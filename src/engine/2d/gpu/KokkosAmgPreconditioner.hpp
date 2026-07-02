@@ -50,7 +50,11 @@ public:
     void initialize(const MeshViews& mesh);
 
     /// Assemble M = I − γ·J from the current Views and (re)build the hierarchy.
-    void setup(const MeshViews& mesh, const StateViews& state, double gamma);
+    /// When `recompute` is false and a hierarchy exists, the prior matrix +
+    /// hierarchy are reused verbatim (CVODE's lagged-preconditioner policy —
+    /// mirrors the serial HypreAmgPreconditioner).
+    void setup(const MeshViews& mesh, const StateViews& state, double gamma,
+               bool recompute);
 
     /// Apply one BoomerAMG V-cycle: z ≈ M⁻¹ r (Views in the plugin's MemSpace).
     void solve(DView r, DView z, double gamma);
@@ -58,8 +62,14 @@ public:
     void finalize();
     bool ready() const noexcept { return amg_ != nullptr; }
 
+    /// Drop the lagged-reuse cache: the next setup() rebuilds the matrix and
+    /// hierarchy regardless of the recompute flag. Call after the solver state
+    /// is re-seeded (CVodeReInit).
+    void invalidate() noexcept { hierarchy_built_ = false; }
+
 private:
     int n_ = 0;
+    bool hierarchy_built_ = false;  ///< set by the first (re)build in setup()
 
     // Static CSR sparsity, resident in the ExecSpace memory space.
     IView  row_ptr_;     ///< [n+1]

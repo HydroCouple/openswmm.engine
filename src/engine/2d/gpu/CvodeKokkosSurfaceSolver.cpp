@@ -184,21 +184,32 @@ int CvodeKokkosSurfaceSolver::rhs_cb(sunrealtype /*t*/, N_Vector y,
 }
 
 int CvodeKokkosSurfaceSolver::psetup_cb(sunrealtype /*t*/, N_Vector /*y*/,
-                                        N_Vector /*fy*/, sunbooleantype /*jok*/,
+                                        N_Vector /*fy*/, sunbooleantype jok,
                                         sunbooleantype* jcurPtr,
                                         sunrealtype gamma, void* user_data) {
     auto* c = static_cast<KokkosSolverContext*>(user_data);
-    *jcurPtr = SUNTRUE;  // always rebuild here; CVODE's policy provides the lag.
+    // Lagged preconditioner: honor CVODE's jok flag (mirrors the serial
+    // CvodeSurfaceSolver::psetup_fn). jok == SUNTRUE means the saved Jacobian
+    // data is still current (only γ drifted) — reuse the cached diagonal /
+    // AMG hierarchy and report NOT recomputed. Previously this callback set
+    // *jcurPtr = SUNTRUE unconditionally and rebuilt everything (including
+    // the dominant BoomerAMGSetup) on every psetup call.
+    const bool recompute = (jok == SUNFALSE);
+    *jcurPtr = recompute ? SUNTRUE : SUNFALSE;
 #if defined(OPENSWMM_HAVE_HYPRE)
     if (c->use_amg) {
-        c->amg->setup(*c->mesh, *c->state, gamma);
+        c->amg->setup(*c->mesh, *c->state, gamma, recompute);
         return 0;
     }
 #else
     (void)gamma;
 #endif
+    // JACOBI: the cached diagonal is γ-free (γ is applied in psolve), so it
+    // stays valid until CVODE requests a fresh Jacobian.
+    if (!recompute && c->prec_diag_built) return 0;
     precondSetup(*c->mesh, *c->state);
     Kokkos::fence();
+    c->prec_diag_built = true;
     return 0;
 }
 
@@ -412,6 +423,14 @@ void CvodeKokkosSurfaceSolver::reinitialize(double t0) {
     if (!cvode_mem_) return;
     seedVolumeFromHead();
     CVodeReInit(cvode_mem_, t0, y_->Convert());
+    // Invalidate the lagged preconditioner caches: the state was re-seeded, so
+    // the cached Jacobi diagonal / AMG hierarchy no longer match it. CVODE is
+    // expected to pass jok = SUNFALSE on the first psetup after a ReInit, but
+    // the explicit reset makes the cache correct regardless of that policy.
+    ctx_.prec_diag_built = false;
+#if defined(OPENSWMM_HAVE_HYPRE)
+    if (amg_precond_) amg_precond_->invalidate();
+#endif
 }
 
 void CvodeKokkosSurfaceSolver::finalize() {

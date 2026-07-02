@@ -138,8 +138,17 @@ void KokkosAmgPreconditioner::initialize(const MeshViews& mesh) {
 }
 
 void KokkosAmgPreconditioner::setup(const MeshViews& mesh, const StateViews& state,
-                                     double gamma) {
+                                     double gamma, bool recompute) {
     if (n_ <= 0) return;
+
+    // Lagged preconditioner: when CVODE says the saved Jacobian is still
+    // current (jok == SUNTRUE → recompute == false) and a hierarchy exists,
+    // reuse the prior matrix + multigrid hierarchy verbatim — skipping the
+    // O(n) assembly AND the dominant HYPRE_BoomerAMGSetup. GMRES still uses
+    // the true matrix-free operator, so a slightly stale preconditioner only
+    // costs a few extra Krylov iterations, never correctness. Mirrors the
+    // serial HypreAmgPreconditioner::setup().
+    if (!recompute && hierarchy_built_) return;
 
     // ---- Assemble M = I − γ·J into values_ in the active ExecSpace ----------
     Kokkos::deep_copy(values_, 0.0);
@@ -184,6 +193,7 @@ void KokkosAmgPreconditioner::setup(const MeshViews& mesh, const StateViews& sta
     HYPRE_IJVectorGetObject(b, reinterpret_cast<void**>(&parb));
     HYPRE_IJVectorGetObject(x, reinterpret_cast<void**>(&parx));
     HYPRE_BoomerAMGSetup(static_cast<HYPRE_Solver>(amg_), parA, parb, parx);
+    hierarchy_built_ = true;
 }
 
 void KokkosAmgPreconditioner::solve(DView r, DView z, double /*gamma*/) {
@@ -221,6 +231,7 @@ void KokkosAmgPreconditioner::finalize() {
     if (b_)   { HYPRE_IJVectorDestroy(static_cast<HYPRE_IJVector>(b_));  b_ = nullptr; }
     if (x_)   { HYPRE_IJVectorDestroy(static_cast<HYPRE_IJVector>(x_));  x_ = nullptr; }
     n_ = 0;
+    hierarchy_built_ = false;
 }
 
 KokkosAmgPreconditioner::~KokkosAmgPreconditioner() { finalize(); }

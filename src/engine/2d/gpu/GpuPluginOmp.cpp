@@ -27,12 +27,26 @@
 
 #include <Kokkos_Core.hpp>
 
+#include <cstdlib>
 #include <cstring>
 
 namespace {
 void ensureKokkosInitialized() {
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
-        Kokkos::initialize();
+        // Thread count: OPENSWMM_2D_THREADS wins, else Kokkos' own defaults
+        // apply (OMP_NUM_THREADS, else all hardware threads — including
+        // efficiency cores on Apple Silicon, which drag the fenced kernel
+        // loops; set OPENSWMM_2D_THREADS to the performance-core count there).
+        // [OPTIONS] THREADS deliberately does NOT govern the plugin: it caps
+        // the host/serial-path loops only.
+        Kokkos::InitializationSettings settings;
+        if (const char* env = std::getenv("OPENSWMM_2D_THREADS")) {
+            char* endp = nullptr;
+            const long n = std::strtol(env, &endp, 10);
+            if (endp != env && n > 0)
+                settings.set_num_threads(static_cast<int>(n));
+        }
+        Kokkos::initialize(settings);
     }
 }
 } // namespace

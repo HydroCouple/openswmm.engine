@@ -598,6 +598,15 @@ void CvodeSurfaceSolver::reinitialize(double t0) {
     }
 
     CVodeReInit(cvode_mem_, t0, y_);
+
+    // Invalidate the lagged preconditioner caches: the state was re-seeded, so
+    // the cached Jacobi diagonal / AMG hierarchy no longer match it. CVODE is
+    // expected to pass jok = SUNFALSE on the first psetup after a ReInit, but
+    // the explicit reset makes the cache correct regardless of that policy.
+    precond_diag_.clear();
+#if defined(OPENSWMM_HAVE_HYPRE)
+    if (amg_precond_) amg_precond_->invalidate();
+#endif
 }
 
 

@@ -179,6 +179,11 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
         else if (val == "ILU")    o->preconditioner = twoD::PreconditionerType::ILU;
         else if (val == "AMG")    o->preconditioner = twoD::PreconditionerType::AMG;
     }
+    else if (key == "2D_RAINFALL_MODE") {
+        if      (val == "NATURAL_NEIGHBOUR") o->rainfall_mode = twoD::RainfallMode::NATURAL_NEIGHBOUR;
+        else if (val == "SYSTEM")            o->rainfall_mode = twoD::RainfallMode::SYSTEM;
+        else if (val == "NONE")              o->rainfall_mode = twoD::RainfallMode::NONE;
+    }
     else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
     // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).

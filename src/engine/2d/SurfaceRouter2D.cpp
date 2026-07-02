@@ -620,6 +620,12 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     const bool live_coupling = (state_.node_coupling != nullptr);
     if (!live_coupling)
         computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
+    else
+        // The held path zeroes coupling_flux inside computeCouplingExchange;
+        // the live path skips it, and scatterCouplingFlux ACCUMULATES (+=), so
+        // without this reset the per-window outfall injection below compounds
+        // across windows (and a failed window's flux would leak into the next).
+        std::fill(state_.coupling_flux.begin(), state_.coupling_flux.end(), 0.0);
 
     // Transfer outfall discharges into 2D cells (both paths). Withdrawal is
     // capped at the water available in the receiving cells; the ledger books
@@ -690,7 +696,19 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
             }
         }
     }
-    if (quiescent) ++quiescent_windows_;
+    if (quiescent) {
+        ++quiescent_windows_;
+        // The solver will not run, so no exchange can be applied this window.
+        // Un-book the held exchanges (mirrors the failure path): a runtime
+        // coupling forcing can zero coupling_flux AFTER computeCouplingExchange
+        // / transferOutfallDischarges wrote their ledger entries, which would
+        // otherwise book an exchange the surface never moved.
+        for (const auto& cp : coupling_points_)
+            if (!cp.is_outfall)
+                ctx.nodes.coupling_volume[
+                    static_cast<std::size_t>(cp.node_idx)] = 0.0;
+        outfall_applied_q_.clear();
+    }
 
     bool advance_failed = false;
 
@@ -777,9 +795,11 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     // boundary edge fluxes (inflow-positive) as −F·dt (outward-positive) into
     // the cumulative tracker the 2D mass balance reads (accumulateMassBalance).
     // First-order in dt (end-of-step flux), consistent with computeCellContinuity.
-    // Skipped for a failed (frozen) window: the state did not change, so no
-    // volume actually crossed the boundary.
-    if (!advance_failed) {
+    // Skipped for a failed (frozen) or quiescent (skipped) window: the state
+    // did not change, so no volume actually crossed the boundary — integrating
+    // a stale nonzero flux from the last fired window would book phantom
+    // outflow.
+    if (!advance_failed && !quiescent) {
         const int ne = boundary_.size();
         for (int idx = 0; idx < ne; ++idx) {
             if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx])

@@ -74,6 +74,11 @@ public:
     /// True once the multigrid hierarchy has been built at least once.
     bool hierarchyBuilt() const noexcept { return hierarchy_built_; }
 
+    /// Drop the lagged-reuse cache: the next setup() rebuilds the matrix and
+    /// hierarchy regardless of the recompute flag. Call after the solver state
+    /// is re-seeded (CVodeReInit).
+    void invalidate() noexcept { hierarchy_built_ = false; }
+
 private:
     SurfaceJacobian   jac_;
     int               n_ = 0;

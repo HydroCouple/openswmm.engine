@@ -1420,6 +1420,15 @@ const char* linear_solver_token(twoD::LinearSolverType t) {
     return "GMRES";
 }
 
+const char* rainfall_mode_token(twoD::RainfallMode m) {
+    switch (m) {
+        case twoD::RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
+        case twoD::RainfallMode::SYSTEM:            return "SYSTEM";
+        case twoD::RainfallMode::NONE:              return "NONE";
+    }
+    return "NATURAL_NEIGHBOUR";
+}
+
 const char* preconditioner_token(twoD::PreconditionerType t) {
     switch (t) {
         case twoD::PreconditionerType::NONE:   return "NONE";
@@ -1472,6 +1481,7 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_MAX_CVODE_STEPS",   std::to_string(o.max_cvode_steps));
     insert("2D_LINEAR_SOLVER",     linear_solver_token(o.linear_solver));
     insert("2D_PRECONDITIONER",    preconditioner_token(o.preconditioner));
+    insert("2D_RAINFALL_MODE",     rainfall_mode_token(o.rainfall_mode));
     insert("2D_REPORT_2D",         o.report_2d ? "YES" : "NO");
     // HDF5 results path — 2D outputs always go to HDF5, never gpkg tables.
     // Restored to SolverOptions2D::output_file on read so SWMMEngine::open

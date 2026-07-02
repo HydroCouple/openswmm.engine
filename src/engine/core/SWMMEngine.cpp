@@ -3474,13 +3474,15 @@ int SWMMEngine::end() noexcept {
 
     // Finalize per-element max stats for report (top-5 CFL-critical, flow turns,
     // non-convergence — matching legacy stats_findMaxStats)
-    ctx_.finalize_max_stats();
-
 #ifdef OPENSWMM_HAS_2D
-    // Finalize 2D surface routing module (flush the partial macro-step
-    // window, then release CVODE resources)
+    // Finalize 2D surface routing module BEFORE the max-stats finalize: the
+    // partial-window flush advances the 2D state and books its exchanges, so
+    // the statistics/reports must read the post-flush state, not a snapshot
+    // taken one window early.
     surface_router_.finalize(ctx_);
 #endif
+
+    ctx_.finalize_max_stats();
 
     // Phase 5: drain and join the IO thread (all writes must complete first)
     io_thread_.stop();
