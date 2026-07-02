@@ -70,6 +70,7 @@ void SpectralROM1D::initialize() {
     q95.assign(static_cast<std::size_t>(n_nodes), 0.0);
 
     sort_buf_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
+    mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     mode_active.assign(static_cast<std::size_t>(n_kept), true);
     n_modes_active = n_kept;
@@ -172,8 +173,7 @@ void SpectralROM1D::advance(double dt, double K1d,
             double aij = a_ensemble[static_cast<std::size_t>(i) * nk + j];
             sum_sq += aij * aij;
         }
-        // store in r_coarse temporarily — replaced below
-        r_coarse[j] = sum_sq / static_cast<double>(n_ensemble);
+        mode_energy_[j] = sum_sq / static_cast<double>(n_ensemble);
     }
 
     // ---- Step 2: Project runoff into coarse space ----------------------------
@@ -203,29 +203,11 @@ void SpectralROM1D::advance(double dt, double K1d,
                                ? std::abs(dt) * max_scale : 0.0;
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
-        double Ej = a_ensemble[j];  // placeholder; recalculate from Step 1 result
-        // Recover E_j: r_coarse now holds projected runoff, but we need E_j.
-        // E_j was saved in sort_buf_ as a side-channel? No — use a separate pass.
-        // Fix: keep mode_energy separate from r_coarse.
-        (void)Ej;
-        bool by_rain = rain_scale > 0.0 &&
-                       std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
-        mode_active[j] = by_rain;  // energy check done below
+        bool by_energy = mode_energy_[j] >= mode_drop_threshold;
+        bool by_rain   = rain_scale > 0.0 &&
+                         std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
+        mode_active[j] = by_energy || by_rain;
         if (mode_active[j]) ++n_modes_active;
-    }
-
-    // Recalculate energy properly (Steps 1 was overwritten above).
-    // Recompute E_j directly here.
-    for (std::size_t j = 0; j < nk; ++j) {
-        double sum_sq = 0.0;
-        for (int i = 0; i < n_ensemble; ++i) {
-            double aij = a_ensemble[static_cast<std::size_t>(i) * nk + j];
-            sum_sq += aij * aij;
-        }
-        double Ej = sum_sq / static_cast<double>(n_ensemble);
-        if (Ej >= mode_drop_threshold) {
-            if (!mode_active[j]) { mode_active[j] = true; ++n_modes_active; }
-        }
     }
 
     // ---- Step 4: Advance modes -----------------------------------------------
