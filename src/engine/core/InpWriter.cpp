@@ -280,7 +280,7 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     // keys are parse errors on reload).
     static const char* sLinSolver[] = {"GMRES", "BICGSTAB", "TFQMR"};
     static const char* sPrecond[]   = {"NONE", "JACOBI", "ILU", "AMG"};
-    static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM"};
+    static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE"};
     sec(f, "2D_OPTIONS");
     std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
     std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
@@ -292,6 +292,7 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD",       o.coupling_cd);
     std::fprintf(f, "%-22s %d\n",    "MAX_KRYLOV_DIM",    o.max_krylov_dim);
     std::fprintf(f, "%-22s %d\n",    "COUPLING_INTERVAL", o.coupling_interval);
+    std::fprintf(f, "%-22s %.12g\n", "COUPLING_WINDOW",   o.coupling_window);
     std::fprintf(f, "%-22s %d\n",    "MAX_CVODE_STEPS",   o.max_cvode_steps);
     std::fprintf(f, "%-22s %s\n",    "LINEAR_SOLVER",
                  sLinSolver[static_cast<int>(o.linear_solver) >= 0 &&
@@ -303,7 +304,7 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                               ? static_cast<int>(o.preconditioner) : 0]);
     std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
                  sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
-                           static_cast<int>(o.rainfall_mode) <= 1
+                           static_cast<int>(o.rainfall_mode) <= 2
                                ? static_cast<int>(o.rainfall_mode) : 0]);
     std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
     if (!o.output_file.empty())

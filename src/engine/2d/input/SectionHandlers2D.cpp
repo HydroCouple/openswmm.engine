@@ -100,6 +100,9 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "COUPLING_INTERVAL")) {
         opts.coupling_interval = tryParseInt(val, ok);
         if (!ok) return "Invalid COUPLING_INTERVAL value";
+    } else if (iequals(key, "COUPLING_WINDOW")) {
+        opts.coupling_window = tryParseDouble(val, ok);
+        if (!ok) return "Invalid COUPLING_WINDOW value";
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
@@ -137,6 +140,8 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
         else if (iequals(val, "SYSTEM"))
             opts.rainfall_mode = RainfallMode::SYSTEM;
+        else if (iequals(val, "NONE"))
+            opts.rainfall_mode = RainfallMode::NONE;
         else
             return "Unknown RAINFALL_MODE: " + val;
     } else if (iequals(key, "REPORT_2D")) {
@@ -161,9 +166,10 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
 bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
         "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
-        "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_CD",
-        "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS", "LINEAR_SOLVER",
-        "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D", "OUTPUT_FILE",
+        "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_WINDOW",
+        "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
+        "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
+        "OUTPUT_FILE",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -190,6 +196,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
     if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
     if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
+    if (iequals(key, "COUPLING_WINDOW"))   return fmt_g(opts.coupling_window);
     if (iequals(key, "MAX_CVODE_STEPS"))   return std::to_string(opts.max_cvode_steps);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
@@ -214,6 +221,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         switch (opts.rainfall_mode) {
             case RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
             case RainfallMode::SYSTEM:            return "SYSTEM";
+            case RainfallMode::NONE:              return "NONE";
         }
         return "NATURAL_NEIGHBOUR";
     }

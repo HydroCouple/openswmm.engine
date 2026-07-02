@@ -3477,8 +3477,9 @@ int SWMMEngine::end() noexcept {
     ctx_.finalize_max_stats();
 
 #ifdef OPENSWMM_HAS_2D
-    // Finalize 2D surface routing module (release CVODE resources)
-    surface_router_.finalize();
+    // Finalize 2D surface routing module (flush the partial macro-step
+    // window, then release CVODE resources)
+    surface_router_.finalize(ctx_);
 #endif
 
     // Phase 5: drain and join the IO thread (all writes must complete first)

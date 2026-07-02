@@ -992,6 +992,23 @@ TEST(InputParsing, Parse2DOptionsLine) {
     err = parse2DOptionsLine({"COUPLING_INTERVAL", "3"}, opts);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(opts.coupling_interval, 3);
+
+    // Time-based macro-step window: −1 AUTO (default), 0 every step, > 0 s.
+    EXPECT_NEAR(opts.coupling_window, -1.0, 1e-12);  // default is AUTO
+    err = parse2DOptionsLine({"COUPLING_WINDOW", "7.5"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(opts.coupling_window, 7.5, 1e-12);
+    EXPECT_EQ(format2DOptionValue(opts, "COUPLING_WINDOW"), "7.5");
+    EXPECT_TRUE(is2DOptionKey("COUPLING_WINDOW"));
+    err = parse2DOptionsLine({"COUPLING_WINDOW", "bogus"}, opts);
+    EXPECT_FALSE(err.empty());
+
+    // RAINFALL_MODE NONE: no rain on the mesh (subcatchments already capture
+    // the storm; rain-on-mesh would double-count it).
+    err = parse2DOptionsLine({"RAINFALL_MODE", "NONE"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_EQ(opts.rainfall_mode, RainfallMode::NONE);
+    EXPECT_EQ(format2DOptionValue(opts, "RAINFALL_MODE"), "NONE");
 }
 
 TEST(InputParsing, Parse2DOptionsRejectsUnknown) {

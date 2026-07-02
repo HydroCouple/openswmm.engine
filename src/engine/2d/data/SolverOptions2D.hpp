@@ -117,7 +117,10 @@ enum class MomentumType : int8_t {
  */
 enum class RainfallMode : int8_t {
     NATURAL_NEIGHBOUR = 0,  ///< Default: spatial interpolation across all gages.
-    SYSTEM            = 1    ///< Uniform = mean of all gages.
+    SYSTEM            = 1,  ///< Uniform = mean of all gages.
+    NONE              = 2   ///< No rain on the mesh. Use when subcatchments
+                            ///< already capture the rainfall (runoff → nodes) —
+                            ///< rain-on-mesh would double-count the same storm.
 };
 
 /**
@@ -145,6 +148,16 @@ struct SolverOptions2D {
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
     int    max_krylov_dim    = 30;      ///< Max Krylov subspace dimension
     int    coupling_interval = 0;       ///< 0 = every SWMM step
+    /// 2D advance window in SECONDS of simulation time. −1 = AUTO (window =
+    /// the nominal [OPTIONS] ROUTING_STEP, clamped to MAX_TIMESTEP); 0 =
+    /// advance every routing step; > 0 = explicit window length. A time-based
+    /// window is immune to 1D variable-step collapse — a step-count
+    /// COUPLING_INTERVAL silently shrinks with the routing step, which is
+    /// exactly the regime where the 2D advance cost explodes. An explicit
+    /// COUPLING_WINDOW takes precedence over COUPLING_INTERVAL; AUTO defers to
+    /// COUPLING_INTERVAL > 1 for backward compatibility. Parsed from
+    /// [2D_OPTIONS] COUPLING_WINDOW; env OPENSWMM_2D_COUPLING_WINDOW overrides.
+    double coupling_window   = -1.0;
     int    max_cvode_steps   = 500;     ///< Max CVODE steps per advance
     bool   report_2d         = true;    ///< Write 2D results to output
 

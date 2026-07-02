@@ -108,8 +108,14 @@ public:
 
     /**
      * @brief Finalize the 2D module at simulation end.
+     *
+     * Flushes any partial macro-step window (routing time accumulated since
+     * the last 2D advance) so the 2D clock ends at the simulation end instead
+     * of up to one window short, then releases the solver.
+     *
+     * @param ctx  Simulation context (needed for the flush advance).
      */
-    void finalize();
+    void finalize(SimulationContext& ctx);
 
     /**
      * @brief Compute a CFL-like stability hint for the 2D domain.
@@ -267,9 +273,32 @@ private:
     long failed_advance_windows_ = 0;
 
     /// CFL hint cached at the last 2D advance (per-cell celerity minimum over
-    /// wet cells); 1e30 while the mesh is dry. Refreshed by updateCflHint().
+    /// wet coupling-stencil cells); 1e30 while those are dry. Refreshed by
+    /// updateCflHint().
     double cfl_hint_ = 1.0e30;
+    /// Cells participating in the explicit 1D↔2D exchange (coupling-point
+    /// stencils) — the only cells the CFL hint scans. Built at initialize().
+    std::vector<int> cfl_cells_;
     void updateCflHint();
+
+    /// Effective time-based 2D advance window (s), resolved at initialize()
+    /// from COUPLING_WINDOW / AUTO. 0 = time gating off (fire every routing
+    /// step, or per COUPLING_INTERVAL when > 1). May be halved at runtime by
+    /// the stability guard; recovers toward window_target_.
+    double effective_window_ = 0.0;
+    /// Resolved window target the stability guard recovers toward.
+    double window_target_ = 0.0;
+    /// Consecutive clean (non-failed) fired windows since the last halving.
+    int    clean_windows_ = 0;
+    /// Windows skipped entirely (dry mesh, zero sources) — diagnostics.
+    long   quiescent_windows_ = 0;
+    /// Simulation time of the most recent routing step (for the finalize flush).
+    double last_t_ = 0.0;
+
+    /// Integrate one accumulated macro-step window: coupling exchange, sources,
+    /// solver advance (with failure handling), booking, diagnostics. Extracted
+    /// from advancePostRouting so finalize() can flush a partial window.
+    void fireAdvanceWindow(SimulationContext& ctx, double dt, double t);
 
     /// One-shot guard: resolve deferred boundary timeseries/curve NAMES to
     /// registry indices on the first advance (ctx.table_names is populated by

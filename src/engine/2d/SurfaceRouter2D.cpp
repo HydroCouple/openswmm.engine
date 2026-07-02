@@ -226,6 +226,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             options_.rainfall_mode = RainfallMode::SYSTEM;
         else if (std::strcmp(rm, "natural") == 0)
             options_.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
+        else if (std::strcmp(rm, "none") == 0)
+            options_.rainfall_mode = RainfallMode::NONE;
     }
 
     // Precompute the static rainfall-interpolation weights. Gage POSITIONS are
@@ -280,6 +282,30 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
 
     // Build coupling point descriptors
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
+
+    // Cells whose state participates in the explicit 1D↔2D exchange — the
+    // coupling-point stencils (vertex coupling) or single cells (triangle
+    // coupling). Only THESE constrain the routing step through the CFL hint:
+    // the 2D interior is integrated fully implicitly by CVODE and imposes no
+    // step limit of its own. (The previous whole-mesh scan let any wet cell —
+    // e.g. rain-on-mesh ponding kilometres from the network — pin the 1D
+    // routing step for the entire run.)
+    cfl_cells_.clear();
+    {
+        std::unordered_set<int> seen_cells;
+        for (const auto& cp : coupling_points_) {
+            if (cp.vertex_idx >= 0) {
+                const int v = cp.vertex_idx;
+                for (int k = mesh_.vert_stencil_ptr[v];
+                     k < mesh_.vert_stencil_ptr[v + 1]; ++k)
+                    seen_cells.insert(mesh_.vert_stencil_idx[k]);
+            } else if (cp.cell_idx >= 0) {
+                seen_cells.insert(cp.cell_idx);
+            }
+        }
+        cfl_cells_.assign(seen_cells.begin(), seen_cells.end());
+        std::sort(cfl_cells_.begin(), cfl_cells_.end());
+    }
 
     // Live (implicit) coupling path — OPT-IN via OPENSWMM_2D_LIVE_COUPLING. The
     // orifice exchange is evaluated inside the CVODE RHS against the live 2D head
@@ -494,6 +520,30 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Seed the cached CFL hint from the initial state (nonzero if the model
     // starts with water on the mesh); refreshed after every 2D advance.
     updateCflHint();
+
+    // Resolve the effective 2D advance-window policy (time-based macro-step).
+    // Explicit COUPLING_WINDOW wins; AUTO (−1, the default) defers to an
+    // explicit legacy COUPLING_INTERVAL > 1, otherwise the user's declared
+    // [OPTIONS] ROUTING_STEP is taken as the acceptable coupling cadence —
+    // variable-step collapse of the 1D solver then cannot drag the 2D advance
+    // cadence (and its per-advance cost) down with it. Behavior-preserving for
+    // healthy models: window == nominal routing step fires every step.
+    {
+        double win = options_.coupling_window;
+        if (const char* env = std::getenv("OPENSWMM_2D_COUPLING_WINDOW")) {
+            char* endp = nullptr;
+            const double v = std::strtod(env, &endp);
+            if (endp != env) win = v;
+        }
+        if (win < 0.0) {
+            win = (options_.coupling_interval > 1)
+                      ? 0.0  // legacy step-count gating stays in charge
+                      : std::min(ctx.options.routing_step, options_.max_timestep);
+        }
+        effective_window_ = std::max(0.0, win);
+        window_target_    = effective_window_;
+        clean_windows_    = 0;
+    }
 }
 
 
@@ -525,23 +575,39 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // the WHOLE accumulated window in a single advance() call. This lets CVODE
     // take large adaptive internal steps instead of being hard-stopped on every
     // ~routing-step boundary — the dominant cost driver for the semi-discrete
-    // solver. COUPLING_INTERVAL <= 1 (default) fires every step (today's
-    // behavior); > 1 advances once per `interval` routing steps. The coupling /
-    // forcing source terms are held constant across the window, and every
-    // downstream term below (the solver advance, sim_time_, boundary-flux,
+    // solver. Two gating policies:
+    //   - Time-based (effective_window_ > 0, the default via COUPLING_WINDOW
+    //     AUTO = nominal ROUTING_STEP): fire when the accumulated routing time
+    //     reaches the window. The window is physical time, so 1D variable-step
+    //     collapse cannot shrink the 2D cadence — exactly the regime where a
+    //     step-count interval degenerates to advance-per-0.2s.
+    //   - Legacy step-count (COUPLING_INTERVAL > 1 with COUPLING_WINDOW unset).
+    // The coupling / forcing source terms are held constant across the window,
+    // and every downstream term (the solver advance, sim_time_, boundary-flux,
     // continuity, statistics, and the mass-balance ledgers) uses the same
     // accumulated `dt`, so the 1D↔2D exchange stays conservative over the macro
     // step. dt varies under VARIABLE_STEP, so accumulate the actual elapsed time.
     pending_dt_ += routing_dt;
     ++coupling_counter_;
-    if (options_.coupling_interval > 1
-        && coupling_counter_ < options_.coupling_interval) {
+    last_t_ = t;
+    if (effective_window_ > 0.0) {
+        // Fire when within half a routing step of the window (jitter cannot
+        // systematically overshoot: the alternative is overshooting by a whole
+        // step). A window equal to the actual routing step fires every step.
+        if (pending_dt_ + 0.5 * routing_dt < effective_window_) return;
+    } else if (options_.coupling_interval > 1
+               && coupling_counter_ < options_.coupling_interval) {
         return;  // Defer the 2D advance; keep accumulating elapsed routing time.
     }
-    const double dt = pending_dt_;   // the 2D macro-step (== routing_dt when interval<=1)
+    const double dt = pending_dt_;   // the 2D macro-step
     pending_dt_ = 0.0;
     coupling_counter_ = 0;
+    fireAdvanceWindow(ctx, dt, t);
+}
 
+
+void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
+                                         double t) {
     // Save 2D state
     state_.save_state();
 
@@ -597,9 +663,39 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // No-op for WALL / NORMAL_FLOW and for constant SPECIFIED_* edges.
     resolveBoundaryValues(ctx, t);
 
+    // Quiescence short-circuit: a window over a mesh holding NO water, with no
+    // source that could wet it, cannot change the 2D state — skip the solver
+    // advance entirely. Dry weather dominates continuous simulations, so this
+    // caps the 2D cost at the (cheap) checks below whenever the surface is
+    // genuinely idle. The checks are conservative: any water volume, any
+    // nonzero rainfall/coupling source (runtime forcings were folded into
+    // these arrays above), any boundary type that can push water in, or the
+    // live-coupling path (whose exchange is evaluated inside the RHS, not in
+    // coupling_flux) disables the skip.
+    bool quiescent = !live_coupling;
+    if (quiescent) {
+        const int ntq = mesh_.n_triangles();
+        for (int i = 0; i < ntq; ++i) {
+            if (state_.volume[i] > 0.0 || state_.rainfall[i] != 0.0
+                || state_.coupling_flux[i] != 0.0) { quiescent = false; break; }
+        }
+    }
+    if (quiescent) {
+        const int ne = boundary_.size();
+        for (int idx = 0; idx < ne; ++idx) {
+            const auto bt = static_cast<BoundaryType>(boundary_.edge_bc_type[idx]);
+            if (bt != BoundaryType::WALL && bt != BoundaryType::NORMAL_FLOW) {
+                quiescent = false;
+                break;
+            }
+        }
+    }
+    if (quiescent) ++quiescent_windows_;
+
     bool advance_failed = false;
 
 #ifdef OPENSWMM_HAS_2D
+    if (!quiescent) {
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
     const double t_reached = solver_->advance(sim_time_, t_target);
@@ -630,6 +726,21 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
                         static_cast<std::size_t>(cp.node_idx)] = 0.0;
         }
         outfall_applied_q_.clear();
+
+        // Stability guard: halve the macro window so the retry pressure eases
+        // (a window below the routing step degenerates to fire-every-step);
+        // recover ×2 toward the resolved target after a run of clean windows
+        // (below).
+        if (effective_window_ > 0.0) {
+            effective_window_ = std::max(1.0e-3, 0.5 * effective_window_);
+            clean_windows_ = 0;
+        }
+    } else if (effective_window_ > 0.0 && effective_window_ < window_target_
+               && ++clean_windows_ >= 20) {
+        // Guard recovery: 20 consecutive clean windows → double back toward
+        // the configured/AUTO target.
+        effective_window_ = std::min(window_target_, 2.0 * effective_window_);
+        clean_windows_ = 0;
     }
 
     // Live-path booking: the solver integrated ∫Q_k dt (m³, +drain/−spill) per
@@ -659,6 +770,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // advance), NOT the DW formula — so skip the DW recompute there.
     if (options_.momentum != MomentumType::INERTIAL)
         computeEdgeFluxes(mesh_, state_, options_);
+    }  // !quiescent
 #endif
 
     // Boundary outflow over the step: integrate the refreshed end-of-step
@@ -710,7 +822,17 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
 }
 
 
-void SurfaceRouter2D::finalize() {
+void SurfaceRouter2D::finalize(SimulationContext& ctx) {
+    // Flush the partial macro-step window: with time-based or step-count
+    // gating, up to one window of routing time can be pending here — dropping
+    // it would end the 2D clock (and the exchange booking) short of the
+    // simulation end.
+    if (active_ && pending_dt_ > 0.0) {
+        const double dt = pending_dt_;
+        pending_dt_ = 0.0;
+        coupling_counter_ = 0;
+        fireAdvanceWindow(ctx, dt, last_t_);
+    }
 #ifdef OPENSWMM_HAS_2D
     if (solver_) {
         solver_->finalize();
@@ -742,14 +864,16 @@ double SurfaceRouter2D::computeCflHint(const SimulationContext& /*ctx*/) const {
 
 
 void SurfaceRouter2D::updateCflHint() {
-    // Per-cell celerity constraint: dt_i = sqrt(A_i) / sqrt(g·h_i) over wet
-    // cells. Pairing each cell's own depth with its own size is the physical
-    // constraint; the previous global-max-depth × global-min-cell-size pairing
-    // let one wet cell anywhere combine with the smallest triangle anywhere to
-    // pin the 1D routing step for the whole run. Dry cells impose nothing.
+    // Per-cell celerity constraint dt_i = sqrt(A_i) / sqrt(g·h_i), evaluated
+    // ONLY over the coupling-stencil cells (cfl_cells_): the explicit 1D↔2D
+    // exchange is what the hint stabilises — the 2D interior is fully implicit
+    // and imposes no routing-step limit. Pairing each cell's own depth with
+    // its own size is the physical constraint; the previous global-max-depth ×
+    // global-min-cell-size pairing over the whole mesh let one wet cell
+    // anywhere pin the 1D routing step for the entire run. Dry cells impose
+    // nothing.
     double hint = 1.0e30;
-    const int nt = mesh_.n_triangles();
-    for (int i = 0; i < nt; ++i) {
+    for (int i : cfl_cells_) {
         const double h = state_.depth[i];
         if (h < options_.dry_depth) continue;
         const double dx = std::sqrt(mesh_.tri_area[i]);
@@ -787,7 +911,7 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
     const int nt = mesh_.n_triangles();
     const int n_gages = ctx.n_gages();
 
-    if (n_gages <= 0) {
+    if (n_gages <= 0 || options_.rainfall_mode == RainfallMode::NONE) {
         std::fill(state_.rainfall.begin(), state_.rainfall.end(), 0.0);
         return;
     }
@@ -957,7 +1081,8 @@ void SurfaceRouter2D::writeDiagRow(SimulationContext& ctx, double dt, double t) 
                 (*diag_csv_)
                     << "t_s,dt_s,flag,d_nsteps,d_newton,d_gmres,d_prec_setups,"
                        "d_lin_fails,last_h_s,n_front,n_wet,dn_wet,max_depth_m,"
-                       "total_vol_m3,sum_abs_coupling_m3s,max_node_exch_m3s\n";
+                       "total_vol_m3,sum_abs_coupling_m3s,max_node_exch_m3s,"
+                       "n_quiescent\n";
             } else {
                 diag_csv_.reset();  // open failed — disable cleanly
             }
@@ -1013,7 +1138,7 @@ void SurfaceRouter2D::writeDiagRow(SimulationContext& ctx, double dt, double t) 
                  << d_prec << ',' << d_linf << ',' << last_h << ','
                  << n_front << ',' << n_wet << ',' << dn_wet << ','
                  << max_depth << ',' << totalVolume() << ',' << sum_abs_coup << ','
-                 << max_node_exch << '\n';
+                 << max_node_exch << ',' << quiescent_windows_ << '\n';
     diag_csv_->flush();
 }
 

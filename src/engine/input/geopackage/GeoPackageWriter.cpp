@@ -1468,6 +1468,7 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_COUPLING_CD",       fmt_g17(o.coupling_cd));
     insert("2D_MAX_KRYLOV_DIM",    std::to_string(o.max_krylov_dim));
     insert("2D_COUPLING_INTERVAL", std::to_string(o.coupling_interval));
+    insert("2D_COUPLING_WINDOW",   fmt_g17(o.coupling_window));
     insert("2D_MAX_CVODE_STEPS",   std::to_string(o.max_cvode_steps));
     insert("2D_LINEAR_SOLVER",     linear_solver_token(o.linear_solver));
     insert("2D_PRECONDITIONER",    preconditioner_token(o.preconditioner));
