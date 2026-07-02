@@ -90,7 +90,7 @@ void SpectralROM1D::initialize() {
         for (int i = 0; i < n_ensemble; ++i) {
             double t = (static_cast<double>(i) + 0.5) / static_cast<double>(n_ensemble);
             mannings_mult[static_cast<std::size_t>(i)] = m_lo + t * (m_hi - m_lo);
-            // Reversed for decorrelation with Manning
+            // Reversed: rank correlation exactly -1 with Manning (comonotone-opposite, not independence)
             double t_r = (static_cast<double>(n_ensemble - 1 - i) + 0.5)
                        / static_cast<double>(n_ensemble);
             runoff_mult[static_cast<std::size_t>(i)] = r_lo + t_r * (r_hi - r_lo);

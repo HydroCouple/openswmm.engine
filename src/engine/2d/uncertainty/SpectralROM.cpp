@@ -101,7 +101,9 @@ void SpectralROM::initialize() {
     //   mannings_mult ∈ [1 - mannings_pert, 1 + mannings_pert]
     //   rainfall_mult ∈ [1 - rainfall_pert, 1 + rainfall_pert]
     //   LHS stratum midpoint: val = low + (i+0.5)/M * (high-low), i=0..M-1
-    //   Rainfall order is reversed to give near-zero correlation with Manning.
+    //   Rainfall order is reversed: rank correlation exactly −1 with Manning
+    //   (comonotone-opposite), NOT independence. Acceptable only while a single
+    //   parameter is perturbed; PR 5 replaces this with independent shuffles.
     // -------------------------------------------------------------------------
 
     mannings_mult.resize(static_cast<std::size_t>(n_ensemble));
