@@ -293,6 +293,8 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     std::fprintf(f, "%-22s %d\n",    "MAX_KRYLOV_DIM",    o.max_krylov_dim);
     std::fprintf(f, "%-22s %d\n",    "COUPLING_INTERVAL", o.coupling_interval);
     std::fprintf(f, "%-22s %.12g\n", "COUPLING_WINDOW",   o.coupling_window);
+    std::fprintf(f, "%-22s %s\n",    "ACTIVE_SET",        o.active_set ? "YES" : "NO");
+    std::fprintf(f, "%-22s %d\n",    "ACTIVE_SET_HALO",   o.active_set_halo);
     std::fprintf(f, "%-22s %d\n",    "MAX_CVODE_STEPS",   o.max_cvode_steps);
     std::fprintf(f, "%-22s %s\n",    "LINEAR_SOLVER",
                  sLinSolver[static_cast<int>(o.linear_solver) >= 0 &&

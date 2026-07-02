@@ -10,6 +10,7 @@
 
 #include "CvodeSurfaceSolver.hpp"
 #include "SurfaceFluxCalculator.hpp"
+#include "../data/ActiveSetData.hpp"
 #include "../mesh/VertexReconstruction.hpp"
 #include "../coupling/NodeCoupling.hpp"   // live node-coupling helpers (macro-step path)
 #include "../../data/NodeData.hpp"        // 1D node state read by the live coupling
@@ -84,6 +85,12 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
     double* y_data    = N_VGetArrayPointer(y);
     double* ydot_data = N_VGetArrayPointer(ydot);
 
+    // Active-set masking: frozen cells' y components never change (their ydot
+    // is exactly 0 below), so their head/depth stay at the frozen-correct
+    // values — the unpack, like every downstream stage, touches actives only.
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+
     // Volume formulation: CVODE integrates the cell water volume V. The free
     // surface η and the mean wetted depth h̄ are reconstructed per cell (smooth,
     // monotone closure) and drive the downstream flux pipeline. Per-cell unpack:
@@ -91,6 +98,7 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
     // serial for any thread count.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
+        if (masked && !as->cell_active[i]) continue;
         reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
     }
 
@@ -180,13 +188,39 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     const bool recompute = (jok == SUNFALSE);
     *jcurPtr = recompute ? SUNTRUE : SUNFALSE;
 
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+
 #if defined(OPENSWMM_HAVE_HYPRE)
     // AMG: assemble M = I − γ·J and rebuild the BoomerAMG hierarchy (only when
     // recompute; setup() reuses the prior hierarchy otherwise).
+    //
+    // Active-set bypass: on a mostly-dry masked system the Jacobian is
+    // near-identity (frozen rows ARE identity), so one BoomerAMG hierarchy
+    // build — O(n) with large constants over the FULL mesh graph — buys
+    // nothing over the (masked, near-exact) Jacobi diagonal. Switch to Jacobi
+    // while the active fraction is below the threshold; the branch flip in
+    // either direction forces a fresh build of whichever preconditioner takes
+    // over (its cache is stale or absent).
     if (ctx->amg_active) {
-        solver->amg_precond_->setup(mesh, state, gamma, recompute);
-        if (recompute) ++solver->prec_full_builds_;
-        return 0;
+        static const double bypass_frac = []{
+            const char* e = std::getenv("OPENSWMM_2D_AMG_BYPASS_FRAC");
+            return (e && e[0]) ? std::atof(e) : 0.05;
+        }();
+        const int  ntot   = mesh.n_triangles();
+        const bool bypass = masked && ntot > 0
+                            && as->n_active() < bypass_frac * ntot;
+        if (!bypass) {
+            const bool force = recompute || !solver->amg_used_last_setup_;
+            solver->amg_precond_->setup(mesh, state, gamma, force);
+            if (force) ++solver->prec_full_builds_;
+            solver->amg_used_last_setup_ = true;
+            return 0;
+        }
+        // Fall through to Jacobi. If AMG served the last setup, the cached
+        // diagonal (if any) is stale — force a rebuild below.
+        if (solver->amg_used_last_setup_) solver->precond_diag_.clear();
+        solver->amg_used_last_setup_ = false;
     }
 #else
     (void)gamma;
@@ -212,6 +246,10 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // bit-identical to serial.
 #pragma omp parallel for schedule(static) num_threads(ctx->opts->num_threads)
     for (int i = 0; i < nt; ++i) {
+        // Frozen cells keep D[i] = 0 (the assign above): psolve then computes
+        // z_i = r_i / (1 − γ·0) = r_i — the exact identity row of M, matching
+        // the frozen cell's exactly-zero Jacobian row.
+        if (masked && !as->cell_active[i]) continue;
         const int nbr[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i], mesh.tri_nbr2[i]};
         double T_sum = 0.0;
         for (int e = 0; e < 3; ++e) {
@@ -235,8 +273,11 @@ int CvodeSurfaceSolver::psolve_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     auto* solver = ctx->solver;
 
 #if defined(OPENSWMM_HAVE_HYPRE)
-    // AMG: apply one BoomerAMG V-cycle z ≈ M⁻¹ r over all cells.
-    if (ctx->amg_active) {
+    // AMG: apply one BoomerAMG V-cycle z ≈ M⁻¹ r over all cells. Dispatch on
+    // whichever preconditioner served the most recent psetup (the active-set
+    // bypass can switch to Jacobi on mostly-dry systems); CVODE guarantees
+    // psolve pairs with the latest psetup.
+    if (ctx->amg_active && solver->amg_used_last_setup_) {
         const int n = ctx->mesh->n_triangles();
         const double* rd = N_VGetArrayPointer(r);
         double*       zd = N_VGetArrayPointer(z);

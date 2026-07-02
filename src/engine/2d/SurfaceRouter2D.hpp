@@ -22,6 +22,7 @@
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_ROUTER_HPP
 #define OPENSWMM_ENGINE_2D_SURFACE_ROUTER_HPP
 
+#include "data/ActiveSetData.hpp"
 #include "data/MeshData.hpp"
 #include "data/SurfaceStateData.hpp"
 #include "data/SolverOptions2D.hpp"
@@ -280,6 +281,10 @@ private:
     /// stencils) — the only cells the CFL hint scans. Built at initialize().
     std::vector<int> cfl_cells_;
     void updateCflHint();
+
+    /// Dry-cell active-set mask (opt-in via [2D_OPTIONS] ACTIVE_SET). Owned
+    /// here; state_.active_set points at it. Rebuilt once per fired window.
+    ActiveSetData active_set_;
 
     /// Effective time-based 2D advance window (s), resolved at initialize()
     /// from COUPLING_WINDOW / AUTO. 0 = time gating off (fire every routing

@@ -191,6 +191,11 @@ private:
     /// selected. Owned via unique_ptr whose destructor sees the complete type
     /// in the .cpp (where ~CvodeSurfaceSolver and the move ops are defined).
     std::unique_ptr<HypreAmgPreconditioner> amg_precond_;
+    /// True when AMG served the most recent psetup. The active-set bypass can
+    /// hand mostly-dry systems to the (masked, near-exact) Jacobi diagonal
+    /// instead; psolve_fn dispatches on this so it always pairs with the
+    /// latest psetup, and a branch flip forces a fresh build of the taker.
+    bool amg_used_last_setup_ = false;
 #endif
 
     // ------------------------------------------------------------------

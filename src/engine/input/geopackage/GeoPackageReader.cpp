@@ -167,6 +167,8 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     else if (key == "2D_MAX_KRYLOV_DIM")    o->max_krylov_dim    = std::stoi(val);
     else if (key == "2D_COUPLING_INTERVAL") o->coupling_interval = std::stoi(val);
     else if (key == "2D_COUPLING_WINDOW")   o->coupling_window   = std::stod(val);
+    else if (key == "2D_ACTIVE_SET")        o->active_set        = (val == "YES");
+    else if (key == "2D_ACTIVE_SET_HALO")   o->active_set_halo   = std::stoi(val);
     else if (key == "2D_MAX_CVODE_STEPS")   o->max_cvode_steps   = std::stoi(val);
     else if (key == "2D_LINEAR_SOLVER") {
         if      (val == "GMRES")    o->linear_solver = twoD::LinearSolverType::GMRES;

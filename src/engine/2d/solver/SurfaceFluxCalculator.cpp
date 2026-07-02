@@ -7,6 +7,7 @@
  */
 
 #include "SurfaceFluxCalculator.hpp"
+#include "../data/ActiveSetData.hpp"
 #include "../data/BoundaryData.hpp"
 
 #include <cmath>
@@ -117,11 +118,18 @@ void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state,
                                 [[maybe_unused]] int nthreads) {
     int nt = mesh.n_triangles();
 
+    // Active-set masking: frozen cells keep their seed-pass gradient (the
+    // TERRAIN slope, not zero — the limiter averages neighbour gradients, so
+    // a zeroed frozen gradient would perturb active cells at the mask edge).
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+
     // Each cell writes only its own grad_hx[i]/grad_hy[i] (it reads neighbour
     // heads, never writes them), so schedule(static) is bit-identical to the
     // serial loop for any thread count.
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int i = 0; i < nt; ++i) {
+        if (masked && !as->cell_active[i]) continue;
         double inv_area = (mesh.tri_area[i] > 1.0e-30)
                               ? 1.0 / mesh.tri_area[i] : 0.0;
         double gx = 0.0, gy = 0.0;
@@ -155,11 +163,18 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
     int nt = mesh.n_triangles();
     double eps2 = epsilon * epsilon;
 
+    // Active-set masking: frozen cells keep the seed-pass limited gradient;
+    // reads of an inactive NEIGHBOUR's unlimited gradient below are exact
+    // because inactive cells' gradients are frozen at their true dry values.
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+
     // Each cell writes only its own grad_*_lim[i] from its own and its
     // neighbours' (read-only) unlimited gradients; the per-iteration q[]/
     // gx_nbr[]/gy_nbr[] arrays are declared inside the body and thus private.
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int i = 0; i < nt; ++i) {
+        if (masked && !as->cell_active[i]) continue;
         // Regularised squared L2 norms of the unlimited gradients of this
         // cell (q0) and its three neighbours (q1..q3). Adding eps² inside
         // each q_k makes every weight strictly positive and gives uniform
@@ -217,12 +232,19 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
     int nt = mesh.n_triangles();
     const double dh_eps = fluxDhEps(opts.flux_dh_eps);  // flux gradient regularization
 
+    // Active-set masking: frozen cells' flux slots were zeroed when they left
+    // the active set and stay zero — exactly their unmasked value (dry cell,
+    // dry neighbours). The wall guard below closes the one remaining hole.
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+
     // Parallelise the OUTER per-cell loop only — the inner e=0..2 writes the
     // cell's own edge_flux[i*3+e] slots (interior edges are stored redundantly
     // per incident cell, so there is no cross-cell scatter). schedule(static)
     // keeps results bit-identical to serial.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
+        if (masked && !as->cell_active[i]) continue;
         for (int e = 0; e < 3; ++e) {
             int idx = i * 3 + e;
             int nbr = tri_nbr(mesh, i, e);
@@ -231,6 +253,20 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
                 // Domain boundary: no-flux wall by default; apply the configured
                 // boundary condition when one is attached (state.boundary).
                 state.edge_flux[idx] = boundaryEdgeFlux(mesh, state, dh_eps, i, idx);
+                continue;
+            }
+
+            // Mass-conservation wall guard: an active→inactive edge carries no
+            // flux. edge_flux is stored redundantly per incident cell and
+            // assembleRHS gathers only a cell's own slots, so a nonzero flux
+            // toward a frozen (ydot-pinned) neighbour would silently create
+            // or destroy volume. An active cell only sits next to an inactive
+            // one when a front crossed the whole halo inside one window —
+            // exactly the breach condition the router detects and redoes —
+            // so until then this guard is a no-op; when it is not, it turns a
+            // would-be leak into a locally-walled, exactly conservative state.
+            if (masked && !as->cell_active[nbr]) {
+                state.edge_flux[idx] = 0.0;
                 continue;
             }
 
@@ -312,10 +348,18 @@ void assembleRHS(const MeshData& mesh, const SurfaceStateData& state,
                   const SolverOptions2D& opts, double* ydot) {
     int nt = mesh.n_triangles();
 
+    // Active-set masking: frozen cells get ydot ≡ 0 — EXACTLY the unmasked
+    // value for a dry cell with zero sources and walled edges, so CVODE sees
+    // identical arithmetic (FD Jacobian column/row exactly 0, Nordsieck
+    // history constant) and no reinitialisation is ever needed.
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+
     // Per-cell gather: each cell sums its own 3 edge fluxes and writes ydot[i].
     // No cross-cell writes → schedule(static) is bit-identical to serial.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
+        if (masked && !as->cell_active[i]) { ydot[i] = 0.0; continue; }
         const double area = mesh.tri_area[i];
 
         // Sum edge fluxes (m³/s; inflow-positive contributions to cell i).

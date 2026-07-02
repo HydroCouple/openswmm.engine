@@ -9,6 +9,7 @@
 #include "SurfaceRouter2D.hpp"
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
+#include "solver/ActiveSetBuilder.hpp"
 #include "solver/SurfaceFluxCalculator.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "solver/SurfaceSolverFactory.hpp"
@@ -521,6 +522,54 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // starts with water on the mesh); refreshed after every 2D advance.
     updateCflHint();
 
+    // Dry-cell active-set masking (opt-in). Resolve the option (env overrides
+    // the INP key), restrict it to the validated integrator/momentum pair, and
+    // run the one-time seed pass BEFORE enabling the mask: the seed fills
+    // every frozen cell/vertex with its exact dry value (terrain gradients,
+    // bed-level vertex heads, zero fluxes), which the masked stages then rely
+    // on when active cells read frozen neighbours.
+    {
+        bool want = options_.active_set;
+        if (const char* env = std::getenv("OPENSWMM_2D_ACTIVE_SET"))
+            want = (env[0] == '1' || env[0] == 'y' || env[0] == 'Y');
+        if (const char* env = std::getenv("OPENSWMM_2D_ACTIVE_SET_HALO")) {
+            char* endp = nullptr;
+            const long h = std::strtol(env, &endp, 10);
+            if (endp != env && h >= 1) options_.active_set_halo = static_cast<int>(h);
+        }
+        active_set_.halo_rings    = std::max(1, options_.active_set_halo);
+        // The wet/seed threshold must sit ABOVE the solver's per-cell error
+        // floor (abs_tolerance is a depth): implicit solves splash tolerance-
+        // level films across the whole active set, and a threshold below that
+        // noise reads them as "wet" — false breach trips and an active set
+        // that can only grow. One order of margin over the tolerance.
+        active_set_.wet_depth_eps = std::max(1.0e-3 * options_.dry_depth,
+                                             10.0 * options_.abs_tolerance);
+        if (const char* env = std::getenv("OPENSWMM_2D_ACTIVE_SET_EPS")) {
+            char* endp = nullptr;
+            const double v = std::strtod(env, &endp);
+            if (endp != env && v >= 0.0) active_set_.wet_depth_eps = v;
+        }
+
+        const bool supported = (options_.integrator == IntegratorType::CVODE)
+                            && (options_.momentum   == MomentumType::DW);
+        if (want && !supported) {
+            std::fprintf(stderr,
+                "[openswmm 2D] NOTICE: ACTIVE_SET requires the CVODE "
+                "diffusive-wave solver; masking disabled for this run.\n");
+            want = false;
+        }
+        active_set_.enabled = false;   // seed pass must take the full loops
+        if (want) {
+            active_set_.resize(mesh_.n_triangles(), mesh_.n_vertices());
+            state_.active_set = &active_set_;
+            seedInactiveState(mesh_, state_, options_);
+            active_set_.enabled = true;
+        } else {
+            state_.active_set = nullptr;
+        }
+    }
+
     // Resolve the effective 2D advance-window policy (time-based macro-step).
     // Explicit COUPLING_WINDOW wins; AUTO (−1, the default) defers to an
     // explicit legacy COUPLING_INTERVAL > 1, otherwise the user's declared
@@ -714,9 +763,46 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
 
 #ifdef OPENSWMM_HAS_2D
     if (!quiescent) {
+    // Rebuild the dry-cell active-set mask for this window. All wetting
+    // mechanisms are final here (held exchange, outfall transfer, rainfall,
+    // forcings, resolved BCs), so the seed set is complete; the halo gives
+    // the front room to move within the window (breach-checked below).
+    if (active_set_.enabled)
+        rebuildActiveSet(mesh_, state_, &boundary_,
+                         &coupling_points_, options_, active_set_);
+
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
-    const double t_reached = solver_->advance(sim_time_, t_target);
+    double t_reached = solver_->advance(sim_time_, t_target);
+
+    // Breach check: if the wet front crossed the WHOLE halo within this one
+    // window (an outer-ring cell got wet), the wall guard has locally walled
+    // the front — conservative but wrong at the edge. Discard the window,
+    // restore the start-of-window state, widen the halo, and redo once. A
+    // second breach keeps the (mass-safe, walled) result and disables masking
+    // for the rest of the run.
+    if (active_set_.enabled && (dt > 0.0) && t_reached > sim_time_
+        && activeSetBreached(mesh_, state_, active_set_)) {
+        ++active_set_.halo_trip_count;
+        state_.reset_state();
+        const int ntr = mesh_.n_triangles();
+        for (int i = 0; i < ntr; ++i)
+            state_.head[i] = mesh_.tri_cz[i] + state_.depth[i];
+        active_set_.halo_rings = std::min(2 * active_set_.halo_rings, 16);
+        rebuildActiveSet(mesh_, state_, &boundary_,
+                         &coupling_points_, options_, active_set_);
+        solver_->reinitialize(sim_time_);
+        t_reached = solver_->advance(sim_time_, t_target);
+        if (t_reached > sim_time_
+            && activeSetBreached(mesh_, state_, active_set_)) {
+            active_set_.enabled = false;
+            state_.active_set   = nullptr;
+            std::fprintf(stderr,
+                "[openswmm 2D] WARNING: wet front outran the active-set halo "
+                "twice in one window at t=%.1f s; masking disabled for the "
+                "rest of the run (results stay conservative).\n", sim_time_);
+        }
+    }
 
     // Advance failure (e.g. MAX_CVODE_STEPS exhausted): the solver left the 2D
     // state unchanged, but its internal integrator clock may sit anywhere in the
@@ -1102,7 +1188,7 @@ void SurfaceRouter2D::writeDiagRow(SimulationContext& ctx, double dt, double t) 
                     << "t_s,dt_s,flag,d_nsteps,d_newton,d_gmres,d_prec_setups,"
                        "d_lin_fails,last_h_s,n_front,n_wet,dn_wet,max_depth_m,"
                        "total_vol_m3,sum_abs_coupling_m3s,max_node_exch_m3s,"
-                       "n_quiescent\n";
+                       "n_quiescent,n_active,halo_trips\n";
             } else {
                 diag_csv_.reset();  // open failed — disable cleanly
             }
@@ -1158,7 +1244,9 @@ void SurfaceRouter2D::writeDiagRow(SimulationContext& ctx, double dt, double t) 
                  << d_prec << ',' << d_linf << ',' << last_h << ','
                  << n_front << ',' << n_wet << ',' << dn_wet << ','
                  << max_depth << ',' << totalVolume() << ',' << sum_abs_coup << ','
-                 << max_node_exch << ',' << quiescent_windows_ << '\n';
+                 << max_node_exch << ',' << quiescent_windows_ << ','
+                 << (active_set_.enabled ? active_set_.n_active() : -1) << ','
+                 << active_set_.halo_trip_count << '\n';
     diag_csv_->flush();
 }
 

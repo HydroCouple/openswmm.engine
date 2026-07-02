@@ -328,6 +328,9 @@ if(OPENSWMM_BUILD_2D)
     # Rainfall→mesh interpolation (natural-neighbour / IDW) + RAINFALL_MODE
     # option round-trip. Pure geometry over the engine-exported interpolator.
     add_gtest_unit(test_engine_2d_rainfall_interp test_2d_rainfall_interp.cpp)
+    # Dry-cell active-set masking: builder units (seed/halo/breach/cleanup),
+    # option round-trip, and masked-vs-unmasked dam-break equivalence.
+    add_gtest_unit(test_engine_2d_active_set test_2d_active_set.cpp)
 endif()
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation

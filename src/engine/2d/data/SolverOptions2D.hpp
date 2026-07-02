@@ -159,6 +159,18 @@ struct SolverOptions2D {
     /// [2D_OPTIONS] COUPLING_WINDOW; env OPENSWMM_2D_COUPLING_WINDOW overrides.
     double coupling_window   = -1.0;
     int    max_cvode_steps   = 500;     ///< Max CVODE steps per advance
+
+    /// Dry-cell active-set masking: restrict the RHS pipeline to wet/sourced
+    /// cells plus an ACTIVE_SET_HALO-ring neighbourhood; frozen cells get
+    /// ydot ≡ 0 (exactly their unmasked value — dry, source-free, walled).
+    /// The CVODE system stays full size. Exactly OFF-able; default OFF until
+    /// field-validated. Parsed from [2D_OPTIONS] ACTIVE_SET (YES/NO); env
+    /// OPENSWMM_2D_ACTIVE_SET (0/1) overrides. CVODE+DW only.
+    bool   active_set        = false;
+    /// BFS halo ring count around the wet/sourced seed set (≥1); auto-doubled
+    /// (capped) when a front crosses the whole halo within one window. Parsed
+    /// from [2D_OPTIONS] ACTIVE_SET_HALO; env OPENSWMM_2D_ACTIVE_SET_HALO.
+    int    active_set_halo   = 2;
     bool   report_2d         = true;    ///< Write 2D results to output
 
     // Time integrator. Default CVODE (validated path); ARKODE selects the

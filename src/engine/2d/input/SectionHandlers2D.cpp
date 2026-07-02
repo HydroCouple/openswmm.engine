@@ -103,6 +103,16 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "COUPLING_WINDOW")) {
         opts.coupling_window = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_WINDOW value";
+    } else if (iequals(key, "ACTIVE_SET")) {
+        if (iequals(val, "YES") || val == "1")
+            opts.active_set = true;
+        else if (iequals(val, "NO") || val == "0")
+            opts.active_set = false;
+        else
+            return "Invalid ACTIVE_SET value (YES/NO)";
+    } else if (iequals(key, "ACTIVE_SET_HALO")) {
+        opts.active_set_halo = tryParseInt(val, ok);
+        if (!ok || opts.active_set_halo < 1) return "Invalid ACTIVE_SET_HALO value";
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
@@ -167,6 +177,7 @@ bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
         "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
         "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_WINDOW",
+        "ACTIVE_SET", "ACTIVE_SET_HALO",
         "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
         "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
         "OUTPUT_FILE",
@@ -197,6 +208,8 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
     if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
     if (iequals(key, "COUPLING_WINDOW"))   return fmt_g(opts.coupling_window);
+    if (iequals(key, "ACTIVE_SET"))        return opts.active_set ? "YES" : "NO";
+    if (iequals(key, "ACTIVE_SET_HALO"))   return std::to_string(opts.active_set_halo);
     if (iequals(key, "MAX_CVODE_STEPS"))   return std::to_string(opts.max_cvode_steps);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;

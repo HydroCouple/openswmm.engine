@@ -54,8 +54,10 @@
 extern "C" {
 #endif
 
-/** ABI version. The core refuses a plugin whose abi_version disagrees. */
-#define OPENSWMM_GPU_ABI_VERSION 1
+/** ABI version. The core refuses a plugin whose abi_version disagrees.
+ *  v2: SurfaceStateData grew the active_set pointer (dry-cell masking) —
+ *  a v1 plugin would mis-read the struct layout. */
+#define OPENSWMM_GPU_ABI_VERSION 2
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {

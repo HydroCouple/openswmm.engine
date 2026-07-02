@@ -27,6 +27,7 @@ namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advan
 namespace openswmm::twoD {
 
 struct CouplingPoint;  // fwd decl — 1D↔2D coupling descriptor (NodeCoupling.hpp)
+struct ActiveSetData;  // fwd decl — dry-cell wet-front mask (ActiveSetData.hpp)
 
 /**
  * @brief SoA storage for 2D surface routing state variables.
@@ -61,6 +62,14 @@ struct SurfaceStateData {
     /// `nodes_1d` is the 1D node data, frozen for the duration of the advance.
     const NodeData*                   nodes_1d        = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
+
+    /// Non-owning view of the dry-cell active-set mask (owned by
+    /// SurfaceRouter2D; rebuilt once per advance window). nullptr or
+    /// !enabled ⇒ every pipeline stage takes its exact full-mesh loop (the
+    /// legacy behaviour, bit-identical). When active, the RHS stages iterate
+    /// the compact active-cell/vertex lists and treat active→inactive edges
+    /// as walls (locally conservative by construction).
+    const ActiveSetData* active_set = nullptr;
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
