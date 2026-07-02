@@ -18,6 +18,7 @@
 #include "uncertainty/NetworkLaplacian1D.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <vector>
@@ -140,17 +141,36 @@ TEST(SpectralROM, LHSDesignCoversRange) {
 // ============================================================================
 
 TEST(SpectralROM, LHSDesignMonotonicity) {
-    // Manning's strata are in ascending order; rainfall in descending order
-    // (the decorrelation construction).
+    // Manning's strata are in ascending order (the reference column).  Since
+    // PR 5, rainfall is an independent Fisher-Yates shuffle of the same
+    // strata rather than a reversed column, so it is NOT monotone in either
+    // direction; the contract is LHS coverage (sorted columns match Manning's
+    // strata pattern exactly) plus near-zero rank correlation with Manning.
     Fixture f;
-    int M = f.rom.n_ensemble;
+    const int M = f.rom.n_ensemble;
     for (int i = 0; i + 1 < M; ++i) {
         EXPECT_LT(f.rom.mannings_mult[static_cast<std::size_t>(i)],
                   f.rom.mannings_mult[static_cast<std::size_t>(i + 1)])
             << "mannings_mult not monotone at i=" << i;
-        EXPECT_GT(f.rom.rainfall_mult[static_cast<std::size_t>(i)],
-                  f.rom.rainfall_mult[static_cast<std::size_t>(i + 1)])
-            << "rainfall_mult not monotone at i=" << i;
+    }
+
+    bool rainfall_ascending = true, rainfall_descending = true;
+    for (int i = 0; i + 1 < M; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (f.rom.rainfall_mult[ui] >= f.rom.rainfall_mult[ui + 1]) rainfall_ascending = false;
+        if (f.rom.rainfall_mult[ui] <= f.rom.rainfall_mult[ui + 1]) rainfall_descending = false;
+    }
+    EXPECT_FALSE(rainfall_ascending) << "rainfall_mult should not be strictly ascending";
+    EXPECT_FALSE(rainfall_descending) << "rainfall_mult should not be strictly descending";
+
+    auto sorted_mann = f.rom.mannings_mult;
+    auto sorted_rain = f.rom.rainfall_mult;
+    std::sort(sorted_mann.begin(), sorted_mann.end());
+    std::sort(sorted_rain.begin(), sorted_rain.end());
+    for (int i = 0; i < M; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(sorted_rain[ui], sorted_mann[ui], 1.0e-10)
+            << "rainfall strata coverage differs at i=" << i;
     }
 }
 
@@ -914,8 +934,11 @@ TEST(UncertaintyEnsemble, SamplesInRange) {
     }
 }
 
-// Manning ascending, rainfall descending — low cross-correlation by design.
-TEST(UncertaintyEnsemble, ManningAscendingRainfallDescending) {
+// Manning ascending (reference column); rainfall an independent Fisher-Yates
+// shuffle of the same strata (PR 5) — near-zero rank correlation with
+// Manning, LHS coverage exact, but NOT monotone in either direction (unlike
+// the old reversed-column scheme, which gave exact rank correlation -1).
+TEST(UncertaintyEnsemble, ManningAscendingRainfallShuffled) {
     UncertaintyEnsemble ens;
     ens.n_members = 20;
     ens.mannings_pert_2d = 0.20;
@@ -926,8 +949,25 @@ TEST(UncertaintyEnsemble, ManningAscendingRainfallDescending) {
         auto ui = static_cast<std::size_t>(i);
         EXPECT_LT(ens.mannings_mult_2d[ui], ens.mannings_mult_2d[ui + 1])
             << "mannings_mult not ascending at i=" << i;
-        EXPECT_GT(ens.rainfall_mult_2d[ui], ens.rainfall_mult_2d[ui + 1])
-            << "rainfall_mult not descending at i=" << i;
+    }
+
+    bool rainfall_ascending = true, rainfall_descending = true;
+    for (int i = 0; i + 1 < ens.n_members; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ens.rainfall_mult_2d[ui] >= ens.rainfall_mult_2d[ui + 1]) rainfall_ascending = false;
+        if (ens.rainfall_mult_2d[ui] <= ens.rainfall_mult_2d[ui + 1]) rainfall_descending = false;
+    }
+    EXPECT_FALSE(rainfall_ascending) << "rainfall_mult_2d should not be strictly ascending";
+    EXPECT_FALSE(rainfall_descending) << "rainfall_mult_2d should not be strictly descending";
+
+    auto sorted_mann = ens.mannings_mult_2d;
+    auto sorted_rain = ens.rainfall_mult_2d;
+    std::sort(sorted_mann.begin(), sorted_mann.end());
+    std::sort(sorted_rain.begin(), sorted_rain.end());
+    for (int i = 0; i < ens.n_members; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(sorted_rain[ui], sorted_mann[ui], 1.0e-10)
+            << "rainfall strata coverage differs at i=" << i;
     }
 }
 

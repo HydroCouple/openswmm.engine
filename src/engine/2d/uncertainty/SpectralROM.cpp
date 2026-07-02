@@ -9,6 +9,7 @@
 
 #include "SpectralROM.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
+#include "uncertainty/LhsShuffle.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -98,10 +99,11 @@ void SpectralROM::initialize() {
     // before initialize() — copy those samples directly.
     //
     // Internal fallback (legacy / standalone): build a deterministic LHS.
-    //   mannings_mult ∈ [1 - mannings_pert, 1 + mannings_pert]
-    //   rainfall_mult ∈ [1 - rainfall_pert, 1 + rainfall_pert]
-    //   LHS stratum midpoint: val = low + (i+0.5)/M * (high-low), i=0..M-1
-    //   Rainfall order is reversed to give near-zero correlation with Manning.
+    //   mannings_mult ∈ [1 - mannings_pert, 1 + mannings_pert] — ascending
+    //   rainfall_mult ∈ [1 - rainfall_pert, 1 + rainfall_pert] — independent
+    //   Fisher-Yates shuffle of the same strata (seed sample_seed+1), giving
+    //   near-zero rank correlation with Manning instead of the exact -1 a
+    //   reversed column would give.
     // -------------------------------------------------------------------------
 
     mannings_mult.resize(static_cast<std::size_t>(n_ensemble));
@@ -120,9 +122,12 @@ void SpectralROM::initialize() {
         for (int i = 0; i < n_ensemble; ++i) {
             double t = (static_cast<double>(i) + 0.5) / static_cast<double>(n_ensemble);
             mannings_mult[static_cast<std::size_t>(i)] = m_lo + t * (m_hi - m_lo);
-            double t_r = (static_cast<double>(n_ensemble - 1 - i) + 0.5)
-                       / static_cast<double>(n_ensemble);
-            rainfall_mult[static_cast<std::size_t>(i)] = r_lo + t_r * (r_hi - r_lo);
+        }
+        const auto rainfall_t = openswmm::uncertainty::shuffledStrata(
+            n_ensemble, sample_seed + 1);
+        for (int i = 0; i < n_ensemble; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            rainfall_mult[ui] = r_lo + rainfall_t[ui] * (r_hi - r_lo);
         }
     }
 

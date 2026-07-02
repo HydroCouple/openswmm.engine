@@ -6,6 +6,7 @@
  */
 
 #include "SpectralROM1D.hpp"
+#include "LhsShuffle.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -90,10 +91,14 @@ void SpectralROM1D::initialize() {
         for (int i = 0; i < n_ensemble; ++i) {
             double t = (static_cast<double>(i) + 0.5) / static_cast<double>(n_ensemble);
             mannings_mult[static_cast<std::size_t>(i)] = m_lo + t * (m_hi - m_lo);
-            // Reversed for decorrelation with Manning
-            double t_r = (static_cast<double>(n_ensemble - 1 - i) + 0.5)
-                       / static_cast<double>(n_ensemble);
-            runoff_mult[static_cast<std::size_t>(i)] = r_lo + t_r * (r_hi - r_lo);
+        }
+        // Independent Fisher-Yates shuffle (sample_seed+1) of the same strata,
+        // giving near-zero rank correlation with Manning instead of the exact
+        // -1 a reversed column would give.
+        const auto runoff_t = shuffledStrata(n_ensemble, sample_seed + 1);
+        for (int i = 0; i < n_ensemble; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            runoff_mult[ui] = r_lo + runoff_t[ui] * (r_hi - r_lo);
         }
     }
 }
@@ -342,6 +347,18 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     if (!any_wet) {
         conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
         return;
+    }
+
+    // Normalize weights to mean 1.0 (same rationale as SWMMEngine::buildROM1D):
+    // preserves relative conductance structure while keeping the eigenvalue
+    // scale matching the topological Laplacian, independent of routing dt.
+    {
+        double sum_w = 0.0;
+        for (double w : weights) sum_w += w;
+        if (sum_w > 0.0) {
+            const double scale = static_cast<double>(n_conduits) / sum_w;
+            for (double& w : weights) w *= scale;
+        }
     }
 
     // Derive is_outfall from full_to_active: negative entry → outfall.

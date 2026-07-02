@@ -461,14 +461,37 @@ TEST(SpectralROM1D, LHSRangeAndSize) {
     }
 }
 
-TEST(SpectralROM1D, LHSManningAscendsRunoffDescends) {
+// PR 5: runoff is now an independent Fisher-Yates shuffle of the Manning
+// strata (near-zero rank correlation), not a reversed column (rank
+// correlation exactly -1).  Manning stays the ascending reference; runoff's
+// contract is: LHS coverage exact (sorted columns match) and NOT descending.
+TEST(SpectralROM1D, LHSManningAscendsRunoffShuffled) {
     ROM1DFixture f;
-    for (int i = 1; i < f.rom.n_ensemble; ++i) {
+    const int M = f.rom.n_ensemble;
+
+    for (int i = 1; i < M; ++i) {
         auto ui = static_cast<std::size_t>(i);
         EXPECT_GE(f.rom.mannings_mult[ui], f.rom.mannings_mult[ui - 1])
             << "Manning's not ascending at i=" << i;
-        EXPECT_LE(f.rom.runoff_mult[ui], f.rom.runoff_mult[ui - 1])
-            << "Runoff not descending at i=" << i;
+    }
+
+    bool descending = true;
+    for (int i = 1; i < M; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (f.rom.runoff_mult[ui] > f.rom.runoff_mult[ui - 1]) { descending = false; break; }
+    }
+    EXPECT_FALSE(descending) << "runoff_mult should not be strictly descending";
+
+    // Coverage: both columns stratify the same [1-p, 1+p] range with p=0.20
+    // (see ROM1DFixture), so sorted runoff must equal sorted Manning exactly.
+    auto sorted_mann = f.rom.mannings_mult;
+    auto sorted_run  = f.rom.runoff_mult;
+    std::sort(sorted_mann.begin(), sorted_mann.end());
+    std::sort(sorted_run.begin(), sorted_run.end());
+    for (int i = 0; i < M; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(sorted_run[ui], sorted_mann[ui], 1.0e-10)
+            << "runoff strata coverage differs at i=" << i;
     }
 }
 
@@ -1389,6 +1412,86 @@ TEST(UpdateBasis, QuantilesRemainValidAfterUpdate) {
             EXPECT_GE(rom.q05[ui], 0.0)
                 << "step " << step << " node " << i;
         }
+    }
+}
+
+// ============================================================================
+// PR 5 — weighted-Laplacian normalization (updateBasis)
+// ============================================================================
+
+TEST(WeightNormalization, EigenvalueScaleInvariance) {
+    // updateBasis() normalizes conduit weights to mean 1.0 before building the
+    // Laplacian, so scaling every input weight by a constant factor (dt- or
+    // units-dependent absolute conductance vs a normalized relative structure)
+    // must produce an IDENTICAL eigenbasis, not merely a proportionally scaled
+    // one — the normalization removes the scale dependence entirely.
+    const int N = 6;
+    const int NC = N - 1;
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    SpectralROM1D rom1, rom2;
+    auto basis1_owned = make_rom1d_chain(N, rom1);
+    auto basis2_owned = make_rom1d_chain(N, rom2);
+    rom1.basis_update_interval = 0.0;
+    rom2.basis_update_interval = 0.0;
+
+    std::vector<double> w1(static_cast<std::size_t>(NC));
+    std::vector<double> w2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        double base = 0.01 * (1.0 + 0.3 * ci);  // non-uniform pattern
+        w1[static_cast<std::size_t>(ci)] = base;
+        w2[static_cast<std::size_t>(ci)] = base * 1000.0;
+    }
+
+    rom1.updateBasis(w1.data(), n1.data(), n2.data(), NC);
+    rom2.updateBasis(w2.data(), n1.data(), n2.data(), NC);
+
+    ASSERT_EQ(rom1.basis->num_kept, rom2.basis->num_kept);
+    for (int j = 0; j < rom1.basis->num_kept; ++j) {
+        const double e1 = rom1.basis->eigenvalues[static_cast<std::size_t>(j)];
+        const double e2 = rom2.basis->eigenvalues[static_cast<std::size_t>(j)];
+        EXPECT_NEAR(e2, e1, std::fabs(e1) * 1.0e-9 + 1.0e-12) << "mode " << j;
+    }
+}
+
+TEST(WeightNormalization, UniformWeightsUnchanged) {
+    // All-weight-1 input is already at mean 1.0, so normalization is the
+    // identity transform: updateBasis() with uniform weights must give
+    // eigenvalues matching GraphEigenBasis::build() on the pure topological
+    // (buildUniform) Laplacian.
+    const int N = 6;
+    const int NC = N - 1;
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<double> w(static_cast<std::size_t>(NC), 1.0);
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC);
+
+    std::vector<int> is_outfall(static_cast<std::size_t>(N), 0);
+    std::vector<int> active_map, full_to_active;
+    CsrGraph L_ref = NetworkLaplacian1D::buildUniform(
+        N, NC, n1.data(), n2.data(), is_outfall.data(), active_map, full_to_active);
+    GraphEigenBasis ref;
+    ASSERT_TRUE(ref.build(L_ref, 4));
+
+    ASSERT_EQ(rom.basis->num_kept, ref.num_kept);
+    for (int j = 0; j < ref.num_kept; ++j) {
+        EXPECT_NEAR(rom.basis->eigenvalues[static_cast<std::size_t>(j)],
+                    ref.eigenvalues[static_cast<std::size_t>(j)], 1.0e-9)
+            << "mode " << j;
     }
 }
 

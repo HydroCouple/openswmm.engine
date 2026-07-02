@@ -38,6 +38,7 @@
 #include "SpatialUncertaintyField.hpp"
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 
 // Forward declaration — avoids pulling 1D uncertainty headers into 2D solver.
 namespace openswmm::uncertainty { struct SpectralROM1D; }
@@ -72,6 +73,12 @@ struct SpectralROM {
     double mannings_pert = 0.20;  ///< Half-range: Manning's n ∈ [1-p, 1+p] × base.
     double rainfall_pert = 0.20;  ///< Half-range: rainfall ∈ [1-p, 1+p] × base.
     double cd_pert       = 0.00;  ///< Half-range: Cd ∈ [1-p, 1+p] × nominal; 0 = disabled.
+
+    /// Seed for the internal-fallback LHS design (used only when
+    /// setExternalSamples() was not called — the production path shares
+    /// samples via UncertaintyEnsemble instead). Rainfall strata are shuffled
+    /// with sample_seed + 1.
+    uint64_t sample_seed = 42;
 
     double mode_drop_threshold = 1.0e-10; ///< Drop mode j when E_j < threshold AND rain forcing < threshold.
 

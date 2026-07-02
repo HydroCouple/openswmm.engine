@@ -74,9 +74,13 @@ struct UncertaintyEnsemble {
     /**
      * @brief Build a deterministic Latin-hypercube design.
      *
-     * Stratifies [1-p, 1+p] into n_members strata (midpoints).
-     * Manning and rainfall columns are independent stratifications;
-     * rainfall order is reversed to give near-zero cross-correlation.
+     * Stratifies [1-p, 1+p] into n_members strata (midpoints).  Manning is
+     * the reference column (ascending stratification).  Rainfall, soil, and
+     * Cd are each an independent Fisher-Yates shuffle of the same strata
+     * (seeds seed+1, seed+2, seed+3 respectively) — every column still hits
+     * each stratum of [0,1) exactly once (LHS coverage exactly preserved),
+     * but the member-to-stratum assignment differs per column, giving every
+     * pair near-zero rank correlation (expected |rho| ~ 1/sqrt(n_members-1)).
      *
      * Calling generate() again (e.g. on reseed) replaces the previous
      * design; callers that hold pointers to the vectors must re-query

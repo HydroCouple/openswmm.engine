@@ -4228,6 +4228,22 @@ void SWMMEngine::buildROM1D() noexcept {
         // If !snap.valid: keep uniform weights (cold start or first initialize())
     }
 
+    // Normalize weights to mean 1.0: preserves the relative conductance
+    // structure (which conduit is stiffer than another) while keeping the
+    // Laplacian's eigenvalue scale matching the topological (uniform-weight)
+    // Laplacian that computeK1d()'s L^2 normalization is calibrated against.
+    // Without this, weights are absolute conductances (0.5*dt*dqdh) that scale
+    // with the routing timestep, so lambda_j*K1d jumps in magnitude the moment
+    // the first weighted rebuild replaces the cold-start uniform basis.
+    {
+        double sum_w = 0.0;
+        for (double w : weights) sum_w += w;
+        if (sum_w > 0.0) {
+            const double scale = static_cast<double>(n_conduits) / sum_w;
+            for (double& w : weights) w *= scale;
+        }
+    }
+
     std::vector<int> active_map, full_to_active;
     uncertainty::CsrGraph g = uncertainty::NetworkLaplacian1D::buildWeighted(
         n_full, n_conduits,
@@ -4317,8 +4333,11 @@ void SWMMEngine::buildROM1D() noexcept {
 
 double SWMMEngine::computeK1d() noexcept {
     // Diffusion-wave diffusivity D = h^(5/3) / (2n*sqrt(S))  [m²/s].
-    // GraphEigenBasis eigenvalues are dimensionless (topological, not spatial),
-    // so D must be normalised by L² to give K1d in 1/s:
+    // GraphEigenBasis eigenvalues are dimensionless (topological, not spatial):
+    // the weighted Laplacian built in buildROM1D()/updateBasis() is normalized
+    // to mean edge weight 1.0, so its eigenvalue scale matches the pure
+    // topological Laplacian regardless of the absolute conductance magnitude
+    // or routing dt. D must still be normalised by L² to give K1d in 1/s:
     //   K1d = D / L² = h^(5/3) / (2n * sqrt(S) * L²)
     // This ensures lambda_j * K1d has units 1/s in the ROM advance equation.
     double sum_k = 0.0;

@@ -32,6 +32,131 @@ static SimulationOptions default_opts() {
     return opts;  // US customary defaults (CFS, ft, in/hr)
 }
 
+// Spearman rank correlation, no-ties closed form: rho = 1 - 6*sum(d^2)/(n*(n^2-1)).
+// Valid here because every LHS column is a strictly monotonic transform of a
+// distinct stratum index, so values within one column are pairwise distinct.
+static std::vector<double> rankOf(const std::vector<double>& v) {
+    const std::size_t n = v.size();
+    std::vector<std::size_t> idx(n);
+    std::iota(idx.begin(), idx.end(), std::size_t{0});
+    std::sort(idx.begin(), idx.end(),
+              [&](std::size_t a, std::size_t b) { return v[a] < v[b]; });
+    std::vector<double> rank(n);
+    for (std::size_t r = 0; r < n; ++r) rank[idx[r]] = static_cast<double>(r);
+    return rank;
+}
+
+static double spearman(const std::vector<double>& a, const std::vector<double>& b) {
+    const auto ra = rankOf(a);
+    const auto rb = rankOf(b);
+    const double n = static_cast<double>(a.size());
+    double sum_d2 = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double d = ra[i] - rb[i];
+        sum_d2 += d * d;
+    }
+    return 1.0 - (6.0 * sum_d2) / (n * (n * n - 1.0));
+}
+
+// ============================================================================
+// LhsDesign — PR 5: independent shuffled columns (fixes F3)
+// ============================================================================
+
+// All 6 pairwise combinations of {Manning, rainfall, soil, Cd} must have
+// near-zero rank correlation.  Theoretical sigma_rho = 1/sqrt(M-1) for M=50
+// is ~0.144.  Measured max|rho| at seed=42 is ~0.130 (all 6 pairs); the bound
+// below is measured+0.05, tight enough to reject the old reversed-strata
+// scheme (rho = -1.0 exactly) while tolerant of the deterministic seed's
+// actual sampling noise.
+TEST(LhsDesign, AllPairsNearZeroRankCorrelation) {
+    const int M = 50;
+    UncertaintyEnsemble ens;
+    ens.n_members = M;
+    ens.generate();
+
+    struct Column { const char* name; const std::vector<double>* v; };
+    const std::vector<Column> cols = {
+        {"mannings", &ens.mannings_mult_2d},
+        {"rainfall", &ens.rainfall_mult_2d},
+        {"soil",     &ens.soil_mult},
+        {"cd",       &ens.cd_mult},
+    };
+
+    constexpr double kBound = 0.18;
+    for (std::size_t i = 0; i < cols.size(); ++i) {
+        for (std::size_t j = i + 1; j < cols.size(); ++j) {
+            const double rho = spearman(*cols[i].v, *cols[j].v);
+            EXPECT_LE(std::fabs(rho), kBound)
+                << cols[i].name << " vs " << cols[j].name << ": rho=" << rho;
+        }
+    }
+}
+
+// Sorting each column must recover the ascending midpoint strata exactly —
+// shuffling reorders which member gets which stratum, but every stratum of
+// [1-p, 1+p] must still be hit exactly once (LHS coverage property).
+TEST(LhsDesign, StrataCoverageExact) {
+    const int M = 30;
+    UncertaintyEnsemble ens;
+    ens.n_members        = M;
+    ens.mannings_pert_2d = 0.20;
+    ens.rainfall_pert_2d = 0.20;
+    ens.soil_pert        = 0.20;
+    ens.cd_pert          = 0.10;
+    ens.generate();
+
+    auto check_strata = [&](std::vector<double> v, double lo, double hi, const char* name) {
+        std::sort(v.begin(), v.end());
+        for (int i = 0; i < M; ++i) {
+            const double expected = lo + (static_cast<double>(i) + 0.5)
+                                        / static_cast<double>(M) * (hi - lo);
+            EXPECT_NEAR(v[static_cast<std::size_t>(i)], expected, 1e-10)
+                << name << " stratum " << i;
+        }
+    };
+    check_strata(ens.mannings_mult_2d, 0.80, 1.20, "mannings");
+    check_strata(ens.rainfall_mult_2d, 0.80, 1.20, "rainfall");
+    check_strata(ens.soil_mult,        0.80, 1.20, "soil");
+    check_strata(ens.cd_mult,          0.90, 1.10, "cd");
+}
+
+// Same seed -> bit-identical columns across repeated generate() calls.
+// Different seed -> different shuffled ordering (Manning is excluded from the
+// "differs" check since it is always the ascending reference regardless of seed).
+TEST(LhsDesign, Reproducibility) {
+    const int M = 20;
+    UncertaintyEnsemble a, b, c;
+    a.n_members = b.n_members = c.n_members = M;
+    a.seed = 42;
+    b.seed = 42;
+    c.seed = 99;
+    a.generate();
+    b.generate();
+    c.generate();
+
+    for (int i = 0; i < M; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        EXPECT_DOUBLE_EQ(a.mannings_mult_2d[ui], b.mannings_mult_2d[ui]);
+        EXPECT_DOUBLE_EQ(a.rainfall_mult_2d[ui], b.rainfall_mult_2d[ui]);
+        EXPECT_DOUBLE_EQ(a.soil_mult[ui], b.soil_mult[ui]);
+        EXPECT_DOUBLE_EQ(a.cd_mult[ui], b.cd_mult[ui]);
+    }
+
+    bool rainfall_differs = false, soil_differs = false, cd_differs = false;
+    for (int i = 0; i < M; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (std::fabs(a.rainfall_mult_2d[ui] - c.rainfall_mult_2d[ui]) > 1e-12)
+            rainfall_differs = true;
+        if (std::fabs(a.soil_mult[ui] - c.soil_mult[ui]) > 1e-12)
+            soil_differs = true;
+        if (std::fabs(a.cd_mult[ui] - c.cd_mult[ui]) > 1e-12)
+            cd_differs = true;
+    }
+    EXPECT_TRUE(rainfall_differs) << "different seed must reshuffle rainfall";
+    EXPECT_TRUE(soil_differs)     << "different seed must reshuffle soil";
+    EXPECT_TRUE(cd_differs)       << "different seed must reshuffle cd";
+}
+
 // ============================================================================
 // SoilParameterLHS — shared member ordering tests
 // ============================================================================

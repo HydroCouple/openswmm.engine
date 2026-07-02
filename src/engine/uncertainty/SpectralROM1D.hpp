@@ -30,6 +30,7 @@
 #include "NetworkLaplacian1D.hpp"
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace openswmm::uncertainty {
@@ -59,6 +60,12 @@ struct SpectralROM1D {
     int    n_ensemble    = 50;    ///< Number of ensemble members M.
     double mannings_pert = 0.20;  ///< Half-range: Manning's n ∈ [1-p, 1+p] × base.
     double runoff_pert   = 0.20;  ///< Half-range: runoff multiplier ∈ [1-p, 1+p].
+
+    /// Seed for the internal-fallback LHS design (used only when
+    /// setExternalSamples() was not called — the production path shares
+    /// samples via UncertaintyEnsemble instead). Runoff strata are shuffled
+    /// with sample_seed + 1.
+    uint64_t sample_seed = 42;
 
     double mode_drop_threshold  = 1.0e-10; ///< Drop mode j when E_j < threshold.
     double basis_update_tol     = 0.05;    ///< Skip basis rebuild when max|Δw|/max|w| < tol.
