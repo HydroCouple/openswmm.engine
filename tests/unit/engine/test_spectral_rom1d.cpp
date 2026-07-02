@@ -241,6 +241,171 @@ TEST(NetworkLaplacian1D, WeightedLaplacianScalesEigenvalues) {
 }
 
 // ============================================================================
+// PR 4 — grounded Laplacian for outfall boundaries
+// ============================================================================
+
+// Build an n-node chain 0-1-..-(n-1) with the last node an outfall.
+// With ground_outfalls=true the interior endpoint of the outfall-adjacent
+// conduit gains a Dirichlet diagonal term, making the operator SPD.
+static CsrGraph make_grounded_chain(int n, std::vector<int>& active_map,
+                                    std::vector<int>& full_to_active,
+                                    bool ground = true) {
+    const int nc = n - 1;
+    std::vector<int> n1(static_cast<std::size_t>(nc));
+    std::vector<int> n2(static_cast<std::size_t>(nc));
+    for (int k = 0; k < nc; ++k) {
+        n1[static_cast<std::size_t>(k)] = k;
+        n2[static_cast<std::size_t>(k)] = k + 1;
+    }
+    std::vector<int> is_outfall(static_cast<std::size_t>(n), 0);
+    is_outfall[static_cast<std::size_t>(n - 1)] = 1;  // last node = outfall
+    return NetworkLaplacian1D::buildUniform(n, nc, n1.data(), n2.data(),
+                                            is_outfall.data(),
+                                            active_map, full_to_active, ground);
+}
+
+TEST(GroundedLaplacian, PositiveDefiniteWithOutfall) {
+    // 8-node chain, node 7 = outfall → 7 active nodes.  The grounded operator
+    // is strictly positive definite: no null mode, smallest eigenvalue > 0.
+    std::vector<int> active_map, full_to_active;
+    CsrGraph L = make_grounded_chain(8, active_map, full_to_active);
+    ASSERT_EQ(static_cast<int>(active_map.size()), 7);
+
+    GraphEigenBasis basis;
+    basis.null_tol = 1.0e-8;
+    ASSERT_TRUE(basis.build(L, 5));
+    EXPECT_EQ(basis.num_null, 0) << "grounded operator has no null space";
+    EXPECT_GT(basis.eigenvalues[0], 1.0e-8)
+        << "smallest eigenvalue must be strictly positive";
+}
+
+TEST(GroundedLaplacian, RitzResidualSmall) {
+    // Each retained (λ_j, v_j) must satisfy ‖L·v_j − λ_j·v_j‖₂ ≤ 1e-8.
+    std::vector<int> active_map, full_to_active;
+    CsrGraph L = make_grounded_chain(8, active_map, full_to_active);
+
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 5));
+    const int n = basis.n_nodes;
+    std::vector<double> y(static_cast<std::size_t>(n), 0.0);
+    for (int j = 0; j < basis.num_kept; ++j) {
+        const double* vj = &basis.P[static_cast<std::size_t>(j * n)];
+        std::fill(y.begin(), y.end(), 0.0);
+        csr_matvec(L, vj, y.data());
+        const double lam = basis.eigenvalues[static_cast<std::size_t>(j)];
+        double resid = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double d = y[static_cast<std::size_t>(i)]
+                           - lam * vj[static_cast<std::size_t>(i)];
+            resid += d * d;
+        }
+        EXPECT_LE(std::sqrt(resid), 1.0e-8) << "Ritz residual too large, mode " << j;
+    }
+}
+
+TEST(GroundedLaplacian, UniformVectorProjectsNonzero) {
+    // The constant vector is NOT orthogonal to the grounded eigenmodes:
+    // most of its energy is representable by the retained modes.  This is the
+    // behavioural point of grounding — uniform inputs now project non-trivially.
+    std::vector<int> active_map, full_to_active;
+    CsrGraph L = make_grounded_chain(8, active_map, full_to_active);
+
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 5));
+    const int n = basis.n_nodes;
+    const double norm_sq = static_cast<double>(n);  // ‖1‖² = n
+
+    double captured = 0.0;
+    for (int j = 0; j < basis.num_kept; ++j) {
+        const double* vj = &basis.P[static_cast<std::size_t>(j * n)];
+        double dot = 0.0;
+        for (int i = 0; i < n; ++i) dot += vj[static_cast<std::size_t>(i)];  // P[:,j]·1
+        captured += dot * dot;
+    }
+    EXPECT_GE(captured, 0.5 * norm_sq)
+        << "retained grounded modes must capture >= 50% of the constant vector";
+}
+
+TEST(GroundedLaplacian, UniformForcingCreatesSpread) {
+    // A SpectralROM1D on a grounded basis, forced by a SPATIALLY UNIFORM runoff
+    // field, develops ensemble spread — this fails on the ungrounded operator
+    // (uniform forcing projects to exactly zero on every zero-mean Neumann mode).
+    std::vector<int> active_map, full_to_active;
+    CsrGraph L = make_grounded_chain(8, active_map, full_to_active);
+
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 5));
+
+    SpectralROM1D rom;
+    rom.basis         = &basis;
+    rom.full_to_active = full_to_active;
+    rom.n_full_nodes  = 8;
+    rom.n_ensemble    = 20;
+    rom.mannings_pert = 0.20;
+    rom.runoff_pert   = 0.20;
+    rom.initialize();
+
+    // Seed all members at zero head (δ from datum), then force uniformly.
+    std::vector<double> h0(static_cast<std::size_t>(rom.n_nodes), 0.0);
+    rom.seed(h0.data());
+
+    std::vector<double> runoff(static_cast<std::size_t>(rom.n_nodes), 1.0e-4);  // uniform
+    for (int step = 0; step < 10; ++step)
+        rom.advance(10.0, 1.0e-3, runoff.data());
+    rom.computeQuantiles();
+
+    // Interior active nodes must show spread (endpoints nearest the ground may be small).
+    double max_spread = 0.0;
+    for (int i = 0; i < rom.n_nodes; ++i)
+        max_spread = std::max(max_spread,
+                              rom.q95[static_cast<std::size_t>(i)]
+                            - rom.q05[static_cast<std::size_t>(i)]);
+    EXPECT_GT(max_spread, 1.0e-10)
+        << "uniform forcing on a grounded basis must produce ensemble spread";
+}
+
+TEST(GroundedLaplacian, NeumannFallbackPreserved) {
+    // ground_outfalls=false restores the pure Neumann (topological) Laplacian.
+    // The defining structural invariant is the row sum: a pure graph Laplacian
+    // has EVERY row summing to zero, whereas grounding adds a Dirichlet diagonal
+    // term to the outfall-adjacent interior node, making that one row sum equal
+    // to the grounding weight.  (We test row sums rather than num_null because
+    // GraphEigenBasis::lanczos starts from a zero-mean ramp deliberately
+    // orthogonal to the constant null vector — so a connected chain's constant
+    // null mode is never in the Krylov space and num_null stays 0 for both
+    // operators; row sums are the operator-level discriminant.)
+    auto row_sums = [](const CsrGraph& L) {
+        std::vector<double> s(static_cast<std::size_t>(L.n), 0.0);
+        for (int r = 0; r < L.n; ++r)
+            for (int k = L.row_ptr[static_cast<std::size_t>(r)];
+                 k < L.row_ptr[static_cast<std::size_t>(r + 1)]; ++k)
+                s[static_cast<std::size_t>(r)] += L.values[static_cast<std::size_t>(k)];
+        return s;
+    };
+
+    std::vector<int> am_n, fta_n, am_g, fta_g;
+    CsrGraph L_neu = make_grounded_chain(8, am_n, fta_n, /*ground=*/false);
+    CsrGraph L_gnd = make_grounded_chain(8, am_g, fta_g, /*ground=*/true);
+
+    // Neumann: all row sums zero.
+    for (double s : row_sums(L_neu))
+        EXPECT_NEAR(s, 0.0, 1.0e-14) << "Neumann Laplacian rows must sum to zero";
+
+    // Grounded: exactly one row (the outfall-adjacent interior node) sums to the
+    // grounding weight (1.0 for the uniform chain); all other rows sum to zero.
+    const auto sg = row_sums(L_gnd);
+    int n_grounded_rows = 0;
+    for (double s : sg) {
+        if (std::abs(s) > 1.0e-12) {
+            EXPECT_NEAR(s, 1.0, 1.0e-12) << "grounded row must sum to the conduit weight";
+            ++n_grounded_rows;
+        }
+    }
+    EXPECT_EQ(n_grounded_rows, 1)
+        << "exactly one interior node is adjacent to the single outfall";
+}
+
+// ============================================================================
 // SpectralROM1D — fixture
 // ============================================================================
 
@@ -609,8 +774,13 @@ static GraphEigenBasis make_chain_fiedler_basis(
     int n2f[5] = {1,2,3,4,5};
     int is_outfall[6] = {1,0,0,0,0,1};
     std::vector<int> active_map;
+    // Neumann (topological) Laplacian: the Fiedler vector / algebraic connectivity
+    // is defined for the ungrounded operator (λ₁ = 0, constant null mode).  Pass
+    // ground_outfalls=false so these diagnostic tests exercise the operator they
+    // were designed for, independent of the PR-4 grounded default.
     CsrGraph L = NetworkLaplacian1D::buildUniform(
-        6, 5, n1f, n2f, is_outfall, active_map, full_to_active_out);
+        6, 5, n1f, n2f, is_outfall, active_map, full_to_active_out,
+        /*ground_outfalls=*/false);
     // Active nodes: 0→full1, 1→full2, 2→full3, 3→full4.
     // Active-node conduit connectivity (internal conduits only):
     //   full 1-2 → active 0-1
