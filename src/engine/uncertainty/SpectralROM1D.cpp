@@ -330,6 +330,12 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
         if (max_delta / (max_prev + 1.0e-12) < basis_update_tol) return;
     }
 
+    // Past this point we are committed to attempting a rebuild this call.
+    // Every exit below — success or failure — must stamp last_basis_update_time_
+    // so a persistently failing rebuild backs off for basis_update_interval
+    // instead of retrying full Lanczos on every routing step.
+    ++basis_updates_attempted_;
+
     // --- Build new weighted Laplacian ------------------------------------
     // Dry-start guard: if all weights are zero/floor, skip this update.
     std::vector<double> weights(static_cast<std::size_t>(n_conduits));
@@ -341,6 +347,8 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     }
     if (!any_wet) {
         conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
         return;
     }
 
@@ -361,6 +369,8 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     if (static_cast<int>(active_map_new.size()) != n_nodes ||
         static_cast<int>(active_map_new.size()) < 4) {
         conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
         return;
     }
 
@@ -371,11 +381,21 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
         basis_owned_ = std::make_unique<GraphEigenBasis>();
         basis_owned_->null_tol = basis->null_tol;
     }
-    if (!basis_owned_->build(L_new, n_kept, P_old.data())) return;
+    if (!basis_owned_->build(L_new, n_kept, P_old.data())) {
+        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
+        return;
+    }
     // Sanity check: basis must have exactly n_kept modes (Lanczos must not have
     // broken down prematurely — the combo v0 starting vector prevents this for
     // normal networks, but guard against degenerate geometry).
-    if (basis_owned_->num_kept != n_kept) return;
+    if (basis_owned_->num_kept != n_kept) {
+        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
+        return;
+    }
 
     basis = basis_owned_.get();  // switch raw pointer to new owned basis
 

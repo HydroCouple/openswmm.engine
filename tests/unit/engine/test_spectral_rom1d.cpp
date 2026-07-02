@@ -1222,6 +1222,67 @@ TEST(UpdateBasis, QuantilesRemainValidAfterUpdate) {
     }
 }
 
+TEST(UpdateBasis, CountersTrackSuccessfulRebuild) {
+    // A single successful rebuild must increment basis_updates_attempted_
+    // without incrementing basis_updates_failed_.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;  // disable time guard for unit test
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC);
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 1);
+    EXPECT_EQ(rom.basis_updates_failed_, 0);
+}
+
+TEST(UpdateBasis, FailedRebuildConsumesInterval) {
+    // A rebuild that fails (topology-mismatch guard) must still stamp
+    // last_basis_update_time_ so a persistently-failing rebuild backs off
+    // for basis_update_interval instead of retrying full Lanczos on every
+    // routing step.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 100.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w(static_cast<std::size_t>(NC), 0.05);  // above the weight floor
+
+    // Force a topology mismatch: mark node 0 as an outfall in the ROM's
+    // full_to_active map without changing n_nodes (fixed at initialize()).
+    // buildWeighted() inside updateBasis() will then produce an active set
+    // of size 5 != rom.n_nodes (6), tripping the guard at ~line 369.
+    rom.full_to_active[0] = -1;
+
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/200.0);
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 1);
+    EXPECT_EQ(rom.basis_updates_failed_, 1);
+
+    // Second call inside the interval (250 - 200 = 50 < 100) must be blocked
+    // by the time-interval guard before incrementing attempted again.
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/250.0);
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 1)
+        << "failed rebuild must stamp last_basis_update_time_ so retries back off";
+}
+
 // ============================================================================
 // PR 6 — checkAndReseed
 // ============================================================================
