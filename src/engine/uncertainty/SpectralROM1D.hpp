@@ -243,6 +243,7 @@ struct SpectralROM1D {
 
 private:
     std::vector<double> sort_buf_;
+    std::vector<double> mode_energy_;  ///< Per-mode energy E_j = mean_i(a²_ij).
 
     std::vector<double> ensemble_runoff_;
     double mean_ensemble_runoff_ = 0.0;
