@@ -86,6 +86,8 @@ struct SpectralROM1D {
 
     // Basis-update bookkeeping
     double last_basis_update_time_ = -1.0e9;  ///< Sim time (s) of last Lanczos rebuild (-1e9 → always fire on first call).
+    int basis_updates_attempted_ = 0;  ///< Count of updateBasis() calls that passed the interval/tolerance guards and attempted a rebuild.
+    int basis_updates_failed_    = 0;  ///< Count of attempted rebuilds that did not complete successfully.
 
     // Reseed bookkeeping (written by seed() and checkAndReseed())
     std::vector<double> seed_heads_;   ///< Active-node heads at last seed (length n_nodes).
