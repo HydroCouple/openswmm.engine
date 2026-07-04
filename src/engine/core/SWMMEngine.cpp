@@ -1823,7 +1823,9 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
 #endif
 
-    // B3++. Advance 1D spectral ROM for uncertainty propagation.
+    // B3++. Advance 1D spectral ROM for uncertainty propagation (deviation form:
+    //        members carry only their deviation from the deterministic run, so
+    //        no reseeding is ever needed and spread is never collapsed).
     if (rom1d_ && rom1d_->is_ready()) {
         // Update eigenbasis from last-converged DYNWAVE Jacobian (warm-start re-solve).
         if (router_.dwSolver().isHSnapshotValid()) {
@@ -1833,13 +1835,21 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         }
         const double K1d = computeK1d();
 
-        // Build per-node dh/dt forcing from the just-completed DynWave step.
-        // Using actual head-rate change instead of lat_flow/area avoids needing
-        // junction storage areas and captures all flow contributions correctly.
-        // Members with different Manning's n decay at different rates from this
-        // common forcing, producing physically meaningful head spread.
+        const int n_active = static_cast<int>(rom1d_active_map_.size());
+
+        // Deterministic head reference h_det for the Manning-sensitivity term
+        // (b_j = P^T h_det) and for quantile reconstruction.
+        for (int ai = 0; ai < n_active; ++ai) {
+            const auto ui = static_cast<std::size_t>(
+                rom1d_active_map_[static_cast<std::size_t>(ai)]);
+            rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+        }
+
+        // Per-node dh/dt forcing from the just-completed DynWave step. Under
+        // the deviation form its projection enters only scaled by
+        // (runoff_mult - 1), so with the engine default runoff_pert = 0 it
+        // contributes nothing — by construction, not by hotfix.
         if (!rom1d_dh_buf_.empty()) {
-            const int n_active = static_cast<int>(rom1d_active_map_.size());
             for (int ai = 0; ai < n_active; ++ai) {
                 const auto ui = static_cast<std::size_t>(
                     rom1d_active_map_[static_cast<std::size_t>(ai)]);
@@ -1847,20 +1857,9 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                     (ctx_.nodes.depth[ui] - ctx_.nodes.old_depth[ui]) / dt_routing;
             }
         }
-        rom1d_->advance(dt_routing, K1d,
+        rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
                         rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data());
         // computeQuantiles() is called only at report boundaries (postOutputSnapshot)
-
-        // Reseed if hydraulic state has drifted significantly from seed state
-        if (!rom1d_active_map_.empty()) {
-            const int n_active = static_cast<int>(rom1d_active_map_.size());
-            std::vector<double> h_active(static_cast<std::size_t>(n_active));
-            for (int ai = 0; ai < n_active; ++ai) {
-                auto ui = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
-                h_active[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
-            }
-            rom1d_->checkAndReseed(h_active.data(), ctx_.current_time);
-        }
     }
 
     // B3a. Inlet capture (street inlet HEC-22 calculations)
@@ -2647,24 +2646,25 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
         }
 
         // Compute 1D ROM quantiles and flush CSV row for every active node.
-        // q50 = actual DynWave head (best deterministic estimate).
-        // q05/q95 = DynWave head ± ROM ensemble spread around the ROM median.
-        // This corrects for the excluded null Laplacian mode: the ROM captures
-        // only spatial deviation, so we anchor the central value to DynWave.
+        // Deviation form: quantiles are natively anchored to the deterministic
+        // DynWave head (reconstruction = h_det + P·δa, clamped at the node
+        // invert), so q05/q50/q95 are written directly — no manual re-anchoring.
         if (rom1d_ && rom1d_->is_ready() && rom1d_csv_.is_open()) {
-            rom1d_->computeQuantiles();
             const int n_active = static_cast<int>(rom1d_active_map_.size());
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui = static_cast<std::size_t>(
+                    rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+            }
+            rom1d_->computeQuantiles(rom1d_h_buf_.data(), rom1d_invert_buf_.data());
             for (int ai = 0; ai < n_active; ++ai) {
                 const auto ui  = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
                 const auto uai = static_cast<std::size_t>(ai);
-                const double h_det = ctx_.nodes.head[ui];
-                const double spread_lo = rom1d_->q50[uai] - rom1d_->q05[uai];
-                const double spread_hi = rom1d_->q95[uai] - rom1d_->q50[uai];
                 rom1d_csv_ << ctx_.current_time                   << ','
                            << ctx_.node_names.name_of(static_cast<int>(ui)) << ','
-                           << (h_det - spread_lo)                 << ','
-                           << h_det                               << ','
-                           << (h_det + spread_hi)                 << '\n';
+                           << rom1d_->q05[uai]                    << ','
+                           << rom1d_->q50[uai]                    << ','
+                           << rom1d_->q95[uai]                    << '\n';
             }
         }
 
@@ -4298,11 +4298,17 @@ void SWMMEngine::buildROM1D() noexcept {
 
     rom1d_->initialize();
 
-    // Store active map for head extraction in stepRouting (checkAndReseed)
+    // Store active map + per-step buffers for head extraction in stepRouting
     rom1d_active_map_ = active_map;
     rom1d_dh_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_h_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_invert_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    for (int ai = 0; ai < n_active; ++ai) {
+        auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
+        rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];
+    }
 
-    // Seed from current node heads (all members start identical)
+    // Seed: zero all deviations, prime h_det_last_ from current node heads
     std::vector<double> h0(static_cast<std::size_t>(n_active));
     for (int ai = 0; ai < n_active; ++ai) {
         auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);

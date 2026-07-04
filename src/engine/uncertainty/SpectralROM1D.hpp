@@ -6,19 +6,27 @@
  * @details Analogous to SpectralROM (2D surface), but operates on the node
  *          head field of a 1D pipe network represented by GraphEigenBasis.
  *
- *          The linearized ROM for node head h evolves as:
+ *          DEVIATION FORM (see docs/uncertainty/DEVIATION_FORM.md): the state
+ *          per member i is the modal projection of the deviation from the
+ *          deterministic trajectory, δa_i = P^T (h_i − h_det), evolving as
  *
- *              da_j/dt = -λ_j * K1d / mannings_mult_i * a_j  +  f_j^i
+ *            d(δa_ij)/dt = −(λ_j·K1d/mm_i)·δa_ij
+ *                          − λ_j·K1d·(1/mm_i − 1)·b_j(t)   (Manning sensitivity)
+ *                          + (rm_i − 1)·r_j(t)             (forcing sensitivity)
  *
  *          where:
- *            a_j     = j-th spectral coefficient for member i
- *            λ_j     = j-th eigenvalue of the network Laplacian
- *            K1d     = effective 1D conductance (m^2/s)
- *            f_j^i   = P[:,j]^T · runoff_per_node × (runoff_mult_i or ensemble)
+ *            λ_j    = j-th eigenvalue of the network Laplacian
+ *            K1d    = effective 1D conductance scale (1/s after L² normalization)
+ *            mm_i   = member i Manning multiplier, rm_i = runoff multiplier
+ *            b_j(t) = P[:,j]^T · h_det   (deterministic head projection)
+ *            r_j(t) = P[:,j]^T · runoff_per_node
+ *
+ *          The nominal member (mm = rm = 1) has zero forcing and zero deviation
+ *          forever, so the median tracks the deterministic run by construction
+ *          and no reseeding is ever required (spread is never collapsed).
  *
  *          Per-member runoff from RunoffEnsemble can be injected via
- *          setEnsembleRunoff(): member i's rate scales the deterministic
- *          runoff projection r_coarse[j] by rate_i / mean_rate.
+ *          setEnsembleRunoff(): (rm_i − 1) is replaced by (rate_i/mean − 1).
  *
  * @ingroup engine_uncertainty
  */
@@ -42,8 +50,9 @@ namespace openswmm::uncertainty {
  *   1. Set `basis` to a built GraphEigenBasis (num_kept > 0).
  *   2. Optionally set n_ensemble, mannings_pert, runoff_pert.
  *   3. Call initialize().
- *   4. Call seed(h_nodes) — all members start from the same head field.
- *   5. Each timestep: call advance(dt, K1d, runoff_per_node), then computeQuantiles().
+ *   4. Call seed(h_nodes) — zeroes all deviations, primes h_det_last_.
+ *   5. Each timestep: call advance(dt, K1d, h_det_active, runoff_per_node),
+ *      then computeQuantiles(h_det_active, invert_active) when output is due.
  *   6. Read q05, q50, q95 per active node.
  *
  * Optionally call setEnsembleRunoff() before each advance() to inject
@@ -67,11 +76,9 @@ struct SpectralROM1D {
     /// with sample_seed + 1.
     uint64_t sample_seed = 42;
 
-    double mode_drop_threshold  = 1.0e-10; ///< Drop mode j when E_j < threshold.
+    double mode_drop_threshold  = 1.0e-10; ///< Drop mode j when E_j and forcing scales < threshold.
     double basis_update_tol     = 0.05;    ///< Skip basis rebuild when max|Δw|/max|w| < tol.
     double basis_update_interval = 60.0;   ///< Min sim time (s) between Lanczos rebuilds.
-    double reseed_head_fraction = 0.10;    ///< Reseed when mean head change > 10% of seed mean.
-    double reseed_min_interval  = 60.0;    ///< Minimum simulation time (s) between reseeds.
 
     // -------------------------------------------------------------------------
     // State (set by initialize() and seed())
@@ -89,16 +96,16 @@ struct SpectralROM1D {
     int basis_updates_attempted_ = 0;  ///< Count of updateBasis() calls that passed the interval/tolerance guards and attempted a rebuild.
     int basis_updates_failed_    = 0;  ///< Count of attempted rebuilds that did not complete successfully.
 
-    // Reseed bookkeeping (written by seed() and checkAndReseed())
-    std::vector<double> seed_heads_;   ///< Active-node heads at last seed (length n_nodes).
-    double last_reseed_time_ = 0.0;    ///< Sim time (s) of last reseed.
-    double seed_mean_head_   = 0.0;    ///< Mean head at last seed.
-
-    /// Ensemble coefficient matrix: a_ensemble[i * n_kept + j] = a_{i,j}.
+    /// Ensemble DEVIATION coefficient matrix: a_ensemble[i * n_kept + j] = δa_{i,j}
+    /// = P[:,j]^T (h_i − h_det).  Zero for the nominal member at all times.
     std::vector<double> a_ensemble;
 
     /// Pre-projected runoff forcing: r_coarse[j] = P[:,j]^T * runoff_per_node.
     std::vector<double> r_coarse;
+
+    /// Pre-projected deterministic head: b_coarse[j] = P[:,j]^T * h_det.
+    /// Refreshed at the top of every advance() call.
+    std::vector<double> b_coarse;
 
     /// Parameter LHS design — one entry per member.
     std::vector<double> mannings_mult;  ///< Ascending LHS in [1-p, 1+p].
@@ -156,19 +163,6 @@ struct SpectralROM1D {
     void clearEnsembleRunoff();
 
     /**
-     * @brief Reseed the ensemble if the hydraulic state has drifted significantly.
-     *
-     * Compares the mean absolute change in active-node heads against
-     * reseed_head_fraction * max(seed_mean_head_, 0.01).  If the threshold is
-     * exceeded AND at least reseed_min_interval seconds have elapsed since the
-     * last reseed, calls seed(current_heads) and updates seed bookkeeping.
-     *
-     * @param current_heads  Current active-node heads (length n_nodes).
-     * @param sim_time       Current simulation time (s).
-     */
-    void checkAndReseed(const double* current_heads, double sim_time);
-
-    /**
      * @brief Rebuild the eigenbasis when the hydraulic operator has changed.
      *
      * Skips the rebuild when max|conduit_off_new − conduit_off_prev| /
@@ -194,49 +188,62 @@ struct SpectralROM1D {
     void initialize();
 
     /**
-     * @brief Project an initial head field onto all ensemble members.
+     * @brief Reset all ensemble deviations to zero and prime h_det_last_.
      *
-     * Sets a_i = P^T * h_nodes for every member (identical start).
+     * Under the deviation form every member starts exactly on the
+     * deterministic trajectory (δa = 0); h_nodes is stored as the initial
+     * deterministic reference for reconstructHead() until the first advance().
      *
-     * @param h_nodes  Head at each active node (length n_nodes).
+     * @param h_nodes  Deterministic head at each active node (length n_nodes).
      */
     void seed(const double* h_nodes);
 
     /**
-     * @brief Advance all ensemble members by dt.
+     * @brief Advance all ensemble deviations by dt (exact exponential step).
      *
-     * For each member i and mode j:
-     *   rate_j = λ_j * K1d / mannings_mult[i]
-     *   f_j    = r_coarse[j] * runoff_mult[i]   (or ensemble path)
-     *   a_{i,j}(t+dt) = (a_{i,j}(t) - f_j/rate_j)*exp(-rate_j*dt) + f_j/rate_j
+     * For each member i and mode j (see DEVIATION_FORM.md §3):
+     *   rate  = λ_j·K1d / mm_i
+     *   g     = −λ_j·K1d·(1/mm_i − 1)·b_j + (rm_i − 1)·r_j
+     *   δa   ← (δa − g/rate)·exp(−rate·dt) + g/rate
+     * with b_j = P[:,j]^T·h_det_active recomputed at every call.
      *
      * @param dt              Timestep (s).
-     * @param K1d             Effective 1D network conductance (m^2/s).
+     * @param K1d             Effective 1D conductance scale (1/s).
+     * @param h_det_active    Deterministic head per active node (length
+     *                        n_nodes). Must be non-null; also stored as
+     *                        h_det_last_ for reconstructHead().
      * @param runoff_per_node Per-active-node runoff rate (m/s), length n_nodes.
-     *                        May be null (no forcing).
+     *                        May be null (no forcing-sensitivity term).
      */
-    void advance(double dt, double K1d, const double* runoff_per_node);
+    void advance(double dt, double K1d, const double* h_det_active,
+                 const double* runoff_per_node);
 
     /**
      * @brief Reconstruct per-node head distribution and extract quantiles.
      *
-     * Writes q05, q50, q95 (length n_nodes).  Negative reconstructed heads
-     * are clamped to 0.
+     * Per node t, member i:  h = h_det_active[t] + Σ_j P[j,t]·δa_{i,j},
+     * clamped to invert_active[t] when invert_active is non-null.
+     * Writes q05, q50, q95 (length n_nodes).
+     *
+     * @param h_det_active   Deterministic head per active node (non-null).
+     * @param invert_active  Node invert elevation per active node (physical
+     *                       lower bound), or null for no clamping.
      */
-    void computeQuantiles();
+    void computeQuantiles(const double* h_det_active,
+                          const double* invert_active);
 
     /**
      * @brief Reconstruct absolute head for one ensemble member at one active node.
      *
-     * Returns Σ_j a_{i,j} * P[j, active_node], clamped to ≥ 0.
-     * Only active modes (mode_active[j] == true) contribute.
-     *
-     * Used by SpectralROM::applyCouplingFlux() when this ROM is registered as
-     * the 1D sidecar, so the 2D coupling path sees per-member 1D heads.
+     * Returns h_det_last_[active_node] + Σ_j δa_{i,j} · P[j, active_node],
+     * guarded to ≥ 0 (numerical safety for the orifice coupling formula).
+     * Only active modes (mode_active[j] == true) contribute.  h_det_last_ is
+     * the head passed to the most recent advance()/seed() call — at most one
+     * routing step old when called from the 2D coupling path.
      *
      * @param member       Ensemble member index (0..n_ensemble-1).
      * @param active_node  Active ROM node index (0..n_nodes-1).
-     * @return Reconstructed head in metres (≥ 0).
+     * @return Reconstructed head (≥ 0).
      */
     double reconstructHead(int member, int active_node) const noexcept;
 
@@ -245,7 +252,11 @@ struct SpectralROM1D {
 
 private:
     std::vector<double> sort_buf_;
-    std::vector<double> mode_energy_;  ///< Per-mode energy E_j = mean_i(a²_ij).
+    std::vector<double> mode_energy_;  ///< Per-mode deviation energy E_j = mean_i(δa²_ij).
+
+    /// Deterministic head passed to the most recent advance()/seed() call
+    /// (length n_nodes). Used by reconstructHead().
+    std::vector<double> h_det_last_;
 
     std::vector<double> ensemble_runoff_;
     double mean_ensemble_runoff_ = 0.0;

@@ -65,6 +65,7 @@ void SpectralROM1D::initialize() {
     a_ensemble.assign(static_cast<std::size_t>(n_ensemble) *
                       static_cast<std::size_t>(n_kept), 0.0);
     r_coarse.assign(static_cast<std::size_t>(n_kept), 0.0);
+    b_coarse.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     q05.assign(static_cast<std::size_t>(n_nodes), 0.0);
     q50.assign(static_cast<std::size_t>(n_nodes), 0.0);
@@ -72,6 +73,7 @@ void SpectralROM1D::initialize() {
 
     sort_buf_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
     mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
+    h_det_last_.assign(static_cast<std::size_t>(n_nodes), 0.0);
 
     mode_active.assign(static_cast<std::size_t>(n_kept), true);
     n_modes_active = n_kept;
@@ -111,53 +113,11 @@ void SpectralROM1D::initialize() {
 void SpectralROM1D::seed(const double* h_nodes) {
     assert(is_ready());
 
-    auto nn = static_cast<std::size_t>(n_nodes);
-    auto nk = static_cast<std::size_t>(n_kept);
-
-    for (std::size_t j = 0; j < nk; ++j) {
-        const double* Pj = &basis->P[j * nn];
-        double dot = 0.0;
-        for (std::size_t i = 0; i < nn; ++i)
-            dot += Pj[i] * h_nodes[i];
-        for (int m = 0; m < n_ensemble; ++m)
-            a_ensemble[static_cast<std::size_t>(m) * nk + j] = dot;
-    }
-
-    // Update reseed bookkeeping so checkAndReseed() has a valid baseline
-    seed_heads_.assign(h_nodes, h_nodes + nn);
-    double sum = 0.0;
-    for (std::size_t i = 0; i < nn; ++i) sum += h_nodes[i];
-    seed_mean_head_ = sum / static_cast<double>(nn);
-}
-
-// ============================================================================
-// checkAndReseed
-// ============================================================================
-
-void SpectralROM1D::checkAndReseed(const double* current_heads, double sim_time) {
-    if (!is_ready() || seed_heads_.empty()) return;
-
-    auto nn = static_cast<std::size_t>(n_nodes);
-
-    // Compute mean absolute change from seed state
-    double mean_change = 0.0;
-    for (std::size_t i = 0; i < nn; ++i)
-        mean_change += std::abs(current_heads[i] - seed_heads_[i]);
-    mean_change /= static_cast<double>(nn);
-
-    const double threshold = reseed_head_fraction * std::max(seed_mean_head_, 0.01);
-    if (mean_change <= threshold) return;
-    // Only apply interval guard after the first reseed (last_reseed_time_==0 means never reseeded)
-    if (last_reseed_time_ > 0.0 && sim_time - last_reseed_time_ <= reseed_min_interval) return;
-
-    seed(current_heads);
-
-    // Update bookkeeping
-    seed_heads_.assign(current_heads, current_heads + nn);
-    last_reseed_time_ = sim_time;
-    double sum = 0.0;
-    for (std::size_t i = 0; i < nn; ++i) sum += current_heads[i];
-    seed_mean_head_ = sum / static_cast<double>(nn);
+    // Deviation form: every member starts exactly on the deterministic
+    // trajectory (δa = 0). h_nodes primes h_det_last_ for reconstructHead()
+    // until the first advance() supplies a fresh deterministic reference.
+    std::fill(a_ensemble.begin(), a_ensemble.end(), 0.0);
+    h_det_last_.assign(h_nodes, h_nodes + static_cast<std::size_t>(n_nodes));
 }
 
 // ============================================================================
@@ -165,13 +125,15 @@ void SpectralROM1D::checkAndReseed(const double* current_heads, double sim_time)
 // ============================================================================
 
 void SpectralROM1D::advance(double dt, double K1d,
+                             const double* h_det_active,
                              const double* runoff_per_node) {
     assert(is_ready());
+    assert(h_det_active != nullptr);
 
     auto nn = static_cast<std::size_t>(n_nodes);
     auto nk = static_cast<std::size_t>(n_kept);
 
-    // ---- Step 1: Mode energy E_j = mean_i(a²_{i,j}) -------------------------
+    // ---- Step 1: Deviation mode energy E_j = mean_i(δa²_{i,j}) --------------
     for (std::size_t j = 0; j < nk; ++j) {
         double sum_sq = 0.0;
         for (int i = 0; i < n_ensemble; ++i) {
@@ -181,7 +143,14 @@ void SpectralROM1D::advance(double dt, double K1d,
         mode_energy_[j] = sum_sq / static_cast<double>(n_ensemble);
     }
 
-    // ---- Step 2: Project runoff into coarse space ----------------------------
+    // ---- Step 2: Project deterministic head and runoff into coarse space ----
+    for (std::size_t j = 0; j < nk; ++j) {
+        const double* Pj = &basis->P[j * nn];
+        double dot_b = 0.0;
+        for (std::size_t i = 0; i < nn; ++i)
+            dot_b += Pj[i] * h_det_active[i];
+        b_coarse[j] = dot_b;
+    }
     if (runoff_per_node) {
         for (std::size_t j = 0; j < nk; ++j) {
             const double* Pj = &basis->P[j * nn];
@@ -193,55 +162,73 @@ void SpectralROM1D::advance(double dt, double K1d,
     } else {
         std::fill(r_coarse.begin(), r_coarse.end(), 0.0);
     }
+    h_det_last_.assign(h_det_active, h_det_active + nn);
 
-    // ---- Step 3: Active set --------------------------------------------------
+    // ---- Step 3: Active set ---------------------------------------------------
+    // A mode participates when its current deviation energy OR either
+    // first-order forcing-sensitivity magnitude exceeds the drop threshold.
+    // Both forcing scales use |multiplier − 1| (deviation form): zero
+    // perturbation ⇒ zero forcing ⇒ modes stay inactive and δa stays 0.
     const bool has_ensemble_runoff = !ensemble_runoff_.empty()
                                       && (runoff_per_node != nullptr)
                                       && (mean_ensemble_runoff_ > 1.0e-30);
-    double max_scale = 1.0 + runoff_pert;
+    double max_rain_dev = 0.0;   // max_i |scale_i − 1|
     if (has_ensemble_runoff) {
         for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_scale = std::max(max_scale,
-                                 ensemble_runoff_[i] / mean_ensemble_runoff_);
+            max_rain_dev = std::max(max_rain_dev,
+                std::abs(ensemble_runoff_[i] / mean_ensemble_runoff_ - 1.0));
+    } else {
+        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
+            max_rain_dev = std::max(max_rain_dev, std::abs(runoff_mult[i] - 1.0));
     }
+    double max_mann_dev = 0.0;   // max_i |1/mm_i − 1|
+    for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
+        max_mann_dev = std::max(max_mann_dev,
+                                std::abs(1.0 / mannings_mult[i] - 1.0));
+
     const double rain_scale = (runoff_per_node != nullptr)
-                               ? std::abs(dt) * max_scale : 0.0;
+                               ? std::abs(dt) * max_rain_dev : 0.0;
+    const double mann_scale = std::abs(dt) * K1d * max_mann_dev;
+
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
-        bool by_energy = mode_energy_[j] >= mode_drop_threshold;
-        bool by_rain   = rain_scale > 0.0 &&
-                         std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
-        mode_active[j] = by_energy || by_rain;
+        const double lam = basis->eigenvalues[j];
+        bool by_energy  = mode_energy_[j] >= mode_drop_threshold;
+        bool by_rain    = rain_scale > 0.0 &&
+                          std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
+        bool by_manning = mann_scale > 0.0 &&
+                          lam * std::abs(b_coarse[j]) * mann_scale >= mode_drop_threshold;
+        mode_active[j] = by_energy || by_rain || by_manning;
         if (mode_active[j]) ++n_modes_active;
     }
 
-    // ---- Step 4: Advance modes -----------------------------------------------
+    // ---- Step 4: Advance deviations (exact exponential step) ------------------
+    //   d(δa)/dt = −rate·δa + g,   rate = λ_j·K1d/mm_i
+    //   g = −λ_j·K1d·(1/mm_i − 1)·b_j + (scale_i − 1)·r_j
     const double rate_floor = 1.0e-12;
 
     for (int i = 0; i < n_ensemble; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double* ai = &a_ensemble[ui * nk];
-        double mm = mannings_mult[ui];
-        double rm = runoff_mult[ui];
+        const double mm       = mannings_mult[ui];
+        const double inv_mm_1 = 1.0 / mm - 1.0;
+        const double scale_1  = has_ensemble_runoff
+            ? (ensemble_runoff_[ui] / mean_ensemble_runoff_ - 1.0)
+            : (runoff_mult[ui] - 1.0);
 
         for (std::size_t j = 0; j < nk; ++j) {
             if (!mode_active[j]) continue;
 
-            double lam  = basis->eigenvalues[j];
-            double rate = lam * K1d / mm;
-
-            double fj;
-            if (has_ensemble_runoff) {
-                fj = r_coarse[j] * (ensemble_runoff_[ui] / mean_ensemble_runoff_);
-            } else {
-                fj = r_coarse[j] * rm;
-            }
+            const double lam  = basis->eigenvalues[j];
+            const double rate = lam * K1d / mm;
+            const double g    = -lam * K1d * inv_mm_1 * b_coarse[j]
+                                + scale_1 * r_coarse[j];
 
             if (rate > rate_floor) {
-                double steady = fj / rate;
+                const double steady = g / rate;
                 ai[j] = (ai[j] - steady) * std::exp(-rate * dt) + steady;
             } else {
-                ai[j] += fj * dt;
+                ai[j] += g * dt;
             }
         }
     }
@@ -251,8 +238,10 @@ void SpectralROM1D::advance(double dt, double K1d,
 // computeQuantiles
 // ============================================================================
 
-void SpectralROM1D::computeQuantiles() {
+void SpectralROM1D::computeQuantiles(const double* h_det_active,
+                                      const double* invert_active) {
     assert(is_ready());
+    assert(h_det_active != nullptr);
 
     auto nn = static_cast<std::size_t>(n_nodes);
     auto nk = static_cast<std::size_t>(n_kept);
@@ -263,10 +252,9 @@ void SpectralROM1D::computeQuantiles() {
     int idx95 = std::min(n_ensemble - 1,
                          static_cast<int>(0.95 * (static_cast<double>(M) - 1.0) + 0.5));
 
-    // Recon buffer: H[node, member] = Σ_j P[j,node] * a[member,j]  (nn × M).
-    // Compute as H = P_active^T * A_active^T in a single node-major pass:
-    //   for each active mode j: H[t, i] += P[j,t] * a[i,j]
-    // Intermediate storage is recon_buf_ (nn × M, row-major: row = node).
+    // Recon buffer: H[node, member] = h_det[node] + Σ_j P[j,node]·δa[member,j]
+    // (nn × M). Computed as one node-major pass per active mode; intermediate
+    // storage is recon_buf_ (row-major: row = node).
     recon_buf_.assign(nn * M, 0.0);
 
     for (std::size_t j = 0; j < nk; ++j) {
@@ -280,11 +268,19 @@ void SpectralROM1D::computeQuantiles() {
         }
     }
 
-    // Clamp, sort each node's row, extract quantiles.
+    // Add the deterministic reference, clamp to the physical floor (node
+    // invert) when supplied, sort each node's row, extract quantiles.
     for (std::size_t t = 0; t < nn; ++t) {
         double* row = &recon_buf_[t * M];
-        for (std::size_t i = 0; i < M; ++i)
-            row[i] = std::max(row[i], 0.0);
+        const double h_det = h_det_active[t];
+        if (invert_active) {
+            const double floor_t = invert_active[t];
+            for (std::size_t i = 0; i < M; ++i)
+                row[i] = std::max(h_det + row[i], floor_t);
+        } else {
+            for (std::size_t i = 0; i < M; ++i)
+                row[i] = h_det + row[i];
+        }
         std::sort(row, row + M);
         q05[t] = row[static_cast<std::size_t>(idx05)];
         q50[t] = row[static_cast<std::size_t>(idx50)];
@@ -443,7 +439,7 @@ double SpectralROM1D::reconstructHead(int member, int active_node) const noexcep
     auto nk = static_cast<std::size_t>(n_kept);
     auto nn = static_cast<std::size_t>(n_nodes);
     const double* ai = &a_ensemble[ui * nk];
-    double h = 0.0;
+    double h = h_det_last_[uk];   // deterministic reference (last advance/seed)
     for (std::size_t j = 0; j < nk; ++j) {
         if (!mode_active[j]) continue;
         h += basis->P[j * nn + uk] * ai[j];
