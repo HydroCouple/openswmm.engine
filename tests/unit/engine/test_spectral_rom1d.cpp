@@ -345,14 +345,16 @@ TEST(GroundedLaplacian, UniformForcingCreatesSpread) {
     rom.runoff_pert   = 0.20;
     rom.initialize();
 
-    // Seed all members at zero head (δ from datum), then force uniformly.
+    // Seed all members on a zero deterministic reference, then force uniformly.
+    // Deviation form: spread comes from (runoff_mult − 1)·r_j with
+    // r_j = P^T·(uniform runoff), nonzero only on the grounded operator.
     std::vector<double> h0(static_cast<std::size_t>(rom.n_nodes), 0.0);
     rom.seed(h0.data());
 
     std::vector<double> runoff(static_cast<std::size_t>(rom.n_nodes), 1.0e-4);  // uniform
     for (int step = 0; step < 10; ++step)
-        rom.advance(10.0, 1.0e-3, runoff.data());
-    rom.computeQuantiles();
+        rom.advance(10.0, 1.0e-3, h0.data(), runoff.data());
+    rom.computeQuantiles(h0.data(), nullptr);
 
     // Interior active nodes must show spread (endpoints nearest the ground may be small).
     double max_spread = 0.0;
@@ -500,25 +502,36 @@ TEST(SpectralROM1D, LHSManningAscendsRunoffShuffled) {
 // ============================================================================
 
 TEST(SpectralROM1D, SeedProducesTightQuantiles) {
-    // All members seeded from same head → q05≈q50≈q95 at t=0.
+    // Deviation form: seed zeroes all deviations, so quantiles equal the
+    // deterministic reference EXACTLY at t=0 (no basis-truncation loss).
     ROM1DFixture f;
     auto h = f.bump_head();
     f.rom.seed(h.data());
-    f.rom.computeQuantiles();
+    f.rom.computeQuantiles(h.data(), nullptr);
 
-    // Tolerance: reconstruction via partial basis loses some energy
     for (int i = 0; i < f.rom.n_nodes; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        EXPECT_NEAR(f.rom.q05[ui], f.rom.q50[ui], 1.0e-12) << "node " << i;
-        EXPECT_NEAR(f.rom.q50[ui], f.rom.q95[ui], 1.0e-12) << "node " << i;
+        EXPECT_DOUBLE_EQ(f.rom.q05[ui], h[ui]) << "node " << i;
+        EXPECT_DOUBLE_EQ(f.rom.q50[ui], h[ui]) << "node " << i;
+        EXPECT_DOUBLE_EQ(f.rom.q95[ui], h[ui]) << "node " << i;
     }
 }
 
-TEST(SpectralROM1D, QuantilesNonNegative) {
+TEST(SpectralROM1D, QuantilesClampedToInvert) {
+    // With an invert floor supplied, no quantile may dip below it even when
+    // deviations pull members downward.
     ROM1DFixture f;
     auto h = f.bump_head();
     f.rom.seed(h.data());
-    f.rom.computeQuantiles();
+
+    std::vector<double> runoff(static_cast<std::size_t>(f.N));
+    for (int i = 0; i < f.N; ++i)
+        runoff[static_cast<std::size_t>(i)] = 1.0e-5 * (1.0 + 0.5 * std::sin(i * 0.4));
+    for (int step = 0; step < 20; ++step)
+        f.rom.advance(30.0, 0.1, h.data(), runoff.data());
+
+    std::vector<double> invert(static_cast<std::size_t>(f.N), 0.0);
+    f.rom.computeQuantiles(h.data(), invert.data());
     for (int i = 0; i < f.rom.n_nodes; ++i) {
         auto ui = static_cast<std::size_t>(i);
         EXPECT_GE(f.rom.q05[ui], 0.0);
@@ -537,8 +550,8 @@ TEST(SpectralROM1D, QuantilesMonotone) {
         runoff[static_cast<std::size_t>(i)] = 1.0e-5 * (1.0 + 0.5 * std::sin(i * 0.4));
 
     for (int step = 0; step < 20; ++step)
-        f.rom.advance(30.0, 0.1, runoff.data());
-    f.rom.computeQuantiles();
+        f.rom.advance(30.0, 0.1, h.data(), runoff.data());
+    f.rom.computeQuantiles(h.data(), nullptr);
 
     for (int i = 0; i < f.rom.n_nodes; ++i) {
         auto ui = static_cast<std::size_t>(i);
@@ -553,6 +566,8 @@ TEST(SpectralROM1D, QuantilesMonotone) {
 
 TEST(SpectralROM1D, SpreadGrowsWithPerturbation) {
     // 30% perturbations + forcing → q95-q05 spread should be nonzero after advance.
+    // Deviation form: spread grows from the Manning-sensitivity term
+    // (−λ·K1d·(1/mm−1)·b_j, b_j from the bump reference) plus (rm−1)·r_j.
     ROM1DFixture f;
     f.rom.mannings_pert = 0.30;
     f.rom.runoff_pert   = 0.30;
@@ -566,8 +581,8 @@ TEST(SpectralROM1D, SpreadGrowsWithPerturbation) {
         runoff[static_cast<std::size_t>(i)] = 2.0e-5 * (1.0 + std::sin(i * 0.5));
 
     for (int step = 0; step < 30; ++step)
-        f.rom.advance(30.0, 0.1, runoff.data());
-    f.rom.computeQuantiles();
+        f.rom.advance(30.0, 0.1, h.data(), runoff.data());
+    f.rom.computeQuantiles(h.data(), nullptr);
 
     double max_spread = 0.0;
     for (int i = 0; i < f.rom.n_nodes; ++i) {
@@ -577,18 +592,55 @@ TEST(SpectralROM1D, SpreadGrowsWithPerturbation) {
     EXPECT_GT(max_spread, 1.0e-6) << "spread should be nonzero with 30% perturbations";
 }
 
-TEST(SpectralROM1D, NullForcingDecaysToNearZero) {
-    // With no runoff (null ptr), all modes should decay exponentially.
+TEST(SpectralROM1D, FrozenReferenceSaturatesAtAnalyticSteadyState) {
+    // With b_j frozen (constant h_det) and no runoff, the deviation ODE has
+    // the closed-form fixed point δa_ij = (mm_i − 1)·b_j  (DEVIATION_FORM.md
+    // §4.3). After enough decay time every member must sit on it exactly.
     ROM1DFixture f;
     auto h = f.bump_head();
     f.rom.seed(h.data());
 
     for (int step = 0; step < 200; ++step)
-        f.rom.advance(30.0, 1.0, nullptr);  // large K1d → fast decay
-    f.rom.computeQuantiles();
+        f.rom.advance(30.0, 1.0, h.data(), nullptr);  // large K1d → fast convergence
+
+    // b_j = P[:,j]^T h
+    const auto nn = static_cast<std::size_t>(f.rom.n_nodes);
+    const auto nk = static_cast<std::size_t>(f.rom.n_kept);
+    for (std::size_t j = 0; j < nk; ++j) {
+        const double* Pj = &f.basis.P[j * nn];
+        double bj = 0.0;
+        for (std::size_t t = 0; t < nn; ++t) bj += Pj[t] * h[t];
+        for (int m = 0; m < f.rom.n_ensemble; ++m) {
+            const double mm       = f.rom.mannings_mult[static_cast<std::size_t>(m)];
+            const double expected = (mm - 1.0) * bj;
+            const double actual   =
+                f.rom.a_ensemble[static_cast<std::size_t>(m) * nk + j];
+            // Tolerance 1e-8: modes whose |b_j| falls below the activity
+            // threshold stay frozen at 0 while the analytic value is ~1e-9.
+            EXPECT_NEAR(actual, expected, 1.0e-8)
+                << "member " << m << " mode " << j;
+        }
+    }
+}
+
+TEST(SpectralROM1D, DecayingReferenceDrivesDeviationsToZero) {
+    // When the deterministic reference decays to zero, b_j → 0 drags every
+    // deviation to zero with it: all members re-converge on the (zero)
+    // deterministic trajectory and the quantile band collapses onto it.
+    ROM1DFixture f;
+    auto h = f.bump_head();
+    f.rom.seed(h.data());
+
+    std::vector<double> h_det = h;
+    for (int step = 0; step < 400; ++step) {
+        f.rom.advance(30.0, 1.0, h_det.data(), nullptr);
+        for (double& v : h_det) v *= 0.9;  // geometric decay of the reference
+    }
+    f.rom.computeQuantiles(h_det.data(), nullptr);
 
     double max_q95 = *std::max_element(f.rom.q95.begin(), f.rom.q95.end());
-    EXPECT_LT(max_q95, 1.0e-4) << "heads should decay near zero without forcing";
+    EXPECT_LT(max_q95, 1.0e-6)
+        << "band must collapse onto the decayed (zero) reference";
 }
 
 // ============================================================================
@@ -638,10 +690,10 @@ TEST(SpectralROM1D, EnsembleRunoffHigherRateGivesMoreEnergy) {
         runoff[static_cast<std::size_t>(i)] = r_base * (1.0 + std::sin(i * 0.7));
 
     for (int step = 0; step < 60; ++step)
-        rom.advance(30.0, 0.01, runoff.data());
-    rom.computeQuantiles();
+        rom.advance(30.0, 0.01, h.data(), runoff.data());
+    rom.computeQuantiles(h.data(), nullptr);
 
-    // Higher-rate members should accumulate more total head → q95 > q05
+    // Rate spread (rate_i/mean − 1 ≠ 0) must produce head spread
     double max_spread = 0.0;
     for (int i = 0; i < N; ++i) {
         auto ui = static_cast<std::size_t>(i);
@@ -692,11 +744,11 @@ TEST(SpectralROM1D, ClearEnsembleRunoffRevertsToScalarPath) {
         runoff[static_cast<std::size_t>(i)] = 1.0e-5 * (1.0 + std::sin(i * 0.7));
 
     for (int step = 0; step < 20; ++step) {
-        rom_scalar.advance(30.0, 0.1, runoff.data());
-        rom_ens.advance(30.0, 0.1, runoff.data());
+        rom_scalar.advance(30.0, 0.1, h.data(), runoff.data());
+        rom_ens.advance(30.0, 0.1, h.data(), runoff.data());
     }
-    rom_scalar.computeQuantiles();
-    rom_ens.computeQuantiles();
+    rom_scalar.computeQuantiles(h.data(), nullptr);
+    rom_ens.computeQuantiles(h.data(), nullptr);
 
     for (int i = 0; i < N; ++i) {
         auto ui = static_cast<std::size_t>(i);
@@ -1344,7 +1396,9 @@ TEST(UpdateBasis, ReProjectionPreservesCoeffNorm) {
     const int N = 6;
     const int NC = N - 1;
     SpectralROM1D rom;
-    auto basis_owned = make_rom1d_chain(N, rom, 0.0);  // no pert so all members equal
+    // Default mannings_pert (0.10): the Manning-sensitivity term is what
+    // builds non-zero deviations against the ramp reference below.
+    auto basis_owned = make_rom1d_chain(N, rom);
     rom.basis_update_interval = 0.0;  // disable time guard for unit test
 
     std::vector<int> n1(static_cast<std::size_t>(NC));
@@ -1354,12 +1408,17 @@ TEST(UpdateBasis, ReProjectionPreservesCoeffNorm) {
         n2[static_cast<std::size_t>(ci)] = ci + 1;
     }
 
-    // Advance briefly to build non-zero coefficients
-    rom.advance(1.0, 1e-3, nullptr);
+    // Advance against the ramp reference to build non-zero deviations
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i)
+        h_det[static_cast<std::size_t>(i)] = (i + 1) * 0.1;
+    for (int step = 0; step < 10; ++step)
+        rom.advance(10.0, 0.1, h_det.data(), nullptr);
 
     // Record Frobenius norm before
     double norm_before = 0.0;
     for (double v : rom.a_ensemble) norm_before += v * v;
+    ASSERT_GT(norm_before, 0.0) << "deviations must be non-zero before rebuild";
 
     // Prime the skip criterion with current uniform weights
     std::vector<double> w0(static_cast<std::size_t>(NC), 1.0);
@@ -1394,14 +1453,20 @@ TEST(UpdateBasis, QuantilesRemainValidAfterUpdate) {
         n2[static_cast<std::size_t>(ci)] = ci + 1;
     }
 
+    // Ramp reference + zero invert floor for quantile reconstruction
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i)
+        h_det[static_cast<std::size_t>(i)] = (i + 1) * 0.1;
+    std::vector<double> invert(static_cast<std::size_t>(N), 0.0);
+
     // Simulate a series of weight updates (growing conductance over time)
     for (int step = 0; step < 5; ++step) {
         double scale = 0.005 * (1.0 + step * 0.5);
         std::vector<double> w(static_cast<std::size_t>(NC), scale);
         w[2] = scale * 3.0;  // one conduit always wetter
         rom.updateBasis(w.data(), n1.data(), n2.data(), NC);
-        rom.advance(10.0, scale * 100.0, nullptr);
-        rom.computeQuantiles();
+        rom.advance(10.0, scale * 100.0, h_det.data(), nullptr);
+        rom.computeQuantiles(h_det.data(), invert.data());
 
         for (int i = 0; i < rom.n_nodes; ++i) {
             auto ui = static_cast<std::size_t>(i);
@@ -1557,119 +1622,213 @@ TEST(WeightNormalization, UniformWeightsUnchanged) {
 }
 
 // ============================================================================
-// PR 6 — checkAndReseed
+// PR 6 (reform) — DeviationForm invariants
 // ============================================================================
 
-TEST(CheckAndReseed, ReseedFiresAfterLargeHeadChange) {
-    // Seed with near-zero heads, then present 1.0 m heads → mean change >> 10%.
-    const int N = 6;
-    SpectralROM1D rom;
-    auto basis_owned = make_rom1d_chain(N, rom);
-
-    // Override seed with zeros
-    std::vector<double> h_zero(static_cast<std::size_t>(N), 0.0);
-    rom.seed(h_zero.data());
-    EXPECT_EQ(rom.last_reseed_time_, 0.0);
-
-    std::vector<double> h_one(static_cast<std::size_t>(N), 1.0);
-    rom.reseed_head_fraction = 0.10;
-    rom.reseed_min_interval  = 0.0;   // no interval restriction
-    rom.checkAndReseed(h_one.data(), 120.0);
-
-    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 120.0)
-        << "last_reseed_time_ must update after reseed";
-    for (int i = 0; i < N; ++i)
-        EXPECT_DOUBLE_EQ(rom.seed_heads_[static_cast<std::size_t>(i)], 1.0)
-            << "seed_heads_ must hold new values";
+// Helper: max (q95 − q05) across all nodes after computeQuantiles().
+static double max_spread(const SpectralROM1D& rom) {
+    double s = 0.0;
+    for (int i = 0; i < rom.n_nodes; ++i)
+        s = std::max(s, rom.q95[static_cast<std::size_t>(i)]
+                      - rom.q05[static_cast<std::size_t>(i)]);
+    return s;
 }
 
-TEST(CheckAndReseed, ReseedDoesNotFireWhenChangeSmall) {
-    // Seed with 1.0 m, present 1.02 m (2% change < 10% threshold).
-    const int N = 6;
-    SpectralROM1D rom;
-    auto basis_owned = make_rom1d_chain(N, rom);
+TEST(DeviationForm, ZeroPerturbationIsExact) {
+    // With mm = rm = 1 for all members, deviations are identically zero, so
+    // q05 == q50 == q95 == h_det to machine precision at every node and step
+    // — the strongest new invariant, impossible under the total-head form.
+    ROM1DFixture f;
+    f.rom.mannings_pert = 0.0;
+    f.rom.runoff_pert   = 0.0;
+    f.rom.initialize();
 
-    std::vector<double> h_base(static_cast<std::size_t>(N), 1.0);
-    rom.seed(h_base.data());
-    rom.reseed_head_fraction = 0.10;
-    rom.reseed_min_interval  = 0.0;
+    auto h0 = f.bump_head();
+    f.rom.seed(h0.data());
 
-    std::vector<double> h_small(static_cast<std::size_t>(N), 1.02);
-    rom.checkAndReseed(h_small.data(), 60.0);
+    std::vector<double> h_det(static_cast<std::size_t>(f.N));
+    std::vector<double> runoff(static_cast<std::size_t>(f.N));
+    for (int step = 0; step < 100; ++step) {
+        // Arbitrary time-varying deterministic reference and forcing
+        const double phase = 0.05 * step;
+        for (int i = 0; i < f.N; ++i) {
+            h_det[static_cast<std::size_t>(i)]  =
+                h0[static_cast<std::size_t>(i)] * (1.0 + 0.5 * std::sin(phase + 0.3 * i));
+            runoff[static_cast<std::size_t>(i)] =
+                1.0e-5 * (1.0 + std::cos(phase + 0.7 * i));
+        }
+        f.rom.advance(15.0, 0.1, h_det.data(), runoff.data());
+    }
+    f.rom.computeQuantiles(h_det.data(), nullptr);
 
-    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 0.0)
-        << "No reseed should fire for a 2% head change";
+    for (int i = 0; i < f.rom.n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(f.rom.q05[ui], h_det[ui], 1.0e-12) << "node " << i;
+        EXPECT_NEAR(f.rom.q50[ui], h_det[ui], 1.0e-12) << "node " << i;
+        EXPECT_NEAR(f.rom.q95[ui], h_det[ui], 1.0e-12) << "node " << i;
+    }
 }
 
-TEST(CheckAndReseed, ReseedMinIntervalRespected) {
-    // Fire two large changes within reseed_min_interval; only first should reseed.
-    const int N = 6;
+TEST(DeviationForm, MedianTracksDeterministic) {
+    // pert = 0.2, M = 50: after 50 steps the median stays bracketed well
+    // inside the spread around the deterministic reference (no drift).
+    const int N = 20, M = 50, K = 6;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
     SpectralROM1D rom;
-    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis         = &basis;
+    rom.n_ensemble    = M;
+    rom.mannings_pert = 0.20;
+    rom.runoff_pert   = 0.0;
+    rom.initialize();
 
-    std::vector<double> h_zero(static_cast<std::size_t>(N), 0.0);
-    rom.seed(h_zero.data());
-    rom.reseed_head_fraction = 0.10;
-    rom.reseed_min_interval  = 60.0;
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h_det[static_cast<std::size_t>(i)] =
+            0.10 * std::exp(-0.5 * dx * dx / (N / 8.0 * N / 8.0));
+    }
+    rom.seed(h_det.data());
+    for (int step = 0; step < 50; ++step)
+        rom.advance(30.0, 0.1, h_det.data(), nullptr);
+    rom.computeQuantiles(h_det.data(), nullptr);
 
-    std::vector<double> h_large(static_cast<std::size_t>(N), 2.0);
-
-    // First call at t=10 — should reseed
-    rom.checkAndReseed(h_large.data(), 10.0);
-    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 10.0);
-
-    // Second call at t=50 (only 40 s later, < 60 s interval) — must NOT reseed
-    std::vector<double> h_large2(static_cast<std::size_t>(N), 5.0);
-    rom.checkAndReseed(h_large2.data(), 50.0);
-    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 10.0)
-        << "Second reseed within min_interval must be suppressed";
+    for (int i = 0; i < rom.n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        const double spread = rom.q95[ui] - rom.q05[ui];
+        EXPECT_LE(std::abs(rom.q50[ui] - h_det[ui]), 0.25 * spread + 1.0e-15)
+            << "median drifted outside 25% of spread at node " << i;
+    }
 }
 
-TEST(CheckAndReseed, SpreadRebuildAfterReseed) {
-    // After advance (spread grows), force a reseed (spread collapses), then
-    // advance again — spread must grow back.
+TEST(DeviationForm, SpreadNeverCollapses) {
+    // Regression against the old reseed-collapse behaviour: under sustained
+    // non-uniform reference growth, total spread is non-decreasing after the
+    // initial transient (5% dips tolerated for sort/quantile discreteness).
+    ROM1DFixture f;   // mannings_pert = 0.20 (fixture default)
+    auto h0 = f.bump_head();
+    f.rom.seed(h0.data());
+
+    std::vector<double> h_det(static_cast<std::size_t>(f.N));
+    double prev_total = -1.0;
+    for (int step = 0; step < 300; ++step) {
+        const double grow = 1.0 + static_cast<double>(step) / 300.0;  // ramp up
+        for (int i = 0; i < f.N; ++i)
+            h_det[static_cast<std::size_t>(i)] = h0[static_cast<std::size_t>(i)] * grow;
+        f.rom.advance(1.0, 0.01, h_det.data(), nullptr);
+
+        if (step > 50) {
+            f.rom.computeQuantiles(h_det.data(), nullptr);
+            double total = 0.0;
+            for (int i = 0; i < f.rom.n_nodes; ++i)
+                total += f.rom.q95[static_cast<std::size_t>(i)]
+                       - f.rom.q05[static_cast<std::size_t>(i)];
+            if (prev_total >= 0.0) {
+                EXPECT_GE(total, prev_total * 0.95)
+                    << "spread collapsed at step " << step;
+            }
+            prev_total = total;
+        }
+    }
+    EXPECT_GT(prev_total, 0.0) << "spread must be nonzero under sustained forcing";
+}
+
+TEST(DeviationForm, SpreadScalesWithManningPert) {
+    // spread(pert=0.2) > spread(pert=0.1) > 0 under identical forcing.
+    auto run_with_pert = [](double pert) {
+        ROM1DFixture f;
+        f.rom.mannings_pert = pert;
+        f.rom.runoff_pert   = 0.0;
+        f.rom.initialize();
+        auto h = f.bump_head();
+        f.rom.seed(h.data());
+        for (int step = 0; step < 40; ++step)
+            f.rom.advance(30.0, 0.1, h.data(), nullptr);
+        f.rom.computeQuantiles(h.data(), nullptr);
+        return max_spread(f.rom);
+    };
+
+    const double s10 = run_with_pert(0.10);
+    const double s20 = run_with_pert(0.20);
+    EXPECT_GT(s10, 0.0);
+    EXPECT_GT(s20, s10) << "doubling the perturbation must widen the band";
+}
+
+TEST(DeviationForm, InvertClampRespected) {
+    // Reference sits just above a 10 m invert; large perturbation pulls some
+    // members below it. With the invert supplied, no quantile may dip under
+    // 10 m — and without it, at least one must (proving the clamp engaged).
+    ROM1DFixture f;
+    f.rom.mannings_pert = 0.50;
+    f.rom.runoff_pert   = 0.0;
+    f.rom.initialize();
+
+    // Strong spatial variation just above the invert (constant components
+    // project to zero on the Neumann chain modes, so variation carries b_j).
+    std::vector<double> h_det(static_cast<std::size_t>(f.N));
+    for (int i = 0; i < f.N; ++i)
+        h_det[static_cast<std::size_t>(i)] =
+            10.0 + 0.05 * std::sin(0.6 * i) + 0.002 * i;
+
+    f.rom.seed(h_det.data());
+    for (int step = 0; step < 60; ++step)
+        f.rom.advance(30.0, 0.5, h_det.data(), nullptr);
+
+    std::vector<double> invert(static_cast<std::size_t>(f.N), 10.0);
+    f.rom.computeQuantiles(h_det.data(), invert.data());
+    double min_q05_clamped = 1.0e300;
+    for (int i = 0; i < f.rom.n_nodes; ++i)
+        min_q05_clamped = std::min(min_q05_clamped,
+                                   f.rom.q05[static_cast<std::size_t>(i)]);
+    EXPECT_GE(min_q05_clamped, 10.0) << "clamped quantiles must respect the invert";
+
+    f.rom.computeQuantiles(h_det.data(), nullptr);
+    double min_q05_free = 1.0e300;
+    for (int i = 0; i < f.rom.n_nodes; ++i)
+        min_q05_free = std::min(min_q05_free,
+                                f.rom.q05[static_cast<std::size_t>(i)]);
+    EXPECT_LT(min_q05_free, 10.0)
+        << "test setup must actually push members below the invert";
+}
+
+TEST(DeviationForm, UpdateBasisPreservesDeviation) {
+    // A basis rebuild re-projects deviations (R = P_new^T P_old); the spread
+    // must be continuous across the rebuild (|Δ| ≤ 10%).
     const int N = 6;
+    const int NC = N - 1;
     SpectralROM1D rom;
-    auto basis_owned = make_rom1d_chain(N, rom, 0.20);  // 20% Manning pert
+    auto basis_owned = make_rom1d_chain(N, rom, 0.20);
+    rom.basis_update_interval = 0.0;
 
-    // Advance 5 steps to build spread
-    for (int s = 0; s < 5; ++s)
-        rom.advance(30.0, 0.01, nullptr);
-    rom.computeQuantiles();
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
 
-    double spread_before = 0.0;
+    std::vector<double> h_det(static_cast<std::size_t>(N));
     for (int i = 0; i < N; ++i)
-        spread_before = std::max(spread_before,
-            rom.q95[static_cast<std::size_t>(i)] -
-            rom.q05[static_cast<std::size_t>(i)]);
-    EXPECT_GT(spread_before, 1e-10) << "spread must exist before reseed";
+        h_det[static_cast<std::size_t>(i)] = (i + 1) * 0.1;
 
-    // Force reseed: non-uniform ramp (constant vector projects to zero on Laplacian modes)
-    std::vector<double> h_new(static_cast<std::size_t>(N));
-    for (int i = 0; i < N; ++i) h_new[static_cast<std::size_t>(i)] = (i + 1) * 0.05;
-    rom.reseed_head_fraction = 0.01;  // very sensitive
-    rom.reseed_min_interval  = 0.0;
-    rom.checkAndReseed(h_new.data(), 200.0);
-    EXPECT_DOUBLE_EQ(rom.last_reseed_time_, 200.0) << "reseed must fire";
+    for (int step = 0; step < 10; ++step)
+        rom.advance(10.0, 0.1, h_det.data(), nullptr);
 
-    // Right after reseed, all members are identical → spread ≈ 0
-    rom.computeQuantiles();
-    double spread_after_reseed = 0.0;
-    for (int i = 0; i < N; ++i)
-        spread_after_reseed = std::max(spread_after_reseed,
-            rom.q95[static_cast<std::size_t>(i)] -
-            rom.q05[static_cast<std::size_t>(i)]);
-    EXPECT_LT(spread_after_reseed, 1e-10) << "spread must collapse immediately after reseed";
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const double spread_before = max_spread(rom);
+    ASSERT_GT(spread_before, 0.0);
 
-    // Advance again — spread must rebuild
-    for (int s = 0; s < 5; ++s)
-        rom.advance(30.0, 0.01, nullptr);
-    rom.computeQuantiles();
+    // Prime the skip criterion, then force a rebuild with a 20% weight bump.
+    std::vector<double> w0(static_cast<std::size_t>(NC), 1.0);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC);
+    std::vector<double> w1 = w0;
+    w1[2] = 1.2;
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC);
 
-    double spread_rebuilt = 0.0;
-    for (int i = 0; i < N; ++i)
-        spread_rebuilt = std::max(spread_rebuilt,
-            rom.q95[static_cast<std::size_t>(i)] -
-            rom.q05[static_cast<std::size_t>(i)]);
-    EXPECT_GT(spread_rebuilt, 1e-10) << "spread must rebuild after reseed + advance";
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const double spread_after = max_spread(rom);
+    EXPECT_NEAR(spread_after, spread_before, spread_before * 0.10)
+        << "spread must be continuous across a basis rebuild";
 }
