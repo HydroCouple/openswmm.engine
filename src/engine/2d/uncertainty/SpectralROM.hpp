@@ -6,23 +6,24 @@
  * @details Runs an M-member ensemble alongside the deterministic CVODE simulation
  *          to produce calibrated prediction intervals at near-zero marginal cost.
  *
- *          The ROM projects the linearized diffusion-wave ODE onto the k-dimensional
- *          Laplacian eigenbasis supplied by SpectralPrecond2D:
+ *          DEVIATION FORM (see docs/uncertainty/DEVIATION_FORM.md): the state per
+ *          member i is the modal projection of the deviation from the deterministic
+ *          CVODE depth field, δa_i = P^T (h_i − h_det), evolving as
  *
- *              da_j/dt = -rate_j(θ) * a_j  +  f_j(θ)
+ *            d(δa_ij)/dt = −(λ_j·keff_ji)·δa_ij
+ *                          − λ_j·(keff_ji − keff_j^nom)·b_j(t)   (Manning sensitivity)
+ *                          + (f_ij − r_coarse[j])               (forcing sensitivity)
  *
- *          where:
- *            rate_j(θ) = λ_j * K_eff / mannings_mult   (mode j decay rate)
- *            f_j(θ)    = (P[:,j]^T * rainfall) * rainfall_mult  (mode j forcing)
+ *          where keff_ji is the per-member depth-weighted mode conductance,
+ *          keff_j^nom = keff_modes_[j] the mm=1 nominal, b_j = P[:,j]^T·h_det, and
+ *          f_ij the member rainfall forcing (r_coarse[j] its mm=rm=1 nominal).
  *
- *          Each ensemble member carries independent parameters θ = {mannings_mult,
- *          rainfall_mult} drawn from a deterministic Latin-hypercube design.
- *          The ODE is solved exactly via an exponential integrator — no substep
- *          limit, no Krylov solves.  Cost: O(M·k) per advance (vs O(M·n) for
- *          full Monte Carlo).
+ *          The nominal member (mm=rm=1) has zero forcing and zero deviation forever,
+ *          so the median tracks the deterministic run by construction. The ODE is
+ *          solved exactly via an exponential integrator — O(M·k) per advance.
  *
- *          After each advance, `computeQuantiles()` reconstructs per-cell depth
- *          distributions and produces 5th / 50th / 95th percentile fields.
+ *          After each advance, `computeQuantiles(h_det)` reconstructs per-cell depth
+ *          as h_det + P·δa (clamped at 0) and produces 5/50/95 percentile fields.
  *
  * @note Requires that the SpectralPrecond2D basis was built successfully (num_kept > 0).
  * @ingroup engine_2d
@@ -92,13 +93,18 @@ struct SpectralROM {
     int              n_modes_active = 0;   ///< Active modes after last advance() call.
     std::vector<bool> mode_active;          ///< length n_kept; true if mode was updated in last advance().
 
-    /// Ensemble coefficient matrix: a_ensemble[i * n_kept + j] = a_{i,j}.
+    /// Ensemble DEVIATION coefficient matrix: a_ensemble[i * n_kept + j] = δa_{i,j}
+    /// = P[:,j]^T (h_i − h_det).  Zero for the nominal member (mm=rm=1) at all times.
     /// Row i = member i; column j = mode j coefficient (length n_ensemble × n_kept).
     std::vector<double> a_ensemble;
 
-    /// Pre-projected rainfall forcing: r_coarse[j] = P[:,j]^T * rainfall_full.
-    /// Updated by advance() each call.
+    /// Pre-projected rainfall forcing: r_coarse[j] = P[:,j]^T * rainfall_full
+    /// (the mm=rm=1 nominal projection). Updated by advance() each call.
     std::vector<double> r_coarse;
+
+    /// Pre-projected deterministic depth: b_coarse[j] = P[:,j]^T * h_det.
+    /// Refreshed at the top of every advance() call.
+    std::vector<double> b_coarse;
 
     /// Parameter design — one entry per member (scalar path).
     std::vector<double> mannings_mult;  ///< Manning's n scale factor per member.
@@ -198,72 +204,74 @@ struct SpectralROM {
     void initialize();
 
     /**
-     * @brief Project a full-resolution depth field onto the ROM basis.
+     * @brief Reset all ensemble deviations to zero and prime the deterministic
+     *        reference for reconstruction.
      *
-     * Sets a_i = P^T * h_full for every ensemble member (same initial state;
-     * members diverge only due to their different parameters during advance()).
+     * Deviation form: every member starts exactly on the deterministic depth
+     * field (δa = 0). h_full is stored as h_det_last_ (used by applyCouplingFlux
+     * and by computeQuantiles until the next advance() supplies a fresh field).
      *
-     * @param h_full  Depth at each triangle (length n_tri).
+     * @param h_full  Deterministic depth at each triangle (length n_tri).
      */
     void seed(const double* h_full);
 
     /**
-     * @brief Advance all ensemble members by dt using the exact exponential
-     *        integrator for the linearized diffusion-wave ROM ODE.
+     * @brief Advance all ensemble deviations by dt (exact exponential step).
      *
-     * For each member i and mode j:
-     *   rate_j = K_eff_j / mannings_mult[i]  *  λ_j
-     *   f_j    = r_coarse[j] * rainfall_mult[i]
-     *   a_{i,j}(t+dt) = (a_{i,j}(t) - f_j/rate_j) * exp(-rate_j*dt) + f_j/rate_j
+     * For each member i and mode j (see DEVIATION_FORM.md §7):
+     *   rate = λ_j · keff_ji
+     *   g    = −λ_j·(keff_ji − keff_j^nom)·b_j + (f_ij − r_coarse[j])
+     *   δa  ← (δa − g/rate)·exp(−rate·dt) + g/rate      (Euler fallback below floor)
+     * with b_j = P[:,j]^T·h_det recomputed every call and keff_j^nom the mm=1
+     * per-mode conductance keff_modes_[j].
      *
-     * When rate_j ≈ 0 (near-null modes or negligible K_eff), falls back to
-     * Euler: a_{i,j}(t+dt) ≈ a_{i,j}(t) + f_j * dt.
-     *
-     * Option A — per-mode Rayleigh-quotient K_eff:
-     *   When h_cell is provided, each mode j gets its own effective conductance
-     *   K_eff_j = K_eff * Σ_t φ_j[t]² * (h[t]/h̄)^(5/3)
-     *   so modes concentrated in deeper cells decay faster.  When h_cell is
-     *   null, K_eff_j = K_eff for all j (uniform, original behaviour).
+     * Option A — per-mode Rayleigh-quotient K_eff via h_cell — is unchanged
+     * (it shapes keff_modes_[j]); h_cell may be null when the basis is already
+     * depth-weighted. h_det is the deterministic reference and is REQUIRED.
      *
      * @param dt        Timestep (s).
      * @param K_eff     Global effective diffusive conductance (m^{4/3}/s).
-     * @param rainfall  Per-triangle rainfall rate (m/s), length n_tri.
-     *                  May be null if there is no rainfall (forcing = 0).
-     * @param h_cell    Current per-triangle depth (m), length n_tri.
-     *                  When non-null, enables per-mode Rayleigh-quotient K_eff
-     *                  (Option A).  May be null for uniform-K_eff behaviour.
+     * @param rainfall  Per-triangle rainfall rate (m/s), length n_tri, or null.
+     * @param h_cell    Per-triangle depth for the Rayleigh-quotient K_eff, or
+     *                  null for uniform-K_eff (e.g. depth-weighted basis).
+     * @param h_det     Deterministic per-triangle depth (m), length n_tri.
+     *                  Required (non-null); also stored as h_det_last_.
      */
     void advance(double dt, double K_eff, const double* rainfall,
-                 const double* h_cell = nullptr);
+                 const double* h_cell, const double* h_det);
 
     /**
      * @brief Reconstruct per-cell depth and compute 5th/50th/95th percentiles.
      *
-     * For each cell: reconstructs h_i = max(0, P * a_i) for all M members,
-     * sorts, and extracts the three quantile levels.
+     * Per cell t, member i:  depth = max(0, h_det[t] + Σ_j P[j,t]·δa_{i,j}).
+     * Sorts the M depths and extracts the three quantile levels.
      *
      * When `parametric_tails` is true, fits a log-normal distribution to the
      * wet-member sub-population (n_wet >= 4) and replaces the sort-based q95
-     * with exp(mu + 1.6449·sigma).  This reduces sensitivity to the top 1-2
-     * samples when M is small.  q05 and q50 are always sort-based.
+     * with exp(mu + 1.6449·sigma).  q05 and q50 are always sort-based.
      *
-     * Result is written to q05, q50, q95 (length n_tri).
+     * @param h_det            Deterministic per-triangle depth (length n_tri),
+     *                         non-null.
+     * @param parametric_tails Enable the log-normal upper-tail estimate.
      */
-    void computeQuantiles(bool parametric_tails = false);
+    void computeQuantiles(const double* h_det, bool parametric_tails = false);
 
     /**
      * @brief Adjust ensemble ROM coefficients for 2D↔1D coupling exchange.
      *
-     * For each non-outfall coupling point, reconstructs the per-member depth at
-     * the coupling cell, evaluates the orifice flow using each member's individual
-     * depth and Manning's multiplier, and updates the ROM coefficients:
+     * Deviation form: the deterministic coupling exchange is already inside
+     * h_det (via the CVODE/coupling pipeline), so only the per-member DIFFERENCE
+     * from the deterministic flux is applied to each member's deviation:
      *
-     *   Q_i   = (Cd * A * sign(dh) * sqrt(2g|dh|)) / mannings_mult[i]
-     *   δa_{i,j} = P[j, ci] * (-Q_i * dt / tri_area)
+     *   Q_det = Cd · A · sign(dh_det) · sqrt(2g|dh_det|)         (nominal Cd, deterministic depth/head)
+     *   Q_i   = Cd · cd_mult[i] · A · sign(dh_i) · sqrt(2g|dh_i|) (per-member Cd, reconstructed depth/head)
+     *   δa_{i,j} += P[j, ci] · (−(Q_i − Q_det) · dt / tri_area)
      *
-     * Scaling Q by 1/mannings_mult[i] captures that higher Manning's n reduces
-     * the effective drainage conductance of the 2D surface toward the inlet.
-     * Members with low n drain faster; members with high n drain slower.
+     * Orifice discharge does NOT depend on Manning's n (that governs surface
+     * conveyance, not the inlet), so the former /mannings_mult scaling is
+     * removed — inlet-conveyance uncertainty, if wanted, belongs to the Cd
+     * multiplier (cd_mult) or a future dedicated parameter.
+     * coupling_unc_output still reports absolute per-member flux bounds Q_i.
      *
      * Must be called AFTER computeCouplingExchange() and BEFORE advance().
      *
@@ -317,6 +325,7 @@ struct SpectralROM {
 
 private:
     std::vector<double> h_work_;      ///< n_tri: scratch for reconstruction.
+    std::vector<double> h_det_last_;  ///< n_tri: deterministic depth from the last advance()/seed().
     std::vector<double> sort_buf_;    ///< n_ensemble: per-cell sort workspace.
     std::vector<double> keff_modes_;  ///< n_kept: per-mode K_eff (Rayleigh quotient, scalar path).
     std::vector<double> mode_energy_; ///< n_kept: E_j = mean_i(a²_{i,j}), recomputed each advance().

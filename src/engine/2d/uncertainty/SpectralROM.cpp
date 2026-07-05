@@ -77,12 +77,14 @@ void SpectralROM::initialize() {
     a_ensemble.assign(static_cast<std::size_t>(n_ensemble) *
                       static_cast<std::size_t>(n_kept), 0.0);
     r_coarse.assign(static_cast<std::size_t>(n_kept), 0.0);
+    b_coarse.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     q05.assign(static_cast<std::size_t>(n_tri), 0.0);
     q50.assign(static_cast<std::size_t>(n_tri), 0.0);
     q95.assign(static_cast<std::size_t>(n_tri), 0.0);
 
     h_work_.assign(static_cast<std::size_t>(n_tri), 0.0);
+    h_det_last_.assign(static_cast<std::size_t>(n_tri), 0.0);
     sort_buf_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
     keff_modes_.assign(static_cast<std::size_t>(n_kept), 0.0);
     mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
@@ -154,20 +156,11 @@ void SpectralROM::initialize() {
 void SpectralROM::seed(const double* h_full) {
     assert(is_ready());
 
-    // a_i = P^T * h_full  (projection; same for every member)
-    // P is n_tri × n_kept, column-major: P[j * n_tri + t] = P_{t,j}
-    auto nt = static_cast<std::size_t>(n_tri);
-    auto nk = static_cast<std::size_t>(n_kept);
-
-    for (std::size_t j = 0; j < nk; ++j) {
-        const double* Pj = &basis->P[j * nt];
-        double dot = 0.0;
-        for (std::size_t t = 0; t < nt; ++t)
-            dot += Pj[t] * h_full[t];
-
-        for (int i = 0; i < n_ensemble; ++i)
-            a_ensemble[static_cast<std::size_t>(i) * nk + j] = dot;
-    }
+    // Deviation form: every member starts exactly on the deterministic depth
+    // field (δa = 0). h_full primes h_det_last_ for applyCouplingFlux() and
+    // computeQuantiles() until the next advance() supplies a fresh reference.
+    std::fill(a_ensemble.begin(), a_ensemble.end(), 0.0);
+    h_det_last_.assign(h_full, h_full + static_cast<std::size_t>(n_tri));
 }
 
 // ============================================================================
@@ -175,13 +168,14 @@ void SpectralROM::seed(const double* h_full) {
 // ============================================================================
 
 void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
-                          const double* h_cell) {
+                          const double* h_cell, const double* h_det) {
     assert(is_ready());
+    assert(h_det != nullptr);
 
     auto nt = static_cast<std::size_t>(n_tri);
     auto nk = static_cast<std::size_t>(n_kept);
 
-    // ---- Step 1: Compute per-mode energy E_j = mean_i(a²_{i,j}) -------------
+    // ---- Step 1: Deviation mode energy E_j = mean_i(δa²_{i,j}) --------------
     for (std::size_t j = 0; j < nk; ++j) {
         double sum_sq = 0.0;
         for (int i = 0; i < n_ensemble; ++i) {
@@ -191,49 +185,25 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         mode_energy_[j] = sum_sq / static_cast<double>(n_ensemble);
     }
 
-    // ---- Step 2: Project rainfall into coarse space -------------------------
+    // ---- Step 2: Project rainfall and deterministic depth into coarse space -
     std::fill(r_coarse.begin(), r_coarse.end(), 0.0);
-    if (rainfall) {
-        for (std::size_t j = 0; j < nk; ++j) {
-            const double* Pj = &basis->P[j * nt];
-            double dot = 0.0;
+    for (std::size_t j = 0; j < nk; ++j) {
+        const double* Pj = &basis->P[j * nt];
+        double dot_b = 0.0;
+        for (std::size_t t = 0; t < nt; ++t)
+            dot_b += Pj[t] * h_det[t];
+        b_coarse[j] = dot_b;
+        if (rainfall) {
+            double dot_r = 0.0;
             for (std::size_t t = 0; t < nt; ++t)
-                dot += Pj[t] * rainfall[t];
-            r_coarse[j] = dot;
+                dot_r += Pj[t] * rainfall[t];
+            r_coarse[j] = dot_r;
         }
     }
 
-    // ---- Step 3: Update active set (transient dropping) ---------------------
-    // Mode j is active if its current energy OR its first-order rain forcing
-    // exceeds mode_drop_threshold.  Inactive modes are skipped in the advance
-    // and reconstruction loops, reducing O(M·k) cost during inter-event decay.
-    // The rain_scale estimate uses the maximum rainfall_mult across members so
-    // no member is falsely skipped when it has significant forcing.
-    const bool has_ensemble_rain = !ensemble_rainfall_.empty()
-                                    && (rainfall != nullptr)
-                                    && (mean_ensemble_rain_ > 1.0e-30);
-    // Max intensity ratio across members: used to scale rain activation criterion.
-    double max_scale = 1.0 + rainfall_pert;  // scalar path upper bound
-    if (has_ensemble_rain) {
-        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_scale = std::max(max_scale,
-                                 ensemble_rainfall_[i] / mean_ensemble_rain_);
-    }
-    const double rain_scale = (rainfall != nullptr)
-                               ? std::abs(dt) * max_scale
-                               : 0.0;
-    n_modes_active = 0;
-    for (std::size_t j = 0; j < nk; ++j) {
-        bool by_energy = mode_energy_[j] >= mode_drop_threshold;
-        bool by_rain   = rain_scale > 0.0 &&
-                         std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
-        mode_active[j] = by_energy || by_rain;
-        if (mode_active[j]) ++n_modes_active;
-    }
-
-    // ---- Step 4: Precompute depth-weight h_weight[t] = (h[t]/h̄)^(5/3) ------
-    // Used by both scalar and spatial Rayleigh-quotient K_eff computations.
-    // When h_cell is null: uniform weights (1.0).
+    // ---- Step 4 (moved up): depth-weight + nominal per-mode keff ------------
+    // keff_modes_[j] is the mm=1 nominal conductance; needed both for the
+    // active-set Manning bound and for the Manning-sensitivity forcing.
     const bool has_hcell = (h_cell != nullptr) && (K_eff > 0.0);
     std::fill(h_weight_.begin(), h_weight_.end(), 1.0);
     if (has_hcell) {
@@ -249,12 +219,8 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             }
         }
     }
-
-    // Scalar Rayleigh-quotient K_eff (per-mode, member-independent).
-    // Used by the scalar Manning path; overridden per-member for spatial Manning.
     std::fill(keff_modes_.begin(), keff_modes_.end(), K_eff);
     for (std::size_t j = 0; j < nk; ++j) {
-        if (!mode_active[j]) continue;
         const double* Pj = &basis->P[j * nt];
         double rq = 0.0;
         for (std::size_t t = 0; t < nt; ++t)
@@ -263,12 +229,60 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
     }
 
     // Flags for active paths (avoids repeated checks in the inner loop).
+    const bool has_ensemble_rain = !ensemble_rainfall_.empty()
+                                    && (rainfall != nullptr)
+                                    && (mean_ensemble_rain_ > 1.0e-30);
     const bool use_spatial_mann = spatial_mannings.is_spatial();
     const bool use_spatial_rain = spatial_rainfall.is_spatial() && (rainfall != nullptr)
                                   && !has_ensemble_rain;
-    // has_ensemble_rain already accounts for rainfall != nullptr and mean > 0.
 
-    // ---- Step 5: Advance active modes ---------------------------------------
+    // ---- Step 3: Active set --------------------------------------------------
+    // Deviation form: a mode participates when its current deviation energy OR
+    // either first-order forcing-sensitivity magnitude exceeds the drop
+    // threshold. Both sensitivity scales use |factor − 1| so zero perturbation
+    // ⇒ zero forcing ⇒ modes stay inactive and δa stays 0.
+    //   rain scale : max_i |scale_i − 1|
+    //   Manning scale : max deviation of keff_ji/keff_nom from 1, bounded by
+    //     max_i,t |1/W_n − 1| (spatial) or max_i |1/mm_i − 1| (scalar).
+    double max_rain_dev = 0.0;
+    if (has_ensemble_rain) {
+        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
+            max_rain_dev = std::max(max_rain_dev,
+                std::abs(ensemble_rainfall_[i] / mean_ensemble_rain_ - 1.0));
+    } else {
+        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
+            max_rain_dev = std::max(max_rain_dev,
+                                    std::abs(rainfall_mult[i] - 1.0));
+    }
+    double max_mann_dev = 0.0;
+    if (use_spatial_mann) {
+        for (const double w : spatial_mannings.values)
+            max_mann_dev = std::max(max_mann_dev, std::abs(1.0 / w - 1.0));
+    } else {
+        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
+            max_mann_dev = std::max(max_mann_dev,
+                                    std::abs(1.0 / mannings_mult[i] - 1.0));
+    }
+    const double rain_scale = (rainfall != nullptr)
+                               ? std::abs(dt) * max_rain_dev : 0.0;
+    const double mann_scale = std::abs(dt) * max_mann_dev;
+
+    n_modes_active = 0;
+    for (std::size_t j = 0; j < nk; ++j) {
+        const double lam = basis->eigenvalues[j];
+        bool by_energy  = mode_energy_[j] >= mode_drop_threshold;
+        bool by_rain    = rain_scale > 0.0 &&
+                          std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
+        bool by_manning = mann_scale > 0.0 &&
+                          lam * keff_modes_[j] * std::abs(b_coarse[j]) * mann_scale
+                              >= mode_drop_threshold;
+        mode_active[j] = by_energy || by_rain || by_manning;
+        if (mode_active[j]) ++n_modes_active;
+    }
+
+    // ---- Step 5: Advance active deviations (exact exponential step) ----------
+    //   rate = λ_j · keff_ji
+    //   g    = −λ_j·(keff_ji − keff_modes_[j])·b_j + (f_ij − r_coarse[j])
     const double rate_floor = 1.0e-12;
 
     for (int i = 0; i < n_ensemble; ++i) {
@@ -291,51 +305,49 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             // --- effective decay rate for mode j, member i ---
             double keff_ji;
             if (W_n_i) {
-                // Spatial Manning: keff_j^i = K_eff * Σ_t φ_j[t]² * h_wt / W_n[i][t]
                 double rq = 0.0;
                 for (std::size_t t = 0; t < nt; ++t)
                     rq += Pj[t] * Pj[t] * h_weight_[t] / W_n_i[t];
                 keff_ji = K_eff * rq;
             } else {
-                // Scalar Manning: keff_modes_[j] / mannings_mult[i]
                 keff_ji = keff_modes_[j] / mm;
             }
 
-            // --- mode forcing for mode j, member i ---
+            // --- member rainfall forcing f_ij ---
             double fj;
             if (has_ensemble_rain) {
-                // RunoffEnsemble path: per-member multiplier on the deterministic
-                // rainfall projection.  Preserves spatial structure (r_coarse[j])
-                // while scaling intensity by each member's runoff rate.
                 fj = r_coarse[j] * (ensemble_rainfall_[ui] / mean_ensemble_rain_);
             } else if (W_r_i) {
-                // Spatial rainfall: f_j^i = Σ_t P[j,t] * rainfall[t] * W_rain[i][t]
                 fj = 0.0;
                 for (std::size_t t = 0; t < nt; ++t)
                     fj += Pj[t] * rainfall[t] * W_r_i[t];
             } else {
-                // Scalar rainfall: r_coarse[j] * rainfall_mult[i]
                 fj = r_coarse[j] * rm;
             }
 
-            // --- exact exponential integrator ---
-            double rate = lam * keff_ji;
+            // --- deviation forcing g and exact exponential integrator ---
+            const double rate = lam * keff_ji;
+            const double g    = -lam * (keff_ji - keff_modes_[j]) * b_coarse[j]
+                                + (fj - r_coarse[j]);
             if (rate > rate_floor) {
-                double steady = fj / rate;
+                const double steady = g / rate;
                 ai[j] = (ai[j] - steady) * std::exp(-rate * dt) + steady;
             } else {
-                ai[j] += fj * dt;
+                ai[j] += g * dt;
             }
         }
     }
+
+    h_det_last_.assign(h_det, h_det + nt);
 }
 
 // ============================================================================
 // computeQuantiles
 // ============================================================================
 
-void SpectralROM::computeQuantiles(bool parametric_tails) {
+void SpectralROM::computeQuantiles(const double* h_det, bool parametric_tails) {
     assert(is_ready());
+    assert(h_det != nullptr);
 
     auto nt = static_cast<std::size_t>(n_tri);
     auto nk = static_cast<std::size_t>(n_kept);
@@ -348,10 +360,11 @@ void SpectralROM::computeQuantiles(bool parametric_tails) {
     int idx95 = std::min(n_ensemble - 1, static_cast<int>(0.95 * (M - 1.0) + 0.5));
 
     for (std::size_t t = 0; t < nt; ++t) {
-        // Reconstruct depth at cell t for all members
+        const double h_det_t = h_det[t];
+        // Reconstruct depth at cell t for all members: h_det + P·δa, floored at 0.
         for (int i = 0; i < n_ensemble; ++i) {
             const double* ai = &a_ensemble[static_cast<std::size_t>(i) * nk];
-            double h = 0.0;
+            double h = h_det_t;
             for (std::size_t j = 0; j < nk; ++j) {
                 if (!mode_active[j]) continue;
                 h += basis->P[j * nt + t] * ai[j];
@@ -428,6 +441,24 @@ void SpectralROM::applyCouplingFlux(
         double tri_area = mesh.tri_area[ci];
         if (tri_area < 1.0e-30) continue;
 
+        // Orifice discharge (no Manning dependence): Q = Cd·mult · A · sign(dh)·sqrt(2g|dh|),
+        // capped by the draining depth so it cannot pull a cell below zero.
+        auto orifice_Q = [&](double h_2d, double h_1d, double cd_mult_i) -> double {
+            double dh = (cell_z + h_2d) - h_1d;
+            if (std::abs(dh) < dh_eps) return 0.0;
+            double sign = (dh > 0.0) ? 1.0 : -1.0;
+            double Q = sign * cp.cd * cd_mult_i * cp.area * std::sqrt(G2 * std::abs(dh));
+            if (Q > 0.0) Q = std::min(Q, h_2d * tri_area / dt);
+            return Q;
+        };
+
+        // Deterministic reference flux: nominal Cd (=1), deterministic depth and
+        // 1D head. The deterministic exchange is already inside h_det via the
+        // coupling pipeline, so only Q_i − Q_det is applied to each member.
+        const double h_2d_det = std::max(h_det_last_[ci], 0.0);
+        const double h_1d_det = node_heads[cp.node_idx];
+        const double Q_det    = orifice_Q(h_2d_det, h_1d_det, 1.0);
+
         // Pre-compute rom1d active index for this coupling node (if 1D ROM active).
         const bool use_rom1d = rom1d && rom1d->is_ready()
                                && !rom1d->full_to_active.empty()
@@ -444,44 +475,26 @@ void SpectralROM::applyCouplingFlux(
             auto    ui = static_cast<std::size_t>(i);
             double* ai = &a_ensemble[ui * nk];
 
-            // Per-member 1D head: use ROM1D reconstruction when available,
-            // fall back to shared deterministic head for outfalls or unregistered nodes.
+            // Per-member 1D head: ROM1D reconstruction when available, else the
+            // shared deterministic head (outfalls / unregistered nodes).
             double h_1d_abs = (active_1d_idx >= 0)
                               ? rom1d->reconstructHead(i, active_1d_idx)
                               : node_heads[cp.node_idx];
 
-            // Reconstruct depth at coupling cell for this member
-            double h_2d = 0.0;
+            // Reconstruct per-member depth at the coupling cell: h_det + P·δa.
+            double h_2d = h_2d_det;
             for (std::size_t j = 0; j < nk; ++j)
                 h_2d += basis->P[j * nt + ci] * ai[j];
             h_2d = std::max(h_2d, 0.0);
 
-            double dh = (cell_z + h_2d) - h_1d_abs;
-            if (std::abs(dh) < dh_eps) continue;
+            const double Q = orifice_Q(h_2d, h_1d_abs, cd_mult[ui]);
 
-            // Orifice exchange scaled by 1/W_n: higher Manning's n reduces
-            // effective drainage conductance toward the inlet.
-            // Spatial path: use the per-cell multiplier at the coupling cell.
-            // Scalar path: use the global per-member multiplier.
-            double sign = (dh > 0.0) ? 1.0 : -1.0;
-            double mm = spatial_mannings.is_spatial()
-                ? spatial_mannings.at(i, static_cast<int>(ci))
-                : mannings_mult[ui];
-            double cd_i = cd_mult[ui];  // per-member Cd multiplier (1.0 when cd_pert=0)
-            double Q    = sign * cp.cd * cd_i * cp.area * std::sqrt(G2 * std::abs(dh)) / mm;
-
-            // Limit drainage by available depth (cannot drain below zero)
-            if (Q > 0.0)
-                Q = std::min(Q, h_2d * tri_area / dt);
-
-            // Track flux bounds across members.
+            // Track absolute per-member flux bounds (diagnostic output).
             if (Q < q_min_cp) q_min_cp = Q;
             if (Q > q_max_cp) q_max_cp = Q;
 
-            // Depth change (negative = drainage out of cell)
-            double delta_h = -Q * dt / tri_area;
-
-            // Update ROM coefficients: δa_j = P[j, ci] * δh
+            // Apply only the deviation from the deterministic flux to δa.
+            const double delta_h = -(Q - Q_det) * dt / tri_area;
             for (std::size_t j = 0; j < nk; ++j)
                 ai[j] += basis->P[j * nt + ci] * delta_h;
         }

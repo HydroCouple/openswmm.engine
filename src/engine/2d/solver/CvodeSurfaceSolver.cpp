@@ -300,8 +300,11 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
         const double* h_cell = rom_->basis->depth_weighted
                                    ? nullptr
                                    : ctx_.state->depth.data();
-        rom_->advance(dt, effective_keff_, rain, h_cell);
-        rom_->computeQuantiles(ctx_.opts->rom_parametric_tails);
+        // Deterministic depth reference for the deviation form (always the
+        // current CVODE depth field; distinct from h_cell, which may be null).
+        const double* h_det = ctx_.state->depth.data();
+        rom_->advance(dt, effective_keff_, rain, h_cell, h_det);
+        rom_->computeQuantiles(h_det, ctx_.opts->rom_parametric_tails);
     };
 
     if (flag < 0) {
