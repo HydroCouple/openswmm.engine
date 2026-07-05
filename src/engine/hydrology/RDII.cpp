@@ -538,5 +538,16 @@ void RDIISolver::applyRdiiInflows(SimulationContext& ctx) const {
     }
 }
 
+// ---------------------------------------------------------------------------
+// rdiiNodeList — sorted unique node indices carrying an RDII UH inflow
+// (legacy RdiiNodeIndex, built by createRdiiFile()).
+// ---------------------------------------------------------------------------
+std::vector<int> RDIISolver::rdiiNodeList() const {
+    std::vector<int> nodes(groups_.node_idx.begin(), groups_.node_idx.end());
+    std::sort(nodes.begin(), nodes.end());
+    nodes.erase(std::unique(nodes.begin(), nodes.end()), nodes.end());
+    return nodes;
+}
+
 } // namespace rdii
 } // namespace openswmm

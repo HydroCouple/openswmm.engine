@@ -32,10 +32,8 @@
 #include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
-#include <fstream>
 #include <unordered_map>
 #include <vector>
-
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
 #endif
@@ -209,7 +207,6 @@ public:
 
     /// Get total exchange flow (sum of coupling flows, m³/s).
     double totalExchangeFlow() const;
-
 #ifdef OPENSWMM_HAS_2D
     /// Access CVODE solver statistics.
     long lastCvodeSteps() const {
@@ -301,7 +298,7 @@ private:
     double last_t_ = 0.0;
 
     /// Integrate one accumulated macro-step window: coupling exchange, sources,
-    /// solver advance (with failure handling), booking, diagnostics. Extracted
+    /// solver advance (with failure handling), and booking. Extracted
     /// from advancePostRouting so finalize() can flush a partial window.
     void fireAdvanceWindow(SimulationContext& ctx, double dt, double t);
 
@@ -309,19 +306,6 @@ private:
     /// registry indices on the first advance (ctx.table_names is populated by
     /// then), not at parse time.
     bool boundary_names_resolved_ = false;
-
-    // -----------------------------------------------------------------------
-    // Stiffness-attribution diagnostic CSV (opt-in via OPENSWMM_2D_DIAG_CSV).
-    // One row per executed 2D advance: per-advance CVODE counter deltas
-    // correlated with the wet/dry-front size and the coupling-exchange
-    // magnitude, so the wet/dry vs coupling stiffness contributions can be
-    // separated. Disabled (null stream) unless the env var names a path.
-    // -----------------------------------------------------------------------
-    std::unique_ptr<std::ofstream> diag_csv_;   ///< open output stream, or null
-    bool diag_checked_   = false;               ///< env var resolved once
-    int  diag_prev_nwet_ = 0;                   ///< previous wet-cell count (for dn_wet)
-    void writeDiagRow(SimulationContext& ctx, double dt, double t);
-
 #ifdef OPENSWMM_HAS_2D
     /// Time integrator, chosen at runtime. Default is the serial CPU
     /// CvodeSurfaceSolver (constructed in initialize()); a future GPU plugin

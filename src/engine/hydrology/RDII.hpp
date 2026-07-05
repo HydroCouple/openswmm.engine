@@ -156,6 +156,14 @@ public:
     /// `active == false` means the response uses the legacy linear IA model.
     std::vector<std::array<ExpDecayParams, 3>> decay_params;
 
+    /// Buffered per-node RDII flow (CFS), sized n_nodes. Read by the RDII
+    /// interface file SAVE path (RdiiInterfaceFile::saveFlows).
+    const std::vector<double>& nodeFlows() const { return node_rdii_flow_; }
+
+    /// Sorted unique node indices that have an RDII unit-hydrograph inflow
+    /// (legacy RdiiNodeIndex; used as the SAVE-file header node list).
+    std::vector<int> rdiiNodeList() const;
+
     /// Compute rain processing interval for a UH (minimum limb duration, capped by wet_step).
     static int getRainInterval(const UnitHydParams& uh, double wet_step);
 

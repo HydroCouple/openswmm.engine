@@ -44,7 +44,7 @@ inline double sq(double x) noexcept { return x * x; }
 // the C-property (F → 0 as Δη → 0). The bound feeds the implicit corrector,
 // the FD Jacobian, AND the diagonal preconditioner (all read the stored flux),
 // so the whole stiff-at-flat-water pathway is regularized in one place.
-// Value comes from SolverOptions2D::flux_dh_eps (default 1 mm, parseable from
+// Value comes from SolverOptions2D::flux_dh_eps (default 4 mm, parseable from
 // [2D_OPTIONS] FLUX_DH_EPS); the env var OPENSWMM_2D_FLUX_DH_EPS overrides it
 // when set (handy for sweeps). 0 restores the bare √.
 inline double fluxDhEps(double opt_default) {

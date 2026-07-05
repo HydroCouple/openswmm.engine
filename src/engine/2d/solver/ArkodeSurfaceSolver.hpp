@@ -99,8 +99,6 @@ public:
 
     double last_step_size() const noexcept override { return last_h_; }
 
-    SolverAdvanceStats last_advance_stats() const noexcept override { return last_stats_; }
-
     const std::vector<double>& last_coupling_exchange() const noexcept override {
         return last_coupling_exchange_;
     }
@@ -152,12 +150,6 @@ private:
     // solve / no AMG ⇒ scales to 1M cells.
     std::vector<double> prec_dV_;
     std::vector<double> prec_wq_;
-
-    /// Lagged-preconditioner diagnostics (OPENSWMM_2D_PREC_STATS).
-    long   prec_total_calls_ = 0;
-    long   prec_full_builds_ = 0;
-
-    SolverAdvanceStats last_stats_;
 
     /// Cached diagonal of the Jacobi preconditioner, sized to n_triangles.
     std::vector<double> precond_diag_;

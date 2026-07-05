@@ -59,7 +59,7 @@ struct KokkosSolverContext {
     StateViews* state       = nullptr;
     double      dry_depth   = 1.0e-3;
     double      limiter_eps = 1.0e-6;
-    double      flux_dh_eps = 1.0e-3;   ///< √|Δη| regularization (FLUX_DH_EPS)
+    double      flux_dh_eps = 4.0e-3;   ///< √|Δη| regularization (FLUX_DH_EPS)
     bool        prec_diag_built = false; ///< Jacobi diagonal cached (lag reuse)
 #if defined(OPENSWMM_HAVE_HYPRE)
     bool                     use_amg = false;   ///< PRECONDITIONER=AMG selected
@@ -86,9 +86,6 @@ public:
     long   last_num_steps() const noexcept override { return last_nsteps_; }
     double last_step_size() const noexcept override { return last_h_; }
     bool   is_initialized() const noexcept override { return cvode_mem_ != nullptr; }
-
-    /// Per-advance CVODE counter deltas (see SolverAdvanceStats).
-    SolverAdvanceStats last_advance_stats() const noexcept override { return last_stats_; }
 
 private:
     // SUNDIALS handles.
@@ -117,7 +114,6 @@ private:
     int  nv_ = 0;
     long last_nsteps_ = 0;
     double last_h_    = 0.0;
-    SolverAdvanceStats last_stats_;
 
     // Host<->device transfer helpers (no-ops in Phase 1 OpenMP host space).
     void uploadMesh();

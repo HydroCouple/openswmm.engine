@@ -892,6 +892,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double rdii    = (up < mb.qual_routing_ii_in.size())     ? mb.qual_routing_ii_in[up]    : 0.0;
             double dwf     = (up < mb.qual_routing_dw_in.size())     ? mb.qual_routing_dw_in[up]    : 0.0;
             double gw      = (up < mb.qual_routing_gw_in.size())     ? mb.qual_routing_gw_in[up]    : 0.0;
+            double ext     = (up < mb.qual_routing_ex_in.size())     ? mb.qual_routing_ex_in[up]    : 0.0;
             double outflow = (up < mb.qual_routing_outflow.size())   ? mb.qual_routing_outflow[up]  : 0.0;
             double flood   = (up < mb.qual_routing_flood.size())     ? mb.qual_routing_flood[up]    : 0.0;
             double seep    = (up < mb.qual_routing_seep.size())      ? mb.qual_routing_seep[up]     : 0.0;
@@ -903,7 +904,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             qrow("Wet Weather Inflow .......", wet);
             qrow("Groundwater Inflow .......", gw);
             qrow("RDII Inflow ..............", rdii);
-            qrow("External Inflow ..........", 0.0);
+            qrow("External Inflow ..........", ext);
             qrow("External Outflow .........", outflow);
             qrow("Flooding Loss ............", flood);
             qrow("Exfiltration Loss ........", seep);
@@ -911,7 +912,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             qrow("Initial Stored Mass ......", init);
             qrow("Final Stored Mass ........", final_);
 
-            double total_in  = wet + rdii + dwf + gw + init;
+            double total_in  = wet + rdii + dwf + gw + ext + init;
             double total_out = outflow + flood + reacted + seep + final_;
             double err_pct = (total_in > 0.0) ? (total_in - total_out) / total_in * 100.0 : 0.0;
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);

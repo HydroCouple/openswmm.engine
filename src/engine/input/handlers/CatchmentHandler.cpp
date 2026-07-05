@@ -295,7 +295,10 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
             // Station + Units are required for STAN_PRCP; the compact `path:col`
             // (USER_CSV) form keeps its older behaviour (trailing scale factor).
             if (ctx.gages.file_format[idx] == RainFileFormat::STAN_PRCP) {
-                if (tok.size() > 6) ctx.gages.station_id[idx] = tok[6];
+                // '*' is the writer's placeholder for "no station" — normalize
+                // back to empty ("accept all rows") instead of filtering on a
+                // literal '*' station that would zero out the rainfall.
+                if (tok.size() > 6 && tok[6] != "*") ctx.gages.station_id[idx] = tok[6];
                 if (tok.size() > 7) {
                     const std::string u = Tokenizer::to_upper(tok[7]);
                     ctx.gages.rain_units[idx] = (u == "MM") ? 1 : 0; // default IN

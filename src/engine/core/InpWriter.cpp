@@ -864,15 +864,42 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
     const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
                     : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
-    if(ts>=0)std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s\n",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
+    const double sf = ctx.gages.scale_factor[u];
+    if(ts>=0){
+        std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
+        if(sf!=1.0)std::fprintf(f," %.4g",sf);
+        std::fprintf(f,"\n");
+    }
     else if(!ctx.gages.file_path[u].empty()){
         const std::string tok = emit_path_token(ctx.gages.file_path[u],
                                                  dst_dir, force_abs_paths, warnings);
-        std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\" %s\n",
-                      ctx.gage_names.name_of(j).c_str(),fmt,h,m,
-                      ctx.gages.snow_factor[u],
-                      tok.c_str(),
-                      ctx.gages.col_name[u].c_str());
+        if(ctx.gages.file_format[u]==RainFileFormat::USER_CSV){
+            // Compact openswmm extension — the reader expects one "path:col" token.
+            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s:%s\"",
+                          ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+                          ctx.gages.snow_factor[u],
+                          tok.c_str(),
+                          ctx.gages.col_name[u].c_str());
+            if(sf!=1.0)std::fprintf(f," %.4g",sf);
+        }else{
+            // Legacy FILE grammar: Fname Station Units [StartDate] [SF] — the
+            // station + units tokens are REQUIRED (gage.c errors with ERROR 203
+            // without them). An empty station gets a '*' placeholder so the
+            // line stays parseable; legacy will match no rows on it.
+            const std::string& sta = ctx.gages.station_id[u];
+            if(sta.empty() && warnings)
+                warnings->push_back("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+
+                                    "\": no station ID set; wrote '*' — the legacy "
+                                    "engine will match no rows in \""+tok+"\"");
+            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\" %s %s",
+                          ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+                          ctx.gages.snow_factor[u],
+                          tok.c_str(),
+                          sta.empty() ? "*" : sta.c_str(),
+                          ctx.gages.rain_units[u]==1 ? "MM" : "IN");
+            if(sf!=1.0)std::fprintf(f," * %.4g",sf); // '*' = no start date (tok[8])
+        }
+        std::fprintf(f,"\n");
     }
     }}
 

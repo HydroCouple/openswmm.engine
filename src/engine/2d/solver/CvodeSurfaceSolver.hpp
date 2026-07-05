@@ -134,9 +134,6 @@ public:
     /// Get last internal step size used by CVODE.
     double last_step_size() const noexcept override { return last_h_; }
 
-    /// Per-advance CVODE counter deltas (see SolverAdvanceStats).
-    SolverAdvanceStats last_advance_stats() const noexcept override { return last_stats_; }
-
     /// Per-point ∫Q dt (m³, +drain/−spill) accumulated over the last advance(),
     /// one entry per live node-coupling point (state.node_coupling order). Empty
     /// unless the live-coupling macro-step path is active. The caller books these
@@ -169,16 +166,6 @@ private:
     int    nc_ = 0;                              ///< number of live node-coupling points
     std::vector<double> coupling_accum_start_;   ///< A_k at the start of the current advance
     std::vector<double> last_coupling_exchange_; ///< per-point ∫Q dt over the last advance (m³)
-
-    /// Lagged-preconditioner diagnostics (OPENSWMM_2D_PREC_STATS). total = all
-    /// psetup calls; full_builds = the subset that rebuilt (jok == SUNFALSE);
-    /// reuses = total − full_builds. (CVodeGetNumPrecEvals only counts the
-    /// jok == SUNFALSE subset, so it cannot report the reuse fraction by itself.)
-    long   prec_total_calls_ = 0;
-    long   prec_full_builds_ = 0;
-
-    /// Per-advance counter deltas, refreshed each advance() (diagnostic CSV).
-    SolverAdvanceStats last_stats_;
 
     /// Cached diagonal of the Jacobi preconditioner, sized to n_triangles.
     /// Populated in psetup_fn from the current edge fluxes; consumed in

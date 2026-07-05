@@ -125,8 +125,10 @@ void handle_inflows(SimulationContext& ctx, const std::vector<std::string>& line
         if (tok.size() < 3) continue;
         // Node  Constituent  TimeSeries  [Type]  [Mfactor]  [Sfactor]  [Baseline]  [Pattern]
 
+        // The node may be defined in a later section (legacy two-pass parsing
+        // is order-independent) — store the raw name and let PostParseResolver
+        // re-resolve; a name that never resolves becomes ERR_NAME there.
         const int node_idx = ctx.node_names.find(tok[0]);
-        if (node_idx < 0) continue;
 
         const std::string& constituent = tok[1];
         const std::string& ts_name     = tok[2];
@@ -138,7 +140,8 @@ void handle_inflows(SimulationContext& ctx, const std::vector<std::string>& line
         std::string pat  = (tok.size() > 7) ? tok[7] : std::string{};
 
         ctx.ext_inflows.add(node_idx, constituent, ts_name,
-                            inflow_type, m_factor, s_factor, baseline, pat);
+                            inflow_type, m_factor, s_factor, baseline, pat,
+                            tok[0]);
     }
 }
 
@@ -152,8 +155,8 @@ void handle_dwf(SimulationContext& ctx, const std::vector<std::string>& lines) {
         if (tok.size() < 3) continue;
         // Node  Constituent  AvgValue  [Pat1]  [Pat2]  [Pat3]  [Pat4]
 
+        // Deferred node resolution — see handle_inflows() note.
         const int node_idx = ctx.node_names.find(tok[0]);
-        if (node_idx < 0) continue;
 
         const std::string& constituent = tok[1];
         double avg_value = to_double(tok[2]);
@@ -163,7 +166,8 @@ void handle_dwf(SimulationContext& ctx, const std::vector<std::string>& lines) {
         std::string p3 = (tok.size() > 5) ? tok[5] : std::string{};
         std::string p4 = (tok.size() > 6) ? tok[6] : std::string{};
 
-        ctx.dwf_inflows.add(node_idx, constituent, avg_value, p1, p2, p3, p4);
+        ctx.dwf_inflows.add(node_idx, constituent, avg_value, p1, p2, p3, p4,
+                            tok[0]);
     }
 }
 
@@ -177,13 +181,13 @@ void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines) 
         if (tok.size() < 3) continue;
         // Node  UHgroup  SewerArea
 
+        // Deferred node resolution — see handle_inflows() note.
         const int node_idx = ctx.node_names.find(tok[0]);
-        if (node_idx < 0) continue;
 
         const std::string& uh_name = tok[1];
         double sewer_area = to_double(tok[2]);
 
-        ctx.rdii_assigns.add(node_idx, uh_name, sewer_area);
+        ctx.rdii_assigns.add(node_idx, uh_name, sewer_area, tok[0]);
     }
 }
 

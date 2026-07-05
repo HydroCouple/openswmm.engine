@@ -140,11 +140,11 @@ struct SolverOptions2D {
     /// Below this gradient the flux is linearized (C¹) so the transmissivity
     /// stays bounded as the water surface flattens — without it, deep near-level
     /// ponding (e.g. a large design storm draining) makes the flux Jacobian blow
-    /// up and the implicit step collapse. Only affects sub-mm gradients, so real
-    /// flow is untouched (mass balance and peak flows unchanged); raise it for
-    /// extra robustness on very deep problems. 0 = bare √. Parsed from
+    /// up and the implicit step collapse. Only affects millimeter-scale
+    /// gradients, so bulk flow is preserved; raise it for extra robustness on
+    /// very deep problems. Default 4 mm; 0 = bare √. Parsed from
     /// [2D_OPTIONS] FLUX_DH_EPS; env OPENSWMM_2D_FLUX_DH_EPS overrides.
-    double flux_dh_eps       = 0.001;   ///< Diffusive-flux gradient floor (m)
+    double flux_dh_eps       = 0.004;   ///< Diffusive-flux gradient floor (m)
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
     int    max_krylov_dim    = 30;      ///< Max Krylov subspace dimension
     int    coupling_interval = 0;       ///< 0 = every SWMM step

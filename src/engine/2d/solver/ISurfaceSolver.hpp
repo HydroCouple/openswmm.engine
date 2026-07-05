@@ -35,31 +35,12 @@ struct SurfaceStateData;
 struct SolverOptions2D;
 
 /**
- * @brief Per-advance integrator diagnostics (deltas over one advance() call).
- *
- * Populated by a backend from its integrator's cumulative counters, differenced
- * across a single advance(). Used by the optional `OPENSWMM_2D_DIAG_CSV`
- * stiffness-attribution harness in SurfaceRouter2D. The default-constructed
- * (all-zero) value is what a backend that does not track these returns.
- */
-struct SolverAdvanceStats {
-    long   d_nsteps      = 0;   ///< internal BDF steps this advance
-    long   d_nrhs        = 0;   ///< RHS evaluations
-    long   d_newton      = 0;   ///< nonlinear (Newton) iterations
-    long   d_gmres       = 0;   ///< linear (Krylov) iterations
-    long   d_prec_setups = 0;   ///< preconditioner setups (AMG hierarchy rebuilds)
-    long   d_lin_fails   = 0;   ///< linear convergence failures
-    int    flag          = 0;   ///< integrator return flag (0 = success, <0 = failure)
-    double last_h        = 0.0; ///< last internal step size (s)
-};
-
-/**
  * @brief Abstract time integrator for the 2D surface-routing ODE system.
  *
  * The method set mirrors the lifecycle SurfaceRouter2D drives: one-time
  * setup, repeated advance, optional reinitialize after external state edits
- * (hot start), and teardown. The two stat accessors expose the most recent
- * integrator step diagnostics for reporting.
+ * (hot start), and teardown. The status accessors expose the most recent
+ * integrator step count and step size for runtime reporting.
  *
  * Implementations are non-copyable (they own backend resources) and owned
  * by SurfaceRouter2D through a unique_ptr<ISurfaceSolver>; the virtual
@@ -88,10 +69,6 @@ public:
 
     /// Last internal step size used by the integrator.
     virtual double last_step_size() const noexcept = 0;
-
-    /// Per-advance integrator deltas for the diagnostic CSV harness. Default
-    /// returns zeros for backends that do not track them.
-    virtual SolverAdvanceStats last_advance_stats() const noexcept { return {}; }
 
     /// Per-point ∫Q dt (m³) from the live node-coupling macro-step path. Default
     /// returns empty for backends that do not implement live coupling (so the

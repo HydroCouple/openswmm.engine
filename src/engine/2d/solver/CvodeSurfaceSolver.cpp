@@ -55,6 +55,7 @@ inline void reconstructFromVolume(const MeshData& m, int i, double V,
     depth = (A > 1.0e-30) ? v / A : 0.0;
     head  = m.tri_cz[i] + depth;
 }
+
 inline double volumeFromHead(const MeshData& m, int i, double head) noexcept {
     const double d = head - m.tri_cz[i];
     return (d > 0.0) ? m.tri_area[i] * d : 0.0;
@@ -102,16 +103,12 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
         reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
     }
 
-    // 2. Reconstruct head at vertices (pseudo-Laplacian)
+    // 2. Reconstruct vertex heads on the RHS path to preserve existing held
+    // coupling behaviour. The diffusive-wave edge flux itself uses centroid
+    // head differences; output gradients are refreshed once per accepted
+    // window by SurfaceRouter2D instead of inside every RHS/Jv evaluation.
     reconstructVertexHeads(mesh, state, opts.num_threads);
-
-    // 3. Compute unlimited gradients (Green-Gauss)
-    computeUnlimitedGradients(mesh, state, opts.num_threads);
-
-    // 4. Apply slope limiter (Jawahar-Kamath)
-    computeLimitedGradients(mesh, state, opts.limiter_epsilon, opts.num_threads);
-
-    // 5. Compute edge fluxes
+    // 3. Compute edge fluxes
     computeEdgeFluxes(mesh, state, opts);
 
     // 6. Assemble RHS
@@ -184,7 +181,6 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // changes the Krylov iteration count, never the converged solution. This
     // removes the dominant BoomerAMG hierarchy rebuild from the (majority)
     // γ-only psetup calls.
-    ++solver->prec_total_calls_;
     const bool recompute = (jok == SUNFALSE);
     *jcurPtr = recompute ? SUNTRUE : SUNFALSE;
 
@@ -213,7 +209,6 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
         if (!bypass) {
             const bool force = recompute || !solver->amg_used_last_setup_;
             solver->amg_precond_->setup(mesh, state, gamma, force);
-            if (force) ++solver->prec_full_builds_;
             solver->amg_used_last_setup_ = true;
             return 0;
         }
@@ -230,7 +225,6 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // otherwise reuse the cached diagonal (psolve_fn re-applies the current γ).
     if (!recompute && !solver->precond_diag_.empty())
         return 0;
-    ++solver->prec_full_builds_;
 
     int nt = mesh.n_triangles();
     auto& D = solver->precond_diag_;
@@ -502,11 +496,7 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     //
     // Note on Jacobian: we DO NOT call CVodeSetJacFn or set a JacTimes
     // function. SUNDIALS computes J·v products via difference quotients of
-    // rhs_fn — at the small head perturbations CVODE uses, this is well
-    // above floating-point noise in the H-formulation (y ~ 100 m gives
-    // δ ~ 1.5e-6 m, much larger than the flux noise floor). If/when
-    // smaller dry_depth values demand more accurate JvP, we can attach an
-    // analytic JacTimes routine without changing anything else here.
+    // rhs_fn.
     const int prec_type = (pc == PreconditionerType::NONE)
                               ? 0   // PREC_NONE
                               : 1;  // PREC_LEFT
@@ -545,17 +535,6 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
 
     int nt = ctx_.mesh->n_triangles();
 
-    // Snapshot cumulative CVODE counters before the advance so we can report
-    // per-advance deltas (stiffness-attribution CSV harness). These getters are
-    // cheap; the cumulative values persist across advances.
-    long c0_nst = 0, c0_nfe = 0, c0_nni = 0, c0_nli = 0, c0_npe = 0, c0_nlcf = 0;
-    CVodeGetNumSteps(cvode_mem_, &c0_nst);
-    CVodeGetNumRhsEvals(cvode_mem_, &c0_nfe);
-    CVodeGetNumNonlinSolvIters(cvode_mem_, &c0_nni);
-    CVodeGetNumLinIters(cvode_mem_, &c0_nli);
-    CVodeGetNumPrecEvals(cvode_mem_, &c0_npe);
-    CVodeGetNumLinConvFails(cvode_mem_, &c0_nlcf);
-
     // Snapshot the ∫Q dt accumulators so the per-window node-coupling exchange
     // is y[nt+k](end) − y[nt+k](start). Not reset between windows (a reset would
     // need CVodeReInit, discarding the step-size/order history we want to keep).
@@ -570,28 +549,6 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
     // Advance CVODE
     double t_reached = t_current;
     int flag = CVode(cvode_mem_, t_target, y_, &t_reached, CV_NORMAL);
-
-    // Record per-advance counter deltas (valid whether or not CVode succeeded —
-    // the counters update even on a failed/partial advance).
-    {
-        long c1_nst = 0, c1_nfe = 0, c1_nni = 0, c1_nli = 0, c1_npe = 0, c1_nlcf = 0;
-        CVodeGetNumSteps(cvode_mem_, &c1_nst);
-        CVodeGetNumRhsEvals(cvode_mem_, &c1_nfe);
-        CVodeGetNumNonlinSolvIters(cvode_mem_, &c1_nni);
-        CVodeGetNumLinIters(cvode_mem_, &c1_nli);
-        CVodeGetNumPrecEvals(cvode_mem_, &c1_npe);
-        CVodeGetNumLinConvFails(cvode_mem_, &c1_nlcf);
-        last_stats_.d_nsteps      = c1_nst  - c0_nst;
-        last_stats_.d_nrhs        = c1_nfe  - c0_nfe;
-        last_stats_.d_newton      = c1_nni  - c0_nni;
-        last_stats_.d_gmres       = c1_nli  - c0_nli;
-        last_stats_.d_prec_setups = c1_npe  - c0_npe;
-        last_stats_.d_lin_fails   = c1_nlcf - c0_nlcf;
-        last_stats_.flag          = flag;
-        double h_last = 0.0;
-        CVodeGetLastStep(cvode_mem_, &h_last);
-        last_stats_.last_h = h_last;
-    }
 
     if (flag < 0) {
         // CVODE failure — leave state unchanged
@@ -652,19 +609,6 @@ void CvodeSurfaceSolver::reinitialize(double t0) {
 
 
 void CvodeSurfaceSolver::finalize() {
-    // Lagged-preconditioner reuse diagnostic (opt-in). Query before CVodeFree.
-    if (cvode_mem_) {
-        const char* e = std::getenv("OPENSWMM_2D_PREC_STATS");
-        if (e && e[0]) {
-            const long reuses = prec_total_calls_ - prec_full_builds_;
-            std::fprintf(stderr,
-                "[2D_PREC_STATS] psetup calls=%ld  full builds=%ld  reuses=%ld"
-                "  (%.1f%% reused)\n",
-                prec_total_calls_, prec_full_builds_, reuses,
-                prec_total_calls_ > 0 ? 100.0 * static_cast<double>(reuses) /
-                          static_cast<double>(prec_total_calls_) : 0.0);
-        }
-    }
     // CVode must be freed before its linear solver (CVODE holds an internal
     // pointer to ls_ via CVodeSetLinearSolver). Likewise free the N_Vector
     // and context last, since N_Vector destruction touches the context.

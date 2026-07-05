@@ -35,6 +35,18 @@ static inline int omp_get_max_threads() { return 1; }
 
 namespace openswmm::twoD {
 
+namespace {
+
+void refreshOutputGradients(const MeshData& mesh, SurfaceStateData& state,
+                            const SolverOptions2D& opts) {
+    if (!opts.report_2d) return;
+    computeUnlimitedGradients(mesh, state, opts.num_threads);
+    computeLimitedGradients(mesh, state, opts.limiter_epsilon,
+                            opts.num_threads);
+}
+
+} // namespace
+
 void SurfaceRouter2D::drainPendingRows() {
     if (mesh_.n_triangles() < 1) return;             // nothing to drain into
 
@@ -472,6 +484,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // edges instead of walling them. Non-owning: boundary_ outlives state_.
     state_.boundary = &boundary_;
 
+    // Seed output gradients for the initial output/API state. Vertex-head
+    // timing is left on the solver RHS path to preserve coupling behaviour.
+    refreshOutputGradients(mesh_, state_, options_);
+
 #ifdef OPENSWMM_HAS_2D
     // Fold the OPENSWMM_2D_MOMENTUM env override into options_ so it is the single
     // source of truth for both the solver (which RHS split) and the post-advance
@@ -867,6 +883,10 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
         }
     }
 
+    // Refresh accepted-state output gradients once per window for snapshots
+    // and API reads instead of inside every CVODE nonlinear/Jv evaluation.
+    refreshOutputGradients(mesh_, state_, options_);
+
     // Refresh edge fluxes at the final accepted (head, depth) so the saved
     // fluxes, the per-cell continuity residual, and the reconstructed cell
     // velocities are all consistent with the reported solution. The last
@@ -921,9 +941,6 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     // changes here — computing once per advance replaces an O(n_triangles)
     // scan per routing step with a cached read.
     updateCflHint();
-
-    // Stiffness-attribution diagnostic row (opt-in via OPENSWMM_2D_DIAG_CSV).
-    writeDiagRow(ctx, dt, sim_time_);
 
     // Clear RESET forcings
     state_.clear_reset_forcings();
@@ -1016,7 +1033,6 @@ double SurfaceRouter2D::totalExchangeFlow() const {
 
 
 void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
-    const int nt = mesh_.n_triangles();
     const int n_gages = ctx.n_gages();
 
     if (n_gages <= 0 || options_.rainfall_mode == RainfallMode::NONE) {
@@ -1177,79 +1193,5 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     mb.final_storage = totalVolume();
 }
 
-
-void SurfaceRouter2D::writeDiagRow(SimulationContext& ctx, double dt, double t) {
-    // Resolve the opt-in path once. Empty/unset env var → harness stays off.
-    if (!diag_checked_) {
-        diag_checked_ = true;
-        const char* path = std::getenv("OPENSWMM_2D_DIAG_CSV");
-        if (path && path[0]) {
-            diag_csv_ = std::make_unique<std::ofstream>(path);
-            if (diag_csv_ && diag_csv_->is_open()) {
-                (*diag_csv_)
-                    << "t_s,dt_s,flag,d_nsteps,d_newton,d_gmres,d_prec_setups,"
-                       "d_lin_fails,last_h_s,n_front,n_wet,dn_wet,max_depth_m,"
-                       "total_vol_m3,sum_abs_coupling_m3s,max_node_exch_m3s,"
-                       "n_quiescent,n_active,halo_trips\n";
-            } else {
-                diag_csv_.reset();  // open failed — disable cleanly
-            }
-        }
-    }
-    if (!diag_csv_) return;
-
-    // Per-cell wet/dry-front metrics from the accepted end-of-step depths.
-    const int nt = mesh_.n_triangles();
-    const double dry = options_.dry_depth;
-    const double front_hi = 3.0 * dry;  // "on the front" band
-    int n_front = 0, n_wet = 0;
-    double max_depth = 0.0, sum_abs_coup = 0.0;
-    for (int i = 0; i < nt; ++i) {
-        const double d = state_.depth[i];
-        if (d > dry) ++n_wet;
-        if (d > 0.0 && d < front_hi) ++n_front;
-        if (d > max_depth) max_depth = d;
-        sum_abs_coup += std::abs(state_.coupling_flux[i]) * mesh_.tri_area[i];
-    }
-    const int dn_wet = std::abs(n_wet - diag_prev_nwet_);
-    diag_prev_nwet_ = n_wet;
-
-    // Largest single coupled-node exchange magnitude (m³/s) — surfaces the
-    // weir-flanking junctions that dominate the late-regime stiffness. The
-    // exchange is now carried as a per-window volume (coupling_volume, 1D ft³);
-    // divide by dt for the rate this diagnostic reports.
-    double max_node_exch = 0.0;
-    if (dt > 0.0) {
-        for (const auto& cp : coupling_points_) {
-            const auto ni = static_cast<std::size_t>(cp.node_idx);
-            const double q = std::abs(ctx.nodes.coupling_volume[ni] / dt)
-                             * options_.flow_1d_to_2d;
-            if (q > max_node_exch) max_node_exch = q;
-        }
-    }
-
-    // Per-advance integrator deltas (zeros if no 2D solver compiled in).
-    long flag = 0, d_nsteps = 0, d_newton = 0, d_gmres = 0,
-         d_prec = 0, d_linf = 0;
-    double last_h = 0.0;
-#ifdef OPENSWMM_HAS_2D
-    if (solver_) {
-        const SolverAdvanceStats st = solver_->last_advance_stats();
-        flag = st.flag; d_nsteps = st.d_nsteps; d_newton = st.d_newton;
-        d_gmres = st.d_gmres; d_prec = st.d_prec_setups; d_linf = st.d_lin_fails;
-        last_h = st.last_h;
-    }
-#endif
-
-    (*diag_csv_) << t << ',' << dt << ',' << flag << ','
-                 << d_nsteps << ',' << d_newton << ',' << d_gmres << ','
-                 << d_prec << ',' << d_linf << ',' << last_h << ','
-                 << n_front << ',' << n_wet << ',' << dn_wet << ','
-                 << max_depth << ',' << totalVolume() << ',' << sum_abs_coup << ','
-                 << max_node_exch << ',' << quiescent_windows_ << ','
-                 << (active_set_.enabled ? active_set_.n_active() : -1) << ','
-                 << active_set_.halo_trip_count << '\n';
-    diag_csv_->flush();
-}
 
 } // namespace openswmm::twoD

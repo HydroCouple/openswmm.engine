@@ -373,43 +373,10 @@ double CvodeKokkosSurfaceSolver::advance(double t_current, double t_target) {
     uploadSources();
     uploadBoundaryDynamic();
 
-    // Snapshot cumulative CVODE counters before the advance so we can report
-    // per-advance deltas (mirrors the serial CvodeSurfaceSolver path; feeds the
-    // OPENSWMM_2D_DIAG_CSV stiffness-attribution harness).
-    long c0_nst = 0, c0_nfe = 0, c0_nni = 0, c0_nli = 0, c0_npe = 0, c0_nlcf = 0;
-    CVodeGetNumSteps(cvode_mem_, &c0_nst);
-    CVodeGetNumRhsEvals(cvode_mem_, &c0_nfe);
-    CVodeGetNumNonlinSolvIters(cvode_mem_, &c0_nni);
-    CVodeGetNumLinIters(cvode_mem_, &c0_nli);
-    CVodeGetNumPrecEvals(cvode_mem_, &c0_npe);
-    CVodeGetNumLinConvFails(cvode_mem_, &c0_nlcf);
-
     CVodeSetStopTime(cvode_mem_, t_target);
     double t_reached = t_current;
     const int flag = CVode(cvode_mem_, t_target, y_->Convert(),
                            &t_reached, CV_NORMAL);
-
-    // Record per-advance counter deltas (valid whether or not CVode succeeded —
-    // the counters update even on a failed/partial advance).
-    {
-        long c1_nst = 0, c1_nfe = 0, c1_nni = 0, c1_nli = 0, c1_npe = 0, c1_nlcf = 0;
-        CVodeGetNumSteps(cvode_mem_, &c1_nst);
-        CVodeGetNumRhsEvals(cvode_mem_, &c1_nfe);
-        CVodeGetNumNonlinSolvIters(cvode_mem_, &c1_nni);
-        CVodeGetNumLinIters(cvode_mem_, &c1_nli);
-        CVodeGetNumPrecEvals(cvode_mem_, &c1_npe);
-        CVodeGetNumLinConvFails(cvode_mem_, &c1_nlcf);
-        last_stats_.d_nsteps      = c1_nst  - c0_nst;
-        last_stats_.d_nrhs        = c1_nfe  - c0_nfe;
-        last_stats_.d_newton      = c1_nni  - c0_nni;
-        last_stats_.d_gmres       = c1_nli  - c0_nli;
-        last_stats_.d_prec_setups = c1_npe  - c0_npe;
-        last_stats_.d_lin_fails   = c1_nlcf - c0_nlcf;
-        last_stats_.flag          = flag;
-        double h_last = 0.0;
-        CVodeGetLastStep(cvode_mem_, &h_last);
-        last_stats_.last_h = h_last;
-    }
 
     if (flag < 0) return t_current;  // failure — leave state unchanged
 

@@ -91,8 +91,8 @@ int ArkodeSurfaceSolver::fe_fn(double /*t*/, N_Vector y, N_Vector ydot,
 }
 
 // Implicit half F_I: the stiff diffusion flux divergence + the live 1D↔2D
-// orifice coupling. Runs the full reconstruct → gradient → limiter → edge-flux
-// pipeline (identical to the CVODE rhs), then assembles the flux divergence and
+// orifice coupling. Runs the reconstruct → edge-flux pipeline (identical to the
+// CVODE rhs), then assembles the flux divergence and
 // scatters the live orifice exchange. Leaves state.head / state.edge_flux at the
 // stage state the preconditioner reads.
 int ArkodeSurfaceSolver::fi_fn(double /*t*/, N_Vector y, N_Vector ydot,
@@ -112,10 +112,12 @@ int ArkodeSurfaceSolver::fi_fn(double /*t*/, N_Vector y, N_Vector ydot,
         reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
     }
 
-    // 2–5. Vertex heads, gradients, slope limiter, edge fluxes.
+    // 2. Reconstruct vertex heads on the RHS path to preserve existing held
+    // coupling behaviour. The diffusive-wave edge flux itself uses centroid
+    // head differences; output gradients are refreshed once per accepted
+    // window by SurfaceRouter2D instead of inside every RHS/Jv evaluation.
     reconstructVertexHeads(mesh, state, opts.num_threads);
-    computeUnlimitedGradients(mesh, state, opts.num_threads);
-    computeLimitedGradients(mesh, state, opts.limiter_epsilon, opts.num_threads);
+    // 3. Edge fluxes.
     computeEdgeFluxes(mesh, state, opts);
 
     // 6. Flux divergence (the implicit operator).
@@ -286,11 +288,9 @@ int ArkodeSurfaceSolver::psetup_inertial_fn(double /*t*/, N_Vector y, N_Vector /
     const double* y_data = N_VGetArrayPointer(y);
     const double* q      = y_data + nt;
 
-    ++solver->prec_total_calls_;
     const bool recompute = (jok == SUNFALSE);
     *jcurPtr = recompute ? SUNTRUE : SUNFALSE;
     if (!recompute && !solver->prec_wq_.empty()) return 0;   // reuse (lagged)
-    ++solver->prec_full_builds_;
 
     constexpr double G = 9.80665;
     const double hmin = opts.dry_depth;
@@ -368,14 +368,12 @@ int ArkodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/
     auto& state  = *ctx->state;
     auto* solver = ctx->solver;
 
-    ++solver->prec_total_calls_;
     const bool recompute = (jok == SUNFALSE);
     *jcurPtr = recompute ? SUNTRUE : SUNFALSE;
 
 #if defined(OPENSWMM_HAVE_HYPRE)
     if (ctx->amg_active) {
         solver->amg_precond_->setup(mesh, state, gamma, recompute);
-        if (recompute) ++solver->prec_full_builds_;
         return 0;
     }
 #else
@@ -384,7 +382,6 @@ int ArkodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/
 
     if (!recompute && !solver->precond_diag_.empty())
         return 0;
-    ++solver->prec_full_builds_;
 
     int nt = mesh.n_triangles();
     auto& D = solver->precond_diag_;
@@ -461,9 +458,6 @@ ArkodeSurfaceSolver::ArkodeSurfaceSolver(ArkodeSurfaceSolver&& o) noexcept
       last_coupling_exchange_(std::move(o.last_coupling_exchange_)),
       momentum_(o.momentum_), ne_(o.ne_), edges_(std::move(o.edges_)),
       prec_dV_(std::move(o.prec_dV_)), prec_wq_(std::move(o.prec_wq_)),
-      prec_total_calls_(o.prec_total_calls_),
-      prec_full_builds_(o.prec_full_builds_),
-      last_stats_(o.last_stats_),
       precond_diag_(std::move(o.precond_diag_))
 #if defined(OPENSWMM_HAVE_HYPRE)
       , amg_precond_(std::move(o.amg_precond_))
@@ -497,9 +491,6 @@ ArkodeSurfaceSolver& ArkodeSurfaceSolver::operator=(ArkodeSurfaceSolver&& o) noe
         edges_        = std::move(o.edges_);
         prec_dV_      = std::move(o.prec_dV_);
         prec_wq_      = std::move(o.prec_wq_);
-        prec_total_calls_ = o.prec_total_calls_;
-        prec_full_builds_ = o.prec_full_builds_;
-        last_stats_   = o.last_stats_;
         precond_diag_ = std::move(o.precond_diag_);
 #if defined(OPENSWMM_HAVE_HYPRE)
         amg_precond_  = std::move(o.amg_precond_);
@@ -663,17 +654,6 @@ double ArkodeSurfaceSolver::advance(double t_current, double t_target) {
     int nt = ctx_.mesh->n_triangles();
     const int accum_off = nt + ne_;   // accumulators sit after the q block
 
-    // Snapshot cumulative ARKODE counters for per-advance deltas (diag CSV).
-    long c0_nst = 0, c0_nfe = 0, c0_nfi = 0, c0_nni = 0,
-         c0_nli = 0, c0_npe = 0, c0_nlcf = 0;
-    ARKodeGetNumSteps(arkode_mem_, &c0_nst);
-    ARKodeGetNumRhsEvals(arkode_mem_, 0, &c0_nfe);
-    ARKodeGetNumRhsEvals(arkode_mem_, 1, &c0_nfi);
-    ARKodeGetNumNonlinSolvIters(arkode_mem_, &c0_nni);
-    ARKodeGetNumLinIters(arkode_mem_, &c0_nli);
-    ARKodeGetNumPrecEvals(arkode_mem_, &c0_npe);
-    ARKodeGetNumLinConvFails(arkode_mem_, &c0_nlcf);
-
     if (nc_ > 0) {
         const double* ys = N_VGetArrayPointer(y_);
         for (int k = 0; k < nc_; ++k) coupling_accum_start_[k] = ys[accum_off + k];
@@ -683,28 +663,6 @@ double ArkodeSurfaceSolver::advance(double t_current, double t_target) {
 
     double t_reached = t_current;
     int flag = ARKodeEvolve(arkode_mem_, t_target, y_, &t_reached, ARK_NORMAL);
-
-    {
-        long c1_nst = 0, c1_nfe = 0, c1_nfi = 0, c1_nni = 0,
-             c1_nli = 0, c1_npe = 0, c1_nlcf = 0;
-        ARKodeGetNumSteps(arkode_mem_, &c1_nst);
-        ARKodeGetNumRhsEvals(arkode_mem_, 0, &c1_nfe);
-        ARKodeGetNumRhsEvals(arkode_mem_, 1, &c1_nfi);
-        ARKodeGetNumNonlinSolvIters(arkode_mem_, &c1_nni);
-        ARKodeGetNumLinIters(arkode_mem_, &c1_nli);
-        ARKodeGetNumPrecEvals(arkode_mem_, &c1_npe);
-        ARKodeGetNumLinConvFails(arkode_mem_, &c1_nlcf);
-        last_stats_.d_nsteps      = c1_nst  - c0_nst;
-        last_stats_.d_nrhs        = (c1_nfe - c0_nfe) + (c1_nfi - c0_nfi);
-        last_stats_.d_newton      = c1_nni  - c0_nni;
-        last_stats_.d_gmres       = c1_nli  - c0_nli;
-        last_stats_.d_prec_setups = c1_npe  - c0_npe;
-        last_stats_.d_lin_fails   = c1_nlcf - c0_nlcf;
-        last_stats_.flag          = flag;
-        double h_last = 0.0;
-        ARKodeGetLastStep(arkode_mem_, &h_last);
-        last_stats_.last_h = h_last;
-    }
 
     if (flag < 0) {
         return t_current;  // ARKODE failure — leave state unchanged
@@ -766,18 +724,6 @@ void ArkodeSurfaceSolver::reinitialize(double t0) {
 }
 
 void ArkodeSurfaceSolver::finalize() {
-    if (arkode_mem_) {
-        const char* e = std::getenv("OPENSWMM_2D_PREC_STATS");
-        if (e && e[0]) {
-            const long reuses = prec_total_calls_ - prec_full_builds_;
-            std::fprintf(stderr,
-                "[2D_PREC_STATS] (arkode) psetup calls=%ld  full builds=%ld  "
-                "reuses=%ld  (%.1f%% reused)\n",
-                prec_total_calls_, prec_full_builds_, reuses,
-                prec_total_calls_ > 0 ? 100.0 * static_cast<double>(reuses) /
-                          static_cast<double>(prec_total_calls_) : 0.0);
-        }
-    }
     if (arkode_mem_) {
         ARKodeFree(&arkode_mem_);
         arkode_mem_ = nullptr;

@@ -11,6 +11,41 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
 `docs/RUNTIME_FORCING_PHASE4_AUDIT.md` (per-group outcomes), and
 `docs/RUNTIME_FORCING_API_GAP_PLAN.md` §7/§12.
 
+### Fixed
+
+- **`[FILES]` `USE/SAVE RUNOFF` and `USE/SAVE RDII` now work in the
+  refactored engine** — previously parsed and written back but never
+  consumed. `SAVE RUNOFF` auto-opens the existing binary runoff interface
+  writer from the slot; `USE RUNOFF` replaces each runoff substep with the
+  file's records (legacy `runoff_readFromFile`), driving the runoff clock
+  from the recorded timesteps. New `RdiiInterfaceFile` implements the RDII
+  slots: `SAVE RDII` exports computed flows in the legacy `SWMM5-RDII`
+  binary format; `USE RDII` **bypasses the internal unit-hydrograph
+  computation** (legacy `rdii_openRdii` semantics) and reads either the
+  binary or the legacy text format with step-aligned (non-interpolated)
+  lookup. Open/format failures fail `start()` with legacy errors
+  323/325/343/345. `USE/SAVE RAINFALL` (collated binary rain file) remains
+  unimplemented but now emits WARNING 103 instead of being silently
+  ignored. Plan: `plans/FILES_INTERFACE_GAP_CLOSURE_PLAN_2026-07-02.md`.
+  Tests: `tests/unit/engine/test_files_iface_gaps.cpp`,
+  `python/tests/engine/test_files_iface_gaps.py`.
+
+- **Routing interface files (`[FILES]` `USE INFLOWS` / `SAVE OUTFLOWS`) now
+  work in the refactored engine** — the paths were parsed and stored but the
+  `InterfaceManager` was never opened, so simulations silently ran without
+  the upstream inflows (and wrote no outflows file). `swmm_engine_start()`
+  now opens both files, reads/writes the legacy headers, and fails with
+  legacy errors 351/353/355/357 on open/format problems. Outfall rows are
+  written at reporting cadence (legacy `iface_saveOutletResults`), flows are
+  converted to the declared units on write, interface pollutant loads flow
+  into node quality mixing and the new "External Inflow" row of the quality
+  routing continuity report, and interface flow volume is booked as external
+  inflow in the routing mass balance. Wrong-mode rows (`SAVE INFLOWS` /
+  `USE OUTFLOWS`) are rejected at parse time (legacy `ERR_ITEMS`). Plan:
+  `plans/ROUTING_INTERFACE_FILE_INTEGRATION_PLAN_2026-07-01.md`. Tests:
+  `tests/unit/engine/test_iface_routing.cpp`,
+  `python/tests/engine/test_iface_routing.py`.
+
 ### Added
 
 - **Python bindings for 2D vertex coupling CD/AREA** —

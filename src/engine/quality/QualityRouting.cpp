@@ -50,6 +50,7 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     addRdiiLoads(ctx, dt);         // RDII pollutant loads → nodes
     addDwfLoads(ctx, dt);          // Dry weather pollutant loads → nodes
     addGwLoads(ctx, dt);           // Groundwater inflow pollutant loads → nodes
+    addIfaceLoads(ctx, dt);        // Routing interface file loads → nodes
     accumulateLinkLoads(ctx, dt);
     mixAtNodes(ctx, dt);
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
@@ -232,6 +233,53 @@ void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
             auto pi = static_cast<std::size_t>(p);
             if (pi < ctx.mass_balance.qual_routing_gw_in.size()) {
                 ctx.mass_balance.qual_routing_gw_in[pi] += q * c_gw * dt;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Add routing interface file pollutant loads to node quality inflows
+// Matches legacy addIfaceInflows() quality portion (routing.c:756-795):
+// mass rates (q * c_iface) are pre-computed per node by
+// iface::InterfaceManager::readInflows() into nodes.iface_qual_mass.
+// ============================================================================
+
+void QualitySolver::addIfaceLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (np <= 0) return;
+    auto& nodes = ctx.nodes;
+    if (nodes.iface_qual_mass.empty()) return;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double q = nodes.iface_inflow[ui];
+        if (q <= 0.0) continue;
+
+        // Add volume inflow from the interface file
+        nodes.qual_vol_in[ui] += q * dt;
+
+        OPENSWMM_IVDEP
+        for (int p = 0; p < np; ++p) {
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            double mass_rate = (nd_idx < nodes.iface_qual_mass.size())
+                               ? nodes.iface_qual_mass[nd_idx] : 0.0;
+            if (mass_rate <= 0.0) continue;
+            if (nd_idx < nodes.qual_mass_in.size()) {
+                nodes.qual_mass_in[nd_idx] += mass_rate;
+            }
+        }
+
+        // Mass balance: interface loads count as external quality inflow
+        // (legacy massbal_addInflowQual(EXTERNAL_INFLOW, p, w))
+        for (int p = 0; p < np; ++p) {
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            double mass_rate = (nd_idx < nodes.iface_qual_mass.size())
+                               ? nodes.iface_qual_mass[nd_idx] : 0.0;
+            if (mass_rate <= 0.0) continue;
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_ex_in.size()) {
+                ctx.mass_balance.qual_routing_ex_in[pi] += mass_rate * dt;
             }
         }
     }

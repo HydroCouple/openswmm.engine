@@ -86,6 +86,9 @@ private:
     /// Add groundwater inflow pollutant loads (c_gw) to node inflows.
     void addGwLoads(SimulationContext& ctx, double dt);
 
+    /// Add routing interface file pollutant loads to node inflows.
+    void addIfaceLoads(SimulationContext& ctx, double dt);
+
     /// Batch accumulate link mass flows to downstream nodes.
     void accumulateLinkLoads(SimulationContext& ctx, double dt);
 
