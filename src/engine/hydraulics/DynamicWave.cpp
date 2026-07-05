@@ -384,6 +384,21 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     auto un = static_cast<std::size_t>(n_nodes);
     auto ul = static_cast<std::size_t>(n_links);
 
+    // Seepage possibility is static input — scan once so the loss recompute
+    // pass can be skipped bit-exactly on loss-free models (see
+    // recomputeConduitLosses).
+    any_conduit_seep_ = false;
+    losses_all_zero_ = true;
+    {
+        const auto& CD = ctx.link_subtypes.conduits;
+        for (int r = 0; r < CD.count(); ++r) {
+            if (CD.seep_rate[static_cast<std::size_t>(r)] > 0.0) {
+                any_conduit_seep_ = true;
+                break;
+            }
+        }
+    }
+
     xnode_.resize(un);  // SoA: allocates all per-node arrays
 
     area1_.resize(ul, 0.0);
@@ -825,9 +840,25 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
         // global ALLOW_PONDING option. See ctx.coupled_node.
         const bool node_can_pond = ctx.options.allow_ponding
             || (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
-        xnode_.new_surf_area[ui] = node_can_pond
-            ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes)
-            : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes);
+        const NodeTile& t = node_tile_[ui];
+        if (!t.is_storage) {
+            // Fast path (bit-exact): non-storage nodes have zero curve area —
+            // node::getSurfArea returns 0.0 (Node.cpp, legacy node.c) — and
+            // node::getPondedArea reduces to the raw ponded_area only when
+            // flooded above the rim with a positive ponded area
+            // (legacy node.c:535-551); every other branch yields 0.0. This
+            // avoids two function calls per node per Picard iteration for
+            // the ~98% of nodes that are not storage units.
+            xnode_.new_surf_area[ui] =
+                (node_can_pond && nodes.depth[ui] > t.full_depth &&
+                 t.ponded_area > 0.0)
+                    ? t.ponded_area
+                    : 0.0;
+        } else {
+            xnode_.new_surf_area[ui] = node_can_pond
+                ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes)
+                : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes);
+        }
 
         // Reset node flows (matching legacy initNodeStates)
         nodes.inflow[ui] = 0.0;
@@ -1422,6 +1453,15 @@ void DWSolver::recomputeConduitLosses(SimulationContext& ctx, double dt) {
     auto& links = ctx.links;
     auto& CD = ctx.link_subtypes.conduits;
     const double evap = evap_rate;
+
+    // Dead-work skip (bit-exact): with zero evaporation and no conduit
+    // seepage anywhere, this pass writes zeros over already-zero rates
+    // (DRY-class conduits retain their stored zeros), i.e. a structural
+    // no-op — ~5% of Picard-iteration time on loss-free models. The latch
+    // flips permanently the first time a nonzero loss becomes possible,
+    // after which the pass always runs at the legacy cadence.
+    if (evap > 0.0 || any_conduit_seep_) losses_all_zero_ = false;
+    if (losses_all_zero_) return;
     for (int ci = 0; ci < n_conduits_; ++ci) {
         const auto uci = static_cast<std::size_t>(ci);
         const int uj = conduit_idx_[uci];

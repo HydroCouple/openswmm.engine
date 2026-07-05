@@ -233,6 +233,17 @@ private:
     int num_threads_ = 1;  ///< OpenMP thread count for parallel loops
     const XSectGroups* groups_ = nullptr;
 
+    /// True if any conduit has a nonzero seepage rate (set once in init()).
+    /// With zero evaporation this gates the bit-exact dead-work skip of
+    /// recomputeConduitLosses (see losses_all_zero_).
+    bool any_conduit_seep_ = false;
+
+    /// One-way latch: true while every stored conduit evap/seep loss rate is
+    /// provably zero (initial state, and no pass has ever run with a nonzero
+    /// loss possible). While true, recomputeConduitLosses is a structural
+    /// no-op and is skipped.
+    bool losses_all_zero_ = true;
+
     // Pre-built conduit index list for skipping non-conduits in inner loops
     std::vector<int> conduit_idx_;
 
