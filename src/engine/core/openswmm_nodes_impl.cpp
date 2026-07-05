@@ -908,10 +908,15 @@ SWMM_ENGINE_API int swmm_node_get_depth_from_volume(SWMM_Engine engine, int idx,
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (depth) {
-        // units: input volume is display VOLUME, output is display LENGTH
+        // units: input volume is display VOLUME, output is display LENGTH.
+        // getDepth needs the real unit system: FUNCTIONAL storage coefficients
+        // are stored in USER units and converted per call (legacy node.c
+        // regime), as are TABULAR curve lookups.
         double vol_internal = to_internal(ctx, openswmm::ucf::VOLUME, volume);
+        const int us = openswmm::ucf::getUnitSystem(
+            static_cast<int>(ctx.options.flow_units));
         double depth_internal = openswmm::node::getDepth(ctx.nodes, idx, vol_internal, &ctx.tables,
-                                                         0, &ctx.node_subtypes);
+                                                         us, &ctx.node_subtypes);
         *depth = to_display(ctx, openswmm::ucf::LENGTH, depth_internal);
     }
     return SWMM_OK;

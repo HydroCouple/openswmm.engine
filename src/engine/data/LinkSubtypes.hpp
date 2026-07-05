@@ -254,17 +254,21 @@ struct WeirData {
     std::vector<double> cd;              ///< Discharge coefficient
     std::vector<double> end_contractions;///< End contractions (legacy param2)
     std::vector<double> crest_height;
+    std::vector<double> cd2;             ///< End-section discharge coeff (legacy cDisch2)
+    std::vector<uint8_t> can_surcharge;  ///< Surcharge YES/NO (legacy Weir.canSurcharge, default YES)
 
     int count() const noexcept { return static_cast<int>(link_idx.size()); }
 
     void clear() noexcept {
         link_idx.clear(); weir_type.clear(); cd.clear();
         end_contractions.clear(); crest_height.clear();
+        cd2.clear(); can_surcharge.clear();
     }
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
         link_idx.reserve(un); weir_type.reserve(un); cd.reserve(un);
         end_contractions.reserve(un); crest_height.reserve(un);
+        cd2.reserve(un); can_surcharge.reserve(un);
     }
     int add_default(int i) {
         const auto p = static_cast<std::ptrdiff_t>(
@@ -274,6 +278,8 @@ struct WeirData {
         cd.insert(cd.begin() + p, 0.0);
         end_contractions.insert(end_contractions.begin() + p, 0.0);
         crest_height.insert(crest_height.begin() + p, 0.0);
+        cd2.insert(cd2.begin() + p, 0.0);
+        can_surcharge.insert(can_surcharge.begin() + p, uint8_t{1});
         return static_cast<int>(p);
     }
     void erase_at(int r) {
@@ -283,6 +289,8 @@ struct WeirData {
         cd.erase(cd.begin() + p);
         end_contractions.erase(end_contractions.begin() + p);
         crest_height.erase(crest_height.begin() + p);
+        cd2.erase(cd2.begin() + p);
+        can_surcharge.erase(can_surcharge.begin() + p);
     }
 };
 

@@ -461,19 +461,14 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
             if (r >= 0)
                 ctx.node_subtypes.dividers.cutoff[static_cast<std::size_t>(r)] /= qcf;
         }
-        // Functional storage A(d) = a0 + a1·d^a2 (a2 dimensionless).  a0 is an
-        // area (inv_area); a1 must keep A in ft² when d is in ft, i.e. scale by
-        // inv_len^(2 - a2).  Tabulated storage (curve >= 0) self-converts
-        // at lookup, so leave it.
-        if (ctx.nodes.type[ui] == NodeType::STORAGE) {
-            const int r = ctx.node_subtypes.storage_row(i);
-            auto& S = ctx.node_subtypes.storages;
-            if (r >= 0 && S.curve[static_cast<std::size_t>(r)] < 0) {
-                const auto ur = static_cast<std::size_t>(r);
-                S.c[ur] /= len2;                                  // a0
-                S.a[ur] /= std::pow(len, 2.0 - S.b[ur]);         // a1
-            }
-        }
+        // Functional storage A(d) = a0 + a1·d^a2 coefficients are NOT
+        // pre-converted. PARITY: legacy keeps them in USER units and converts
+        // per call inside storage_getVolume/getSurfArea/getDepth (node.c:895,
+        // 944, 778) using the TRUNCATED SI VOLUME factor 0.02832 ≠ 0.3048³
+        // (swmm5.c:157), which is FP-distinguishable from evaluating
+        // pre-converted internal coefficients. Node.cpp mirrors that per-call
+        // regime, so the parsed user-unit values must stay as-is. Tabulated
+        // storage (curve >= 0) likewise self-converts at lookup.
     }
 
     // --- Links: cross-section geometry, length, offsets, flow limits ---
@@ -566,18 +561,10 @@ void convert_internal_to_display(SimulationContext& ctx) {
             if (r >= 0)
                 ctx.node_subtypes.dividers.cutoff[static_cast<std::size_t>(r)] *= flow;
         }
-        // Functional storage A(d) = a0 + a1·d^a2: a0 (storage_c) is an area;
-        // a1 (storage_a) scales by len^(2 - a2) so A stays ft²-consistent.
-        // a2 (storage_b) is dimensionless and unchanged in both directions.
-        if (ctx.nodes.type[ui] == NodeType::STORAGE) {
-            const int r = ctx.node_subtypes.storage_row(i);
-            auto& S = ctx.node_subtypes.storages;
-            if (r >= 0 && S.curve[static_cast<std::size_t>(r)] < 0) {
-                const auto ur = static_cast<std::size_t>(r);
-                S.c[ur] *= area;
-                S.a[ur] *= std::pow(len, 2.0 - S.b[ur]);
-            }
-        }
+        // Functional storage A(d) = a0 + a1·d^a2 coefficients stay in USER
+        // units end-to-end (see convert_inputs_to_internal — legacy converts
+        // per call in node.c), so there is nothing to back-convert; the .inp
+        // writer emits the stored values directly.
     }
 
     // --- Links ---
@@ -1048,16 +1035,6 @@ void resolve_cross_references(SimulationContext& ctx) {
                         ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
                     ctx.links.offset1[uj] = std::max(0.0, raw1);
                 }
-                // WARNING 10: if orifice invert (absolute) < downstream node invert
-                if (n1 >= 0 && n1 < n_nodes && n2 >= 0 && n2 < n_nodes) {
-                    double inv1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
-                    double inv2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
-                    double ori_abs = ctx.links.offset1[uj] + inv1; // after conversion
-                    if (ori_abs < inv2) {
-                        ctx.links.offset1[uj] = std::max(0.0, inv2 - inv1);
-                        ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
-                    }
-                }
             } else if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
                 // [WEIRS]/[OUTLETS]: crest_height = absolute crest elevation →
                 // convert to depth above n1, operating on the side-table row.
@@ -1071,16 +1048,49 @@ void resolve_cross_references(SimulationContext& ctx) {
                     double rawCrest = *crest - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
                     *crest = std::max(0.0, rawCrest);
                 }
-                // WARNING 10: if crest (absolute) < downstream node invert
-                if (crest && n1 >= 0 && n1 < n_nodes && n2 >= 0 && n2 < n_nodes) {
-                    double crest_abs = *crest + ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
-                    double inv2     = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
-                    if (crest_abs < inv2) {
-                        *crest = std::max(0.0, inv2 - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)]);
-                        ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
-                    }
-                }
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Regulator crest below downstream invert (legacy WARNING 10)
+    // -------------------------------------------------------------------------
+    // PARITY link.c link_validate:424-439: for ORIFICE/WEIR/OUTLET links whose
+    // crest (invert(n1) + offset) lies below the downstream node invert, DW
+    // routing RAISES the crest with offset = invert(n2) - invert(n1). Legacy
+    // applies this for BOTH offset conventions (it runs after the ELEV→DEPTH
+    // conversion in link_validate), so it must NOT be gated on link_offsets.
+    // The raised offset's bits differ from invert+parsed-offset (e.g. Bellinge
+    // G60F61Yo1 hcrest by 1 ULP), which near-crest head cancellation amplifies.
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        auto lt = ctx.links.type[uj];
+        if (lt != LinkType::ORIFICE && lt != LinkType::WEIR &&
+            lt != LinkType::OUTLET) continue;
+        int n1 = ctx.links.node1[uj];
+        int n2 = ctx.links.node2[uj];
+        if (n1 < 0 || n1 >= n_nodes || n2 < 0 || n2 >= n_nodes) continue;
+
+        double* off = nullptr;
+        if (lt == LinkType::ORIFICE) {
+            off = &ctx.links.offset1[uj];
+        } else {
+            const int wr  = ctx.link_subtypes.weir_row(j);
+            const int olr = (wr < 0) ? ctx.link_subtypes.outlet_row(j) : -1;
+            off = (wr >= 0)
+                ? &ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
+                : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
+                            : nullptr);
+        }
+        if (!off) continue;
+
+        double inv1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
+        double inv2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
+        if (inv1 + *off < inv2) {
+            if (ctx.options.routing_model == RoutingModel::DYNWAVE) {
+                *off = inv2 - inv1;   // legacy link.c:434-435 (bit-exact form)
+            }
+            ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
         }
     }
 

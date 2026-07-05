@@ -300,8 +300,15 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 int Router::step(SimulationContext& ctx, double dt,
                  double evap_rate,
                  dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
-    // 1. Save old states
-    saveOldStates(ctx);
+    // 1. Old states are saved ONCE per step by SWMMEngine::step() BEFORE
+    //    lateral inflows are assembled — matching legacy routing_execute,
+    //    which snapshots old hyd state / oldLatFlow (initSystemInflows,
+    //    routing.c:431) before addSystemInflows fills the new laterals.
+    //    A second save here clobbered old_lat_flow with the CURRENT step's
+    //    just-assembled laterals, corrupting the reported (interpolated)
+    //    NODE_LATFLOW while leaving solver state untouched. Standalone
+    //    Router users (unit tests) must call ctx.nodes/links.save_state()
+    //    themselves before step().
 
     // 2. Init node flows from laterals and losses (includes storage evap)
     initNodeFlows(ctx, dt, evap_rate);
@@ -409,11 +416,6 @@ double Router::getAdaptiveStep(SimulationContext& ctx,
 // ============================================================================
 // Internal helpers
 // ============================================================================
-
-void Router::saveOldStates(SimulationContext& ctx) {
-    ctx.nodes.save_state();
-    ctx.links.save_state();
-}
 
 void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) {
     auto& nodes = ctx.nodes;

@@ -29,6 +29,7 @@
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
+#include <cmath>
 
 namespace openswmm {
 
@@ -131,6 +132,17 @@ struct SimulationOptions {
 
     /** @brief Simulation end date/time (decimal days, OADate (days since 12/30/1899)). */
     double end_date = 0.0;
+
+    /** @brief Total simulation duration in milliseconds, or -1 if not set.
+     *  @details PARITY legacy swmm5.c:3198-3200 / project.c:173: legacy forms
+     *  TotalDuration from the SEPARATE date and time parts —
+     *  floor((EndDate-StartDate)*86400 + (EndTime-StartTime)*86400) * 1000 —
+     *  which yields EXACT whole-second ms (e.g. 172680000.0), whereas
+     *  (end_date - start_date)*86400000 from the combined serials rounds
+     *  (e.g. 172679999.99999997). The INP options handler stores the
+     *  legacy-exact value here; writers that only set the combined serials
+     *  must reset it to -1 so total_duration_ms() falls back. */
+    double total_duration_ms = -1.0;
 
     /** @brief Report start date/time. */
     double report_start = 0.0;
@@ -511,6 +523,16 @@ struct SimulationOptions {
 
     /** @brief Named links to report (used when rpt_links == 2). */
     std::vector<std::string> rpt_link_names;
+
+    /** @brief Total simulation duration in milliseconds (legacy TotalDuration).
+     *  @details Returns the legacy-exact value stored by the INP options
+     *  handler when available; otherwise falls back to flooring the combined
+     *  serial difference to whole seconds (mirroring legacy swmm5.c:3198-3200
+     *  as closely as the combined representation allows). */
+    double totalDurationMs() const {
+        if (total_duration_ms >= 0.0) return total_duration_ms;
+        return std::floor((end_date - start_date) * 86400.0) * 1000.0;
+    }
 };
 
 } /* namespace openswmm */

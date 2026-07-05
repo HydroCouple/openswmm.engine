@@ -188,6 +188,13 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
         // tok[7]: end contractions
         if (tok.size() > 7) ctx.link_subtypes.weirs.end_contractions[uwr] = to_double(tok[7]);
+        // tok[8]: end-section discharge coeff (legacy cDisch2, link.c weir_readParams x[5])
+        if (tok.size() > 8 && tok[8] != "*")
+            ctx.link_subtypes.weirs.cd2[uwr] = to_double(tok[8]);
+        // tok[9]: can-surcharge flag (legacy x[6], default YES)
+        if (tok.size() > 9 && tok[9] != "*")
+            ctx.link_subtypes.weirs.can_surcharge[uwr] =
+                (Tokenizer::to_upper(tok[9]) == "YES") ? uint8_t{1} : uint8_t{0};
         if (!pl.comment.empty())
             ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

@@ -151,7 +151,11 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
 
 double RunoffSolver::getRunoffRate(double depth, double dStore, double alpha) {
     double excess = depth - dStore;
-    if (excess > 0.0) {
+    // PARITY subcatch.c findSubareaRunoff (line 1016): legacy computes runoff
+    // only when xDepth > ZERO (consts.h ZERO = 1e-10 ft), NOT > 0 — a
+    // recession tail with excess in (0, 1e-10] must report EXACTLY zero
+    // runoff (e.g. Bellinge subcatch 230 at step 36533).
+    if (excess > 1.0e-10) {
         if (alpha > 0.0)
             return alpha * std::pow(excess, MEXP);
         // N=0 case is handled in processSubarea via instant drain

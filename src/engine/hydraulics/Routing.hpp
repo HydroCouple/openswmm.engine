@@ -116,8 +116,6 @@ private:
     std::vector<int> steady_sorted_links_;  ///< Topological link order for STEADY routing
     bool cycle_detected_ = false;           ///< Gap #44: set true when toposort detects a loop
 
-    /// Save old hydraulic states before routing.
-    void saveOldStates(SimulationContext& ctx);
 
     /// Initialise node inflows from lateral flows and losses (including storage evap).
     void initNodeFlows(SimulationContext& ctx, double dt, double evap_rate);

@@ -292,6 +292,7 @@ void routing_execute(int routingModel, double routingStep)
         if ( traceFile )
         {
             static long traceSn = 0;
+            extern long SwmmTraceRstepSn;   /* defined in dwflow.c */
             int tj;
             double qSum = 0.0, ySum = 0.0, lSum = 0.0, roSum = 0.0;
             /* FNV-1a 64-bit hashes over the raw bit patterns of link flow &
@@ -319,6 +320,7 @@ void routing_execute(int routingModel, double routingStep)
                     ++traceSn,
                     NewRoutingTime, 1000.0*routingStep, trialsCount, qSum, ySum,
                     lSum, roSum, qHash, yHash);
+            SwmmTraceRstepSn = traceSn;   /* step-gate for dwflow link trace */
 
             // Optional per-element dump at one step (SWMM_TRACE_DUMP_STEP=N):
             // writes "<trace>.dumpN" with per-link newFlow/dqdh and per-node
@@ -346,9 +348,10 @@ void routing_execute(int routingModel, double routingStep)
                             fprintf(df, "L,%d,%a,%a\n", tj,
                                     Link[tj].newFlow, Link[tj].dqdh);
                         for (tj = 0; tj < Nobjects[NODE]; tj++)
-                            fprintf(df, "N,%d,%a,%a,%a,%a\n", tj,
+                            fprintf(df, "N,%d,%a,%a,%a,%a,%a\n", tj,
                                     Node[tj].newDepth, Node[tj].inflow,
-                                    Node[tj].outflow, Node[tj].newLatFlow);
+                                    Node[tj].outflow, Node[tj].newLatFlow,
+                                    Node[tj].oldLatFlow);
                         for (tj = 0; tj < Nobjects[SUBCATCH]; tj++)
                             fprintf(df, "S,%d,%a,%a,%a,%a\n", tj,
                                     Subcatch[tj].newRunoff,

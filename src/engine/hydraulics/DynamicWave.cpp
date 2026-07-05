@@ -58,6 +58,11 @@ static inline int omp_get_max_threads() { return 1; }
 #endif
 
 namespace openswmm {
+
+// A3 parity tracing: routing-step serial defined in SWMMEngine.cpp, used to
+// step-gate the per-link term trace (SWMM_TRACE_LSTEP) below.
+extern long g_trace_rstep_sn;
+
 namespace dynwave {
 
 using constants::GRAVITY;
@@ -1224,7 +1229,23 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 double w2 = width2_[uj];
                 XSectParams& xs = xs_ref();
                 double wM = xsect::getWofY(xs, yMid);
-                surfArea2 = (wM + w2) * length * 0.5;
+                // PARITY dwflow.c:521-523 + getWidth() (dwflow.c:632-641):
+                // the surface-area midpoint width is getWidth(yMid) — the
+                // Preissmann slot width when active, else capped at
+                // CrownCutoff*yFull for closed sections. Only width_mid_
+                // (Froude) keeps the raw getWofY value, matching legacy
+                // link_getFroude's uncapped xsect_getWofY.
+                double wMsa;
+                double wSlotM = getSlotWidth(yMid, yf, tile_w_max_[uci],
+                                             tile_shape_[uci]);
+                if (wSlotM > 0.0)
+                    wMsa = wSlotM;
+                else if (yMid / yf >= getCrownCutoff() &&
+                         !xsect::isOpen(tile_xsect_batch_shape_[uci]))
+                    wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
+                else
+                    wMsa = wM;
+                surfArea2 = (wMsa + w2) * length * 0.5;
                 depth1_[uj] = y1;
                 depth_mid_[uj] = yMid;
                 width_mid_[uj] = wM;  // patch width for modified depth
@@ -1242,7 +1263,23 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 double w1 = width1_[uj];
                 XSectParams& xs = xs_ref();
                 double wM = xsect::getWofY(xs, yMid);
-                surfArea1 = (w1 + wM) * length * 0.5;
+                // PARITY dwflow.c:531-535 + getWidth() (dwflow.c:632-641):
+                // the surface-area midpoint width is getWidth(yMid) — the
+                // Preissmann slot width when active, else capped at
+                // CrownCutoff*yFull for closed sections. Only width_mid_
+                // (Froude) keeps the raw getWofY value, matching legacy
+                // link_getFroude's uncapped xsect_getWofY.
+                double wMsa;
+                double wSlotM = getSlotWidth(yMid, yf, tile_w_max_[uci],
+                                             tile_shape_[uci]);
+                if (wSlotM > 0.0)
+                    wMsa = wSlotM;
+                else if (yMid / yf >= getCrownCutoff() &&
+                         !xsect::isOpen(tile_xsect_batch_shape_[uci]))
+                    wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
+                else
+                    wMsa = wM;
+                surfArea1 = (w1 + wMsa) * length * 0.5;
                 depth2_[uj] = y2;
                 depth_mid_[uj] = yMid;
                 width_mid_[uj] = wM;  // patch width for modified depth
@@ -1632,12 +1669,27 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                 bool froude_check = false;
                 if (!slope_check && (nfl == 1 || nfl == 2) && !hasOutfall) {
                     if (depth1_[uj] > FUDGE && depth2_[uj] > FUDGE) {
-                        double v1 = q / area1_[uj];
-                        double w1 = width1_[uj];
-                        double dh1 = (w1 > FUDGE) ? area1_[uj] / w1 : 0.0;
-                        // PARITY: match legacy link_getFroude (sqrt(GRAVITY*y)).
-                        double f1 = (dh1 > 0.0) ? std::fabs(v1) / std::sqrt(constants::GRAVITY * dh1) : 0.0;
-                        froude_check = (f1 >= 1.0);
+                        // PARITY dwflow.c checkNormalFlow → link_getFroude
+                        // (link.c:860-873): the hydraulic depth uses the RAW
+                        // top width xsect_getWofY(y1) — NOT the STEP-B
+                        // CrownCutoff-capped width1_ (which overstates Froude
+                        // for a nearly-full pipe and spuriously fires the
+                        // normal-flow limit) — and a CLOSED conduit within
+                        // FUDGE of full has Froude 0 (no limit check).
+                        const double y1d = depth1_[uj];
+                        const bool closed_nearfull =
+                            !tile_is_open_[uci] && (yf - y1d <= FUDGE);
+                        if (!closed_nearfull) {
+                            double v1 = q / area1_[uj];
+                            XSectParams xs = buildXSP(ctx, uj);
+                            double w1 = xsect::getWofY(xs, y1d);
+                            // Legacy divides A/W with no zero guard; y1 < yf
+                            // and not near-full keeps W finite here.
+                            double dh1 = area1_[uj] / w1;
+                            double f1 = std::fabs(v1) /
+                                        std::sqrt(constants::GRAVITY * dh1);
+                            froude_check = (f1 >= 1.0);
+                        }
                     }
                 }
                 if (slope_check || froude_check) {
@@ -1885,13 +1937,17 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         static FILE* lf = nullptr;
         static long  lf_target = -2;
         static long  lf_skip = 0;
+        static long  lf_step = 0;
         static int   lf_count = 0;
+        static int   lf_rows = 0;
         if (lf_target == -2) {
             const char* p  = std::getenv("SWMM_TRACE_LINK");
             const char* tr = std::getenv("SWMM_TRACE_RSTEP");
             const char* sk = std::getenv("SWMM_TRACE_SKIP");
+            const char* ls = std::getenv("SWMM_TRACE_LSTEP");
             lf_target = -1;
             if (sk && *sk) lf_skip = std::atol(sk);
+            if (ls && *ls) lf_step = std::atol(ls);
             if (p && *p && tr && *tr) {
                 char fname[512];
                 lf_target = std::atol(p);
@@ -1903,13 +1959,21 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
         }
         if (lf && static_cast<long>(uj) == lf_target) {
             ++lf_count;
-            if (lf_count > lf_skip && lf_count <= lf_skip + 128) {
+            // SWMM_TRACE_LSTEP=N: capture while computing routing step >= N
+            // (the RSTEP serial increments at the END of each step, so during
+            // step N the serial still reads N-1). Otherwise use the
+            // invocation-count window (SWMM_TRACE_SKIP).
+            const bool in_window = lf_step > 0
+                ? (openswmm::g_trace_rstep_sn + 1 >= lf_step)
+                : (lf_count > lf_skip);
+            if (in_window && lf_rows < 128) {
+                ++lf_rows;
                 std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d\n",
                              lf_count, qLast, v, sig, rho, aWtd, rWtd,
                              dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
                              surf_area1_[uj], surf_area2_[uj],
                              static_cast<int>(links.flow_class[uj]));
-                if (lf_count >= lf_skip + 128) { std::fclose(lf); lf = nullptr; }
+                if (lf_rows >= 128) { std::fclose(lf); lf = nullptr; }
             }
         }
     }

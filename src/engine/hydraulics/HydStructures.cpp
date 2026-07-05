@@ -17,13 +17,20 @@
 #include "XSectBatch.hpp"
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 
 namespace openswmm {
+
+// A3 parity tracing: routing-step serial defined in SWMMEngine.cpp, used to
+// step-gate the per-orifice term trace (SWMM_TRACE_ORIF + SWMM_TRACE_LSTEP).
+extern long g_trace_rstep_sn;
+
 namespace hydstruct {
 
 void PumpGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); curve_type.resize(u,0); speed.resize(u,1.0); y_on.resize(u,0); y_off.resize(u,0); }
 void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); c_orifice.resize(u,0); c_weir.resize(u,0); h_crit.resize(u,0); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); }
-void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); }
+void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); can_surcharge.resize(u,1); }
 void OutletGroup::resize(int n)  { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); q_coeff.resize(u,0); q_expon.resize(u,1); }
 
 void StructureSolver::init(SimulationContext& ctx) {
@@ -48,22 +55,13 @@ void StructureSolver::init(SimulationContext& ctx) {
     weirs_.resize(n_weirs);
     outlets_.resize(n_outlets);
 
-    // Legacy weir flow (link.c weir_getFlow) evaluates Q in the project's
-    // DISPLAY units — length & head are multiplied by UCF(LENGTH) — then the
-    // CMS result is divided by M3perFT3 to get CFS. Every weir formula
-    // (transverse L·H^1.5, sideflow L^0.83·H^1.67, v-notch H^2.5, trapezoidal)
-    // is degree-2.5 homogeneous in length, so that whole round-trip collapses
-    // to one scale factor on the discharge coefficient:
-    //     UCF(LENGTH)^2.5 / M3perFT3   (= 1/sqrt(UCF) for SI, 1.0 for US).
-    // Our geometry is already in internal feet, so pre-scaling the stored
-    // coefficient lets the ft-based formulas below yield CFS directly and keeps
-    // the unit-conversion in exactly one place (matches the internal-imperial
-    // convention used everywhere else).
-    constexpr double M3perFT3 = 0.028317; // legacy consts.h
-    const int    weir_us   = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    const double weir_ucfL = ucf::Ucf[ucf::LENGTH][weir_us];
-    const double weir_cf   = (weir_us == 1)
-        ? std::pow(weir_ucfL, 2.5) / M3perFT3 : 1.0;
+    // PARITY link.c weir_getFlow: legacy evaluates weir Q in the project's
+    // DISPLAY units per call — length & head multiplied by UCF(LENGTH), the
+    // formula applied with the RAW discharge coefficient, and the CMS result
+    // divided by M3perFT3 for SI. Folding UCF^2.5/M3perFT3 into the stored
+    // coefficient is algebraically identical but reorders the FP ops and
+    // costs ~1 ULP per evaluation, so the coefficients are stored RAW and
+    // computeWeirFlowK replicates the legacy per-call conversion sequence.
 
     // Second pass: populate
     int ip = 0, io = 0, iw = 0, ix = 0;
@@ -141,7 +139,9 @@ void StructureSolver::init(SimulationContext& ctx) {
                 const auto& W = ctx.link_subtypes.weirs;
                 const auto wr = static_cast<size_t>(ctx.link_subtypes.weir_row(j));
                 weirs_.link_idx[uk]   = j;
-                weirs_.c_disch1[uk]   = W.cd[wr] * weir_cf;
+                weirs_.c_disch1[uk]   = W.cd[wr];   // RAW (see PARITY note above)
+                weirs_.c_disch2[uk]   = W.cd2[wr];  // RAW end-section coeff
+                weirs_.can_surcharge[uk] = W.can_surcharge[wr];
                 weirs_.has_flap[uk]   = ctx.links.has_flap_gate[uj];
                 weirs_.weir_type[uk]  = static_cast<int>(W.weir_type[wr]);
                 weirs_.end_con[uk]    = W.end_contractions[wr];
@@ -471,7 +471,10 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
         double h_open = setting * y_full;
         if (h_open < FUDGE_ORI) {
             links.flow[uj] = 0.0;
-            links.depth[uj] = 0.0;
+            // PARITY link.c:553: legacy link_getInflow early-returns on
+            // setting == 0 WITHOUT touching newDepth — a closed orifice's
+            // reported depth stays FROZEN at its last open-state value.
+            // (links.depth deliberately not zeroed here.)
             orifices_.surf_area[uk] = 0.0;
             return;
         }
@@ -582,12 +585,14 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
         }
 
         // --- Compute flow (matching legacy orifice_getFlow) ---
+        // PARITY link.c orifice_getFlow: legacy uses pow(f, 1.5) — the
+        // x·sqrt(x) closed form is not bit-identical, so keep std::pow.
         double q = 0.0;
         double dqdh = 0.0;
         if (f <= 0.0) {
             q = 0.0;
         } else if (f < 1.0) {
-            q = cWeir * fastmath::pow3_2(f);
+            q = cWeir * std::pow(f, 1.5);
             dqdh = 1.5 * q / (f * hCrit);
         } else {
             q = cOrif * std::sqrt(head);
@@ -611,7 +616,7 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
                 q = 0.0;
                 dqdh = 0.0;
             } else if (f < 1.0) {
-                q = cWeir * fastmath::pow3_2(f);
+                q = cWeir * std::pow(f, 1.5);   // PARITY: legacy pow(f, 1.5)
                 dqdh = 1.5 * q / (f * hCrit);
             } else {
                 q = cOrif * std::sqrt(head);
@@ -619,18 +624,52 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
             }
         }
 
-        // --- Villemonte submergence correction (matching legacy) ---
-        if (f < 1.0 && h2 > hcrest && h1 > hcrest) {
+        // --- Villemonte submergence correction ---
+        // PARITY link.c orifice_getInflow:1929-1934: legacy applies the
+        // correction UNGUARDED whenever f < 1 and h2 > hcrest, with
+        // pow(ratio, 1.5) (ratio ≤ 1 since h1 ≥ h2 after the direction
+        // swap; ratio == 1 must zero the flow, which the previous
+        // `ratio < 1` guard skipped).
+        if (f < 1.0 && h2 > hcrest) {
             double ratio = (h2 - hcrest) / (h1 - hcrest);
-            if (ratio < 1.0 && ratio > 0.0) {
-                double inner = 1.0 - fastmath::pow3_2(ratio);
-                if (inner > 0.0) q *= std::pow(inner, 0.385);
-            }
+            q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
         }
 
         q = std::max(q, 0.0);
         links.flow[uj] = q * dir;
         links.dqdh[uj] = dqdh;
+
+        // A3 parity term tracing for one orifice (SWMM_TRACE_ORIF=<index>,
+        // step-gated via SWMM_TRACE_LSTEP; format-matched to legacy link.c).
+        {
+            static FILE* of = nullptr;
+            static long  of_target = -2;
+            static long  of_step = 0;
+            static int   of_rows = 0;
+            if (of_target == -2) {
+                const char* p  = std::getenv("SWMM_TRACE_ORIF");
+                const char* tr = std::getenv("SWMM_TRACE_RSTEP");
+                const char* ls = std::getenv("SWMM_TRACE_LSTEP");
+                of_target = -1;
+                if (ls && *ls) of_step = std::atol(ls);
+                if (p && *p && tr && *tr) {
+                    char fname[512];
+                    of_target = std::atol(p);
+                    std::snprintf(fname, sizeof(fname), "%s.orif%ld", tr, of_target);
+                    of = std::fopen(fname, "w");
+                    if (of) std::fprintf(of,
+                        "h1,h2,hcrest,hcrown,f,head,cWeir,cOrif,hCrit,dqdh,q\n");
+                }
+            }
+            if (of && j == of_target &&
+                (of_step <= 0 || g_trace_rstep_sn + 1 >= of_step) && of_rows < 128) {
+                ++of_rows;
+                std::fprintf(of, "%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a\n",
+                             h1, h2, hcrest, hcrown, f, head,
+                             cWeir, cOrif, hCrit, dqdh, q * dir);
+                if (of_rows >= 128) { std::fclose(of); of = nullptr; }
+            }
+        }
 
         // Scatter orifice surface area to end nodes via legacy
         // findNonConduitSurfArea (half each, then zero the UP_CRITICAL end's
@@ -695,11 +734,15 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
         // Legacy link.c:2252-2257 always uses Node[n1].invertElev.
         double y_full = links.xsect_y_full[uj];
         double setting = links.setting[uj];
+        // PARITY link.c:2252-2259: legacy computes hcrown from the DESIGN
+        // crest (invert + offset1) BEFORE the partial-open adjustment, then
+        // raises hcrest by (1-setting)*yFull. Folding the adjustment into
+        // hcrest first and adding yFull*setting back is algebraically equal
+        // but reorders the FP ops (differs for 0 < setting < 1).
         double hcrest = nodes.invert_elev[un1]
-                      + ctx.link_subtypes.weirs.crest_height[static_cast<size_t>(ctx.link_subtypes.weir_row(j))]
-                      + (1.0 - setting) * y_full;
-
-        double hcrown = hcrest + y_full * setting;
+                      + ctx.link_subtypes.weirs.crest_height[static_cast<size_t>(ctx.link_subtypes.weir_row(j))];
+        double hcrown = hcrest + y_full;
+        hcrest += (1.0 - setting) * y_full;
         double head = hgl1 - hcrest;
         if (head <= FUDGE_W || hcrest >= hcrown) {
             links.flow[uj] = 0.0;
@@ -710,9 +753,82 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
         }
 
         double cd     = weirs_.c_disch1[uk];
+        double cd2    = weirs_.c_disch2[uk];
         double length = links.xsect_w_max[uj];
         int    wt     = weirs_.weir_type[uk];
+        const bool flap = weirs_.has_flap[uk] != 0;
         double q = 0.0;
+
+        // PARITY link.c weir_getFlow (2323-2412): legacy evaluates the weir
+        // formula in DISPLAY units — length & head × UCF(LENGTH), RAW Cd,
+        // std::pow with the legacy literal exponents (1.5 / 0.83 / 1.67 /
+        // 2.5; NOT x·sqrt(x) closed forms) — then divides the CMS result by
+        // M3perFT3 for SI. Replicated op-for-op for bit parity.
+        constexpr double M3perFT3 = 0.028317;  // legacy consts.h
+        const int    us   = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double ucfL = ucf::Ucf[ucf::LENGTH][us];
+        auto weirFlow = [&](double head_ft, double dir_f,
+                            double& q1_out, double& q2_out) {
+            q1_out = 0.0;
+            q2_out = 0.0;
+            if (head_ft <= 0.0) return;
+            double lengthD = length * ucfL;
+            double h = head_ft * ucfL;
+            // Partially-open V-notch behaves as a trapezoidal weir
+            // (legacy link.c:2358-2360).
+            int wType = wt;
+            if (wType == 2 && setting < 1.0) wType = 3;
+            switch (wType) {
+                case 0:  // TRANSVERSE — Q = Cd·L·H^1.5
+                    lengthD -= 0.1 * weirs_.end_con[uk] * h;
+                    lengthD = std::max(lengthD, 0.0);
+                    q1_out = cd * lengthD * std::pow(h, 1.5);
+                    break;
+                case 1:  // SIDEFLOW — reverse flow behaves as TRANSVERSE
+                    lengthD -= 0.1 * weirs_.end_con[uk] * h;
+                    lengthD = std::max(lengthD, 0.0);
+                    if (dir_f < 0.0)
+                        q1_out = cd * lengthD * std::pow(h, 1.5);
+                    else
+                        q1_out = cd * std::pow(lengthD, 0.83) * std::pow(h, 1.67);
+                    break;
+                case 2:  // V-NOTCH (fully open) — Q = Cd·slope·H^2.5
+                    q1_out = cd * weirs_.slope[uk] * std::pow(h, 2.5);
+                    break;
+                case 3: { // TRAPEZOIDAL (incl. partly-open V-notch)
+                    // Legacy: length = W(y)·UCF at y = (1-setting)·yFull.
+                    // W(y) inline per shape: triangular w = 2·s·y,
+                    // trapezoid w = base + 2·s·y (base from xsect_y_bot).
+                    double y = (1.0 - setting) * y_full;
+                    double w = (wt == 2)
+                        ? 2.0 * weirs_.slope[uk] * y
+                        : links.xsect_y_bot[uj] + 2.0 * weirs_.slope[uk] * y;
+                    q1_out = cd * (w * ucfL) * std::pow(h, 1.5);
+                    q2_out = cd2 * weirs_.slope[uk] * std::pow(h, 2.5);
+                    break;
+                }
+            }
+            if (us == 1) {  // SI: CMS → CFS (legacy link.c:2404-2408)
+                q1_out /= M3perFT3;
+                q2_out /= M3perFT3;
+            }
+        };
+
+        // Flow area between the (possibly raised) crest and crest+y —
+        // legacy weir_getOpenArea (link.c), A(y) inlined per weir shape.
+        auto weirOpenArea = [&](double y) -> double {
+            double z = (1.0 - setting) * y_full;
+            double zy = std::min(z + y, y_full);
+            auto areaOf = [&](double d) -> double {
+                switch (wt) {
+                    case 2:  return weirs_.slope[uk] * d * d;      // TRIANGULAR
+                    case 3:  return (links.xsect_y_bot[uj]
+                                     + weirs_.slope[uk] * d) * d;  // TRAPEZOIDAL
+                    default: return length * d;                    // RECT_OPEN
+                }
+            };
+            return areaOf(zy) - areaOf(z);
+        };
 
         // Surface-area contribution: matches legacy weir_getInflow lines
         // 2271-2273 —   y = yFull - (hcrown - min(h1, hcrown))
@@ -747,89 +863,82 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
             weirs_.surf_area[uk] = width_at_y * weirs_.length_eff[uk];
         }
 
-        // --- Surcharge path: legacy weir_getInflow lines 2285-2301
-        if (hgl1 >= hcrown && y_full > 0.0 && setting > 0.0) {
-            // c_surcharge = q(at h_full) / sqrt(h_full/2). Recomputing this
-            // per call rather than caching because `setting` can change via
-            // controls. Uses the SAME weir formula as below so the two modes
-            // match at the transition point.
+        // --- Head above crown: legacy weir_getInflow link.c:2285-2304.
+        //     canSurcharge=YES → equivalent-orifice formulation;
+        //     canSurcharge=NO  → cap head at the weir opening height and
+        //     keep the ordinary weir equation.
+        if (hgl1 >= hcrown && weirs_.can_surcharge[uk]) {
+            // cSurcharge — legacy caches q(setting·yFull)/sqrt(setting·yFull/2)
+            // at validation (weir_validate) and on control changes
+            // (weir_setSetting), computed THROUGH weir_getFlow (so end
+            // contractions apply). Recomputed here with the identical op
+            // order — bit-identical while `setting` is unchanged.
             double h_full = setting * y_full;
-            double q_full = 0.0;
-            switch (wt) {
-                case 0: q_full = cd * length * fastmath::pow3_2(h_full); break;
-                case 1: q_full = cd * std::pow(length, 0.83)
-                                    * fastmath::pow5_3(h_full); break;
-                case 2: q_full = cd * weirs_.slope[uk]
-                                    * fastmath::pow5_2(h_full); break;
-                case 3: { // TRAPEZOIDAL: q = q1 (rect) + q2 (V-notch sides)
-                    double y_bot = links.xsect_y_bot[uj];
-                    double q1 = cd * y_bot * fastmath::pow3_2(h_full);
-                    double q2 = weirs_.c_disch2[uk] * weirs_.slope[uk]
-                              * fastmath::pow5_2(h_full);
-                    q_full = q1 + q2;
-                    break;
+            double q1f = 0.0, q2f = 0.0;
+            weirFlow(h_full, 1.0, q1f, q2f);
+            double h_half = h_full / 2.0;
+            double c_surcharge =
+                (h_half > 0.0) ? (q1f + q2f) / std::sqrt(h_half) : 0.0;
+
+            // weir_getOrificeFlow (link.c): q = c·sqrt(head) with the head
+            // measured to the weir-opening midpoint (or to the tailwater when
+            // submerged above it), plus the ARMCO flap-gate head loss.
+            double y_mid = (hcrest + hcrown) / 2.0;
+            double h_orif = (hgl2 < y_mid) ? hgl1 - y_mid : hgl1 - hgl2;
+            double y_open = hcrown - hcrest;
+            q = c_surcharge * std::sqrt(h_orif);
+            if (flap) {
+                double a = weirOpenArea(y_open);
+                if (a > 0.0) {
+                    double v = q / a;
+                    double hloss = (4.0 / constants::GRAVITY) * v * v
+                                 * std::exp(-1.15 * v / std::sqrt(y_open));
+                    h_orif -= hloss;
+                    h_orif = std::max(h_orif, 0.0);
+                    q = c_surcharge * std::sqrt(h_orif);
                 }
             }
-            double h_half = h_full * 0.5;
-            double c_surcharge = (h_half > 0.0) ? q_full / std::sqrt(h_half) : 0.0;
-
-            double y_mid = (hcrest + hcrown) * 0.5;
-            double h_orif = (hgl2 < y_mid) ? hgl1 - y_mid : hgl1 - hgl2;
-            h_orif = std::max(h_orif, 0.0);
-            q = c_surcharge * std::sqrt(h_orif);
 
             // Reported weir depth on the surcharge (orifice-equivalent) path:
-            // legacy weir_getInflow link.c:2294-2296 sets newDepth = hcrown-hcrest
-            // (the weir opening height), not the head above the crest.
-            links.depth[uj] = hcrown - hcrest;
+            // legacy weir_getInflow link.c:2294-2296 sets newDepth =
+            // hcrown-hcrest (the weir opening height).
+            links.depth[uj] = y_open;
 
-            // Surcharged weir dqdh uses the ORIFICE head, not the full head
-            // above the crest (legacy weir_getOrificeFlow, link.c:2435 sets
-            // Link[j].dqdh = q / (2·head) with head == the orifice head).
+            // Surcharged weir dqdh uses the ORIFICE head (legacy
+            // weir_getOrificeFlow sets dqdh = q / (2·head)).
             links.dqdh[uj] = (h_orif > 0.0) ? q / (2.0 * h_orif) : 0.0;
         } else {
-            // --- Free (weir) flow path.  Track q1 (central) and q2 (end
-            // sections) separately so dqdh can match legacy weir_getdqdh
-            // (link.c:2495), which weights them 1.5×/1.67×/2.5× by weir type.
+            // canSurcharge == NO with head above crown: legacy link.c:2303
+            // limits the head to the height of the weir opening.
+            if (hgl1 >= hcrown) head = hcrown - hcrest;
+
+            // --- Free (weir) flow path — legacy weir_getFlow + Villemonte.
             double q1 = 0.0, q2 = 0.0;
-            switch (wt) {
-                case 0: { // TRANSVERSE — Q = Cd·L·H^1.5
-                    double ec = weirs_.end_con[uk];
-                    double L = length - 0.1 * ec * head;
-                    if (L < 0.0) L = 0.0;
-                    q1 = cd * L * fastmath::pow3_2(head);
-                    break;
-                }
-                case 1: // SIDEFLOW — reverse flow behaves as TRANSVERSE
-                        // (legacy link.c:2380-2388).
-                    if (dir < 0.0)
-                        q1 = cd * length * fastmath::pow3_2(head);
-                    else
-                        q1 = cd * std::pow(length, 0.83) * fastmath::pow5_3(head);
-                    break;
-                case 2: // V-NOTCH — Q = Cd·slope·H^2.5
-                    q1 = cd * weirs_.slope[uk] * fastmath::pow5_2(head);
-                    break;
-                case 3: { // TRAPEZOIDAL — q1 (rect crest) + q2 (V-notch sides)
-                    double y_bot = links.xsect_y_bot[uj];
-                    q1 = cd * y_bot * fastmath::pow3_2(head);
-                    q2 = weirs_.c_disch2[uk] * weirs_.slope[uk]
-                              * fastmath::pow5_2(head);
-                    break;
+            weirFlow(head, dir, q1, q2);
+
+            // ARMCO flap-gate head-loss adjustment (legacy weir_getFlow):
+            // velocity through the weir opening → head loss → one
+            // re-evaluation of the weir formula at the adjusted head.
+            if (flap) {
+                double area = weirOpenArea(head);
+                if (area > 1.0e-6) {  // legacy TINY
+                    double veloc = (q1 + q2) / area;
+                    double hLoss = (4.0 / constants::GRAVITY) * veloc * veloc
+                                 * std::exp(-1.15 * veloc / std::sqrt(head));
+                    head = head - hLoss;
+                    if (head < 0.0) head = 0.0;
+                    weirFlow(head, dir, q1, q2);
                 }
             }
 
-            // dqdh from the UN-submerged q1/q2 (legacy sets dqdh inside
-            // weir_getFlow, BEFORE Villemonte is applied in weir_getInflow).
-            // weir_getdqdh (link.c:2495):
+            // dqdh from the UN-submerged q1/q2 at the (possibly ARMCO-
+            // adjusted) head — legacy weir_getdqdh (link.c:2495), called at
+            // the end of weir_getFlow BEFORE Villemonte is applied:
             //   TRANSVERSE  : 1.5·|q1/h|
             //   SIDEFLOW    : reverse 1.5·|q1/h|, forward 1.67·|q1/h|
             //   V-NOTCH     : 2.5·|q1/h| (fully open, q2==0)
             //   TRAPEZOIDAL : 1.5·|q1/h| + 2.5·|q2/h|
-            // The previous flat q/(2·head) understated a transverse weir's
-            // dqdh by 3×, letting the implicit surcharge solve under-damp and
-            // driving a weir-flow limit cycle (e.g. Bellinge G80F66Yw1).
-            if (head > FUDGE_W) {
+            if (std::fabs(head) >= FUDGE_W) {
                 double q1h = std::fabs(q1 / head);
                 double q2h = std::fabs(q2 / head);
                 switch (wt) {
@@ -843,24 +952,26 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
                 links.dqdh[uj] = 0.0;
             }
 
-            q = q1 + q2;
-
-            // Villemonte submergence correction — leave the 0.385 power
-            // as std::pow (no closed form); replace the inner 1.5.
-            double h_tail = hgl2 - hcrest;
-            if (h_tail > 0.0 && head > 0.0) {
-                double ratio = h_tail / head;
-                if (ratio > 0.0 && ratio < 1.0) {
-                    double inner = 1.0 - fastmath::pow3_2(ratio);
-                    if (inner > 0.0) q *= std::pow(inner, 0.385);
-                }
+            // Villemonte submergence correction — legacy weir_getInflow
+            // link.c:2306-2315: applied PER COMPONENT with the weir-type
+            // power {1.5, 5/3, 2.5, 1.5} for q1 and the V-notch power 2.5
+            // for q2; the ratio uses the RAW heads above the crest (not the
+            // surcharge-capped head).
+            if (hgl2 > hcrest) {
+                static const double weirPower[4] = {1.5, 5.0 / 3.0, 2.5, 1.5};
+                double ratio = (hgl2 - hcrest) / (hgl1 - hcrest);
+                double wp = (wt >= 0 && wt < 4) ? weirPower[wt] : 1.5;
+                q1 *= std::pow(1.0 - std::pow(ratio, wp), 0.385);
+                if (q2 > 0.0)
+                    q2 *= std::pow(1.0 - std::pow(ratio, 2.5), 0.385);
             }
 
-            // Reported weir depth on the free-flow path: legacy
-            // weir_getInflow link.c:2318 sets newDepth = MIN(h1-hcrest, yFull),
-            // i.e. the head above the crest capped at the weir opening height.
-            // (head == hgl1 - hcrest here, unmodified on this branch.)
-            links.depth[uj] = std::min(head, y_full);
+            q = q1 + q2;
+
+            // Reported weir depth on the free-flow path: legacy link.c:2318
+            // newDepth = MIN(h1 - hcrest, yFull) — RAW head above crest,
+            // not the surcharge-capped one.
+            links.depth[uj] = std::min(hgl1 - hcrest, y_full);
         }
 
         if (q < 0.0) q = 0.0;

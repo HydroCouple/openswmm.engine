@@ -104,6 +104,10 @@ struct WeirGroup {
     /// (legacy Weir[k].length = max(200, 2·routeStep·sqrt(g·yFull))).
     /// Pre-computed at init; constant per simulation.
     std::vector<double> length_eff;
+    /// Surcharge YES/NO (legacy Weir.canSurcharge): when NO and h1 >= hcrown,
+    /// the head is capped at the weir opening height instead of switching to
+    /// the equivalent-orifice formulation (legacy link.c weir_getInflow).
+    std::vector<uint8_t> can_surcharge;
     void resize(int n);
 };
 

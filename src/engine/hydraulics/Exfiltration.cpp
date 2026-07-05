@@ -128,16 +128,19 @@ void ExfilSolver::init(SimulationContext& ctx) {
                 }
             }
 
-            // Note: legacy converts from user units to internal units here.
-            // In the new engine, values are assumed to already be in internal
-            // units (ft) after parsing. If unit conversion is needed during
-            // parsing, it should be done there, not here.
+            // Note: legacy converts TABULAR areas/depths to internal units
+            // here (exfil.c:126-129, inside the TABULAR case only).
 
         } else {
             // --- FUNCTIONAL: area = A * depth^B + C
-            //     Legacy: exfil_initState() FUNCTIONAL case
+            //     Legacy: exfil_initState() FUNCTIONAL case (exfil.c:134-141)
             //     Bottom area: at depth=0, area = A*0^B + C = C
             //     Exception: if B==0 (exponent is zero), area = A*1 + C = A+C
+            //     PARITY QUIRK: legacy does NOT unit-convert the FUNCTIONAL
+            //     bottom area (its /UCF at exfil.c:126-129 is inside the
+            //     TABULAR case only), so the raw USER-unit coefficients are
+            //     used directly — storage coefficients stay user-unit
+            //     end-to-end (see PostParseResolver), matching this quirk.
             double a_coeff = (sr >= 0) ? ctx.node_subtypes.storages.a[static_cast<size_t>(sr)] : 0.0;
             double b_coeff = (sr >= 0) ? ctx.node_subtypes.storages.b[static_cast<size_t>(sr)] : 0.0;
             double c_coeff = (sr >= 0) ? ctx.node_subtypes.storages.c[static_cast<size_t>(sr)] : 0.0;

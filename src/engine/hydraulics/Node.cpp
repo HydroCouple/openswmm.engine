@@ -13,6 +13,7 @@
 
 #include "../core/UnitConversion.hpp"
 #include "../data/NodeSubtypes.hpp"
+#include "../math/FindRoot.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -76,11 +77,20 @@ double getVolume(const NodeData& nodes, int idx, double depth,
             return 0.0;
         }
         // Functional: integrate A(d) = a0 + a1*d^a2 → V = a0*d + a1/(a2+1)*d^(a2+1)
-        double a0 = g.c;
-        double a1 = g.a;
-        double a2 = g.b;
-        double n = a2 + 1.0;
-        return a0 * depth + (n != 0.0 ? a1 / n * std::pow(depth, n) : 0.0);
+        //
+        // PARITY: legacy storage_getVolume (node.c:923-927) keeps a0/a1/a2 in
+        // USER units and converts per call:
+        //   d *= UCF(LENGTH);
+        //   n = Storage[k].a2 + 1.0;
+        //   v = (Storage[k].a0 * d) + Storage[k].a1 / n * pow(d, n);
+        //   return v / UCF(VOLUME);
+        // The SI VOLUME factor is the TRUNCATED 0.02832 (swmm5.c:157), not
+        // 0.3048³, so this per-call regime is FP-distinguishable from
+        // evaluating pre-converted internal coefficients — mirror it exactly.
+        double d = depth * ucf::Ucf[ucf::LENGTH][unit_sys];
+        double n = g.b + 1.0;
+        double v = (g.c * d) + g.a / n * std::pow(d, n);
+        return v / ucf::Ucf[ucf::VOLUME][unit_sys];
     }
 
     // JUNCTION / OUTFALL / DIVIDER: linear V = fullVolume * (d / fullDepth)
@@ -130,33 +140,48 @@ double getDepth(const NodeData& nodes, int idx, double volume,
         }
 
         // Functional: V = a0*d + a1/(a2+1) * d^(a2+1)
-        // For simple case a2==0: V = (a0 + a1)*d → d = V/(a0+a1)
+        //
+        // PARITY: legacy storage_getDepth (node.c:778-866) keeps a0/a1/a2 in
+        // USER units: it converts the target volume to user units up front
+        // (v *= UCF(VOLUME), node.c:801), solves for depth in user units per
+        // the case split below, then d /= UCF(LENGTH) and clamps to fullDepth
+        // (node.c:861-864). Mirror the exact expressions and operand order.
         double a0 = g.c;
         double a1 = g.a;
         double a2 = g.b;
+        const double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+        double v = volume * ucf::Ucf[ucf::VOLUME][unit_sys];
+        double d;
 
-        if (std::fabs(a2) < 1e-10) {
-            // Linear A(d) = a0 + a1 → V = (a0+a1)*d
-            double total_a = a0 + a1;
-            return (total_a > 0.0) ? volume / total_a : 0.0;
+        if (a2 == 0.0) {
+            // area = a0 + a1; v = (a0 + a1) * d              (node.c:825-829)
+            d = v / (a0 + a1);
+        } else if (a0 == 0.0) {
+            // area = a1*d^a2; v = a1/(a2+1)*d^(a2+1)         (node.c:831-836)
+            double e = 1.0 / (a2 + 1.0);
+            d = std::pow(v / (a1 * e), e);
+        } else if (a2 == 1.0 && a1 > 0.0) {
+            // area = a0 + a1*d; v = a0*d + (a1/2)*d^2        (node.c:838-841)
+            d = (std::sqrt(a0 * a0 + 2. * a1 * v) - a0) / a1;
+        } else {
+            // area = a0 + a1*d^a2 — Newton/bisection on the USER-unit depth
+            // over [0, fullDepth*UCF(LENGTH)], xacc 0.001  (node.c:843-847).
+            // Legacy's storage_getVolDiff (node.c:871-891) differences the
+            // INTERNAL-unit storage_getVolume at the user-unit trial depth
+            // against the USER-unit target v, and uses the internal-unit
+            // storage_getSurfArea as the derivative — a legacy unit quirk,
+            // replicated as-is. (Legacy also passes the storage subIndex
+            // where those functions expect a node index; we pass the node
+            // index, which resolves to the same storage geometry.)
+            d = v / (a0 + a1);
+            findroot::newton(0.0, fd * ucf_len, &d, 0.001,
+                [&](double y, double* f, double* df) {
+                    *f  = getVolume(nodes, idx, y, tables, unit_sys, subs) - v;
+                    *df = getSurfArea(nodes, idx, y, tables, unit_sys, subs);
+                });
         }
-
-        // General case: Newton iteration
-        // F(d) = a0*d + a1/(a2+1)*d^(a2+1) - V = 0
-        // F'(d) = a0 + a1*d^a2
-        double d = (fd > 0.0 && fv > 0.0) ? fd * (volume / fv) : 1.0;
-        d = std::max(d, 0.001);
-        double n = a2 + 1.0;
-        for (int iter = 0; iter < 20; ++iter) {
-            double f = a0 * d + (n != 0.0 ? a1 / n * std::pow(d, n) : 0.0) - volume;
-            double df = a0 + a1 * std::pow(d, a2);
-            if (std::fabs(df) < 1e-20) break;
-            double dd = -f / df;
-            d += dd;
-            d = std::max(d, 0.0);
-            if (std::fabs(dd) < 1e-6) break;
-        }
-        return std::min(d, fd);
+        d /= ucf_len;                                       // node.c:861
+        return std::min(d, fd);                             // node.c:862-864
     }
 
     // JUNCTION / OUTFALL / DIVIDER: V = MIN_SURFAREA * d → d = V / MIN_SURFAREA
@@ -199,11 +224,15 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
             return 0.0;
         }
         // Functional: area = a0 + a1 * d^a2
-        double a0 = g.c;
-        double a1 = g.a;
-        double a2 = g.b;
-        double area = a0 + a1 * std::pow(depth, a2);
-        return area;
+        //
+        // PARITY: legacy storage_getSurfArea (node.c:966-968, 977) keeps
+        // a0/a1/a2 in USER units and converts per call, with TWO successive
+        // divisions (not one divide by len²):
+        //   area = Storage[k].a0 + Storage[k].a1 * pow(d*UCF(LENGTH), Storage[k].a2);
+        //   return area / UCF(LENGTH) / UCF(LENGTH);
+        double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+        double area = g.c + g.a * std::pow(depth * ucf_len, g.b);
+        return area / ucf_len / ucf_len;
     }
 
     // Non-storage nodes: legacy node_getSurfArea returns 0 for everything

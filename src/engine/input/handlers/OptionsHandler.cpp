@@ -68,6 +68,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -355,6 +356,19 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
     }
     if (got_end_date || got_end_time) {
         opt.end_date = end_date_part + end_time_part;
+    }
+    // PARITY swmm5.c:3198-3200: legacy forms TotalDuration from the SEPARATE
+    // date and time parts — floor((EndDate-StartDate)*86400 +
+    // (EndTime-StartTime)*86400) × 1000 — which is exact whole-second ms.
+    // The combined serials (end_date - start_date)*86400000 round differently
+    // (e.g. 172679999.99999997 vs the legacy-exact 172680000.0), perturbing
+    // the final clipped runoff step near simulation end. Only computable here
+    // when both dates were parsed from their parts; anything else falls back
+    // to SimulationOptions::totalDurationMs().
+    if (got_start_date && got_end_date) {
+        opt.total_duration_ms =
+            std::floor((end_date_part - start_date_part) * 86400.0 +
+                       (end_time_part - start_time_part) * 86400.0) * 1000.0;
     }
     if (got_rpt_date || got_rpt_time) {
         opt.report_start = rpt_date_part + rpt_time_part;

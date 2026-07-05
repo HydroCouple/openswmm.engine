@@ -70,6 +70,13 @@ static constexpr int SWMM_ERR_IO             = 11;  // public SWMM_ERR_IO
 
 namespace openswmm {
 
+// A3 parity tracing: routing-step serial (updated by the RSTEP trace in
+// stepRouting) so the per-link term trace in DynamicWave.cpp can be gated on
+// a step number (SWMM_TRACE_LSTEP) instead of an invocation count — bypassed
+// links make invocation counts hard to predict. Mirrors SwmmTraceRstepSn in
+// the legacy engine (dwflow.c / routing.c).
+long g_trace_rstep_sn = 0;
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -981,7 +988,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     // above total_sec while new_runoff_time_ has already been clamped to
     // total_sec inside this loop body — causing the while-loop to fire
     // indefinitely with dt_runoff = 0.
-    const double total_sec_clamp = (ctx_.options.end_date - ctx_.options.start_date) * 86400.0;
+    // PARITY: use the legacy-exact TotalDuration (swmm5.c:3198-3200) — the
+    // combined-serial product (end-start)*86400 rounds differently and
+    // perturbs the final clipped runoff step (see totalDurationMs()).
+    const double total_sec_clamp = ctx_.options.totalDurationMs() / 1000.0;
     double next_routing_time = std::min(routing_time + dt_routing, total_sec_clamp);
     while (new_runoff_time_ < next_routing_time) {
         // Save old runoff/runon/conc + GW state for interpolation at the RUNOFF
@@ -1160,22 +1170,17 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 emit_warning(SWMM_ERR_IO, "USE RUNOFF: attempting to read "
                              "beyond end of runoff interface file");
                 new_runoff_time_ = total_sec_clamp;
-                new_runoff_ms_ = (ctx_.options.end_date - ctx_.options.start_date)
-                               * 86400000.0;
+                new_runoff_ms_ = ctx_.options.totalDurationMs();
                 break;
             }
             if (file_dt <= 0.0) file_dt = 1.0;
             new_runoff_time_ = old_runoff_time_ + file_dt;
             new_runoff_ms_ = new_runoff_ms_ + 1000.0 * file_dt;
-            const double total_sec_use =
-                (ctx_.options.end_date - ctx_.options.start_date) * 86400.0;
+            const double total_ms_use = ctx_.options.totalDurationMs();
+            const double total_sec_use = total_ms_use / 1000.0;
             if (new_runoff_time_ > total_sec_use)
                 new_runoff_time_ = total_sec_use;
-            {
-                const double total_ms_use =
-                    (ctx_.options.end_date - ctx_.options.start_date) * 86400000.0;
-                if (new_runoff_ms_ > total_ms_use) new_runoff_ms_ = total_ms_use;
-            }
+            if (new_runoff_ms_ > total_ms_use) new_runoff_ms_ = total_ms_use;
 
             // RDII stays on its internal path (legacy computes RDII
             // independently of the runoff file) unless USE RDII overrides.
@@ -1201,11 +1206,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // TotalDuration is (End-Start)*MSECperDAY (project.c), formed here
         // directly in ms — NOT 1000*total_sec, which rounds differently.
         new_runoff_ms_ = new_runoff_ms_ + 1000.0 * dt_runoff;
-        // Total simulation duration in seconds
-        double total_sec = (ctx_.options.end_date - ctx_.options.start_date)
-                           * 86400.0;
-        const double total_ms = (ctx_.options.end_date - ctx_.options.start_date)
-                                * 86400000.0;
+        // Total simulation duration — legacy-exact TotalDuration
+        // (swmm5.c:3198-3200; see SimulationOptions::totalDurationMs()).
+        const double total_ms = ctx_.options.totalDurationMs();
+        double total_sec = total_ms / 1000.0;
         if (new_runoff_time_ > total_sec) {
             dt_runoff = (total_ms - old_runoff_ms_) / 1000.0;  // legacy runoff.c:235
             new_runoff_time_ = total_sec;
@@ -2635,6 +2639,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                          ctx_.elapsed_ms + 1000.0 * dt_routing,
                          1000.0 * dt_routing, iters, q_sum, y_sum, l_sum,
                          ro_sum, q_hash, y_hash);
+            g_trace_rstep_sn = trace_sn;  // step-gate for DynamicWave link trace
 
             // Optional per-element dump at one step (SWMM_TRACE_DUMP_STEP=N),
             // format-matched to the legacy dump for element-level pinpointing.
@@ -2659,11 +2664,12 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                         }
                         for (int tj = 0; tj < ctx_.n_nodes(); ++tj) {
                             auto utj = static_cast<std::size_t>(tj);
-                            std::fprintf(df, "N,%d,%a,%a,%a,%a\n", tj,
+                            std::fprintf(df, "N,%d,%a,%a,%a,%a,%a\n", tj,
                                          ctx_.nodes.depth[utj],
                                          ctx_.nodes.inflow[utj],
                                          ctx_.nodes.outflow[utj],
-                                         ctx_.nodes.lat_flow[utj]);
+                                         ctx_.nodes.lat_flow[utj],
+                                         ctx_.nodes.old_lat_flow[utj]);
                         }
                         for (int tj = 0; tj < ctx_.n_subcatches(); ++tj) {
                             auto utj = static_cast<std::size_t>(tj);
@@ -5044,20 +5050,51 @@ void SWMMEngine::initGeometry() noexcept {
     }
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
         int n1 = ctx_.links.node1[uj];
         int n2 = ctx_.links.node2[uj];
         auto un1 = static_cast<std::size_t>(n1);
         auto un2 = static_cast<std::size_t>(n2);
-        double z1 = ctx_.nodes.invert_elev[un1] + ctx_.links.offset1[uj]
+        // PARITY dynwave.c:143-152: crown elevations accumulate over ALL link
+        // types — legacy adds Link.offset1/2 + Link.xsect.yFull for every
+        // link, so a weir or orifice hanging off a junction raises its crown
+        // (and thus its EXTRAN surcharge threshold), e.g. Bellinge G75F65Y.
+        // Legacy link_readParams mirrors offset2 = offset1 for orifices,
+        // weirs and outlets (link.c:368-391); weir/outlet crest heights live
+        // in the subtype tables here, so reconstruct them per type. Pumps
+        // keep offset 0 and yFull 0 (link.c:334-335, pump_validate), making
+        // their contribution the node invert — a no-op under MAX.
+        double off1 = ctx_.links.offset1[uj];
+        double off2 = ctx_.links.offset2[uj];
+        switch (ctx_.links.type[uj]) {
+            case LinkType::ORIFICE:
+                off2 = off1;                              // link.c:368-369
+                break;
+            case LinkType::WEIR: {
+                const int wr = ctx_.link_subtypes.weir_row(j);
+                off1 = (wr >= 0) ? ctx_.link_subtypes.weirs
+                           .crest_height[static_cast<std::size_t>(wr)] : 0.0;
+                off2 = off1;                              // link.c:377-378
+                break;
+            }
+            case LinkType::OUTLET: {
+                const int olr = ctx_.link_subtypes.outlet_row(j);
+                off1 = (olr >= 0) ? ctx_.link_subtypes.outlets
+                           .crest_height[static_cast<std::size_t>(olr)] : 0.0;
+                off2 = off1;                              // link.c:390-391
+                break;
+            }
+            default: break;  // CONDUIT: parsed offsets; PUMP: zeros
+        }
+        double z1 = ctx_.nodes.invert_elev[un1] + off1
                      + ctx_.links.xsect_y_full[uj];
-        double z2 = ctx_.nodes.invert_elev[un2] + ctx_.links.offset2[uj]
+        double z2 = ctx_.nodes.invert_elev[un2] + off2
                      + ctx_.links.xsect_y_full[uj];
         if (z1 > ctx_.nodes.crown_elev[un1])
             ctx_.nodes.crown_elev[un1] = z1;
         if (z2 > ctx_.nodes.crown_elev[un2])
             ctx_.nodes.crown_elev[un2] = z2;
-        // Track node degree (connectivity count)
+        // Track node degree (connectivity count) — conduits only, unchanged.
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
         ctx_.nodes.degree[un1]++;
         ctx_.nodes.degree[un2]++;
     }

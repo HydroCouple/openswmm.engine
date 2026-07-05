@@ -1539,6 +1539,10 @@ TEST(SteadyFlowRouting, FlowEqualsManningSolution) {
     Router router;
     router.init(ctx, RouteModel::STEADY);
     const double dt = 300.0;
+    // Old-state save is the engine step loop's job now (legacy parity);
+    // standalone Router callers save explicitly.
+    ctx.nodes.save_state();
+    ctx.links.save_state();
     router.step(ctx, dt);
 
     auto ul = std::size_t{0};
@@ -1569,6 +1573,10 @@ TEST(SteadyFlowRouting, FlowCappedAtQFull) {
 
     Router router;
     router.init(ctx, RouteModel::STEADY);
+    // Old-state save is the engine step loop's job now (legacy parity);
+    // standalone Router callers save explicitly.
+    ctx.nodes.save_state();
+    ctx.links.save_state();
     router.step(ctx, 300.0);
 
     double q_full = ctx.link_subtypes.conduits.q_full[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
@@ -1583,6 +1591,10 @@ TEST(SteadyFlowRouting, ZeroInflowZeroDepth) {
     SimulationContext ctx = buildSteadyCtx(0.0);
     Router router;
     router.init(ctx, RouteModel::STEADY);
+    // Old-state save is the engine step loop's job now (legacy parity);
+    // standalone Router callers save explicitly.
+    ctx.nodes.save_state();
+    ctx.links.save_state();
     router.step(ctx, 300.0);
 
     auto ul = std::size_t{0};

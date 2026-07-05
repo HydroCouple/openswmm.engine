@@ -925,20 +925,24 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     else if (k == "START_DATE") {
         opt.start_date = openswmm::input::parse_date(v)
                        + (opt.start_date - std::floor(opt.start_date));
+        opt.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     }
     else if (k == "START_TIME") {
         opt.start_date = std::floor(opt.start_date)
                        + openswmm::input::parse_time_seconds(v)
                          / openswmm::datetime::SecsPerDay;
+        opt.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     }
     else if (k == "END_DATE") {
         opt.end_date = openswmm::input::parse_date(v)
                      + (opt.end_date - std::floor(opt.end_date));
+        opt.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     }
     else if (k == "END_TIME") {
         opt.end_date = std::floor(opt.end_date)
                      + openswmm::input::parse_time_seconds(v)
                        / openswmm::datetime::SecsPerDay;
+        opt.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     }
     else if (k == "REPORT_START_DATE") {
         opt.report_start = openswmm::input::parse_date(v)
@@ -1255,7 +1259,9 @@ SWMM_ENGINE_API int swmm_options_get_start_date(SWMM_Engine engine, double* valu
 
 SWMM_ENGINE_API int swmm_options_set_start_date(SWMM_Engine engine, double value) {
     CHECK_HANDLE(engine);
-    to_engine(engine)->context().options.start_date = value;
+    auto& opt_sd = to_engine(engine)->context().options;
+    opt_sd.start_date = value;
+    opt_sd.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     return SWMM_OK;
 }
 
@@ -1268,7 +1274,9 @@ SWMM_ENGINE_API int swmm_options_get_end_date(SWMM_Engine engine, double* value)
 
 SWMM_ENGINE_API int swmm_options_set_end_date(SWMM_Engine engine, double value) {
     CHECK_HANDLE(engine);
-    to_engine(engine)->context().options.end_date = value;
+    auto& opt_ed = to_engine(engine)->context().options;
+    opt_ed.end_date = value;
+    opt_ed.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     return SWMM_OK;
 }
 

@@ -48,10 +48,10 @@ double TimestepController::compute_next(
     // Step 2: Adjust so total duration is not exceeded
     //         (matching legacy swmm5.c:975-979: nextRoutingTime > RoutingDuration
     //          → routingStep = (RoutingDuration - NewRoutingTime)/1000, min 1 ms).
-    //         Uses the legacy-parity ms clock (ctx.elapsed_ms == NewRoutingTime).
-    const double total_sec = std::floor(
-        (opt.end_date - opt.start_date) * SEC_PER_DAY + 0.5);
-    const double total_msec = total_sec * 1000.0;
+    //         Uses the legacy-parity ms clock (ctx.elapsed_ms == NewRoutingTime)
+    //         and the legacy-exact TotalDuration (no +0.5 rounding; see
+    //         SimulationOptions::totalDurationMs()).
+    const double total_msec = opt.totalDurationMs();
     if (ctx.elapsed_ms + 1000.0 * dt > total_msec) {
         dt = (total_msec - ctx.elapsed_ms) / 1000.0;
         dt = std::max(dt, 0.001);  // legacy floor: 1 msec
@@ -127,12 +127,10 @@ bool TimestepController::simulation_complete(const SimulationContext& ctx) noexc
     //                                       + (EndTime-StartTime)*SECperDAY) * 1000
     // then: NewRoutingTime >= RoutingDuration (in milliseconds).
     //
-    // Use floor() to get an exact integer second count, then compare on the
-    // legacy-parity ms clock (accumulated in ms exactly as legacy does).
-    double total_sec = std::floor(
-        (ctx.options.end_date - ctx.options.start_date) * SEC_PER_DAY + 0.5);
-    double total_msec   = total_sec * 1000.0;
-    return ctx.elapsed_ms >= total_msec;
+    // PARITY: use the legacy-exact TotalDuration stored at parse time
+    // (SimulationOptions::totalDurationMs()) — legacy FLOORS the separate
+    // date+time second counts (no +0.5 rounding).
+    return ctx.elapsed_ms >= ctx.options.totalDurationMs();
 }
 
 } /* namespace openswmm::hydraulics */

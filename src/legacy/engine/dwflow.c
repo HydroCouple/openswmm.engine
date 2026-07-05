@@ -37,6 +37,12 @@
 
 static const  double MAXVELOCITY =  50.;     // max. allowable velocity (ft/sec)
 
+// A3 parity tracing: routing-step serial (set by the RSTEP trace in
+// routing.c) so the per-link term trace can be gated on a step number
+// (SWMM_TRACE_LSTEP) instead of an invocation count — bypassed links make
+// invocation counts hard to predict.
+long SwmmTraceRstepSn = 0;
+
 static int    getFlowClass(int link, double q, double h1, double h2,
               double y1, double y2, double* criticalDepth, double* normalDepth,
               double* fasnh);
@@ -246,14 +252,18 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
         static FILE* lf = NULL;
         static long  lfTarget = -2;
         static long  lfSkip = 0;
+        static long  lfStep = 0;
         static int   lfCount = 0;
+        static int   lfRows = 0;
         if ( lfTarget == -2 )
         {
             char* p = getenv("SWMM_TRACE_LINK");
             char* tr = getenv("SWMM_TRACE_RSTEP");
             char* sk = getenv("SWMM_TRACE_SKIP");
+            char* ls = getenv("SWMM_TRACE_LSTEP");
             lfTarget = -1;
             if ( sk && *sk ) lfSkip = atol(sk);
+            if ( ls && *ls ) lfStep = atol(ls);
             if ( p && *p && tr && *tr )
             {
                 char fname[512];
@@ -266,15 +276,23 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
         }
         if ( lf && linkIndex == lfTarget )
         {
+            int inWindow;
             ++lfCount;
-            if ( lfCount > lfSkip && lfCount <= lfSkip + 128 )
+            /* SWMM_TRACE_LSTEP=N: capture while computing routing step >= N
+               (the RSTEP serial increments at the END of each step, so during
+               step N the serial still reads N-1). Otherwise use the
+               invocation-count window (SWMM_TRACE_SKIP). */
+            inWindow = lfStep > 0 ? (SwmmTraceRstepSn + 1 >= lfStep)
+                                  : (lfCount > lfSkip);
+            if ( inWindow && lfRows < 128 )
             {
+                ++lfRows;
                 fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d\n",
                         lfCount, qLast, v, sigma, rho, aWtd, rWtd,
                         dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
                         Link[linkIndex].surfArea1, Link[linkIndex].surfArea2,
                         Link[linkIndex].flowClass);
-                if ( lfCount >= lfSkip + 128 ) { fclose(lf); lf = NULL; }
+                if ( lfRows >= 128 ) { fclose(lf); lf = NULL; }
             }
         }
     }
