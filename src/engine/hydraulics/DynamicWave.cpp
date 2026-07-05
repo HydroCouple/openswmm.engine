@@ -1827,7 +1827,11 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
 #ifdef SWMM_FAST_MANNING_POW
     double r43 = fastmath::pow4_3(rWtd);
 #else
-    double r43 = std::pow(rWtd, 1.33333333333);
+    // EXACT legacy literal (dwflow.c:211): 1.33333, six digits — NOT
+    // 1.33333333333 and NOT 4.0/3.0. The exponent value itself is part of
+    // the parity contract; a longer literal shifts r^exp by ~1e-9 relative
+    // and seeds macroscopic divergence within a few routing steps.
+    double r43 = std::pow(rWtd, 1.33333);
 #endif
     double dq1 = dt * tile_rough_factor_[uci] / r43 * absv;
 
@@ -1874,6 +1878,41 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // length directly (NOT dt_g=dt*GRAVITY). dqdh feeds the surcharge node-depth
     // Jacobian (sumdqdh denominator), so the grouping/divide must match exactly.
     dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / length * barrels_d;
+
+    // A3 parity term tracing for one link (SWMM_TRACE_LINK=<index>, first 64
+    // invocations; format-matched to the legacy trace in dwflow.c).
+    {
+        static FILE* lf = nullptr;
+        static long  lf_target = -2;
+        static long  lf_skip = 0;
+        static int   lf_count = 0;
+        if (lf_target == -2) {
+            const char* p  = std::getenv("SWMM_TRACE_LINK");
+            const char* tr = std::getenv("SWMM_TRACE_RSTEP");
+            const char* sk = std::getenv("SWMM_TRACE_SKIP");
+            lf_target = -1;
+            if (sk && *sk) lf_skip = std::atol(sk);
+            if (p && *p && tr && *tr) {
+                char fname[512];
+                lf_target = std::atol(p);
+                std::snprintf(fname, sizeof(fname), "%s.link%ld", tr, lf_target);
+                lf = std::fopen(fname, "w");
+                if (lf) std::fprintf(lf,
+                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc\n");
+            }
+        }
+        if (lf && static_cast<long>(uj) == lf_target) {
+            ++lf_count;
+            if (lf_count > lf_skip && lf_count <= lf_skip + 128) {
+                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d\n",
+                             lf_count, qLast, v, sig, rho, aWtd, rWtd,
+                             dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
+                             surf_area1_[uj], surf_area2_[uj],
+                             static_cast<int>(links.flow_class[uj]));
+                if (lf_count >= lf_skip + 128) { std::fclose(lf); lf = nullptr; }
+            }
+        }
+    }
 
     // Shared post-processing
     applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
@@ -2526,6 +2565,39 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // --- Save new depth ---
     nodes.depth[ui] = y_new;
     nodes.head[ui] = t.invert_elev + y_new;
+
+    // A3 parity term tracing for one node (SWMM_TRACE_NODE=<index>, first 64
+    // invocations; format-matched to the legacy trace in dynwave.c).
+    {
+        static FILE* nf = nullptr;
+        static long  nf_target = -2;
+        static long  nf_skip = 0;
+        static int   nf_count = 0;
+        if (nf_target == -2) {
+            const char* p  = std::getenv("SWMM_TRACE_NODE");
+            const char* tr = std::getenv("SWMM_TRACE_RSTEP");
+            const char* sk = std::getenv("SWMM_TRACE_SKIP");
+            nf_target = -1;
+            if (sk && *sk) nf_skip = std::atol(sk);
+            if (p && *p && tr && *tr) {
+                char fname[512];
+                nf_target = std::atol(p);
+                std::snprintf(fname, sizeof(fname), "%s.node%ld", tr, nf_target);
+                nf = std::fopen(fname, "w");
+                if (nf) std::fprintf(nf,
+                    "n,yOld,yLast,dQ,dV,surfArea,sumdqdh,surch,yNew\n");
+            }
+        }
+        if (nf && node_idx == nf_target) {
+            ++nf_count;
+            if (nf_count > nf_skip && nf_count <= nf_skip + 128) {
+                std::fprintf(nf, "%d,%a,%a,%a,%a,%a,%a,%d,%a\n", nf_count,
+                             y_old, y_last, dQ, dV, surf_area, xnode_.sumdqdh[ui],
+                             is_surcharged ? 1 : 0, y_new);
+                if (nf_count >= nf_skip + 128) { std::fclose(nf); nf = nullptr; }
+            }
+        }
+    }
 }
 
 // ============================================================================

@@ -749,6 +749,43 @@ void setNodeDepth(int i, double dt)
 
     // --- save new depth for node
     Node[i].newDepth = yNew;
+
+    // --- A3 parity term tracing for one node (SWMM_TRACE_NODE=<index>,
+    //     first 64 invocations; requires SWMM_TRACE_RSTEP for the path)
+    {
+        static FILE* nf = NULL;
+        static long  nfTarget = -2;
+        static long  nfSkip = 0;
+        static int   nfCount = 0;
+        if ( nfTarget == -2 )
+        {
+            char* p = getenv("SWMM_TRACE_NODE");
+            char* tr = getenv("SWMM_TRACE_RSTEP");
+            char* sk = getenv("SWMM_TRACE_SKIP");
+            nfTarget = -1;
+            if ( sk && *sk ) nfSkip = atol(sk);
+            if ( p && *p && tr && *tr )
+            {
+                char fname[512];
+                nfTarget = atol(p);
+                snprintf(fname, sizeof(fname), "%s.node%ld", tr, nfTarget);
+                nf = fopen(fname, "w");
+                if ( nf ) fprintf(nf,
+                    "n,yOld,yLast,dQ,dV,surfArea,sumdqdh,surch,yNew\n");
+            }
+        }
+        if ( nf && i == nfTarget )
+        {
+            ++nfCount;
+            if ( nfCount > nfSkip && nfCount <= nfSkip + 128 )
+            {
+                fprintf(nf, "%d,%a,%a,%a,%a,%a,%a,%d,%a\n", nfCount,
+                        yOld, yLast, dQ, dV, surfArea, Xnode[i].sumdqdh,
+                        isSurcharged, yNew);
+                if ( nfCount >= nfSkip + 128 ) { fclose(nf); nf = NULL; }
+            }
+        }
+    }
 }
 
 //=============================================================================

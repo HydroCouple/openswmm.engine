@@ -199,9 +199,6 @@ static void load_external_rain_files(SimulationContext& ctx) {
     const int n_gages = ctx.gages.count();
     if (n_gages == 0) return;
 
-    // Project rain depth units: SI (mm) for CMS/LPS/MLD, US (in) otherwise.
-    const bool project_si = static_cast<int>(ctx.options.flow_units) >= 3;
-
     // Retain a generous window around the run so the gage has data at and just
     // before the start, and through the end, of the simulation.
     const double start = ctx.options.start_date;
@@ -224,10 +221,25 @@ static void load_external_rain_files(SimulationContext& ctx) {
             if (!fp) continue; // legacy reports ERROR 361; mirror the TS loader
         }
 
-        // File depths → project rain units.  File is MM when rain_units==1.
+        // PARITY: legacy pipes external rain files through a binary "rain
+        // interface file" that stores depths in INCHES as 4-byte FLOATS:
+        //   - parseStdLine (rain.c) reads the value with sscanf "%f" (float);
+        //   - readStdLine applies the rain-type transform in float
+        //     (INTENSITY: x = x*Interval/3600.0f; CUMULATIVE: incremental
+        //     delta via a float accumulator; VOLUME: none);
+        //   - then x *= (float)UnitsFactor with UnitsFactor = 1.0/MMperINCH
+        //     iff the file units are MM (rain.c:570), and the float is
+        //     written to the interface file.
+        // The gage read-back (gage.c convertRainfall) later multiplies by
+        // Gage.unitsFactor = MMperINCH for SI projects (gage.c:300) — see
+        // Gage.cpp. Keep the series in float-quantized INCHES here so the
+        // composite conversion is bit-identical to legacy.
         const bool file_mm = ctx.gages.rain_units[ug] == 1;
-        const double units_factor = file_mm ? (project_si ? 1.0 : 1.0 / 25.4)
-                                            : (project_si ? 25.4 : 1.0);
+        const float units_factor_f =
+            file_mm ? static_cast<float>(1.0 / 25.40) : 1.0f;
+        const int   rain_type_w  = ctx.gages.rain_type[ug];
+        const float interval_f   = static_cast<float>(ctx.gages.interval_sec[ug]);
+        float rain_accum_f = 0.0f;  // legacy rain.c file-scope RainAccum
 
         const std::string& sta = ctx.gages.station_id[ug];
 
@@ -243,10 +255,10 @@ static void load_external_rain_files(SimulationContext& ctx) {
         char line[256];
         char tok[64];
         int  yr, mo, dy, hr, mn;
-        double val;
+        float val;
         while (std::fgets(line, sizeof(line), fp)) {
             if (line[0] == ';' || line[0] == '\n' || line[0] == '\r') continue;
-            if (std::sscanf(line, "%63s %d %d %d %d %d %lf",
+            if (std::sscanf(line, "%63s %d %d %d %d %d %f",
                             tok, &yr, &mo, &dy, &hr, &mn, &val) != 7) continue;
             if (!sta.empty() && sta != tok) continue;
 
@@ -256,12 +268,26 @@ static void load_external_rain_files(SimulationContext& ctx) {
             // Whole-file statistics for the report summary.
             if (first_date == 0.0 || dt < first_date) first_date = dt;
             if (dt > last_date) last_date = dt;
-            if (val > 0.0) ++periods_precip;
+            if (val > 0.0f) ++periods_precip;
 
             // Retain only the records needed to route the simulation window.
             if (dt < win_lo || dt > win_hi) continue;
+
+            // PARITY: legacy readStdLine (rain.c) write-side transform, all
+            // in single precision.
+            float x = val;
+            if (rain_type_w == 0) {          // RAINFALL_INTENSITY → depth
+                x = x * interval_f / 3600.0f;
+            } else if (rain_type_w == 2) {   // CUMULATIVE_RAINFALL → delta
+                if (x >= rain_accum_f) {
+                    x = x - rain_accum_f;
+                    rain_accum_f += x;
+                } else rain_accum_f = x;
+            }
+            x *= units_factor_f;             // file units → inches (float)
+
             series.x.push_back(dt);
-            series.y.push_back(val * units_factor);
+            series.y.push_back(static_cast<double>(x));
         }
         std::fclose(fp);
 
@@ -340,8 +366,11 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
         if (n_val <= 0.0) n_val = CD.roughness[ucr];
     }
 
-    // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2
-    CD.rough_factor[ucr] = GRAVITY * (n_val / PHI) * (n_val / PHI);
+    // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2.
+    // PARITY link.c:1133: GRAVITY * SQR(roughness/PHI) — the square is grouped
+    // FIRST, then multiplied by GRAVITY. Left-to-right G*(x)*(x) rounds
+    // differently by 1 ULP and seeds dq1 divergence in the momentum kernel.
+    CD.rough_factor[ucr] = GRAVITY * ((n_val / PHI) * (n_val / PHI));
 
     // Conveyance factor: beta = PHI * sqrt(|slope|) / n
     double beta = PHI * std::sqrt(slope) / n_val;
@@ -885,10 +914,39 @@ void resolve_cross_references(SimulationContext& ctx) {
             // but we can cache the index for performance
             (void)ts_idx; // ts_name is used directly by InflowSolver
         }
-        // Re-resolve node index if it was -1 during parsing
-        if (ctx.ext_inflows.node_idx[ui] < 0) {
-            // Can't resolve without stored node name — skip
-        }
+    }
+
+    // -------------------------------------------------------------------------
+    // [INFLOWS] / [DWF] / [RDII] node re-resolution
+    // -------------------------------------------------------------------------
+    // These sections may precede the node sections in the .inp — handlers
+    // store the raw node name and defer resolution here (legacy two-pass
+    // parsing is order-independent). A name that still fails to resolve is
+    // a fatal input error, matching legacy error_setInpError(ERR_NAME, ...)
+    // in inflow_readExtInflow/inflow_readDwfInflow/rdii_readRdiiInflow.
+    // Iterate backwards so erase() keeps remaining indices valid.
+    {
+        auto resolve_node_rows =
+            [&ctx](auto& store, std::vector<int>& idx,
+                   const std::vector<std::string>& names) {
+            for (int i = store.count() - 1; i >= 0; --i) {
+                auto ui = static_cast<std::size_t>(i);
+                if (idx[ui] >= 0) continue;
+                const std::string& name = names[ui];
+                if (!name.empty()) {
+                    idx[ui] = ctx.node_names.find(name);
+                    if (idx[ui] >= 0) continue;
+                    ctx.errors.push_back(format_error(ERR_NAME, name));
+                }
+                store.erase(i);   // never expose an unresolved row downstream
+            }
+        };
+        resolve_node_rows(ctx.ext_inflows, ctx.ext_inflows.node_idx,
+                          ctx.ext_inflows.node_name);
+        resolve_node_rows(ctx.dwf_inflows, ctx.dwf_inflows.node_idx,
+                          ctx.dwf_inflows.node_name);
+        resolve_node_rows(ctx.rdii_assigns, ctx.rdii_assigns.node_idx,
+                          ctx.rdii_assigns.node_name);
     }
 
     // -------------------------------------------------------------------------
@@ -1211,13 +1269,32 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         switch (shape) {
         case XsectShape::CUSTOM: {
-            // Properties already set from CUSTOM shape curve above
+            // Properties already set from CUSTOM shape curve above.
+            // PARITY: mirror legacy xsect_setCustomXsectParams (xsect.c:668-700).
             a_full = ctx.links.xsect_a_full[uj];
             r_full = ctx.links.xsect_r_full[uj];
             w_max  = ctx.links.xsect_w_max[uj];
-            s_full = a_full * std::pow(std::max(r_full, 1e-10), 2.0/3.0);
-            s_max  = s_full;
+            s_full = a_full * std::pow(r_full, 2.0/3.0);   // xsect.c:684 (no clamp)
+            s_max  = s_full;   // fallback if the shape curve was not resolved
             yw_max = y_full;
+            int ci = ctx.links.xsect_curve[uj];
+            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+                // xsect.c:685-686 — scale the unit-height shape sMax/aMax
+                s_max = td.s_max * y_full * y_full * std::pow(y_full, 2.0/3.0);
+                ctx.links.xsect_a_bot[uj] = td.a_max * y_full * y_full;
+                // xsect.c:688-699 — height at lowest widest point from the
+                // (normalized) width table
+                int iMax = 0;
+                double wtMax = td.width_tbl[0];
+                for (int i = 1; i < transect::N_TRANSECT_TBL; ++i) {
+                    if (td.width_tbl[i] < wtMax) break;
+                    wtMax = td.width_tbl[i];
+                    iMax = i;
+                }
+                yw_max = y_full * static_cast<double>(iMax) /
+                         static_cast<double>(transect::N_TRANSECT_TBL - 1);
+            }
             break;
         }
 

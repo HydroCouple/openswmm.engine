@@ -249,6 +249,16 @@ struct NodeData {
     std::vector<double>     qual_vol_in;
 
     /**
+     * @brief Routing interface file quality mass rate per (node, pollutant) (mass/sec).
+     * @details Written by iface::InterfaceManager::readInflows() each routing
+     *          step (cleared in clearInflowSources()); read by
+     *          QualitySolver::addIfaceLoads() → added to qual_mass_in.
+     *          Flat 2D: [node * n_pollutants + pollutant].
+     * @see Legacy: routing.c addIfaceInflows() quality portion
+     */
+    std::vector<double>     iface_qual_mass;
+
+    /**
      * @brief LID drain quality mass rate per (node, pollutant) (mass/sec).
      * @details Set once per runoff step (cleared at runoff step start); read
      *          each routing step by addWetWeatherLoads() → added to qual_mass_in.
@@ -358,6 +368,12 @@ struct NodeData {
 
     /** @brief Lateral flow at the previous timestep. */
     std::vector<double>     old_lat_flow;
+
+    /**
+     * @brief Total inflow at the previous timestep (for output interpolation).
+     * @see Legacy: Node[i].oldFlowInflow (node.c:294, node_getResults node.c:491)
+     */
+    std::vector<double>     old_inflow;
 
     // -----------------------------------------------------------------------
     // Per-object INP comment
@@ -551,6 +567,7 @@ struct NodeData {
         coupling_inflow.assign(un, 0.0);
         coupling_volume.assign(un, 0.0);
         qual_mass_in.clear();
+        iface_qual_mass.clear();
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
         lid_drain_qual_vol.assign(un, 0.0);
@@ -565,6 +582,7 @@ struct NodeData {
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
+        old_inflow.assign(un, 0.0);
 
         comments.assign(un, std::string{});
         tags.assign(un, std::string{});
@@ -620,6 +638,7 @@ struct NodeData {
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
         g(old_net_inflow, 0.0); g(full_volume, 0.0);
         g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
+        g(old_inflow, 0.0);
         comments.resize(un, std::string{});
         tags.resize(un, std::string{});
 
@@ -665,7 +684,7 @@ struct NodeData {
         e(qual_vol_in); e(lid_drain_qual_vol);
         e(inflow); e(outflow); e(overflow); e(losses);
         e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
-        e(old_depth); e(old_volume); e(old_lat_flow);
+        e(old_depth); e(old_volume); e(old_lat_flow); e(old_inflow);
         e(comments); e(tags); e(rpt_flag);
 
         e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
@@ -686,7 +705,8 @@ struct NodeData {
                             v.begin() + static_cast<std::ptrdiff_t>(base + np));
             };
             erase2d(conc); erase2d(conc_old);
-            erase2d(qual_mass_in); erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
+            erase2d(qual_mass_in); erase2d(iface_qual_mass);
+            erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
             if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
         }
 
@@ -726,6 +746,7 @@ struct NodeData {
             hrt.assign(static_cast<std::size_t>(count()), 0.0);
             user_conc_mass_flux.assign(total, 0.0);
             qual_mass_in.assign(total, 0.0);
+            iface_qual_mass.assign(total, 0.0);
             lid_drain_qual_load.assign(total, 0.0);
         }
     }
@@ -760,6 +781,7 @@ struct NodeData {
         coupling_inflow.shrink_to_fit();
         coupling_volume.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
+        iface_qual_mass.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
@@ -775,6 +797,7 @@ struct NodeData {
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();
+        old_inflow.shrink_to_fit();
 
         comments.shrink_to_fit();
         tags.shrink_to_fit();
@@ -810,6 +833,8 @@ struct NodeData {
         std::copy(depth.begin(),    depth.end(),    old_depth.begin());
         std::copy(volume.begin(),   volume.end(),   old_volume.begin());
         std::copy(lat_flow.begin(), lat_flow.end(), old_lat_flow.begin());
+        // Legacy node_setOldHydState (node.c:294): oldFlowInflow = inflow
+        std::copy(inflow.begin(),   inflow.end(),   old_inflow.begin());
         // Save net inflow for trapezoidal averaging in next step
         for (std::size_t i = 0; i < inflow.size(); ++i) {
             old_net_inflow[i] = inflow[i] - outflow[i];
@@ -842,6 +867,7 @@ struct NodeData {
         std::fill(losses.begin(),   losses.end(),   0.0);
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
+        std::fill(old_inflow.begin(), old_inflow.end(), 0.0);
         // coupling_inflow / coupling_volume are NOT cleared by clearInflowSources
         // (coupling_volume is the carry-across-steps field — its end-of-step value
         // must persist into the next step's assembly), so zero them explicitly on
@@ -869,6 +895,7 @@ struct NodeData {
         std::fill(dwf_inflow.begin(),    dwf_inflow.end(),    0.0);
         std::fill(rdii_inflow.begin(),   rdii_inflow.end(),   0.0);
         std::fill(iface_inflow.begin(),  iface_inflow.end(),  0.0);
+        std::fill(iface_qual_mass.begin(), iface_qual_mass.end(), 0.0);
         std::fill(qual_mass_in.begin(),  qual_mass_in.end(),  0.0);
         std::fill(qual_vol_in.begin(),   qual_vol_in.end(),   0.0);
     }

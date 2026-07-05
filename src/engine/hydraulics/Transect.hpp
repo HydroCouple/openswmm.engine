@@ -46,6 +46,11 @@ struct TransectData {
     double w_max  = 0.0;
     double a_full = 0.0;
     double r_full = 0.0;
+    // CUSTOM shapes only (legacy TShape.sMax/aMax, shape.c getSmax): max
+    // section factor and its area for a shape of UNIT height, computed on the
+    // unnormalized tables. Scaled by yFull in the caller (xsect.c:685-686).
+    double s_max  = 0.0;
+    double a_max  = 0.0;
 
     double area_tbl[N_TRANSECT_TBL]  = {};
     double hrad_tbl[N_TRANSECT_TBL]  = {};

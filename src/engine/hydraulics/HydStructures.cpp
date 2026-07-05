@@ -184,6 +184,18 @@ void StructureSolver::init(SimulationContext& ctx) {
         if (ctx.links.type[uj] != LinkType::CONDUIT)
             nc_indices_.push_back(j);
     }
+
+    // Map each non-conduit link index to its row in the per-type group so the
+    // per-link sequential path (computeNonConduitFlowOne) can dispatch.
+    nc_group_k_.assign(static_cast<size_t>(ctx.n_links()), -1);
+    for (int k = 0; k < pumps_.count; ++k)
+        nc_group_k_[static_cast<size_t>(pumps_.link_idx[static_cast<size_t>(k)])] = k;
+    for (int k = 0; k < orifices_.count; ++k)
+        nc_group_k_[static_cast<size_t>(orifices_.link_idx[static_cast<size_t>(k)])] = k;
+    for (int k = 0; k < weirs_.count; ++k)
+        nc_group_k_[static_cast<size_t>(weirs_.link_idx[static_cast<size_t>(k)])] = k;
+    for (int k = 0; k < outlets_.count; ++k)
+        nc_group_k_[static_cast<size_t>(outlets_.link_idx[static_cast<size_t>(k)])] = k;
 }
 
 // ============================================================================
@@ -227,6 +239,12 @@ void StructureSolver::updatePumpTargetSettings(SimulationContext& ctx) {
 
 void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt,
                                        const double* node_new_surf_area) {
+    for (int k = 0; k < pumps_.count; ++k)
+        computePumpFlowK(ctx, dt, node_new_surf_area, k);
+}
+
+void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
+                                       const double* node_new_surf_area, int k) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
@@ -237,14 +255,14 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt,
     double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys]; // internal ft → display
     double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys]; // internal ft³ → display
 
-    for (int k = 0; k < pumps_.count; ++k) {
+    {
         auto uk = static_cast<size_t>(k);
         int j = pumps_.link_idx[uk];
         auto uj = static_cast<size_t>(j);
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
-        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; continue; }
+        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; return; }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
@@ -261,7 +279,7 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt,
         // If pump is off, no flow
         if (links.setting[uj] == 0.0) {
             links.flow[uj] = 0.0;
-            continue;
+            return;
         }
 
         double q = 0.0;
@@ -338,17 +356,22 @@ void StructureSolver::computePumpFlows(SimulationContext& ctx, double dt,
                     if (q > max_q) q = max_q;
                 }
                 if (q < 0.0) q = 0.0;
-            } else {
-                // Non-storage: if pumping would make depth negative, clamp
-                // q to inflow. Legacy uses Xnode[j].newSurfArea (accumulated
-                // from connected conduits this iter); refactored falls back
-                // to MIN_SURFAREA if caller didn't supply it.
+            } else if (ct == 2 || ct == 3 || ct == 4) {
+                // Non-storage TYPE2/3/4 pump: if pumping would make depth
+                // negative, clamp q to inflow.
+                // PARITY: legacy getModPumpFlow (dynwave.c:477-484) applies
+                // this check ONLY for TYPE2/TYPE4/TYPE3 pumps and divides by
+                // the RAW Xnode.newSurfArea — NO MinSurfArea floor. Flooring
+                // the area suppresses the clamp exactly when a small-area
+                // wet-well junction is about to be drawn dry (y <= 0), letting
+                // the pump run at full curve rate where legacy pins it to the
+                // node inflow (seen at Bellinge G70F11Pp1). A zero area gives
+                // y = ±inf/NaN with the same comparison outcome as legacy.
                 double net_inflow = nodes.inflow[un1] - nodes.outflow[un1] - q;
                 double net_vol = 0.5 * (nodes.old_net_inflow[un1] + net_inflow) * dt;
                 double surf = (node_new_surf_area != nullptr)
                                 ? node_new_surf_area[un1]
                                 : constants::MIN_SURFAREA;
-                surf = std::max(surf, constants::MIN_SURFAREA);
                 double y_new = nodes.old_depth[un1] + net_vol / surf;
                 if (y_new <= 0.0) q = std::max(nodes.inflow[un1], 0.0);
             }
@@ -383,44 +406,54 @@ static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
 // Batch orifice flow — Q = Cd*A*sqrt(2gH), matching legacy orifice_getInflow
 // ============================================================================
 
+// Scatter an orifice's surface area to its end nodes, replicating legacy
+// findNonConduitSurfArea (dynwave.c:498-510): HALF of Orifice.surfArea is
+// added to each end node, then the contribution to node1 is zeroed when the
+// link is UP_CRITICAL (or node1 is STORAGE) and the contribution to node2 is
+// zeroed when DN_CRITICAL (or node2 is STORAGE). Must run on EVERY exit path
+// (including dry/flap) — legacy adds the FUDGE*length baseline even when the
+// orifice carries no flow. Omitting that baseline, and omitting the
+// critical-class zeroing, understated/overstated node surface area at low
+// depth and seeded a per-iteration node-head divergence (extran3 1570/1630).
+void StructureSolver::scatterOrificeSurfArea(SimulationContext& ctx,
+                                             double* node_new_surf_area,
+                                             std::size_t uk_, std::size_t uj_,
+                                             std::size_t un1_, std::size_t un2_) {
+    if (node_new_surf_area == nullptr) return;
+    auto& links = ctx.links;
+    auto& nodes = ctx.nodes;
+    double sa1 = orifices_.surf_area[uk_] * 0.5;
+    double sa2 = sa1;
+    auto fc = links.flow_class[uj_];
+    if (fc == FlowClass::UP_CRITICAL || nodes.type[un1_] == NodeType::STORAGE)
+        sa1 = 0.0;
+    if (fc == FlowClass::DN_CRITICAL || nodes.type[un2_] == NodeType::STORAGE)
+        sa2 = 0.0;
+    node_new_surf_area[un1_] += sa1;
+    node_new_surf_area[un2_] += sa2;
+}
+
 void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
                                           double* node_new_surf_area) {
+    for (int k = 0; k < orifices_.count; ++k)
+        computeOrificeFlowK(ctx, node_new_surf_area, k);
+}
+
+void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
+                                          double* node_new_surf_area, int k) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     using constants::GRAVITY;
     constexpr double FUDGE_ORI = 0.0001;
 
-    // Scatter an orifice's surface area to its end nodes, replicating legacy
-    // findNonConduitSurfArea (dynwave.c:498-510): HALF of Orifice.surfArea is
-    // added to each end node, then the contribution to node1 is zeroed when the
-    // link is UP_CRITICAL (or node1 is STORAGE) and the contribution to node2 is
-    // zeroed when DN_CRITICAL (or node2 is STORAGE). Must run on EVERY exit path
-    // (including dry/flap) — legacy adds the FUDGE*length baseline even when the
-    // orifice carries no flow. Omitting that baseline, and omitting the
-    // critical-class zeroing, understated/overstated node surface area at low
-    // depth and seeded a per-iteration node-head divergence (extran3 1570/1630).
-    auto scatterOrificeSurfArea = [&](std::size_t uk_, std::size_t uj_,
-                                      std::size_t un1_, std::size_t un2_) {
-        if (node_new_surf_area == nullptr) return;
-        double sa1 = orifices_.surf_area[uk_] * 0.5;
-        double sa2 = sa1;
-        auto fc = links.flow_class[uj_];
-        if (fc == FlowClass::UP_CRITICAL || nodes.type[un1_] == NodeType::STORAGE)
-            sa1 = 0.0;
-        if (fc == FlowClass::DN_CRITICAL || nodes.type[un2_] == NodeType::STORAGE)
-            sa2 = 0.0;
-        node_new_surf_area[un1_] += sa1;
-        node_new_surf_area[un2_] += sa2;
-    };
-
-    for (int k = 0; k < orifices_.count; ++k) {
+    {
         auto uk = static_cast<size_t>(k);
         int j = orifices_.link_idx[uk];
         auto uj = static_cast<size_t>(j);
 
         int n1 = links.node1[uj];
         int n2 = links.node2[uj];
-        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; continue; }
+        if (n1 < 0 || n2 < 0) { links.flow[uj] = 0.0; return; }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
 
@@ -440,7 +473,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             orifices_.surf_area[uk] = 0.0;
-            continue;
+            return;
         }
 
         // Use xsect::getAofY for proper cross-section area at partial opening
@@ -511,8 +544,8 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
             // Legacy orifice_getInflow:1899: on dry-exit, surfArea = FUDGE·length
             // so the node depth solver still sees a non-zero equivalent area.
             orifices_.surf_area[uk] = FUDGE_ORI * orifices_.length_eff[uk];
-            scatterOrificeSurfArea(uk, uj, un1, un2);  // DRY → both ends, no zeroing
-            continue;
+            scatterOrificeSurfArea(ctx, node_new_surf_area, uk, uj, un1, un2);  // DRY -> both ends, no zeroing
+            return;
         }
 
         // Flap gate: block reverse flow
@@ -522,8 +555,8 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
             links.dqdh[uj] = 0.0;
             links.flow_class[uj] = FlowClass::DRY;
             orifices_.surf_area[uk] = FUDGE_ORI * orifices_.length_eff[uk];
-            scatterOrificeSurfArea(uk, uj, un1, un2);
-            continue;
+            scatterOrificeSurfArea(ctx, node_new_surf_area, uk, uj, un1, un2);
+            return;
         }
 
         // --- Determine flow class (matching legacy) ---
@@ -602,7 +635,7 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
         // Scatter orifice surface area to end nodes via legacy
         // findNonConduitSurfArea (half each, then zero the UP_CRITICAL end's
         // node1 / DN_CRITICAL end's node2 and any STORAGE end).
-        scatterOrificeSurfArea(uk, uj, un1, un2);
+        scatterOrificeSurfArea(ctx, node_new_surf_area, uk, uj, un1, un2);
     }
 }
 
@@ -612,11 +645,17 @@ void StructureSolver::computeOrificeFlows(SimulationContext& ctx,
 
 void StructureSolver::computeWeirFlows(SimulationContext& ctx,
                                        double* node_new_surf_area) {
+    for (int k = 0; k < weirs_.count; ++k)
+        computeWeirFlowK(ctx, node_new_surf_area, k);
+}
+
+void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
+                                       double* node_new_surf_area, int k) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     constexpr double FUDGE_W = 0.0001;
 
-    for (int k = 0; k < weirs_.count; ++k) {
+    {
         auto uk = static_cast<size_t>(k);
         int j = weirs_.link_idx[uk];
         auto uj = static_cast<size_t>(j);
@@ -627,7 +666,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             weirs_.surf_area[uk] = 0.0;
-            continue;
+            return;
         }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
@@ -643,7 +682,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
             weirs_.surf_area[uk] = 0.0;
-            continue;
+            return;
         }
 
         // Swap hgl values for reverse flow so that hgl1 is always the
@@ -667,7 +706,7 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
             links.depth[uj] = 0.0;   // legacy weir_getInflow: DRY → newDepth=0
             links.dqdh[uj] = 0.0;
             weirs_.surf_area[uk] = 0.0;
-            continue;
+            return;
         }
 
         double cd     = weirs_.c_disch1[uk];
@@ -846,6 +885,11 @@ void StructureSolver::computeWeirFlows(SimulationContext& ctx,
 // ============================================================================
 
 void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
+    for (int k = 0; k < outlets_.count; ++k)
+        computeOutletFlowK(ctx, k);
+}
+
+void StructureSolver::computeOutletFlowK(SimulationContext& ctx, int k) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
 
@@ -855,7 +899,7 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
     double ucf_flow = ucf::Qcf[fu];
     constexpr double FUDGE_OUT = 0.0001;
 
-    for (int k = 0; k < outlets_.count; ++k) {
+    {
         auto uk = static_cast<size_t>(k);
         int j = outlets_.link_idx[uk];
         auto uj = static_cast<size_t>(j);
@@ -865,7 +909,7 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
         if (n1 < 0 || n2 < 0) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
-            continue;
+            return;
         }
         auto un1 = static_cast<size_t>(n1);
         auto un2 = static_cast<size_t>(n2);
@@ -909,7 +953,7 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
             links.depth[uj] = 0.0;
             links.flow_class[uj] = FlowClass::DRY;
             links.dqdh[uj] = 0.0;
-            continue;
+            return;
         }
 
         // Rating curve is indexed on user-units of length (legacy calls
@@ -945,7 +989,13 @@ void StructureSolver::computeOutletFlows(SimulationContext& ctx) {
         links.flow[uj] = q * static_cast<double>(dir);
         links.depth[uj] = head;
         links.flow_class[uj] = FlowClass::SUBCRITICAL;
-        links.dqdh[uj] = (head > FUDGE_OUT) ? q / (2.0 * head) : 0.0;
+        // PARITY: legacy leaves outlet dqdh at 0.0 — findNonConduitFlow
+        // (src/legacy/engine/dynwave.c:513) zeroes Link.dqdh and
+        // outlet_getInflow (src/legacy/engine/link.c:2611-2670) never sets it.
+        // The q/(2*head) form previously used here is the ORIFICE formula
+        // (link.c:1974) and inflated sumdqdh at nodes adjacent to outlets,
+        // diverging the EXTRAN surcharge depth update.
+        links.dqdh[uj] = 0.0;
     }
 }
 
@@ -963,6 +1013,57 @@ void StructureSolver::computeAllFlows(SimulationContext& ctx, double dt,
     if (orifices_.count > 0) computeOrificeFlows(ctx, node_new_surf_area);
     if (weirs_.count > 0)    computeWeirFlows(ctx, node_new_surf_area);
     if (outlets_.count > 0)  computeOutletFlows(ctx);
+}
+
+// ============================================================================
+// Per-link sequential path (PARITY with legacy findLinkFlows, dynwave.c:383-398)
+// ============================================================================
+
+void StructureSolver::computeNonConduitFlowOne(SimulationContext& ctx, double dt,
+                                               double* node_new_surf_area,
+                                               int link_idx) {
+    auto uj = static_cast<std::size_t>(link_idx);
+    int k = (uj < nc_group_k_.size()) ? nc_group_k_[uj] : -1;
+    if (k < 0) return;
+
+    // PARITY: legacy findNonConduitFlow (dynwave.c:423) zeroes Link.dqdh
+    // before the per-type flow routine; only routines that compute a
+    // derivative overwrite it.
+    ctx.links.dqdh[uj] = 0.0;
+
+    switch (ctx.links.type[uj]) {
+        case LinkType::PUMP:
+            computePumpFlowK(ctx, dt, node_new_surf_area, k);
+            break;
+        case LinkType::ORIFICE:
+            computeOrificeFlowK(ctx, node_new_surf_area, k);
+            break;
+        case LinkType::WEIR:
+            computeWeirFlowK(ctx, node_new_surf_area, k);
+            break;
+        case LinkType::OUTLET:
+            computeOutletFlowK(ctx, k);
+            break;
+        default: break;
+    }
+}
+
+void StructureSolver::scatterHeldSurfArea(SimulationContext& ctx,
+                                          double* node_new_surf_area,
+                                          int link_idx) {
+    // Legacy updateNodeFlows runs for BYPASSED links too, scattering the
+    // previous iteration's Link.surfArea1/2 into Xnode.newSurfArea. Only
+    // orifices carry a non-zero held area (weir/pump/outlet contribute none).
+    auto uj = static_cast<std::size_t>(link_idx);
+    if (ctx.links.type[uj] != LinkType::ORIFICE) return;
+    int k = (uj < nc_group_k_.size()) ? nc_group_k_[uj] : -1;
+    if (k < 0) return;
+    int n1 = ctx.links.node1[uj];
+    int n2 = ctx.links.node2[uj];
+    if (n1 < 0 || n2 < 0) return;
+    scatterOrificeSurfArea(ctx, node_new_surf_area, static_cast<std::size_t>(k),
+                           uj, static_cast<std::size_t>(n1),
+                           static_cast<std::size_t>(n2));
 }
 
 } // namespace hydstruct

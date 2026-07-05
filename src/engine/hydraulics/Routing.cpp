@@ -214,7 +214,8 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             // Update conveyance with adjusted slope and roughness
             double beta = PHI * std::sqrt(slope_abs) / roughness;
             CD.beta[ucr]         = beta;
-            CD.rough_factor[ucr] = GRAVITY * (roughness / PHI) * (roughness / PHI);
+            // PARITY link.c:1133: GRAVITY * SQR(roughness/PHI) — square first.
+            CD.rough_factor[ucr] = GRAVITY * ((roughness / PHI) * (roughness / PHI));
             CD.q_full[ucr]       = ctx.links.xsect_s_full[uj] * beta;
             CD.q_max[ucr]        = ctx.links.xsect_s_max[uj] * beta;
         }

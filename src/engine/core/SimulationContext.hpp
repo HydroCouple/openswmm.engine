@@ -28,7 +28,7 @@
  * ctx.reset()          — full cold reset (call before re-running)
  * ctx.save_state()     — snapshot current state into old-step arrays
  * ctx.advance(dt)      — advance simulation clock by dt seconds
- * ctx.output_due()     — true when dt_output_remaining <= EPSILON
+ * ctx.output_due()     — true when elapsed_ms >= next_report_ms (legacy grid)
  * ctx.is_complete()    — true when current_time >= end_time
  * ```
  *
@@ -370,14 +370,38 @@ struct SimulationContext {
     double current_date = 0.0;
 
     /**
-     * @brief Time remaining until the next output boundary (seconds).
+     * @brief Elapsed routing time in MILLISECONDS from start_date.
      *
-     * @details Managed by TimestepController. Decremented each step;
-     *          reset to options.report_step by reset_output_timer().
+     * @details Legacy-parity clock: accumulated exactly as legacy
+     *          `NewRoutingTime = NewRoutingTime + 1000.0 * routingStep`
+     *          (swmm5.c / routing.c:309). Kept alongside current_time
+     *          (seconds) because the two accumulations are NOT
+     *          FP-identical; report scheduling and report datestamps
+     *          must use this clock to match legacy bit-for-bit.
      *
-     * @see TimestepController::advance(), TimestepController::output_due()
+     * @see Legacy: NewRoutingTime in globals.h
      */
-    double dt_output_remaining = 0.0;
+    double elapsed_ms = 0.0;
+
+    /**
+     * @brief Elapsed routing time (ms) at the START of the current step.
+     *
+     * @details Legacy OldRoutingTime; with elapsed_ms brackets the report
+     *          instant for interpolated output.
+     */
+    double old_elapsed_ms = 0.0;
+
+    /**
+     * @brief Next report instant in MILLISECONDS from start_date.
+     *
+     * @details Legacy ReportTime: seeded to 1000*report_step at start and
+     *          advanced by 1000*report_step per period (swmm5.c:721,1044).
+     *          The grid is anchored at SIM start; periods whose datestamp
+     *          falls before options.report_start are skipped (not written)
+     *          but the grid still advances — exactly legacy
+     *          output_saveResults() (output.c:481).
+     */
+    double next_report_ms = 0.0;
 
     /**
      * @brief Time remaining until the next control rule event (seconds).
@@ -823,6 +847,7 @@ struct SimulationContext {
         std::vector<double> qual_routing_ii_in;  ///< RDII quality mass inflow
         std::vector<double> qual_routing_dw_in;  ///< Dry weather quality mass inflow
         std::vector<double> qual_routing_gw_in;  ///< Groundwater quality mass inflow
+        std::vector<double> qual_routing_ex_in;  ///< External (interface file) quality mass inflow
         std::vector<double> qual_routing_seep;   ///< Quality mass lost to seepage
         std::vector<double> qual_routing_evap;   ///< Quality mass lost to evaporation
 
@@ -845,6 +870,7 @@ struct SimulationContext {
             qual_routing_ii_in.assign(np, 0.0);
             qual_routing_dw_in.assign(np, 0.0);
             qual_routing_gw_in.assign(np, 0.0);
+            qual_routing_ex_in.assign(np, 0.0);
             qual_routing_seep.assign(np, 0.0);
             qual_routing_evap.assign(np, 0.0);
             routing_forcing_qual_inflow.assign(np, 0.0);
@@ -869,6 +895,7 @@ struct SimulationContext {
             auto qrii = std::move(qual_routing_ii_in);
             auto qrdw = std::move(qual_routing_dw_in);
             auto qrgw = std::move(qual_routing_gw_in);
+            auto qrex = std::move(qual_routing_ex_in);
             auto qrseep = std::move(qual_routing_seep);
             auto qrevap = std::move(qual_routing_evap);
             auto qrfqi = std::move(routing_forcing_qual_inflow);
@@ -890,6 +917,7 @@ struct SimulationContext {
             qual_routing_ii_in = std::move(qrii);
             qual_routing_dw_in = std::move(qrdw);
             qual_routing_gw_in = std::move(qrgw);
+            qual_routing_ex_in = std::move(qrex);
             qual_routing_seep = std::move(qrseep);
             qual_routing_evap = std::move(qrevap);
             routing_forcing_qual_inflow = std::move(qrfqi);
@@ -905,6 +933,7 @@ struct SimulationContext {
                             &qual_routing_ii_in,
                             &qual_routing_dw_in,
                             &qual_routing_gw_in,
+                            &qual_routing_ex_in,
                             &qual_routing_seep,
                             &qual_routing_evap,
                             &routing_forcing_qual_inflow}) {
@@ -1170,8 +1199,10 @@ struct SimulationContext {
         control_log.clear();
         current_time = 0.0;
         current_date = 0.0;
-        dt_output_remaining = 0.0;
         dt_controls_remaining = 0.0;
+        elapsed_ms = 0.0;
+        old_elapsed_ms = 0.0;
+        next_report_ms = 0.0;
         error_code = 0;
         warning_code = 0;
         error_message.clear();
@@ -1254,8 +1285,11 @@ struct SimulationContext {
         tables.reset_cursors();
         current_time = 0.0;
         current_date = options.start_date;
-        dt_output_remaining = options.report_step;
         dt_controls_remaining = 0.0;
+        elapsed_ms = 0.0;
+        old_elapsed_ms = 0.0;
+        // Legacy swmm5.c:721 — ReportTime = 1000 * ReportStep (ms from SIM start)
+        next_report_ms = 1000.0 * options.report_step;
     }
 
     /**

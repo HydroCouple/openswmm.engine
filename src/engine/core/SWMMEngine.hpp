@@ -50,6 +50,7 @@
 #include "../hydrology/Inflow.hpp"
 #include "../hydrology/RDII.hpp"
 #include "../hydrology/RunoffInterface.hpp"
+#include "../hydrology/RdiiInterface.hpp"
 #include "../quality/QualityRouting.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
@@ -356,12 +357,18 @@ private:
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
 
     // Phase 1b: optional runoff interface file (legacy "Frunoff").
-    // When in SAVE mode, the engine auto-emits one record per runoff substep
-    // from inside stepRunoff(). When in USE mode, no engine-side integration
-    // happens yet — the C API exposes the file but the caller is responsible
-    // for invoking swmm_runoff_iface_read_step() between simulation steps
-    // (USE-mode auto-skip is tracked as a follow-up).
+    // SAVE mode: the engine auto-emits one record per runoff substep from
+    // inside stepRunoff(). USE mode: stepRunoff() replaces each runoff
+    // substep with the next file record (legacy runoff_readFromFile).
+    // Auto-opened from [FILES] SAVE/USE RUNOFF in start(); also reachable
+    // via the swmm_runoff_iface_* C API.
     std::unique_ptr<runoff_iface::RunoffInterfaceFile> runoff_iface_file_;
+
+    // RDII interface file (legacy "Frdii"). USE mode bypasses the internal
+    // unit-hydrograph computation (legacy rdii_openRdii skips
+    // createRdiiFile); SAVE mode exports the computed RDII flows. Opened
+    // from [FILES] USE/SAVE RDII in start().
+    rdii_iface::RdiiInterfaceFile rdii_iface_file_;
 
     // Event and steady-state tracking
     int next_event_ = 0;                        ///< Index of next event in ctx_.events
@@ -394,6 +401,23 @@ private:
     // lateral flows are linearly interpolated between runoff boundaries.
     double old_runoff_time_ = 0.0;  ///< Previous runoff boundary (seconds from start)
     double new_runoff_time_ = 0.0;  ///< Next runoff boundary (seconds from start)
+    // PARITY: millisecond mirrors of the runoff clock, accumulated with the
+    // exact legacy ops (runoff.c:229-237 — NewRunoffTime += 1000*step, clamp
+    // to TotalDuration ms). The wet-weather/GW interpolation weight f
+    // (routing.c:703) and the report-instant runoff weight (output.c) must be
+    // formed from MILLISECOND quantities to round identically to legacy.
+    double old_runoff_ms_ = 0.0;    ///< legacy OldRunoffTime (msec)
+    double new_runoff_ms_ = 0.0;    ///< legacy NewRunoffTime (msec)
+
+    // PARITY: per-subcatchment interpolated wet-weather / GW inflows saved by
+    // the Phase-2 interpolation so assembleLateralInflows() can replay
+    // legacy's exact per-node accumulation ORDER — routing.c:466-473 adds
+    // ext, dwf, then PER-SUBCATCHMENT wet-weather q (routing.c:716), then GW,
+    // RDII, iface into Node.newLatFlow. Pre-summing per node and adding in a
+    // different source order rounds differently (1-ULP lat-flow drift).
+    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff+runon (cfs)
+    std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
+    std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
 
     // Persistent runoff-state flags read by computeRunoffTimestep() on the NEXT
     // runoff step (one-step lag), matching legacy globals HasRunoff/HasSnow in
@@ -496,6 +520,11 @@ private:
     /// the .out NODE_VOLUME and the routing mass-balance storage sums so both
     /// match legacy, while the internal volume-state (MIN_SURFAREA) is preserved.
     double reportedNodeVolume(int i) const noexcept;
+
+    /// Same legacy-convention mapping evaluated at an arbitrary (depth, volume)
+    /// state — used to map the PREVIOUS step's state for output interpolation
+    /// (legacy node_getResults interpolates old/new volumes, node.c:487).
+    double reportedNodeVolume(int i, double depth, double volume) const noexcept;
 
     // -----------------------------------------------------------------------
     // Initialization sub-functions (called by init_modules)

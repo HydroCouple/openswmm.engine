@@ -32,6 +32,7 @@
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <math.h>
+#include <stdlib.h>   // getenv/atol for the env-gated A3 parity trace
 #include "headers.h"
 
 static const  double MAXVELOCITY =  50.;     // max. allowable velocity (ft/sec)
@@ -238,6 +239,45 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
 
     // --- compute derivative of flow w.r.t. head
     Link[linkIndex].dqdh = 1.0 / denom  * GRAVITY * dt * aWtd / length * barrels;
+
+    // --- A3 parity term tracing for one link (SWMM_TRACE_LINK=<index>,
+    //     first 64 invocations; requires SWMM_TRACE_RSTEP for the path)
+    {
+        static FILE* lf = NULL;
+        static long  lfTarget = -2;
+        static long  lfSkip = 0;
+        static int   lfCount = 0;
+        if ( lfTarget == -2 )
+        {
+            char* p = getenv("SWMM_TRACE_LINK");
+            char* tr = getenv("SWMM_TRACE_RSTEP");
+            char* sk = getenv("SWMM_TRACE_SKIP");
+            lfTarget = -1;
+            if ( sk && *sk ) lfSkip = atol(sk);
+            if ( p && *p && tr && *tr )
+            {
+                char fname[512];
+                lfTarget = atol(p);
+                snprintf(fname, sizeof(fname), "%s.link%ld", tr, lfTarget);
+                lf = fopen(fname, "w");
+                if ( lf ) fprintf(lf,
+                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc\n");
+            }
+        }
+        if ( lf && linkIndex == lfTarget )
+        {
+            ++lfCount;
+            if ( lfCount > lfSkip && lfCount <= lfSkip + 128 )
+            {
+                fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d\n",
+                        lfCount, qLast, v, sigma, rho, aWtd, rWtd,
+                        dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
+                        Link[linkIndex].surfArea1, Link[linkIndex].surfArea2,
+                        Link[linkIndex].flowClass);
+                if ( lfCount >= lfSkip + 128 ) { fclose(lf); lf = NULL; }
+            }
+        }
+    }
 
     // --- check if any flow limitation applies
     Link[linkIndex].inletControl = FALSE;

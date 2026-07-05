@@ -1091,8 +1091,13 @@ double getAofS(const XSectParams& xs, double s) {
         default: {
             // Newton-Raphson on S(a) = s, bracketed in [a1, a2] (legacy generic_getAofS).
             // a2 = absolute area at max flow = aFull * Amax-ratio.
+            // PARITY: legacy xsect_getAmax (xsect.c:712) returns aBot for CUSTOM
+            // (= Shape.aMax * yFull^2, set by xsect_setCustomXsectParams). Keep
+            // the ratio path for IRREGULAR until transect aMax is populated.
             double a1, a2;
-            double a_max = xs.a_full * getAmax(xs);
+            double a_max = (static_cast<XSectShape>(xs.type) == XSectShape::CUSTOM)
+                               ? xs.a_bot
+                               : xs.a_full * getAmax(xs);
             if ((s <= xs.s_max && s >= xs.s_full) && xs.s_max != xs.s_full) {
                 a1 = xs.a_full;   // sFull < sMax: root lies between aFull and aMax
                 a2 = a_max;

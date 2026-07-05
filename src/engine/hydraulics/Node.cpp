@@ -188,9 +188,13 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
             auto ci = static_cast<std::size_t>(g.curve);
             if (tables && ci < tables->tables.size()) {
                 double ucf_len  = ucf::Ucf[ucf::LENGTH][unit_sys];
-                double ucf_area = ucf_len * ucf_len;
-                double area = table_lookup_cursor(tables->tables[ci], depth * ucf_len);
-                return area / ucf_area;
+                // PARITY: legacy storage_getSurfArea (node.c) uses the
+                // EXTRAPOLATING table_lookupEx (table.c:469) — not the
+                // clamped table_lookup — and converts units with two
+                // successive divisions: `area / UCF(LENGTH) / UCF(LENGTH)`.
+                // A single divide by (ucf_len*ucf_len) rounds differently.
+                double area = table_lookupEx(tables->tables[ci], depth * ucf_len);
+                return area / ucf_len / ucf_len;
             }
             return 0.0;
         }
