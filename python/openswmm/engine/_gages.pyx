@@ -292,6 +292,7 @@ cdef class Gages:
     # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str gage_id) -> int:
+        """Return the zero-based index of rain gage *gage_id* (raises if unknown)."""
         cdef bytes b = gage_id.encode('utf-8')
         cdef int i = swmm_gage_index(_h(self._solver), b)
         if i < 0:
@@ -299,6 +300,7 @@ cdef class Gages:
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the rain gage at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_gage_id(_h(self._solver), idx)
@@ -307,6 +309,7 @@ cdef class Gages:
     # ---- Editing -------------------------------------------------
 
     def add(self, str gage_id) -> Gage:
+        """Add a new rain gage *gage_id* and return its :class:`Gage` handle."""
         cdef bytes b = gage_id.encode('utf-8')
         _check(swmm_gage_add(_h(self._solver), b))
         self._solver._bump_generation()
@@ -314,6 +317,7 @@ cdef class Gages:
         return Gage(self._solver, new_idx)
 
     def rename(self, key, str new_id) -> None:
+        """Rename the rain gage identified by *key* to *new_id*."""
         cdef int i = _resolve_gage(self._solver, key)
         cdef bytes b = new_id.encode('utf-8')
         _check(swmm_gage_rename(_h(self._solver), i, b))

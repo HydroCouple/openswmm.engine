@@ -114,6 +114,7 @@ class Controls(MutableSequence):
             self.append(r)
 
     def insert(self, idx, value):
+        """Insert *value* at *idx* (emulated via clear + re-add; the C rule API is append-only)."""
         n = len(self)
         if idx < 0:
             idx += n
@@ -125,12 +126,14 @@ class Controls(MutableSequence):
             self.append(r)
 
     def append(self, value) -> None:
+        """Append a control rule parsed from *value* (an INP ``RULE`` block or rule mapping)."""
         text = self._unpack(value)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = text.encode('utf-8')
         _check(swmm_control_add_rule(h, b))
 
     def clear(self) -> None:
+        """Remove all control rules from the model."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_control_clear_rules(h))
 

@@ -299,6 +299,7 @@ cdef class Pollutants:
     # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str pollut_id) -> int:
+        """Return the zero-based index of pollutant *pollut_id* (raises if unknown)."""
         cdef bytes b = pollut_id.encode('utf-8')
         cdef int i = swmm_pollutant_index(_h(self._solver), b)
         if i < 0:
@@ -306,6 +307,7 @@ cdef class Pollutants:
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the pollutant at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_pollutant_id(_h(self._solver), idx)
@@ -314,6 +316,7 @@ cdef class Pollutants:
     # ---- Editing --------------------------------------------------
 
     def add(self, str pollut_id, units=ConcentrationUnits.MG_PER_L) -> Pollutant:
+        """Add a new pollutant *pollut_id* measured in *units* and return its :class:`Pollutant`."""
         cdef bytes b = pollut_id.encode('utf-8')
         _check(swmm_pollutant_add(_h(self._solver), b, int(units)))
         self._solver._bump_generation()

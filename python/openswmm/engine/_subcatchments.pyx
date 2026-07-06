@@ -178,6 +178,7 @@ cdef class InfiltrationView:
     def set_horton(self,
                    double f0, double fmin,
                    double decay, double dry_time) -> None:
+        """Set Horton infiltration parameters (f0, fmin, decay, dry-time) for this subcatchment."""
         _check_fresh(self._sub)
         _check(swmm_subcatch_set_infil_horton(
             _h(self._sub._solver), self._sub._index, f0, fmin, decay, dry_time))
@@ -194,6 +195,7 @@ cdef class InfiltrationView:
     def set_green_ampt(self,
                        double suction, double conductivity,
                        double initial_deficit) -> None:
+        """Set Green-Ampt infiltration parameters (suction, conductivity, initial deficit)."""
         _check_fresh(self._sub)
         _check(swmm_subcatch_set_infil_green_ampt(
             _h(self._sub._solver), self._sub._index,
@@ -208,6 +210,7 @@ cdef class InfiltrationView:
         return v
 
     def set_curve_number(self, double cn) -> None:
+        """Set the SCS curve-number infiltration parameter."""
         _check_fresh(self._sub)
         _check(swmm_subcatch_set_infil_curve_number(
             _h(self._sub._solver), self._sub._index, cn))
@@ -655,6 +658,7 @@ cdef class Subcatchment:
     # ---- Quality ---------------------------------------------------
 
     def quality(self, pollutant) -> float:
+        """Return the current runoff concentration of *pollutant* for this subcatchment."""
         _check_fresh(self)
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef double v = 0.0
@@ -663,6 +667,7 @@ cdef class Subcatchment:
         return v
 
     def ponded_quality(self, pollutant) -> float:
+        """Return the ponded-water concentration of *pollutant* for this subcatchment."""
         _check_fresh(self)
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef double v = 0.0
@@ -671,6 +676,7 @@ cdef class Subcatchment:
         return v
 
     def set_ponded_quality(self, pollutant, double mass) -> None:
+        """Set the ponded-water *mass* of *pollutant* for this subcatchment."""
         _check_fresh(self)
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         _check(swmm_subcatch_set_ponded_quality(
@@ -828,6 +834,7 @@ cdef class Subcatchments:
     # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str sub_id) -> int:
+        """Return the zero-based index of subcatchment *sub_id* (raises if unknown)."""
         cdef bytes b = sub_id.encode('utf-8')
         cdef int i = swmm_subcatch_index(_h(self._solver), b)
         if i < 0:
@@ -835,6 +842,7 @@ cdef class Subcatchments:
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the subcatchment at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_subcatch_id(_h(self._solver), idx)
@@ -843,6 +851,7 @@ cdef class Subcatchments:
     # ---- Editing (bumps generation) -------------------------------
 
     def add(self, str sub_id) -> Subcatchment:
+        """Add a new subcatchment *sub_id* and return its :class:`Subcatchment` handle."""
         cdef bytes b = sub_id.encode('utf-8')
         _check(swmm_subcatch_add(_h(self._solver), b))
         self._solver._bump_generation()
@@ -850,6 +859,7 @@ cdef class Subcatchments:
         return Subcatchment(self._solver, new_idx)
 
     def rename(self, key, str new_id) -> None:
+        """Rename the subcatchment identified by *key* to *new_id*."""
         cdef int i = _resolve_subcatch(self._solver, key)
         cdef bytes b = new_id.encode('utf-8')
         _check(swmm_subcatch_rename(_h(self._solver), i, b))
@@ -913,6 +923,7 @@ cdef class Subcatchments:
         return buf
 
     def qualities(self, pollutant):
+        """Return an array of *pollutant* runoff concentrations for every subcatchment."""
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef int p = _resolve_pollutant(self._solver, pollutant)

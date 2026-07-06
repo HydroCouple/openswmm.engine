@@ -82,6 +82,7 @@ class Spatial:
     # ------------------------------------------------------------------
 
     def node_coord(self, node) -> Tuple[float, float]:
+        """Return the ``(x, y)`` coordinate of *node*."""
         cdef int i = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double x = 0.0, y = 0.0
@@ -89,6 +90,7 @@ class Spatial:
         return (x, y)
 
     def set_node_coord(self, node, double x, double y) -> None:
+        """Set the ``(x, y)`` coordinate of *node*."""
         cdef int i = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_spatial_set_node_coord(h, i, x, y))
@@ -123,6 +125,7 @@ class Spatial:
     # ------------------------------------------------------------------
 
     def link_coord(self, link) -> Tuple[float, float]:
+        """Return the ``(x, y)`` mid-point coordinate of *link*."""
         cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double x = 0.0, y = 0.0
@@ -130,6 +133,7 @@ class Spatial:
         return (x, y)
 
     def set_link_coord(self, link, double x, double y) -> None:
+        """Set the ``(x, y)`` mid-point coordinate of *link*."""
         cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_spatial_set_link_coord(h, i, x, y))
@@ -147,6 +151,7 @@ class Spatial:
         return np.column_stack((xs, ys))
 
     def set_link_vertices(self, link, vertices) -> None:
+        """Set the polyline vertices of *link* from an ``(N, 2)`` array."""
         cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef np.ndarray[double, ndim=2] arr = np.ascontiguousarray(
@@ -166,6 +171,7 @@ class Spatial:
     # ------------------------------------------------------------------
 
     def subcatchment_coord(self, sub) -> Tuple[float, float]:
+        """Return the ``(x, y)`` centroid coordinate of *sub*."""
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double x = 0.0, y = 0.0
@@ -173,11 +179,13 @@ class Spatial:
         return (x, y)
 
     def set_subcatchment_coord(self, sub, double x, double y) -> None:
+        """Set the ``(x, y)`` centroid coordinate of *sub*."""
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_spatial_set_subcatch_coord(h, i, x, y))
 
     def subcatchment_polygon(self, sub):
+        """Return the boundary polygon of *sub* as an ``(N, 2)`` array."""
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = 0
@@ -189,6 +197,7 @@ class Spatial:
         return np.column_stack((xs, ys))
 
     def set_subcatchment_polygon(self, sub, polygon) -> None:
+        """Set the boundary polygon of *sub* from an ``(N, 2)`` array."""
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef np.ndarray[double, ndim=2] arr = np.ascontiguousarray(
@@ -208,6 +217,7 @@ class Spatial:
     # ------------------------------------------------------------------
 
     def gage_coord(self, gage) -> Tuple[float, float]:
+        """Return the ``(x, y)`` coordinate of rain *gage*."""
         cdef int i = _resolve_gage(self._solver, gage)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double x = 0.0, y = 0.0
@@ -215,6 +225,7 @@ class Spatial:
         return (x, y)
 
     def set_gage_coord(self, gage, double x, double y) -> None:
+        """Set the ``(x, y)`` coordinate of rain *gage*."""
         cdef int i = _resolve_gage(self._solver, gage)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_spatial_set_gage_coord(h, i, x, y))

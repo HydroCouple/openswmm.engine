@@ -83,6 +83,7 @@ cdef class _PointTable:
         return n
 
     def add_point(self, double x, double y) -> None:
+        """Append an ``(x, y)`` point to the table."""
         _check(swmm_table_add_point(_h(self._solver), self._index, x, y))
 
     def clear(self) -> None:
@@ -202,6 +203,7 @@ cdef class Tables:
             return False
 
     def get_index(self, str table_id) -> int:
+        """Return the zero-based index of table *table_id* (raises if unknown)."""
         cdef bytes b = table_id.encode('utf-8')
         cdef int i = swmm_table_index(_h(self._solver), b)
         if i < 0:
@@ -209,6 +211,7 @@ cdef class Tables:
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the table at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_table_id(_h(self._solver), idx)
@@ -236,6 +239,7 @@ cdef class Tables:
     # ---- Creation -----------------------------------------------
 
     def add_timeseries(self, str ts_id) -> TimeSeries:
+        """Add a new time series *ts_id* and return its :class:`TimeSeries` handle."""
         cdef bytes b = ts_id.encode('utf-8')
         _check(swmm_timeseries_add(_h(self._solver), b))
         self._solver._bump_generation()
@@ -261,10 +265,12 @@ cdef class Tables:
         return _PointTable(self._solver, idx)
 
     def as_timeseries(self, key) -> TimeSeries:
+        """Return a :class:`TimeSeries` view of the table identified by *key*."""
         cdef int i = _resolve_table(self._solver, key)
         return TimeSeries(self._solver, i)
 
     def as_curve(self, key) -> Curve:
+        """Return a :class:`Curve` view of the table identified by *key*."""
         cdef int i = _resolve_table(self._solver, key)
         return Curve(self._solver, i)
 

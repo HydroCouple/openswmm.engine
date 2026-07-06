@@ -83,6 +83,7 @@ cdef class OutputReader:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
+        """Close the binary output file and release its handle."""
         if self._handle != NULL:
             swmm_output_close(self._handle)
             self._handle = NULL
@@ -273,6 +274,7 @@ cdef class OutputReader:
         return buf
 
     def link_result(self, int period, var) -> np.ndarray:
+        """Return an array of *var* values for every link at output *period*."""
         cdef int v = int(var)
         cdef int n = swmm_output_get_link_count(self._handle)
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
@@ -284,6 +286,7 @@ cdef class OutputReader:
         return buf
 
     def subcatchment_result(self, int period, var) -> np.ndarray:
+        """Return an array of *var* values for every subcatchment at output *period*."""
         cdef int v = int(var)
         cdef int n = swmm_output_get_subcatch_count(self._handle)
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
@@ -295,6 +298,7 @@ cdef class OutputReader:
         return buf
 
     def system_result(self, int period, var) -> float:
+        """Return the system-wide *var* value at output *period*."""
         cdef int v = int(var)
         cdef float value = 0.0
         cdef int rc = swmm_output_get_system_result(
@@ -319,6 +323,7 @@ cdef class OutputReader:
         return int(start), int(end)
 
     def node_series(self, node, var, *, start=None, end=None) -> np.ndarray:
+        """Return the time series of *var* for *node* over the reporting window."""
         cdef int idx = self._resolve(node, "node")
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
@@ -337,6 +342,7 @@ cdef class OutputReader:
         return buf
 
     def link_series(self, link, var, *, start=None, end=None) -> np.ndarray:
+        """Return the time series of *var* for *link* over the reporting window."""
         cdef int idx = self._resolve(link, "link")
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
@@ -355,6 +361,7 @@ cdef class OutputReader:
         return buf
 
     def subcatchment_series(self, sub, var, *, start=None, end=None) -> np.ndarray:
+        """Return the time series of *var* for *sub* over the reporting window."""
         cdef int idx = self._resolve(sub, "subcatchment")
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
@@ -373,6 +380,7 @@ cdef class OutputReader:
         return buf
 
     def system_series(self, var, *, start=None, end=None) -> np.ndarray:
+        """Return the system-wide time series of *var* over the reporting window."""
         cdef int v = int(var)
         cdef int period_count = swmm_output_get_period_count(self._handle)
         cdef int s, e
@@ -394,6 +402,7 @@ cdef class OutputReader:
     # ------------------------------------------------------------------
 
     def node_attributes(self, node, int period) -> Dict[OutNodeVar, float]:
+        """Return all output variables for *node* at output *period* as a dict."""
         cdef int idx = self._resolve(node, "node")
         cdef int n_attrs = 0
         cdef int budget = max(32, int(OutNodeVar.POLLUT_BASE) + self.pollutant_count)
@@ -406,6 +415,7 @@ cdef class OutputReader:
         return self._attrs_to_dict(OutNodeVar, buf[:n_attrs])
 
     def link_attributes(self, link, int period) -> Dict[OutLinkVar, float]:
+        """Return all output variables for *link* at output *period* as a dict."""
         cdef int idx = self._resolve(link, "link")
         cdef int n_attrs = 0
         cdef int budget = max(32, int(OutLinkVar.POLLUT_BASE) + self.pollutant_count)
@@ -418,6 +428,7 @@ cdef class OutputReader:
         return self._attrs_to_dict(OutLinkVar, buf[:n_attrs])
 
     def subcatchment_attributes(self, sub, int period) -> Dict[OutSubcatchVar, float]:
+        """Return all output variables for *sub* at output *period* as a dict."""
         cdef int idx = self._resolve(sub, "subcatchment")
         cdef int n_attrs = 0
         cdef int budget = max(32, int(OutSubcatchVar.POLLUT_BASE) + self.pollutant_count)

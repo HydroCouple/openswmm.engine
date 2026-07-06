@@ -1550,6 +1550,7 @@ class EventsView(MutableSequence):
         _check(swmm_events_remove(h, idx))
 
     def insert(self, idx, value):
+        """Insert *value* at *idx* (emulated via clear + re-add; the C event API is append-only)."""
         # The C API only supports append; emulate insert by clearing and
         # re-adding. For ``idx >= len(self)`` this degenerates to append.
         n = len(self)
@@ -1563,6 +1564,7 @@ class EventsView(MutableSequence):
             self.append(ev)
 
     def append(self, value):
+        """Append a reporting / hot-start event *value*."""
         start, end = self._unpack(value)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int new_idx = -1
@@ -1570,6 +1572,7 @@ class EventsView(MutableSequence):
             h, datetime_to_oadate(start), datetime_to_oadate(end), &new_idx))
 
     def clear(self):
+        """Remove all scheduled events."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_events_clear(h))
 

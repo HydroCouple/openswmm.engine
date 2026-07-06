@@ -250,12 +250,14 @@ class Inflows:
     # =========================================================================
 
     def add_rdii(self, node, str uh_name, double area) -> None:
+        """Add an RDII inflow at *node* driven by unit-hydrograph group *uh_name* over sewered *area*."""
         cdef int n = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = uh_name.encode('utf-8')
         _check(swmm_rdii_add(h, n, b, area))
 
     def get_rdii(self, int idx) -> RDIIEntry:
+        """Return the :class:`RDIIEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int node_idx = -1
         cdef char buf[128]
@@ -286,12 +288,14 @@ class Inflows:
                        double r, double t, double k,
                        *,
                        double dmax=0.0, double drecov=0.0, double dinit=0.0) -> None:
+        """Add an RTK unit-hydrograph (response R/T/K) to group *uh_name* for *month*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = uh_name.encode('utf-8')
         _check(swmm_hydrograph_add(
             h, b, month, response, r, t, k, dmax, drecov, dinit))
 
     def get_hydrograph(self, int idx) -> HydrographEntry:
+        """Return the :class:`HydrographEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef char buf[128]
         cdef int month = 0, response = 0
@@ -394,12 +398,14 @@ class Inflows:
         _check(swmm_hydrograph_set_gage(h, b_uh, b_gage))
 
     def add_hydrograph_gage(self, str uh_name, str gage_name) -> None:
+        """Associate rain *gage_name* with unit-hydrograph group *uh_name*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b_uh = uh_name.encode('utf-8')
         cdef bytes b_gage = gage_name.encode('utf-8')
         _check(swmm_hydrograph_add_gage(h, b_uh, b_gage))
 
     def get_hydrograph_gage(self, int idx) -> HydrographGageEntry:
+        """Return the :class:`HydrographGageEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef char uh_buf[128]
         cdef char g_buf[128]
@@ -418,6 +424,7 @@ class Inflows:
         return swmm_hydrograph_group_count(h)
 
     def get_hydrograph_group_id(self, int idx) -> str:
+        """Return the ID of the unit-hydrograph group at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef char buf[128]
         _check(swmm_hydrograph_group_id(h, idx, buf, 128))
@@ -430,12 +437,14 @@ class Inflows:
     def add_rdii_decay(self, str uh_name, int response,
                        double k_dep, double k_0, double k_T,
                        double T_ref, double theta_rec, double T_freeze) -> None:
+        """Add an exponential-decay RDII entry to unit-hydrograph *uh_name*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = uh_name.encode('utf-8')
         _check(swmm_rdii_decay_add(
             h, b, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze))
 
     def get_rdii_decay(self, int idx) -> RDIIDecayEntry:
+        """Return the :class:`RDIIDecayEntry` at *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef char buf[128]
         cdef int response = 0

@@ -86,6 +86,7 @@ class Forcing:
 
     def node_lat_inflow(self, node, double value, *,
                         mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Force a lateral inflow (flow units) at *node* for the current step; *mode* selects replace/add/scale and *persist* keeps it across steps."""
         cdef int i = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_node_lat_inflow(
@@ -93,6 +94,7 @@ class Forcing:
 
     def node_head_boundary(self, node, double value, *,
                            mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Force a head/stage boundary at *node* for the current step (see *mode* / *persist*)."""
         cdef int i = _resolve_node(self._solver, node)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_node_head_boundary(
@@ -100,6 +102,7 @@ class Forcing:
 
     def node_quality(self, node, pollutant, double mass_rate, *,
                      mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Force a pollutant mass-rate inflow of *pollutant* at *node* (see *mode* / *persist*)."""
         cdef int ni = _resolve_node(self._solver, node)
         cdef int pi = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
@@ -110,6 +113,7 @@ class Forcing:
 
     def link_flow(self, link, double value, *,
                   mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Force the flow through *link* for the current step (see *mode* / *persist*)."""
         cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_link_flow(
@@ -117,6 +121,7 @@ class Forcing:
 
     def link_setting(self, link, double value, *,
                      mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Force the control setting (0-1) of *link* for the current step (see *mode* / *persist*)."""
         cdef int i = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_link_setting(
@@ -126,6 +131,7 @@ class Forcing:
 
     def subcatchment_rainfall(self, sub, double value, *,
                               mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Force the rainfall rate on subcatchment *sub* for the current step (see *mode* / *persist*)."""
         cdef int i = _resolve_subcatch(self._solver, sub)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_subcatch_rainfall(
@@ -353,6 +359,7 @@ class Forcing:
 
     def gage_rainfall(self, gage, double value, *,
                       mode=ForcingMode.REPLACE, bint persist=False) -> None:
+        """Force the rainfall rate reported by rain *gage* for the current step (see *mode* / *persist*)."""
         cdef int i = _resolve_gage(self._solver, gage)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_gage_rainfall(
@@ -407,6 +414,7 @@ class Forcing:
             _check(swmm_forcing_clear(h, int(channel), i))
 
     def clear_all(self) -> None:
+        """Clear all active runtime forcing overrides."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_forcing_clear_all(h))
 

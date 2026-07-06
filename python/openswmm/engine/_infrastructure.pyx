@@ -56,6 +56,7 @@ class Transects:
         return swmm_transect_count(h)
 
     def add(self, str transect_id) -> int:
+        """Add a natural-channel transect *transect_id* and return its index."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = transect_id.encode('utf-8')
         _check(swmm_transect_add(h, b))
@@ -64,10 +65,12 @@ class Transects:
 
     def set_roughness(self, int idx,
                       double n_left, double n_right, double n_channel) -> None:
+        """Set the left-bank, right-bank and channel Manning's n for transect *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_transect_set_roughness(h, idx, n_left, n_right, n_channel))
 
     def add_station(self, int idx, double station, double elevation) -> None:
+        """Append a ``(station, elevation)`` point to transect *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_transect_add_station(h, idx, station, elevation))
 
@@ -263,6 +266,7 @@ class Streets:
         return swmm_street_count(h)
 
     def add(self, str street_id) -> int:
+        """Add a street cross-section *street_id* and return its index."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = street_id.encode('utf-8')
         _check(swmm_street_add(h, b))
@@ -275,6 +279,7 @@ class Streets:
                    int sides=2,
                    double back_width=0.0, double back_slope=0.0,
                    double back_n=0.0) -> None:
+        """Set the geometry and roughness parameters for street *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_street_set_params(
             h, idx, t_crown, h_curb, sx, n_road,
@@ -361,6 +366,7 @@ class Inlets:
         return swmm_inlet_count(h)
 
     def add(self, str inlet_id, str inlet_type) -> int:
+        """Add an inlet *inlet_id* of *inlet_type* and return its index."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b_id = inlet_id.encode('utf-8')
         cdef bytes b_type = inlet_type.encode('utf-8')
@@ -372,6 +378,7 @@ class Inlets:
                    double length=0.0, double width=0.0,
                    str grate_type="",
                    double open_area=0.0, double splash_veloc=0.0) -> None:
+        """Set the geometry parameters for inlet *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b_grate = grate_type.encode('utf-8')
         _check(swmm_inlet_set_params(
@@ -521,22 +528,26 @@ class LIDs:
 
     def set_surface(self, int idx, *,
                     double storage, double roughness, double slope) -> None:
+        """Set the surface-layer parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_surface(h, idx, storage, roughness, slope))
 
     def set_soil(self, int idx, *,
                  double thick, double porosity, double fc,
                  double wp, double ksat, double kslope) -> None:
+        """Set the soil-layer parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_soil(h, idx, thick, porosity, fc, wp, ksat, kslope))
 
     def set_storage(self, int idx, *,
                     double thick, double void_frac, double ksat) -> None:
+        """Set the storage-layer parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_storage(h, idx, thick, void_frac, ksat))
 
     def set_drain(self, int idx, *,
                   double coeff, double expon, double offset) -> None:
+        """Set the underdrain parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drain(h, idx, coeff, expon, offset))
 
