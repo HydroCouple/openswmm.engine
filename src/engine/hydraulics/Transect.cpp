@@ -94,16 +94,17 @@ void buildTables(TransectData& td) {
     td.hrad_tbl[0] = 0.0;
     td.width_tbl[0] = 0.0;
 
-    // NOTE (transect parity gap): legacy createTables (transect.c:281-289)
-    // ACCUMULATES `y = ymin; y += dy` each row rather than `ymin + idx*dy`.
-    // Switching to the accumulation makes all 43 user2 transect tables
-    // bit-identical to legacy, BUT it regressed extran8a to a 1.86e-09
-    // near-miss and did NOT fix user2/user5 (whose real seed is the upstream
-    // depth `y1` — a separate bug in the IRREGULAR flow-class/offset path).
-    // The IRREGULAR/transect path has multiple interacting parity issues
-    // (table build, missing xsect section-factor params, conveyance, depth
-    // seed) that resist piecemeal fixing — reverted to hold the 15/19 baseline
-    // pending a coordinated fix. See the transect-parity gap note.
+    // NOTE (transect parity gap — see irregular-transect-parity-gap memory):
+    // legacy createTables (transect.c:281-289) ACCUMULATES `y=ymin; y+=dy` each
+    // row rather than `ymin + idx*dy`. Applying that accumulation makes ALL
+    // transect tables (incl. a_full/r_full/w_max) bit-identical to legacy, but
+    // by itself it REGRESSES extran8a — proving a compensating runtime bug (#3)
+    // that the currently-wrong tables mask. Minimal repro: extran8a links
+    // 10081/10082 (no offsets) diverge 1 ULP in the initial depth y1 at step 1
+    // with tables matching. The coordinated fix must land the accumulation AND
+    // fix #3 (runtime transect USE — initial-depth/geometry/conveyance) together
+    // so extran8a stays exact while user2/user5/extran8b reach parity. Reverted
+    // to hold the 15/19 baseline.
     for (int idx = 1; idx < N_TRANSECT_TBL; ++idx) {
         const double y = ymin + static_cast<double>(idx) * dy;
         double wpSum = 0.0, aSum = 0.0, qSum = 0.0;
