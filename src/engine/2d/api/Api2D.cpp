@@ -11,6 +11,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
+#include <openswmm/engine/openswmm_forcing.h>
 #include "../../core/SWMMEngine.hpp"
 #include "../mesh/MeshBuilder.hpp"
 
@@ -708,6 +709,8 @@ int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(idx, router2d);
+    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
+        router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     s.rainfall_forced[idx]    = static_cast<int8_t>(mode);
@@ -720,6 +723,8 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
                                      double value, int mode, int persist) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
+    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
+        router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     int nt = router2d.mesh().n_triangles();
@@ -736,6 +741,8 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx,
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(idx, router2d);
+    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
+        router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     s.evap_forced[idx]    = static_cast<int8_t>(mode);
@@ -748,6 +755,8 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine,
                                  double value, int mode, int persist) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
+    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
+        router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     int nt = router2d.mesh().n_triangles();
@@ -764,6 +773,8 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(idx, router2d);
+    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
+        router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     s.coupling_forced[idx]    = static_cast<int8_t>(mode);

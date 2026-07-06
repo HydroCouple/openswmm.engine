@@ -511,6 +511,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     coupling_counter_ = 0;
     sim_time_ = 0.0;
     pending_dt_ = 0.0;
+    force_next_window_ = false;
 
     // COUPLING_INTERVAL > 1 advances the 2D solver over a multi-routing-step
     // macro-window so CVODE can take large adaptive steps (big speedup). This is
@@ -655,19 +656,35 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     pending_dt_ += routing_dt;
     ++coupling_counter_;
     last_t_ = t;
-    if (effective_window_ > 0.0) {
+    const bool force_window = force_next_window_;
+    if (!force_window && effective_window_ > 0.0) {
         // Fire when within half a routing step of the window (jitter cannot
         // systematically overshoot: the alternative is overshooting by a whole
         // step). A window equal to the actual routing step fires every step.
         if (pending_dt_ + 0.5 * routing_dt < effective_window_) return;
-    } else if (options_.coupling_interval > 1
+    } else if (!force_window && options_.coupling_interval > 1
                && coupling_counter_ < options_.coupling_interval) {
         return;  // Defer the 2D advance; keep accumulating elapsed routing time.
     }
+    force_next_window_ = false;
     const double dt = pending_dt_;   // the 2D macro-step
     pending_dt_ = 0.0;
     coupling_counter_ = 0;
     fireAdvanceWindow(ctx, dt, t);
+}
+
+
+void SurfaceRouter2D::prepareOneShotForcing(SimulationContext& ctx) {
+    if (!active_) return;
+
+    if (pending_dt_ > 0.0) {
+        const double dt = pending_dt_;
+        pending_dt_ = 0.0;
+        coupling_counter_ = 0;
+        force_next_window_ = false;
+        fireAdvanceWindow(ctx, dt, last_t_);
+    }
+    force_next_window_ = true;
 }
 
 
@@ -956,6 +973,7 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
         const double dt = pending_dt_;
         pending_dt_ = 0.0;
         coupling_counter_ = 0;
+        force_next_window_ = false;
         fireAdvanceWindow(ctx, dt, last_t_);
     }
 #ifdef OPENSWMM_HAS_2D

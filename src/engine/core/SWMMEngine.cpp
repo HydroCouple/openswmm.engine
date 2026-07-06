@@ -3996,21 +3996,9 @@ void SWMMEngine::applyForcings(double dt) noexcept {
             }
         }
 
-        // ---- Link quality forcing (same semantics as the node channel) ----
-        for (int j = 0; j < ctx_.n_links(); ++j) {
-            for (int p = 0; p < np; ++p) {
-                auto flat = static_cast<std::size_t>(j) * static_cast<std::size_t>(np)
-                          + static_cast<std::size_t>(p);
-                if (f.link_quality_mode[flat] == ForcingMode::OVERRIDE) {
-                    ctx_.links.conc[flat] = f.link_quality_value[flat];
-                } else if (f.link_quality_mode[flat] == ForcingMode::ADD) {
-                    ctx_.links.conc[flat] += f.link_quality_value[flat];
-                    ctx_.mass_balance.routing_forcing_qual_inflow[
-                        static_cast<std::size_t>(p)] +=
-                        f.link_quality_value[flat] * dt;
-                }
-            }
-        }
+        // Link quality forcing is applied after QualitySolver::updateLinkQuality()
+        // so the prescribed concentration is not overwritten by upstream-node
+        // mixing during the same routing step.
 
         // ---- Persistent user quality mass flux (user_conc_mass_flux) ----
         // Applied as additive mass source each step, analogous to user_lat_flow.
