@@ -2286,7 +2286,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                 std::snprintf(fname, sizeof(fname), "%s.link%ld", tr, lf_target);
                 lf = std::fopen(fname, "w");
                 if (lf) std::fprintf(lf,
-                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc\n");
+                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid\n");
             }
         }
         if (lf && static_cast<long>(uj) == lf_target) {
@@ -2300,11 +2300,13 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                 : (lf_count > lf_skip);
             if (in_window && lf_rows < 128) {
                 ++lf_rows;
-                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d\n",
+                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a\n",
                              lf_count, qLast, v, sig, rho, aWtd, rWtd,
                              dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
                              surf_area1_[uj], surf_area2_[uj],
-                             static_cast<int>(links.flow_class[uj]));
+                             static_cast<int>(links.flow_class[uj]),
+                             depth1_[uj], depth_mid_[uj], area1_[uj],
+                             area_mid_[uj], hrad1_[uj], hrad_mid_[uj]);
                 if (lf_rows >= 128) { std::fclose(lf); lf = nullptr; }
             }
         }

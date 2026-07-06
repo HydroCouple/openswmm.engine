@@ -1137,6 +1137,16 @@ void resolve_cross_references(SimulationContext& ctx) {
                 ctx.links.xsect_a_full[uj] = td.a_full;
                 ctx.links.xsect_r_full[uj] = td.r_full;
                 ctx.links.xsect_w_max[uj]  = td.w_max;
+                // NOTE: legacy getTransectParams (xsect.c:1339-1358) ALSO sets
+                // sFull/sMax/aBot/ywMax on the IRREGULAR xsect. Propagating them
+                // here (with the physical sMax/aMax from setMaxSectionFactor)
+                // regressed extran8a to a 1.86e-09 near-miss WITHOUT fixing
+                // user2/user5 — the refactored IRREGULAR conveyance/flow-limit
+                // path (q_full/q_max from s_full/s_max in Routing.cpp) evidently
+                // compensates for the previously-zero values. Deferred: the
+                // IRREGULAR section-factor path needs a coordinated fix (params
+                // + conveyance + getAmax), not a piecemeal propagation. See the
+                // transect-parity gap note.
             }
         }
     }
