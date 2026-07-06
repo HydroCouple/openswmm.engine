@@ -1090,12 +1090,14 @@ double getAofS(const XSectParams& xs, double s) {
             return xs.a_full * invLookup(psi, xsect_tables::S_SemiCirc, xsect_tables::N_S_SemiCirc);
         default: {
             // Newton-Raphson on S(a) = s, bracketed in [a1, a2] (legacy generic_getAofS).
-            // a2 = absolute area at max flow = aFull * Amax-ratio.
-            // PARITY: legacy xsect_getAmax (xsect.c:712) returns aBot for CUSTOM
-            // (= Shape.aMax * yFull^2, set by xsect_setCustomXsectParams). Keep
-            // the ratio path for IRREGULAR until transect aMax is populated.
+            // a2 = absolute area at max flow = xsect_getAmax.
+            // PARITY: legacy xsect_getAmax (xsect.c:711-713) returns aBot for
+            // BOTH IRREGULAR and CUSTOM (the physical area at the max section
+            // factor, set from the transect/shape tables); every other shape
+            // uses aFull * Amax-ratio.
             double a1, a2;
-            double a_max = (static_cast<XSectShape>(xs.type) == XSectShape::CUSTOM)
+            const XSectShape sh = static_cast<XSectShape>(xs.type);
+            double a_max = (sh == XSectShape::CUSTOM || sh == XSectShape::IRREGULAR)
                                ? xs.a_bot
                                : xs.a_full * getAmax(xs);
             if ((s <= xs.s_max && s >= xs.s_full) && xs.s_max != xs.s_full) {

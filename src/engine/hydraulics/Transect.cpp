@@ -94,19 +94,16 @@ void buildTables(TransectData& td) {
     td.hrad_tbl[0] = 0.0;
     td.width_tbl[0] = 0.0;
 
-    // NOTE (transect parity gap — see irregular-transect-parity-gap memory):
-    // legacy createTables (transect.c:281-289) ACCUMULATES `y=ymin; y+=dy` each
-    // row rather than `ymin + idx*dy`. Applying that accumulation makes ALL
-    // transect tables (incl. a_full/r_full/w_max) bit-identical to legacy, but
-    // by itself it REGRESSES extran8a — proving a compensating runtime bug (#3)
-    // that the currently-wrong tables mask. Minimal repro: extran8a links
-    // 10081/10082 (no offsets) diverge 1 ULP in the initial depth y1 at step 1
-    // with tables matching. The coordinated fix must land the accumulation AND
-    // fix #3 (runtime transect USE — initial-depth/geometry/conveyance) together
-    // so extran8a stays exact while user2/user5/extran8b reach parity. Reverted
-    // to hold the 15/19 baseline.
+    // PARITY: legacy createTables (transect.c:281-289) ACCUMULATES the depth
+    // `y = ymin; y += dy` each row rather than recomputing `ymin + idx*dy`.
+    // The accumulated rounding path makes ALL transect tables — including
+    // a_full/r_full/w_max — bit-identical to legacy. (This is one of the three
+    // coupled pieces of the IRREGULAR parity fix; the other two are the
+    // physical s_max/a_max computed below and the getTransectParams propagation
+    // in PostParseResolver + the getAofS getAmax IRREGULAR path.)
+    double y = ymin;
     for (int idx = 1; idx < N_TRANSECT_TBL; ++idx) {
-        const double y = ymin + static_cast<double>(idx) * dy;
+        y += dy;
         double wpSum = 0.0, aSum = 0.0, qSum = 0.0;
         double areaT = 0.0, widthT = 0.0;
 
@@ -147,6 +144,25 @@ void buildTables(TransectData& td) {
             td.hrad_tbl[idx] = td.hrad_tbl[idx - 1];
         else
             td.hrad_tbl[idx] = std::pow(qSum * nChannel / PHI / areaT, 1.5);
+    }
+
+    // PARITY: legacy setMaxSectionFactor (transect.c:596-618) — the physical
+    // maximum section factor and the area at which it occurs, computed on the
+    // UNNORMALIZED tables BEFORE the normalization below. Stored ABSOLUTE (real
+    // ft units), unlike the unit-height CUSTOM s_max/a_max (buildCustomTables)
+    // that the caller scales by yFull. The IRREGULAR propagation in
+    // PostParseResolver uses these directly for xsect sMax / aBot. For channels
+    // whose section factor peaks below full depth (vertical end-walls raise the
+    // wetted perimeter faster than the area near the top) aMax < aFull and
+    // sMax > sFull; getAofS's Newton bracket then needs aMax, not aFull.
+    td.s_max = 0.0;
+    td.a_max = 0.0;
+    for (int i = 1; i < N_TRANSECT_TBL; ++i) {
+        double sf = td.area_tbl[i] * std::pow(td.hrad_tbl[i], 2.0 / 3.0);
+        if (sf > td.s_max) {
+            td.s_max = sf;
+            td.a_max = td.area_tbl[i];
+        }
     }
 
     const int nLast = N_TRANSECT_TBL - 1;

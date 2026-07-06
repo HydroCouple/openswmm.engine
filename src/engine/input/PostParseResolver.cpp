@@ -1112,8 +1112,28 @@ void resolve_cross_references(SimulationContext& ctx) {
             }
             td.stations  = ctx.transects.stations[ut];
             td.elevations = ctx.transects.elevations[ut];
-            td.x_left_bank  = ctx.transects.x_left_bank[ut];
-            td.x_right_bank = ctx.transects.x_right_bank[ut];
+            td.length_factor = ctx.transects.length_factor[ut];
+            // PARITY: legacy transect setParams/addStation (transect.c:360-410)
+            // transform the raw [TRANSECTS] GR data BEFORE building the tables:
+            //   Station = x * Xfactor / UCF(LENGTH)          (mult, then divide)
+            //   Elev    = (y + Yfactor) / UCF(LENGTH),  Yfactor = x9 / UCF
+            //   Xbank   = (xbank / UCF) * Xfactor            (divide, then mult)
+            // The elevation OFFSET (x9, e.g. 799/798 in extran8a) is the load-
+            // bearing part: legacy builds every slice area/width/hrad at the
+            // real bed elevation (~800 ft), so `y - yhi` rounds at that
+            // magnitude. Building on the raw ~0-ft elevations rounds
+            // differently (~1e-13 per entry) and breaks bit-parity even though
+            // the geometry is offset-invariant in exact arithmetic. Applied to
+            // the td COPY only, so [TRANSECTS] round-trips the raw GR values.
+            const int t_us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+            const double t_ucf = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(t_us)];
+            double xFactor = ctx.transects.x_factor[ut];      // parse-time 0→1 default
+            if (xFactor == 0.0) xFactor = 1.0;
+            const double yFactor = ctx.transects.y_factor[ut] / t_ucf;   // x9 / UCF
+            for (auto& s : td.stations)   s = s * xFactor / t_ucf;
+            for (auto& e : td.elevations) e = (e + yFactor) / t_ucf;
+            td.x_left_bank  = (ctx.transects.x_left_bank[ut]  / t_ucf) * xFactor;
+            td.x_right_bank = (ctx.transects.x_right_bank[ut] / t_ucf) * xFactor;
             transect::buildTables(td);
         }
         // Resolve IRREGULAR link transect names → indices, then set properties
@@ -1137,16 +1157,11 @@ void resolve_cross_references(SimulationContext& ctx) {
                 ctx.links.xsect_a_full[uj] = td.a_full;
                 ctx.links.xsect_r_full[uj] = td.r_full;
                 ctx.links.xsect_w_max[uj]  = td.w_max;
-                // NOTE: legacy getTransectParams (xsect.c:1339-1358) ALSO sets
-                // sFull/sMax/aBot/ywMax on the IRREGULAR xsect. Propagating them
-                // here (with the physical sMax/aMax from setMaxSectionFactor)
-                // regressed extran8a to a 1.86e-09 near-miss WITHOUT fixing
-                // user2/user5 — the refactored IRREGULAR conveyance/flow-limit
-                // path (q_full/q_max from s_full/s_max in Routing.cpp) evidently
-                // compensates for the previously-zero values. Deferred: the
-                // IRREGULAR section-factor path needs a coordinated fix (params
-                // + conveyance + getAmax), not a piecemeal propagation. See the
-                // transect-parity gap note.
+                // The full section-factor params (sFull, physical sMax, aBot,
+                // ywMax) — legacy getTransectParams (xsect.c:1339-1358) — are
+                // set in the shape-property resolution block below (the
+                // XsectShape::IRREGULAR case), which runs after transect-name
+                // resolution and owns s_full/s_max/a_bot/yw_max.
             }
         }
     }
@@ -1318,9 +1333,49 @@ void resolve_cross_references(SimulationContext& ctx) {
             break;
         }
 
-        case XsectShape::IRREGULAR:
+        case XsectShape::IRREGULAR: {
+            // PARITY: legacy getTransectParams (xsect.c:1339-1358). Beyond
+            // a/r/w_full this sets sFull, the PHYSICAL sMax, aBot (= area at the
+            // max section factor) and ywMax (height at the lowest widest point).
+            // These feed link_getYnorm's getAofS normal-depth solve (initial
+            // conduit depth) and the flow-limit q_max — leaving sMax=sFull /
+            // aBot=0 diverges every transect whose section factor peaks below
+            // full depth (see the s_max/a_max note in Transect.cpp buildTables).
+            int ci = ctx.links.xsect_curve[uj];
+            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+                a_full = td.a_full;
+                r_full = td.r_full;
+                w_max  = td.w_max;
+                y_full = td.y_full;
+                s_full = a_full * std::pow(r_full, 2.0/3.0);   // xsect.c:1343
+                s_max  = td.s_max;                              // xsect.c:1344 (absolute)
+                ctx.links.xsect_a_bot[uj] = td.a_max;           // xsect.c:1345
+                // xsect.c:1347-1358 — height at lowest widest point from the
+                // (normalized) width table
+                int iMax = 0;
+                double wtMax = td.width_tbl[0];
+                for (int i = 1; i < transect::N_TRANSECT_TBL; ++i) {
+                    if (td.width_tbl[i] < wtMax) break;
+                    wtMax = td.width_tbl[i];
+                    iMax = i;
+                }
+                yw_max = y_full * static_cast<double>(iMax) /
+                         static_cast<double>(transect::N_TRANSECT_TBL - 1);
+            } else {
+                // Fallback if transect not resolved
+                a_full = w_max * y_full;
+                double p_def = 2.0 * y_full + w_max;
+                r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
+                s_full = a_full * std::pow(r_full, 2.0/3.0);
+                s_max  = s_full;
+                yw_max = y_full;
+            }
+            break;
+        }
+
         case XsectShape::STREET_XSECT: {
-            // Properties already set from transect / street tables above.
+            // Properties already set from street tables above.
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
@@ -1332,7 +1387,7 @@ void resolve_cross_references(SimulationContext& ctx) {
                 s_max  = s_full;
                 yw_max = y_full;
             } else {
-                // Fallback if transect/street not resolved
+                // Fallback if street not resolved
                 a_full = w_max * y_full;
                 double p_def = 2.0 * y_full + w_max;
                 r_full = (p_def > 0.0) ? a_full / p_def : 0.0;
