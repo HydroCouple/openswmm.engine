@@ -310,6 +310,32 @@ public:
         double* w1, double* w2, double* wm, int n_links) const;
 
     /**
+     * @brief Team-callable triple kernels: thread `tid` of `nthreads`
+     *        processes only its static slice of every shape group.
+     *
+     * @details Call from EVERY thread of an OpenMP team (typically the
+     *          persistent DW Picard team) with that thread's id/team size;
+     *          the caller owns the barrier that orders the outputs for
+     *          consumers. Slices are disjoint (single-producer per element,
+     *          including the shared group-local scratch buffers, which are
+     *          sliced on cache-line boundaries), and per-element results are
+     *          position-independent — so results are bit-identical to the
+     *          serial triple at any thread count. Honors the bypass mask
+     *          exactly like the serial forms. (tid=0, nthreads=1) IS the
+     *          serial form.
+     */
+    void computeAreaHydRadTripleTeam(
+        const double* d1, const double* d2, const double* dm,
+        double* a1, double* a2, double* am,
+        double* hrad1, double* hrad_mid, int n_links,
+        int tid, int nthreads) const;
+
+    void computeWidthsTripleTeam(
+        const double* d1, const double* d2, const double* dm,
+        double* w1, double* w2, double* wm, int n_links,
+        int tid, int nthreads) const;
+
+    /**
      * @brief Restrict the triple kernels to non-bypassed links for the
      *        current Picard iteration.
      *

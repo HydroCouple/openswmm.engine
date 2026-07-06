@@ -55,6 +55,17 @@
 #include <omp.h>
 #else
 static inline int omp_get_max_threads() { return 1; }
+static inline int omp_get_num_threads() { return 1; }
+static inline int omp_get_thread_num()  { return 0; }
+#endif
+
+// Darwin/Apple-Silicon scheduling helpers (see setNumThreads / execute):
+// sysctl for the performance-core count, pthread QoS to keep team threads
+// off the efficiency cores.
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#include <pthread.h>
+#include <pthread/qos.h>
 #endif
 
 namespace openswmm {
@@ -725,6 +736,35 @@ void DWSolver::buildConduitNodeCSR(const SimulationContext& ctx) {
 // setNumThreads — configure OpenMP parallelism
 // ============================================================================
 
+#if defined(__APPLE__)
+// Number of PERFORMANCE-core logical CPUs on Apple Silicon (hw.perflevel0),
+// 0 when unknown (Intel Macs / sysctl failure). With OMP_WAIT_POLICY=active
+// (see SWMMEngine::start), a team thread scheduled onto an EFFICIENCY core
+// turns every Picard barrier into a straggler wait (E-cores run this
+// workload ~3x slower), which is why T=8 on an 8P+2E M1 Max collapsed to
+// 2.2x SLOWER than serial. Timing-only: results are bit-identical at any
+// thread count.
+static int darwinPerfCoreCount() {
+    int n = 0;
+    std::size_t sz = sizeof(n);
+    if (sysctlbyname("hw.perflevel0.logicalcpu", &n, &sz, nullptr, 0) != 0)
+        return 0;
+    return (n > 0) ? n : 0;
+}
+
+// Pin the calling thread's QoS to USER_INTERACTIVE so the macOS scheduler
+// keeps it on P-cores. Called once per team thread from the persistent
+// parallel region prologue in execute() (thread_local latch). Errors are
+// ignored — QoS is a scheduling hint, not a correctness requirement.
+static void darwinPinThreadToPerfCores() {
+    static thread_local bool applied = false;
+    if (!applied) {
+        (void)pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+        applied = true;
+    }
+}
+#endif
+
 void DWSolver::setNumThreads(int n) {
     // A/B override: SWMM_DW_THREADS=<N> forces the DW Picard thread count,
     // bypassing the model-size gate below (unset or invalid → normal path).
@@ -761,6 +801,20 @@ void DWSolver::setNumThreads(int n) {
         if (cap < 1) cap = 1;
         num_threads_ = std::min(num_threads_, cap);
     }
+
+#if defined(__APPLE__)
+    // Apple Silicon P-core clamp (see darwinPerfCoreCount): never run more
+    // team threads than PERFORMANCE cores. Measured on Bellinge (M1 Max,
+    // 8P+2E): unclamped T=8 with active waits = 204s vs T=4 = 57s; with the
+    // QoS pin (execute() prologue) T=8 recovers but T=6 is the sweet spot —
+    // leaving P-core headroom for the OS/IO thread avoids barrier-straggler
+    // preemption. PERFORMANCE-ONLY: bit-identical at any thread count.
+    if (num_threads_ > 1) {
+        const int pcores = darwinPerfCoreCount();
+        if (pcores > 2)
+            num_threads_ = std::min(num_threads_, pcores - 2);
+    }
+#endif
 }
 
 // ============================================================================
@@ -849,6 +903,13 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
 #pragma omp parallel num_threads(num_threads_) if(num_threads_ > 1) default(shared)
     {
+#if defined(__APPLE__)
+        // One-time per pool thread (thread_local latch inside): QoS pin to
+        // P-cores. Without it, macOS may schedule active-spinning team
+        // threads onto E-cores, making every barrier wait on an E-core
+        // straggler (the T=8 collapse — see darwinPerfCoreCount).
+        darwinPinThreadToPerfCores();
+#endif
         int  t_steps     = 0;      // per-thread replica of legacy `Steps`
         bool t_converged = false;  // per-thread replica of `converged`
 
@@ -1227,21 +1288,33 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // ---- STEP B: Batch widths from depths (needed for surface area) ----
     // For EXTRAN/static-slot, the cap-buffers above feed the width kernel;
     // for SLOT mode, depths feed it directly (no crown cap).
-    // Serial inside `omp single`: the triple kernels pipeline through
-    // per-group SHARED scratch buffers (ShapeGroup::buf_d/buf_r), so they are
-    // not team-splittable without per-thread buffers. STEP A's closing
-    // barrier ordered the depth/cap inputs; this single's closing barrier
-    // orders width1/2/mid for STEP C.
-    #pragma omp single
+    // Team-split (B3): each thread runs the triple kernels over ITS static
+    // slice of every shape group (computeWidthsTripleTeam) — disjoint
+    // single-producer element writes, including the shared group scratch
+    // buffers which are sliced on cache-line boundaries, so results are
+    // bit-identical to the former serial `omp single` at any thread count.
+    // STEP A's closing barrier ordered the depth/cap inputs AND the bypass
+    // mask (single nowait above); the explicit barrier below orders
+    // width1/2/mid for their cross-slice consumers (STEP C / the SLOT
+    // override loop, which partition conduits differently than the shape
+    // groups do).
     {
-    if (!slot_mode) {
-        groups_->computeWidthsTriple(wcap_d1_.data(), wcap_d2_.data(), wcap_dm_.data(),
-                                      width1_.data(), width2_.data(), width_mid_.data(),
-                                      n_links_);
-    } else {
-        groups_->computeWidthsTriple(depth1_.data(), depth2_.data(), depth_mid_.data(),
-                                     width1_.data(), width2_.data(), width_mid_.data(),
-                                     n_links_);
+        const int b_tid = omp_get_thread_num();
+        const int b_nth = omp_get_num_threads();
+        if (!slot_mode) {
+            groups_->computeWidthsTripleTeam(
+                wcap_d1_.data(), wcap_d2_.data(), wcap_dm_.data(),
+                width1_.data(), width2_.data(), width_mid_.data(),
+                n_links_, b_tid, b_nth);
+        } else {
+            groups_->computeWidthsTripleTeam(
+                depth1_.data(), depth2_.data(), depth_mid_.data(),
+                width1_.data(), width2_.data(), width_mid_.data(),
+                n_links_, b_tid, b_nth);
+        }
+    }
+    #pragma omp barrier
+    if (slot_mode) {
         // For a surcharged closed conduit the tabulated top width goes to 0 at
         // the crown (e.g. circular W_Circ[full]=0), so the surface-area that
         // STEP C builds for the connected nodes would collapse to MinSurfArea.
@@ -1249,6 +1322,11 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // surcharged (dwflow.c). Without this the SLOT node surface area is too
         // small, the depth update overshoots the rim, and the excess is booked
         // as phantom flooding (test1 SLOT continuity −16% vs legacy −2%).
+        // Team `omp for`: per-conduit single-producer overwrites of the width
+        // arrays, reading only STEP-A depths (ordered by STEP A's barrier) and
+        // kernel widths (ordered by the barrier above). Its implicit closing
+        // barrier orders the final widths for STEP C.
+        #pragma omp for schedule(static)
         for (int ci = 0; ci < n_conduits_; ++ci) {
             auto uci = static_cast<std::size_t>(ci);
             auto uj  = static_cast<std::size_t>(tile_uj_[uci]);
@@ -1268,8 +1346,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 if (ws > 0.0) width_mid_[uj] = ws;
             }
         }
-    }
-    }   // end omp single (STEP B; implicit barrier)
+    }   // end STEP B
 
     // ---- STEP C: Flow classification + surface area (conduits only) ----
     // Matches legacy dwflow.c findSurfArea + getFlowClass.
@@ -1575,15 +1652,22 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     double* OPENSWMM_RESTRICT p_wm  = width_mid_.data();
     (void)p_wm;  // width_mid_ already computed in STEP B
 
-    // Serial inside `omp single` — same shared-scratch-buffer constraint as
-    // STEP B. STEP C's closing barrier ordered the (modified) depth inputs;
-    // this single's closing barrier orders areas/hyd-radii for STEP E.
-    #pragma omp single
+    // Team-split (B3) — same slice contract as STEP B (see
+    // computeAreaHydRadTripleTeam): disjoint single-producer element writes,
+    // bit-identical to the former serial `omp single` at any thread count.
+    // STEP C's closing barrier ordered the (modified) depth inputs; the
+    // explicit barrier below orders areas/hyd-radii for their cross-slice
+    // consumers (STEP E / momentumKernels, which partition by conduit, not
+    // by shape group).
     {
-    groups_->computeAreaHydRadTriple(p_d1, p_d2, p_dm,
-                                     p_a1, p_a2, p_am,
-                                     p_h1, p_hm, n_links_);
+        const int d_tid = omp_get_thread_num();
+        const int d_nth = omp_get_num_threads();
+        groups_->computeAreaHydRadTripleTeam(p_d1, p_d2, p_dm,
+                                             p_a1, p_a2, p_am,
+                                             p_h1, p_hm, n_links_,
+                                             d_tid, d_nth);
     }
+    #pragma omp barrier
     // width_mid_ already computed in STEP B; UP/DN_CRITICAL/DRY cases
     // patched inline in STEP C.
 
