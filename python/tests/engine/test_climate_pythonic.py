@@ -69,9 +69,11 @@ class TestClimateArrayRoundTrip:
         ("adc_pervious", 10),
     ])
     def test_array_roundtrip(self, clim_solver, attr, n):
-        # small, strictly-increasing fractional values — valid for ADC curves
-        # and harmless for the monthly/adjust arrays.
-        vals = [round(0.01 * i, 3) for i in range(n)]
+        # Non-zero, strictly-increasing fractional values in (0, 1): valid for
+        # ADC curves and faithful for the monthly/adjust arrays. A zero base is
+        # avoided because the conductivity multiplier treats 0 as the "no
+        # adjustment" sentinel and reads back as 1.0.
+        vals = [round(0.5 + 0.01 * i, 3) for i in range(n)]
         setattr(clim_solver.climate, attr, vals)
         got = list(getattr(clim_solver.climate, attr))
         assert got == pytest.approx(vals)
