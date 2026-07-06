@@ -372,9 +372,27 @@ private:
     // Per-link bypass flag (true when both end nodes converged; skip momentum solve)
     // uint8_t instead of bool: avoids std::vector<bool> bit-packing overhead
     std::vector<uint8_t> bypassed_;
-    // True when findBypassedLinks marked at least one link this iteration;
-    // gates the XSectGroups bypass mask (kernel work restriction).
-    bool any_bypassed_ = false;
+
+    // ------------------------------------------------------------------------
+    // B2 threading — CSR node→incident-conduit adjacency for the parallel
+    // node-centric flow gather (see gatherConduitNodeFlows). Built once in
+    // init() from static topology.
+    //
+    // PROOF OF BIT-EXACTNESS vs the serial per-link scatter: legacy
+    // findLinkFlows (dynwave.c:385-388) scatters conduits one link at a time
+    // in ascending link index; each link updates node1's accumulators, then
+    // node2's. For a given NODE, the projection of that global order is
+    // simply its incident conduit links in ascending link index (node1-end
+    // entry before node2-end entry when both ends touch the same node). CSR
+    // entries are stored per node in exactly that order, so the per-node
+    // gather performs the identical FP accumulation sequence on each
+    // accumulator (inflow, outflow, sumdqdh, new_surf_area) — bit-exact at
+    // any thread count, since each node is owned by exactly one thread.
+    // ------------------------------------------------------------------------
+    std::vector<int>     csr_row_;           ///< size n_nodes_+1 (prefix offsets)
+    std::vector<int32_t> csr_link_;          ///< incident conduit link index j
+    std::vector<uint8_t> csr_is_n2_;         ///< 0 = node1 end, 1 = node2 end
+    std::vector<uint8_t> csr_other_outfall_; ///< other-end node is an OUTFALL
 
     // Node-dense tile of the per-node invariants setNodeDepth touches every
     // Picard iteration. setNodeDepth reads ~20 SoA arrays per node; the seven
@@ -434,15 +452,23 @@ private:
     void initNodeStates(SimulationContext& ctx);
     void findBypassedLinks(const SimulationContext& ctx);
     void computeLinkGeometry(SimulationContext& ctx);
-    /// Recompute conduit evap/seepage loss rates PER Picard iteration, matching
-    /// legacy dwflow_findConduitFlow which calls link_getLossRate every iteration
-    /// for non-dry conduits (and skips DRY/UP_DRY/DN_DRY via its early return,
-    /// leaving the prior loss rate untouched). Uses the current-iteration depth
-    /// and the faithful transect top width. Replaces the once-per-step
-    /// Router::computeConduitLosses for the DYNWAVE path.
-    void recomputeConduitLosses(SimulationContext& ctx, double dt);
-    void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
-    void classifyMomentumCategories(SimulationContext& ctx);
+    /// Recompute ONE conduit's evap/seepage loss rates for the current Picard
+    /// iterate, matching legacy dwflow_findConduitFlow which calls
+    /// link_getLossRate every iteration for non-dry conduits (and skips
+    /// DRY/UP_DRY/DN_DRY via its early return, leaving the prior loss rate
+    /// untouched). Uses the current-iteration depth and the faithful transect
+    /// top width. Called per-element from the fused momentumKernels loop
+    /// (own-element reads/writes only — parallel-safe). The zero-loss latch
+    /// (losses_all_zero_) is updated once per timestep in execute().
+    void recomputeConduitLossOne(SimulationContext& ctx, double dt, int ci);
+    /// Fused per-conduit Picard tail as ONE orphaned `omp for` on the
+    /// persistent team: new_flow_ pre-init, per-iterate loss recompute,
+    /// static-slot/EXTRAN STEP E geometry overrides, momentum category
+    /// classification, momentum kernel dispatch, and links.flow commit.
+    /// Every sub-step reads/writes ONLY its own conduit's elements, so the
+    /// fusion preserves the exact per-element operation order of the former
+    /// separate passes — bit-exact at any thread count.
+    void momentumKernels(SimulationContext& ctx, double dt, int step);
 
     /// Per-element momentum kernels. Called inside the single OpenMP
     /// parallel-for over all conduits in solveMomentumBatch, matching
@@ -456,9 +482,28 @@ private:
     void applyFlowLimits(SimulationContext& ctx, double dt, int step,
                          std::size_t uj, double& q, double qLast,
                          double barrels_d, bool isFull);
-    void updateNodeFlows(SimulationContext& ctx, bool conduits_only = false);
+    /// Serial all-links scatter (legacy updateNodeFlows over every link).
+    /// Used ONLY on the no-callback path (tests / standalone execute without
+    /// non_conduit_fn); the production path uses the parallel CSR gather
+    /// below for conduits + the callback's own per-structure scatter.
+    void updateNodeFlows(SimulationContext& ctx);
+    /// Build the node→incident-conduit CSR adjacency (once, from init()).
+    void buildConduitNodeCSR(const SimulationContext& ctx);
+    /// Parallel node-centric replacement for the serial conduit scatter:
+    /// team `omp for` over nodes; each node accumulates its incident conduit
+    /// contributions (inflow/outflow, sumdqdh, evap/seep node outflow, surf
+    /// area) in ascending link-index order — see the CSR proof note above.
+    /// links.flow commit is fused into momentumKernels.
+    void gatherConduitNodeFlows(SimulationContext& ctx);
     void computeAASkipFlags(const SimulationContext& ctx);
-    bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
+    /// Team-callable node-depth update (former updateNodeDepths): orphaned
+    /// `omp for nowait` over nodes + per-thread unconverged tallies combined
+    /// into `unconv_shared` via `omp atomic` (integer count — order-free,
+    /// bit-exact), then an orphaned barrier. After return every thread reads
+    /// the same `unconv_shared`; convergence = (unconv_shared == 0). The
+    /// caller must zero `unconv_shared` behind a barrier beforehand.
+    void updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
+                              int& unconv_shared);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 

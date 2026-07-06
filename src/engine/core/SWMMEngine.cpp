@@ -4357,9 +4357,43 @@ void SWMMEngine::initHydraulics() noexcept {
 
     // 1b. Configure OpenMP thread count from THREADS option.
     //     0 = use all available; N = use min(N, available).
-    //     DWSolver applies its own threshold (< 4*nThreads links → 1 thread).
+    //     DWSolver applies its own per-thread conduit-count gate.
     //     The global OMP thread count is also set for Runoff/Quality modules.
     {
+#if defined(SWMM_USE_OPENMP) && !defined(_WIN32)
+        // B2 threading wait policy: the persistent-team DW Picard loop
+        // synchronizes with several barriers per iteration (~1.2M iterations
+        // on large runs). With libomp's DEFAULT passive wait policy each
+        // barrier costs 5-30µs (kernel futex sleep/wake — measured; this is
+        // why legacy-style threading was net-negative). With active spinning
+        // a barrier costs ~0.5-3µs. Request active waiting whenever DW
+        // threading is possible (THREADS > 1 / 0 = auto, or the
+        // SWMM_DW_THREADS A/B override). setenv(overwrite=0) respects an
+        // explicit user override of either variable. This MUST run before
+        // the first OpenMP runtime call in the process — libomp reads the
+        // environment once, at lazy runtime init (typically the
+        // omp_get_max_threads() below). kmp_set_blocktime() is also called
+        // as a runtime-effective fallback in case a host application already
+        // initialized OpenMP before engine start.
+        {
+            const char* dw_env = std::getenv("SWMM_DW_THREADS");
+            const int dw_forced = dw_env ? std::atoi(dw_env) : -1;
+            const bool dw_threading_possible =
+                rm == RouteModel::DYNWAVE &&
+                (ctx_.options.num_threads != 1 || dw_forced > 1) &&
+                dw_forced != 1;
+            if (dw_threading_possible) {
+                setenv("OMP_WAIT_POLICY", "active", 0);
+                setenv("KMP_BLOCKTIME", "infinite", 0);
+#if defined(KMP_VERSION_MAJOR)
+                // libomp extension: set spin-wait blocktime on the calling
+                // (master) thread; workers forked by it inherit the setting.
+                // Effective even when the runtime pre-dates the setenv above.
+                kmp_set_blocktime(2147483647);
+#endif
+            }
+        }
+#endif
         int nt = ctx_.options.num_threads;
         if (nt == 0)
             nt = omp_get_max_threads();
@@ -4367,7 +4401,8 @@ void SWMMEngine::initHydraulics() noexcept {
             nt = std::min(nt, omp_get_max_threads());
         omp_set_num_threads(nt);
 
-        // DWSolver gets its own thread count with link-count threshold
+        // DWSolver gets its own thread count with per-thread conduit gate
+        // (or the SWMM_DW_THREADS forced override).
         if (rm == RouteModel::DYNWAVE) {
             router_.setDWNumThreads(ctx_.options.num_threads);
         }
