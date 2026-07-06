@@ -724,6 +724,85 @@ int HotStartManager::apply_legacy_routing(
 }
 
 // ============================================================================
+// HotStartManager::save_legacy_routing()
+//
+// Op-for-op transliteration of legacy hotstart.c saveHotstart()+saveRouting()
+// for the "SWMM5-HOTSTART4" format (hotstart.c:327-353, 358-399).
+// ============================================================================
+
+int HotStartManager::save_legacy_routing(const std::string& path,
+                                         const SimulationContext& ctx) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        tl_last_io_error = "Cannot open hotstart save file '" + path + "'";
+        return 1;
+    }
+
+    // --- header: 15-char stamp (no NUL) + object counts (int32) ---
+    //     legacy hotstart.c:346-352.
+    const char stamp[] = "SWMM5-HOTSTART4";       // 15 chars + implicit NUL
+    file.write(stamp, 15);                          // NUL not written (strlen)
+
+    const int32_t nSub   = ctx.n_subcatches();
+    const int32_t nLand  = 0;                       // land uses (unused here)
+    const int32_t nNodes = ctx.n_nodes();
+    const int32_t nLinks = ctx.n_links();
+    const int32_t nPollut = ctx.n_pollutants();
+    const int32_t flowUnits = static_cast<int32_t>(ctx.options.flow_units);
+    if (!write_pod(file, nSub)   || !write_pod(file, nLand) ||
+        !write_pod(file, nNodes) || !write_pod(file, nLinks) ||
+        !write_pod(file, nPollut) || !write_pod(file, flowUnits)) {
+        tl_last_io_error = "Hotstart header write failed for '" + path + "'";
+        return 1;
+    }
+
+    const auto& nodes = ctx.nodes;
+    const auto& links = ctx.links;
+
+    // --- node routing state (legacy saveRouting hotstart.c:368-386):
+    //     depth, latFlow [, storage hrt], per-pollutant quality — all float. ---
+    for (int i = 0; i < nNodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        write_pod(file, static_cast<float>(nodes.depth[ui]));
+        write_pod(file, static_cast<float>(nodes.lat_flow[ui]));
+        // Version-4 storage residence time. The reader discards it and it does
+        // not affect hydraulic routing (quality-only), so 0 is written.
+        if (nodes.type[ui] == NodeType::STORAGE)
+            write_pod(file, 0.0f);
+        for (int j = 0; j < nPollut; ++j) {
+            const auto qi = ui * static_cast<std::size_t>(nPollut) +
+                            static_cast<std::size_t>(j);
+            float q = (qi < nodes.conc.size())
+                ? static_cast<float>(nodes.conc[qi]) : 0.0f;
+            write_pod(file, q);
+        }
+    }
+
+    // --- link routing state (legacy saveRouting hotstart.c:387-397):
+    //     flow, depth, setting, per-pollutant quality — all float. ---
+    for (int i = 0; i < nLinks; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        write_pod(file, static_cast<float>(links.flow[ui]));
+        write_pod(file, static_cast<float>(links.depth[ui]));
+        write_pod(file, static_cast<float>(links.setting[ui]));
+        for (int j = 0; j < nPollut; ++j) {
+            const auto qi = ui * static_cast<std::size_t>(nPollut) +
+                            static_cast<std::size_t>(j);
+            float q = (qi < links.conc.size())
+                ? static_cast<float>(links.conc[qi]) : 0.0f;
+            write_pod(file, q);
+        }
+    }
+
+    if (!file) {
+        tl_last_io_error = "Hotstart body write failed for '" + path + "'";
+        return 1;
+    }
+    tl_last_io_error.clear();
+    return 0;
+}
+
+// ============================================================================
 // HotStartManager::flush()
 // ============================================================================
 

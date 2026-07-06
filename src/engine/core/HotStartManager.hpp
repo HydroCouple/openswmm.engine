@@ -292,6 +292,27 @@ public:
                                     SimulationContext& ctx,
                                     std::function<void(const std::string&)> warn_cb = {});
 
+    /**
+     * @brief Write the current routing state as a legacy EPA SWMM5 `.hsf`
+     *        (SAVE HOTSTART), byte-format-compatible with legacy readRouting()
+     *        and apply_legacy_routing() above.
+     *
+     * @details Mirrors legacy hotstart.c saveHotstart()+saveRouting() for the
+     *          "SWMM5-HOTSTART4" version: 15-char stamp + object counts
+     *          (nSub, nLand, nNodes, nLinks, nPollut, flowUnits as int32), then
+     *          per node `depth, latFlow[, storage hrt], qual[]` and per link
+     *          `flow, depth, setting, qual[]` — all float, internal units
+     *          (ft, cfs). Storage residence time (hrt) is written as 0 (the
+     *          reader discards it; it does not affect hydraulic routing).
+     *
+     * @param path  Absolute path for the `.hsf` file.
+     * @param ctx   Source context (final routing state).
+     * @returns 0 on success; non-zero on file-open/write error
+     *          (description in last_io_error()).
+     */
+    static int save_legacy_routing(const std::string& path,
+                                   const SimulationContext& ctx);
+
     // -----------------------------------------------------------------------
     // Flush (write-back modifications)
     // -----------------------------------------------------------------------

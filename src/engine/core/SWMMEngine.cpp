@@ -3867,6 +3867,23 @@ int SWMMEngine::end() noexcept {
 
     ctx_.finalize_max_stats();
 
+    // SAVE HOTSTART (end-of-run entries): write the final routing state to each
+    // SAVE HOTSTART file with no datetime suffix, matching legacy swmm_end →
+    // hotstart_save (swmm5.c). Datetime-suffixed intermediate saves are a
+    // follow-up (not exercised by the QA suite). Legacy .hsf format so the file
+    // round-trips through USE HOTSTART (apply_legacy_routing).
+    for (const auto& entry : ctx_.files.hotstart_saves) {
+        if (entry.datetime != 0.0) continue;   // intermediate save — not yet
+        const std::string& sp = !entry.path.absolute.empty()
+            ? entry.path.absolute : entry.path.original;
+        if (sp.empty()) continue;
+        const int rc = HotStartManager::save_legacy_routing(sp, ctx_);
+        if (rc != 0) {
+            ctx_.warnings.push_back(
+                "SAVE HOTSTART: " + HotStartManager::last_io_error());
+        }
+    }
+
     // Phase 5: drain and join the IO thread (all writes must complete first)
     io_thread_.stop();
 
