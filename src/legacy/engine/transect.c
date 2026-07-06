@@ -307,29 +307,6 @@ void createTables(TTransect *transect, double ymin, double ymax)
 
     // --- set width at 0 height equal to width at 4% of max. height
     transect->widthTbl[0] = transect->widthTbl[1];
-
-    // --- A3 transect-table parity dump (env-gated)
-    {
-        char* p = getenv("SWMM_TRACE_TRANSECT");
-        if ( p && *p )
-        {
-            char fn[512];
-            FILE* tf;
-            int q;
-            snprintf(fn, sizeof(fn), "%s.leg.%s", p, transect->ID);
-            tf = fopen(fn, "w");
-            if ( tf )
-            {
-                fprintf(tf, "yFull=%a aFull=%a rFull=%a wMax=%a\n",
-                        transect->yFull, transect->aFull, transect->rFull,
-                        transect->wMax);
-                for (q = 0; q < transect->nTbl; q++)
-                    fprintf(tf, "%d,%a,%a,%a\n", q, transect->areaTbl[q],
-                            transect->hradTbl[q], transect->widthTbl[q]);
-                fclose(tf);
-            }
-        }
-    }
 }
 
 //=============================================================================

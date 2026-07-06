@@ -70,10 +70,6 @@ static inline int omp_get_thread_num()  { return 0; }
 
 namespace openswmm {
 
-// A3 parity tracing: routing-step serial defined in SWMMEngine.cpp, used to
-// step-gate the per-link term trace (SWMM_TRACE_LSTEP) below.
-extern long g_trace_rstep_sn;
-
 namespace dynwave {
 
 using constants::GRAVITY;
@@ -2263,55 +2259,6 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // Jacobian (sumdqdh denominator), so the grouping/divide must match exactly.
     dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / length * barrels_d;
 
-    // A3 parity term tracing for one link (SWMM_TRACE_LINK=<index>, first 64
-    // invocations; format-matched to the legacy trace in dwflow.c).
-    {
-        static FILE* lf = nullptr;
-        static long  lf_target = -2;
-        static long  lf_skip = 0;
-        static long  lf_step = 0;
-        static int   lf_count = 0;
-        static int   lf_rows = 0;
-        if (lf_target == -2) {
-            const char* p  = std::getenv("SWMM_TRACE_LINK");
-            const char* tr = std::getenv("SWMM_TRACE_RSTEP");
-            const char* sk = std::getenv("SWMM_TRACE_SKIP");
-            const char* ls = std::getenv("SWMM_TRACE_LSTEP");
-            lf_target = -1;
-            if (sk && *sk) lf_skip = std::atol(sk);
-            if (ls && *ls) lf_step = std::atol(ls);
-            if (p && *p && tr && *tr) {
-                char fname[512];
-                lf_target = std::atol(p);
-                std::snprintf(fname, sizeof(fname), "%s.link%ld", tr, lf_target);
-                lf = std::fopen(fname, "w");
-                if (lf) std::fprintf(lf,
-                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid\n");
-            }
-        }
-        if (lf && static_cast<long>(uj) == lf_target) {
-            ++lf_count;
-            // SWMM_TRACE_LSTEP=N: capture while computing routing step >= N
-            // (the RSTEP serial increments at the END of each step, so during
-            // step N the serial still reads N-1). Otherwise use the
-            // invocation-count window (SWMM_TRACE_SKIP).
-            const bool in_window = lf_step > 0
-                ? (openswmm::g_trace_rstep_sn + 1 >= lf_step)
-                : (lf_count > lf_skip);
-            if (in_window && lf_rows < 128) {
-                ++lf_rows;
-                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a\n",
-                             lf_count, qLast, v, sig, rho, aWtd, rWtd,
-                             dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
-                             surf_area1_[uj], surf_area2_[uj],
-                             static_cast<int>(links.flow_class[uj]),
-                             depth1_[uj], depth_mid_[uj], area1_[uj],
-                             area_mid_[uj], hrad1_[uj], hrad_mid_[uj]);
-                if (lf_rows >= 128) { std::fclose(lf); lf = nullptr; }
-            }
-        }
-    }
-
     // Shared post-processing
     applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
 }
@@ -3041,39 +2988,6 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // --- Save new depth ---
     nodes.depth[ui] = y_new;
     nodes.head[ui] = t.invert_elev + y_new;
-
-    // A3 parity term tracing for one node (SWMM_TRACE_NODE=<index>, first 64
-    // invocations; format-matched to the legacy trace in dynwave.c).
-    {
-        static FILE* nf = nullptr;
-        static long  nf_target = -2;
-        static long  nf_skip = 0;
-        static int   nf_count = 0;
-        if (nf_target == -2) {
-            const char* p  = std::getenv("SWMM_TRACE_NODE");
-            const char* tr = std::getenv("SWMM_TRACE_RSTEP");
-            const char* sk = std::getenv("SWMM_TRACE_SKIP");
-            nf_target = -1;
-            if (sk && *sk) nf_skip = std::atol(sk);
-            if (p && *p && tr && *tr) {
-                char fname[512];
-                nf_target = std::atol(p);
-                std::snprintf(fname, sizeof(fname), "%s.node%ld", tr, nf_target);
-                nf = std::fopen(fname, "w");
-                if (nf) std::fprintf(nf,
-                    "n,yOld,yLast,dQ,dV,surfArea,sumdqdh,surch,yNew\n");
-            }
-        }
-        if (nf && node_idx == nf_target) {
-            ++nf_count;
-            if (nf_count > nf_skip && nf_count <= nf_skip + 128) {
-                std::fprintf(nf, "%d,%a,%a,%a,%a,%a,%a,%d,%a\n", nf_count,
-                             y_old, y_last, dQ, dV, surf_area, xnode_.sumdqdh[ui],
-                             is_surcharged ? 1 : 0, y_new);
-                if (nf_count >= nf_skip + 128) { std::fclose(nf); nf = nullptr; }
-            }
-        }
-    }
 }
 
 // ============================================================================
