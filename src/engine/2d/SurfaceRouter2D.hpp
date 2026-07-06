@@ -106,6 +106,15 @@ public:
     void advancePostRouting(SimulationContext& ctx, double dt, double t);
 
     /**
+     * @brief Prepare a RESET 2D forcing to apply on the next routing step.
+     *
+     * Flushes any already accumulated macro-window before the new one-shot is
+     * recorded, then forces the next routing step to fire a 2D advance so the
+     * prescription applies to future time only and is cleared after use.
+     */
+    void prepareOneShotForcing(SimulationContext& ctx);
+
+    /**
      * @brief Finalize the 2D module at simulation end.
      *
      * Flushes any partial macro-step window (routing time accumulated since
@@ -253,6 +262,7 @@ private:
     /// macro-step). Lets the 2D solver integrate one large adaptive window over
     /// `interval` routing steps instead of being hard-stopped every step.
     double pending_dt_       = 0.0;
+    bool   force_next_window_ = false;
 
     /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
     /// per-step delta in the global mass balance.

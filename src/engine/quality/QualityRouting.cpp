@@ -33,6 +33,39 @@ namespace quality {
 
 // ZERO_VOLUME defined in QualityRouting.hpp
 
+namespace {
+
+void applyLinkQualityForcing(SimulationContext& ctx, int n_pollutants, double dt) {
+    if (n_pollutants <= 0) return;
+
+    auto& f = ctx.forcing;
+    if (f.link_quality_mode.empty()) return;
+
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        for (int p = 0; p < n_pollutants; ++p) {
+            auto flat = uj * static_cast<std::size_t>(n_pollutants)
+                      + static_cast<std::size_t>(p);
+            if (flat >= f.link_quality_mode.size()
+                || flat >= ctx.links.conc.size()) {
+                continue;
+            }
+
+            if (f.link_quality_mode[flat] == ForcingMode::OVERRIDE) {
+                ctx.links.conc[flat] = std::max(f.link_quality_value[flat], 0.0);
+            } else if (f.link_quality_mode[flat] == ForcingMode::ADD) {
+                ctx.links.conc[flat] =
+                    std::max(ctx.links.conc[flat] + f.link_quality_value[flat], 0.0);
+                ctx.mass_balance.routing_forcing_qual_inflow[
+                    static_cast<std::size_t>(p)] +=
+                    f.link_quality_value[flat] * dt;
+            }
+        }
+    }
+}
+
+} // namespace
+
 void QualitySolver::init(int n_nodes, int n_links, int n_pollutants) {
     n_pollutants_ = n_pollutants;
     (void)n_nodes;
@@ -56,6 +89,7 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
     applyDecay(ctx, dt);
     updateLinkQuality(ctx, dt);
+    applyLinkQualityForcing(ctx, n_pollutants_, dt);
 }
 
 // ============================================================================
