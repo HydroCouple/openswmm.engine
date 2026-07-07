@@ -423,8 +423,16 @@ jobs:
           "$PY" -m pip install --upgrade pip
           # --only-binary :all: forbids an sdist rebuild fallback, so a missing
           # platform wheel fails loudly instead of silently building from source.
-          # numpy is still pulled from PyPI (as a wheel).
-          "$PY" -m pip install --only-binary :all: --find-links wheelhouse openswmm openswmm-gpu-omp
+          # numpy (the base wheel's only runtime dep) is pulled from PyPI as a wheel.
+          "$PY" -m pip install --only-binary :all: numpy
+          # The project wheels MUST come from the local wheelhouse, never PyPI.
+          # openswmm / openswmm-gpu-omp are pre-releases (6.0.0a2), and a *stable*
+          # openswmm-gpu-omp 0.0.0 placeholder exists on PyPI; without --no-index pip
+          # prefers that stable stub over our local pre-release and installs an empty
+          # package (ModuleNotFoundError: openswmm_gpu_omp). --no-index also makes a
+          # missing or mis-tagged companion wheel fail loudly here instead of silently
+          # resolving to PyPI.
+          "$PY" -m pip install --only-binary :all: --no-index --find-links wheelhouse openswmm openswmm-gpu-omp
           "$PY" -m pip show openswmm | tee wheel-smoke-${{ matrix.os }}.txt
           # gpu-omp companion must import AND be auto-discovered by base openswmm
           # (import openswmm runs _register_gpu_companion → OPENSWMM_GPU_PLUGIN_PATH).
