@@ -1482,6 +1482,21 @@ void report_writeInputErrorMsg(int k, int sect, char* line, long lineCount)
 
 //=============================================================================
 
+void report_invokeWarningCallback(const char* msg)
+//
+//  Input:   msg = warning message text
+//  Output:  none
+//  Purpose: forwards a warning to the registered callback, if any. Leading
+//           whitespace/newlines are skipped so hosts get a clean log line.
+//
+{
+    if ( WarningCallback == NULL || msg == NULL ) return;
+    while ( *msg == '\n' || *msg == '\r' || *msg == ' ' || *msg == '\t' ) msg++;
+    WarningCallback(msg, WarningCallbackData);
+}
+
+//=============================================================================
+
 void report_writeWarningMsg(char* msg, char* id)
 //
 //  Input:   msg = text of warning message
@@ -1492,6 +1507,14 @@ void report_writeWarningMsg(char* msg, char* id)
 {
     fprintf(Frpt.file, "\n  %s %s", msg, id);
     Warnings++;
+
+    // --- also stream the warning to a registered host callback
+    if ( WarningCallback != NULL )
+    {
+        char buf[MAXMSG + 1];
+        snprintf(buf, MAXMSG, "%s %s", msg, id);
+        report_invokeWarningCallback(buf);
+    }
 }
 
 //=============================================================================

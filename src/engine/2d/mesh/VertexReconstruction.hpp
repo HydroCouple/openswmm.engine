@@ -41,8 +41,10 @@ void buildVertexStencils(MeshData& mesh);
  *
  * @param mesh  The mesh (with stencils built).
  * @param state Surface state (reads head[], writes vert_head[]).
+ * @param nthreads OpenMP thread count for the per-vertex loop (1 = serial).
  */
-void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state);
+void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
+                             int nthreads = 1);
 
 } // namespace openswmm::twoD
 

@@ -31,11 +31,6 @@ public disclosure:
    of this repository. The maintainers receive a notification immediately
    and the advisory remains private until coordinated disclosure.
 
-2. **Email.** If you do not have a GitHub account or cannot use the
-   advisory flow, email **security@hydrocouple.org** with the details
-   below. Encrypt with the maintainer's PGP key when handling
-   exploit-grade payloads.
-
 Please include, where possible:
 
 - A clear description of the issue and the affected component

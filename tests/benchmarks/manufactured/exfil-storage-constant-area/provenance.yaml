@@ -1,0 +1,77 @@
+benchmark: exfil-storage-constant-area
+type: manufactured
+description: >
+  Constant-rate exfiltration from a fully saturated storage unit with no inflow,
+  no underdrain, and no clogging.  The ODE d(depth)/dt = -kSat/phi has an exact
+  linear solution; Euler integration is exact for this case.
+swmm_target: src/engine/hydrology/LID.cpp (LIDSolver::batchBarrelFlux)
+
+problem:
+  name: constant-area-storage-exfiltration
+  ode: "d(depth)/dt = -kSat / phi"
+  exact_solution:
+    depth:   "depth(t) = depth_0 - (kSat/phi)*t"
+    E_cumul: "E_cumul(t) = kSat * t"
+  scenario: no rainfall, no underdrain, no evaporation, no clogging
+
+parameters:
+  depth_0_ft: 2.0
+  stor_thick_ft: 2.0
+  kSat_ft_per_s: 1.0e-4
+  stor_void_phi: 0.4
+  clogFactor: 0.0
+  drain_coeff: 0.0
+  derived:
+    drain_rate_ft_per_s: 2.5e-4        # kSat / phi
+    t_empty_s: 8000.0                  # depth_0 * phi / kSat
+    min_depth_for_const_rate_ft: 0.25  # kSat * dt(1000s) / phi
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s:           time in seconds
+    stor_depth_ft: storage layer depth in ft (exact)
+    E_cumul_ft:    cumulative exfiltration depth in ft of water (exact)
+  n_points: 7
+  t_values_s: [0, 1000, 2000, 3000, 4000, 5000, 6000]
+  dt_s: 1000.0
+  regime: constant-rate (t_max < t_empty = 8000 s; volume limiter never active)
+
+mass_balance_identity:
+  formula: "E_cumul(t) == (depth_0 - depth(t)) * phi"
+  verified: true
+
+tolerances:
+  stor_depth_max_abs_ft: 1.0e-9
+  E_cumul_max_abs_ft: 1.0e-9
+  rms_ft: 1.0e-10
+  basis: >
+    Euler is exact for constant-rate ODEs; only floating-point rounding
+    (~1e-15 ft) contributes to error.  Tolerance is 1e-9 to absorb minor
+    FP ordering differences across platforms.
+
+attribution:
+  references:
+    swmm_lid_model: >
+      Rossman, L.A. and Huber, W.C. (2016). Storm Water Management Model
+      Reference Manual Volume I - Hydrology. EPA/600/R-15/162A. U.S.
+      Environmental Protection Agency, Cincinnati, OH. Chapter 9 (LID Controls).
+    storage_routing: >
+      Puls, L.G. (1928). Flood regulation of the Tennessee River. House
+      Document 185, 70th Congress, 1st Session. U.S. Congress, Washington, DC.
+      (Original storage-routing continuity formulation.)
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: analytic formula evaluated in double-precision arithmetic
+  tool: none (closed-form linear solution)
+  date: "2026-05-04"
+  author: openswmm.engine development team
+  computation: |
+    depth[i]   = 2.0 - 2.5e-4 * t[i]
+    E_cumul[i] = 1.0e-4 * t[i]
+  reproducible: true
+  notes: >
+    Reference values are exact rational multiples of the parameters; no
+    approximation is involved.  The mass-balance identity E_cumul = (depth_0
+    - depth) * phi is satisfied exactly.

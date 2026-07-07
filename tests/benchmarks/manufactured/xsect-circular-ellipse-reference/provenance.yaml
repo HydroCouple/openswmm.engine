@@ -1,0 +1,31 @@
+benchmark: xsect-circular-ellipse-reference
+created: 2026-05-14
+method: closed-form
+generator: python3 (inline script, A(y) = R^2 * [(y/R-1)*sqrt(1-(y/R-1)^2) + arcsin(y/R-1) + pi/2])
+
+parameters:
+  D_ft: 3.0
+  R_ft: 1.5
+  A_full_ft2: 7.0685834705770345  # pi * R^2
+
+grid:
+  y_norm_step: 0.05
+  n_points: 21  # 0.00 to 1.00 inclusive
+
+precision: double (IEEE 754)
+
+table_accuracy_note: |
+  SWMM A_Circ table has 51 entries (dy_norm = 0.02) with quadratic interpolation.
+  Maximum interpolation error vs analytical is < 0.5% of A_full.
+tolerance_frac_Afull: 0.005
+
+attribution:
+  references:
+    circular_geometry: >
+      Chow, V.T. (1959). Open Channel Hydraulics. McGraw-Hill. Appendix A
+      (geometric properties of circular and other channel cross-sections).
+    swmm_xsect: >
+      Rossman, L.A. and Huber, W.C. (2016). Storm Water Management Model
+      Reference Manual Volume II — Hydraulics. EPA/600/R-17/111. Appendix A
+      (A_Circ lookup table with quadratic interpolation).
+  license_note: benchmark data are original to this project; no copied source code.

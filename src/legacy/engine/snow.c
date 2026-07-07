@@ -413,6 +413,11 @@ void snow_plowSnow(int subcatchIndex, double tStep)
     // --- see if there's any snowfall
     gage_getPrecip(Subcatch[subcatchIndex].gage, &rainfall, &snowfall);
 
+    // --- include any API prescribed snowfall so prescribed snow
+    //     accumulates in the pack (previously it only influenced melt
+    //     computations, leaving a runoff continuity hole)
+    snowfall += Subcatch[subcatchIndex].apiSnowfall;
+
     // --- add snowfall to snow pack
     for (i=SNOW_PLOWABLE; i<=SNOW_PERV; i++)
     {

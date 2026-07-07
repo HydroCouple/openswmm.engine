@@ -137,30 +137,33 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         double route_step = ctx.options.routing_step;
         double lengthening_step = ctx.options.lengthening_step;
 
+        auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: mod_length authority
         if (lengthening_step <= 0.0) {
             // Legacy: skip Courant lengthening when LENGTHENING_STEP not set
-            for (int j = 0; j < n_links; ++j) {
-                ctx.links.mod_length[static_cast<std::size_t>(j)] =
-                    ctx.links.length[static_cast<std::size_t>(j)];
+            for (int r = 0; r < CD.count(); ++r) {
+                const auto ur = static_cast<std::size_t>(r);
+                CD.mod_length[ur] = CD.length[ur];
             }
         } else {
             double tStep = std::min(route_step, lengthening_step);
 
             for (int j = 0; j < n_links; ++j) {
                 auto uj = static_cast<std::size_t>(j);
-                if (ctx.links.type[uj] != LinkType::CONDUIT) {
-                    ctx.links.mod_length[uj] = ctx.links.length[uj];
+                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+                const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (conduit)
+                const auto ucr = static_cast<std::size_t>(cr);
+
+                double L = CD.length[ucr];
+                if (L <= 0.0) {
+                    CD.mod_length[ucr] = L;
                     continue;
                 }
-
-                double L = ctx.links.length[uj];
-                if (L <= 0.0) { ctx.links.mod_length[uj] = L; continue; }
 
                 double yFull = ctx.links.xsect_y_full[uj];
                 double aFull = ctx.links.xsect_a_full[uj];
                 double sFull = ctx.links.xsect_s_full[uj];
-                double n_rough = ctx.links.roughness[uj];
-                double slope_abs = std::fabs(ctx.links.slope[uj]);
+                double n_rough = CD.roughness[ucr];
+                double slope_abs = std::fabs(CD.slope[ucr]);
 
                 // For open channels, use hydraulic depth (aFull / top-width)
                 // rather than geometric full depth for the wave-speed term.
@@ -179,9 +182,9 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
                     double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
                     double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
                     double factor = (ratio > 1.0) ? ratio : 1.0;
-                    ctx.links.mod_length[uj] = factor * L;
+                    CD.mod_length[ucr] = factor * L;
                 } else {
-                    ctx.links.mod_length[uj] = L;
+                    CD.mod_length[ucr] = L;
                 }
             }
         }
@@ -193,24 +196,28 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     {
         using constants::PHI;
         using constants::GRAVITY;
+        auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: lengthened conveyance
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            const auto ucr = static_cast<std::size_t>(cr);
 
-            double L = ctx.links.length[uj];
-            double modL = ctx.links.mod_length[uj];
+            double L = CD.length[ucr];
+            double modL = CD.mod_length[ucr];
             if (L <= 0.0 || modL <= L) continue;  // not lengthened
 
             double factor = modL / L;
-            double slope_abs = std::fabs(ctx.links.slope[uj]) / factor;
-            double roughness = ctx.links.roughness[uj] / std::sqrt(factor);
+            double slope_abs = std::fabs(CD.slope[ucr]) / factor;
+            double roughness = CD.roughness[ucr] / std::sqrt(factor);
 
             // Update conveyance with adjusted slope and roughness
             double beta = PHI * std::sqrt(slope_abs) / roughness;
-            ctx.links.beta[uj] = beta;
-            ctx.links.rough_factor[uj] = GRAVITY * (roughness / PHI) * (roughness / PHI);
-            ctx.links.q_full[uj] = ctx.links.xsect_s_full[uj] * beta;
-            ctx.links.q_max[uj]  = ctx.links.xsect_s_max[uj] * beta;
+            CD.beta[ucr]         = beta;
+            // PARITY link.c:1133: GRAVITY * SQR(roughness/PHI) — square first.
+            CD.rough_factor[ucr] = GRAVITY * ((roughness / PHI) * (roughness / PHI));
+            CD.q_full[ucr]       = ctx.links.xsect_s_full[uj] * beta;
+            CD.q_max[ucr]        = ctx.links.xsect_s_max[uj] * beta;
         }
     }
 
@@ -239,15 +246,35 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             kw_solver_.setLinkOrder(sorted);
             break;
         }
-        case RouteModel::DYNWAVE:
-            dw_solver_.init(n_nodes, n_links, groups_, ctx);
-            dw_solver_.head_tol = ctx.options.head_tol;
+        case RouteModel::DYNWAVE: {
+            // Configure the solver from options BEFORE init(): init() allocates
+            // surcharge-method-specific state — e.g. the Dynamic Preissmann Slot
+            // (DPS) arrays are resized only when surcharge_method ==
+            // DYNAMIC_SLOT. Setting the method after init() left those arrays
+            // empty and segfaulted in applyDPSGeometry. EXTRAN (the default) is
+            // unaffected since it needs no extra allocation.
+            //
+            // HEAD_TOLERANCE is entered in project length units (ft for US,
+            // m for SI).  Legacy dynwave_init converts the user value to
+            // internal feet via `HeadTol /= UCF(LENGTH)` (dynwave.c:183); the
+            // compiled default (DEFAULT_HEAD_TOL, already in feet) is left as-is.
+            // Skipping this made an SI model's 0.0015 m tolerance act as
+            // 0.0015 ft (~3.3× too tight) → chronic non-convergence.
+            const double ucf_len = ucf::Ucf[ucf::LENGTH][
+                ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+            dw_solver_.head_tol =
+                (ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
+                    ? constants::DEFAULT_HEAD_TOL
+                    : ctx.options.head_tol / ucf_len;
             dw_solver_.max_trials = ctx.options.max_trials;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
             dw_solver_.anderson_accel = ctx.options.anderson_accel;
+
+            dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
+        }
         case RouteModel::STEADY: {
             // Build topological link order (same as KW — upstream → downstream)
             int n_sorted = toposort::sortLinks(ctx.links.node1.data(),
@@ -259,27 +286,11 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         }
     }
 
-    // Build divider SoA from node data
-    {
-        int nd = 0;
-        for (int i = 0; i < n_nodes; ++i)
-            if (ctx.nodes.type[static_cast<std::size_t>(i)] == NodeType::DIVIDER) ++nd;
-        dividers_.resize(nd);
-        int d = 0;
-        for (int i = 0; i < n_nodes && d < nd; ++i) {
-            auto ui = static_cast<std::size_t>(i);
-            if (ctx.nodes.type[ui] != NodeType::DIVIDER) continue;
-            auto ud = static_cast<std::size_t>(d);
-            dividers_.node_idx[ud]      = i;
-            dividers_.method[ud]        = static_cast<int>(ctx.nodes.divider_type[ui]);
-            dividers_.cutoff_flow[ud]   = ctx.nodes.divider_cutoff[ui];
-            dividers_.weir_cd[ud]       = ctx.nodes.divider_cd[ui];
-            dividers_.weir_max_depth[ud]= ctx.nodes.divider_max_depth[ui];
-            dividers_.table_idx[ud]     = ctx.nodes.divider_curve[ui];
-            dividers_.div_link_idx[ud]  = ctx.nodes.divider_link[ui];
-            ++d;
-        }
-    }
+    // Divider data now lives in the relational side-table
+    // ctx.node_subtypes.dividers, built once at hydraulics init (after this
+    // Router::init returns). computeDividerFlows() reads it directly, so the
+    // former local DividerSoA build has been removed.
+    // See docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md (Phase 2).
 }
 
 // ============================================================================
@@ -289,14 +300,28 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 int Router::step(SimulationContext& ctx, double dt,
                  double evap_rate,
                  dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
-    // 1. Save old states
-    saveOldStates(ctx);
+    // 1. Old states are saved ONCE per step by SWMMEngine::step() BEFORE
+    //    lateral inflows are assembled — matching legacy routing_execute,
+    //    which snapshots old hyd state / oldLatFlow (initSystemInflows,
+    //    routing.c:431) before addSystemInflows fills the new laterals.
+    //    A second save here clobbered old_lat_flow with the CURRENT step's
+    //    just-assembled laterals, corrupting the reported (interpolated)
+    //    NODE_LATFLOW while leaving solver state untouched. Standalone
+    //    Router users (unit tests) must call ctx.nodes/links.save_state()
+    //    themselves before step().
 
     // 2. Init node flows from laterals and losses (includes storage evap)
     initNodeFlows(ctx, dt, evap_rate);
 
-    // 2b. Compute conduit evaporation and seepage loss rates
-    computeConduitLosses(ctx, dt, evap_rate);
+    // 2b. Compute conduit evaporation and seepage loss rates.
+    // For DYNWAVE this is done PER Picard iteration inside DWSolver::execute
+    // (recomputeConduitLosses), matching legacy dwflow which calls
+    // link_getLossRate every iteration with a flow-class gate. Computing it
+    // once here (start-of-step, ungated) would leak loss onto dry/up-dry
+    // conduits and freeze the rate. KINWAVE/STEADY are non-iterative, so the
+    // once-per-step computation matches their legacy behavior.
+    if (model_ != RouteModel::DYNWAVE)
+        computeConduitLosses(ctx, dt, evap_rate);
 
     // 3. Set outfall boundary depths (P8-G03)
     outfall::setAllOutfallDepths(ctx, ctx.current_date);
@@ -333,7 +358,8 @@ int Router::step(SimulationContext& ctx, double dt,
 
                     // Overflow check
                     double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj], &ctx.tables,
-                        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+                        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
+                        &ctx.node_subtypes);
                     if (v_new > full_vol) {
                         ctx.nodes.overflow[uj] = (v_new - full_vol) / dt;
                         v_new = full_vol;
@@ -343,7 +369,7 @@ int Router::step(SimulationContext& ctx, double dt,
                     // Invert volume → depth using node::getDepth (Newton / table lookup)
                     // Matches legacy node_getDepth() in node.c (Gap #12)
                     int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-                    double d2 = node::getDepth(ctx.nodes, j, v_new, &ctx.tables, us);
+                    double d2 = node::getDepth(ctx.nodes, j, v_new, &ctx.tables, us, &ctx.node_subtypes);
 
                     // Under-relaxation
                     d2 = 0.45 * d1 + 0.55 * d2;
@@ -367,7 +393,7 @@ int Router::step(SimulationContext& ctx, double dt,
     }
 
     // 5. Compute divider flows (P8-G02)
-    divider::computeDividerFlows(ctx, dividers_);
+    divider::computeDividerFlows(ctx, ctx.node_subtypes.dividers);
 
     // 6. Update link final states (depth, volume)
     updateLinkStates(ctx);
@@ -391,11 +417,6 @@ double Router::getAdaptiveStep(SimulationContext& ctx,
 // Internal helpers
 // ============================================================================
 
-void Router::saveOldStates(SimulationContext& ctx) {
-    ctx.nodes.save_state();
-    ctx.links.save_state();
-}
-
 void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) {
     auto& nodes = ctx.nodes;
     int n = ctx.n_nodes();
@@ -406,17 +427,28 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
         // (matching legacy node.c storage_getLosses)
         double loss_rate = 0.0;
         if (nodes.type[ui] == NodeType::STORAGE) {
-            double stor_evap_rate = evap_rate * nodes.storage_evap_frac[ui];
+            // Relational refactor (Phase 4): storage config (evap fraction, seep
+            // rate) and per-step losses live in the dense side-table; storage_row
+            // is valid for any STORAGE node.
+            const int sr = ctx.node_subtypes.storage_row(i);
+            auto& st = ctx.node_subtypes.storages;
+            const auto sru = static_cast<std::size_t>(sr);
+            const double evap_frac = (sr >= 0) ? st.evap_frac[sru] : 0.0;
+            const double seep_rate = (sr >= 0) ? st.seep_rate[sru] : 0.0;
+            double stor_evap_rate = evap_rate * evap_frac;
 
-            // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called
-            // before router_.step()) and stored as a volume in storage_exfil_loss.
+            // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called before
+            // router_.step()) and stored as a volume in the side-table's exfil_loss.
             // Convert back to a rate for joint capping with evaporation.
-            double exfil_cfs = (dt > 0.0) ? nodes.storage_exfil_loss[ui] / dt : 0.0;
+            double exfil_cfs = 0.0;
+            if (dt > 0.0 && sr >= 0)
+                exfil_cfs = st.exfil_loss[sru] / dt;
 
-            if (stor_evap_rate > 0.0 || nodes.storage_seep_rate[ui] > 0.0 || exfil_cfs > 0.0) {
+            if (stor_evap_rate > 0.0 || seep_rate > 0.0 || exfil_cfs > 0.0) {
                 double depth = nodes.depth[ui];
                 double area = node::getSurfArea(nodes, i, depth, &ctx.tables,
-                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
+                    &ctx.node_subtypes);
 
                 // Evaporation rate over surface area (cfs)
                 double evap_cfs = 0.0;
@@ -432,12 +464,14 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
                     exfil_cfs *= ratio;
                 }
 
-                nodes.storage_evap_loss[ui]  = evap_cfs * dt;
-                nodes.storage_exfil_loss[ui] = exfil_cfs * dt;
+                if (sr >= 0) {
+                    st.evap_loss[sru]  = evap_cfs * dt;
+                    st.exfil_loss[sru] = exfil_cfs * dt;
+                }
                 loss_rate = evap_cfs + exfil_cfs;
-            } else {
-                nodes.storage_evap_loss[ui]  = 0.0;
-                nodes.storage_exfil_loss[ui] = 0.0;
+            } else if (sr >= 0) {
+                st.evap_loss[sru]  = 0.0;
+                st.exfil_loss[sru] = 0.0;
             }
         }
         nodes.losses[ui] = loss_rate;
@@ -469,6 +503,8 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
     for (int j = 0; j < n; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (links.type[uj] != LinkType::CONDUIT) continue;
+        auto& CD = ctx.link_subtypes.conduits;
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
         double depth = 0.5 * (links.old_depth[uj] + links.depth[uj]);
         double evap_loss = 0.0;
@@ -482,23 +518,32 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // conduits — NOT `Conduit[k].modLength` (lengthened).
             // The lengthened length appears only in the momentum equation
             // (`dwflow.c:133`), not in loss-volume accounting.
-            double length = links.length[uj];
-            if (length <= 0.0) length = links.mod_length[uj];
+            double length = CD.length[ucr];
+            if (length <= 0.0) length = CD.mod_length[ucr];
             int batch_shape = links.xsect_batch_shape[uj];
 
-            // Evaporation for open conduits only
+            // Evaporation for open conduits only.
+            //
+            // NOTE (IRREGULAR conduit evap, user2/user5): the cross-section
+            // GEOMETRY is bit-faithful to legacy (verified: extran8a's IRREGULAR
+            // conduits are byte-identical; buildTables + lookup are 1:1 ports).
+            // The residual divergence is NOT geometry — it is the conduit-loss
+            // ACCOUNTING timing: legacy computes conduit evap PER PICARD ITERATION
+            // inside dwflow_findConduitFlow (using the current-iteration depth +
+            // the DW volume cap, and skipping bypassed conduits), whereas this
+            // runs ONCE per step before the Picard loop using the start-of-step
+            // depth. On natural channels this seeds a ~1e-5 cfs difference that
+            // the surcharge dynamics amplify. Reproducing legacy bit-for-bit
+            // requires moving conduit-loss evaluation into the iteration loop.
+            // The transect top-width below uses the linear approximation; the
+            // faithful getWofY was tried and does NOT resolve the parity gap
+            // (the gap is the timing, not the width). See PARITY_FINDINGS.
             if (xsect::isOpen(batch_shape) && evap_rate > 0.0) {
                 double top_width = 0.0;
-                // IRREGULAR/CUSTOM shapes: getWofY doesn't have transect
-                // table access in per-element mode, so use w_max scaled by
-                // depth fraction as approximation. For standard shapes, use
-                // the proper geometric dispatch.
                 if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
                     batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
                     double y_full = links.xsect_y_full[uj];
                     double w_max  = links.xsect_w_max[uj];
-                    // Linear interpolation: w ≈ w_max * (depth / y_full)
-                    // (conservative estimate for natural channels)
                     top_width = (y_full > 0.0) ? w_max * std::min(depth / y_full, 1.0) : 0.0;
                 } else {
                     XSectParams xs{};
@@ -512,7 +557,7 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             }
 
             // Seepage loss
-            if (links.seep_rate[uj] > 0.0) {
+            if (CD.seep_rate[ucr] > 0.0) {
                 XSectParams xs{};
                 xs.type   = batch_shape;
                 xs.y_full = links.xsect_y_full[uj];
@@ -527,7 +572,7 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                 else if (d_seep >= xs.yw_max)
                     d_seep = xs.yw_max;
                 double width = xsect::getWofY(xs, d_seep);
-                seep_loss = links.seep_rate[uj] * width * length;
+                seep_loss = CD.seep_rate[ucr] * width * length;
             }
 
             // Limit total to available volume (DW) or flow (other models)
@@ -544,8 +589,8 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             }
         }
 
-        links.evap_loss_rate[uj] = evap_loss;
-        links.seep_loss_rate[uj] = seep_loss;
+        CD.evap_loss_rate[ucr] = evap_loss;
+        CD.seep_loss_rate[ucr] = seep_loss;
     }
 }
 
@@ -590,6 +635,8 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
             }
             continue;
         }
+        auto& CD = ctx.link_subtypes.conduits;
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
         // DUMMY cross-section: zero area, pass flow through.
         if (links.xsect_shape[uj] == XsectShape::DUMMY) {
@@ -616,12 +663,12 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
             qin = std::min(qin, q_max);
         }
 
-        double barrels = static_cast<double>(std::max(links.barrels[uj], 1));
+        double barrels = static_cast<double>(std::max(CD.barrels[ucr], 1));
         double q       = qin / barrels;
 
         // Subtract pre-computed conduit loss rate (evap + seep per barrel).
         // Matches legacy link_getLossRate call in steadyflow_execute().
-        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+        double loss_rate = CD.evap_loss_rate[ucr] + CD.seep_loss_rate[ucr];
         q -= loss_rate;
         if (q < 0.0) q = 0.0;
 
@@ -629,7 +676,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         XSectParams xs = buildXSP(links, uj);
 
         // Manning normal-depth area.
-        double q_full = links.q_full[uj];
+        double q_full = CD.q_full[ucr];
         double a_full = links.xsect_a_full[uj];
         double a;
         if (q >= q_full) {
@@ -641,7 +688,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         } else {
             // s = q / beta  →  a = xsect::getAofS(xs, s)
             // Matches legacy: s = q / beta; a1 = xsect_getAofS(&xsect, s).
-            double beta = links.beta[uj];
+            double beta = CD.beta[ucr];
             if (beta > 0.0) {
                 double s = q / beta;
                 a = xsect::getAofS(xs, s);
@@ -662,14 +709,14 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         // Update link depth and volume.
         // In steady state a1 == a2, so depth and volume are uniform.
         double y = xsect::getYofA(xs, a);
-        double length = links.mod_length[uj];
-        if (length <= 0.0) length = links.length[uj];
+        double length = CD.mod_length[ucr];
+        if (length <= 0.0) length = CD.length[ucr];
 
         links.depth[uj]  = y;
         links.volume[uj] = a * length * barrels;
 
         // Gap #57: steady flow — same area at both ends, so both full or neither.
-        links.full_state[uj] = (a_full > 0.0 && a >= a_full) ? int8_t{3} : int8_t{0};
+        CD.full_state[ucr] = (a_full > 0.0 && a >= a_full) ? int8_t{3} : int8_t{0};
 
         // Update non-storage end-node depths (max of current and conduit end).
         // Matches legacy setNewLinkState → updateNodeDepth in flowrout.c.

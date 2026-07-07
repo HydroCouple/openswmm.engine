@@ -106,6 +106,17 @@ struct XSectParams {
     double a_bot   = 0.0;      ///< Area of bottom section
     double s_bot   = 0.0;      ///< Slope of bottom section / exponent
     double r_bot   = 0.0;      ///< Radius of bottom section / coefficient
+
+    // Tabulated geometry for IRREGULAR / CUSTOM / STREET_XSECT shapes, whose
+    // A/R/W vs depth come from a per-link transect table rather than a shared
+    // static table.  These point into ctx.transect_tables (stable for the run)
+    // and stay null for every self-contained shape.  Without them the
+    // context-free per-element accessors return 0 for irregular sections (so
+    // e.g. init-time getDepthFromFlow could not compute normal depth/storage).
+    const double* area_tbl  = nullptr;   ///< Normalized area      vs y/y_full
+    const double* hrad_tbl  = nullptr;   ///< Normalized hyd-radius vs y/y_full
+    const double* width_tbl = nullptr;   ///< Normalized width     vs y/y_full
+    int    transect_tbl_size = 0;        ///< Entry count of the tables above
 };
 
 // ============================================================================
@@ -299,6 +310,60 @@ public:
         double* w1, double* w2, double* wm, int n_links) const;
 
     /**
+     * @brief Team-callable triple kernels: thread `tid` of `nthreads`
+     *        processes only its static slice of every shape group.
+     *
+     * @details Call from EVERY thread of an OpenMP team (typically the
+     *          persistent DW Picard team) with that thread's id/team size;
+     *          the caller owns the barrier that orders the outputs for
+     *          consumers. Slices are disjoint (single-producer per element,
+     *          including the shared group-local scratch buffers, which are
+     *          sliced on cache-line boundaries), and per-element results are
+     *          position-independent — so results are bit-identical to the
+     *          serial triple at any thread count. Honors the bypass mask
+     *          exactly like the serial forms. (tid=0, nthreads=1) IS the
+     *          serial form.
+     */
+    void computeAreaHydRadTripleTeam(
+        const double* d1, const double* d2, const double* dm,
+        double* a1, double* a2, double* am,
+        double* hrad1, double* hrad_mid, int n_links,
+        int tid, int nthreads) const;
+
+    void computeWidthsTripleTeam(
+        const double* d1, const double* d2, const double* dm,
+        double* w1, double* w2, double* wm, int n_links,
+        int tid, int nthreads) const;
+
+    /**
+     * @brief Restrict the triple kernels to non-bypassed links for the
+     *        current Picard iteration.
+     *
+     * @details Legacy findLinkFlows skips a "bypassed" link (both end nodes
+     *          converged) entirely, leaving its geometry at the previously
+     *          computed values.  The batch triple kernels instead recompute
+     *          every link from its (unchanged) stored depths — producing
+     *          bit-identical values, i.e. pure waste that grows with the
+     *          bypass fraction (Bellinge averages ~9 Picard iterations per
+     *          step, so most kernel invocations run with a mostly-converged
+     *          network).  This packs each shape group down to its active
+     *          links so the kernels and gather/scatter touch only those.
+     *          Bypassed links keep their stored outputs, exactly as legacy.
+     *
+     *          Pass nullptr to clear (all links active, zero overhead).
+     *          The mask only affects computeWidthsTriple and
+     *          computeAreaHydRadTriple; all other compute* methods are
+     *          init/reporting-path and stay unmasked.
+     *
+     * @param bypassed_by_link  Per-link flags indexed by GLOBAL link index
+     *                          (1 = bypassed/skip), or nullptr for all-active.
+     *
+     * @note const: the mask is per-iteration scratch (mutable members), set
+     *       through the same const XSectGroups* the solver computes with.
+     */
+    void setBypassMask(const std::uint8_t* bypassed_by_link) const;
+
+    /**
      * @brief Compute section factor for every link (from area, not depth).
      *
      * @param areas   [in]  Global area array.
@@ -331,6 +396,29 @@ public:
 
 private:
     std::vector<ShapeGroup> groups_;
+
+    // Per-iteration bypass-mask state (see setBypassMask).  packed_groups_[gi]
+    // is a packed view of groups_[gi] holding only the active links; it reuses
+    // the ShapeGroup layout so the gather/kernel/scatter path runs unchanged.
+    // packed_count_[gi]:  kMaskFullGroup → no link in the group is bypassed
+    // (use the original group directly, no packing was done); 0..count →
+    // number of active links in the packed view.  All mutable because the
+    // mask is per-Picard-iteration scratch while the compute API is const.
+    static constexpr int kMaskFullGroup = -1;
+    mutable std::vector<ShapeGroup> packed_groups_;
+    mutable std::vector<int>        packed_count_;
+    mutable bool                    mask_active_ = false;
+
+    /// Group view honoring the bypass mask: nullptr → skip group entirely.
+    const ShapeGroup* maskedGroup(std::size_t gi) const {
+        const ShapeGroup* gp = &groups_[gi];
+        if (mask_active_) {
+            const int na = packed_count_[gi];
+            if (na == 0) return nullptr;
+            if (na != kMaskFullGroup) gp = &packed_groups_[gi];
+        }
+        return gp;
+    }
 };
 
 // ============================================================================
@@ -424,6 +512,17 @@ void hydrad_circular(
     const double* OPENSWMM_RESTRICT depth,
     const double* OPENSWMM_RESTRICT y_full,
     const double* OPENSWMM_RESTRICT r_full,
+    double*       OPENSWMM_RESTRICT hydrad,
+    int count
+);
+
+/// Fused area + hydraulic radius for CIRCULAR/FORCE_MAIN (shared table index).
+void area_hydrad_circular(
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT y_full,
+    const double* OPENSWMM_RESTRICT a_full,
+    const double* OPENSWMM_RESTRICT r_full,
+    double*       OPENSWMM_RESTRICT area,
     double*       OPENSWMM_RESTRICT hydrad,
     int count
 );

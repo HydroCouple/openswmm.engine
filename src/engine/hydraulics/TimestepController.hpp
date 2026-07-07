@@ -5,24 +5,27 @@
  * @details The TimestepController implements the explicit timestep formula:
  *
  * @code
- * dt_next = min(dt_output_remaining, dt_cfl, dt_controls, dt_rdii)
+ * dt_next = min(time_to_next_report, dt_cfl, dt_controls, dt_rdii)
  * @endcode
  *
- * ### Key design decision (R18)
+ * ### Report clock (legacy parity)
  *
- * The legacy SWMM engine (src/solver/routing.c, routing_execute()) uses a
- * fixed routing step and then *interpolates* simulation state to hit output
- * time boundaries. This means the output values are not computed at exact
- * output times — they are interpolated.
+ * Report scheduling runs on the legacy-parity millisecond clock:
+ * `ctx.elapsed_ms` mirrors legacy `NewRoutingTime` (accumulated as
+ * `+= 1000.0 * dt`, routing.c:309) and `ctx.next_report_ms` mirrors legacy
+ * `ReportTime` (seeded `1000*ReportStep`, advanced by `1000*ReportStep` per
+ * period, swmm5.c:721/1044). A report period is due when
+ * `elapsed_ms >= next_report_ms` (swmm5.c:1019). Periods dated before
+ * REPORT_START are skipped by the writer but the grid still advances
+ * (output.c:481).
  *
- * The new engine instead:
- * 1. Computes dt_next so the simulation clock lands exactly on the next
- *    output boundary.
- * 2. Takes the computed step (no interpolation needed).
- * 3. Posts the exact-time snapshot to the IO thread.
+ * ### Key design decision (R18) — superseded for parity
  *
- * This is more physically correct (no interpolation artifacts) and also
- * simplifies the output writing code (no interpolation logic needed).
+ * The original refactored design shortened dt so the clock lands exactly on
+ * report boundaries (no interpolation). Legacy instead free-steps and
+ * interpolates results to the report instant (output.c:650/682). The clamp
+ * is retained temporarily and is removed by the A2 reporting-parity work in
+ * favor of legacy-identical interpolation.
  *
  * ### Integration with IO thread (Phase 5)
  *
@@ -86,20 +89,19 @@ public:
      * @brief Compute the next simulation timestep.
      *
      * @details Result is the minimum of:
-     *          - `ctx.dt_output_remaining` (time to next output boundary)
+     *          - time to the next report instant (from ctx.next_report_ms;
+     *            clamp scheduled for removal by the A2 reporting-parity work)
      *          - `dt_cfl` (CFL-limited hydraulic step from DynamicWave)
      *          - `ctx.dt_controls_remaining` (next control rule event)
      *          - `ctx.options.routing_step` (user-configured max step)
      *          - NOT less than `ctx.options.min_routing_step` (minimum floor)
      *
-     * @param ctx     Simulation context (reads dt_output_remaining, options).
+     * @param ctx     Simulation context (reads elapsed_ms/next_report_ms, options).
      * @param dt_cfl  CFL-limited timestep from the DynamicWave solver (seconds).
      *                Pass `ctx.options.routing_step` if not using dynamic wave.
      * @returns       dt_next in seconds, guaranteed > 0.
      *
-     * @pre  ctx.dt_output_remaining > 0.
      * @post Return value <= dt_cfl.
-     * @post Return value <= ctx.dt_output_remaining.
      * @post Return value >= ctx.options.min_routing_step.
      */
     static double compute_next(const SimulationContext& ctx, double dt_cfl) noexcept;
@@ -112,8 +114,10 @@ public:
      * @brief Advance internal timers by dt_taken seconds.
      *
      * @details Updates:
-     *          - `ctx.current_time += dt_taken / 86400.0` (decimal days)
-     *          - `ctx.dt_output_remaining -= dt_taken`
+     *          - `ctx.current_time += dt_taken` (seconds)
+     *          - `ctx.current_date` (decompose-recompose from current_time)
+     *          - `ctx.old_elapsed_ms = ctx.elapsed_ms;
+     *             ctx.elapsed_ms += 1000.0 * dt_taken` (legacy ms clock)
      *          - `ctx.dt_controls_remaining -= dt_taken`
      *
      * @param ctx      Simulation context (mutated).
@@ -122,11 +126,13 @@ public:
     static void advance(SimulationContext& ctx, double dt_taken) noexcept;
 
     /**
-     * @brief Reset the output countdown timer to the full report step.
+     * @brief Advance the report grid to the next period.
      *
-     * @details Call this immediately after posting a snapshot to the IO thread.
+     * @details Legacy swmm5.c:1044 — `ReportTime += 1000 * ReportStep`.
+     *          Call after handling a due report period (written or skipped
+     *          by the REPORT_START gate).
      *
-     * @param ctx  Simulation context (dt_output_remaining reset to report_step).
+     * @param ctx  Simulation context (next_report_ms advanced one period).
      */
     static void reset_output_timer(SimulationContext& ctx) noexcept;
 
@@ -135,13 +141,14 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Returns true when simulation clock has reached an output boundary.
+     * @brief Returns true when the clock has reached the next report instant.
      *
-     * @details A small epsilon (1e-6 seconds) is used for floating-point comparison
-     *          to avoid missing an output due to floating-point rounding.
+     * @details Legacy swmm5.c:1019 — `NewRoutingTime >= ReportTime`, on the
+     *          ms-accumulated clock (no epsilon; both sides are exact sums
+     *          of the same ms quantities, as in legacy).
      *
      * @param ctx  Simulation context.
-     * @returns    true if dt_output_remaining <= EPSILON.
+     * @returns    true if elapsed_ms >= next_report_ms.
      */
     static bool output_due(const SimulationContext& ctx) noexcept;
 
@@ -155,8 +162,6 @@ public:
     // Constants
     // -----------------------------------------------------------------------
 
-    /** @brief Epsilon for output-time floating-point comparison (seconds). */
-    static constexpr double OUTPUT_EPSILON = 1.0e-6;
 
     /** @brief Seconds per day (exact). */
     static constexpr double SEC_PER_DAY = 86400.0;

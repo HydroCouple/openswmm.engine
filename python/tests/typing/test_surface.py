@@ -56,6 +56,8 @@ from openswmm.engine import (
     RunoffTotal,
     Solver,
     StaleObjectError,
+    SurfaceBoundaryType,
+    SurfaceForcingMode,
     WashoffFunc,
     WeirType,
     XSectShape,
@@ -247,6 +249,12 @@ def check_enums() -> None:
     assert int(LidType.BIO_CELL) == 0
     assert int(ForcingMode.REPLACE) == 0
     assert int(ForcingTarget.NODE) == 0
+    # 2D surface enums use the canonical SWMM_FORCING_* codes (OVERRIDE=1, ADD=2).
+    assert int(SurfaceForcingMode.NONE) == 0
+    assert int(SurfaceForcingMode.OVERRIDE) == 1
+    assert int(SurfaceForcingMode.ADD) == 2
+    assert int(SurfaceBoundaryType.WALL) == 0
+    assert int(SurfaceBoundaryType.RATING_CURVE) == 4
     assert int(RunoffTotal.RAINFALL) == 0
     assert int(RoutingTotal.DRY_WEATHER) == 0
     assert int(OutNodeVar.DEPTH) == 0

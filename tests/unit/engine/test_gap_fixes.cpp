@@ -620,16 +620,20 @@ TEST(TopoSort, EmptyNetwork) {
 TEST(OutfallRouting, RouteToFieldDefaultMinusOne) {
     NodeData nodes;
     nodes.resize(3);
+    openswmm::NodeSubtypes subs;
     for (int i = 0; i < 3; ++i) {
-        EXPECT_EQ(nodes.outfall_route_to[static_cast<size_t>(i)], -1);
+        const int r = subs.set_node_type(nodes, i, NodeType::OUTFALL);
+        EXPECT_EQ(subs.outfalls.route_to[static_cast<size_t>(r)], -1);
     }
 }
 
 TEST(OutfallRouting, RouteToCanBeSet) {
     NodeData nodes;
     nodes.resize(3);
-    nodes.outfall_route_to[1] = 5;
-    EXPECT_EQ(nodes.outfall_route_to[1], 5);
+    openswmm::NodeSubtypes subs;
+    const int r = subs.set_node_type(nodes, 1, NodeType::OUTFALL);
+    subs.outfalls.route_to[static_cast<size_t>(r)] = 5;
+    EXPECT_EQ(subs.outfalls.route_to[static_cast<size_t>(r)], 5);
 }
 
 TEST(OutfallRouting, RunonConversion) {
@@ -1128,14 +1132,17 @@ TEST(NodeGetDepth, StorageFunctionalLinear) {
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 10.0;
-    nodes.storage_curve[0] = -1;  // functional
-    nodes.storage_a[0] = 1000.0;  // A = 1000 (constant area)
-    nodes.storage_b[0] = 0.0;     // exponent = 0
-    nodes.storage_c[0] = 0.0;     // constant = 0
+    openswmm::NodeSubtypes subs;
+    const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;  // functional
+    S.a[ur] = 1000.0;  // A = 1000 (constant area)
+    S.b[ur] = 0.0;     // exponent = 0
+    S.c[ur] = 0.0;     // constant = 0
 
     // V = (a0 + a1)*d = 1000*d → d = V/1000
     double vol = 5000.0;
-    double d = node::getDepth(nodes, 0, vol);
+    double d = node::getDepth(nodes, 0, vol, nullptr, 0, &subs);
     EXPECT_NEAR(d, 5.0, 0.01);
 }
 
@@ -1145,10 +1152,13 @@ TEST(NodeGetDepth, StorageFunctionalNonlinear) {
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 20.0;
     nodes.full_volume[0] = 0.0;  // no precomputed
-    nodes.storage_curve[0] = -1;
-    nodes.storage_a[0] = 100.0;   // a1
-    nodes.storage_b[0] = 1.0;     // a2 (exponent) → A = a1*d^1 = 100*d
-    nodes.storage_c[0] = 50.0;    // a0 → A = 50 + 100*d
+    openswmm::NodeSubtypes subs;
+    const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;
+    S.a[ur] = 100.0;   // a1
+    S.b[ur] = 1.0;     // a2 (exponent) → A = a1*d^1 = 100*d
+    S.c[ur] = 50.0;    // a0 → A = 50 + 100*d
 
     // V = 50*d + 100/2 * d^2 = 50*d + 50*d^2
     // At d=5: V = 250 + 1250 = 1500
@@ -1156,7 +1166,7 @@ TEST(NodeGetDepth, StorageFunctionalNonlinear) {
     double v_at_5 = 50.0 * d_test + 50.0 * d_test * d_test;
     EXPECT_NEAR(v_at_5, 1500.0, 1e-6);
 
-    double d = node::getDepth(nodes, 0, v_at_5);
+    double d = node::getDepth(nodes, 0, v_at_5, nullptr, 0, &subs);
     EXPECT_NEAR(d, d_test, 0.01);
 }
 
@@ -1229,12 +1239,15 @@ TEST(StorageHalfAreaGuard, RealCurveProvidesArea) {
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 10.0;
-    nodes.storage_curve[0] = -1;  // functional
-    nodes.storage_a[0] = 1000.0;
-    nodes.storage_b[0] = 0.0;
-    nodes.storage_c[0] = 0.0;
+    openswmm::NodeSubtypes subs;
+    const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;  // functional
+    S.a[ur] = 1000.0;
+    S.b[ur] = 0.0;
+    S.c[ur] = 0.0;
 
-    double sa = node::getSurfArea(nodes, 0, 5.0);
+    double sa = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
     EXPECT_GT(sa, constants::MIN_SURFAREA)
         << "Real storage curve should exceed MIN_SURFAREA";
     EXPECT_NEAR(sa, 1000.0, 0.01);
@@ -1247,12 +1260,15 @@ TEST(StorageHalfAreaGuard, DegenerateCurveReturnsRaw) {
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 10.0;
-    nodes.storage_curve[0] = -1;  // functional
-    nodes.storage_a[0] = 0.0;
-    nodes.storage_b[0] = 0.0;
-    nodes.storage_c[0] = 0.0;
+    openswmm::NodeSubtypes subs;
+    const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;  // functional
+    S.a[ur] = 0.0;
+    S.b[ur] = 0.0;
+    S.c[ur] = 0.0;
 
-    double sa = node::getSurfArea(nodes, 0, 5.0);
+    double sa = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
     EXPECT_NEAR(sa, 0.0, 1e-10)
         << "Degenerate storage curve returns raw 0 (no internal MIN_SURFAREA clamp)";
     EXPECT_LT(sa, constants::MIN_SURFAREA)
@@ -1266,12 +1282,15 @@ TEST(StorageHalfAreaGuard, SmallCurveReturnsRaw) {
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 10.0;
-    nodes.storage_curve[0] = -1;
-    nodes.storage_a[0] = 0.01;
-    nodes.storage_b[0] = 0.0;
-    nodes.storage_c[0] = 0.0;
+    openswmm::NodeSubtypes subs;
+    const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;
+    S.a[ur] = 0.01;
+    S.b[ur] = 0.0;
+    S.c[ur] = 0.0;
 
-    double sa = node::getSurfArea(nodes, 0, 5.0);
+    double sa = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
     EXPECT_NEAR(sa, 0.01, 1e-10)
         << "Tiny curve (0.01 ft²) returns raw value (no internal MIN_SURFAREA clamp)";
     EXPECT_LT(sa, constants::MIN_SURFAREA)
@@ -1285,12 +1304,15 @@ TEST(StorageHalfAreaGuard, CurveJustAboveThreshold) {
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 10.0;
-    nodes.storage_curve[0] = -1;
-    nodes.storage_a[0] = 13.0;
-    nodes.storage_b[0] = 0.0;
-    nodes.storage_c[0] = 0.0;
+    openswmm::NodeSubtypes subs;
+    const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;
+    S.a[ur] = 13.0;
+    S.b[ur] = 0.0;
+    S.c[ur] = 0.0;
 
-    double sa = node::getSurfArea(nodes, 0, 5.0);
+    double sa = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
     EXPECT_GT(sa, constants::MIN_SURFAREA)
         << "Curve area 13 ft² should exceed MIN_SURFAREA (12.566 ft²)";
     EXPECT_NEAR(sa, 13.0, 0.01);
@@ -1305,18 +1327,21 @@ TEST(StorageHalfAreaGuard, DepthDependentCrosses) {
     nodes.resize(1);
     nodes.type[0] = NodeType::STORAGE;
     nodes.full_depth[0] = 20.0;
-    nodes.storage_curve[0] = -1;
-    nodes.storage_a[0] = 100.0;
-    nodes.storage_b[0] = 1.0;
-    nodes.storage_c[0] = 0.0;
+    openswmm::NodeSubtypes subs;
+    const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+    auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+    S.curve[ur] = -1;
+    S.a[ur] = 100.0;
+    S.b[ur] = 1.0;
+    S.c[ur] = 0.0;
 
-    double sa_low = node::getSurfArea(nodes, 0, 0.1);
+    double sa_low = node::getSurfArea(nodes, 0, 0.1, nullptr, 0, &subs);
     EXPECT_NEAR(sa_low, 10.0, 1e-10)
         << "At shallow depth, returns raw curve value (no internal MIN_SURFAREA clamp)";
     EXPECT_LT(sa_low, constants::MIN_SURFAREA)
         << "Raw value below MIN_SURFAREA → guard keeps pipe halves";
 
-    double sa_high = node::getSurfArea(nodes, 0, 5.0);
+    double sa_high = node::getSurfArea(nodes, 0, 5.0, nullptr, 0, &subs);
     EXPECT_NEAR(sa_high, 500.0, 0.01)
         << "At depth 5, returns raw curve value 500";
     EXPECT_GT(sa_high, constants::MIN_SURFAREA)
@@ -1458,21 +1483,23 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     const int NL = 1;
     ctx.links.resize(NL);
     auto ul = std::size_t{0};
-    ctx.links.type[ul]             = LinkType::CONDUIT;
+    const auto cr = static_cast<std::size_t>(
+        ctx.link_subtypes.set_link_type(ctx.links, 0, LinkType::CONDUIT));
+    auto& C = ctx.link_subtypes.conduits;
     ctx.links.node1[ul]            = 0;
     ctx.links.node2[ul]            = 1;
-    ctx.links.barrels[ul]          = 1;
+    C.barrels[cr]                  = 1;
     ctx.links.xsect_shape[ul]      = XsectShape::CIRCULAR;
     ctx.links.xsect_y_full[ul]     = 1.0;   // 1 ft diameter
     ctx.links.xsect_w_max[ul]      = 1.0;
-    ctx.links.length[ul]           = 100.0; // ft
-    ctx.links.roughness[ul]        = 0.015; // Manning n
-    ctx.links.slope[ul]            = 0.005; // ft/ft
+    C.length[cr]                   = 100.0; // ft
+    C.roughness[cr]                = 0.015; // Manning n
+    C.slope[cr]                    = 0.005; // ft/ft
     ctx.links.offset1[ul]          = 0.0;
     ctx.links.offset2[ul]          = 0.0;
-    ctx.links.seep_rate[ul]        = 0.0;
-    ctx.links.evap_loss_rate[ul]   = 0.0;
-    ctx.links.seep_loss_rate[ul]   = 0.0;
+    C.seep_rate[cr]                = 0.0;
+    C.evap_loss_rate[cr]           = 0.0;
+    C.seep_loss_rate[cr]           = 0.0;
     ctx.links.old_flow[ul]         = 99.0;  // sentinel: must not be copied
 
     // Pre-compute xsect properties (the Router::init does this, but we do it
@@ -1491,12 +1518,12 @@ SimulationContext buildSteadyCtx(double lat_inflow_cfs) {
     ctx.links.xsect_r_bot[ul]  = xs.r_bot;
 
     using constants::PHI;
-    double beta = PHI * std::sqrt(ctx.links.slope[ul]) / ctx.links.roughness[ul];
-    ctx.links.beta[ul]         = beta;
-    ctx.links.q_full[ul]       = xs.s_full * beta;
-    ctx.links.q_max[ul]        = xs.s_max  * beta;
-    ctx.links.mod_length[ul]   = ctx.links.length[ul];
-    ctx.links.rough_factor[ul] = 0.0;
+    double beta = PHI * std::sqrt(C.slope[cr]) / C.roughness[cr];
+    C.beta[cr]         = beta;
+    C.q_full[cr]       = xs.s_full * beta;
+    C.q_max[cr]        = xs.s_max  * beta;
+    C.mod_length[cr]   = C.length[cr];
+    C.rough_factor[cr] = 0.0;
 
     return ctx;
 }
@@ -1512,6 +1539,10 @@ TEST(SteadyFlowRouting, FlowEqualsManningSolution) {
     Router router;
     router.init(ctx, RouteModel::STEADY);
     const double dt = 300.0;
+    // Old-state save is the engine step loop's job now (legacy parity);
+    // standalone Router callers save explicitly.
+    ctx.nodes.save_state();
+    ctx.links.save_state();
     router.step(ctx, dt);
 
     auto ul = std::size_t{0};
@@ -1526,7 +1557,7 @@ TEST(SteadyFlowRouting, FlowEqualsManningSolution) {
     xs.type = static_cast<int>(XSectShape::CIRCULAR);
     double p[4] = {1.0, 0.0, 0.0, 0.0};
     xsect::setParams(xs, xs.type, p, 1.0);
-    double beta    = ctx.links.beta[ul];
+    double beta    = ctx.link_subtypes.conduits.beta[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
     double s       = Q_in / beta;
     double a_exp   = xsect::getAofS(xs, s);
     double y_exp   = xsect::getYofA(xs, a_exp);
@@ -1542,9 +1573,13 @@ TEST(SteadyFlowRouting, FlowCappedAtQFull) {
 
     Router router;
     router.init(ctx, RouteModel::STEADY);
+    // Old-state save is the engine step loop's job now (legacy parity);
+    // standalone Router callers save explicitly.
+    ctx.nodes.save_state();
+    ctx.links.save_state();
     router.step(ctx, 300.0);
 
-    double q_full = ctx.links.q_full[ul];
+    double q_full = ctx.link_subtypes.conduits.q_full[static_cast<std::size_t>(ctx.link_subtypes.conduit_row(static_cast<int>(ul)))];
     EXPECT_NEAR(ctx.links.flow[ul], q_full, q_full * 1e-6)
         << "Flow exceeding q_full must be capped";
     EXPECT_NEAR(ctx.links.depth[ul], ctx.links.xsect_y_full[ul], 1e-6)
@@ -1556,6 +1591,10 @@ TEST(SteadyFlowRouting, ZeroInflowZeroDepth) {
     SimulationContext ctx = buildSteadyCtx(0.0);
     Router router;
     router.init(ctx, RouteModel::STEADY);
+    // Old-state save is the engine step loop's job now (legacy parity);
+    // standalone Router callers save explicitly.
+    ctx.nodes.save_state();
+    ctx.links.save_state();
     router.step(ctx, 300.0);
 
     auto ul = std::size_t{0};
@@ -1723,7 +1762,8 @@ TEST(TopoSortCycle44, RouterHasCycleFlagSet) {
     ctx.link_names.add("l0"); ctx.link_names.add("l1");
     ctx.nodes.resize(2);
     ctx.links.resize(2);
-    ctx.links.type[0] = ctx.links.type[1] = openswmm::LinkType::CONDUIT;
+    ctx.link_subtypes.set_link_type(ctx.links, 0, openswmm::LinkType::CONDUIT);
+    ctx.link_subtypes.set_link_type(ctx.links, 1, openswmm::LinkType::CONDUIT);
     ctx.links.node1[0] = 0; ctx.links.node2[0] = 1;
     ctx.links.node1[1] = 1; ctx.links.node2[1] = 0;  // forms cycle
     ctx.links.xsect_shape[0] = ctx.links.xsect_shape[1] = openswmm::XsectShape::CIRCULAR;
@@ -2390,12 +2430,16 @@ TEST(LinkFullState57, SteadyFlowPartialPipe) {
     EXPECT_EQ(fs, 0);
 }
 
-// LinkData resize initialises full_state to 0
+// ConduitData rows initialise full_state to 0 (Phase 6: moved off LinkData)
 TEST(LinkFullState57, ResizeInitialisesZero) {
     LinkData ld;
     ld.resize(5);
     for (int i = 0; i < 5; ++i)
-        EXPECT_EQ(ld.full_state[static_cast<std::size_t>(i)], 0);
+        ld.type[static_cast<std::size_t>(i)] = LinkType::CONDUIT;
+    LinkSubtypes ls;
+    ls.build_default_rows(ld);
+    for (int i = 0; i < 5; ++i)
+        EXPECT_EQ(ls.conduits.full_state[static_cast<std::size_t>(ls.conduit_row(i))], 0);
 }
 
 // Stat tracking: up_full time accumulates when bit 0 is set
@@ -2528,20 +2572,22 @@ namespace {
 // Table x = depth (ft), y = surface area (ft²).  Returns a TableData with
 // the curve at index 0.
 struct StorageTestSetup {
-    NodeData     nodes;
-    TableData    tables;
+    NodeData             nodes;
+    TableData            tables;
+    openswmm::NodeSubtypes subs;
 
     // area_depths: pairs of (depth_ft, area_ft2) for the storage curve.
     // full_depth: maximum depth (ft).
     StorageTestSetup(const std::vector<std::pair<double,double>>& area_depths,
                      double full_depth) {
         nodes.resize(1);
-        nodes.type[0]          = NodeType::STORAGE;
         nodes.full_depth[0]    = full_depth;
-        nodes.storage_curve[0] = 0;     // use table index 0
-        nodes.storage_a[0]     = 0.0;
-        nodes.storage_b[0]     = 0.0;
-        nodes.storage_c[0]     = 0.0;
+        const int sr = subs.set_node_type(nodes, 0, NodeType::STORAGE);
+        auto& S = subs.storages; const auto ur = static_cast<std::size_t>(sr);
+        S.curve[ur] = 0;     // use table index 0
+        S.a[ur]     = 0.0;
+        S.b[ur]     = 0.0;
+        S.c[ur]     = 0.0;
 
         // Pre-compute full_volume via table_getStorageVolume
         Table tbl;
@@ -2563,7 +2609,7 @@ TEST(StorageTabularDepth12, RectangularRoundTrip) {
 
     for (double d_ref : {1.0, 3.0, 5.0, 7.5, 9.5}) {
         double vol = table_getStorageVolume(s.tables.tables[0], d_ref);
-        double d_back = node::getDepth(s.nodes, 0, vol, &s.tables, 0);
+        double d_back = node::getDepth(s.nodes, 0, vol, &s.tables, 0, &s.subs);
         EXPECT_NEAR(d_back, d_ref, 1e-4) << "d_ref=" << d_ref;
     }
 }
@@ -2580,7 +2626,7 @@ TEST(StorageTabularDepth12, TrapezoidalNonlinearExact) {
     double vol_at_5 = table_getStorageVolume(s.tables.tables[0], 5.0);
     EXPECT_NEAR(vol_at_5, 625.0, 1e-6);  // sanity check
 
-    double d_back = node::getDepth(s.nodes, 0, vol_at_5, &s.tables, 0);
+    double d_back = node::getDepth(s.nodes, 0, vol_at_5, &s.tables, 0, &s.subs);
     EXPECT_NEAR(d_back, 5.0, 1e-4);
 
     // Confirm the old linear approximation would have been wrong
@@ -2596,7 +2642,7 @@ TEST(StorageTabularDepth12, TrapezoidalRoundTrip) {
 
     for (double d_ref : {0.5, 2.0, 4.0, 6.0, 8.5, 9.9}) {
         double vol = table_getStorageVolume(s.tables.tables[0], d_ref);
-        double d_back = node::getDepth(s.nodes, 0, vol, &s.tables, 0);
+        double d_back = node::getDepth(s.nodes, 0, vol, &s.tables, 0, &s.subs);
         EXPECT_NEAR(d_back, d_ref, 1e-4) << "d_ref=" << d_ref;
     }
 }
@@ -2604,14 +2650,14 @@ TEST(StorageTabularDepth12, TrapezoidalRoundTrip) {
 // Zero volume → zero depth.
 TEST(StorageTabularDepth12, ZeroVolumeReturnsZero) {
     StorageTestSetup s({{0.0, 100.0}, {10.0, 200.0}}, 10.0);
-    EXPECT_DOUBLE_EQ(node::getDepth(s.nodes, 0, 0.0, &s.tables, 0), 0.0);
+    EXPECT_DOUBLE_EQ(node::getDepth(s.nodes, 0, 0.0, &s.tables, 0, &s.subs), 0.0);
 }
 
 // Volume at or beyond full_volume → full_depth (clamped at top of table).
 TEST(StorageTabularDepth12, FullVolumeReturnsFullDepth) {
     StorageTestSetup s({{0.0, 100.0}, {10.0, 200.0}}, 10.0);
     double v_full = s.nodes.full_volume[0];
-    double d = node::getDepth(s.nodes, 0, v_full, &s.tables, 0);
+    double d = node::getDepth(s.nodes, 0, v_full, &s.tables, 0, &s.subs);
     EXPECT_NEAR(d, 10.0, 1e-3);
 }
 
@@ -2622,7 +2668,7 @@ TEST(StorageTabularDepth12, MultiSegmentRoundTrip) {
 
     for (double d_ref : {1.0, 3.0, 5.0, 7.0, 9.0}) {
         double vol = table_getStorageVolume(s.tables.tables[0], d_ref);
-        double d_back = node::getDepth(s.nodes, 0, vol, &s.tables, 0);
+        double d_back = node::getDepth(s.nodes, 0, vol, &s.tables, 0, &s.subs);
         EXPECT_NEAR(d_back, d_ref, 1e-4) << "d_ref=" << d_ref;
     }
 }
@@ -2850,7 +2896,8 @@ TEST(InfilTrench24, SurfaceDrainsDirectlyToStorage) {
     g.surf_depth[0] = 0.0;
     g.stor_depth[0] = 0.0;
 
-    lid::LIDSolver::batchInfilTrenchFlux(g, rain, 0.0, dt);
+    const double no_evap[1] = {0.0};
+    lid::LIDSolver::batchInfilTrenchFlux(g, rain, no_evap, dt);
 
     // Storage should have received water
     EXPECT_GT(g.stor_depth[0], 0.0) << "Storage should fill from surface drainage";
@@ -2877,7 +2924,8 @@ TEST(InfilTrench24, FullStorageProducesSurfaceRunoff) {
     g.surf_depth[0] = 0.5;  // some water already on surface
 
     g.inflow[0] = rain;
-    lid::LIDSolver::batchInfilTrenchFlux(g, rain, 0.0, dt);
+    const double no_evap[1] = {0.0};
+    lid::LIDSolver::batchInfilTrenchFlux(g, rain, no_evap, dt);
 
     // Storage is full → surface cannot infiltrate → surface outflow
     EXPECT_GT(g.surface_runoff[0], 0.0) << "Full storage should produce surface runoff";
@@ -2896,7 +2944,8 @@ TEST(InfilTrench24, ExfiltrationAndDrainOutputs) {
     g.surf_depth[0] = 0.0;
     g.inflow[0]     = 0.0;
 
-    lid::LIDSolver::batchInfilTrenchFlux(g, 0.0, 0.0, dt);
+    const double no_evap[1] = {0.0};
+    lid::LIDSolver::batchInfilTrenchFlux(g, 0.0, no_evap, dt);
 
     EXPECT_GT(g.infil_loss[0],  0.0) << "Exfiltration should be > 0 when storage is full";
     EXPECT_GT(g.drain_flow[0],  0.0) << "Drain flow should be > 0";

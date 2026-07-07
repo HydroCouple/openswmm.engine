@@ -1,0 +1,10 @@
+SWMM5 Interface File
+OpenSWMM INFLOWS
+0    - reporting time step in sec
+2    - number of constituents as listed below:
+FLOW CFS
+TSS MG/L
+1    - number of nodes as listed below:
+J1
+Node             Year Mon Day Hr  Min Sec FLOW       TSS       
+J1               2026 01  01  00  00  00  1.250000   12.500000 

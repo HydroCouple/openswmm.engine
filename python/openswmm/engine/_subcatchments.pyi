@@ -10,18 +10,29 @@ Type stubs for :mod:`openswmm.engine._subcatchments`.
 """
 
 from collections.abc import Iterator, MutableMapping
-from typing import Any, Optional, Tuple, Union
+from typing import Any, NamedTuple, Optional, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ._enums import InfilModel
+from ._enums import AquiferParam, InfilModel
 from ._gages import Gage
 from ._nodes import Node
 from ._solver import Solver
 
 
 _Key = Union[int, str]
+
+
+class GroundwaterParams(NamedTuple):
+    surf_elev: float
+    a1: float
+    b1: float
+    a2: float
+    b2: float
+    a3: float
+    tw: float
+    hstar: float
 
 
 class SubcatchmentStatsView:
@@ -55,6 +66,7 @@ class Subcatchment:
 
     # Identity
     id: str
+    tag: str
     index: int
     solver: Solver
 
@@ -71,6 +83,11 @@ class Subcatchment:
     # Topology
     gage: Gage
     outlet: Union[Node, "Subcatchment", None]
+
+    # Groundwater / aquifer assignment
+    aquifer: Optional[int]
+    gw_node: Optional[int]
+    gw_params: GroundwaterParams
 
     # Runtime state
     runoff: float
@@ -93,6 +110,15 @@ class Subcatchment:
     def quality(self, pollutant: _Key) -> float: ...
     def ponded_quality(self, pollutant: _Key) -> float: ...
     def set_ponded_quality(self, pollutant: _Key, mass: float) -> None: ...
+
+    def set_gw_params(self, surf_elev: float, a1: float, b1: float,
+                      a2: float, b2: float, a3: float,
+                      tw: float, hstar: float) -> None: ...
+    def set_gw_state(self, theta: float = ..., lower_depth: float = ...) -> None: ...
+    def get_gw_state(self) -> tuple[float, float]: ...
+    def set_snow_state(self, surface: int, swe: float = ..., fw: float = ...,
+                       ati: float = ..., coldc: float = ...) -> None: ...
+    def get_snow_state(self, surface: int) -> tuple[float, float, float, float]: ...
 
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
@@ -122,3 +148,45 @@ class Subcatchments:
     ids: NDArray[Any]
 
     def qualities(self, pollutant: _Key) -> NDArray[Any]: ...
+
+
+class Aquifers:
+    """Name-keyed collection of C{[AQUIFERS]} entries (C{solver.aquifers})."""
+
+    def get_param(self, aquifer: _Key, param: Union[AquiferParam, int]) -> float: ...
+    def set_param(
+        self, aquifer: _Key, param: Union[AquiferParam, int], value: float
+    ) -> None: ...
+    def get_evap_pattern(self, aquifer: _Key) -> str: ...
+    def set_evap_pattern(self, aquifer: _Key, name: Optional[str]) -> None: ...
+
+
+class Snowpacks:
+    """Name-keyed collection of C{[SNOWPACKS]} entries (C{solver.snowpacks})."""
+
+    def set_plowable(
+        self, snowpack: _Key, *,
+        cmin: float, cmax: float, tbase: float, fwfrac: float,
+        sd0: float, fw0: float, last: float,
+    ) -> None: ...
+    def get_plowable(self, snowpack: _Key) -> dict[str, float]: ...
+    def set_impervious(
+        self, snowpack: _Key, *,
+        cmin: float, cmax: float, tbase: float, fwfrac: float,
+        sd0: float, fw0: float, last: float,
+    ) -> None: ...
+    def get_impervious(self, snowpack: _Key) -> dict[str, float]: ...
+    def set_pervious(
+        self, snowpack: _Key, *,
+        cmin: float, cmax: float, tbase: float, fwfrac: float,
+        sd0: float, fw0: float, last: float,
+    ) -> None: ...
+    def get_pervious(self, snowpack: _Key) -> dict[str, float]: ...
+    def set_removal(
+        self, snowpack: _Key, *,
+        dsnow: float, fout: float, fimp: float,
+        fperv: float, fimelt: float, fsubcatch: float,
+    ) -> None: ...
+    def get_removal(self, snowpack: _Key) -> dict[str, float]: ...
+    def set_removal_subcatch(self, snowpack: _Key, name: Optional[str]) -> None: ...
+    def get_removal_subcatch(self, snowpack: _Key) -> str: ...

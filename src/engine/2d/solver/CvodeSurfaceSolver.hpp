@@ -30,10 +30,12 @@
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "ISurfaceSolver.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 
 #include <vector>
+#include <memory>
 
 // Forward declarations for SUNDIALS types (avoid pulling in full headers)
 struct SUNContext_;
@@ -44,6 +46,9 @@ typedef struct _generic_SUNLinearSolver* SUNLinearSolver;
 namespace openswmm::twoD {
 
 class CvodeSurfaceSolver;
+#if defined(OPENSWMM_HAVE_HYPRE)
+class HypreAmgPreconditioner;  // complete type only in the .cpp (guarded)
+#endif
 
 /**
  * @brief Context passed to the CVODE RHS / preconditioner callbacks.
@@ -61,15 +66,19 @@ struct CvodeSolverContext {
     SurfaceStateData*   state  = nullptr;
     SolverOptions2D*    opts   = nullptr;
     CvodeSurfaceSolver* solver = nullptr;
+    bool                amg_active = false;  ///< effective AMG (after hypre fallback)
 };
 
 /**
  * @brief CVODE wrapper for the 2D surface routing ODE system.
  */
-class CvodeSurfaceSolver {
+class CvodeSurfaceSolver : public ISurfaceSolver {
 public:
-    CvodeSurfaceSolver() = default;
-    ~CvodeSurfaceSolver();
+    // Defined out-of-line in the .cpp (where HypreAmgPreconditioner is a
+    // complete type) so the unique_ptr member's destructor can be instantiated
+    // there rather than at every construction site.
+    CvodeSurfaceSolver();
+    ~CvodeSurfaceSolver() override;
 
     // Non-copyable
     CvodeSurfaceSolver(const CvodeSurfaceSolver&) = delete;
@@ -90,7 +99,7 @@ public:
      * @param opts  Solver options.
      */
     void initialize(MeshData& mesh, SurfaceStateData& state,
-                    SolverOptions2D& opts);
+                    SolverOptions2D& opts) override;
 
     /**
      * @brief Advance the solution from t_current to t_target.
@@ -103,7 +112,7 @@ public:
      * @param t_target  Target time to advance to (s).
      * @return Actual time reached (should equal t_target on success).
      */
-    double advance(double t_current, double t_target);
+    double advance(double t_current, double t_target) override;
 
     /**
      * @brief Reinitialize CVODE with current state vector.
@@ -112,26 +121,35 @@ public:
      *
      * @param t0 New initial time.
      */
-    void reinitialize(double t0);
+    void reinitialize(double t0) override;
 
     /**
      * @brief Release all SUNDIALS resources.
      */
-    void finalize();
+    void finalize() override;
 
     /// Get number of internal steps taken in last advance() call.
-    long last_num_steps() const noexcept { return last_nsteps_; }
+    long last_num_steps() const noexcept override { return last_nsteps_; }
 
     /// Get last internal step size used by CVODE.
-    double last_step_size() const noexcept { return last_h_; }
+    double last_step_size() const noexcept override { return last_h_; }
+
+    /// Per-point ∫Q dt (m³, +drain/−spill) accumulated over the last advance(),
+    /// one entry per live node-coupling point (state.node_coupling order). Empty
+    /// unless the live-coupling macro-step path is active. The caller books these
+    /// to the 1D node lateral inflow + the 2D mass-balance ledger.
+    const std::vector<double>& last_coupling_exchange() const noexcept override {
+        return last_coupling_exchange_;
+    }
 
     /// Check if solver is initialized.
-    bool is_initialized() const noexcept { return cvode_mem_ != nullptr; }
+    bool is_initialized() const noexcept override { return cvode_mem_ != nullptr; }
 
 private:
     void*           cvode_mem_ = nullptr;  ///< CVODE memory block
     SUNLinearSolver ls_        = nullptr;  ///< SPGMR Krylov linear solver
-    N_Vector        y_         = nullptr;  ///< State vector (water-surface elevation H)
+    N_Vector        y_         = nullptr;  ///< State vector (cell water volume V)
+    N_Vector        abstol_    = nullptr;  ///< Per-cell absolute tolerance vector (volume)
     SUNContext      sun_ctx_   = nullptr;  ///< SUNDIALS context
 
     CvodeSolverContext ctx_;               ///< RHS callback context
@@ -139,11 +157,33 @@ private:
     long   last_nsteps_ = 0;
     double last_h_      = 0.0;
 
+    // ── Live node-coupling (macro-step) state augmentation ────────────────────
+    // When state.node_coupling is set (COUPLING_INTERVAL > 1), the state vector
+    // is augmented to nt + nc_: the extra nc_ entries A_k = ∫Q_k dt accumulate
+    // the live orifice exchange per coupling point so the 1D↔2D booking is
+    // conservative (CVODE integrates A_k with the same BDF method as V). nc_ == 0
+    // (default) ⇒ no augmentation, byte-identical to the legacy held-flux path.
+    int    nc_ = 0;                              ///< number of live node-coupling points
+    std::vector<double> coupling_accum_start_;   ///< A_k at the start of the current advance
+    std::vector<double> last_coupling_exchange_; ///< per-point ∫Q dt over the last advance (m³)
+
     /// Cached diagonal of the Jacobi preconditioner, sized to n_triangles.
     /// Populated in psetup_fn from the current edge fluxes; consumed in
     /// psolve_fn. Phase 1 stores diag(J) as a heuristic per-cell value
     /// (sum of edge transmissivities, normalised by cell area, negated).
     std::vector<double> precond_diag_;
+
+#if defined(OPENSWMM_HAVE_HYPRE)
+    /// hypre BoomerAMG preconditioner (PRECONDITIONER=AMG). Null unless AMG is
+    /// selected. Owned via unique_ptr whose destructor sees the complete type
+    /// in the .cpp (where ~CvodeSurfaceSolver and the move ops are defined).
+    std::unique_ptr<HypreAmgPreconditioner> amg_precond_;
+    /// True when AMG served the most recent psetup. The active-set bypass can
+    /// hand mostly-dry systems to the (masked, near-exact) Jacobi diagonal
+    /// instead; psolve_fn dispatches on this so it always pairs with the
+    /// latest psetup, and a branch flip forces a fresh build of the taker.
+    bool amg_used_last_setup_ = false;
+#endif
 
     // ------------------------------------------------------------------
     // SUNDIALS callbacks. All three have C linkage requirements imposed

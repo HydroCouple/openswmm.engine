@@ -51,6 +51,19 @@ class LegacyRainGage:
         """Current snowfall intensity."""
         return self._get(SWMMRainGageProperties.GAGE_SNOWFALL)
 
+    @property
+    def scale_factor(self) -> float:
+        """Rainfall scaling factor (dimensionless; 1.0 = no scaling)."""
+        return self._get(SWMMRainGageProperties.GAGE_SCALEFACTOR)
+
+    @scale_factor.setter
+    def scale_factor(self, value: float) -> None:
+        """Set the rainfall scaling factor.
+
+        :raises ValueError: from the C API when ``value <= 0.0``.
+        """
+        self._set(SWMMRainGageProperties.GAGE_SCALEFACTOR, value)
+
     def set_rainfall(
         self,
         value: float,

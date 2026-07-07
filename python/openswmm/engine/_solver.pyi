@@ -14,11 +14,13 @@ from datetime import datetime, timedelta
 from os import PathLike
 from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional, Union
 
-from ._enums import EngineState
+from ._enums import EngineState, FlowUnits
 
 if TYPE_CHECKING:
     # Imports for type-checking only — avoids cycles at runtime because the
     # collection modules import Solver themselves.
+    from ._2d import Surface2D
+    from ._climate import Climate
     from ._controls import Controls
     from ._edit import ModelEditor
     from ._forcing import Forcing
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
     from ._quality import Quality
     from ._spatial import Spatial
     from ._statistics import Statistics
-    from ._subcatchments import Subcatchments
+    from ._subcatchments import Aquifers, Snowpacks, Subcatchments
     from ._tables import Patterns, Tables
 
 # Re-exported exception hierarchy. Canonical definitions in :mod:`_exceptions`.
@@ -53,6 +55,8 @@ from ._exceptions import (
 )
 
 _PathLike = Union[str, PathLike[str]]
+
+GEOPACKAGE_PLUGIN_ID: str = "org.hydrocouple.openswmm.plugins.geopackage"
 
 
 # ---------------------------------------------------------------------------
@@ -115,16 +119,38 @@ class _OptionsExtView(MutableMapping[str, str]):
     def __len__(self) -> int: ...
 
 
-class UserFlags(MutableMapping[str, Union[bool, int, float]]):
+class UserFlagDef(NamedTuple):
+    """A ``[USER_FLAGS]`` schema definition: ``(name, type, description)``.
+
+    ``type`` is 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING
+    (see :class:`UserFlagType`).
+    """
+
+    name: str
+    type: int
+    description: str
+
+
+class UserFlags(MutableMapping[str, Union[bool, int, float, str]]):
     """Typed user-flag mapping. See :class:`Solver.userflags`."""
 
     def __init__(self, solver: "Solver") -> None: ...
-    def __getitem__(self, key: str) -> Union[bool, int, float]: ...
-    def __setitem__(self, key: str, value: Union[bool, int, float]) -> None: ...
+    def __getitem__(self, key: str) -> Union[bool, int, float, str]: ...
+    def __setitem__(self, key: str, value: Union[bool, int, float, str]) -> None: ...
     def __delitem__(self, key: str) -> None: ...
     def __iter__(self) -> Iterator[str]: ...
     def __len__(self) -> int: ...
     def __contains__(self, key: object) -> bool: ...
+
+    # [USER_FLAGS] schema definitions
+    def define(self, name: str, type: int, description: str = "") -> None: ...
+    def undefine(self, name: str) -> None: ...
+    def definitions(self) -> list[UserFlagDef]: ...
+
+    # [USER_FLAG_VALUES] per-object values
+    def get_value(self, obj_type: str, obj_name: str, flag_name: str) -> Optional[str]: ...
+    def set_value(self, obj_type: str, obj_name: str, flag_name: str, value: str) -> None: ...
+    def clear_value(self, obj_type: str, obj_name: str, flag_name: str) -> None: ...
 
 
 class EventsView(MutableSequence[Event]):
@@ -252,7 +278,45 @@ class Solver:
     def report_start_datetime(self, value: datetime) -> None: ...
     @property
     def current_datetime(self) -> datetime: ...
+    @property
+    def sim_start_time(self) -> datetime:
+        """Resolved simulation start (``swmm_get_start_time``).
 
+        @rtype: datetime
+        """
+        ...
+    @property
+    def sim_end_time(self) -> datetime:
+        """Resolved simulation end (``swmm_get_end_time``).
+
+        @rtype: datetime
+        """
+        ...
+    @property
+    def event_count(self) -> int:
+        """Number of ``[EVENTS]`` entries on the model.
+
+        @rtype: int
+        """
+        ...
+
+    # ------------- Units -------------
+    @property
+    def flow_units(self) -> FlowUnits:
+        """The model's flow-unit system, resolved from ``FLOW_UNITS``.
+
+        @return: Active flow-unit system; read this to interpret the
+            project-unit magnitudes returned by all getters.
+        @rtype: L{FlowUnits}
+        """
+        ...
+    @property
+    def unit_system(self) -> str:
+        """``'US'`` (CFS/GPM/MGD) or ``'SI'`` (CMS/LPS/MLD).
+
+        @rtype: str
+        """
+        ...
     # ------------- Views -------------
     @property
     def options(self) -> SimulationOptions: ...
@@ -269,6 +333,10 @@ class Solver:
     @property
     def subcatchments(self) -> "Subcatchments": ...
     @property
+    def aquifers(self) -> "Aquifers": ...
+    @property
+    def snowpacks(self) -> "Snowpacks": ...
+    @property
     def gages(self) -> "Gages": ...
     @property
     def pollutants(self) -> "Pollutants": ...
@@ -283,6 +351,8 @@ class Solver:
     @property
     def forcing(self) -> "Forcing": ...
     @property
+    def climate(self) -> "Climate": ...
+    @property
     def infrastructure(self) -> "Infrastructure": ...
     @property
     def spatial(self) -> "Spatial": ...
@@ -296,9 +366,13 @@ class Solver:
     def editor(self) -> "ModelEditor": ...
     @property
     def save_schedule(self) -> "SaveSchedule": ...
+    @property
+    def surface2d(self) -> "Surface2D": ...
 
     # ------------- Model write -------------
     def write(self, path: _PathLike) -> None: ...
+    def write_with_plugin(self, path: _PathLike, output_plugin_id: str = ...) -> None: ...
+    def write_geopackage(self, path: _PathLike, crs: Optional[str] = ...) -> None: ...
 
     # ------------- Runoff interface file -------------
     def open_runoff_interface_write(self, path: _PathLike) -> None: ...
@@ -317,6 +391,14 @@ class Solver:
     def set_warning_callback(
         self, callback: Optional[Callable[[int, str], None]]
     ) -> None: ...
+    def set_progress_callback(
+        self, callback: Optional[Callable[[float], None]]
+    ) -> None:
+        """Register a progress callback receiving the elapsed fraction [0, 1].
+
+        @param callback: ``(elapsed_frac: float) -> None`` or ``None`` to clear.
+        """
+        ...
 
     # ------------- Context manager -------------
     def __enter__(self) -> "Solver": ...

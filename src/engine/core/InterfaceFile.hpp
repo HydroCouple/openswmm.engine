@@ -55,6 +55,13 @@ public:
     /// Open routing interface files for reading/writing
     int openFiles(const std::string& infile_path, const std::string& outfile_path);
 
+    /// Read the inflows file header (flow units, pollutants, nodes).
+    /// Called eagerly from SWMMEngine::start() after openFiles().
+    int readFileHeader(SimulationContext& ctx);
+
+    /// Write the outflows file header. Called from SWMMEngine::start().
+    void writeFileHeader(const SimulationContext& ctx);
+
     /// Read next set of inflow values from upstream interface file
     void readInflows(SimulationContext& ctx, double current_time);
 
@@ -94,17 +101,11 @@ private:
 
     std::vector<int> pollut_map_;   ///< Map: project pollutant idx -> interface file col (-1 = none)
 
-    /// Read the file header (flow units, pollutants, nodes)
-    int readFileHeader(SimulationContext& ctx);
-
     /// Read next period of data from the interface file
     bool readNextPeriod();
 
     /// Copy new values to old values and advance time
     void setOldValues();
-
-    /// Write the file header for output
-    void writeFileHeader(const SimulationContext& ctx);
 
     /// Check if a node is an outlet (for writing)
     static bool isOutletNode(const SimulationContext& ctx, int node_idx);

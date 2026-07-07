@@ -8,10 +8,17 @@
  */
 
 #include "VertexReconstruction.hpp"
+#include "../data/ActiveSetData.hpp"
 
 #include <vector>
 #include <cmath>
 #include <algorithm>
+
+#if defined(SWMM_USE_OPENMP)
+#include <omp.h>
+#else
+static inline int omp_get_max_threads() { return 1; }
+#endif
 
 namespace openswmm::twoD {
 
@@ -137,10 +144,21 @@ void buildVertexStencils(MeshData& mesh) {
 }
 
 
-void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state) {
+void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
+                             [[maybe_unused]] int nthreads) {
     int nv = mesh.n_vertices();
 
+    // Active-set masking: a vertex touched only by frozen cells keeps its
+    // seed-pass value — its stencil heads are frozen too, so the gather
+    // would reproduce it exactly.
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+
+    // CSR gather: each vertex reads its stencil's cell heads (read-only) and
+    // writes only its own vert_head[b]. schedule(static) ⇒ bit-exact serial.
+#pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int b = 0; b < nv; ++b) {
+        if (masked && !as->vert_active[b]) continue;
         int start = mesh.vert_stencil_ptr[b];
         int end   = mesh.vert_stencil_ptr[b + 1];
 

@@ -40,7 +40,7 @@ cimport numpy as np
 
 from ._common cimport *
 from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
-from ._exceptions import StaleObjectError
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 # =============================================================================
@@ -183,6 +183,7 @@ cdef class XSection:
         return self._read()[4]
 
     def as_tuple(self):
+        """Return the cross-section as a ``(shape, geom1, geom2, geom3, geom4)`` tuple."""
         s, g1, g2, g3, g4 = self._read()
         return (XSectShape(s), g1, g2, g3, g4)
 
@@ -395,10 +396,10 @@ cdef class Link:
     """A single link, addressed by index in the parent :class:`Links`
     collection. Same staleness model as :class:`Node`."""
 
-    cdef object _solver
-    cdef int _index
-    cdef long long _gen
-    cdef str _captured_id
+    cdef readonly object _solver
+    cdef readonly int _index
+    cdef readonly long long _gen
+    cdef readonly str _captured_id
     cdef object _stats
     cdef object _xsect
     cdef object _pump
@@ -426,6 +427,26 @@ cdef class Link:
         _check_fresh(self)
         cdef const char* raw = swmm_link_id(_h(self._solver), self._index)
         return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
+    def tag(self) -> str:
+        """The link's free-form tag string (from the INP C{[TAGS]} section).
+
+        Empty string when the link has no tag. Assigning C{None} or C{""}
+        clears it. The tag is keyed by index and persists across L{rename}.
+
+        @rtype: str
+        """
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_link_get_tag(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @tag.setter
+    def tag(self, value) -> None:
+        _check_fresh(self)
+        cdef bytes b = (value or "").encode('utf-8')
+        _check(swmm_link_set_tag(_h(self._solver), self._index, b))
 
     @property
     def index(self) -> int:
@@ -739,6 +760,7 @@ cdef class Link:
     # ---- Quality ---------------------------------------------------
 
     def quality(self, pollutant) -> float:
+        """Return the current concentration of *pollutant* in this link."""
         _check_fresh(self)
         cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
         cdef double v = 0.0
@@ -847,13 +869,15 @@ cdef class Links:
     # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str link_id) -> int:
+        """Return the zero-based index of link *link_id* (raises if unknown)."""
         cdef bytes b = link_id.encode('utf-8')
         cdef int i = swmm_link_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(link_id)
+            raise ElementNotFoundError(link_id)
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the link at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_link_id(_h(self._solver), idx)
@@ -862,6 +886,7 @@ cdef class Links:
     # ---- Editing (bumps generation) -------------------------------
 
     def add(self, str link_id, link_type) -> Link:
+        """Add a new link *link_id* of *link_type* and return its :class:`Link` handle."""
         cdef bytes b = link_id.encode('utf-8')
         _check(swmm_link_add(_h(self._solver), b, int(link_type)))
         self._solver._bump_generation()
@@ -869,11 +894,13 @@ cdef class Links:
         return Link(self._solver, new_idx)
 
     def pop_last(self, str link_id) -> None:
+        """Remove the most recently added link, which must be *link_id*."""
         cdef bytes b = link_id.encode('utf-8')
         _check(swmm_link_pop_last(_h(self._solver), b))
         self._solver._bump_generation()
 
     def rename(self, key, str new_id) -> None:
+        """Rename the link identified by *key* to *new_id*."""
         cdef int i = _resolve_link(self._solver, key)
         cdef bytes b = new_id.encode('utf-8')
         _check(swmm_link_rename(_h(self._solver), i, b))
@@ -983,6 +1010,7 @@ cdef class Links:
         return buf
 
     def qualities(self, pollutant):
+        """Return an array of *pollutant* concentrations for every link."""
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef int p_idx = _resolve_pollutant(self._solver, pollutant)

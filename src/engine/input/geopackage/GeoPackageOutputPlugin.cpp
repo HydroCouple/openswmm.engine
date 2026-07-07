@@ -62,14 +62,8 @@ int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
 
         populate_default_variables(db_.get());
 
-        // Compute unit conversion factors once
-        unit_system_   = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-        ucf_rainfall_  = ucf::UCF(ucf::RAINFALL,  ctx.options);
-        ucf_raindepth_ = ucf::UCF(ucf::RAINDEPTH, ctx.options);
-        ucf_evaprate_  = ucf::UCF(ucf::EVAPRATE,  ctx.options);
-        ucf_length_    = ucf::UCF(ucf::LENGTH,    ctx.options);
-        ucf_volume_    = ucf::UCF(ucf::VOLUME,    ctx.options);
-        ucf_flow_      = ucf::UCF(ucf::FLOW,      ctx.options);
+        // Per-timestep results arrive pre-converted to display units (engine
+        // boundary); no plugin-side conversion factors needed.
 
         // Cache variable IDs
         auto var_stmt = gpkg::prepare(db_.get(), "SELECT variable_id, name, object_type FROM variables");
@@ -119,37 +113,37 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
             vid = lookup_variable("rainfall", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.rainfall.size())
                 buffer_.push_back({"SUBCATCH", name, vid, sim_time,
-                    snapshot.subcatch.rainfall[ui] * ucf_rainfall_});
+                    snapshot.subcatch.rainfall[ui]});
 
             vid = lookup_variable("snow_depth", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.snow_depth.size())
                 buffer_.push_back({"SUBCATCH", name, vid, sim_time,
-                    snapshot.subcatch.snow_depth[ui] * ucf_raindepth_});
+                    snapshot.subcatch.snow_depth[ui]});
 
             vid = lookup_variable("evap_loss", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.evap.size())
                 buffer_.push_back({"SUBCATCH", name, vid, sim_time,
-                    snapshot.subcatch.evap[ui] * ucf_evaprate_});
+                    snapshot.subcatch.evap[ui]});
 
             vid = lookup_variable("infil_loss", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.infil.size())
                 buffer_.push_back({"SUBCATCH", name, vid, sim_time,
-                    snapshot.subcatch.infil[ui] * ucf_rainfall_});
+                    snapshot.subcatch.infil[ui]});
 
             vid = lookup_variable("runoff", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.runoff.size())
                 buffer_.push_back({"SUBCATCH", name, vid, sim_time,
-                    snapshot.subcatch.runoff[ui] * ucf_flow_});
+                    snapshot.subcatch.runoff[ui]});
 
             vid = lookup_variable("gw_flow", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.gw_flow.size())
                 buffer_.push_back({"SUBCATCH", name, vid, sim_time,
-                    snapshot.subcatch.gw_flow[ui] * ucf_flow_});
+                    snapshot.subcatch.gw_flow[ui]});
 
             vid = lookup_variable("gw_elev", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.gw_elev.size())
                 buffer_.push_back({"SUBCATCH", name, vid, sim_time,
-                    snapshot.subcatch.gw_elev[ui] * ucf_length_});
+                    snapshot.subcatch.gw_elev[ui]});
 
             vid = lookup_variable("soil_moist", "SUBCATCH");
             if (vid >= 0 && ui < snapshot.subcatch.soil_moist.size())
@@ -184,32 +178,32 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
             vid = lookup_variable("depth", "NODE");
             if (vid >= 0 && ui < snapshot.nodes.depth.size())
                 buffer_.push_back({"NODE", name, vid, sim_time,
-                    snapshot.nodes.depth[ui] * ucf_length_});
+                    snapshot.nodes.depth[ui]});
 
             vid = lookup_variable("head", "NODE");
             if (vid >= 0 && ui < snapshot.nodes.head.size())
                 buffer_.push_back({"NODE", name, vid, sim_time,
-                    snapshot.nodes.head[ui] * ucf_length_});
+                    snapshot.nodes.head[ui]});
 
             vid = lookup_variable("volume", "NODE");
             if (vid >= 0 && ui < snapshot.nodes.volume.size())
                 buffer_.push_back({"NODE", name, vid, sim_time,
-                    snapshot.nodes.volume[ui] * ucf_volume_});
+                    snapshot.nodes.volume[ui]});
 
             vid = lookup_variable("lateral_inflow", "NODE");
             if (vid >= 0 && ui < snapshot.nodes.lateral_inflow.size())
                 buffer_.push_back({"NODE", name, vid, sim_time,
-                    snapshot.nodes.lateral_inflow[ui] * ucf_flow_});
+                    snapshot.nodes.lateral_inflow[ui]});
 
             vid = lookup_variable("total_inflow", "NODE");
             if (vid >= 0 && ui < snapshot.nodes.total_inflow.size())
                 buffer_.push_back({"NODE", name, vid, sim_time,
-                    snapshot.nodes.total_inflow[ui] * ucf_flow_});
+                    snapshot.nodes.total_inflow[ui]});
 
             vid = lookup_variable("overflow", "NODE");
             if (vid >= 0 && ui < snapshot.nodes.overflow.size())
                 buffer_.push_back({"NODE", name, vid, sim_time,
-                    snapshot.nodes.overflow[ui] * ucf_flow_});
+                    snapshot.nodes.overflow[ui]});
 
             // Pollutant concentrations
             for (int p = 0; p < snapshot.pollut_count; ++p) {
@@ -239,22 +233,22 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
             vid = lookup_variable("flow", "LINK");
             if (vid >= 0 && ui < snapshot.links.flow.size())
                 buffer_.push_back({"LINK", name, vid, sim_time,
-                    snapshot.links.flow[ui] * ucf_flow_});
+                    snapshot.links.flow[ui]});
 
             vid = lookup_variable("depth", "LINK");
             if (vid >= 0 && ui < snapshot.links.depth.size())
                 buffer_.push_back({"LINK", name, vid, sim_time,
-                    snapshot.links.depth[ui] * ucf_length_});
+                    snapshot.links.depth[ui]});
 
             vid = lookup_variable("velocity", "LINK");
             if (vid >= 0 && ui < snapshot.links.velocity.size())
                 buffer_.push_back({"LINK", name, vid, sim_time,
-                    snapshot.links.velocity[ui] * ucf_length_});
+                    snapshot.links.velocity[ui]});
 
             vid = lookup_variable("volume", "LINK");
             if (vid >= 0 && ui < snapshot.links.volume.size())
                 buffer_.push_back({"LINK", name, vid, sim_time,
-                    snapshot.links.volume[ui] * ucf_volume_});
+                    snapshot.links.volume[ui]});
 
             vid = lookup_variable("capacity", "LINK");
             if (vid >= 0 && ui < snapshot.links.capacity.size())
@@ -280,87 +274,84 @@ int GeoPackageOutputPlugin::update(const SimulationSnapshot& snapshot) {
         {
             int vid;
 
-            // Temperature — convert °F → °C for SI
+            // Temperature already in display units (°F US | °C SI) from boundary
             vid = lookup_variable("air_temp", "SYSTEM");
-            if (vid >= 0) {
-                double temp = (unit_system_ == 0)
-                    ? snapshot.sys_temperature
-                    : (5.0 / 9.0) * (snapshot.sys_temperature - 32.0);
-                buffer_.push_back({"SYSTEM", "system", vid, sim_time, temp});
-            }
+            if (vid >= 0)
+                buffer_.push_back({"SYSTEM", "system", vid, sim_time,
+                    snapshot.sys_temperature});
 
             vid = lookup_variable("rainfall", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_rainfall * ucf_rainfall_});
+                    snapshot.sys_rainfall});
 
             vid = lookup_variable("snow_depth", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_snow_depth * ucf_raindepth_});
+                    snapshot.sys_snow_depth});
 
             vid = lookup_variable("infil", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_infil * ucf_rainfall_});
+                    snapshot.sys_infil});
 
             vid = lookup_variable("runoff", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_runoff * ucf_flow_});
+                    snapshot.sys_runoff});
 
             vid = lookup_variable("dw_inflow", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_dw_inflow * ucf_flow_});
+                    snapshot.sys_dw_inflow});
 
             vid = lookup_variable("gw_inflow", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_gw_inflow * ucf_flow_});
+                    snapshot.sys_gw_inflow});
 
             vid = lookup_variable("ii_inflow", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_ii_inflow * ucf_flow_});
+                    snapshot.sys_ii_inflow});
 
             vid = lookup_variable("ext_inflow", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_ext_inflow * ucf_flow_});
+                    snapshot.sys_ext_inflow});
 
             vid = lookup_variable("total_inflow", "SYSTEM");
             if (vid >= 0) {
-                double total = (snapshot.sys_runoff + snapshot.sys_dw_inflow +
-                                snapshot.sys_gw_inflow + snapshot.sys_ii_inflow +
-                                snapshot.sys_ext_inflow) * ucf_flow_;
+                double total = snapshot.sys_runoff + snapshot.sys_dw_inflow +
+                               snapshot.sys_gw_inflow + snapshot.sys_ii_inflow +
+                               snapshot.sys_ext_inflow;
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time, total});
             }
 
             vid = lookup_variable("flooding", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_flooding * ucf_flow_});
+                    snapshot.sys_flooding});
 
             vid = lookup_variable("outflow", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_outflow * ucf_flow_});
+                    snapshot.sys_outflow});
 
             vid = lookup_variable("storage", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_storage * ucf_volume_});
+                    snapshot.sys_storage});
 
             vid = lookup_variable("evap", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_evap * ucf_evaprate_});
+                    snapshot.sys_evap});
 
             vid = lookup_variable("pet", "SYSTEM");
             if (vid >= 0)
                 buffer_.push_back({"SYSTEM", "system", vid, sim_time,
-                    snapshot.sys_pet * ucf_evaprate_});
+                    snapshot.sys_pet});
         }
 
         if (buffer_.size() >= FLUSH_THRESHOLD)

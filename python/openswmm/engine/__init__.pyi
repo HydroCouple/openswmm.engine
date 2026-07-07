@@ -119,6 +119,7 @@ from ._enums import (
     GageRainType as GageRainType,
     InfilModel as InfilModel,
     # Water quality / LID
+    AquiferParam as AquiferParam,
     BuildupFunc as BuildupFunc,
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,
@@ -131,7 +132,15 @@ from ._enums import (
     # Forcing & patterns
     ForcingMode as ForcingMode,
     ForcingTarget as ForcingTarget,
+    ForcingType as ForcingType,
+    ForcingPersist as ForcingPersist,
     PatternType as PatternType,
+    # 2D surface routing
+    SurfaceForcingMode as SurfaceForcingMode,
+    SurfaceBoundaryType as SurfaceBoundaryType,
+    # Nodes / editing
+    DividerType as DividerType,
+    RefType as RefType,
     # Mass-balance totals
     RoutingTotal as RoutingTotal,
     RunoffTotal as RunoffTotal,

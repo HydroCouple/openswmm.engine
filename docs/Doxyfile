@@ -30,7 +30,7 @@
 # This tag specifies the encoding used for all characters in the configuration
 # file that follow. The default is UTF-8 which is also the encoding used for all
 # text before the first occurrence of this tag. Doxygen uses libiconv (or the
-# iconv built into libc) for the transcoding. See
+# iconv built into libc) for the transcoding. See 
 # https://www.gnu.org/software/libiconv/ for the list of possible encodings.
 # The default value is: UTF-8.
 
@@ -1493,7 +1493,8 @@ HTML_EXTRA_FILES       = custom/js/doxygen-awesome-darkmode-toggle.js \
                          custom/js/doxygen-awesome-fragment-copy-button.js \
                          custom/js/doxygen-awesome-interactive-toc.js \
                          custom/js/doxygen-awesome-paragraph-link.js \
-                         custom/js/doxygen-awesome-tabs.js
+                         custom/js/doxygen-awesome-tabs.js \
+                         custom/mathjax-config.js
 
 # The HTML_COLORSTYLE tag can be used to specify if the generated HTML output
 # should be rendered with a dark or light theme.

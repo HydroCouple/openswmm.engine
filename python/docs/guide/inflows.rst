@@ -100,6 +100,33 @@ so per-row reading works.
 
 ----
 
+Routing interface files (``[FILES]``)
+=====================================
+
+Two separate models can be chained through legacy SWMM routing interface
+files: an upstream model declares ``SAVE OUTFLOWS "file"`` in its
+``[FILES]`` section and writes one row per outlet node per reporting
+step; a downstream model declares ``USE INFLOWS "file"`` and receives
+those flows (and pollutant loads) as node lateral inflows, interpolated
+between file periods. Node names in the file must match node ids in the
+receiving model; flows are converted from the file's declared units.
+Paths can also be set programmatically via
+:meth:`ModelBuilder.files_set` with the ``"INFLOWS_PATH"`` /
+``"OUTFLOWS_PATH"`` keys. A missing or malformed inflows file causes
+:meth:`Solver.start` to raise (legacy errors 351/353/357).
+
+The other ``[FILES]`` slots behave like legacy SWMM: ``SAVE RUNOFF``
+exports each runoff substep to a binary runoff interface file and
+``USE RUNOFF`` replays it in place of the runoff computation;
+``SAVE RDII`` exports the computed RDII inflows (legacy ``SWMM5-RDII``
+binary) and ``USE RDII`` **overrides the internal unit-hydrograph
+computation entirely** — the file's flows (binary or legacy text format)
+become the RDII inflows. ``USE/SAVE RAINFALL`` (the collated binary rain
+file) is not implemented; the engine warns and reads gage data files
+directly.
+
+----
+
 See also
 ========
 

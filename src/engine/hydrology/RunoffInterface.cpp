@@ -14,10 +14,17 @@
 
 #include "RunoffInterface.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include <cstring>
 
 namespace openswmm {
 namespace runoff_iface {
+
+namespace {
+/// Legacy consts.h MIN_RUNOFF: reported runoff below this rate × area is
+/// written as zero (0.001 in/hr expressed as ft/sec).
+constexpr double MIN_RUNOFF = 2.31481e-8;
+} // namespace
 
 // ============================================================================
 // Open for writing (SAVE mode)
@@ -32,6 +39,8 @@ int RunoffInterfaceFile::openForWrite(const std::string& path, int n_subcatch,
     n_subcatch_ = n_subcatch;
     n_pollut_ = n_pollut;
     n_results_ = N_FIXED_RESULTS + n_pollut;
+    flow_units_ = flow_units;
+    unit_system_ = ucf::getUnitSystem(flow_units);
     step_count_ = 0;
 
     buf_.resize(static_cast<size_t>(n_results_));
@@ -93,6 +102,8 @@ int RunoffInterfaceFile::openForRead(const std::string& path, int n_subcatch,
     n_subcatch_ = n_subcatch;
     n_pollut_ = n_pollut;
     n_results_ = N_FIXED_RESULTS + n_pollut;
+    flow_units_ = flow_units;
+    unit_system_ = ucf::getUnitSystem(flow_units);
     step_count_ = 0;
 
     buf_.resize(static_cast<size_t>(n_results_));
@@ -110,30 +121,46 @@ void RunoffInterfaceFile::saveResults(const SimulationContext& ctx, double dt) {
     float dt_f = static_cast<float>(dt);
     std::fwrite(&dt_f, sizeof(float), 1, fp_);
 
+    // Values are written in USER units, mirroring legacy
+    // subcatch_getResults(j, 1.0, x) so files inter-operate with the
+    // legacy engine (internal state is ft/sec, cfs).
+    const int us = unit_system_;
+    const double qcf = ucf::Qcf[flow_units_];
+
     int np = n_pollut_;
     for (int j = 0; j < n_subcatch_; ++j) {
         auto uj = static_cast<size_t>(j);
 
         // Fixed results (matching legacy SUBCATCH_RAINFALL..SUBCATCH_SOIL_MOIST)
-        double rainfall = 0.0;
+        double rainfall = 0.0;  // gage rainfall is already project rain units
         if (ctx.subcatches.gage[uj] >= 0 &&
             ctx.subcatches.gage[uj] < static_cast<int>(ctx.gages.rainfall.size()))
             rainfall = ctx.gages.rainfall[static_cast<size_t>(ctx.subcatches.gage[uj])];
 
-        buf_[0] = static_cast<float>(rainfall);
-        buf_[1] = 0.0f;  // snow depth (placeholder)
-        buf_[2] = static_cast<float>(ctx.subcatches.evap_loss[uj]);
-        buf_[3] = static_cast<float>(ctx.subcatches.infil_loss[uj]);
-        buf_[4] = static_cast<float>(ctx.subcatches.runoff[uj]);
-        buf_[5] = static_cast<float>(ctx.subcatches.gw_flow[uj]);
-        buf_[6] = 0.0f;  // GW elevation (placeholder)
-        buf_[7] = 0.0f;  // soil moisture (placeholder)
+        // Legacy zeroes reported runoff below MIN_RUNOFF × area (ft²);
+        // washoff is zeroed with it. subcatches.area holds project units
+        // (ac | ha); legacy converts with the same Ucf[LANDAREA] constants.
+        double runoff = ctx.subcatches.runoff[uj];   // cfs
+        const double area_ft2 =
+            ctx.subcatches.area[uj] / ucf::Ucf[ucf::LANDAREA][us];
+        if (runoff < MIN_RUNOFF * area_ft2) runoff = 0.0;
 
-        // Pollutant washoff concentrations
+        buf_[0] = static_cast<float>(rainfall);
+        buf_[1] = 0.0f;  // snow depth (no per-subcatch state — see header)
+        buf_[2] = static_cast<float>(ctx.subcatches.evap_loss[uj]
+                                     * ucf::Ucf[ucf::EVAPRATE][us]);
+        buf_[3] = static_cast<float>(ctx.subcatches.infil_loss[uj]
+                                     * ucf::Ucf[ucf::RAINFALL][us]);
+        buf_[4] = static_cast<float>(runoff * qcf);
+        buf_[5] = static_cast<float>(ctx.subcatches.gw_flow[uj] * qcf);
+        buf_[6] = 0.0f;  // GW elevation (no per-subcatch state — see header)
+        buf_[7] = 0.0f;  // soil moisture (no per-subcatch state — see header)
+
+        // Pollutant washoff concentrations (legacy: zero when runoff is zero)
         for (int p = 0; p < np; ++p) {
             auto sq = uj * static_cast<size_t>(np) + static_cast<size_t>(p);
             buf_[static_cast<size_t>(N_FIXED_RESULTS + p)] =
-                (sq < ctx.subcatches.conc.size())
+                (runoff > 0.0 && sq < ctx.subcatches.conc.size())
                 ? static_cast<float>(ctx.subcatches.conc[sq]) : 0.0f;
         }
 
@@ -147,11 +174,12 @@ void RunoffInterfaceFile::saveResults(const SimulationContext& ctx, double dt) {
 // Read one timestep of results
 // ============================================================================
 
-bool RunoffInterfaceFile::readResults(SimulationContext& ctx) {
+bool RunoffInterfaceFile::readResults(SimulationContext& ctx, double* dt_out) {
     if (!fp_ || writing_) return false;
 
     float dt_f;
     if (std::fread(&dt_f, sizeof(float), 1, fp_) != 1) return false;
+    if (dt_out) *dt_out = static_cast<double>(dt_f);
 
     int np = n_pollut_;
     for (int j = 0; j < n_subcatch_; ++j) {
@@ -162,8 +190,20 @@ bool RunoffInterfaceFile::readResults(SimulationContext& ctx) {
             != static_cast<size_t>(n_results_))
             return false;
 
-        // Restore subcatchment state from file
-        ctx.subcatches.runoff[uj] = static_cast<double>(buf_[4]);
+        // Restore subcatchment state from file, converting the user-unit
+        // record values back to internal units exactly as legacy
+        // runoff_readFromFile does — including its evap asymmetry (written
+        // ×UCF(EVAPRATE) but read ÷UCF(RAINFALL), a deliberate legacy-parity
+        // quirk). Snow depth / GW elev / soil moisture have no refactored
+        // per-subcatch state and are skipped.
+        const int us = unit_system_;
+        const double qcf = ucf::Qcf[flow_units_];
+        ctx.subcatches.evap_loss[uj]  = static_cast<double>(buf_[2])
+                                        / ucf::Ucf[ucf::RAINFALL][us];
+        ctx.subcatches.infil_loss[uj] = static_cast<double>(buf_[3])
+                                        / ucf::Ucf[ucf::RAINFALL][us];
+        ctx.subcatches.runoff[uj]     = static_cast<double>(buf_[4]) / qcf;
+        ctx.subcatches.gw_flow[uj]    = static_cast<double>(buf_[5]) / qcf;
 
         // Restore pollutant concentrations
         for (int p = 0; p < np; ++p) {

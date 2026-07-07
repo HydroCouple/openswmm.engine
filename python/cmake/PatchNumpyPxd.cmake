@@ -81,13 +81,24 @@ function(openswmm_patch_numpy_pxd)
     set(_old "<tuple>d.subarray.shape")
     set(_new "<tuple>PyDataType_SUBARRAY(d).shape")
 
+    # numpy 1.x still has the `subarray` field and does NOT declare the
+    # PyDataType_SUBARRAY accessor in its Cython pxd, so the rewrite would
+    # break the build there.  Only rewrite on numpy 2.x; copy verbatim on 1.x.
+    if(_numpy_version VERSION_LESS "2.0")
+        set(_do_rewrite FALSE)
+    else()
+        set(_do_rewrite TRUE)
+    endif()
+
     set(_patched_files "")
     foreach(_pxd "__init__.pxd" "__init__.cython-30.pxd" "__init__.cython-31.pxd")
         set(_src "${_numpy_dir}/${_pxd}")
         if(EXISTS "${_src}")
             set(_dst "${_patched_dir}/numpy/${_pxd}")
             file(READ "${_src}" _content)
-            string(REPLACE "${_old}" "${_new}" _content "${_content}")
+            if(_do_rewrite)
+                string(REPLACE "${_old}" "${_new}" _content "${_content}")
+            endif()
             file(WRITE "${_dst}" "${_content}")
             list(APPEND _patched_files "${_pxd}")
         endif()

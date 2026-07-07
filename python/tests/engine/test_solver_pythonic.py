@@ -221,8 +221,10 @@ class TestUserFlags:
         assert abs(v - 3.14) < 1e-9
 
     def test_wrong_value_type_raises(self, opened_solver):
+        # bool/int/float/str are all accepted (str auto-defines a STRING
+        # flag); a container type has no supported setter and must raise.
         with pytest.raises(TypeError):
-            opened_solver.userflags["X"] = "not allowed"
+            opened_solver.userflags["X"] = [1, 2, 3]
 
 
 # ---------------------------------------------------------------------------

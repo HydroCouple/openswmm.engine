@@ -15,9 +15,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
+#include <string_view>
 
 namespace openswmm::twoD {
 
@@ -97,12 +100,28 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "COUPLING_INTERVAL")) {
         opts.coupling_interval = tryParseInt(val, ok);
         if (!ok) return "Invalid COUPLING_INTERVAL value";
+    } else if (iequals(key, "COUPLING_WINDOW")) {
+        opts.coupling_window = tryParseDouble(val, ok);
+        if (!ok) return "Invalid COUPLING_WINDOW value";
+    } else if (iequals(key, "ACTIVE_SET")) {
+        if (iequals(val, "YES") || val == "1")
+            opts.active_set = true;
+        else if (iequals(val, "NO") || val == "0")
+            opts.active_set = false;
+        else
+            return "Invalid ACTIVE_SET value (YES/NO)";
+    } else if (iequals(key, "ACTIVE_SET_HALO")) {
+        opts.active_set_halo = tryParseInt(val, ok);
+        if (!ok || opts.active_set_halo < 1) return "Invalid ACTIVE_SET_HALO value";
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
     } else if (iequals(key, "LIMITER_EPSILON")) {
         opts.limiter_epsilon = tryParseDouble(val, ok);
         if (!ok) return "Invalid LIMITER_EPSILON value";
+    } else if (iequals(key, "FLUX_DH_EPS")) {
+        opts.flux_dh_eps = tryParseDouble(val, ok);
+        if (!ok) return "Invalid FLUX_DH_EPS value";
     } else if (iequals(key, "MAX_CVODE_STEPS")) {
         opts.max_cvode_steps = tryParseInt(val, ok);
         if (!ok) return "Invalid MAX_CVODE_STEPS value";
@@ -122,8 +141,19 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.preconditioner = PreconditionerType::JACOBI;
         else if (iequals(val, "ILU"))
             opts.preconditioner = PreconditionerType::ILU;
+        else if (iequals(val, "AMG"))
+            opts.preconditioner = PreconditionerType::AMG;
         else
             return "Unknown PRECONDITIONER: " + val;
+    } else if (iequals(key, "RAINFALL_MODE")) {
+        if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
+            opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
+        else if (iequals(val, "SYSTEM"))
+            opts.rainfall_mode = RainfallMode::SYSTEM;
+        else if (iequals(val, "NONE"))
+            opts.rainfall_mode = RainfallMode::NONE;
+        else
+            return "Unknown RAINFALL_MODE: " + val;
     } else if (iequals(key, "REPORT_2D")) {
         if (iequals(val, "YES") || val == "1")
             opts.report_2d = true;
@@ -139,6 +169,75 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
 
+    return {};
+}
+
+
+bool is2DOptionKey(const std::string& key) {
+    static const char* kKeys[] = {
+        "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
+        "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_WINDOW",
+        "ACTIVE_SET", "ACTIVE_SET_HALO",
+        "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
+        "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
+        "OUTPUT_FILE",
+    };
+    for (const char* k : kKeys) {
+        if (iequals(key, k)) return true;
+    }
+    return false;
+}
+
+
+std::string format2DOptionValue(const SolverOptions2D& opts,
+                                const std::string& key) {
+    auto fmt_g = [](double v) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.12g", v);
+        return std::string(buf);
+    };
+
+    if (iequals(key, "MAX_TIMESTEP"))      return fmt_g(opts.max_timestep);
+    if (iequals(key, "MIN_TIMESTEP"))      return fmt_g(opts.min_timestep);
+    if (iequals(key, "REL_TOLERANCE"))     return fmt_g(opts.rel_tolerance);
+    if (iequals(key, "ABS_TOLERANCE"))     return fmt_g(opts.abs_tolerance);
+    if (iequals(key, "DRY_DEPTH"))         return fmt_g(opts.dry_depth);
+    if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
+    if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
+    if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
+    if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
+    if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
+    if (iequals(key, "COUPLING_WINDOW"))   return fmt_g(opts.coupling_window);
+    if (iequals(key, "ACTIVE_SET"))        return opts.active_set ? "YES" : "NO";
+    if (iequals(key, "ACTIVE_SET_HALO"))   return std::to_string(opts.active_set_halo);
+    if (iequals(key, "MAX_CVODE_STEPS"))   return std::to_string(opts.max_cvode_steps);
+    if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
+    if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
+    if (iequals(key, "LINEAR_SOLVER")) {
+        switch (opts.linear_solver) {
+            case LinearSolverType::GMRES:    return "GMRES";
+            case LinearSolverType::BICGSTAB: return "BICGSTAB";
+            case LinearSolverType::TFQMR:    return "TFQMR";
+        }
+        return "GMRES";
+    }
+    if (iequals(key, "PRECONDITIONER")) {
+        switch (opts.preconditioner) {
+            case PreconditionerType::NONE:   return "NONE";
+            case PreconditionerType::JACOBI: return "JACOBI";
+            case PreconditionerType::ILU:    return "ILU";
+            case PreconditionerType::AMG:    return "AMG";
+        }
+        return "JACOBI";
+    }
+    if (iequals(key, "RAINFALL_MODE")) {
+        switch (opts.rainfall_mode) {
+            case RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
+            case RainfallMode::SYSTEM:            return "SYSTEM";
+            case RainfallMode::NONE:              return "NONE";
+        }
+        return "NATURAL_NEIGHBOUR";
+    }
     return {};
 }
 
@@ -286,7 +385,11 @@ input::SectionHandler makeSectionHandler(LineParser line_parser) {
             if (tokens.empty()) continue;
             std::string err = lp(tokens);
             if (!err.empty()) {
-                ctx.error_code    = 1;
+                // 5 = public SWMM_ERR_PARSE. Must be non-zero so InputReader
+                // (which gates success on ctx.error_code == 0) treats the
+                // section as failed; previously this was 1 (SWMM_ERR_NOMEM),
+                // so every 2D section parse error surfaced as "Out of memory".
+                ctx.error_code    = 5;
                 ctx.error_message = "[2D] " + err + " — line: " + raw;
                 return;
             }
@@ -362,12 +465,55 @@ std::string parse2DBoundaryConditionsLine(
 
 
 // ============================================================================
+// §11A — [2D_EDGE_CONVEYANCE] line parser
+// ============================================================================
+
+std::string parse2DEdgeConveyanceLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_rows)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 3) {
+        return "[2D_EDGE_CONVEYANCE] needs FROM_VERTEX TO_VERTEX CONVEYANCE";
+    }
+
+    SurfaceRouter2D::PendingEdgeConveyanceRow row;
+    bool ok = false;
+
+    row.v_from = tryParseInt(tokens[0], ok);
+    if (!ok || row.v_from < 0)
+        return "[2D_EDGE_CONVEYANCE] invalid FROM_VERTEX: " + tokens[0];
+
+    row.v_to = tryParseInt(tokens[1], ok);
+    if (!ok || row.v_to < 0)
+        return "[2D_EDGE_CONVEYANCE] invalid TO_VERTEX: " + tokens[1];
+
+    if (row.v_from == row.v_to)
+        return "[2D_EDGE_CONVEYANCE] FROM_VERTEX and TO_VERTEX must differ";
+
+    row.conveyance = tryParseDouble(tokens[2], ok);
+    if (!ok)
+        return "[2D_EDGE_CONVEYANCE] invalid CONVEYANCE: " + tokens[2];
+
+    // Q1 — strict [0, 1] clamp at parse time.
+    if (row.conveyance < 0.0 || row.conveyance > 1.0) {
+        return "[2D_EDGE_CONVEYANCE] CONVEYANCE must be in [0, 1] (got "
+               + tokens[2] + ")";
+    }
+
+    pending_rows.push_back(std::move(row));
+    return {};
+}
+
+
+// ============================================================================
 // register2DSections
 // ============================================================================
 
 void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                        std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         input::SectionRegistry& registry)
 {
     registry.register_custom("2D_OPTIONS",
@@ -402,6 +548,14 @@ void register2DSections(MeshData& mesh,
             return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
 
+    // §11A — [2D_EDGE_CONVEYANCE] accumulates pending rows; drained
+    // during SurfaceRouter2D::initialize() after buildMeshTopology so
+    // the vertex-pair → (tri, edge_local) lookup table is available.
+    registry.register_custom("2D_EDGE_CONVEYANCE",
+        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
+            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+        }));
+
     // [2D_MESH_FILE] — capture only the first FILE token; mesh is loaded
     // after the main .inp is fully parsed (see SWMMEngine::open).
     registry.register_custom("2D_MESH_FILE",
@@ -426,6 +580,7 @@ void register2DSections(MeshData& mesh,
 std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
+                                   std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir)
 {
@@ -465,12 +620,69 @@ std::string load2DMeshExternalFile(MeshData& mesh,
             return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
 
+    // §11A — external .2dm may carry its own [2D_EDGE_CONVEYANCE].
+    mini.register_custom("2D_EDGE_CONVEYANCE",
+        makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
+            return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
+        }));
+
+    // The external .2dm may carry its own `;; UNITS:` header. Scan first
+    // so SurfaceRouter2D::initialize sees the right flag before it runs.
+    prescan2DUnitsHeader(p.string(), opts);
+
     openswmm::input::InputReader reader(mini);
     openswmm::SimulationContext  dummy;
     if (!reader.read(p.string(), dummy)) {
         return "2D_MESH_FILE: error reading '" + p.string() + "': " + dummy.error_message;
     }
     return {};
+}
+
+// ============================================================================
+// prescan2DUnitsHeader
+// ============================================================================
+
+void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
+{
+    std::ifstream in(inp_path);
+    if (!in) return;  // file missing — caller will surface the error
+
+    auto trim = [](std::string s) {
+        const auto issp = [](unsigned char c) { return std::isspace(c) != 0; };
+        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))   s.pop_back();
+        std::size_t i = 0;
+        while (i < s.size() && issp(static_cast<unsigned char>(s[i]))) ++i;
+        return s.substr(i);
+    };
+
+    std::string line;
+    while (std::getline(in, line)) {
+        const std::string t = trim(line);
+        if (t.size() < 2 || t[0] != ';' || t[1] != ';') continue;
+        std::string rest = trim(t.substr(2));
+        // Match "UNITS:" prefix case-insensitively.
+        constexpr std::string_view kKey = "UNITS:";
+        if (rest.size() < kKey.size()) continue;
+        bool match = true;
+        for (std::size_t i = 0; i < kKey.size(); ++i) {
+            if (std::toupper(static_cast<unsigned char>(rest[i])) != kKey[i]) {
+                match = false; break;
+            }
+        }
+        if (!match) continue;
+        const std::string value = trim(rest.substr(kKey.size()));
+        // Recognised metric markers.  Anything else (including absent /
+        // unknown / explicit "ft") leaves the flag at its current value.
+        const bool si =
+               iequals(value, "SI (m)")
+            || iequals(value, "m")
+            || iequals(value, "metre")
+            || iequals(value, "metres")
+            || iequals(value, "meter")
+            || iequals(value, "meters");
+        if (si) opts.mesh_units_si = true;
+        // We keep scanning so a later UNITS: line in the same file wins.
+    }
 }
 
 } // namespace openswmm::twoD

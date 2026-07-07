@@ -44,7 +44,7 @@ double convertRainfall(double raw_value, GageState& state) {
             break;
     }
 
-    return r * state.units_factor * state.adjust_factor;
+    return r * state.units_factor * state.scale_factor * state.adjust_factor;
 }
 
 void separatePrecip(GageState& state, double intensity,
@@ -97,10 +97,16 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
 
         // Gap #53: co-gage sharing — copy rainfall from the primary gage that
         // shares this gage's timeseries.  Matches legacy gage_setState() coGage path.
+        // The primary's rainfall already has its own scale_factor baked in, so
+        // we strip it and multiply by this gage's scale_factor (legacy gage.c:355).
         int co = (uj < ctx.gages.co_gage_index.size())
                  ? ctx.gages.co_gage_index[uj] : -1;
         if (co >= 0 && co < j) {
-            ctx.gages.rainfall[uj] = ctx.gages.rainfall[static_cast<std::size_t>(co)];
+            const auto uco = static_cast<std::size_t>(co);
+            double primary_sf = ctx.gages.scale_factor[uco];
+            double this_sf    = ctx.gages.scale_factor[uj];
+            double ratio = (primary_sf > 0.0) ? (this_sf / primary_sf) : 1.0;
+            ctx.gages.rainfall[uj] = ctx.gages.rainfall[uco] * ratio;
             continue;
         }
 
@@ -120,8 +126,18 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
 
         int ts_idx = ctx.gages.ts_index[uj];
         double raw_value = 0.0;
-        if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
-            auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+        // Select the source series: a FILE_RAIN gage reads from its own resolved
+        // rain_series (built by load_external_rain_files); a TIMESERIES gage reads
+        // from the shared table pool.  Both reuse the identical step-function below.
+        Table* rtbl = nullptr;
+        if (ctx.gages.source[uj] == RainSource::FILE_RAIN) {
+            if (uj < ctx.gages.rain_series.size() && !ctx.gages.rain_series[uj].empty())
+                rtbl = &ctx.gages.rain_series[uj];
+        } else if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
+            rtbl = &ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+        }
+        if (rtbl) {
+            auto& tbl = *rtbl;
             int n = static_cast<int>(tbl.x.size());
 
             // Step-function lookup: find rightmost entry where x[idx] <= t
@@ -156,8 +172,11 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
         }
 
         if (rain_type == 1 && interval > 0.0) {
-            // VOLUME: value is depth per interval → convert to in/hr
-            raw_value = raw_value / (interval / 3600.0);
+            // VOLUME: value is depth per interval → convert to in/hr.
+            // Match legacy gage.c:692 operand order exactly: r/interval*3600.0
+            // (one divide then one multiply), NOT r/(interval/3600.0) which forms
+            // the non-representable 1/12 constant first and rounds differently.
+            raw_value = raw_value / interval * 3600.0;
         } else if (rain_type == 2 && interval > 0.0) {
             // CUMULATIVE (Gap #31): raw_value is cumulative depth; compute delta.
             // Matches legacy convertRainfall() CUMULATIVE_RAINFALL case:
@@ -169,9 +188,25 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
                 ? raw_value              // counter reset — use full value as depth
                 : (raw_value - prev);    // normal incremental delta
             ctx.gages.cumul_rain_accum[uj] = raw_value;
-            raw_value = depth / (interval / 3600.0);  // depth → in/hr
+            raw_value = depth / interval * 3600.0;  // depth → in/hr (legacy gage.c:697 order)
         }
         // INTENSITY (type 0): already in/hr — no conversion needed
+
+        // PARITY: legacy convertRainfall (gage.c:705) applies
+        //   r1 * unitsFactor * scaleFactor * Adjust.rainFactor
+        // where Gage.unitsFactor = MMperINCH for FILE gages in SI projects
+        // (gage.c:300 — "rain depths on interface file are in inches") and
+        // 1.0 otherwise. The FILE series here holds float-quantized inches
+        // (see load_external_rain_files), so this restores project mm/hr.
+        // Multiplication order must match legacy: unitsFactor BEFORE
+        // scaleFactor.
+        {
+            double units_factor = 1.0;
+            if (ctx.gages.source[uj] == RainSource::FILE_RAIN &&
+                static_cast<int>(ctx.options.flow_units) >= 3)
+                units_factor = 25.40;  // legacy MMperINCH (consts.h:389)
+            raw_value = raw_value * units_factor * ctx.gages.scale_factor[uj];
+        }
 
         // Convert from in/hr to ft/sec for internal use
         // Legacy: rainfall stored as in/hr for reporting, converted to ft/sec for runoff
@@ -203,22 +238,49 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
                          double report_date) {
     auto ug = static_cast<std::size_t>(gage_idx);
 
-    // API override
+    // Co-gage: report the primary's report rainfall re-scaled by this gage's
+    // factor (legacy gage_setReportRainfall, gage.c:535-541). Co-gage index is
+    // always lower than this gage's, so the recursion terminates.
+    int co = (ug < ctx.gages.co_gage_index.size())
+             ? ctx.gages.co_gage_index[ug] : -1;
+    if (co >= 0 && co < gage_idx) {
+        const auto uco = static_cast<std::size_t>(co);
+        double primary_sf = ctx.gages.scale_factor[uco];
+        double this_sf    = ctx.gages.scale_factor[ug];
+        double ratio = (primary_sf > 0.0) ? (this_sf / primary_sf) : 1.0;
+        return getReportRainfall(ctx, co, report_date) * ratio;
+    }
+
+    // API override (legacy gage.c:544-548)
     if (ctx.gages.api_rainfall[ug] >= 0.0) {
         return ctx.gages.api_rainfall[ug];
     }
 
-    // Query timeseries at report_date (matching legacy gage_setReportRainfall)
-    int ts_idx = ctx.gages.ts_index[ug];
-    if (ts_idx < 0 || ts_idx >= static_cast<int>(ctx.tables.tables.size()))
-        return 0.0;
+    // Select the same series the gage state machine reads (Gage.cpp setState):
+    // FILE_RAIN gages use their private resolved rain_series; TIMESERIES gages
+    // use the shared table pool. (The previous version read only the shared
+    // pool, so FILE gages always reported 0.)
+    const Table* rtbl = nullptr;
+    if (ctx.gages.source[ug] == RainSource::FILE_RAIN) {
+        if (ug < ctx.gages.rain_series.size() && !ctx.gages.rain_series[ug].empty())
+            rtbl = &ctx.gages.rain_series[ug];
+    } else {
+        int ts_idx = ctx.gages.ts_index[ug];
+        if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size()))
+            rtbl = &ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+    }
+    if (!rtbl) return 0.0;
 
-    const auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ts_idx)];
+    const auto& tbl = *rtbl;
     int n = static_cast<int>(tbl.x.size());
     int idx = tbl.cursor.index;
     if (idx < 0 || idx >= n) return 0.0;
 
     double interval = ctx.gages.interval_sec[ug];
+
+    // Legacy gage_setReportRainfall (gage.c:550-564): advance the report time
+    // by one second, then three-way branch on the current interval end and the
+    // next interval start.
     double t = report_date + datetime::OneSecond;
 
     double entry_start = tbl.x[static_cast<std::size_t>(idx)];
@@ -238,10 +300,25 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
         }
     }
 
-    // Convert VOLUME to INTENSITY if needed
+    // Convert VOLUME to INTENSITY. Match legacy operand order exactly
+    // (gage.c:692): r / interval * 3600.0 — NOT r / (interval/3600.0), which
+    // forms a non-representable constant first and rounds differently.
     int rain_type = ctx.gages.rain_type[ug];
     if (rain_type == 1 && interval > 0.0) {
-        result = result / (interval / 3600.0);
+        result = result / interval * 3600.0;
+    }
+    // CUMULATIVE gages would need the interval delta here (legacy carries the
+    // converted value in gage state); none of the parity models use them with
+    // report rainfall — revisit if one does.
+
+    // PARITY: unitsFactor (MMperINCH for SI-project FILE gages, gage.c:300)
+    // BEFORE scaleFactor — legacy convertRainfall (gage.c:705).
+    {
+        double units_factor = 1.0;
+        if (ctx.gages.source[ug] == RainSource::FILE_RAIN &&
+            static_cast<int>(ctx.options.flow_units) >= 3)
+            units_factor = 25.40;  // legacy MMperINCH (consts.h:389)
+        result = result * units_factor * ctx.gages.scale_factor[ug];
     }
 
     return result;

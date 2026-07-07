@@ -117,6 +117,7 @@ int input_countObjects()
                 snprintf(warnMsg, MAXLINE,
                     "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", tok, lineCount);
                 report_writeLine(warnMsg);
+                report_invokeWarningCallback(warnMsg);
                 sect = -1;
                 continue;
             }
@@ -228,6 +229,7 @@ int input_readData()
                 snprintf(warnMsg, MAXLINE,
                     "\n  WARNING: Unknown section '%s' at line %ld will be skipped.", Tok[0], lineCount);
                 report_writeLine(warnMsg);
+                report_invokeWarningCallback(warnMsg);
                 sect = -1;
                 continue;
             }

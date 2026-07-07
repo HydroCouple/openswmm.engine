@@ -83,6 +83,7 @@ cdef class HotStart:
         return obj
 
     def close(self) -> None:
+        """Close the hot-start file and release its handle."""
         if self._handle != NULL:
             swmm_hotstart_close(self._handle)
             self._handle = NULL
@@ -158,22 +159,27 @@ cdef class HotStart:
     # ------------------------------------------------------------------
 
     def set_node_depth(self, str node_id, double depth) -> None:
+        """Seed the initial water depth at *node_id* in the hot-start state."""
         cdef bytes b = node_id.encode('utf-8')
         _check(swmm_hotstart_set_node_depth(self._handle, b, depth))
 
     def set_node_head(self, str node_id, double head) -> None:
+        """Seed the initial hydraulic head at *node_id* in the hot-start state."""
         cdef bytes b = node_id.encode('utf-8')
         _check(swmm_hotstart_set_node_head(self._handle, b, head))
 
     def set_link_flow(self, str link_id, double flow) -> None:
+        """Seed the initial flow at *link_id* in the hot-start state."""
         cdef bytes b = link_id.encode('utf-8')
         _check(swmm_hotstart_set_link_flow(self._handle, b, flow))
 
     def set_link_depth(self, str link_id, double depth) -> None:
+        """Seed the initial depth at *link_id* in the hot-start state."""
         cdef bytes b = link_id.encode('utf-8')
         _check(swmm_hotstart_set_link_depth(self._handle, b, depth))
 
     def set_subcatchment_runoff(self, str sub_id, double runoff) -> None:
+        """Seed the initial runoff at *sub_id* in the hot-start state."""
         cdef bytes b = sub_id.encode('utf-8')
         _check(swmm_hotstart_set_subcatch_runoff(self._handle, b, runoff))
 
@@ -268,6 +274,7 @@ class SaveSchedule(MutableSequence):
         _check(swmm_hotstart_saves_remove(h, idx))
 
     def insert(self, idx, value):
+        """Insert *value* at *idx* (emulated via clear + re-add; the C save API is append-only)."""
         # The C API only supports append; emulate insert by clearing and
         # re-adding (same approach as solver.events).
         n = len(self)
@@ -281,12 +288,14 @@ class SaveSchedule(MutableSequence):
             self.append(ent)
 
     def append(self, value):
+        """Append a hot-start save-schedule entry *value*."""
         when, path = self._unpack(value)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = path.encode('utf-8')
         _check(swmm_hotstart_saves_add(h, b, datetime_to_oadate(when)))
 
     def clear(self):
+        """Remove all entries from the hot-start save schedule."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_hotstart_saves_clear(h))
 

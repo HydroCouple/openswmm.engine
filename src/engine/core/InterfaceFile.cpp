@@ -62,6 +62,10 @@ void InterfaceFileSoA::resize(int n) {
 // ============================================================================
 
 void InterfaceManager::init(SimulationContext& /*ctx*/) {
+    // Re-init safety: release any files left open by a previous run so a
+    // second open()/initialize() cycle on the same engine does not leak
+    // handles (openFiles() is called again from start()).
+    closeFiles();
     data_.count = 0;
     infile_  = nullptr;
     outfile_ = nullptr;
@@ -268,15 +272,17 @@ void InterfaceManager::setOldValues() {
 // ============================================================================
 
 void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) {
-    if (!infile_ || data_.count == 0) return;
+    if (!infile_) return;
 
-    // On first call, read the header if not yet done
+    // Fallback: read the header if start() has not done so eagerly.
+    // (Checked before the count guard — count is 0 until the header is read.)
     if (data_.old_values.empty()) {
         if (readFileHeader(ctx) != 0) {
             closeFiles();
             return;
         }
     }
+    if (data_.count == 0) return;
 
     // Return if interface file starts after current time
     if (old_time_ > current_time) return;
@@ -307,15 +313,20 @@ void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) 
         double flow = getFlow(i, iface_frac_);
         ctx.nodes.iface_inflow[static_cast<std::size_t>(node)] += flow;
 
-        // Add interpolated quality values
+        // Add interpolated quality mass rates (w = q * c), matching legacy
+        // addIfaceInflows(): quality is only added for positive flows.
+        // QualitySolver::addIfaceLoads() folds these into qual_mass_in.
         int n_polluts = ctx.n_pollutants();
-        for (int p = 0; p < n_polluts; ++p) {
-            if (pollut_map_.empty()) continue;
-            double qual = getQuality(i, p, iface_frac_);
-            if (qual > 0.0) {
-                // Add quality loading to node
-                // (full implementation would use mass-weighted mixing)
-                // ctx.nodes.qual[node * n_polluts + p] += qual;
+        if (flow > 0.0 && n_polluts > 0 && !pollut_map_.empty()
+            && !ctx.nodes.iface_qual_mass.empty()) {
+            auto base_q = static_cast<std::size_t>(node) *
+                          static_cast<std::size_t>(n_polluts);
+            for (int p = 0; p < n_polluts; ++p) {
+                double qual = getQuality(i, p, iface_frac_);
+                if (qual > 0.0) {
+                    ctx.nodes.iface_qual_mass[base_q + static_cast<std::size_t>(p)]
+                        += flow * qual;
+                }
             }
         }
     }
@@ -347,8 +358,11 @@ void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
         std::fprintf(outfile_, " %04d %02d  %02d  %02d  %02d  %02d ",
                      yr, mon, day, hr, mn, sec);
 
-        // Write flow (in output flow units)
-        std::fprintf(outfile_, " %-10f", ctx.nodes.inflow[ui]);
+        // Write flow converted from internal cfs to the project's flow units
+        // (legacy: Node[j].inflow * UCF(FLOW), with UCF(FLOW) = Qcf[FlowUnits])
+        int fu = static_cast<int>(ctx.options.flow_units);
+        if (fu < 0 || fu > 5) fu = 0;
+        std::fprintf(outfile_, " %-10f", ctx.nodes.inflow[ui] * ucf::Qcf[fu]);
 
         // Write pollutant concentrations
         int np = ctx.n_pollutants();

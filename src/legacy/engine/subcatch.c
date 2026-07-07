@@ -425,6 +425,7 @@ void subcatch_initState(int subcatchIndex)
     Subcatch[subcatchIndex].infilLoss = 0.0;
     Subcatch[subcatchIndex].apiRainfall = 0.0;
     Subcatch[subcatchIndex].apiSnowfall = 0.0;
+    Subcatch[subcatchIndex].apiEvapRate = MISSING;
 
 
     // --- initialize state of infiltration, groundwater, & snow pack objects
@@ -605,6 +606,24 @@ void  subcatch_addRunonFlow(int subcatchIndex, double flow)
 }
 
 /*!
+* \brief Returns the potential evaporation rate (ft/sec) for a subcatchment.
+* \param[in] subcatchIndex Subcatchment index
+* \details
+*  Returns the externally prescribed PET rate (apiEvapRate) when one has
+*  been set through the API; the prescribed rate is used as-is and bypasses
+*  the DRY_ONLY suppression and monthly adjustments already folded into
+*  Evap.rate. Otherwise returns the climate-derived Evap.rate subject to
+*  the DRY_ONLY option.
+*/
+double subcatch_getEvapRate(int subcatchIndex)
+{
+    if ( Subcatch[subcatchIndex].apiEvapRate != MISSING )
+        return Subcatch[subcatchIndex].apiEvapRate;
+    if ( Evap.dryOnly && Subcatch[subcatchIndex].rainfall > 0.0 ) return 0.0;
+    return Evap.rate;
+}
+
+/*!
 * \brief Computes runoff & new storage depth for subcatchment.
 * \param[in] subcatchIndex Subcatchment index
 * \param[in] tStep Time step (sec)
@@ -659,8 +678,7 @@ double subcatch_getRunoff(int subcatchIndex, double tStep)
     getNetPrecip(subcatchIndex, netPrecip, tStep);
 
     // --- find potential evaporation rate
-    if ( Evap.dryOnly && Subcatch[subcatchIndex].rainfall > 0.0 ) evapRate = 0.0;
-    else evapRate = Evap.rate;
+    evapRate = subcatch_getEvapRate(subcatchIndex);
 
     // --- set monthly infiltration adjustment factor
     infil_setInfilFactor(subcatchIndex);

@@ -36,7 +36,7 @@ void ClimateFileReader::close() {
 }
 
 bool ClimateFileReader::open(const std::string& path, double /*start_oa_date*/,
-                              int unit_system) {
+                              int unit_system, int temp_units) {
     close();
     unit_system_ = unit_system;
 
@@ -55,6 +55,11 @@ bool ClimateFileReader::open(const std::string& path, double /*start_oa_date*/,
         close();
         return false;
     }
+
+    // Config-specified units (legacy [TEMPERATURE] FILE keyword) win over the
+    // per-format default/header auto-detection. -1 keeps the existing behavior.
+    if (temp_units >= 0)
+        temp_units_ = temp_units;
 
     // For GHCND, the first line is the header — parse field positions
     if (format_ == ClimateFileFormat::GHCND) {

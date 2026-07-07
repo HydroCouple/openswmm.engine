@@ -29,6 +29,8 @@ Compared to the pre-v1 surface:
 * :attr:`Solver.nodes`, :attr:`Solver.links`, ... are lazy collection
   accessors. In P1 they return the existing collection classes; full
   wrapper-object treatment lands in P2-P8.
+* :attr:`Solver.surface2d` is the lazy :class:`Surface2D` view over the
+  2D overland-flow mesh (check :attr:`Surface2D.is_active` before use).
 
 .. code-block:: python
 
@@ -52,7 +54,7 @@ from typing import Iterator, Optional, Union
 
 from ._common cimport *
 from ._dates import datetime_to_oadate, oadate_to_datetime
-from ._enums import EngineState
+from ._enums import EngineState, FlowUnits
 
 # Canonical EngineError hierarchy lives in :mod:`_exceptions`. Re-exported for
 # both intra-module raises and backward-compatible imports.
@@ -78,6 +80,10 @@ from ._exceptions import (
 # =============================================================================
 
 _SECONDS_PER_DAY = 86400.0
+
+#: Registered id of the built-in GeoPackage model writer/reader plugin. Pass to
+#: :meth:`Solver.write_with_plugin` (or use :meth:`Solver.write_geopackage`).
+GEOPACKAGE_PLUGIN_ID = "org.hydrocouple.openswmm.plugins.geopackage"
 
 
 def _path_to_str(p) -> str:
@@ -172,12 +178,15 @@ cdef class Solver:
         self._step_begin_cb = None
         self._step_end_cb = None
         self._warning_cb = None
+        self._progress_cb = None
         self._options = None
         self._userflags = None
         self._events_view = None
         self._nodes = None
         self._links = None
         self._subcatchments = None
+        self._aquifers = None
+        self._snowpacks = None
         self._gages = None
         self._pollutants = None
         self._tables = None
@@ -185,12 +194,15 @@ cdef class Solver:
         self._inflows = None
         self._controls = None
         self._forcing = None
+        self._climate = None
         self._infrastructure = None
         self._spatial = None
         self._quality = None
         self._statistics = None
         self._mass_balance = None
         self._editor = None
+        self._hotstart = None
+        self._surface2d = None
         self._generation = 0
         # Stash the plugin_lib for ``open()`` to consume. We don't pass it to
         # __init__ purely for symmetry with the v0 surface (which took it via
@@ -516,9 +528,45 @@ cdef class Solver:
         Equivalent to ``start_datetime + elapsed``. After the simulation
         ends this returns the end-of-simulation moment.
         """
+        # swmm_get_current_time returns elapsed *seconds* from the start
+        # (context().current_time), not an absolute OADate, so feeding it to
+        # oadate_to_datetime yields the 1899 epoch. Build the absolute moment
+        # from the (already-correct) start_datetime + elapsed timedelta, which
+        # is exactly the documented contract.
+        return self.start_datetime + self.elapsed
+
+    @property
+    def sim_start_time(self) -> datetime:
+        """Resolved simulation start as a :class:`datetime.datetime`.
+
+        The engine's resolved start of the routing window (from
+        ``swmm_get_start_time``), as distinct from the configured
+        :attr:`start_datetime` option.
+        """
         cdef double v = 0.0
-        _check(swmm_get_current_time(self._handle, &v))
+        _check(swmm_get_start_time(self._handle, &v))
         return oadate_to_datetime(v)
+
+    @property
+    def sim_end_time(self) -> datetime:
+        """Resolved simulation end as a :class:`datetime.datetime`.
+
+        The engine's resolved end of the routing window (from
+        ``swmm_get_end_time``).
+        """
+        cdef double v = 0.0
+        _check(swmm_get_end_time(self._handle, &v))
+        return oadate_to_datetime(v)
+
+    @property
+    def event_count(self) -> int:
+        """Number of ``[EVENTS]`` entries defined on the model.
+
+        @rtype: int
+        """
+        cdef int v = 0
+        _check(swmm_get_event_count(self._handle, &v))
+        return v
 
     # ------------------------------------------------------------------
     # CRS
@@ -562,6 +610,41 @@ cdef class Solver:
         cdef bytes b = _path_to_str(path).encode('utf-8')
         _check(swmm_model_write(self._handle, b))
 
+    def write_with_plugin(self, path, str output_plugin_id="") -> None:
+        """Write the current model using an output plugin.
+
+        Pass an empty ``output_plugin_id`` (the default) for the built-in
+        ``.inp`` writer; pass a registered plugin id (e.g.
+        :data:`GEOPACKAGE_PLUGIN_ID`) to serialise the model with that plugin.
+
+        @param path: Destination file path.
+        @param output_plugin_id: Plugin id, or ``""`` for the built-in writer.
+        @raise EngineError: On C API failure (e.g. unknown plugin id).
+        """
+        cdef bytes bp = _path_to_str(path).encode('utf-8')
+        cdef bytes bid = output_plugin_id.encode('utf-8')
+        _check(swmm_model_write_with_plugin(self._handle, bp, bid))
+
+    def write_geopackage(self, path, crs=None) -> None:
+        """Write the model to an OGC GeoPackage (``.gpkg``).
+
+        Convenience wrapper over :meth:`write_with_plugin` using the built-in
+        GeoPackage writer. Network nodes, links, subcatchments and rain gages
+        are written as feature layers.
+
+        @param path: Destination ``.gpkg`` path.
+        @param crs: Optional coordinate reference system string (e.g.
+            ``"EPSG:2284"``). When given it is applied via
+            ``solver.spatial.crs`` first, so every feature is tagged with that
+            SRS — without it the geometries are written with an undefined SRS
+            and GIS tools cannot place them. Pass ``None`` to keep the model's
+            existing CRS.
+        @raise EngineError: On C API failure.
+        """
+        if crs is not None:
+            self.spatial.crs = crs
+        self.write_with_plugin(path, GEOPACKAGE_PLUGIN_ID)
+
     # ------------------------------------------------------------------
     # Views: options / userflags / events
     # ------------------------------------------------------------------
@@ -577,6 +660,42 @@ cdef class Solver:
         if self._options is None:
             self._options = SimulationOptions(self)
         return self._options
+
+    @property
+    def flow_units(self):
+        """``solver.flow_units`` — the model's flow-unit system.
+
+        Returns a :class:`~openswmm.engine.FlowUnits` enum member via the
+        engine's typed ``swmm_get_flow_units`` accessor. This is the
+        first-class way to discover the units a running model exchanges:
+        because the C API returns every quantity in the units declared in
+        the ``.inp`` file (project units), consumers should read this to
+        interpret returned magnitudes correctly.
+
+        @return: The active flow-unit system.
+        @rtype: L{openswmm.engine.FlowUnits}
+        @raise EngineError: On C API failure.
+        """
+        cdef int v = 0
+        _check(swmm_get_flow_units(self._handle, &v))
+        return FlowUnits(v)
+
+    @property
+    def unit_system(self):
+        """``solver.unit_system`` — ``'US'`` or ``'SI'``.
+
+        Returns the engine's typed ``swmm_get_unit_system`` result
+        (``0`` = US/imperial, ``1`` = SI/metric). ``CFS``/``GPM``/``MGD``
+        are US customary; ``CMS``/``LPS``/``MLD`` are SI. Length, area, and
+        volume getters return values in the corresponding project units.
+
+        @return: ``'US'`` for US-customary models, ``'SI'`` for metric.
+        @rtype: str
+        @raise EngineError: On C API failure.
+        """
+        cdef int v = 0
+        _check(swmm_get_unit_system(self._handle, &v))
+        return "SI" if v == 1 else "US"
 
     @property
     def userflags(self):
@@ -629,6 +748,22 @@ cdef class Solver:
         return self._subcatchments
 
     @property
+    def aquifers(self):
+        """``solver.aquifers`` — :class:`Aquifers` collection of ``[AQUIFERS]``."""
+        if self._aquifers is None:
+            from ._subcatchments import Aquifers
+            self._aquifers = Aquifers(self)
+        return self._aquifers
+
+    @property
+    def snowpacks(self):
+        """``solver.snowpacks`` — :class:`Snowpacks` collection of ``[SNOWPACKS]``."""
+        if self._snowpacks is None:
+            from ._subcatchments import Snowpacks
+            self._snowpacks = Snowpacks(self)
+        return self._snowpacks
+
+    @property
     def gages(self):
         if self._gages is None:
             from ._gages import Gages
@@ -677,6 +812,13 @@ cdef class Solver:
             from ._forcing import Forcing
             self._forcing = Forcing(self)
         return self._forcing
+
+    @property
+    def climate(self):
+        if self._climate is None:
+            from ._climate import Climate
+            self._climate = Climate(self)
+        return self._climate
 
     @property
     def infrastructure(self):
@@ -730,6 +872,25 @@ cdef class Solver:
             from ._hotstart import SaveSchedule
             self._hotstart = SaveSchedule(self)
         return self._hotstart
+
+    @property
+    def surface2d(self):
+        """``solver.surface2d`` — the :class:`Surface2D` overland-flow view.
+
+        Mesh queries, per-triangle state, statistics, forcing, edge
+        boundary conditions, and edge conveyance for the 2D diffusion-wave
+        surface. Check :meth:`Surface2D.is_active` before use — a model
+        with no ``[2D_*]`` sections has an inactive surface.
+
+        @return: The cached L{Surface2D} view for this solver's engine.
+        @rtype: Surface2D
+        @raise ImportError: When the extension was built without 2D
+            support.
+        """
+        if self._surface2d is None:
+            from ._2d import Surface2D
+            self._surface2d = Surface2D(self.handle)
+        return self._surface2d
 
     # ------------------------------------------------------------------
     # Runoff interface file
@@ -839,6 +1000,25 @@ cdef class Solver:
                 self._handle, _warning_trampoline,
                 <void*>self._warning_cb))
 
+    def set_progress_callback(self, callback) -> None:
+        """Register a callback invoked as the simulation advances.
+
+        The callable receives a single ``float`` — the elapsed fraction of
+        the simulation in ``[0.0, 1.0]`` — suitable for driving a progress
+        bar. Pass ``None`` to unregister.
+
+        @param callback: A callable ``(elapsed_frac: float) -> None``, or
+            ``None`` to clear.
+        """
+        if callback is None:
+            self._progress_cb = None
+            _check(swmm_set_progress_callback(self._handle, NULL, NULL))
+        else:
+            self._progress_cb = callback
+            _check(swmm_set_progress_callback(
+                self._handle, _progress_trampoline,
+                <void*>self._progress_cb))
+
     # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
@@ -882,6 +1062,10 @@ cdef class Solver:
 # accessible by attribute or index.
 from collections import namedtuple
 Event = namedtuple("Event", ["start", "end"])
+
+# A user-flag schema definition record: ``(name, type, description)``
+# where ``type`` is 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING.
+UserFlagDef = namedtuple("UserFlagDef", ["name", "type", "description"])
 
 
 class SimulationOptions(MutableMapping):
@@ -1068,8 +1252,13 @@ class UserFlags(MutableMapping):
     Python value of the right native type. Writing chooses the matching
     C setter based on ``type(value)``.
 
-    ``del solver.userflags[name]`` is not supported (the C API has no
-    delete operation).
+    ``del solver.userflags[name]`` removes the flag's schema definition and
+    every per-object value assigned to it (``swmm_userflag_undefine``).
+
+    Beyond the mapping interface, the view exposes the ``[USER_FLAGS]``
+    schema (:meth:`define`, :meth:`undefine`, :meth:`definitions`) and the
+    ``[USER_FLAG_VALUES]`` per-object values (:meth:`get_value`,
+    :meth:`set_value`, :meth:`clear_value`).
     """
 
     def __init__(self, solver):
@@ -1082,8 +1271,11 @@ class UserFlags(MutableMapping):
         cdef bytes b = (<str>key).encode('utf-8')
         cdef int iv = 0
         cdef double dv = 0.0
-        # Try bool first, then int, then real. If all three return
-        # SWMM_ERR_BADPARAM the key isn't a user flag at all.
+        cdef char sbuf[512]
+        cdef int found = 0
+        # Try bool first, then int, then real, then string (the scalar
+        # store is the MODEL-scoped per-object value). If all four fail
+        # the key isn't a user flag at all.
         cdef int rc = swmm_userflag_get_bool(h, b, &iv)
         if rc == 0:
             return bool(iv)
@@ -1093,6 +1285,9 @@ class UserFlags(MutableMapping):
         rc = swmm_userflag_get_real(h, b, &dv)
         if rc == 0:
             return float(dv)
+        rc = swmm_userflag_value_get(h, b"MODEL", b"", b, sbuf, 512, &found)
+        if rc == 0 and found:
+            return sbuf.decode('utf-8')
         raise KeyError(key)
 
     def __setitem__(self, key, value):
@@ -1100,28 +1295,41 @@ class UserFlags(MutableMapping):
             raise TypeError(f"user flag name must be str, got {type(key).__name__}")
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = (<str>key).encode('utf-8')
+        cdef bytes b_val
         if isinstance(value, bool):
             _check(swmm_userflag_set_bool(h, b, 1 if value else 0))
         elif isinstance(value, int):
             _check(swmm_userflag_set_int(h, b, <int>value))
         elif isinstance(value, float):
             _check(swmm_userflag_set_real(h, b, <double>value))
+        elif isinstance(value, str):
+            # Mirror the typed setters: auto-define as STRING, then store
+            # the MODEL-scoped value.
+            _check(swmm_userflag_define(h, b, 3, b""))
+            b_val = (<str>value).encode('utf-8')
+            _check(swmm_userflag_value_set(h, b"MODEL", b"", b, b_val))
         else:
             raise TypeError(
-                "user flag value must be bool, int, or float; got "
+                "user flag value must be bool, int, float, or str; got "
                 + type(value).__name__
             )
 
     def __delitem__(self, key):
-        raise TypeError("user flags cannot be deleted")
+        if not isinstance(key, str):
+            raise TypeError(f"user flag name must be str, got {type(key).__name__}")
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = (<str>key).encode('utf-8')
+        if swmm_userflag_undefine(h, b) != 0:
+            raise KeyError(key)
 
     def __iter__(self):
-        # The C API doesn't expose enumeration; clients must know the
-        # flag names. Empty iterator is the honest answer.
-        return iter(())
+        return iter([d.name for d in self.definitions()])
 
     def __len__(self) -> int:
-        return 0
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int v = 0
+        _check(swmm_userflag_def_count(h, &v))
+        return v
 
     def __contains__(self, key) -> bool:
         try:
@@ -1131,6 +1339,145 @@ class UserFlags(MutableMapping):
             return False
         except TypeError:
             return False
+
+    # -- [USER_FLAGS] schema definitions -----------------------------------
+
+    def define(self, str name, int type, str description="") -> None:
+        """Define (or redefine) a user flag (C{[USER_FLAGS]} schema).
+
+        Redefining an existing name overwrites its definition; previously
+        assigned per-object values are kept as-is.
+
+        @param name: Flag name (stored uppercase).
+        @type name: str
+        @param type: Flag type: 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING
+            (see L{UserFlagType}).
+        @type type: int
+        @param description: Optional description.
+        @type description: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On empty name or invalid type.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_name = name.encode('utf-8')
+        cdef bytes b_desc = description.encode('utf-8')
+        _check(swmm_userflag_define(h, b_name, type, b_desc))
+
+    def undefine(self, str name) -> None:
+        """Remove a flag definition and all its per-object values.
+
+        @param name: Flag name (case-insensitive).
+        @type name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: If the flag is not defined.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = name.encode('utf-8')
+        _check(swmm_userflag_undefine(h, b))
+
+    def definitions(self) -> list:
+        """Return every user-flag schema definition, in insertion order.
+
+        @return: List of L{UserFlagDef} named tuples
+            C{(name, type, description)}.
+        @rtype: list[UserFlagDef]
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = 0
+        cdef int t = 0
+        cdef char name_buf[128]
+        cdef char desc_buf[512]
+        _check(swmm_userflag_def_count(h, &n))
+        out = []
+        for i in range(n):
+            _check(swmm_userflag_def_get(h, i, name_buf, 128, &t,
+                                         desc_buf, 512))
+            out.append(UserFlagDef(name_buf.decode('utf-8'), t,
+                                   desc_buf.decode('utf-8')))
+        return out
+
+    # -- [USER_FLAG_VALUES] per-object values -------------------------------
+
+    def get_value(self, str obj_type, str obj_name, str flag_name):
+        """Return the flag value assigned to a specific object, as a string.
+
+        String form is symmetric with the INP encoding: BOOLEAN as
+        C{YES}/C{NO}, INTEGER as a decimal, REAL as C{%g}, STRING verbatim.
+
+        @param obj_type: Object type token (e.g. C{"NODE"}, C{"LINK"},
+            C{"SUBCATCHMENT"}); case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: The value string, or C{None} when no value is assigned.
+        @rtype: str or None
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef char buf[512]
+        cdef int found = 0
+        _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
+                                       buf, 512, &found))
+        if not found:
+            return None
+        return buf.decode('utf-8')
+
+    def set_value(self, str obj_type, str obj_name, str flag_name,
+                  str value) -> None:
+        """Assign a flag value to a specific object from a string.
+
+        The flag must already be defined (its declared type drives parsing).
+        BOOLEAN accepts C{YES}/C{NO}/C{TRUE}/C{FALSE}/C{1}/C{0}; INTEGER a
+        decimal integer; REAL a decimal number; STRING is stored verbatim.
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive); must be defined.
+        @type flag_name: str
+        @param value: Value string parsed per the flag's declared type.
+        @type value: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On undefined flag or a value that does not
+            parse as the declared type.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef bytes b_val = value.encode('utf-8')
+        _check(swmm_userflag_value_set(h, b_type, b_name, b_flag, b_val))
+
+    def clear_value(self, str obj_type, str obj_name, str flag_name) -> None:
+        """Remove the flag value assigned to a specific object (mark unset).
+
+        Clearing an unassigned value succeeds (idempotent).
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        _check(swmm_userflag_value_clear(h, b_type, b_name, b_flag))
 
 
 class EventsView(MutableSequence):
@@ -1203,6 +1550,7 @@ class EventsView(MutableSequence):
         _check(swmm_events_remove(h, idx))
 
     def insert(self, idx, value):
+        """Insert *value* at *idx* (emulated via clear + re-add; the C event API is append-only)."""
         # The C API only supports append; emulate insert by clearing and
         # re-adding. For ``idx >= len(self)`` this degenerates to append.
         n = len(self)
@@ -1216,6 +1564,7 @@ class EventsView(MutableSequence):
             self.append(ev)
 
     def append(self, value):
+        """Append a reporting / hot-start event *value*."""
         start, end = self._unpack(value)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int new_idx = -1
@@ -1223,6 +1572,7 @@ class EventsView(MutableSequence):
             h, datetime_to_oadate(start), datetime_to_oadate(end), &new_idx))
 
     def clear(self):
+        """Remove all scheduled events."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_events_clear(h))
 

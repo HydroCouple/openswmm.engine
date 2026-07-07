@@ -28,6 +28,7 @@ struct ExtInflowData {
     int count() const { return static_cast<int>(node_idx.size()); }
 
     std::vector<int>         node_idx;       ///< Target node index
+    std::vector<std::string> node_name;      ///< Raw node name from input (for post-parse re-resolution)
     std::vector<std::string> constituent;    ///< "FLOW" or pollutant name
     std::vector<std::string> ts_name;        ///< Timeseries name ("" if none)
     std::vector<std::string> inflow_type;    ///< "FLOW","CONCEN","MASS"
@@ -38,8 +39,9 @@ struct ExtInflowData {
 
     void add(int ni, const std::string& cons, const std::string& ts,
              const std::string& type, double mf, double sf, double base,
-             const std::string& pat) {
-        node_idx.push_back(ni); constituent.push_back(cons);
+             const std::string& pat, const std::string& name = {}) {
+        node_idx.push_back(ni); node_name.push_back(name);
+        constituent.push_back(cons);
         ts_name.push_back(ts); inflow_type.push_back(type);
         m_factor.push_back(mf); s_factor.push_back(sf);
         baseline.push_back(base); pattern_name.push_back(pat);
@@ -51,6 +53,7 @@ struct ExtInflowData {
         if (idx < 0 || idx >= count()) return;
         const auto u = static_cast<std::size_t>(idx);
         node_idx.erase(node_idx.begin() + u);
+        node_name.erase(node_name.begin() + u);
         constituent.erase(constituent.begin() + u);
         ts_name.erase(ts_name.begin() + u);
         inflow_type.erase(inflow_type.begin() + u);
@@ -69,6 +72,7 @@ struct DwfData {
     int count() const { return static_cast<int>(node_idx.size()); }
 
     std::vector<int>         node_idx;       ///< Target node
+    std::vector<std::string> node_name;      ///< Raw node name from input (for post-parse re-resolution)
     std::vector<std::string> constituent;    ///< "FLOW" or pollutant name
     std::vector<double>      avg_value;      ///< Average value
     std::vector<std::string> pat1;           ///< Monthly pattern name
@@ -78,8 +82,10 @@ struct DwfData {
 
     void add(int ni, const std::string& cons, double avg,
              const std::string& p1, const std::string& p2,
-             const std::string& p3, const std::string& p4) {
-        node_idx.push_back(ni); constituent.push_back(cons);
+             const std::string& p3, const std::string& p4,
+             const std::string& name = {}) {
+        node_idx.push_back(ni); node_name.push_back(name);
+        constituent.push_back(cons);
         avg_value.push_back(avg);
         pat1.push_back(p1); pat2.push_back(p2);
         pat3.push_back(p3); pat4.push_back(p4);
@@ -89,6 +95,7 @@ struct DwfData {
         if (idx < 0 || idx >= count()) return;
         const auto u = static_cast<std::size_t>(idx);
         node_idx.erase(node_idx.begin() + u);
+        node_name.erase(node_name.begin() + u);
         constituent.erase(constituent.begin() + u);
         avg_value.erase(avg_value.begin() + u);
         pat1.erase(pat1.begin() + u);
@@ -106,11 +113,14 @@ struct RDIIAssignData {
     int count() const { return static_cast<int>(node_idx.size()); }
 
     std::vector<int>         node_idx;    ///< Target node
+    std::vector<std::string> node_name;   ///< Raw node name from input (for post-parse re-resolution)
     std::vector<std::string> uh_name;     ///< Unit hydrograph name
     std::vector<double>      sewer_area;  ///< Tributary sewer area
 
-    void add(int ni, const std::string& uh, double area) {
-        node_idx.push_back(ni); uh_name.push_back(uh);
+    void add(int ni, const std::string& uh, double area,
+             const std::string& name = {}) {
+        node_idx.push_back(ni); node_name.push_back(name);
+        uh_name.push_back(uh);
         sewer_area.push_back(area);
     }
 
@@ -118,6 +128,7 @@ struct RDIIAssignData {
         if (idx < 0 || idx >= count()) return;
         const auto u = static_cast<std::size_t>(idx);
         node_idx.erase(node_idx.begin() + u);
+        node_name.erase(node_name.begin() + u);
         uh_name.erase(uh_name.begin() + u);
         sewer_area.erase(sewer_area.begin() + u);
     }
@@ -174,12 +185,12 @@ struct UnitHydData {
 struct RDIIDecayEntry {
     std::string uh_name;    ///< Matches UnitHydEntry::name
     int    response  = -1;  ///< 0=SHORT, 1=MEDIUM, 2=LONG
-    double k_dep     = 0.0; ///< Depletion rate (1/mm) — temperature-independent
+    double k_dep     = 0.0; ///< Depletion rate (1/project rain-depth unit: 1/in or 1/mm) — temperature-independent
     double k_0       = 0.0; ///< Base recovery rate (1/hr)
     double k_T       = 0.0; ///< Thermal recovery rate at T_ref (1/hr)
     double T_ref     = 10.0;///< Reference temperature (deg C)
     double theta_rec = 0.0; ///< Temperature sensitivity (1/deg C)
-    double T_freeze  = 0.0; ///< Recovery suppressed when T <= T_freeze (deg C)
+    double T_freeze  = 0.0; ///< Recovery suppressed when T < T_freeze (deg C)
 };
 
 struct RDIIDecayData {

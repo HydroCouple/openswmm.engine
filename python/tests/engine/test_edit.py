@@ -9,6 +9,7 @@ from openswmm.engine import (
     ConversionResult,
     NodeType,
     LinkType,
+    BadParamError,
 )
 
 
@@ -320,14 +321,14 @@ class TestConvertNode:
         m = ModelBuilder()
         m.add_node("J", NodeType.JUNCTION)
         ed = ModelEditor(m)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(BadParamError):
             ed.convert_node(0, NodeType.JUNCTION)
 
     def test_invalid_type_raises(self):
         m = ModelBuilder()
         m.add_node("J", NodeType.JUNCTION)
         ed = ModelEditor(m)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(BadParamError):
             ed.convert_node(0, 99)
 
     def test_convert_result_cleared_fields_are_strings(self):
@@ -397,7 +398,7 @@ class TestConvertLink:
         m.add_node("B", NodeType.OUTFALL)
         m.add_link("C", LinkType.CONDUIT)
         ed = ModelEditor(m)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(BadParamError):
             ed.convert_link(0, LinkType.CONDUIT)
 
     def test_convert_by_name(self):

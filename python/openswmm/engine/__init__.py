@@ -148,7 +148,7 @@ Advanced forcing
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver, run, run_with_callback
+from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID
 from ._exceptions import (
     EngineError,
     BadHandleError,
@@ -189,7 +189,7 @@ from ._report import (
 # =============================================================================
 from ._nodes import Nodes
 from ._links import Links
-from ._subcatchments import Subcatchments
+from ._subcatchments import Subcatchments, Aquifers, Snowpacks, GroundwaterParams
 from ._gages import Gages
 
 # =============================================================================
@@ -205,10 +205,11 @@ from ._output_reader import OutputReader
 # =============================================================================
 from ._pollutants import Pollutants
 from ._quality import Quality
-from ._tables import Tables
+from ._tables import Tables, Patterns
 from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
+from ._climate import Climate
 
 # =============================================================================
 # Spatial / infrastructure / 2D
@@ -250,10 +251,18 @@ from ._enums import (
     InfilModel, GageDataSource, GageRainType,
     # Water quality / LID
     ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
+    # Hydrology parameters
+    AquiferParam,
     # Output variables
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
     # Forcing & patterns
-    ForcingMode, ForcingTarget, PatternType,
+    ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
+    # 2D surface routing
+    SurfaceForcingMode, SurfaceBoundaryType,
+    # Nodes / editing
+    DividerType, RefType,
+    # Tables / model files
+    TableType, FilePathRole, UserFlagType,
     # Mass-balance totals
     RunoffTotal, RoutingTotal,
 )
@@ -262,7 +271,7 @@ __all__ = [
     # --- DateTime conversion (SWMM DateTime <-> Python datetime) ---
     "oadate_to_datetime", "datetime_to_oadate", "datetime_api",
     # --- Engine lifecycle & errors ---
-    "Solver", "run", "run_with_callback",
+    "Solver", "run", "run_with_callback", "GEOPACKAGE_PLUGIN_ID",
     "EngineError",
     "BadHandleError", "BadIndexError", "BadParamError",
     "LifecycleError", "HotStartError", "PluginError",
@@ -279,10 +288,12 @@ __all__ = [
     "NodeFloodingEntry", "LinkFlowEntry", "PumpEntry", "SubcatchmentEntry",
     # --- Domain object access (hydraulics) ---
     "Nodes", "Links", "Subcatchments", "Gages",
+    "Aquifers", "Snowpacks",
     # --- Simulation state & I/O ---
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
-    "Pollutants", "Quality", "Tables", "Inflows", "Controls", "Forcing",
+    "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
+    "Climate",
     # --- Spatial / infrastructure / 2D ---
     "Infrastructure", "Spatial",
     "Surface2D", "HAS_2D",
@@ -298,10 +309,16 @@ __all__ = [
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---
     "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType",
+    # --- Enumerations: hydrology parameters ---
+    "AquiferParam",
     # --- Enumerations: output variables ---
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
     # --- Enumerations: forcing & patterns ---
-    "ForcingMode", "ForcingTarget", "PatternType",
+    "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
+    # --- Enumerations: 2D surface routing ---
+    "SurfaceForcingMode", "SurfaceBoundaryType",
+    "DividerType", "RefType",
+    "TableType", "FilePathRole", "UserFlagType",
     # --- Enumerations: mass-balance totals ---
     "RunoffTotal", "RoutingTotal",
 ]

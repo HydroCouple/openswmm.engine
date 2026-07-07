@@ -61,8 +61,19 @@ struct MeshData;  // forward declaration
  *   - /Mesh2_face_rainfall           [nTime, nFace] rainfall (m/s)
  *   - /Mesh2_face_coupling_flux      [nTime, nFace] node coupling (m/s)
  *   - /Mesh2_face_net_source         [nTime, nFace] net source/sink (m/s)
+ *   - /Mesh2_face_vx                 [nTime, nFace] cell velocity X (m/s)
+ *   - /Mesh2_face_vy                 [nTime, nFace] cell velocity Y (m/s)
+ *   - /Mesh2_face_continuity_err     [nTime, nFace] per-cell continuity residual (m³/s)
  *   - /Mesh2_edge_flux               [nTime, nFace, 3] edge normal flux
  *   - /Mesh2_node_head               [nTime, nNode] reconstructed vertex head (m)
+ *
+ * ### Cumulative rendering envelopes (fixed [nFace], overwritten each update())
+ *   - /Mesh2_face_max_depth          [nFace] max overland depth (m)
+ *   - /Mesh2_face_max_velocity       [nFace] max cell speed |v| (m/s)
+ *   - /Mesh2_face_max_continuity_err [nFace] max |continuity residual| (m³/s)
+ *
+ * ### Global mass balance (written once in finalize())
+ *   - /mass_balance_2d               group of scalar terms (m³) + @continuity_error
  *
  * @ingroup engine_2d
  */
@@ -129,8 +140,16 @@ private:
     hid_t ds_face_rainfall_        = H5I_INVALID_HID;
     hid_t ds_face_coupling_flux_   = H5I_INVALID_HID;
     hid_t ds_face_net_source_      = H5I_INVALID_HID;
+    hid_t ds_face_vx_              = H5I_INVALID_HID;
+    hid_t ds_face_vy_              = H5I_INVALID_HID;
+    hid_t ds_face_continuity_err_  = H5I_INVALID_HID;
     hid_t ds_edge_flux_            = H5I_INVALID_HID;
     hid_t ds_node_head_            = H5I_INVALID_HID;
+
+    // Cumulative envelopes — fixed [nFace], overwritten in place each update()
+    hid_t ds_face_max_depth_          = H5I_INVALID_HID;
+    hid_t ds_face_max_velocity_       = H5I_INVALID_HID;
+    hid_t ds_face_max_continuity_err_ = H5I_INVALID_HID;
 
     hsize_t n_faces_  = 0;
     hsize_t n_nodes_  = 0;
@@ -142,8 +161,14 @@ private:
                                   const hsize_t* dims,
                                   const hsize_t* chunk_dims);
     void writeStringAttr(hid_t loc, const char* name, const char* value);
+    void writeDoubleAttr(hid_t loc, const char* name, double value);
     void extendAndWrite2D(hid_t ds, const double* data, hsize_t n_cols);
     void extendAndWrite3D(hid_t ds, const double* data, hsize_t dim1, hsize_t dim2);
+    /// Create a fixed [nFace] face dataset (no time dimension) for an envelope.
+    hid_t createFaceEnvelopeDataset(const char* name, const char* long_name,
+                                    const char* units);
+    /// Overwrite a fixed [nFace] dataset in place with the latest envelope.
+    void writeFaceEnvelope(hid_t ds, const double* data);
 };
 
 } // namespace openswmm::twoD

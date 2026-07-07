@@ -95,6 +95,12 @@ struct PollutantData {
     std::vector<double>     c_rdii;
 
     /**
+     * @brief Dry weather sanitary flow concentration.
+     * @see Legacy: Pollut[i].dwfConcen
+     */
+    std::vector<double>     c_dwf;
+
+    /**
      * @brief Initial concentration everywhere in the network.
      * @see Legacy: Pollut[i].initConc
      */
@@ -141,6 +147,7 @@ struct PollutantData {
         c_rain.assign(un, 0.0);
         c_gw.assign(un, 0.0);
         c_rdii.assign(un, 0.0);
+        c_dwf.assign(un, 0.0);
         init_conc.assign(un, 0.0);
         co_pollut.assign(un, -1);
         co_frac.assign(un, 0.0);
@@ -156,6 +163,7 @@ struct PollutantData {
         c_rain.shrink_to_fit();
         c_gw.shrink_to_fit();
         c_rdii.shrink_to_fit();
+        c_dwf.shrink_to_fit();
         init_conc.shrink_to_fit();
         co_pollut.shrink_to_fit();
         co_frac.shrink_to_fit();

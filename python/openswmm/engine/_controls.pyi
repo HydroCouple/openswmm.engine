@@ -1,7 +1,7 @@
 """Type stubs for :mod:`openswmm.engine._controls`."""
 
 from collections.abc import MutableSequence
-from typing import Any, NamedTuple, Union
+from typing import Any, NamedTuple, Tuple, Union
 
 from ._solver import Solver
 
@@ -25,3 +25,4 @@ class Controls(MutableSequence[ControlRule]):
     def clear(self) -> None: ...
     def set_link_setting(self, link: _Key, setting: float) -> None: ...
     def set_link_status(self, link: _Key, *, closed: bool) -> None: ...
+    def validate_message(self, rule_text: str) -> Tuple[bool, str]: ...

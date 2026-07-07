@@ -475,6 +475,7 @@ int project_readOption(char* s1, char* s2)
         snprintf(warnMsg, MAXLINE,
             "\n  WARNING: Unknown option keyword '%s' in [OPTIONS] section - option will be ignored.", s1);
         report_writeLine(warnMsg);
+        report_invokeWarningCallback(warnMsg);
         return 0;
     }
     switch ( k )

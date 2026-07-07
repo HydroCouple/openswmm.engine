@@ -70,6 +70,21 @@ struct MeshData {
     std::vector<double> edge_my;        ///< Edge midpoint Y
     std::vector<double> edge_mz;        ///< Edge midpoint Z (interpolated)
 
+    /// Per-edge conveyance factor in [0, 1], flat 2D [tri * 3 + edge].
+    /// Default 1.0 (unrestricted) for every edge.  Multiplies the
+    /// diffusion-wave flux in SurfaceFluxCalculator::computeEdgeFluxes
+    /// (the last factor before edge_flux is stored).  Symmetric: for
+    /// an interior edge shared by triangles A and B, the slots
+    /// [A*3 + e_A] and [B*3 + e_B] must carry the same value;
+    /// SurfaceRouter2D::initialize enforces this when draining the
+    /// [2D_EDGE_CONVEYANCE] pending rows.  See §11A of
+    /// docs/2dModelStrategy.md.
+    ///
+    /// Cross-reference: this is the edge transmissivity ψ in the
+    /// Integral-Porosity Shallow-Water literature (Sanders 2008;
+    /// Bruwier et al. 2017).
+    std::vector<double> edge_conveyance;
+
     // Surface properties
     std::vector<double> mannings_n;     ///< Manning's roughness coefficient
     std::vector<std::string> tri_tag;   ///< Optional triangle tag
@@ -142,6 +157,7 @@ struct MeshData {
         edge_mx.resize(n3, 0.0);
         edge_my.resize(n3, 0.0);
         edge_mz.resize(n3, 0.0);
+        edge_conveyance.resize(n3, 1.0);  // §11A — default unrestricted
 
         mannings_n.resize(n, 0.035);
         tri_tag.resize(n);

@@ -17,6 +17,7 @@
 #define OPENSWMM_INP_WRITER_HPP
 
 #include <string>
+#include <vector>
 
 namespace openswmm {
 
@@ -40,11 +41,24 @@ namespace inp_writer {
  *   [USER_FLAGS], [PLUGINS],
  *   [MAP], [COORDINATES], [VERTICES], [Polygons], [SYMBOLS]
  *
- * @param ctx   Simulation context with all model data.
- * @param path  Output file path.
+ *   Slice IO-4: every external-file path slot (`[FILES]`, `[RAINGAGES]
+ *   FILE`, `[TIMESERIES] FILE`, `[TEMPERATURE] FILE`, etc.) is emitted
+ *   *relative to* the destination directory by default. Set
+ *   `ctx.options.write_absolute_paths = true` to disable rebasing.
+ *   Slots that cannot be expressed relatively (cross-volume on Windows,
+ *   UNC roots, beyond the depth cap) fall back to absolute form and
+ *   append a human-readable explanation to `warnings` when that vector
+ *   is non-null.
+ *
+ * @param ctx       Simulation context with all model data.
+ * @param path      Output file path.
+ * @param warnings  Optional sink for non-fatal portability warnings
+ *                  (cross-volume slots, etc.). Pass nullptr to discard.
  * @returns 0 on success, -1 on file error.
  */
-int writeInpFile(const SimulationContext& ctx, const std::string& path);
+int writeInpFile(const SimulationContext& ctx,
+                 const std::string&       path,
+                 std::vector<std::string>* warnings = nullptr);
 
 } // namespace inp_writer
 } // namespace openswmm

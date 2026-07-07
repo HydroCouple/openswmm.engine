@@ -966,6 +966,9 @@ void climate_initState()
 {
     LastDay = NO_DATE;
     Temp.tmax = MISSING;
+    Temp.apiTemp = MISSING;
+    Wind.apiWs = MISSING;
+    Evap.apiRate = MISSING;
     Snow.removed = 0.0;
     NextEvapDate = StartDate;
     NextEvapRate = 0.0;
@@ -1005,7 +1008,10 @@ void climate_setState(DateTime theDate)
 {
     if (Fclimate.mode == USE_FILE)
         updateFileValues(theDate);
-    if (Temp.dataSource != NO_TEMP)
+    // --- setTemp also runs when an API temperature is prescribed so that
+    //     derived quantities (sat. vapor pressure) stay consistent even
+    //     for models with no temperature data source
+    if (Temp.dataSource != NO_TEMP || Temp.apiTemp != MISSING)
         setTemp(theDate);
     setEvap(theDate);
     setWind(theDate);
@@ -1210,6 +1216,11 @@ void setTemp(DateTime theDate)
         }
     }
 
+    // --- an API prescribed temperature overrides the data-source value
+    //     (applied before derived quantities so they stay consistent;
+    //     bypasses monthly adjustments by design)
+    if (Temp.apiTemp != MISSING) Temp.ta = Temp.apiTemp;
+
     // --- compute saturation vapor pressure
     Temp.ea = 8.1175e6 * exp(-7701.544 / (Temp.ta + 405.0265));
 }
@@ -1254,6 +1265,11 @@ void setEvap(DateTime theDate)
     // --- apply climate change adjustment
     Evap.rate += Adjust.evap[mon - 1];
 
+    // --- an API prescribed evaporation rate overrides the data-source
+    //     value (applied after adjustments so the prescription is final;
+    //     per-subcatchment apiEvapRate still takes precedence downstream)
+    if (Evap.apiRate != MISSING) Evap.rate = Evap.apiRate;
+
     // --- set soil recovery factor
     Evap.recoveryFactor = 1.0;
     k = Evap.recoveryPattern;
@@ -1285,6 +1301,9 @@ void setWind(DateTime theDate)
     default:
         Wind.ws = 0.0;
     }
+
+    // --- an API prescribed wind speed overrides the data-source value
+    if (Wind.apiWs != MISSING) Wind.ws = Wind.apiWs;
 }
 
 /*!

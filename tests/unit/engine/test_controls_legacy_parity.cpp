@@ -63,8 +63,8 @@ protected:
         ctx.allocate_objects();
 
         // Mark P1 as a pump so LINK_STATUS returns its setting.
-        ctx.links.type[0] = openswmm::LinkType::PUMP;
-        ctx.links.type[1] = openswmm::LinkType::CONDUIT;
+        ctx.link_subtypes.set_link_type(ctx.links, 0, openswmm::LinkType::PUMP);
+        ctx.link_subtypes.set_link_type(ctx.links, 1, openswmm::LinkType::CONDUIT);
         ctx.links.setting[0]        = 1.0;
         ctx.links.target_setting[0] = 1.0;
         ctx.links.time_last_set[0]  = ctx.options.start_date;

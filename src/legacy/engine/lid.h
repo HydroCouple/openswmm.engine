@@ -206,6 +206,8 @@ void     lid_delete(void);
 
 int      lid_readProcParams(char* tok[], int ntoks);
 int      lid_readGroupParams(char* tok[], int ntoks);
+int      lid_setDrainParams(int lidIndex, double coeff, double expon,
+                            double offset);
 
 void     lid_validate(void);
 void     lid_initState(void);

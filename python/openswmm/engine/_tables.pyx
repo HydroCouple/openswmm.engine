@@ -24,6 +24,7 @@ patterns — and the C side stores time series and curves in a single
 
 # cython: language_level=3
 
+from ._exceptions import ElementNotFoundError
 from typing import Tuple
 
 import numpy as np
@@ -31,7 +32,7 @@ cimport numpy as np
 
 from ._common cimport *
 from ._dates import oadate_to_datetime, datetime_to_oadate
-from ._enums import PatternType
+from ._enums import PatternType, TableType
 
 
 cdef inline SWMM_Engine _h(solver):
@@ -82,6 +83,7 @@ cdef class _PointTable:
         return n
 
     def add_point(self, double x, double y) -> None:
+        """Append an ``(x, y)`` point to the table."""
         _check(swmm_table_add_point(_h(self._solver), self._index, x, y))
 
     def clear(self) -> None:
@@ -104,6 +106,16 @@ cdef class _PointTable:
             buf[i, 0] = x
             buf[i, 1] = y
         return buf
+
+    @property
+    def points(self):
+        """Raw ``float64`` ``(n_points, 2)`` array of ``(x, y)`` points.
+
+        Generic view exposed on every table handed back by
+        :meth:`Tables.__getitem__`.  The typed :class:`TimeSeries` /
+        :class:`Curve` subclasses override this with domain dtypes.
+        """
+        return self._raw_points()
 
     def __repr__(self) -> str:
         try:
@@ -191,21 +203,43 @@ cdef class Tables:
             return False
 
     def get_index(self, str table_id) -> int:
+        """Return the zero-based index of table *table_id* (raises if unknown)."""
         cdef bytes b = table_id.encode('utf-8')
         cdef int i = swmm_table_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(table_id)
+            raise ElementNotFoundError(table_id)
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the table at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_table_id(_h(self._solver), idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
+    def get_type(self, key) -> TableType:
+        """The type of a table, as a L{TableType}.
+
+        Tables (time series and curves) share one unified array; this
+        partitions it — e.g. for a Data-Objects browser that lists time
+        series separately from each curve kind.
+
+        @param key: Table index (int) or id (str).
+        @type key: int or str
+        @return: The table's type code.
+        @rtype: L{TableType}
+        @raise KeyError: If a string id is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int i = _resolve_table(self._solver, key)
+        cdef int v = 0
+        _check(swmm_table_get_type(_h(self._solver), i, &v))
+        return TableType(v)
+
     # ---- Creation -----------------------------------------------
 
     def add_timeseries(self, str ts_id) -> TimeSeries:
+        """Add a new time series *ts_id* and return its :class:`TimeSeries` handle."""
         cdef bytes b = ts_id.encode('utf-8')
         _check(swmm_timeseries_add(_h(self._solver), b))
         self._solver._bump_generation()
@@ -231,10 +265,12 @@ cdef class Tables:
         return _PointTable(self._solver, idx)
 
     def as_timeseries(self, key) -> TimeSeries:
+        """Return a :class:`TimeSeries` view of the table identified by *key*."""
         cdef int i = _resolve_table(self._solver, key)
         return TimeSeries(self._solver, i)
 
     def as_curve(self, key) -> Curve:
+        """Return a :class:`Curve` view of the table identified by *key*."""
         cdef int i = _resolve_table(self._solver, key)
         return Curve(self._solver, i)
 
@@ -260,15 +296,63 @@ cdef class Pattern:
 
     @property
     def index(self) -> int:
+        """The pattern's zero-based index within L{Patterns}.
+
+        @rtype: int
+        """
         return self._index
 
     @property
+    def id(self) -> str:
+        """The pattern's string identifier (from the INP C{[PATTERNS]} section).
+
+        @rtype: str
+        """
+        cdef const char* raw = swmm_pattern_id(_h(self._solver), self._index)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    @property
     def solver(self):
+        """The parent L{Solver}."""
         return self._solver
 
+    @property
+    def type(self):
+        """The pattern's type as a L{PatternType} (MONTHLY/DAILY/HOURLY/WEEKEND).
+
+        @rtype: L{PatternType}
+        """
+        cdef int v = 0
+        _check(swmm_pattern_get_type(_h(self._solver), self._index, &v))
+        return PatternType(v)
+
+    @property
+    def factors(self):
+        """The pattern's multiplier factors as a list of floats.
+
+        The length depends on L{type}: 12 (monthly), 7 (daily), 24 (hourly),
+        or 24 (weekend).
+
+        @rtype: list[float]
+        """
+        cdef int n = 0
+        _check(swmm_pattern_get_factor_count(_h(self._solver), self._index, &n))
+        cdef double v = 0.0
+        out = []
+        cdef int i
+        for i in range(n):
+            _check(swmm_pattern_get_factor(_h(self._solver), self._index, i, &v))
+            out.append(v)
+        return out
+
     def set_factors(self, values, type=PatternType.HOURLY) -> None:
-        """Replace the pattern factors. ``values`` must be a sequence with
-        length 12 (monthly), 7 (daily), 24 (hourly), or 24 (weekend)."""
+        """Replace the pattern factors.
+
+        @param values: Sequence of multiplier factors. Length must be
+            12 (monthly), 7 (daily), 24 (hourly), or 24 (weekend).
+        @param type: Ignored placeholder kept for backward compatibility;
+            the pattern type is fixed at creation.
+        """
         cdef np.ndarray[double, ndim=1] arr = np.ascontiguousarray(
             values, dtype=np.float64)
         cdef int n = arr.shape[0]
@@ -280,9 +364,11 @@ cdef class Pattern:
 
 
 cdef class Patterns:
-    """``solver.patterns`` — index-keyed collection of :class:`Pattern`
-    wrappers. The C API does not expose an id→index lookup, so string
-    keys are not currently supported here."""
+    """Indexable, iterable collection of L{Pattern} wrappers.
+
+    Reachable as C{solver.tables.patterns}. Items are addressed by integer
+    index or by string id.
+    """
 
     cdef object _solver
 
@@ -297,20 +383,72 @@ cdef class Patterns:
         for i in range(n):
             yield Pattern(self._solver, i)
 
-    def __getitem__(self, int idx):
-        n = len(self)
-        if idx < 0:
-            idx += n
-        if not 0 <= idx < n:
-            raise IndexError(idx)
+    def get_index(self, str pattern_id) -> int:
+        """Resolve a pattern's zero-based index from its string id.
+
+        @param pattern_id: The pattern's string identifier.
+        @return: Zero-based index.
+        @rtype: int
+        @raise KeyError: If no pattern has that id.
+        """
+        cdef bytes b = pattern_id.encode('utf-8')
+        cdef int i = swmm_pattern_index(_h(self._solver), b)
+        if i < 0:
+            raise ElementNotFoundError(pattern_id)
+        return i
+
+    def __getitem__(self, key):
+        cdef int idx
+        cdef int n = len(self)
+        if isinstance(key, str):
+            idx = self.get_index(key)
+        else:
+            idx = key
+            if idx < 0:
+                idx += n
+            if not 0 <= idx < n:
+                raise IndexError(key)
         return Pattern(self._solver, idx)
 
+    def __contains__(self, key) -> bool:
+        try:
+            self[key]
+            return True
+        except (KeyError, IndexError):
+            return False
+
     def add(self, str pattern_id, type=PatternType.HOURLY) -> Pattern:
+        """Append a new time pattern and return its wrapper.
+
+        @param pattern_id: Unique identifier for the new pattern.
+        @param type: The L{PatternType} (defaults to HOURLY).
+        @rtype: L{Pattern}
+        """
         cdef bytes b = pattern_id.encode('utf-8')
         _check(swmm_pattern_add(_h(self._solver), b, int(type)))
         self._solver._bump_generation()
         # Newly-added pattern is the last one.
         return Pattern(self._solver, swmm_pattern_count(_h(self._solver)) - 1)
+
+    def remove(self, key) -> None:
+        """Remove a pattern (by index or id), clearing any reference sites.
+
+        @param key: Integer index or string id of the pattern to remove.
+        """
+        cdef int idx = self.get_index(key) if isinstance(key, str) else key
+        _check(swmm_pattern_remove(_h(self._solver), idx))
+        self._solver._bump_generation()
+
+    def rename(self, key, str new_id) -> None:
+        """Rename a pattern, updating every stored reference to it.
+
+        @param key: Integer index or string id of the pattern to rename.
+        @param new_id: The new identifier.
+        """
+        cdef int idx = self.get_index(key) if isinstance(key, str) else key
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_pattern_rename(_h(self._solver), idx, b))
+        self._solver._bump_generation()
 
     def __repr__(self) -> str:
         try:

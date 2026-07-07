@@ -171,5 +171,12 @@ EXTERN TStreet*   Street;                   // Array of defined Street cross-sec
 EXTERN TShape*    Shape;                    // Array of custom conduit shapes
 EXTERN TEvent*    Event;                    // Array of routing events
 
+// Process-global warning callback. When set (via swmm_setWarningCallback), the
+// engine invokes it for each warning in addition to writing the .rpt line, so a
+// host can stream warnings live. Raw function-pointer type (not the public
+// typedef) to avoid include-order coupling; the types are compatible.
+EXTERN void (*WarningCallback)(const char *message, void *userData);
+EXTERN void*  WarningCallbackData;          // Opaque user data for the callback
+
 
 #endif //GLOBALS_H

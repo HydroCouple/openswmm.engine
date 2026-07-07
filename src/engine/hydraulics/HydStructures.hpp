@@ -104,6 +104,10 @@ struct WeirGroup {
     /// (legacy Weir[k].length = max(200, 2·routeStep·sqrt(g·yFull))).
     /// Pre-computed at init; constant per simulation.
     std::vector<double> length_eff;
+    /// Surcharge YES/NO (legacy Weir.canSurcharge): when NO and h1 >= hcrown,
+    /// the head is capped at the weir opening height instead of switching to
+    /// the equivalent-orifice formulation (legacy link.c weir_getInflow).
+    std::vector<uint8_t> can_surcharge;
     void resize(int n);
 };
 
@@ -153,17 +157,49 @@ public:
     /// @brief Get pre-built list of all non-conduit link indices.
     const std::vector<int>& nonConduitIndices() const noexcept { return nc_indices_; }
 
+    /// @brief Compute flow for ONE non-conduit link (per-link sequential
+    ///        path). PARITY: legacy findLinkFlows (dynwave.c:383-398)
+    ///        processes non-conduits one at a time in link-index order with
+    ///        an immediate updateNodeFlows() scatter, so a later structure
+    ///        (e.g. the second pump on a shared wet well) sees the earlier
+    ///        one's flow in the node accumulators. Callers must scatter the
+    ///        resulting links.flow/dqdh to the node accumulators BEFORE
+    ///        computing the next link.
+    void computeNonConduitFlowOne(SimulationContext& ctx, double dt,
+                                  double* node_new_surf_area, int link_idx);
+
+    /// @brief Scatter the HELD surface area of a bypassed non-conduit link
+    ///        (legacy updateNodeFlows runs for bypassed links too, adding the
+    ///        previous iteration's Link.surfArea1/2). Only orifices carry a
+    ///        non-zero held area (weirs/pumps/outlets contribute none).
+    void scatterHeldSurfArea(SimulationContext& ctx,
+                             double* node_new_surf_area, int link_idx);
+
 private:
     PumpGroup    pumps_;
     OrificeGroup orifices_;
     WeirGroup    weirs_;
     OutletGroup  outlets_;
     std::vector<int> nc_indices_;   ///< All non-conduit link indices
+    std::vector<int> nc_group_k_;   ///< link index → row in its type group (-1 = none)
 
     /// Batch pump flow — vectorisable curve lookups. Reads node_new_surf_area
     /// for the non-storage pump flow-limiter (legacy getModPumpFlow).
     void computePumpFlows(SimulationContext& ctx, double dt,
                           const double* node_new_surf_area);
+
+    // Per-element bodies of the batch loops (k = row in the type group).
+    void computePumpFlowK(SimulationContext& ctx, double dt,
+                          const double* node_new_surf_area, int k);
+    void computeOrificeFlowK(SimulationContext& ctx,
+                             double* node_new_surf_area, int k);
+    void computeWeirFlowK(SimulationContext& ctx,
+                          double* node_new_surf_area, int k);
+    void computeOutletFlowK(SimulationContext& ctx, int k);
+    void scatterOrificeSurfArea(SimulationContext& ctx,
+                                double* node_new_surf_area,
+                                std::size_t uk, std::size_t uj,
+                                std::size_t un1, std::size_t un2);
 
     /// Batch orifice flow — Q = Cd·A·sqrt(2gH), plus per-orifice
     /// surface-area scatter into `node_new_surf_area` (matching legacy

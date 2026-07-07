@@ -73,6 +73,7 @@ class Link:
 
     # Identity
     id: str
+    tag: str
     index: int
     type: LinkType
     solver: Solver

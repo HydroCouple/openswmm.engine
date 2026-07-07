@@ -15,6 +15,7 @@
 #include "../Tokenizer.hpp"
 #include "../InputParseUtils.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/ErrorCodes.hpp"
 
 namespace openswmm::input {
 
@@ -66,11 +67,21 @@ void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines)
             files.rdii_mode = mode;
             files.rdii_path = path;
         } else if (kind_word == "INFLOWS") {
-            // Legacy: USE only.  Ignore the mode column for storage —
-            // the slot semantics imply USE.
+            // Legacy: USE only — SAVE INFLOWS is a fatal input error
+            // (iface.c iface_readFileParams returns ERR_ITEMS).
+            if (mode != FileMode::USE) {
+                ctx.errors.push_back(
+                    format_error(ERR_ITEMS, "", "[FILES] SAVE INFLOWS"));
+                continue;
+            }
             files.inflows_path = path;
         } else if (kind_word == "OUTFLOWS") {
-            // Legacy: SAVE only.
+            // Legacy: SAVE only — USE OUTFLOWS is a fatal input error.
+            if (mode != FileMode::SAVE) {
+                ctx.errors.push_back(
+                    format_error(ERR_ITEMS, "", "[FILES] USE OUTFLOWS"));
+                continue;
+            }
             files.outflows_path = path;
         } else if (kind_word == "HOTSTART") {
             if (mode == FileMode::SAVE) {

@@ -55,14 +55,64 @@ inline void escapeJson(const char *input, char *output, int maxLen)
  * @brief Emit a progress update as a JSON line to stdout.
  *
  * @param stepCount Number of simulation steps completed so far
- * @param elapsed Time elapsed in current step (seconds)
+ * @param elapsed Cumulative elapsed simulation time (days)
+ * @param runoffErrFrac Running runoff continuity error as a fraction
+ *                      (0.001 = 0.1 %), or 0.0 if not yet meaningful.
+ * @param routingErrFrac Running flow-routing continuity error as a fraction.
  *
- * Format: `{"type":"progress","stepCount":123,"elapsed":0.5}\n`
+ * The continuity values are sent as fractions (not percentages) so the GUI
+ * pipeline, which multiplies by 100 for display, matches the refactored
+ * engine's runoff/routing-error convention and the final "continuity" line.
+ *
+ * Format:
+ * `{"type":"progress","stepCount":123,"elapsed":0.5,"runoff":0.0001,"routing":0.0002}\n`
  */
-inline void emitProgress(int stepCount, double elapsed)
+inline void emitProgress(int stepCount, double elapsed,
+                         double runoffErrFrac, double routingErrFrac)
 {
-    std::printf("{\"type\":\"progress\",\"stepCount\":%d,\"elapsed\":%.6f}\n",
-                stepCount, elapsed);
+    std::printf("{\"type\":\"progress\",\"stepCount\":%d,\"elapsed\":%.6f,"
+                "\"runoff\":%.8f,\"routing\":%.8f}\n",
+                stepCount, elapsed, runoffErrFrac, routingErrFrac);
+    std::fflush(stdout);
+}
+
+/**
+ * @brief Emit the simulation window (start/end) as a JSON line to stdout.
+ *
+ * @param startOADate Simulation start as an OADate (decimal days since
+ *                    1899-12-30 — the SWMM DateTime epoch).
+ * @param endOADate   Simulation end as an OADate.
+ *
+ * Emitted once after swmm_start so the parent can derive a 0–1 progress
+ * fraction from the per-step elapsed-days value and render readable
+ * start/current/end columns.
+ *
+ * Format: `{"type":"dates","start":45000.000000,"end":45010.000000}\n`
+ */
+inline void emitDates(double startOADate, double endOADate)
+{
+    std::printf("{\"type\":\"dates\",\"start\":%.6f,\"end\":%.6f}\n",
+                startOADate, endOADate);
+    std::fflush(stdout);
+}
+
+/**
+ * @brief Emit the final mass-balance (continuity) errors to stdout.
+ *
+ * @param runoffErrFrac  Runoff continuity error as a fraction (0.001 = 0.1 %).
+ * @param routingErrFrac Flow-routing continuity error as a fraction.
+ *
+ * Emitted once after swmm_end() (the errors are only finalised then). The GUI
+ * forwards these to the simulation status model, which multiplies by 100 for
+ * display — so the values are sent as fractions, not percentages, to match the
+ * refactored engine's runoff/routing-error convention.
+ *
+ * Format: `{"type":"continuity","runoff":0.00050000,"routing":0.00120000}\n`
+ */
+inline void emitContinuity(double runoffErrFrac, double routingErrFrac)
+{
+    std::printf("{\"type\":\"continuity\",\"runoff\":%.8f,\"routing\":%.8f}\n",
+                runoffErrFrac, routingErrFrac);
     std::fflush(stdout);
 }
 

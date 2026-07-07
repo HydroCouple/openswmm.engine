@@ -204,6 +204,58 @@ inline std::vector<uint8_t> encode_multipolygon(const std::vector<double>& xs,
     return buf;
 }
 
+/**
+ * @brief Encode a POLYGON geometry (single ring) in GeoPackage Binary format.
+ * @param xs  X coordinates of polygon ring vertices.
+ * @param ys  Y coordinates of polygon ring vertices.
+ *
+ * Used for the 2D mesh triangle feature layer (one ring of 3 vertices,
+ * closed automatically). Identical to encode_multipolygon minus the outer
+ * MULTIPOLYGON wrapper.
+ */
+inline std::vector<uint8_t> encode_polygon(const std::vector<double>& xs,
+                                            const std::vector<double>& ys,
+                                            int32_t srs_id) {
+    if (xs.empty()) {
+        std::vector<uint8_t> buf;
+        detail::write_gp_header_empty(buf, srs_id);
+        detail::append_u8(buf, WKB_LITTLE_ENDIAN);
+        detail::append_u32(buf, WKB_POLYGON);
+        detail::append_u32(buf, 0);
+        return buf;
+    }
+    // Ensure ring closure
+    bool closed = (xs.front() == xs.back() && ys.front() == ys.back());
+    uint32_t n_pts = static_cast<uint32_t>(xs.size()) + (closed ? 0 : 1);
+
+    double min_x = xs[0], max_x = xs[0], min_y = ys[0], max_y = ys[0];
+    for (size_t i = 1; i < xs.size(); ++i) {
+        min_x = std::min(min_x, xs[i]);
+        max_x = std::max(max_x, xs[i]);
+        min_y = std::min(min_y, ys[i]);
+        max_y = std::max(max_y, ys[i]);
+    }
+
+    std::vector<uint8_t> buf;
+    buf.reserve(8 + 32 + 30 + n_pts * 16);
+    detail::write_gp_header(buf, srs_id, min_x, min_y, max_x, max_y);
+
+    // WKB POLYGON
+    detail::append_u8(buf, WKB_LITTLE_ENDIAN);
+    detail::append_u32(buf, WKB_POLYGON);
+    detail::append_u32(buf, 1); // 1 ring
+    detail::append_u32(buf, n_pts);
+    for (size_t i = 0; i < xs.size(); ++i) {
+        detail::append_f64(buf, xs[i]);
+        detail::append_f64(buf, ys[i]);
+    }
+    if (!closed) {
+        detail::append_f64(buf, xs.front());
+        detail::append_f64(buf, ys.front());
+    }
+    return buf;
+}
+
 // ============================================================================
 // Decode structures
 // ============================================================================

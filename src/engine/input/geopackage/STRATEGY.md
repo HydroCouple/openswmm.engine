@@ -1005,3 +1005,150 @@ Future schema changes will increment this version and include migration SQL in `
 | Regression | Run the `site_drainage_model` test case with GeoPackage output; compare summary statistics against legacy `.out` |
 | Observed data | Import a sample CSV of observed flow data, link to a node, verify sim-vs-observed query |
 | Performance | Benchmark GeoPackage output vs. binary `.out` for the standard test suite; target < 2x overhead |
+
+---
+
+## 10. External-File Content (Part D — Slices IO-5 to IO-8)
+
+Added by the IO portability work documented in
+`openswmm.gui/docs/IO_PORTABILITY_PLAN.md`. Replaces opaque on-disk
+references to legacy SWMM file formats (hot-start `.hsf`, raingage
+data, climate data, SWMM5 routing-interface text) with **structured
+relational tables** whose rows are the parsed contents of those files.
+
+The design principle: a `.gpkg` IS the project. After save, the user
+can copy just the `.gpkg` to any machine; the engine recovers every
+external-file reference by materialising a scratch file on open (see
+§10.3 below).
+
+### 10.1 Table catalogue
+
+```
+hotstart_slots                       — header + status per USE/SAVE slot
+hotstart_node_state                  — per-node routing state
+hotstart_link_state                  — per-link routing state
+hotstart_subcatch_state              — per-subcatch hydrology state
+hotstart_node_pollutant_state        — per-(node,pollutant) concentrations
+hotstart_link_pollutant_state        — per-(link,pollutant) concentrations
+hotstart_subcatch_pollutant_state    — per-(subcatch,pollutant) buildup/conc
+
+raingage_data                        — per-(gage, time) rainfall records
+climate_data                         — per-day Tmin/Tmax/evap/wind/sky/humidity
+
+routing_interface_node               — per-(node, time) INFLOWS/OUTFLOWS/RDII flow
+routing_interface_subcatch           — per-(subcatch, time) RUNOFF flow
+routing_interface_gage               — per-(gage, time) RAINFALL records
+routing_interface_node_pollutants    — quality concentrations for node-keyed routing
+```
+
+Plus an extension of the existing `input_timeseries` table with
+provenance columns (`source`, `source_filename`, `source_column`).
+`source = 'imported_from_file'` rows carry their original filename +
+optional CSV column selector for diff-friendly provenance.
+
+### 10.2 Foreign-key relationships
+
+Every row in Part D carries composite FKs into the model objects
+already present in the schema. Example: `hotstart_node_state` has
+
+```sql
+FOREIGN KEY (simulation_id, slot_name)
+    REFERENCES hotstart_slots(simulation_id, slot_name)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+FOREIGN KEY (simulation_id, node_id)
+    REFERENCES nodes(simulation_id, node_id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+```
+
+This gives three invariants for free:
+
+1. **Cascading delete.** Deleting a simulation removes its hot-start
+   slots; deleting a node removes every state row that references it.
+2. **Cascading rename.** Updating a node's `node_id` propagates
+   automatically to every dependent state and pollutant row.
+3. **Orphan rejection.** Inserting a row that references a non-existent
+   parent is rejected at insert time (SQL error
+   `FOREIGN KEY constraint failed`).
+
+`PRAGMA foreign_keys = ON` is set on every connection in
+`GpkgUtils::open_database`, so these invariants hold for both readers
+and writers.
+
+#### Why three pollutant-state tables instead of one polymorphic table?
+
+A single `hotstart_pollutant_state` keyed by `object_type` + `object_id`
+could not carry a foreign key into the right owning table — SQLite has
+no discriminated-union FK. Splitting into
+`hotstart_{node,link,subcatch}_pollutant_state` lets each table FK into
+its owning state table *and* into the model's `pollutants`, preserving
+the cascade invariants.
+
+### 10.3 Write fan-out (Slice IO-7)
+
+`write_external_content(db, ctx, simulation_id)` runs inside the same
+SQLite transaction as the rest of `GeoPackageWriter::write_model`. For
+each populated external-file slot on the in-memory `SimulationContext`:
+
+1. **File exists** → invoke the matching format parser (Slice IO-6,
+   `formats/`) to convert bytes → typed rows; INSERT into the Part D
+   table.
+2. **File missing + USE direction** → throw `GpkgError`; the transaction
+   rolls back. Saving a model that references unreadable USE files is
+   rejected.
+3. **File missing + SAVE direction** (hot-start only today) → write a
+   parent `hotstart_slots` row with `status = 'pending'`. The engine's
+   output plugin populates the state rows after the simulation
+   completes.
+
+### 10.4 Read hydration (Slice IO-8)
+
+`read_external_content(db, ctx, simulation_id, scratch_dir)` is called
+from `GeoPackageReader::read_model` when the source `.gpkg`'s sibling
+scratch directory path is supplied (computed by `scratchDirFor`). For
+each role with rows in Part D:
+
+1. Query rows ordered by their natural key.
+2. Reconstruct the format's in-memory structure
+   (`TimeseriesRow[]`, `RaingageRow[]`, `HotstartSnapshot`, etc.).
+3. Invoke the matching IO-6 *materialiser* to write a legacy-format
+   scratch file under `<gpkg-stem>.scratch/`.
+4. Bind the matching `ctx` slot's `FilePathPair`:
+   - `.absolute` ← scratch path (ready for `fopen`)
+   - `.original` ← diagnostic sentinel `"<gpkg:role:owner>"`, used only
+     for logging — `InpWriter` never emits it because GPKG and INP are
+     mutually-exclusive output channels.
+
+The scratch directory sits *next to* the source `.gpkg` (not in
+`$TMPDIR`) per the project's transparent-IO convention.
+
+### 10.5 Roles served by format adapters (Slice IO-6)
+
+| Role | Format adapter | Canonical form |
+|---|---|---|
+| Timeseries | `TimeseriesFormat` | SWMM-native `MM/DD/YYYY HH:MM[:SS] value` text |
+| Raingage | `RaingageFormat` | SWMM "Standard" `STATION YYYY MM DD HH MM VALUE` text |
+| Climate | `ClimateFormat` | `date,tmin,tmax,evap,wind,sky,humidity` user CSV |
+| Routing interface | `RoutingInterfaceFormat` | SWMM5 text format from `iface.c` *(plan said "binary" — legacy is actually text)* |
+| Hot-start | `HotstartFormat` | HSF v4 binary, routing portion only |
+
+**Hot-start subcatch runoff state** is deferred: the schema columns
+exist (`hotstart_subcatch_state` carries the full set of infiltration /
+groundwater / snowpack fields) but the materialiser writes
+`nSubcatch=0` until a follow-up slice extends it. Subcatch
+runoff in the legacy HSF format has conditional fields whose presence
+depends on per-subcatch groundwater / snowpack configuration; writing
+that round-trip correctly requires the engine state machine to be
+involved.
+
+### 10.6 Migration notes
+
+`create_schema` is idempotent (every CREATE uses `IF NOT EXISTS`), so
+loading an older `.gpkg` that lacks Part D tables works — the new
+tables are added on the next save. The pre-existing `input_timeseries`
+table is extended in place; rows authored before the provenance columns
+existed get `source = 'inline'` by default.
+
+There is no automatic backfill: a model loaded from a pre-Part-D
+`.gpkg` still has its external-file references in their original
+`[FILES]` form. The next *save* runs the fan-out and populates Part D
+from disk. After that, the `.gpkg` is portable.

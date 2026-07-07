@@ -131,9 +131,15 @@ class TestNodeProperties:
         assert n0.outflow >= 0.0
 
     def test_lateral_inflow_setter(self, running_solver):
+        # ``lateral_inflow`` is a one-step forcing override: the setter writes a
+        # user forcing buffer (``user_lat_flow``) that the engine folds into the
+        # realized lateral inflow during the next routing step. The getter reads
+        # the realized state (``lat_flow``), so the override only becomes visible
+        # after ``step()`` — there is no same-tick round-trip on this property.
         n0 = running_solver.nodes[0]
         n0.lateral_inflow = 0.42
-        assert n0.lateral_inflow == pytest.approx(0.42)
+        running_solver.step()
+        assert running_solver.nodes[0].lateral_inflow == pytest.approx(0.42)
 
 
 # ---------------------------------------------------------------------------

@@ -44,10 +44,10 @@ class TestRunoffInterfaceSaveMode:
             s.open()
             s.initialize()
             s.start()
-            s.open_runoff_iface_write(rfi)
+            s.open_runoff_interface_write(rfi)
             _drive_to_end(s)
             s.end()
-            s.close_runoff_iface()
+            s.close_runoff_interface()
         finally:
             try:
                 s.close()
@@ -71,10 +71,10 @@ class TestRunoffInterfaceSaveMode:
             s.open()
             s.initialize()
             s.start()
-            s.open_runoff_iface_write(rfi)
+            s.open_runoff_interface_write(rfi)
             _drive_to_end(s)
             s.end()
-            s.close_runoff_iface()
+            s.close_runoff_interface()
         finally:
             try:
                 s.close()
@@ -93,14 +93,14 @@ class TestRunoffInterfaceSaveMode:
             s2.open()
             s2.initialize()
             s2.start()
-            s2.open_runoff_iface_read(rfi)
+            s2.open_runoff_interface_read(rfi)
             for _ in range(100_000):  # generous upper bound
                 if not s2.read_runoff_step():
                     break
                 records += 1
             else:
                 pytest.fail("read_runoff_step appears to loop past EOF")
-            s2.close_runoff_iface()
+            s2.close_runoff_interface()
             s2.end()
         finally:
             try:
@@ -128,8 +128,8 @@ class TestRunoffInterfaceContracts:
             s.open()
             s.initialize()
             # Never opened — close should still succeed.
-            s.close_runoff_iface()
-            s.close_runoff_iface()
+            s.close_runoff_interface()
+            s.close_runoff_interface()
         finally:
             try:
                 s.close()

@@ -37,7 +37,7 @@ endif()
 # OpenMP::OpenMP_C / OpenMP::OpenMP_CXX imported targets with the correct
 # INTERFACE compile options and link libraries, so the target_link_libraries
 # call below is sufficient — no global flag manipulation needed.
-if(OpenMP_FOUND OR OpenMP_C_FOUND)
+if(OpenMP_FOUND OR OpenMP_C_FOUND OR TARGET OpenMP::OpenMP_C)
     message(STATUS "OpenMP found and will be used for legacy engine")
 else()
     message(WARNING "OpenMP not found - building legacy engine without parallel support")
@@ -66,6 +66,18 @@ configure_file(
     ${PROJECT_SOURCE_DIR}/include/openswmm/legacy/engine/legacy_version.h.in
     ${CMAKE_CURRENT_BINARY_DIR}/legacy_version.h
 )
+
+# Install the generated legacy_version.h alongside the legacy public headers so
+# consumers of an installed engine (e.g. the GUI's swmmvis.cpp) can resolve
+# `#include "legacy_version.h"` without referencing this target's BINARY_DIR.
+# The engine target re-exports include/openswmm/legacy/engine on its
+# INSTALL_INTERFACE (see src/engine/CMakeLists.txt) so the quoted include works.
+if(OPENSWMM_INSTALL OR OPENSWMMCORE_INSTALL)
+    install(
+        FILES ${CMAKE_CURRENT_BINARY_DIR}/legacy_version.h
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/openswmm/legacy/engine
+    )
+endif()
 
 # Public header (canonical location after Phase 1 relocation)
 set(SWMM_PUBLIC_HEADERS
@@ -104,6 +116,19 @@ set_target_properties(openswmm_legacy_engine
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN TRUE
 )
+
+# Match the refactored engine's arm64 tuning flag (src/engine/CMakeLists.txt
+# enables -mcpu=native PRIVATE on openswmm_engine when the probe passes) so
+# legacy-vs-refactored wall-time comparisons stay flag-matched. FP semantics
+# are unaffected: the global -ffp-contract=off prevents FMA fusion.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND NOT MSVC)
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag("-mcpu=native" OPENSWMM_LEGACY_HAVE_MCPU_NATIVE)
+    if(OPENSWMM_LEGACY_HAVE_MCPU_NATIVE)
+        target_compile_options(openswmm_legacy_engine PRIVATE -mcpu=native)
+        message(STATUS "OpenSWMM Legacy Engine: -mcpu=native enabled for arm64")
+    endif()
+endif()
 
 # Platform definitions (required by legacy SWMM source)
 if(WIN32)
@@ -163,15 +188,23 @@ target_include_directories(openswmm_legacy_engine
 )
 
 # Link dependencies
-# OpenMP::OpenMP_C is gated on OpenMP_FOUND so the "no OpenMP" fallback
-# (lines 33-36 above, which defines NO_OPENMP) actually produces a buildable
-# target instead of failing on a missing imported target.
+# OpenMP::OpenMP_C is gated on the imported target actually existing — not on
+# the ${OpenMP_FOUND} variable. On macOS the directory-scoped find_package(OpenMP)
+# at the top of this file fails and leaves a local OpenMP_FOUND=FALSE that
+# shadows the cached TRUE set by the Apple Homebrew finder; gating on the
+# variable then skipped this link, so the legacy .c files compiled without
+# _OPENMP and BOTH project.c and swmm5.c emitted the fallback omp_get_max_threads
+# stub -> duplicate-symbol link failure. TARGET_NAME_IF_EXISTS resolves at
+# generate time against the (GLOBAL) imported target the finder creates, so
+# libomp links, _OPENMP is defined, and the stub branch is not compiled. When no
+# OpenMP target exists (the NO_OPENMP fallback) it expands to empty, keeping the
+# target buildable.
 target_link_libraries(openswmm_legacy_engine
     PUBLIC
         openswmm_common   # INTERFACE library — exposes include/
     PRIVATE
         $<$<NOT:$<BOOL:$<C_COMPILER_ID:MSVC>>>:m>
-        $<$<BOOL:${OpenMP_FOUND}>:OpenMP::OpenMP_C>
+        $<TARGET_NAME_IF_EXISTS:OpenMP::OpenMP_C>
 )
 
 # RPATH — wheel layout: bundled deps in openswmm/.dylibs/, two levels above

@@ -103,3 +103,15 @@ configure complex hydraulic infrastructure; spatial / CRS handling.
    editing
    infrastructure
    spatial
+
+2-D surface routing & data exchange
+===================================
+
+Overlay a triangular mesh on the 1-D network and route the surface with a
+CVODE solver; persist results and observed data to a GeoPackage.
+
+.. toctree::
+   :maxdepth: 1
+
+   2d
+   geopackage

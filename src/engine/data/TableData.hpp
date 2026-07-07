@@ -32,6 +32,7 @@
 #ifndef OPENSWMM_ENGINE_TABLE_DATA_HPP
 #define OPENSWMM_ENGINE_TABLE_DATA_HPP
 
+#include "../core/FilePathPair.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -133,7 +134,8 @@ struct Table {
     // ---- File-backed time series support ----
     bool               is_file_based = false; ///< True if data is read from external file
     std::FILE*         file_handle = nullptr;  ///< Open file handle (owned)
-    std::string        file_path;              ///< Path to external data file
+    FilePathPair       file_path;              ///< Path to external data file
+                                               ///< (carries {absolute, original})
     TableBlock         first_boundary;         ///< First rows from file (for validation)
     TableBlock         last_boundary;          ///< Last rows from file (for validation)
     TableBlock         cache;                  ///< Sliding cache window for file lookups
@@ -194,8 +196,11 @@ inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
         return tbl.y[0];
     }
 
-    // Clamp above last entry
-    if (x_query >= tbl.x[n - 1]) {
+    // Clamp above last entry — strictly above only: legacy table_lookup
+    // (src/legacy/engine/table.c:400) interpolates the last segment when
+    // x == x[n-1] (its scan condition is `x <= x2`), so equality must fall
+    // through to the interpolation below for bit parity.
+    if (x_query > tbl.x[n - 1]) {
         tbl.cursor.index     = n - 1;
         tbl.cursor.direction = -1;
         return tbl.y[n - 1];
@@ -210,19 +215,27 @@ inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
         tbl.cursor.direction = +1;
     }
 
-    // Backward seek
-    while (idx > 0 && tbl.x[idx] > x_query) {
+    // Backward seek — `>=` so a query landing exactly on an interior knot
+    // selects the segment ENDING at that knot, matching legacy table_lookup's
+    // first-match linear scan (`if (x <= x2) return table_interpolate(...)`,
+    // src/legacy/engine/table.c:426).
+    while (idx > 0 && tbl.x[idx] >= x_query) {
         --idx;
         tbl.cursor.direction = -1;
     }
 
     tbl.cursor.index = idx;
 
-    // Linear interpolation between x[idx] and x[idx+1]
-    const double dx = tbl.x[idx + 1] - tbl.x[idx];
-    if (dx <= 0.0) return tbl.y[idx];  // guard against duplicate x values
-    const double t = (x_query - tbl.x[idx]) / dx;
-    return tbl.y[idx] + t * (tbl.y[idx + 1] - tbl.y[idx]);
+    // PARITY: op-for-op transliteration of legacy table_interpolate
+    // (src/legacy/engine/table.c:54-67): multiply THEN divide —
+    //   y1 + (x - x1) * (y2 - y1) / dx
+    // (the previous t=(x-x1)/dx; y1+t*(y2-y1) form rounds differently by
+    // 1 ULP), and the legacy degenerate-segment guard |dx| < 1e-20 → mean.
+    const double x1 = tbl.x[idx],     y1 = tbl.y[idx];
+    const double x2 = tbl.x[idx + 1], y2 = tbl.y[idx + 1];
+    const double dx = x2 - x1;
+    if (std::fabs(dx) < 1.0e-20) return (y1 + y2) / 2.;
+    return y1 + (x_query - x1) * (y2 - y1) / dx;
 }
 
 /**
@@ -346,9 +359,14 @@ inline double table_getStorageVolume(Table& tbl, double depth) noexcept {
         double x2 = tbl.x[i];
         double a2 = tbl.y[i];
         if (x2 >= depth) {
-            // Bracketed — interpolate area at target depth
-            double frac = (x2 > x1) ? (depth - x1) / (x2 - x1) : 0.0;
-            double a = a1 + frac * (a2 - a1);
+            // Bracketed — interpolate area at target depth.
+            // PARITY: legacy table_getStorageVolume (table.c:624) calls
+            // table_interpolate (table.c:54): multiply THEN divide,
+            // |dx| < 1e-20 degenerate guard → mean of end areas.
+            const double dxi = x2 - x1;
+            double a;
+            if (std::fabs(dxi) < 1.0e-20) a = (a1 + a2) / 2.;
+            else a = a1 + (depth - x1) * (a2 - a1) / dxi;
             return v + (a1 + a) / 2.0 * (depth - x1);
         }
         dx = x2 - x1;
@@ -499,36 +517,39 @@ inline double table_inverseLookup(const Table& tbl, double y_query) noexcept {
  * @returns        Interpolated or extrapolated y value.
  */
 inline double table_lookupEx(const Table& tbl, double x_query) noexcept {
+    // PARITY: op-for-op transliteration of legacy table_lookupEx
+    // (src/legacy/engine/table.c:469-505):
+    //   - below first entry: x/x1*y1 when x1 > 0 (line through the origin),
+    //     else y1 — NOT first-interval slope extrapolation;
+    //   - in range: table_interpolate (multiply THEN divide, |dx| < 1e-20
+    //     degenerate guard → mean);
+    //   - above last entry: extrapolate with the slope `s` of the last
+    //     segment seen during the walk (skipping x2 == x1 segments),
+    //     clamped at s >= 0.
     const int n = static_cast<int>(tbl.x.size());
     if (n == 0) return 0.0;
-    if (n == 1) return tbl.y[0];
 
-    // Below first entry: extrapolate using first interval slope
-    if (x_query <= tbl.x[0]) {
-        double dx = tbl.x[1] - tbl.x[0];
-        if (dx <= 0.0) return tbl.y[0];
-        double s = (tbl.y[1] - tbl.y[0]) / dx;
-        return tbl.y[0] + s * (x_query - tbl.x[0]);
+    double x1 = tbl.x[0];
+    double y1 = tbl.y[0];
+    double s = 0.0;
+    if (x_query <= x1) {
+        if (x1 > 0.0) return x_query / x1 * y1;
+        else return y1;
     }
-
-    // Above last entry: extrapolate using last interval slope
-    if (x_query >= tbl.x[n - 1]) {
-        double dx = tbl.x[n - 1] - tbl.x[n - 2];
-        if (dx <= 0.0) return tbl.y[n - 1];
-        double s = (tbl.y[n - 1] - tbl.y[n - 2]) / dx;
-        return tbl.y[n - 1] + s * (x_query - tbl.x[n - 1]);
-    }
-
-    // In-range: linear interpolation
     for (int i = 1; i < n; ++i) {
-        if (tbl.x[i] >= x_query) {
-            double dx = tbl.x[i] - tbl.x[i - 1];
-            if (dx <= 0.0) return tbl.y[i - 1];
-            double t = (x_query - tbl.x[i - 1]) / dx;
-            return tbl.y[i - 1] + t * (tbl.y[i] - tbl.y[i - 1]);
+        const double x2 = tbl.x[i];
+        const double y2 = tbl.y[i];
+        if (x2 != x1) s = (y2 - y1) / (x2 - x1);
+        if (x_query <= x2) {
+            const double dx = x2 - x1;
+            if (std::fabs(dx) < 1.0e-20) return (y1 + y2) / 2.;
+            return y1 + (x_query - x1) * (y2 - y1) / dx;
         }
+        x1 = x2;
+        y1 = y2;
     }
-    return tbl.y[n - 1];
+    if (s < 0.0) s = 0.0;
+    return y1 + s * (x_query - x1);
 }
 
 // ============================================================================

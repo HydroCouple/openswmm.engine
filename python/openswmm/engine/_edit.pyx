@@ -53,6 +53,7 @@ The editor works with both :class:`ModelBuilder` (BUILDING state) and
 
 # cython: language_level=3
 
+from ._exceptions import ElementNotFoundError
 from datetime import datetime
 
 from ._common cimport *
@@ -248,7 +249,7 @@ cdef class ModelEditor:
             nb = id_or_idx.encode('utf-8')
             ni = swmm_node_index(self._handle, nb)
             if ni < 0:
-                raise KeyError(f"Node '{id_or_idx}' not found")
+                raise ElementNotFoundError(id_or_idx)
             return ni
         return int(id_or_idx)
 
@@ -259,7 +260,7 @@ cdef class ModelEditor:
             lb = id_or_idx.encode('utf-8')
             li = swmm_link_index(self._handle, lb)
             if li < 0:
-                raise KeyError(f"Link '{id_or_idx}' not found")
+                raise ElementNotFoundError(id_or_idx)
             return li
         return int(id_or_idx)
 
@@ -270,7 +271,7 @@ cdef class ModelEditor:
             sb = id_or_idx.encode('utf-8')
             si = swmm_subcatch_index(self._handle, sb)
             if si < 0:
-                raise KeyError(f"Subcatchment '{id_or_idx}' not found")
+                raise ElementNotFoundError(id_or_idx)
             return si
         return int(id_or_idx)
 
@@ -281,7 +282,7 @@ cdef class ModelEditor:
             gb = id_or_idx.encode('utf-8')
             gi = swmm_gage_index(self._handle, gb)
             if gi < 0:
-                raise KeyError(f"Gage '{id_or_idx}' not found")
+                raise ElementNotFoundError(id_or_idx)
             return gi
         return int(id_or_idx)
 
@@ -292,7 +293,7 @@ cdef class ModelEditor:
             tb = id_or_idx.encode('utf-8')
             ti = swmm_table_index(self._handle, tb)
             if ti < 0:
-                raise KeyError(f"Table '{id_or_idx}' not found")
+                raise ElementNotFoundError(id_or_idx)
             return ti
         return int(id_or_idx)
 

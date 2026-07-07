@@ -1,0 +1,258 @@
+;;============================================================================
+;; OpenSWMM — Complete 2D Surface Routing Example
+;;
+;; A 20 m × 20 m parking lot meshed as 8 triangles on a 3×3 vertex grid,
+;; sloping gently from north (z = 101.0) to south (z = 100.0). The mesh
+;; exercises every 2D input section the engine currently parses:
+;;
+;;   [2D_OPTIONS]              — every documented key
+;;   [2D_VERTICES]             — 9 vertices
+;;   [2D_TRIANGLES]            — 8 triangles, Manning's n = 0.018 (asphalt)
+;;   [2D_VERTEX_NODE_MAP]      — center vertex couples to drain inlet J1
+;;   [2D_TRIANGLE_NODE_MAP]    — NE-corner triangle couples to street vault ST1
+;;   [2D_BOUNDARY_CONDITIONS]  — one row each for NORMAL_FLOW, SPECIFIED_STAGE,
+;;                               TS_STAGE, SPECIFIED_FLOW, RATING_CURVE
+;;   [2D_EDGE_CONVEYANCE]      — east-west "leaky berm" at y = 10 m (c = 0.30)
+;;
+;; The optional `;; UNITS:` and `;; SOURCE_CRS:` comment headers at the top of
+;; the file are read by the engine's prescan (see docs/2dModelStrategy.md §2A
+;; and §11A). With `;; UNITS: SI (m)`, the engine treats the mesh values as
+;; already-SI metres and skips its FLOW_UNITS-based ft→m scaling. For US-units
+;; projects (FLOW_UNITS = CFS/GPM/MGD) you would either remove the header (and
+;; let the engine multiply by 0.3048) or write mesh values in metres and keep
+;; the header (recommended for new projects).
+;;
+;; To use an external `.2dm` mesh file instead of inline sections, comment out
+;; the five [2D_*] mesh sections below and uncomment the [2D_MESH_FILE] block
+;; at the very bottom of this file.
+;;============================================================================
+
+;; UNITS: SI (m)
+;; SOURCE_CRS: EPSG:32616
+
+
+[TITLE]
+2D Surface Routing — Complete Example
+Demonstrates every implemented [2D_*] input section.
+
+
+[OPTIONS]
+FLOW_UNITS           CMS
+INFILTRATION         GREEN_AMPT
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+
+START_DATE           01/01/2024
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2024
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2024
+END_TIME             06:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         00:00:15
+
+
+[EVAPORATION]
+CONSTANT             0.0
+DRY_ONLY             NO
+
+
+[RAINGAGES]
+;;Name  Format   Interval   SCF   Source
+RG1     INTENSITY 0:05      1.0   TIMESERIES   RAIN_TS
+
+
+[JUNCTIONS]
+;;Name  Elevation  MaxDepth  InitDepth  SurDepth  Aponded
+;; Rim elevation (= Elevation + MaxDepth) is 100.5 m — matches the surface
+;; bed at v4 so the orifice gate opens as soon as water reaches the inlet.
+J1      99.0       1.5       0.0        0.0       0.0
+
+
+[OUTFALLS]
+;;Name  Elevation  Type   Stage      Gated   Route To
+OUT1    98.0       FREE   *          NO
+
+
+[STORAGE]
+;;Name  Elev   MaxDepth  InitDepth  Shape       Coeff  Exp  Const  SurDepth  Fevap
+;; Rim elevation (= Elev + MaxDepth) is 101.0 m, ~0.33 m above the T6 cell
+;; centroid bed (≈ 100.67 m).  Constant 5 m² area via FUNCTIONAL form.
+ST1     99.5   1.5       0.0        FUNCTIONAL  0      0    5.0    0         0
+
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
+C1      J1        OUT1    100     0.013      0         0          0         0
+C2      ST1       OUT1     50     0.013      0         0          0         0
+
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  0.30   0      0      0      1
+C2      CIRCULAR  0.20   0      0      0      1
+
+
+[TIMESERIES]
+;;Name      Date         Time   Value
+;; Rainfall — 5 mm/hr for the first 2 hours, then dry.
+RAIN_TS     01/01/2024   00:00  5.0
+RAIN_TS                  02:00  5.0
+RAIN_TS                  02:05  0.0
+RAIN_TS                  06:00  0.0
+
+;; Tidal stage on the east boundary (m): smooth diurnal swing 100.2 → 100.8.
+TIDAL_TS    01/01/2024   00:00  100.20
+TIDAL_TS                 01:30  100.55
+TIDAL_TS                 03:00  100.80
+TIDAL_TS                 04:30  100.55
+TIDAL_TS                 06:00  100.20
+
+
+[CURVES]
+;;Name  Type     X-Value   Y-Value
+;; Rating curve for the east-corner outflow edge: stage (m above bed) → flow (m³/s per m of edge).
+DOWN_RC RATING   0.00      0.00
+DOWN_RC          0.25      0.05
+DOWN_RC          0.50      0.18
+DOWN_RC          1.00      0.55
+DOWN_RC          2.00      1.80
+
+
+[REPORT]
+INPUT      NO
+CONTROLS   NO
+SUBCATCHMENTS  ALL
+NODES      ALL
+LINKS      ALL
+
+
+;;============================================================================
+;; 2D Surface Routing Sections
+;;============================================================================
+
+
+[2D_OPTIONS]
+;;Parameter             Value      ;; Notes
+MAX_TIMESTEP            10.0       ;; Max CVODE internal step (s)
+MIN_TIMESTEP            0.001      ;; Min CVODE internal step (s)
+REL_TOLERANCE           1.0e-4     ;; CVODE relative tolerance
+ABS_TOLERANCE           1.0e-6     ;; CVODE absolute tolerance (m of depth)
+DRY_DEPTH               0.001      ;; Wet/dry threshold (m)
+LIMITER_EPSILON         1.0e-6     ;; Jawahar-Kamath slope-limiter ε
+COUPLING_CD             0.65       ;; Default discharge coefficient (overridden per-row below)
+LINEAR_SOLVER           GMRES      ;; GMRES (wired); BICGSTAB / TFQMR reserved
+PRECONDITIONER          JACOBI     ;; NONE | JACOBI (wired); ILU reserved
+MAX_KRYLOV_DIM          30         ;; Max Krylov subspace dim
+MAX_CVODE_STEPS         500        ;; Max CVODE steps per advance call
+COUPLING_INTERVAL       0          ;; 0 = couple every SWMM routing step
+REPORT_2D               YES        ;; Toggle 2D reporting
+OUTPUT_FILE             2d_complete_example.h5   ;; HDF5 output (relative to this .inp)
+
+
+[2D_VERTICES]
+;;  X        Y        Z        TAG
+;; --------- -------- -------- ----------
+    0.0      0.0      100.00   ;; v0 — SW corner
+   10.0      0.0      100.00   ;; v1 — south mid
+   20.0      0.0      100.00   ;; v2 — SE corner
+    0.0     10.0      100.50   ;; v3 — west mid
+   10.0     10.0      100.50   ;; v4 — centre  (couples to J1)
+   20.0     10.0      100.50   ;; v5 — east mid
+    0.0     20.0      101.00   ;; v6 — NW corner
+   10.0     20.0      101.00   ;; v7 — north mid
+   20.0     20.0      101.00   ;; v8 — NE corner
+
+
+[2D_TRIANGLES]
+;; V1  V2  V3   MANNINGS_N   TAG
+;; --- --- ---  ----------   --------
+   0   1   4    0.018        ;; T0 — SW lower
+   0   4   3    0.018        ;; T1 — SW upper
+   1   2   5    0.018        ;; T2 — SE lower
+   1   5   4    0.018        ;; T3 — SE upper
+   3   4   7    0.018        ;; T4 — NW lower
+   3   7   6    0.018        ;; T5 — NW upper
+   4   5   8    0.018  vault ;; T6 — NE lower (couples to ST1)
+   4   8   7    0.018        ;; T7 — NE upper
+
+
+[2D_VERTEX_NODE_MAP]
+;; VERTEX  SWMM_NODE  CD     AREA  (m²)
+;; ------  ---------  ----   ----
+   4       J1         0.65   2.0       ;; centre vertex → drain inlet
+
+
+[2D_TRIANGLE_NODE_MAP]
+;; TRIANGLE_OR_TAG   SWMM_NODE   CD     AREA  (m²)
+;; ----------------  ---------   ----   ----
+   vault             ST1         0.60   10.0      ;; NE-lower cell → street vault
+
+
+[2D_BOUNDARY_CONDITIONS]
+;; Per-edge boundary conditions. Format: TRI EDGE TYPE PARAM_1 PARAM_2 GROUP
+;; PARAM_2 is reserved (always *); GROUP is optional (* = none).
+;; Boundary edges not listed here default to WALL (zero flux).
+;;
+;; Local edge convention: edge e is opposite vertex e of the triangle.
+;;   For T0=(v0,v1,v4): e0=(v1,v4), e1=(v4,v0), e2=(v0,v1).
+;;
+;; TRI   EDGE   TYPE              PARAM_1         PARAM_2   GROUP
+;; ---   ----   ---------------   -------------   -------   --------
+;; South perimeter — let water leave under Manning's normal-flow:
+   0     2      NORMAL_FLOW       0.0050          *         *           ;; T0 south edge (v0,v1)
+   2     2      NORMAL_FLOW       0.0050          *         *           ;; T2 south edge (v1,v2)
+;;
+;; East perimeter — mixed tidal stage (timeseries) and rating-curve outflow:
+   2     0      TS_STAGE          TIDAL_TS        *         east_tide   ;; T2 east edge (v2,v5)
+   6     0      RATING_CURVE      DOWN_RC         *         east_rc     ;; T6 east edge (v5,v8)
+;;
+;; North perimeter — upstream inflow as specified per-metre flow + a constant stage:
+   7     0      SPECIFIED_FLOW    0.0500          *         upstream    ;; T7 north edge (v8,v7) — inflow (outward-negative)
+   5     0      SPECIFIED_STAGE   101.50          *         *           ;; T5 north edge (v7,v6) — fixed stage
+;;
+;; West perimeter — left default WALL (T5 e1 and T1 e1).
+
+
+[2D_EDGE_CONVEYANCE]
+;; "Leaky berm" running east–west at y = 10 m. Both interior edges along the
+;; berm carry 30% of the diffusion-wave flux that the geometry would otherwise
+;; allow. The engine mirrors each row to the partner slot on the neighbouring
+;; triangle so antisymmetry (and mass conservation) is preserved.
+;;
+;; FROM_VERTEX  TO_VERTEX  CONVEYANCE
+;; -----------  ---------  ----------
+   3            4          0.30        ;; berm segment from v3 to v4 (T1↔T4)
+   4            5          0.30        ;; berm segment from v4 to v5 (T3↔T6)
+
+
+[COORDINATES]
+;;Node   X-Coord   Y-Coord
+J1       10.0      10.0
+ST1      15.0      15.0
+OUT1     22.0       0.0
+
+
+[MAP]
+DIMENSIONS    -2.0    -2.0    24.0    24.0
+UNITS         Meters
+
+
+;;============================================================================
+;; OPTIONAL — External mesh file
+;;
+;; To split the mesh into a sibling .2dm file (useful when the same mesh is
+;; shared across multiple .inp configurations), delete the five [2D_*] mesh
+;; sections above and uncomment the block below:
+;;
+;; [2D_MESH_FILE]
+;; FILE   2d_complete_example.2dm
+;;============================================================================

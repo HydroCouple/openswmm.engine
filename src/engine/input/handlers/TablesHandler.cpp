@@ -93,10 +93,17 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
         // Detect FILE reference
         const std::string tok1_upper = Tokenizer::to_upper(tok[1]);
         if (tok1_upper == "FILE") {
-            // External file — path (and optional :column) is tok[2]
-            // Store in table's id as "FILE:path[:column]" for later loading
+            // External file — tok[2] is the quoted path, optionally with a
+            // `:column` suffix inside the quotes (e.g. "rain.csv:East_Gage").
+            // Store the inner token verbatim in Table::file_path; the
+            // PostParseResolver splits the column suffix when loading, and
+            // InpWriter emits the whole thing unchanged for byte-fidelity
+            // round-trip.  tbl.id is left as the table name set above.
             if (tok.size() > 2) {
-                tbl.id = "FILE:" + tok[2];
+                std::string path = tok[2];
+                if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
+                    path = path.substr(1, path.size() - 2);
+                tbl.file_path = std::move(path);
             }
             continue;
         }
@@ -109,35 +116,58 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
 
         if (has_date && tok.size() >= 4) {
             // Name  Date  Time  Value
-            last_date = parse_datetime(tok[1], tok[2]);
-            x = last_date;
+            x = parse_datetime(tok[1], tok[2]);
+            // Carry only the DATE (midnight) to subsequent date-less
+            // continuation rows — matching legacy table_readTimeseries, where
+            // aDate holds the date and x = aDate + aTime. Storing the FULL
+            // datetime here corrupted continuation rows (e.g. a row "00:30"
+            // after a dated "10/01/2003 00:25" became 00:25+00:30 = 00:55),
+            // scrambling rain/inflow hydrographs that repeat the date every N
+            // rows.
+            last_date = std::floor(x);
             y = to_double(tok[3]);
         } else if (!has_date && tok.size() >= 3) {
             // Name  Time  Value  (continuation, uses last_date)
+            //
+            // The time token may be EITHER decimal hours (a bare number such
+            // as "0.25" or "3.0") OR a clock string "HH:MM[:SS]".  This mirrors
+            // legacy table_readTimeseries() / datetime_strToTime(): try a full
+            // decimal parse first — if the whole token is a number it is
+            // decimal hours, converted to a fraction of a day (÷24); otherwise
+            // fall back to the integer HH:MM:SS path.  The previous code only
+            // handled HH:MM:SS, so a bare "0.25" was truncated to 0, dropping
+            // most of the series (e.g. EXTRAN inflow hydrographs).
             double time_frac = 0.0;
-            // Parse time HH:MM[:SS] → fractional days
-            unsigned th = 0, tm = 0;
-            double   ts = 0.0;
-            const char* tp   = tok[1].data();
-            const char* tend = tok[1].data() + tok[1].size();
-            auto rut = [&](unsigned& out) {
-                auto [np, ec] = std::from_chars(tp, tend, out);
-                if (ec != std::errc{}) return;
-                tp = np;
-            };
-            auto rdt = [&](double& out) {
-                auto [np, ec] = openswmm::from_chars_double(tp, tend, out);
-                if (ec != std::errc{}) return;
-                tp = np;
-            };
-            rut(th);
-            if (tp < tend && *tp == ':') { ++tp; rut(tm); }
-            if (tp < tend && *tp == ':') { ++tp; rdt(ts); }
-            // Use integer arithmetic matching legacy datetime_encodeTime()
-            // to produce identical floating-point time fractions
-            time_frac = datetime::encodeTime(static_cast<int>(th),
-                                             static_cast<int>(tm),
-                                             static_cast<int>(ts));
+            const char* tbeg = tok[1].data();
+            const char* tend = tbeg + tok[1].size();
+            double dec_hours = 0.0;
+            auto [dp, dec] = openswmm::from_chars_double(tbeg, tend, dec_hours);
+            if (dec == std::errc{} && dp == tend) {
+                // Whole token is a number → decimal hours → fraction of day.
+                time_frac = dec_hours / 24.0;
+            } else {
+                // Clock format HH:MM[:SS].  Use integer arithmetic matching
+                // legacy datetime_encodeTime() for identical time fractions.
+                unsigned th = 0, tm = 0;
+                double   ts = 0.0;
+                const char* tp = tbeg;
+                auto rut = [&](unsigned& out) {
+                    auto [np, ec] = std::from_chars(tp, tend, out);
+                    if (ec != std::errc{}) return;
+                    tp = np;
+                };
+                auto rdt = [&](double& out) {
+                    auto [np, ec] = openswmm::from_chars_double(tp, tend, out);
+                    if (ec != std::errc{}) return;
+                    tp = np;
+                };
+                rut(th);
+                if (tp < tend && *tp == ':') { ++tp; rut(tm); }
+                if (tp < tend && *tp == ':') { ++tp; rdt(ts); }
+                time_frac = datetime::encodeTime(static_cast<int>(th),
+                                                 static_cast<int>(tm),
+                                                 static_cast<int>(ts));
+            }
 
             // If the time wraps back to 0 (midnight) and we already have
             // data, increment the day

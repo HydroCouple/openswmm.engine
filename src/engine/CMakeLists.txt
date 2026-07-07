@@ -102,6 +102,10 @@ target_include_directories(openswmm_engine
         $<INSTALL_INTERFACE:include>
         $<INSTALL_INTERFACE:include/openswmm/engine>
         $<INSTALL_INTERFACE:include/openswmm/plugin_sdk>
+        # Lets installed-engine consumers resolve the quoted
+        # `#include "legacy_version.h"` (generated header installed by
+        # src/legacy/engine) without referencing the legacy target's BINARY_DIR.
+        $<INSTALL_INTERFACE:include/openswmm/legacy/engine>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -122,9 +126,19 @@ find_package(Threads REQUIRED)
 target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
 
 # ---- OpenMP (for parallel solver loops) ----
-# Uses custom FindOpenMP.cmake for Apple Silicon Homebrew libomp support.
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
+# macOS/AppleClang is the only platform where the stock FindOpenMP cannot
+# locate OpenMP on its own (Homebrew libomp): there we add the project cmake/
+# dir to the module path and use the custom finder. On Linux/Windows the stock
+# FindOpenMP discovers the compiler's OpenMP — and is also what Kokkos/SUNDIALS
+# find_dependency(OpenMP) resolves to at find_package(SUNDIALS) time — so we
+# must NOT put cmake/FindOpenMP.cmake on the module path there (it is Apple-only
+# and would shadow stock, breaking that transitive find).
+if(APPLE)
+    list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+    include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
+else()
+    find_package(OpenMP)
+endif()
 
 if(OpenMP_FOUND OR TARGET OpenMP::OpenMP_CXX)
     target_link_libraries(openswmm_engine PRIVATE OpenMP::OpenMP_CXX)
@@ -173,6 +187,46 @@ else()
     endif()
 endif()
 
+# ---- Fast geometry / Manning kernels (opt-OUT; default ON) ----
+# The refactored engine ships with the fast cross-section table lookup
+# (reciprocal-multiply + `*inv_delta`, no per-element IEEE divide) and the fast
+# Manning friction (x*cbrt(x) instead of libm pow). Together ~10% faster DW
+# routing. These are NOT bit-exact vs legacy (ULP-level; ~1e-4 flow accumulated
+# over long runs — well inside the abs 1e-8 / rel 1e-7 gate per lookup). Turn
+# BOTH off for bit-exact legacy parity (the QA parity harness / regression
+# baselines): -DOPENSWMM_FAST_XSECT_LOOKUP=OFF -DOPENSWMM_FAST_MANNING_POW=OFF
+option(OPENSWMM_FAST_XSECT_LOOKUP
+    "Fast cross-section table lookup (reciprocal-multiply; not bit-exact vs legacy)" ON)
+option(OPENSWMM_FAST_MANNING_POW
+    "Fast Manning friction via cbrt instead of libm pow (not bit-exact vs legacy)" ON)
+if(OPENSWMM_FAST_XSECT_LOOKUP)
+    target_compile_definitions(openswmm_engine PRIVATE SWMM_XSECT_FAST_LOOKUP)
+endif()
+if(OPENSWMM_FAST_MANNING_POW)
+    target_compile_definitions(openswmm_engine PRIVATE SWMM_FAST_MANNING_POW)
+endif()
+message(STATUS "OpenSWMM Engine: fast kernels — xsect_lookup=${OPENSWMM_FAST_XSECT_LOOKUP}"
+        " manning_pow=${OPENSWMM_FAST_MANNING_POW}"
+        " (ON ⇒ ~10% faster DW routing, NOT bit-exact vs legacy)")
+
+# ---- Force-optimized override (for Debug parent builds) ----
+# When the engine is consumed as a subdirectory by a parent project that's
+# in Debug mode (e.g. a GUI under active development), CMAKE_BUILD_TYPE=Debug
+# normally collapses -O3 to -O0 and disables LTO. The engine is a stable
+# dependency in those scenarios — runtime perf, not engine debuggability,
+# is what matters — so this option lets a parent force the engine targets
+# to compile with the Darwin/Linux preset Release flags as PRIVATE target
+# options, overriding the parent's Debug flags for engine TUs only.
+option(OPENSWMM_ENGINE_FORCE_OPTIMIZED
+    "Always compile engine targets with optimized flags, even in Debug builds" OFF)
+if(OPENSWMM_ENGINE_FORCE_OPTIMIZED AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(openswmm_engine PRIVATE
+        -O2 -fdata-sections -ffunction-sections
+        -fno-fast-math -ffp-contract=off -fno-math-errno)
+    message(STATUS "OpenSWMM Engine: OPENSWMM_ENGINE_FORCE_OPTIMIZED ON → "
+            "compiling engine with -O2 + section-gc regardless of CMAKE_BUILD_TYPE")
+endif()
+
 # ---- Link-time optimization (IPO/LTO) ----
 # Enables cross-translation-unit inlining and dead-code elimination. Critical
 # for performance when hot-path functions (fastmath::pow4_3, SIMD helpers,
@@ -181,7 +235,27 @@ endif()
 if(NOT DEFINED OPENSWMM_ENABLE_LTO)
     set(OPENSWMM_ENABLE_LTO ON CACHE BOOL "Enable interprocedural / link-time optimization for Release builds")
 endif()
-if(OPENSWMM_ENABLE_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+# musl libc (Alpine / musllinux wheels): the `fortify-headers` package (pulled in
+# by `build-base`) wraps stdio in `always_inline` gnu_inline functions that GCC
+# cannot inline during the `-flto` link ("inlining failed in call to
+# 'always_inline' 'vsnprintf': function body can be overwritten at link time"),
+# which aborts the engine shared-library link. LTO + fortify-headers is a
+# known-broken combination on musl; disable IPO there. glibc (manylinux),
+# macOS, and Windows keep LTO. check_ipo_supported() does NOT catch this — its
+# probe program never includes the fortify stdio wrappers.
+if(OPENSWMM_ENABLE_LTO AND CMAKE_CXX_COMPILER)
+    execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -dumpmachine
+                    OUTPUT_VARIABLE OPENSWMM_TARGET_TRIPLE
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    if(OPENSWMM_TARGET_TRIPLE MATCHES "musl")
+        set(OPENSWMM_ENABLE_LTO OFF)
+        message(STATUS "OpenSWMM Engine: IPO/LTO disabled on musl libc "
+                       "(${OPENSWMM_TARGET_TRIPLE}) — fortify-headers + LTO incompatible")
+    endif()
+endif()
+if(OPENSWMM_ENABLE_LTO AND
+   (OPENSWMM_ENGINE_FORCE_OPTIMIZED OR NOT CMAKE_BUILD_TYPE STREQUAL "Debug"))
     include(CheckIPOSupported)
     check_ipo_supported(RESULT OPENSWMM_IPO_SUPPORTED OUTPUT OPENSWMM_IPO_ERROR)
     if(OPENSWMM_IPO_SUPPORTED)
@@ -243,6 +317,22 @@ if(NOT WIN32)
         MACOSX_RPATH  TRUE
         INSTALL_RPATH "${LIB_ROOT}"
     )
+endif()
+
+# Keep vendored static dependencies (HDF5, SQLite) PRIVATE at the dynamic-symbol
+# level, not just the link interface. Linking them PRIVATE keeps them out of the
+# CMake usage requirements, but the static archives' symbols still land in this
+# dylib's export table with default visibility (e.g. ~3.5k _H5* symbols). A
+# consumer that ALSO links its own copy — the GUI links HDF5 for its 2D mesh
+# reader and SQLite transitively via GDAL — then cross-binds some calls to this
+# dylib's copy and crashes in HDF5's atexit teardown (H5_term_library →
+# H5I_clear_type operating on a foreign HDF5's global state). Hiding these from
+# the export table makes each binary use its own copy end-to-end, regardless of
+# version. (sundials/Kokkos are not hidden here: no current consumer links its
+# own copy, and the GPU plugin carries its own statically.)
+if(APPLE)
+    target_link_options(openswmm_engine PRIVATE
+        "LINKER:-unexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/macos_unexported_symbols.txt")
 endif()
 
 # ---- Install ----
@@ -327,6 +417,15 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
         target_compile_options(openswmm_engine_internal PRIVATE /arch:AVX2)
     endif()
 
+    # Fast kernels (default ON) — must match the shared engine so MSVC unit
+    # tests exercise the same build variant.
+    if(OPENSWMM_FAST_XSECT_LOOKUP)
+        target_compile_definitions(openswmm_engine_internal PRIVATE SWMM_XSECT_FAST_LOOKUP)
+    endif()
+    if(OPENSWMM_FAST_MANNING_POW)
+        target_compile_definitions(openswmm_engine_internal PRIVATE SWMM_FAST_MANNING_POW)
+    endif()
+
     message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")
 endif()
 
@@ -338,6 +437,7 @@ if(OPENSWMM_BUILD_2D)
         2d/data/*.cpp
         2d/mesh/*.cpp
         2d/solver/SurfaceFluxCalculator.cpp
+        2d/solver/ActiveSetBuilder.cpp
         2d/coupling/*.cpp
         2d/input/*.cpp
         2d/output/*.cpp
@@ -348,11 +448,57 @@ if(OPENSWMM_BUILD_2D)
     # CVODE wrapper requires SUNDIALS
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
 
+    # ARKODE/ARKStep IMEX wrapper (alternative integrator, OPENSWMM_2D_INTEGRATOR
+    # = arkode). Reuses the same SUNDIALS already linked for CVODE. The unique-
+    # edge structure backs the local-inertial (MOMENTUM=inertial) momentum DOFs.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ArkodeSurfaceSolver.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
+
+    # Approximate-Jacobian (diffusion-stencil) assembly — pure C++, shared by
+    # the Jacobi and AMG preconditioners. Always compiled.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceJacobian.cpp)
+
+    # Runtime backend selector (dlopen of the optional GPU plugin; serial CPU
+    # fallback). Lives in the core — it owns the CPU↔plugin decision — but
+    # pulls in no Kokkos/GPU dependency itself.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
+
+    # hypre BoomerAMG preconditioner (PRECONDITIONER=AMG) — compiled only when
+    # OPENSWMM_WITH_HYPRE is ON (the source includes HYPRE.h).
+    if(OPENSWMM_WITH_HYPRE)
+        list(APPEND OPENSWMM_2D_SOURCES 2d/solver/HypreAmgPreconditioner.cpp)
+    endif()
+
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
-    # Find SUNDIALS (CVODE) via vcpkg or system install
-    find_package(SUNDIALS REQUIRED COMPONENTS cvode)
-    target_link_libraries(openswmm_engine PRIVATE SUNDIALS::cvode)
+    # Find SUNDIALS (CVODE + ARKODE + the threaded OpenMP N_Vector). The OpenMP
+    # N_Vector (SUNDIALS::nvecopenmp) lets the core CPU solver run its vector ops
+    # multithreaded under the THREADS option without the Kokkos plugin.
+    find_package(SUNDIALS REQUIRED COMPONENTS cvode arkode nvecopenmp)
+    target_link_libraries(openswmm_engine PRIVATE
+        SUNDIALS::cvode SUNDIALS::arkode SUNDIALS::nvecopenmp)
+
+    # hypre BoomerAMG — opt-in algebraic-multigrid preconditioner for the 2D
+    # solver. We call hypre's IJ/BoomerAMG API directly from the psetup/psolve
+    # callbacks (no SUNDIALS N_VParHyp coupling), so SUNDIALS need not be built
+    # with hypre. Built sequentially (MPI_COMM_SELF); the `hypre` vcpkg feature
+    # supplies the library.
+    if(OPENSWMM_WITH_HYPRE)
+        find_package(HYPRE CONFIG REQUIRED)
+        target_link_libraries(openswmm_engine PRIVATE HYPRE::HYPRE)
+        # PUBLIC, not PRIVATE: CvodeSurfaceSolver.hpp gates the amg_precond_
+        # member on OPENSWMM_HAVE_HYPRE, so sizeof(CvodeSurfaceSolver) depends
+        # on it. Any consumer that includes the header (unit tests, GUI) MUST
+        # see the same definition or the struct layout disagrees with the
+        # library — an ODR violation that corrupts the stack. Linking hypre
+        # stays PRIVATE; only the ABI-affecting macro is propagated.
+        target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAVE_HYPRE)
+        if(TARGET openswmm_engine_internal)
+            target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAVE_HYPRE)
+        endif()
+        message(STATUS "OpenSWMM Engine: hypre BoomerAMG preconditioner ENABLED "
+                       "(PRECONDITIONER=AMG available)")
+    endif()
 
     # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
     # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
@@ -380,7 +526,18 @@ if(OPENSWMM_BUILD_2D)
     # Also add to the internal static library for MSVC unit tests
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
-        target_link_libraries(openswmm_engine_internal PRIVATE SUNDIALS::cvode)
+        target_link_libraries(openswmm_engine_internal PRIVATE
+            SUNDIALS::cvode SUNDIALS::arkode SUNDIALS::nvecopenmp)
+        # The 2D sources include HypreAmgPreconditioner.cpp, which references
+        # HYPRE_* symbols when OPENSWMM_HAVE_HYPRE is set. The shared engine
+        # links HYPRE above; the internal STATIC lib must link it too, or MSVC
+        # unit-test exes (which link openswmm_engine_internal, not the shared
+        # lib) fail with LNK1120 unresolved HYPRE_* externals. Static libraries
+        # don't carry their deps, so this PRIVATE link is propagated to the
+        # exe link line by CMake.
+        if(OPENSWMM_WITH_HYPRE)
+            target_link_libraries(openswmm_engine_internal PRIVATE HYPRE::HYPRE)
+        endif()
         if(hdf5_FOUND)
             target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
         else()
@@ -391,6 +548,13 @@ if(OPENSWMM_BUILD_2D)
     endif()
 
     message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE + HDF5)")
+
+    # Optional GPU surface-solver plugin (standalone shared lib, dlopen()ed
+    # at runtime — NOT linked into openswmm_engine). Phase 0 stub for now.
+    # See docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md.
+    if(OPENSWMM_BUILD_GPU_PLUGIN)
+        add_subdirectory(2d/gpu)
+    endif()
 else()
     message(STATUS "OpenSWMM Engine: 2D surface routing disabled (set -DOPENSWMM_BUILD_2D=ON to enable)")
 endif()

@@ -98,8 +98,10 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
             break;
 
         case EvapMethod::MONTHLY:
-            // Convert from in/day to ft/sec using US EVAPRATE factor
-            state.evap_rate = state.monthly_evap[month] / ucf::Ucf[ucf::EVAPRATE][0];
+            // Convert in/day (US) or mm/day (SI) → ft/sec using the project's
+            // unit-system EVAPRATE factor (set at init). Hardcoding the US index
+            // over-evaporated SI (CMS) models by ~25×.
+            state.evap_rate = state.monthly_evap[month] / state.evaprate_ucf;
             break;
 
         case EvapMethod::TEMPERATURE: {

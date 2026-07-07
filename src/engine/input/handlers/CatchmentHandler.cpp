@@ -16,10 +16,16 @@
  *
  * ### [RAINGAGES] format
  * ```
- * ;; Name   Format    Interval  SCF   Source
- * RG1       VOLUME    0:15      1.0   TIMESERIES RAIN1
- * RG2       VOLUME    0:15      1.0   FILE "rain.csv:EAST_GAGE"
+ * ;; Name   Format    Interval  SCF   Source                 [ScaleFactor]
+ * RG1       VOLUME    0:15      1.0   TIMESERIES RAIN1        2.0
+ * RG2       VOLUME    0:15      1.0   FILE "rain.csv:EAST"    1.5
  * ```
+ *
+ * The trailing `ScaleFactor` token is optional; it multiplies the gage's
+ * rainfall intensity after unit conversion (Build 5.3.0+, parity with
+ * legacy `gage.c`).  When two gages share the same TIMESERIES (co-gages),
+ * the secondary's rainfall is rescaled by the ratio
+ * `scale_factor[secondary] / scale_factor[primary]`.
  *
  * @see Legacy reference: src/solver/input.c — readSubcatch(), readGage()
  * @ingroup engine_input
@@ -58,9 +64,16 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.ts_name,       std::string{});
     grow(ctx.gages.file_path,     std::string{});
     grow(ctx.gages.col_name,      std::string{});
+    grow(ctx.gages.station_id,    std::string{});
+    grow(ctx.gages.rain_units,    0);
+    grow(ctx.gages.file_first_date,    0.0);
+    grow(ctx.gages.file_last_date,     0.0);
+    grow(ctx.gages.file_periods_precip, 0L);
+    if (ctx.gages.rain_series.size() < n) ctx.gages.rain_series.resize(n);
     grow(ctx.gages.file_format,   RainFileFormat::UNKNOWN);
     grow(ctx.gages.interval_sec,  3600);
     grow(ctx.gages.snow_factor,   1.0);
+    grow(ctx.gages.scale_factor,  1.0);
     grow(ctx.gages.rain_type,     0);
     grow(ctx.gages.rainfall,      0.0);
     grow(ctx.gages.next_rainfall, 0.0);
@@ -120,6 +133,14 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         // Optional CurbLen (column 7)
         if (tok.size() > 7)
             ctx.subcatches.curb_length[idx] = to_double(tok[7]);
+
+        // Optional SnowPack (column 8) — store the name for deferred
+        // resolution (SNOWPACKS is usually parsed after SUBCATCHMENTS) and
+        // attempt an immediate resolve in case it was parsed first.
+        if (tok.size() > 8 && !tok[8].empty()) {
+            ctx.subcatches.snowpack_name[idx] = tok[8];
+            ctx.subcatches.snowpack[idx] = ctx.snowpack_names.find(tok[8]);
+        }
         if (!pl.comment.empty())
             ctx.subcatches.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
@@ -213,9 +234,20 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         else if (fmt == "CUMULATIVE") ctx.gages.rain_type[idx] = 2;
         else                          ctx.gages.rain_type[idx] = 0; // INTENSITY
 
-        // Interval: HH:MM or seconds
+        // Recording interval. SWMM specifies the rain-gage interval in
+        // DECIMAL HOURS or "H:MM[:SS]" format — NOT seconds. A bare decimal
+        // such as "0.08333" means 0.08333 hours (= 300 s); the generic
+        // parse_time_seconds() would mis-read it as 0.08333 s and truncate to
+        // 0, which empties the rain window and yields ZERO precipitation on
+        // every timeseries/file rain gage. Match legacy datetime_strToTime
+        // (decimal hours → fraction of day → seconds).
+        const std::string& itok = tok[2];
+        double interval_secs =
+            (itok.find(':') != std::string::npos)
+                ? parse_time_seconds(itok)        // H:MM[:SS] clock duration
+                : to_double(itok, 0.0) * 3600.0;  // decimal hours
         ctx.gages.interval_sec[idx] =
-            static_cast<int>(parse_time_seconds(tok[2]));
+            static_cast<int>(interval_secs + 0.5);
 
         // Snow correction factor
         ctx.gages.snow_factor[idx] = to_double(tok[3], 1.0);
@@ -228,6 +260,12 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
             ctx.gages.ts_name[idx]  = tok[5]; // Store name for deferred resolution
             ctx.gages.ts_index[idx] = ctx.table_names.find(tok[5]);
             // ts_index may be -1 if TIMESERIES section appears after RAINGAGES
+
+            // Optional trailing rainfall scaling factor (legacy gage.c readGageSeriesFormat tok[6])
+            if (tok.size() > 6) {
+                double sf = to_double(tok[6], 1.0);
+                if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+            }
         } else if (src == "FILE" && tok.size() > 5) {
             ctx.gages.source[idx] = RainSource::FILE_RAIN;
 
@@ -249,6 +287,34 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 ctx.gages.file_format[idx] = RainFileFormat::STAN_PRCP;
             }
             (void)colon; // suppress warning
+
+            // Standard SWMM FILE grammar (legacy gage.c gage_readParams):
+            //   Name Format Interval SCF FILE Fname Station Units [StartDate] [SCF]
+            // tok[5]=Fname, tok[6]=Station, tok[7]=Units (IN|MM),
+            // tok[8]=optional start date, tok[9]=optional rainfall scale factor.
+            // Station + Units are required for STAN_PRCP; the compact `path:col`
+            // (USER_CSV) form keeps its older behaviour (trailing scale factor).
+            if (ctx.gages.file_format[idx] == RainFileFormat::STAN_PRCP) {
+                // '*' is the writer's placeholder for "no station" — normalize
+                // back to empty ("accept all rows") instead of filtering on a
+                // literal '*' station that would zero out the rainfall.
+                if (tok.size() > 6 && tok[6] != "*") ctx.gages.station_id[idx] = tok[6];
+                if (tok.size() > 7) {
+                    const std::string u = Tokenizer::to_upper(tok[7]);
+                    ctx.gages.rain_units[idx] = (u == "MM") ? 1 : 0; // default IN
+                }
+                // The trailing scale factor is honoured only when present as a
+                // positive number (a start date token would not parse as one).
+                if (tok.size() > 9) {
+                    double sf = to_double(tok[9], 1.0);
+                    if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+                }
+            } else {
+                if (tok.size() > 6) {
+                    double sf = to_double(tok[6], 1.0);
+                    if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+                }
+            }
         }
         if (!pl.comment.empty())
             ctx.gages.comments[static_cast<std::size_t>(idx)] = pl.comment;

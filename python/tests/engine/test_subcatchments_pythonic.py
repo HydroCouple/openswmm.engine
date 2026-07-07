@@ -108,8 +108,11 @@ class TestCoverage:
     def test_set_get_round_trip(self, opened_solver):
         if len(opened_solver.subcatchments) == 0:
             pytest.skip("no subcatchments")
-        # The fixture may not have landuses defined; skip if so.
-        from openswmm.engine._common import swmm_landuse_count
+        # Landuse count is exposed at runtime via the quality.landuses
+        # collection (the swmm_landuse_count C symbol lives in the
+        # cimport-only _common.pxd and has no runtime module).
+        n_landuses = len(opened_solver.quality.landuses)
+        assert n_landuses >= 0
         s0 = opened_solver.subcatchments[0]
         # Read coverage[0] via the engine's int-based path to dodge id checks.
         # We don't have a landuse id helper in the fixture, so just smoke-test

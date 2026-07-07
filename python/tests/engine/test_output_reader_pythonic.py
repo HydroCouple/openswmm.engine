@@ -38,12 +38,15 @@ from openswmm.engine import (
 
 
 @pytest.fixture
-def out_path(completed_solver) -> str:
-    """The .out file written by the completed_solver fixture."""
-    # solver_files fixture passes tmp_path / "site_drainage.out" as ``out``.
-    # We don't have direct access to it from completed_solver, so reach
-    # into the solver's recorded path.
-    path = completed_solver._out
+def out_path(completed_solver, solver_files) -> str:
+    """The .out file written by the completed_solver fixture.
+
+    ``completed_solver`` runs the full simulation (producing the ``.out``
+    file); ``solver_files`` carries the ``(inp, rpt, out)`` paths the solver
+    was constructed with, so we read the ``.out`` path from there rather than
+    from any (non-public) solver attribute.
+    """
+    _inp, _rpt, path = solver_files
     if not path or not os.path.exists(path):
         pytest.skip("completed_solver did not produce a .out file")
     return path

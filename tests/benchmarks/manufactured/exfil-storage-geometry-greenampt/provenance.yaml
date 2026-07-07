@@ -1,0 +1,71 @@
+benchmark: exfil-storage-geometry-greenampt
+type: manufactured
+description: >
+  Fixed-stage storage-node exfiltration benchmark with analytical bottom and
+  bank areas and exact saturated Green-Ampt reference curves for each
+  component. The setup isolates geometry partitioning plus Green-Ampt seepage
+  without conflating the result with storage depletion.
+swmm_target: src/engine/hydraulics/Exfiltration.cpp (ExfilSolver::init, computeAll)
+
+problem:
+  name: fixed-stage-storage-geometry-greenampt
+  storage_area: "A(d) = 50 + 100 d"
+  fixed_depth_ft: 2.0
+  bottom_area_ft2: 50.0
+  bank_area_ft2: 250.0
+  bank_depth_ft: 1.0
+  exact_component_relation: "t(F) = [F - c1 ln(1 + F/c1)] / Ks"
+  exact_cumulative_exfil: "E(t) = 50 F_bottom(t) + 250 F_bank(t)"
+
+parameters:
+  depth_ft: 2.0
+  area_constant_ft2: 50.0
+  area_linear_coeff: 100.0
+  ksat_in_per_hr: 4.32
+  suction_ft: 0.5
+  imd: 0.2
+  unit_system: US
+  derived:
+    ksat_ft_per_s: 1.0e-4
+    c1_bottom_ft: 0.5
+    c1_bank_ft: 0.3
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s: time in seconds
+    exfil_rate_cfs: exact average exfiltration rate over the interval ending at t
+    exfil_cumul_ft3: exact cumulative exfiltration volume in ft^3
+  n_points: 11
+  dt_s: 60.0
+
+tolerances:
+  exfil_rate_max_abs_cfs: 5.0e-5
+  exfil_cumul_max_abs_ft3: 3.0e-3
+  basis: >
+    ExfilSolver uses the same saturated Green-Ampt implicit relation as the
+    benchmark reference, but grnampt_getF2 terminates its Newton solve at an
+    absolute infiltration-depth increment of about 1e-5 ft. At the benchmark's
+    combined seepage area (300 ft^2), that maps to a cumulative volume error of
+    order 3e-3 ft^3 and a per-step rate error of order 5e-5 cfs.
+
+attribution:
+  references:
+    green_ampt: >
+      Green, W.H. and Ampt, G.A. (1911). Studies on soil physics, Part I.
+      Journal of Agricultural Science 4(1), 1-24.
+    swmm_hydrology: >
+      Rossman, L.A. and Huber, W.C. (2016). Storm Water Management Model
+      Reference Manual Volume I — Hydrology. EPA/600/R-15/162A.
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: exact saturated Green-Ampt component curves evaluated at 60 s intervals
+  tool: Newton solve of the implicit relation t(F) = [F - c1 ln(1 + F/c1)] / Ks
+  date: "2026-05-14"
+  author: openswmm.engine development team
+  reproducible: true
+  notes: >
+    The test forces both bottom and bank Green-Ampt states onto the saturated
+    branch at t = 0 so the reference remains analytically exact for the chosen
+    fixed stage and storage geometry.

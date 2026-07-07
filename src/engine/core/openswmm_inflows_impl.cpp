@@ -47,6 +47,19 @@ inline std::vector<std::string> unique_uh_group_names(
     return out;
 }
 
+/// Rebuild the inflow solver's per-step SoA cache from the live context so a
+/// runtime inflow edit takes effect on the next step. The solver caches
+/// ext/DWF definitions at start(); editing ctx alone leaves the cache stale.
+/// No-op until the simulation is running (pre-start edits flow through
+/// InflowSolver::init at start()).
+inline void refresh_inflows_if_running(SWMM_Engine engine,
+                                       openswmm::SimulationContext& ctx) {
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED) {
+        to_engine(engine)->inflowSolver().init(ctx);
+    }
+}
+
 }  // namespace
 
 extern "C" {
@@ -75,6 +88,27 @@ SWMM_ENGINE_API int swmm_ext_inflow_add(SWMM_Engine engine, int node_idx, const 
         pattern   ? pattern   : ""
     );
 
+    refresh_inflows_if_running(engine, ctx);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_ext_inflow_set_scale(SWMM_Engine engine, int entry_idx,
+                                                double scale) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(entry_idx >= 0 && entry_idx < ctx.ext_inflows.count());
+    ctx.ext_inflows.s_factor[static_cast<std::size_t>(entry_idx)] = scale;
+    refresh_inflows_if_running(engine, ctx);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_ext_inflow_set_baseline(SWMM_Engine engine, int entry_idx,
+                                                   double baseline) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(entry_idx >= 0 && entry_idx < ctx.ext_inflows.count());
+    ctx.ext_inflows.baseline[static_cast<std::size_t>(entry_idx)] = baseline;
+    refresh_inflows_if_running(engine, ctx);
     return SWMM_OK;
 }
 
@@ -114,6 +148,7 @@ SWMM_ENGINE_API int swmm_ext_inflow_remove(SWMM_Engine engine, int entry_idx) {
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(entry_idx >= 0 && entry_idx < ctx.ext_inflows.count());
     ctx.ext_inflows.erase(entry_idx);
+    refresh_inflows_if_running(engine, ctx);
     return SWMM_OK;
 }
 
@@ -139,6 +174,7 @@ SWMM_ENGINE_API int swmm_dwf_add(SWMM_Engine engine, int node_idx, const char* c
         pat4 ? pat4 : ""
     );
 
+    refresh_inflows_if_running(engine, ctx);
     return SWMM_OK;
 }
 
@@ -179,6 +215,17 @@ SWMM_ENGINE_API int swmm_dwf_remove(SWMM_Engine engine, int entry_idx) {
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(entry_idx >= 0 && entry_idx < ctx.dwf_inflows.count());
     ctx.dwf_inflows.erase(entry_idx);
+    refresh_inflows_if_running(engine, ctx);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_dwf_set_baseline(SWMM_Engine engine, int entry_idx,
+                                            double avg_value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(entry_idx >= 0 && entry_idx < ctx.dwf_inflows.count());
+    ctx.dwf_inflows.avg_value[static_cast<std::size_t>(entry_idx)] = avg_value;
+    refresh_inflows_if_running(engine, ctx);
     return SWMM_OK;
 }
 

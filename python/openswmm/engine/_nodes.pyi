@@ -45,6 +45,8 @@ class OutfallView:
     def set_stage(self, stage: float) -> None: ...
     def set_tidal_curve(self, curve_idx: int) -> None: ...
     def set_timeseries(self, ts_idx: int) -> None: ...
+    def get_tidal_curve(self) -> int: ...
+    def get_timeseries(self) -> int: ...
 
 
 class DividerView:
@@ -56,6 +58,7 @@ class Node:
 
     # Identity
     id: str
+    tag: str
     index: int
     type: NodeType
     solver: Solver

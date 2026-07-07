@@ -1,0 +1,13 @@
+SWMM5 Interface File
+IO-6b test interface
+60   - reporting time step in sec
+3    - number of constituents as listed below:
+FLOW CFS
+TSS MG/L
+BOD MG/L
+2    - number of nodes as listed below:
+J1
+J2
+Node             Year Mon Day Hr  Min Sec FLOW       TSS        BOD       
+J1               2026 01  01  00  00  00  1.250000   10.000000  5.000000  
+J2               2026 01  01  00  01  00  0.950000   12.000000  6.500000  

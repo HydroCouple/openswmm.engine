@@ -110,6 +110,9 @@ int RDIISolver::getMaxPeriods(const UnitHydParams& uh, int response,
 // ---------------------------------------------------------------------------
 // validateExpDecay — warn if exponential decay is configured but no temperature
 // data source is available; recovery will fall back to T_ref in that case.
+// Also guards against degenerate per-row configurations (mirrors the
+// reference IAModel validate()): k_dep == 0 disables abstraction entirely,
+// and T_freeze >= T_ref suppresses recovery at the reference temperature.
 // ---------------------------------------------------------------------------
 void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
     bool any_active = false;
@@ -124,6 +127,25 @@ void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
             "WARNING: [RDII_DECAY] exponential IA model is active but no "
             "temperature source is configured. Recovery rate will be evaluated "
             "at T_ref for every group; no seasonal variation will be produced.");
+    }
+
+    static const char* kResponseNames[3] = {"SHORT", "MEDIUM", "LONG"};
+    for (const auto& e : ctx.rdii_decay.entries) {
+        if (findUnitHyd(e.uh_name) < 0) continue;
+        if (e.response < 0 || e.response > 2) continue;
+        const char* resp = kResponseNames[e.response];
+        if (e.k_dep == 0.0) {
+            ctx.warnings.emplace_back(
+                "WARNING: [RDII_DECAY] k_dep = 0 for group '" + e.uh_name +
+                "' (" + resp + "): initial abstraction is disabled; excess "
+                "equals rainfall and the recovery parameters have no effect.");
+        }
+        if (e.T_freeze >= e.T_ref) {
+            ctx.warnings.emplace_back(
+                "WARNING: [RDII_DECAY] T_freeze >= T_ref for group '" +
+                e.uh_name + "' (" + resp + "): recovery is suppressed at the "
+                "reference temperature; check the freeze threshold.");
+        }
     }
 }
 
@@ -281,11 +303,13 @@ static double updateIA_linear(const UnitHydParams& uh, UHResponseData& rd,
 
 // ---------------------------------------------------------------------------
 // Additive recovery rate k_rec(T) = k_0 + k_T * exp(theta_rec * (T - T_ref))
-// with frozen-ground suppression below T_freeze. T is in deg Celsius.
+// with frozen-ground suppression strictly below T_freeze (recovery still
+// occurs at T == T_freeze, matching the reference IAModel). T is in deg
+// Celsius. Declared in RDII.hpp so unit tests can pin it to the reference.
 // @see docs/RDII_ExpDecay_Implementation.md §2.2
 // ---------------------------------------------------------------------------
-static double getRecoveryRate(const ExpDecayParams& dp, double T_celsius) {
-    if (T_celsius <= dp.T_freeze) return 0.0;
+double getRecoveryRate(const ExpDecayParams& dp, double T_celsius) {
+    if (T_celsius < dp.T_freeze) return 0.0;
     double k = dp.k_0 + dp.k_T
                * std::exp(dp.theta_rec * (T_celsius - dp.T_ref));
     return std::max(0.0, k);
@@ -298,13 +322,18 @@ static inline double fToC(double tf) { return (tf - 32.0) * 5.0 / 9.0; }
 // updateIA_exp — exponential IA depletion during storms, additive temperature-
 // dependent recovery during dry periods. Falls back to T_ref when no
 // temperature source is configured (warned at init time).
+//
+// Mass-consistent bookkeeping: the storage is drained by exactly the depth it
+// abstracts from the rainfall (ia_consumed), and the excess is computed from
+// that same ia_consumed. Declared in RDII.hpp so unit tests can pin the
+// trajectory to the reference IAModel implementation.
 // @see docs/RDII_ExpDecay_Implementation.md §2.1
 // ---------------------------------------------------------------------------
-static double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
-                           const ExpDecayParams& dp,
-                           int month, int response,
-                           double rainDepth, double dt_sec,
-                           const SimulationContext& ctx) {
+double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
+                    const ExpDecayParams& dp,
+                    int month, int response,
+                    double rainDepth, double dt_sec,
+                    const SimulationContext& ctx) {
     int m = month % 12;
     int k = response % 3;
     double iaMax = uh.iaMax[m][k];
@@ -507,6 +536,17 @@ void RDIISolver::applyRdiiInflows(SimulationContext& ctx) const {
         if (q == 0.0) continue;
         ctx.nodes.rdii_inflow[static_cast<size_t>(i)] += q;
     }
+}
+
+// ---------------------------------------------------------------------------
+// rdiiNodeList — sorted unique node indices carrying an RDII UH inflow
+// (legacy RdiiNodeIndex, built by createRdiiFile()).
+// ---------------------------------------------------------------------------
+std::vector<int> RDIISolver::rdiiNodeList() const {
+    std::vector<int> nodes(groups_.node_idx.begin(), groups_.node_idx.end());
+    std::sort(nodes.begin(), nodes.end());
+    nodes.erase(std::unique(nodes.begin(), nodes.end()), nodes.end());
+    return nodes;
 }
 
 } // namespace rdii

@@ -1,0 +1,77 @@
+benchmark: exfil-cylindrical-storage-greenampt
+type: manufactured
+description: >
+  Storage exfiltration with a linear clogging model.  Constant rainfall inflow
+  causes wb_inflow to grow linearly, reducing keff each step.  The depth and
+  cumulative exfiltration both have closed-form quadratic reference solutions.
+swmm_target: src/engine/hydrology/LID.cpp (LIDSolver::batchBarrelFlux)
+
+problem:
+  name: cylindrical-storage-clogging-trajectory
+  mechanism: >
+    getStorageExfil linear clogging model: keff = kSat*(1 - wb_inflow/clogFactor).
+    wb_inflow grows by r*dt each step.  Euler step is exact for each time-invariant
+    keff (keff is recomputed from wb_inflow at the start of each call).
+  exact_solution:
+    D: "D[N] = 2.0 - 0.009*N + 0.00015*N*(N-1)  [ft storage depth]"
+    E: "E[N] = 0.006*N - 0.00006*N*(N-1)          [ft cumulative exfil]"
+
+parameters:
+  D0_ft: 2.0
+  stor_thick_ft: 3.0
+  kSat_ft_per_s: 1.0e-4
+  phi: 0.4
+  clogFactor_ft: 0.3
+  r_unit_inflow_ft_per_s: 1.0e-4
+  dt_s: 60.0
+  n_steps: 10
+  drain_coeff: 0.0
+  derived:
+    wb_inflow_per_step_ft: 6.0e-3   # r * dt
+    keff_decrement_per_step: 2.0e-6 # kSat * (r*dt/clogFactor) = 1e-4 * 0.02
+    clogging_fraction_at_N10: 0.20  # 0.06 / 0.3 = 20% clogged at final step
+
+dataset:
+  file: reference.csv
+  columns:
+    t_s:          time in seconds
+    stor_depth_ft: storage layer depth in ft (exact)
+    E_cumul_ft:   cumulative exfiltration depth in ft of water (exact)
+  n_points: 11
+  t_values_s: [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600]
+  dt_s: 60.0
+
+tolerances:
+  stor_depth_max_abs_ft: 1.0e-9
+  E_cumul_max_abs_ft: 1.0e-9
+  rms_ft: 1.0e-10
+  basis: >
+    Euler is exact for each step because keff is recomputed from the deterministic
+    wb_inflow[n] = n*6e-3 at the start of every call.  Only IEEE 754 rounding
+    (~1e-15 ft) contributes.  The 1e-9 threshold is 10^6 times the noise floor.
+
+attribution:
+  references:
+    swmm_lid_model: >
+      Rossman, L.A. and Huber, W.C. (2016). Storm Water Management Model
+      Reference Manual Volume I — Hydrology. EPA/600/R-15/162A.  Chapter 9.
+    clogging_model: >
+      Argue, J.R. (2004). Water Sensitive Urban Design.  University of South
+      Australia.  Linear clogging parameterization for LID storage.
+  license_note: benchmark data are original to this project; no copied source code.
+
+provenance:
+  generated_by: closed-form quadratic formula evaluated in rational arithmetic
+  tool: hand computation — no approximation
+  date: "2026-05-13"
+  author: openswmm.engine development team
+  computation: |
+    keff[n] = 1e-4 * (1 - 0.02*n)
+    exfil_depth[n] = keff[n] * dt / phi = 0.015 * (1 - 0.02*n)
+    D[N] = 2.0 + sum_{n=0}^{N-1} (0.006 - 0.015*(1-0.02*n))
+         = 2.0 + N*(-0.009) + 0.0003*N*(N-1)/2
+    E[N] = sum_{n=0}^{N-1} keff[n]*dt = 0.006*N - 0.00006*N*(N-1)
+  reproducible: true
+  notes: >
+    All reference values are exact rational multiples of the parameters.
+    The mass-balance identity phi*(D[N]-D[0]) = phi*r*dt*N - E[N] holds exactly.

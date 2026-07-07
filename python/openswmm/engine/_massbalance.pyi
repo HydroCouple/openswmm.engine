@@ -18,10 +18,23 @@ _Key = Union[int, str]
 class MassBalance:
     def __init__(self, solver: Solver) -> None: ...
 
-    runoff_continuity_error: float
-    routing_continuity_error: float
-    routing_diagnostics: RoutingDiagnostics
-    max_courant: float
+    @property
+    def runoff_continuity_error(self) -> float:
+        """Runoff continuity (mass-balance) error, as a percentage."""
+        ...
+    @property
+    def routing_continuity_error(self) -> float:
+        """Flow-routing continuity (mass-balance) error, as a percentage."""
+        ...
+    @property
+    def routing_diagnostics(self) -> RoutingDiagnostics:
+        """Routing-solver time-step diagnostics (step sizes, Courant number,
+        convergence counts) as a :class:`RoutingDiagnostics` record."""
+        ...
+    @property
+    def max_courant(self) -> float:
+        """Maximum Courant number reached over the routing run."""
+        ...
 
     def quality_continuity_error(self, pollutant: _Key) -> float: ...
     def runoff_total(self, component: RunoffTotal) -> float: ...

@@ -142,8 +142,8 @@ else:
         assert Path(out).exists(), "output file not written"
 
         reader = OutputReader(out)
-        assert reader.get_node_count() > 0
-        assert reader.get_link_count() > 0
+        assert reader.node_count > 0
+        assert reader.link_count > 0
         reader.close()
     finally:
         shutil.rmtree(td, ignore_errors=True)
@@ -167,25 +167,26 @@ else:
         subs  = Subcatchments(solver)
         gages = Gages(solver)
 
-        n_before = nodes.count()
-        l_before = links.count()
-        s_before = subs.count()
-        g_before = gages.count()
+        n_before = len(nodes)
+        l_before = len(links)
+        s_before = len(subs)
+        g_before = len(gages)
 
-        assert nodes.add("PY_N1", int(NodeType.JUNCTION)) == 0
-        assert nodes.count() == n_before + 1
-        assert links.add("PY_L1", int(LinkType.CONDUIT)) == 0
-        assert links.count() == l_before + 1
-        assert subs.add("PY_SC1") == 0
-        assert subs.count() == s_before + 1
-        assert gages.add("PY_G1") == 0
-        assert gages.count() == g_before + 1
+        # add() raises EngineError on failure and returns a wrapper object
+        nodes.add("PY_N1", int(NodeType.JUNCTION))
+        assert len(nodes) == n_before + 1
+        links.add("PY_L1", int(LinkType.CONDUIT))
+        assert len(links) == l_before + 1
+        subs.add("PY_SC1")
+        assert len(subs) == s_before + 1
+        gages.add("PY_G1")
+        assert len(gages) == g_before + 1
 
         # pop_last undoes add (link must go before its nodes)
-        assert links.pop_last("PY_L1") == 0
-        assert links.count() == l_before
-        assert nodes.pop_last("PY_N1") == 0
-        assert nodes.count() == n_before
+        links.pop_last("PY_L1")
+        assert len(links) == l_before
+        nodes.pop_last("PY_N1")
+        assert len(nodes) == n_before
 
         solver.close()
         solver.destroy()
@@ -206,10 +207,10 @@ else:
         solver = Solver(str(INP), str(td / "i.rpt"), str(td / "i.out"))
         solver.open()
         inflows = Inflows(solver)
-        before = inflows.ext_inflow_count()
+        before = inflows.external_count
         inflows.add_external(0, "FLOW", baseline=0.5)
-        assert inflows.ext_inflow_count() >= before + 1
-        inflows.add_dwf(0, "FLOW", 1.5)
+        assert inflows.external_count >= before + 1
+        inflows.add_dwf(0, "FLOW", avg_value=1.5)
         solver.close()
         solver.destroy()
     finally:

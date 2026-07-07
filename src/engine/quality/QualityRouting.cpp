@@ -33,6 +33,39 @@ namespace quality {
 
 // ZERO_VOLUME defined in QualityRouting.hpp
 
+namespace {
+
+void applyLinkQualityForcing(SimulationContext& ctx, int n_pollutants, double dt) {
+    if (n_pollutants <= 0) return;
+
+    auto& f = ctx.forcing;
+    if (f.link_quality_mode.empty()) return;
+
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        for (int p = 0; p < n_pollutants; ++p) {
+            auto flat = uj * static_cast<std::size_t>(n_pollutants)
+                      + static_cast<std::size_t>(p);
+            if (flat >= f.link_quality_mode.size()
+                || flat >= ctx.links.conc.size()) {
+                continue;
+            }
+
+            if (f.link_quality_mode[flat] == ForcingMode::OVERRIDE) {
+                ctx.links.conc[flat] = std::max(f.link_quality_value[flat], 0.0);
+            } else if (f.link_quality_mode[flat] == ForcingMode::ADD) {
+                ctx.links.conc[flat] =
+                    std::max(ctx.links.conc[flat] + f.link_quality_value[flat], 0.0);
+                ctx.mass_balance.routing_forcing_qual_inflow[
+                    static_cast<std::size_t>(p)] +=
+                    f.link_quality_value[flat] * dt;
+            }
+        }
+    }
+}
+
+} // namespace
+
 void QualitySolver::init(int n_nodes, int n_links, int n_pollutants) {
     n_pollutants_ = n_pollutants;
     (void)n_nodes;
@@ -48,11 +81,15 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
 
     addWetWeatherLoads(ctx, dt);   // Subcatchment washoff → nodes
     addRdiiLoads(ctx, dt);         // RDII pollutant loads → nodes
+    addDwfLoads(ctx, dt);          // Dry weather pollutant loads → nodes
+    addGwLoads(ctx, dt);           // Groundwater inflow pollutant loads → nodes
+    addIfaceLoads(ctx, dt);        // Routing interface file loads → nodes
     accumulateLinkLoads(ctx, dt);
     mixAtNodes(ctx, dt);
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
     applyDecay(ctx, dt);
     updateLinkQuality(ctx, dt);
+    applyLinkQualityForcing(ctx, n_pollutants_, dt);
 }
 
 // ============================================================================
@@ -160,6 +197,129 @@ void QualitySolver::addRdiiLoads(SimulationContext& ctx, double dt) {
 }
 
 // ============================================================================
+// Add default dry weather pollutant loads to node quality inflows
+// Matches legacy addDwfInflows() default-concentration portion
+// (routing.c:560-571: w = q * Pollut[p].dwfConcen)
+// ============================================================================
+
+void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (np <= 0) return;
+    auto& nodes = ctx.nodes;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double q = nodes.dwf_inflow[ui];
+        if (q <= 0.0) continue;
+
+        OPENSWMM_IVDEP
+        for (int p = 0; p < np; ++p) {
+            double c_dwf = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
+            if (c_dwf <= 0.0) continue;
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            if (nd_idx < nodes.qual_mass_in.size()) {
+                nodes.qual_mass_in[nd_idx] += q * c_dwf;
+            }
+        }
+
+        // Mass balance: track dry weather quality inflow
+        for (int p = 0; p < np; ++p) {
+            double c_dwf = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
+            if (c_dwf <= 0.0) continue;
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_dw_in.size()) {
+                ctx.mass_balance.qual_routing_dw_in[pi] += q * c_dwf * dt;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Add groundwater inflow pollutant loads to node quality inflows
+// Matches legacy addGroundwaterInflows() pollutant portion
+// (routing.c:678-686: w = q * Pollut[p].gwConcen)
+// ============================================================================
+
+void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (np <= 0) return;
+    auto& nodes = ctx.nodes;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double q = nodes.gw_inflow[ui];
+        if (q <= 0.0) continue;  // pollutant load only for positive inflow
+
+        OPENSWMM_IVDEP
+        for (int p = 0; p < np; ++p) {
+            double c_gw = ctx.pollutants.c_gw[static_cast<std::size_t>(p)];
+            if (c_gw <= 0.0) continue;
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            if (nd_idx < nodes.qual_mass_in.size()) {
+                nodes.qual_mass_in[nd_idx] += q * c_gw;
+            }
+        }
+
+        // Mass balance: track groundwater quality inflow
+        for (int p = 0; p < np; ++p) {
+            double c_gw = ctx.pollutants.c_gw[static_cast<std::size_t>(p)];
+            if (c_gw <= 0.0) continue;
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_gw_in.size()) {
+                ctx.mass_balance.qual_routing_gw_in[pi] += q * c_gw * dt;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Add routing interface file pollutant loads to node quality inflows
+// Matches legacy addIfaceInflows() quality portion (routing.c:756-795):
+// mass rates (q * c_iface) are pre-computed per node by
+// iface::InterfaceManager::readInflows() into nodes.iface_qual_mass.
+// ============================================================================
+
+void QualitySolver::addIfaceLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (np <= 0) return;
+    auto& nodes = ctx.nodes;
+    if (nodes.iface_qual_mass.empty()) return;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double q = nodes.iface_inflow[ui];
+        if (q <= 0.0) continue;
+
+        // Add volume inflow from the interface file
+        nodes.qual_vol_in[ui] += q * dt;
+
+        OPENSWMM_IVDEP
+        for (int p = 0; p < np; ++p) {
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            double mass_rate = (nd_idx < nodes.iface_qual_mass.size())
+                               ? nodes.iface_qual_mass[nd_idx] : 0.0;
+            if (mass_rate <= 0.0) continue;
+            if (nd_idx < nodes.qual_mass_in.size()) {
+                nodes.qual_mass_in[nd_idx] += mass_rate;
+            }
+        }
+
+        // Mass balance: interface loads count as external quality inflow
+        // (legacy massbal_addInflowQual(EXTERNAL_INFLOW, p, w))
+        for (int p = 0; p < np; ++p) {
+            auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            double mass_rate = (nd_idx < nodes.iface_qual_mass.size())
+                               ? nodes.iface_qual_mass[nd_idx] : 0.0;
+            if (mass_rate <= 0.0) continue;
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_ex_in.size()) {
+                ctx.mass_balance.qual_routing_ex_in[pi] += mass_rate * dt;
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Accumulate link mass flows to downstream nodes — VECTORISABLE
 // ============================================================================
 
@@ -207,8 +367,9 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
     // Batch over all nodes — inner loop over pollutants is vectorisable
     // Outer node loop is parallelisable: each node reads only its own
     // pre-computed mass_in and vol_in (scatter phase is complete).
+    // Legacy parity: src/legacy/engine/qualrout.c runs this loop serially.
 #if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for schedule(static)
+// #pragma omp parallel for schedule(static)
 #endif
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<size_t>(i);
@@ -294,8 +455,9 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
     const bool is_steady = (ctx.options.routing_model == RoutingModel::STEADY);
 
     // Batch over all links — parallelisable (each link writes to its own slot)
+    // Legacy parity: src/legacy/engine/qualrout.c runs this loop serially.
 #if defined(SWMM_USE_OPENMP)
-#pragma omp parallel for schedule(static)
+// #pragma omp parallel for schedule(static)
 #endif
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<size_t>(j);
@@ -323,8 +485,9 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
         //   Concentrates pollutants when conduit water evaporates.
         double fEvap = 1.0;
         if (v_old > ZERO_VOLUME) {
-            int nb = (uj < links.barrels.size()) ? links.barrels[uj] : 1;
-            double evap_rate = (uj < links.evap_loss_rate.size()) ? links.evap_loss_rate[uj] : 0.0;
+            int cr = ctx.link_subtypes.conduit_row(j);
+            int nb = (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
+            double evap_rate = (cr >= 0) ? ctx.link_subtypes.conduits.evap_loss_rate[static_cast<size_t>(cr)] : 0.0;
             double v_evap = evap_rate * static_cast<double>(nb) * dt;
             if (v_evap > 0.0) fEvap = 1.0 + v_evap / v_old;
         }
@@ -430,9 +593,9 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
 
         // AREA: average surface area at old and new depth (Gap #16)
         double a1 = node::getSurfArea(nodes, j, nodes.old_depth[uj], &ctx.tables,
-                                      ucf::getUnitSystem(unit_sys));
+                                      ucf::getUnitSystem(unit_sys), &ctx.node_subtypes);
         double a2 = node::getSurfArea(nodes, j, nodes.depth[uj],     &ctx.tables,
-                                      ucf::getUnitSystem(unit_sys));
+                                      ucf::getUnitSystem(unit_sys), &ctx.node_subtypes);
         double area = (a1 + a2) * 0.5 * ucf_length * ucf_length;  // user units²
 
         // 3. Update HRT for storage nodes (matching legacy updateHRT)

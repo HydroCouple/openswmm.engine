@@ -257,6 +257,31 @@ SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt) {
 }
 
 // ============================================================================
+// Unit system query
+// ============================================================================
+// The C API getters/setters exchange values in the project's DISPLAY units
+// (selected by [OPTIONS] FLOW_UNITS); these accessors tell callers which units
+// those are. swmm_options_get(engine, "FLOW_UNITS", ...) returns the same
+// information as a string — these are the typed convenience equivalents for
+// bindings and coupling code that need to convert without string parsing.
+
+SWMM_ENGINE_API int swmm_get_flow_units(SWMM_Engine engine, int* flow_units) {
+    CHECK_HANDLE(engine);
+    if (flow_units)
+        *flow_units = static_cast<int>(to_engine(engine)->context().options.flow_units);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_get_unit_system(SWMM_Engine engine, int* unit_system) {
+    CHECK_HANDLE(engine);
+    if (unit_system) {
+        const int fu = static_cast<int>(to_engine(engine)->context().options.flow_units);
+        *unit_system = openswmm::ucf::getUnitSystem(fu);  // 0 = US, 1 = SI
+    }
+    return SWMM_OK;
+}
+
+// ============================================================================
 // Routing event and steady-state status
 // ============================================================================
 

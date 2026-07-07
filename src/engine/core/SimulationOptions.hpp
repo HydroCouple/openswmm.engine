@@ -24,10 +24,12 @@
 #ifndef OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 #define OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 
+#include "FilePathPair.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
+#include <cmath>
 
 namespace openswmm {
 
@@ -130,6 +132,17 @@ struct SimulationOptions {
 
     /** @brief Simulation end date/time (decimal days, OADate (days since 12/30/1899)). */
     double end_date = 0.0;
+
+    /** @brief Total simulation duration in milliseconds, or -1 if not set.
+     *  @details PARITY legacy swmm5.c:3198-3200 / project.c:173: legacy forms
+     *  TotalDuration from the SEPARATE date and time parts —
+     *  floor((EndDate-StartDate)*86400 + (EndTime-StartTime)*86400) * 1000 —
+     *  which yields EXACT whole-second ms (e.g. 172680000.0), whereas
+     *  (end_date - start_date)*86400000 from the combined serials rounds
+     *  (e.g. 172679999.99999997). The INP options handler stores the
+     *  legacy-exact value here; writers that only set the combined serials
+     *  must reset it to -1 so total_duration_ms() falls back. */
+    double total_duration_ms = -1.0;
 
     /** @brief Report start date/time. */
     double report_start = 0.0;
@@ -271,6 +284,17 @@ struct SimulationOptions {
      *  @see Legacy: SkipSteadyState */
     bool skip_steady_state = false;
 
+    /** @brief Slice IO-4 opt-out: emit external-file paths verbatim absolute.
+     *  @details Default (false) makes InpWriter rebase every external-file
+     *           reference relative to the destination `.inp` directory for
+     *           portability. Set true to disable rebasing — paths are
+     *           emitted in their resolved absolute form. Used by power
+     *           users locked to legacy tools that don't accept relative
+     *           paths in `.inp`. See IO_PORTABILITY_PLAN.md §1A & §5.4.
+     *  @see Legacy: no equivalent — relative paths always work in EPA SWMM.
+     */
+    bool write_absolute_paths = false;
+
     // -----------------------------------------------------------------------
     // System settings
     // -----------------------------------------------------------------------
@@ -405,11 +429,17 @@ struct SimulationOptions {
     /** @brief Timeseries name for temperature data. */
     std::string temp_ts_name;
 
-    /** @brief File path for temperature data. */
-    std::string temp_file;
+    /** @brief File path for temperature data. Carries {absolute, original}. */
+    FilePathPair temp_file;
 
     /** @brief Temperature file start date (OADate). */
     double temp_file_start = 0.0;
+
+    /** @brief Climate-file temperature units: 0=tenths-degC (C10), 1=degC (C),
+     *  2=degF (F); -1 = unspecified (reader keeps its per-format default).
+     *  @details Maps the legacy [TEMPERATURE] FILE units keyword (TempUnitsWords
+     *           {"C10","C","F"} in climate.c) and ClimateFile TempUnits enum. */
+    int temp_units = -1;
 
     /** @brief Wind speed type: 0=MONTHLY, 1=FILE. */
     int wind_type = 0;
@@ -428,6 +458,13 @@ struct SimulationOptions {
 
     /** @brief Snowmelt: latitude (degrees). */
     double snow_lat = 0.0;
+
+    /** @brief Snowmelt: longitude/solar-time correction (minutes).
+     *  @details Legacy [TEMPERATURE] SNOWMELT longitude field. Stored verbatim
+     *           in minutes; converted to hours (÷60) into ClimateState::dtlong
+     *           at init, matching legacy climate.c (Temp.dtlong = x[5]/60.0).
+     *           0 = use true solar time. */
+    double snow_dtlong = 0.0;
 
     /** @brief Snowmelt: site elevation above sea level (ft, internal units).
      *  @details Used to compute atmospheric pressure for psychrometric constant.
@@ -486,6 +523,16 @@ struct SimulationOptions {
 
     /** @brief Named links to report (used when rpt_links == 2). */
     std::vector<std::string> rpt_link_names;
+
+    /** @brief Total simulation duration in milliseconds (legacy TotalDuration).
+     *  @details Returns the legacy-exact value stored by the INP options
+     *  handler when available; otherwise falls back to flooring the combined
+     *  serial difference to whole seconds (mirroring legacy swmm5.c:3198-3200
+     *  as closely as the combined representation allows). */
+    double totalDurationMs() const {
+        if (total_duration_ms >= 0.0) return total_duration_ms;
+        return std::floor((end_date - start_date) * 86400.0) * 1000.0;
+    }
 };
 
 } /* namespace openswmm */

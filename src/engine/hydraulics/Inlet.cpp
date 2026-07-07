@@ -357,7 +357,11 @@ void InletSolver::init(SimulationContext& ctx) {
             soa_.sx[i]                = 0.01;
             soa_.gutter_depression[i] = 0.0;
             soa_.gutter_width[i]      = 0.0;
-            soa_.road_roughness[i]    = ctx.links.roughness[li];
+            {
+                const int cr = ctx.link_subtypes.conduit_row(li);
+                soa_.road_roughness[i] = (cr >= 0)
+                    ? ctx.link_subtypes.conduits.roughness[static_cast<std::size_t>(cr)] : 0.01;
+            }
             soa_.n_sides[i]           = 1;
             soa_.t_crown[i]           = 100.0;  // effectively unlimited spread
         }
@@ -398,7 +402,8 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
         if (q < MIN_FLOW) continue;
 
         // Get conduit geometry for this inlet
-        double SL    = links.slope[li];
+        const int cr = ctx.link_subtypes.conduit_row(li);
+        double SL    = (cr >= 0) ? ctx.link_subtypes.conduits.slope[static_cast<std::size_t>(cr)] : 0.0;
         double Sx_i  = soa_.sx[ii];
         double a_i   = soa_.gutter_depression[ii];
         double W_i   = soa_.gutter_width[ii];

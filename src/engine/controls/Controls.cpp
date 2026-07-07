@@ -483,14 +483,23 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
                 ctx.links.type[ui] != LinkType::PUMP)
                 return MISSING;
             return ctx.links.setting[ui];
-        case ConditionVar::LINK_FULLFLOW:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.q_full[ui] * ucf_flow : MISSING;
+        case ConditionVar::LINK_FULLFLOW: {
+            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
+            const int cr = ctx.link_subtypes.conduit_row(idx);
+            return ((cr >= 0) ? ctx.link_subtypes.conduits.q_full[static_cast<size_t>(cr)] : 0.0) * ucf_flow;
+        }
         case ConditionVar::LINK_FULLDEPTH:
             return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.xsect_y_full[ui] * ucf_len : MISSING;
-        case ConditionVar::LINK_LENGTH:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.length[ui] * ucf_len : MISSING;
-        case ConditionVar::LINK_SLOPE:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.slope[ui] : MISSING;
+        case ConditionVar::LINK_LENGTH: {
+            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
+            const int cr = ctx.link_subtypes.conduit_row(idx);
+            return ((cr >= 0) ? ctx.link_subtypes.conduits.length[static_cast<size_t>(cr)] : 0.0) * ucf_len;
+        }
+        case ConditionVar::LINK_SLOPE: {
+            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
+            const int cr = ctx.link_subtypes.conduit_row(idx);
+            return (cr >= 0) ? ctx.link_subtypes.conduits.slope[static_cast<size_t>(cr)] : 0.0;
+        }
         case ConditionVar::LINK_VELOCITY:
             if (idx < 0 || idx >= ctx.n_links()) return MISSING;
             if (ctx.links.type[ui] != LinkType::CONDUIT) return MISSING;
@@ -500,8 +509,10 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
                 xs.y_full = ctx.links.xsect_y_full[ui];
                 xs.a_full = ctx.links.xsect_a_full[ui];
                 xs.w_max = ctx.links.xsect_w_max[ui];
+                const int cr = ctx.link_subtypes.conduit_row(idx);
+                const int barrels = (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
                 return link::getVelocity(xs, ctx.links.flow[ui], ctx.links.depth[ui],
-                                          ctx.links.barrels[ui]) * ucf_len;
+                                          barrels) * ucf_len;
             }
         case ConditionVar::LINK_TIMEOPEN:
             // Returns MISSING if link is closed (setting <= 0).

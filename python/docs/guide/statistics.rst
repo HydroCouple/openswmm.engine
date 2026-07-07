@@ -78,6 +78,8 @@ Subcatchment stats
      - Cumulative runoff volume per subcatchment.
    * - ``subcatchment_max_runoff``
      - Peak runoff rate per subcatchment.
+   * - ``subcatchment_precip``
+     - Cumulative precipitation per subcatchment.
 
 ----
 

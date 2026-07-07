@@ -18,6 +18,8 @@
 //   - Support added for tracking a gage's prior n-hour rainfall total.
 //   - Support added for relative file names.
 //   - Support added for setting rainfall through API call.
+//   Build 5.3.0:
+//   - Support added for reporting rain gage scaling factor  
 //-----------------------------------------------------------------------------
 #define _CRT_SECURE_NO_DEPRECATE
 
@@ -69,7 +71,7 @@ int gage_readParams(int gageIndex, char* tok[], int ntoks)
     char     *id;
     char     fname[MAXFNAME+1];
     char     staID[MAXMSG+1];
-    double   x[7];
+    double   x[8];
 
     // --- check that gage exists
     if ( ntoks < 2 ) return error_setInpError(ERR_ITEMS, "");
@@ -84,6 +86,7 @@ int gage_readParams(int gageIndex, char* tok[], int ntoks)
     x[4] = NO_DATE;      // Default is no start/end date
     x[5] = NO_DATE;
     x[6] = 0.0;          // US units
+    x[7] = 1.0;          // Rainfall scaling factor
     fname[0] = '\0';
     staID[0] = '\0';
 
@@ -109,6 +112,7 @@ int gage_readParams(int gageIndex, char* tok[], int ntoks)
     Gage[gageIndex].rainType     = (int)x[1];
     Gage[gageIndex].rainInterval = (int)x[2];
     Gage[gageIndex].snowFactor   = x[3];
+    Gage[gageIndex].scaleFactor  = x[7];
     Gage[gageIndex].rainUnits    = (int)x[6];
     if ( Gage[gageIndex].tSeries >= 0 ) Gage[gageIndex].dataSource = RAIN_TSERIES;
     else                        Gage[gageIndex].dataSource = RAIN_FILE;
@@ -157,6 +161,14 @@ int readGageSeriesFormat(char* tok[], int ntoks, double x[])
     if ( ts < 0 ) return error_setInpError(ERR_NAME, tok[5]);
     x[0] = (double)ts;
     sstrncpy(tok[2], "", 0);
+
+    // --- get optional rain scale factor
+    if ( ntoks > 6 )
+    {
+        if ( !getDouble(tok[6], &x[7]) || x[7] <= 0.0 )
+            return error_setInpError(ERR_NUMBER, tok[6]);
+    }
+
     return 0;
 }
 
@@ -198,6 +210,14 @@ int readGageFileFormat(char* tok[], int ntoks, double x[])
             return error_setInpError(ERR_DATETIME, tok[8]);
         x[4] = (float) aDate;
     }
+
+    // --- get optional rain scale factor
+    if ( ntoks > 9 )
+    {
+        if ( !getDouble(tok[9], &x[7]) || x[7] <= 0.0 )
+            return error_setInpError(ERR_NUMBER, tok[9]);
+    }
+
     return 0;
 }
 
@@ -330,8 +350,10 @@ void gage_setState(int j, DateTime t)
     // --- use rainfall from co-gage (gage with lower index that uses
     //     same rainfall time series or file) if it exists
     if ( Gage[j].coGage >= 0)
-    {
-        Gage[j].rainfall = Gage[Gage[j].coGage].rainfall;
+    {   
+        int cg = Gage[j].coGage;
+        // Apply rainfall scaling factor to co-gage's rainfall
+        Gage[j].rainfall = Gage[cg].rainfall * Gage[j].scaleFactor / Gage[cg].scaleFactor;
         return;
     }
 
@@ -511,8 +533,10 @@ void gage_setReportRainfall(int gageIndex, DateTime reportDate)
 
     // --- use value from co-gage if it exists
     if ( Gage[gageIndex].coGage >= 0)
-    {
-        Gage[gageIndex].reportRainfall = Gage[Gage[gageIndex].coGage].reportRainfall;
+    {   
+        int cg = Gage[gageIndex].coGage;
+        // Apply rainfall scaling factor to co-gage's reported rainfall
+        Gage[gageIndex].reportRainfall = Gage[cg].reportRainfall * Gage[gageIndex].scaleFactor / Gage[cg].scaleFactor;
         return;
     }
 
@@ -677,7 +701,8 @@ double convertRainfall(int j, double r)
 
       default: r1 = r;
     }
-    return r1 * Gage[j].unitsFactor * Adjust.rainFactor;
+    
+    return r1 * Gage[j].unitsFactor * Gage[j].scaleFactor * Adjust.rainFactor;
 }
 
 //=============================================================================
