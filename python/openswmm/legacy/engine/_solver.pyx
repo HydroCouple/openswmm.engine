@@ -39,6 +39,10 @@ from .solver cimport (
     swmm_NodeProperty,
     swmm_LinkProperty,
     swmm_SystemProperty,
+    swmm_PollutProperty,
+    swmm_PatternProperty,
+    swmm_LanduseProperty,
+    swmm_AquiferProperty,
     swmm_FlowUnitsProperty,
     swmm_API_Errors,
     progress_callback,
@@ -65,6 +69,9 @@ from .solver cimport (
     swmm_getValueExpanded,
     swmm_setValue,
     swmm_setValueExpanded,
+    swmm_setTreatment,
+    swmm_clearTreatment,
+    swmm_setLidDrain,
     swmm_getSavedValue,
     swmm_writeLine,
     swmm_decodeDate,
@@ -157,10 +164,12 @@ class SWMMRainGageProperties(Enum):
     @cvar GAGE_TOTAL_PRECIPITATION: Total precipitation.
     @cvar GAGE_RAINFALL: Rainfall.
     @cvar GAGE_SNOWFALL: Snowfall.
+    @cvar GAGE_SCALEFACTOR: Rainfall scaling factor (dimensionless, > 0).
     """
     GAGE_TOTAL_PRECIPITATION = swmm_GageProperty.swmm_GAGE_TOTAL_PRECIPITATION # Total precipitation
     GAGE_RAINFALL = swmm_GageProperty.swmm_GAGE_RAINFALL # Rainfall
     GAGE_SNOWFALL = swmm_GageProperty.swmm_GAGE_SNOWFALL # Snowfall
+    GAGE_SCALEFACTOR = swmm_GageProperty.swmm_GAGE_SCALEFACTOR # Rainfall scaling factor
     
 class SWMMSubcatchmentProperties(Enum):
     """Enumeration of SWMM subcatchment properties.
@@ -208,6 +217,13 @@ class SWMMSubcatchmentProperties(Enum):
     @cvar CURB_LENGTH: Curb length.
     @cvar API_RAINFALL: API rainfall override.
     @cvar API_SNOWFALL: API snowfall override.
+    @cvar API_PET: API prescribed potential evapotranspiration rate override.
+    @cvar GW_MOISTURE: Groundwater upper zone moisture content (state injection).
+    @cvar GW_LOWER_DEPTH: Groundwater saturated zone depth (state injection).
+    @cvar SNOW_SWE: Snow pack SWE on a snow subarea (sub_index 0-2).
+    @cvar SNOW_FW: Snow pack free water on a snow subarea (sub_index 0-2).
+    @cvar SNOW_ATI: Snow pack antecedent temperature index (sub_index 0-2).
+    @cvar SNOW_COLDC: Snow pack cold content (sub_index 0-2).
     @cvar POLLUTANT_BUILDUP: Pollutant buildup.
     @cvar EXTERNAL_POLLUTANT_BUILDUP: External pollutant buildup.
     @cvar POLLUTANT_RUNOFF_CONCENTRATION: Pollutant runoff concentration.
@@ -262,7 +278,14 @@ class SWMMSubcatchmentProperties(Enum):
     POLLUTANT_RUNOFF_CONCENTRATION = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_RUNOFF_CONCENTRATION
     POLLUTANT_PONDED_CONCENTRATION = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION
     POLLUTANT_TOTAL_LOAD = swmm_SubcatchProperty.swmm_SUBCATCH_POLLUTANT_TOTAL_LOAD
-    
+    API_PET = swmm_SubcatchProperty.swmm_SUBCATCH_API_PET
+    GW_MOISTURE = swmm_SubcatchProperty.swmm_SUBCATCH_GW_MOISTURE
+    GW_LOWER_DEPTH = swmm_SubcatchProperty.swmm_SUBCATCH_GW_LOWER_DEPTH
+    SNOW_SWE = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_SWE
+    SNOW_FW = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_FW
+    SNOW_ATI = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_ATI
+    SNOW_COLDC = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_COLDC
+
 class SWMMNodeProperties(Enum):
     """Enumeration of SWMM node properties.
 
@@ -422,6 +445,13 @@ class SWMMSystemProperties(Enum):
     @cvar HEAD_TOL: Head tolerance.
     @cvar SYS_FLOW_TOL: System flow tolerance.
     @cvar LAT_FLOW_TOL: Lateral flow tolerance.
+    @cvar EVAP_RATE: Current climate-derived evaporation rate (read-only).
+    @cvar TEMPERATURE: Current air temperature (read-only).
+    @cvar API_TEMPERATURE: API prescribed air temperature override.
+    @cvar WIND_SPEED: Current wind speed (read-only).
+    @cvar API_WIND_SPEED: API prescribed wind speed override.
+    @cvar API_EVAP: API prescribed system-wide evaporation rate override.
+    @cvar EVAP_DRY_ONLY: Evaporation DRY_ONLY option (runtime-settable).
     """
     START_DATE = swmm_SystemProperty.swmm_STARTDATE
     CURRENT_DATE = swmm_SystemProperty.swmm_CURRENTDATE
@@ -464,6 +494,139 @@ class SWMMSystemProperties(Enum):
     HEAD_TOL = swmm_SystemProperty.swmm_HEADTOL
     SYS_FLOW_TOL = swmm_SystemProperty.swmm_SYSFLOWTOL
     LAT_FLOW_TOL = swmm_SystemProperty.swmm_LATFLOWTOL
+    EVAP_RATE = swmm_SystemProperty.swmm_EVAPRATE
+    TEMPERATURE = swmm_SystemProperty.swmm_TEMPERATURE
+    API_TEMPERATURE = swmm_SystemProperty.swmm_API_TEMPERATURE
+    WIND_SPEED = swmm_SystemProperty.swmm_WINDSPEED
+    API_WIND_SPEED = swmm_SystemProperty.swmm_API_WINDSPEED
+    API_EVAP = swmm_SystemProperty.swmm_API_EVAP
+    EVAP_DRY_ONLY = swmm_SystemProperty.swmm_EVAP_DRY_ONLY
+
+
+class SWMMPollutantProperties(Enum):
+    """Enumeration of SWMM pollutant properties.
+
+    The source concentrations are settable while the simulation is
+    running (dynamic quality forcing), in the pollutant's concentration
+    units (e.g. mg/L).
+
+    The decay constant, co-pollutant link, and snow-only flag are read live
+    each step, so a mid-run edit takes effect on the next step. The initial
+    network concentration only seeds state at start and is rejected while
+    running. The decay constant is in 1/day (INP units).
+
+    @cvar RAIN_CONCENTRATION: Rain (wet deposition) concentration.
+    @cvar GW_CONCENTRATION: Groundwater inflow concentration.
+    @cvar RDII_CONCENTRATION: RDII inflow concentration.
+    @cvar DWF_CONCENTRATION: Dry weather sanitary flow concentration.
+    @cvar KDECAY: First-order decay constant (1/day).
+    @cvar CO_POLLUTANT: Co-pollutant index (-1 = none).
+    @cvar CO_FRACTION: Co-pollutant fraction (0-1).
+    @cvar SNOW_ONLY: Buildup-only-under-snow flag (0/1).
+    @cvar INIT_CONCENTRATION: Initial network concentration (pre-start only).
+    """
+    RAIN_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_RAIN_CONCEN
+    GW_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_GW_CONCEN
+    RDII_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_RDII_CONCEN
+    DWF_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_DWF_CONCEN
+    KDECAY = swmm_PollutProperty.swmm_POLLUT_KDECAY
+    CO_POLLUTANT = swmm_PollutProperty.swmm_POLLUT_CO_POLLUTANT
+    CO_FRACTION = swmm_PollutProperty.swmm_POLLUT_CO_FRACTION
+    SNOW_ONLY = swmm_PollutProperty.swmm_POLLUT_SNOW_ONLY
+    INIT_CONCENTRATION = swmm_PollutProperty.swmm_POLLUT_INIT_CONCEN
+
+class SWMMPatternProperties(Enum):
+    """Enumeration of SWMM time-pattern properties.
+
+    Pattern multiplier factors are settable both before the simulation
+    starts and while it is running; they are looked up afresh each step
+    (DWF/GW/inflow scaling), so a mid-run edit takes effect on the next
+    step. For C{FACTOR}, pass the 0-based factor position as the
+    C{sub_index} argument of C{set_value}/C{get_value}.
+
+    @cvar FACTOR: One multiplier factor (sub_index = factor position).
+    @cvar COUNT: Number of factors in the pattern (read-only).
+    @cvar TYPE: Pattern type code (read-only): 0 monthly, 1 daily,
+        2 hourly, 3 weekend.
+    """
+    FACTOR = swmm_PatternProperty.swmm_PATTERN_FACTOR
+    COUNT = swmm_PatternProperty.swmm_PATTERN_COUNT
+    TYPE = swmm_PatternProperty.swmm_PATTERN_TYPE
+
+class SWMMLandUseProperties(Enum):
+    """Enumeration of SWMM land-use properties.
+
+    Street-sweeping parameters are settable both before the simulation
+    starts and while it is running; they are read per step when sweeping is
+    evaluated, so a mid-run edit takes effect on the next step.
+
+    Buildup/washoff function parameters are per land use and pollutant; pass
+    the 0-based pollutant index as the C{sub_index} argument. Editing a
+    function changes only how buildup evolves going forward — the accumulated
+    pool is preserved.
+
+    @cvar SWEEP_INTERVAL: Street-sweeping interval (days).
+    @cvar SWEEP_REMOVAL: Fraction of buildup available for sweeping (0-1).
+    @cvar BUILDUP_FUNC: Buildup function type code (sub_index = pollutant).
+    @cvar BUILDUP_COEFF1: Buildup coefficient c0 / max buildup.
+    @cvar BUILDUP_COEFF2: Buildup coefficient c1 / rate.
+    @cvar BUILDUP_COEFF3: Buildup coefficient c2 / exponent.
+    @cvar BUILDUP_NORMALIZER: Buildup normalizer: 0 area, 1 curb length.
+    @cvar WASHOFF_FUNC: Washoff function type code.
+    @cvar WASHOFF_COEFF: Washoff coefficient.
+    @cvar WASHOFF_EXPON: Washoff exponent.
+    @cvar WASHOFF_SWEEP_EFFIC: Washoff street-sweeping efficiency (0-1).
+    @cvar WASHOFF_BMP_EFFIC: Washoff BMP efficiency (0-1).
+    """
+    SWEEP_INTERVAL = swmm_LanduseProperty.swmm_LANDUSE_SWEEP_INTERVAL
+    SWEEP_REMOVAL = swmm_LanduseProperty.swmm_LANDUSE_SWEEP_REMOVAL
+    BUILDUP_FUNC = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_FUNC
+    BUILDUP_COEFF1 = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_COEFF1
+    BUILDUP_COEFF2 = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_COEFF2
+    BUILDUP_COEFF3 = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_COEFF3
+    BUILDUP_NORMALIZER = swmm_LanduseProperty.swmm_LANDUSE_BUILDUP_NORMALIZER
+    WASHOFF_FUNC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_FUNC
+    WASHOFF_COEFF = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_COEFF
+    WASHOFF_EXPON = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_EXPON
+    WASHOFF_SWEEP_EFFIC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_SWEEP_EFFIC
+    WASHOFF_BMP_EFFIC = swmm_LanduseProperty.swmm_LANDUSE_WASHOFF_BMP_EFFIC
+
+class SWMMAquiferProperties(Enum):
+    """Enumeration of SWMM aquifer properties.
+
+    Values use input-file units (the C{[AQUIFERS]} line columns). The
+    flux-coefficient properties (conductivity, slopes, evap/loss coefficients)
+    are read live each step, so they are settable both before the simulation
+    starts and while it is running; the structural / initial-condition
+    properties (porosity, wilting point, field capacity, bottom elevation,
+    water table elevation, upper moisture) bound or seed the groundwater state
+    and are rejected while the simulation is running.
+
+    @cvar POROSITY: Porosity (volumetric fraction, pre-start-only).
+    @cvar WILTING_POINT: Wilting point (volumetric fraction, pre-start-only).
+    @cvar FIELD_CAPACITY: Field capacity (volumetric fraction, pre-start-only).
+    @cvar CONDUCTIVITY: Saturated hydraulic conductivity (in/hr or mm/hr).
+    @cvar CONDUCT_SLOPE: Conductivity slope.
+    @cvar TENSION_SLOPE: Tension slope (ft or m).
+    @cvar UPPER_EVAP_FRAC: Upper-zone evaporation fraction (0-1).
+    @cvar LOWER_EVAP_DEPTH: Lower-zone evaporation depth (ft or m).
+    @cvar LOWER_LOSS_COEFF: Lower-zone seepage-loss coefficient (in/hr or mm/hr).
+    @cvar BOTTOM_ELEV: Aquifer bottom elevation (ft or m, pre-start-only).
+    @cvar WATER_TABLE_ELEV: Initial water table elevation (ft or m, pre-start-only).
+    @cvar UPPER_MOISTURE: Initial upper-zone moisture (volumetric fraction, pre-start-only).
+    """
+    POROSITY = swmm_AquiferProperty.swmm_AQUIFER_POROSITY
+    WILTING_POINT = swmm_AquiferProperty.swmm_AQUIFER_WILTING_POINT
+    FIELD_CAPACITY = swmm_AquiferProperty.swmm_AQUIFER_FIELD_CAPACITY
+    CONDUCTIVITY = swmm_AquiferProperty.swmm_AQUIFER_CONDUCTIVITY
+    CONDUCT_SLOPE = swmm_AquiferProperty.swmm_AQUIFER_CONDUCT_SLOPE
+    TENSION_SLOPE = swmm_AquiferProperty.swmm_AQUIFER_TENSION_SLOPE
+    UPPER_EVAP_FRAC = swmm_AquiferProperty.swmm_AQUIFER_UPPER_EVAP_FRAC
+    LOWER_EVAP_DEPTH = swmm_AquiferProperty.swmm_AQUIFER_LOWER_EVAP_DEPTH
+    LOWER_LOSS_COEFF = swmm_AquiferProperty.swmm_AQUIFER_LOWER_LOSS_COEFF
+    BOTTOM_ELEV = swmm_AquiferProperty.swmm_AQUIFER_BOTTOM_ELEV
+    WATER_TABLE_ELEV = swmm_AquiferProperty.swmm_AQUIFER_WATER_TABLE_ELEV
+    UPPER_MOISTURE = swmm_AquiferProperty.swmm_AQUIFER_UPPER_MOISTURE
 
 # =============================================================================
 # Units / errors enumerations
@@ -1202,13 +1365,92 @@ cdef class Solver:
             element_index = index
 
         cdef int error_code = swmm_setValueExpanded(
-            objType=<int>object_type.value, 
+            objType=<int>object_type.value,
             property=<int>property_type.value,
             index=element_index,
             subindex=sub_index,
             pollutantIndex=<int>pollutant_index,
             value=value
         )
+
+        self.__validate_error(error_code)
+
+    def set_treatment(self, node_index: Union[int, str], pollutant_index: int, expression: str) -> None:
+        """Set (or replace) the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; a
+        mid-run edit is evaluated from the next routing step on. A failed
+        parse raises and leaves no treatment in place for the pair.
+
+        @param node_index: Node index or name (e.g., C{0} or C{"J1"}).
+        @type node_index: int or str
+        @param pollutant_index: Pollutant index (e.g., C{0}).
+        @type pollutant_index: int
+        @param expression: Treatment expression in input-file form, e.g.
+            C{"R = 0.5"} or C{"C = BOD * 0.2"}.
+        @type expression: str
+        """
+        cdef int element_index = -1
+
+        if isinstance(node_index, str):
+            element_index = self.get_object_index(SWMMObjects.NODE, node_index)
+            self.__validate_error(element_index)
+        else:
+            element_index = node_index
+
+        cdef bytes expression_bytes = expression.encode('utf-8')
+        cdef int error_code = swmm_setTreatment(element_index, <int>pollutant_index, expression_bytes)
+
+        self.__validate_error(error_code)
+
+    def clear_treatment(self, node_index: Union[int, str], pollutant_index: int) -> None:
+        """Remove the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; zero
+        removal applies from the next routing step on.
+
+        @param node_index: Node index or name (e.g., C{0} or C{"J1"}).
+        @type node_index: int or str
+        @param pollutant_index: Pollutant index (e.g., C{0}).
+        @type pollutant_index: int
+        """
+        cdef int element_index = -1
+
+        if isinstance(node_index, str):
+            element_index = self.get_object_index(SWMMObjects.NODE, node_index)
+            self.__validate_error(element_index)
+        else:
+            element_index = node_index
+
+        cdef int error_code = swmm_clearTreatment(element_index, <int>pollutant_index)
+
+        self.__validate_error(error_code)
+
+    def set_lid_drain(self, lid_index: Union[int, str], coeff: float, expon: float, offset: float) -> None:
+        """Set the underdrain flow parameters of a LID process at runtime.
+
+        The drain parameters are read live each routing step, so a mid-run
+        edit takes effect on the next step. Values use input-file units,
+        matching the C{[LID_CONTROLS]} DRAIN line.
+
+        @param lid_index: LID process index or name (e.g., C{0} or C{"RB1"}).
+        @type lid_index: int or str
+        @param coeff: Underdrain flow coefficient (in/hr or mm/hr).
+        @type coeff: float
+        @param expon: Underdrain head exponent.
+        @type expon: float
+        @param offset: Offset height of the underdrain (in or mm).
+        @type offset: float
+        """
+        cdef int element_index = -1
+
+        if isinstance(lid_index, str):
+            element_index = self.get_object_index(SWMMObjects.LID, lid_index)
+            self.__validate_error(element_index)
+        else:
+            element_index = lid_index
+
+        cdef int error_code = swmm_setLidDrain(element_index, coeff, expon, offset)
 
         self.__validate_error(error_code)
 
@@ -1252,14 +1494,30 @@ cdef class Solver:
             element_index = index
 
         cdef double value = swmm_getValueExpanded(
-            objType=<int>object_type.value, 
-            property=<int>property_type.value, 
-            index=element_index, 
+            objType=<int>object_type.value,
+            property=<int>property_type.value,
+            index=element_index,
             subIndex=sub_index,
             pollutantIndex=pollutant_index
         )
 
-        self.__validate_error(<int>value)
+        # swmm_getValueExpanded() returns the property value directly. Errors
+        # are signalled two ways: regular solver errors set a positive system
+        # ERROR_CODE, while API-state/lookup errors are returned as the large
+        # negative swmm_API_Errors sentinels (<= -999900). A small negative
+        # return is a VALID value (e.g. a sub-freezing air temperature, or the
+        # -999 API-unset sentinel) and must not be treated as an error — the
+        # old `__validate_error(<int>value)` raised on any value < 0.
+        cdef int internal_error_code = <int>swmm_getValue(
+            property=SWMMObjects.SYSTEM.value,
+            index=SWMMSystemProperties.ERROR_CODE.value
+        )
+        if internal_error_code > 0:
+            raise SWMMSolverException(
+                f'SWMM failed with message: {internal_error_code}, {self.__get_error()}')
+        if value <= -999900.0:
+            raise SWMMSolverException(
+                f'SWMM failed with message: {<int>value}, {get_error_message(<int>value)}')
 
         return value
     
@@ -1457,10 +1715,14 @@ cdef class Solver:
         cdef int error_code = 0
 
         if self._solver_state == SolverState.ENDED or \
-           self._solver_state == SolverState.CREATED:
+           self._solver_state == SolverState.CREATED or \
+           self._solver_state == SolverState.OPEN:
+            # OPEN = swmm_open() was called but swmm_start() never was, so
+            # there is no active run to end. Calling swmm_end() here would tear
+            # down routing/runoff state that was never allocated and crash the
+            # EPA core; treat it as a no-op.
             return 0
-        if self._solver_state != SolverState.OPEN and \
-           self._solver_state != SolverState.STARTED and \
+        if self._solver_state != SolverState.STARTED and \
            self._solver_state != SolverState.FINISHED:
             return -1
 
@@ -1503,10 +1765,13 @@ cdef class Solver:
         """
         cdef int error_code = 0
 
-        if self._solver_state == SolverState.CREATED:
+        if self._solver_state == SolverState.CREATED or \
+           self._solver_state == SolverState.CLOSED:
             return 0
-        if self._solver_state != SolverState.REPORTED:
-            return -1
+        # swmm_close() is valid from any state after swmm_open(); the legacy
+        # EPA core is a global singleton, so a project left un-closed (e.g. an
+        # OPEN-but-never-started session) corrupts the next swmm_open() and
+        # segfaults. Always release rather than requiring REPORTED.
 
         self.__execute_callbacks(CallbackType.BEFORE_CLOSE)
         error_code = swmm_close()
@@ -1524,6 +1789,10 @@ cdef class Solver:
         """
         cdef int error_code = 0
 
+        if self._solver_state is None:
+            # Can occur during interpreter teardown (__dealloc__) after the
+            # cdef attribute has been cleared; nothing to finalize.
+            return
         if self._solver_state == SolverState.OPEN or \
            self._solver_state == SolverState.STARTED or \
            self._solver_state == SolverState.FINISHED:

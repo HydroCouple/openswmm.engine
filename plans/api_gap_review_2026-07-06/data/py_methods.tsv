@@ -1,0 +1,698 @@
+domain	qualname	module	kind	signature
+2d	Surface2D.__init__	_2d	method	(self, engine_ptr: int) -> None
+2d	Surface2D.abs_tolerance	_2d	property	(self) -> float
+2d	Surface2D.boundary_edge_count	_2d	property	(self) -> int
+2d	Surface2D.continuity_error	_2d	property	(self) -> float
+2d	Surface2D.cvode_last_step	_2d	property	(self) -> float
+2d	Surface2D.cvode_steps	_2d	property	(self) -> int
+2d	Surface2D.dry_depth	_2d	property	(self) -> float
+2d	Surface2D.force_clear_all	_2d	method	(self) -> None
+2d	Surface2D.force_coupling_flux	_2d	method	(self, idx: int, value: float, *, mode: SurfaceForcingMode=..., persist: ForcingPersist=...) -> None
+2d	Surface2D.force_evap	_2d	method	(self, idx: int, value: float, *, mode: SurfaceForcingMode=..., persist: ForcingPersist=...) -> None
+2d	Surface2D.force_evap_uniform	_2d	method	(self, value: float, *, mode: SurfaceForcingMode=..., persist: ForcingPersist=...) -> None
+2d	Surface2D.force_rainfall	_2d	method	(self, idx: int, value: float, *, mode: SurfaceForcingMode=..., persist: ForcingPersist=...) -> None
+2d	Surface2D.force_rainfall_uniform	_2d	method	(self, value: float, *, mode: SurfaceForcingMode=..., persist: ForcingPersist=...) -> None
+2d	Surface2D.get_coupling_flux	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_coupling_fluxes	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_depth	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_depths	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_edge_bc_cum_flux	_2d	method	(self, tri_idx: int, edge: int) -> float
+2d	Surface2D.get_edge_bc_flow	_2d	method	(self, tri_idx: int, edge: int) -> float
+2d	Surface2D.get_edge_bc_head	_2d	method	(self, tri_idx: int, edge: int) -> float
+2d	Surface2D.get_edge_bc_slope	_2d	method	(self, tri_idx: int, edge: int) -> float
+2d	Surface2D.get_edge_bc_type	_2d	method	(self, tri_idx: int, edge: int) -> SurfaceBoundaryType
+2d	Surface2D.get_edge_conveyance	_2d	method	(self, tri: int, edge: int) -> float
+2d	Surface2D.get_edge_conveyance_bulk	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_edge_flux_bulk	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_edge_geometry_bulk	_2d	method	(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]
+2d	Surface2D.get_head	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_heads	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_mass_balance	_2d	method	(self) -> dict[str, float]
+2d	Surface2D.get_net_source	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_rainfall	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_stat_max_continuity_err	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_stat_max_depths	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_stat_max_velocities	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_triangle_area	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_triangle_centroid	_2d	method	(self, idx: int) -> tuple[float, float, float]
+2d	Surface2D.get_triangle_coupled_node	_2d	method	(self, tri_idx: int) -> int
+2d	Surface2D.get_triangle_mannings	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_triangle_neighbours	_2d	method	(self, idx: int) -> tuple[int, int, int]
+2d	Surface2D.get_triangle_tag	_2d	method	(self, idx: int) -> str
+2d	Surface2D.get_triangle_vertices	_2d	method	(self, idx: int) -> tuple[int, int, int]
+2d	Surface2D.get_vertex_coords	_2d	method	(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]
+2d	Surface2D.get_vertex_coupled_node	_2d	method	(self, vertex_idx: int) -> int
+2d	Surface2D.get_vertex_coupling_area	_2d	method	(self, vertex_idx: int) -> float
+2d	Surface2D.get_vertex_coupling_cd	_2d	method	(self, vertex_idx: int) -> float
+2d	Surface2D.get_vertex_head	_2d	method	(self, idx: int) -> float
+2d	Surface2D.get_vertex_heads	_2d	method	(self) -> npt.NDArray[np.float64]
+2d	Surface2D.get_vertex_tag	_2d	method	(self, idx: int) -> str
+2d	Surface2D.get_vertex_xyz	_2d	method	(self, idx: int) -> tuple[float, float, float]
+2d	Surface2D.is_active	_2d	property	(self) -> bool
+2d	Surface2D.max_depth	_2d	property	(self) -> float
+2d	Surface2D.n_triangles	_2d	property	(self) -> int
+2d	Surface2D.n_vertices	_2d	property	(self) -> int
+2d	Surface2D.prepare_for_edit	_2d	method	(self) -> None
+2d	Surface2D.rel_tolerance	_2d	property	(self) -> float
+2d	Surface2D.reset_edge_conveyance	_2d	method	(self) -> None
+2d	Surface2D.set_edge_bc_flow	_2d	method	(self, tri_idx: int, edge: int, flow: float) -> None
+2d	Surface2D.set_edge_bc_flow_tseries_name	_2d	method	(self, tri_idx: int, edge: int, name: str) -> None
+2d	Surface2D.set_edge_bc_head	_2d	method	(self, tri_idx: int, edge: int, head: float) -> None
+2d	Surface2D.set_edge_bc_rating_curve_name	_2d	method	(self, tri_idx: int, edge: int, name: str) -> None
+2d	Surface2D.set_edge_bc_slope	_2d	method	(self, tri_idx: int, edge: int, slope: float) -> None
+2d	Surface2D.set_edge_bc_tseries_name	_2d	method	(self, tri_idx: int, edge: int, name: str) -> None
+2d	Surface2D.set_edge_bc_type	_2d	method	(self, tri_idx: int, edge: int, bc_type: SurfaceBoundaryType) -> None
+2d	Surface2D.set_edge_conveyance	_2d	method	(self, tri: int, edge: int, conveyance: float) -> None
+2d	Surface2D.set_triangle_mannings	_2d	method	(self, idx: int, n: float) -> None
+2d	Surface2D.set_triangle_tag	_2d	method	(self, idx: int, tag: str) -> None
+2d	Surface2D.set_vertex_coupled_node	_2d	method	(self, vertex_idx: int, node_name: str) -> None
+2d	Surface2D.set_vertex_coupling_area	_2d	method	(self, vertex_idx: int, area: float) -> None
+2d	Surface2D.set_vertex_coupling_cd	_2d	method	(self, vertex_idx: int, cd: float) -> None
+2d	Surface2D.set_vertex_tag	_2d	method	(self, idx: int, tag: str) -> None
+2d	Surface2D.set_vertex_z	_2d	method	(self, idx: int, z: float) -> None
+2d	Surface2D.total_exchange_flow	_2d	property	(self) -> float
+2d	Surface2D.total_volume	_2d	property	(self) -> float
+2d	Surface2D.triangle_coupling_count	_2d	property	(self) -> int
+2d	Surface2D.vertex_coupling_count	_2d	property	(self) -> int
+climate	Climate.__init__	_climate	method	(self, solver: Solver) -> None
+controls	Controls.__delitem__	_controls	method	(self, idx: Any) -> None
+controls	Controls.__getitem__	_controls	method	(self, idx: Any) -> Any
+controls	Controls.__init__	_controls	method	(self, solver: Solver) -> None
+controls	Controls.__len__	_controls	method	(self) -> int
+controls	Controls.__setitem__	_controls	method	(self, idx: Any, value: Any) -> None
+controls	Controls.append	_controls	method	(self, value: Any) -> None
+controls	Controls.clear	_controls	method	(self) -> None
+controls	Controls.insert	_controls	method	(self, idx: int, value: Any) -> None
+controls	Controls.set_link_setting	_controls	method	(self, link: _Key, setting: float) -> None
+controls	Controls.set_link_status	_controls	method	(self, link: _Key, *, closed: bool) -> None
+controls	Controls.validate_message	_controls	method	(self, rule_text: str) -> Tuple[bool, str]
+dates	datetime_to_oadate	_dates	function	(dt: datetime) -> float
+dates	oadate_to_datetime	_dates	function	(value: float) -> datetime
+datetime	add_seconds	_datetime	function	(value: float, seconds: float) -> float
+datetime	decode_date	_datetime	function	(value: float) -> tuple[int, int, int]
+datetime	decode_time	_datetime	function	(value: float) -> tuple[int, int, int]
+datetime	encode_date	_datetime	function	(year: int, month: int, day: int) -> float
+datetime	encode_time	_datetime	function	(hour: int, minute: int, second: int) -> float
+datetime	time_diff	_datetime	function	(value1: float, value2: float) -> int
+edit	ConversionResult.__init__	_edit	method	(self, new_type: int, cleared_fields: list[str], warnings: list[str]) -> None
+edit	ConversionResult.__repr__	_edit	method	(self) -> str
+edit	ImpactEntry.__init__	_edit	method	(self, obj_type: int, obj_idx: int, field: str, cascaded: bool) -> None
+edit	ImpactEntry.__repr__	_edit	method	(self) -> str
+edit	ModelEditor.__init__	_edit	method	(self, engine: object) -> None
+edit	ModelEditor.analyze_gage_impact	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.analyze_link_impact	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.analyze_node_impact	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.analyze_subcatch_impact	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.analyze_table_impact	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.analyze_transect_impact	_edit	method	(self, idx: int) -> list[ImpactEntry]
+edit	ModelEditor.convert_link	_edit	method	(self, id_or_idx: int | str, new_type: int) -> ConversionResult
+edit	ModelEditor.convert_node	_edit	method	(self, id_or_idx: int | str, new_type: int) -> ConversionResult
+edit	ModelEditor.delete_gage	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.delete_link	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.delete_node	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.delete_subcatch	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.delete_table	_edit	method	(self, id_or_idx: int | str) -> list[ImpactEntry]
+edit	ModelEditor.delete_transect	_edit	method	(self, idx: int) -> list[ImpactEntry]
+edit	ModelEditor.gage_count	_edit	property	(self) -> int
+edit	ModelEditor.link_count	_edit	property	(self) -> int
+edit	ModelEditor.node_count	_edit	property	(self) -> int
+edit	ModelEditor.subcatch_count	_edit	property	(self) -> int
+edit	ModelEditor.table_count	_edit	property	(self) -> int
+exceptions	EngineError.__init__	_exceptions	method	(self, code: int, message: str=...) -> None
+exceptions	EngineError.__repr__	_exceptions	method	(self) -> str
+exceptions	StaleObjectError.__init__	_exceptions	method	(self, message: str=...) -> None
+exceptions	raise_for_code	_exceptions	function	(code: int, message: Optional[str]=...) -> None
+forcing	Forcing.__init__	_forcing	method	(self, solver: Solver) -> None
+forcing	Forcing.clear	_forcing	method	(self, target: ForcingTarget, key: _Key) -> None
+forcing	Forcing.clear_all	_forcing	method	(self) -> None
+forcing	Forcing.climate_dry_only	_forcing	method	(self, flag: bool) -> None
+forcing	Forcing.climate_evap	_forcing	method	(self, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.climate_evap_rate	_forcing	method	(self) -> float
+forcing	Forcing.climate_temperature	_forcing	method	(self, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.climate_wind	_forcing	method	(self, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.gage_rainfall	_forcing	method	(self, gage: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.get_climate_dry_only	_forcing	method	(self) -> bool
+forcing	Forcing.get_climate_temperature	_forcing	method	(self) -> float
+forcing	Forcing.get_climate_wind_speed	_forcing	method	(self) -> float
+forcing	Forcing.link_flow	_forcing	method	(self, link: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.link_quality	_forcing	method	(self, link: _Key, pollutant: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.link_setting	_forcing	method	(self, link: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.node_head_boundary	_forcing	method	(self, node: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.node_lat_inflow	_forcing	method	(self, node: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.node_quality	_forcing	method	(self, node: _Key, pollutant: _Key, mass_rate: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.subcatchment_evap	_forcing	method	(self, sub: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.subcatchment_rainfall	_forcing	method	(self, sub: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+forcing	Forcing.subcatchment_snowfall	_forcing	method	(self, sub: _Key, value: float, *, mode: ForcingMode=..., persist: bool=...) -> None
+gages	Gage.__eq__	_gages	method	(self, other: object) -> bool
+gages	Gage.__hash__	_gages	method	(self) -> int
+gages	Gage.__init__	_gages	method	(self, solver: Solver, index: int) -> None
+gages	Gage.__repr__	_gages	method	(self) -> str
+gages	Gage.set_file	_gages	method	(self, path: str, station_id: str) -> None
+gages	Gage.set_rain_interval	_gages	method	(self, seconds: Union[float, timedelta]) -> None
+gages	Gage.set_timeseries	_gages	method	(self, ts_id: str) -> None
+gages	Gages.__contains__	_gages	method	(self, key: object) -> bool
+gages	Gages.__getitem__	_gages	method	(self, key: _Key) -> Gage
+gages	Gages.__init__	_gages	method	(self, solver: Solver) -> None
+gages	Gages.__iter__	_gages	method	(self) -> Iterator[Gage]
+gages	Gages.__len__	_gages	method	(self) -> int
+gages	Gages.add	_gages	method	(self, gage_id: str) -> Gage
+gages	Gages.get_id	_gages	method	(self, idx: int) -> str
+gages	Gages.get_index	_gages	method	(self, gage_id: str) -> int
+gages	Gages.rename	_gages	method	(self, key: _Key, new_id: str) -> None
+geopackage	GeoPackage.__enter__	_geopackage	method	(self) -> 'GeoPackage'
+geopackage	GeoPackage.__exit__	_geopackage	method	(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> bool
+geopackage	GeoPackage.__init__	_geopackage	method	(self, path: str) -> None
+geopackage	GeoPackage.begin	_geopackage	method	(self) -> None
+geopackage	GeoPackage.close	_geopackage	method	(self) -> None
+geopackage	GeoPackage.commit	_geopackage	method	(self) -> None
+geopackage	GeoPackage.create_observed_series	_geopackage	method	(self, name: str, variable: str, obj_type: str='', obj_id: str='', source: str='', units: str='') -> int
+geopackage	GeoPackage.last_error	_geopackage	property	(self) -> str
+geopackage	GeoPackage.object_counts	_geopackage	method	(self, sim_id: str) -> Dict[str, int]
+geopackage	GeoPackage.observed_series_count	_geopackage	method	(self) -> int
+geopackage	GeoPackage.observed_value_count	_geopackage	method	(self, series_id: int) -> int
+geopackage	GeoPackage.query_double	_geopackage	method	(self, sql: str) -> float
+geopackage	GeoPackage.query_int	_geopackage	method	(self, sql: str) -> int
+geopackage	GeoPackage.read_observed_values	_geopackage	method	(self, series_id: int) -> Tuple[List[str], npt.NDArray[np.float64]]
+geopackage	GeoPackage.read_result_ts	_geopackage	method	(self, sim_id: str, obj_type: str, obj_id: str, variable: str) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+geopackage	GeoPackage.read_summary	_geopackage	method	(self, sim_id: str, obj_type: str, obj_id: str, variable: str) -> float
+geopackage	GeoPackage.result_ts_count	_geopackage	method	(self, sim_id: str, obj_type: str, obj_id: str, variable: str) -> int
+geopackage	GeoPackage.rollback	_geopackage	method	(self) -> None
+geopackage	GeoPackage.simulation_count	_geopackage	method	(self) -> int
+geopackage	GeoPackage.simulation_ids	_geopackage	method	(self) -> List[str]
+geopackage	GeoPackage.topology_edge_count	_geopackage	method	(self, sim_id: str) -> int
+geopackage	GeoPackage.variable_count	_geopackage	method	(self) -> int
+geopackage	GeoPackage.write_observed_value	_geopackage	method	(self, series_id: int, timestamp: str, value: float, flag: str='') -> None
+geopackage	GeoPackage.write_observed_values	_geopackage	method	(self, series_id: int, timestamps: List[str], values: npt.ArrayLike, flags: Optional[List[str]]=None) -> None
+geopackage	is_registered	_geopackage	function	() -> bool
+geopackage	register	_geopackage	function	(key: str='', org: str='', email: str='', deploy: str='') -> bool
+hotstart	HotStart.__enter__	_hotstart	method	(self) -> 'HotStart'
+hotstart	HotStart.__exit__	_hotstart	method	(self, *args: Any) -> bool
+hotstart	HotStart.__init__	_hotstart	method	(self) -> None
+hotstart	HotStart.__repr__	_hotstart	method	(self) -> str
+hotstart	HotStart.apply	_hotstart	method	(self, solver: Solver) -> None
+hotstart	HotStart.close	_hotstart	method	(self) -> None
+hotstart	HotStart.crs	_hotstart	property	(self) -> Optional[str]
+hotstart	HotStart.link_count	_hotstart	property	(self) -> int
+hotstart	HotStart.node_count	_hotstart	property	(self) -> int
+hotstart	HotStart.open	_hotstart	classmethod	(cls, path: _PathLike) -> 'HotStart'
+hotstart	HotStart.save_from	_hotstart	staticmethod	(solver: Solver, path: _PathLike) -> None
+hotstart	HotStart.set_link_depth	_hotstart	method	(self, link_id: str, depth: float) -> None
+hotstart	HotStart.set_link_flow	_hotstart	method	(self, link_id: str, flow: float) -> None
+hotstart	HotStart.set_node_depth	_hotstart	method	(self, node_id: str, depth: float) -> None
+hotstart	HotStart.set_node_head	_hotstart	method	(self, node_id: str, head: float) -> None
+hotstart	HotStart.set_subcatchment_runoff	_hotstart	method	(self, sub_id: str, runoff: float) -> None
+hotstart	HotStart.sim_datetime	_hotstart	property	(self) -> datetime
+hotstart	HotStart.warnings	_hotstart	property	(self) -> List[str]
+hotstart	SaveSchedule.__delitem__	_hotstart	method	(self, idx: Any) -> None
+hotstart	SaveSchedule.__getitem__	_hotstart	method	(self, idx: Any) -> Any
+hotstart	SaveSchedule.__init__	_hotstart	method	(self, solver: Solver) -> None
+hotstart	SaveSchedule.__len__	_hotstart	method	(self) -> int
+hotstart	SaveSchedule.__setitem__	_hotstart	method	(self, idx: Any, value: Any) -> None
+hotstart	SaveSchedule.append	_hotstart	method	(self, value: Any) -> None
+hotstart	SaveSchedule.clear	_hotstart	method	(self) -> None
+hotstart	SaveSchedule.insert	_hotstart	method	(self, idx: int, value: Any) -> None
+inflows	Inflows.__init__	_inflows	method	(self, solver: Solver) -> None
+inflows	Inflows.add_dwf	_inflows	method	(self, node: _Key, constituent: str, *, avg_value: float=..., monthly_pattern: str=..., daily_pattern: str=..., hourly_pattern: str=..., weekend_pattern: str=...) -> None
+inflows	Inflows.add_external	_inflows	method	(self, node: _Key, constituent: str, *, ts_name: str=..., type: str=..., m_factor: float=..., s_factor: float=..., baseline: float=..., pattern: str=...) -> None
+inflows	Inflows.add_hydrograph	_inflows	method	(self, uh_name: str, month: int, response: int, r: float, t: float, k: float, *, dmax: float=..., drecov: float=..., dinit: float=...) -> None
+inflows	Inflows.add_hydrograph_gage	_inflows	method	(self, uh_name: str, gage_name: str) -> None
+inflows	Inflows.add_rdii	_inflows	method	(self, node: _Key, uh_name: str, area: float) -> None
+inflows	Inflows.add_rdii_decay	_inflows	method	(self, uh_name: str, response: int, k_dep: float, k_0: float, k_T: float, T_ref: float, theta_rec: float, T_freeze: float) -> None
+inflows	Inflows.clear_hydrograph_group_months	_inflows	method	(self, uh_name: str) -> None
+inflows	Inflows.get_dwf	_inflows	method	(self, entry_idx: int) -> Tuple[int, str, float, str, str, str, str]
+inflows	Inflows.get_external	_inflows	method	(self, entry_idx: int) -> Tuple[int, str, str, str, float, float, float, str]
+inflows	Inflows.get_hydrograph	_inflows	method	(self, idx: int) -> HydrographEntry
+inflows	Inflows.get_hydrograph_gage	_inflows	method	(self, idx: int) -> HydrographGageEntry
+inflows	Inflows.get_hydrograph_group_id	_inflows	method	(self, idx: int) -> str
+inflows	Inflows.get_rdii	_inflows	method	(self, idx: int) -> RDIIEntry
+inflows	Inflows.get_rdii_decay	_inflows	method	(self, idx: int) -> RDIIDecayEntry
+inflows	Inflows.remove_dwf	_inflows	method	(self, entry_idx: int) -> None
+inflows	Inflows.remove_external	_inflows	method	(self, entry_idx: int) -> None
+inflows	Inflows.remove_hydrograph_entry	_inflows	method	(self, uh_name: str, month: int, response: int) -> None
+inflows	Inflows.remove_hydrograph_group	_inflows	method	(self, uh_name: str) -> None
+inflows	Inflows.remove_rdii	_inflows	method	(self, entry_idx: int) -> None
+inflows	Inflows.remove_rdii_decay	_inflows	method	(self, uh_name: str, response: int) -> None
+inflows	Inflows.rename_hydrograph_group	_inflows	method	(self, idx: int, new_id: str) -> None
+inflows	Inflows.set_dwf_baseline	_inflows	method	(self, entry_idx: int, avg_value: float) -> None
+inflows	Inflows.set_external_baseline	_inflows	method	(self, entry_idx: int, baseline: float) -> None
+inflows	Inflows.set_external_scale	_inflows	method	(self, entry_idx: int, scale: float) -> None
+inflows	Inflows.set_hydrograph_gage	_inflows	method	(self, uh_name: str, gage_name: str) -> None
+inflows	Inflows.set_hydrograph_ia	_inflows	method	(self, uh_name: str, month: int, response: int, dmax: float, drecov: float, dinit: float) -> None
+inflows	Inflows.set_hydrograph_rtk	_inflows	method	(self, uh_name: str, month: int, response: int, r: float, t: float, k: float) -> None
+inflows	Inflows.set_rdii_decay	_inflows	method	(self, uh_name: str, response: int, k_dep: float, k_0: float, k_T: float, T_ref: float, theta_rec: float, T_freeze: float) -> None
+infrastructure	Infrastructure.__init__	_infrastructure	method	(self, solver: Solver) -> None
+infrastructure	Inlets.__contains__	_infrastructure	method	(self, key: object) -> bool
+infrastructure	Inlets.__init__	_infrastructure	method	(self, solver: Solver) -> None
+infrastructure	Inlets.__iter__	_infrastructure	method	(self) -> Iterator[str]
+infrastructure	Inlets.__len__	_infrastructure	method	(self) -> int
+infrastructure	Inlets.add	_infrastructure	method	(self, inlet_id: str, inlet_type: str) -> int
+infrastructure	Inlets.get_id	_infrastructure	method	(self, idx: int) -> str
+infrastructure	Inlets.get_index	_infrastructure	method	(self, inlet_id: str) -> int
+infrastructure	Inlets.get_params	_infrastructure	method	(self, idx: int) -> dict[str, float | str]
+infrastructure	Inlets.get_type	_infrastructure	method	(self, idx: int) -> str
+infrastructure	Inlets.set_params	_infrastructure	method	(self, idx: int, *, length: float=..., width: float=..., grate_type: str=..., open_area: float=..., splash_veloc: float=...) -> None
+infrastructure	LIDs.__contains__	_infrastructure	method	(self, key: object) -> bool
+infrastructure	LIDs.__init__	_infrastructure	method	(self, solver: Solver) -> None
+infrastructure	LIDs.__iter__	_infrastructure	method	(self) -> Iterator[str]
+infrastructure	LIDs.__len__	_infrastructure	method	(self) -> int
+infrastructure	LIDs.add	_infrastructure	method	(self, lid_id: str, lid_type: LidType) -> int
+infrastructure	LIDs.get_drain	_infrastructure	method	(self, idx: int) -> dict[str, float]
+infrastructure	LIDs.get_drainmat	_infrastructure	method	(self, idx: int) -> dict[str, float]
+infrastructure	LIDs.get_id	_infrastructure	method	(self, idx: int) -> str
+infrastructure	LIDs.get_index	_infrastructure	method	(self, lid_id: str) -> int
+infrastructure	LIDs.get_pavement	_infrastructure	method	(self, idx: int) -> dict[str, float]
+infrastructure	LIDs.get_soil	_infrastructure	method	(self, idx: int) -> dict[str, float]
+infrastructure	LIDs.get_storage	_infrastructure	method	(self, idx: int) -> dict[str, float]
+infrastructure	LIDs.get_surface	_infrastructure	method	(self, idx: int) -> dict[str, float]
+infrastructure	LIDs.get_type	_infrastructure	method	(self, idx: int) -> int
+infrastructure	LIDs.set_drain	_infrastructure	method	(self, idx: int, *, coeff: float, expon: float, offset: float) -> None
+infrastructure	LIDs.set_drainmat	_infrastructure	method	(self, idx: int, *, thick: float, void_frac: float, roughness: float) -> None
+infrastructure	LIDs.set_pavement	_infrastructure	method	(self, idx: int, *, thick: float, void_ratio: float, frac_imperv: float, ksat: float, clog_factor: float=..., regen_days: float=...) -> None
+infrastructure	LIDs.set_soil	_infrastructure	method	(self, idx: int, *, thick: float, porosity: float, fc: float, wp: float, ksat: float, kslope: float) -> None
+infrastructure	LIDs.set_storage	_infrastructure	method	(self, idx: int, *, thick: float, void_frac: float, ksat: float) -> None
+infrastructure	LIDs.set_surface	_infrastructure	method	(self, idx: int, *, storage: float, roughness: float, slope: float) -> None
+infrastructure	LIDs.usage_add	_infrastructure	method	(self, subcatchment: _Key, lid: int, *, number: int, area: float, width: float, init_sat: float=..., from_imperv: float=...) -> None
+infrastructure	LIDs.usage_count	_infrastructure	method	(self) -> int
+infrastructure	LIDs.usage_get	_infrastructure	method	(self, usage_idx: int) -> dict[str, float | int]
+infrastructure	LIDs.usage_remove	_infrastructure	method	(self, usage_idx: int) -> None
+infrastructure	Streets.__contains__	_infrastructure	method	(self, key: object) -> bool
+infrastructure	Streets.__init__	_infrastructure	method	(self, solver: Solver) -> None
+infrastructure	Streets.__iter__	_infrastructure	method	(self) -> Iterator[str]
+infrastructure	Streets.__len__	_infrastructure	method	(self) -> int
+infrastructure	Streets.add	_infrastructure	method	(self, street_id: str) -> int
+infrastructure	Streets.get_id	_infrastructure	method	(self, idx: int) -> str
+infrastructure	Streets.get_index	_infrastructure	method	(self, street_id: str) -> int
+infrastructure	Streets.get_params	_infrastructure	method	(self, idx: int) -> dict[str, float]
+infrastructure	Streets.set_params	_infrastructure	method	(self, idx: int, *, t_crown: float, h_curb: float, sx: float, n_road: float, gutter_depres: float=..., gutter_width: float=..., sides: int=..., back_width: float=..., back_slope: float=..., back_n: float=...) -> None
+infrastructure	Transects.__contains__	_infrastructure	method	(self, key: object) -> bool
+infrastructure	Transects.__init__	_infrastructure	method	(self, solver: Solver) -> None
+infrastructure	Transects.__iter__	_infrastructure	method	(self) -> Iterator[str]
+infrastructure	Transects.__len__	_infrastructure	method	(self) -> int
+infrastructure	Transects.add	_infrastructure	method	(self, transect_id: str) -> int
+infrastructure	Transects.add_station	_infrastructure	method	(self, idx: int, station: float, elevation: float) -> None
+infrastructure	Transects.clear_stations	_infrastructure	method	(self, idx: int) -> None
+infrastructure	Transects.get_bank_stations	_infrastructure	method	(self, idx: int) -> Tuple[float, float]
+infrastructure	Transects.get_comments	_infrastructure	method	(self, idx: int) -> str
+infrastructure	Transects.get_encroachment_stations	_infrastructure	method	(self, idx: int) -> Tuple[float, float]
+infrastructure	Transects.get_id	_infrastructure	method	(self, idx: int) -> str
+infrastructure	Transects.get_index	_infrastructure	method	(self, transect_id: str) -> int
+infrastructure	Transects.get_modifiers	_infrastructure	method	(self, idx: int) -> Tuple[float, float, float]
+infrastructure	Transects.get_roughness	_infrastructure	method	(self, idx: int) -> Tuple[float, float, float]
+infrastructure	Transects.get_station	_infrastructure	method	(self, idx: int, station_idx: int) -> Tuple[float, float]
+infrastructure	Transects.remove	_infrastructure	method	(self, key: _Key) -> None
+infrastructure	Transects.rename	_infrastructure	method	(self, key: _Key, new_id: str) -> None
+infrastructure	Transects.set_bank_stations	_infrastructure	method	(self, idx: int, left: float, right: float) -> None
+infrastructure	Transects.set_comments	_infrastructure	method	(self, idx: int, text: str) -> None
+infrastructure	Transects.set_encroachment_stations	_infrastructure	method	(self, idx: int, left: float, right: float) -> None
+infrastructure	Transects.set_modifiers	_infrastructure	method	(self, idx: int, n_factor: float, x_factor: float, y_factor: float) -> None
+infrastructure	Transects.set_roughness	_infrastructure	method	(self, idx: int, n_left: float, n_right: float, n_channel: float) -> None
+infrastructure	Transects.station_count	_infrastructure	method	(self, idx: int) -> int
+infrastructure	Transects.stations	_infrastructure	method	(self, idx: int) -> List[Tuple[float, float]]
+links	Link.__eq__	_links	method	(self, other: object) -> bool
+links	Link.__hash__	_links	method	(self) -> int
+links	Link.__init__	_links	method	(self, solver: Solver, index: int) -> None
+links	Link.__repr__	_links	method	(self) -> str
+links	Link.quality	_links	method	(self, pollutant: _Key) -> float
+links	Link.set_nodes	_links	method	(self, from_node: Union[Node, _Key], to_node: Union[Node, _Key]) -> None
+links	Link.xsect	_links	property	(self) -> XSection
+links	Links.__contains__	_links	method	(self, key: object) -> bool
+links	Links.__getitem__	_links	method	(self, key: _Key) -> Link
+links	Links.__init__	_links	method	(self, solver: Solver) -> None
+links	Links.__iter__	_links	method	(self) -> Iterator[Link]
+links	Links.__len__	_links	method	(self) -> int
+links	Links.__repr__	_links	method	(self) -> str
+links	Links.add	_links	method	(self, link_id: str, link_type: LinkType) -> Link
+links	Links.get_id	_links	method	(self, idx: int) -> str
+links	Links.get_index	_links	method	(self, link_id: str) -> int
+links	Links.pop_last	_links	method	(self, link_id: str) -> None
+links	Links.pump_stats	_links	method	(self) -> Tuple[NDArray[Any], NDArray[Any], NDArray[Any]]
+links	Links.qualities	_links	method	(self, pollutant: _Key) -> NDArray[Any]
+links	Links.rename	_links	method	(self, key: _Key, new_id: str) -> None
+links	XSection.__iter__	_links	method	(self) -> Iterator[Any]
+links	XSection.as_tuple	_links	method	(self) -> Tuple[XSectShape, float, float, float, float]
+massbalance	MassBalance.__init__	_massbalance	method	(self, solver: Solver) -> None
+massbalance	MassBalance.__repr__	_massbalance	method	(self) -> str
+massbalance	MassBalance.max_courant	_massbalance	property	(self) -> float
+massbalance	MassBalance.quality_continuity_error	_massbalance	method	(self, pollutant: _Key) -> float
+massbalance	MassBalance.quality_evap_loss	_massbalance	method	(self, pollutant: _Key) -> float
+massbalance	MassBalance.quality_seep_loss	_massbalance	method	(self, pollutant: _Key) -> float
+massbalance	MassBalance.routing_continuity_error	_massbalance	property	(self) -> float
+massbalance	MassBalance.routing_diagnostics	_massbalance	property	(self) -> RoutingDiagnostics
+massbalance	MassBalance.routing_total	_massbalance	method	(self, component: RoutingTotal) -> float
+massbalance	MassBalance.runoff_continuity_error	_massbalance	property	(self) -> float
+massbalance	MassBalance.runoff_total	_massbalance	method	(self, component: RunoffTotal) -> float
+model	ModelBuilder.__init__	_model	method	(self) -> None
+model	ModelBuilder.add_gage	_model	method	(self, gage_id: str) -> int
+model	ModelBuilder.add_link	_model	method	(self, link_id: str, link_type: int) -> int
+model	ModelBuilder.add_node	_model	method	(self, node_id: str, node_type: int) -> int
+model	ModelBuilder.add_subcatch	_model	method	(self, sc_id: str) -> int
+model	ModelBuilder.add_subcatchment	_model	method	(self, sc_id: str) -> int
+model	ModelBuilder.add_title_line	_model	method	(self, line: str) -> None
+model	ModelBuilder.clear_title	_model	method	(self) -> None
+model	ModelBuilder.clear_userflag_value	_model	method	(self, obj_type: str, obj_name: str, flag_name: str) -> None
+model	ModelBuilder.define_userflag	_model	method	(self, name: str, type: int, description: str='') -> None
+model	ModelBuilder.files_get	_model	method	(self, key: str) -> str
+model	ModelBuilder.files_set	_model	method	(self, key: str, value: str) -> None
+model	ModelBuilder.finalize	_model	method	(self) -> None
+model	ModelBuilder.generation	_model	property	(self) -> int
+model	ModelBuilder.get_crs	_model	method	(self) -> str
+model	ModelBuilder.get_file_path	_model	method	(self, role: int, owner: str=...) -> tuple[str, str]
+model	ModelBuilder.get_option	_model	method	(self, key: str) -> str
+model	ModelBuilder.get_option_ext	_model	method	(self, key: str) -> str
+model	ModelBuilder.get_title_count	_model	method	(self) -> int
+model	ModelBuilder.get_title_line	_model	method	(self, index: int) -> str
+model	ModelBuilder.get_userflag_bool	_model	method	(self, name: str) -> bool
+model	ModelBuilder.get_userflag_def	_model	method	(self, index: int) -> tuple[str, int, str]
+model	ModelBuilder.get_userflag_int	_model	method	(self, name: str) -> int
+model	ModelBuilder.get_userflag_real	_model	method	(self, name: str) -> float
+model	ModelBuilder.get_userflag_value	_model	method	(self, obj_type: str, obj_name: str, flag_name: str) -> Optional[str]
+model	ModelBuilder.handle	_model	property	(self) -> int
+model	ModelBuilder.plugin_get	_model	method	(self, idx: int) -> tuple[str, str]
+model	ModelBuilder.plugin_remove	_model	method	(self, path_or_id: str) -> None
+model	ModelBuilder.plugin_set	_model	method	(self, path_or_id: str, args: str='') -> None
+model	ModelBuilder.plugins_count	_model	method	(self) -> int
+model	ModelBuilder.pop_last_link	_model	method	(self, link_id: str) -> int
+model	ModelBuilder.pop_last_node	_model	method	(self, node_id: str) -> int
+model	ModelBuilder.set_file_path	_model	method	(self, role: int, new_path: str, owner: str=...) -> None
+model	ModelBuilder.set_link_length	_model	method	(self, idx: int, length: float) -> None
+model	ModelBuilder.set_link_nodes	_model	method	(self, idx: int, from_node: int, to_node: int) -> None
+model	ModelBuilder.set_link_roughness	_model	method	(self, idx: int, n: float) -> None
+model	ModelBuilder.set_link_xsect	_model	method	(self, idx: int, shape: int, g1: float, g2: float=0, g3: float=0, g4: float=0) -> None
+model	ModelBuilder.set_node_invert	_model	method	(self, idx: int, elev: float) -> None
+model	ModelBuilder.set_node_max_depth	_model	method	(self, idx: int, depth: float) -> None
+model	ModelBuilder.set_option	_model	method	(self, key: str, value: str) -> None
+model	ModelBuilder.set_option_ext	_model	method	(self, key: str, value: str) -> None
+model	ModelBuilder.set_title	_model	method	(self, text: str) -> None
+model	ModelBuilder.set_userflag_bool	_model	method	(self, name: str, value: bool) -> None
+model	ModelBuilder.set_userflag_int	_model	method	(self, name: str, value: int) -> None
+model	ModelBuilder.set_userflag_real	_model	method	(self, name: str, value: float) -> None
+model	ModelBuilder.set_userflag_value	_model	method	(self, obj_type: str, obj_name: str, flag_name: str, value: str) -> None
+model	ModelBuilder.to_solver	_model	method	(self) -> Solver
+model	ModelBuilder.undefine_userflag	_model	method	(self, name: str) -> None
+model	ModelBuilder.userflag_def_count	_model	method	(self) -> int
+model	ModelBuilder.validate	_model	method	(self) -> None
+model	ModelBuilder.write	_model	method	(self, path: str) -> None
+model	ModelBuilder.write_with_plugin	_model	method	(self, path: str, output_plugin_id: str='') -> None
+nodes	Node.__eq__	_nodes	method	(self, other: object) -> bool
+nodes	Node.__hash__	_nodes	method	(self) -> int
+nodes	Node.__init__	_nodes	method	(self, solver: Solver, index: int) -> None
+nodes	Node.__repr__	_nodes	method	(self) -> str
+nodes	Node.depth_from_volume	_nodes	method	(self, volume: float) -> float
+nodes	Node.quality	_nodes	method	(self, pollutant: _Key) -> float
+nodes	Node.set_head_boundary	_nodes	method	(self, head: float) -> None
+nodes	Node.set_quality_mass_flux	_nodes	method	(self, pollutant: _Key, mass_rate: float) -> None
+nodes	Nodes.__contains__	_nodes	method	(self, key: object) -> bool
+nodes	Nodes.__getitem__	_nodes	method	(self, key: _Key) -> Node
+nodes	Nodes.__init__	_nodes	method	(self, solver: Solver) -> None
+nodes	Nodes.__iter__	_nodes	method	(self) -> Iterator[Node]
+nodes	Nodes.__len__	_nodes	method	(self) -> int
+nodes	Nodes.__repr__	_nodes	method	(self) -> str
+nodes	Nodes.add	_nodes	method	(self, node_id: str, node_type: NodeType) -> Node
+nodes	Nodes.get_id	_nodes	method	(self, idx: int) -> str
+nodes	Nodes.get_index	_nodes	method	(self, node_id: str) -> int
+nodes	Nodes.pop_last	_nodes	method	(self, node_id: str) -> None
+nodes	Nodes.qualities	_nodes	method	(self, pollutant: _Key) -> NDArray[Any]
+nodes	Nodes.rename	_nodes	method	(self, key: _Key, new_id: str) -> None
+nodes	Nodes.set_lateral_inflows	_nodes	method	(self, values: NDArray[Any]) -> None
+nodes	OutfallView.get_tidal_curve	_nodes	method	(self) -> int
+nodes	OutfallView.get_timeseries	_nodes	method	(self) -> int
+nodes	OutfallView.set_stage	_nodes	method	(self, stage: float) -> None
+nodes	OutfallView.set_tidal_curve	_nodes	method	(self, curve_idx: int) -> None
+nodes	OutfallView.set_timeseries	_nodes	method	(self, ts_idx: int) -> None
+output_reader	OutputReader.__enter__	_output_reader	method	(self) -> 'OutputReader'
+output_reader	OutputReader.__exit__	_output_reader	method	(self, *args: Any) -> bool
+output_reader	OutputReader.__init__	_output_reader	method	(self, path: _PathLike) -> None
+output_reader	OutputReader.__repr__	_output_reader	method	(self) -> str
+output_reader	OutputReader.close	_output_reader	method	(self) -> None
+output_reader	OutputReader.link_attributes	_output_reader	method	(self, link: _Key, period: int) -> Dict[Union[OutLinkVar, int], float]
+output_reader	OutputReader.link_result	_output_reader	method	(self, period: int, var: OutLinkVar) -> NDArray[Any]
+output_reader	OutputReader.link_series	_output_reader	method	(self, link: _Key, var: OutLinkVar, *, start: Optional[int]=..., end: Optional[int]=...) -> NDArray[Any]
+output_reader	OutputReader.node_attributes	_output_reader	method	(self, node: _Key, period: int) -> Dict[Union[OutNodeVar, int], float]
+output_reader	OutputReader.node_result	_output_reader	method	(self, period: int, var: OutNodeVar) -> NDArray[Any]
+output_reader	OutputReader.node_series	_output_reader	method	(self, node: _Key, var: OutNodeVar, *, start: Optional[int]=..., end: Optional[int]=...) -> NDArray[Any]
+output_reader	OutputReader.node_stats	_output_reader	method	(self, node: _Key) -> _OutputNodeStats
+output_reader	OutputReader.subcatchment_attributes	_output_reader	method	(self, sub: _Key, period: int) -> Dict[Union[OutSubcatchVar, int], float]
+output_reader	OutputReader.subcatchment_result	_output_reader	method	(self, period: int, var: OutSubcatchVar) -> NDArray[Any]
+output_reader	OutputReader.subcatchment_series	_output_reader	method	(self, sub: _Key, var: OutSubcatchVar, *, start: Optional[int]=..., end: Optional[int]=...) -> NDArray[Any]
+output_reader	OutputReader.system_result	_output_reader	method	(self, period: int, var: OutSystemVar) -> float
+output_reader	OutputReader.system_series	_output_reader	method	(self, var: OutSystemVar, *, start: Optional[int]=..., end: Optional[int]=...) -> NDArray[Any]
+pollutants	Pollutant.__eq__	_pollutants	method	(self, other: object) -> bool
+pollutants	Pollutant.__hash__	_pollutants	method	(self) -> int
+pollutants	Pollutant.__init__	_pollutants	method	(self, solver: Solver, index: int) -> None
+pollutants	Pollutant.__repr__	_pollutants	method	(self) -> str
+pollutants	Pollutant.set_co_pollutant	_pollutants	method	(self, co: Union['Pollutant', _Key], fraction: float) -> None
+pollutants	Pollutants.__contains__	_pollutants	method	(self, key: object) -> bool
+pollutants	Pollutants.__getitem__	_pollutants	method	(self, key: _Key) -> Pollutant
+pollutants	Pollutants.__init__	_pollutants	method	(self, solver: Solver) -> None
+pollutants	Pollutants.__iter__	_pollutants	method	(self) -> Iterator[Pollutant]
+pollutants	Pollutants.__len__	_pollutants	method	(self) -> int
+pollutants	Pollutants.add	_pollutants	method	(self, pollut_id: str, units: ConcentrationUnits=...) -> Pollutant
+pollutants	Pollutants.get_id	_pollutants	method	(self, idx: int) -> str
+pollutants	Pollutants.get_index	_pollutants	method	(self, pollut_id: str) -> int
+pollutants	Pollutants.set_link_quality	_pollutants	method	(self, link: _Key, pollutant: _Key, conc: float) -> None
+pollutants	Pollutants.set_node_quality	_pollutants	method	(self, node: _Key, pollutant: _Key, conc: float) -> None
+quality	Landuse.__init__	_quality	method	(self, solver: Solver, index: int) -> None
+quality	Landuses.__contains__	_quality	method	(self, key: object) -> bool
+quality	Landuses.__getitem__	_quality	method	(self, key: _Key) -> Landuse
+quality	Landuses.__init__	_quality	method	(self, solver: Solver) -> None
+quality	Landuses.__iter__	_quality	method	(self) -> Iterator[Landuse]
+quality	Landuses.__len__	_quality	method	(self) -> int
+quality	Landuses.add	_quality	method	(self, landuse_id: str) -> Landuse
+quality	Landuses.get_id	_quality	method	(self, idx: int) -> str
+quality	Landuses.get_index	_quality	method	(self, landuse_id: str) -> int
+quality	Quality.__init__	_quality	method	(self, solver: Solver) -> None
+quality	Quality.clear_treatment	_quality	method	(self, node: _Key, pollutant: _Key) -> None
+quality	Quality.get_buildup	_quality	method	(self, landuse: _Key, pollutant: _Key) -> Dict[str, object]
+quality	Quality.get_treatment	_quality	method	(self, node: _Key, pollutant: _Key) -> str
+quality	Quality.get_washoff	_quality	method	(self, landuse: _Key, pollutant: _Key) -> Dict[str, object]
+quality	Quality.set_buildup	_quality	method	(self, landuse: _Key, pollutant: _Key, *, func: BuildupFunc, c1: float, c2: float, c3: float, normalizer: int=...) -> None
+quality	Quality.set_treatment	_quality	method	(self, node: _Key, pollutant: _Key, expression: str) -> None
+quality	Quality.set_washoff	_quality	method	(self, landuse: _Key, pollutant: _Key, *, func: WashoffFunc, coeff: float, expon: float, sweep_effic: float=..., bmp_effic: float=...) -> None
+solver	EventsView.__delitem__	_solver	method	(self, idx: Any) -> None
+solver	EventsView.__getitem__	_solver	method	(self, idx: Any) -> Any
+solver	EventsView.__init__	_solver	method	(self, solver: 'Solver') -> None
+solver	EventsView.__len__	_solver	method	(self) -> int
+solver	EventsView.__setitem__	_solver	method	(self, idx: Any, value: Any) -> None
+solver	EventsView.append	_solver	method	(self, value: Any) -> None
+solver	EventsView.clear	_solver	method	(self) -> None
+solver	EventsView.insert	_solver	method	(self, idx: int, value: Any) -> None
+solver	SimulationOptions.__contains__	_solver	method	(self, key: object) -> bool
+solver	SimulationOptions.__delitem__	_solver	method	(self, key: str) -> None
+solver	SimulationOptions.__getitem__	_solver	method	(self, key: str) -> str
+solver	SimulationOptions.__init__	_solver	method	(self, solver: 'Solver') -> None
+solver	SimulationOptions.__iter__	_solver	method	(self) -> Iterator[str]
+solver	SimulationOptions.__len__	_solver	method	(self) -> int
+solver	SimulationOptions.__setitem__	_solver	method	(self, key: str, value: Any) -> None
+solver	SimulationOptions.crs	_solver	property	(self) -> str
+solver	SimulationOptions.end_datetime	_solver	property	(self) -> datetime
+solver	SimulationOptions.report_start_datetime	_solver	property	(self) -> datetime
+solver	SimulationOptions.routing_step	_solver	property	(self) -> timedelta
+solver	SimulationOptions.start_datetime	_solver	property	(self) -> datetime
+solver	Solver.__enter__	_solver	method	(self) -> 'Solver'
+solver	Solver.__exit__	_solver	method	(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[object]) -> bool
+solver	Solver.__init__	_solver	method	(self, inp: _PathLike='', rpt: Optional[_PathLike]=None, out: Optional[_PathLike]=None, *, plugin_lib: Optional[_PathLike]=None) -> None
+solver	Solver.__repr__	_solver	method	(self) -> str
+solver	Solver.aquifers	_solver	property	(self) -> 'Aquifers'
+solver	Solver.climate	_solver	property	(self) -> 'Climate'
+solver	Solver.close	_solver	method	(self) -> None
+solver	Solver.close_runoff_interface	_solver	method	(self) -> None
+solver	Solver.controls	_solver	property	(self) -> 'Controls'
+solver	Solver.create	_solver	method	(self) -> None
+solver	Solver.crs	_solver	property	(self) -> str
+solver	Solver.current_datetime	_solver	property	(self) -> datetime
+solver	Solver.destroy	_solver	method	(self) -> None
+solver	Solver.editor	_solver	property	(self) -> 'ModelEditor'
+solver	Solver.elapsed	_solver	property	(self) -> timedelta
+solver	Solver.end	_solver	method	(self) -> None
+solver	Solver.end_datetime	_solver	property	(self) -> datetime
+solver	Solver.event_count	_solver	property	(self) -> int
+solver	Solver.events	_solver	property	(self) -> EventsView
+solver	Solver.flow_units	_solver	property	(self) -> FlowUnits
+solver	Solver.forcing	_solver	property	(self) -> 'Forcing'
+solver	Solver.gages	_solver	property	(self) -> 'Gages'
+solver	Solver.generation	_solver	property	(self) -> int
+solver	Solver.handle	_solver	property	(self) -> int
+solver	Solver.inflows	_solver	property	(self) -> 'Inflows'
+solver	Solver.infrastructure	_solver	property	(self) -> 'Infrastructure'
+solver	Solver.initialize	_solver	method	(self) -> None
+solver	Solver.is_between_events	_solver	property	(self) -> bool
+solver	Solver.links	_solver	property	(self) -> 'Links'
+solver	Solver.mass_balance	_solver	property	(self) -> 'MassBalance'
+solver	Solver.nodes	_solver	property	(self) -> 'Nodes'
+solver	Solver.open	_solver	method	(self, plugin_lib: Optional[_PathLike]=None) -> None
+solver	Solver.open_runoff_interface_read	_solver	method	(self, path: _PathLike) -> None
+solver	Solver.open_runoff_interface_write	_solver	method	(self, path: _PathLike) -> None
+solver	Solver.options	_solver	property	(self) -> SimulationOptions
+solver	Solver.patterns	_solver	property	(self) -> 'Patterns'
+solver	Solver.pollutants	_solver	property	(self) -> 'Pollutants'
+solver	Solver.quality	_solver	property	(self) -> 'Quality'
+solver	Solver.read_runoff_step	_solver	method	(self) -> bool
+solver	Solver.report	_solver	method	(self) -> None
+solver	Solver.report_start_datetime	_solver	property	(self) -> datetime
+solver	Solver.routing_step	_solver	property	(self) -> timedelta
+solver	Solver.run	_solver	method	(self) -> None
+solver	Solver.save_runoff_step	_solver	method	(self, dt: Union[timedelta, float]) -> None
+solver	Solver.save_schedule	_solver	property	(self) -> 'SaveSchedule'
+solver	Solver.set_progress_callback	_solver	method	(self, callback: Optional[Callable[[float], None]]) -> None
+solver	Solver.set_step_begin_callback	_solver	method	(self, callback: Optional[Callable[[float, float], None]]) -> None
+solver	Solver.set_step_end_callback	_solver	method	(self, callback: Optional[Callable[[float, float], None]]) -> None
+solver	Solver.set_warning_callback	_solver	method	(self, callback: Optional[Callable[[int, str], None]]) -> None
+solver	Solver.sim_end_time	_solver	property	(self) -> datetime
+solver	Solver.sim_start_time	_solver	property	(self) -> datetime
+solver	Solver.snowpacks	_solver	property	(self) -> 'Snowpacks'
+solver	Solver.spatial	_solver	property	(self) -> 'Spatial'
+solver	Solver.start	_solver	method	(self, save_results: bool=True) -> None
+solver	Solver.start_datetime	_solver	property	(self) -> datetime
+solver	Solver.state	_solver	property	(self) -> EngineState
+solver	Solver.statistics	_solver	property	(self) -> 'Statistics'
+solver	Solver.steady_state_skip	_solver	property	(self) -> bool
+solver	Solver.step	_solver	method	(self) -> timedelta
+solver	Solver.steps	_solver	method	(self) -> Iterator[timedelta]
+solver	Solver.stride	_solver	method	(self, n_steps: int) -> timedelta
+solver	Solver.subcatchments	_solver	property	(self) -> 'Subcatchments'
+solver	Solver.surface2d	_solver	property	(self) -> 'Surface2D'
+solver	Solver.tables	_solver	property	(self) -> 'Tables'
+solver	Solver.unit_system	_solver	property	(self) -> str
+solver	Solver.until	_solver	method	(self, target: Union[datetime, timedelta]) -> timedelta
+solver	Solver.userflags	_solver	property	(self) -> UserFlags
+solver	Solver.write	_solver	method	(self, path: _PathLike) -> None
+solver	Solver.write_geopackage	_solver	method	(self, path: _PathLike, crs: Optional[str]=...) -> None
+solver	Solver.write_with_plugin	_solver	method	(self, path: _PathLike, output_plugin_id: str=...) -> None
+solver	UserFlags.__contains__	_solver	method	(self, key: object) -> bool
+solver	UserFlags.__delitem__	_solver	method	(self, key: str) -> None
+solver	UserFlags.__getitem__	_solver	method	(self, key: str) -> Union[bool, int, float, str]
+solver	UserFlags.__init__	_solver	method	(self, solver: 'Solver') -> None
+solver	UserFlags.__iter__	_solver	method	(self) -> Iterator[str]
+solver	UserFlags.__len__	_solver	method	(self) -> int
+solver	UserFlags.__setitem__	_solver	method	(self, key: str, value: Union[bool, int, float, str]) -> None
+solver	UserFlags.clear_value	_solver	method	(self, obj_type: str, obj_name: str, flag_name: str) -> None
+solver	UserFlags.define	_solver	method	(self, name: str, type: int, description: str='') -> None
+solver	UserFlags.definitions	_solver	method	(self) -> list[UserFlagDef]
+solver	UserFlags.get_value	_solver	method	(self, obj_type: str, obj_name: str, flag_name: str) -> Optional[str]
+solver	UserFlags.set_value	_solver	method	(self, obj_type: str, obj_name: str, flag_name: str, value: str) -> None
+solver	UserFlags.undefine	_solver	method	(self, name: str) -> None
+solver	_OptionsExtView.__delitem__	_solver	method	(self, key: str) -> None
+solver	_OptionsExtView.__getitem__	_solver	method	(self, key: str) -> str
+solver	_OptionsExtView.__init__	_solver	method	(self, solver: 'Solver') -> None
+solver	_OptionsExtView.__iter__	_solver	method	(self) -> Iterator[str]
+solver	_OptionsExtView.__len__	_solver	method	(self) -> int
+solver	_OptionsExtView.__setitem__	_solver	method	(self, key: str, value: Any) -> None
+solver	run	_solver	function	(inp: _PathLike, rpt: Optional[_PathLike]=None, out: Optional[_PathLike]=None, *, plugin_lib: Optional[_PathLike]=None) -> None
+solver	run_with_callback	_solver	function	(inp: _PathLike, rpt: Optional[_PathLike]=None, out: Optional[_PathLike]=None, callback: Optional[Callable[[float], None]]=None, *, plugin_lib: Optional[_PathLike]=None) -> None
+spatial	Spatial.__init__	_spatial	method	(self, solver: Solver) -> None
+spatial	Spatial.crs	_spatial	property	(self) -> str
+spatial	Spatial.gage_coord	_spatial	method	(self, gage: _Key) -> Tuple[float, float]
+spatial	Spatial.link_coord	_spatial	method	(self, link: _Key) -> Tuple[float, float]
+spatial	Spatial.link_vertices	_spatial	method	(self, link: _Key) -> NDArray[Any]
+spatial	Spatial.node_coord	_spatial	method	(self, node: _Key) -> Tuple[float, float]
+spatial	Spatial.node_coords	_spatial	method	(self) -> NDArray[Any]
+spatial	Spatial.set_gage_coord	_spatial	method	(self, gage: _Key, x: float, y: float) -> None
+spatial	Spatial.set_link_coord	_spatial	method	(self, link: _Key, x: float, y: float) -> None
+spatial	Spatial.set_link_vertices	_spatial	method	(self, link: _Key, vertices: NDArray[Any]) -> None
+spatial	Spatial.set_node_coord	_spatial	method	(self, node: _Key, x: float, y: float) -> None
+spatial	Spatial.set_node_coords	_spatial	method	(self, coords: NDArray[Any]) -> None
+spatial	Spatial.set_subcatchment_coord	_spatial	method	(self, sub: _Key, x: float, y: float) -> None
+spatial	Spatial.set_subcatchment_polygon	_spatial	method	(self, sub: _Key, polygon: NDArray[Any]) -> None
+spatial	Spatial.subcatchment_coord	_spatial	method	(self, sub: _Key) -> Tuple[float, float]
+spatial	Spatial.subcatchment_polygon	_spatial	method	(self, sub: _Key) -> NDArray[Any]
+statistics	Statistics.__init__	_statistics	method	(self, solver: Solver) -> None
+statistics	Statistics.link_max_filling	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.link_max_filling_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.link_max_flow	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.link_max_flow_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.link_max_velocity	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.link_max_velocity_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.link_surcharge_time	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.link_surcharge_time_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.link_vol_flow	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.link_vol_flow_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.node_max_depth	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.node_max_depth_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.node_max_overflow	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.node_max_overflow_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.node_time_flooded	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.node_time_flooded_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.node_vol_flooded	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.node_vol_flooded_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.subcatchment_max_runoff	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.subcatchment_max_runoff_at	_statistics	method	(self, idx: int) -> float
+statistics	Statistics.subcatchment_precip	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.subcatchment_runoff_vol	_statistics	property	(self) -> NDArray[Any]
+statistics	Statistics.subcatchment_runoff_vol_at	_statistics	method	(self, idx: int) -> float
+subcatchments	Aquifers.get_evap_pattern	_subcatchments	method	(self, aquifer: _Key) -> str
+subcatchments	Aquifers.get_param	_subcatchments	method	(self, aquifer: _Key, param: Union[AquiferParam, int]) -> float
+subcatchments	Aquifers.set_evap_pattern	_subcatchments	method	(self, aquifer: _Key, name: Optional[str]) -> None
+subcatchments	Aquifers.set_param	_subcatchments	method	(self, aquifer: _Key, param: Union[AquiferParam, int], value: float) -> None
+subcatchments	CoverageView.__delitem__	_subcatchments	method	(self, key: _Key) -> None
+subcatchments	CoverageView.__getitem__	_subcatchments	method	(self, key: _Key) -> float
+subcatchments	CoverageView.__init__	_subcatchments	method	(self, sub: 'Subcatchment') -> None
+subcatchments	CoverageView.__iter__	_subcatchments	method	(self) -> Iterator[str]
+subcatchments	CoverageView.__len__	_subcatchments	method	(self) -> int
+subcatchments	CoverageView.__setitem__	_subcatchments	method	(self, key: _Key, value: float) -> None
+subcatchments	InfiltrationView.set_curve_number	_subcatchments	method	(self, cn: float) -> None
+subcatchments	InfiltrationView.set_green_ampt	_subcatchments	method	(self, suction: float, conductivity: float, initial_deficit: float) -> None
+subcatchments	InfiltrationView.set_horton	_subcatchments	method	(self, f0: float, fmin: float, decay: float, dry_time: float) -> None
+subcatchments	Snowpacks.get_impervious	_subcatchments	method	(self, snowpack: _Key) -> dict[str, float]
+subcatchments	Snowpacks.get_pervious	_subcatchments	method	(self, snowpack: _Key) -> dict[str, float]
+subcatchments	Snowpacks.get_plowable	_subcatchments	method	(self, snowpack: _Key) -> dict[str, float]
+subcatchments	Snowpacks.get_removal	_subcatchments	method	(self, snowpack: _Key) -> dict[str, float]
+subcatchments	Snowpacks.get_removal_subcatch	_subcatchments	method	(self, snowpack: _Key) -> str
+subcatchments	Snowpacks.set_impervious	_subcatchments	method	(self, snowpack: _Key, *, cmin: float, cmax: float, tbase: float, fwfrac: float, sd0: float, fw0: float, last: float) -> None
+subcatchments	Snowpacks.set_pervious	_subcatchments	method	(self, snowpack: _Key, *, cmin: float, cmax: float, tbase: float, fwfrac: float, sd0: float, fw0: float, last: float) -> None
+subcatchments	Snowpacks.set_plowable	_subcatchments	method	(self, snowpack: _Key, *, cmin: float, cmax: float, tbase: float, fwfrac: float, sd0: float, fw0: float, last: float) -> None
+subcatchments	Snowpacks.set_removal	_subcatchments	method	(self, snowpack: _Key, *, dsnow: float, fout: float, fimp: float, fperv: float, fimelt: float, fsubcatch: float) -> None
+subcatchments	Snowpacks.set_removal_subcatch	_subcatchments	method	(self, snowpack: _Key, name: Optional[str]) -> None
+subcatchments	Subcatchment.__eq__	_subcatchments	method	(self, other: object) -> bool
+subcatchments	Subcatchment.__hash__	_subcatchments	method	(self) -> int
+subcatchments	Subcatchment.__init__	_subcatchments	method	(self, solver: Solver, index: int) -> None
+subcatchments	Subcatchment.__repr__	_subcatchments	method	(self) -> str
+subcatchments	Subcatchment.get_gw_state	_subcatchments	method	(self) -> tuple[float, float]
+subcatchments	Subcatchment.get_snow_state	_subcatchments	method	(self, surface: int) -> tuple[float, float, float, float]
+subcatchments	Subcatchment.ponded_quality	_subcatchments	method	(self, pollutant: _Key) -> float
+subcatchments	Subcatchment.quality	_subcatchments	method	(self, pollutant: _Key) -> float
+subcatchments	Subcatchment.set_gw_params	_subcatchments	method	(self, surf_elev: float, a1: float, b1: float, a2: float, b2: float, a3: float, tw: float, hstar: float) -> None
+subcatchments	Subcatchment.set_gw_state	_subcatchments	method	(self, theta: float=..., lower_depth: float=...) -> None
+subcatchments	Subcatchment.set_outlet_node	_subcatchments	method	(self, node: Union[Node, _Key]) -> None
+subcatchments	Subcatchment.set_outlet_subcatchment	_subcatchments	method	(self, sub: Union['Subcatchment', _Key]) -> None
+subcatchments	Subcatchment.set_ponded_quality	_subcatchments	method	(self, pollutant: _Key, mass: float) -> None
+subcatchments	Subcatchment.set_snow_state	_subcatchments	method	(self, surface: int, swe: float=..., fw: float=..., ati: float=..., coldc: float=...) -> None
+subcatchments	Subcatchments.__contains__	_subcatchments	method	(self, key: object) -> bool
+subcatchments	Subcatchments.__getitem__	_subcatchments	method	(self, key: _Key) -> Subcatchment
+subcatchments	Subcatchments.__init__	_subcatchments	method	(self, solver: Solver) -> None
+subcatchments	Subcatchments.__iter__	_subcatchments	method	(self) -> Iterator[Subcatchment]
+subcatchments	Subcatchments.__len__	_subcatchments	method	(self) -> int
+subcatchments	Subcatchments.add	_subcatchments	method	(self, sub_id: str) -> Subcatchment
+subcatchments	Subcatchments.get_id	_subcatchments	method	(self, idx: int) -> str
+subcatchments	Subcatchments.get_index	_subcatchments	method	(self, sub_id: str) -> int
+subcatchments	Subcatchments.qualities	_subcatchments	method	(self, pollutant: _Key) -> NDArray[Any]
+subcatchments	Subcatchments.rename	_subcatchments	method	(self, key: _Key, new_id: str) -> None
+tables	Pattern.__init__	_tables	method	(self, solver: Solver, index: int) -> None
+tables	Pattern.set_factors	_tables	method	(self, values: Iterable[float], type: PatternType=...) -> None
+tables	Patterns.__contains__	_tables	method	(self, key: object) -> bool
+tables	Patterns.__getitem__	_tables	method	(self, key: _Key) -> Pattern
+tables	Patterns.__init__	_tables	method	(self, solver: Solver) -> None
+tables	Patterns.__iter__	_tables	method	(self) -> Iterator[Pattern]
+tables	Patterns.__len__	_tables	method	(self) -> int
+tables	Patterns.add	_tables	method	(self, pattern_id: str, type: PatternType=...) -> Pattern
+tables	Patterns.get_index	_tables	method	(self, pattern_id: str) -> int
+tables	Patterns.remove	_tables	method	(self, key: _Key) -> None
+tables	Patterns.rename	_tables	method	(self, key: _Key, new_id: str) -> None
+tables	Tables.__contains__	_tables	method	(self, key: object) -> bool
+tables	Tables.__getitem__	_tables	method	(self, key: _Key) -> _PointTable
+tables	Tables.__init__	_tables	method	(self, solver: Solver) -> None
+tables	Tables.__iter__	_tables	method	(self) -> Iterator[_PointTable]
+tables	Tables.__len__	_tables	method	(self) -> int
+tables	Tables.add_curve	_tables	method	(self, curve_id: str, curve_type: int=...) -> Curve
+tables	Tables.add_timeseries	_tables	method	(self, ts_id: str) -> TimeSeries
+tables	Tables.as_curve	_tables	method	(self, key: _Key) -> Curve
+tables	Tables.as_timeseries	_tables	method	(self, key: _Key) -> TimeSeries
+tables	Tables.get_id	_tables	method	(self, idx: int) -> str
+tables	Tables.get_index	_tables	method	(self, table_id: str) -> int
+tables	Tables.get_type	_tables	method	(self, key: int | str) -> TableType
+tables	TimeSeries.add	_tables	method	(self, when: Union[datetime, float], value: float) -> None
+tables	_PointTable.__init__	_tables	method	(self, solver: Solver, index: int) -> None
+tables	_PointTable.__len__	_tables	method	(self) -> int
+tables	_PointTable.add_point	_tables	method	(self, x: float, y: float) -> None
+tables	_PointTable.clear	_tables	method	(self) -> None
+tables	_PointTable.lookup	_tables	method	(self, x: float) -> float
+# 696 Python methods across 26 stubs

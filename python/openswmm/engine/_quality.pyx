@@ -25,6 +25,7 @@ object keys.
 
 # cython: language_level=3
 
+from ._exceptions import ElementNotFoundError
 from collections.abc import Iterator
 from typing import Dict, NamedTuple, Optional, Union
 
@@ -131,19 +132,22 @@ class Landuses:
             return False
 
     def get_index(self, str landuse_id) -> int:
+        """Return the zero-based index of land use *landuse_id* (raises if unknown)."""
         cdef bytes b = landuse_id.encode('utf-8')
         cdef int i = swmm_landuse_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(landuse_id)
+            raise ElementNotFoundError(landuse_id)
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the land use at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_landuse_id(_h(self._solver), idx)
         return raw.decode('utf-8') if raw != NULL else ""
 
     def add(self, str landuse_id) -> Landuse:
+        """Add a new land use *landuse_id* and return its :class:`Landuse` handle."""
         cdef bytes b = landuse_id.encode('utf-8')
         _check(swmm_landuse_add(_h(self._solver), b))
         self._solver._bump_generation()
@@ -213,6 +217,7 @@ class Quality:
     def set_washoff(self, landuse, pollutant, *,
                     func, double coeff, double expon,
                     double sweep_effic=0.0, double bmp_effic=0.0) -> None:
+        """Set the washoff function and coefficients for *landuse* / *pollutant*."""
         cdef int lu = _resolve_landuse(self._solver, landuse)
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
@@ -220,6 +225,7 @@ class Quality:
             h, lu, p, int(func), coeff, expon, sweep_effic, bmp_effic))
 
     def get_washoff(self, landuse, pollutant) -> Dict[str, object]:
+        """Return the washoff parameters for *landuse* / *pollutant* as a dict."""
         cdef int lu = _resolve_landuse(self._solver, landuse)
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
@@ -238,6 +244,7 @@ class Quality:
     # ------------------------------------------------------------------
 
     def set_treatment(self, node, pollutant, str expression) -> None:
+        """Set the treatment *expression* for *pollutant* at *node*."""
         cdef int ni = _resolve_node(self._solver, node)
         cdef int pi = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
@@ -245,6 +252,7 @@ class Quality:
         _check(swmm_treatment_set(h, ni, pi, b))
 
     def get_treatment(self, node, pollutant) -> str:
+        """Return the treatment expression for *pollutant* at *node*."""
         cdef int ni = _resolve_node(self._solver, node)
         cdef int pi = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
@@ -253,6 +261,7 @@ class Quality:
         return buf.decode('utf-8')
 
     def clear_treatment(self, node, pollutant) -> None:
+        """Remove any treatment for *pollutant* at *node*."""
         cdef int ni = _resolve_node(self._solver, node)
         cdef int pi = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle

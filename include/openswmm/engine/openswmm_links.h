@@ -64,7 +64,8 @@ typedef enum SWMM_XSectShape {
     SWMM_XSECT_GOTHIC          = 16, /**< Gothic.                               geom1=height. */
     SWMM_XSECT_CATENARY        = 17, /**< Catenary.                             geom1=height. */
     SWMM_XSECT_SEMIELLIPTICAL  = 18, /**< Semi-elliptical.                      geom1=height. */
-    SWMM_XSECT_IRREGULAR       = 19  /**< Irregular (from transect data).       geom1=transect index. */
+    SWMM_XSECT_IRREGULAR       = 19, /**< Irregular (from transect data).       geom1=transect index. */
+    SWMM_XSECT_STREET          = 24  /**< Street cross-section (from [STREETS]). geom1=street index. */
 } SWMM_XSectShape;
 
 /* =========================================================================

@@ -49,6 +49,10 @@ cdef extern from "openswmm_engine.h":
     cdef int swmm_get_current_time(SWMM_Engine e, double* current)
     cdef int swmm_get_routing_step(SWMM_Engine e, double* dt)
 
+    # --- Units (typed accessors; new in the latest API expansion) ---
+    cdef int swmm_get_flow_units(SWMM_Engine e, int* flow_units)
+    cdef int swmm_get_unit_system(SWMM_Engine e, int* unit_system)
+
     # --- Routing events / steady-state ---
     cdef int swmm_is_between_events(SWMM_Engine e, int* is_between)
     cdef int swmm_get_event_count(SWMM_Engine e, int* count)
@@ -121,6 +125,16 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_options_set(SWMM_Engine e, const char* key, const char* value)
     cdef int swmm_options_get_ext(SWMM_Engine e, const char* key, char* buf, int buflen)
     cdef int swmm_options_set_ext(SWMM_Engine e, const char* key, const char* value)
+    # External-file slots. `role` is the C enum SWMM_FilePathRole; the C++
+    # header rejects an implicit int->enum conversion, so declare the enum
+    # type here and cast at the call sites (see _model.pyx).
+    ctypedef enum SWMM_FilePathRole:
+        pass
+    cdef int swmm_file_path_get(SWMM_Engine e, SWMM_FilePathRole role, const char* owner,
+                                char* absolute_buf, int absolute_buflen,
+                                char* original_buf, int original_buflen)
+    cdef int swmm_file_path_set(SWMM_Engine e, SWMM_FilePathRole role, const char* owner,
+                                const char* new_path)
     cdef int swmm_get_crs(SWMM_Engine e, char* buf, int buflen)
     # Typed time-control accessors (OADate doubles)
     cdef int swmm_options_get_start_date(SWMM_Engine e, double* value)
@@ -136,6 +150,24 @@ cdef extern from "openswmm_model.h":
     cdef int swmm_userflag_set_bool(SWMM_Engine e, const char* name, int value)
     cdef int swmm_userflag_set_int(SWMM_Engine e, const char* name, int value)
     cdef int swmm_userflag_set_real(SWMM_Engine e, const char* name, double value)
+    # User-flag schema definitions ([USER_FLAGS]) + per-object values
+    # ([USER_FLAG_VALUES]). Types: 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING.
+    cdef int swmm_userflag_def_count(SWMM_Engine e, int* count)
+    cdef int swmm_userflag_def_get(SWMM_Engine e, int index,
+                                   char* name_buf, int name_buflen,
+                                   int* type,
+                                   char* desc_buf, int desc_buflen)
+    cdef int swmm_userflag_define(SWMM_Engine e, const char* name, int type,
+                                  const char* description)
+    cdef int swmm_userflag_undefine(SWMM_Engine e, const char* name)
+    cdef int swmm_userflag_value_get(SWMM_Engine e, const char* obj_type,
+                                     const char* obj_name, const char* flag_name,
+                                     char* buf, int buflen, int* found)
+    cdef int swmm_userflag_value_set(SWMM_Engine e, const char* obj_type,
+                                     const char* obj_name, const char* flag_name,
+                                     const char* value)
+    cdef int swmm_userflag_value_clear(SWMM_Engine e, const char* obj_type,
+                                       const char* obj_name, const char* flag_name)
 
 cdef extern from "openswmm_nodes.h":
     # Identity
@@ -190,7 +222,9 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_outfall_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_node_set_outfall_stage(SWMM_Engine e, int idx, double stage)
     cdef int swmm_node_set_outfall_tidal(SWMM_Engine e, int idx, int curve_idx)
+    cdef int swmm_node_get_outfall_tidal(SWMM_Engine e, int idx, int* curve_idx)
     cdef int swmm_node_set_outfall_timeseries(SWMM_Engine e, int idx, int ts_idx)
+    cdef int swmm_node_get_outfall_timeseries(SWMM_Engine e, int idx, int* ts_idx)
     cdef int swmm_node_get_outfall_param(SWMM_Engine e, int idx, double* param)
     cdef int swmm_node_set_outfall_flap_gate(SWMM_Engine e, int idx, int has_gate)
     cdef int swmm_node_get_outfall_flap_gate(SWMM_Engine e, int idx, int* has_gate)
@@ -226,6 +260,8 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_divider_type(SWMM_Engine e, int idx, int* type)
     # Rename
     cdef int swmm_node_rename(SWMM_Engine e, int idx, const char* newId)
+    cdef int swmm_node_get_tag(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_node_set_tag(SWMM_Engine e, int idx, const char* tag)
 
 cdef extern from "openswmm_links.h":
     # Identity
@@ -351,6 +387,8 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_get_ids_bulk(SWMM_Engine e, char* buf, int stride, int count) nogil
     # Rename
     cdef int swmm_link_rename(SWMM_Engine e, int idx, const char* newId)
+    cdef int swmm_link_get_tag(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_link_set_tag(SWMM_Engine e, int idx, const char* tag)
 
 cdef extern from "openswmm_subcatchments.h":
     # Identity
@@ -359,6 +397,29 @@ cdef extern from "openswmm_subcatchments.h":
     cdef const char* swmm_subcatch_id(SWMM_Engine e, int idx)
     # Creation
     cdef int swmm_subcatch_add(SWMM_Engine e, const char* id)
+    # Aquifers and snowpacks (model-global named objects)
+    cdef int         swmm_aquifer_count(SWMM_Engine e)
+    cdef int         swmm_aquifer_index(SWMM_Engine e, const char* id)
+    cdef const char* swmm_aquifer_id(SWMM_Engine e, int idx)
+    cdef int         swmm_aquifer_add(SWMM_Engine e, const char* id)
+    cdef int         swmm_aquifer_get_param(SWMM_Engine e, int idx, int param, double* value)
+    cdef int         swmm_aquifer_set_param(SWMM_Engine e, int idx, int param, double value)
+    cdef int         swmm_aquifer_get_evap_pattern(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int         swmm_aquifer_set_evap_pattern(SWMM_Engine e, int idx, const char* name)
+    cdef int         swmm_snowpack_count(SWMM_Engine e)
+    cdef int         swmm_snowpack_index(SWMM_Engine e, const char* id)
+    cdef const char* swmm_snowpack_id(SWMM_Engine e, int idx)
+    cdef int         swmm_snowpack_add(SWMM_Engine e, const char* id)
+    cdef int         swmm_snowpack_set_plowable(SWMM_Engine e, int idx, double cmin, double cmax, double tbase, double fwfrac, double sd0, double fw0, double last)
+    cdef int         swmm_snowpack_get_plowable(SWMM_Engine e, int idx, double* cmin, double* cmax, double* tbase, double* fwfrac, double* sd0, double* fw0, double* last)
+    cdef int         swmm_snowpack_set_impervious(SWMM_Engine e, int idx, double cmin, double cmax, double tbase, double fwfrac, double sd0, double fw0, double last)
+    cdef int         swmm_snowpack_get_impervious(SWMM_Engine e, int idx, double* cmin, double* cmax, double* tbase, double* fwfrac, double* sd0, double* fw0, double* last)
+    cdef int         swmm_snowpack_set_pervious(SWMM_Engine e, int idx, double cmin, double cmax, double tbase, double fwfrac, double sd0, double fw0, double last)
+    cdef int         swmm_snowpack_get_pervious(SWMM_Engine e, int idx, double* cmin, double* cmax, double* tbase, double* fwfrac, double* sd0, double* fw0, double* last)
+    cdef int         swmm_snowpack_set_removal(SWMM_Engine e, int idx, double dsnow, double fout, double fimp, double fperv, double fimelt, double fsubcatch)
+    cdef int         swmm_snowpack_get_removal(SWMM_Engine e, int idx, double* dsnow, double* fout, double* fimp, double* fperv, double* fimelt, double* fsubcatch)
+    cdef int         swmm_snowpack_set_removal_subcatch(SWMM_Engine e, int idx, const char* name)
+    cdef int         swmm_snowpack_get_removal_subcatch(SWMM_Engine e, int idx, char* buf, int buflen)
     # Property setters
     cdef int swmm_subcatch_set_outlet(SWMM_Engine e, int idx, int node_idx)
     cdef int swmm_subcatch_set_area(SWMM_Engine e, int idx, double area)
@@ -433,6 +494,22 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int swmm_subcatch_set_ponded_quality(SWMM_Engine e, int subcatch_idx, int pollutant_idx, double mass)
     # Rename
     cdef int swmm_subcatch_rename(SWMM_Engine e, int idx, const char* newId)
+    cdef int swmm_subcatch_get_tag(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_subcatch_set_tag(SWMM_Engine e, int idx, const char* tag)
+    # Groundwater / aquifer assignment + infiltration-model setter
+    cdef int swmm_subcatch_get_aquifer(SWMM_Engine e, int idx, int* aquifer_idx)
+    cdef int swmm_subcatch_set_aquifer(SWMM_Engine e, int idx, int aquifer_idx)
+    cdef int swmm_subcatch_get_gw_node(SWMM_Engine e, int idx, int* node_idx)
+    cdef int swmm_subcatch_set_gw_node(SWMM_Engine e, int idx, int node_idx)
+    cdef int swmm_subcatch_get_gw_params(SWMM_Engine e, int idx,
+                                         double* surf_elev, double* a1, double* b1,
+                                         double* a2, double* b2, double* a3,
+                                         double* tw, double* hstar)
+    cdef int swmm_subcatch_set_gw_params(SWMM_Engine e, int idx,
+                                         double surf_elev, double a1, double b1,
+                                         double a2, double b2, double a3,
+                                         double tw, double hstar)
+    cdef int swmm_subcatch_set_infil_model(SWMM_Engine e, int idx, int model)
 
 cdef extern from "openswmm_gages.h":
     # Identity
@@ -447,9 +524,19 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_set_data_source(SWMM_Engine e, int idx, int source)
     cdef int swmm_gage_set_timeseries(SWMM_Engine e, int idx, const char* ts_id)
     cdef int swmm_gage_set_filename(SWMM_Engine e, int idx, const char* path, const char* station_id)
+    cdef int swmm_gage_set_station_id(SWMM_Engine e, int idx, const char* station_id)
+    cdef int swmm_gage_set_snow_factor(SWMM_Engine e, int idx, double factor)
+    cdef int swmm_gage_set_rain_units(SWMM_Engine e, int idx, int units)
+    cdef int swmm_gage_set_scale_factor(SWMM_Engine e, int idx, double factor)
     # Property getters
     cdef int swmm_gage_get_rain_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_gage_get_data_source(SWMM_Engine e, int idx, int* source)
+    cdef int swmm_gage_get_scale_factor(SWMM_Engine e, int idx, double* factor)
+    cdef int swmm_gage_get_rain_interval(SWMM_Engine e, int idx, double* seconds)
+    cdef int swmm_gage_get_snow_factor(SWMM_Engine e, int idx, double* factor)
+    cdef int swmm_gage_get_timeseries(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_gage_get_station_id(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_gage_get_rain_units(SWMM_Engine e, int idx, int* units)
     # State
     cdef int swmm_gage_get_rainfall(SWMM_Engine e, int idx, double* rainfall)
     cdef int swmm_gage_set_rainfall(SWMM_Engine e, int idx, double rainfall)
@@ -513,6 +600,7 @@ cdef extern from "openswmm_pollutants.h":
     # Creation
     cdef int swmm_pollutant_add(SWMM_Engine e, const char* id, int units)
     # Property setters
+    cdef int swmm_pollutant_set_units(SWMM_Engine e, int idx, int units)
     cdef int swmm_pollutant_set_kdecay(SWMM_Engine e, int idx, double k)
     cdef int swmm_pollutant_set_rain_conc(SWMM_Engine e, int idx, double conc)
     cdef int swmm_pollutant_set_gw_conc(SWMM_Engine e, int idx, double conc)
@@ -540,6 +628,7 @@ cdef extern from "openswmm_tables.h":
     cdef int         swmm_table_count(SWMM_Engine e)
     cdef int         swmm_table_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_table_id(SWMM_Engine e, int idx)
+    cdef int         swmm_table_get_type(SWMM_Engine e, int idx, int* type)
     # Creation
     cdef int swmm_timeseries_add(SWMM_Engine e, const char* id)
     cdef int swmm_curve_add(SWMM_Engine e, const char* id, int type)
@@ -554,6 +643,13 @@ cdef extern from "openswmm_tables.h":
     cdef int swmm_pattern_add(SWMM_Engine e, const char* id, int type)
     cdef int swmm_pattern_set_factors(SWMM_Engine e, int idx, const double* factors, int count)
     cdef int swmm_pattern_count(SWMM_Engine e)
+    cdef int swmm_pattern_index(SWMM_Engine e, const char* id)
+    cdef const char* swmm_pattern_id(SWMM_Engine e, int idx)
+    cdef int swmm_pattern_get_type(SWMM_Engine e, int idx, int* type)
+    cdef int swmm_pattern_get_factor_count(SWMM_Engine e, int idx, int* count)
+    cdef int swmm_pattern_get_factor(SWMM_Engine e, int idx, int i, double* v)
+    cdef int swmm_pattern_remove(SWMM_Engine e, int idx)
+    cdef int swmm_pattern_rename(SWMM_Engine e, int idx, const char* newId)
 
 cdef extern from "openswmm_inflows.h":
     cdef int swmm_ext_inflow_add(SWMM_Engine e, int node_idx, const char* constituent,
@@ -602,9 +698,30 @@ cdef extern from "openswmm_inflows.h":
                                   double* k_dep, double* k_0, double* k_T,
                                   double* T_ref, double* theta_rec, double* T_freeze)
     cdef int swmm_rdii_decay_count(SWMM_Engine e)
+    # Read / remove side (added in the 2026 binding refresh) — entry-index keyed
+    cdef int swmm_ext_inflow_get(SWMM_Engine e, int entry_idx, int* node_idx, char* constituent_buf, int constituent_buflen, char* ts_buf, int ts_buflen, char* type_buf, int type_buflen, double* m_factor, double* s_factor, double* baseline, char* pattern_buf, int pattern_buflen)
+    cdef int swmm_ext_inflow_remove(SWMM_Engine e, int entry_idx)
+    cdef int swmm_ext_inflow_set_scale(SWMM_Engine e, int entry_idx, double scale)
+    cdef int swmm_ext_inflow_set_baseline(SWMM_Engine e, int entry_idx, double baseline)
+    cdef int swmm_dwf_get(SWMM_Engine e, int entry_idx, int* node_idx, char* constituent_buf, int constituent_buflen, double* avg_value, char* pat1_buf, int pat1_buflen, char* pat2_buf, int pat2_buflen, char* pat3_buf, int pat3_buflen, char* pat4_buf, int pat4_buflen)
+    cdef int swmm_dwf_remove(SWMM_Engine e, int entry_idx)
+    cdef int swmm_dwf_set_baseline(SWMM_Engine e, int entry_idx, double avg_value)
+    cdef int swmm_rdii_remove(SWMM_Engine e, int entry_idx)
+    # Unit-hydrograph editing — (uh_name, month, response) keyed
+    cdef int swmm_hydrograph_set_rtk(SWMM_Engine e, const char* uh_name, int month, int response, double r, double t, double k)
+    cdef int swmm_hydrograph_set_ia(SWMM_Engine e, const char* uh_name, int month, int response, double dmax, double drecov, double dinit)
+    cdef int swmm_hydrograph_remove_entry(SWMM_Engine e, const char* uh_name, int month, int response)
+    cdef int swmm_hydrograph_remove_group(SWMM_Engine e, const char* uh_name)
+    cdef int swmm_hydrograph_clear_group_months(SWMM_Engine e, const char* uh_name)
+    cdef int swmm_hydrograph_group_rename(SWMM_Engine e, int idx, const char* new_id)
+    cdef int swmm_hydrograph_set_gage(SWMM_Engine e, const char* uh_name, const char* gage_name)
+    # RDII decay editing — (uh_name, response) keyed
+    cdef int swmm_rdii_decay_set(SWMM_Engine e, const char* uh_name, int response, double k_dep, double k_0, double k_T, double T_ref, double theta_rec, double T_freeze)
+    cdef int swmm_rdii_decay_remove(SWMM_Engine e, const char* uh_name, int response)
 
 cdef extern from "openswmm_controls.h":
     cdef int swmm_control_add_rule(SWMM_Engine e, const char* rule_text)
+    cdef int swmm_control_validate_rule(SWMM_Engine e, const char* rule_text, char* err_buf, int err_buf_len, int* line_out)
     cdef int swmm_control_count(SWMM_Engine e)
     cdef int swmm_control_get_rule(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_control_get_id(SWMM_Engine e, int idx, char* buf, int buflen)
@@ -624,11 +741,18 @@ cdef extern from "openswmm_infrastructure.h":
                                      double t_crown, double h_curb, double sx, double n_road,
                                      double gutter_depres, double gutter_width, int sides,
                                      double back_width, double back_slope, double back_n)
+    cdef int swmm_street_get_params(SWMM_Engine e, int idx,
+                                     double* t_crown, double* h_curb, double* sx, double* n_road,
+                                     double* gutter_depres, double* gutter_width, int* sides,
+                                     double* back_width, double* back_slope, double* back_n)
     cdef int swmm_street_count(SWMM_Engine e)
     # Inlets
     cdef int swmm_inlet_add(SWMM_Engine e, const char* id, const char* type)
     cdef int swmm_inlet_set_params(SWMM_Engine e, int idx, double length, double width,
                                     const char* grate_type, double open_area, double splash_veloc)
+    cdef int swmm_inlet_get_params(SWMM_Engine e, int idx, double* length, double* width,
+                                    char* grate_type, int grate_buflen, double* open_area, double* splash_veloc)
+    cdef int swmm_inlet_get_type(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_inlet_count(SWMM_Engine e)
     # LID controls
     cdef int swmm_lid_add(SWMM_Engine e, const char* id, int type)
@@ -636,9 +760,48 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_set_soil(SWMM_Engine e, int idx, double thick, double porosity, double fc, double wp, double ksat, double kslope)
     cdef int swmm_lid_set_storage(SWMM_Engine e, int idx, double thick, double void_frac, double ksat)
     cdef int swmm_lid_set_drain(SWMM_Engine e, int idx, double coeff, double expon, double offset)
+    cdef int swmm_lid_set_pavement(SWMM_Engine e, int idx, double thick, double void_ratio, double frac_imperv, double ksat, double clog_factor, double regen_days)
+    cdef int swmm_lid_set_drainmat(SWMM_Engine e, int idx, double thick, double void_frac, double roughness)
+    cdef int swmm_lid_get_type(SWMM_Engine e, int idx, int* type)
+    cdef int swmm_lid_get_surface(SWMM_Engine e, int idx, double* storage, double* roughness, double* slope)
+    cdef int swmm_lid_get_soil(SWMM_Engine e, int idx, double* thick, double* porosity, double* fc, double* wp, double* ksat, double* kslope)
+    cdef int swmm_lid_get_storage(SWMM_Engine e, int idx, double* thick, double* void_frac, double* ksat)
+    cdef int swmm_lid_get_drain(SWMM_Engine e, int idx, double* coeff, double* expon, double* offset)
+    cdef int swmm_lid_get_pavement(SWMM_Engine e, int idx, double* thick, double* void_ratio, double* frac_imperv, double* ksat, double* clog_factor, double* regen_days)
+    cdef int swmm_lid_get_drainmat(SWMM_Engine e, int idx, double* thick, double* void_frac, double* roughness)
     cdef int swmm_lid_count(SWMM_Engine e)
     # LID usage
     cdef int swmm_lid_usage_add(SWMM_Engine e, int subcatch_idx, int lid_idx, int number, double area, double width, double init_sat, double from_imperv)
+    cdef int swmm_lid_usage_count(SWMM_Engine e)
+    cdef int swmm_lid_usage_get(SWMM_Engine e, int usage_idx,
+                                int* subcatch_idx, int* lid_idx, int* number,
+                                double* area, double* width, double* init_sat,
+                                double* from_imperv, int* to_perv, double* from_perv)
+    cdef int swmm_lid_usage_remove(SWMM_Engine e, int usage_idx)
+    # Identity lookups (read side)
+    cdef int         swmm_transect_index(SWMM_Engine e, const char* id)
+    cdef const char* swmm_transect_id(SWMM_Engine e, int idx)
+    cdef int         swmm_street_index(SWMM_Engine e, const char* id)
+    cdef const char* swmm_street_id(SWMM_Engine e, int idx)
+    cdef int         swmm_inlet_index(SWMM_Engine e, const char* id)
+    cdef const char* swmm_inlet_id(SWMM_Engine e, int idx)
+    cdef int         swmm_lid_index(SWMM_Engine e, const char* id)
+    cdef const char* swmm_lid_id(SWMM_Engine e, int idx)
+    # Transect detail getters / mutation
+    cdef int swmm_transect_get_roughness(SWMM_Engine e, int idx, double* n_left, double* n_right, double* n_channel)
+    cdef int swmm_transect_set_bank_stations(SWMM_Engine e, int idx, double left, double right)
+    cdef int swmm_transect_get_bank_stations(SWMM_Engine e, int idx, double* left, double* right)
+    cdef int swmm_transect_set_encroachment_stations(SWMM_Engine e, int idx, double left, double right)
+    cdef int swmm_transect_get_encroachment_stations(SWMM_Engine e, int idx, double* left, double* right)
+    cdef int swmm_transect_set_modifiers(SWMM_Engine e, int idx, double n_factor, double x_factor, double y_factor)
+    cdef int swmm_transect_get_modifiers(SWMM_Engine e, int idx, double* n_factor, double* x_factor, double* y_factor)
+    cdef int swmm_transect_set_comments(SWMM_Engine e, int idx, const char* text)
+    cdef int swmm_transect_get_comments(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_transect_get_station_count(SWMM_Engine e, int idx)
+    cdef int swmm_transect_get_station(SWMM_Engine e, int idx, int station_idx, double* station, double* elevation)
+    cdef int swmm_transect_clear_stations(SWMM_Engine e, int idx)
+    cdef int swmm_transect_rename(SWMM_Engine e, int idx, const char* new_id)
+    cdef int swmm_transect_remove(SWMM_Engine e, int idx)
 
 cdef extern from "openswmm_quality.h":
     # Landuse
@@ -853,11 +1016,89 @@ cdef extern from "openswmm_forcing.h":
     # Subcatchment forcing
     cdef int swmm_forcing_subcatch_rainfall(SWMM_Engine e, int idx, double value, int mode, int persist)
     cdef int swmm_forcing_subcatch_evap(SWMM_Engine e, int idx, double value, int mode, int persist)
+    cdef int swmm_forcing_subcatch_snowfall(SWMM_Engine e, int idx, double value, int mode, int persist)
+    cdef int swmm_climate_get_evap_rate(SWMM_Engine e, double* value)
+    # Climate forcing (system-wide)
+    cdef int swmm_forcing_climate_temperature(SWMM_Engine e, double value, int mode, int persist)
+    cdef int swmm_climate_get_temperature(SWMM_Engine e, double* value)
+    cdef int swmm_forcing_climate_wind(SWMM_Engine e, double value, int mode, int persist)
+    cdef int swmm_climate_get_wind_speed(SWMM_Engine e, double* value)
+    cdef int swmm_forcing_climate_evap(SWMM_Engine e, double value, int mode, int persist)
+    cdef int swmm_climate_set_dry_only(SWMM_Engine e, int flag)
+    cdef int swmm_climate_get_dry_only(SWMM_Engine e, int* flag)
+    # Link quality forcing
+    cdef int swmm_forcing_link_quality(SWMM_Engine e, int link_idx, int pollutant_idx,
+                                       double value, int mode, int persist)
+    # State injection (data assimilation)
+    cdef int swmm_subcatch_set_gw_state(SWMM_Engine e, int idx, double theta, double lower_depth)
+    cdef int swmm_subcatch_get_gw_state(SWMM_Engine e, int idx, double* theta, double* lower_depth)
+    cdef int swmm_subcatch_set_snow_state(SWMM_Engine e, int idx, int surface,
+                                          double swe, double fw, double ati, double coldc)
+    cdef int swmm_subcatch_get_snow_state(SWMM_Engine e, int idx, int surface,
+                                          double* swe, double* fw, double* ati, double* coldc)
+    # Pollutant DWF concentration
+    cdef int swmm_pollutant_set_dwf_conc(SWMM_Engine e, int idx, double conc)
+    cdef int swmm_pollutant_get_dwf_conc(SWMM_Engine e, int idx, double* conc)
     # Gage forcing
     cdef int swmm_forcing_gage_rainfall(SWMM_Engine e, int idx, double value, int mode, int persist)
     # Clear
     cdef int swmm_forcing_clear(SWMM_Engine e, int type, int idx)
     cdef int swmm_forcing_clear_all(SWMM_Engine e)
+
+
+cdef extern from "openswmm_climate.h":
+    # Temperature
+    cdef int swmm_climate_get_temp_source(SWMM_Engine e, int* source)
+    cdef int swmm_climate_set_temp_source(SWMM_Engine e, int source)
+    cdef int swmm_climate_get_temp_timeseries(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_climate_set_temp_timeseries(SWMM_Engine e, const char* ts_id)
+    cdef int swmm_climate_get_temp_file_start(SWMM_Engine e, double* date)
+    cdef int swmm_climate_set_temp_file_start(SWMM_Engine e, double date)
+    cdef int swmm_climate_get_temp_units(SWMM_Engine e, int* units)
+    cdef int swmm_climate_set_temp_units(SWMM_Engine e, int units)
+    cdef int swmm_climate_get_elevation(SWMM_Engine e, double* elev)
+    cdef int swmm_climate_set_elevation(SWMM_Engine e, double elev)
+    cdef int swmm_climate_get_latitude(SWMM_Engine e, double* latitude)
+    cdef int swmm_climate_set_latitude(SWMM_Engine e, double latitude)
+    cdef int swmm_climate_get_longitude_correction(SWMM_Engine e, double* minutes)
+    cdef int swmm_climate_set_longitude_correction(SWMM_Engine e, double minutes)
+    # Evaporation
+    cdef int swmm_climate_get_evap_type(SWMM_Engine e, int* type)
+    cdef int swmm_climate_set_evap_type(SWMM_Engine e, int type)
+    cdef int swmm_climate_get_evap_monthly(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_evap_monthly(SWMM_Engine e, const double* values, int count)
+    cdef int swmm_climate_get_evap_timeseries(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_climate_set_evap_timeseries(SWMM_Engine e, const char* ts_id)
+    cdef int swmm_climate_get_pan_coeff(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_pan_coeff(SWMM_Engine e, const double* values, int count)
+    cdef int swmm_climate_get_evap_recovery(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_climate_set_evap_recovery(SWMM_Engine e, const char* pattern_id)
+    # Wind speed
+    cdef int swmm_climate_get_wind_type(SWMM_Engine e, int* type)
+    cdef int swmm_climate_set_wind_type(SWMM_Engine e, int type)
+    cdef int swmm_climate_get_wind_monthly(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_wind_monthly(SWMM_Engine e, const double* values, int count)
+    # Snowmelt globals
+    cdef int swmm_climate_get_snow_temp(SWMM_Engine e, double* divide_temp)
+    cdef int swmm_climate_set_snow_temp(SWMM_Engine e, double divide_temp)
+    cdef int swmm_climate_get_ati_weight(SWMM_Engine e, double* tipm)
+    cdef int swmm_climate_set_ati_weight(SWMM_Engine e, double tipm)
+    cdef int swmm_climate_get_neg_melt_ratio(SWMM_Engine e, double* rnm)
+    cdef int swmm_climate_set_neg_melt_ratio(SWMM_Engine e, double rnm)
+    # Areal-depletion curves
+    cdef int swmm_climate_get_adc_impervious(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_adc_impervious(SWMM_Engine e, const double* values, int count)
+    cdef int swmm_climate_get_adc_pervious(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_adc_pervious(SWMM_Engine e, const double* values, int count)
+    # Monthly adjustments
+    cdef int swmm_climate_get_adjust_temperature(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_adjust_temperature(SWMM_Engine e, const double* values, int count)
+    cdef int swmm_climate_get_adjust_evaporation(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_adjust_evaporation(SWMM_Engine e, const double* values, int count)
+    cdef int swmm_climate_get_adjust_rainfall(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_adjust_rainfall(SWMM_Engine e, const double* values, int count)
+    cdef int swmm_climate_get_adjust_conductivity(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_adjust_conductivity(SWMM_Engine e, const double* values, int count)
 
 
 # --- Shared helpers ---

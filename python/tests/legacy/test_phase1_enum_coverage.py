@@ -86,30 +86,84 @@ class TestSubcatchmentEnumCoverage(unittest.TestCase):
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_RUNOFF_CONCENTRATION.value, 245)
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_PONDED_CONCENTRATION.value, 246)
         self.assertEqual(solver.SWMMSubcatchmentProperties.POLLUTANT_TOTAL_LOAD.value, 247)
+        self.assertEqual(solver.SWMMSubcatchmentProperties.API_PET.value, 248)
+        self.assertEqual(solver.SWMMSubcatchmentProperties.GW_MOISTURE.value, 249)
+        self.assertEqual(solver.SWMMSubcatchmentProperties.SNOW_COLDC.value, 254)
 
     def test_total_enum_member_count(self):
-        """All 48 subcatchment properties should be present."""
-        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 48)
+        """All 55 subcatchment properties should be present."""
+        self.assertEqual(len(solver.SWMMSubcatchmentProperties), 55)
 
 
 class TestSystemEnumCoverage(unittest.TestCase):
-    """Verify all 41 system enum members are present."""
+    """Verify all 48 system enum members are present."""
 
     def test_system_enum_count(self):
-        self.assertEqual(len(solver.SWMMSystemProperties), 41)
+        self.assertEqual(len(solver.SWMMSystemProperties), 48)
 
     def test_tolerance_properties(self):
-        """HEAD_TOL, SYS_FLOW_TOL, LAT_FLOW_TOL are present."""
+        """HEAD_TOL, SYS_FLOW_TOL, LAT_FLOW_TOL, EVAP_RATE are present."""
         self.assertEqual(solver.SWMMSystemProperties.HEAD_TOL.value, 38)
         self.assertEqual(solver.SWMMSystemProperties.SYS_FLOW_TOL.value, 39)
         self.assertEqual(solver.SWMMSystemProperties.LAT_FLOW_TOL.value, 40)
+        self.assertEqual(solver.SWMMSystemProperties.EVAP_RATE.value, 41)
+
+    def test_climate_api_properties(self):
+        """TEMPERATURE/WIND current + API prescription properties."""
+        self.assertEqual(solver.SWMMSystemProperties.TEMPERATURE.value, 42)
+        self.assertEqual(solver.SWMMSystemProperties.API_TEMPERATURE.value, 43)
+        self.assertEqual(solver.SWMMSystemProperties.WIND_SPEED.value, 44)
+        self.assertEqual(solver.SWMMSystemProperties.API_WIND_SPEED.value, 45)
+        self.assertEqual(solver.SWMMSystemProperties.API_EVAP.value, 46)
+        self.assertEqual(solver.SWMMSystemProperties.EVAP_DRY_ONLY.value, 47)
+
+    def test_pollutant_enum(self):
+        """Pollutant source concentration properties (500 block)."""
+        self.assertEqual(
+            solver.SWMMPollutantProperties.RAIN_CONCENTRATION.value, 500)
+        self.assertEqual(
+            solver.SWMMPollutantProperties.DWF_CONCENTRATION.value, 503)
+        self.assertEqual(
+            solver.SWMMPollutantProperties.KDECAY.value, 504)
+        self.assertEqual(
+            solver.SWMMPollutantProperties.INIT_CONCENTRATION.value, 508)
+        self.assertEqual(len(solver.SWMMPollutantProperties), 9)
+
+    def test_pattern_enum(self):
+        """Time-pattern properties (600 block)."""
+        self.assertEqual(solver.SWMMPatternProperties.FACTOR.value, 600)
+        self.assertEqual(solver.SWMMPatternProperties.COUNT.value, 601)
+        self.assertEqual(solver.SWMMPatternProperties.TYPE.value, 602)
+        self.assertEqual(len(solver.SWMMPatternProperties), 3)
+
+    def test_landuse_enum(self):
+        """Land-use sweeping + buildup/washoff properties (700 block)."""
+        self.assertEqual(
+            solver.SWMMLandUseProperties.SWEEP_INTERVAL.value, 700)
+        self.assertEqual(
+            solver.SWMMLandUseProperties.SWEEP_REMOVAL.value, 701)
+        self.assertEqual(
+            solver.SWMMLandUseProperties.BUILDUP_FUNC.value, 702)
+        self.assertEqual(
+            solver.SWMMLandUseProperties.WASHOFF_BMP_EFFIC.value, 711)
+        self.assertEqual(len(solver.SWMMLandUseProperties), 12)
+
+    def test_aquifer_enum(self):
+        """Aquifer properties (800 block; P10 parity)."""
+        self.assertEqual(
+            solver.SWMMAquiferProperties.POROSITY.value, 800)
+        self.assertEqual(
+            solver.SWMMAquiferProperties.CONDUCTIVITY.value, 803)
+        self.assertEqual(
+            solver.SWMMAquiferProperties.UPPER_MOISTURE.value, 811)
+        self.assertEqual(len(solver.SWMMAquiferProperties), 12)
 
 
 class TestNodeEnumCoverage(unittest.TestCase):
-    """Verify all 15 node enum members are present."""
+    """Verify all 16 node enum members are present (TYPE..OUTFLOW, 300-315)."""
 
     def test_node_enum_count(self):
-        self.assertEqual(len(solver.SWMMNodeProperties), 15)
+        self.assertEqual(len(solver.SWMMNodeProperties), 16)
 
 
 class TestLinkEnumCoverage(unittest.TestCase):
@@ -120,10 +174,18 @@ class TestLinkEnumCoverage(unittest.TestCase):
 
 
 class TestRainGageEnumCoverage(unittest.TestCase):
-    """Verify all 3 rain gage enum members are present."""
+    """Verify all 4 rain gage enum members are present.
+
+    The a2 API adds GAGE_SCALEFACTOR (rainfall scaling factor) after
+    GAGE_SNOWFALL, bringing the swmm_GageProperty enum to 4 members.
+    """
 
     def test_raingage_enum_count(self):
-        self.assertEqual(len(solver.SWMMRainGageProperties), 3)
+        self.assertEqual(len(solver.SWMMRainGageProperties), 4)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_TOTAL_PRECIPITATION.value, 100)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_RAINFALL.value, 101)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_SNOWFALL.value, 102)
+        self.assertEqual(solver.SWMMRainGageProperties.GAGE_SCALEFACTOR.value, 103)
 
 
 class TestGetMassBalanceErrorFix(unittest.TestCase):

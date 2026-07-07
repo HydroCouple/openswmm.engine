@@ -2,9 +2,9 @@ name: Regression Testing
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
   workflow_dispatch:
 
@@ -112,10 +112,19 @@ jobs:
         # The *-tests-release preset sets VCPKG_MANIFEST_FEATURES=tests;geopackage
         # and enables OPENSWMM_BUILD_UNIT_TESTS + OPENSWMM_BUILD_REGRESSION_TESTS
         # + OPENSWMM_WITH_GEOPACKAGE on top of the Release-flavoured base preset.
+        # gpu;hypre are vcpkg defaults, but added EXPLICITLY (overriding the
+        # preset's feature list) + the Kokkos/AMG CMake options pinned ON so the
+        # 2D-parity regression suite always exercises the Kokkos-OpenMP plugin
+        # and BoomerAMG path; find_package(Kokkos/HYPRE REQUIRED) fails configure
+        # if either default ever regresses.
         run: >
           cmake
           --preset=${{ matrix.cmake_preset }}-tests-release
           -B build-${{ matrix.vcpkg_triplet }}
+          -DVCPKG_MANIFEST_FEATURES="tests;geopackage;gpu;hypre"
+          -DOPENSWMM_BUILD_GPU_PLUGIN=ON
+          -DOPENSWMM_GPU_BACKEND=omp
+          -DOPENSWMM_WITH_HYPRE=ON
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build (Release)
@@ -165,7 +174,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "${{ github.workspace }}/regression-release-${{ matrix.vcpkg_triplet }}/bin"
+          INST="${{ github.workspace }}/regression-release-${{ matrix.vcpkg_triplet }}"
+          cd "$INST/bin"
           echo "--- bin/ contents ---"
           ls -la
           echo
@@ -178,14 +188,29 @@ jobs:
               ldd "$exe"
             fi
           done
+          # Gate: the Kokkos-OpenMP plugin must be installed (lib/ on Unix).
+          PLUGIN=$(find "$INST/lib" \( -name 'libopenswmm_gpu_omp.dylib' -o -name 'libopenswmm_gpu_omp.so' \) | head -1 || true)
+          if [ -z "$PLUGIN" ]; then
+            echo "::error::Kokkos GPU plugin (libopenswmm_gpu_omp) missing from $INST/lib — Kokkos default regressed"
+            exit 1
+          fi
+          echo "Kokkos plugin installed: $PLUGIN"
 
       - name: Verify bundled runtime libs (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Set-Location "${{ github.workspace }}/regression-release-${{ matrix.vcpkg_triplet }}/bin"
+          $inst = "${{ github.workspace }}/regression-release-${{ matrix.vcpkg_triplet }}"
+          Set-Location "$inst/bin"
           Write-Host "--- bin/ contents ---"
           Get-ChildItem | Format-Table Mode,Length,Name
+          # Gate: the Kokkos-OpenMP plugin must be installed (bin/ on Windows).
+          $plugin = Get-ChildItem -Recurse -Path $inst -Filter "openswmm_gpu_omp.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $plugin) {
+            Write-Host "::error::Kokkos GPU plugin (openswmm_gpu_omp.dll) missing from $inst — Kokkos default regressed"
+            exit 1
+          }
+          Write-Host "Kokkos plugin installed: $($plugin.FullName)"
 
       - name: Upload Release install artifact
         uses: actions/upload-artifact@v5

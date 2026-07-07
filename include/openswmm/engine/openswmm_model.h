@@ -107,7 +107,7 @@ SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_pat
  *
  *          @p output_plugin_id is resolved via the engine's
  *          PluginFactory::find_component() — accepts a plugin id
- *          (e.g., "org.hydrocouple.openswmm.geopackage"), an
+ *          (e.g., "org.hydrocouple.openswmm.plugins.geopackage"), an
  *          `id:version` pair, or a shared-library path.  The resolved
  *          plugin must advertise input capability
  *          (`IPluginComponentInfo::has_input()` returns true), since
@@ -265,6 +265,97 @@ swmm_files_get(SWMM_Engine engine, const char* key, char* buf, int buflen);
  */
 SWMM_ENGINE_API int
 swmm_files_set(SWMM_Engine engine, const char* key, const char* value);
+
+/* =========================================================================
+ * External-file path slots — typed, broader API (Slice IO-9)
+ * =========================================================================
+ *
+ * Reaches every external-file slot in the model — not just the [FILES]
+ * section — so the GUI's portability normalizer can walk a uniform list
+ * before save without per-role plumbing.
+ *
+ * Each slot carries both:
+ *   - the original token as it appeared in the source `.inp`
+ *     (relative-or-absolute, with whichever separators the author used);
+ *   - the resolved absolute path the engine uses for `fopen`.
+ *
+ * The slot getter exposes both strings to the caller; the slot setter
+ * updates the original token and clears the cached absolute resolution
+ * (PostParseResolver re-fills it the next time it runs).
+ *
+ * See openswmm.gui/docs/IO_PORTABILITY_PLAN.md §3.3 for the storage model
+ * and §3.7 for the GUI editor contract.
+ * ========================================================================= */
+
+/**
+ * @brief Identifies a single external-file slot on the model.
+ *
+ * @details Vector slots (per-gage data, per-timeseries data, per-hot-start
+ *          save entry) require an `owner` key to disambiguate; scalar
+ *          slots ignore the `owner` argument.
+ */
+typedef enum SWMM_FilePathRole {
+    /* Scalar slots — `owner` ignored. */
+    SWMM_FILE_RAINFALL          = 1,  /**< ctx.files.rainfall_path        */
+    SWMM_FILE_RUNOFF            = 2,  /**< ctx.files.runoff_path          */
+    SWMM_FILE_RDII              = 3,  /**< ctx.files.rdii_path            */
+    SWMM_FILE_INFLOWS           = 4,  /**< ctx.files.inflows_path         */
+    SWMM_FILE_OUTFLOWS          = 5,  /**< ctx.files.outflows_path        */
+    SWMM_FILE_HOTSTART_USE      = 6,  /**< ctx.files.hotstart_use_path    */
+    SWMM_FILE_CLIMATE_TEMP      = 7,  /**< ctx.options.temp_file          */
+
+    /* Vector slots — `owner` selects the entry. */
+    SWMM_FILE_HOTSTART_SAVE     = 8,  /**< ctx.files.hotstart_saves[i],
+                                       *  `owner` is decimal index "0".."N-1" */
+    SWMM_FILE_RAINGAGE_DATA     = 9,  /**< ctx.gages.file_path[i],
+                                       *  `owner` is the gage id     */
+    SWMM_FILE_TIMESERIES_DATA   = 10  /**< ctx.tables.tables[i].file_path,
+                                       *  `owner` is the series id   */
+} SWMM_FilePathRole;
+
+/**
+ * @brief Read both strings from an external-file slot.
+ *
+ * @param engine        Engine handle.
+ * @param role          Which slot to read.
+ * @param owner         Owner key for vector slots; NULL/"" for scalar slots.
+ * @param absolute_buf  [out] UTF-8 absolute path (NUL-terminated, truncated
+ *                      at `absolute_buflen - 1`). May be empty if the slot
+ *                      was set programmatically and never resolved.
+ * @param absolute_buflen  Size of `absolute_buf` in bytes.
+ * @param original_buf  [out] UTF-8 original token as authored. May be empty.
+ * @param original_buflen  Size of `original_buf` in bytes.
+ * @returns SWMM_OK on success;
+ *          SWMM_ERR_BADPARAM when `role` is unknown, when `owner` is
+ *          required but NULL/missing in the model, or when buffer
+ *          arguments are NULL.
+ */
+SWMM_ENGINE_API int
+swmm_file_path_get(SWMM_Engine          engine,
+                   SWMM_FilePathRole    role,
+                   const char*          owner,
+                   char*                absolute_buf,
+                   int                  absolute_buflen,
+                   char*                original_buf,
+                   int                  original_buflen);
+
+/**
+ * @brief Set the original token for an external-file slot; clears the
+ *        cached absolute resolution.
+ *
+ * @details For vector slots, an `owner` that is not yet present in the
+ *          model results in `SWMM_ERR_BADPARAM` — callers must add the
+ *          owning gage / timeseries / hot-start save row first.
+ *
+ *          Pass an empty `new_path` to clear the slot.
+ *
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM otherwise.
+ */
+SWMM_ENGINE_API int
+swmm_file_path_set(SWMM_Engine          engine,
+                   SWMM_FilePathRole    role,
+                   const char*          owner,
+                   const char*          new_path);
 
 /* =========================================================================
  * Title / notes access
@@ -461,6 +552,9 @@ SWMM_ENGINE_API int swmm_options_set_report_start(SWMM_Engine engine, double val
 
 /* =========================================================================
  * User flags
+ *
+ * Flag names are case-insensitive: they are stored uppercase, matching the
+ * [USER_FLAGS] INP handler.
  * ========================================================================= */
 
 /**
@@ -498,6 +592,131 @@ SWMM_ENGINE_API int swmm_userflag_set_int (SWMM_Engine engine, const char* name,
 
 /** @brief Set a REAL user flag at runtime. */
 SWMM_ENGINE_API int swmm_userflag_set_real(SWMM_Engine engine, const char* name, double value);
+
+/* -------------------------------------------------------------------------
+ * User flag schema definitions ([USER_FLAGS]) and per-object values
+ * ([USER_FLAG_VALUES]).
+ *
+ * Flag types (matching openswmm::UserFlagType):
+ *   0 = BOOLEAN, 1 = INTEGER, 2 = REAL, 3 = STRING.
+ *
+ * Per-object values use string form symmetric with the INP encoding:
+ * BOOLEAN as YES/NO, INTEGER as %d, REAL as %g, STRING verbatim (no quotes).
+ * Object types and flag names are case-insensitive (stored uppercase);
+ * object names are case-preserved.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Number of user-flag schema definitions.
+ * @param engine  Engine handle.
+ * @param count   [out] Definition count.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null count.
+ */
+SWMM_ENGINE_API int swmm_userflag_def_count(SWMM_Engine engine, int* count);
+
+/**
+ * @brief Retrieve a user-flag schema definition by index (insertion order).
+ * @param engine       Engine handle.
+ * @param index        Zero-based definition index.
+ * @param name_buf     [out] Flag name (NUL-terminated, truncated to fit). May be NULL.
+ * @param name_buflen  Size of name_buf in bytes.
+ * @param type         [out] Flag type (0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING). May be NULL.
+ * @param desc_buf     [out] Description (empty string if none). May be NULL.
+ * @param desc_buflen  Size of desc_buf in bytes.
+ * @returns SWMM_OK; SWMM_ERR_BADINDEX if index out of range.
+ */
+SWMM_ENGINE_API int swmm_userflag_def_get(
+    SWMM_Engine engine,
+    int         index,
+    char*       name_buf,
+    int         name_buflen,
+    int*        type,
+    char*       desc_buf,
+    int         desc_buflen
+);
+
+/**
+ * @brief Define (or redefine) a user flag.
+ * @param engine       Engine handle.
+ * @param name         Flag name (stored uppercase).
+ * @param type         Flag type (0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING).
+ * @param description  Optional description (may be NULL or empty).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null/empty name or invalid type.
+ * @details Redefining an existing name overwrites its definition; previously
+ *          assigned per-object values are kept as-is.
+ */
+SWMM_ENGINE_API int swmm_userflag_define(
+    SWMM_Engine engine,
+    const char* name,
+    int         type,
+    const char* description
+);
+
+/**
+ * @brief Remove a user-flag definition and all per-object values assigned to it.
+ * @param engine  Engine handle.
+ * @param name    Flag name (case-insensitive).
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if the flag is not defined.
+ */
+SWMM_ENGINE_API int swmm_userflag_undefine(SWMM_Engine engine, const char* name);
+
+/**
+ * @brief Read the flag value assigned to a specific object, as a string.
+ * @param engine     Engine handle.
+ * @param obj_type   Object type token (e.g. "NODE", "LINK", "SUBCATCHMENT").
+ * @param obj_name   Object identifier (case-preserved).
+ * @param flag_name  Flag name (case-insensitive).
+ * @param buf        [out] Value string (empty when not assigned).
+ * @param buflen     Size of buf in bytes.
+ * @param found      [out] 1 if a value is assigned, 0 otherwise.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null arguments.
+ */
+SWMM_ENGINE_API int swmm_userflag_value_get(
+    SWMM_Engine engine,
+    const char* obj_type,
+    const char* obj_name,
+    const char* flag_name,
+    char*       buf,
+    int         buflen,
+    int*        found
+);
+
+/**
+ * @brief Assign a flag value to a specific object from a string.
+ * @param engine     Engine handle.
+ * @param obj_type   Object type token (e.g. "NODE", "LINK", "SUBCATCHMENT").
+ * @param obj_name   Object identifier (case-preserved).
+ * @param flag_name  Flag name; must already be defined (its declared type
+ *                   drives parsing).
+ * @param value      Value string: BOOLEAN accepts YES/NO/TRUE/FALSE/1/0;
+ *                   INTEGER a decimal integer; REAL a decimal number;
+ *                   STRING is stored verbatim.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM on null arguments, undefined flag,
+ *          or a value that does not parse as the declared type.
+ */
+SWMM_ENGINE_API int swmm_userflag_value_set(
+    SWMM_Engine engine,
+    const char* obj_type,
+    const char* obj_name,
+    const char* flag_name,
+    const char* value
+);
+
+/**
+ * @brief Remove the flag value assigned to a specific object (mark unset).
+ * @param engine     Engine handle.
+ * @param obj_type   Object type token.
+ * @param obj_name   Object identifier (case-preserved).
+ * @param flag_name  Flag name (case-insensitive).
+ * @returns SWMM_OK (idempotent: clearing an unassigned value succeeds);
+ *          SWMM_ERR_BADPARAM on null arguments.
+ */
+SWMM_ENGINE_API int swmm_userflag_value_clear(
+    SWMM_Engine engine,
+    const char* obj_type,
+    const char* obj_name,
+    const char* flag_name
+);
 
 #ifdef __cplusplus
 } /* extern "C" */

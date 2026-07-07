@@ -15,6 +15,7 @@ cdef class Solver:
     cdef object _step_begin_cb
     cdef object _step_end_cb
     cdef object _warning_cb
+    cdef object _progress_cb
     # P1 — lazy views & domain-collection accessors. Cached on first access so
     # ``solver.options is solver.options`` holds for a given Solver instance.
     # ``_generation`` is bumped on structural mutations (add/delete/rename) so
@@ -25,6 +26,8 @@ cdef class Solver:
     cdef object _nodes
     cdef object _links
     cdef object _subcatchments
+    cdef object _aquifers
+    cdef object _snowpacks
     cdef object _gages
     cdef object _pollutants
     cdef object _tables
@@ -32,10 +35,13 @@ cdef class Solver:
     cdef object _inflows
     cdef object _controls
     cdef object _forcing
+    cdef object _climate
     cdef object _infrastructure
     cdef object _spatial
     cdef object _quality
     cdef object _statistics
     cdef object _mass_balance
     cdef object _editor
+    cdef object _hotstart
+    cdef object _surface2d
     cdef long long _generation

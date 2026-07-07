@@ -69,11 +69,18 @@ struct MovingAvg7 {
 // ============================================================================
 
 struct ClimateState {
-    double temperature  = 70.0;  ///< Air temperature (deg F)
+    double temperature  = 70.0;  ///< Air temperature (deg F) — effective (post-forcing)
     double temp_range   = 0.0;   ///< Daily temperature range (deg F)
     double evap_rate    = 0.0;   ///< Evaporation rate (ft/sec)
-    double wind_speed   = 0.0;   ///< Wind speed (mph)
+    double wind_speed   = 0.0;   ///< Wind speed (mph) — effective (post-forcing)
     double humidity     = 50.0;  ///< Relative humidity (%)
+
+    // Source/default bases (pre-forcing). The per-step source lookup writes
+    // these; forcing then resolves effective values on top. Keeping them
+    // separate lets a one-shot/cleared forcing revert to the data source (or
+    // default) even when no source overwrites the value each step.
+    double temperature_src = 70.0;  ///< Source/default air temperature (deg F)
+    double wind_speed_src  = 0.0;   ///< Source/default wind speed (mph)
 
     // Derived values
     double gamma        = 0.0;   ///< Psychrometric constant
@@ -87,6 +94,11 @@ struct ClimateState {
 
     // Monthly evaporation table (for MONTHLY method)
     double monthly_evap[12] = {};
+
+    // EVAPRATE unit-conversion factor (in/day US or mm/day SI → ft/sec) for the
+    // project's unit system. Set at init; MONTHLY uses it so SI models convert
+    // mm/day correctly (defaults to the US factor for back-compatibility).
+    double evaprate_ucf = 1036800.0;
 
     // Monthly adjustment factors
     double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};

@@ -82,8 +82,8 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
     } else if (q_in_norm <= 0.0) {
         a_in_norm = 0.0;
     } else {
-        double s_needed = q_in_norm / beta1;
-        a_in_norm = xsect::getAofS(xs, s_needed * a_full) / a_full;
+        double s_needed = q_in_norm / beta1;  // dimensional section factor = Q_in/beta
+        a_in_norm = xsect::getAofS(xs, s_needed) / a_full;
     }
 
     // Finite-difference coefficients
@@ -262,6 +262,8 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
             }
             continue;
         }
+        auto& CD = ctx.link_subtypes.conduits;
+        const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
         // Gather inflow from upstream node
         // (matching legacy getLinkInflow: use node inflow, limited by max outflow)
@@ -276,21 +278,21 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
         }
 
         // Divide by barrels (KW solves per barrel)
-        double barrels = static_cast<double>(std::max(links.barrels[uj], 1));
+        double barrels = static_cast<double>(std::max(CD.barrels[ucr], 1));
         double qin_per_barrel = qin / barrels;
 
         // Build XSectParams for this conduit
         XSectParams xs = buildXSP_KW(links, uj);
 
-        double q_full = links.q_full[uj];
+        double q_full = CD.q_full[ucr];
         double a_full = links.xsect_a_full[uj];
         double s_full = links.xsect_s_full[uj];
-        double beta   = links.beta[uj];
-        double length = links.mod_length[uj];
-        if (length <= 0.0) length = links.length[uj];
+        double beta   = CD.beta[ucr];
+        double length = CD.mod_length[ucr];
+        if (length <= 0.0) length = CD.length[ucr];
 
         // Compute evaporation + seepage loss rate
-        double loss_rate = links.evap_loss_rate[uj] + links.seep_loss_rate[uj];
+        double loss_rate = CD.evap_loss_rate[ucr] + CD.seep_loss_rate[ucr];
 
         // Set inflow for this conduit
         q_in_[uj] = qin_per_barrel;
@@ -329,7 +331,7 @@ int KWSolver::execute(SimulationContext& ctx, double dt) {
                 if (a_in_[uj]  >= a_full) fs |= 1;
                 if (a_out_[uj] >= a_full) fs |= 2;
             }
-            links.full_state[uj] = fs;
+            CD.full_state[ucr] = fs;
         }
 
         // Update non-storage end-node depths (Gap #13)

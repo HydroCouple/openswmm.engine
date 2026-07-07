@@ -118,8 +118,8 @@ class TestLinkProperties:
         l0.control_setting = 0.5
         assert l0.control_setting == pytest.approx(0.5)
 
-    def test_closed_setter(self, opened_solver):
-        l0 = opened_solver.links[0]
+    def test_closed_setter(self, running_solver):
+        l0 = running_solver.links[0]
         original = l0.closed
         l0.closed = not original
         assert l0.closed == (not original)

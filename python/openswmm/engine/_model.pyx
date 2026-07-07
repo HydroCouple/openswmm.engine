@@ -70,11 +70,33 @@ cdef class ModelBuilder:
     """
 
     cdef SWMM_Engine _handle
+    # ``_generation`` mirrors :attr:`Solver._generation`: container-level
+    # editors (``builder.tables.add_curve``, ``builder.transects.add``, …)
+    # call ``self._solver._bump_generation()`` regardless of whether the
+    # owning object is a :class:`Solver` or a :class:`ModelBuilder`, so the
+    # builder must expose the same staleness-counter surface.
+    cdef long long _generation
 
     def __init__(self):
         self._handle = swmm_engine_new()
         if self._handle == NULL:
             raise MemoryError("Failed to create engine in BUILDING state")
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        """Monotonic counter bumped on every structural mutation.
+
+        Mirrors :attr:`Solver.generation` so wrapper objects minted from a
+        :class:`ModelBuilder` can detect staleness the same way.
+        """
+        return int(self._generation)
+
+    def _bump_generation(self) -> None:
+        """Increment the staleness counter. Called by collection-level
+        editors so wrappers minted before a mutation can detect they are
+        out of date. Internal: do not call directly."""
+        self._generation += 1
 
     # =========================================================================
     # Nodes
@@ -456,6 +478,46 @@ cdef class ModelBuilder:
         cdef bytes b_val = value.encode('utf-8')
         _check(swmm_options_set(self._handle, b_key, b_val))
 
+    def get_file_path(self, int role, str owner="") -> tuple:
+        """Read an external-file slot's resolved and original paths.
+
+        @param role: Which slot to read; a L{FilePathRole} value.
+        @type role: int
+        @param owner: Owner key for vector slots (decimal index for
+            hot-start saves, gage id for rain-gage data, series id for
+            time-series data). Ignored for scalar slots.
+        @type owner: str
+        @return: C{(absolute, original)} — the resolved absolute path and
+            the original token as authored. Either may be empty.
+        @rtype: tuple[str, str]
+        @raise EngineError: On C API failure (e.g. unknown role/owner).
+        """
+        cdef bytes b_owner = owner.encode('utf-8')
+        cdef char abs_buf[512]
+        cdef char orig_buf[512]
+        _check(swmm_file_path_get(self._handle, <SWMM_FilePathRole>role, b_owner,
+                                  abs_buf, 512, orig_buf, 512))
+        return (abs_buf.decode('utf-8'), orig_buf.decode('utf-8'))
+
+    def set_file_path(self, int role, str new_path, str owner="") -> None:
+        """Set the original token for an external-file slot.
+
+        Clears the cached absolute resolution. For vector slots the
+        ``owner`` must already exist in the model. Pass an empty
+        ``new_path`` to clear the slot.
+
+        @param role: Which slot to set; a L{FilePathRole} value.
+        @type role: int
+        @param new_path: New path token; empty string clears the slot.
+        @type new_path: str
+        @param owner: Owner key for vector slots; ignored for scalar slots.
+        @type owner: str
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_owner = owner.encode('utf-8')
+        cdef bytes b_path = new_path.encode('utf-8')
+        _check(swmm_file_path_set(self._handle, <SWMM_FilePathRole>role, b_owner, b_path))
+
     def get_option_ext(self, str key) -> str:
         """Return the value of an extended model option.
 
@@ -636,6 +698,143 @@ cdef class ModelBuilder:
         """
         cdef bytes b = name.encode('utf-8')
         _check(swmm_userflag_set_real(self._handle, b, value))
+
+    def define_userflag(self, str name, int type, str description=""):
+        """Define (or redefine) a user-flag schema entry (C{[USER_FLAGS]}).
+
+        Redefining an existing name overwrites its definition; previously
+        assigned per-object values are kept as-is.
+
+        @param name: Flag name (stored uppercase).
+        @type name: str
+        @param type: Flag type: 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING
+            (see L{UserFlagType}).
+        @type type: int
+        @param description: Optional description.
+        @type description: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On C API failure (empty name or invalid type).
+        """
+        cdef bytes b_name = name.encode('utf-8')
+        cdef bytes b_desc = description.encode('utf-8')
+        _check(swmm_userflag_define(self._handle, b_name, type, b_desc))
+
+    def undefine_userflag(self, str name):
+        """Remove a user-flag definition and all its per-object values.
+
+        @param name: Flag name (case-insensitive).
+        @type name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: If the flag is not defined.
+        """
+        cdef bytes b = name.encode('utf-8')
+        _check(swmm_userflag_undefine(self._handle, b))
+
+    def userflag_def_count(self) -> int:
+        """Return the number of user-flag schema definitions.
+
+        @return: Definition count.
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        cdef int v = 0
+        _check(swmm_userflag_def_count(self._handle, &v))
+        return v
+
+    def get_userflag_def(self, int index) -> tuple:
+        """Return a user-flag schema definition by index (insertion order).
+
+        @param index: Zero-based definition index.
+        @type index: int
+        @return: C{(name, type, description)} where C{type} is 0=BOOLEAN,
+            1=INTEGER, 2=REAL, 3=STRING.
+        @rtype: tuple[str, int, str]
+        @raise EngineError: If C{index} is out of range.
+        """
+        cdef char name_buf[128]
+        cdef char desc_buf[512]
+        cdef int t = 0
+        _check(swmm_userflag_def_get(self._handle, index, name_buf, 128,
+                                     &t, desc_buf, 512))
+        return (name_buf.decode('utf-8'), t, desc_buf.decode('utf-8'))
+
+    def get_userflag_value(self, str obj_type, str obj_name, str flag_name):
+        """Return the flag value assigned to a specific object, as a string.
+
+        String form is symmetric with the INP encoding: BOOLEAN as
+        C{YES}/C{NO}, INTEGER as a decimal, REAL as C{%g}, STRING verbatim.
+
+        @param obj_type: Object type token (e.g. C{"NODE"}, C{"LINK"},
+            C{"SUBCATCHMENT"}); case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: The value string, or C{None} when no value is assigned.
+        @rtype: str or None
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef char buf[512]
+        cdef int found = 0
+        _check(swmm_userflag_value_get(self._handle, b_type, b_name, b_flag,
+                                       buf, 512, &found))
+        if not found:
+            return None
+        return buf.decode('utf-8')
+
+    def set_userflag_value(self, str obj_type, str obj_name, str flag_name,
+                           str value):
+        """Assign a flag value to a specific object from a string.
+
+        The flag must already be defined (its declared type drives parsing).
+        BOOLEAN accepts C{YES}/C{NO}/C{TRUE}/C{FALSE}/C{1}/C{0}; INTEGER a
+        decimal integer; REAL a decimal number; STRING is stored verbatim.
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive); must be defined.
+        @type flag_name: str
+        @param value: Value string parsed per the flag's declared type.
+        @type value: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On undefined flag or a value that does not parse
+            as the declared type.
+        """
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        cdef bytes b_val = value.encode('utf-8')
+        _check(swmm_userflag_value_set(self._handle, b_type, b_name, b_flag,
+                                       b_val))
+
+    def clear_userflag_value(self, str obj_type, str obj_name, str flag_name):
+        """Remove the flag value assigned to a specific object (mark unset).
+
+        Clearing an unassigned value succeeds (idempotent).
+
+        @param obj_type: Object type token; case-insensitive.
+        @type obj_type: str
+        @param obj_name: Object identifier (case-preserved).
+        @type obj_name: str
+        @param flag_name: Flag name (case-insensitive).
+        @type flag_name: str
+        @return: None
+        @rtype: None
+        @raise EngineError: On C API failure.
+        """
+        cdef bytes b_type = obj_type.encode('utf-8')
+        cdef bytes b_name = obj_name.encode('utf-8')
+        cdef bytes b_flag = flag_name.encode('utf-8')
+        _check(swmm_userflag_value_clear(self._handle, b_type, b_name, b_flag))
 
     # =========================================================================
     # Plugins

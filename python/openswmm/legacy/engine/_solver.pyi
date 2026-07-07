@@ -100,10 +100,13 @@ class SWMMRainGageProperties(Enum):
     :type GAGE_RAINFALL: int
     :ivar GAGE_SNOWFALL: Snowfall
     :type GAGE_SNOWFALL: int
+    :ivar GAGE_SCALEFACTOR: Rainfall scaling factor (dimensionless, > 0)
+    :type GAGE_SCALEFACTOR: int
     """
     GAGE_TOTAL_PRECIPITATION = ...
     GAGE_RAINFALL = ...
     GAGE_SNOWFALL = ...
+    GAGE_SCALEFACTOR = ...
 
 
 class SWMMSubcatchmentProperties(Enum):
@@ -144,6 +147,8 @@ class SWMMSubcatchmentProperties(Enum):
     :type POLLUTANT_PONDED_CONCENTRATION: int
     :ivar POLLUTANT_TOTAL_LOAD: Pollutant total load
     :type POLLUTANT_TOTAL_LOAD: int
+    :ivar API_PET: API prescribed potential evapotranspiration rate
+    :type API_PET: int
     """
     AREA = ...
     RAINGAGE = ...
@@ -193,6 +198,134 @@ class SWMMSubcatchmentProperties(Enum):
     POLLUTANT_RUNOFF_CONCENTRATION = ...
     POLLUTANT_PONDED_CONCENTRATION = ...
     POLLUTANT_TOTAL_LOAD = ...
+    API_PET = ...
+    GW_MOISTURE = ...
+    GW_LOWER_DEPTH = ...
+    SNOW_SWE = ...
+    SNOW_FW = ...
+    SNOW_ATI = ...
+    SNOW_COLDC = ...
+
+
+class SWMMPollutantProperties(Enum):
+    """
+    Enumeration of SWMM pollutant properties (runtime-settable source
+    concentrations in pollutant units).
+
+    :ivar RAIN_CONCENTRATION: Rain (wet deposition) concentration
+    :type RAIN_CONCENTRATION: int
+    :ivar GW_CONCENTRATION: Groundwater inflow concentration
+    :type GW_CONCENTRATION: int
+    :ivar RDII_CONCENTRATION: RDII inflow concentration
+    :type RDII_CONCENTRATION: int
+    :ivar DWF_CONCENTRATION: Dry weather sanitary flow concentration
+    :type DWF_CONCENTRATION: int
+    :ivar KDECAY: First-order decay constant (1/day); live each step
+    :ivar CO_POLLUTANT: Co-pollutant index (-1 = none)
+    :ivar CO_FRACTION: Co-pollutant fraction (0-1)
+    :ivar SNOW_ONLY: Buildup-only-under-snow flag (0/1)
+    :ivar INIT_CONCENTRATION: Initial network concentration (pre-start only)
+    """
+    RAIN_CONCENTRATION = ...
+    GW_CONCENTRATION = ...
+    RDII_CONCENTRATION = ...
+    DWF_CONCENTRATION = ...
+    KDECAY = ...
+    CO_POLLUTANT = ...
+    CO_FRACTION = ...
+    SNOW_ONLY = ...
+    INIT_CONCENTRATION = ...
+
+
+class SWMMPatternProperties(Enum):
+    """
+    Enumeration of SWMM time-pattern properties (runtime-settable
+    multiplier factors). For ``FACTOR`` pass the 0-based factor position
+    as the ``sub_index`` argument of ``set_value``/``get_value``.
+
+    :ivar FACTOR: One multiplier factor (sub_index = factor position)
+    :type FACTOR: int
+    :ivar COUNT: Number of factors in the pattern (read-only)
+    :type COUNT: int
+    :ivar TYPE: Pattern type code (read-only): 0 monthly/1 daily/2 hourly/3 weekend
+    :type TYPE: int
+    """
+    FACTOR = ...
+    COUNT = ...
+    TYPE = ...
+
+
+class SWMMLandUseProperties(Enum):
+    """
+    Enumeration of SWMM land-use properties (runtime-settable street
+    sweeping parameters).
+
+    Buildup/washoff parameters are per land use and pollutant; pass the
+    0-based pollutant index as the ``sub_index`` argument.
+
+    :ivar SWEEP_INTERVAL: Street-sweeping interval (days)
+    :type SWEEP_INTERVAL: int
+    :ivar SWEEP_REMOVAL: Fraction of buildup available for sweeping (0-1)
+    :type SWEEP_REMOVAL: int
+    :ivar BUILDUP_FUNC: Buildup function type code (sub_index = pollutant)
+    :ivar BUILDUP_COEFF1: Buildup coefficient c0 / max buildup
+    :ivar BUILDUP_COEFF2: Buildup coefficient c1 / rate
+    :ivar BUILDUP_COEFF3: Buildup coefficient c2 / exponent
+    :ivar BUILDUP_NORMALIZER: Buildup normalizer: 0 area, 1 curb length
+    :ivar WASHOFF_FUNC: Washoff function type code
+    :ivar WASHOFF_COEFF: Washoff coefficient
+    :ivar WASHOFF_EXPON: Washoff exponent
+    :ivar WASHOFF_SWEEP_EFFIC: Washoff street-sweeping efficiency (0-1)
+    :ivar WASHOFF_BMP_EFFIC: Washoff BMP efficiency (0-1)
+    """
+    SWEEP_INTERVAL = ...
+    SWEEP_REMOVAL = ...
+    BUILDUP_FUNC = ...
+    BUILDUP_COEFF1 = ...
+    BUILDUP_COEFF2 = ...
+    BUILDUP_COEFF3 = ...
+    BUILDUP_NORMALIZER = ...
+    WASHOFF_FUNC = ...
+    WASHOFF_COEFF = ...
+    WASHOFF_EXPON = ...
+    WASHOFF_SWEEP_EFFIC = ...
+    WASHOFF_BMP_EFFIC = ...
+
+
+class SWMMAquiferProperties(Enum):
+    """
+    Enumeration of SWMM aquifer properties (input-file units).
+
+    The flux-coefficient properties (conductivity, slopes, evap/loss
+    coefficients) are read live each step and are settable both before the
+    simulation starts and while it is running; the structural /
+    initial-condition properties are pre-start-only.
+
+    :ivar POROSITY: Porosity (volumetric fraction, pre-start-only)
+    :ivar WILTING_POINT: Wilting point (volumetric fraction, pre-start-only)
+    :ivar FIELD_CAPACITY: Field capacity (volumetric fraction, pre-start-only)
+    :ivar CONDUCTIVITY: Saturated hydraulic conductivity (in/hr or mm/hr)
+    :ivar CONDUCT_SLOPE: Conductivity slope
+    :ivar TENSION_SLOPE: Tension slope (ft or m)
+    :ivar UPPER_EVAP_FRAC: Upper-zone evaporation fraction (0-1)
+    :ivar LOWER_EVAP_DEPTH: Lower-zone evaporation depth (ft or m)
+    :ivar LOWER_LOSS_COEFF: Lower-zone seepage-loss coefficient (in/hr or mm/hr)
+    :ivar BOTTOM_ELEV: Aquifer bottom elevation (ft or m, pre-start-only)
+    :ivar WATER_TABLE_ELEV: Initial water table elevation (ft or m, pre-start-only)
+    :ivar UPPER_MOISTURE: Initial upper-zone moisture (volumetric fraction, pre-start-only)
+    """
+    POROSITY = ...
+    WILTING_POINT = ...
+    FIELD_CAPACITY = ...
+    CONDUCTIVITY = ...
+    CONDUCT_SLOPE = ...
+    TENSION_SLOPE = ...
+    UPPER_EVAP_FRAC = ...
+    LOWER_EVAP_DEPTH = ...
+    LOWER_LOSS_COEFF = ...
+    BOTTOM_ELEV = ...
+    WATER_TABLE_ELEV = ...
+    UPPER_MOISTURE = ...
 
 
 class SWMMNodeProperties(Enum):
@@ -446,6 +579,16 @@ class SWMMSystemProperties(Enum):
     :type SYS_FLOW_TOL: int
     :ivar LAT_FLOW_TOL: Lateral flow tolerance
     :type LAT_FLOW_TOL: int
+    :ivar EVAP_RATE: Current climate-derived evaporation rate (read-only)
+    :type EVAP_RATE: int
+    :ivar TEMPERATURE: Current air temperature (read-only)
+    :type TEMPERATURE: int
+    :ivar API_TEMPERATURE: API prescribed air temperature
+    :type API_TEMPERATURE: int
+    :ivar WIND_SPEED: Current wind speed (read-only)
+    :type WIND_SPEED: int
+    :ivar API_WIND_SPEED: API prescribed wind speed
+    :type API_WIND_SPEED: int
 
     """
     START_DATE = ...
@@ -489,6 +632,13 @@ class SWMMSystemProperties(Enum):
     HEAD_TOL = ...
     SYS_FLOW_TOL = ...
     LAT_FLOW_TOL = ...
+    EVAP_RATE = ...
+    TEMPERATURE = ...
+    API_TEMPERATURE = ...
+    WIND_SPEED = ...
+    API_WIND_SPEED = ...
+    API_EVAP = ...
+    EVAP_DRY_ONLY = ...
 
 
 class SWMMFlowUnits(Enum):
@@ -901,7 +1051,57 @@ class Solver:
         :type sub_index: int
         """
         ...
-    
+
+    def set_treatment(self, node_index: Union[int, str], pollutant_index: int, expression: str) -> None:
+        """
+        Set (or replace) the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; a
+        mid-run edit is evaluated from the next routing step on. A failed
+        parse raises and leaves no treatment in place for the pair.
+
+        :param node_index: Node index or name (e.g., 0, 'J1')
+        :type node_index: int or str
+        :param pollutant_index: Pollutant index (e.g., 0)
+        :type pollutant_index: int
+        :param expression: Treatment expression in input-file form, e.g. "R = 0.5" or "C = BOD * 0.2"
+        :type expression: str
+        """
+        ...
+
+    def clear_treatment(self, node_index: Union[int, str], pollutant_index: int) -> None:
+        """
+        Remove the treatment expression for a node/pollutant pair.
+
+        Callable before the simulation starts or while it is running; zero
+        removal applies from the next routing step on.
+
+        :param node_index: Node index or name (e.g., 0, 'J1')
+        :type node_index: int or str
+        :param pollutant_index: Pollutant index (e.g., 0)
+        :type pollutant_index: int
+        """
+        ...
+
+    def set_lid_drain(self, lid_index: Union[int, str], coeff: float, expon: float, offset: float) -> None:
+        """
+        Set the underdrain flow parameters of a LID process at runtime.
+
+        The drain parameters are read live each routing step, so a mid-run
+        edit takes effect on the next step. Values use input-file units,
+        matching the [LID_CONTROLS] DRAIN line.
+
+        :param lid_index: LID process index or name (e.g., 0, 'RB1')
+        :type lid_index: int or str
+        :param coeff: Underdrain flow coefficient (in/hr or mm/hr)
+        :type coeff: float
+        :param expon: Underdrain head exponent
+        :type expon: float
+        :param offset: Offset height of the underdrain (in or mm)
+        :type offset: float
+        """
+        ...
+
     def get_value(self, object_type: SWMMObjects, property_type: Union[SWMMRainGageProperties, SWMMSubcatchmentProperties, SWMMNodeProperties, SWMMLinkProperties, SWMMSystemProperties], index: Union[int, str], sub_index: int = ...) -> float:
         """
         Get a SWMM system property value.

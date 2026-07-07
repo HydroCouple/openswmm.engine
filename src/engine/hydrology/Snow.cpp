@@ -134,45 +134,14 @@ static double getArealDepletion(SnowSoA& soa, std::size_t ui, int subarea,
 }
 
 // ============================================================================
-// Batch ATI update — VECTORISABLE
+// Rain-on-snow melt rate (legacy: getRainmelt) — one rainfall value
 // ============================================================================
 
-void SnowSolver::batchATIUpdate(double* ati, double temp, double tipm,
-                                 double dt, int count) {
-    // tipm adjusted for timestep: tipm_adj = 1 - (1-tipm)^(dt/21600)
-    double tipm_adj = 1.0 - std::pow(1.0 - tipm, dt / 21600.0);
-    for (int i = 0; i < count; ++i) {
-        ati[i] += tipm_adj * (temp - ati[i]);
-    }
-}
-
-// ============================================================================
-// Batch degree-day melt — VECTORISABLE
-// ============================================================================
-
-void SnowSolver::batchDegreeDayMelt(const double* dhm, const double* tbase,
-                                     double temp, double* melt, int count) {
-    for (int i = 0; i < count; ++i) {
-        double excess = temp - tbase[i];
-        melt[i] = (excess > 0.0) ? dhm[i] * excess : 0.0;
-    }
-}
-
-// ============================================================================
-// Batch rain-on-snow melt — VECTORISABLE (uniform inputs broadcast)
-// ============================================================================
-
-void SnowSolver::batchRainOnSnowMelt(double temp, double wind, double gamma,
-                                      double ea, double rainfall,
-                                      double* melt, int count) {
-    // Rain-on-snow formula (legacy: getRainmelt)
+double SnowSolver::rainMeltRate(double temp, double wind, double gamma,
+                                 double ea, double rainfall) {
     // Only applies when rainfall > 0.02 in/hr converted to ft/sec
     const double ucf_rain_us = ucf::Ucf[ucf::RAINFALL][0]; // US: in/hr ↔ ft/sec
-    const double RAIN_THRESHOLD = 0.02 / ucf_rain_us;
-    if (rainfall <= RAIN_THRESHOLD) {
-        std::fill(melt, melt + count, 0.0);
-        return;
-    }
+    if (rainfall <= 0.02 / ucf_rain_us) return 0.0;
 
     double rain_in_hr = rainfall * ucf_rain_us;  // ft/sec → in/hr
     double uadj = 0.006 * wind;
@@ -180,22 +149,21 @@ void SnowSolver::batchRainOnSnowMelt(double temp, double wind, double gamma,
     double t2 = 7.5 * gamma * uadj;
     double t3 = 8.5 * uadj * (ea - 0.18);
     double smelt_in_hr = t1 * (0.001167 + t2 + 0.007 * rain_in_hr) + t3;
-    double smelt = smelt_in_hr / ucf_rain_us;  // in/hr → ft/sec
-    smelt = std::max(smelt, 0.0);
-
-    // Broadcast same melt rate to all subareas (uniform climate)
-    std::fill(melt, melt + count, smelt);
+    return std::max(smelt_in_hr / ucf_rain_us, 0.0);  // in/hr → ft/sec
 }
 
 // ============================================================================
-// Batch snow accumulation — VECTORISABLE
+// Execute — scalar convenience overload (broadcast to all subcatchments)
 // ============================================================================
 
-void SnowSolver::batchAccumulate(double* wsnow, double snowfall, double dt, int count) {
-    double accum = snowfall * dt;
-    for (int i = 0; i < count; ++i) {
-        wsnow[i] += accum;
-    }
+void SnowSolver::execute(SimulationContext& ctx, double dt,
+                          double temp, double wind, double rainfall,
+                          double snowfall, double gamma, double ea) {
+    int n = soa_.n_subcatch;
+    if (n == 0) return;
+    std::vector<double> rain(static_cast<std::size_t>(n), rainfall);
+    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
+    execute(ctx, dt, temp, wind, rain.data(), snow.data(), gamma, ea);
 }
 
 // ============================================================================
@@ -203,8 +171,8 @@ void SnowSolver::batchAccumulate(double* wsnow, double snowfall, double dt, int 
 // ============================================================================
 
 void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
-                          double temp, double wind, double rainfall,
-                          double snowfall, double gamma, double ea) {
+                          double temp, double wind, const double* rainfall,
+                          const double* snowfall, double gamma, double ea) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
     int total = n * N_SUBAREAS;
@@ -237,7 +205,8 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
             continue;
         }
         int subarea = i % N_SUBAREAS;
-        soa_.asc[ui] = getArealDepletion(soa_, ui, subarea, snowfall, dt);
+        soa_.asc[ui] = getArealDepletion(soa_, ui, subarea,
+                                         snowfall[i / N_SUBAREAS], dt);
     }
 
     // -----------------------------------------------------------------------
@@ -274,15 +243,20 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
     }
 
     // -----------------------------------------------------------------------
-    // Step 4: Compute melt rate — degree-day or rain-on-snow.
+    // Step 4: Compute melt rate — degree-day or rain-on-snow, selected per
+    // subcatchment from that subcatchment's own rainfall (matching legacy
+    // meltSnowpack: rmelt > 0 wins, else degree-day).
     // -----------------------------------------------------------------------
     const double RAIN_THRESHOLD = 0.02 / ucf::Ucf[ucf::RAINFALL][0];
-    if (rainfall > RAIN_THRESHOLD) {
-        batchRainOnSnowMelt(temp, wind, gamma, ea, rainfall,
-                            soa_.imelt.data(), total);
-    } else {
-        batchDegreeDayMelt(soa_.dhm.data(), soa_.tbase.data(), temp,
-                           soa_.imelt.data(), total);
+    for (int i = 0; i < total; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        double rain_sc = rainfall[i / N_SUBAREAS];
+        if (rain_sc > RAIN_THRESHOLD) {
+            soa_.imelt[ui] = rainMeltRate(temp, wind, gamma, ea, rain_sc);
+        } else {
+            double excess = temp - soa_.tbase[ui];
+            soa_.imelt[ui] = (excess > 0.0) ? soa_.dhm[ui] * excess : 0.0;
+        }
     }
 
     // Step 4b: Scale melt by areal coverage (using stored soa_.asc[ui]).
@@ -373,15 +347,22 @@ void SnowSolver::setMeltCoeffs(int day_of_year) {
 void SnowSolver::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
+    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
+    plowSnow(ctx, dt, snow.data());
+}
+
+void SnowSolver::plowSnow(SimulationContext& ctx, double dt, const double* snowfall) {
+    int n = soa_.n_subcatch;
+    if (n == 0) return;
 
     for (int j = 0; j < n; ++j) {
         auto uj = static_cast<std::size_t>(j);
 
-        // Add snowfall to all subareas
+        // Add this subcatchment's snowfall to all subareas
         for (int k = SNOW_PLOWABLE; k <= SNOW_PERV; ++k) {
             auto idx = static_cast<std::size_t>(j * N_SUBAREAS + k);
             if (soa_.fArea[idx] > 0.0) {
-                soa_.wsnow[idx] += snowfall * dt;
+                soa_.wsnow[idx] += snowfall[uj] * dt;
                 soa_.imelt[idx] = 0.0;
             }
         }

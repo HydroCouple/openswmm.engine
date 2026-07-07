@@ -295,6 +295,22 @@ SWMM_ENGINE_API int swmm_get_current_time(SWMM_Engine engine, double* current);
 SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt);
 
 /* =========================================================================
+ * Unit system query
+ * =========================================================================
+ * All C API getters return — and all setters accept — values in the project's
+ * DISPLAY units, selected by [OPTIONS] FLOW_UNITS. These accessors report which
+ * units are in effect so callers (bindings, coupling) can interpret values.
+ */
+
+/** @brief Get the active flow-units code (0=CFS,1=GPM,2=MGD,3=CMS,4=LPS,5=MLD).
+ *  @note  Typed equivalent of swmm_options_get(engine,"FLOW_UNITS",...). */
+SWMM_ENGINE_API int swmm_get_flow_units(SWMM_Engine engine, int* flow_units);
+
+/** @brief Get the active unit system (0 = US/imperial, 1 = SI/metric).
+ *  @note  Derived from flow units: CMS/LPS/MLD => SI, otherwise US. */
+SWMM_ENGINE_API int swmm_get_unit_system(SWMM_Engine engine, int* unit_system);
+
+/* =========================================================================
  * Routing event and steady-state status
  * ========================================================================= */
 
@@ -454,6 +470,7 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 #include "openswmm_quality.h"
 #include "openswmm_statistics.h"
 #include "openswmm_forcing.h"
+#include "openswmm_climate.h"
 #include "openswmm_edit.h"
 
 #ifdef OPENSWMM_HAS_2D

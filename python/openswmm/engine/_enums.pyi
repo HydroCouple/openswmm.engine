@@ -410,6 +410,37 @@ class LidType(IntEnum):
     VEGETATIVE_SWALE = 7
 
 
+class AquiferParam(IntEnum):
+    """Aquifer parameter codes for Aquifers.get_param / set_param.
+
+    @cvar POROSITY: Porosity (volumetric fraction).
+    @cvar WILTING_POINT: Wilting point (volumetric fraction).
+    @cvar FIELD_CAPACITY: Field capacity (volumetric fraction).
+    @cvar CONDUCTIVITY: Saturated hydraulic conductivity.
+    @cvar CONDUCT_SLOPE: Conductivity slope.
+    @cvar TENSION_SLOPE: Tension slope.
+    @cvar UPPER_EVAP_FRAC: Upper-zone evaporation fraction.
+    @cvar LOWER_EVAP_DEPTH: Lower-zone evaporation depth.
+    @cvar LOWER_LOSS_COEFF: Lower-zone seepage-loss coefficient.
+    @cvar BOTTOM_ELEV: Aquifer bottom elevation.
+    @cvar WATER_TABLE_ELEV: Initial water table elevation.
+    @cvar UPPER_MOISTURE: Initial upper-zone moisture.
+    """
+
+    POROSITY = 0
+    WILTING_POINT = 1
+    FIELD_CAPACITY = 2
+    CONDUCTIVITY = 3
+    CONDUCT_SLOPE = 4
+    TENSION_SLOPE = 5
+    UPPER_EVAP_FRAC = 6
+    LOWER_EVAP_DEPTH = 7
+    LOWER_LOSS_COEFF = 8
+    BOTTOM_ELEV = 9
+    WATER_TABLE_ELEV = 10
+    UPPER_MOISTURE = 11
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
@@ -522,13 +553,15 @@ class ForcingMode(IntEnum):
     """Forcing application mode.
 
     Determines how a forced value is combined with the model-computed value.
+    Mirrors C{SWMM_ForcingMode} in C{openswmm_forcing.h} (OVERRIDE=1, ADD=2;
+    0 is the engine-internal "no forcing" state and is not exposed).
 
     @cvar REPLACE: Replace the computed value entirely.
     @cvar ADD: Add the forced value to the computed value.
     """
 
-    REPLACE = 0
-    ADD = 1
+    REPLACE = 1
+    ADD = 2
 
 
 class ForcingTarget(IntEnum):
@@ -538,12 +571,14 @@ class ForcingTarget(IntEnum):
     @cvar LINK: Link forcing target.
     @cvar SUBCATCH: Subcatchment forcing target.
     @cvar GAGE: Rain gage forcing target.
+    @cvar CLIMATE: System-wide climate forcing target (temperature, wind).
     """
 
     NODE = 0
     LINK = 1
     SUBCATCH = 2
     GAGE = 3
+    CLIMATE = 4
 
 
 # =============================================================================
@@ -617,3 +652,112 @@ class RoutingTotal(IntEnum):
     SEEP_LOSS = 8
     INIT_STORAGE = 9
     FINAL_STORAGE = 10
+
+
+# =============================================================================
+# Dividers / forcing / references (added in the 2026 binding refresh)
+# =============================================================================
+
+class DividerType(IntEnum):
+    """Flow-diversion method for a DIVIDER node. Mirrors ``SWMM_DividerType``."""
+
+    CUTOFF = 0
+    OVERFLOW = 1
+    TABULAR = 2
+    WEIR = 3
+
+
+class ForcingType(IntEnum):
+    """Forcing channel for a runtime override. Mirrors ``SWMM_ForcingType``."""
+
+    NODE_LAT_INFLOW = 0
+    NODE_HEAD_BOUNDARY = 1
+    NODE_QUALITY = 2
+    LINK_FLOW = 3
+    LINK_SETTING = 4
+    SUBCATCH_RAINFALL = 5
+    SUBCATCH_EVAP = 6
+    GAGE_RAINFALL = 7
+    CLIMATE_TEMPERATURE = 8
+    CLIMATE_WIND = 9
+    SUBCATCH_SNOWFALL = 10
+    CLIMATE_EVAP = 11
+    LINK_QUALITY = 12
+
+
+class ForcingPersist(IntEnum):
+    """Lifetime of a runtime forcing override. Mirrors ``SWMM_ForcingPersist``."""
+
+    RESET = 0
+    PERSIST = 1
+
+
+class SurfaceForcingMode(IntEnum):
+    """2D surface forcing mode. Mirrors ``SWMM_ForcingMode`` (OVERRIDE=1, ADD=2)."""
+
+    NONE = 0
+    OVERRIDE = 1
+    ADD = 2
+
+
+class SurfaceBoundaryType(IntEnum):
+    """2D mesh edge boundary-condition type. Mirrors ``openswmm::twoD::BoundaryType``."""
+
+    WALL = 0
+    NORMAL_FLOW = 1
+    SPECIFIED_STAGE = 2
+    SPECIFIED_FLOW = 3
+    RATING_CURVE = 4
+
+
+class RefType(IntEnum):
+    """Object kind holding a reference (editing API). Mirrors ``SWMM_RefType``."""
+
+    NODE = 0
+    LINK = 1
+    SUBCATCH = 2
+    GAGE = 3
+    TABLE = 4
+    TRANSECT = 5
+    INLET_USAGE = 6
+
+
+class TableType(IntEnum):
+    """Table type code from ``swmm_table_get_type``. Mirrors ``openswmm::TableType``."""
+
+    TIMESERIES = 0
+    CURVE_STORAGE = 1
+    CURVE_DIVERSION = 2
+    CURVE_RATING = 3
+    CURVE_SHAPE = 4
+    CURVE_CONTROL = 5
+    CURVE_TIDAL = 6
+    CURVE_PUMP1 = 7
+    CURVE_PUMP2 = 8
+    CURVE_PUMP3 = 9
+    CURVE_PUMP4 = 10
+    CURVE_PUMP5 = 11
+
+
+class FilePathRole(IntEnum):
+    """External-file slot selector for ``swmm_file_path_get/set``. Mirrors ``SWMM_FilePathRole``."""
+
+    RAINFALL = 1
+    RUNOFF = 2
+    RDII = 3
+    INFLOWS = 4
+    OUTFLOWS = 5
+    HOTSTART_USE = 6
+    CLIMATE_TEMP = 7
+    HOTSTART_SAVE = 8
+    RAINGAGE_DATA = 9
+    TIMESERIES_DATA = 10
+
+
+class UserFlagType(IntEnum):
+    """User-flag schema value type for ``swmm_userflag_define``. Mirrors ``openswmm::UserFlagType``."""
+
+    BOOLEAN = 0
+    INTEGER = 1
+    REAL = 2
+    STRING = 3

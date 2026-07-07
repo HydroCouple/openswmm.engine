@@ -46,13 +46,15 @@ double TimestepController::compute_next(
     dt = std::max(dt, min_step);
 
     // Step 2: Adjust so total duration is not exceeded
-    //         (matching legacy: routingStep = (RoutingDuration - NewRoutingTime) / 1000)
-    //         Use millisecond-based arithmetic to match legacy exactly.
-    const double total_sec = std::floor(
-        (opt.end_date - opt.start_date) * SEC_PER_DAY + 0.5);
-    const double sim_remaining = total_sec - ctx.current_time;
-    if (sim_remaining > 0.0 && dt > sim_remaining) {
-        dt = std::max(sim_remaining, 0.001);  // legacy floor: 1 msec
+    //         (matching legacy swmm5.c:975-979: nextRoutingTime > RoutingDuration
+    //          → routingStep = (RoutingDuration - NewRoutingTime)/1000, min 1 ms).
+    //         Uses the legacy-parity ms clock (ctx.elapsed_ms == NewRoutingTime)
+    //         and the legacy-exact TotalDuration (no +0.5 rounding; see
+    //         SimulationOptions::totalDurationMs()).
+    const double total_msec = opt.totalDurationMs();
+    if (ctx.elapsed_ms + 1000.0 * dt > total_msec) {
+        dt = (total_msec - ctx.elapsed_ms) / 1000.0;
+        dt = std::max(dt, 0.001);  // legacy floor: 1 msec
     }
 
     // Step 3: Align to control rule event boundary
@@ -61,15 +63,9 @@ double TimestepController::compute_next(
         dt = ctx.dt_controls_remaining;
     }
 
-    // Step 4: Align to output boundary if it falls within this step.
-    //         Shortens the step to land exactly on the report time, avoiding
-    //         interpolation of output values. Only applied when the remaining
-    //         time to the next output is at least min_step (prevents tiny steps).
-    if (ctx.dt_output_remaining > 0.0 &&
-        ctx.dt_output_remaining >= min_step &&
-        ctx.dt_output_remaining < dt) {
-        dt = ctx.dt_output_remaining;
-    }
+    // (Parity) No report-boundary alignment: legacy free-steps and
+    // interpolates results to the report instant (output.c:650/682);
+    // postOutputSnapshot performs the identical interpolation.
 
     // Final safety: never allow zero or negative
     if (dt <= 0.0) dt = min_step;
@@ -90,10 +86,11 @@ void TimestepController::advance(
     // to avoid floating-point divergence from simple division.
     ctx.current_date  = datetime::addSeconds(ctx.options.start_date, ctx.current_time);
 
-    if (ctx.dt_output_remaining > 0.0) {
-        ctx.dt_output_remaining -= dt_taken;
-        if (ctx.dt_output_remaining < 0.0) ctx.dt_output_remaining = 0.0;
-    }
+    // Legacy-parity ms clock (routing.c:308-309):
+    //   OldRoutingTime = NewRoutingTime;
+    //   NewRoutingTime = NewRoutingTime + 1000.0 * routingStep;
+    ctx.old_elapsed_ms = ctx.elapsed_ms;
+    ctx.elapsed_ms     = ctx.elapsed_ms + 1000.0 * dt_taken;
 
     if (ctx.dt_controls_remaining > 0.0) {
         ctx.dt_controls_remaining -= dt_taken;
@@ -106,7 +103,10 @@ void TimestepController::advance(
 // ============================================================================
 
 void TimestepController::reset_output_timer(SimulationContext& ctx) noexcept {
-    ctx.dt_output_remaining = ctx.options.report_step;
+    // Legacy swmm5.c:1044 — ReportTime = ReportTime + 1000 * ReportStep.
+    // The grid is anchored at SIM start and advances even for periods that
+    // fall before REPORT_START (which are simply not written).
+    ctx.next_report_ms = ctx.next_report_ms + 1000.0 * ctx.options.report_step;
 }
 
 // ============================================================================
@@ -114,7 +114,8 @@ void TimestepController::reset_output_timer(SimulationContext& ctx) noexcept {
 // ============================================================================
 
 bool TimestepController::output_due(const SimulationContext& ctx) noexcept {
-    return ctx.dt_output_remaining <= OUTPUT_EPSILON;
+    // Legacy swmm5.c:1019 — if (NewRoutingTime >= ReportTime) save.
+    return ctx.elapsed_ms >= ctx.next_report_ms;
 }
 
 // ============================================================================
@@ -126,13 +127,10 @@ bool TimestepController::simulation_complete(const SimulationContext& ctx) noexc
     //                                       + (EndTime-StartTime)*SECperDAY) * 1000
     // then: NewRoutingTime >= RoutingDuration (in milliseconds).
     //
-    // Use floor() to get an exact integer second count, then compare in
-    // milliseconds to avoid floating-point drift in OADate arithmetic.
-    double total_sec = std::floor(
-        (ctx.options.end_date - ctx.options.start_date) * SEC_PER_DAY + 0.5);
-    double current_msec = ctx.current_time * 1000.0;
-    double total_msec   = total_sec * 1000.0;
-    return current_msec >= total_msec;
+    // PARITY: use the legacy-exact TotalDuration stored at parse time
+    // (SimulationOptions::totalDurationMs()) — legacy FLOORS the separate
+    // date+time second counts (no +0.5 rounding).
+    return ctx.elapsed_ms >= ctx.options.totalDurationMs();
 }
 
 } /* namespace openswmm::hydraulics */

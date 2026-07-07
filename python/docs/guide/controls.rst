@@ -73,6 +73,19 @@ Direct runtime actions
      - Set the link's control setting. ``link`` accepts ``int | str``.
    * - ``set_link_status(link, *, closed)``
      - Open / close the link.
+   * - ``validate_message(rule_text)``
+     - Check a rule **without** adding it. Returns ``(ok, message)`` —
+       ``ok`` is ``True`` and ``message`` empty when the rule parses,
+       otherwise ``False`` with the engine's error description.
+
+Validate a rule before appending it:
+
+.. code-block:: python
+
+    ok, msg = s.controls.validate_message(rule_text)
+    if not ok:
+        raise ValueError(f"bad rule: {msg}")
+    s.controls.append(rule_text)
 
 ----
 

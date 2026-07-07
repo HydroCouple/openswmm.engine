@@ -20,6 +20,9 @@
 #include "../data/LinkData.hpp"
 #include "XSectBatch.hpp"
 #include "Node.hpp"
+#include "Transect.hpp"
+
+#include <vector>
 
 namespace openswmm {
 
@@ -111,44 +114,25 @@ double getHydPower(double flow, double head_upstream, double head_downstream);
 /**
  * @brief Build XSectParams from LinkData SoA arrays.
  *
- * @param links  Link SoA data.
- * @param uj     Link index (size_t).
+ * @param links      Link SoA data.
+ * @param uj         Link index (size_t).
+ * @param transects  Optional transect-table pool (ctx.transect_tables). When
+ *                   supplied, IRREGULAR/CUSTOM/STREET_XSECT links get their
+ *                   A/R/W table pointers attached so the per-element accessors
+ *                   can evaluate tabulated geometry. Pass nullptr when the link
+ *                   is known to be a self-contained shape.
  * @returns Populated XSectParams struct.
  */
-XSectParams buildXSectParams(const LinkData& links, std::size_t uj);
+XSectParams buildXSectParams(
+    const LinkData& links, std::size_t uj,
+    const std::vector<transect::TransectData>* transects = nullptr);
 
 // ============================================================================
 // Batch functions (for routing hot loop)
 // ============================================================================
 
-/**
- * @brief Compute velocity for all links in batch.
- *
- * @param links     SoA link data.
- * @param xs_groups Shape-grouped xsect manager (for area computation).
- * @param velocity  [out] Velocity array (indexed by link).
- */
-void computeVelocities(const LinkData& links, double* velocity);
-
-/**
- * @brief Compute Froude numbers for all conduit links.
- *
- * @param links   SoA link data.
- * @param velocity [in] Velocity array.
- * @param froude  [out] Froude number array (indexed by link).
- */
-void computeFroude(const LinkData& links, const double* velocity, double* froude);
-
-/**
- * @brief Compute Manning conveyance for all conduit links.
- *
- * @details Sets links.beta, links.rough_factor, links.q_full for each
- *          conduit link. Must be called once after slope/roughness/xsect
- *          are set (at init time, not each timestep).
- *
- * @param links  SoA link data (modified in place).
- */
-void computeAllConveyance(LinkData& links);
+// Phase 6: computeVelocities/computeFroude/computeAllConveyance removed (dead
+// code; referenced conduit fields now in ConduitData — see LinkSubtypes.hpp).
 
 /**
  * @brief Translate LinkData::XsectShape to batch XSectShape int code.

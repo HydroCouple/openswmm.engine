@@ -201,6 +201,12 @@ public:
     int execute(SimulationContext& ctx, double dt,
                 NonConduitFlowFunc non_conduit_fn = nullptr);
 
+    /// Whether the most recent execute() reached Picard convergence on its final
+    /// iteration (legacy dynwave.c: a step is "not converging" iff this is false
+    /// after MaxTrials — NOT merely because it used all trials). Used for the
+    /// "% of Steps Not Converging" stability statistic.
+    bool lastConverged() const { return last_converged_; }
+
     /**
      * @brief Compute CFL-based variable timestep.
      * @details Also updates per-node/link CFL-critical counters (matching
@@ -226,6 +232,17 @@ private:
     int n_conduits_ = 0;
     int num_threads_ = 1;  ///< OpenMP thread count for parallel loops
     const XSectGroups* groups_ = nullptr;
+
+    /// True if any conduit has a nonzero seepage rate (set once in init()).
+    /// With zero evaporation this gates the bit-exact dead-work skip of
+    /// recomputeConduitLosses (see losses_all_zero_).
+    bool any_conduit_seep_ = false;
+
+    /// One-way latch: true while every stored conduit evap/seep loss rate is
+    /// provably zero (initial state, and no pass has ever run with a nonzero
+    /// loss possible). While true, recomputeConduitLosses is a structural
+    /// no-op and is skipped.
+    bool losses_all_zero_ = true;
 
     // Pre-built conduit index list for skipping non-conduits in inner loops
     std::vector<int> conduit_idx_;
@@ -267,10 +284,10 @@ private:
     std::vector<double> tile_w_max_;         ///< links.xsect_w_max
     std::vector<double> tile_length_;        ///< cached_length_ = max(mod_length, length); used for arithmetic stability
     std::vector<double> tile_inv_length_;    ///< inv_length_
-    std::vector<double> tile_links_length_;  ///< raw links.length[uj] — used for volume calculations only
-    std::vector<double> tile_beta_;          ///< links.beta
-    std::vector<double> tile_q_max_;         ///< links.q_max
-    std::vector<double> tile_rough_factor_;  ///< links.rough_factor
+    std::vector<double> tile_links_length_;  ///< raw ConduitData.length — used for volume calculations only
+    std::vector<double> tile_beta_;          ///< ConduitData.beta
+    std::vector<double> tile_q_max_;         ///< ConduitData.q_max
+    std::vector<double> tile_rough_factor_;  ///< ConduitData.rough_factor
     std::vector<double> tile_barrels_d_;     ///< barrels_d_
     std::vector<uint8_t> tile_is_open_;      ///< is_open_
     std::vector<uint8_t> tile_is_force_main_;///< is_force_main_
@@ -297,6 +314,8 @@ private:
     std::vector<double>  tile_q_limit_;
     std::vector<double>  tile_loss_inlet_;
     std::vector<double>  tile_loss_outlet_;
+    std::vector<double>  tile_loss_avg_;     ///< ConduitData.loss_avg
+    std::vector<double>  tile_roughness_;    ///< ConduitData.roughness (force-main detection)
     std::vector<uint8_t> tile_has_flap_gate_;
     std::vector<int8_t>  tile_direction_;
 
@@ -307,6 +326,8 @@ private:
 
     // Per-timestep constants
     double dt_gravity_ = 0.0;            ///< dt * GRAVITY (set once per timestep)
+
+    bool         last_converged_   = false; ///< final Picard converged flag of last execute()
 
     /// Effective minimum nodal surface area (ft²) used as a floor for the
     /// dy = dV/surf_area Picard update.  Legacy `MinSurfArea` is the user
@@ -352,6 +373,53 @@ private:
     // uint8_t instead of bool: avoids std::vector<bool> bit-packing overhead
     std::vector<uint8_t> bypassed_;
 
+    // ------------------------------------------------------------------------
+    // B2 threading — CSR node→incident-conduit adjacency for the parallel
+    // node-centric flow gather (see gatherConduitNodeFlows). Built once in
+    // init() from static topology.
+    //
+    // PROOF OF BIT-EXACTNESS vs the serial per-link scatter: legacy
+    // findLinkFlows (dynwave.c:385-388) scatters conduits one link at a time
+    // in ascending link index; each link updates node1's accumulators, then
+    // node2's. For a given NODE, the projection of that global order is
+    // simply its incident conduit links in ascending link index (node1-end
+    // entry before node2-end entry when both ends touch the same node). CSR
+    // entries are stored per node in exactly that order, so the per-node
+    // gather performs the identical FP accumulation sequence on each
+    // accumulator (inflow, outflow, sumdqdh, new_surf_area) — bit-exact at
+    // any thread count, since each node is owned by exactly one thread.
+    // ------------------------------------------------------------------------
+    std::vector<int>     csr_row_;           ///< size n_nodes_+1 (prefix offsets)
+    std::vector<int32_t> csr_link_;          ///< incident conduit link index j
+    std::vector<uint8_t> csr_is_n2_;         ///< 0 = node1 end, 1 = node2 end
+    std::vector<uint8_t> csr_other_outfall_; ///< other-end node is an OUTFALL
+
+    // Node-dense tile of the per-node invariants setNodeDepth touches every
+    // Picard iteration. setNodeDepth reads ~20 SoA arrays per node; the seven
+    // step-invariant ones below otherwise cost seven separate cache streams
+    // (legacy's AoS TNode record pays 1-2 lines per node for the same reads).
+    // Rebuilt once per routing step in execute() — amortised over the Picard
+    // iterations and automatically correct even if the editing API mutates
+    // node geometry mid-run. y_crown pre-evaluates crownElev − invertElev
+    // with the identical operands the per-call subtraction used, so the
+    // value is bit-identical (legacy setNodeDepth recomputes it per call).
+    struct NodeTile {
+        double  full_depth;
+        double  y_crown;       ///< crown_elev − invert_elev
+        double  invert_elev;
+        double  ponded_area;
+        double  sur_depth;
+        double  full_volume;
+        int32_t degree;
+        uint8_t is_storage;
+        uint8_t is_outfall;
+    };
+    std::vector<NodeTile> node_tile_;
+    // Unit system for node volume/surf-area table dispatch, hoisted from the
+    // per-call ucf::getUnitSystem(options.flow_units) (options are fixed
+    // during a run).
+    int unit_sys_ = 0;
+
     // Per-link surface area contributions to upstream/downstream nodes
     // (matching legacy Link[].surfArea1/surfArea2 from dwflow.c findSurfArea)
     std::vector<double> surf_area1_;   ///< Surface area at upstream node (ft²)
@@ -374,6 +442,7 @@ private:
     std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
     std::vector<uint8_t> aa_skip_;      ///< Per-node flag: skip AA this iteration
 
+
     // Per-conduit momentum category (rebuilt each Picard iteration).
     // solveMomentumBatch dispatches on category_[uj] inline — no auxiliary
     // per-category index list is needed.
@@ -383,8 +452,23 @@ private:
     void initNodeStates(SimulationContext& ctx);
     void findBypassedLinks(const SimulationContext& ctx);
     void computeLinkGeometry(SimulationContext& ctx);
-    void solveMomentumBatch(SimulationContext& ctx, double dt, int step);
-    void classifyMomentumCategories(SimulationContext& ctx);
+    /// Recompute ONE conduit's evap/seepage loss rates for the current Picard
+    /// iterate, matching legacy dwflow_findConduitFlow which calls
+    /// link_getLossRate every iteration for non-dry conduits (and skips
+    /// DRY/UP_DRY/DN_DRY via its early return, leaving the prior loss rate
+    /// untouched). Uses the current-iteration depth and the faithful transect
+    /// top width. Called per-element from the fused momentumKernels loop
+    /// (own-element reads/writes only — parallel-safe). The zero-loss latch
+    /// (losses_all_zero_) is updated once per timestep in execute().
+    void recomputeConduitLossOne(SimulationContext& ctx, double dt, int ci);
+    /// Fused per-conduit Picard tail as ONE orphaned `omp for` on the
+    /// persistent team: new_flow_ pre-init, per-iterate loss recompute,
+    /// static-slot/EXTRAN STEP E geometry overrides, momentum category
+    /// classification, momentum kernel dispatch, and links.flow commit.
+    /// Every sub-step reads/writes ONLY its own conduit's elements, so the
+    /// fusion preserves the exact per-element operation order of the former
+    /// separate passes — bit-exact at any thread count.
+    void momentumKernels(SimulationContext& ctx, double dt, int step);
 
     /// Per-element momentum kernels. Called inside the single OpenMP
     /// parallel-for over all conduits in solveMomentumBatch, matching
@@ -398,9 +482,28 @@ private:
     void applyFlowLimits(SimulationContext& ctx, double dt, int step,
                          std::size_t uj, double& q, double qLast,
                          double barrels_d, bool isFull);
-    void updateNodeFlows(SimulationContext& ctx, bool conduits_only = false);
+    /// Serial all-links scatter (legacy updateNodeFlows over every link).
+    /// Used ONLY on the no-callback path (tests / standalone execute without
+    /// non_conduit_fn); the production path uses the parallel CSR gather
+    /// below for conduits + the callback's own per-structure scatter.
+    void updateNodeFlows(SimulationContext& ctx);
+    /// Build the node→incident-conduit CSR adjacency (once, from init()).
+    void buildConduitNodeCSR(const SimulationContext& ctx);
+    /// Parallel node-centric replacement for the serial conduit scatter:
+    /// team `omp for` over nodes; each node accumulates its incident conduit
+    /// contributions (inflow/outflow, sumdqdh, evap/seep node outflow, surf
+    /// area) in ascending link-index order — see the CSR proof note above.
+    /// links.flow commit is fused into momentumKernels.
+    void gatherConduitNodeFlows(SimulationContext& ctx);
     void computeAASkipFlags(const SimulationContext& ctx);
-    bool updateNodeDepths(SimulationContext& ctx, double dt, int step);
+    /// Team-callable node-depth update (former updateNodeDepths): orphaned
+    /// `omp for nowait` over nodes + per-thread unconverged tallies combined
+    /// into `unconv_shared` via `omp atomic` (integer count — order-free,
+    /// bit-exact), then an orphaned barrier. After return every thread reads
+    /// the same `unconv_shared`; convergence = (unconv_shared == 0). The
+    /// caller must zero `unconv_shared` behind a barrier beforehand.
+    void updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
+                              int& unconv_shared);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
@@ -410,6 +513,13 @@ public:
 
     /// Mutable pointer to the per-node new_surf_area array (for HydStructures scatter).
     double* nodeNewSurfAreaDataMut() { return xnode_.new_surf_area.data(); }
+
+    /// Per-link bypass flag (1 = both end nodes converged → flow held this
+    /// iteration). Read by the non_conduit_fn callback to hold bypassed
+    /// weir/orifice/pump/outlet flows, matching legacy findLinkFlows.
+    bool isBypassed(int j) const {
+        return bypassed_[static_cast<std::size_t>(j)] != 0;
+    }
 
     /// Mutable reference to the per-node sumdqdh accumulator at index n.
     double& nodeSumDqdh(int n) { return xnode_.sumdqdh[static_cast<std::size_t>(n)]; }

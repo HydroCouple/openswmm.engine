@@ -114,6 +114,7 @@ class Controls(MutableSequence):
             self.append(r)
 
     def insert(self, idx, value):
+        """Insert *value* at *idx* (emulated via clear + re-add; the C rule API is append-only)."""
         n = len(self)
         if idx < 0:
             idx += n
@@ -125,12 +126,14 @@ class Controls(MutableSequence):
             self.append(r)
 
     def append(self, value) -> None:
+        """Append a control rule parsed from *value* (an INP ``RULE`` block or rule mapping)."""
         text = self._unpack(value)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = text.encode('utf-8')
         _check(swmm_control_add_rule(h, b))
 
     def clear(self) -> None:
+        """Remove all control rules from the model."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_control_clear_rules(h))
 
@@ -159,6 +162,25 @@ class Controls(MutableSequence):
         cdef int idx = _resolve_link(self._solver, link)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_control_set_link_status(h, idx, 1 if closed else 0))
+
+    # ---- Rule validation ------------------------------------------
+
+    def validate_message(self, str rule_text):
+        """Validate a control rule without adding it, returning diagnostics.
+
+        @param rule_text: A full C{[CONTROLS]} rule to check.
+        @return: C{(ok, message)} where C{ok} is C{True} when the rule parses
+            and C{message} is empty, or C{False} with the engine's
+            human-readable error description.
+        @rtype: tuple[bool, str]
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = rule_text.encode('utf-8')
+        cdef char err_buf[1024]
+        err_buf[0] = 0
+        cdef int line_out = 0
+        cdef int rc = swmm_control_validate_rule(h, b, err_buf, 1024, &line_out)
+        return (rc == 0, err_buf.decode('utf-8'))
 
     def __repr__(self) -> str:
         try:

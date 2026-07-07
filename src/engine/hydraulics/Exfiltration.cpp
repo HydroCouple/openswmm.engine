@@ -39,7 +39,12 @@ void ExfilSolver::init(SimulationContext& ctx) {
     int n_exfil = 0;
     for (int i = 0; i < n_nodes; ++i) {
         auto ui = static_cast<size_t>(i);
-        if (nodes.type[ui] == NodeType::STORAGE && nodes.exfil_ksat[ui] > 0.0) {
+        // Relational refactor (Phase 3): exfil conductivity from the side-table
+        // (ExfilSolver::init runs after node_subtypes.build), wide fallback otherwise.
+        const int sr = ctx.node_subtypes.storage_row(i);
+        const double ksat = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_ksat[static_cast<size_t>(sr)] : 0.0;
+        if (nodes.type[ui] == NodeType::STORAGE && ksat > 0.0) {
             ++n_exfil;
         }
     }
@@ -56,7 +61,16 @@ void ExfilSolver::init(SimulationContext& ctx) {
     int k = 0;
     for (int i = 0; i < n_nodes; ++i) {
         auto ui = static_cast<size_t>(i);
-        if (nodes.type[ui] != NodeType::STORAGE || nodes.exfil_ksat[ui] <= 0.0) {
+        // Relational refactor (Phase 3): exfil Green-Ampt params from the
+        // side-table (fresh at init), with a wide-array fallback.
+        const int sr = ctx.node_subtypes.storage_row(i);
+        const double exf_suction = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_suction[static_cast<size_t>(sr)] : 0.0;
+        const double exf_ksat = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_ksat[static_cast<size_t>(sr)] : 0.0;
+        const double exf_imd = (sr >= 0)
+            ? ctx.node_subtypes.storages.exfil_imd[static_cast<size_t>(sr)] : 0.0;
+        if (nodes.type[ui] != NodeType::STORAGE || exf_ksat <= 0.0) {
             continue;
         }
 
@@ -66,18 +80,20 @@ void ExfilSolver::init(SimulationContext& ctx) {
         // --- Initialize Green-Ampt states for bottom and bank
         //     Uses the same soil parameters for both (matching legacy createStorageExfil)
         infil::grnampt_init(soa_.btm_ga[uk],
-                            nodes.exfil_suction[ui],
-                            nodes.exfil_ksat[ui],
-                            nodes.exfil_imd[ui],
+                            exf_suction,
+                            exf_ksat,
+                            exf_imd,
                             ctx.options);
         infil::grnampt_init(soa_.bank_ga[uk],
-                            nodes.exfil_suction[ui],
-                            nodes.exfil_ksat[ui],
-                            nodes.exfil_imd[ui],
+                            exf_suction,
+                            exf_ksat,
+                            exf_imd,
                             ctx.options);
 
         // --- Compute bottom area and bank geometry from storage shape
-        int curve_idx = nodes.storage_curve[ui];
+        //     Storage geometry from the side-table (sr from above), wide fallback.
+        int curve_idx = (sr >= 0)
+            ? ctx.node_subtypes.storages.curve[static_cast<size_t>(sr)] : -1;
 
         if (curve_idx >= 0) {
             // --- TABULAR: storage shape given by a storage curve
@@ -112,19 +128,22 @@ void ExfilSolver::init(SimulationContext& ctx) {
                 }
             }
 
-            // Note: legacy converts from user units to internal units here.
-            // In the new engine, values are assumed to already be in internal
-            // units (ft) after parsing. If unit conversion is needed during
-            // parsing, it should be done there, not here.
+            // Note: legacy converts TABULAR areas/depths to internal units
+            // here (exfil.c:126-129, inside the TABULAR case only).
 
         } else {
             // --- FUNCTIONAL: area = A * depth^B + C
-            //     Legacy: exfil_initState() FUNCTIONAL case
+            //     Legacy: exfil_initState() FUNCTIONAL case (exfil.c:134-141)
             //     Bottom area: at depth=0, area = A*0^B + C = C
             //     Exception: if B==0 (exponent is zero), area = A*1 + C = A+C
-            double a_coeff = nodes.storage_a[ui];
-            double b_coeff = nodes.storage_b[ui];
-            double c_coeff = nodes.storage_c[ui];
+            //     PARITY QUIRK: legacy does NOT unit-convert the FUNCTIONAL
+            //     bottom area (its /UCF at exfil.c:126-129 is inside the
+            //     TABULAR case only), so the raw USER-unit coefficients are
+            //     used directly — storage coefficients stay user-unit
+            //     end-to-end (see PostParseResolver), matching this quirk.
+            double a_coeff = (sr >= 0) ? ctx.node_subtypes.storages.a[static_cast<size_t>(sr)] : 0.0;
+            double b_coeff = (sr >= 0) ? ctx.node_subtypes.storages.b[static_cast<size_t>(sr)] : 0.0;
+            double c_coeff = (sr >= 0) ? ctx.node_subtypes.storages.c[static_cast<size_t>(sr)] : 0.0;
 
             double btm = c_coeff;
             if (b_coeff == 0.0) {
@@ -176,7 +195,8 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
             // area = MIN(area, exfil->bankMaxArea))
             double area = openswmm::node::getSurfArea(ctx.nodes, soa_.node_idx[uk], depth,
                                             &ctx.tables,
-                                            openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)));
+                                            openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
+                                            &ctx.node_subtypes);
             double bank_area = std::min(area, soa_.bank_max_area[uk]);
             double bank_rate = infil::grnampt_getInfil(soa_.bank_ga[uk], 0.0, bank_depth, dt);
             total_loss += bank_rate * bank_area;
@@ -186,11 +206,13 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         double max_loss = nodes.volume[uni] / dt;
         total_loss = std::min(total_loss, max_loss);
 
-        // Write pre-computed exfil volume (ft3) for Router::initNodeFlows.
-        // Volume is reduced through the routing continuity equation (nodes.losses)
-        // rather than here, so that evap + exfil are jointly capped to available
-        // storage before advancing the timestep.
-        nodes.storage_exfil_loss[uni] = total_loss * dt;
+        // Write pre-computed exfil volume (ft3) into the side-table for
+        // Router::initNodeFlows. Volume is reduced through the routing continuity
+        // equation (nodes.losses) rather than here, so that evap + exfil are
+        // jointly capped to available storage before advancing the timestep.
+        const int sr = ctx.node_subtypes.storage_row(static_cast<int>(uni));
+        if (sr >= 0)
+            ctx.node_subtypes.storages.exfil_loss[static_cast<std::size_t>(sr)] = total_loss * dt;
     }
 }
 

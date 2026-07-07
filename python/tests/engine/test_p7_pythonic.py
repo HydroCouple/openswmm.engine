@@ -20,6 +20,7 @@ from openswmm.engine import (
     ForcingMode,
     ForcingTarget,
     PatternType,
+    TableType,
 )
 from openswmm.engine._controls import Controls, ControlRule
 from openswmm.engine._forcing import Forcing
@@ -90,6 +91,16 @@ class TestTables:
         assert c.points.dtype == np.float64
         if len(c) > 0:
             assert c.points.shape[1] == 2
+
+    def test_get_type(self, opened_solver):
+        coll = opened_solver.tables
+        if len(coll) == 0:
+            pytest.skip("no tables")
+        # Every table resolves to a TableType; index and id agree.
+        for idx in range(len(coll)):
+            t = coll.get_type(idx)
+            assert isinstance(t, TableType)
+            assert coll.get_type(coll.get_id(idx)) == t
 
 
 class TestPatterns:

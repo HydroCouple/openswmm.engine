@@ -100,17 +100,22 @@ public:
     /// Access the DW solver (for non-conduit node state scatter).
     dynwave::DWSolver& dwSolver() { return dw_solver_; }
 
+    /// Whether the most recent step() converged. DYNWAVE returns the solver's
+    /// real final Picard flag; other models always converge (legacy only tracks
+    /// dynwave non-convergence). Feeds the "% of Steps Not Converging" stat.
+    bool lastStepConverged() const {
+        return (model_ == RouteModel::DYNWAVE) ? dw_solver_.lastConverged() : true;
+    }
+
 private:
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
     kinwave::KWSolver kw_solver_;
     dynwave::DWSolver dw_solver_;
-    divider::DividerSoA dividers_;
+    // Divider data moved to ctx.node_subtypes.dividers (relational side-table).
     std::vector<int> steady_sorted_links_;  ///< Topological link order for STEADY routing
     bool cycle_detected_ = false;           ///< Gap #44: set true when toposort detects a loop
 
-    /// Save old hydraulic states before routing.
-    void saveOldStates(SimulationContext& ctx);
 
     /// Initialise node inflows from lateral flows and losses (including storage evap).
     void initNodeFlows(SimulationContext& ctx, double dt, double evap_rate);

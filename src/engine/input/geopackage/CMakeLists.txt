@@ -21,11 +21,13 @@ endif()
 file(GLOB GEOPACKAGE_SOURCES
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     *.cpp
+    formats/*.cpp     # Slice IO-6 — external-file format parsers/materialisers
 )
 
 file(GLOB GEOPACKAGE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     *.hpp
+    formats/*.hpp
 )
 
 add_library(openswmm_geopackage STATIC ${GEOPACKAGE_SOURCES})

@@ -132,7 +132,8 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         // CoFrac
         if (tok.size() > 8)  ctx.pollutants.co_frac[idx]   = to_double(tok[8]);
 
-        // Cdwf (skip tok[9] — not stored in PollutantData)
+        // Cdwf — default dry weather sanitary flow concentration
+        if (tok.size() > 9)  ctx.pollutants.c_dwf[idx]     = to_double(tok[9]);
 
         // Cinit
         if (tok.size() > 10) ctx.pollutants.init_conc[idx]  = to_double(tok[10]);

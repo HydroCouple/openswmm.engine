@@ -45,6 +45,7 @@ __all__ = [
     "NumericalError",
     "CRSError",
     "DependencyError",
+    "ElementNotFoundError",
     "StaleObjectError",
     "raise_for_code",
 ]
@@ -137,6 +138,30 @@ class CRSError(EngineError, ValueError):
 class DependencyError(EngineError, RuntimeError):
     """Object has dependents that block the requested operation
     (``SWMM_ERR_DEPENDENCY``)."""
+
+
+class ElementNotFoundError(BadIndexError, KeyError):
+    """A string element ID was not found in a collection.
+
+    Raised by the identity-lookup paths of the domain collections
+    (``solver.nodes.get_index``, ``links["X"]``, transects/streets/LID
+    controls, …).  It inherits from :class:`KeyError` so idiomatic
+    ``except KeyError:`` handlers keep working unchanged, and from
+    :class:`BadIndexError` (hence :class:`EngineError`) so callers that
+    want to catch engine faults specifically can do so without importing
+    ``KeyError``-vs-``IndexError`` lore.
+
+    Construction takes the offending id directly; it does not go through
+    :func:`raise_for_code` (the miss is detected Python-side from a
+    negative C index, not a non-zero return code).
+    """
+
+    def __init__(self, element_id, message: str = "") -> None:
+        self.element_id = element_id
+        super().__init__(
+            ErrorCode.BADINDEX.value,
+            message or f"Element not found: {element_id!r}",
+        )
 
 
 class StaleObjectError(LifecycleError):

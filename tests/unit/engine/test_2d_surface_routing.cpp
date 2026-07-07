@@ -801,7 +801,7 @@ TEST(EdgeFlux, ClosedSystemVolumeBudget) {
     computeEdgeFluxes(mesh, state, opts);
 
     std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, ydot.data());
+    assembleRHS(mesh, state, opts, ydot.data());
 
     double net_dvol_dt = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
@@ -828,12 +828,15 @@ TEST(RHSAssembly, RainfallOnlyProducesPositiveRate) {
     std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
     std::fill(state.rainfall.begin(), state.rainfall.end(), 0.001);
 
+    SolverOptions2D opts;
     std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, ydot.data());
+    assembleRHS(mesh, state, opts, ydot.data());
 
+    // Volume formulation: dV/dt = Σ F + A·sources. With zero flux the rate is
+    // the rainfall volume rate = rainfall · cell area.
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        EXPECT_NEAR(ydot[i], 0.001, 1e-12)
-            << "Triangle " << i << " dψ/dt != rainfall rate";
+        EXPECT_NEAR(ydot[i], 0.001 * mesh.tri_area[i], 1e-12)
+            << "Triangle " << i << " dV/dt != rainfall volume rate";
     }
 }
 
@@ -848,11 +851,114 @@ TEST(RHSAssembly, CouplingFluxAppearsInRHS) {
     state.coupling_flux[0] = -0.005;  // Drainage sink
     state.coupling_flux[1] =  0.003;  // Surcharge source
 
+    SolverOptions2D opts;
     std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, ydot.data());
+    assembleRHS(mesh, state, opts, ydot.data());
 
-    EXPECT_NEAR(ydot[0], -0.005, 1e-12);
-    EXPECT_NEAR(ydot[1],  0.003, 1e-12);
+    // Volume formulation: the coupling flux (m/s) enters as a volume rate A·q.
+    EXPECT_NEAR(ydot[0], -0.005 * mesh.tri_area[0], 1e-12);
+    EXPECT_NEAR(ydot[1],  0.003 * mesh.tri_area[1], 1e-12);
+}
+
+
+// ============================================================================
+// Per-cell continuity residual (local mass balance diagnostic)
+// ============================================================================
+
+TEST(CellContinuity, ResidualZeroForConsistentStep) {
+    auto mesh = makeUnitSquareMesh();
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+
+    // Arbitrary inflow-positive edge fluxes (m³/s) and sources (m/s).
+    state.edge_flux = {0.01, -0.02, 0.005,  -0.01, 0.02, -0.005};
+    state.rainfall[0] = 0.001; state.rainfall[1] = 0.0;
+    state.coupling_flux[0] = -0.003; state.coupling_flux[1] = 0.002;
+
+    // A forward-Euler-consistent depth update must give zero residual.
+    SolverOptions2D opts;
+    std::vector<double> ydot(mesh.n_triangles());
+    assembleRHS(mesh, state, opts, ydot.data());
+
+    const double dt = 7.0;
+    state.save_state();  // old_volume = volume (0)
+    // Forward-Euler-consistent VOLUME update: V = V_old + dV/dt · dt.
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        state.volume[i] = state.old_volume[i] + ydot[i] * dt;
+
+    computeCellContinuity(mesh, state, opts, dt);
+
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        EXPECT_NEAR(state.cell_continuity_err[i], 0.0, 1e-12)
+            << "Triangle " << i;
+}
+
+TEST(CellContinuity, DetectsImbalance) {
+    auto mesh = makeUnitSquareMesh();
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+
+    // No fluxes/sources but storage grows → residual = dV/dt (nonzero).
+    SolverOptions2D opts;
+    state.save_state();                          // old_volume = 0
+    state.volume[0] = 0.10 * mesh.tri_area[0];   // volume grew with no inflow
+    computeCellContinuity(mesh, state, opts, 5.0);
+
+    double expected = 0.10 * mesh.tri_area[0] / 5.0;
+    EXPECT_NEAR(state.cell_continuity_err[0], expected, 1e-12);
+}
+
+
+// ============================================================================
+// RT0 cell-centred velocity reconstruction
+// ============================================================================
+
+TEST(FaceVelocity, ReconstructsUniformField) {
+    auto mesh = makeUnitSquareMesh();
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    SolverOptions2D opts;
+
+    // Edge fluxes consistent with a uniform specific-discharge q = (qx, qy):
+    //   edge_flux_e = (q · n_e) · L_e.
+    const double qx = 0.3, qy = -0.2, depth = 0.5;
+    std::fill(state.depth.begin(), state.depth.end(), depth);
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        for (int e = 0; e < 3; ++e) {
+            int idx = i * 3 + e;
+            state.edge_flux[idx] =
+                (qx * mesh.edge_nx[idx] + qy * mesh.edge_ny[idx])
+                * mesh.edge_length[idx];
+        }
+
+    computeFaceVelocity(mesh, state, opts);
+
+    // Velocity = specific discharge / depth, recovered exactly.
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        EXPECT_NEAR(state.face_vx[i], qx / depth, 1e-9) << "Triangle " << i;
+        EXPECT_NEAR(state.face_vy[i], qy / depth, 1e-9) << "Triangle " << i;
+    }
+}
+
+TEST(FaceVelocity, DryCellIsZero) {
+    auto mesh = makeUnitSquareMesh();
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    SolverOptions2D opts;
+
+    std::fill(state.depth.begin(), state.depth.end(), 0.0);  // dry
+    std::fill(state.edge_flux.begin(), state.edge_flux.end(), 0.123);
+
+    computeFaceVelocity(mesh, state, opts);
+
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        EXPECT_EQ(state.face_vx[i], 0.0);
+        EXPECT_EQ(state.face_vy[i], 0.0);
+    }
 }
 
 
@@ -886,6 +992,23 @@ TEST(InputParsing, Parse2DOptionsLine) {
     err = parse2DOptionsLine({"COUPLING_INTERVAL", "3"}, opts);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(opts.coupling_interval, 3);
+
+    // Time-based macro-step window: −1 AUTO (default), 0 every step, > 0 s.
+    EXPECT_NEAR(opts.coupling_window, -1.0, 1e-12);  // default is AUTO
+    err = parse2DOptionsLine({"COUPLING_WINDOW", "7.5"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(opts.coupling_window, 7.5, 1e-12);
+    EXPECT_EQ(format2DOptionValue(opts, "COUPLING_WINDOW"), "7.5");
+    EXPECT_TRUE(is2DOptionKey("COUPLING_WINDOW"));
+    err = parse2DOptionsLine({"COUPLING_WINDOW", "bogus"}, opts);
+    EXPECT_FALSE(err.empty());
+
+    // RAINFALL_MODE NONE: no rain on the mesh (subcatchments already capture
+    // the storm; rain-on-mesh would double-count it).
+    err = parse2DOptionsLine({"RAINFALL_MODE", "NONE"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_EQ(opts.rainfall_mode, RainfallMode::NONE);
+    EXPECT_EQ(format2DOptionValue(opts, "RAINFALL_MODE"), "NONE");
 }
 
 TEST(InputParsing, Parse2DOptionsRejectsUnknown) {
@@ -1041,6 +1164,34 @@ TEST(SurfaceState, UpdateStatisticsTracksMax) {
     EXPECT_NEAR(state.stat_max_depth[1], 0.8, 1e-12);  // Updated to 0.8
 }
 
+TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
+    SurfaceStateData state;
+    state.resize(2, 1);
+    std::vector<double> areas = {10.0, 20.0};
+
+    // Step 1: cell 0 moves fast (3-4-5 triangle → |v| = 5), cell 1 slow.
+    state.face_vx[0] = 3.0; state.face_vy[0] = 4.0;   // |v| = 5
+    state.face_vx[1] = 0.6; state.face_vy[1] = 0.8;   // |v| = 1
+    state.cell_continuity_err[0] = -2.0;              // |err| = 2
+    state.cell_continuity_err[1] =  0.5;
+    state.update_statistics(areas, 1.0);
+    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);
+    EXPECT_NEAR(state.stat_max_velocity[1], 1.0, 1e-12);
+    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12);
+    EXPECT_NEAR(state.stat_max_cont_err[1], 0.5, 1e-12);
+
+    // Step 2: cell 0 slows, cell 1 speeds up; envelopes are monotone.
+    state.face_vx[0] = 1.0; state.face_vy[0] = 0.0;   // |v| = 1 (< 5)
+    state.face_vx[1] = 0.0; state.face_vy[1] = 2.0;   // |v| = 2 (> 1)
+    state.cell_continuity_err[0] =  0.1;              // |err| = 0.1 (< 2)
+    state.cell_continuity_err[1] = -3.0;              // |err| = 3 (> 0.5)
+    state.update_statistics(areas, 1.0);
+    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);  // retained
+    EXPECT_NEAR(state.stat_max_velocity[1], 2.0, 1e-12);  // raised
+    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12);  // retained
+    EXPECT_NEAR(state.stat_max_cont_err[1], 3.0, 1e-12);  // raised
+}
+
 TEST(SurfaceState, ClearResetForcings) {
     SurfaceStateData state;
     state.resize(2, 1);
@@ -1081,7 +1232,9 @@ TEST(SolverOptions, DefaultValues) {
     EXPECT_EQ(opts.coupling_interval, 0);
     EXPECT_TRUE(opts.report_2d);
     EXPECT_EQ(opts.linear_solver, LinearSolverType::GMRES);
-    EXPECT_EQ(opts.preconditioner, PreconditionerType::NONE);
+    // Default is AMG (best available); a build without hypre resolves it to
+    // JACOBI at solver initialize, so the struct default itself is AMG.
+    EXPECT_EQ(opts.preconditioner, PreconditionerType::AMG);
 }
 
 
@@ -1236,6 +1389,145 @@ TEST(DiamondMesh, VertexReconstructionConstantExact) {
 // a hand-built MeshData + a hand-built SimulationSnapshot with the new
 // surface_* fields populated.
 
+// ============================================================================
+// §11A — Edge conveyance factor: data model, parser, flux apply
+// ============================================================================
+
+TEST(EdgeConveyance, DefaultsToOneForEveryEdgeAfterResize) {
+    MeshData mesh = makeUnitSquareMesh();   // 2 triangles → 6 edge slots
+    ASSERT_EQ(mesh.edge_conveyance.size(), 6u);
+    for (double c : mesh.edge_conveyance) EXPECT_DOUBLE_EQ(c, 1.0);
+}
+
+TEST(EdgeConveyance, ParserAcceptsValidRowAndStashesIt) {
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
+    std::string err = parse2DEdgeConveyanceLine({"17", "18", "0.4"}, pending);
+    EXPECT_TRUE(err.empty()) << err;
+    ASSERT_EQ(pending.size(), 1u);
+    EXPECT_EQ(pending[0].v_from, 17);
+    EXPECT_EQ(pending[0].v_to,   18);
+    EXPECT_DOUBLE_EQ(pending[0].conveyance, 0.4);
+}
+
+TEST(EdgeConveyance, ParserRejectsOutOfRangeConveyance) {
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "-0.1"}, pending).empty());
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "1.5"},  pending).empty());
+    EXPECT_TRUE (parse2DEdgeConveyanceLine({"0", "1", "0.0"},  pending).empty());
+    EXPECT_TRUE (parse2DEdgeConveyanceLine({"0", "1", "1.0"},  pending).empty());
+    // The two bad rows pushed nothing; the two good rows pushed one each.
+    EXPECT_EQ(pending.size(), 2u);
+}
+
+TEST(EdgeConveyance, ParserRejectsEqualFromAndTo) {
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"5", "5", "0.5"}, pending).empty());
+    EXPECT_EQ(pending.size(), 0u);
+}
+
+TEST(EdgeConveyance, ParserRejectsTooFewTokens) {
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1"}, pending).empty());
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0"},      pending).empty());
+}
+
+TEST(EdgeConveyance, ParserSkipsEmptyTokenList) {
+    // Empty input represents a comment-only / blank line and is silently OK.
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
+    EXPECT_TRUE(parse2DEdgeConveyanceLine({}, pending).empty());
+    EXPECT_EQ(pending.size(), 0u);
+}
+
+TEST(EdgeConveyance, FluxCalculatorMultipliesByFactor) {
+    // Reference: unattenuated flux on a unit-square mesh with depth on T0
+    // and a small head step driving flow into T1.  Then re-run with
+    // conveyance 0.5 on the shared interior edge — flux halves.
+    MeshData mesh = makeUnitSquareMesh();
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+
+    state.depth[0] = 0.50;   // T0 wet
+    state.depth[1] = 0.10;   // T1 less wet
+    state.head[0]  = mesh.tri_cz[0] + state.depth[0];
+    state.head[1]  = mesh.tri_cz[1] + state.depth[1];
+
+    SolverOptions2D opts;  // dry_depth = 0.001 by default — both cells wet
+
+    // Reference run with all conveyance = 1.0.
+    computeEdgeFluxes(mesh, state, opts);
+    double ref_T0_e = 0.0, ref_T1_e = 0.0;
+    int shared_e_T0 = -1, shared_e_T1 = -1;
+    for (int e = 0; e < 3; ++e) {
+        const int nbr = (e == 0) ? mesh.tri_nbr0[0]
+                       :(e == 1) ? mesh.tri_nbr1[0]
+                       :           mesh.tri_nbr2[0];
+        if (nbr == 1) { shared_e_T0 = e; ref_T0_e = state.edge_flux[0 * 3 + e]; }
+    }
+    for (int e = 0; e < 3; ++e) {
+        const int nbr = (e == 0) ? mesh.tri_nbr0[1]
+                       :(e == 1) ? mesh.tri_nbr1[1]
+                       :           mesh.tri_nbr2[1];
+        if (nbr == 0) { shared_e_T1 = e; ref_T1_e = state.edge_flux[1 * 3 + e]; }
+    }
+    ASSERT_GE(shared_e_T0, 0);
+    ASSERT_GE(shared_e_T1, 0);
+
+    // Antisymmetry sanity check (no conveyance yet).
+    EXPECT_NEAR(ref_T0_e, -ref_T1_e, 1e-12);
+    EXPECT_GT(std::abs(ref_T0_e), 1e-9);  // non-trivial flux
+
+    // Now halve the conveyance on BOTH slots of the shared edge.
+    mesh.edge_conveyance[0 * 3 + shared_e_T0] = 0.5;
+    mesh.edge_conveyance[1 * 3 + shared_e_T1] = 0.5;
+
+    // Re-init state (depth/head reset to keep the comparison clean).
+    state.depth[0] = 0.50; state.depth[1] = 0.10;
+    state.head[0]  = mesh.tri_cz[0] + state.depth[0];
+    state.head[1]  = mesh.tri_cz[1] + state.depth[1];
+
+    computeEdgeFluxes(mesh, state, opts);
+
+    EXPECT_NEAR(state.edge_flux[0 * 3 + shared_e_T0], 0.5 * ref_T0_e, 1e-12);
+    EXPECT_NEAR(state.edge_flux[1 * 3 + shared_e_T1], 0.5 * ref_T1_e, 1e-12);
+
+    // Antisymmetry still holds with attenuation (mass conservation).
+    EXPECT_NEAR(state.edge_flux[0 * 3 + shared_e_T0],
+                -state.edge_flux[1 * 3 + shared_e_T1], 1e-12);
+}
+
+TEST(EdgeConveyance, ZeroFactorEqualsWall) {
+    // Conveyance 0.0 on the shared interior edge should produce exactly the
+    // same edge_flux as a boundary edge (which the calculator zeros via the
+    // nbr < 0 early-return).
+    MeshData mesh = makeUnitSquareMesh();
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    state.depth[0] = 0.50;
+    state.depth[1] = 0.10;
+    state.head[0]  = mesh.tri_cz[0] + state.depth[0];
+    state.head[1]  = mesh.tri_cz[1] + state.depth[1];
+
+    // Block the shared edge on both slots.
+    for (int e = 0; e < 3; ++e) {
+        if (mesh.tri_nbr0[0] == 1 && e == 0) mesh.edge_conveyance[0 * 3 + e] = 0.0;
+        if (mesh.tri_nbr1[0] == 1 && e == 1) mesh.edge_conveyance[0 * 3 + e] = 0.0;
+        if (mesh.tri_nbr2[0] == 1 && e == 2) mesh.edge_conveyance[0 * 3 + e] = 0.0;
+        if (mesh.tri_nbr0[1] == 0 && e == 0) mesh.edge_conveyance[1 * 3 + e] = 0.0;
+        if (mesh.tri_nbr1[1] == 0 && e == 1) mesh.edge_conveyance[1 * 3 + e] = 0.0;
+        if (mesh.tri_nbr2[1] == 0 && e == 2) mesh.edge_conveyance[1 * 3 + e] = 0.0;
+    }
+
+    SolverOptions2D opts;
+    computeEdgeFluxes(mesh, state, opts);
+
+    // The blocked shared edge → zero flux on both slots.  Other edges
+    // (which are boundary edges of the unit square) are also zero by the
+    // nbr < 0 early-return.  Net result: every slot is zero.
+    for (double f : state.edge_flux) {
+        EXPECT_DOUBLE_EQ(f, 0.0);
+    }
+}
+
 #ifdef OPENSWMM_HAS_2D
 
 // ============================================================================
@@ -1388,8 +1680,15 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     snap.surface_rainfall      = {0.0,  0.0};
     snap.surface_coupling_flux = {0.0,  0.0};
     snap.surface_net_source    = {0.0,  0.0};
+    snap.surface_face_vx       = {0.0,  0.0};
+    snap.surface_face_vy       = {0.0,  0.0};
+    snap.surface_continuity_err = {0.0,  0.0};
     snap.surface_edge_flux     = {0.0, 0.0, 0.0,  0.0, 0.0, 0.0}; // [tri*3+e]
     snap.surface_vert_head     = {0.0, 0.0, 0.0,  0.0};
+    // Cumulative rendering envelopes (per face)
+    snap.surface_stat_max_depth    = {0.05, 0.10};
+    snap.surface_stat_max_velocity = {0.20, 0.40};
+    snap.surface_stat_max_cont_err = {1.0e-6, 2.0e-6};
 
     // Output path in a temp location; remove any stale file first.
     const fs::path h5_path = fs::temp_directory_path() /
@@ -1406,6 +1705,12 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     openswmm::SimulationContext ctx{};
     ASSERT_EQ(plugin.validate(ctx), 0);
     ASSERT_EQ(plugin.prepare(ctx),  0);
+
+    // Activate the global 2D mass balance so finalize() writes /mass_balance_2d.
+    ctx.mass_balance_2d.active        = true;
+    ctx.mass_balance_2d.init_storage  = 0.0;
+    ctx.mass_balance_2d.rainfall_in   = 10.0;
+    ctx.mass_balance_2d.final_storage = 10.0;  // closed, conservative → error ~0
 
     plugin.prepareMeshAndDatasets(mesh);
 
@@ -1431,6 +1736,13 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_face_nodes"));
     EXPECT_TRUE(exists("Mesh2_face_depth"));
     EXPECT_TRUE(exists("Mesh2_face_head"));
+    EXPECT_TRUE(exists("Mesh2_face_vx"));
+    EXPECT_TRUE(exists("Mesh2_face_vy"));
+    EXPECT_TRUE(exists("Mesh2_face_continuity_err"));
+    EXPECT_TRUE(exists("Mesh2_face_max_depth"));
+    EXPECT_TRUE(exists("Mesh2_face_max_velocity"));
+    EXPECT_TRUE(exists("Mesh2_face_max_continuity_err"));
+    EXPECT_TRUE(exists("mass_balance_2d"));
     EXPECT_TRUE(exists("time"));
 
     // /time should have one entry after our single update()
@@ -1456,6 +1768,38 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
         H5Sclose(space);
         H5Dclose(ds);
+    }
+
+    // Envelope dataset is fixed [n_tri] (no time dimension) and holds the
+    // values from the last update().
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_max_velocity", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        EXPECT_EQ(H5Sget_simple_extent_ndims(space), 1);
+        hsize_t dims[1] = {0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(n_tri));
+        std::vector<double> vals(n_tri, 0.0);
+        H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, vals.data());
+        EXPECT_NEAR(vals[0], 0.20, 1e-12);
+        EXPECT_NEAR(vals[1], 0.40, 1e-12);
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+
+    // /mass_balance_2d group carries the scalar terms and a continuity_error attr.
+    {
+        hid_t grp = H5Gopen2(file_id, "mass_balance_2d", H5P_DEFAULT);
+        ASSERT_GE(grp, 0);
+        EXPECT_TRUE(H5Lexists(grp, "rainfall_in", H5P_DEFAULT) > 0);
+        EXPECT_TRUE(H5Aexists(grp, "continuity_error") > 0);
+        hid_t attr = H5Aopen(grp, "continuity_error", H5P_DEFAULT);
+        double err = 1.0;
+        H5Aread(attr, H5T_NATIVE_DOUBLE, &err);
+        EXPECT_NEAR(err, 0.0, 1e-9);  // init+rainfall(10) − final(10) = 0
+        H5Aclose(attr);
+        H5Gclose(grp);
     }
 
     H5Fclose(file_id);

@@ -104,7 +104,7 @@
                 "CMAKE_C_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
                 "CMAKE_CXX_FLAGS": "-O2 -flto -fdata-sections -ffunction-sections -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
                 "CMAKE_EXE_LINKER_FLAGS": "-flto",
-                "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace -undefined dynamic_lookup",
+                "CMAKE_SHARED_LINKER_FLAGS": "-flto -twolevel_namespace",
                 "CMAKE_MODULE_LINKER_FLAGS": "-flto -undefined dynamic_lookup"
             },
             "condition": {
@@ -121,7 +121,7 @@
                 "CMAKE_C_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
                 "CMAKE_CXX_FLAGS": "-O0 -g -DDEBUG -fno-fast-math -ffp-contract=off -ffloat-store -Wall -Wextra",
                 "CMAKE_EXE_LINKER_FLAGS": "-g",
-                "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace -undefined dynamic_lookup",
+                "CMAKE_SHARED_LINKER_FLAGS": "-twolevel_namespace",
                 "CMAKE_MODULE_LINKER_FLAGS": "-undefined dynamic_lookup"
             },
             "condition": {

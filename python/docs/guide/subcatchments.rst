@@ -205,6 +205,48 @@ Writers force the model to match:
     sc.infiltration.set_green_ampt(3.5, 0.06, 0.26)
     sc.infiltration.set_curve_number(85.0)
 
+You can also switch the active model directly without touching its
+parameters (the per-model sub-arrays are preserved):
+
+.. code-block:: python
+
+    sc.infiltration.model = InfilModel.GREEN_AMPT
+
+----
+
+Groundwater & aquifer assignment
+================================
+
+When a subcatchment drains to an aquifer, three properties expose the
+``[GROUNDWATER]`` configuration. :attr:`Subcatchment.aquifer` and
+:attr:`Subcatchment.gw_node` return ``None`` when unset; assign an index,
+a string id, a wrapper, or ``None`` to detach:
+
+.. code-block:: python
+
+    sc = s.subcatchments["S1"]
+
+    sc.aquifer = "Aquifer1"          # id, index, or None to detach
+    sc.gw_node = "J3"                # receiving node id / index / Node / None
+
+    print(sc.aquifer)                # -> aquifer index, or None
+    print(sc.gw_node)                # -> node index, or None
+
+The flow parameters are read as a :class:`GroundwaterParams` named tuple in
+``[GROUNDWATER]`` token order and written with :meth:`Subcatchment.set_gw_params`:
+
+.. code-block:: python
+
+    p = sc.gw_params                 # GroundwaterParams(surf_elev, a1, b1, ...)
+    print(p.surf_elev, p.a1, p.b1)
+
+    sc.set_gw_params(surf_elev=10.0, a1=0.01, b1=1.5,
+                     a2=0.0, b2=0.0, a3=0.0, tw=0.0, hstar=5.0)
+
+Reading ``gw_params`` requires an aquifer to be assigned. To inject the
+runtime groundwater *state* (moisture / saturated depth) during a run, use
+:meth:`Subcatchment.set_gw_state` / :meth:`Subcatchment.get_gw_state`.
+
 ----
 
 Coverage view

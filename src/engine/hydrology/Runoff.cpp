@@ -87,10 +87,15 @@ void RunoffSoA::computeAlpha() {
         if (area[ui] > 0.0) {
             double area_imperv = area[ui] * fi;
             double area_perv   = area[ui] * fp;
+            // Match legacy subcatch.c:398-399 operand order EXACTLY:
+            //   PHI * width / area * sqrt(slope) / N
+            // i.e. divide by area BEFORE multiplying sqrt(slope), and divide by N
+            // as a separate final step — do NOT fold (N*area) into one denominator
+            // (that reassociation differs by ~1 ULP and biases every pow() output).
             alpha_imperv[ui] = (n_imperv[ui] > 0.0 && area_imperv > 0.0)
-                ? PHI * width[ui] * sq_slope / (n_imperv[ui] * area_imperv) : 0.0;
+                ? PHI * width[ui] / area_imperv * sq_slope / n_imperv[ui] : 0.0;
             alpha_perv[ui] = (n_perv[ui] > 0.0 && area_perv > 0.0)
-                ? PHI * width[ui] * sq_slope / (n_perv[ui] * area_perv) : 0.0;
+                ? PHI * width[ui] / area_perv * sq_slope / n_perv[ui] : 0.0;
         }
     }
 }
@@ -146,7 +151,11 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
 
 double RunoffSolver::getRunoffRate(double depth, double dStore, double alpha) {
     double excess = depth - dStore;
-    if (excess > 0.0) {
+    // PARITY subcatch.c findSubareaRunoff (line 1016): legacy computes runoff
+    // only when xDepth > ZERO (consts.h ZERO = 1e-10 ft), NOT > 0 — a
+    // recession tail with excess in (0, 1e-10] must report EXACTLY zero
+    // runoff (e.g. Bellinge subcatch 230 at step 36533).
+    if (excess > 1.0e-10) {
         if (alpha > 0.0)
             return alpha * std::pow(excess, MEXP);
         // N=0 case is handled in processSubarea via instant drain
@@ -243,12 +252,16 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
     // ----- Step 1: Rainfall → net precip (ft/sec) -----
     // Matches legacy getNetPrecip(): all subareas get same precipitation rate.
+    // Any subcatchment rainfall forcing resolves here (OVERRIDE replaces the
+    // gage value, ADD augments it) so it cannot be clobbered by the gage
+    // re-read — same pattern as the PET forcing below.
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
         int gi = ctx.subcatches.gage[ui];
         double rain_inhr = 0.0;
         if (gi >= 0 && gi < ctx.n_gages())
             rain_inhr = ctx.gages.rainfall[static_cast<std::size_t>(gi)];
+        rain_inhr = ctx.forcing.effective_rainfall(ui, rain_inhr);
         precip_[ui] = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
         ctx.subcatches.rainfall[ui] = precip_[ui];  // ft/sec (internal units)
     }
@@ -257,11 +270,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // Wire climate module evaporation: use the global evap rate computed
     // by climate::updateDailyClimate(). Matches legacy:
     //   evapRate = (dryOnly && rainfall > 0) ? 0 : Evap.rate
+    // Any prescribed PET forcing then resolves per subcatchment: an OVERRIDE
+    // rate is used as-is (bypasses DRY_ONLY); ADD augments the climate rate.
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
         bool is_dry_only = ctx.options.evap_dry_only;
         double rain = precip_[ui] * ucf::UCF(ucf::RAINFALL, ctx.options);
-        evap_rate_[ui] = (is_dry_only && rain > 0.0) ? 0.0 : evap_rate_in;
+        double broadcast = (is_dry_only && rain > 0.0) ? 0.0 : evap_rate_in;
+        evap_rate_[ui] = ctx.forcing.effective_evap_rate(ui, broadcast);
     }
 
     // ----- Step 3: Per-subcatchment subarea processing -----

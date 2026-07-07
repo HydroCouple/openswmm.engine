@@ -53,7 +53,7 @@ struct ExpDecayParams {
     double k_T       = 0.0;   ///< Thermal recovery rate at T_ref (1/hr)
     double T_ref     = 10.0;  ///< Reference temperature (deg C)
     double theta_rec = 0.0;   ///< Temperature sensitivity (1/deg C)
-    double T_freeze  = 0.0;   ///< Recovery suppressed at or below this temperature (deg C)
+    double T_freeze  = 0.0;   ///< Recovery suppressed below this temperature (deg C)
 };
 
 /// Per-response (SHORT/MEDIUM/LONG) unit hydrograph data.
@@ -77,6 +77,20 @@ struct UHResponseData {
         dry_seconds = static_cast<long>(n) * 300 + 1; // start dry
     }
 };
+
+/// Additive recovery rate k_rec(T) = k_0 + k_T * exp(theta_rec * (T - T_ref)),
+/// suppressed (returns 0) strictly below T_freeze. T in deg Celsius.
+/// Exposed for unit testing against the reference IAModel implementation.
+double getRecoveryRate(const ExpDecayParams& dp, double T_celsius);
+
+/// One exponential-IA update step: mass-consistent depletion when
+/// rainDepth > 0, temperature-dependent recovery otherwise.
+/// Returns the excess rainfall depth (project rain-depth units).
+/// Exposed for unit testing against the reference IAModel implementation.
+double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
+                    const ExpDecayParams& dp, int month, int response,
+                    double rainDepth, double dt_sec,
+                    const SimulationContext& ctx);
 
 struct RDIIGroupSoA {
     int count = 0;
@@ -141,6 +155,14 @@ public:
     /// Same indexing as uh_params; each entry holds [SHORT, MEDIUM, LONG].
     /// `active == false` means the response uses the legacy linear IA model.
     std::vector<std::array<ExpDecayParams, 3>> decay_params;
+
+    /// Buffered per-node RDII flow (CFS), sized n_nodes. Read by the RDII
+    /// interface file SAVE path (RdiiInterfaceFile::saveFlows).
+    const std::vector<double>& nodeFlows() const { return node_rdii_flow_; }
+
+    /// Sorted unique node indices that have an RDII unit-hydrograph inflow
+    /// (legacy RdiiNodeIndex; used as the SAVE-file header node list).
+    std::vector<int> rdiiNodeList() const;
 
     /// Compute rain processing interval for a UH (minimum limb duration, capped by wet_step).
     static int getRainInterval(const UnitHydParams& uh, double wet_step);

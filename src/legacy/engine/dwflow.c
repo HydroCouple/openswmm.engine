@@ -32,6 +32,7 @@
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <math.h>
+#include <stdlib.h>   // getenv/atol for the env-gated A3 parity trace
 #include "headers.h"
 
 static const  double MAXVELOCITY =  50.;     // max. allowable velocity (ft/sec)

@@ -21,6 +21,7 @@ class Pollutant:
     gw_conc: float
     init_conc: float
     rdii_conc: float
+    dwf_conc: float
     snow_only: bool
     co_pollutant: Optional[Tuple["Pollutant", float]]
 

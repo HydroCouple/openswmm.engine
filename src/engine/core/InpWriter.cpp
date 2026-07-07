@@ -16,7 +16,10 @@
  *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, BUILDUP, WASHOFF, TREATMENT,
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES,
  *   MAP, COORDINATES, VERTICES, Polygons, SYMBOLS,
- *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS
+ *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
+ *   2D_OPTIONS, 2D_MESH_FILE (external mode) or 2D_VERTICES, 2D_TRIANGLES,
+ *   2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP, 2D_BOUNDARY_CONDITIONS,
+ *   2D_EDGE_CONVEYANCE (inline mode)
  *
  * @ingroup engine_core
  *
@@ -26,12 +29,27 @@
  */
 
 #include "InpWriter.hpp"
+#include "PathResolver.hpp"
 #include "SimulationContext.hpp"
 #include "DateTime.hpp"
+#include "UnitConversion.hpp"
+#include "../input/PostParseResolver.hpp"
+
+// 2D model definition (plain define-free data structs; reached at runtime
+// through ctx.twod_io — null in non-2D engine builds).
+#include "../2d/data/MeshData.hpp"
+#include "../2d/data/SolverOptions2D.hpp"
+#include "../2d/data/BoundaryData.hpp"
+#include "../2d/data/PendingRows2D.hpp"
+#include "../2d/data/Serialize2D.hpp"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace openswmm {
 namespace inp_writer {
@@ -151,9 +169,353 @@ static bool hasLT(const SimulationContext& c, LinkType t) {
     for(int j=0;j<c.n_links();++j) if(c.links.type[static_cast<size_t>(j)]==t) return true; return false;
 }
 
-int writeInpFile(const SimulationContext& ctx, const std::string& path) {
+// Slice IO-4 helper — pick the path token to emit for an external-file slot.
+// Honors ctx.options.write_absolute_paths and falls back to absolute form
+// when relative is impossible (cross-volume, beyond depth cap, etc.).
+//
+// Inputs:
+//   slot          The FilePathPair carrying {absolute, original}.
+//   dst_dir       Destination .inp directory (anchor for rebase). Empty
+//                 when writeInpFile was called with a bare filename in the
+//                 current working directory.
+//   force_abs     True when WRITE_ABSOLUTE_PATHS is set; bypasses rebase.
+//   warnings_out  Optional sink for cross-volume / over-depth diagnostics.
+//
+// Returns the token (without surrounding quotes) to emit inside the .inp.
+// Empty return means "don't emit the row".
+static std::string emit_path_token(const FilePathPair& slot,
+                                    const std::string&  dst_dir,
+                                    bool                force_abs,
+                                    std::vector<std::string>* warnings_out) {
+    if (slot.absolute.empty() && slot.original.empty()) return {};
+
+    if (force_abs) {
+        // Power-user opt-out — emit absolute form verbatim. Prefer the
+        // resolver's resolution when available; otherwise the original
+        // token may itself already be absolute.
+        return !slot.absolute.empty() ? slot.absolute : slot.original;
+    }
+
+    if (dst_dir.empty()) {
+        // No anchor — keep the original token (writer was called without
+        // a directory context, e.g. bare "out.inp"). Fall back to absolute
+        // when the original is empty.
+        return slot.original.empty() ? slot.absolute : slot.original;
+    }
+
+    // If the resolver pass never ran (programmatic-model path) the slot
+    // carries only `.original`. If that token is itself absolute, rebase
+    // it; otherwise treat it as already relative to the source `.inp`
+    // and pass through unchanged — the writer has no anchor to rebase
+    // against.
+    const std::string& target = !slot.absolute.empty() ? slot.absolute
+                                                       : slot.original;
+    if (slot.absolute.empty() && !io::isAbsolutePath(slot.original)) {
+        return slot.original;
+    }
+
+    auto r = io::makeRelative(target, dst_dir);
+    if (warnings_out
+        && r.classification != io::PathClass::Relative
+        && !r.warning.empty()) {
+        warnings_out->push_back(r.warning);
+    }
+    return r.path;
+}
+
+// ============================================================================
+// [2D_*] sections — 2D surface-routing model definition.
+//
+// Sources are reached through ctx.twod_io (non-owning pointers wired by
+// SWMMEngine); all null in engine builds without 2D support, so this is a
+// guarded no-op there and for pure-1D models (no defaults pollution).
+//
+// External-mesh policy: when SolverOptions2D::mesh_file is set, the main
+// .inp gets [2D_OPTIONS] plus the [2D_MESH_FILE] reference (never inline
+// geometry), and the CURRENT in-memory mesh state is written to the .2dm
+// sidecar resolved against the destination directory — external mode means
+// "the mesh lives in a sidecar", so saving the model saves both files.
+// This persists API mutations made after the external load (vertex Z,
+// conveyance, BC edits) and keeps the reference valid when saving to a
+// different directory. With no mesh_file, all sections are inlined.
+//
+// Units: a `;; UNITS: SI (m)` header is emitted under [2D_VERTICES] when
+// the in-memory mesh is in SI metres — either authored that way
+// (mesh_units_si) or converted in place by SurfaceRouter2D::initialize()
+// (mesh_scaled_to_si). prescan2DUnitsHeader picks it up on reload and
+// skips the FLOW_UNITS rescale, so post-run saves of US-unit projects
+// round-trip without double-scaling. Coupling AREA values share the same
+// units convention as the mesh and are emitted as stored.
+// ============================================================================
+
+// [2D_BOUNDARY_CONDITIONS] grammar token for a pending row (TS_* spellings
+// chosen when the parameter is a timeseries name, so type round-trips).
+static const char* bc2d_type_token(const twoD::PendingBoundaryRow& r) {
+    switch (r.bc_type) {
+        case 1:  return "NORMAL_FLOW";
+        case 2:  return r.name.empty() ? "SPECIFIED_STAGE" : "TS_STAGE";
+        case 3:  return r.name.empty() ? "SPECIFIED_FLOW"  : "TS_FLOW";
+        case 4:  return "RATING_CURVE";
+        default: return "WALL";
+    }
+}
+
+static void emit2DMeshSections(FILE* f, const SimulationContext& ctx);
+
+static void write2DSections(FILE* f, const SimulationContext& ctx,
+                            const std::string& dst_dir,
+                            bool force_abs_paths,
+                            std::vector<std::string>* warnings) {
+    const auto& tio = ctx.twod_io;
+    if (!tio.mesh || !tio.options) return;
+    const auto& mesh = *tio.mesh;
+    const auto& o    = *tio.options;
+
+    const bool has_mesh = mesh.n_vertices() > 0 && mesh.n_triangles() > 0;
+    const bool external = !o.mesh_file.empty();
+    if (!has_mesh && !external) return;
+
+    // ---- [2D_OPTIONS] -----------------------------------------------------
+    // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
+    // keys are parse errors on reload).
+    static const char* sLinSolver[] = {"GMRES", "BICGSTAB", "TFQMR"};
+    static const char* sPrecond[]   = {"NONE", "JACOBI", "ILU", "AMG"};
+    static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE"};
+    sec(f, "2D_OPTIONS");
+    std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
+    std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
+    std::fprintf(f, "%-22s %.12g\n", "MIN_TIMESTEP",      o.min_timestep);
+    std::fprintf(f, "%-22s %.12g\n", "REL_TOLERANCE",     o.rel_tolerance);
+    std::fprintf(f, "%-22s %.12g\n", "ABS_TOLERANCE",     o.abs_tolerance);
+    std::fprintf(f, "%-22s %.12g\n", "DRY_DEPTH",         o.dry_depth);
+    std::fprintf(f, "%-22s %.12g\n", "LIMITER_EPSILON",   o.limiter_epsilon);
+    std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD",       o.coupling_cd);
+    std::fprintf(f, "%-22s %d\n",    "MAX_KRYLOV_DIM",    o.max_krylov_dim);
+    std::fprintf(f, "%-22s %d\n",    "COUPLING_INTERVAL", o.coupling_interval);
+    std::fprintf(f, "%-22s %.12g\n", "COUPLING_WINDOW",   o.coupling_window);
+    std::fprintf(f, "%-22s %s\n",    "ACTIVE_SET",        o.active_set ? "YES" : "NO");
+    std::fprintf(f, "%-22s %d\n",    "ACTIVE_SET_HALO",   o.active_set_halo);
+    std::fprintf(f, "%-22s %d\n",    "MAX_CVODE_STEPS",   o.max_cvode_steps);
+    std::fprintf(f, "%-22s %s\n",    "LINEAR_SOLVER",
+                 sLinSolver[static_cast<int>(o.linear_solver) >= 0 &&
+                            static_cast<int>(o.linear_solver) <= 2
+                                ? static_cast<int>(o.linear_solver) : 0]);
+    std::fprintf(f, "%-22s %s\n",    "PRECONDITIONER",
+                 sPrecond[static_cast<int>(o.preconditioner) >= 0 &&
+                          static_cast<int>(o.preconditioner) <= 3
+                              ? static_cast<int>(o.preconditioner) : 0]);
+    std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
+                 sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
+                           static_cast<int>(o.rainfall_mode) <= 2
+                               ? static_cast<int>(o.rainfall_mode) : 0]);
+    std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
+    if (!o.output_file.empty())
+        std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", o.output_file.c_str());
+
+    // ---- [2D_MESH_FILE] — keep the reference, refresh the sidecar ----------
+    if (external) {
+        std::string tok = o.mesh_file;
+        if (!force_abs_paths && !dst_dir.empty() && io::isAbsolutePath(tok)) {
+            auto r = io::makeRelative(tok, dst_dir);
+            if (warnings && r.classification != io::PathClass::Relative
+                && !r.warning.empty())
+                warnings->push_back(r.warning);
+            tok = r.path;
+        }
+        sec(f, "2D_MESH_FILE");
+        std::fprintf(f, "FILE %s\n", tok.c_str());
+
+        // External mode means "the mesh lives in a sidecar": write the
+        // CURRENT in-memory state to the .2dm the emitted reference resolves
+        // to, so post-load API mutations persist and a save to a different
+        // directory carries its mesh along. Skipped when no mesh is loaded
+        // (e.g. the external file failed to load) so a good sidecar is
+        // never clobbered with emptiness.
+        if (has_mesh) {
+            namespace fs = std::filesystem;
+            fs::path sp(tok);
+            if (sp.is_relative() && !dst_dir.empty()) sp = fs::path(dst_dir) / sp;
+            std::error_code ec;
+            if (sp.has_parent_path()) fs::create_directories(sp.parent_path(), ec);
+            if (FILE* sf = std::fopen(sp.string().c_str(), "w")) {
+                std::fprintf(sf, ";; OpenSWMM 2D mesh — written by the engine "
+                                 "alongside the .inp save.\n");
+                emit2DMeshSections(sf, ctx);
+                std::fclose(sf);
+            } else if (warnings) {
+                warnings->push_back(
+                    "[2D_MESH_FILE]: could not write mesh sidecar '"
+                    + sp.string() + "' — mesh state was NOT saved");
+            }
+        }
+        return;
+    }
+
+    emit2DMeshSections(f, ctx);
+}
+
+// Emit [2D_VERTICES] / [2D_TRIANGLES] / node maps / [2D_BOUNDARY_CONDITIONS]
+// / [2D_EDGE_CONVEYANCE] from the in-memory mesh state. Target is either the
+// main .inp (inline mode) or the external .2dm sidecar — both are parsed by
+// the same section grammar (SectionHandlers2D / load2DMeshExternalFile).
+static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
+    const auto& tio  = ctx.twod_io;
+    const auto& mesh = *tio.mesh;
+    const auto& o    = *tio.options;
+
+    // ---- [2D_VERTICES] ------------------------------------------------------
+    const bool si = o.mesh_units_si || o.mesh_scaled_to_si;
+    const int nv = mesh.n_vertices();
+    const int nt = mesh.n_triangles();
+
+    sec(f, "2D_VERTICES");
+    if (si) std::fprintf(f, ";; UNITS: SI (m)\n");
+    std::fprintf(f, ";;%-16s %-18s %-14s %s\n", "X", "Y", "Z", "TAG");
+    for (int i = 0; i < nv; ++i) {
+        std::fprintf(f, "%-18.10g %-18.10g %-14.10g", mesh.vx[i], mesh.vy[i],
+                     mesh.vz[i]);
+        if (!mesh.vtag[i].empty()) std::fprintf(f, " %s", mesh.vtag[i].c_str());
+        std::fprintf(f, "\n");
+    }
+
+    // ---- [2D_TRIANGLES] -------------------------------------------------------
+    sec(f, "2D_TRIANGLES");
+    std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
+                 "MANNINGS_N", "TAG");
+    for (int t = 0; t < nt; ++t) {
+        std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.tri_v0[t],
+                     mesh.tri_v1[t], mesh.tri_v2[t], mesh.mannings_n[t]);
+        if (!mesh.tri_tag[t].empty())
+            std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
+        std::fprintf(f, "\n");
+    }
+
+    // Coupled-node name: prefer the authored name, fall back to the
+    // resolved index (API-built models; rename-safe).
+    auto node_name_for = [&ctx](const std::string& name, int idx) -> std::string {
+        if (!name.empty()) return name;
+        if (idx >= 0 && idx < ctx.node_names.size())
+            return ctx.node_names.name_of(idx);
+        return {};
+    };
+
+    // ---- [2D_VERTEX_NODE_MAP] -------------------------------------------------
+    {
+        bool any = false;
+        for (int i = 0; i < nv && !any; ++i)
+            any = !node_name_for(mesh.vert_coupled_node_name[i],
+                                 mesh.vert_coupled_node[i]).empty();
+        if (any) {
+            sec(f, "2D_VERTEX_NODE_MAP");
+            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "VERTEX", "NODE", "CD",
+                         "AREA");
+            for (int i = 0; i < nv; ++i) {
+                const std::string cn = node_name_for(
+                    mesh.vert_coupled_node_name[i], mesh.vert_coupled_node[i]);
+                if (cn.empty()) continue;
+                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", i, cn.c_str(),
+                             mesh.vert_coupling_cd[i],
+                             mesh.vert_coupling_area[i]);
+            }
+        }
+    }
+
+    // ---- [2D_TRIANGLE_NODE_MAP] -------------------------------------------------
+    {
+        bool any = false;
+        for (int t = 0; t < nt && !any; ++t)
+            any = !node_name_for(mesh.tri_coupled_node_name[t],
+                                 mesh.tri_coupled_node[t]).empty();
+        if (any) {
+            sec(f, "2D_TRIANGLE_NODE_MAP");
+            std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE", "CD",
+                         "AREA");
+            for (int t = 0; t < nt; ++t) {
+                const std::string cn = node_name_for(
+                    mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
+                if (cn.empty()) continue;
+                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
+                             mesh.tri_coupling_cd[t],
+                             mesh.tri_coupling_area[t]);
+            }
+        }
+    }
+
+    // ---- [2D_BOUNDARY_CONDITIONS] -------------------------------------------------
+    // Authored pending rows preferred (retained after the initialize()
+    // drain); BoundaryData reconstruction fallback loses the GROUP label.
+    {
+        const auto rows = twoD::collectBCRows(tio.pending_bc, tio.boundary,
+                                              o.pending_rows_drained);
+        if (!rows.empty()) {
+            sec(f, "2D_BOUNDARY_CONDITIONS");
+            std::fprintf(f, ";;%-4s %-4s %-16s %-14s %-8s %s\n", "TRI", "EDGE",
+                         "TYPE", "PARAM_1", "PARAM_2", "GROUP");
+            for (const auto& r : rows) {
+                char p1[32];
+                if (!r.name.empty()) {
+                    std::snprintf(p1, sizeof(p1), "%s", r.name.c_str());
+                } else if (r.bc_type == 0) { // WALL — no parameter
+                    std::snprintf(p1, sizeof(p1), "*");
+                } else {
+                    std::snprintf(p1, sizeof(p1), "%.12g", r.param1);
+                }
+                if (!r.group.empty()) {
+                    std::fprintf(f, "%-6d %-4d %-16s %-14s %-8s %s\n", r.tri,
+                                 r.edge, bc2d_type_token(r), p1, "*",
+                                 r.group.c_str());
+                } else {
+                    std::fprintf(f, "%-6d %-4d %-16s %s\n", r.tri, r.edge,
+                                 bc2d_type_token(r), p1);
+                }
+            }
+        }
+    }
+
+    // ---- [2D_EDGE_CONVEYANCE] -------------------------------------------------
+    {
+        const auto rows = twoD::collectConveyanceRows(tio.pending_ec, tio.mesh,
+                                                      o.pending_rows_drained);
+        if (!rows.empty()) {
+            sec(f, "2D_EDGE_CONVEYANCE");
+            std::fprintf(f, ";;%-10s %-12s %s\n", "FROM_VERTEX", "TO_VERTEX",
+                         "CONVEYANCE");
+            for (const auto& r : rows) {
+                std::fprintf(f, "%-12d %-12d %.12g\n", r.v_from, r.v_to,
+                             r.conveyance);
+            }
+        }
+    }
+}
+
+int writeInpFile(const SimulationContext& ctx_internal,
+                 const std::string&       path,
+                 std::vector<std::string>* warnings) {
+    // The engine stores 1D input fields in internal units (feet/cfs); the .inp
+    // must carry display units matching FLOW_UNITS. For SI models, convert a
+    // local copy back to display units so the live engine state is never
+    // mutated. Skipped for US models (factor 1.0) so the common case pays
+    // nothing. Without this, each save dumps internal feet and the next open
+    // re-applies the m→ft factor, compounding ×3.28084 per cycle.
+    const int us_check = ucf::getUnitSystem(
+        static_cast<int>(ctx_internal.options.flow_units));
+    const bool needs_display_conv =
+        ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us_check)] != 1.0;
+
+    SimulationContext ctx_display;
+    if (needs_display_conv) {
+        ctx_display = ctx_internal;
+        input::convert_internal_to_display(ctx_display);
+    }
+    const SimulationContext& ctx = needs_display_conv ? ctx_display : ctx_internal;
+
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return -1;
+
+    // Slice IO-4: pre-compute the rebase anchor + opt-out flag once so each
+    // section can pass them to emit_path_token() without re-deriving.
+    const std::string dst_dir = openswmm::io::parentDir(path);
+    const bool        force_abs_paths = ctx.options.write_absolute_paths;
 
     sec(f,"TITLE");
     std::fprintf(f,";;Project Title/Notes\n");
@@ -268,6 +630,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
     if (!o.crs.empty())
         std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());
+    if (o.write_absolute_paths)
+        std::fprintf(f,"%-20s %s\n",  "WRITE_ABSOLUTE_PATHS", "YES");
     for (const auto& kv : o.ext_options)
         std::fprintf(f,"%-20s %s\n",  kv.first.c_str(), kv.second.c_str());
     }
@@ -310,7 +674,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     {
         const auto& opts = ctx.options;
         bool has_temp = (opts.temp_source > 0 || opts.wind_type > 0 ||
-                         opts.snow_divt != 34.0 || opts.snow_lat != 0.0);
+                         opts.snow_divt != 34.0 || opts.snow_lat != 0.0 ||
+                         opts.snow_dtlong != 0.0);
         for (int i = 0; i < 10 && !has_temp; ++i)
             if (opts.adc_imperv[i] != 1.0 || opts.adc_perv[i] != 1.0) has_temp = true;
         // Check monthly wind speeds
@@ -322,9 +687,19 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
             if (opts.temp_source == 1)
                 std::fprintf(f,"TIMESERIES   %s\n", opts.temp_ts_name.c_str());
             else if (opts.temp_source == 2) {
-                std::fprintf(f,"FILE         \"%s\"", opts.temp_file.c_str());
+                const std::string tok =
+                    emit_path_token(opts.temp_file, dst_dir, force_abs_paths, warnings);
+                std::fprintf(f,"FILE         \"%s\"", tok.c_str());
+                // Legacy positional form: FILE fname [startdate] [units]. Emit a
+                // "*" start-date placeholder when units are set without a date.
                 if (opts.temp_file_start > 0.0)
                     std::fprintf(f," %.6f", opts.temp_file_start);
+                else if (opts.temp_units >= 0)
+                    std::fprintf(f," *");
+                if (opts.temp_units >= 0) {
+                    static const char* kUnitsWords[] = {"C10", "C", "F"};
+                    std::fprintf(f," %s", kUnitsWords[opts.temp_units]);
+                }
                 std::fprintf(f,"\n");
             }
 
@@ -337,10 +712,20 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
                 std::fprintf(f,"WINDSPEED    FILE\n");
             }
 
-            std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f %.4f\n",
-                         opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
-                         opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt,
-                         opts.snow_elev);
+            if (opts.snow_dtlong != 0.0) {
+                // Legacy 9-token form carries the longitude/solar-time
+                // correction (minutes):
+                //   SNOWMELT divt ati nrg elev lat dtlong minMelt maxMelt
+                std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.4f %.4f %.6f %.6f\n",
+                             opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
+                             opts.snow_elev, opts.snow_lat, opts.snow_dtlong,
+                             opts.snow_min_melt, opts.snow_max_melt);
+            } else {
+                std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f %.4f\n",
+                             opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
+                             opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt,
+                             opts.snow_elev);
+            }
 
             std::fprintf(f,"ADC          IMPERVIOUS");
             for (int i = 0; i < 10; ++i)
@@ -475,8 +860,47 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(int j=0;j<ctx.n_gages();++j){auto u=static_cast<size_t>(j);
     write_obj_comment(f, ctx.gages.comments, u);
     int iv=ctx.gages.interval_sec[u];int h=iv/3600,m=(iv%3600)/60;int ts=ctx.gages.ts_index[u];
-    if(ts>=0)std::fprintf(f,"%-16s INTENSITY    %d:%02d     %.2f     TIMESERIES %s\n",ctx.gage_names.name_of(j).c_str(),h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
-    else if(!ctx.gages.file_path[u].empty())std::fprintf(f,"%-16s INTENSITY    %d:%02d     %.2f     FILE \"%s\" %s\n",ctx.gage_names.name_of(j).c_str(),h,m,ctx.gages.snow_factor[u],ctx.gages.file_path[u].c_str(),ctx.gages.col_name[u].c_str());
+    // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
+    // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
+    const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
+                    : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
+    const double sf = ctx.gages.scale_factor[u];
+    if(ts>=0){
+        std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
+        if(sf!=1.0)std::fprintf(f," %.4g",sf);
+        std::fprintf(f,"\n");
+    }
+    else if(!ctx.gages.file_path[u].empty()){
+        const std::string tok = emit_path_token(ctx.gages.file_path[u],
+                                                 dst_dir, force_abs_paths, warnings);
+        if(ctx.gages.file_format[u]==RainFileFormat::USER_CSV){
+            // Compact openswmm extension — the reader expects one "path:col" token.
+            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s:%s\"",
+                          ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+                          ctx.gages.snow_factor[u],
+                          tok.c_str(),
+                          ctx.gages.col_name[u].c_str());
+            if(sf!=1.0)std::fprintf(f," %.4g",sf);
+        }else{
+            // Legacy FILE grammar: Fname Station Units [StartDate] [SF] — the
+            // station + units tokens are REQUIRED (gage.c errors with ERROR 203
+            // without them). An empty station gets a '*' placeholder so the
+            // line stays parseable; legacy will match no rows on it.
+            const std::string& sta = ctx.gages.station_id[u];
+            if(sta.empty() && warnings)
+                warnings->push_back("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+
+                                    "\": no station ID set; wrote '*' — the legacy "
+                                    "engine will match no rows in \""+tok+"\"");
+            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\" %s %s",
+                          ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+                          ctx.gages.snow_factor[u],
+                          tok.c_str(),
+                          sta.empty() ? "*" : sta.c_str(),
+                          ctx.gages.rain_units[u]==1 ? "MM" : "IN");
+            if(sf!=1.0)std::fprintf(f," * %.4g",sf); // '*' = no start date (tok[8])
+        }
+        std::fprintf(f,"\n");
+    }
     }}
 
     // [SUBCATCHMENTS]
@@ -497,7 +921,10 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
     int rt=ctx.subcatches.subarea_routing[u];
     if(rt<0||rt>2)rt=0;
-    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.2f %-8s %10.2f\n",ctx.subcatch_names.name_of(j).c_str(),ctx.subcatches.n_imperv[u],ctx.subcatches.n_perv[u],ctx.subcatches.ds_imperv[u]*12.0,ctx.subcatches.ds_perv[u]*12.0,ctx.subcatches.frac_imperv_no_store[u]*100.0,kRouteToNames[rt],ctx.subcatches.pct_routed[u]*100.0);
+    // S-Imperv/S-Perv are stored in display depth units (Runoff converts them
+    // via UCF(RAINDEPTH) at use), so emit as-is — a prior *12.0 corrupted them
+    // (and broke file→write→reparse round-trips).
+    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.2f %-8s %10.2f\n",ctx.subcatch_names.name_of(j).c_str(),ctx.subcatches.n_imperv[u],ctx.subcatches.n_perv[u],ctx.subcatches.ds_imperv[u],ctx.subcatches.ds_perv[u],ctx.subcatches.frac_imperv_no_store[u]*100.0,kRouteToNames[rt],ctx.subcatches.pct_routed[u]*100.0);
     }}
 
     // [INFILTRATION]
@@ -639,8 +1066,13 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-12s %-12s %-8s\n","----------------","------------","------------","--------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::OUTFALL)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
-    std::fprintf(f,"%-16s %12.4f %-12s %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(ctx.nodes.outfall_type[u]),ctx.nodes.outfall_has_flap_gate[u]?"YES":"NO");
-    if(ctx.nodes.outfall_type[u]==OutfallType::FIXED)std::fprintf(f," %12.4f",ctx.nodes.outfall_param[u]);
+    // Relational side-table (Phase 4).
+    const int orow = ctx.node_subtypes.outfall_row(j); const auto& O = ctx.node_subtypes.outfalls;
+    const OutfallType otype = (orow>=0)?O.bc_type[static_cast<size_t>(orow)]:OutfallType::FREE;
+    const int oflap = (orow>=0)?O.has_flap_gate[static_cast<size_t>(orow)]:0;
+    const double oparam = (orow>=0)?O.param[static_cast<size_t>(orow)]:0.0;
+    std::fprintf(f,"%-16s %12.4f %-12s %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype),oflap?"YES":"NO");
+    if(otype==OutfallType::FIXED)std::fprintf(f," %12.4f",oparam);
     std::fprintf(f,"\n");
     }}
 
@@ -650,17 +1082,20 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-12s %-16s %-12s\n","----------------","------------","----------------","------------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::DIVIDER)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
+    // Relational side-table (Phase 4).
+    const int drow = ctx.node_subtypes.divider_row(j); const auto& D = ctx.node_subtypes.dividers;
     // Resolve diversion link name
     const char* divLinkName = "*";
     std::string dlnStr;
-    int dlIdx = (u < ctx.nodes.divider_link.size()) ? ctx.nodes.divider_link[u] : -1;
+    int dlIdx = (drow>=0) ? D.link[static_cast<size_t>(drow)]
+                          : -1;
     if(dlIdx >= 0 && dlIdx < ctx.link_names.size()) {
         dlnStr = ctx.link_names.name_of(dlIdx); divLinkName = dlnStr.c_str();
-    } else if(u < ctx.nodes.divider_link_name.size() && !ctx.nodes.divider_link_name[u].empty()) {
-        divLinkName = ctx.nodes.divider_link_name[u].c_str();
+    } else if(drow>=0 && !D.link_name[static_cast<size_t>(drow)].empty()) {
+        divLinkName = D.link_name[static_cast<size_t>(drow)].c_str();
     }
-    auto dtype = (u < ctx.nodes.divider_type.size()) ? ctx.nodes.divider_type[u] : DividerType::CUTOFF;
-    double cutoff = (u < ctx.nodes.divider_cutoff.size()) ? ctx.nodes.divider_cutoff[u] : 0.0;
+    auto dtype = (drow>=0) ? D.method[static_cast<size_t>(drow)] : DividerType::CUTOFF;
+    double cutoff = (drow>=0) ? D.cutoff[static_cast<size_t>(drow)] : 0.0;
     switch(dtype) {
     case DividerType::CUTOFF:
         std::fprintf(f,"%-16s %12.4f %-16s CUTOFF   %12.4f %12.4f %12.4f %12.4f %12.4f\n",
@@ -677,11 +1112,12 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     case DividerType::TABULAR: {
         const char* curveName = "*";
         std::string cnStr;
-        int ci = (u < ctx.nodes.divider_curve.size()) ? ctx.nodes.divider_curve[u] : -1;
+        int ci = (drow>=0) ? D.curve[static_cast<size_t>(drow)]
+                           : -1;
         if(ci >= 0 && ci < ctx.table_names.size()) {
             cnStr = ctx.table_names.name_of(ci); curveName = cnStr.c_str();
-        } else if(u < ctx.nodes.divider_curve_name.size() && !ctx.nodes.divider_curve_name[u].empty()) {
-            curveName = ctx.nodes.divider_curve_name[u].c_str();
+        } else if(drow>=0 && !D.curve_name[static_cast<size_t>(drow)].empty()) {
+            curveName = D.curve_name[static_cast<size_t>(drow)].c_str();
         }
         std::fprintf(f,"%-16s %12.4f %-16s TABULAR  %-16s %12.4f %12.4f %12.4f %12.4f\n",
             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
@@ -690,8 +1126,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         break;
     }
     case DividerType::WEIR: {
-        double cd = (u < ctx.nodes.divider_cd.size()) ? ctx.nodes.divider_cd[u] : 0.0;
-        double maxd = (u < ctx.nodes.divider_max_depth.size()) ? ctx.nodes.divider_max_depth[u] : 0.0;
+        double cd = (drow>=0) ? D.cd[static_cast<size_t>(drow)] : 0.0;
+        double maxd = (drow>=0) ? D.max_depth[static_cast<size_t>(drow)] : 0.0;
         std::fprintf(f,"%-16s %12.4f %-16s WEIR     %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f\n",
             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
             cutoff, cd, maxd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
@@ -707,10 +1143,17 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s\n","----------------","------------","------------","------------","------------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::STORAGE)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
-    if(ctx.nodes.storage_curve[u]>=0)
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s 0 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,ctx.nodes.storage_curve[u]),ctx.nodes.sur_depth[u]);
-    else
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f FUNCTIONAL %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],ctx.nodes.storage_a[u],ctx.nodes.storage_b[u],ctx.nodes.storage_c[u],ctx.nodes.sur_depth[u]);
+    // Relational side-table (Phase 4).
+    const int srow = ctx.node_subtypes.storage_row(j); const auto& S = ctx.node_subtypes.storages;
+    const int scurve = (srow>=0)?S.curve[static_cast<size_t>(srow)]:-1;
+    if(scurve>=0)
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s 0 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve),ctx.nodes.sur_depth[u]);
+    else {
+        const double sa=(srow>=0)?S.a[static_cast<size_t>(srow)]:0.0;
+        const double sb=(srow>=0)?S.b[static_cast<size_t>(srow)]:0.0;
+        const double sc=(srow>=0)?S.c[static_cast<size_t>(srow)]:0.0;
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f FUNCTIONAL %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],sa,sb,sc,ctx.nodes.sur_depth[u]);
+    }
     }}
 
     // [CONDUITS]
@@ -719,7 +1162,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-16s %-16s %-12s %-12s %-12s %-12s %-10s %-10s\n","----------------","----------------","----------------","------------","------------","------------","------------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %12.6f %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.length[u],ctx.links.roughness[u],ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
+    const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
+    std::fprintf(f,"%-16s %-16s %-16s %12.4f %12.6f %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
     }}
 
     // [PUMPS]
@@ -728,7 +1172,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------------","----------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::PUMP)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s 0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,ctx.links.pump_curve[u]),ctx.links.setting[u]>0?"ON":"OFF");
+    const int pr=ctx.link_subtypes.pump_row(j);
+    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s 0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,(pr>=0)?ctx.link_subtypes.pumps.curve[static_cast<size_t>(pr)]:-1),ctx.links.setting[u]>0?"ON":"OFF");
     }}
 
     // [ORIFICES]
@@ -737,7 +1182,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s\n","----------------","----------------","----------------","----------","----------","----------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::ORIFICE)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s SIDE       %10.4f %10.4f NO\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],ctx.links.cd[u]);
+    const int orr=ctx.link_subtypes.orifice_row(j);
+    std::fprintf(f,"%-16s %-16s %-16s SIDE       %10.4f %10.4f NO\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(orr>=0)?ctx.link_subtypes.orifices.cd[static_cast<size_t>(orr)]:0.0);
     }}
 
     // [WEIRS]
@@ -746,7 +1192,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::WEIR)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f NO       0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),"TRANSVERSE",ctx.links.crest_height[u],ctx.links.cd[u]);
+    const int wr=ctx.link_subtypes.weir_row(j); const auto& WD=ctx.link_subtypes.weirs;
+    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f NO       0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),"TRANSVERSE",(wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,(wr>=0)?WD.cd[static_cast<size_t>(wr)]:0.0);
     }}
 
     // [OUTLETS]
@@ -755,7 +1202,8 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-16s %-16s %-10s %-16s %-10s %-10s\n","----------------","----------------","----------------","----------","----------------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::OUTLET)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %10.4f FUNCTIONAL   %10g %10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],ctx.links.cd[u],ctx.links.param2[u]);
+    const int olr=ctx.link_subtypes.outlet_row(j); const auto& OUT=ctx.link_subtypes.outlets;
+    std::fprintf(f,"%-16s %-16s %-16s %10.4f FUNCTIONAL   %10g %10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(olr>=0)?OUT.coeff[static_cast<size_t>(olr)]:0.0,(olr>=0)?OUT.expon[static_cast<size_t>(olr)]:0.0);
     }}
 
     // [XSECTIONS]
@@ -764,23 +1212,50 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
     if(ctx.links.type[u]==LinkType::PUMP)continue;
-    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),ctx.links.xsect_y_full[u],ctx.links.xsect_w_max[u],0.0,0.0,ctx.links.barrels[u]);
+    const int cr=ctx.link_subtypes.conduit_row(j);
+    const int xbarrels=(cr>=0)?ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)]:1;
+    // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
+    // side slopes the derived fields can't reproduce).  xsect_geom1 == 0 means
+    // the object was built by a path that didn't populate them; fall back to
+    // the legacy derived-field emission.  See LinkData::xsect_geom1.
+    // STREET cross-sections store a named [STREETS] reference (Geom1 is the
+    // street name, not a dimension), so emit the retained name instead of the
+    // numeric geometry — matching the [XSECTIONS] parser's STREET handling.
+    if(ctx.links.xsect_shape[u]==XsectShape::STREET_XSECT){
+        std::fprintf(f,"%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
+            ctx.link_names.name_of(j).c_str(),
+            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
+            ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,xbarrels);
+        continue;
+    }
+    double g1,g2,g3,g4;
+    if(ctx.links.xsect_geom1[u]!=0.0){
+        g1=ctx.links.xsect_geom1[u]; g2=ctx.links.xsect_geom2[u];
+        g3=ctx.links.xsect_geom3[u]; g4=ctx.links.xsect_geom4[u];
+    } else {
+        g1=ctx.links.xsect_y_full[u]; g2=ctx.links.xsect_w_max[u]; g3=0.0; g4=0.0;
+    }
+    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
     }}
 
     // [LOSSES]
     {bool hasLoss=false;
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    if(ctx.links.type[u]==LinkType::CONDUIT&&(ctx.links.loss_inlet[u]!=0||ctx.links.loss_outlet[u]!=0||ctx.links.loss_avg[u]!=0||ctx.links.has_flap_gate[u]||ctx.links.seep_rate[u]!=0)){hasLoss=true;break;}}
+    {const int cr=ctx.link_subtypes.conduit_row(j);const auto&CD=ctx.link_subtypes.conduits;
+    if(ctx.links.type[u]==LinkType::CONDUIT&&cr>=0&&(CD.loss_inlet[static_cast<size_t>(cr)]!=0||CD.loss_outlet[static_cast<size_t>(cr)]!=0||CD.loss_avg[static_cast<size_t>(cr)]!=0||ctx.links.has_flap_gate[u]||CD.seep_rate[static_cast<size_t>(cr)]!=0)){hasLoss=true;break;}}}
     if(hasLoss){sec(f,"LOSSES");
     std::fprintf(f,";;%-16s %-10s %-10s %-10s %-8s %-10s\n","Link","Kentry","Kexit","Kavg","Flap","Seepage");
     std::fprintf(f,";;%-16s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------","----------","----------","--------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
     if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
-    if(ctx.links.loss_inlet[u]==0&&ctx.links.loss_outlet[u]==0&&ctx.links.loss_avg[u]==0&&!ctx.links.has_flap_gate[u]&&ctx.links.seep_rate[u]==0)continue;
+    const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
+    if(cr<0)continue;
+    const auto ucr=static_cast<size_t>(cr);
+    if(CD.loss_inlet[ucr]==0&&CD.loss_outlet[ucr]==0&&CD.loss_avg[ucr]==0&&!ctx.links.has_flap_gate[u]&&CD.seep_rate[ucr]==0)continue;
     std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %-8s %10.6f\n",
         ctx.link_names.name_of(j).c_str(),
-        ctx.links.loss_inlet[u],ctx.links.loss_outlet[u],ctx.links.loss_avg[u],
-        ctx.links.has_flap_gate[u]?"YES":"NO",ctx.links.seep_rate[u]);
+        CD.loss_inlet[ucr],CD.loss_outlet[ucr],CD.loss_avg[ucr],
+        ctx.links.has_flap_gate[u]?"YES":"NO",CD.seep_rate[ucr]);
     }}}
 
     // [TRANSECTS]
@@ -860,12 +1335,12 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
 
     // [POLLUTANTS]
     if(ctx.n_pollutants()>0){sec(f,"POLLUTANTS");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s\n","Name","Units","Crain","Cgw","Crdii","Kdecay","SnowOnly","CoPollut","CoFrac");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s\n","----------------","--------","----------","----------","----------","----------","----------","----------------","----------");
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n","Name","Units","Crain","Cgw","Crdii","Kdecay","SnowOnly","CoPollut","CoFrac","Cdwf","Cinit");
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-10s %-10s %-16s %-10s %-10s %-10s\n","----------------","--------","----------","----------","----------","----------","----------","----------------","----------","----------","----------");
     for(int p=0;p<ctx.n_pollutants();++p){auto u=static_cast<size_t>(p);
     write_obj_comment(f, ctx.pollutants.comments, u);
     const char*un="MG/L";if(ctx.pollutants.units[u]==MassUnits::UG_PER_L)un="UG/L";if(ctx.pollutants.units[u]==MassUnits::COUNTS_PER_L)un="#/L";
-    std::fprintf(f,"%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f\n",pN(ctx,p),un,ctx.pollutants.c_rain[u],ctx.pollutants.c_gw[u],ctx.pollutants.c_rdii[u],ctx.pollutants.k_decay[u],ctx.pollutants.snow_only[u]?"YES":"NO",ctx.pollutants.co_pollut[u]>=0?pN(ctx,ctx.pollutants.co_pollut[u]):"*",ctx.pollutants.co_frac[u]);
+    std::fprintf(f,"%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f %10.4f %10.4f\n",pN(ctx,p),un,ctx.pollutants.c_rain[u],ctx.pollutants.c_gw[u],ctx.pollutants.c_rdii[u],ctx.pollutants.k_decay[u],ctx.pollutants.snow_only[u]?"YES":"NO",ctx.pollutants.co_pollut[u]>=0?pN(ctx,ctx.pollutants.co_pollut[u]):"*",ctx.pollutants.co_frac[u],ctx.pollutants.c_dwf[u],ctx.pollutants.init_conc[u]);
     }}
 
     // [LANDUSES]
@@ -1043,6 +1518,16 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
         if(e==std::string::npos)e=tb.comment.size();
         std::fprintf(f,";%.*s\n",static_cast<int>(e-s),tb.comment.data()+s);
         if(e==tb.comment.size())break;s=e+2;}
+    }
+    // File-backed series — preserve the FILE reference rather than dumping
+    // the in-memory cache of rows. The path token (possibly carrying a
+    // `:column` suffix) is stored verbatim by TablesHandler; Slice IO-4
+    // rebases the path portion relative to the destination directory.
+    if(!tb.file_path.empty()){
+        const std::string tok = emit_path_token(tb.file_path, dst_dir,
+                                                 force_abs_paths, warnings);
+        std::fprintf(f,"%-16s FILE         \"%s\"\n",tN(ctx,t),tok.c_str());
+        continue;
     }
     // PostParseResolver offsets relative time series by start_date so the
     // engine can do absolute OADate lookups.  Detect this using the same
@@ -1242,7 +1727,9 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
 
     // [FILES] — secondary file references (rainfall / runoff / RDII /
     // inflows / outflows / hot-start save & use).  Mode → keyword
-    // mapping mirrors the legacy parser.
+    // mapping mirrors the legacy parser. Slice IO-4: every path token
+    // is rebased relative to the destination directory (unless
+    // WRITE_ABSOLUTE_PATHS is set).
     if (ctx.files.has_any()) {
         sec(f, "FILES");
         std::fprintf(f, ";;%-12s %-10s %s\n", "Mode", "FileType", "Path");
@@ -1251,36 +1738,46 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
                    m == FileMode::USE  ? "USE"  : "";
         };
         auto write_pair = [&](FileMode mode, const char* kind,
-                               const std::string& path) {
-            if (mode == FileMode::NONE || path.empty()) return;
+                               const FilePathPair& slot) {
+            if (mode == FileMode::NONE || slot.empty()) return;
+            const std::string tok = emit_path_token(slot, dst_dir,
+                                                     force_abs_paths, warnings);
             std::fprintf(f, "%-13s %-10s \"%s\"\n",
-                          mode_word(mode), kind, path.c_str());
+                          mode_word(mode), kind, tok.c_str());
         };
         write_pair(ctx.files.rainfall_mode, "RAINFALL", ctx.files.rainfall_path);
         write_pair(ctx.files.runoff_mode,   "RUNOFF",   ctx.files.runoff_path);
         write_pair(ctx.files.rdii_mode,     "RDII",     ctx.files.rdii_path);
-        if (!ctx.files.inflows_path.empty())
-            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "INFLOWS",
-                          ctx.files.inflows_path.c_str());
-        if (!ctx.files.outflows_path.empty())
-            std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "OUTFLOWS",
-                          ctx.files.outflows_path.c_str());
-        if (!ctx.files.hotstart_use_path.empty())
-            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "HOTSTART",
-                          ctx.files.hotstart_use_path.c_str());
+        if (!ctx.files.inflows_path.empty()) {
+            const std::string tok = emit_path_token(ctx.files.inflows_path,
+                                                     dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE",  "INFLOWS", tok.c_str());
+        }
+        if (!ctx.files.outflows_path.empty()) {
+            const std::string tok = emit_path_token(ctx.files.outflows_path,
+                                                     dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "OUTFLOWS", tok.c_str());
+        }
+        if (!ctx.files.hotstart_use_path.empty()) {
+            const std::string tok = emit_path_token(ctx.files.hotstart_use_path,
+                                                     dst_dir, force_abs_paths, warnings);
+            std::fprintf(f, "%-13s %-10s \"%s\"\n", "USE", "HOTSTART", tok.c_str());
+        }
         for (const auto &save : ctx.files.hotstart_saves) {
             if (save.path.empty()) continue;
+            const std::string tok = emit_path_token(save.path, dst_dir,
+                                                     force_abs_paths, warnings);
             if (save.datetime > 0.0) {
                 char date_buf[16], time_buf[16];
                 fmt_date(date_buf, save.datetime);
                 fmt_time(time_buf, save.datetime);
                 std::fprintf(f, "%-13s %-10s \"%s\" %s %s\n",
                               "SAVE", "HOTSTART",
-                              save.path.c_str(),
+                              tok.c_str(),
                               date_buf, time_buf);
             } else {
                 std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "HOTSTART",
-                              save.path.c_str());
+                              tok.c_str());
             }
         }
     }
@@ -1290,6 +1787,10 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path) {
     for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",ps.path.c_str());
     for(const auto&a:ps.init_args)std::fprintf(f," %s",a.c_str());std::fprintf(f,"\n");
     }}
+
+    // [2D_*] — 2D surface-routing model definition (no-op for 1D models
+    // and for engine builds without the 2D module).
+    write2DSections(f, ctx, dst_dir, force_abs_paths, warnings);
 
     std::fclose(f);
     return 0;

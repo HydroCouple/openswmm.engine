@@ -49,6 +49,29 @@ inline DbPtr open_database(const std::string& path, int flags = SQLITE_OPEN_READ
         std::string msg = raw ? sqlite3_errmsg(raw) : "unknown error";
         throw GpkgError("Failed to open database '" + path + "': " + msg, rc);
     }
+
+    // Slice IO-5: every connection enforces foreign keys. This is a
+    // per-connection SQLite setting, so we set it here rather than only
+    // in create_schema — reader connections need it too if they want
+    // cascading-delete or orphan-rejection semantics to hold.
+    char* err = nullptr;
+    if (sqlite3_exec(db.get(), "PRAGMA foreign_keys=ON", nullptr, nullptr,
+                      &err) != SQLITE_OK) {
+        std::string msg = err ? err : "unknown error";
+        sqlite3_free(err);
+        throw GpkgError("Failed to enable foreign_keys pragma on '" + path
+                          + "': " + msg, rc);
+    }
+
+    // Retry on a busy database rather than failing immediately with
+    // SQLITE_BUSY. On Windows (mandatory file locking) a connection that is
+    // torn down while a write is still settling can briefly hold the .gpkg /
+    // -wal lock; without a busy handler the next open()'s first PRAGMA fails
+    // outright ("database is locked"). 5 s is generous for the short-lived
+    // intra-process contention we actually hit and is a no-op on POSIX, where
+    // advisory locking already tolerates this.
+    sqlite3_busy_timeout(db.get(), 5000);
+
     return db;
 }
 
@@ -131,28 +154,64 @@ inline std::vector<uint8_t> column_blob(sqlite3_stmt* stmt, int col) {
     return {data, data + size};
 }
 
-// RAII transaction guard
+// RAII transaction guard.
+//
+// The destructor rolls a not-yet-committed transaction back, but does so
+// ROBUSTLY instead of fire-and-forget. A plain, unchecked
+// `sqlite3_exec(db, "ROLLBACK")` can silently leave the transaction OPEN on
+// Windows: if any statement on the connection is still in an aborted/stepped
+// state — e.g. an INSERT that just tripped an immediate FOREIGN KEY constraint
+// mid-write — SQLite refuses the ROLLBACK with SQLITE_BUSY ("cannot rollback -
+// SQL statements in progress"). Under Windows' mandatory file locking the
+// transaction then stays open and the SAME connection reads its own uncommitted
+// rows; POSIX advisory locking tolerates the stray lock, which is why the bug
+// only surfaced on Windows (test_engine_geopackage_mesh2d rollback case, where
+// the connection saw 3 nodes / 4 vertices / 60 options instead of none).
+//
+// Resetting only the one statement that failed (in step_or_throw) was not
+// enough — anything still holding a per-statement lock at unwind time blocks the
+// ROLLBACK. rollback() therefore drives the connection to a known-clean state:
+//   1. reset EVERY live statement so none holds a statement-journal lock,
+//   2. issue ROLLBACK,
+//   3. confirm the connection actually returned to autocommit mode,
+// retrying a bounded number of times. On POSIX this is a single clean pass and
+// the reset loop is a no-op (unwinding has already finalized the statements).
 class Transaction {
 public:
     explicit Transaction(sqlite3* db) : db_(db) {
         exec(db_, "BEGIN IMMEDIATE");
     }
     void commit() {
-        if (!committed_) {
+        if (!finished_) {
             exec(db_, "COMMIT");
-            committed_ = true;
+            finished_ = true;
         }
     }
-    ~Transaction() {
-        if (!committed_) {
+    void rollback() {
+        if (finished_) return;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            // Clear any statement left mid-flight so it cannot hold a lock that
+            // makes ROLLBACK fail with SQLITE_BUSY (statements in progress).
+            for (sqlite3_stmt* s = sqlite3_next_stmt(db_, nullptr); s != nullptr;
+                 s = sqlite3_next_stmt(db_, s)) {
+                sqlite3_reset(s);
+            }
             sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+            // sqlite3_get_autocommit() != 0 iff no transaction is open, i.e. the
+            // ROLLBACK actually took effect. If it is still 0 the rollback was
+            // refused; loop and retry now that the statements are reset.
+            if (sqlite3_get_autocommit(db_) != 0) break;
         }
+        finished_ = true;
+    }
+    ~Transaction() {
+        rollback();
     }
     Transaction(const Transaction&) = delete;
     Transaction& operator=(const Transaction&) = delete;
 private:
     sqlite3* db_;
-    bool committed_ = false;
+    bool finished_ = false;
 };
 
 } // namespace openswmm::gpkg

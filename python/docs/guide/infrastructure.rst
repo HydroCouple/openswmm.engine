@@ -118,6 +118,21 @@ LIDs
    API has no id→index lookup for LID controls (passing a string
    raises :exc:`TypeError`).
 
+The placement rows are also readable and removable by global index, so the
+``[LID_USAGE]`` block round-trips:
+
+.. code-block:: python
+
+    n = infra.lids.usage_count()              # total placement rows
+    row = infra.lids.usage_get(0)             # dict of one row
+    print(row["subcatch_index"], row["lid_index"],
+          row["area"], row["from_imperv"])
+    infra.lids.usage_remove(0)                # delete a placement row
+
+``usage_get`` returns a dict with keys ``subcatch_index``, ``lid_index``,
+``number``, ``area``, ``width``, ``init_sat``, ``from_imperv``, ``to_perv``
+and ``from_perv``.
+
 ----
 
 See also

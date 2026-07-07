@@ -22,7 +22,7 @@
 #ifndef OPENSWMM_DIVIDER_HPP
 #define OPENSWMM_DIVIDER_HPP
 
-#include "../data/NodeData.hpp"
+#include "../data/NodeSubtypes.hpp"
 #include <vector>
 
 namespace openswmm {
@@ -38,19 +38,6 @@ enum class DividerMethod : int {
     WEIR         = 3
 };
 
-struct DividerSoA {
-    int count = 0;
-    std::vector<int>    node_idx;      ///< Divider node index
-    std::vector<int>    div_link_idx;  ///< Diversion link index
-    std::vector<int>    method;        ///< DividerMethod
-    std::vector<double> cutoff_flow;   ///< Cutoff flow (for CUTOFF)
-    std::vector<double> weir_cd;       ///< Discharge coeff (for WEIR)
-    std::vector<double> weir_max_depth;///< Weir max depth
-    std::vector<int>    table_idx;     ///< Curve index (for TABULAR)
-
-    void resize(int n);
-};
-
 /**
  * @brief Compute diversion flows for all divider nodes.
  *
@@ -59,10 +46,15 @@ struct DividerSoA {
  *   - Computes diversion flow based on method
  *   - Sets diversion link flow and reduces primary link flow
  *
+ *   Reads the relational DividerData side-table (ctx.node_subtypes.dividers),
+ *   which replaces the former standalone DividerSoA. The data is identical
+ *   (same dividers, same node-index order, same fields) so results are
+ *   unchanged; the side-table is simply the single source of truth.
+ *
  * @param ctx   Simulation context.
- * @param soa   Divider data.
+ * @param divs  Divider side-table (ctx.node_subtypes.dividers).
  */
-void computeDividerFlows(SimulationContext& ctx, const DividerSoA& soa);
+void computeDividerFlows(SimulationContext& ctx, const DividerData& divs);
 
 } // namespace divider
 } // namespace openswmm

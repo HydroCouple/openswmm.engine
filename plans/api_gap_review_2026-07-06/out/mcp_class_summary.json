@@ -1,0 +1,21 @@
+{
+  "n_classes": 64,
+  "n_unreferenced": 15,
+  "unreferenced": [
+    "ConversionResult",
+    "CoverageView",
+    "DividerView",
+    "EventsView",
+    "HydrographGageEntry",
+    "ImpactEntry",
+    "LinkStatsView",
+    "NodeStatsView",
+    "OrificeView",
+    "PumpView",
+    "RDIIEntry",
+    "SimulationOptions",
+    "StorageView",
+    "SubcatchmentStatsView",
+    "WeirView"
+  ]
+}

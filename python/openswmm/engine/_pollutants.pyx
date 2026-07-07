@@ -26,7 +26,7 @@ mirror the shape of :doc:`nodes` / :doc:`links`.
 
 from ._common cimport *
 from ._enums import ConcentrationUnits
-from ._exceptions import StaleObjectError
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 cdef inline SWMM_Engine _h(solver):
@@ -62,10 +62,10 @@ cdef inline void _check_fresh(p) except *:
 cdef class Pollutant:
     """A single pollutant."""
 
-    cdef object _solver
-    cdef int _index
-    cdef long long _gen
-    cdef str _captured_id
+    cdef readonly object _solver
+    cdef readonly int _index
+    cdef readonly long long _gen
+    cdef readonly str _captured_id
 
     def __init__(self, solver, int index):
         self._solver = solver
@@ -97,6 +97,18 @@ cdef class Pollutant:
         cdef int v = 0
         _check(swmm_pollutant_get_units(_h(self._solver), self._index, &v))
         return ConcentrationUnits(v)
+
+    @units.setter
+    def units(self, value) -> None:
+        """Change the concentration units (a L{ConcentrationUnits} value or its
+        integer code: 0=MG/L, 1=UG/L, 2=#/L).
+
+        Units are normally fixed at creation; this lets a model builder correct
+        them. Editable in the pre-start states only — a mid-run change raises
+        L{LifecycleError}.
+        """
+        _check_fresh(self)
+        _check(swmm_pollutant_set_units(_h(self._solver), self._index, int(value)))
 
     # ---- Decay / fate properties -----------------------------------
 
@@ -173,6 +185,24 @@ cdef class Pollutant:
     def rdii_conc(self, double value) -> None:
         _check_fresh(self)
         _check(swmm_pollutant_set_rdii_conc(_h(self._solver), self._index, value))
+
+    @property
+    def dwf_conc(self) -> float:
+        """Dry-weather-flow concentration of this pollutant (pollutant units).
+
+        Mirrors L{rdii_conc}: the concentration applied to dry-weather
+        sanitary inflows. Settable while the simulation is running so
+        diurnal/seasonal sanitary quality can be prescribed mid-run.
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_pollutant_get_dwf_conc(_h(self._solver), self._index, &v))
+        return v
+
+    @dwf_conc.setter
+    def dwf_conc(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_pollutant_set_dwf_conc(_h(self._solver), self._index, value))
 
     # ---- Snow-only flag --------------------------------------------
 
@@ -269,13 +299,15 @@ cdef class Pollutants:
     # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str pollut_id) -> int:
+        """Return the zero-based index of pollutant *pollut_id* (raises if unknown)."""
         cdef bytes b = pollut_id.encode('utf-8')
         cdef int i = swmm_pollutant_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(pollut_id)
+            raise ElementNotFoundError(pollut_id)
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the pollutant at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_pollutant_id(_h(self._solver), idx)
@@ -284,6 +316,7 @@ cdef class Pollutants:
     # ---- Editing --------------------------------------------------
 
     def add(self, str pollut_id, units=ConcentrationUnits.MG_PER_L) -> Pollutant:
+        """Add a new pollutant *pollut_id* measured in *units* and return its :class:`Pollutant`."""
         cdef bytes b = pollut_id.encode('utf-8')
         _check(swmm_pollutant_add(_h(self._solver), b, int(units)))
         self._solver._bump_generation()

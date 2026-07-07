@@ -50,6 +50,7 @@
 #include "../hydrology/Inflow.hpp"
 #include "../hydrology/RDII.hpp"
 #include "../hydrology/RunoffInterface.hpp"
+#include "../hydrology/RdiiInterface.hpp"
 #include "../quality/QualityRouting.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
@@ -200,6 +201,55 @@ public:
     SimulationContext&       context()       noexcept { return ctx_; }
     const SimulationContext& context() const noexcept { return ctx_; }
 
+    /// Groundwater solver access (for C API state injection).
+    groundwater::GWSolver&       gwSolver()       noexcept { return groundwater_; }
+    const groundwater::GWSolver& gwSolver() const noexcept { return groundwater_; }
+
+    /// Snow solver access (for C API state injection).
+    snow::SnowSolver&       snowSolver()       noexcept { return snow_; }
+    const snow::SnowSolver& snowSolver() const noexcept { return snow_; }
+
+    /// Inflow solver access (for C API runtime pattern-cache refresh).
+    inflow::InflowSolver&       inflowSolver()       noexcept { return inflow_; }
+    const inflow::InflowSolver& inflowSolver() const noexcept { return inflow_; }
+
+    /// Re-derive the land-use buildup/washoff parameter cache from the live
+    /// context (for C API runtime edits via swmm_buildup_set/_washoff_set).
+    /// Leaves the accumulated buildup pool untouched.
+    void refreshLanduseParams() noexcept;
+
+    /// Recompile one (node, pollutant) treatment expression from the live
+    /// context and refresh the per-node has-treatment flag (for C API runtime
+    /// edits via swmm_treatment_set/_clear — the step loop evaluates the
+    /// compiled cache, not the expression string). Returns 0 on success or a
+    /// nonzero parse-error code; a failed parse leaves the cell cleared.
+    int refreshTreatment(int node_idx, int pollut_idx) noexcept;
+
+    /// Re-copy the drain-layer coefficients from the live context into the
+    /// LID solver's per-unit parameter columns (for C API runtime edits via
+    /// swmm_lid_set_drain). Touches no per-unit state, so it is safe mid-run;
+    /// a no-op before the solver is initialized.
+    void refreshLIDDrainParams() noexcept;
+
+    /// Re-derive the groundwater solver's per-subcatchment flux-coefficient
+    /// columns (conductivity, slopes, evap/loss coefficients) from the live
+    /// context aquifers (for C API runtime edits via swmm_aquifer_set_param).
+    /// Leaves the structural columns (porosity/field capacity/wilting point/
+    /// total depth) and the GW state (theta, lower_depth) untouched.
+    void refreshAquiferParams() noexcept;
+
+    /**
+     * @brief Area-weighted snow depth (SWE, ft) on a subcatchment.
+     *
+     * Combines the snow pack's plowable/impervious/pervious subarea SWE
+     * weighted by subarea fractions (matching the report snapshot
+     * computation). Returns 0 for subcatchments without a snow pack.
+     *
+     * @param idx Subcatchment index (caller-validated).
+     * @return Snow water equivalent depth (ft).
+     */
+    double subcatchSnowDepth(int idx) const noexcept;
+
     /**
      * @brief Open the runoff interface file in SAVE mode (Phase 1b).
      *
@@ -301,16 +351,24 @@ private:
     std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)
     std::vector<double>          gw_frac_perv_; ///< Per-subcatch pervious fraction for GW evap
     std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
+    std::vector<double>          snow_rain_;    ///< Per-subcatch rainfall into snow step (ft/sec)
+    std::vector<double>          snow_snow_;    ///< Per-subcatch snowfall into snow step (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager      iface_;        ///< Routing interface file I/O
 
     // Phase 1b: optional runoff interface file (legacy "Frunoff").
-    // When in SAVE mode, the engine auto-emits one record per runoff substep
-    // from inside stepRunoff(). When in USE mode, no engine-side integration
-    // happens yet — the C API exposes the file but the caller is responsible
-    // for invoking swmm_runoff_iface_read_step() between simulation steps
-    // (USE-mode auto-skip is tracked as a follow-up).
+    // SAVE mode: the engine auto-emits one record per runoff substep from
+    // inside stepRunoff(). USE mode: stepRunoff() replaces each runoff
+    // substep with the next file record (legacy runoff_readFromFile).
+    // Auto-opened from [FILES] SAVE/USE RUNOFF in start(); also reachable
+    // via the swmm_runoff_iface_* C API.
     std::unique_ptr<runoff_iface::RunoffInterfaceFile> runoff_iface_file_;
+
+    // RDII interface file (legacy "Frdii"). USE mode bypasses the internal
+    // unit-hydrograph computation (legacy rdii_openRdii skips
+    // createRdiiFile); SAVE mode exports the computed RDII flows. Opened
+    // from [FILES] USE/SAVE RDII in start().
+    rdii_iface::RdiiInterfaceFile rdii_iface_file_;
 
     // Event and steady-state tracking
     int next_event_ = 0;                        ///< Index of next event in ctx_.events
@@ -325,6 +383,14 @@ private:
     /// OUTPUT_FILE is configured; used in start() to call prepareMeshAndDatasets
     /// once the mesh is built.
     twoD::Default2DOutputPlugin* surface_output_plugin_ = nullptr;
+
+    /// Point ctx_.twod_io at surface_router_'s mesh/options/boundary and
+    /// pending parse rows so serialization consumers (InpWriter, GeoPackage
+    /// reader/writer) can access the 2D model through the context alone.
+    /// Called once from the constructor; SWMMEngine is non-copyable and
+    /// non-movable, so the pointers stay valid for the engine's lifetime,
+    /// and SimulationContext::reset() intentionally preserves them.
+    void wire2DModelIO() noexcept;
 #endif
 
     std::string rpt_path_;  ///< Report file path
@@ -335,6 +401,32 @@ private:
     // lateral flows are linearly interpolated between runoff boundaries.
     double old_runoff_time_ = 0.0;  ///< Previous runoff boundary (seconds from start)
     double new_runoff_time_ = 0.0;  ///< Next runoff boundary (seconds from start)
+    // PARITY: millisecond mirrors of the runoff clock, accumulated with the
+    // exact legacy ops (runoff.c:229-237 — NewRunoffTime += 1000*step, clamp
+    // to TotalDuration ms). The wet-weather/GW interpolation weight f
+    // (routing.c:703) and the report-instant runoff weight (output.c) must be
+    // formed from MILLISECOND quantities to round identically to legacy.
+    double old_runoff_ms_ = 0.0;    ///< legacy OldRunoffTime (msec)
+    double new_runoff_ms_ = 0.0;    ///< legacy NewRunoffTime (msec)
+
+    // PARITY: per-subcatchment interpolated wet-weather / GW inflows saved by
+    // the Phase-2 interpolation so assembleLateralInflows() can replay
+    // legacy's exact per-node accumulation ORDER — routing.c:466-473 adds
+    // ext, dwf, then PER-SUBCATCHMENT wet-weather q (routing.c:716), then GW,
+    // RDII, iface into Node.newLatFlow. Pre-summing per node and adding in a
+    // different source order rounds differently (1-ULP lat-flow drift).
+    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff+runon (cfs)
+    std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
+    std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
+
+    // Persistent runoff-state flags read by computeRunoffTimestep() on the NEXT
+    // runoff step (one-step lag), matching legacy globals HasRunoff/HasSnow in
+    // runoff.c. They must persist across substeps so the engine keeps wet_step
+    // through the hydrograph recession (rain stopped, ponded water still
+    // draining); otherwise dry_step coarsens the falling limb and the
+    // end-of-step-rate×dt bookkeeping under-counts runoff volume.
+    bool has_runoff_ = false;  ///< Prev step generated runoff (legacy HasRunoff)
+    bool has_snow_   = false;  ///< Prev step had snow cover   (legacy HasSnow)
 
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results
@@ -397,6 +489,42 @@ private:
     };
 
     AvgAccumulator avg_;  ///< Averaging accumulator (only used when rpt_averages == true)
+
+    // -----------------------------------------------------------------------
+    // Reporting-path XSectParams cache
+    // -----------------------------------------------------------------------
+    // updateStatistics / postOutputSnapshot / accumulateAvgResults each
+    // rebuilt the full XSectParams gather per conduit per routing step just
+    // to call link::getVelocity. The params are static during a run except
+    // through the C-API editing path, which bumps ctx.xsect_generation via
+    // recompute_conduit_flow_properties — ensureXspCache() compares the
+    // generation and rebuilds only then. Values are verbatim copies of the
+    // same SoA fields, so consumers receive bit-identical inputs.
+    std::vector<XSectParams> xsp_cache_;
+    std::uint64_t xsp_cache_gen_ = ~0ULL;   ///< generation the cache was built at
+
+    /** @brief Rebuild xsp_cache_ if links/xsect state changed (cheap check). */
+    void ensureXspCache() noexcept;
+
+    /// Legacy-convention full volume per node for .out NODE_VOLUME reporting:
+    /// 0 for plain junctions/outfalls/dividers (legacy node_getVolume returns 0
+    /// when fullVolume==0), pump wet-well xMax for Type-1 pump inlets. STORAGE
+    /// reports its curve volume directly. This DECOUPLES the reported node volume
+    /// from the internal volume-state (which keeps MIN_SURFAREA*depth for the
+    /// volume-based solver + surcharge detection). See postOutputSnapshot().
+    std::vector<double> report_full_volume_;
+
+    /// Legacy-convention reported node volume (mirrors legacy node_getVolume):
+    /// STORAGE → curve volume (ctx_.nodes.volume); junction/outfall/divider →
+    /// report_full_volume_·(depth/fullDepth) = 0 for plain junctions. Used for
+    /// the .out NODE_VOLUME and the routing mass-balance storage sums so both
+    /// match legacy, while the internal volume-state (MIN_SURFAREA) is preserved.
+    double reportedNodeVolume(int i) const noexcept;
+
+    /// Same legacy-convention mapping evaluated at an arbitrary (depth, volume)
+    /// state — used to map the PREVIOUS step's state for output interpolation
+    /// (legacy node_getResults interpolates old/new volumes, node.c:487).
+    double reportedNodeVolume(int i, double depth, double volume) const noexcept;
 
     // -----------------------------------------------------------------------
     // Initialization sub-functions (called by init_modules)
@@ -491,8 +619,10 @@ private:
     /** @brief Pre-compute GW surface water head and available node flow from routing state. */
     void assembleGWCoupling(double dt_runoff) noexcept;
 
-    /** @brief Assemble all decomposed inflow sources into nodes.lat_flow and compute step mass balance. */
-    void assembleLateralInflows() noexcept;
+    /** @brief Assemble all decomposed inflow sources into nodes.lat_flow and compute step mass balance.
+     *  @param dt_routing  Current routing step (s); used to re-derive the 1D↔2D
+     *                     coupling rate from the carried per-window exchange volume. */
+    void assembleLateralInflows(double dt_routing) noexcept;
 
     void stepRouting(double dt_routing) noexcept;
 
@@ -524,6 +654,15 @@ private:
      * @brief Post a snapshot to the IO thread if output is due.
      */
     void postOutputSnapshot(double dt_step) noexcept;
+
+    /**
+     * @brief Deep-copy the active 2D surface state into a snapshot.
+     * @details No-op when the 2D module is inactive. Shared by the
+     *          full-results path and the 2D-only path in postOutputSnapshot,
+     *          so 2D HDF5 output can be driven independently of save_results_.
+     * @param snap  The snapshot to fill with surface_* fields.
+     */
+    void fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept;
 
     /**
      * @brief Accumulate current node/link results into the averaging accumulators.

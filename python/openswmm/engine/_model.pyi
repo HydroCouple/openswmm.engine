@@ -13,6 +13,7 @@ without requiring a ``.inp`` file.
 """
 
 from datetime import datetime
+from typing import Optional
 
 from ._solver import Solver
 
@@ -42,6 +43,15 @@ class ModelBuilder:
     """
 
     def __init__(self) -> None: ...
+
+    @property
+    def generation(self) -> int:
+        """Monotonic counter bumped on every structural mutation.
+
+        Mirrors :attr:`Solver.generation` so wrapper objects minted from a
+        :class:`ModelBuilder` can detect staleness the same way.
+        """
+        ...
 
     # =========================================================================
     # Nodes
@@ -349,6 +359,22 @@ class ModelBuilder:
         """
         ...
 
+    def get_file_path(self, role: int, owner: str = ...) -> tuple[str, str]:
+        """Read an external-file slot's ``(absolute, original)`` paths.
+
+        @param role: A L{FilePathRole} value.
+        @param owner: Owner key for vector slots; ignored for scalar slots.
+        @rtype: tuple[str, str]
+        """
+        ...
+    def set_file_path(self, role: int, new_path: str, owner: str = ...) -> None:
+        """Set an external-file slot's path token (empty clears it).
+
+        @param role: A L{FilePathRole} value.
+        @param owner: Owner key for vector slots; must already exist.
+        """
+        ...
+
     def get_option_ext(self, key: str) -> str:
         """Return the value of an extension option (unknown to base SWMM).
 
@@ -412,6 +438,53 @@ class ModelBuilder:
 
     def set_userflag_real(self, name: str, value: float) -> None:
         """Set a real-valued user flag.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def define_userflag(self, name: str, type: int, description: str = "") -> None:
+        """Define (or redefine) a user-flag schema entry (C{[USER_FLAGS]}).
+
+        @param type: 0=BOOLEAN, 1=INTEGER, 2=REAL, 3=STRING (L{UserFlagType}).
+        @raise EngineError: On empty name or invalid type.
+        """
+        ...
+
+    def undefine_userflag(self, name: str) -> None:
+        """Remove a user-flag definition and all its per-object values.
+
+        @raise EngineError: If the flag is not defined.
+        """
+        ...
+
+    def userflag_def_count(self) -> int:
+        """Return the number of user-flag schema definitions."""
+        ...
+
+    def get_userflag_def(self, index: int) -> tuple[str, int, str]:
+        """Return C{(name, type, description)} for the definition at C{index}.
+
+        @raise EngineError: If C{index} is out of range.
+        """
+        ...
+
+    def get_userflag_value(self, obj_type: str, obj_name: str, flag_name: str) -> Optional[str]:
+        """Return a per-object flag value string, or C{None} when unassigned.
+
+        @raise EngineError: On C API failure.
+        """
+        ...
+
+    def set_userflag_value(self, obj_type: str, obj_name: str, flag_name: str, value: str) -> None:
+        """Assign a per-object flag value from a string (typed parse).
+
+        @raise EngineError: On undefined flag or unparseable value.
+        """
+        ...
+
+    def clear_userflag_value(self, obj_type: str, obj_name: str, flag_name: str) -> None:
+        """Remove a per-object flag value (idempotent).
 
         @raise EngineError: On C API failure.
         """

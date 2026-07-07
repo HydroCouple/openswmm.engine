@@ -90,15 +90,11 @@ private:
     long                output_start_pos_ = 0;
     int                 n_periods_  = 0;
 
-    // Unit conversion factors (internal → display), computed once in prepare()
-    double ucf_rainfall_  = 1.0;
-    double ucf_raindepth_ = 1.0;
-    double ucf_evaprate_  = 1.0;
+    // Static-object header is written from the SimulationContext (internal
+    // units), so it still needs these two factors. Per-timestep results arrive
+    // pre-converted by the engine boundary and need no plugin-side conversion.
     double ucf_length_    = 1.0;
     double ucf_landarea_  = 1.0;
-    double ucf_volume_    = 1.0;
-    double ucf_flow_      = 1.0;
-    int    unit_system_   = 0;     // 0=US, 1=SI
 
     // Per-object report flags, captured during prepare() from SimulationContext
     std::vector<char> subcatch_rpt_flag_;

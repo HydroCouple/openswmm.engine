@@ -15,6 +15,8 @@ surface routing module (requires ``OPENSWMM_BUILD_2D=ON`` and SUNDIALS).
 import numpy as np
 import numpy.typing as npt
 
+from ._enums import SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType
+
 
 class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
@@ -102,6 +104,10 @@ class Surface2D:
         """
         ...
 
+    def prepare_for_edit(self) -> None:
+        """Make the parsed 2D mesh editable without a full ``initialize()``."""
+        ...
+
     def set_vertex_z(self, idx: int, z: float) -> None:
         """Set the ground elevation of a mesh vertex.
 
@@ -116,6 +122,19 @@ class Surface2D:
         @param z: New ground elevation (project vertical units).
         @type z: float
         @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def get_vertex_xyz(self, idx: int) -> tuple[float, float, float]:
+        """Scalar ``(x, y, z)`` for one mesh vertex (project units).
+
+        @rtype: tuple[float, float, float]
+        """
+        ...
+    def get_vertex_head(self, idx: int) -> float:
+        """Scalar water-surface head at one mesh vertex (project units).
+
+        @rtype: float
         """
         ...
 
@@ -163,6 +182,26 @@ class Surface2D:
         """
         ...
 
+    def set_triangle_mannings(self, idx: int, n: float) -> None:
+        """Set Manning's M{n} for a triangle (must be strictly positive)."""
+        ...
+
+    def get_triangle_tag(self, idx: int) -> str:
+        """Return the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG)."""
+        ...
+
+    def set_triangle_tag(self, idx: int, tag: str) -> None:
+        """Set the descriptive tag of a triangle (empty string clears it)."""
+        ...
+
+    def get_vertex_tag(self, idx: int) -> str:
+        """Return the descriptive tag of a vertex (C{[2D_VERTICES]} TAG)."""
+        ...
+
+    def set_vertex_tag(self, idx: int, tag: str) -> None:
+        """Set the descriptive tag of a vertex (empty string clears it)."""
+        ...
+
     def get_triangle_neighbours(self, idx: int) -> tuple[int, int, int]:
         """Return the (n0, n1, n2) neighbour triangle indices.
 
@@ -208,6 +247,46 @@ class Surface2D:
         @rtype: int
         @raise RuntimeError: If the C API call fails.
         """
+        ...
+
+    def set_vertex_coupled_node(self, vertex_idx: int, node_name: str) -> None:
+        """Couple a mesh vertex to a 1D SWMM node by name (C{""} clears)."""
+        ...
+
+    def get_vertex_coupling_cd(self, vertex_idx: int) -> float:
+        """Return the coupling discharge coefficient of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} CD column
+        (default 0.65).
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @return: Discharge coefficient.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_vertex_coupling_cd(self, vertex_idx: int, cd: float) -> None:
+        """Set the coupling discharge coefficient of a vertex (must be > 0)."""
+        ...
+
+    def get_vertex_coupling_area(self, vertex_idx: int) -> float:
+        """Return the coupling exchange area of a vertex.
+
+        Corresponds to the C{[2D_VERTEX_NODE_MAP]} AREA column in m^2
+        (default 1.0).
+
+        @param vertex_idx: Vertex index (0-based).
+        @type vertex_idx: int
+        @return: Exchange area in m^2.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_vertex_coupling_area(self, vertex_idx: int, area: float) -> None:
+        """Set the coupling exchange area of a vertex in m^2 (must be > 0)."""
         ...
 
     def get_triangle_coupled_node(self, tri_idx: int) -> int:
@@ -406,11 +485,53 @@ class Surface2D:
         ...
 
     def get_stat_max_depths(self) -> npt.NDArray[np.float64]:
-        """Return cumulative maximum-depth statistics for all triangles.
+        """Return cumulative maximum-depth envelope for all triangles.
 
-        @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
         @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def get_stat_max_velocities(self) -> npt.NDArray[np.float64]:
+        """Return cumulative maximum velocity-magnitude envelope per triangle.
+
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m/s.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def get_stat_max_continuity_err(self) -> npt.NDArray[np.float64]:
+        """Return cumulative maximum M{abs(continuity residual)} envelope per triangle.
+
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in
+            C{m^3/s}.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    @property
+    def continuity_error(self) -> float:
+        """Global 2D surface continuity error.
+
+        @return: M{(total_in - total_out) / total_in}, the domain mass-balance
+            error as a fraction.
+        @rtype: float
+        @raise RuntimeError: If the 2D module did not run.
+        """
+        ...
+
+    def get_mass_balance(self) -> dict[str, float]:
+        """Return the global 2D mass-balance terms.
+
+        @return: Mapping with keys C{init_storage}, C{final_storage},
+            C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
+            C{outfall_in}, C{boundary_in}, C{boundary_out}, C{evap_out}
+            (all C{m^3}) and C{continuity_error} (fraction).
+        @rtype: dict[str, float]
+        @raise RuntimeError: If the 2D module did not run.
         """
         ...
 
@@ -419,50 +540,114 @@ class Surface2D:
     # ====================================================================
 
     def force_rainfall(
-        self, idx: int, value: float, mode: int = 1, persist: int = 0
+        self,
+        idx: int,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
     ) -> None:
         """Force rainfall on a specific triangle.
 
         @param idx: Triangle index.
         @type idx: int
-        @param value: Rainfall rate.
+        @param value: Rainfall rate (m/s).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
         ...
 
     def force_rainfall_uniform(
-        self, value: float, mode: int = 1, persist: int = 0
+        self,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
     ) -> None:
         """Force uniform rainfall on all triangles.
 
-        @param value: Rainfall rate.
+        @param value: Rainfall rate (m/s).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
+        @raise RuntimeError: If the C API rejects the forcing.
+        """
+        ...
+
+    def force_evap(
+        self,
+        idx: int,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
+    ) -> None:
+        """Force evaporation on a specific triangle.
+
+        The rate is a demand: wet cells lose depth at this rate, shutting
+        off smoothly as a cell dries (depths never go negative). The default
+        rate is 0 unless forced. Negative values are treated as zero.
+
+        @param idx: Triangle index.
+        @type idx: int
+        @param value: Evaporation rate (m/s; same SI convention as rainfall).
+        @type value: float
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
+        @raise RuntimeError: If the C API rejects the forcing.
+        """
+        ...
+
+    def force_evap_uniform(
+        self,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
+    ) -> None:
+        """Force uniform evaporation on all triangles.
+
+        @param value: Evaporation rate (m/s; same SI convention as rainfall).
+        @type value: float
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
         ...
 
     def force_coupling_flux(
-        self, idx: int, value: float, mode: int = 1, persist: int = 0
+        self,
+        idx: int,
+        value: float,
+        *,
+        mode: SurfaceForcingMode = ...,
+        persist: ForcingPersist = ...,
     ) -> None:
         """Force a coupling flux on a specific triangle.
 
         @param idx: Triangle index.
         @type idx: int
-        @param value: Coupling flux value.
+        @param value: Coupling flux value (m/s, positive = into 2D).
         @type value: float
-        @param mode: Forcing mode (C{1} = ADD, C{0} = REPLACE).
-        @type mode: int
-        @param persist: C{1} to hold until cleared; C{0} for single-step.
-        @type persist: int
+        @param mode: How the value is applied (C{OVERRIDE} or C{ADD}).
+        @type mode: L{SurfaceForcingMode}
+        @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
+            single step.
+        @type persist: L{ForcingPersist}
         @raise RuntimeError: If the C API rejects the forcing.
         """
         ...
@@ -552,28 +737,30 @@ class Surface2D:
         """
         ...
 
-    def get_edge_bc_type(self, tri_idx: int, edge: int) -> int:
+    def get_edge_bc_type(self, tri_idx: int, edge: int) -> SurfaceBoundaryType:
         """Return the boundary condition type for a triangle edge.
 
         @param tri_idx: Triangle index.
         @type tri_idx: int
         @param edge: Edge index in C{0}-C{2}.
         @type edge: int
-        @return: Boundary condition type code.
-        @rtype: int
+        @return: Boundary condition type.
+        @rtype: L{SurfaceBoundaryType}
         @raise RuntimeError: If the C API call fails.
         """
         ...
 
-    def set_edge_bc_type(self, tri_idx: int, edge: int, bc_type: int) -> None:
+    def set_edge_bc_type(
+        self, tri_idx: int, edge: int, bc_type: SurfaceBoundaryType
+    ) -> None:
         """Set the boundary condition type for a triangle edge.
 
         @param tri_idx: Triangle index.
         @type tri_idx: int
         @param edge: Edge index in C{0}-C{2}.
         @type edge: int
-        @param bc_type: Boundary condition type code.
-        @type bc_type: int
+        @param bc_type: Boundary condition type.
+        @type bc_type: L{SurfaceBoundaryType}
         @raise RuntimeError: If the C API rejects the assignment.
         """
         ...
@@ -643,4 +830,120 @@ class Surface2D:
         @rtype: float
         @raise RuntimeError: If the C API call fails.
         """
+        ...
+
+    def get_edge_bc_flow(self, tri_idx: int, edge: int) -> float:
+        """Return the prescribed flow per metre for a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Prescribed flow per metre of edge (C{m^3/s/m}).
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_edge_bc_flow(self, tri_idx: int, edge: int, flow: float) -> None:
+        """Set the prescribed flow per metre for a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param flow: Prescribed flow per metre of edge (C{m^3/s/m}).
+        @type flow: float
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def set_edge_bc_tseries_name(
+        self, tri_idx: int, edge: int, name: str
+    ) -> None:
+        """Set the timeseries name driving a SPECIFIED_STAGE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Timeseries name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def set_edge_bc_flow_tseries_name(
+        self, tri_idx: int, edge: int, name: str
+    ) -> None:
+        """Set the timeseries name driving a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Timeseries name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def set_edge_bc_rating_curve_name(
+        self, tri_idx: int, edge: int, name: str
+    ) -> None:
+        """Set the rating-curve name driving a RATING_CURVE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @param name: Rating-curve name, or C{""} to clear.
+        @type name: str
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    # ====================================================================
+    # Edge conveyance factor
+    # ====================================================================
+
+    def get_edge_conveyance(self, tri: int, edge: int) -> float:
+        """Return the per-edge conveyance factor in C{[0, 1]}.
+
+        @param tri: Triangle index in C{[0, triangle_count)}.
+        @type tri: int
+        @param edge: Local edge index in C{{0, 1, 2}}.
+        @type edge: int
+        @return: Conveyance factor (1.0 = unrestricted, 0.0 = wall).
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_edge_conveyance(self, tri: int, edge: int, conveyance: float) -> None:
+        """Set the per-edge conveyance factor in C{[0, 1]}.
+
+        For interior edges the value is mirrored to the partner slot on
+        the neighbouring triangle so mass conservation is preserved.
+
+        @param tri: Triangle index in C{[0, triangle_count)}.
+        @type tri: int
+        @param edge: Local edge index in C{{0, 1, 2}}.
+        @type edge: int
+        @param conveyance: New value in C{[0, 1]}.
+        @type conveyance: float
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def get_edge_conveyance_bulk(self) -> npt.NDArray[np.float64]:
+        """Return a NumPy array of all per-edge conveyance factors.
+
+        Length is C{triangle_count * 3}, indexed C{[tri*3 + edge]}.
+        @rtype: np.ndarray
+        """
+        ...
+
+    def reset_edge_conveyance(self) -> None:
+        """Reset every edge's conveyance factor to 1.0 (unrestricted)."""
         ...

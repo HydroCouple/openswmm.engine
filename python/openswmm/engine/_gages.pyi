@@ -29,6 +29,12 @@ class Gage:
     solver: Solver
     rain_type: GageRainType
     data_source: GageDataSource
+    scale_factor: float
+    snow_factor: float
+    rain_interval: float
+    rain_units: int
+    timeseries: str
+    station_id: str
     rainfall: float
 
     def __init__(self, solver: Solver, index: int) -> None: ...

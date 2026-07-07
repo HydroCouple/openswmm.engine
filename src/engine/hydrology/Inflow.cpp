@@ -14,6 +14,7 @@
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../data/TableData.hpp"
+#include <cctype>
 #include <cmath>
 #include <algorithm>
 #include <string>
@@ -60,18 +61,8 @@ double InflowSolver::getPatternFactor(int pat_idx, int month, int day, int hour)
     }
 }
 
-void InflowSolver::init(SimulationContext& ctx) {
-
-    // ---- Build pattern name → index map for fast lookup ----
-    // PatternData stores names; we build a local map to resolve DWF pattern
-    // names to indices.  The pattern index is the position in ctx.patterns.
-    std::unordered_map<std::string, int> pattern_map;
+void InflowSolver::refreshPatterns(const SimulationContext& ctx) {
     int np = ctx.patterns.count();
-    for (int i = 0; i < np; ++i) {
-        pattern_map[ctx.patterns.names[static_cast<std::size_t>(i)]] = i;
-    }
-
-    // ---- Copy patterns into runtime structures ----
     patterns_.resize(static_cast<std::size_t>(np));
     for (int i = 0; i < np; ++i) {
         auto ui = static_cast<std::size_t>(i);
@@ -83,6 +74,31 @@ void InflowSolver::init(SimulationContext& ctx) {
             patterns_[ui].factors[k] = facs[k];
         }
     }
+}
+
+void InflowSolver::init(SimulationContext& ctx) {
+
+    // ---- Build pattern name → index map for fast lookup ----
+    // PatternData stores names; we build a local map to resolve DWF pattern
+    // names to indices.  The pattern index is the position in ctx.patterns.
+    //
+    // Lookups are case-INSENSITIVE to match legacy: SWMM's symbol table
+    // upper-cases every character (hash.c UCHAR macro), so a [DWF] row that
+    // references "Kurve4" resolves to a [PATTERNS] entry named "kurve4".
+    // A case-sensitive std::unordered_map silently missed these, leaving the
+    // inflow with no time pattern (a flat factor of 1.0).
+    auto upper = [](std::string s) {
+        for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return s;
+    };
+    std::unordered_map<std::string, int> pattern_map;
+    int np = ctx.patterns.count();
+    for (int i = 0; i < np; ++i) {
+        pattern_map[upper(ctx.patterns.names[static_cast<std::size_t>(i)])] = i;
+    }
+
+    // ---- Copy patterns into runtime structures ----
+    refreshPatterns(ctx);
 
     // ---- Populate external inflows with name resolution ----
     int ne = ctx.ext_inflows.count();
@@ -93,11 +109,19 @@ void InflowSolver::init(SimulationContext& ctx) {
         ext_inflows_.baseline[ui]     = ctx.ext_inflows.baseline[ui];
         ext_inflows_.scale_factor[ui] = ctx.ext_inflows.s_factor[ui];
 
-        // Unit conversion factor (m_factor).
-        // For FLOW inflows, legacy uses cf = 1.0/UCF(FLOW) to convert from
-        // user flow units to internal units (cfs).  The parser already stores
-        // this in m_factor, so we use it directly.
-        ext_inflows_.conv_factor[ui]  = ctx.ext_inflows.m_factor[ui];
+        // Unit conversion factor. For a FLOW inflow the timeseries/baseline are
+        // in the user's display flow units; convert to internal cfs by dividing
+        // by Qcf[flow_units] (matching the DWF path above and legacy
+        // inflow_readExtInflow: x /= UCF(FLOW)). m_factor is the user-supplied
+        // [INFLOWS] conversion-factor column (1.0 unless given). Without this,
+        // metric (CMS/LPS/MLD) direct inflows were applied ~35x too small.
+        double cf = ctx.ext_inflows.m_factor[ui];
+        const auto& cons = ctx.ext_inflows.constituent[ui];
+        if (cons == "FLOW" || cons == "flow" || cons == "Flow") {
+            int fu = static_cast<int>(ctx.options.flow_units);
+            if (fu >= 0 && fu < 6) cf /= ucf::Qcf[fu];
+        }
+        ext_inflows_.conv_factor[ui]  = cf;
 
         // Resolve timeseries name → table index
         const auto& ts_name = ctx.ext_inflows.ts_name[ui];
@@ -110,7 +134,7 @@ void InflowSolver::init(SimulationContext& ctx) {
         // Resolve baseline pattern name → pattern index
         const auto& pat_name = ctx.ext_inflows.pattern_name[ui];
         if (!pat_name.empty()) {
-            auto pit = pattern_map.find(pat_name);
+            auto pit = pattern_map.find(upper(pat_name));
             ext_inflows_.base_pat_idx[ui] = (pit != pattern_map.end()) ? pit->second : -1;
         } else {
             ext_inflows_.base_pat_idx[ui] = -1;
@@ -150,7 +174,7 @@ void InflowSolver::init(SimulationContext& ctx) {
 
         for (int p = 0; p < 4; ++p) {
             if (pat_fields[p]->empty()) continue;
-            auto pit = pattern_map.find(*pat_fields[p]);
+            auto pit = pattern_map.find(upper(*pat_fields[p]));
             if (pit == pattern_map.end()) continue;
             int pat_idx = pit->second;
             // Sort into correct position by pattern type

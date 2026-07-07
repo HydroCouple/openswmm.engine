@@ -29,6 +29,7 @@ flat (``add_*`` / ``*_count``) rather than dressing it as a collection.
 
 # cython: language_level=3
 
+from ._exceptions import ElementNotFoundError
 from ._common cimport *
 
 
@@ -55,6 +56,7 @@ class Transects:
         return swmm_transect_count(h)
 
     def add(self, str transect_id) -> int:
+        """Add a natural-channel transect *transect_id* and return its index."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = transect_id.encode('utf-8')
         _check(swmm_transect_add(h, b))
@@ -63,12 +65,192 @@ class Transects:
 
     def set_roughness(self, int idx,
                       double n_left, double n_right, double n_channel) -> None:
+        """Set the left-bank, right-bank and channel Manning's n for transect *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_transect_set_roughness(h, idx, n_left, n_right, n_channel))
 
     def add_station(self, int idx, double station, double elevation) -> None:
+        """Append a ``(station, elevation)`` point to transect *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_transect_add_station(h, idx, station, elevation))
+
+    # ---- Identity lookups -------------------------------------------
+
+    def get_index(self, str transect_id) -> int:
+        """Resolve a transect's zero-based index from its string id.
+
+        @param transect_id: The transect's string identifier.
+        @rtype: int
+        @raise KeyError: If no transect has that id.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = transect_id.encode('utf-8')
+        cdef int i = swmm_transect_index(h, b)
+        if i < 0:
+            raise ElementNotFoundError(transect_id)
+        return i
+
+    def get_id(self, int idx) -> str:
+        """Return the string id of the transect at C{idx}.
+
+        @rtype: str
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef const char* raw = swmm_transect_id(h, idx)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    def _resolve(self, key) -> int:
+        if isinstance(key, str):
+            return self.get_index(key)
+        cdef int n = len(self)
+        cdef int idx = key
+        if idx < 0:
+            idx += n
+        if not 0 <= idx < n:
+            raise IndexError(key)
+        return idx
+
+    def __iter__(self):
+        cdef int n = len(self)
+        for i in range(n):
+            yield self.get_id(i)
+
+    def __contains__(self, key) -> bool:
+        try:
+            self._resolve(key)
+            return True
+        except (KeyError, IndexError):
+            return False
+
+    def remove(self, key) -> None:
+        """Remove a transect (by index or id), clearing reference sites.
+
+        @param key: Integer index or string id.
+        """
+        cdef int idx = self._resolve(key)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_transect_remove(h, idx))
+        self._solver._bump_generation()
+
+    def rename(self, key, str new_id) -> None:
+        """Rename a transect, updating stored references.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef int idx = self._resolve(key)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_transect_rename(h, idx, b))
+        self._solver._bump_generation()
+
+    # ---- Station geometry -------------------------------------------
+
+    def station_count(self, int idx) -> int:
+        """Number of (station, elevation) points in the transect at C{idx}.
+
+        @rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_transect_get_station_count(h, idx)
+
+    def get_station(self, int idx, int station_idx):
+        """Return the C{(station, elevation)} pair at C{station_idx}.
+
+        @rtype: tuple[float, float]
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double station = 0.0, elevation = 0.0
+        _check(swmm_transect_get_station(h, idx, station_idx, &station, &elevation))
+        return (station, elevation)
+
+    def stations(self, int idx):
+        """Return all C{(station, elevation)} points as a list of tuples.
+
+        @rtype: list[tuple[float, float]]
+        """
+        cdef int n = self.station_count(idx)
+        cdef int i
+        return [self.get_station(idx, i) for i in range(n)]
+
+    def clear_stations(self, int idx) -> None:
+        """Remove all station points from the transect at C{idx}."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_transect_clear_stations(h, idx))
+
+    # ---- Roughness / banks / encroachment / modifiers ---------------
+
+    def get_roughness(self, int idx):
+        """Return Manning's n as C{(n_left, n_right, n_channel)}.
+
+        @rtype: tuple[float, float, float]
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double nl = 0.0, nr = 0.0, nc = 0.0
+        _check(swmm_transect_get_roughness(h, idx, &nl, &nr, &nc))
+        return (nl, nr, nc)
+
+    def get_bank_stations(self, int idx):
+        """Return the C{(left, right)} bank stations.
+
+        @rtype: tuple[float, float]
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double left = 0.0, right = 0.0
+        _check(swmm_transect_get_bank_stations(h, idx, &left, &right))
+        return (left, right)
+
+    def set_bank_stations(self, int idx, double left, double right) -> None:
+        """Set the left/right bank stations."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_transect_set_bank_stations(h, idx, left, right))
+
+    def get_encroachment_stations(self, int idx):
+        """Return the C{(left, right)} encroachment stations.
+
+        @rtype: tuple[float, float]
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double left = 0.0, right = 0.0
+        _check(swmm_transect_get_encroachment_stations(h, idx, &left, &right))
+        return (left, right)
+
+    def set_encroachment_stations(self, int idx, double left, double right) -> None:
+        """Set the left/right encroachment stations."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_transect_set_encroachment_stations(h, idx, left, right))
+
+    def get_modifiers(self, int idx):
+        """Return the geometry modifiers as C{(n_factor, x_factor, y_factor)}.
+
+        @rtype: tuple[float, float, float]
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double nf = 0.0, xf = 0.0, yf = 0.0
+        _check(swmm_transect_get_modifiers(h, idx, &nf, &xf, &yf))
+        return (nf, xf, yf)
+
+    def set_modifiers(self, int idx, double n_factor,
+                      double x_factor, double y_factor) -> None:
+        """Set the geometry modifiers (Manning, station, elevation factors)."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_transect_set_modifiers(h, idx, n_factor, x_factor, y_factor))
+
+    def get_comments(self, int idx) -> str:
+        """Return the descriptive comment string for the transect at C{idx}.
+
+        @rtype: str
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef char buf[1024]
+        _check(swmm_transect_get_comments(h, idx, buf, 1024))
+        return buf.decode('utf-8')
+
+    def set_comments(self, int idx, str text) -> None:
+        """Set the descriptive comment string for the transect at C{idx}."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = text.encode('utf-8')
+        _check(swmm_transect_set_comments(h, idx, b))
 
 
 # ---- Streets --------------------------------------------------------
@@ -84,6 +266,7 @@ class Streets:
         return swmm_street_count(h)
 
     def add(self, str street_id) -> int:
+        """Add a street cross-section *street_id* and return its index."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = street_id.encode('utf-8')
         _check(swmm_street_add(h, b))
@@ -96,11 +279,78 @@ class Streets:
                    int sides=2,
                    double back_width=0.0, double back_slope=0.0,
                    double back_n=0.0) -> None:
+        """Set the geometry and roughness parameters for street *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_street_set_params(
             h, idx, t_crown, h_curb, sx, n_road,
             gutter_depres, gutter_width, sides,
             back_width, back_slope, back_n))
+
+    def get_params(self, int idx) -> dict:
+        """Read back a street cross-section's geometric parameters.
+
+        Inverse of :meth:`set_params`. Values are returned in the same
+        (display/project) units they were supplied.
+
+        @param idx: Zero-based street index.
+        @type idx: int
+        @return: Mapping with keys ``t_crown``, ``h_curb``, ``sx``,
+            ``n_road``, ``gutter_depres``, ``gutter_width``, ``sides``,
+            ``back_width``, ``back_slope``, ``back_n``.
+        @rtype: dict
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double t_crown = 0.0, h_curb = 0.0, sx = 0.0, n_road = 0.0
+        cdef double gutter_depres = 0.0, gutter_width = 0.0
+        cdef int sides = 0
+        cdef double back_width = 0.0, back_slope = 0.0, back_n = 0.0
+        _check(swmm_street_get_params(
+            h, idx, &t_crown, &h_curb, &sx, &n_road,
+            &gutter_depres, &gutter_width, &sides,
+            &back_width, &back_slope, &back_n))
+        return {
+            "t_crown": t_crown, "h_curb": h_curb, "sx": sx, "n_road": n_road,
+            "gutter_depres": gutter_depres, "gutter_width": gutter_width,
+            "sides": sides, "back_width": back_width,
+            "back_slope": back_slope, "back_n": back_n,
+        }
+
+    def get_index(self, str street_id) -> int:
+        """Resolve a street's zero-based index from its string id.
+
+        @rtype: int
+        @raise KeyError: If no street has that id.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = street_id.encode('utf-8')
+        cdef int i = swmm_street_index(h, b)
+        if i < 0:
+            raise ElementNotFoundError(street_id)
+        return i
+
+    def get_id(self, int idx) -> str:
+        """Return the string id of the street at C{idx}.
+
+        @rtype: str
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef const char* raw = swmm_street_id(h, idx)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    def __iter__(self):
+        cdef int n = len(self)
+        for i in range(n):
+            yield self.get_id(i)
+
+    def __contains__(self, key) -> bool:
+        if isinstance(key, str):
+            try:
+                self.get_index(key)
+                return True
+            except KeyError:
+                return False
+        return 0 <= int(key) < len(self)
 
 
 # ---- Inlets ---------------------------------------------------------
@@ -116,6 +366,7 @@ class Inlets:
         return swmm_inlet_count(h)
 
     def add(self, str inlet_id, str inlet_type) -> int:
+        """Add an inlet *inlet_id* of *inlet_type* and return its index."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b_id = inlet_id.encode('utf-8')
         cdef bytes b_type = inlet_type.encode('utf-8')
@@ -127,10 +378,85 @@ class Inlets:
                    double length=0.0, double width=0.0,
                    str grate_type="",
                    double open_area=0.0, double splash_veloc=0.0) -> None:
+        """Set the geometry parameters for inlet *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b_grate = grate_type.encode('utf-8')
         _check(swmm_inlet_set_params(
             h, idx, length, width, b_grate, open_area, splash_veloc))
+
+    def get_params(self, int idx) -> dict:
+        """Read back an inlet's geometric parameters.
+
+        Inverse of :meth:`set_params` — lets an editor load an existing inlet.
+        The inlet *type* string (set at :meth:`add`) is returned separately by
+        :meth:`get_type`.
+
+        @param idx: Zero-based inlet index.
+        @type idx: int
+        @return: Mapping with keys ``length``, ``width``, ``grate_type``,
+            ``open_area``, ``splash_veloc``.
+        @rtype: dict
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double length = 0.0, width = 0.0, open_area = 0.0, splash_veloc = 0.0
+        cdef char grate[256]
+        _check(swmm_inlet_get_params(
+            h, idx, &length, &width, grate, sizeof(grate),
+            &open_area, &splash_veloc))
+        return {
+            "length": length, "width": width,
+            "grate_type": grate.decode('utf-8'),
+            "open_area": open_area, "splash_veloc": splash_veloc,
+        }
+
+    def get_type(self, int idx) -> str:
+        """Return the inlet's type string (the value passed to :meth:`add`).
+
+        @param idx: Zero-based inlet index.
+        @rtype: str
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef char buf[256]
+        _check(swmm_inlet_get_type(h, idx, buf, sizeof(buf)))
+        return buf.decode('utf-8')
+
+    def get_index(self, str inlet_id) -> int:
+        """Resolve an inlet's zero-based index from its string id.
+
+        @rtype: int
+        @raise KeyError: If no inlet has that id.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = inlet_id.encode('utf-8')
+        cdef int i = swmm_inlet_index(h, b)
+        if i < 0:
+            raise ElementNotFoundError(inlet_id)
+        return i
+
+    def get_id(self, int idx) -> str:
+        """Return the string id of the inlet at C{idx}.
+
+        @rtype: str
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef const char* raw = swmm_inlet_id(h, idx)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    def __iter__(self):
+        cdef int n = len(self)
+        for i in range(n):
+            yield self.get_id(i)
+
+    def __contains__(self, key) -> bool:
+        if isinstance(key, str):
+            try:
+                self.get_index(key)
+                return True
+            except KeyError:
+                return False
+        return 0 <= int(key) < len(self)
 
 
 # ---- LID controls + usage ------------------------------------------
@@ -151,33 +477,179 @@ class LIDs:
         return swmm_lid_count(h)
 
     def add(self, str lid_id, lid_type) -> int:
-        """``lid_type`` is a :class:`LidType` enum."""
+        """Add a LID control.
+
+        @param lid_id: Unique identifier for the new LID control.
+        @param lid_type: A L{LidType} enum value.
+        @return: Zero-based index of the new LID control.
+        @rtype: int
+        """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = lid_id.encode('utf-8')
         _check(swmm_lid_add(h, b, int(lid_type)))
         self._solver._bump_generation()
         return len(self) - 1
 
+    def get_index(self, str lid_id) -> int:
+        """Resolve a LID control's zero-based index from its string id.
+
+        @rtype: int
+        @raise KeyError: If no LID control has that id.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = lid_id.encode('utf-8')
+        cdef int i = swmm_lid_index(h, b)
+        if i < 0:
+            raise ElementNotFoundError(lid_id)
+        return i
+
+    def get_id(self, int idx) -> str:
+        """Return the string id of the LID control at C{idx}.
+
+        @rtype: str
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef const char* raw = swmm_lid_id(h, idx)
+        return raw.decode('utf-8') if raw != NULL else ""
+
+    def __iter__(self):
+        cdef int n = len(self)
+        for i in range(n):
+            yield self.get_id(i)
+
+    def __contains__(self, key) -> bool:
+        if isinstance(key, str):
+            try:
+                self.get_index(key)
+                return True
+            except KeyError:
+                return False
+        return 0 <= int(key) < len(self)
+
     def set_surface(self, int idx, *,
                     double storage, double roughness, double slope) -> None:
+        """Set the surface-layer parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_surface(h, idx, storage, roughness, slope))
 
     def set_soil(self, int idx, *,
                  double thick, double porosity, double fc,
                  double wp, double ksat, double kslope) -> None:
+        """Set the soil-layer parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_soil(h, idx, thick, porosity, fc, wp, ksat, kslope))
 
     def set_storage(self, int idx, *,
                     double thick, double void_frac, double ksat) -> None:
+        """Set the storage-layer parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_storage(h, idx, thick, void_frac, ksat))
 
     def set_drain(self, int idx, *,
                   double coeff, double expon, double offset) -> None:
+        """Set the underdrain parameters for LID *idx*."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drain(h, idx, coeff, expon, offset))
+
+    def set_pavement(self, int idx, *,
+                     double thick, double void_ratio, double frac_imperv,
+                     double ksat, double clog_factor=0.0, double regen_days=0.0) -> None:
+        """Set the porous-pavement layer (PERM_PAVEMENT LIDs)."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_set_pavement(h, idx, thick, void_ratio, frac_imperv,
+                                     ksat, clog_factor, regen_days))
+
+    def set_drainmat(self, int idx, *,
+                     double thick, double void_frac, double roughness) -> None:
+        """Set the drainage-mat layer (GREEN_ROOF LIDs)."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_set_drainmat(h, idx, thick, void_frac, roughness))
+
+    def get_type(self, int idx) -> int:
+        """Return the LID control's type code (inverse of the ``lid_type``
+        argument to :meth:`add`).
+
+        @param idx: Zero-based LID index.
+        @return: An integer L{LidType} code (0=BIO_CELL … 7=VEGETATIVE_SWALE).
+        @rtype: int
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int t = -1
+        _check(swmm_lid_get_type(h, idx, &t))
+        return t
+
+    def get_surface(self, int idx) -> dict:
+        """Read the surface layer. Inverse of :meth:`set_surface`.
+
+        @return: Mapping ``storage``, ``roughness``, ``slope``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double storage = 0.0, roughness = 0.0, slope = 0.0
+        _check(swmm_lid_get_surface(h, idx, &storage, &roughness, &slope))
+        return {"storage": storage, "roughness": roughness, "slope": slope}
+
+    def get_soil(self, int idx) -> dict:
+        """Read the soil layer. Inverse of :meth:`set_soil`.
+
+        @return: Mapping ``thick``, ``porosity``, ``fc``, ``wp``, ``ksat``,
+            ``kslope``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, porosity = 0.0, fc = 0.0, wp = 0.0, ksat = 0.0, kslope = 0.0
+        _check(swmm_lid_get_soil(h, idx, &thick, &porosity, &fc, &wp, &ksat, &kslope))
+        return {"thick": thick, "porosity": porosity, "fc": fc,
+                "wp": wp, "ksat": ksat, "kslope": kslope}
+
+    def get_storage(self, int idx) -> dict:
+        """Read the storage layer. Inverse of :meth:`set_storage`.
+
+        @return: Mapping ``thick``, ``void_frac``, ``ksat``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, void_frac = 0.0, ksat = 0.0
+        _check(swmm_lid_get_storage(h, idx, &thick, &void_frac, &ksat))
+        return {"thick": thick, "void_frac": void_frac, "ksat": ksat}
+
+    def get_drain(self, int idx) -> dict:
+        """Read the underdrain layer. Inverse of :meth:`set_drain`.
+
+        @return: Mapping ``coeff``, ``expon``, ``offset``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double coeff = 0.0, expon = 0.0, offset = 0.0
+        _check(swmm_lid_get_drain(h, idx, &coeff, &expon, &offset))
+        return {"coeff": coeff, "expon": expon, "offset": offset}
+
+    def get_pavement(self, int idx) -> dict:
+        """Read the porous-pavement layer. Inverse of :meth:`set_pavement`.
+
+        @return: Mapping ``thick``, ``void_ratio``, ``frac_imperv``, ``ksat``,
+            ``clog_factor``, ``regen_days``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, void_ratio = 0.0, frac_imperv = 0.0
+        cdef double ksat = 0.0, clog_factor = 0.0, regen_days = 0.0
+        _check(swmm_lid_get_pavement(h, idx, &thick, &void_ratio, &frac_imperv,
+                                     &ksat, &clog_factor, &regen_days))
+        return {"thick": thick, "void_ratio": void_ratio, "frac_imperv": frac_imperv,
+                "ksat": ksat, "clog_factor": clog_factor, "regen_days": regen_days}
+
+    def get_drainmat(self, int idx) -> dict:
+        """Read the drainage-mat layer. Inverse of :meth:`set_drainmat`.
+
+        @return: Mapping ``thick``, ``void_frac``, ``roughness``.
+        @rtype: dict
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double thick = 0.0, void_frac = 0.0, roughness = 0.0
+        _check(swmm_lid_get_drainmat(h, idx, &thick, &void_frac, &roughness))
+        return {"thick": thick, "void_frac": void_frac, "roughness": roughness}
 
     def usage_add(self, subcatchment, lid, *,
                   int number, double area, double width,
@@ -194,6 +666,57 @@ class LIDs:
         cdef int li = int(lid)
         _check(swmm_lid_usage_add(
             h, si, li, number, area, width, init_sat, from_imperv))
+
+    def usage_count(self) -> int:
+        """Number of ``[LID_USAGE]`` placement rows across all subcatchments.
+
+        @rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_lid_usage_count(h)
+
+    def usage_get(self, int usage_idx) -> dict:
+        """Read one ``[LID_USAGE]`` placement row by global index.
+
+        @param usage_idx: Zero-based global usage index in
+            C{[0, usage_count())}.
+        @type usage_idx: int
+        @return: Mapping with keys ``subcatch_index``, ``lid_index``,
+            ``number``, ``area``, ``width``, ``init_sat``, ``from_imperv``,
+            ``to_perv``, ``from_perv``.
+        @rtype: dict
+        @raise EngineError: On C API failure (e.g. index out of range).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int subcatch_idx = 0, lid_idx = 0, number = 0, to_perv = 0
+        cdef double area = 0.0, width = 0.0, init_sat = 0.0
+        cdef double from_imperv = 0.0, from_perv = 0.0
+        _check(swmm_lid_usage_get(
+            h, usage_idx, &subcatch_idx, &lid_idx, &number,
+            &area, &width, &init_sat, &from_imperv, &to_perv, &from_perv))
+        return {
+            "subcatch_index": subcatch_idx,
+            "lid_index": lid_idx,
+            "number": number,
+            "area": area,
+            "width": width,
+            "init_sat": init_sat,
+            "from_imperv": from_imperv,
+            "to_perv": to_perv,
+            "from_perv": from_perv,
+        }
+
+    def usage_remove(self, int usage_idx) -> None:
+        """Remove one ``[LID_USAGE]`` placement row by global index.
+
+        @param usage_idx: Zero-based global usage index in
+            C{[0, usage_count())}.
+        @type usage_idx: int
+        @raise EngineError: On C API failure (e.g. index out of range).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_usage_remove(h, usage_idx))
+        self._solver._bump_generation()
 
 
 # ---- Top-level Infrastructure view ----------------------------------

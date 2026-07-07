@@ -93,6 +93,21 @@ SWMM_ENGINE_API int swmm_ext_inflow_get(SWMM_Engine engine, int entry_idx,
  */
 SWMM_ENGINE_API int swmm_ext_inflow_remove(SWMM_Engine engine, int entry_idx);
 
+/**
+ * @brief Set an external inflow entry's timeseries scale factor at runtime.
+ * @details Updates the entry and refreshes the inflow solver's per-step cache,
+ *          so the change takes effect on the next step (a lighter alternative
+ *          to remove + re-add). @p entry_idx is a flat index over all entries.
+ */
+SWMM_ENGINE_API int swmm_ext_inflow_set_scale(SWMM_Engine engine, int entry_idx, double scale);
+
+/**
+ * @brief Set an external inflow entry's constant baseline at runtime.
+ * @details Same semantics as @ref swmm_ext_inflow_set_scale for the baseline
+ *          term. Baseline is in the inflow's display units.
+ */
+SWMM_ENGINE_API int swmm_ext_inflow_set_baseline(SWMM_Engine engine, int entry_idx, double baseline);
+
 /* =========================================================================
  * Dry weather flow
  * ========================================================================= */
@@ -152,6 +167,14 @@ SWMM_ENGINE_API int swmm_dwf_get(SWMM_Engine engine, int entry_idx,
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_dwf_remove(SWMM_Engine engine, int entry_idx);
+
+/**
+ * @brief Set a DWF entry's average (baseline) value at runtime.
+ * @details Updates the entry and refreshes the inflow solver's per-step cache,
+ *          so the change takes effect on the next step. @p avg_value is in the
+ *          constituent's display units (flow units for FLOW).
+ */
+SWMM_ENGINE_API int swmm_dwf_set_baseline(SWMM_Engine engine, int entry_idx, double avg_value);
 
 /* =========================================================================
  * RDII (Rainfall-Dependent Infiltration/Inflow)
@@ -487,7 +510,7 @@ SWMM_ENGINE_API int swmm_rdii_decay_remove(SWMM_Engine engine, const char* uh_na
  * @param k_T        Thermal recovery rate at T_ref (1/hr) — ET-driven drying.
  * @param T_ref      Reference temperature (deg C) for the thermal term.
  * @param theta_rec  Temperature sensitivity (1/deg C) of the thermal term.
- * @param T_freeze   Recovery is suppressed when air temperature <= T_freeze (deg C).
+ * @param T_freeze   Recovery is suppressed when air temperature < T_freeze (deg C).
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_rdii_decay_add(SWMM_Engine engine, const char* uh_name,

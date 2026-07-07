@@ -19,6 +19,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 
 #include "openswmm_solver.h"
 
@@ -237,12 +239,27 @@ TEST(SolverTransectErrors, ZeroChannelManningIsError227) {
     int rc = swmm_open(inpPath.c_str(), rptPath.c_str(), outPath.c_str());
     EXPECT_NE(rc, 0) << "swmm_open should fail for zero channel Manning's n";
 
+    // Since commit b0cdd62b the zero-n NC line is rejected at PARSE time
+    // (transect.c setManning), so the run finishes with the canonical
+    // line-level input error code 200 (ERR_INPUT) — legacy semantics for
+    // any per-line input error — while the specific ERROR 227 detail is
+    // written to the report file. Pin both.
     char errMsg[512] = {};
     int code = swmm_getError(errMsg, sizeof(errMsg));
-    EXPECT_EQ(code, 227) << "Expected error code 227 (ERR_TRANSECT_MANNING), got " << code
+    EXPECT_EQ(code, 200) << "Expected generic input error 200, got " << code
                           << " message: " << errMsg;
 
     swmm_close();
+
+    {
+        std::ifstream rpt(rptPath);
+        ASSERT_TRUE(rpt.good()) << "report file missing: " << rptPath;
+        std::stringstream ss;
+        ss << rpt.rdbuf();
+        EXPECT_NE(ss.str().find("ERROR 227"), std::string::npos)
+            << "report must carry the specific ERROR 227 detail";
+    }
+
     std::remove(inpPath.c_str());
     std::remove(rptPath.c_str());
     std::remove(outPath.c_str());

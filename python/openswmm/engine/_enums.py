@@ -457,6 +457,46 @@ class LidType(IntEnum):
     VEGETATIVE_SWALE = 7
 
 
+class AquiferParam(IntEnum):
+    """Aquifer parameter codes for C{Aquifers.get_param} / C{set_param}.
+
+    Values use input-file units (the C{[AQUIFERS]} line columns). The
+    flux-coefficient parameters (C{CONDUCTIVITY}, C{CONDUCT_SLOPE},
+    C{TENSION_SLOPE}, C{UPPER_EVAP_FRAC}, C{LOWER_EVAP_DEPTH},
+    C{LOWER_LOSS_COEFF}) are settable both before the simulation starts and
+    while it is running. The structural / initial-condition parameters
+    (C{POROSITY}, C{WILTING_POINT}, C{FIELD_CAPACITY}, C{BOTTOM_ELEV},
+    C{WATER_TABLE_ELEV}, C{UPPER_MOISTURE}) bound or seed the groundwater
+    state and are pre-start-only.
+
+    @cvar POROSITY: Porosity (volumetric fraction).
+    @cvar WILTING_POINT: Wilting point (volumetric fraction).
+    @cvar FIELD_CAPACITY: Field capacity (volumetric fraction).
+    @cvar CONDUCTIVITY: Saturated hydraulic conductivity.
+    @cvar CONDUCT_SLOPE: Conductivity slope.
+    @cvar TENSION_SLOPE: Tension slope.
+    @cvar UPPER_EVAP_FRAC: Upper-zone evaporation fraction.
+    @cvar LOWER_EVAP_DEPTH: Lower-zone evaporation depth.
+    @cvar LOWER_LOSS_COEFF: Lower-zone seepage-loss coefficient.
+    @cvar BOTTOM_ELEV: Aquifer bottom elevation.
+    @cvar WATER_TABLE_ELEV: Initial water table elevation.
+    @cvar UPPER_MOISTURE: Initial upper-zone moisture.
+    """
+
+    POROSITY = 0
+    WILTING_POINT = 1
+    FIELD_CAPACITY = 2
+    CONDUCTIVITY = 3
+    CONDUCT_SLOPE = 4
+    TENSION_SLOPE = 5
+    UPPER_EVAP_FRAC = 6
+    LOWER_EVAP_DEPTH = 7
+    LOWER_LOSS_COEFF = 8
+    BOTTOM_ELEV = 9
+    WATER_TABLE_ELEV = 10
+    UPPER_MOISTURE = 11
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
@@ -569,13 +609,15 @@ class ForcingMode(IntEnum):
     """Forcing application mode.
 
     Determines how a forced value is combined with the model-computed value.
+    Mirrors C{SWMM_ForcingMode} in C{openswmm_forcing.h} (OVERRIDE=1, ADD=2;
+    0 is the engine-internal "no forcing" state and is not exposed).
 
     @cvar REPLACE: Replace the computed value entirely.
     @cvar ADD: Add the forced value to the computed value.
     """
 
-    REPLACE = 0
-    ADD = 1
+    REPLACE = 1
+    ADD = 2
 
 
 class ForcingTarget(IntEnum):
@@ -585,12 +627,14 @@ class ForcingTarget(IntEnum):
     @cvar LINK: Link forcing.
     @cvar SUBCATCH: Subcatchment forcing.
     @cvar GAGE: Rain gage forcing.
+    @cvar CLIMATE: System-wide climate forcing (temperature, wind).
     """
 
     NODE = 0
     LINK = 1
     SUBCATCH = 2
     GAGE = 3
+    CLIMATE = 4
 
 
 # =============================================================================
@@ -669,3 +713,234 @@ class RoutingTotal(IntEnum):
     INIT_STORAGE = 9
     FINAL_STORAGE = 10
     FORCING_INFLOW = 11
+
+
+# =============================================================================
+# Dividers
+# =============================================================================
+
+
+class DividerType(IntEnum):
+    """Flow-diversion method for a C{DIVIDER} node.
+
+    Mirrors C{SWMM_DividerType} in C{openswmm_nodes.h}.
+
+    @cvar CUTOFF: Flow above a cutoff value is diverted.
+    @cvar OVERFLOW: Diverted flow equals the capacity exceedance of the
+        main link.
+    @cvar TABULAR: Diverted flow is looked up on a diversion curve.
+    @cvar WEIR: A weir equation governs the diversion.
+    """
+
+    CUTOFF = 0
+    OVERFLOW = 1
+    TABULAR = 2
+    WEIR = 3
+
+
+# =============================================================================
+# Runtime forcing
+# =============================================================================
+
+
+class ForcingType(IntEnum):
+    """Forcing channel selected when injecting a runtime override.
+
+    Mirrors C{SWMM_ForcingType} in C{openswmm_forcing.h}. Distinct from
+    L{ForcingTarget}, which only names the object *kind* passed to
+    L{Forcing.clear}.
+
+    @cvar NODE_LAT_INFLOW: Lateral inflow at a node.
+    @cvar NODE_HEAD_BOUNDARY: Head boundary condition at a node.
+    @cvar NODE_QUALITY: Pollutant concentration at a node.
+    @cvar LINK_FLOW: Imposed flow on a link.
+    @cvar LINK_SETTING: Control setting on a link.
+    @cvar SUBCATCH_RAINFALL: Rainfall on a subcatchment.
+    @cvar SUBCATCH_EVAP: Evaporation on a subcatchment.
+    @cvar GAGE_RAINFALL: Rainfall at a rain gage.
+    @cvar CLIMATE_TEMPERATURE: System-wide air temperature.
+    @cvar CLIMATE_WIND: System-wide wind speed.
+    @cvar SUBCATCH_SNOWFALL: Snowfall on a subcatchment.
+    @cvar CLIMATE_EVAP: System-wide evaporation rate.
+    @cvar LINK_QUALITY: Pollutant quality on a link.
+    """
+
+    NODE_LAT_INFLOW = 0
+    NODE_HEAD_BOUNDARY = 1
+    NODE_QUALITY = 2
+    LINK_FLOW = 3
+    LINK_SETTING = 4
+    SUBCATCH_RAINFALL = 5
+    SUBCATCH_EVAP = 6
+    GAGE_RAINFALL = 7
+    CLIMATE_TEMPERATURE = 8
+    CLIMATE_WIND = 9
+    SUBCATCH_SNOWFALL = 10
+    CLIMATE_EVAP = 11
+    LINK_QUALITY = 12
+
+
+class ForcingPersist(IntEnum):
+    """Lifetime of a runtime forcing override.
+
+    Mirrors C{SWMM_ForcingPersist} in C{openswmm_forcing.h}. Shared by the 1D
+    and 2D forcing APIs.
+
+    @cvar RESET: Auto-clear the forcing after each routing step.
+    @cvar PERSIST: Keep the forcing until it is explicitly cleared.
+    """
+
+    RESET = 0
+    PERSIST = 1
+
+
+# =============================================================================
+# 2D surface routing
+# =============================================================================
+
+class SurfaceForcingMode(IntEnum):
+    """How a 2D surface forcing value is applied to a mesh cell.
+
+    Mirrors C{SWMM_ForcingMode} in C{openswmm_forcing.h} and the engine's
+    C{openswmm::ForcingMode}. Note the values differ from the 1D
+    L{ForcingMode}: the 2D forcing API consumes the canonical
+    C{SWMM_FORCING_*} codes directly (C{OVERRIDE=1}, C{ADD=2}).
+
+    @cvar NONE: No forcing — use the model-computed value.
+    @cvar OVERRIDE: Replace the computed value with the user value.
+    @cvar ADD: Add the user value to the computed value.
+    """
+
+    NONE = 0
+    OVERRIDE = 1
+    ADD = 2
+
+
+class SurfaceBoundaryType(IntEnum):
+    """2D mesh edge boundary-condition type.
+
+    Mirrors C{openswmm::twoD::BoundaryType} (C{BoundaryData.hpp}).
+
+    @cvar WALL: Zero-flux wall (default).
+    @cvar NORMAL_FLOW: Manning outflow using the bed slope.
+    @cvar SPECIFIED_STAGE: Prescribed water-surface elevation (const or TS).
+    @cvar SPECIFIED_FLOW: Prescribed per-metre discharge (const or TS).
+    @cvar RATING_CURVE: Stage-to-flow lookup curve.
+    """
+
+    WALL = 0
+    NORMAL_FLOW = 1
+    SPECIFIED_STAGE = 2
+    SPECIFIED_FLOW = 3
+    RATING_CURVE = 4
+
+
+# =============================================================================
+# Object references (model editing)
+# =============================================================================
+
+
+class RefType(IntEnum):
+    """Kind of object that holds a reference, used by the editing/impact API.
+
+    Mirrors C{SWMM_RefType} in C{openswmm_edit.h}.
+
+    @cvar NODE: A node holds the reference.
+    @cvar LINK: A link holds the reference.
+    @cvar SUBCATCH: A subcatchment holds the reference.
+    @cvar GAGE: A rain gage holds the reference.
+    @cvar TABLE: A time series or curve holds the reference.
+    @cvar TRANSECT: A transect holds the reference.
+    @cvar INLET_USAGE: An inlet-usage entry holds the reference.
+    """
+
+    NODE = 0
+    LINK = 1
+    SUBCATCH = 2
+    GAGE = 3
+    TABLE = 4
+    TRANSECT = 5
+    INLET_USAGE = 6
+
+
+class TableType(IntEnum):
+    """Table type codes returned by C{swmm_table_get_type}.
+
+    Tables (time series and curves) are stored in a single unified array;
+    this code partitions that array. Mirrors C{openswmm::TableType}.
+
+    @cvar TIMESERIES: Time-varying values (rainfall, inflow, etc.).
+    @cvar CURVE_STORAGE: Storage node volume-depth curve.
+    @cvar CURVE_DIVERSION: Diversion rating curve.
+    @cvar CURVE_RATING: Outfall/weir rating curve.
+    @cvar CURVE_SHAPE: Cross-section shape curve.
+    @cvar CURVE_CONTROL: Control rule action curve.
+    @cvar CURVE_TIDAL: Tidal stage curve.
+    @cvar CURVE_PUMP1: Pump curve type 1 (ON/OFF depth).
+    @cvar CURVE_PUMP2: Pump curve type 2 (head vs flow).
+    @cvar CURVE_PUMP3: Pump curve type 3 (volume vs time).
+    @cvar CURVE_PUMP4: Pump curve type 4 (depth vs speed).
+    @cvar CURVE_PUMP5: Pump curve type 5 (head vs flow, variable speed).
+    """
+
+    TIMESERIES = 0
+    CURVE_STORAGE = 1
+    CURVE_DIVERSION = 2
+    CURVE_RATING = 3
+    CURVE_SHAPE = 4
+    CURVE_CONTROL = 5
+    CURVE_TIDAL = 6
+    CURVE_PUMP1 = 7
+    CURVE_PUMP2 = 8
+    CURVE_PUMP3 = 9
+    CURVE_PUMP4 = 10
+    CURVE_PUMP5 = 11
+
+
+class FilePathRole(IntEnum):
+    """External-file slot selector for C{swmm_file_path_get/set}.
+
+    Mirrors C{SWMM_FilePathRole}. Scalar slots ignore the ``owner``
+    argument; vector slots use ``owner`` to select the entry (a decimal
+    index for hot-start saves, the gage id for rain-gage data, the series
+    id for time-series data).
+
+    @cvar RAINFALL: Rainfall interface file (scalar).
+    @cvar RUNOFF: Runoff interface file (scalar).
+    @cvar RDII: RDII interface file (scalar).
+    @cvar INFLOWS: Routing inflows interface file (scalar).
+    @cvar OUTFLOWS: Routing outflows interface file (scalar).
+    @cvar HOTSTART_USE: Hot-start file to read (scalar).
+    @cvar CLIMATE_TEMP: Climate/temperature file (scalar).
+    @cvar HOTSTART_SAVE: Hot-start save slot (vector; owner = index).
+    @cvar RAINGAGE_DATA: Rain-gage data file (vector; owner = gage id).
+    @cvar TIMESERIES_DATA: Time-series data file (vector; owner = series id).
+    """
+
+    RAINFALL = 1
+    RUNOFF = 2
+    RDII = 3
+    INFLOWS = 4
+    OUTFLOWS = 5
+    HOTSTART_USE = 6
+    CLIMATE_TEMP = 7
+    HOTSTART_SAVE = 8
+    RAINGAGE_DATA = 9
+    TIMESERIES_DATA = 10
+
+
+class UserFlagType(IntEnum):
+    """User-flag schema value type for C{swmm_userflag_define}.
+
+    Mirrors C{openswmm::UserFlagType}.
+
+    @cvar BOOLEAN: Boolean flag (INP encoding C{YES}/C{NO}).
+    @cvar INTEGER: Integer flag.
+    @cvar REAL: Real-valued flag.
+    @cvar STRING: Free-text flag (stored verbatim).
+    """
+
+    BOOLEAN = 0
+    INTEGER = 1
+    REAL = 2
+    STRING = 3

@@ -85,11 +85,12 @@ static double getYnorm(const XSectParams& xs, double beta, double q_max,
 
 void buildOutfallLinkMap(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
-    const int n_nodes = ctx.n_nodes();
+    auto& outs  = ctx.node_subtypes.outfalls;   // relational side-table (authoritative)
     const int n_links = ctx.n_links();
 
-    nodes.outfall_link_idx.assign(static_cast<std::size_t>(n_nodes), -1);
-    nodes.outfall_link_offset.assign(static_cast<std::size_t>(n_nodes), 0.0);
+    // Reset the cached connectivity on every outfall row.
+    outs.link_idx.assign(static_cast<std::size_t>(outs.count()), -1);
+    outs.link_offset.assign(static_cast<std::size_t>(outs.count()), 0.0);
 
     // Single pass over links; first matching conduit wins (matches the
     // first-break legacy behaviour of the inner scan).
@@ -100,18 +101,53 @@ void buildOutfallLinkMap(SimulationContext& ctx) {
         int n1 = ctx.links.node1[uk];
         int n2 = ctx.links.node2[uk];
 
-        if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL &&
-            nodes.outfall_link_idx[static_cast<std::size_t>(n2)] < 0) {
-            nodes.outfall_link_idx[static_cast<std::size_t>(n2)]    = k;
-            nodes.outfall_link_offset[static_cast<std::size_t>(n2)] = ctx.links.offset2[uk];
+        if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL) {
+            const int r = ctx.node_subtypes.outfall_row(n2);
+            if (r >= 0 && outs.link_idx[static_cast<std::size_t>(r)] < 0) {
+                outs.link_idx[static_cast<std::size_t>(r)]    = k;
+                outs.link_offset[static_cast<std::size_t>(r)] = ctx.links.offset2[uk];
+            }
         }
-        if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL &&
-            nodes.outfall_link_idx[static_cast<std::size_t>(n1)] < 0) {
-            nodes.outfall_link_idx[static_cast<std::size_t>(n1)]    = k;
-            nodes.outfall_link_offset[static_cast<std::size_t>(n1)] = ctx.links.offset1[uk];
+        if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL) {
+            const int r = ctx.node_subtypes.outfall_row(n1);
+            if (r >= 0 && outs.link_idx[static_cast<std::size_t>(r)] < 0) {
+                outs.link_idx[static_cast<std::size_t>(r)]    = k;
+                outs.link_offset[static_cast<std::size_t>(r)] = ctx.links.offset1[uk];
+            }
         }
     }
 }
+
+namespace {
+// Static (boundary-condition) outfall properties. Phase 3.2 of the relational
+// refactor: read from the dense OutfallData side-table when available, else from
+// the wide NodeData arrays. The side-table is built at hydraulics init *after*
+// buildOutfallLinkMap, so link_idx/link_offset are resolved; and these fields are
+// static during a run, so the side-table is an exact mirror of the wide arrays.
+// The per-step-mutable head_2d is deliberately NOT included here — it is read
+// separately from the side-table (outfalls.head_2d) at the use site.
+struct OutfallStatic {
+    OutfallType bc_type;
+    double      param;
+    uint8_t     has_flap;
+    int         link_idx;
+    double      link_offset;
+};
+
+inline OutfallStatic outfallStatic(const NodeData& nodes, const NodeSubtypes& subs,
+                                   std::size_t uj) {
+    (void)nodes;
+    const int r = subs.outfall_row(static_cast<int>(uj));
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        return OutfallStatic{ subs.outfalls.bc_type[ur], subs.outfalls.param[ur],
+                              subs.outfalls.has_flap_gate[ur], subs.outfalls.link_idx[ur],
+                              subs.outfalls.link_offset[ur] };
+    }
+    // Non-outfall / no row: resize defaults (FREE, no flap, no cached link).
+    return OutfallStatic{ OutfallType::FREE, 0.0, 0, -1, 0.0 };
+}
+}  // namespace
 
 void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
     auto& nodes = ctx.nodes;
@@ -123,18 +159,21 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
     // Then calls node_setOutletDepth(n, yNorm, yCrit, z).
     // For FREE outfall: depth = z + MIN(yNorm, yCrit).
 
-    for (int j = 0; j < ctx.n_nodes(); ++j) {
+    // Per-outfall computation body (unchanged from the original loop). Reads
+    // the wide NodeData arrays by node index `j` so results are bit-for-bit
+    // identical regardless of how outfalls are enumerated below.
+    auto process_outfall = [&](int j) {
         auto uj = static_cast<std::size_t>(j);
-        if (nodes.type[uj] != NodeType::OUTFALL) continue;
 
         double depth = 0.0;
 
         // Cached outfall → conduit mapping (populated once at init).
         // Falls back to a scan only if the cache is empty (e.g. in unit
         // tests that skip Router::init).
-        int link_idx = nodes.outfall_link_idx[uj];
-        double z = nodes.outfall_link_offset[uj];
-        if (link_idx < 0 && !nodes.outfall_link_idx.empty()) {
+        const OutfallStatic ost = outfallStatic(nodes, ctx.node_subtypes, uj);
+        int link_idx = ost.link_idx;
+        double z = ost.link_offset;
+        if (link_idx < 0) {
             for (int k = 0; k < ctx.n_links(); ++k) {
                 auto uk = static_cast<std::size_t>(k);
                 if (ctx.links.type[uk] != LinkType::CONDUIT) continue;
@@ -150,14 +189,18 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         double yNorm = 0.0, yCrit = 0.0;
         if (link_idx >= 0) {
             auto uk = static_cast<std::size_t>(link_idx);
-            int barrels = std::max(ctx.links.barrels[uk], 1);
+            const auto& CD = ctx.link_subtypes.conduits;
+            const int cr = ctx.link_subtypes.conduit_row(link_idx);
+            int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
             double q = std::fabs(ctx.links.flow[uk]) / barrels;
             XSectParams xs = buildXSectParams(ctx, uk);
-            yNorm = getYnorm(xs, ctx.links.beta[uk], ctx.links.q_max[uk], q);
+            const double beta_v = (cr >= 0) ? CD.beta[static_cast<std::size_t>(cr)] : 0.0;
+            const double qmax_v = (cr >= 0) ? CD.q_max[static_cast<std::size_t>(cr)] : 0.0;
+            yNorm = getYnorm(xs, beta_v, qmax_v, q);
             yCrit = xsect::getYcrit(xs, q);
         }
 
-        switch (nodes.outfall_type[uj]) {
+        switch (ost.bc_type) {
             case OutfallType::FREE:
                 // Legacy: depth = z + MIN(yNorm, yCrit)
                 depth = z + std::min(yNorm, yCrit);
@@ -169,23 +212,41 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 break;
 
             case OutfallType::FIXED: {
-                double stage = nodes.outfall_param[uj] / ucf_len;
-                // Legacy: let yCrit = MIN(yCrit, yNorm)
+                // outfall_param is ALREADY in internal feet (converted once in
+                // PostParseResolver, matching legacy node.c fixedStage). The
+                // TIDAL/TIMESERIES branches below divide by ucf_len because
+                // those read raw display-unit table values; FIXED must not —
+                // a second division inflated the stage by 1/ucf_len in metric
+                // models (e.g. user3: 223.7 m → 733.9 m), driving huge spurious
+                // outfall backflow that flooded the upstream storage nodes.
+                double stage = ost.param;
+                // Legacy outfall_setOutletDepth (node.c:1429-1454):
+                //   yCrit = MIN(yCrit, yNorm)
+                //   if (yCrit+z+inv < stage)  yNew = stage - inv
+                //   else if (z > 0) { if (stage < inv+z) yNew = MAX(0, stage-inv)
+                //                     else               yNew = z + yCrit }
+                //   else                      yNew = yCrit
                 yCrit = std::min(yCrit, yNorm);
-                // If critical depth elev < stage, use stage
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
-                // Else if conduit above outfall invert, use critical depth
                 else if (z > 0.0)
-                    depth = z + yCrit;
-                // Else use max of critical depth and stage
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    // free-overfall (no offset, stage below critical-depth
+                    // elev): node sits at the conduit's critical depth, NOT 0.
+                    // Using max(0, stage-inv) here left a free-discharging
+                    // FIXED outfall below its invert at depth 0, so the
+                    // connecting conduit's downstream depth/area was too small
+                    // and it under-conveyed (user3 EGG conduit CCOROUT1 ~6%),
+                    // backing water up and surcharging the upstream node.
+                    depth = yCrit;
                 break;
             }
 
             case OutfallType::TIDAL: {
-                int curve_idx = static_cast<int>(nodes.outfall_param[uj]);
+                int curve_idx = static_cast<int>(ost.param);
                 double stage = nodes.invert_elev[uj];
                 if (curve_idx >= 0 && curve_idx < static_cast<int>(ctx.tables.tables.size())) {
                     int h_tmp, m_tmp, s_tmp;
@@ -197,14 +258,16 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
                 else if (z > 0.0)
-                    depth = z + yCrit;
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
                 break;
             }
 
             case OutfallType::TIMESERIES: {
-                int ts_idx = static_cast<int>(nodes.outfall_param[uj]);
+                int ts_idx = static_cast<int>(ost.param);
                 double stage = nodes.invert_elev[uj];
                 if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
                     stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], current_time) / ucf_len;
@@ -213,9 +276,11 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
                     depth = stage - nodes.invert_elev[uj];
                 else if (z > 0.0)
-                    depth = z + yCrit;
+                    depth = (stage < nodes.invert_elev[uj] + z)
+                                ? std::max(0.0, stage - nodes.invert_elev[uj])
+                                : z + yCrit;
                 else
-                    depth = std::max(0.0, stage - nodes.invert_elev[uj]);
+                    depth = yCrit;  // free overfall sits at critical depth (legacy node.c:1453)
                 break;
             }
         }
@@ -242,22 +307,41 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         // is robust against any future outfall type whose h_standard
         // might fall below z_inv.
         //
+        // Wet/dry blend: updateOutfallBoundaries caches a Hermite ramp
+        // factor in [0,1] (0 = dry → free discharge, 1 = wet → full
+        // tailwater) keyed on the 2D solver's dry_depth. The override
+        // blends the prescribed stage from h_standard (free) up to the
+        // raw tailwater h_2d as the cell wets, so a near-dry outfall cell
+        // reverts to free discharge instead of being pinned at bed level
+        // (which deadlocked the pipe), and the wet/dry transition stays
+        // C¹ to avoid step-to-step chatter.
+        //
         // Flap-gate logic (matches the original updateOutfallBoundaries
-        // intent): when h_2d would *raise* the stage above h_standard,
-        // a closed flap gate prevents the 2D side from pushing water
-        // back into the pipe network, so we skip the override and leave
-        // h_standard intact.
+        // intent): when the raw tailwater h_2d would *raise* the stage
+        // above h_standard, a closed flap gate prevents the 2D side from
+        // pushing water back into the pipe network, so we skip the
+        // override and leave h_standard intact.
         //
         // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4, C5).
-        double h_2d = nodes.outfall_2d_head[uj];
-        if (h_2d > z_inv) {
-            bool flap_closed = (nodes.outfall_has_flap_gate[uj] != 0)
+        // Mutable 2D head from the outfall side-table; -1e30 sentinel (no override)
+        // when there is no outfall row; ramp 0 = dry (override suppressed).
+        const int orow = ctx.node_subtypes.outfall_row(static_cast<int>(uj));
+        double h_2d = (orow >= 0)
+            ? ctx.node_subtypes.outfalls.head_2d[static_cast<std::size_t>(orow)]
+            : -1.0e30;
+        double ramp_2d = (orow >= 0)
+            ? ctx.node_subtypes.outfalls.ramp_2d[static_cast<std::size_t>(orow)]
+            : 0.0;
+        if (h_2d > z_inv && ramp_2d > 0.0) {
+            bool flap_closed = (ost.has_flap != 0)
                                && (h_2d > h_standard);
             if (!flap_closed) {
-                double depth_2d = h_2d - z_inv;
-                if (depth_2d > depth) {
-                    depth      = depth_2d;
-                    h_standard = z_inv + depth;
+                // Blend free (h_standard) → tailwater (h_2d) by wetness.
+                // ramp=1 reproduces the legacy max(h_standard, h_2d).
+                double h_blend = h_standard + ramp_2d * std::max(0.0, h_2d - h_standard);
+                if (h_blend > h_standard) {
+                    h_standard = h_blend;
+                    depth      = h_standard - z_inv;
                 }
             }
         }
@@ -286,6 +370,23 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
 
         nodes.depth[uj] = depth;
         nodes.head[uj] = nodes.invert_elev[uj] + depth;
+    };
+
+    // Phase 2 (relational refactor): iterate the dense outfall side-table
+    // instead of scanning every node, turning this per-routing-step pass from
+    // O(n_nodes) into O(n_outfalls). The computation body is unchanged, so
+    // results stay bit-for-bit identical. Falls back to a full node scan when
+    // the side-tables are not built (e.g. unit tests that skip hydraulics init).
+    // See docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md (Phase 2).
+    const auto& outs = ctx.node_subtypes.outfalls;
+    if (static_cast<int>(ctx.node_subtypes.subtype_row.size()) == ctx.n_nodes()) {
+        for (int r = 0; r < outs.count(); ++r)
+            process_outfall(outs.node_idx[static_cast<std::size_t>(r)]);
+    } else {
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            if (nodes.type[static_cast<std::size_t>(j)] == NodeType::OUTFALL)
+                process_outfall(j);
+        }
     }
 }
 

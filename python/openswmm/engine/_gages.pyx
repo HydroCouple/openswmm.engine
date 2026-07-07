@@ -29,7 +29,7 @@ cimport numpy as np
 
 from ._common cimport *
 from ._enums import GageDataSource, GageRainType
-from ._exceptions import StaleObjectError
+from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
 # =============================================================================
@@ -59,10 +59,10 @@ cdef inline void _check_fresh(gage) except *:
 cdef class Gage:
     """A single rain gage."""
 
-    cdef object _solver
-    cdef int _index
-    cdef long long _gen
-    cdef str _captured_id
+    cdef readonly object _solver
+    cdef readonly int _index
+    cdef readonly long long _gen
+    cdef readonly str _captured_id
 
     def __init__(self, solver, int index):
         self._solver = solver
@@ -115,6 +115,88 @@ cdef class Gage:
         _check_fresh(self)
         _check(swmm_gage_set_data_source(
             _h(self._solver), self._index, int(value)))
+
+    @property
+    def scale_factor(self) -> float:
+        """Rainfall scaling factor (dimensionless, > 0; 1.0 = no scaling).
+
+        May be mutated at any time, including while the simulation is running,
+        to support parameter sweeps. The new value takes effect on the next
+        timestep. Raises if assigned a non-positive value.
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_gage_get_scale_factor(_h(self._solver), self._index, &v))
+        return v
+
+    @scale_factor.setter
+    def scale_factor(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_scale_factor(_h(self._solver), self._index, value))
+
+    @property
+    def snow_factor(self) -> float:
+        """Snow-catch deficiency correction factor (SCF; 1.0 = no correction).
+
+        This is the legacy [RAINGAGES] SCF column, distinct from
+        :attr:`scale_factor`. Raises if assigned a non-positive value.
+        """
+        _check_fresh(self)
+        cdef double v = 1.0
+        _check(swmm_gage_get_snow_factor(_h(self._solver), self._index, &v))
+        return v
+
+    @snow_factor.setter
+    def snow_factor(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_snow_factor(_h(self._solver), self._index, value))
+
+    @property
+    def rain_interval(self) -> float:
+        """Rain recording interval in seconds."""
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_gage_get_rain_interval(_h(self._solver), self._index, &v))
+        return v
+
+    @rain_interval.setter
+    def rain_interval(self, value) -> None:
+        self.set_rain_interval(value)
+
+    @property
+    def rain_units(self) -> int:
+        """Rain-depth units declared for a file source: 0 = IN, 1 = MM."""
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_gage_get_rain_units(_h(self._solver), self._index, &v))
+        return v
+
+    @rain_units.setter
+    def rain_units(self, int value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_rain_units(_h(self._solver), self._index, value))
+
+    @property
+    def timeseries(self) -> str:
+        """Assigned time-series id (empty when the source is not a series)."""
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_gage_get_timeseries(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @property
+    def station_id(self) -> str:
+        """Station id for a file source (empty when unset)."""
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_gage_get_station_id(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @station_id.setter
+    def station_id(self, str value) -> None:
+        _check_fresh(self)
+        cdef bytes b = value.encode('utf-8')
+        _check(swmm_gage_set_station_id(_h(self._solver), self._index, b))
 
     def set_rain_interval(self, seconds) -> None:
         """Set the rain-interval duration. Accepts a number of seconds
@@ -210,13 +292,15 @@ cdef class Gages:
     # ---- Identity lookups -----------------------------------------
 
     def get_index(self, str gage_id) -> int:
+        """Return the zero-based index of rain gage *gage_id* (raises if unknown)."""
         cdef bytes b = gage_id.encode('utf-8')
         cdef int i = swmm_gage_index(_h(self._solver), b)
         if i < 0:
-            raise KeyError(gage_id)
+            raise ElementNotFoundError(gage_id)
         return i
 
     def get_id(self, int idx) -> str:
+        """Return the ID string of the rain gage at *idx*."""
         if not (0 <= idx < len(self)):
             raise IndexError(idx)
         cdef const char* raw = swmm_gage_id(_h(self._solver), idx)
@@ -225,6 +309,7 @@ cdef class Gages:
     # ---- Editing -------------------------------------------------
 
     def add(self, str gage_id) -> Gage:
+        """Add a new rain gage *gage_id* and return its :class:`Gage` handle."""
         cdef bytes b = gage_id.encode('utf-8')
         _check(swmm_gage_add(_h(self._solver), b))
         self._solver._bump_generation()
@@ -232,6 +317,7 @@ cdef class Gages:
         return Gage(self._solver, new_idx)
 
     def rename(self, key, str new_id) -> None:
+        """Rename the rain gage identified by *key* to *new_id*."""
         cdef int i = _resolve_gage(self._solver, key)
         cdef bytes b = new_id.encode('utf-8')
         _check(swmm_gage_rename(_h(self._solver), i, b))

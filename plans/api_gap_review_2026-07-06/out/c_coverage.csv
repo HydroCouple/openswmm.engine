@@ -1,0 +1,824 @@
+function,domain,called,declared,override,status,note
+swmm_2d_boundary_edge_count,2d,True,True,,exposed,
+swmm_2d_edge_get_geometry_bulk,2d,True,True,,exposed,
+swmm_2d_force_clear_all,2d,True,True,,exposed,
+swmm_2d_force_coupling_flux,2d,True,True,,exposed,
+swmm_2d_force_evap,2d,True,True,,exposed,
+swmm_2d_force_evap_uniform,2d,True,True,,exposed,
+swmm_2d_force_rainfall,2d,True,True,,exposed,
+swmm_2d_force_rainfall_uniform,2d,True,True,,exposed,
+swmm_2d_get_abs_tolerance,2d,True,True,,exposed,
+swmm_2d_get_continuity_error,2d,True,True,,exposed,
+swmm_2d_get_coupling_flux,2d,True,True,,exposed,
+swmm_2d_get_coupling_fluxes_bulk,2d,True,True,,exposed,
+swmm_2d_get_cvode_last_step,2d,True,True,,exposed,
+swmm_2d_get_cvode_steps,2d,True,True,,exposed,
+swmm_2d_get_depth,2d,True,True,,exposed,
+swmm_2d_get_depths_bulk,2d,True,True,,exposed,
+swmm_2d_get_dry_depth,2d,True,True,,exposed,
+swmm_2d_get_edge_bc_cum_flux,2d,True,True,,exposed,
+swmm_2d_get_edge_bc_flow,2d,True,True,,exposed,
+swmm_2d_get_edge_bc_head,2d,True,True,,exposed,
+swmm_2d_get_edge_bc_slope,2d,True,True,,exposed,
+swmm_2d_get_edge_bc_type,2d,True,True,,exposed,
+swmm_2d_get_edge_conveyance,2d,True,True,,exposed,
+swmm_2d_get_edge_conveyance_bulk,2d,True,True,,exposed,
+swmm_2d_get_edge_flux_bulk,2d,True,True,,exposed,
+swmm_2d_get_head,2d,True,True,,exposed,
+swmm_2d_get_heads_bulk,2d,True,True,,exposed,
+swmm_2d_get_mass_balance,2d,True,True,,exposed,
+swmm_2d_get_max_depth,2d,True,True,,exposed,
+swmm_2d_get_net_source,2d,True,True,,exposed,
+swmm_2d_get_rainfall,2d,True,True,,exposed,
+swmm_2d_get_rel_tolerance,2d,True,True,,exposed,
+swmm_2d_get_stat_max_continuity_err,2d,True,True,,exposed,
+swmm_2d_get_stat_max_depths,2d,True,True,,exposed,
+swmm_2d_get_stat_max_velocities,2d,True,True,,exposed,
+swmm_2d_get_total_exchange_flow,2d,True,True,,exposed,
+swmm_2d_get_total_volume,2d,True,True,,exposed,
+swmm_2d_get_triangle_tag,2d,True,True,,exposed,
+swmm_2d_get_vertex_coupling_area,2d,True,True,,exposed,
+swmm_2d_get_vertex_coupling_cd,2d,True,True,,exposed,
+swmm_2d_get_vertex_tag,2d,True,True,,exposed,
+swmm_2d_is_active,2d,True,True,,exposed,
+swmm_2d_prepare_for_edit,2d,True,True,,exposed,
+swmm_2d_reset_edge_conveyance,2d,True,True,,exposed,
+swmm_2d_set_abs_tolerance,2d,True,True,,exposed,
+swmm_2d_set_dry_depth,2d,True,True,,exposed,
+swmm_2d_set_edge_bc_flow,2d,True,True,,exposed,
+swmm_2d_set_edge_bc_flow_tseries_name,2d,True,True,,exposed,
+swmm_2d_set_edge_bc_head,2d,True,True,,exposed,
+swmm_2d_set_edge_bc_rating_curve_name,2d,True,True,,exposed,
+swmm_2d_set_edge_bc_slope,2d,True,True,,exposed,
+swmm_2d_set_edge_bc_tseries_name,2d,True,True,,exposed,
+swmm_2d_set_edge_bc_type,2d,True,True,,exposed,
+swmm_2d_set_edge_conveyance,2d,True,True,,exposed,
+swmm_2d_set_rel_tolerance,2d,True,True,,exposed,
+swmm_2d_set_triangle_mannings,2d,True,True,,exposed,
+swmm_2d_set_triangle_tag,2d,True,True,,exposed,
+swmm_2d_set_vertex_coupled_node,2d,True,True,,exposed,
+swmm_2d_set_vertex_coupling_area,2d,True,True,,exposed,
+swmm_2d_set_vertex_coupling_cd,2d,True,True,,exposed,
+swmm_2d_set_vertex_tag,2d,True,True,,exposed,
+swmm_2d_set_vertex_z,2d,True,True,,exposed,
+swmm_2d_triangle_count,2d,True,True,parity,exposed,via _2d.Surface2D.n_triangles (property).
+swmm_2d_triangle_coupling_count,2d,True,True,,exposed,
+swmm_2d_triangle_get_area,2d,True,True,,exposed,
+swmm_2d_triangle_get_centroid,2d,True,True,,exposed,
+swmm_2d_triangle_get_coupled_node,2d,True,True,,exposed,
+swmm_2d_triangle_get_mannings,2d,True,True,,exposed,
+swmm_2d_triangle_get_neighbours,2d,True,True,,exposed,
+swmm_2d_triangle_get_vertices,2d,True,True,,exposed,
+swmm_2d_vertex_count,2d,True,True,parity,exposed,via _2d.Surface2D.n_vertices (property).
+swmm_2d_vertex_coupling_count,2d,True,True,,exposed,
+swmm_2d_vertex_get_coupled_node,2d,True,True,,exposed,
+swmm_2d_vertex_get_head,2d,True,True,parity,exposed,"via _2d.Surface2D.get_vertex_heads (bulk-only on Py side, single via index)."
+swmm_2d_vertex_get_heads_bulk,2d,True,True,,exposed,
+swmm_2d_vertex_get_xyz,2d,True,True,parity,exposed,"via _2d.Surface2D.get_vertex_coords (returns full (x,y,z) tuple)."
+swmm_2d_vertex_get_xyz_bulk,2d,True,True,parity,exposed,"via _2d.Surface2D.get_vertex_coords (returns (x,y,z) NumPy arrays)."
+swmm_aquifer_add,subcatchments,True,True,,exposed,
+swmm_aquifer_count,subcatchments,True,True,,exposed,
+swmm_aquifer_get_evap_pattern,subcatchments,True,True,,exposed,
+swmm_aquifer_get_param,subcatchments,True,True,,exposed,
+swmm_aquifer_id,subcatchments,True,True,,exposed,
+swmm_aquifer_index,subcatchments,True,True,,exposed,
+swmm_aquifer_set_evap_pattern,subcatchments,True,True,,exposed,
+swmm_aquifer_set_param,subcatchments,True,True,,exposed,
+swmm_buildup_get,quality,True,True,,exposed,
+swmm_buildup_set,quality,True,True,,exposed,
+swmm_climate_get_adc_impervious,climate,True,True,,exposed,
+swmm_climate_get_adc_pervious,climate,True,True,,exposed,
+swmm_climate_get_adjust_conductivity,climate,True,True,,exposed,
+swmm_climate_get_adjust_evaporation,climate,True,True,,exposed,
+swmm_climate_get_adjust_rainfall,climate,True,True,,exposed,
+swmm_climate_get_adjust_temperature,climate,True,True,,exposed,
+swmm_climate_get_ati_weight,climate,True,True,,exposed,
+swmm_climate_get_dry_only,forcing,True,True,,exposed,
+swmm_climate_get_elevation,climate,True,True,,exposed,
+swmm_climate_get_evap_monthly,climate,True,True,,exposed,
+swmm_climate_get_evap_rate,forcing,True,True,,exposed,
+swmm_climate_get_evap_recovery,climate,True,True,,exposed,
+swmm_climate_get_evap_timeseries,climate,True,True,,exposed,
+swmm_climate_get_evap_type,climate,True,True,,exposed,
+swmm_climate_get_latitude,climate,True,True,,exposed,
+swmm_climate_get_longitude_correction,climate,True,True,,exposed,
+swmm_climate_get_neg_melt_ratio,climate,True,True,,exposed,
+swmm_climate_get_pan_coeff,climate,True,True,,exposed,
+swmm_climate_get_snow_temp,climate,True,True,,exposed,
+swmm_climate_get_temp_file_start,climate,True,True,,exposed,
+swmm_climate_get_temp_source,climate,True,True,,exposed,
+swmm_climate_get_temp_timeseries,climate,True,True,,exposed,
+swmm_climate_get_temp_units,climate,True,True,,exposed,
+swmm_climate_get_temperature,forcing,True,True,,exposed,
+swmm_climate_get_wind_monthly,climate,True,True,,exposed,
+swmm_climate_get_wind_speed,forcing,True,True,,exposed,
+swmm_climate_get_wind_type,climate,True,True,,exposed,
+swmm_climate_set_adc_impervious,climate,True,True,,exposed,
+swmm_climate_set_adc_pervious,climate,True,True,,exposed,
+swmm_climate_set_adjust_conductivity,climate,True,True,,exposed,
+swmm_climate_set_adjust_evaporation,climate,True,True,,exposed,
+swmm_climate_set_adjust_rainfall,climate,True,True,,exposed,
+swmm_climate_set_adjust_temperature,climate,True,True,,exposed,
+swmm_climate_set_ati_weight,climate,True,True,,exposed,
+swmm_climate_set_dry_only,forcing,True,True,,exposed,
+swmm_climate_set_elevation,climate,True,True,,exposed,
+swmm_climate_set_evap_monthly,climate,True,True,,exposed,
+swmm_climate_set_evap_recovery,climate,True,True,,exposed,
+swmm_climate_set_evap_timeseries,climate,True,True,,exposed,
+swmm_climate_set_evap_type,climate,True,True,,exposed,
+swmm_climate_set_latitude,climate,True,True,,exposed,
+swmm_climate_set_longitude_correction,climate,True,True,,exposed,
+swmm_climate_set_neg_melt_ratio,climate,True,True,,exposed,
+swmm_climate_set_pan_coeff,climate,True,True,,exposed,
+swmm_climate_set_snow_temp,climate,True,True,,exposed,
+swmm_climate_set_temp_file_start,climate,True,True,,exposed,
+swmm_climate_set_temp_source,climate,True,True,,exposed,
+swmm_climate_set_temp_timeseries,climate,True,True,,exposed,
+swmm_climate_set_temp_units,climate,True,True,,exposed,
+swmm_climate_set_wind_monthly,climate,True,True,,exposed,
+swmm_climate_set_wind_type,climate,True,True,,exposed,
+swmm_control_add_rule,controls,True,True,,exposed,
+swmm_control_clear_rules,controls,True,True,,exposed,
+swmm_control_count,controls,True,True,,exposed,
+swmm_control_get_id,controls,True,True,,exposed,
+swmm_control_get_rule,controls,True,True,,exposed,
+swmm_control_set_link_setting,controls,True,True,,exposed,
+swmm_control_set_link_status,controls,True,True,,exposed,
+swmm_control_validate_rule,controls,True,True,,exposed,
+swmm_conversion_result_free,edit,True,True,intentional,exposed,Python uses GC; _edit.ConversionResult is a TypedDict.
+swmm_curve_add,tables,True,True,,exposed,
+swmm_datetime_add_seconds,datetime,True,True,,exposed,
+swmm_datetime_decode_date,datetime,True,True,,exposed,
+swmm_datetime_decode_time,datetime,True,True,,exposed,
+swmm_datetime_encode_date,datetime,True,True,,exposed,
+swmm_datetime_encode_time,datetime,True,True,,exposed,
+swmm_datetime_time_diff,datetime,True,True,,exposed,
+swmm_dwf_add,inflows,True,True,,exposed,
+swmm_dwf_count,inflows,True,True,,exposed,
+swmm_dwf_get,inflows,True,True,,exposed,
+swmm_dwf_remove,inflows,True,True,,exposed,
+swmm_dwf_set_baseline,inflows,True,True,,exposed,
+swmm_engine_close,engine,True,True,,exposed,
+swmm_engine_create,engine,True,True,intentional,exposed,SessionManager.create_session owns the engine lifecycle; no standalone tool.
+swmm_engine_destroy,engine,True,True,intentional,exposed,SessionManager.close_session / cleanup_all own destruction.
+swmm_engine_end,engine,True,True,parity,exposed,via lifecycle.run_simulation / close_model.
+swmm_engine_get_state,engine,True,True,,exposed,
+swmm_engine_initialize,engine,True,True,parity,exposed,via lifecycle.open_model (calls initialize after open).
+swmm_engine_new,model,True,True,intentional,exposed,Solver.__init__ handles engine creation transparently.
+swmm_engine_open,engine,True,True,,exposed,
+swmm_engine_report,engine,True,True,parity,exposed,via lifecycle.run_simulation (auto-reports at end) and analysis.get_report_snapshot.
+swmm_engine_run,engine,True,True,,exposed,
+swmm_engine_run_with_callback,engine,True,True,parity,exposed,via lifecycle.run_simulation (background-thread variant).
+swmm_engine_start,engine,True,True,parity,exposed,via lifecycle.run_simulation / step_simulation (start before stepping).
+swmm_engine_step,engine,True,True,,exposed,
+swmm_engine_stride,engine,True,True,parity,exposed,via lifecycle.step_simulation (num_steps parameter).
+swmm_error_message,engine,False,True,intentional,intentional,Python raises EngineError; error-code -> message is internal.
+swmm_events_add,engine,True,True,parity,exposed,via lifecycle.events_add.
+swmm_events_clear,engine,True,True,parity,exposed,via lifecycle.events_clear.
+swmm_events_count,engine,True,True,parity,exposed,via lifecycle.events_count.
+swmm_events_get,engine,True,True,parity,exposed,via lifecycle.events_get.
+swmm_events_remove,engine,True,True,parity,exposed,via lifecycle.events_remove.
+swmm_events_set,engine,True,True,parity,exposed,via lifecycle.events_set.
+swmm_ext_inflow_add,inflows,True,True,parity,exposed,via _inflows.Inflows.add_external.
+swmm_ext_inflow_count,inflows,True,True,,exposed,
+swmm_ext_inflow_get,inflows,True,True,,exposed,
+swmm_ext_inflow_remove,inflows,True,True,,exposed,
+swmm_ext_inflow_set_baseline,inflows,True,True,,exposed,
+swmm_ext_inflow_set_scale,inflows,True,True,,exposed,
+swmm_file_path_get,model,True,True,,exposed,
+swmm_file_path_set,model,True,True,,exposed,
+swmm_files_get,model,True,True,parity,exposed,via model.files_get.
+swmm_files_set,model,True,True,parity,exposed,via model.files_set.
+swmm_finalize_model,model,True,True,parity,exposed,via _model.ModelBuilder.finalize.
+swmm_forcing_clear,forcing,True,True,,exposed,
+swmm_forcing_clear_all,forcing,True,True,parity,exposed,via forcing.clear_forcing (no target_type/element_id) and forcing.clear_forcing per-target.
+swmm_forcing_climate_evap,forcing,True,True,,exposed,
+swmm_forcing_climate_temperature,forcing,True,True,,exposed,
+swmm_forcing_climate_wind,forcing,True,True,,exposed,
+swmm_forcing_gage_rainfall,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='gage', variable='rainfall') and forcing.set_rainfall_override."
+swmm_forcing_link_flow,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='link', variable='flow')."
+swmm_forcing_link_quality,forcing,True,True,,exposed,
+swmm_forcing_link_setting,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='link', variable='setting') and controls.set_link_setting."
+swmm_forcing_node_head_boundary,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='node', variable='head')."
+swmm_forcing_node_lat_inflow,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='node', variable='lateral_inflow')."
+swmm_forcing_node_quality,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='node', variable='quality')."
+swmm_forcing_subcatch_evap,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='subcatchment', variable='evap')."
+swmm_forcing_subcatch_rainfall,forcing,True,True,parity,exposed,"via forcing.set_forcing (target_type='subcatchment', variable='rainfall')."
+swmm_forcing_subcatch_snowfall,forcing,True,True,,exposed,
+swmm_gage_add,gages,True,True,,exposed,
+swmm_gage_analyze_impact,edit,True,True,,exposed,
+swmm_gage_count,gages,True,True,parity,exposed,via lifecycle.open_model summary + query.find_elements counts.
+swmm_gage_delete,edit,True,True,,exposed,
+swmm_gage_get_data_source,gages,True,True,parity,exposed,via query.get_gage_info.
+swmm_gage_get_rain_interval,gages,True,True,,exposed,
+swmm_gage_get_rain_type,gages,True,True,parity,exposed,via query.get_gage_info (rain_type field).
+swmm_gage_get_rain_units,gages,True,True,,exposed,
+swmm_gage_get_rainfall,gages,True,True,parity,exposed,via query.get_gage_info (current rate during running/ended).
+swmm_gage_get_rainfall_bulk,gages,True,True,parity,exposed,via spatial.get_model_geometry / analysis.get_time_series with element_type='system'.
+swmm_gage_get_scale_factor,gages,True,True,,exposed,
+swmm_gage_get_snow_factor,gages,True,True,,exposed,
+swmm_gage_get_station_id,gages,True,True,,exposed,
+swmm_gage_get_timeseries,gages,True,True,,exposed,
+swmm_gage_id,gages,True,True,parity,exposed,via query.get_gage_info / find_elements listings.
+swmm_gage_index,gages,True,True,parity,exposed,via query.find_elements (string id -> index).
+swmm_gage_rename,gages,True,True,,exposed,
+swmm_gage_set_data_source,gages,True,True,parity,exposed,via editing.configure_gage (data_source field).
+swmm_gage_set_filename,gages,True,True,parity,exposed,via editing.configure_gage (filename + station_id fields).
+swmm_gage_set_rain_interval,gages,True,True,parity,exposed,via editing.configure_gage (rain_interval field).
+swmm_gage_set_rain_type,gages,True,True,parity,exposed,via editing.configure_gage (rain_type field).
+swmm_gage_set_rain_units,gages,True,True,,exposed,
+swmm_gage_set_rainfall,gages,True,True,parity,exposed,"via forcing.set_forcing (target='gage', variable='rainfall')."
+swmm_gage_set_scale_factor,gages,True,True,,exposed,
+swmm_gage_set_snow_factor,gages,True,True,,exposed,
+swmm_gage_set_station_id,gages,True,True,,exposed,
+swmm_gage_set_timeseries,gages,True,True,,exposed,
+swmm_get_crs,model,True,True,parity,exposed,via _spatial.Spatial.get_crs (Python routes top-level CRS through Spatial).
+swmm_get_current_time,engine,False,True,intentional,intentional,"Not called directly; current time via _solver.Solver.current_datetime (start_datetime + elapsed). C func returns elapsed seconds, not an OADate."
+swmm_get_end_time,engine,True,True,parity,exposed,via lifecycle.get_simulation_time.
+swmm_get_event_count,engine,True,True,intentional,exposed,Alias of swmm_events_count per inline doc; same Phase 1 wrapping.
+swmm_get_flow_units,engine,True,True,,exposed,
+swmm_get_last_error,engine,False,True,intentional,intentional,Python raises EngineError instead of polling last-error state.
+swmm_get_last_error_msg,engine,False,True,intentional,intentional,Python raises EngineError carrying the message.
+swmm_get_max_courant,massbalance,True,True,parity,exposed,via analysis.get_mass_balance routing_diagnostics.max_courant.
+swmm_get_quality_continuity_error,massbalance,True,True,parity,exposed,via analysis.get_mass_balance (quality_continuity per pollutant).
+swmm_get_quality_evap_loss,massbalance,True,True,parity,exposed,via analysis.get_mass_balance (quality losses per pollutant).
+swmm_get_quality_seep_loss,massbalance,True,True,parity,exposed,via analysis.get_mass_balance (quality losses per pollutant).
+swmm_get_routing_continuity_error,massbalance,True,True,parity,exposed,via analysis.get_mass_balance (routing_continuity field).
+swmm_get_routing_stats,massbalance,True,True,parity,exposed,via analysis.get_mass_balance routing_diagnostics field.
+swmm_get_routing_step,engine,True,True,parity,exposed,via lifecycle.get_simulation_time.
+swmm_get_routing_total,massbalance,True,True,parity,exposed,via analysis.get_mass_balance (routing totals: DWF/WWF/RDII/external/etc.).
+swmm_get_runoff_continuity_error,massbalance,True,True,parity,exposed,via analysis.get_mass_balance (runoff_continuity field).
+swmm_get_runoff_total,massbalance,True,True,parity,exposed,via analysis.get_mass_balance (runoff totals: rainfall/evap/infil/runoff/etc.).
+swmm_get_start_time,engine,True,True,parity,exposed,via lifecycle.get_simulation_time.
+swmm_get_steady_state_skip,engine,True,True,parity,exposed,via lifecycle.get_steady_state_skip.
+swmm_get_unit_system,engine,True,True,,exposed,
+swmm_gpkg_begin,geopackage,True,True,intentional,exposed,Transaction lifecycle owned by individual write tools.
+swmm_gpkg_close,geopackage,True,True,,exposed,
+swmm_gpkg_commit,geopackage,True,True,intentional,exposed,Same.
+swmm_gpkg_create_observed_series,geopackage,True,True,parity,exposed,via geopackage.import_observed_data.
+swmm_gpkg_gage_count,geopackage,True,True,parity,exposed,via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_is_registered,geopackage,True,True,intentional,exposed,Same.
+swmm_gpkg_last_error,geopackage,True,True,intentional,exposed,Errors surface as ToolError directly; no separate query tool.
+swmm_gpkg_link_count,geopackage,True,True,parity,exposed,via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_node_count,geopackage,True,True,parity,exposed,via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_observed_series_count,geopackage,True,True,parity,exposed,via geopackage.compare_sim_vs_observed (lists observed series).
+swmm_gpkg_observed_value_count,geopackage,True,True,parity,exposed,via geopackage.compare_sim_vs_observed.
+swmm_gpkg_open,geopackage,True,True,parity,exposed,via _geopackage.GeoPackage.__init__.
+swmm_gpkg_query_double,geopackage,True,True,intentional,exposed,Same.
+swmm_gpkg_query_int,geopackage,True,True,intentional,exposed,Direct SQL escape hatch; intentionally not exposed (security risk + LLM use case mismatch).
+swmm_gpkg_read_observed_values,geopackage,True,True,parity,exposed,via geopackage.compare_sim_vs_observed.
+swmm_gpkg_read_result_ts,geopackage,True,True,parity,exposed,via geopackage.get_result_timeseries.
+swmm_gpkg_read_summary,geopackage,True,True,parity,exposed,via geopackage.get_result_summary.
+swmm_gpkg_register,geopackage,True,True,intentional,exposed,Registration handled internally when opening; no standalone tool.
+swmm_gpkg_result_ts_count,geopackage,True,True,parity,exposed,via geopackage.get_result_timeseries (count derivable from response).
+swmm_gpkg_rollback,geopackage,True,True,intentional,exposed,Same.
+swmm_gpkg_simulation_count,geopackage,True,True,parity,exposed,via geopackage.list_simulations (returns count + ids).
+swmm_gpkg_simulation_id,geopackage,True,True,parity,exposed,"via _geopackage.GeoPackage.simulation_ids (plural, returns list)."
+swmm_gpkg_subcatch_count,geopackage,True,True,parity,exposed,via _geopackage.GeoPackage.object_counts (aggregate dict).
+swmm_gpkg_topology_edge_count,geopackage,True,True,parity,exposed,via geopackage.list_simulations result includes object_counts.
+swmm_gpkg_variable_count,geopackage,True,True,parity,exposed,via geopackage.get_result_summary (lists available variables).
+swmm_gpkg_write_observed_value,geopackage,True,True,parity,exposed,via geopackage.import_observed_data (batched).
+swmm_gpkg_write_observed_values,geopackage,True,True,parity,exposed,via geopackage.import_observed_data.
+swmm_hotstart_apply,hotstart,True,True,parity,exposed,via hotstart.load_hotstart (calls apply after open).
+swmm_hotstart_close,hotstart,True,True,intentional,exposed,HotStart lifecycle managed by load_hotstart's context.
+swmm_hotstart_get_crs,hotstart,True,True,parity,exposed,via hotstart.load_hotstart result includes crs.
+swmm_hotstart_get_sim_time,hotstart,True,True,parity,exposed,via hotstart.load_hotstart result includes sim_time.
+swmm_hotstart_link_count,hotstart,True,True,parity,exposed,via hotstart.load_hotstart result includes link_count.
+swmm_hotstart_node_count,hotstart,True,True,parity,exposed,via hotstart.load_hotstart result includes node_count.
+swmm_hotstart_open,hotstart,True,True,parity,exposed,via hotstart.load_hotstart (opens + applies + closes internally).
+swmm_hotstart_save,hotstart,True,True,,exposed,
+swmm_hotstart_saves_add,hotstart,True,True,,exposed,
+swmm_hotstart_saves_clear,hotstart,True,True,,exposed,
+swmm_hotstart_saves_count,hotstart,True,True,,exposed,
+swmm_hotstart_saves_get_datetime,hotstart,True,True,parity,exposed,via hotstart.saves_get.
+swmm_hotstart_saves_get_path,hotstart,True,True,parity,exposed,via hotstart.saves_get (returns path + datetime).
+swmm_hotstart_saves_remove,hotstart,True,True,,exposed,
+swmm_hotstart_saves_set_datetime,hotstart,True,True,parity,exposed,via hotstart.saves_set (datetime_oadate field).
+swmm_hotstart_saves_set_path,hotstart,True,True,parity,exposed,via hotstart.saves_set (path field).
+swmm_hotstart_set_link_depth,hotstart,True,True,mcp-gap,exposed,Same pattern.
+swmm_hotstart_set_link_flow,hotstart,True,True,mcp-gap,exposed,Same pattern.
+swmm_hotstart_set_node_depth,hotstart,True,True,mcp-gap,exposed,State-modify-then-apply pattern; no standalone tool. Phase 4 follow-up.
+swmm_hotstart_set_node_head,hotstart,True,True,mcp-gap,exposed,Same as set_node_depth.
+swmm_hotstart_set_subcatch_runoff,hotstart,True,True,mcp-gap,exposed,Same pattern.
+swmm_hotstart_warning,hotstart,True,True,parity,exposed,via _hotstart.HotStart.get_warning.
+swmm_hotstart_warning_count,hotstart,True,True,parity,exposed,via hotstart.load_hotstart result includes warnings list (count derivable).
+swmm_hydrograph_add,inflows,True,True,,exposed,
+swmm_hydrograph_add_gage,inflows,True,True,parity,exposed,via _inflows.Inflows.add_hydrograph_gage.
+swmm_hydrograph_clear_group_months,inflows,True,True,,exposed,
+swmm_hydrograph_count,inflows,True,True,,exposed,
+swmm_hydrograph_gage_count,inflows,True,True,,exposed,
+swmm_hydrograph_get,inflows,True,True,,exposed,
+swmm_hydrograph_get_gage,inflows,True,True,,exposed,
+swmm_hydrograph_group_count,inflows,True,True,,exposed,
+swmm_hydrograph_group_id,inflows,True,True,,exposed,
+swmm_hydrograph_group_rename,inflows,True,True,,exposed,
+swmm_hydrograph_remove_entry,inflows,True,True,,exposed,
+swmm_hydrograph_remove_group,inflows,True,True,,exposed,
+swmm_hydrograph_set_gage,inflows,True,True,,exposed,
+swmm_hydrograph_set_ia,inflows,True,True,,exposed,
+swmm_hydrograph_set_rtk,inflows,True,True,,exposed,
+swmm_impact_report_free,edit,True,True,intentional,exposed,Python uses GC; _edit.ImpactEntry list is GC-managed.
+swmm_inlet_add,infrastructure,True,True,,exposed,
+swmm_inlet_count,infrastructure,True,True,,exposed,
+swmm_inlet_get_params,infrastructure,True,True,,exposed,
+swmm_inlet_get_type,infrastructure,True,True,,exposed,
+swmm_inlet_id,infrastructure,True,True,,exposed,
+swmm_inlet_index,infrastructure,True,True,,exposed,
+swmm_inlet_set_params,infrastructure,True,True,,exposed,
+swmm_is_between_events,engine,True,True,parity,exposed,via lifecycle.is_between_events.
+swmm_landuse_add,quality,True,True,,exposed,
+swmm_landuse_count,quality,True,True,,exposed,
+swmm_landuse_get_sweep_interval,quality,True,True,parity,exposed,via quality.get_sweep_interval.
+swmm_landuse_get_sweep_removal,quality,True,True,parity,exposed,via quality.get_sweep_removal.
+swmm_landuse_id,quality,True,True,,exposed,
+swmm_landuse_index,quality,True,True,,exposed,
+swmm_landuse_set_sweep_interval,quality,True,True,parity,exposed,via quality.set_sweep_interval.
+swmm_landuse_set_sweep_removal,quality,True,True,parity,exposed,via quality.set_sweep_removal.
+swmm_lid_add,infrastructure,True,True,,exposed,
+swmm_lid_count,infrastructure,True,True,,exposed,
+swmm_lid_get_drain,infrastructure,True,True,,exposed,
+swmm_lid_get_drainmat,infrastructure,True,True,,exposed,
+swmm_lid_get_pavement,infrastructure,True,True,,exposed,
+swmm_lid_get_soil,infrastructure,True,True,,exposed,
+swmm_lid_get_storage,infrastructure,True,True,,exposed,
+swmm_lid_get_surface,infrastructure,True,True,,exposed,
+swmm_lid_get_type,infrastructure,True,True,,exposed,
+swmm_lid_id,infrastructure,True,True,,exposed,
+swmm_lid_index,infrastructure,True,True,,exposed,
+swmm_lid_set_drain,infrastructure,True,True,,exposed,
+swmm_lid_set_drainmat,infrastructure,True,True,,exposed,
+swmm_lid_set_pavement,infrastructure,True,True,,exposed,
+swmm_lid_set_soil,infrastructure,True,True,,exposed,
+swmm_lid_set_storage,infrastructure,True,True,,exposed,
+swmm_lid_set_surface,infrastructure,True,True,,exposed,
+swmm_lid_usage_add,infrastructure,True,True,,exposed,
+swmm_lid_usage_count,infrastructure,True,True,,exposed,
+swmm_lid_usage_get,infrastructure,True,True,,exposed,
+swmm_lid_usage_remove,infrastructure,True,True,,exposed,
+swmm_link_add,links,True,True,,exposed,
+swmm_link_analyze_impact,edit,True,True,,exposed,
+swmm_link_convert,edit,True,True,,exposed,
+swmm_link_count,links,True,True,parity,exposed,via lifecycle.open_model summary + query.find_elements counts.
+swmm_link_delete,edit,True,True,,exposed,
+swmm_link_get_barrels,links,True,True,,exposed,
+swmm_link_get_capacities_bulk,links,True,True,,exposed,
+swmm_link_get_capacity,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_closed,links,True,True,,exposed,
+swmm_link_get_control_setting,links,True,True,,exposed,
+swmm_link_get_control_settings_bulk,links,True,True,,exposed,
+swmm_link_get_crest_height,links,True,True,,exposed,
+swmm_link_get_culvert_code,links,True,True,,exposed,
+swmm_link_get_depth,links,True,True,parity,exposed,via query.get_link_info (read during running/ended).
+swmm_link_get_depths_bulk,links,True,True,,exposed,
+swmm_link_get_discharge_coeff,links,True,True,,exposed,
+swmm_link_get_end_contractions,links,True,True,,exposed,
+swmm_link_get_flap_gate,links,True,True,,exposed,
+swmm_link_get_flow,links,True,True,,exposed,
+swmm_link_get_flows_bulk,links,True,True,,exposed,
+swmm_link_get_from_node,links,True,True,parity,exposed,via query.get_link_info (returns endpoints).
+swmm_link_get_hyd_power,links,True,True,,exposed,
+swmm_link_get_hyd_powers_bulk,links,True,True,,exposed,
+swmm_link_get_ids_bulk,links,True,True,,exposed,
+swmm_link_get_initial_flow,links,True,True,,exposed,
+swmm_link_get_length,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_loss_coeff,links,True,True,,exposed,
+swmm_link_get_max_flow,links,True,True,,exposed,
+swmm_link_get_offset_dn,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_offset_up,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_orifice_open_close_rate,links,True,True,,exposed,
+swmm_link_get_orifice_type,links,True,True,,exposed,
+swmm_link_get_outlet_expon,links,True,True,,exposed,
+swmm_link_get_outlet_rating_type,links,True,True,,exposed,
+swmm_link_get_pump_curve,links,True,True,,exposed,
+swmm_link_get_pump_init_state,links,True,True,,exposed,
+swmm_link_get_pump_shutoff_depth,links,True,True,,exposed,
+swmm_link_get_pump_startup_depth,links,True,True,,exposed,
+swmm_link_get_pump_stats_bulk,links,True,True,,exposed,
+swmm_link_get_quality,links,True,True,,exposed,
+swmm_link_get_quality_bulk,links,True,True,,exposed,
+swmm_link_get_roughness,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_seep_rate,links,True,True,,exposed,
+swmm_link_get_slope,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_stat_max_filling,links,True,True,,exposed,
+swmm_link_get_stat_max_flow,links,True,True,,exposed,
+swmm_link_get_stat_max_velocity,links,True,True,,exposed,
+swmm_link_get_stat_pump_cycles,links,True,True,,exposed,
+swmm_link_get_stat_pump_on_time,links,True,True,,exposed,
+swmm_link_get_stat_pump_volume,links,True,True,,exposed,
+swmm_link_get_stat_surcharge_time,links,True,True,,exposed,
+swmm_link_get_stat_vol_flow,links,True,True,,exposed,
+swmm_link_get_tag,links,True,True,,exposed,
+swmm_link_get_target_setting,links,True,True,,exposed,
+swmm_link_get_target_settings_bulk,links,True,True,,exposed,
+swmm_link_get_to_node,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_type,links,True,True,parity,exposed,via query.get_link_info.
+swmm_link_get_velocities_bulk,links,True,True,,exposed,
+swmm_link_get_velocity,links,True,True,,exposed,
+swmm_link_get_volume,links,True,True,,exposed,
+swmm_link_get_volumes_bulk,links,True,True,,exposed,
+swmm_link_get_weir_type,links,True,True,,exposed,
+swmm_link_get_xsect,links,True,True,parity,exposed,via query.get_link_info (returns cross-section dict).
+swmm_link_id,links,True,True,parity,exposed,via query.get_link_info / find_elements listings.
+swmm_link_index,links,True,True,parity,exposed,via query.find_elements (string id -> index resolved internally).
+swmm_link_pop_last,links,True,True,,exposed,
+swmm_link_rename,links,True,True,parity,exposed,via editing.rename_link.
+swmm_link_set_barrels,links,True,True,,exposed,
+swmm_link_set_closed,links,True,True,,exposed,
+swmm_link_set_control_setting,links,True,True,,exposed,
+swmm_link_set_crest_height,links,True,True,,exposed,
+swmm_link_set_culvert_code,links,True,True,,exposed,
+swmm_link_set_discharge_coeff,links,True,True,,exposed,
+swmm_link_set_end_contractions,links,True,True,,exposed,
+swmm_link_set_flap_gate,links,True,True,,exposed,
+swmm_link_set_flow,links,True,True,,exposed,
+swmm_link_set_flows_bulk,links,True,True,,exposed,
+swmm_link_set_initial_flow,links,True,True,parity,exposed,via editing.set_link_properties.
+swmm_link_set_length,links,True,True,parity,exposed,via editing.set_link_properties.
+swmm_link_set_loss_coeff,links,True,True,,exposed,
+swmm_link_set_max_flow,links,True,True,,exposed,
+swmm_link_set_nodes,links,True,True,parity,exposed,via building.add_link (sets nodes on creation); no in-place re-route tool yet.
+swmm_link_set_offset_dn,links,True,True,parity,exposed,via editing.set_link_properties.
+swmm_link_set_offset_up,links,True,True,parity,exposed,via editing.set_link_properties.
+swmm_link_set_orifice_open_close_rate,links,True,True,,exposed,
+swmm_link_set_orifice_type,links,True,True,,exposed,
+swmm_link_set_outlet_expon,links,True,True,,exposed,
+swmm_link_set_outlet_rating_type,links,True,True,,exposed,
+swmm_link_set_pump_curve,links,True,True,,exposed,
+swmm_link_set_pump_init_state,links,True,True,,exposed,
+swmm_link_set_pump_shutoff_depth,links,True,True,,exposed,
+swmm_link_set_pump_startup_depth,links,True,True,,exposed,
+swmm_link_set_quality,pollutants,True,True,,exposed,
+swmm_link_set_roughness,links,True,True,parity,exposed,via editing.set_link_properties.
+swmm_link_set_seep_rate,links,True,True,,exposed,
+swmm_link_set_tag,links,True,True,,exposed,
+swmm_link_set_target_setting,links,True,True,,exposed,
+swmm_link_set_weir_type,links,True,True,,exposed,
+swmm_link_set_xsect,links,True,True,parity,exposed,"via editing.set_link_properties + nodes.set_xsect (Links.set_xsect, the Phase 1 addition)."
+swmm_model_write,model,True,True,,exposed,
+swmm_model_write_with_plugin,model,True,True,parity,exposed,via model.write_with_plugin.
+swmm_node_add,nodes,True,True,,exposed,
+swmm_node_analyze_impact,edit,True,True,,exposed,
+swmm_node_convert,edit,True,True,,exposed,
+swmm_node_count,nodes,True,True,parity,exposed,via lifecycle.open_model summary + query.find_elements counts.
+swmm_node_delete,edit,True,True,,exposed,
+swmm_node_get_crown_elev,nodes,True,True,parity,exposed,via query.get_node_info (invert_elev + max_depth).
+swmm_node_get_degree,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_depth,nodes,True,True,,exposed,
+swmm_node_get_depth_from_volume,nodes,True,True,,exposed,
+swmm_node_get_depths_bulk,nodes,True,True,,exposed,
+swmm_node_get_divider_type,nodes,True,True,,exposed,
+swmm_node_get_exfil_params,nodes,True,True,,exposed,
+swmm_node_get_full_volume,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_head,nodes,True,True,parity,exposed,via query.get_node_info (read during running/ended).
+swmm_node_get_heads_bulk,nodes,True,True,,exposed,
+swmm_node_get_ids_bulk,nodes,True,True,,exposed,
+swmm_node_get_inflow,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_inflows_bulk,nodes,True,True,,exposed,
+swmm_node_get_initial_depth,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_invert_elev,nodes,True,True,parity,exposed,via query.get_node_info (returns invert_elev field).
+swmm_node_get_lateral_inflow,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_lateral_inflows_bulk,nodes,True,True,,exposed,
+swmm_node_get_losses,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_losses_bulk,nodes,True,True,,exposed,
+swmm_node_get_max_depth,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_outfall_flap_gate,nodes,True,True,,exposed,
+swmm_node_get_outfall_param,nodes,True,True,,exposed,
+swmm_node_get_outfall_route_to,nodes,True,True,,exposed,
+swmm_node_get_outfall_tidal,nodes,True,True,,exposed,
+swmm_node_get_outfall_timeseries,nodes,True,True,,exposed,
+swmm_node_get_outfall_type,nodes,True,True,,exposed,
+swmm_node_get_outflow,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_outflows_bulk,nodes,True,True,,exposed,
+swmm_node_get_overflow,nodes,True,True,,exposed,
+swmm_node_get_overflows_bulk,nodes,True,True,,exposed,
+swmm_node_get_ponded_area,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_quality,nodes,True,True,,exposed,
+swmm_node_get_quality_bulk,nodes,True,True,,exposed,
+swmm_node_get_stat_max_depth,nodes,True,True,,exposed,
+swmm_node_get_stat_max_overflow,nodes,True,True,,exposed,
+swmm_node_get_stat_time_flooded,nodes,True,True,,exposed,
+swmm_node_get_stat_vol_flooded,nodes,True,True,,exposed,
+swmm_node_get_storage_curve,nodes,True,True,,exposed,
+swmm_node_get_storage_functional,nodes,True,True,,exposed,
+swmm_node_get_storage_seep_rate,nodes,True,True,,exposed,
+swmm_node_get_surcharge_depth,nodes,True,True,parity,exposed,via query.get_node_info.
+swmm_node_get_tag,nodes,True,True,,exposed,
+swmm_node_get_type,nodes,True,True,,exposed,
+swmm_node_get_volume,nodes,True,True,,exposed,
+swmm_node_get_volumes_bulk,nodes,True,True,,exposed,
+swmm_node_id,nodes,True,True,parity,exposed,via query.get_node_info (id lookup by index returned in listings).
+swmm_node_index,nodes,True,True,parity,exposed,via query.find_elements / get_node_info (string id -> index resolved internally).
+swmm_node_pop_last,nodes,True,True,,exposed,
+swmm_node_rename,nodes,True,True,parity,exposed,via editing.rename_node (Phase 2 wave 2).
+swmm_node_set_depth,nodes,True,True,,exposed,
+swmm_node_set_depths_bulk,nodes,True,True,,exposed,
+swmm_node_set_divider_type,nodes,True,True,,exposed,
+swmm_node_set_exfil_params,nodes,True,True,,exposed,
+swmm_node_set_head_boundary,nodes,True,True,parity,exposed,"via forcing.set_forcing (target_type='node', variable='head')."
+swmm_node_set_initial_depth,nodes,True,True,parity,exposed,via editing.set_node_properties.
+swmm_node_set_invert_elev,nodes,True,True,parity,exposed,via editing.set_node_properties.
+swmm_node_set_lat_inflows_bulk,nodes,True,True,,exposed,
+swmm_node_set_lateral_inflow,nodes,True,True,parity,exposed,"via forcing.set_forcing (target_type='node', variable='lateral_inflow')."
+swmm_node_set_max_depth,nodes,True,True,,exposed,
+swmm_node_set_outfall_flap_gate,nodes,True,True,,exposed,
+swmm_node_set_outfall_route_to,nodes,True,True,,exposed,
+swmm_node_set_outfall_stage,nodes,True,True,,exposed,
+swmm_node_set_outfall_tidal,nodes,True,True,,exposed,
+swmm_node_set_outfall_timeseries,nodes,True,True,,exposed,
+swmm_node_set_outfall_type,nodes,True,True,,exposed,
+swmm_node_set_pond_area,nodes,True,True,parity,exposed,via editing.set_node_properties.
+swmm_node_set_quality,pollutants,True,True,,exposed,
+swmm_node_set_quality_mass_flux,nodes,True,True,,exposed,
+swmm_node_set_storage_curve,nodes,True,True,,exposed,
+swmm_node_set_storage_functional,nodes,True,True,,exposed,
+swmm_node_set_storage_seep_rate,nodes,True,True,,exposed,
+swmm_node_set_surcharge_depth,nodes,True,True,parity,exposed,via editing.set_node_properties.
+swmm_node_set_tag,nodes,True,True,,exposed,
+swmm_options_get,model,True,True,,exposed,
+swmm_options_get_end_date,model,True,True,parity,exposed,via _solver.Solver.end_datetime / _model.ModelBuilder.end_datetime properties.
+swmm_options_get_ext,model,True,True,,exposed,
+swmm_options_get_report_start,model,True,True,parity,exposed,via _solver.Solver.report_start_datetime / _model.ModelBuilder.report_start_datetime properties.
+swmm_options_get_start_date,model,True,True,parity,exposed,via _solver.Solver.start_datetime / _model.ModelBuilder.start_datetime properties.
+swmm_options_set,model,True,True,,exposed,
+swmm_options_set_end_date,model,True,True,parity,exposed,via _solver.Solver.end_datetime / _model.ModelBuilder.end_datetime setters.
+swmm_options_set_ext,model,True,True,,exposed,
+swmm_options_set_report_start,model,True,True,parity,exposed,via _solver.Solver.report_start_datetime / _model.ModelBuilder.report_start_datetime setters.
+swmm_options_set_start_date,model,True,True,parity,exposed,via _solver.Solver.start_datetime / _model.ModelBuilder.start_datetime setters.
+swmm_output_close,output,True,True,intentional,exposed,OutputReader lifecycle managed by SimSession; no standalone close tool.
+swmm_output_get_error_code,output,True,True,parity,exposed,via analysis.output_metadata; engine surfaces failures as EngineError elsewhere.
+swmm_output_get_flow_units,output,True,True,parity,exposed,via analysis.output_metadata; also surfaced via lifecycle.open_model summary.
+swmm_output_get_link_attribute,output,True,True,,exposed,
+swmm_output_get_link_count,output,True,True,parity,exposed,via analysis.output_metadata.
+swmm_output_get_link_id,output,True,True,parity,exposed,via query.get_link_info + listings.
+swmm_output_get_link_result,output,True,True,parity,exposed,via analysis.output_link_results (plural).
+swmm_output_get_link_series,output,True,True,parity,exposed,via analysis.get_time_series with element_type='link'.
+swmm_output_get_node_attribute,output,True,True,,exposed,
+swmm_output_get_node_count,output,True,True,parity,exposed,via analysis.output_metadata; also via query.get_node_info / lifecycle summary.
+swmm_output_get_node_id,output,True,True,parity,exposed,via query.get_node_info (string id round-trip) + lifecycle summary listings.
+swmm_output_get_node_result,output,True,True,parity,exposed,"via analysis.output_node_results (plural; returns {id, index, value} records)."
+swmm_output_get_node_series,output,True,True,parity,exposed,via analysis.get_time_series with element_type='node'.
+swmm_output_get_node_stat_max_depth,output,True,True,,exposed,
+swmm_output_get_node_stat_max_overflow,output,True,True,,exposed,
+swmm_output_get_node_stat_time_flooded,output,True,True,,exposed,
+swmm_output_get_node_stat_vol_flooded,output,True,True,,exposed,
+swmm_output_get_period_count,output,True,True,,exposed,
+swmm_output_get_period_time,output,True,True,,exposed,
+swmm_output_get_pollut_count,output,True,True,parity,exposed,via analysis.output_pollutant_count + analysis.output_metadata.
+swmm_output_get_report_step,output,True,True,parity,exposed,via analysis.output_metadata.
+swmm_output_get_start_date,output,True,True,parity,exposed,via analysis.output_metadata.
+swmm_output_get_subcatch_attribute,output,True,True,,exposed,
+swmm_output_get_subcatch_count,output,True,True,parity,exposed,via analysis.output_metadata.
+swmm_output_get_subcatch_id,output,True,True,parity,exposed,via query.get_subcatchment_info + listings.
+swmm_output_get_subcatch_result,output,True,True,parity,exposed,via analysis.output_subcatch_results (plural).
+swmm_output_get_subcatch_series,output,True,True,parity,exposed,via analysis.get_time_series with element_type='subcatchment'.
+swmm_output_get_system_result,output,True,True,,exposed,
+swmm_output_get_system_series,output,True,True,parity,exposed,via analysis.get_time_series with element_type='system'.
+swmm_output_get_version,output,True,True,parity,exposed,via analysis.output_metadata.
+swmm_output_open,output,True,True,parity,exposed,via _output_reader.OutputReader.__init__.
+swmm_pattern_add,tables,True,True,,exposed,
+swmm_pattern_count,tables,True,True,,exposed,
+swmm_pattern_get_factor,tables,True,True,,exposed,
+swmm_pattern_get_factor_count,tables,True,True,,exposed,
+swmm_pattern_get_type,tables,True,True,,exposed,
+swmm_pattern_id,tables,True,True,,exposed,
+swmm_pattern_index,tables,True,True,,exposed,
+swmm_pattern_remove,tables,True,True,,exposed,
+swmm_pattern_rename,tables,True,True,,exposed,
+swmm_pattern_set_factors,tables,True,True,,exposed,
+swmm_plugin_get,model,True,True,parity,exposed,via model.plugin_get.
+swmm_plugin_remove,model,True,True,parity,exposed,via model.plugin_remove.
+swmm_plugin_set,model,True,True,parity,exposed,via model.plugin_set.
+swmm_plugins_count,model,True,True,parity,exposed,via model.plugins_count.
+swmm_pollutant_add,pollutants,True,True,,exposed,
+swmm_pollutant_count,pollutants,True,True,,exposed,
+swmm_pollutant_get_co_pollutant,pollutants,True,True,,exposed,
+swmm_pollutant_get_dwf_conc,pollutants,True,True,,exposed,
+swmm_pollutant_get_gw_conc,pollutants,True,True,,exposed,
+swmm_pollutant_get_init_conc,pollutants,True,True,,exposed,
+swmm_pollutant_get_kdecay,pollutants,True,True,,exposed,
+swmm_pollutant_get_mwt,pollutants,True,True,,exposed,
+swmm_pollutant_get_rain_conc,pollutants,True,True,,exposed,
+swmm_pollutant_get_rdii_conc,pollutants,True,True,,exposed,
+swmm_pollutant_get_snow_only,pollutants,True,True,,exposed,
+swmm_pollutant_get_units,pollutants,True,True,,exposed,
+swmm_pollutant_id,pollutants,True,True,parity,exposed,via query.get_pollutant_info / find_elements.
+swmm_pollutant_index,pollutants,True,True,parity,exposed,via query.find_elements (string id -> index).
+swmm_pollutant_set_co_pollutant,pollutants,True,True,,exposed,
+swmm_pollutant_set_dwf_conc,pollutants,True,True,,exposed,
+swmm_pollutant_set_gw_conc,pollutants,True,True,,exposed,
+swmm_pollutant_set_init_conc,pollutants,True,True,,exposed,
+swmm_pollutant_set_kdecay,pollutants,True,True,,exposed,
+swmm_pollutant_set_mwt,pollutants,True,True,,exposed,
+swmm_pollutant_set_rain_conc,pollutants,True,True,,exposed,
+swmm_pollutant_set_rdii_conc,pollutants,True,True,,exposed,
+swmm_pollutant_set_snow_only,pollutants,True,True,,exposed,
+swmm_pollutant_set_units,pollutants,True,True,,exposed,
+swmm_rdii_add,inflows,True,True,,exposed,
+swmm_rdii_count,inflows,True,True,,exposed,
+swmm_rdii_decay_add,inflows,True,True,,exposed,
+swmm_rdii_decay_count,inflows,True,True,,exposed,
+swmm_rdii_decay_get,inflows,True,True,,exposed,
+swmm_rdii_decay_remove,inflows,True,True,,exposed,
+swmm_rdii_decay_set,inflows,True,True,,exposed,
+swmm_rdii_get,inflows,True,True,,exposed,
+swmm_rdii_remove,inflows,True,True,,exposed,
+swmm_runoff_iface_close,engine,True,True,,exposed,
+swmm_runoff_iface_open_read,engine,True,True,,exposed,
+swmm_runoff_iface_open_write,engine,True,True,,exposed,
+swmm_runoff_iface_read_step,engine,True,True,,exposed,
+swmm_runoff_iface_save_step,engine,True,True,,exposed,
+swmm_set_progress_callback,engine,True,True,parity,exposed,via _solver.run_with_callback (function-level convenience).
+swmm_set_steady_state_skip,engine,True,True,parity,exposed,via lifecycle.set_steady_state_skip.
+swmm_set_step_begin_callback,engine,True,True,intentional,exposed,MCP transport can't host LLM-side callbacks; bridge in Phase 4.
+swmm_set_step_end_callback,engine,True,True,intentional,exposed,MCP transport can't host LLM-side callbacks; bridge in Phase 4.
+swmm_set_warning_callback,engine,True,True,intentional,exposed,MCP transport can't host LLM-side callbacks; bridge in Phase 4.
+swmm_snowpack_add,subcatchments,True,True,,exposed,
+swmm_snowpack_count,subcatchments,True,True,,exposed,
+swmm_snowpack_get_impervious,subcatchments,True,True,,exposed,
+swmm_snowpack_get_pervious,subcatchments,True,True,,exposed,
+swmm_snowpack_get_plowable,subcatchments,True,True,,exposed,
+swmm_snowpack_get_removal,subcatchments,True,True,,exposed,
+swmm_snowpack_get_removal_subcatch,subcatchments,True,True,,exposed,
+swmm_snowpack_id,subcatchments,True,True,,exposed,
+swmm_snowpack_index,subcatchments,True,True,,exposed,
+swmm_snowpack_set_impervious,subcatchments,True,True,,exposed,
+swmm_snowpack_set_pervious,subcatchments,True,True,,exposed,
+swmm_snowpack_set_plowable,subcatchments,True,True,,exposed,
+swmm_snowpack_set_removal,subcatchments,True,True,,exposed,
+swmm_snowpack_set_removal_subcatch,subcatchments,True,True,,exposed,
+swmm_spatial_get_crs,spatial,True,True,,exposed,
+swmm_spatial_get_gage_coord,spatial,True,True,parity,exposed,via spatial.get_coordinates (element_type='gage'); spatial.get_model_geometry returns all gage coords.
+swmm_spatial_get_link_coord,spatial,True,True,parity,exposed,via spatial.get_coordinates (element_type='link').
+swmm_spatial_get_link_vertex_count,spatial,True,True,parity,exposed,via spatial.get_vertices (count derivable from returned list).
+swmm_spatial_get_link_vertices,spatial,True,True,parity,exposed,via spatial.get_vertices (returns full polyline incl. endpoints).
+swmm_spatial_get_node_coord,spatial,True,True,parity,exposed,via spatial.get_coordinates (element_type='node').
+swmm_spatial_get_node_coords_bulk,spatial,True,True,parity,exposed,via spatial.get_all_coordinates (element_type='node') and spatial.get_model_geometry.
+swmm_spatial_get_subcatch_coord,spatial,True,True,parity,exposed,via spatial.get_coordinates (element_type='subcatchment').
+swmm_spatial_get_subcatch_polygon,spatial,True,True,parity,exposed,via spatial.get_polygon.
+swmm_spatial_get_subcatch_polygon_count,spatial,True,True,parity,exposed,via spatial.get_polygon (count derivable from returned list).
+swmm_spatial_set_crs,spatial,True,True,,exposed,
+swmm_spatial_set_gage_coord,spatial,True,True,parity,exposed,via spatial.set_coordinates (element_type='gage').
+swmm_spatial_set_link_coord,spatial,True,True,parity,exposed,via spatial.set_coordinates (element_type='link').
+swmm_spatial_set_link_vertices,spatial,True,True,parity,exposed,via spatial.set_vertices (takes interior vertices only per the API asymmetry).
+swmm_spatial_set_node_coord,spatial,True,True,parity,exposed,via spatial.set_coordinates (element_type='node').
+swmm_spatial_set_node_coords_bulk,spatial,True,True,parity,exposed,mcp-gap-bulk-write: no MCP tool currently writes node coords in bulk; per-node spatial.set_coordinates loop suffices for small models.
+swmm_spatial_set_subcatch_coord,spatial,True,True,parity,exposed,via spatial.set_coordinates (element_type='subcatchment').
+swmm_spatial_set_subcatch_polygon,spatial,True,True,parity,exposed,via spatial.set_polygon.
+swmm_stat_link_max_filling,statistics,True,True,parity,exposed,via links.stat_max_filling.
+swmm_stat_link_max_filling_bulk,statistics,True,True,,exposed,
+swmm_stat_link_max_flow,statistics,True,True,parity,exposed,via links.stat_max_flow.
+swmm_stat_link_max_flow_bulk,statistics,True,True,parity,exposed,via links.get_flows_bulk + analysis.get_capacity_summary aggregates.
+swmm_stat_link_max_velocity,statistics,True,True,parity,exposed,via links.stat_max_velocity.
+swmm_stat_link_max_velocity_bulk,statistics,True,True,,exposed,
+swmm_stat_link_surcharge_time,statistics,True,True,parity,exposed,via links.stat_surcharge_time.
+swmm_stat_link_surcharge_time_bulk,statistics,True,True,,exposed,
+swmm_stat_link_vol_flow,statistics,True,True,parity,exposed,via links.stat_vol_flow.
+swmm_stat_link_vol_flow_bulk,statistics,True,True,,exposed,
+swmm_stat_node_max_depth,statistics,True,True,parity,exposed,via nodes.stat_max_depth.
+swmm_stat_node_max_depth_bulk,statistics,True,True,parity,exposed,via nodes.get_depths_bulk + analysis.get_flooding_summary aggregates.
+swmm_stat_node_max_overflow,statistics,True,True,parity,exposed,via nodes.stat_max_overflow.
+swmm_stat_node_max_overflow_bulk,statistics,True,True,,exposed,
+swmm_stat_node_time_flooded,statistics,True,True,parity,exposed,via nodes.stat_time_flooded.
+swmm_stat_node_time_flooded_bulk,statistics,True,True,,exposed,
+swmm_stat_node_vol_flooded,statistics,True,True,parity,exposed,via nodes.stat_vol_flooded.
+swmm_stat_node_vol_flooded_bulk,statistics,True,True,,exposed,
+swmm_stat_subcatch_max_runoff,statistics,True,True,parity,exposed,via subcatchments.stat_max_runoff.
+swmm_stat_subcatch_max_runoff_bulk,statistics,True,True,,exposed,
+swmm_stat_subcatch_precip,statistics,True,True,parity,exposed,via subcatchments.stat_precip.
+swmm_stat_subcatch_runoff_vol,statistics,True,True,parity,exposed,via subcatchments.stat_runoff_vol.
+swmm_stat_subcatch_runoff_vol_bulk,statistics,True,True,parity,exposed,via subcatchments.get_runoff_bulk + analysis aggregates.
+swmm_street_add,infrastructure,True,True,,exposed,
+swmm_street_count,infrastructure,True,True,,exposed,
+swmm_street_get_params,infrastructure,True,True,,exposed,
+swmm_street_id,infrastructure,True,True,,exposed,
+swmm_street_index,infrastructure,True,True,,exposed,
+swmm_street_set_params,infrastructure,True,True,,exposed,
+swmm_subcatch_add,subcatchments,True,True,,exposed,
+swmm_subcatch_analyze_impact,edit,True,True,,exposed,
+swmm_subcatch_count,subcatchments,True,True,parity,exposed,via lifecycle.open_model summary + query.find_elements counts.
+swmm_subcatch_delete,edit,True,True,,exposed,
+swmm_subcatch_get_aquifer,subcatchments,True,True,,exposed,
+swmm_subcatch_get_area,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_coverage,subcatchments,True,True,,exposed,
+swmm_subcatch_get_ds_imperv,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_ds_perv,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_evap,subcatchments,True,True,,exposed,
+swmm_subcatch_get_evap_bulk,subcatchments,True,True,,exposed,
+swmm_subcatch_get_gage,subcatchments,True,True,,exposed,
+swmm_subcatch_get_groundwater,subcatchments,True,True,,exposed,
+swmm_subcatch_get_gw_node,subcatchments,True,True,,exposed,
+swmm_subcatch_get_gw_params,subcatchments,True,True,,exposed,
+swmm_subcatch_get_gw_state,subcatchments,True,True,,exposed,
+swmm_subcatch_get_ids_bulk,subcatchments,True,True,,exposed,
+swmm_subcatch_get_imperv_pct,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_infil,subcatchments,True,True,,exposed,
+swmm_subcatch_get_infil_bulk,subcatchments,True,True,,exposed,
+swmm_subcatch_get_infil_curve_number,subcatchments,True,True,,exposed,
+swmm_subcatch_get_infil_green_ampt,subcatchments,True,True,,exposed,
+swmm_subcatch_get_infil_horton,subcatchments,True,True,,exposed,
+swmm_subcatch_get_infil_model,subcatchments,True,True,,exposed,
+swmm_subcatch_get_n_imperv,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_n_perv,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_outlet,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info (returns outlet node id).
+swmm_subcatch_get_outlet_subcatch,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_ponded_quality,subcatchments,True,True,,exposed,
+swmm_subcatch_get_quality,subcatchments,True,True,,exposed,
+swmm_subcatch_get_quality_bulk,subcatchments,True,True,,exposed,
+swmm_subcatch_get_rainfall,subcatchments,True,True,,exposed,
+swmm_subcatch_get_rainfall_bulk,subcatchments,True,True,,exposed,
+swmm_subcatch_get_runoff,subcatchments,True,True,,exposed,
+swmm_subcatch_get_runoff_bulk,subcatchments,True,True,,exposed,
+swmm_subcatch_get_slope,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_get_snow_depth,subcatchments,True,True,,exposed,
+swmm_subcatch_get_snow_depth_bulk,subcatchments,True,True,,exposed,
+swmm_subcatch_get_snow_state,subcatchments,True,True,,exposed,
+swmm_subcatch_get_stat_max_runoff,subcatchments,True,True,,exposed,
+swmm_subcatch_get_stat_precip,subcatchments,True,True,,exposed,
+swmm_subcatch_get_stat_runoff_vol,subcatchments,True,True,,exposed,
+swmm_subcatch_get_tag,subcatchments,True,True,,exposed,
+swmm_subcatch_get_width,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info.
+swmm_subcatch_id,subcatchments,True,True,parity,exposed,via query.get_subcatchment_info / find_elements listings.
+swmm_subcatch_index,subcatchments,True,True,parity,exposed,via query.find_elements (string id -> index).
+swmm_subcatch_rename,subcatchments,True,True,parity,exposed,via editing.rename_subcatchment.
+swmm_subcatch_set_aquifer,subcatchments,True,True,,exposed,
+swmm_subcatch_set_area,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_subcatch_set_coverage,subcatchments,True,True,,exposed,
+swmm_subcatch_set_ds_imperv,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_subcatch_set_ds_perv,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_subcatch_set_gage,subcatchments,True,True,,exposed,
+swmm_subcatch_set_gw_node,subcatchments,True,True,,exposed,
+swmm_subcatch_set_gw_params,subcatchments,True,True,,exposed,
+swmm_subcatch_set_gw_state,subcatchments,True,True,,exposed,
+swmm_subcatch_set_imperv_pct,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_subcatch_set_infil_curve_number,subcatchments,True,True,,exposed,
+swmm_subcatch_set_infil_green_ampt,subcatchments,True,True,,exposed,
+swmm_subcatch_set_infil_horton,subcatchments,True,True,,exposed,
+swmm_subcatch_set_infil_model,subcatchments,True,True,,exposed,
+swmm_subcatch_set_n_imperv,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_subcatch_set_n_perv,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_subcatch_set_outlet,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties (outlet_node_id field).
+swmm_subcatch_set_outlet_subcatch,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties (cascade outlet); supported in same field.
+swmm_subcatch_set_ponded_quality,subcatchments,True,True,,exposed,
+swmm_subcatch_set_rainfall,subcatchments,True,True,,exposed,
+swmm_subcatch_set_slope,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_subcatch_set_snow_state,subcatchments,True,True,,exposed,
+swmm_subcatch_set_tag,subcatchments,True,True,,exposed,
+swmm_subcatch_set_width,subcatchments,True,True,parity,exposed,via editing.set_subcatchment_properties.
+swmm_table_add_point,tables,True,True,,exposed,
+swmm_table_analyze_impact,edit,True,True,,exposed,
+swmm_table_clear,tables,True,True,,exposed,
+swmm_table_count,tables,True,True,,exposed,
+swmm_table_delete,edit,True,True,,exposed,
+swmm_table_get_point,tables,True,True,,exposed,
+swmm_table_get_point_count,tables,True,True,,exposed,
+swmm_table_get_type,tables,True,True,,exposed,
+swmm_table_id,tables,True,True,,exposed,
+swmm_table_index,tables,True,True,,exposed,
+swmm_table_lookup,tables,True,True,,exposed,
+swmm_timeseries_add,tables,True,True,,exposed,
+swmm_title_add_line,model,True,True,,exposed,
+swmm_title_clear,model,True,True,,exposed,
+swmm_title_get_count,model,True,True,,exposed,
+swmm_title_get_line,model,True,True,,exposed,
+swmm_title_set,model,True,True,,exposed,
+swmm_transect_add,infrastructure,True,True,,exposed,
+swmm_transect_add_station,infrastructure,True,True,,exposed,
+swmm_transect_analyze_impact,edit,True,True,,exposed,
+swmm_transect_clear_stations,infrastructure,True,True,,exposed,
+swmm_transect_count,infrastructure,True,True,,exposed,
+swmm_transect_delete,edit,True,True,,exposed,
+swmm_transect_get_bank_stations,infrastructure,True,True,,exposed,
+swmm_transect_get_comments,infrastructure,True,True,,exposed,
+swmm_transect_get_encroachment_stations,infrastructure,True,True,,exposed,
+swmm_transect_get_modifiers,infrastructure,True,True,,exposed,
+swmm_transect_get_roughness,infrastructure,True,True,,exposed,
+swmm_transect_get_station,infrastructure,True,True,,exposed,
+swmm_transect_get_station_count,infrastructure,True,True,,exposed,
+swmm_transect_id,infrastructure,True,True,,exposed,
+swmm_transect_index,infrastructure,True,True,,exposed,
+swmm_transect_remove,infrastructure,True,True,,exposed,
+swmm_transect_rename,infrastructure,True,True,,exposed,
+swmm_transect_set_bank_stations,infrastructure,True,True,,exposed,
+swmm_transect_set_comments,infrastructure,True,True,,exposed,
+swmm_transect_set_encroachment_stations,infrastructure,True,True,,exposed,
+swmm_transect_set_modifiers,infrastructure,True,True,,exposed,
+swmm_transect_set_roughness,infrastructure,True,True,,exposed,
+swmm_treatment_clear,quality,True,True,,exposed,
+swmm_treatment_get,quality,True,True,,exposed,
+swmm_treatment_set,quality,True,True,,exposed,
+swmm_userflag_def_count,model,True,True,,exposed,
+swmm_userflag_def_get,model,True,True,,exposed,
+swmm_userflag_define,model,True,True,,exposed,
+swmm_userflag_get_bool,model,True,True,,exposed,
+swmm_userflag_get_int,model,True,True,,exposed,
+swmm_userflag_get_real,model,True,True,,exposed,
+swmm_userflag_set_bool,model,True,True,,exposed,
+swmm_userflag_set_int,model,True,True,,exposed,
+swmm_userflag_set_real,model,True,True,,exposed,
+swmm_userflag_undefine,model,True,True,,exposed,
+swmm_userflag_value_clear,model,True,True,,exposed,
+swmm_userflag_value_get,model,True,True,,exposed,
+swmm_userflag_value_set,model,True,True,,exposed,
+swmm_validate_model,model,True,True,parity,exposed,via _model.ModelBuilder.validate.
+swmm_washoff_get,quality,True,True,,exposed,
+swmm_washoff_set,quality,True,True,,exposed,

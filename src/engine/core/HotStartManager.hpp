@@ -266,6 +266,54 @@ public:
                      std::function<void(const std::string&)> warn_cb = {});
 
     // -----------------------------------------------------------------------
+    // Legacy EPA SWMM5 hotstart (.hsf) — read + apply routing state
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Read a legacy EPA SWMM5 `.hsf` (USE HOTSTART) file and apply its
+     *        routing state to the context, BY OBJECT INDEX (the legacy format
+     *        stores node/link state in object order, no IDs).
+     *
+     * @details Mirrors legacy hotstart.c readRouting(): sets each node's depth +
+     *          lateral inflow and each link's flow + depth + setting, all stored
+     *          as float in internal units (ft, cfs). Supports file stamps
+     *          `SWMM5-HOTSTART1..4`. Currently routing-only: returns a non-zero
+     *          error if the file contains subcatchments (the runoff section is
+     *          not yet parsed). Derived state (head, volumes, old-step values)
+     *          is recomputed by the caller from the applied depths/flows.
+     *
+     * @param path    Absolute path to the legacy `.hsf` file.
+     * @param ctx     Target context (node/link counts must match the file).
+     * @param warn_cb Optional warning callback.
+     * @returns 0 on success; non-zero error code otherwise (description in
+     *          last_io_error()).
+     */
+    static int apply_legacy_routing(const std::string& path,
+                                    SimulationContext& ctx,
+                                    std::function<void(const std::string&)> warn_cb = {});
+
+    /**
+     * @brief Write the current routing state as a legacy EPA SWMM5 `.hsf`
+     *        (SAVE HOTSTART), byte-format-compatible with legacy readRouting()
+     *        and apply_legacy_routing() above.
+     *
+     * @details Mirrors legacy hotstart.c saveHotstart()+saveRouting() for the
+     *          "SWMM5-HOTSTART4" version: 15-char stamp + object counts
+     *          (nSub, nLand, nNodes, nLinks, nPollut, flowUnits as int32), then
+     *          per node `depth, latFlow[, storage hrt], qual[]` and per link
+     *          `flow, depth, setting, qual[]` — all float, internal units
+     *          (ft, cfs). Storage residence time (hrt) is written as 0 (the
+     *          reader discards it; it does not affect hydraulic routing).
+     *
+     * @param path  Absolute path for the `.hsf` file.
+     * @param ctx   Source context (final routing state).
+     * @returns 0 on success; non-zero on file-open/write error
+     *          (description in last_io_error()).
+     */
+    static int save_legacy_routing(const std::string& path,
+                                   const SimulationContext& ctx);
+
+    // -----------------------------------------------------------------------
     // Flush (write-back modifications)
     // -----------------------------------------------------------------------
 

@@ -1,0 +1,5 @@
+module,cls,name,has_stub
+_subcatchments,_NamedObjects,add,True
+_subcatchments,_NamedObjects,get_id,True
+_subcatchments,_NamedObjects,get_index,True
+_tables,_PointTable,points,True

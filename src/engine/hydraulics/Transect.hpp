@@ -32,6 +32,7 @@ struct TransectData {
     double n_left   = 0.0;   ///< Left overbank Manning's n
     double n_right  = 0.0;   ///< Right overbank Manning's n
     double n_channel = 0.0;  ///< Main channel Manning's n
+    double length_factor = 1.0;  ///< Main-channel / flood-plain length ratio (Lfactor)
 
     // Station-elevation pairs
     std::vector<double> stations;    ///< x positions (ft)
@@ -45,6 +46,11 @@ struct TransectData {
     double w_max  = 0.0;
     double a_full = 0.0;
     double r_full = 0.0;
+    // CUSTOM shapes only (legacy TShape.sMax/aMax, shape.c getSmax): max
+    // section factor and its area for a shape of UNIT height, computed on the
+    // unnormalized tables. Scaled by yFull in the caller (xsect.c:685-686).
+    double s_max  = 0.0;
+    double a_max  = 0.0;
 
     double area_tbl[N_TRANSECT_TBL]  = {};
     double hrad_tbl[N_TRANSECT_TBL]  = {};

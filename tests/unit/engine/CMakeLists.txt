@@ -69,7 +69,14 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
         COMMAND $<TARGET_FILE:${TEST_NAME}>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
     )
-    set_tests_properties(${TEST_NAME} PROPERTIES LABELS "unit")
+    # Pin the serial CPU 2D solver so unit assertions are deterministic and
+    # bit-exact. With the GPU plugin now built+installed by default, runtime
+    # `auto` would otherwise pick the Kokkos-OpenMP backend (results agree only
+    # to ~1e-13, not bit-identical). The dedicated `test_engine_2d_omp_default`
+    # test below exercises the omp default path explicitly.
+    set_tests_properties(${TEST_NAME} PROPERTIES
+        LABELS "unit"
+        ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
 endfunction()
 
 # ---- Unit test targets ----
@@ -77,9 +84,11 @@ endfunction()
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
 add_gtest_unit(test_engine_tokenizer         test_tokenizer.cpp)
-add_gtest_unit(test_engine_timeseries_cursor test_timeseries_cursor.cpp)
 add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
-add_gtest_unit(test_engine_csv_timeseries    test_csv_timeseries.cpp)
+add_gtest_unit(test_engine_timeseries_file_roundtrip test_timeseries_file_roundtrip.cpp)
+add_gtest_unit(test_engine_pathresolver      test_pathresolver.cpp)
+add_gtest_unit(test_engine_postparse_resolver test_postparse_resolver.cpp)
+add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
@@ -88,26 +97,75 @@ add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cp
 add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
 add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
 add_gtest_unit(test_engine_files_section          test_files_section.cpp)
+add_gtest_unit(test_engine_iface_routing          test_iface_routing.cpp)
+add_gtest_unit(test_engine_files_iface_gaps       test_files_iface_gaps.cpp)
+add_gtest_unit(test_engine_section_order_parity   test_section_order_parity.cpp)
+add_gtest_unit(test_engine_capi_file_paths        test_capi_file_paths.cpp)
 add_gtest_unit(test_engine_events_section         test_events_section.cpp)
 add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
+add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
-add_gtest_unit(test_engine_io_thread         test_io_thread.cpp)
-add_gtest_unit(test_engine_timestep_ctrl     test_timestep_controller.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
 add_gtest_unit(test_engine_user_flags        test_user_flags.cpp)
+# User-flags C API surface for the GUI (Phase 0 of
+# openswmm.gui/docs/USER_FLAGS_UI_PLAN_2026-06-03.md).
+add_gtest_unit(test_engine_user_flags_capi   test_user_flags_capi.cpp)
 add_gtest_unit(test_engine_section_registry  test_section_registry.cpp)
-add_gtest_unit(test_engine_crs               test_crs.cpp)
 add_gtest_unit(test_engine_xsection          test_xsection.cpp)
+target_compile_definitions(test_engine_xsection PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+# STREET cross-section end-to-end (parse → street transect → routing).
+add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
+# STREET cross-section programmatic builder API (set/get xsect + get_params).
+add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
+# GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
+# snowpack surfaces, inlet params/type, LID layers/type).
+add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
+target_compile_definitions(test_engine_infiltration PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+add_gtest_unit(test_engine_ode_solver       test_ode_solver.cpp)
+target_compile_definitions(test_engine_ode_solver PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+add_gtest_unit(test_engine_massbalance      test_massbalance.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
 add_gtest_unit(test_engine_snow             test_snow.cpp)
+add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)
+add_gtest_unit(test_engine_gage_attributes  test_gage_attributes.cpp)
+add_gtest_unit(test_engine_gage_file_roundtrip test_gage_file_roundtrip.cpp)
 add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_lid              test_lid.cpp)
+target_compile_definitions(test_engine_lid PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
+target_compile_definitions(test_engine_groundwater PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_routing          test_routing.cpp)
+target_compile_definitions(test_engine_routing PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_quality_routing  test_quality_routing.cpp)
+target_compile_definitions(test_engine_quality_routing PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+add_gtest_unit(test_engine_exfiltration      test_exfiltration.cpp)
+target_compile_definitions(test_engine_exfiltration PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
+# Presence guard: fails (does not skip) if any manufactured benchmark
+# reference.csv is missing or truncated, so the data-driven benchmark tests'
+# GTEST_SKIP()-on-missing fallback cannot silently drop coverage in CI.
+add_gtest_unit(test_engine_benchmark_corpus  test_benchmark_corpus.cpp)
+target_compile_definitions(test_engine_benchmark_corpus PRIVATE
+    "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
+)
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
@@ -123,6 +181,7 @@ add_gtest_unit(test_engine_links_pump_stats_bulk test_links_pump_stats_bulk.cpp)
 add_gtest_unit(test_engine_nodes_bulk_phase3 test_nodes_bulk_phase3.cpp)
 add_gtest_unit(test_engine_links_bulk_phase3 test_links_bulk_phase3.cpp)
 add_gtest_unit(test_engine_subcatchments_bulk_phase3 test_subcatchments_bulk_phase3.cpp)
+add_gtest_unit(test_engine_subcatch_editor_api test_subcatch_editor_api.cpp)
 add_gtest_unit(test_engine_statistics_bulk_phase3 test_statistics_bulk_phase3.cpp)
 add_gtest_unit(test_engine_runoff_interface_capi test_runoff_interface_capi.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
@@ -134,21 +193,42 @@ add_gtest_unit(test_engine_tags           test_tags.cpp)
 # max-flow (added 2026-05-25 for Slice SB of the GUI plan).
 add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
 
+# End-to-end model-builder parity: build site_drainage_model.inp via the
+# programmatic API, run it, write it back out, and confirm result parity
+# against a fresh run of the reference .inp.
+add_gtest_unit(test_engine_site_drainage_builder test_site_drainage_builder.cpp)
+
+# ---- Serialize tests that share the site_drainage_model.out fixture ----
+# These targets all run site_drainage_model.inp with site_drainage_model.out as
+# the output path (swmm_engine_open truncates/recreates it), while
+# test_engine_output_node_stats opens that same file read-only as its fixture.
+# All share data/ as their WORKING_DIRECTORY, so under `ctest -jN` a writer
+# truncating the file races the reader's open → intermittent
+# "Failed to open fixture 'site_drainage_model.out'" failures. A shared
+# RESOURCE_LOCK makes CTest never schedule these concurrently; they still run in
+# parallel with the rest of the suite.
+set_property(TEST
+    test_engine_output_node_stats
+    test_engine_links_bulk_phase3
+    test_engine_links_pump_stats_bulk
+    test_engine_nodes_bulk_phase3
+    test_engine_subcatchments_bulk_phase3
+    test_engine_subcatch_editor_api
+    test_engine_statistics_bulk_phase3
+    test_engine_runoff_interface_capi
+    test_engine_site_drainage_builder
+    APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
+
 # 2D surface routing tests — geometry, gradients, flux, parsing.
-# Non-CVODE portions can be built without SUNDIALS by compiling the needed
-# sources directly; the HDF5 output plugin test is gated on OPENSWMM_BUILD_2D
-# because it needs the real Default2DOutputPlugin + libhdf5.
+# The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
+# SectionHandlers2D, Default2DOutputPlugin) are NOT compiled into the test here:
+# the target links the engine library, which exports them. Compiling them into
+# the exe AS WELL produced duplicate definitions across the exe and the engine
+# dylib — an ODR violation whose UB surfaced as heap corruption in the CVODE
+# solver path once 2D struct sizes changed. The test calls the engine's copies.
 set(TEST_2D_SOURCES
     test_2d_surface_routing.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/VertexReconstruction.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SurfaceFluxCalculator.cpp
-    ${PROJECT_SOURCE_DIR}/src/engine/2d/input/SectionHandlers2D.cpp
 )
-if(OPENSWMM_BUILD_2D)
-    list(APPEND TEST_2D_SOURCES
-        ${PROJECT_SOURCE_DIR}/src/engine/2d/output/Default2DOutputPlugin.cpp)
-endif()
 add_executable(test_engine_2d_surface ${TEST_2D_SOURCES})
 target_link_libraries(test_engine_2d_surface
     PRIVATE
@@ -192,7 +272,117 @@ add_test(
     COMMAND $<TARGET_FILE:test_engine_2d_surface>
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
-set_tests_properties(test_engine_2d_surface PROPERTIES LABELS "unit")
+set_tests_properties(test_engine_2d_surface PROPERTIES
+    LABELS "unit"
+    ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
+
+# Exercise the default acceleration path end-to-end: with the GPU plugin built
+# and co-located with the engine, runtime `auto`/omp must discover and load it.
+# Runs the 2D example through the CLI and asserts the omp backend was selected.
+# (Numeric omp-vs-cpu parity is ~1e-13, covered by the Kokkos parity test and
+# the serial reference in test_engine_2d_surface.)
+if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
+    file(COPY ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
+         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(
+        NAME    test_engine_2d_omp_default
+        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example.inp 2d_omp_default.rpt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    # Point plugin discovery straight at the freshly built omp plugin. Without
+    # this the engine only searches its own module dir; on Windows multi-config
+    # builds the CLI and the plugin land in separate per-config trees (e.g.
+    # bin/Debug vs src/engine/2d/gpu/Debug), so the omp plugin is never found,
+    # the run silently falls back to the serial CPU solver, and the
+    # PASS_REGULAR_EXPRESSION below never matches. OPENSWMM_GPU_PLUGIN_PATH is
+    # the highest-priority search dir, so this makes discovery deterministic on
+    # every platform/generator. Guarded so non-omp GPU backends still configure.
+    set(_omp_test_env "OPENSWMM_2D_BACKEND=omp")
+    if(TARGET openswmm_gpu_omp)
+        list(APPEND _omp_test_env
+             "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
+    endif()
+    set_tests_properties(test_engine_2d_omp_default PROPERTIES
+        LABELS "unit"
+        ENVIRONMENT "${_omp_test_env}"
+        PASS_REGULAR_EXPRESSION "using GPU backend: omp")
+endif()
+
+# InpWriter [2D_*] emission — end-to-end through the public C API (open a
+# 2D .inp → swmm_model_write → reopen → compare via swmm_2d_* accessors,
+# plus the GeoPackage write→reopen end-to-end). Needs the full 2D module.
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_inp_writer_2d test_inp_writer_2d.cpp)
+    # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
+    # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
+    # always-feet⇄metres coupling factors (the 1D side is always feet-internal).
+    add_gtest_unit(test_engine_2d_coupling_units test_2d_coupling_units.cpp)
+    # Two-way 1D↔2D OUTFALL coupling regression — a coupled outfall's pipe
+    # discharge must reach the 2D mesh (it read nodes.outflow≈0 before the fix)
+    # and both the 2D and 1D continuity ledgers must close.
+    add_gtest_unit(test_engine_2d_outfall_coupling test_2d_outfall_coupling.cpp)
+    # Two-way 1D↔2D JUNCTION coupling regression — a coupled junction must
+    # surcharge above its crown to spill onto the 2D mesh and recapture ponded
+    # surface water through its inlet (both blocked when ponded_area was zeroed).
+    add_gtest_unit(test_engine_2d_junction_coupling test_2d_junction_coupling.cpp)
+    # Cross-domain volume conservation of 1D↔2D coupling under VARIABLE_STEP —
+    # guards the per-window-volume carry that keeps the staggered exchange
+    # mass-conservative when the routing dt varies between produce and consume.
+    add_gtest_unit(test_engine_2d_coupling_conservation test_2d_coupling_conservation.cpp)
+    # Rainfall→mesh interpolation (natural-neighbour / IDW) + RAINFALL_MODE
+    # option round-trip. Pure geometry over the engine-exported interpolator.
+    add_gtest_unit(test_engine_2d_rainfall_interp test_2d_rainfall_interp.cpp)
+    # Dry-cell active-set masking: builder units (seed/halo/breach/cleanup),
+    # option round-trip, and masked-vs-unmasked dam-break equivalence.
+    add_gtest_unit(test_engine_2d_active_set test_2d_active_set.cpp)
+endif()
+
+# Golden cross-section parity harness — diffs the new xsect:: implementation
+# against the legacy xsect.c. The legacy dylib hides its internal xsect_*
+# symbols, so we compile xsect.c (+ findroot.c + stub globals) directly into the
+# test executable. The stub globals satisfy the linker for the IRREGULAR/CUSTOM/
+# STREET code paths the harness does not exercise.
+add_executable(test_engine_xsect_parity
+    test_xsect_parity.cpp
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/xsect.c
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/findroot.c
+    legacy_xsect_stubs.c
+)
+target_link_libraries(test_engine_xsect_parity
+    PRIVATE
+        GTest::gtest GTest::gtest_main GTest::gmock
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+target_include_directories(test_engine_xsect_parity
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+        ${PROJECT_SOURCE_DIR}/src/legacy/engine
+        ${PROJECT_BINARY_DIR}/src/legacy/engine   # generated legacy_version.h
+)
+if(MSVC)
+    target_compile_options(test_engine_xsect_parity PRIVATE /EHsc)
+endif()
+# Mirror the engine's fast-lookup build variant into the test TU so the
+# BitExact batch/golden checks adapt (ULP==0 when bit-exact, tolerance when
+# the default fast lookup is on). The scalar lookup_exact checks stay ULP==0
+# either way (XSection.cpp's scalar accessor always uses the exact core).
+if(OPENSWMM_FAST_XSECT_LOOKUP)
+    target_compile_definitions(test_engine_xsect_parity PRIVATE SWMM_XSECT_FAST_LOOKUP)
+endif()
+set_target_properties(test_engine_xsect_parity PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_xsect_parity)
+add_test(
+    NAME    test_engine_xsect_parity
+    COMMAND $<TARGET_FILE:test_engine_xsect_parity>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_xsect_parity PROPERTIES LABELS "unit")
 
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)
@@ -222,4 +412,156 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
     )
     set_tests_properties(test_engine_geopackage PROPERTIES LABELS "unit")
+
+    # Part E — 2D mesh persistence round-trip (data-level: the fixture wires
+    # ctx.twod_io at locally-owned 2D structs, so this runs in both 2D and
+    # non-2D builds).
+    add_executable(test_engine_geopackage_mesh2d test_geopackage_mesh2d.cpp)
+    target_link_libraries(test_engine_geopackage_mesh2d
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+            openswmm_legacy_engine
+    )
+    target_include_directories(test_engine_geopackage_mesh2d
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_mesh2d PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage_mesh2d)
+    add_test(
+        NAME    test_engine_geopackage_mesh2d
+        COMMAND $<TARGET_FILE:test_engine_geopackage_mesh2d>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_mesh2d PROPERTIES LABELS "unit")
+
+    # Slice IO-6 — external-file format parsers/materialisers.
+    add_executable(test_engine_geopackage_formats
+        test_geopackage_formats.cpp)
+    target_link_libraries(test_engine_geopackage_formats
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_formats
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_formats PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage_formats)
+    add_test(
+        NAME    test_engine_geopackage_formats
+        COMMAND $<TARGET_FILE:test_engine_geopackage_formats>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_formats PROPERTIES LABELS "unit")
+
+    # Slice IO-5 — structured external-file content schema + FK integrity.
+    add_executable(test_engine_geopackage_schema_external_content
+        test_geopackage_schema_external_content.cpp)
+    target_link_libraries(test_engine_geopackage_schema_external_content
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_schema_external_content
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_schema_external_content
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(
+        test_engine_geopackage_schema_external_content)
+    add_test(
+        NAME    test_engine_geopackage_schema_external_content
+        COMMAND $<TARGET_FILE:test_engine_geopackage_schema_external_content>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_schema_external_content
+        PROPERTIES LABELS "unit")
+
+    # Slice IO-7 — external-content fan-out from SimulationContext slots
+    # into the Part D tables.
+    add_executable(test_engine_geopackage_external_content_writer
+        test_geopackage_external_content_writer.cpp)
+    target_link_libraries(test_engine_geopackage_external_content_writer
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_external_content_writer
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_external_content_writer
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(
+        test_engine_geopackage_external_content_writer)
+    add_test(
+        NAME    test_engine_geopackage_external_content_writer
+        COMMAND $<TARGET_FILE:test_engine_geopackage_external_content_writer>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_external_content_writer
+        PROPERTIES LABELS "unit")
+
+    # Slice IO-8 — Part D content → ctx slot hydration + scratch materialise.
+    add_executable(test_engine_geopackage_external_content_reader
+        test_geopackage_external_content_reader.cpp)
+    target_link_libraries(test_engine_geopackage_external_content_reader
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_external_content_reader
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_external_content_reader
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(
+        test_engine_geopackage_external_content_reader)
+    add_test(
+        NAME    test_engine_geopackage_external_content_reader
+        COMMAND $<TARGET_FILE:test_engine_geopackage_external_content_reader>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_external_content_reader
+        PROPERTIES LABELS "unit")
 endif()

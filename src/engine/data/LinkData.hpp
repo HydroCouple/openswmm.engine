@@ -168,50 +168,34 @@ struct LinkData {
     std::vector<double>     xsect_w_max;
 
     /**
+     * @brief Raw [XSECTIONS] geometry parameters as supplied (display units),
+     *        retained purely for lossless serialization.
+     * @details The computational fields above (@ref xsect_y_full, @ref
+     *          xsect_w_max, @ref xsect_a_full, @ref xsect_y_bot, @ref
+     *          xsect_r_bot) are overwritten with derived geometry during
+     *          initialization (e.g. for a trapezoid @ref xsect_w_max becomes
+     *          the TOP width, discarding the input bottom width and side
+     *          slopes), so they cannot reproduce the original Geom1–Geom4.
+     *          These mirror the four columns exactly so swmm_model_write and
+     *          swmm_link_get_xsect can round-trip them.  @c xsect_geom1 == 0
+     *          marks "not populated" (e.g. objects built by readers that do
+     *          not set these), in which case writers fall back to the derived
+     *          fields.  Set by swmm_link_set_xsect and the [XSECTIONS] parser.
+     */
+    std::vector<double>     xsect_geom1;
+    std::vector<double>     xsect_geom2;
+    std::vector<double>     xsect_geom3;
+    std::vector<double>     xsect_geom4;
+
+    /**
      * @brief Shape curve index (for IRREGULAR / CUSTOM shapes).
      * @details -1 for standard shapes.
      */
     std::vector<int>        xsect_curve;
 
-    /** @brief Manning's roughness coefficient. */
-    std::vector<double>     roughness;
-
-    /** @brief Conduit length (project length units). */
-    std::vector<double>     length;
-
-    /** @brief Conduit slope (rise/run, dimensionless). */
-    std::vector<double>     slope;
-
-    /**
-     * @brief Modified conduit length for CFL stability (project length units).
-     * @details Computed as lengthFactor * length where lengthFactor >= 1.0.
-     *          Short conduits are virtually lengthened to satisfy the Courant
-     *          criterion at full-flow conditions.
-     * @see Legacy: Conduit[k].modLength
-     */
-    std::vector<double>     mod_length;
-
-    /** @brief Number of identical barrels (conduits only, default 1). */
-    std::vector<int>        barrels;
-
-    /**
-     * @brief Manning conveyance factor: beta = PHI * sqrt(|slope|) / n.
-     * @details Q_normal = beta * S(A) where S is the section factor.
-     * @see Legacy: Conduit[k].beta
-     */
-    std::vector<double>     beta;
-
-    /**
-     * @brief Roughness factor for head loss: GRAVITY * (n/PHI)^2.
-     * @see Legacy: Conduit[k].roughFactor
-     */
-    std::vector<double>     rough_factor;
-
-    /**
-     * @brief Full-pipe flow rate: q_full = xsect_s_full * beta.
-     * @see Legacy: Link[j].qFull
-     */
-    std::vector<double>     q_full;
+    // Phase 6: conduit-config fields (roughness, length, slope, mod_length,
+    // barrels, beta, rough_factor, q_full, q_max) moved to ConduitData in
+    // LinkSubtypes.hpp — the relational link side-tables are the single store.
 
     /**
      * @brief Full-pipe hydraulic radius.
@@ -230,12 +214,6 @@ struct LinkData {
      * @see Legacy: Link[j].xsect.sMax
      */
     std::vector<double>     xsect_s_max;
-
-    /**
-     * @brief Maximum flow rate at sMax: q_max = xsect_s_max * beta.
-     * @see Legacy: Conduit[k].qMax
-     */
-    std::vector<double>     q_max;
 
     /**
      * @brief Bottom depth for FILLED_CIRCULAR, RECT_TRIANG, RECT_ROUND shapes.
@@ -307,28 +285,9 @@ struct LinkData {
     // Pump-specific properties (valid when type[i] == PUMP)
     // -----------------------------------------------------------------------
 
-    /**
-     * @brief Pump curve index into TableData.
-     * @see Legacy: TPump.pumpCurve
-     */
-    std::vector<int>        pump_curve;
-
-    /** @brief Initial pump on/off state. */
-    std::vector<bool>       pump_init_state;
-
-    /** @brief Pump startup depth (ft). */
-    std::vector<double>     pump_startup;
-
-    /** @brief Pump shutoff depth (ft). */
-    std::vector<double>     pump_shutoff;
-
-    /**
-     * @brief Pump curve type: 1=TYPE1..5=TYPE5, 6=Ideal, -1=not a pump.
-     * @details Set by StructureSolver::init(). TYPE4_PUMP is excluded from
-     *          downstream dQ/dH accumulation in the DW solver.
-     * @see Legacy: Pump[k].type, dynwave.c:565-575
-     */
-    std::vector<int>        pump_curve_type;
+    // Phase 6: pump-config fields (pump_curve, pump_init_state, pump_startup,
+    // pump_shutoff, pump_curve_type) moved to PumpData in LinkSubtypes.hpp.
+    // pump_curve_name stays on base (shared with outlet/conduit-IRREGULAR).
 
     /** @brief Pump curve name (for deferred resolution). */
     std::vector<std::string> pump_curve_name;
@@ -337,38 +296,13 @@ struct LinkData {
     // Conduit loss coefficients
     // -----------------------------------------------------------------------
 
-    /** @brief Inlet loss coefficient. @see Legacy: Link[j].cLossInlet */
-    std::vector<double>     loss_inlet;
-    /** @brief Outlet loss coefficient. @see Legacy: Link[j].cLossOutlet */
-    std::vector<double>     loss_outlet;
-    /** @brief Average loss coefficient. @see Legacy: Link[j].cLossAvg */
-    std::vector<double>     loss_avg;
+    // Phase 6: conduit loss/seep/culvert + per-step state (loss_inlet,
+    // loss_outlet, loss_avg, seep_rate, evap_loss_rate, seep_loss_rate,
+    // culvert_code, normal_flow_limited, inlet_control) moved to ConduitData.
+    // has_flap_gate and dqdh stay on base (shared / multi-owner).
+
     /** @brief Flap gate on this conduit (uint8_t: 0=no, 1=yes). @see Legacy: Link[j].hasFlapGate */
     std::vector<uint8_t>    has_flap_gate;
-    /** @brief User-specified seepage rate (project units). @see Legacy: Link[j].seepRate */
-    std::vector<double>     seep_rate;
-
-    /** @brief Computed conduit evaporation loss rate (cfs per barrel). @see Legacy: Conduit[k].evapLossRate */
-    std::vector<double>     evap_loss_rate;
-
-    /** @brief Computed conduit seepage loss rate (cfs per barrel). @see Legacy: Conduit[k].seepLossRate */
-    std::vector<double>     seep_loss_rate;
-
-    /**
-     * @brief Culvert type code (1-57, 0 = not a culvert).
-     * @see Legacy: Link[j].xsect.culvertCode
-     */
-    std::vector<int>        culvert_code;
-
-    /// True if normal flow limitation was applied this step (uint8_t: 0=no, 1=yes).
-    /// @see Legacy: Link[j].normalFlow
-    std::vector<uint8_t>    normal_flow_limited;
-
-    /**
-     * @brief True if inlet control governs for this culvert link (uint8_t: 0=no, 1=yes).
-     * @see Legacy: Link[j].inletControl
-     */
-    std::vector<uint8_t>    inlet_control;
 
     /**
      * @brief Derivative dQ/dH for inlet-controlled culvert flow.
@@ -380,24 +314,8 @@ struct LinkData {
     // Weir / Orifice / Outlet — shared geometric properties
     // -----------------------------------------------------------------------
 
-    /** @brief Crest height above upstream node invert (project length units). */
-    std::vector<double>     crest_height;
-
-    /** @brief Discharge coefficient (dimensionless). */
-    std::vector<double>     cd;
-
-    /** @brief Parameter 1 (orifice type: 0=BOTTOM, 1=SIDE; weir type encoding). */
-    std::vector<double>     param1;
-
-    /** @brief Rated capacity or parameter 2 (weir side slopes, orifice area, etc.). */
-    std::vector<double>     param2;
-
-    /**
-     * @brief Orifice open/close rate (fraction per second).
-     * @details Controls how fast setting transitions between 0 and 1.
-     *          0 = instantaneous. @see Legacy: Orifice[k].orate
-     */
-    std::vector<double>     orate;
+    // Phase 6: weir/orifice/outlet config (crest_height, cd, param1, param2,
+    // orate) moved to OrificeData/WeirData/OutletData in LinkSubtypes.hpp.
 
     // -----------------------------------------------------------------------
     // State variables — updated each timestep
@@ -433,13 +351,7 @@ struct LinkData {
     /** @brief True if the link is closed by a control rule (uint8_t: 0=no, 1=yes). */
     std::vector<uint8_t>    is_closed;
 
-    /**
-     * @brief End-of-step full-pipe classification: 0=neither, 1=UP_FULL, 2=DN_FULL, 3=ALL_FULL.
-     * @details Set by KW/DW/Steady-flow solvers each routing step.
-     *          Bit 0 = upstream end at or above full depth; bit 1 = downstream end.
-     * @see Legacy: link_getFullState() in src/legacy/engine/link.c
-     */
-    std::vector<int8_t>     full_state;
+    // Phase 6: full_state (per-step up/down full bitmask) moved to ConduitData.
 
     // -----------------------------------------------------------------------
     // Previous-step state
@@ -641,19 +553,14 @@ struct LinkData {
         xsect_y_full.assign(un, 0.0);
         xsect_a_full.assign(un, 0.0);
         xsect_w_max.assign(un, 0.0);
+        xsect_geom1.assign(un, 0.0);
+        xsect_geom2.assign(un, 0.0);
+        xsect_geom3.assign(un, 0.0);
+        xsect_geom4.assign(un, 0.0);
         xsect_curve.assign(un, -1);
-        roughness.assign(un, 0.01);
-        length.assign(un, 0.0);
-        slope.assign(un, 0.0);
-        mod_length.assign(un, 0.0);
-        barrels.assign(un, 1);
-        beta.assign(un, 0.0);
-        rough_factor.assign(un, 0.0);
-        q_full.assign(un, 0.0);
         xsect_r_full.assign(un, 0.0);
         xsect_s_full.assign(un, 0.0);
         xsect_s_max.assign(un, 0.0);
-        q_max.assign(un, 0.0);
         xsect_y_bot.assign(un, 0.0);
         xsect_a_bot.assign(un, 0.0);
         xsect_s_bot.assign(un, 0.0);
@@ -665,29 +572,9 @@ struct LinkData {
         time_last_set.assign(un, 0.0);
         direction.assign(un, 1);
 
-        loss_inlet.assign(un, 0.0);
-        loss_outlet.assign(un, 0.0);
-        loss_avg.assign(un, 0.0);
         has_flap_gate.assign(un, 0);
-        seep_rate.assign(un, 0.0);
-        evap_loss_rate.assign(un, 0.0);
-        seep_loss_rate.assign(un, 0.0);
-        culvert_code.assign(un, 0);
-        inlet_control.assign(un, 0);
         dqdh.assign(un, 0.0);
-
-        pump_curve.assign(un, -1);
-        pump_init_state.assign(un, false);
-        pump_startup.assign(un, 0.0);
-        pump_shutoff.assign(un, 0.0);
-        pump_curve_type.assign(un, -1);
         pump_curve_name.resize(un);
-
-        crest_height.assign(un, 0.0);
-        cd.assign(un, 0.0);
-        param1.assign(un, 0.0);
-        param2.assign(un, 0.0);
-        orate.assign(un, 0.0);
 
         flow.assign(un, 0.0);
         depth.assign(un, 0.0);
@@ -695,7 +582,6 @@ struct LinkData {
         froude.assign(un, 0.0);
         flow_class.assign(un, FlowClass::DRY);
         is_closed.assign(un, 0);
-        full_state.assign(un, 0);
         old_flow.assign(un, 0.0);
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
@@ -726,7 +612,6 @@ struct LinkData {
         stat_flow_turns.assign(un, 0L);
         stat_flow_turn_sign.assign(un, 0);
         stat_time_courant_critical.assign(un, 0.0);
-        normal_flow_limited.assign(un, 0);
     }
 
     /**
@@ -740,28 +625,18 @@ struct LinkData {
         g(offset1, 0.0); g(offset2, 0.0); g(q0, 0.0); g(q_limit, 0.0);
         g(xsect_shape, XsectShape::CIRCULAR);
         g(xsect_y_full, 0.0); g(xsect_a_full, 0.0); g(xsect_w_max, 0.0);
-        g(xsect_curve, -1); g(roughness, 0.013); g(param1, 0.0);
-        g(length, 0.0); g(mod_length, 0.0); g(slope, 0.0);
-        g(barrels, 1); g(beta, 0.0); g(rough_factor, 0.0);
-        g(q_full, 0.0); g(q_max, 0.0);
+        g(xsect_geom1, 0.0); g(xsect_geom2, 0.0); g(xsect_geom3, 0.0); g(xsect_geom4, 0.0);
+        g(xsect_curve, -1);
         g(xsect_r_full, 0.0); g(xsect_s_full, 0.0); g(xsect_s_max, 0.0);
         g(xsect_y_bot, 0.0); g(xsect_a_bot, 0.0);
         g(xsect_s_bot, 0.0); g(xsect_r_bot, 0.0);
         g(xsect_yw_max, 0.0); g(xsect_batch_shape, 0);
-        g(setting, 1.0); g(target_setting, 1.0); g(direction, 1);
-        g(loss_inlet, 0.0); g(loss_outlet, 0.0); g(loss_avg, 0.0);
-        g(has_flap_gate, uint8_t{0}); g(seep_rate, 0.0);
-        g(evap_loss_rate, 0.0); g(seep_loss_rate, 0.0);
-        g(culvert_code, 0); g(normal_flow_limited, uint8_t{0});
-        g(inlet_control, uint8_t{0}); g(dqdh, 0.0);
-        g(pump_curve, -1); g(pump_init_state, false);
-        g(pump_startup, 0.0); g(pump_shutoff, 0.0);
-        g(pump_curve_type, -1);
+        g(setting, 1.0); g(target_setting, 1.0); g(time_last_set, 0.0);
+        g(direction, 1);
+        g(has_flap_gate, uint8_t{0}); g(dqdh, 0.0);
         pump_curve_name.resize(un);
-        g(crest_height, 0.0); g(cd, 0.0); g(param2, 0.0); g(orate, 0.0);
         g(flow, 0.0); g(depth, 0.0); g(volume, 0.0);
         g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
-        g(full_state, int8_t{0});
         g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
         comments.resize(un, std::string{});
         tags.resize(un, std::string{});
@@ -799,22 +674,15 @@ struct LinkData {
         e(type); e(node1); e(node2); e(offset1); e(offset2); e(q0); e(q_limit);
 
         e(xsect_shape); e(xsect_y_full); e(xsect_a_full); e(xsect_w_max); e(xsect_curve);
-        e(roughness); e(length); e(slope); e(mod_length); e(barrels);
-        e(beta); e(rough_factor); e(q_full);
-        e(xsect_r_full); e(xsect_s_full); e(xsect_s_max); e(q_max);
+        e(xsect_r_full); e(xsect_s_full); e(xsect_s_max);
         e(xsect_y_bot); e(xsect_a_bot); e(xsect_s_bot); e(xsect_r_bot); e(xsect_yw_max);
         e(xsect_batch_shape); e(setting); e(target_setting); e(direction);
 
-        e(pump_curve); e(pump_init_state); e(pump_startup); e(pump_shutoff);
-        e(pump_curve_type); e(pump_curve_name);
+        e(pump_curve_name);
 
-        e(loss_inlet); e(loss_outlet); e(loss_avg); e(has_flap_gate); e(seep_rate);
-        e(evap_loss_rate); e(seep_loss_rate); e(culvert_code);
-        e(normal_flow_limited); e(inlet_control); e(dqdh);
+        e(has_flap_gate); e(dqdh);
 
-        e(crest_height); e(cd); e(param1); e(param2); e(orate);
-
-        e(flow); e(depth); e(volume); e(froude); e(flow_class); e(is_closed); e(full_state);
+        e(flow); e(depth); e(volume); e(froude); e(flow_class); e(is_closed);
         e(old_flow); e(old_depth); e(old_volume);
         e(comments); e(tags); e(rpt_flag);
 
@@ -900,18 +768,9 @@ struct LinkData {
         xsect_a_full.shrink_to_fit();
         xsect_w_max.shrink_to_fit();
         xsect_curve.shrink_to_fit();
-        roughness.shrink_to_fit();
-        length.shrink_to_fit();
-        slope.shrink_to_fit();
-        mod_length.shrink_to_fit();
-        barrels.shrink_to_fit();
-        beta.shrink_to_fit();
-        rough_factor.shrink_to_fit();
-        q_full.shrink_to_fit();
         xsect_r_full.shrink_to_fit();
         xsect_s_full.shrink_to_fit();
         xsect_s_max.shrink_to_fit();
-        q_max.shrink_to_fit();
         xsect_y_bot.shrink_to_fit();
         xsect_a_bot.shrink_to_fit();
         xsect_s_bot.shrink_to_fit();
@@ -922,30 +781,9 @@ struct LinkData {
         target_setting.shrink_to_fit();
         direction.shrink_to_fit();
 
-        loss_inlet.shrink_to_fit();
-        loss_outlet.shrink_to_fit();
-        loss_avg.shrink_to_fit();
         has_flap_gate.shrink_to_fit();
-        seep_rate.shrink_to_fit();
-        evap_loss_rate.shrink_to_fit();
-        seep_loss_rate.shrink_to_fit();
-        culvert_code.shrink_to_fit();
-        inlet_control.shrink_to_fit();
         dqdh.shrink_to_fit();
-        normal_flow_limited.shrink_to_fit();
-
-        pump_curve.shrink_to_fit();
-        pump_init_state.shrink_to_fit();
-        pump_startup.shrink_to_fit();
-        pump_shutoff.shrink_to_fit();
-        pump_curve_type.shrink_to_fit();
         pump_curve_name.shrink_to_fit();
-
-        crest_height.shrink_to_fit();
-        cd.shrink_to_fit();
-        param1.shrink_to_fit();
-        param2.shrink_to_fit();
-        orate.shrink_to_fit();
 
         flow.shrink_to_fit();
         depth.shrink_to_fit();

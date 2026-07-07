@@ -308,6 +308,17 @@ class TestLegacyRainGages(unittest.TestCase):
         # Verify no crash
         s.finalize()
 
+    def test_scale_factor_round_trip(self):
+        s = _make_solver()
+        s.initialize()
+        gages = LegacyRainGages(s)
+        rg = gages["RainGage"]
+        # Default unscaled gage reads back as 1.0.
+        self.assertAlmostEqual(rg.scale_factor, 1.0)
+        rg.scale_factor = 2.5
+        self.assertAlmostEqual(rg.scale_factor, 2.5)
+        s.finalize()
+
 
 # ======================================================================
 #  LegacySystem
