@@ -54,13 +54,29 @@ endif()
 
 project(openswmm-gpu-omp VERSION 6.0.0 LANGUAGES CXX)
 
-# Use the engine's custom OpenMP finder so omp links on Apple clang (probes the
-# Homebrew libomp prefixes the macOS wheel build installs into). Kokkos' config
-# does find_dependency(OpenMP); placing the engine cmake/ dir on the module path
-# routes that to the same finder.
-list(APPEND CMAKE_MODULE_PATH "${OPENSWMM_ENGINE_ROOT}/cmake")
-if(NOT TARGET OpenMP::OpenMP_CXX)
-    include("${OPENSWMM_ENGINE_ROOT}/cmake/FindOpenMP.cmake")
+# OpenMP discovery. macOS/AppleClang is the ONLY platform where stock CMake
+# FindOpenMP cannot locate OpenMP (Apple ships no libomp): only there do we put
+# the engine cmake/ dir on the module path so its Apple-only custom finder is
+# used — and so Kokkos' KokkosConfig find_dependency(OpenMP) resolves to that
+# same finder. On Linux/Windows that finder is a no-op, so shadowing stock
+# FindOpenMP would leave OpenMP unfound and Kokkos' find_dependency(OpenMP)
+# would fail configure with "Kokkos could not be found because dependency
+# OpenMP could not be found". Mirror the engine's own rule (and warning) in
+# src/engine/CMakeLists.txt: shadow ONLY on Apple; use stock elsewhere.
+if(APPLE)
+    list(APPEND CMAKE_MODULE_PATH "${OPENSWMM_ENGINE_ROOT}/cmake")
+    if(NOT TARGET OpenMP::OpenMP_CXX)
+        include("${OPENSWMM_ENGINE_ROOT}/cmake/FindOpenMP.cmake")
+    endif()
+    # The plugin links libomp by absolute path (through Kokkos' OpenMP interface
+    # target), but libomp's install-name is @rpath/libomp.dylib. Appending the
+    # link-path dirs to the installed plugin's RPATH makes that reference
+    # resolvable so delocate-wheel can find and bundle libomp — mirrors
+    # python/CMakeLists.txt for the base wheel. Without it delocate fails with
+    # "@rpath/libomp.dylib not found".
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+else()
+    find_package(OpenMP)
 endif()
 
 # Build the omp plugin from the engine's real plugin CMake. Standalone: there is
