@@ -266,32 +266,56 @@ getting to the ensemble.
 > like" its fundamental plus a couple of overtones — technically an infinite
 > series, practically dominated by the first few terms.
 
-### 4.4 Making it an ensemble — where uncertainty enters
+> **One clarification before continuing**: the real deterministic answer —
+> the actual water depth or head at every node — is *not* produced by this
+> toy ODE. It comes from SWMM's full nonlinear DynWave/CVODE solver, exactly
+> as it always has. The modal-projection math above is the *linearized
+> surrogate* the sidecar uses internally to describe how an ensemble
+> member's uncertainty, not its total value, evolves relative to that real
+> deterministic answer. §4.4 makes this precise.
 
-So far this describes the *deterministic* evolution of the modal
-coefficients. Now run `M=50` parallel copies, member `i = 1..50`, each with
-its own sampled Manning's-n multiplier `mannings_mult[i]` and rainfall
-multiplier `rainfall_mult[i]` drawn from the Latin Hypercube design in §3.3:
+### 4.4 Making it an ensemble — tracking the *deviation*, not the total
+
+Call the real, live deterministic depth (or head) field `h_det` — the number
+SWMM's ordinary solver computes every routing step regardless of whether the
+sidecar is even switched on. Each ensemble member `i` doesn't track its own
+independent total depth; it tracks only how far its sampled Manning's-n
+multiplier `mannings_mult[i]` and rainfall multiplier `rainfall_mult[i]`
+(drawn from the Latin Hypercube design in §3.3) pull it away from `h_det`.
+Project that *deviation* onto the eigenmodes exactly as in §4.3:
 
 ```
-da[i,j]/dt = −rate[i,j] · a[i,j]  +  f[i,j]
+δa[i,j] = P[:,j]^T · (h_i − h_det)      ("how much member i's deviation looks like shape j")
 
-rate[i,j] = λ_j · K1d / mannings_mult[i]    (rougher channel → slower decay)
-f[i,j]    = r_coarse[j] · rainfall_mult[i]  (wetter member → stronger forcing)
+b_j     = P[:,j]^T · h_det              ("how much of the real deterministic answer is shape j")
 ```
 
-A member with `mannings_mult[i] = 1.2` (20% rougher than calibrated) has a
-*smaller* effective decay rate — physically, a rougher channel resists flow
-more, so disturbances linger longer and drain more slowly. A member with
-`rainfall_mult[i] = 1.2` sees 20% more rainfall-driven forcing on every mode.
+The deviation for mode `j`, member `i` obeys its own leaky-bucket equation:
+
+```
+d(δa[i,j])/dt = −rate[i,j] · δa[i,j]  +  g[i,j]
+
+rate[i,j] = λ_j · K1d / mannings_mult[i]
+
+g[i,j] = −λ_j · K1d · (1/mannings_mult[i] − 1) · b_j     (Manning sensitivity)
+         + (rainfall_mult[i] − 1) · r_coarse[j]           (forcing sensitivity)
+```
+
+The key feature: for the member with `mannings_mult[i] = 1` and
+`rainfall_mult[i] = 1` — the "nominal" member sitting exactly at the
+calibrated parameter values — every term in `g[i,j]` vanishes. Its deviation
+is *exactly zero, forever*: that member's reconstructed depth is always
+identical to the real deterministic answer, not merely close to it. Every
+other member's deviation measures, precisely, how much its particular
+Manning's-n or rainfall guess would have changed the outcome.
 
 Each of the `M × k` mode-member pairs is *still* a leaky bucket with an exact
 closed-form solution — the same equation from §4.1, applied independently to
 every (member, mode) pair:
 
 ```
-steady[i,j]   = f[i,j] / rate[i,j]
-a[i,j](t+dt)  = (a[i,j](t) − steady[i,j]) · exp(−rate[i,j] · dt)  +  steady[i,j]
+steady[i,j]     = g[i,j] / rate[i,j]
+δa[i,j](t+dt)   = (δa[i,j](t) − steady[i,j]) · exp(−rate[i,j] · dt)  +  steady[i,j]
 ```
 
 This is **not an approximation of the ODE — it is its exact solution**, for
@@ -307,11 +331,12 @@ approximation.
 
 ### 4.5 Reading out the answer — reconstructing depths and taking quantiles
 
-At any moment, reconstruct member `i`'s full head field by summing its modal
-coefficients back through the eigenvector shapes:
+At any moment, reconstruct member `i`'s full head field by adding its
+deviation, summed back through the eigenvector shapes, onto the real
+deterministic answer:
 
 ```
-h_i[node t] = Σ_j  a[i,j] · P[j, t]
+h_i[node t] = h_det[node t]  +  Σ_j  δa[i,j] · P[j, t]
 ```
 
 Do this for all 50 members at node `t`, sort the 50 resulting numbers, and
@@ -448,21 +473,7 @@ run," and it's the threshold that actually changes engineering practice.
 
 ## 8. Honesty corner — what it can't do yet
 
-An accurate picture of any tool includes its edges. Two are worth knowing
-about, both active areas of ongoing refinement in this codebase:
-
-**The band reflects uncertainty *since the last recalibration*, not
-necessarily total cumulative uncertainty.** The ROM periodically re-anchors
-its ensemble to the deterministic solution when the hydraulic state has
-drifted significantly (roughly every 60 seconds of simulated time during a
-fast-changing storm). This keeps the ensemble from silently drifting away
-from physical reality over a long simulation, but it also means the spread
-you observe at any instant reflects how much uncertainty has *accumulated
-since the most recent re-anchor point*, not the full uncertainty accumulated
-from the very start of the simulation. In practice this mostly matters for
-very long, slowly-varying simulations; short, dynamic storm events (the
-common case) re-anchor often enough that this rarely changes the practical
-picture.
+An accurate picture of any tool includes its edges.
 
 **A perfectly uniform perturbation currently produces no visible spread.**
 This sounds paradoxical, so it's worth explaining precisely why. Recall from
@@ -481,8 +492,23 @@ never perfectly uniform, so this rarely bites in practice, but a
 perfectly-uniform synthetic test case can be genuinely misleading about how
 much uncertainty is "really" there.
 
-Both of these are documented, understood limitations with active reform work
-tracked in this repository's engineering checklists — not silent traps.
+This is a documented, understood limitation with active reform work tracked
+in this repository's engineering checklists — not a silent trap.
+
+> **Historical note**: an earlier version of this section also warned that
+> the band reflected uncertainty "since the last recalibration" — the ROM
+> periodically re-anchored its ensemble to the deterministic solution,
+> silently erasing accumulated spread every ~60 seconds during a fast-moving
+> storm. The deviation-form reformulation (each ensemble member now tracks
+> only its *deviation* from the live deterministic answer — see §4.4)
+> removed that limitation outright: the nominal member's deviation is exactly
+> zero forever, so there is nothing to periodically re-anchor, and the 1D ROM
+> no longer reseeds at all. A narrower, physically legitimate version
+> survives only on the 2D surface: when previously-dry cells become
+> significantly wet, the ROM basis is rebuilt to cover them and every
+> member's deviation resets to zero at that moment — but that only happens on
+> genuine domain growth, not on a periodic timer, and it does not affect the
+> median (which tracks the deterministic answer regardless).
 
 ---
 
@@ -493,7 +519,8 @@ tracked in this repository's engineering checklists — not silent traps.
 | **Ensemble member** | One of the 50 parallel "what if" universes | index `i = 1..M` |
 | **Eigenmode / shape** | One of the network's characteristic vibration patterns | `P[:,j]`, eigenvector `j` |
 | **Eigenvalue** | How fast that shape's disturbances decay | `λ_j` |
-| **Modal coefficient** | "How much of shape `j` is present right now" | `a[i,j]` |
+| **Deterministic reference** | The real depth/head from SWMM's ordinary solver, ROM-independent | `h_det` |
+| **Modal deviation** | "How far member `i`'s guess has drifted from the real answer, in shape `j`" | `δa[i,j]` |
 | **Graph Laplacian** | The matrix encoding who's connected to whom | `L` |
 | **K_eff / K1d** | Effective conductance (from Manning's n, slope, depth) | scales the decay rate |
 | **Latin Hypercube Sampling** | Stratified "one ticket per price bracket" sampling | strata of `[1−p, 1+p]` |
@@ -517,6 +544,9 @@ tracked in this repository's engineering checklists — not silent traps.
 - **The ensemble ODE integrator itself**: `SpectralROM1D.{hpp,cpp}` (1D) and
   `src/engine/2d/uncertainty/SpectralROM.{hpp,cpp}` (2D) — every equation in
   §4 of this document has a direct line-for-line counterpart there.
-- **Ongoing refinement work**, including fixes to both limitations described
+- **The deviation-form design note**: `docs/uncertainty/DEVIATION_FORM.md` is
+  the normative spec for the math in §4.4–4.5 — the full derivation, the
+  exact API each ROM exposes, and the acceptance-test invariants.
+- **Ongoing refinement work**, including the remaining limitation described
   in §8, is tracked in this repository's engineering checklists at the
   project root.
