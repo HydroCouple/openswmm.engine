@@ -117,6 +117,20 @@ jobs:
             vcpkg-downloads-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
             vcpkg-downloads-${{ runner.os }}-
 
+      # The Windows preset uses the "Ninja Multi-Config" generator, which needs
+      # MSVC (cl.exe + INCLUDE/LIB) already on the environment. Without a
+      # developer shell, CMake's compiler probe finds C:\mingw64\bin\cc.exe and
+      # chokes on the preset's MSVC-only flags (/fp:precise, /W4, ...):
+      # "cc.exe: error: /fp:precise: linker input file not found". Activate the
+      # MSVC dev environment so Ninja discovers cl.exe first. (The wheel jobs do
+      # not need this — scikit-build-core uses the Visual Studio generator,
+      # which locates MSVC on its own.)
+      - name: Set up MSVC developer environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
       - name: Configure (Release)
         # Release packaging skips the test/benchmark targets so vcpkg pulls only
         # the runtime deps. Kokkos + hypre/AMG are vcpkg/CMake defaults, but
