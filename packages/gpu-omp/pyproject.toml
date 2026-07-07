@@ -114,7 +114,32 @@ case "$(uname -m)" in
   aarch64) VCPKG_TRIPLET=arm64-linux ;;
   *)       echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
 esac
+# Make vcpkg use the SYSTEM cmake/ninja instead of the prebuilt tools it keeps
+# in downloads/tools. Those bundled binaries are glibc-linked; on musllinux
+# (Alpine) they cannot exec, so vcpkg's compiler-hash detection dies the instant
+# it invokes the downloaded ninja. The system tools are installed above (apk
+# ninja/samurai, yum/apt ninja-build) with the pinned cmake<4 on PATH. No-op on
+# manylinux (glibc), where the same system tools are valid too.
+export VCPKG_FORCE_SYSTEM_BINARIES=1
+# /host persists across the manylinux and musllinux container runs within a
+# single cibuildwheel invocation, so a checkout from the earlier (manylinux)
+# run may already be at /host/vcpkg — and a bare `git clone` aborts on a
+# non-empty destination ("destination path already exists"). The vcpkg tool
+# binary is also libc-specific (a glibc binary bootstrapped under manylinux
+# cannot exec under musllinux), so the checkout must be re-cloned and
+# re-bootstrapped per container rather than reused. Wipe any stale checkout
+# first, preserving the (cache-restored) downloads/ tree so source tarballs are
+# not re-fetched.
+if [ -d /host/vcpkg ]; then
+  rm -rf /tmp/vcpkg-downloads
+  mv /host/vcpkg/downloads /tmp/vcpkg-downloads 2>/dev/null || true
+  rm -rf /host/vcpkg
+fi
 git clone --depth 1 --branch "${VCPKG_REF:-2025.02.14}" https://github.com/microsoft/vcpkg.git /host/vcpkg
+if [ -d /tmp/vcpkg-downloads ]; then
+  rm -rf /host/vcpkg/downloads
+  mv /tmp/vcpkg-downloads /host/vcpkg/downloads
+fi
 /host/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 /host/vcpkg/vcpkg install \
   --triplet "$VCPKG_TRIPLET" \
@@ -125,7 +150,7 @@ git clone --depth 1 --branch "${VCPKG_REF:-2025.02.14}" https://github.com/micro
   --x-feature hypre
 """
 before-build = "pip install ninja"
-environment  = { VCPKG_ROOT = "/host/vcpkg", CMAKE_POLICY_VERSION_MINIMUM = "3.5" }
+environment  = { VCPKG_ROOT = "/host/vcpkg", CMAKE_POLICY_VERSION_MINIMUM = "3.5", VCPKG_FORCE_SYSTEM_BINARIES = "1" }
 environment-pass = ["ACTIONS_CACHE_URL", "ACTIONS_RUNTIME_TOKEN", "VCPKG_BINARY_SOURCES", "VCPKG_REF"]
 
 [tool.cibuildwheel.macos]
