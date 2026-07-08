@@ -507,7 +507,11 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // controls the inflow for each subarea call.
         double precip_imperv = precip;
         double precip_perv   = precip;
-        if (ctx.subcatches.snowpack[ui] >= 0) {
+        // IGNORE_SNOWMELT: fall back to raw gage precip for both subareas
+        // (legacy subcatch.c:784 `Subcatch[j].snowpack && !IgnoreSnowmelt`).
+        // Pairs with the snow-block skip in SWMMEngine::stepRunoff so the now
+        // stale snow_net_* arrays are never read.
+        if (ctx.subcatches.snowpack[ui] >= 0 && !ctx.options.ignore_snow_melt) {
             double sni = ctx.subcatches.snow_net_imperv[ui];
             double snp = ctx.subcatches.snow_net_perv[ui];
             if (sni >= 0.0) precip_imperv = sni;

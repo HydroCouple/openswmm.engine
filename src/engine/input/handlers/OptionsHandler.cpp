@@ -143,6 +143,12 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.routing_model = RoutingModel::KINWAVE;
             else if (rv == "DYNWAVE"   || rv == "DYNAMIC_WAVE")
                 opt.routing_model = RoutingModel::DYNWAVE;
+            // Legacy FLOW_ROUTING NONE maps to the NO_ROUTING method and forces
+            // IgnoreRouting = TRUE (project.c:504). The refactored RoutingModel
+            // enum has no NONE value, so realize the same effect by setting the
+            // ignore_routing flag directly (routing_model is unused when routing
+            // is ignored).
+            else if (rv == "NONE" || rv == "NO_ROUTING") opt.ignore_routing = true;
             else opt.ext_options[key] = val;
 
         // -----------------------------------------------------------------

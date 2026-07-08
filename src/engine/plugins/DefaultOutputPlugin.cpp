@@ -217,7 +217,9 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     for (const auto& f : node_rpt_flag_) if (f) ++n_nodes_;
     n_links_ = 0;
     for (const auto& f : link_rpt_flag_) if (f) ++n_links_;
-    n_polluts_ = ctx.n_pollutants();
+    // IGNORE_QUALITY: drop all pollutant columns from the binary .out file so
+    // OutputReader reads zero pollutants (legacy output.c:150 NumPolluts = 0).
+    n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_pollutants();
 
     n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
     n_node_vars_ = 6 + n_polluts_;      // depth..overflow + pollutants
