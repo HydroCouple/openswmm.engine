@@ -213,7 +213,9 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "ALLOW_PONDING") ctx.options.allow_ponding = (val == "YES");
         else if (key == "IGNORE_RAINFALL") ctx.options.ignore_rainfall = (val == "YES");
         else if (key == "IGNORE_SNOWMELT") ctx.options.ignore_snow_melt = (val == "YES");
-        else if (key == "IGNORE_GW") ctx.options.ignore_groundwater = (val == "YES");
+        // Accept the normalized "IGNORE_GROUNDWATER" and the legacy short
+        // "IGNORE_GW" spelling so pre-normalization .gpkg files still load.
+        else if (key == "IGNORE_GROUNDWATER" || key == "IGNORE_GW") ctx.options.ignore_groundwater = (val == "YES");
         else if (key == "IGNORE_ROUTING") ctx.options.ignore_routing = (val == "YES");
         else if (key == "IGNORE_QUALITY") ctx.options.ignore_quality = (val == "YES");
         else if (key == "WET_STEP") ctx.options.wet_step = std::stod(val);

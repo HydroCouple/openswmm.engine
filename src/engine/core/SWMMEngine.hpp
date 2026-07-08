@@ -431,6 +431,12 @@ private:
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results
 
+    /// Legacy DoRouting analog (swmm5.c:748): routing executes only when the
+    /// model has nodes and IGNORE_ROUTING is off. Computed once in start();
+    /// gates stepRouting(), statistics, routing mass balance, the routing
+    /// step-size selection, and the outfall interface write.
+    bool do_routing_ = true;
+
     // -----------------------------------------------------------------------
     // Report averaging accumulator (legacy RptFlags.averages)
     // -----------------------------------------------------------------------

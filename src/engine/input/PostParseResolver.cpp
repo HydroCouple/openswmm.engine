@@ -1616,6 +1616,18 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // Auto-set "ignore process" flags for absent object classes, matching the
+    // legacy project_validate() (project.c:221-222). With no aquifers there is
+    // no groundwater to compute; with no snowpacks there is no snowmelt. This
+    // couples the process flags to model content so the runtime guards and the
+    // report process-model echo behave exactly like the legacy engine.
+    // (FLOW_ROUTING NONE => ignore_routing is handled at parse time in
+    // OptionsHandler; IGNORE_RAINFALL => no RDII is realized at runtime.)
+    // -------------------------------------------------------------------------
+    if (ctx.aquifers.count() == 0)  ctx.options.ignore_groundwater = true; // project.c:222
+    if (ctx.snowpacks.count() == 0) ctx.options.ignore_snow_melt   = true; // project.c:221
+
+    // -------------------------------------------------------------------------
     // Release excess vector capacity accumulated during parsing
     // -------------------------------------------------------------------------
     ctx.shrink_all_to_fit();

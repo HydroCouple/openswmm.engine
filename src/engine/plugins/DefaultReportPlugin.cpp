@@ -491,24 +491,30 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
     std::fprintf(f, "\n  Flow Units ............... %s", FlowUnitWords[fu]);
 
+    // Process Models — legacy report_writeOptions() prints NO when the ignore
+    // flag is set OR the object class is empty (report.c:270-298).
     std::fprintf(f, "\n  Process Models:");
     std::fprintf(f, "\n    Rainfall/Runoff ........ %s",
-                 (ctx.n_subcatches() > 0 && ctx.n_gages() > 0) ? "YES" : "NO");
+                 (ctx.n_subcatches() > 0 && ctx.n_gages() > 0
+                  && !opt.ignore_rainfall) ? "YES" : "NO");
     bool has_exp_decay = (ctx.rdii_decay.count() > 0);
     std::fprintf(f, "\n    RDII ................... %s",
-                 has_rdii ? (has_exp_decay ? "YES (Exponential IA)"
-                                           : "YES (Linear IA)")
-                          : "NO");
-    std::fprintf(f, "\n    Snowmelt ............... %s", has_snow ? "YES" : "NO");
-    std::fprintf(f, "\n    Groundwater ............ %s", has_gw ? "YES" : "NO");
+                 (has_rdii && !opt.ignore_rdii)
+                     ? (has_exp_decay ? "YES (Exponential IA)"
+                                      : "YES (Linear IA)")
+                     : "NO");
+    std::fprintf(f, "\n    Snowmelt ............... %s",
+                 (has_snow && !opt.ignore_snow_melt) ? "YES" : "NO");
+    std::fprintf(f, "\n    Groundwater ............ %s",
+                 (has_gw && !opt.ignore_groundwater) ? "YES" : "NO");
     std::fprintf(f, "\n    Flow Routing ........... %s",
-                 (ctx.n_links() > 0) ? "YES" : "NO");
+                 (ctx.n_links() > 0 && !opt.ignore_routing) ? "YES" : "NO");
     if (ctx.n_links() > 0) {
         std::fprintf(f, "\n    Ponding Allowed ........ %s",
                      opt.allow_ponding ? "YES" : "NO");
     }
     std::fprintf(f, "\n    Water Quality .......... %s",
-                 (ctx.n_pollutants() > 0) ? "YES" : "NO");
+                 (ctx.n_pollutants() > 0 && !opt.ignore_quality) ? "YES" : "NO");
 
     if (ctx.n_subcatches() > 0) {
         int im = static_cast<int>(opt.infiltration);
@@ -672,7 +678,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Internal units: buildup-derived fields are in display mass (lbs for US);
     //                 volumetric mass fields (wet dep, infil, runoff) are in mg.
     // =====================================================================
-    if (opt.rpt_continuity && ctx.n_pollutants() > 0) {
+    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
 
@@ -728,7 +734,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Groundwater Continuity — matches legacy report_writeGwaterError()
     // =====================================================================
-    if (has_gw && opt.rpt_continuity) {
+    if (has_gw && opt.rpt_continuity && !opt.ignore_groundwater) {
         const auto& mb = ctx.mass_balance;
 
         // Compute total GW area (ft²) for depth conversion
@@ -786,8 +792,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     // =====================================================================
     // Flow Routing Continuity — matches legacy report_writeFlowError()
+    // (report.c:288: suppressed when routing is ignored).
     // =====================================================================
-    if (opt.rpt_continuity) {
+    if (opt.rpt_continuity && !opt.ignore_routing) {
         const auto& mb = ctx.mass_balance;
         std::fprintf(f, "\n  **************************        Volume        Volume");
         std::fprintf(f, si_report
@@ -855,8 +862,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     // =====================================================================
     // Quality Routing Continuity — Gap #71, matches legacy writeQualError()
+    // (report.c:298: suppressed when there are no pollutants or quality is ignored).
     // =====================================================================
-    if (opt.rpt_continuity) {
+    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
         // Internal mass unit: conc (mg/L or ug/L) × volume (ft³)
@@ -1243,7 +1251,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Subcatchment Washoff Summary — Gap #64, matches legacy writeSubcatchLoads()
     // total_load is in mg (washoff_load [mg/s] × dt [s]); convert to lbs: /453592
     // =====================================================================
-    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0) {
+    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0
+        && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
         int np = ctx.n_pollutants();
         static constexpr double MG_TO_LBS = 1.0 / 453592.0;
@@ -1299,7 +1308,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()
     // =====================================================================
-    if (has_gw && opt.rpt_subcatchments != 0) {
+    if (has_gw && opt.rpt_subcatchments != 0 && !opt.ignore_groundwater) {
         WRITE(f, "*******************");
         WRITE(f, "Groundwater Summary");
         WRITE(f, "*******************");
@@ -2038,7 +2047,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Link Pollutant Load Summary — Gap #64, matches legacy writeLinkLoads()
     // stat_total_load is in ft³ × mg/L; convert to lbs: × 28.317/453592
     // =====================================================================
-    if (ctx.n_links() > 0 && ctx.n_pollutants() > 0 && opt.rpt_links != 0) {
+    if (ctx.n_links() > 0 && ctx.n_pollutants() > 0 && opt.rpt_links != 0
+        && !opt.ignore_quality) {
         int nl = ctx.n_links();
         int np = ctx.n_pollutants();
         // conversion: CFS × mg/L × sec × (28.317 L/ft³) / (453592 mg/lb) = lbs

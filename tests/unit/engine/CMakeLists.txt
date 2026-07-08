@@ -133,6 +133,9 @@ target_compile_definitions(test_engine_ode_solver PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_massbalance      test_massbalance.cpp)
+# Runtime-effect coverage for the [OPTIONS] IGNORE_* process flags (closes the
+# gap that left five of the six flags as parsed-but-dead no-ops).
+add_gtest_unit(test_engine_ignore_flags     test_ignore_flags.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
 add_gtest_unit(test_engine_snow             test_snow.cpp)
 add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)

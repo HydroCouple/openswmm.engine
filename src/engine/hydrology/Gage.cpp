@@ -89,6 +89,16 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
     for (int j = 0; j < ctx.n_gages(); ++j) {
         auto uj = static_cast<std::size_t>(j);
 
+        // IGNORE_RAINFALL: force this gage's rainfall to zero every step
+        // (legacy gage_setState, gage.c:344-347). Zeroing here — ahead of the
+        // API override, co-gage copy, and monthly scaling below — transitively
+        // zeros the per-subcatchment rain/snow split, the runoff-solver precip,
+        // and RDII excess, matching the legacy "no rainfall" behavior.
+        if (ctx.options.ignore_rainfall) {
+            ctx.gages.rainfall[uj] = 0.0;
+            continue;
+        }
+
         // Check API rainfall override (-1.0 means no override)
         if (ctx.gages.api_rainfall[uj] >= 0.0) {
             ctx.gages.rainfall[uj] = ctx.gages.api_rainfall[uj];
@@ -236,6 +246,9 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
 
 double getReportRainfall(const SimulationContext& ctx, int gage_idx,
                          double report_date) {
+    // IGNORE_RAINFALL: nothing is reported (legacy leaves gage rainfall 0).
+    if (ctx.options.ignore_rainfall) return 0.0;
+
     auto ug = static_cast<std::size_t>(gage_idx);
 
     // Co-gage: report the primary's report rainfall re-scaled by this gage's

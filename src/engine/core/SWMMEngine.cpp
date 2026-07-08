@@ -687,6 +687,12 @@ int SWMMEngine::start(int save_results) noexcept {
 
     save_results_ = save_results;
 
+    // Legacy DoRouting (swmm5.c:748): DoRouting = (Nobjects[NODE] > 0 &&
+    // !IgnoreRouting). Routing execution, statistics, mass balance, the
+    // routing-step-size coarsening, and the outfall interface write are all
+    // gated on this in step()/postOutputSnapshot().
+    do_routing_ = (ctx_.n_nodes() > 0 && !ctx_.options.ignore_routing);
+
     // Open routing interface files ([FILES] USE INFLOWS / SAVE OUTFLOWS) and
     // process headers eagerly — matching legacy routing_open() →
     // iface_openRoutingFiles(). Without this the InterfaceManager stays
@@ -763,7 +769,8 @@ int SWMMEngine::start(int save_results) noexcept {
     // rdii_openRdii() skips createRdiiFile() when Frdii.mode == USE_FILE).
     if (ctx_.files.rdii_mode != FileMode::NONE
         && !ctx_.files.rdii_path.empty()
-        && !ctx_.options.ignore_rdii) {
+        && !ctx_.options.ignore_rdii
+        && !ctx_.options.ignore_rainfall) {   // legacy: rain_open() gates rdii_openRdii() (swmm5.c:735)
         const std::string& dp = !ctx_.files.rdii_path.absolute.empty()
             ? ctx_.files.rdii_path.absolute
             : ctx_.files.rdii_path.original;
@@ -856,25 +863,42 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     }
 
     // Compute next explicit timestep using CFL-based adaptive stepping
-    double dt_cfl = ctx_.options.routing_step;
-    if (ctx_.options.variable_step > 0.0) {
-        dt_cfl = router_.getAdaptiveStep(ctx_, ctx_.options.routing_step,
-                                          ctx_.options.variable_step);
-        // Track max Courant number: ratio of fixed step to CFL-limited step
-        if (dt_cfl > 0.0 && dt_cfl < ctx_.options.routing_step) {
-            double courant = ctx_.options.routing_step / dt_cfl;
-            ctx_.routing_stats.max_courant =
-                std::max(ctx_.routing_stats.max_courant, courant);
+    double dt_next;
+    if (!do_routing_) {
+        // IGNORE_ROUTING (legacy DoRouting == false, swmm5.c:963): with routing
+        // off there is no CFL constraint — the clock advances at
+        // MIN(WetStep, ReportStep), bounded only by the remaining simulation
+        // duration. The CFL/RouteStep clamp and control-rule alignment inside
+        // TimestepController::compute_next must NOT apply here, so mirror only
+        // its total-duration clamp (compute_next steps 2; TimestepController.cpp:54).
+        double dt = std::min(ctx_.options.wet_step, ctx_.options.report_step);
+        const double total_msec = ctx_.options.totalDurationMs();
+        if (ctx_.elapsed_ms + 1000.0 * dt > total_msec) {
+            dt = (total_msec - ctx_.elapsed_ms) / 1000.0;
+            dt = std::max(dt, 0.001);  // legacy floor: 1 msec
         }
-    }
+        dt_next = dt;
+    } else {
+        double dt_cfl = ctx_.options.routing_step;
+        if (ctx_.options.variable_step > 0.0) {
+            dt_cfl = router_.getAdaptiveStep(ctx_, ctx_.options.routing_step,
+                                              ctx_.options.variable_step);
+            // Track max Courant number: ratio of fixed step to CFL-limited step
+            if (dt_cfl > 0.0 && dt_cfl < ctx_.options.routing_step) {
+                double courant = ctx_.options.routing_step / dt_cfl;
+                ctx_.routing_stats.max_courant =
+                    std::max(ctx_.routing_stats.max_courant, courant);
+            }
+        }
 #ifdef OPENSWMM_HAS_2D
-    // Optionally constrain dt by 2D CFL hint (prevents coupling interval too large)
-    if (surface_router_.isActive()) {
-        double dt_cfl_2d = surface_router_.computeCflHint(ctx_);
-        dt_cfl = std::min(dt_cfl, dt_cfl_2d);
-    }
+        // Optionally constrain dt by 2D CFL hint (prevents coupling interval too large)
+        if (surface_router_.isActive()) {
+            double dt_cfl_2d = surface_router_.computeCflHint(ctx_);
+            dt_cfl = std::min(dt_cfl, dt_cfl_2d);
+        }
 #endif
-    const double dt_next = hydraulics::TimestepController::compute_next(ctx_, dt_cfl);
+        dt_next = hydraulics::TimestepController::compute_next(ctx_, dt_cfl);
+    }
 
     // Fire step-begin callback
     emit_progress();
@@ -900,11 +924,21 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // Reference: swmm5.c::execRouting() → runoff_execute() + routing_execute()
 
     stepRunoff(dt_next);
-    stepRouting(dt_next);
-    updateStatistics(dt_next);
-    updateRoutingMassBalance(dt_next);
+    // IGNORE_ROUTING (legacy `if (DoRouting) routing_execute()`, swmm5.c:997,
+    // and massbal.c:299): skip the routing step and its statistics / routing
+    // mass-balance accumulation. Runoff and its final-storage bookkeeping still
+    // run every step.
+    if (do_routing_) {
+        stepRouting(dt_next);
+        updateStatistics(dt_next);
+        updateRoutingMassBalance(dt_next);
+    }
     computeFinalStorage();
-    computeFinalQualityMassBalance();
+    // IGNORE_QUALITY: surface buildup was never updated this run, so skip the
+    // final quality mass-balance pass (legacy skips the whole quality path).
+    if (!ctx_.options.ignore_quality) {
+        computeFinalQualityMassBalance();
+    }
 
     // Accumulate node/link results for time-step averaging (legacy RptFlags.averages)
     if (ctx_.options.rpt_averages) {
@@ -1177,7 +1211,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
             // RDII stays on its internal path (legacy computes RDII
             // independently of the runoff file) unless USE RDII overrides.
+            // IGNORE_RAINFALL suppresses RDII too (legacy rain_open gates it).
             if (!ctx_.options.ignore_rdii
+                && !ctx_.options.ignore_rainfall
                 && !(rdii_iface_file_.isOpen()
                      && !rdii_iface_file_.isWriting())) {
                 int rdii_month_use = datetime::monthOfYear(abs_time) - 1;
@@ -1213,7 +1249,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //      Legacy pre-computes RDII in createRdiiFile() at WetStep cadence;
         //      we compute here using each UH group's assigned rain gage.
         //      Results are buffered in rdii_ and applied during routing.
-        if (!ctx_.options.ignore_rdii) {
+        //      IGNORE_RAINFALL suppresses RDII too (legacy rain_open gates it).
+        if (!ctx_.options.ignore_rdii && !ctx_.options.ignore_rainfall) {
             if (rdii_iface_file_.isOpen() && !rdii_iface_file_.isWriting()) {
                 // [FILES] USE RDII: UH computation bypassed — flows come
                 // straight from the interface file in stepRouting() B2a
@@ -1235,7 +1272,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //     snow_plowSnow() each runoff step, then subcatch_getRunoff →
         //     getNetPrecip → snow_getSnowMelt with that subcatchment's own
         //     rainfall/snowfall.
-        {
+        // IGNORE_SNOWMELT: skip the whole snow accumulation/plow/melt path
+        // (legacy runoff.c:254 snow_plowSnow skip + gage.c:517 precip split).
+        // The runoff solver then falls back to raw gage precip via the matching
+        // guard in Runoff.cpp execute() (subcatch.c:784), so snow_net_* being
+        // left stale is harmless.
+        if (!ctx_.options.ignore_snow_melt) {
             // Per-subcatchment rain/snow assembly (ft/sec). The gage value
             // is split by air temperature vs. the dividing temperature;
             // rainfall and snowfall forcing channels then resolve on their
@@ -1357,14 +1399,27 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // unconditional call here costs nothing for ordinary runs.
         saveRunoffIfaceStep(dt_runoff);
 
-        // A4c. Surface quality: buildup + washoff
-        stepSurfaceQuality(dt_runoff);
+        // A4c. Surface quality: buildup + washoff. IGNORE_QUALITY skips all
+        //      pollutant buildup/washoff/sweeping (legacy runoff.c:274
+        //      `if (IgnoreQuality) continue;`).
+        if (!ctx_.options.ignore_quality) {
+            stepSurfaceQuality(dt_runoff);
+        }
 
-        // A5. Assemble GW coupling (pre-compute sw_head from routing state)
-        assembleGWCoupling(dt_runoff);
+        // A5. Groundwater — IGNORE_GROUNDWATER skips the coupling + solver
+        //     entirely (legacy subcatch.c:712 `!IgnoreGwater && ...groundwater`).
+        //     With the solver skipped, gw_flow[] stays 0 so the downstream GW
+        //     scatter contributes nothing to node inflow, and the GW mass
+        //     balance terms (accumulated inside groundwater_.execute) self-zero
+        //     (legacy massbal.c:286). The auto-coupling in resolve_cross_references
+        //     already forces this flag on when the model has no aquifers.
+        if (!ctx_.options.ignore_groundwater) {
+            // A5a. Assemble GW coupling (pre-compute sw_head from routing state)
+            assembleGWCoupling(dt_runoff);
 
-        // A5b. Groundwater solver (reads subcatches.gw_sw_head, not nodes directly)
-        stepGroundwater(dt_runoff);
+            // A5b. Groundwater solver (reads subcatches.gw_sw_head, not nodes directly)
+            stepGroundwater(dt_runoff);
+        }
 
         // A6. LID performance
         // A6a. Compute per-unit LID inflow from non-LID subarea runoff + rainfall.
@@ -1455,7 +1510,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     int np_ctx = ctx_.n_pollutants();
                     int np_lid = g.n_pollutants;
                     int np_use = std::min(np_ctx, np_lid);
-                    if (np_use > 0 && g.drain_flow[uu] > 0.0) {
+                    // IGNORE_QUALITY: no LID drain pollutant loads (runoff.c:274).
+                    if (np_use > 0 && g.drain_flow[uu] > 0.0
+                        && !ctx_.options.ignore_quality) {
                         double drain_cfs = g.drain_flow[uu] * lid_area;
                         // Determine destination node index
                         int dest_node = g.drain_node[uu];
@@ -1498,7 +1555,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         {
             int np  = ctx_.n_pollutants();
             int nlu = ctx_.n_landuses();
-            if (np > 0 && nlu > 0 && !is_raining) {
+            // IGNORE_QUALITY: skip street-sweeping buildup removal (runoff.c:274).
+            if (np > 0 && nlu > 0 && !is_raining
+                && !ctx_.options.ignore_quality) {
                 int sweep_doy = datetime::dayOfYear(abs_time);
                 int ss = ctx_.options.sweep_start;
                 int se = ctx_.options.sweep_end;
@@ -2609,13 +2668,15 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //      reporting cadence in postOutputSnapshot() — matching legacy
     //      output_saveResults() → iface_saveOutletResults() — not here.
 
-    // B4b. Gap #55: inlet quality mass transfer (bypass↔capture based on net flow)
-    if (ctx_.n_pollutants() > 0) {
+    // B4b. Gap #55: inlet quality mass transfer (bypass↔capture based on net flow).
+    //      IGNORE_QUALITY skips inlet quality adjustment + quality routing
+    //      (legacy routing.c:252 `Nobjects[POLLUT] > 0 && !IgnoreQuality`).
+    if (ctx_.n_pollutants() > 0 && !ctx_.options.ignore_quality) {
         inlet_.adjustQualInflows(ctx_, dt_routing);
     }
 
     // B5. Water quality routing (P8-G13: fill stub bodies)
-    if (ctx_.n_pollutants() > 0) {
+    if (ctx_.n_pollutants() > 0 && !ctx_.options.ignore_quality) {
         quality_.execute(ctx_, dt_routing);
     }
 }
@@ -3234,8 +3295,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
         // Routing interface file: write one outfall row per reporting step
         // (legacy output_saveResults() → iface_saveOutletResults()). Not
         // gated on save_results_ — the interface file is a model-coupling
-        // artifact, independent of .out persistence.
-        iface_.writeOutfallResults(ctx_, report_date);
+        // artifact, independent of .out persistence. IGNORE_ROUTING suppresses
+        // it (legacy saves outflows only when !IgnoreRouting, output.c:519).
+        if (do_routing_) {
+            iface_.writeOutfallResults(ctx_, report_date);
+        }
 
         if (save_results_ && !plugins_.empty()) {
             // Build a SimulationSnapshot from the current context.

@@ -209,7 +209,8 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("ALLOW_PONDING", opts.allow_ponding ? "YES" : "NO");
     insert("IGNORE_RAINFALL", opts.ignore_rainfall ? "YES" : "NO");
     insert("IGNORE_SNOWMELT", opts.ignore_snow_melt ? "YES" : "NO");
-    insert("IGNORE_GW", opts.ignore_groundwater ? "YES" : "NO");
+    // Key spelling matches INP / C API / GUI (was the shorter "IGNORE_GW").
+    insert("IGNORE_GROUNDWATER", opts.ignore_groundwater ? "YES" : "NO");
     insert("IGNORE_ROUTING", opts.ignore_routing ? "YES" : "NO");
     insert("IGNORE_QUALITY", opts.ignore_quality ? "YES" : "NO");
     insert_d("WET_STEP", opts.wet_step);
