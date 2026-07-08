@@ -587,6 +587,26 @@ TEST(ROMQuality, SpreadScalesWithPerturbationLevel) {
         << "  (spread_lo=" << spread_lo << ", spread_hi=" << spread_hi << ")";
 }
 
+// PR 9c end-to-end: a registered non-built-in parameter (INFLOW,
+// FORCING_VECTOR on the per-node dh/dt field, LOGNORMAL multipliers) is the
+// ONLY uncertainty source — spread must still appear. The DWF at J1 drives
+// non-uniform head rise, so the dh/dt projection is nonzero and the
+// per-member θ_i spread it.
+TEST(ROMQuality, RegisteredInflowParamProducesSpread) {
+    std::string inp = k_inp_1d;
+    const std::string old_line = "1D  MANNINGS_N  0.20";
+    const std::string new_line = "1D  INFLOW  0.30  LOGNORMAL  FORCING_VECTOR";
+    auto pos = inp.find(old_line);
+    ASSERT_NE(pos, std::string::npos);
+    inp.replace(pos, old_line.size(), new_line);
+
+    const double spread = runAndGetMaxSpread(
+        inp.c_str(), "/tmp/rom1d_inflow.inp", "/tmp/rom1d_inflow.rpt");
+    ASSERT_GE(spread, 0.0) << "INFLOW run failed";
+    EXPECT_GT(spread, 1.0e-9)
+        << "a registered 1D INFLOW FORCING_VECTOR param must produce spread";
+}
+
 } // anonymous namespace
 
 #ifndef OPENSWMM_HAS_2D

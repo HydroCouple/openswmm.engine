@@ -4308,6 +4308,39 @@ void SWMMEngine::buildROM1D() noexcept {
         rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];
     }
 
+    // Register non-built-in 1D uncertainty specs on the ROM (PR 9c; see
+    // PARAMETER_REGISTRY.md §6). MANNINGS_N/RAINFALL are the built-in path
+    // handled above; every other active 1D spec gets a registry-generated
+    // column. FORCING_VECTOR params (e.g. INFLOW) use the per-node dh/dt
+    // buffer as their field — the same DynWave head-rate forcing the built-in
+    // runoff scale multiplies — so an INFLOW member with θ = 1.3 experiences
+    // the observed lateral-inflow-driven head changes 30% stronger.
+    // rom1d_dh_buf_ is allocated above and never resized, so the pointer
+    // stays valid for the ROM's lifetime.
+    {
+        uncertainty::UncertaintyEnsemble reg;
+        reg.n_members = rom1d_->n_ensemble;
+        reg.registerDefaults();  // occupy legacy seed offsets 0..3
+        bool any_extra = false;
+        for (const auto& s : uncertainty_config_.specs_for(uncertainty::LayerTarget::ONE_D)) {
+            if (s.name == "MANNINGS_N" || s.name == "RAINFALL") continue;
+            reg.registerParam(s.name, s.layer, s.entry, s.dist, s.perturbation);
+            any_extra = true;
+        }
+        if (any_extra) {
+            reg.generate();
+            for (const auto& s : uncertainty_config_.specs_for(uncertainty::LayerTarget::ONE_D)) {
+                if (s.name == "MANNINGS_N" || s.name == "RAINFALL") continue;
+                const auto* col = reg.column(s.name, uncertainty::LayerTarget::ONE_D);
+                if (!col) continue;
+                const double* field =
+                    (s.entry == uncertainty::ParamEntry::FORCING_VECTOR)
+                        ? rom1d_dh_buf_.data() : nullptr;
+                rom1d_->addRegisteredParam(s.entry, *col, field);
+            }
+        }
+    }
+
     // Seed: zero all deviations, prime h_det_last_ from current node heads
     std::vector<double> h0(static_cast<std::size_t>(n_active));
     for (int ai = 0; ai < n_active; ++ai) {

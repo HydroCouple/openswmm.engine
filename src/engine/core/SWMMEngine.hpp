@@ -64,6 +64,7 @@
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 #include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/UncertaintyEnsemble.hpp"
 #include "../uncertainty/GraphEigenBasis.hpp"
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
