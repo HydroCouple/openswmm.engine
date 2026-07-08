@@ -62,6 +62,31 @@ void SpectralROM::clearEnsembleRainfall() {
 }
 
 // ============================================================================
+// addRegisteredParam / clearRegisteredParams (PR 9b)
+// ============================================================================
+
+void SpectralROM::addRegisteredParam(openswmm::uncertainty::ParamEntry entry,
+                                     const std::vector<double>& column,
+                                     const double* field) {
+    if (static_cast<int>(column.size()) != n_ensemble)
+        throw std::invalid_argument(
+            "SpectralROM::addRegisteredParam: column size must equal n_ensemble");
+    if (entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR && field == nullptr)
+        throw std::invalid_argument(
+            "SpectralROM::addRegisteredParam: FORCING_VECTOR requires a field");
+    ExtraParam ep;
+    ep.entry  = entry;
+    ep.column = column;
+    ep.field  = field;
+    ep.rv.assign(static_cast<std::size_t>(n_kept), 0.0);
+    extra_params_.push_back(std::move(ep));
+}
+
+void SpectralROM::clearRegisteredParams() {
+    extra_params_.clear();
+}
+
+// ============================================================================
 // initialize
 // ============================================================================
 
@@ -200,6 +225,35 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             r_coarse[j] = dot_r;
         }
     }
+    // Registered FORCING_VECTOR fields (PR 9b): re-project each per call.
+    for (auto& ep : extra_params_) {
+        if (ep.entry != openswmm::uncertainty::ParamEntry::FORCING_VECTOR) continue;
+        for (std::size_t j = 0; j < nk; ++j) {
+            const double* Pj = &basis->P[j * nt];
+            double dot = 0.0;
+            for (std::size_t t = 0; t < nt; ++t)
+                dot += Pj[t] * ep.field[t];
+            ep.rv[j] = dot;
+        }
+    }
+
+    // Per-member effective multipliers from registered extra params
+    // (PARAMETER_REGISTRY.md §5). Products over an empty list are exactly 1.0,
+    // so the no-extra-params path is bit-identical to the built-in behavior.
+    auto rate_mult_prod = [this](std::size_t ui) {
+        double prod = 1.0;
+        for (const auto& ep : extra_params_)
+            if (ep.entry == openswmm::uncertainty::ParamEntry::RATE_MULT)
+                prod *= ep.column[ui];
+        return prod;
+    };
+    auto forcing_mult_prod = [this](std::size_t ui) {
+        double prod = 1.0;
+        for (const auto& ep : extra_params_)
+            if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_MULT)
+                prod *= ep.column[ui];
+        return prod;
+    };
 
     // ---- Step 4 (moved up): depth-weight + nominal per-mode keff ------------
     // keff_modes_[j] is the mm=1 nominal conductance; needed both for the
@@ -244,24 +298,48 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
     //   rain scale : max_i |scale_i − 1|
     //   Manning scale : max deviation of keff_ji/keff_nom from 1, bounded by
     //     max_i,t |1/W_n − 1| (spatial) or max_i |1/mm_i − 1| (scalar).
-    double max_rain_dev = 0.0;
-    if (has_ensemble_rain) {
-        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_rain_dev = std::max(max_rain_dev,
-                std::abs(ensemble_rainfall_[i] / mean_ensemble_rain_ - 1.0));
-    } else {
-        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_rain_dev = std::max(max_rain_dev,
-                                    std::abs(rainfall_mult[i] - 1.0));
+    double max_rain_dev = 0.0;   // max_i |scale_i − 1|  (incl. FORCING_MULT extras)
+    for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i) {
+        const double base = has_ensemble_rain
+            ? (ensemble_rainfall_[i] / mean_ensemble_rain_)
+            : rainfall_mult[i];
+        max_rain_dev = std::max(max_rain_dev,
+                                std::abs(base * forcing_mult_prod(i) - 1.0));
     }
-    double max_mann_dev = 0.0;
-    if (use_spatial_mann) {
-        for (const double w : spatial_mannings.values)
-            max_mann_dev = std::max(max_mann_dev, std::abs(1.0 / w - 1.0));
-    } else {
-        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_mann_dev = std::max(max_mann_dev,
-                                    std::abs(1.0 / mannings_mult[i] - 1.0));
+    double max_mann_dev = 0.0;   // max |1/(w·Πθ) − 1|  (incl. RATE_MULT extras)
+    {
+        // Extremes of the extra RATE_MULT product across members (1.0 when none).
+        double p_min = 1.0, p_max = 1.0;
+        if (!extra_params_.empty()) {
+            p_min = p_max = rate_mult_prod(0);
+            for (std::size_t i = 1; i < static_cast<std::size_t>(n_ensemble); ++i) {
+                const double p = rate_mult_prod(i);
+                p_min = std::min(p_min, p);
+                p_max = std::max(p_max, p);
+            }
+        }
+        if (use_spatial_mann) {
+            // 1/(w·p) is monotone in both factors, so the extremes of w and p
+            // bound the full cross product exactly.
+            double w_min = spatial_mannings.values[0], w_max = w_min;
+            for (const double w : spatial_mannings.values) {
+                w_min = std::min(w_min, w);
+                w_max = std::max(w_max, w);
+            }
+            max_mann_dev = std::max(std::abs(1.0 / (w_min * p_min) - 1.0),
+                                    std::abs(1.0 / (w_max * p_max) - 1.0));
+        } else {
+            for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
+                max_mann_dev = std::max(max_mann_dev,
+                    std::abs(1.0 / (mannings_mult[i] * rate_mult_prod(i)) - 1.0));
+        }
+    }
+    // Per-FORCING_VECTOR-param max deviation max_i |θ_i − 1|.
+    for (auto& ep : extra_params_) {
+        if (ep.entry != openswmm::uncertainty::ParamEntry::FORCING_VECTOR) continue;
+        ep.max_dev = 0.0;
+        for (double th : ep.column)
+            ep.max_dev = std::max(ep.max_dev, std::abs(th - 1.0));
     }
     const double rain_scale = (rainfall != nullptr)
                                ? std::abs(dt) * max_rain_dev : 0.0;
@@ -276,7 +354,15 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         bool by_manning = mann_scale > 0.0 &&
                           lam * keff_modes_[j] * std::abs(b_coarse[j]) * mann_scale
                               >= mode_drop_threshold;
-        mode_active[j] = by_energy || by_rain || by_manning;
+        bool by_vector  = false;
+        for (const auto& ep : extra_params_) {
+            if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR &&
+                ep.max_dev * std::abs(dt) * std::abs(ep.rv[j]) >= mode_drop_threshold) {
+                by_vector = true;
+                break;
+            }
+        }
+        mode_active[j] = by_energy || by_rain || by_manning || by_vector;
         if (mode_active[j]) ++n_modes_active;
     }
 
@@ -285,11 +371,15 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
     //   g    = −λ_j·(keff_ji − keff_modes_[j])·b_j + (f_ij − r_coarse[j])
     const double rate_floor = 1.0e-12;
 
+    const bool has_extra = !extra_params_.empty();
+
     for (int i = 0; i < n_ensemble; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double* ai = &a_ensemble[ui * nk];
-        double mm = mannings_mult[ui];  // scalar fallback
-        double rm = rainfall_mult[ui];  // scalar fallback
+        const double rate_prod    = rate_mult_prod(ui);     // extra RATE_MULT product
+        const double forcing_prod = forcing_mult_prod(ui);  // extra FORCING_MULT product
+        double mm = mannings_mult[ui] * rate_prod;  // scalar path effective multiplier
+        double rm = rainfall_mult[ui];              // scalar fallback
 
         // Pointer to this member's spatial fields (null if scalar path).
         const double* W_n_i = use_spatial_mann
@@ -308,12 +398,12 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                 double rq = 0.0;
                 for (std::size_t t = 0; t < nt; ++t)
                     rq += Pj[t] * Pj[t] * h_weight_[t] / W_n_i[t];
-                keff_ji = K_eff * rq;
+                keff_ji = K_eff * rq / rate_prod;
             } else {
                 keff_ji = keff_modes_[j] / mm;
             }
 
-            // --- member rainfall forcing f_ij ---
+            // --- member rainfall forcing f_ij (× extra FORCING_MULT product) ---
             double fj;
             if (has_ensemble_rain) {
                 fj = r_coarse[j] * (ensemble_rainfall_[ui] / mean_ensemble_rain_);
@@ -324,11 +414,18 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             } else {
                 fj = r_coarse[j] * rm;
             }
+            fj *= forcing_prod;
 
             // --- deviation forcing g and exact exponential integrator ---
             const double rate = lam * keff_ji;
-            const double g    = -lam * (keff_ji - keff_modes_[j]) * b_coarse[j]
+            double g          = -lam * (keff_ji - keff_modes_[j]) * b_coarse[j]
                                 + (fj - r_coarse[j]);
+            if (has_extra) {
+                for (const auto& ep : extra_params_)
+                    if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR)
+                        g += (ep.column[ui] - 1.0) * ep.rv[j];
+            }
+
             if (rate > rate_floor) {
                 const double steady = g / rate;
                 ai[j] = (ai[j] - steady) * std::exp(-rate * dt) + steady;

@@ -1832,3 +1832,101 @@ TEST(DeviationForm, UpdateBasisPreservesDeviation) {
     EXPECT_NEAR(spread_after, spread_before, spread_before * 0.10)
         << "spread must be continuous across a basis rebuild";
 }
+
+// ============================================================================
+// PR 9b — RegisteredParams (generic parameter consumption in the 1D ROM)
+// ============================================================================
+
+TEST(RegisteredParams, ForcingVectorProducesSpreadAndClearRestores) {
+    // Zero built-in perturbation → the ONLY uncertainty source is the
+    // registered FORCING_VECTOR param. Spread must appear with it and the
+    // ROM must return to exact zero-deviation behavior after clearing.
+    ROM1DFixture f;
+    f.rom.mannings_pert = 0.0;
+    f.rom.runoff_pert   = 0.0;
+    f.rom.initialize();
+
+    auto h_det = f.bump_head();
+    f.rom.seed(h_det.data());
+
+    // Non-uniform per-node field (uniform projects to ~0 on Neumann modes).
+    std::vector<double> v(static_cast<std::size_t>(f.N));
+    for (int i = 0; i < f.N; ++i)
+        v[static_cast<std::size_t>(i)] = 1.0e-4 * (1.0 + std::sin(i * 0.7));
+
+    // Lognormal-style multiplier column around 1 (any spread-carrying column works).
+    std::vector<double> theta(static_cast<std::size_t>(f.rom.n_ensemble));
+    for (int i = 0; i < f.rom.n_ensemble; ++i)
+        theta[static_cast<std::size_t>(i)] =
+            1.0 + 0.3 * (2.0 * (static_cast<double>(i) + 0.5)
+                             / static_cast<double>(f.rom.n_ensemble) - 1.0);
+    f.rom.addRegisteredParam(ParamEntry::FORCING_VECTOR, theta, v.data());
+
+    for (int step = 0; step < 30; ++step)
+        f.rom.advance(30.0, 0.1, h_det.data(), nullptr);
+    f.rom.computeQuantiles(h_det.data(), nullptr);
+    EXPECT_GT(max_spread(f.rom), 1.0e-9)
+        << "a registered FORCING_VECTOR param must produce spread";
+
+    // Clear + reseed: with no perturbation sources left, quantiles equal the
+    // deterministic reference EXACTLY after any number of steps.
+    f.rom.clearRegisteredParams();
+    f.rom.seed(h_det.data());
+    for (int step = 0; step < 30; ++step)
+        f.rom.advance(30.0, 0.1, h_det.data(), nullptr);
+    f.rom.computeQuantiles(h_det.data(), nullptr);
+    for (int i = 0; i < f.rom.n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_DOUBLE_EQ(f.rom.q05[ui], h_det[ui]) << "node " << i;
+        EXPECT_DOUBLE_EQ(f.rom.q95[ui], h_det[ui]) << "node " << i;
+    }
+}
+
+TEST(RegisteredParams, RateMultEquivalentToBuiltInManning) {
+    // A registered RATE_MULT column must reproduce, bit-exactly, the dynamics
+    // of the same multipliers supplied through the built-in Manning path.
+    const int N = 20, M = 20, K = 4;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h_det[static_cast<std::size_t>(i)] =
+            0.10 * std::exp(-0.5 * dx * dx / (N / 8.0 * N / 8.0));
+    }
+
+    // ROM A: built-in Manning perturbation.
+    SpectralROM1D romA;
+    romA.basis = &basis; romA.n_ensemble = M;
+    romA.mannings_pert = 0.20; romA.runoff_pert = 0.0;
+    romA.initialize();
+    romA.seed(h_det.data());
+
+    // ROM B: zero built-in perturbation + RATE_MULT column equal to A's design.
+    SpectralROM1D romB;
+    romB.basis = &basis; romB.n_ensemble = M;
+    romB.mannings_pert = 0.0; romB.runoff_pert = 0.0;
+    romB.initialize();
+    romB.addRegisteredParam(ParamEntry::RATE_MULT, romA.mannings_mult);
+    romB.seed(h_det.data());
+
+    for (int step = 0; step < 20; ++step) {
+        romA.advance(30.0, 0.1, h_det.data(), nullptr);
+        romB.advance(30.0, 0.1, h_det.data(), nullptr);
+    }
+    ASSERT_EQ(romA.a_ensemble.size(), romB.a_ensemble.size());
+    for (std::size_t k = 0; k < romA.a_ensemble.size(); ++k)
+        EXPECT_DOUBLE_EQ(romA.a_ensemble[k], romB.a_ensemble[k]) << "k=" << k;
+}
+
+TEST(RegisteredParams, InvalidRegistrationThrows) {
+    ROM1DFixture f;
+    std::vector<double> wrong(static_cast<std::size_t>(f.rom.n_ensemble + 3), 1.0);
+    std::vector<double> ok(static_cast<std::size_t>(f.rom.n_ensemble), 1.0);
+    EXPECT_THROW(f.rom.addRegisteredParam(ParamEntry::RATE_MULT, wrong),
+                 std::invalid_argument);
+    EXPECT_THROW(f.rom.addRegisteredParam(ParamEntry::FORCING_VECTOR, ok, nullptr),
+                 std::invalid_argument);
+}

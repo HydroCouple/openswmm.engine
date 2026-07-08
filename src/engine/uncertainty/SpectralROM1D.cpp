@@ -50,6 +50,31 @@ void SpectralROM1D::clearEnsembleRunoff() {
 }
 
 // ============================================================================
+// addRegisteredParam / clearRegisteredParams (PR 9b)
+// ============================================================================
+
+void SpectralROM1D::addRegisteredParam(ParamEntry entry,
+                                       const std::vector<double>& column,
+                                       const double* field) {
+    if (static_cast<int>(column.size()) != n_ensemble)
+        throw std::invalid_argument(
+            "SpectralROM1D::addRegisteredParam: column size must equal n_ensemble");
+    if (entry == ParamEntry::FORCING_VECTOR && field == nullptr)
+        throw std::invalid_argument(
+            "SpectralROM1D::addRegisteredParam: FORCING_VECTOR requires a field");
+    ExtraParam ep;
+    ep.entry  = entry;
+    ep.column = column;
+    ep.field  = field;
+    ep.rv.assign(static_cast<std::size_t>(n_kept), 0.0);
+    extra_params_.push_back(std::move(ep));
+}
+
+void SpectralROM1D::clearRegisteredParams() {
+    extra_params_.clear();
+}
+
+// ============================================================================
 // initialize
 // ============================================================================
 
@@ -162,7 +187,35 @@ void SpectralROM1D::advance(double dt, double K1d,
     } else {
         std::fill(r_coarse.begin(), r_coarse.end(), 0.0);
     }
+    // Registered FORCING_VECTOR fields (PR 9b): re-project each per call
+    // (the fields are live engine buffers that change every routing step).
+    for (auto& ep : extra_params_) {
+        if (ep.entry != ParamEntry::FORCING_VECTOR) continue;
+        for (std::size_t j = 0; j < nk; ++j) {
+            const double* Pj = &basis->P[j * nn];
+            double dot = 0.0;
+            for (std::size_t i = 0; i < nn; ++i)
+                dot += Pj[i] * ep.field[i];
+            ep.rv[j] = dot;
+        }
+    }
     h_det_last_.assign(h_det_active, h_det_active + nn);
+
+    // Per-member effective multipliers from registered extra params
+    // (PARAMETER_REGISTRY.md §5). Products over an empty list are exactly 1.0,
+    // so the no-extra-params path is bit-identical to the built-in behavior.
+    auto rate_mult_prod = [this](std::size_t ui) {
+        double prod = 1.0;
+        for (const auto& ep : extra_params_)
+            if (ep.entry == ParamEntry::RATE_MULT) prod *= ep.column[ui];
+        return prod;
+    };
+    auto forcing_mult_prod = [this](std::size_t ui) {
+        double prod = 1.0;
+        for (const auto& ep : extra_params_)
+            if (ep.entry == ParamEntry::FORCING_MULT) prod *= ep.column[ui];
+        return prod;
+    };
 
     // ---- Step 3: Active set ---------------------------------------------------
     // A mode participates when its current deviation energy OR either
@@ -172,19 +225,25 @@ void SpectralROM1D::advance(double dt, double K1d,
     const bool has_ensemble_runoff = !ensemble_runoff_.empty()
                                       && (runoff_per_node != nullptr)
                                       && (mean_ensemble_runoff_ > 1.0e-30);
-    double max_rain_dev = 0.0;   // max_i |scale_i − 1|
-    if (has_ensemble_runoff) {
-        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_rain_dev = std::max(max_rain_dev,
-                std::abs(ensemble_runoff_[i] / mean_ensemble_runoff_ - 1.0));
-    } else {
-        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_rain_dev = std::max(max_rain_dev, std::abs(runoff_mult[i] - 1.0));
+    double max_rain_dev = 0.0;   // max_i |scale_i − 1|  (incl. FORCING_MULT extras)
+    for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i) {
+        const double base = has_ensemble_runoff
+            ? (ensemble_runoff_[i] / mean_ensemble_runoff_)
+            : runoff_mult[i];
+        max_rain_dev = std::max(max_rain_dev,
+                                std::abs(base * forcing_mult_prod(i) - 1.0));
     }
-    double max_mann_dev = 0.0;   // max_i |1/mm_i − 1|
+    double max_mann_dev = 0.0;   // max_i |1/mm_eff_i − 1|  (incl. RATE_MULT extras)
     for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
         max_mann_dev = std::max(max_mann_dev,
-                                std::abs(1.0 / mannings_mult[i] - 1.0));
+            std::abs(1.0 / (mannings_mult[i] * rate_mult_prod(i)) - 1.0));
+    // Per-FORCING_VECTOR-param max deviation max_i |θ_i − 1|.
+    for (auto& ep : extra_params_) {
+        if (ep.entry != ParamEntry::FORCING_VECTOR) continue;
+        ep.max_dev = 0.0;
+        for (double th : ep.column)
+            ep.max_dev = std::max(ep.max_dev, std::abs(th - 1.0));
+    }
 
     const double rain_scale = (runoff_per_node != nullptr)
                                ? std::abs(dt) * max_rain_dev : 0.0;
@@ -198,7 +257,15 @@ void SpectralROM1D::advance(double dt, double K1d,
                           std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
         bool by_manning = mann_scale > 0.0 &&
                           lam * std::abs(b_coarse[j]) * mann_scale >= mode_drop_threshold;
-        mode_active[j] = by_energy || by_rain || by_manning;
+        bool by_vector  = false;
+        for (const auto& ep : extra_params_) {
+            if (ep.entry == ParamEntry::FORCING_VECTOR &&
+                ep.max_dev * std::abs(dt) * std::abs(ep.rv[j]) >= mode_drop_threshold) {
+                by_vector = true;
+                break;
+            }
+        }
+        mode_active[j] = by_energy || by_rain || by_manning || by_vector;
         if (mode_active[j]) ++n_modes_active;
     }
 
@@ -207,22 +274,30 @@ void SpectralROM1D::advance(double dt, double K1d,
     //   g = −λ_j·K1d·(1/mm_i − 1)·b_j + (scale_i − 1)·r_j
     const double rate_floor = 1.0e-12;
 
+    const bool has_extra = !extra_params_.empty();
+
     for (int i = 0; i < n_ensemble; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double* ai = &a_ensemble[ui * nk];
-        const double mm       = mannings_mult[ui];
+        const double mm       = mannings_mult[ui] * rate_mult_prod(ui);
         const double inv_mm_1 = 1.0 / mm - 1.0;
-        const double scale_1  = has_ensemble_runoff
-            ? (ensemble_runoff_[ui] / mean_ensemble_runoff_ - 1.0)
-            : (runoff_mult[ui] - 1.0);
+        const double base     = has_ensemble_runoff
+            ? (ensemble_runoff_[ui] / mean_ensemble_runoff_)
+            : runoff_mult[ui];
+        const double scale_1  = base * forcing_mult_prod(ui) - 1.0;
 
         for (std::size_t j = 0; j < nk; ++j) {
             if (!mode_active[j]) continue;
 
             const double lam  = basis->eigenvalues[j];
             const double rate = lam * K1d / mm;
-            const double g    = -lam * K1d * inv_mm_1 * b_coarse[j]
+            double g          = -lam * K1d * inv_mm_1 * b_coarse[j]
                                 + scale_1 * r_coarse[j];
+            if (has_extra) {
+                for (const auto& ep : extra_params_)
+                    if (ep.entry == ParamEntry::FORCING_VECTOR)
+                        g += (ep.column[ui] - 1.0) * ep.rv[j];
+            }
 
             if (rate > rate_floor) {
                 const double steady = g / rate;

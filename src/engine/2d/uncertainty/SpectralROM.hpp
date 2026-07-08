@@ -37,6 +37,7 @@
 #include "../solver/SpectralPrecond2D.hpp"
 #include "../coupling/NodeCoupling.hpp"
 #include "SpatialUncertaintyField.hpp"
+#include "uncertainty/UncertaintyTypes.hpp"
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -320,6 +321,29 @@ struct SpectralROM {
     /// Revert to the scalar rainfall_mult path (undo setEnsembleRainfall).
     void clearEnsembleRainfall();
 
+    /**
+     * @brief Register an additional uncertain parameter column (PR 9b).
+     *
+     * Same contract as SpectralROM1D::addRegisteredParam
+     * (PARAMETER_REGISTRY.md §5): RATE_MULT multiplies the effective Manning
+     * multiplier (also on the spatial-Manning path), FORCING_MULT multiplies
+     * the member rainfall-forcing scale, FORCING_VECTOR carries a non-owning
+     * per-triangle field (length n_tri) re-projected each advance() with
+     * sensitivity (θ_i − 1)·(Pᵀv)_j, COUPLING_MULT is ignored by advance()
+     * (the coupling path reads cd_mult).
+     *
+     * Call after initialize(). @p column length must equal n_ensemble.
+     *
+     * @throws std::invalid_argument on size mismatch, or FORCING_VECTOR
+     *         without a field.
+     */
+    void addRegisteredParam(openswmm::uncertainty::ParamEntry entry,
+                            const std::vector<double>& column,
+                            const double* field = nullptr);
+
+    /// Remove all registered extra parameters (restores built-in-only behavior).
+    void clearRegisteredParams();
+
     /// True if initialize() has been called and n_kept > 0.
     bool is_ready() const noexcept { return n_kept > 0 && !a_ensemble.empty(); }
 
@@ -336,6 +360,17 @@ private:
 
     /// Mean of ensemble_rainfall_; used to normalise per-member multipliers.
     double mean_ensemble_rain_ = 0.0;
+
+    /// One registered extra parameter (PR 9b). `rv` is the per-mode
+    /// projection scratch for FORCING_VECTOR fields, refreshed each advance().
+    struct ExtraParam {
+        openswmm::uncertainty::ParamEntry entry;
+        std::vector<double> column;          ///< θ_i per member (copied)
+        const double*       field = nullptr; ///< FORCING_VECTOR: per-triangle v (non-owning)
+        std::vector<double> rv;              ///< n_kept projections of field
+        double              max_dev = 0.0;   ///< max_i |θ_i − 1| (refreshed per advance)
+    };
+    std::vector<ExtraParam> extra_params_;
 
     /// When true, initialize() uses external_mann_ / external_rain_ instead of
     /// building the internal LHS.

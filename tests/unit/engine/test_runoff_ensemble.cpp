@@ -474,3 +474,144 @@ TEST(WQDecayBounds, MultiStepMonotonicAndSpreadGrows) {
     }
     (void)prev_spread;
 }
+
+// ============================================================================
+// PR 9b — ParamRegistry (parameter registry: sampling, lookup, back-compat)
+// ============================================================================
+
+#include "uncertainty/LhsShuffle.hpp"
+
+// probit accuracy: Acklam's approximation, |probit(Phi(z)) - z| < 1.2e-8.
+TEST(ParamRegistry, ProbitAccuracy) {
+    for (double z = -6.0; z <= 6.0; z += 0.01) {
+        const double u = 0.5 * std::erfc(-z / 1.4142135623730951);  // Phi(z)
+        EXPECT_NEAR(probit(u), z, 1.2e-8) << "z = " << z;
+    }
+}
+
+// Back-compat: registerDefaults() + generate() reproduces the pre-registry
+// (PR-5) legacy columns BIT-EXACTLY: Manning ascending strata, rainfall/soil/cd
+// independently shuffled with seeds seed+1/+2/+3, all uniform lo + t*(hi-lo).
+TEST(ParamRegistry, DefaultsReproduceLegacyColumnsBitExact) {
+    UncertaintyEnsemble ens;
+    ens.n_members        = 50;
+    ens.seed             = 42;
+    ens.mannings_pert_2d = 0.20;
+    ens.rainfall_pert_2d = 0.10;
+    ens.soil_pert        = 0.25;
+    ens.cd_pert          = 0.15;
+    ens.generate();
+
+    const int    M  = ens.n_members;
+    const double Md = static_cast<double>(M);
+    auto legacy_uniform = [](double p, double t) {
+        const double lo = 1.0 - p, hi = 1.0 + p;
+        return lo + t * (hi - lo);
+    };
+
+    const auto rain_t = shuffledStrata(M, ens.seed + 1);
+    const auto soil_t = shuffledStrata(M, ens.seed + 2);
+    const auto cd_t   = shuffledStrata(M, ens.seed + 3);
+    for (int i = 0; i < M; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        const double t_m = (static_cast<double>(i) + 0.5) / Md;
+        EXPECT_DOUBLE_EQ(ens.mannings_mult_2d[ui], legacy_uniform(0.20, t_m));
+        EXPECT_DOUBLE_EQ(ens.rainfall_mult_2d[ui], legacy_uniform(0.10, rain_t[ui]));
+        EXPECT_DOUBLE_EQ(ens.soil_mult[ui],        legacy_uniform(0.25, soil_t[ui]));
+        EXPECT_DOUBLE_EQ(ens.cd_mult[ui],          legacy_uniform(0.15, cd_t[ui]));
+    }
+}
+
+// Registry lookup: registered columns retrievable by (name, layer); absent
+// names return nullptr; LayerTarget::NONE matches any layer.
+TEST(ParamRegistry, LookupByNameAndLayer) {
+    UncertaintyEnsemble ens;
+    ens.n_members = 20;
+    ens.registerDefaults();
+    ens.registerParam("INFLOW", LayerTarget::ONE_D,
+                      ParamEntry::FORCING_VECTOR, DistType::LOGNORMAL, 0.30);
+    ens.generate();
+
+    ASSERT_NE(ens.column("MANNINGS_N", LayerTarget::TWO_D), nullptr);
+    ASSERT_NE(ens.column("INFLOW", LayerTarget::ONE_D), nullptr);
+    EXPECT_EQ(static_cast<int>(ens.column("INFLOW", LayerTarget::ONE_D)->size()), 20);
+    EXPECT_NE(ens.column("INFLOW"), nullptr);  // NONE matches any layer
+    EXPECT_EQ(ens.column("INFLOW", LayerTarget::TWO_D), nullptr);
+    EXPECT_EQ(ens.column("NO_SUCH", LayerTarget::ONE_D), nullptr);
+}
+
+// Re-registering an existing (name, layer) updates in place: no duplicate,
+// stable seed_offset (so other columns are not reshuffled).
+TEST(ParamRegistry, ReRegisterUpdatesInPlace) {
+    UncertaintyEnsemble ens;
+    ens.n_members = 20;
+    ens.registerDefaults();
+    auto& p1 = ens.registerParam("INFLOW", LayerTarget::ONE_D,
+                                 ParamEntry::FORCING_VECTOR, DistType::UNIFORM, 0.10);
+    const uint64_t off = p1.seed_offset;
+    const std::size_t count = ens.params.size();
+    auto& p2 = ens.registerParam("INFLOW", LayerTarget::ONE_D,
+                                 ParamEntry::FORCING_VECTOR, DistType::LOGNORMAL, 0.30);
+    EXPECT_EQ(ens.params.size(), count);
+    EXPECT_EQ(p2.seed_offset, off);
+    EXPECT_EQ(static_cast<int>(p2.dist), static_cast<int>(DistType::LOGNORMAL));
+    EXPECT_DOUBLE_EQ(p2.pert, 0.30);
+}
+
+// Distribution moments at M = 200 (PARAMETER_REGISTRY.md §8).
+TEST(ParamRegistry, DistributionMomentsMatchSpec) {
+    const int M = 200;
+    const double p = 0.30;
+    UncertaintyEnsemble ens;
+    ens.n_members = M;
+    ens.registerParam("U", LayerTarget::ONE_D, ParamEntry::FORCING_MULT,
+                      DistType::UNIFORM, p);
+    ens.registerParam("N", LayerTarget::ONE_D, ParamEntry::FORCING_MULT,
+                      DistType::NORMAL, p);
+    ens.registerParam("L", LayerTarget::ONE_D, ParamEntry::FORCING_MULT,
+                      DistType::LOGNORMAL, p);
+    ens.generate();
+
+    auto mean_of = [](const std::vector<double>& c) {
+        return std::accumulate(c.begin(), c.end(), 0.0) / static_cast<double>(c.size());
+    };
+    auto sorted = [](std::vector<double> c) { std::sort(c.begin(), c.end()); return c; };
+
+    const auto& U = *ens.column("U");
+    const auto& N = *ens.column("N");
+    const auto& L = *ens.column("L");
+
+    // UNIFORM: mean 1 within 2%, band exactly inside [1-p, 1+p].
+    EXPECT_NEAR(mean_of(U), 1.0, 0.02);
+    EXPECT_GE(*std::min_element(U.begin(), U.end()), 1.0 - p);
+    EXPECT_LE(*std::max_element(U.begin(), U.end()), 1.0 + p);
+
+    // NORMAL (±3σ trunc): mean 1 within 2%, hard band [1-p, 1+p].
+    EXPECT_NEAR(mean_of(N), 1.0, 0.02);
+    EXPECT_GE(*std::min_element(N.begin(), N.end()), 1.0 - p);
+    EXPECT_LE(*std::max_element(N.begin(), N.end()), 1.0 + p);
+
+    // LOGNORMAL: median 1 within 2%; q05/q95 within 3% of 1/(1+p), (1+p);
+    // strictly positive.
+    const auto Ls = sorted(L);
+    const double med = 0.5 * (Ls[99] + Ls[100]);
+    EXPECT_NEAR(med, 1.0, 0.02);
+    const double q05 = Ls[static_cast<std::size_t>(0.05 * (M - 1) + 0.5)];
+    const double q95 = Ls[static_cast<std::size_t>(0.95 * (M - 1) + 0.5)];
+    EXPECT_NEAR(q05, 1.0 / (1.0 + p), 0.03 * (1.0 / (1.0 + p)));
+    EXPECT_NEAR(q95, 1.0 + p,          0.03 * (1.0 + p));
+    EXPECT_GT(*std::min_element(L.begin(), L.end()), 0.0);
+}
+
+// p = 0 gives a column of exact 1.0s for every family.
+TEST(ParamRegistry, ZeroPertGivesUnitColumns) {
+    UncertaintyEnsemble ens;
+    ens.n_members = 10;
+    ens.registerParam("U", LayerTarget::ONE_D, ParamEntry::FORCING_MULT, DistType::UNIFORM,   0.0);
+    ens.registerParam("N", LayerTarget::ONE_D, ParamEntry::FORCING_MULT, DistType::NORMAL,    0.0);
+    ens.registerParam("L", LayerTarget::ONE_D, ParamEntry::FORCING_MULT, DistType::LOGNORMAL, 0.0);
+    ens.generate();
+    for (const char* name : {"U", "N", "L"})
+        for (double v : *ens.column(name))
+            EXPECT_DOUBLE_EQ(v, 1.0) << name;
+}

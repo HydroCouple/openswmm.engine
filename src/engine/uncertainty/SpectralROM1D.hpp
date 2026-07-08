@@ -36,6 +36,7 @@
 
 #include "GraphEigenBasis.hpp"
 #include "NetworkLaplacian1D.hpp"
+#include "UncertaintyTypes.hpp"
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -163,6 +164,34 @@ struct SpectralROM1D {
     void clearEnsembleRunoff();
 
     /**
+     * @brief Register an additional uncertain parameter column (PR 9b).
+     *
+     * The built-in Manning/runoff machinery is untouched; registered params
+     * fold into the deviation dynamics per their taxonomy
+     * (PARAMETER_REGISTRY.md §5):
+     *   RATE_MULT      — multiplies the effective Manning multiplier
+     *                    (mm_eff = mm · Π θ), shaping both the decay rate and
+     *                    the Manning-sensitivity forcing.
+     *   FORCING_MULT   — multiplies the runoff forcing scale
+     *                    (scale = rm · Π θ, sensitivity (scale − 1)·r_j).
+     *   FORCING_VECTOR — @p field points to a per-active-node field v
+     *                    (length n_nodes, NON-OWNING, must outlive the ROM or
+     *                    be cleared); projected each advance();
+     *                    sensitivity (θ_i − 1)·(Pᵀv)_j.
+     *   COUPLING_MULT  — ignored by advance() (coupling reads cd_mult).
+     *
+     * Call after initialize(). @p column length must equal n_ensemble.
+     *
+     * @throws std::invalid_argument on size mismatch, or FORCING_VECTOR
+     *         without a field.
+     */
+    void addRegisteredParam(ParamEntry entry, const std::vector<double>& column,
+                            const double* field = nullptr);
+
+    /// Remove all registered extra parameters (restores built-in-only behavior).
+    void clearRegisteredParams();
+
+    /**
      * @brief Rebuild the eigenbasis when the hydraulic operator has changed.
      *
      * Skips the rebuild when max|conduit_off_new − conduit_off_prev| /
@@ -260,6 +289,17 @@ private:
 
     std::vector<double> ensemble_runoff_;
     double mean_ensemble_runoff_ = 0.0;
+
+    /// One registered extra parameter (PR 9b). `rv` is the per-mode
+    /// projection scratch for FORCING_VECTOR fields, refreshed each advance().
+    struct ExtraParam {
+        ParamEntry          entry;
+        std::vector<double> column;         ///< θ_i per member (copied)
+        const double*       field = nullptr;///< FORCING_VECTOR: per-node v (non-owning)
+        std::vector<double> rv;             ///< n_kept projections of field
+        double              max_dev = 0.0;  ///< max_i |θ_i − 1| (refreshed per advance)
+    };
+    std::vector<ExtraParam> extra_params_;
 
     bool external_samples_set_ = false;
     std::vector<double> external_mann_;
