@@ -506,10 +506,7 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
                     if ((O.bc_type[ur] == OutfallType::TIDAL ||
                          O.bc_type[ur] == OutfallType::TIMESERIES) &&
                         static_cast<int>(O.param[ur]) == table_idx) {
-                        // -1, not 0: 0 is a valid table index and would silently
-                        // re-point the outfall at whatever table is first.
-                        O.param[ur] = -1.0;
-                        O.param_name[ur].clear();
+                        O.param[ur] = 0.0;
                         result.add(SWMM_REF_NODE, i, "outfall_param", false);
                     }
                 }
