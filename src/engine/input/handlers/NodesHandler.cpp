@@ -114,23 +114,46 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
         else if (otype == "TIDAL")      O.bc_type[orow] = OutfallType::TIDAL;
         else if (otype == "TIMESERIES") O.bc_type[orow] = OutfallType::TIMESERIES;
 
-        // Stage or curve reference
-        if (tok.size() > 3) {
-            // For FIXED: numeric stage; for TIDAL/TIMESERIES: curve/tseries name → resolve later
+        // Canonical column layout (legacy outfall_readParams):
+        //   name elev FIXED      stage    (gated) (routeTo)
+        //   name elev TIDAL      curveID  (gated) (routeTo)
+        //   name elev TIMESERIES tseriesID (gated) (routeTo)
+        //   name elev FREE|NORMAL         (gated) (routeTo)
+        // FREE/NORMAL carry no stage-data field, so the gate/routeTo columns
+        // shift left by one for those types.
+        const bool has_stage_field = (O.bc_type[orow] == OutfallType::FIXED  ||
+                                      O.bc_type[orow] == OutfallType::TIDAL  ||
+                                      O.bc_type[orow] == OutfallType::TIMESERIES);
+        std::size_t next = 3;
+
+        // FREE/NORMAL have no stage data, but the EPA GUI still emits the column
+        // as a "*" placeholder (e.g. "OUT1 98.0 FREE * NO"). Skip it so the gate
+        // and route-to columns stay aligned for both layouts.
+        if (!has_stage_field && tok.size() > next && tok[next] == "*")
+            ++next;
+
+        if (has_stage_field && tok.size() > next) {
             if (O.bc_type[orow] == OutfallType::FIXED) {
-                O.param[orow] = to_double(tok[3]);
+                O.param[orow] = to_double(tok[next]);
+            } else {
+                // TIDAL / TIMESERIES: keep the name; PostParseResolver turns it
+                // into a table index once [CURVES]/[TIMESERIES] have been read.
+                // -1 (not 0) marks "unresolved" — 0 is a valid table index.
+                O.param_name[orow] = tok[next];
+                O.param[orow]      = -1.0;
             }
-            // For TIDAL / TIMESERIES, the name resolution is deferred to a post-parse pass
+            ++next;
         }
 
         // Gated (YES/NO)
-        if (tok.size() > 4) {
-            O.has_flap_gate[orow] = Tokenizer::parse_boolean(tok[4]);
+        if (tok.size() > next) {
+            O.has_flap_gate[orow] = Tokenizer::parse_boolean(tok[next]);
+            ++next;
         }
 
         // Route-to subcatchment (optional last field)
-        if (tok.size() > 5 && !tok[5].empty() && tok[5] != "*") {
-            int sc = ctx.subcatch_names.find(tok[5]);
+        if (tok.size() > next && !tok[next].empty() && tok[next] != "*") {
+            int sc = ctx.subcatch_names.find(tok[next]);
             O.route_to[orow] = sc;  // may be -1 if not yet parsed
         }
         if (!pl.comment.empty())
