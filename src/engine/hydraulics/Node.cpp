@@ -150,7 +150,8 @@ double getDepth(const NodeData& nodes, int idx, double volume,
         double a1 = g.a;
         double a2 = g.b;
         const double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
-        double v = volume * ucf::Ucf[ucf::VOLUME][unit_sys];
+        const double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys];
+        double v = volume * ucf_vol;
         double d;
 
         if (a2 == 0.0) {
@@ -164,20 +165,28 @@ double getDepth(const NodeData& nodes, int idx, double volume,
             // area = a0 + a1*d; v = a0*d + (a1/2)*d^2        (node.c:838-841)
             d = (std::sqrt(a0 * a0 + 2. * a1 * v) - a0) / a1;
         } else {
-            // area = a0 + a1*d^a2 — Newton/bisection on the USER-unit depth
-            // over [0, fullDepth*UCF(LENGTH)], xacc 0.001  (node.c:843-847).
-            // Legacy's storage_getVolDiff (node.c:871-891) differences the
-            // INTERNAL-unit storage_getVolume at the user-unit trial depth
-            // against the USER-unit target v, and uses the internal-unit
-            // storage_getSurfArea as the derivative — a legacy unit quirk,
-            // replicated as-is. (Legacy also passes the storage subIndex
-            // where those functions expect a node index; we pass the node
-            // index, which resolves to the same storage geometry.)
+            // area = a0 + a1*d^a2 — Newton on the USER-unit depth over
+            // [0, fullDepth*UCF(LENGTH)], xacc 0.001  (node.c:843-847).
+            //
+            // getVolume/getSurfArea take depth in INTERNAL (ft) units and
+            // return volume/area in INTERNAL (ft3/ft2) units, while y and v
+            // here are USER-unit. Convert at this boundary so *f/*df aren't
+            // a mix of unit systems.
+            //
+            // BUGFIX (was PARITY-replicated quirk): legacy's storage_getVolDiff
+            // (node.c:871-891 pre-fix) passed the user-unit trial depth
+            // straight into the internal-unit storage_getVolume/
+            // storage_getSurfArea and diffed the internal-unit result against
+            // the user-unit target v — silent under US units (UCF(LENGTH) ==
+            // UCF(VOLUME) == 1.0) but numerically wrong under SI. Legacy has
+            // since been fixed the same way (node.c storage_getVolDiff); this
+            // mirrors that fix rather than the original quirk.
             d = v / (a0 + a1);
             findroot::newton(0.0, fd * ucf_len, &d, 0.001,
                 [&](double y, double* f, double* df) {
-                    *f  = getVolume(nodes, idx, y, tables, unit_sys, subs) - v;
-                    *df = getSurfArea(nodes, idx, y, tables, unit_sys, subs);
+                    double yFt = y / ucf_len;
+                    *f  = getVolume(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol - v;
+                    *df = getSurfArea(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol / ucf_len;
                 });
         }
         d /= ucf_len;                                       // node.c:861
