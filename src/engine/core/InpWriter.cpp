@@ -1061,13 +1061,9 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }}
 
     // [OUTFALLS]
-    // Column order must match outfall_readParams() / handle_outfalls():
-    //   Name Elev Type [StageData] Gated [RouteTo]
-    // StageData is present only for FIXED (numeric stage) and TIDAL/TIMESERIES
-    // (table NAME, not the internal index).
     if(hasNT(ctx,NodeType::OUTFALL)){sec(f,"OUTFALLS");
-    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-8s %-16s\n","Name","Elev","Type","Stage Data","Gated","Route To");
-    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-8s %-16s\n","----------------","------------","------------","----------------","--------","----------------");
+    std::fprintf(f,";;%-16s %-12s %-12s %-8s\n","Name","Elev","Type","Gated");
+    std::fprintf(f,";;%-16s %-12s %-12s %-8s\n","----------------","------------","------------","--------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::OUTFALL)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
     // Relational side-table (Phase 4).
@@ -1075,23 +1071,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     const OutfallType otype = (orow>=0)?O.bc_type[static_cast<size_t>(orow)]:OutfallType::FREE;
     const int oflap = (orow>=0)?O.has_flap_gate[static_cast<size_t>(orow)]:0;
     const double oparam = (orow>=0)?O.param[static_cast<size_t>(orow)]:0.0;
-    const int oroute = (orow>=0)?O.route_to[static_cast<size_t>(orow)]:-1;
-
-    // Stage-data column.
-    char stage[64]; stage[0]='\0';
-    if(otype==OutfallType::FIXED){
-        std::snprintf(stage,sizeof(stage),"%.4f",oparam);
-    } else if(otype==OutfallType::TIDAL||otype==OutfallType::TIMESERIES){
-        const int t = static_cast<int>(oparam);
-        if(t>=0 && t<static_cast<int>(ctx.tables.tables.size()))
-            std::snprintf(stage,sizeof(stage),"%s",ctx.table_names.name_of(t).c_str());
-    }
-
-    std::fprintf(f,"%-16s %12.4f %-12s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype));
-    if(stage[0]!='\0')std::fprintf(f," %-16s",stage);
-    std::fprintf(f," %-8s",oflap?"YES":"NO");
-    if(oroute>=0 && oroute<ctx.n_subcatches())
-        std::fprintf(f," %-16s",ctx.subcatch_names.name_of(oroute).c_str());
+    std::fprintf(f,"%-16s %12.4f %-12s %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype),oflap?"YES":"NO");
+    if(otype==OutfallType::FIXED)std::fprintf(f," %12.4f",oparam);
     std::fprintf(f,"\n");
     }}
 

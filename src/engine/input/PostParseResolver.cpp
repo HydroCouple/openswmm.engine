@@ -827,42 +827,6 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
-    // Outfall stage-data name resolution (TIDAL curve / TIMESERIES stage series)
-    // -------------------------------------------------------------------------
-    // [OUTFALLS] may precede [CURVES]/[TIMESERIES] in the .inp, so the handler
-    // stores the raw name and defers resolution to here. Curves and timeseries
-    // share one index space (ctx.tables), so an unresolved param of 0 would
-    // silently alias whatever table happens to be first — hence -1 as the
-    // sentinel and a fatal ERR_NAME on failure, matching legacy
-    // outfall_readParams() (node.c:1345-1354).
-    for (int i = 0; i < n_nodes; ++i) {
-        if (ctx.nodes.type[static_cast<std::size_t>(i)] != NodeType::OUTFALL) continue;
-        const int r = ctx.node_subtypes.outfall_row(i);
-        if (r < 0) continue;
-        auto& O = ctx.node_subtypes.outfalls;
-        const auto ur = static_cast<std::size_t>(r);
-        const bool is_tidal = (O.bc_type[ur] == OutfallType::TIDAL);
-        if (!is_tidal && O.bc_type[ur] != OutfallType::TIMESERIES) continue;
-        if (O.param[ur] >= 0.0) continue;              // already resolved (e.g. via API)
-
-        const std::string& nm = O.param_name[ur];
-        const int t = nm.empty() ? -1 : ctx.table_names.find(nm);
-        if (t < 0) {
-            ctx.errors.push_back(format_error(ERR_NAME, nm));
-            continue;
-        }
-        // Enforce the referent kind legacy got for free from separate
-        // Curve[]/Tseries[] arrays: TIDAL wants a curve, TIMESERIES a series.
-        const bool is_ts = (ctx.tables.tables[static_cast<std::size_t>(t)].type
-                                == TableType::TIMESERIES);
-        if (is_tidal == is_ts) {
-            ctx.errors.push_back(format_error(ERR_NAME, nm));
-            continue;
-        }
-        O.param[ur] = static_cast<double>(t);
-    }
-
-    // -------------------------------------------------------------------------
     // Pump curve name resolution
     // -------------------------------------------------------------------------
     for (int j = 0; j < n_links; ++j) {

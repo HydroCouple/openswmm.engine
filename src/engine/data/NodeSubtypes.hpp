@@ -161,13 +161,8 @@ struct OutfallData {
 
     /** @brief Boundary condition type (FREE/NORMAL/FIXED/TIDAL/TIMESERIES). */
     std::vector<OutfallType> bc_type;
-    /** @brief Fixed stage, or tidal/timeseries table index (per bc_type).
-     *  For TIDAL/TIMESERIES an unresolved reference is -1 (never 0, which is a
-     *  valid table index). */
+    /** @brief Fixed stage, or tidal/timeseries table index (per bc_type). */
     std::vector<double>      param;
-    /** @brief Stage-data table name for TIDAL/TIMESERIES, held for deferred
-     *  name→index resolution in PostParseResolver (empty otherwise). */
-    std::vector<std::string> param_name;
     /** @brief Flap gate present (0/1). */
     std::vector<uint8_t>     has_flap_gate;
     /** @brief Subcatchment index to route discharge to (-1 = none). */
@@ -187,7 +182,7 @@ struct OutfallData {
 
     /** @brief Drop all rows (capacity retained). */
     void clear() noexcept {
-        node_idx.clear(); bc_type.clear(); param.clear(); param_name.clear();
+        node_idx.clear(); bc_type.clear(); param.clear();
         has_flap_gate.clear(); route_to.clear();
         link_idx.clear(); link_offset.clear(); head_2d.clear();
         ramp_2d.clear();
@@ -197,7 +192,6 @@ struct OutfallData {
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
         node_idx.reserve(un); bc_type.reserve(un); param.reserve(un);
-        param_name.reserve(un);
         has_flap_gate.reserve(un); route_to.reserve(un);
         link_idx.reserve(un); link_offset.reserve(un); head_2d.reserve(un);
         ramp_2d.reserve(un);
@@ -211,7 +205,6 @@ struct OutfallData {
         node_idx.insert(node_idx.begin() + p, i);
         bc_type.insert(bc_type.begin() + p, OutfallType::FREE);
         param.insert(param.begin() + p, 0.0);
-        param_name.insert(param_name.begin() + p, std::string{});
         has_flap_gate.insert(has_flap_gate.begin() + p, uint8_t{0});
         route_to.insert(route_to.begin() + p, -1);
         link_idx.insert(link_idx.begin() + p, -1);
@@ -227,7 +220,6 @@ struct OutfallData {
         node_idx.erase(node_idx.begin() + p);
         bc_type.erase(bc_type.begin() + p);
         param.erase(param.begin() + p);
-        param_name.erase(param_name.begin() + p);
         has_flap_gate.erase(has_flap_gate.begin() + p);
         route_to.erase(route_to.begin() + p);
         link_idx.erase(link_idx.begin() + p);
