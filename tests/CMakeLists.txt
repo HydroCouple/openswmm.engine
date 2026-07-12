@@ -128,6 +128,9 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     add_test(NAME test_legacy_solver_expanded_api
         COMMAND $<TARGET_FILE:test_solver_expanded_api>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    add_test(NAME test_legacy_solver_storage_shapes
+        COMMAND $<TARGET_FILE:test_solver_storage_shapes>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
     add_test(NAME test_legacy_output
         COMMAND $<TARGET_FILE:test_output>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/output/data)
@@ -139,6 +142,7 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         test_legacy_solver_hotstart
         test_legacy_solver_shapes
         test_legacy_solver_expanded_api
+        test_legacy_solver_storage_shapes
         test_legacy_output
         PROPERTIES LABELS "unit"
     )
