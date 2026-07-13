@@ -5,7 +5,66 @@ All notable changes to the OpenSWMM Engine are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Runtime forcing Phase 4 + §3 legacy quality sources
+The `6.0.0-alpha.3` sections below are **unreleased / pending** — no
+`v6.0.0-alpha.3` git tag has been cut yet, but it is the version already
+set in `CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json`, and
+`python/pyproject.toml` for all work merged since the `v6.0.0-alpha.1`
+tag, so it's used here instead of a generic "Unreleased" heading.
+
+## [6.0.0-alpha.3] — Precipitation scaling (gage SCF fix + per-subcatchment factors)
+
+See `plans/PRECIP_SCALING_IMPLEMENTATION_PLAN.md` and
+`plans/PRECIP_SCALING_TEST_HANDOFF.md`.
+
+### Fixed
+
+- **Refactored engine dropped the gage snow catch factor (SCF) at runtime.**
+  The C++ engine parsed, stored, wrote and API-exposed the `[RAINGAGES]` SCF but
+  never multiplied by it: `separatePrecip()` was dead code with zero call sites,
+  and the live rain/snow split in `SWMMEngine.cpp` used the raw gage intensity.
+  Legacy `gage.c` applies SCF. Snowfall volume now matches legacy. Replaced
+  `separatePrecip()` with `gage::splitPrecip()`, the single source of truth for
+  the split. **Behaviour change for any model with `SCF ≠ 1.0`** — every model
+  in `tests/` and `examples/` uses `SCF = 1.0`, so no shipped baseline moves,
+  but user snow models will.
+- **Refactored engine applied no rain/snow split for snow-pack-less
+  subcatchments.** The non-snow-pack runoff path read raw gage rainfall with no
+  temperature test, so below freezing it received `rain × 1.0` where legacy
+  gives `rain × SCF`. `RunoffSolver::execute()` now routes through
+  `splitPrecip()` too. **Behaviour change for `SCF ≠ 1.0` snow-season models.**
+- **`InpWriter` silently dropped the `[SUBCATCHMENTS]` snow-pack assignment.**
+  Only 8 columns were emitted, so token 8 (Snowpack) was lost on every INP
+  round-trip. The writer now emits it (and a `*` placeholder when a trailing
+  scale factor must reach past an unassigned pack).
+- **`swmm_gage_set_snow_factor` was not settable mid-run.** It carried a
+  `CHECK_GEOMETRY` guard the sibling `swmm_gage_set_scale_factor` deliberately
+  omits, so a calibration/RTC loop could not adjust the SCF after the model was
+  opened. Removed the guard — SCF is a scalar precipitation multiplier, not
+  geometry, and now matches the rainfall scale factor and the new subcatchment
+  scale factors.
+
+### Added
+
+- **Optional per-subcatchment rainfall and snow scale factors** — trailing
+  tokens 9 and 10 of `[SUBCATCHMENTS]`, both defaulting to `1.0` (a true
+  no-op; default-valued models round-trip byte-identically). They compose
+  multiplicatively with the gage factors:
+  `rainfall = gage_rain × gage.scaleFactor × rainScaleFactor`,
+  `snowfall = gage_rain × gage.scaleFactor × SCF × snowScaleFactor`.
+  Applied to the gage-derived component only — API/forcing overrides are
+  absolute and deliberately unscaled. Token 8 accepts `*` as a "no snow pack"
+  placeholder so tokens 9/10 are reachable without a pack. Exposed across the
+  full stack: C API (`swmm_subcatch_{get,set}_{rain,snow}_scale_factor`,
+  settable mid-run), legacy property enum (`swmm_SUBCATCH_{RAIN,SNOW}_SCALE_FACTOR`),
+  Python bindings (`Subcatchment.{rain,snow}_scale_factor` on both trees),
+  GeoPackage subcatchments table (`rain_scale_factor`/`snow_scale_factor` REAL
+  columns, reader guards a column-existence check so pre-existing `.gpkg` files
+  still open), and the openswmm.mcp `editing_{get,set}_subcatch_{rain,snow}_scale_factor`
+  tools (plus `editing_{get,set}_gage_snow_factor`, closing the last gage-SCF
+  gap). The GUI surfaces all four factors in the Property Browser and the
+  Attribute Table.
+
+## [6.0.0-alpha.3] — Runtime forcing Phase 4 + §3 legacy quality sources
 
 See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
 `docs/RUNTIME_FORCING_PHASE4_AUDIT.md` (per-group outcomes), and
@@ -13,6 +72,27 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
 
 ### Fixed
 
+- **`TIMESERIES` / `TIDAL` outfalls read the wrong stage table** — the
+  `[OUTFALLS]` handler read the stage-data name and discarded it, deferring
+  resolution to a post-parse pass that was never written, so
+  `OutfallData::param` kept its default of `0`. Curves and timeseries share
+  one index space (`ctx.tables`) and `Outfall.cpp` guarded only with `>= 0`,
+  so the outfall silently drew its stage from whichever table came first in
+  the model — an unrelated shape curve, in the reported case, pinning the
+  outfall at that curve's y-value with no error. `OutfallData` now carries
+  `param_name` for deferred resolution (mirroring `DividerData::link_name`),
+  `PostParseResolver` resolves it against `ctx.table_names` and type-checks
+  the referent (a `TIMESERIES` outfall may not point at a curve), and an
+  unresolvable name is a fatal `ERR_NAME` as in legacy `outfall_readParams()`
+  rather than a silent misread. Unresolved references now use `-1`, not `0`.
+- **`InpWriter` corrupted `[OUTFALLS]` on save** — the section was emitted as
+  `Name Elev Type Gated [Stage]`, but the canonical (and parsed) order is
+  `Name Elev Type StageData Gated RouteTo`. A `FIXED` outfall's stage was
+  written *after* the gate flag and re-parsed as `0`; `TIDAL`/`TIMESERIES`
+  names and `RouteTo` were never written at all. The writer now emits the
+  canonical column order, resolving the table *name* for `TIDAL`/`TIMESERIES`,
+  and the parser accepts the EPA-GUI `*` stage-data placeholder on
+  `FREE`/`NORMAL` rows without shifting the gate column.
 - **`[FILES]` `USE/SAVE RUNOFF` and `USE/SAVE RDII` now work in the
   refactored engine** — previously parsed and written back but never
   consumed. `SAVE RUNOFF` auto-opens the existing binary runoff interface
@@ -216,7 +296,71 @@ See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
   `set_ponded_concentration` now pass `pollutant_index=` and work at runtime
   (previously raised an object-index API error).
 
-## [Unreleased] — User-flag schema bindings + 2D/MCP gap closure
+## [6.0.0-alpha.3] — 2D GPU acceleration, capped-pipe 1D/2D coupling & performance
+
+Commits 2026-06-10 → 2026-07-05, surfaced via a `git-cliff` audit of
+`v6.0.0-alpha.1..HEAD` against this file (see `cliff.toml`) — these landed
+alongside the runtime-forcing work above but were not yet logged.
+
+### Added
+
+- **Portable Kokkos GPU surface solver + HIP/SYCL plugins (2D).** New
+  performance-portable GPU path for the 2D surface router
+  (`docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md`): CVODE control flow,
+  tolerances, and operator-splitting are unchanged — only the `N_Vector`
+  and RHS move to Kokkos, numerically equivalent to the serial CPU
+  reference. `ISurfaceSolver` interface with `SurfaceSolverFactory`
+  resolving the backend at runtime (dlopen a GPU plugin, else fall back to
+  the serial `CvodeSurfaceSolver`; `OPENSWMM_2D_BACKEND` override, auto
+  order cuda → hip → sycl → omp → serial). GPU plugin is opt-in
+  (`OPENSWMM_BUILD_GPU_PLUGIN`) via a stable C ABI (`GpuPluginAbi.h`); base
+  build stays Kokkos-free. New vcpkg `gpu`/`gpu-cuda`/`gpu-hip`/`gpu-sycl`
+  features.
+- **Capped-pipe 1D/2D junction coupling model.** Replaced the two-regime
+  free-inlet/surcharge blend with a bidirectional gradient orifice
+  (`h_2d - h_1d`) gated by a C1 Hermite ramp at the pipe crown: below the
+  crown the node pressurizes internally over its auto-sized ponded shaft
+  with no exchange; the cover only connects the domains once water
+  overtops it. `sur_depth` now solely sizes the 1D Preissmann-slot
+  headroom above the crown. Doc:
+  `docs/1D_2D_COUPLING_CONFIGURATION.md`.
+- **Time-based 2D coupling window.** New `COUPLING_WINDOW` (s) in
+  `[2D_OPTIONS]` (-1 AUTO / 0 every step / >0 s; env
+  `OPENSWMM_2D_COUPLING_WINDOW`; INP + GeoPackage round-trip) decouples
+  the 2D advance cadence from 1D variable-step shrinkage. Adds a
+  quiescence short-circuit (windows with no water/rain/coupling sources
+  and only WALL/NORMAL_FLOW boundaries skip the CVODE advance entirely)
+  and a stencil-scoped CFL hint so a rain-wetted cell far from the network
+  no longer pins the 1D routing step. Bellinge 3h smoke: 15.2s → 9.2s
+  (omp).
+- **Dry-cell active-set masking (wet-front tracking), opt-in.** Restricts
+  every 2D RHS pipeline stage to `active = wet ∪ sourced ∪ halo` while the
+  CVODE system stays full-size (frozen cells get `ydot = 0`, so the BDF
+  history is never invalidated). Opt-in via `[2D_OPTIONS] ACTIVE_SET`
+  (env `OPENSWMM_2D_ACTIVE_SET`); wall-guarded (mask errors are locally
+  conservative, never a leak) with a breach-redo/halo-doubling safety
+  net. `SurfaceStateData` gained an `active_set` pointer — GPU plugin ABI
+  bumped to v2.
+
+### Performance
+
+- **1D dynamic-wave Picard loop:** persistent-team OpenMP threading
+  (team spans the whole iteration loop; CSR node-centric gather replaces
+  the serial link-order scatter, provably bit-identical FP order to
+  legacy at any thread count), batch-geometry kernels parallelized with
+  Apple-Silicon P-core clamp/QoS, and dead-work elimination
+  (loss recompute / node-state init skipped when structurally a no-op).
+  Bellinge: 204s → 56.5s (T=8, Apple Silicon); routing loop 95.8s → 80.1s
+  in the separate bit-parity-preserving optimization pass (bypass-aware
+  batch geometry kernels). All changes gated on a 20-model bit-parity
+  scorecard / byte-identical `.out` files.
+- **2D held-path coupling:** skip zero-exchange coupling stencils in the
+  active set (the exchange is a per-window constant already scattered
+  into `coupling_flux`, so a stencil with zero flux this window
+  contributes nothing) — storm-peak active set drops from ~38% to
+  ~wet+halo (~5%) of the mesh on held-path coupled models.
+
+## [6.0.0-alpha.3] — User-flag schema bindings + 2D/MCP gap closure
 
 See `docs/API_GAP_CLOSURE_PLAN_2026-06-10.md`.
 
@@ -247,7 +391,7 @@ See `docs/API_GAP_CLOSURE_PLAN_2026-06-10.md`.
   allowlist entries for symbols that had since been bound; the allowlist
   is now empty and the coverage test enforces the full surface.
 
-## [Unreleased] — Runtime forcing verification pass (handoff build/test/fix)
+## [6.0.0-alpha.3] — Runtime forcing verification pass (handoff build/test/fix)
 
 Builds, runs and verifies the runtime-forcing batch per
 `docs/RUNTIME_FORCING_TESTING_HANDOFF.md`. Full Python suite green
@@ -294,7 +438,7 @@ Builds, runs and verifies the runtime-forcing batch per
   scalar `execute`/`plowSnow` convenience overloads (per-subcatchment array
   signatures broke `test_snow.cpp`).
 
-## [Unreleased] — Runtime forcing API phases 1–3 complete (gap plan rows 5–12)
+## [6.0.0-alpha.3] — Runtime forcing API phases 1–3 complete (gap plan rows 5–12)
 
 See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` and
 `docs/RUNTIME_FORCING_TESTING_HANDOFF.md` (functional verification pending).
@@ -345,7 +489,7 @@ See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` and
 - Phase 4 parameter-surface audits are execution-gated — protocol in
   `docs/RUNTIME_FORCING_TESTING_HANDOFF.md` §6.
 
-## [Unreleased] — Snowfall forcing + snow-path repair (gap plan row 4)
+## [6.0.0-alpha.3] — Snowfall forcing + snow-path repair (gap plan row 4)
 
 See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (item M3).
 
@@ -377,7 +521,7 @@ See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (item M3).
   it now returns the area-weighted pack SWE in user depth units via the
   new `SWMMEngine::subcatchSnowDepth()`.
 
-## [Unreleased] — Runtime climate forcing (gap plan rows 1–3)
+## [6.0.0-alpha.3] — Runtime climate forcing (gap plan rows 1–3)
 
 See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (items A2, A5, M1, M2).
 
@@ -411,7 +555,7 @@ See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (items A2, A5, M1, M2).
   codes were expected, so clearing a SUBCATCH actually cleared node
   quality. It now clears every channel belonging to the requested object.
 
-## [Unreleased] — Subcatchment PET prescription
+## [6.0.0-alpha.3] — Subcatchment PET prescription
 
 See `docs/SUBCATCHMENT_PET_PRESCRIPTION_PLAN.md`.
 
@@ -438,7 +582,7 @@ See `docs/SUBCATCHMENT_PET_PRESCRIPTION_PLAN.md`.
   groundwater solvers, so capping to available water and mass-balance
   accounting happen along the normal computation paths.
 
-## [Unreleased] — Pythonic Python bindings (v1)
+## [6.0.0-alpha.3] — Pythonic Python bindings (v1)
 
 ### Changed — **breaking** (Python bindings only; C API unchanged)
 
@@ -671,6 +815,1353 @@ The legacy per-domain `test_*.py` files have been processed:
 - **Documentation workflow** — Removed stale `bug_fixes` branch trigger; updated to `actions/checkout@v4`.
 - **Export header** — Fixed misplaced `@author`/`@copyright` block that was injected inside a `#define` preprocessor directive in `openswmm_engine_export.h`.
 
-## [5.2.0] — Legacy
+## Legacy EPA SWMM 5 engine history
 
-Last EPA-maintained release. See [docs/SWMM_5.2.0.md](docs/SWMM_5.2.0.md) for details on HEC-22 inlet analysis, new storage shapes, variable speed pumps, and control rule enhancements.
+The sections below cover the EPA-maintained `src/legacy` engine (`swmm5.c` /
+`runoff.c` / `dynwave.c` / etc.), reconstructed from EPA's official update
+notes (`epaswmm5_updates.txt`). Only **Engine Updates** are listed — the
+original notes also describe Windows-GUI-only changes (EPA's separate
+Delphi `epaswmm5.exe`), which are out of scope for this engine repository.
+GUI-facing engine capabilities added here (e.g. Streets/Inlets, LID
+practices) were later re-implemented for the OpenSWMM GUI/MVC layer in
+`openswmm.gui`.
+
+Builds `v5.0.22` through `v5.2.4` have matching `git` tags in this
+repository. Builds `5.0.001`–`5.0.021` (SWMM 5's original 2004–2010
+release run) predate this repo's tag history — no `v*` tag exists for
+them here — and are listed below without version brackets for that
+reason, oldest first.
+
+## [5.2.4] — 2023-07-15
+
+### Fixed
+
+- Mismatch between reported pollutant Surface Runoff mass and conveyance
+  system Wet Weather Inflow mass in a run's Status Report.
+- Invalid-input-data test for an LID unit with an underdrain.
+- Water-flux-rate calculations between layers in Bio-Retention, Permeable
+  Pavement, and Infiltration Trench LID units.
+- Hydraulic head seen by a storage-layer underdrain in a Permeable Pavement
+  LID with a soil layer above it.
+- Retrieval of the backing parameters for a Street cross-section.
+- Generation of transect points for a Street cross-section with a
+  depressed gutter, and the gutter-slope calculation for depressed-gutter
+  Street links.
+- Effective hydraulic head seen within a curb inlet with an inclined
+  throat opening.
+
+### Changed
+
+- Conduit evaporation/seepage loss per time step is now limited to the
+  conduit's current volume (was its flow rate) under dynamic wave routing,
+  and is split evenly between both end nodes (was upstream node only).
+- Default Inertial Damping and Variable Time Step option values now match
+  the GUI's defaults.
+
+## [5.2.3] — 2023-02-12
+
+### Fixed
+
+- Double counting of initial moisture volume in the drainage-mat layer of
+  a green roof LID unit.
+
+## [5.2.2] — 2022-12-01
+
+### Added
+
+- Dimension check for the Modified Basket Handle and Round-Rectangular
+  cross sections (rounded-portion height cannot exceed total height).
+- Additional performance statistics in the Street Flow Summary table.
+
+### Changed
+
+- Default number of dynamic-wave routing threads changed to 1, matching
+  the User's Manual and the GUI.
+
+### Fixed
+
+- Long run times when the simulation duration exceeded the end of an
+  externally applied time series.
+- A bug (introduced in 5.2.0) causing the math-expression evaluator to
+  compute `a*b^c` as `(a*b)^c` instead of `a*(b^c)`.
+- Storage-unit evaporation/exfiltration loss reported as a percentage of
+  total storage volume.
+- Warning messages about raising a node's max depth and adjusting a
+  conduit's elevation drop (removed in 5.2.1) restored.
+
+## [5.2.1] — 2022-08-01
+
+### Changed
+
+- Use of the Normal Flow Limited feature for dynamic wave routing is now
+  optional.
+- For kinematic-wave storage routing, the reported depth after
+  convergence is based on the last volume value rather than the next
+  trial depth.
+- Reduced excessive Status Report warnings: no message when a node's max
+  depth is raised to the crown of the highest connecting conduit, or when
+  a conduit's elevation drop/slope is adjusted to a minimum allowed value.
+
+### Fixed
+
+- A refactoring bug causing excessive execution times for projects with
+  control rules.
+- Egg-shaped cross-section geometry tables at the two lowest relative
+  depth levels.
+- Dry nodes no longer have their pollutant concentration forced to 0 when
+  receiving non-zero pollutant inflow (a 5.2.0 regression); a non-storage
+  node with no inflow now keeps its water-quality concentration unchanged
+  instead of being zeroed.
+- `F_OFF` definition in `output.c` for non-MS C/C++ compilers.
+
+## [5.2.0] — 2021-11-01
+
+Last EPA-maintained release before this project's refactor.
+
+### Added
+
+- **Street runoff capture by inlet drains** — new Street cross-section
+  type (`[STREETS]`), Inlet object (`[INLETS]`), and conduit `[INLET_USAGE]`
+  placement; HEC-22 (or custom capture-curve) inlet capture analysis
+  interfaced with flow routing; new Street Summary table (peak flow depth
+  and spread per Street conduit/Inlet).
+- Type 5 variable-speed pump obeying the pump affinity laws (head/flow vs.
+  speed).
+- Pre-defined analytical Storage Curve shapes: cylinders, paraboloids,
+  cones, pyramids.
+- New control-rule condition-clause quantities, including past n-hour
+  rainfall; condition clauses can now include named variables and math
+  expressions.
+- Listing of nodes with the highest flow-routing non-convergence frequency
+  in the Status Report.
+- Support for the latest NOAA Climate Data Online GHCN service (US or SI
+  units).
+- Additional validation check on the user-supplied Green-Ampt Initial
+  Deficit value.
+- New Rain Barrel LID parameter: covered or not.
+- Command-line executable now supports binary output files larger than
+  2 GB; number of open files increased to 8192.
+- A number of new functions added to the SWMM 5 API.
+
+### Changed
+
+- Permeable Pavement LID effective permeability now accounts for the
+  Impervious Surface Fraction parameter.
+- Permeable Pavement LID depth values in the detailed report are now
+  expressed in inches/mm (was feet).
+- Math-expression parser now allows exponents to be expressions, not just
+  constants.
+- Time-step-average reporting option's average-flow computation changed.
+- Shell sort replaces insertion sort for sorting event periods.
+
+### Fixed
+
+- Conversion of runon flow into an equivalent ponded depth for Curve
+  Number infiltration.
+- Total reporting time value used in several summary-table statistics.
+
+## [5.1.15] — 2020-05-01
+
+### Added
+
+- A mix of infiltration methods can now be used within a single project.
+- Status Report grouped frequency table of variable routing time steps
+  used during a simulation.
+- Fatal error now issued if a storage node's area curve produces a
+  negative volume when extrapolated to the node's full depth.
+
+### Fixed
+
+- Average summary statistics for a reporting start date later than the
+  simulation start date.
+- Pollutant mass-balance error when very shallow storage units lost all
+  inflow to flooding.
+
+## [5.1.14] — 2020-03-01
+
+### Fixed
+
+- A refactoring bug producing incorrect rainfall when the same time
+  series was used by an RDII-Unit-Hydrograph rain gage and another
+  subcatchment gage.
+- Skipping the first rain gage in a project when checking for duplicate
+  station IDs with different data files.
+- A crash running projects with LID units but no subcatchments.
+- LID underdrain pollutant loads incorrectly added to mass-balance totals.
+- The program hanging when an LID unit sent outflow back onto the
+  pervious area of its own subcatchment.
+- Failure to re-initialize layer volumes for each LID unit evaluated.
+- Street sweeping being ignored when the sweeping period began with a
+  higher day-of-year than its end.
+- Incorrect adjustments for conduit evaporation/seepage losses under
+  dynamic wave routing.
+- Soil-moisture-deficit recovery being ignored for Green-Ampt
+  exfiltration from storage units.
+- Node/link ID names mistaken for option keywords in the `[REPORT]`
+  section.
+- A possible crash when reporting average (vs. point) values within each
+  reporting time interval.
+
+## [5.1.13] — 2018-05-10
+
+### Added
+
+- Monthly time patterns for a subcatchment's depression-storage depth,
+  pervious Manning's n, and hydraulic conductivity.
+- LID controls can now treat a designated portion of a subcatchment's
+  pervious-area runoff (previously impervious-only).
+- Permeable pavement LIDs subject to clogging can have permeability partly
+  restored at periodic intervals.
+- LID underdrain flow-control options: auto-open/auto-close depth
+  thresholds and a head-based control curve for nominal drain flow.
+- Pollutant removal percentages assignable to LID underdrain processes.
+- Subcatchment Runoff Summary Report now includes pre-LID pervious and
+  impervious total runoff volumes.
+- Choice of dynamic-wave surcharge method: traditional EXTRAN Surcharge
+  Algorithm, or a new SLOT (Preissmann Slot) option for closed conduits
+  flowing >98.5% full.
+- Storage-unit node can model a closed/pressurized vessel via a Surcharge
+  Depth value.
+- Weir discharge coefficient can vary with head via a Weir Curve.
+- Periodic time step option for control-rule evaluation.
+- Option to report node/link time-series results as reporting-step
+  averages instead of interpolated point values.
+
+### Changed
+
+- A regulator link's upstream offset below its downstream node's invert
+  is now auto-raised only under dynamic wave routing (with a warning);
+  other routing methods only warn.
+
+### Fixed
+
+- Unused rain gages no longer examined when adjusting the wet-runoff time
+  step.
+- Permeable-pavement LID surface inflow rate capped at the pavement's
+  permeability.
+- Minimum Nodal Surface Area dynamic-wave option now applied only when a
+  node's connecting-link surface area falls below it (was always-available
+  surface area).
+- Full closed rectangular cross-section top width now set to 0.
+- Mitered Corrugated Metal Arch culvert "C" parameter value corrected.
+- Flow-continuity-error reporting for systems with backflow through
+  outfall nodes.
+
+## [5.1.12] — 2017-03-14
+
+### Changed
+
+- `direct.h` now only `#include`d when compiled for Windows.
+- Redacted the 5.1.011 update that internally aligned the wet time step
+  with the reporting time step — it caused problems for certain time-step
+  combinations.
+- Subcatchment's bottom elevation (not its parent aquifer's) now used
+  when saving a water-table value to the binary results file.
+- Conduit seepage-rate conversion (per-area → per-length) now uses top
+  width instead of wetted perimeter (only vertical seepage is assumed).
+- Crest-length reductions for end contractions no longer used for
+  trapezoidal weirs.
+- `NO`/`YES` no longer accepted as `NORMAL_FLOW_LIMITED` attributes (only
+  `SLOPE`/`FROUDE`/`BOTH`).
+- User-supplied minimum-slope option now initialized to 0.0 (none).
+- Routing Events and Skip Steady Flow options now work correctly
+  together; steady-state periods with no flow routing no longer skew
+  routing-time-step statistics.
+- MS exception-handling statements now only enabled for the Microsoft C
+  compiler.
+
+### Fixed
+
+- Failure to limit surface infiltration into a saturated rain-garden LID
+  unit.
+- Maximum-limit calculation on LID drain flows, for smoother results at
+  low depths above the drain offset.
+- A variable used for detailed LID reporting is now properly initialized.
+- Occasional duplicate lines written to the detailed LID results file.
+- Coefficient of the evaporation/seepage term in the dynamic-wave flow
+  equation (corrected 1.5 → 2.5).
+- Engels flow equation for side-flow weirs (incorrect since SWMM 3/4).
+- Slope Correction Factor for culverts with mitered inlets.
+- An entry in the gravel-roadway weir-coefficient table.
+- Number of barrels now accounted for when compiling full-conduit-flow
+  frequency statistics.
+- Water level in storage nodes with no outflow links under kinematic
+  wave/steady flow routing.
+- Depth-at-max-width formula for the Modified Basket Handle cross
+  section.
+
+## [5.1.11] — 2016-08-22
+
+### Added
+
+- Detailed flow routing can be restricted to pre-defined event periods
+  (`[EVENTS]` section: start/end date and time).
+- New API functions `swmm_getError()` and `swmm_getWarnings()`.
+- Recognizes the new NCDC Climate Data Online precipitation file format.
+- Check that subcatchment imperviousness does not exceed 100%.
+- Rule premises can include `SIMULATION DAYOFYEAR`.
+
+### Changed
+
+- Error codes returned by the API functions (`swmm_open`, `swmm_start`,
+  `swmm_step`, etc.) corrected.
+- Runoff time steps adjusted to stay aligned with the Report time step.
+- LID native-soil infiltration now satisfied first when it occurs
+  alongside underdrain flow.
+- LID underdrain offset no longer limited to the top of the storage layer
+  (allows upturned drains).
+- Detailed LID report file now lists results by date/time and elapsed
+  hours, and reports water level (not moisture content) for permeable
+  pavement.
+- A regulator link opening below its downstream node invert is now
+  auto-raised to invert level (with a warning, was warning-only).
+- Node surcharging now only reported for dynamic wave routing; storage
+  nodes are never classified as surcharged.
+- Status Report no longer lists modulated-control actions (continuous,
+  produced an enormous number of entries).
+
+### Fixed
+
+- Monthly conductivity adjustments now also applied to the internal
+  Green-Ampt "Lu" parameter.
+- Time-step correction for outfall outflow returned to a subcatchment.
+- A weir with an open rectangular shape and non-zero slope no longer
+  raises a spurious input error (slope is ignored).
+- Illegal array-index bug checking the pump-curve type for an Ideal Pump
+  under dynamic wave routing.
+- Redundant unit conversion of max. reported depth in the Node Depth
+  Summary table.
+- Storage unit surface-area-curve metric→internal conversion for bottom
+  exfiltration.
+- A bug resetting a link's `TIMEOPEN` control-rule variable when its
+  setting changed between partly-open states.
+- Roadway Weir road-width metric-unit conversion.
+- Saved link settings read from a hot-start file, for models containing
+  pollutants.
+- A refactoring bug affecting water-quality mass-balance results for
+  Steady Flow routing.
+- Date/time fractional-part decoding could round to 24:00:00.
+
+## [5.1.10] — 2015-08-05
+
+### Added
+
+- Modified Green-Ampt infiltration option (no upper-zone moisture-deficit
+  redistribution during low-rainfall events; more infiltration for storms
+  beginning with low intensity, e.g. SCS design storms).
+- ROADWAY weir type (FHWA HDS-5 overtopping method), typically used in
+  parallel with a culvert conduit.
+- Rule premises can test whether a link has been open/closed for a
+  specific duration.
+- Unsaturated hydraulic conductivity ("K") usable in custom groundwater
+  flow equations.
+- Daily potential evapotranspiration (PET) added as a system output
+  variable.
+
+### Changed
+
+- Hargreaves evaporation formula now uses a 7-day running average of
+  daily temperatures (was single-day values).
+- `qualrout.c` refactored to be more compact.
+- Storage seepage/evaporation losses now based on end-, not start-,
+  of-prior-time-step storage volume.
+
+### Fixed
+
+- A 5.1.008 regression that excluded LID infiltration from the
+  groundwater routine.
+- Failure to properly initialize the "initially wet" LID flag.
+- Duplicate printing of the first line of an LID detailed report file.
+- `makefile` for the GNU C/C++ compiler now correctly links the OpenMP
+  libraries.
+
+## [5.1.9] — 2015-04-30
+
+### Added
+
+- New warning for a control-rule premise comparing two different
+  variable types.
+
+### Fixed
+
+- A refactoring bug preventing simulations longer than 68 years.
+- Input-parsing error preventing recognition of a two-variable comparison
+  in a control-rule premise.
+- Runon to a subcatchment fully occupied by LIDs missing from its Summary
+  Report (5.1.008 update 12 regression).
+- LID units returning outflow to a subcatchment's pervious area even when
+  LIDs occupied the entire subcatchment.
+- Units label for Total Inflow Volume in the Node Inflow Summary table.
+
+### Changed
+
+- Dry conduit/storage-node definition for quality routing changed to
+  ≤1 mm depth (avoids concentrations blowing up from evaporation losses).
+
+## [5.1.8] — 2015-04-02
+
+### Added
+
+- Monthly adjustment patterns for hydraulic conductivity (rainfall
+  infiltration and storage/conduit exfiltration).
+- LID drains can send outflow to a different node/subcatchment than their
+  parent subcatchment.
+- Outfall nodes can send outflow onto a subcatchment (irrigation / complex
+  LID treatment).
+- New Rooftop Disconnection LID practice, with an optional downspout
+  flow-capacity limit.
+- Optional soil layer for Permeable Pavement LIDs (sand filter/bedding).
+- New groundwater-equation variables: porosity, unsaturated hydraulic
+  conductivity, infiltration rate, percolation rate; new Groundwater
+  Summary table.
+- Minimum Variable Time Step option for dynamic wave routing (down to
+  0.001 s, was fixed at 0.5 s).
+- Dynamic-wave routing parallelized across multiple processors (new
+  `THREADS` option, default 1).
+- Node Depth Summary column for max depth at the Reporting Time Step.
+- Control-rule premises can compare a node/link variable's value at two
+  different locations (e.g. `NODE 123 HEAD > NODE 456 HEAD`); node volume
+  added as a condition variable.
+
+### Changed
+
+- LID runon from another source is now distributed across the
+  subcatchment's non-LID area only (unless a single LID occupies the full
+  area).
+- Non-zero-runoff reporting threshold changed from 0.001 cfs to
+  0.001 in/hr.
+- Overall flow-routing mass-balance calculation now accounts for negative
+  flow streams (e.g. total external inflow).
+- Report labels renamed: "Surface Runoff" → "Total Runoff" (Runoff
+  Continuity), "Internal Outflow" → "Flooding Losses" (Flow Routing
+  Continuity).
+- Pollutant washoff routines moved to a new module (`surfqual.c`),
+  revised to account for LID runoff reduction.
+- Steady Flow routing's initial flows are now ignored (removes their
+  mass-balance contribution).
+- Lateral inflows to conveyance nodes now evaluated at the start (was end)
+  of the routing time step.
+- Final runoff/routing time steps adjusted so total simulation duration
+  is not exceeded.
+- Storage node HRT added to Hot Start file state.
+
+### Fixed
+
+- Evaporation rates read from a time series only updated on new days,
+  occasionally stopping a run prematurely.
+- Hot Start runoff value assigned to the wrong internal property
+  (`newRunoff` vs. `oldRunoff`).
+- Indexing bug reading Hot Start files with snowmelt parameters.
+- Non-conduit link setting from a Hot Start file not used to initialize
+  the link.
+- Snowmelt adjustment for snow-covered area derived from an areal
+  depletion curve.
+- Snowmelt double-counted in total subcatchment precipitation.
+- Green Roof LID drainage-mat flow calculation applied void ratio to
+  depth instead of area.
+- LID wet/dry runoff time-step choice ignored LID unit state, causing
+  excessive LID continuity errors.
+- Refactoring bug leaving LID detailed-report time in minutes instead of
+  hours; results now written at each runoff step where LID state changes.
+- Groundwater evaporation loss not initialized to 0 for subcatchments
+  with no pervious area.
+- Excessive continuity errors for systems with high conduit seepage
+  rates.
+- Pollutant loss through conduit/storage-node seepage not included in
+  mass balance.
+- Conduit/storage-node concentrations not increased to account for
+  evaporation volume loss.
+- Capacity-limited-links check exiting prematurely on a non-conduit link.
+- Bug identifying the percent of time a conduit has either end full.
+- A refactoring bug that prevented surcharged weirs (5.1.007) from
+  passing any flow.
+- Bug evaluating recursive nodal water-quality treatment function calls.
+
+## [5.1.7] — 2014-09-15
+
+### Added
+
+- Monthly adjustments for temperature, evaporation rate, and rainfall.
+- Support for reading the new GHCN-Daily climate data files (NCDC Climate
+  Data Online).
+- Custom equation support extended to deep-groundwater-aquifer seepage
+  flow (previously lateral flow only); `[GW_FLOW]` renamed to `[GWF]` with
+  a format change to accommodate both.
+- New Weir parameter: whether the weir can surcharge via an orifice
+  equation.
+- Storage-unit seepage can now use Green-Ampt infiltration (head-dependent
+  seepage rate); constant-rate option remains via a zero initial moisture
+  deficit.
+
+### Changed
+
+- Modified Horton method's dry-period infiltration-capacity-recovery
+  formula revised.
+- Green-Ampt infiltration functions refactored for clarity.
+- Most LID simulation routines modified for more accurate results under
+  flooded conditions; detailed LID results now always correspond to a
+  full reporting time step.
+
+### Fixed
+
+- Green-Ampt initial cumulative infiltration into the upper soil zone was
+  incorrectly set to the maximum value instead of zero.
+- Infiltration out of the bottom of a Bio-Retention Cell or Permeable
+  Pavement LID with a zero-depth storage layer.
+- Groundwater flow-equation variable name for receiving channel bottom
+  height corrected to match the GUI (`Hcb`).
+- Crash when a climate file supplied evaporation rates with no
+  subcatchments in the project.
+- Flow/pollutant routing mass-balance accounting for negative external
+  inflows.
+- Area-available-for-seepage calculation for a storage node with a
+  tabular storage curve.
+- Depth-from-volume function for a storage curve where depth falls within
+  a constant-area (vertical-wall) section.
+
+## [5.1.6] — 2014-05-19
+
+### Fixed
+
+- Off-by-one error updating the next scheduled write time for detailed
+  LID results.
+- Soil-water-available-for-evaporation in LID soil layers wasn't limited
+  by the wilting point.
+- Misplaced parenthesis in the permeable-pavement infiltration-rate
+  equation.
+- Units-conversion error computing a pollutant's contribution from direct
+  precipitation to subcatchment water quality.
+
+### Changed
+
+- Increased decimal places for hourly evaporation in the detailed LID
+  report.
+
+## [5.1.5] — 2014-04-23
+
+### Fixed
+
+- A problem reading hydraulic results from a hot-start file.
+
+## [5.1.4] — 2014-04-14
+
+### Added
+
+- Support for the Ignore RDII analysis option.
+
+## [5.1.3] — 2014-04-08
+
+### Added
+
+- New Upper Zone Evap. Pattern property on the Aquifer object (monthly
+  adjustment of upper-zone evaporation fraction).
+
+### Fixed
+
+- Bug writing/reading RDII flows to the binary RDII file.
+
+## [5.1.2] — 2014-03-31
+
+### Fixed
+
+- Bug preventing hotstart files with the latest format from being read.
+
+### Changed
+
+- Only non-ponded surface area is now saved for use in the dynamic-wave
+  surcharge algorithm.
+
+## [5.1.1] — 2014-03-24
+
+### Added
+
+- Support for the new NOAA-NCDC online precipitation file format.
+- Modified Horton infiltration method (uses cumulative infiltration in
+  excess of the minimum rate as its state variable).
+- RDII interface files now saved in a binary format (ASCII still
+  supported for externally-created files).
+- Green Roof and Rain Garden LID categories (previously configured only
+  via Bio-Retention Cell).
+- Custom groundwater outflow equation per subcatchment.
+- Evaporation of water from open channels.
+- New conduit Seepage Rate property (uniform seepage along bottom/sloped
+  sides).
+- New Dynamic Wave options: maximum iterations and head tolerance per
+  time step, plus reporting of the percentage of non-convergent time
+  steps.
+- User-settable flow tolerances for steady-state-skip determination.
+- Control rules can use a conduit's OPEN/CLOSED status in premises and
+  actions.
+- New Node Inflows Summary column: mass-balance error in volume units.
+- New Link Pollutant Load summary table.
+
+### Changed
+
+- Storage-unit infiltration renamed to seepage (single seepage-rate
+  parameter; legacy Green-Ampt parameter sets still recognized).
+- Meaning of the link "Capacity" view variable: fraction of full
+  cross-section area filled (conduits) vs. control setting (other links).
+- Froude Number link view variable replaced by flow volume; subcatchment
+  "Losses" replaced by separate Evaporation/Infiltration variables; upper
+  groundwater-zone Soil Moisture added.
+- Rain Barrel Drain Delay of 0 now allows continuous draining while
+  filling.
+- Dropped the requirement that an impervious surface be dry before street
+  sweeping.
+- Remaining pollutant mass after a surface goes dry is now treated as
+  unavailable for future washoff ("Remaining Buildup" in the mass-balance
+  report).
+- Wet-weather washoff inflow-load interpolation across a routing time
+  step modified for better runoff/quality-routing agreement.
+- RDII unit-hydrograph time-step selection modified for K < 1.0 (ratio of
+  rising- to falling-limb duration).
+- Upper groundwater zone reaching saturation now sets the lower saturated
+  zone depth to the full aquifer depth.
+- Conduits with small negative slopes are auto-corrected to the positive
+  minimum slope (enables Steady Flow / Kinematic Wave routing).
+- Avg. Froude Number / Avg. Flow Change columns replaced with
+  normal-flow-limited and inlet-controlled time fractions in the Flow
+  Classification Summary.
+- Weirs no longer operate as an orifice when surcharged; excess flow
+  floods the upstream node instead.
+- Pump flow at a reporting time falling mid-transition now uses the
+  nearest (start or end) value rather than interpolating.
+- Binary results file no longer stores zero-valued pollutant results when
+  Water Quality analysis is disabled.
+- Hot Start files now contain the complete watershed + conveyance-system
+  state.
+
+### Fixed
+
+- Fully-flowing open-channel flow can no longer exceed the full normal
+  flow; Normal Flow Limit (slope + Froude) criteria unified.
+- A check preventing outflow from a dry node.
+- Control-rule elapsed-time/time-of-day equality tests made more
+  accurate; such conditions now also accept decimal hours.
+- Error 319 renumbered to 320 (new Error 319: unrecognized rainfall file
+  format); external time-series format errors now use Error 363 (was
+  173).
+
+## [5.0.22] — 2011-04-21
+
+### Added
+
+- New validation errors: LID surface-layer vegetation volume fraction
+  less than 1, total LID area exceeding subcatchment area, or total LID
+  capture area exceeding subcatchment impervious area.
+- New error 318 for a user rainfall file with dates out of sequence.
+- New error 110 if a subcatchment's ground elevation is below its
+  groundwater aquifer's initial water-table elevation.
+- Checks added to the groundwater mass-balance solution (lower-zone depth
+  vs. total depth; upper-zone moisture vs. porosity).
+- Pump Summary Report expanded: number of startups, minimum flow, time
+  off at both ends of the pump curve.
+
+### Changed
+
+- LID Storage-layer Conductivity now means the native soil's saturated
+  hydraulic conductivity below the layer (was the layer's own
+  conductivity).
+- Storage layers are now optional (zero height) for Bio-Retention Cells
+  and Permeable Pavement LIDs.
+- A zero-top-width LID overland-flow surface now spills excess water
+  above the surface storage depth instantaneously.
+- Water initially stored in LID units is now reported in the Runoff
+  Continuity table.
+
+### Fixed
+
+- Rain Barrel LID Drain Delay time conversion (hours → seconds).
+- Vegetative Swale infiltration calculation, so a fully pervious swale
+  with vertical sides matches an equivalent pervious subcatchment.
+- Missing values for accumulation periods within an NWS rain file.
+- Evaporation during wet periods incorrectly including rainfall/runon as
+  available moisture (should be current ponded depth only).
+- Curve Number infiltration now uses only direct precipitation (was
+  including runon/internally-routed flow).
+- Tailwater term in the groundwater flow equation now zero when no
+  tailwater depth exists.
+- Divide-by-zero for an empty Filled Circular pipe, and for an empty
+  trapezoidal channel with zero bottom width.
+- Critical/normal depth adjustment for a conduit no longer allowed to set
+  depth to exactly zero.
+- Orifice/weir flow depth not reported as 0 when its setting was changed
+  to 0 (reporting only, no effect on routing).
+- Node Surcharge Summary not reporting a ponded node as surcharged
+  (reporting only, no effect on routing).
+
+---
+
+The releases below (SWMM 5.0.001–5.0.021, 2004–2010) predate this
+repository's tag history; there is no corresponding `v*` git tag, so they
+are headed by build number rather than `[x.y.z]`.
+
+## Build 5.0.021 — 2010-09-30
+
+### Changed
+
+- Rainfall + runon used to compute infiltration no longer pre-adjusted by
+  subtracting evaporation loss.
+- Green-Ampt infiltration rate no longer allowed below the smaller of
+  saturated hydraulic conductivity and available surface moisture
+  (moisture below a small tolerance is now treated as 0).
+- Pollutant Loading summary tables now list all pollutants in a single
+  table (was 5 pollutants per table).
+
+### Fixed
+
+- A code-refactoring error in 5.0.019 that prevented recovery of
+  infiltration capacity during dry periods.
+- Pervious-area adjustment (5.0.019) for evaporation/infiltration to a
+  subcatchment's groundwater zone.
+- Accounting of evaporation loss from just a subcatchment's pervious
+  area.
+- Evaporation/infiltration losses from Storage nodes under Kinematic Wave
+  and Steady Flow routing.
+
+## Build 5.0.020 — 2010-08-23
+
+### Fixed
+
+- A refactoring bug preventing SWMM from reading rainfall data from
+  external rainfall files.
+
+## Build 5.0.019 — 2010-07-30
+
+### Added
+
+- Explicit modeling of five Low Impact Development (LID) practices at the
+  subcatchment level.
+- Pollutant buildup over a landuse can now be specified by a time series
+  instead of just a buildup function.
+- Option to evaporate standing water only during periods with no
+  precipitation.
+- Controls based on flow rates now account for flow direction.
+
+### Changed
+
+- Storage-node evaporation/infiltration losses now computed directly
+  within the flow-routing routines for better mass conservation.
+- Normal-flow check now uses only the upstream Froude number (was both
+  up- and downstream).
+- Maximum trials for dynamic-wave flow/head equations increased 4 → 8.
+- Ponding calculation revised again for continuity: a surcharged/ponded
+  node's depth change per time step is now bounded near full depth,
+  governed by ponded area (dynamic wave); for Kinematic Wave/Steady Flow,
+  ponded area is now just a pond/no-pond indicator and flooded depth is
+  set to the node's maximum depth. Node Flooding Summary now reports
+  ponded depth (dynamic wave) or ponded volume (other routing), not
+  acre-inches.
+- Groundwater mass-balance equations reverted to their 5.0.013 form.
+- Villemonte correction for downstream submergence extended to partly
+  filled orifices (previously weirs only).
+- A non-conduit link connected to a storage node no longer contributes to
+  the node's surface area.
+- Auto max-depth adjustment to match a connected link's crown no longer
+  applies to bottom orifices.
+- Internal routing of runoff between impervious/pervious sub-areas is
+  ignored when a subcatchment has only one type of sub-area.
+- The Ignore Snowmelt switch is now automatically set true when no snow
+  pack objects are defined.
+
+### Fixed
+
+- A missing term in the submerged-inlet-control check for Culvert
+  conduits.
+- Min/max daily temperatures from a climate file are now swapped if
+  min > max; Hargreaves-derived evaporation rates can no longer be
+  negative; several bugs reading Canadian DLY02/04 climate files.
+- Zero rainfall values in a rain file/time series are now skipped
+  (treated as a dry period) instead of desynchronizing the record.
+- A bug desynchronizing evaporation time-series data from the simulation
+  clock.
+- Water-quality mass balance now correctly accounts for initial mass
+  introduced via a hot-start file.
+- For runoff-only models, the wet runoff time step is now capped at the
+  reporting time step when the latter is smaller.
+
+### Removed
+
+- Fatal error is now raised for a negative conduit entrance/exit/average
+  loss coefficient (previously silently accepted).
+
+## Build 5.0.018 — 2009-11-18
+
+### Added
+
+- Storage Volume Summary table now reports total infiltration +
+  evaporation loss as a percentage of total inflow, per storage unit.
+- Warning message when a Rain Gage's recording interval is less than the
+  smallest interval in its rainfall time series.
+- Hot Start files now include each subcatchment's final groundwater-zone
+  state.
+
+### Changed
+
+- Link Summary table now lists the actual conduit slope rather than the
+  slope adjusted by conduit lengthening.
+- Status Report now displays only the summary tables for which results
+  were obtained.
+- Engine version number corrected to 50018 (had been overlooked since
+  5.0.010).
+
+### Fixed
+
+- Double counting of final stored volume when finding nodes with the
+  highest mass-balance errors.
+
+## Build 5.0.017 — 2009-10-07
+
+### Added
+
+- A default dry-weather-flow concentration property on the Pollutant
+  object (overridable per node).
+
+### Changed
+
+- Ponding routine for dynamic wave routing further modified to handle a
+  node transitioning between surcharged and ponded conditions within one
+  time step (fixing large 5.0.016 ponding continuity errors).
+- Error 112 (conduit elevation drop exceeds length) downgraded from fatal
+  error to warning; slope computed the pre-5.0.014 way (elevation
+  drop/length) in this case.
+- Inflow interface files no longer need to contain every pollutant
+  defined in the current project.
+- RDII unit-hydrograph time step now uses the smaller of the wet runoff
+  time step and the shortest hydrograph's time-to-peak (was the rain
+  gage's recording interval), permitting hydrographs that peak faster
+  than the gage interval.
+- Curve Number infiltration now stops once the maximum capacity is fully
+  used.
+- CSTR mixing equation for water-quality routing replaced with a more
+  robust finite-difference approximation (avoids numerical problems at
+  high decay rates); first-order decay is now applied under Steady Flow
+  routing via a dedicated routine.
+
+### Fixed
+
+- Water-quality mass-balance errors in systems with node treatment,
+  by correctly accounting for both inflow mass and mass in storage.
+
+### Removed
+
+- The small ponded-depth tolerance before runoff initiation was removed
+  for a smoother runoff response.
+
+## Build 5.0.016 — 2009-06-22
+
+### Added
+
+- Option to compute daily evaporation from climate-file daily
+  temperatures using Hargreaves' method.
+- Recognition of comma-delimited NCDC rainfall files (with/without
+  station name) and space-delimited NCDC files with empty condition-code
+  fields.
+- Error check for an RDII unit hydrograph whose time base is less than
+  its rain gage's recording interval.
+
+### Changed
+
+- Nodes that can pond are no longer always treated as non-surcharging
+  storage nodes — only once ponding actually occurs.
+- Extrapolated storage-curve surface area above the table's highest depth
+  is now only used if the curve slopes outward; otherwise the last
+  tabulated area is used.
+
+### Fixed
+
+- A small full/not-full storage-node tolerance that could keep a full
+  unit "full" despite small net outflow, removed.
+- Spurious negative-elevation-offset warnings for `*`-offset or
+  near-invert offset values.
+- A 5.0.015 regression producing incorrect RDII inflows when the gage
+  recording interval was less than the wet time step.
+
+## Build 5.0.015 — 2009-04-10
+
+### Added
+
+- Optional Green-Ampt infiltration parameters on Storage nodes (infiltration
+  basin support), now explicitly accounting for ponded-water-depth effect
+  on infiltration rate.
+- Separate Initial Abstraction parameters (max depth, initial depth,
+  recovery rate) for each of the three RDII unit hydrographs (short/
+  medium/long term) in a group.
+- Meander Modifier transect parameter (ratio of meandering main-channel
+  length to overbank length).
+- Recognition of space-delimited NWS TD 3240/3260 files with a station
+  name field.
+
+### Changed
+
+- Normal-flow limitation based on Froude number now requires the
+  criterion hold for both upstream and downstream depths (was either).
+- Computed top surface width for dynamic wave routing is no longer
+  floored at the width-at-4%-depth value; the actual width is used no
+  matter how small.
+
+### Fixed
+
+- A 5.0.014 regression that inadvertently removed the 2 GB binary
+  output-file size limit for GUI runs.
+- Backflow into an outfall node is now correctly counted in the node's
+  Total Inflow result.
+- Reporting error for overflow rate into ponded volume at a flooding
+  node under dynamic wave routing.
+
+### Removed
+
+- Rainfall time-series/rain-gage recording-interval mismatches are now a
+  fatal error instead of a silently auto-adjusted gage interval.
+
+## Build 5.0.014 — 2009-01-21
+
+Large feature release (culverts, custom cross-sections, minimum slope,
+baseline inflow patterns).
+
+### Added
+
+- Culvert Inlet Control flow computation under dynamic wave routing for
+  designated Culvert conduits.
+- Minimum Slope option — a computed conduit slope is never allowed below
+  this value.
+- Optional Baseline Time Pattern for external inflows at nodes (monthly/
+  weekly periodic adjustment).
+- Outlet rating curve can be based on either freeboard depth (as before)
+  or the upstream/downstream head difference.
+- "SIMULATION MONTH"/"SIMULATION DAY" added as control-rule time
+  conditions; conduit OPEN/CLOSED status usable in premises/actions.
+- Time Series data can now be imported from an external file.
+- Option to ignore any combination of Rainfall/Runoff, Snowmelt,
+  Groundwater, Flow Routing, and Water Quality process models.
+- A user-defined groundwater outflow equation per subcatchment.
+- Modified Baskethandle cross section extended to any circular-top radius
+  ≥ half the section width.
+
+### Changed
+
+- Rain gage recording interval auto-adjusted to the smallest interval in
+  its time-series data (with a warning); fatal error if gages sharing a
+  time series don't share the same Rainfall Format.
+- Curve Number infiltration regeneration rate now simply the reciprocal
+  of the user-supplied drying time (no longer needs saturated
+  conductivity); optional monthly adjustment pattern for the recovery
+  rate.
+- Under-relaxation of pump flows between DW-routing iterations dropped
+  (could violate the pump curve); upstream-weighted area now used in the
+  dQ/dH term for conduits; Froude numbers for the normal-flow check now
+  use hydraulic depth.
+- Ponded volume under dynamic wave routing now computed from computed
+  nodal depth (reverting to pre-5.0.010 behavior) for consistency with
+  storage-node treatment; orifice head now measured from opening midpoint
+  (not bottom), and orifices no longer contribute end-node surface area.
+- Orifice partial-open setting now interpreted as fraction of opening
+  height (was fraction of area); equivalent discharge coefficient
+  recomputed on every setting change.
+- Washoff of user-specified initial buildup with no buildup function now
+  works correctly; runoff/runon/rainfall concentration mixing revised for
+  more consistent results, especially with BMP removal.
+- Storage-unit quality routing switched to the analytical CSTR solution;
+  HRT update formula revised; Steady Flow quality routing now treats
+  conduit concentration as equal to the upstream node's.
+- Reverse (backflow) inflow at an Outfall is now treated as an external
+  inflow for water-quality purposes (models saltwater/contaminant
+  intrusion).
+- Snow removal now begins once the removal-depth threshold is reached,
+  correctly converted to internal feet.
+- "Total Flooding"/ponded-volume Node Depth Summary column relabeled "Max
+  Vol. Ponded"; MGD/CMS flow values now report to 3 decimal places.
+
+### Fixed
+
+- Green-Ampt infiltration rate at the point of surface saturation
+  mid-time-step.
+- A crash with the No Routing option combined with Save Outflows
+  Interface File.
+- Under Steady Flow/Kinematic Wave, a Dummy conduit connecting to a
+  higher-elevation node no longer requires an inlet offset.
+- Possible closing of tide gates on outfalls directly connected to
+  orifice/weir/outlet links.
+- A bug preventing RDII from being computed for hydrographs sharing a
+  rain gage with another hydrograph; a groundwater bug allowing
+  infiltration to continue once the water table fully saturated; a
+  metric-units conversion error for computed groundwater flow.
+- The flow contribution of the triangular ends of a trapezoidal weir.
+- A roundoff error under kinematic wave/steady flow that occasionally
+  mis-reported nodes as ponded.
+
+## Build 5.0.013 — 2008-03-11
+
+### Changed
+
+- PID controller definition and implementation revised.
+- Dynamic-wave routing: new method weights upstream conduit geometry more
+  as the Froude number approaches 1; Normal Flow Limit (slope + Froude)
+  now applies both criteria together; flow in a fully-flowing open
+  channel capped at full normal flow; a dry node can no longer have
+  outflow; ponding computation reverted to the 5.0.009 approach (depth
+  from volume); max-depth-change time-step criterion restored.
+
+### Fixed
+
+- Acceptable site-latitude value check.
+- A code-refactoring error in the dynamic-wave momentum equation's
+  inertial term.
+- A node's crown elevation now considers connecting non-conduit links.
+- Possible incorrect initial orifice setting.
+- Error checks added for invalid numbers in a hot-start file.
+
+## Build 5.0.012 — 2008-02-04
+
+### Added
+
+- PID-type modulated control rule.
+- User-assigned maximum conduit flow limit now applies to all routing
+  options (was Dynamic Wave only).
+- Possibility of ponding at a Type I pump's inlet (wet well) node.
+
+### Changed
+
+- Conduit/orifice/weir/outlet offsets can now be an absolute elevation or
+  a relative depth above the node invert (`LINK_OFFSETS` option).
+- "Flooding" now recorded whenever water level exceeds a node's top,
+  whether or not ponding occurs (previously only when there was no
+  ponding).
+- Green-Ampt upper-soil-zone drying-time calculation moved from time 0 to
+  the first rainfall period (removes a start-date-shift artifact).
+- Steady-state-flow detection criteria realigned with SWMM 4.
+- Minimum flow-area/hydraulic-radius floor (0.0001) for dynamic wave
+  routing removed (redundant with the depth floor); flow-direction test
+  for UPSTREAM/DOWNSTREAM CRITICAL conditions removed (could stall
+  solutions); max-depth-change time-step criterion dropped again.
+- Head-loss calculation from flap gates extended to orifices.
+- "Snow Only" pollutant-buildup option, previously unimplemented, now
+  works.
+
+### Fixed
+
+- SI unit-conversion bugs for pump on/off depth settings and pump-curve
+  slope values; Hazen-Williams head-loss formula for force mains.
+- A 5.0.010 regression preventing RDII computation for hydrographs
+  sharing a rain gage.
+- Pollutant loading from RDII now based on RDII quality (was rainfall
+  quality).
+- System outflow/flooding values saved to the binary results file now
+  match the values used for the flow-continuity-error calculation.
+- Command-line version's default `END_TIME` corrected from 24 days to 0.
+
+## Build 5.0.011 — 2007-07-16
+
+### Fixed
+
+- Weir/Outlet settings not being updated after a control-rule change.
+- Weir control setting not accounted for in the equivalent orifice
+  coefficient for surcharged flow, in V-notch weir flow, or in reported
+  weir flow depth.
+- A 5.0.010 change to ponded depth/volume computation under dynamic wave
+  routing.
+- Runon/rainfall/ponded-water quality-mixing equations, to prevent
+  numerical instability at very low volumes.
+- NCDC rainfall-file missing values ('M' flag) now counted in the
+  reported missing-record total.
+
+## Build 5.0.010 — 2007-06-19
+
+Major release: engine recompiled with all `float`s as `double`s (except
+binary-interface-file fields) under VC++ 2005.
+
+### Added
+
+- NO ROUTING analysis option (runoff-only runs).
+- Ideal Pump type (pumps at inlet inflow rate, no pump curve).
+- Custom Shape conduit cross section (via a new Shape Curve) and Circular
+  Force Main shape (Hazen-Williams or Darcy-Weisbach for pressurized
+  flow).
+- Pump startup/shutoff inlet-node depths as direct pump properties
+  (previously control-rule only).
+- Timed orifice gate open/close rate (SWMM 4 `ORATE` parity).
+- Initial-abstraction loss on RDII unit hydrographs.
+- Combined slope + Froude-number criterion for supercritical/normal flow.
+- Flow Instability Index per non-pump link, with the five highest listed
+  in the Status Report.
+- Node volumes now initialized from hot-start depth to reflect implied
+  initial ponding.
+
+### Changed
+
+- Orifice head now measured to the opening's midpoint (not bottom);
+  orifices no longer contribute end-node surface area; partial-open
+  setting reinterpreted as fraction of opening height with the discharge
+  coefficient recomputed on each change.
+- Ponded depth under dynamic wave routing always set equal to computed
+  ponded depth (was the smaller of ponded/dynamic depth).
+- Width-vs-depth tables for circular and irregular cross sections
+  expanded to 51 entries.
+- Treatment-function math-expression evaluation made more efficient.
+- Node Depth Summary's ponded-volume column relabeled "Max Vol. Ponded".
+
+### Fixed
+
+- Area corrections to dynamic-wave inlet/outlet loss terms (introduced in
+  5.0.008) removed — reverted a regression.
+- Kinematic-wave inflow-area normalization when flow is capped at maximum
+  normal flow.
+- Dynamic-wave variable-time-step node-fullness check (avoided
+  excessively small steps).
+- Divider-node check now examines both diversion-link end nodes.
+- Outlet-link conditions now recognized in control rules; error raised
+  for multiple rule clauses on one line.
+- Ignore Rainfall option now zeroes rain-gage rainfall (prevented a
+  spurious reported value).
+- New Error 108 when a subcatchment outlet ID collides with both a node
+  and a subcatchment name.
+- Groundwater bug allowing infiltration to continue once the water table
+  fully saturated, plus a metric-units conversion error on computed flow.
+- Flow contribution of a trapezoidal weir's triangular ends.
+- A roundoff error occasionally mis-reporting ponded nodes under
+  kinematic wave/steady flow.
+
+## Build 5.0.009 — 2006-09-19
+
+### Changed
+
+- Minimum runoff able to generate pollutant washoff changed from
+  0.001 in/hr to 0.001 cfs.
+- A new RDII event now begins once continuous dry weather exceeds the
+  longest unit hydrograph's base time (was a fixed 12 hours).
+
+### Fixed
+
+- User-prepared climate files no longer confused with the Canadian
+  format.
+- Dynamic-wave routing through long force mains connected to Type 3/4
+  pumps.
+
+## Build 5.0.008 — 2006-07-05
+
+### Added
+
+- Constant value + scaling factor for Direct External inflows.
+- Total pollutant washoff-load listing per subcatchment; new Node
+  Inflows/Flooding and Outfall flows/pollutant-loads summary tables.
+- Checks for non-negative conduit offsets and orifice/weir/outlet
+  heights.
+
+### Changed
+
+- Pipe invert elevations at outfalls now measured relative to the
+  outfall stage elevation (was the outfall's own invert).
+- Entrance/exit minor-loss terms for dynamic wave routing adjusted by the
+  mid-point-to-entrance/exit area ratio.
+- Equivalent length cap for orifices/weirs changed from a 200 ft minimum
+  to a 200 ft maximum.
+- Subcatchment pollutant washoff reprogrammed for more rigorous mass
+  balance when runoff is routed across subcatchments or with direct
+  rainfall deposition.
+- Revoked Engine Update #12 from 5.0.006.
+
+### Fixed
+
+- Horton infiltration drying-time → regeneration-curve-constant
+  conversion.
+- Flow-depth-from-head error in the dynamic-wave Froude-number
+  normal-flow check.
+- Rainfall-unit conversion when reading from an external file.
+- Display of washoff mass-balance results for Counts/Liter pollutants.
+- Reporting of total system maximum runoff rate in the Subcatchment
+  Runoff Summary table.
+
+## Build 5.0.007 — 2006-03-10
+
+### Added
+
+- Ignore Rainfall analysis option (external inflows/DWF only, no
+  rainfall-driven runoff).
+- Peak runoff flow added to the Subcatchment Summary table; non-conduit
+  links now included in the Link Flow Summary table.
+
+### Changed
+
+- Hydraulic-radius calculations for Rectangular-Closed,
+  Rectangular-Triangular, and Rectangular-Round shapes now account for
+  wetted-perimeter increase under full flow.
+- Full-Flow vs. Maximum-Flow distinction refined in several closed-conduit
+  code paths; irregular cross sections where max-normal-flow depth is
+  less than full depth now handled correctly.
+
+### Fixed
+
+- Final ponded-water volume from node flooding now included in the
+  reported flow-continuity error.
+
+## Build 5.0.006a — 2005-10-19
+
+### Fixed
+
+- Snowmelt-during-rainfall formula returned ft/sec instead of in/hr.
+- Routing-interface-file generation for systems with nodes but no links.
+
+## Build 5.0.006 — 2005-09-05
+
+### Added
+
+- Storage Unit maximum-volume/outflow-rate summary table.
+- Optional SWMM 4 `BC` parameter (minimum groundwater table elevation for
+  flow) on the groundwater flow equation.
+- Control-rule Action clause can set pump/orifice/weir/outlet control via
+  a curve (vs. node depth) or a time series ("Modulated Controls").
+- Geometry tables for standard-size elliptical pipes.
+
+### Changed
+
+- Storage curves (area vs. depth) now linearly extrapolated beyond the
+  table limit (SWMM 4 behavior), not held constant.
+- Evaporation no longer computed for a dry storage unit; storage-unit
+  water-quality concentrations now adjusted for evaporation loss each
+  step.
+- A climate file now positions to the simulation start (not file start)
+  unless the user specifies a starting date; reaching end-of-file during
+  a run is now a fatal error (was silently held at last value).
+- Pollutant treatment functions using storage-node concentration now use
+  inflow concentration (matching non-storage nodes); global first-order
+  decay no longer applied to a storage unit that has its own treatment
+  function.
+- Total moisture available for infiltration each runoff step now has
+  evaporation subtracted first.
+- Node/Conduit flow statistics in the Status Report now collected only
+  over the reporting period (not the full simulation period).
+
+### Fixed
+
+- Interior nodes mistaken for outfall nodes (depending on connecting-link
+  orientation) during water-quality analysis.
+- Water-quality routing through dummy conduits.
+- Standard-size elliptical-pipe code number mistaken for an actual
+  dimension.
+- Upper-soil-zone moisture depletion during dry periods under Green-Ampt
+  infiltration.
+- Initial/final groundwater storage volumes in the Groundwater Continuity
+  table (reporting only; did not affect computed flows or water-table
+  levels).
+- Climate files can now supply evaporation during runoff-free runs (was
+  ignored with no subcatchments present).
+
+## Build 5.0.005b — 2005-06-15
+
+### Fixed
+
+- End-node offsets for partly-filled circular cross sections weren't
+  increased to account for fill depth.
+- Weir flow wasn't necessarily zero when the high-head side's water level
+  was zero.
+
+### Changed
+
+- Bottom Orifice "crest height" now interpreted as a horizontal plane
+  above the upstream node's invert (supports storage-unit riser
+  outlets).
+
+## Build 5.0.005a — 2005-05-25
+
+### Fixed
+
+- An erroneous error message for a node with multiple outflow links
+  including an Outlet link.
+
+## Build 5.0.005 — 2005-05-20
+
+### Added
+
+- Maximum-allowable-flow property on the Conduit object (default 0 = no
+  limit).
+- New dynamic-wave routing option selecting the normal-flow-limit
+  criterion (SWMM 4 `KSUPER` parity); new option to skip routing during
+  steady-flow periods (reduces continuous-simulation run time).
+- New, more robust water-quality routing algorithm for dynamic wave
+  routing.
+
+### Changed
+
+- Conversion factor for external pollutant mass inflows must now convert
+  to mass-concentration-per-second (flow units no longer part of the
+  conversion).
+- Minimum elevation change for a flat conduit changed to 0.001 ft (SWMM 4
+  parity).
+- Irregular cross-section max depth now based on the highest station
+  elevation (was first/last station), with vertical walls added at the
+  ends if needed; nominal width now the top width at full depth (was max
+  width over all depths).
+- Head over a non-surcharged, submerged weir now based on height above
+  the weir crest (was head difference across the weir); side-contraction
+  weir-length-reduction equation fixed (SWMM 4 bug).
+- Depths at outfalls under Steady/Kinematic Wave routing now reported as
+  the connecting conduit's depth.
+
+### Fixed
+
+- Ponded-depth computation at flooded nodes under dynamic wave routing.
+- Wrong lookup function for Time-Series outfall water elevations.
+- Interpolation of values from a routing interface file.
+- Rainfall-file reader confusing the standard space-delimited format with
+  other formats; a reporting error for rainfall series with no ending
+  zero value.
+- A missing snowmelt-coefficient computation for pervious areas.
+- Max-to-design flow ratio per conduit, now accounting for barrel count.
+
+### Removed
+
+- The Compatibility Mode dynamic-wave option was removed in favor of a
+  single method designed for SWMM 4 compatibility with more stable
+  results.
+
+## Build 5.0.004 — 2004-11-24
+
+### Added
+
+- Pollutant concentration-unit codes added to the binary output file.
+
+### Changed
+
+- Curve Number infiltration's regeneration-rate-from-drying-time
+  calculation corrected to use a constant (not continuously declining)
+  infiltration capacity per rain event.
+- Surcharged/high-Froude-number conduits are now included when computing
+  a dynamic-wave variable time step (previously excluded).
+
+### Fixed
+
+- NCDC-formatted external rain-file identification/reading.
+- Reported-velocity sign for links with adverse slope.
+- Reading results from previously saved Runoff Interface files.
+- Dynamic-wave routine for SWMM3/SWMM4 compatibility modes (better match
+  to Extran results).
+- Zero-sloped-conduit check widened to elevation differences below
+  0.01 ft.
+- Ponded-depth computation at flooded nodes under dynamic wave routing.
+
+## Build 5.0.003 — 2004-11-10
+
+### Added
+
+- Error 405 for a binary results file that would exceed the 2.1 GB system
+  limit.
+- Support for Canadian DLY02/DLY04 temperature files.
+
+### Fixed
+
+- Full-depth width-table entries for closed rounded cross sections
+  (numerical stability under dynamic wave routing).
+- A units problem for RDII inflows under metric flow units.
+- Reading the `TEMPDIR` option when it contained spaces.
+- Rule-based control of weir crest height (control setting previously
+  adjusted flow instead of the crest-to-crown distance).
+
+## Build 5.0.002 — 2004-11-01
+
+### Changed
+
+- Modifications to the Picard method used for dynamic-wave flow routing.
+
+## Build 5.0.001 — 2004-10-29
+
+First official release of SWMM 5.
