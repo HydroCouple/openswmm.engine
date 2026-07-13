@@ -12,6 +12,7 @@
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
+#include "data/StorageGeometry.hpp"
 #include "data/LinkData.hpp"
 #include "data/SubcatchData.hpp"
 #include "data/GageData.hpp"
@@ -294,6 +295,8 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
 }
 
 static bool table_exists(sqlite3* db, const std::string& name);  // defined below
+static bool column_exists(sqlite3* db, const std::string& table,
+                          const std::string& column);            // defined below
 
 static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // --- base nodes (common columns + discriminator + geometry) ---
@@ -331,9 +334,21 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
 
     // --- storages child table → side-table (rows created above by set_node_type) ---
     {
+        // `shape` / p1..p3 are columns appended after the schema shipped. A .gpkg
+        // written by an older engine does not have them at all — SELECTing them would
+        // fail with "no such column", not return NULL — and the db is opened READONLY
+        // so we cannot ALTER it. Probe, then read the shape columns only if present;
+        // otherwise fall back to the pre-shape rule (curve_name set => TABULAR, else
+        // FUNCTIONAL), which is exactly how such a file behaved before.
+        const bool has_shape = column_exists(db, "storages", "shape");
         auto stmt = prepare(db,
-            "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
-            "exfil_suction, exfil_ksat, exfil_imd FROM storages WHERE simulation_id = ?");
+            has_shape
+                ? "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
+                  "exfil_suction, exfil_ksat, exfil_imd, shape, p1, p2, p3 "
+                  "FROM storages WHERE simulation_id = ?"
+                : "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
+                  "exfil_suction, exfil_ksat, exfil_imd "
+                  "FROM storages WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         auto& S = ctx.node_subtypes.storages;
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -349,6 +364,17 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
             S.exfil_suction[ur] = column_double(stmt.get(), 7);
             S.exfil_ksat[ur]    = column_double(stmt.get(), 8);
             S.exfil_imd[ur]     = column_double(stmt.get(), 9);
+
+            StorageShape sshape = S.curve_name[ur].empty() ? StorageShape::FUNCTIONAL
+                                                           : StorageShape::TABULAR;
+            if (has_shape) {
+                if (!column_is_null(stmt.get(), 10))
+                    storage_shape_from_keyword(column_text(stmt.get(), 10), sshape);
+                S.p1[ur] = column_double(stmt.get(), 11);
+                S.p2[ur] = column_double(stmt.get(), 12);
+                S.p3[ur] = column_double(stmt.get(), 13);
+            }
+            S.shape[ur] = sshape;
         }
     }
 
@@ -645,13 +671,25 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
 }
 
 static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    // Scale factors were added after the initial subcatchments schema. Probe for
+    // them so pre-existing .gpkg files (which lack the columns) still open; when
+    // absent the SoA keeps its 1.0 default, a true no-op.
+    const bool has_scale = column_exists(db, "subcatchments", "rain_scale_factor");
     auto stmt = prepare(db,
-        "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
-        "area, width, slope, curb_length, frac_imperv, "
-        "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
-        "subarea_routing, pct_routed, "
-        "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag "
-        "FROM subcatchments WHERE simulation_id = ? ORDER BY fid");
+        has_scale
+            ? "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
+              "area, width, slope, curb_length, frac_imperv, "
+              "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
+              "subarea_routing, pct_routed, "
+              "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag, "
+              "rain_scale_factor, snow_scale_factor "
+              "FROM subcatchments WHERE simulation_id = ? ORDER BY fid"
+            : "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
+              "area, width, slope, curb_length, frac_imperv, "
+              "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
+              "subarea_routing, pct_routed, "
+              "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag "
+              "FROM subcatchments WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -718,6 +756,13 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
             const auto u = static_cast<std::size_t>(idx);
             if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
             ctx.subcatches.tags[u] = column_text(stmt.get(), 23);
+        }
+
+        if (has_scale) {
+            if (!column_is_null(stmt.get(), 24))
+                ctx.subcatches.rain_scale_factor[idx] = column_double(stmt.get(), 24);
+            if (!column_is_null(stmt.get(), 25))
+                ctx.subcatches.snow_scale_factor[idx] = column_double(stmt.get(), 25);
         }
     }
 }

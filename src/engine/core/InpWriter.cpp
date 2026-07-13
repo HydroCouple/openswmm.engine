@@ -31,6 +31,7 @@
 #include "InpWriter.hpp"
 #include "PathResolver.hpp"
 #include "SimulationContext.hpp"
+#include "../data/StorageGeometry.hpp"
 #include "DateTime.hpp"
 #include "UnitConversion.hpp"
 #include "../input/PostParseResolver.hpp"
@@ -1165,8 +1166,18 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // Relational side-table (Phase 4).
     const int srow = ctx.node_subtypes.storage_row(j); const auto& S = ctx.node_subtypes.storages;
     const int scurve = (srow>=0)?S.curve[static_cast<size_t>(srow)]:-1;
+    const StorageShape sshape = (srow>=0)?S.shape[static_cast<size_t>(srow)]:StorageShape::FUNCTIONAL;
     if(scurve>=0)
         std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s 0 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve),ctx.nodes.sur_depth[u]);
+    else if(storage_shape_is_geometric(sshape)){
+        // Geometric shapes re-emit the RAW L/W/Z the user gave us, not the derived
+        // a/b/c — that is the whole point of keeping p1..p3 in the SoA. Writing the
+        // coefficients here would silently downgrade the node to FUNCTIONAL on save.
+        const double q1=S.p1[static_cast<size_t>(srow)];
+        const double q2=S.p2[static_cast<size_t>(srow)];
+        const double q3=S.p3[static_cast<size_t>(srow)];
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %-10s %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],storage_shape_keyword(sshape),q1,q2,q3,ctx.nodes.sur_depth[u]);
+    }
     else {
         const double sa=(srow>=0)?S.a[static_cast<size_t>(srow)]:0.0;
         const double sb=(srow>=0)?S.b[static_cast<size_t>(srow)]:0.0;

@@ -2714,6 +2714,16 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Depth statistics
         double cur_depth = ctx_.nodes.depth[uj];
         ctx_.nodes.stat_sum_depth[uj] += cur_depth;
+        // Storage-volume statistics: accumulate the node's actual stored volume at
+        // this depth (legacy StorageStats avgVol += newVolume). Recomputed from the
+        // maintained depth via the same relation the report uses, so the Storage
+        // Volume Summary's average is exact for the nonlinear shapes rather than a
+        // volume-of-average-depth approximation.
+        if (ctx_.nodes.type[uj] == NodeType::STORAGE) {
+            const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+            ctx_.nodes.stat_sum_volume[uj] += node::getVolume(
+                ctx_.nodes, j, cur_depth, &ctx_.tables, us, &ctx_.node_subtypes);
+        }
         if (cur_depth > ctx_.nodes.stat_max_depth[uj]) {
             ctx_.nodes.stat_max_depth[uj] = cur_depth;
             ctx_.nodes.stat_max_depth_date[uj] = ctx_.current_date;

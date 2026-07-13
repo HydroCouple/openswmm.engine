@@ -383,6 +383,82 @@ SWMM_ENGINE_API int swmm_node_set_storage_functional(SWMM_Engine engine, int idx
 SWMM_ENGINE_API int swmm_node_get_storage_functional(SWMM_Engine engine, int idx, double* a, double* b, double* c);
 
 /**
+ * @brief Storage-unit surface-area relation codes.
+ *
+ * @details Ordinals match the legacy solver's `enum StorageType`, so the same int is
+ *          valid on both engines. The four geometric shapes take three raw dimensions
+ *          (see swmm_node_set_storage_geometry); TABULAR takes a curve; FUNCTIONAL
+ *          takes the a/b/c power-law coefficients.
+ */
+typedef enum {
+    SWMM_STORAGE_TABULAR     = 0,  /**< Area vs. depth from a curve. */
+    SWMM_STORAGE_FUNCTIONAL  = 1,  /**< Area = c + a*d^b. */
+    SWMM_STORAGE_CYLINDRICAL = 2,  /**< Elliptical cylinder: p1 = major axis, p2 = minor axis. */
+    SWMM_STORAGE_CONICAL     = 3,  /**< Elliptical cone: p1, p2 = base axes, p3 = side slope. */
+    SWMM_STORAGE_PARABOLOID  = 4,  /**< Elliptical paraboloid: p1, p2 = top axes, p3 = height (≠ 0). */
+    SWMM_STORAGE_PYRAMIDAL   = 5   /**< Rectangular pyramid: p1 = length, p2 = width, p3 = side slope. */
+} SWMM_StorageShape;
+
+/**
+ * @brief Set a storage node's surface-area relation.
+ *
+ * @details Setting a geometric shape detaches any storage curve and re-derives the
+ *          internal area coefficients from the node's current raw dimensions; follow
+ *          with swmm_node_set_storage_geometry() to supply them. Setting
+ *          SWMM_STORAGE_FUNCTIONAL also detaches the curve. Use
+ *          swmm_node_set_storage_curve() to make a node TABULAR.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param shape   A SWMM_StorageShape code.
+ * @returns SWMM_OK on success, SWMM_ERR_BADPARAM if @p shape is not a valid code.
+ */
+SWMM_ENGINE_API int swmm_node_set_storage_shape(SWMM_Engine engine, int idx, int shape);
+
+/**
+ * @brief Get a storage node's surface-area relation.
+ * @param engine      Engine handle.
+ * @param idx         Zero-based node index.
+ * @param[out] shape  Receives a SWMM_StorageShape code.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_get_storage_shape(SWMM_Engine engine, int idx, int* shape);
+
+/**
+ * @brief Set the raw dimensions of a geometric storage shape.
+ *
+ * @details Meaning of p1/p2/p3 depends on the node's current shape — see
+ *          SWMM_StorageShape. The engine stores the raw dimensions (so they survive a
+ *          write back to .inp) and derives the area coefficients from them. The call
+ *          is atomic: if the dimensions are invalid nothing is written.
+ *
+ *          Validity (mirrors the legacy solver): p1 > 0, p2 > 0, p3 >= 0, and p3 != 0
+ *          for SWMM_STORAGE_PARABOLOID.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
+ * @param p1      Major axis / base length.
+ * @param p2      Minor axis / base width.
+ * @param p3      Side slope (run/rise), or height for SWMM_STORAGE_PARABOLOID.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if the node's shape is not geometric
+ *          or the dimensions are invalid.
+ */
+SWMM_ENGINE_API int swmm_node_set_storage_geometry(SWMM_Engine engine, int idx,
+                                                   double p1, double p2, double p3);
+
+/**
+ * @brief Get the raw dimensions of a geometric storage shape.
+ * @param engine   Engine handle.
+ * @param idx      Zero-based node index.
+ * @param[out] p1  Receives the major axis / base length.
+ * @param[out] p2  Receives the minor axis / base width.
+ * @param[out] p3  Receives the side slope / height.
+ * @returns SWMM_OK on success, or an error code. Returns zeros for a non-geometric shape.
+ */
+SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx,
+                                                   double* p1, double* p2, double* p3);
+
+/**
  * @brief Set the seepage rate for a storage node.
  * @param engine  Engine handle.
  * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).

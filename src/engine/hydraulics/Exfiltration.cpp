@@ -12,6 +12,7 @@
 #include "Node.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "../data/StorageGeometry.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -144,9 +145,22 @@ void ExfilSolver::init(SimulationContext& ctx) {
             double a_coeff = (sr >= 0) ? ctx.node_subtypes.storages.a[static_cast<size_t>(sr)] : 0.0;
             double b_coeff = (sr >= 0) ? ctx.node_subtypes.storages.b[static_cast<size_t>(sr)] : 0.0;
             double c_coeff = (sr >= 0) ? ctx.node_subtypes.storages.c[static_cast<size_t>(sr)] : 0.0;
+            const StorageShape sshape = (sr >= 0)
+                ? ctx.node_subtypes.storages.shape[static_cast<size_t>(sr)]
+                : StorageShape::FUNCTIONAL;
 
             double btm = c_coeff;
-            if (b_coeff == 0.0) {
+            if (storage_shape_is_geometric(sshape)) {
+                // Geometric shapes: the area relation is the quadratic c + a*d + b*d²,
+                // so the bottom area is simply c — the "+a when b == 0" rule above is a
+                // property of the power law and must NOT be applied here.
+                // Legacy exfil.c:143-150 spells this out for CYLINDRICAL/CONICAL/
+                // PYRAMIDAL (btmArea = a0, no addend). PARABOLOID has no case there at
+                // all, leaving btmArea at 0 — which is the same answer, since a
+                // paraboloid's c is 0 (it comes to a point at the invert). Routing it
+                // through the FUNCTIONAL rule instead would add a1 = π·A·B/Z and give a
+                // paraboloid a spurious bottom area.
+            } else if (b_coeff == 0.0) {
                 btm += a_coeff;
             }
             soa_.btm_area[uk] = btm;

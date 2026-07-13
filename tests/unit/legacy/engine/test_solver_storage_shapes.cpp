@@ -81,8 +81,11 @@ int runAndCheckConsistency(const char* inp, const char* rpt, const char* out,
 
     // STOR1 must NOT be at node index 0 (its own storage subIndex), or
     // this fixture no longer exercises the subIndex-vs-node-index bug.
+    // Nodes are indexed in section order — [JUNCTIONS] then [OUTFALLS] then
+    // [STORAGE] — so J1=0, O1=1, STOR1=2; the requirement is simply that the
+    // node index differs from the storage subIndex (0), not a specific value.
     EXPECT_EQ(idxJ1, 0);
-    EXPECT_EQ(idxStor1, 1);
+    EXPECT_GT(idxStor1, 0);
 
     double fullDepth = swmm_getValue(swmm_NODE_MAXDEPTH, idxStor1);
 

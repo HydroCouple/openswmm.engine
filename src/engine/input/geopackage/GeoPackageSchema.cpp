@@ -92,16 +92,25 @@ CREATE TABLE IF NOT EXISTS nodes (
     UNIQUE(simulation_id, node_id)
 );
 
--- Storage units (1:1 with a STORAGE node). curve_name set => tabulated;
--- otherwise functional A·d^B + C. Values are canonical internal units (the
--- whole .gpkg is internal-unit; see read path). Lossless side-table mirror.
+-- Storage units (1:1 with a STORAGE node). `shape` is the area relation
+-- (TABULAR / FUNCTIONAL / CYLINDRICAL / CONICAL / PARABOLIC / PYRAMIDAL) and decides
+-- how a/b/c are read: FUNCTIONAL is the power law A·d^B + C, the geometric shapes are
+-- the quadratic C + A·d + B·d². For the geometric shapes p1/p2/p3 carry the raw user
+-- dimensions (L/W/Z) that a/b/c were derived from, so the file round-trips losslessly.
+-- `shape` is NULL in files written before it existed — the reader then falls back to
+-- the old rule (curve_name set => TABULAR, else FUNCTIONAL). Values are canonical
+-- internal units (the whole .gpkg is internal-unit; see read path).
 CREATE TABLE IF NOT EXISTS storages (
     simulation_id   TEXT NOT NULL,
     node_id         TEXT NOT NULL,
     curve_name      TEXT,
+    shape           TEXT,
     a               REAL,
     b               REAL,
     c               REAL,
+    p1              REAL,
+    p2              REAL,
+    p3              REAL,
     seep_rate       REAL,
     evap_frac       REAL,
     exfil_suction   REAL,
@@ -287,6 +296,8 @@ CREATE TABLE IF NOT EXISTS subcatchments (
     infil_p4        REAL,
     infil_p5        REAL,
     tag             TEXT,
+    rain_scale_factor REAL DEFAULT 1.0,  -- optional [SUBCATCHMENTS] token 9
+    snow_scale_factor REAL DEFAULT 1.0,  -- optional [SUBCATCHMENTS] token 10
     UNIQUE(simulation_id, subcatch_id)
 );
 

@@ -12,6 +12,7 @@
 
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
+#include "data/StorageGeometry.hpp"
 #include "input/PostParseResolver.hpp"
 #include "data/NodeData.hpp"
 #include "data/LinkData.hpp"
@@ -305,9 +306,9 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
         "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag) "
         "VALUES (?,?,?,?,?,?,?,?,?,?)");
     auto st_stmt = prepare(db,
-        "INSERT INTO storages (simulation_id, node_id, curve_name, a, b, c, "
-        "seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+        "INSERT INTO storages (simulation_id, node_id, curve_name, shape, a, b, c, "
+        "p1, p2, p3, seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     auto of_stmt = prepare(db,
         "INSERT INTO outfalls (simulation_id, node_id, outfall_type, param, "
         "has_flap_gate, route_to) VALUES (?,?,?,?,?,?)");
@@ -362,14 +363,19 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
             bind_text(st_stmt.get(), 1, sim_id);
             bind_text(st_stmt.get(), 2, name);
             bind_name(st_stmt.get(), 3, r >= 0 ? S.curve_name[ur] : std::string{});
-            bind_double(st_stmt.get(), 4,  r >= 0 ? S.a[ur] : 0.0);
-            bind_double(st_stmt.get(), 5,  r >= 0 ? S.b[ur] : 0.0);
-            bind_double(st_stmt.get(), 6,  r >= 0 ? S.c[ur] : 0.0);
-            bind_double(st_stmt.get(), 7,  r >= 0 ? S.seep_rate[ur] : 0.0);
-            bind_double(st_stmt.get(), 8,  r >= 0 ? S.evap_frac[ur] : 0.0);
-            bind_double(st_stmt.get(), 9,  r >= 0 ? S.exfil_suction[ur] : 0.0);
-            bind_double(st_stmt.get(), 10, r >= 0 ? S.exfil_ksat[ur] : 0.0);
-            bind_double(st_stmt.get(), 11, r >= 0 ? S.exfil_imd[ur] : 0.0);
+            bind_text(st_stmt.get(), 4, storage_shape_keyword(
+                r >= 0 ? S.shape[ur] : StorageShape::FUNCTIONAL));
+            bind_double(st_stmt.get(), 5,  r >= 0 ? S.a[ur] : 0.0);
+            bind_double(st_stmt.get(), 6,  r >= 0 ? S.b[ur] : 0.0);
+            bind_double(st_stmt.get(), 7,  r >= 0 ? S.c[ur] : 0.0);
+            bind_double(st_stmt.get(), 8,  r >= 0 ? S.p1[ur] : 0.0);
+            bind_double(st_stmt.get(), 9,  r >= 0 ? S.p2[ur] : 0.0);
+            bind_double(st_stmt.get(), 10, r >= 0 ? S.p3[ur] : 0.0);
+            bind_double(st_stmt.get(), 11, r >= 0 ? S.seep_rate[ur] : 0.0);
+            bind_double(st_stmt.get(), 12, r >= 0 ? S.evap_frac[ur] : 0.0);
+            bind_double(st_stmt.get(), 13, r >= 0 ? S.exfil_suction[ur] : 0.0);
+            bind_double(st_stmt.get(), 14, r >= 0 ? S.exfil_ksat[ur] : 0.0);
+            bind_double(st_stmt.get(), 15, r >= 0 ? S.exfil_imd[ur] : 0.0);
             sqlite3_step(st_stmt.get());
         } else if (ntype == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);
@@ -583,8 +589,9 @@ static void write_subcatchments(sqlite3* db, const SimulationContext& ctx,
         "area, width, slope, curb_length, frac_imperv, "
         "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
         "subarea_routing, pct_routed, "
-        "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag, "
+        "rain_scale_factor, snow_scale_factor) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
 
     int n = ctx.subcatch_names.size();
     for (int i = 0; i < n; ++i) {
@@ -648,6 +655,10 @@ static void write_subcatchments(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 25, ctx.subcatches.tags[utag]);
         else
             bind_null(stmt.get(), 25);
+
+        // Precipitation scale factors (default 1.0 in the SoA).
+        bind_double(stmt.get(), 26, safe_dbl(ctx.subcatches.rain_scale_factor, i));
+        bind_double(stmt.get(), 27, safe_dbl(ctx.subcatches.snow_scale_factor, i));
 
         sqlite3_step(stmt.get());
     }
