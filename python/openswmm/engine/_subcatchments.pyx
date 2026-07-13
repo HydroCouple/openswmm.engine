@@ -371,6 +371,45 @@ cdef class Subcatchment:
         _check(swmm_subcatch_set_slope(_h(self._solver), self._index, value))
 
     @property
+    def rain_scale_factor(self) -> float:
+        """Per-subcatchment rainfall scale factor (dimensionless, > 0; 1.0 = no scaling).
+
+        Optional trailing token 9 of ``[SUBCATCHMENTS]``. Multiplies this
+        subcatchment's gage-derived rainfall, composing with the gage's own
+        ``scale_factor``. API/forcing rainfall overrides are NOT scaled by it.
+        Settable while the simulation is running (parameter sweeps / RTC); the
+        new value takes effect on the next timestep. Raises if non-positive.
+        """
+        _check_fresh(self)
+        cdef double v = 1.0
+        _check(swmm_subcatch_get_rain_scale_factor(_h(self._solver), self._index, &v))
+        return v
+
+    @rain_scale_factor.setter
+    def rain_scale_factor(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_rain_scale_factor(_h(self._solver), self._index, value))
+
+    @property
+    def snow_scale_factor(self) -> float:
+        """Per-subcatchment snowfall scale factor (dimensionless, > 0; 1.0 = no scaling).
+
+        Optional trailing token 10 of ``[SUBCATCHMENTS]``. Composes with the
+        gage snow catch factor (SCF): SCF corrects the physical gage's snow-catch
+        deficiency, this captures spatial variation across the catchment.
+        Settable mid-run. Raises if non-positive.
+        """
+        _check_fresh(self)
+        cdef double v = 1.0
+        _check(swmm_subcatch_get_snow_scale_factor(_h(self._solver), self._index, &v))
+        return v
+
+    @snow_scale_factor.setter
+    def snow_scale_factor(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_snow_scale_factor(_h(self._solver), self._index, value))
+
+    @property
     def imperv_pct(self) -> float:
         _check_fresh(self)
         cdef double v = 0.0

@@ -123,13 +123,19 @@ static void   adjustSubareaParams(int subareaType, int subcatch);
 * \param[in] ntoks Number of tokens
 * \return Error code
 * \details Data has format:
-*  Name  RainGage  Outlet  Area  %Imperv  Width  Slope CurbLength  Snowpack
+*  Name  RainGage  Outlet  Area  %Imperv  Width  Slope CurbLength
+*        [Snowpack] [RainScaleFactor] [SnowScaleFactor]
+*
+*  Snowpack (tok 8) may be given as "*" to hold the position when no snow
+*  pack is assigned but a scale factor follows (same convention the
+*  [RAINGAGES] FILE format uses for an omitted start date).
+*  RainScaleFactor (tok 9) and SnowScaleFactor (tok 10) default to 1.0.
 */
 int  subcatch_readParams(int subcatchIndex, char* tok[], int ntoks)
 {
     int    i, k, m;
     char*  id;
-    double x[9];
+    double x[11];
 
     // --- check for enough tokens
     if ( ntoks < 8 ) return error_setInpError(ERR_ITEMS, "");
@@ -159,12 +165,28 @@ int  subcatch_readParams(int subcatchIndex, char* tok[], int ntoks)
     }
 
     // --- if snowmelt object named, check that it exists
+    //     ("*" is a placeholder meaning no snow pack, same convention as
+    //      the omitted start date in the [RAINGAGES] FILE format)
     x[8] = -1;
-    if ( ntoks > 8 )
+    if ( ntoks > 8 && *tok[8] != '*' )
     {
         k = project_findObject(SNOWMELT, tok[8]);
         if ( k < 0 ) return error_setInpError(ERR_NAME, tok[8]);
         x[8] = k;
+    }
+
+    // --- read optional rainfall & snowfall scale factors (default 1.0)
+    x[9]  = 1.0;
+    x[10] = 1.0;
+    if ( ntoks > 9 )
+    {
+        if ( ! getDouble(tok[9], &x[9]) || x[9] <= 0.0 )
+            return error_setInpError(ERR_NUMBER, tok[9]);
+    }
+    if ( ntoks > 10 )
+    {
+        if ( ! getDouble(tok[10], &x[10]) || x[10] <= 0.0 )
+            return error_setInpError(ERR_NUMBER, tok[10]);
     }
 
     // --- assign input values to subcatch's properties
@@ -177,6 +199,8 @@ int  subcatch_readParams(int subcatchIndex, char* tok[], int ntoks)
     Subcatch[subcatchIndex].width       = x[5] / UCF(LENGTH);
     Subcatch[subcatchIndex].slope       = x[6] / 100.0;
     Subcatch[subcatchIndex].curbLength  = x[7];
+    Subcatch[subcatchIndex].rainScaleFactor = x[9];
+    Subcatch[subcatchIndex].snowScaleFactor = x[10];
     Subcatch[subcatchIndex].nPervPattern  = -1;
     Subcatch[subcatchIndex].dStorePattern = -1;
     Subcatch[subcatchIndex].infilPattern  = -1;
@@ -770,6 +794,12 @@ void getNetPrecip(int j, double* netPrecip, double tStep)
     if ( k >= 0 )
     {
         gage_getPrecip(k, &rainfall, &snowfall);
+
+        // --- apply subcatchment-level scale factors to the gage-derived
+        //     component only. API-prescribed precip below is an absolute
+        //     injection and is deliberately left unscaled.
+        rainfall *= Subcatch[j].rainScaleFactor;
+        snowfall *= Subcatch[j].snowScaleFactor;
     }
 
     rainfall += Subcatch[j].apiRainfall;

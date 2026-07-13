@@ -1248,4 +1248,45 @@ SWMM_ENGINE_API int swmm_snowpack_get_removal_subcatch(SWMM_Engine engine, int i
     return SWMM_OK;
 }
 
+// ============================================================================
+// Precipitation scale factors
+//
+// No CHECK_GEOMETRY on the setters — these are deliberately settable mid-run so
+// a calibration or RTC loop can drive them, matching swmm_gage_set_scale_factor.
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_set_rain_scale_factor(SWMM_Engine engine, int idx, double factor) {
+    CHECK_HANDLE(engine);
+    if (factor <= 0.0) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.rain_scale_factor[static_cast<std::size_t>(idx)] = factor;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_rain_scale_factor(SWMM_Engine engine, int idx, double* factor) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (factor) *factor = ctx.subcatches.rain_scale_factor[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_snow_scale_factor(SWMM_Engine engine, int idx, double factor) {
+    CHECK_HANDLE(engine);
+    if (factor <= 0.0) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.snow_scale_factor[static_cast<std::size_t>(idx)] = factor;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_snow_scale_factor(SWMM_Engine engine, int idx, double* factor) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (factor) *factor = ctx.subcatches.snow_scale_factor[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
 } /* extern "C" */

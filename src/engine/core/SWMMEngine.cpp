@@ -14,6 +14,7 @@
 #include "DateTime.hpp"
 #include "SimulationContext.hpp"
 #include "UnitConversion.hpp"
+#include "../hydrology/Gage.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/XSectBatch.hpp"
 #include "../hydraulics/Outfall.hpp"
@@ -1285,22 +1286,21 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             auto un_sc = static_cast<std::size_t>(ctx_.n_subcatches());
             snow_rain_.assign(un_sc, 0.0);
             snow_snow_.assign(un_sc, 0.0);
-            double snow_divt = ctx_.options.snow_divt;   // deg F threshold
-            bool is_snowing = ctx_.climate_state.temperature <= snow_divt;
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.snowpack[ui] < 0) continue;
-                int gi = ctx_.subcatches.gage[ui];
-                double gage_inhr = (gi >= 0 && gi < ctx_.n_gages())
-                    ? ctx_.gages.rainfall[static_cast<std::size_t>(gi)] : 0.0;
-                double rain_inhr = is_snowing ? 0.0 : gage_inhr;
-                double snow_inhr = is_snowing ? gage_inhr : 0.0;
-                // Forcing channels (user units for rainfall — matching the
-                // runoff solver's resolution; snowfall channel stores ft/sec)
+                // Single source of truth for the split (gage.c:513-523 parity):
+                // applies the IgnoreSnowmelt guard, the temperature test, the
+                // gage snow catch factor, and the subcatchment scale factors.
+                // Returns ft/sec.
+                gage::PrecipSplit p = gage::splitPrecip(ctx_, ui);
+                // Forcing channels resolve on top. effective_rainfall() takes
+                // user units, so convert out and back; the snowfall channel
+                // already stores ft/sec.
+                double rain_inhr = p.rainfall * ucf::Ucf[ucf::RAINFALL][0];
                 rain_inhr = ctx_.forcing.effective_rainfall(ui, rain_inhr);
                 snow_rain_[ui] = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
-                snow_snow_[ui] = ctx_.forcing.effective_snowfall(
-                    ui, snow_inhr / ucf::Ucf[ucf::RAINFALL][0]);
+                snow_snow_[ui] = ctx_.forcing.effective_snowfall(ui, p.snowfall);
             }
 
             // Accumulation + plowing BEFORE melt (legacy runoff.c:254).

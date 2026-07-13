@@ -252,17 +252,26 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
     // ----- Step 1: Rainfall → net precip (ft/sec) -----
     // Matches legacy getNetPrecip(): all subareas get same precipitation rate.
-    // Any subcatchment rainfall forcing resolves here (OVERRIDE replaces the
+    //
+    // The rain/snow split runs for EVERY subcatchment, not just those with a
+    // snow pack — legacy gage_getPrecip() is called unconditionally from
+    // getNetPrecip() (subcatch.c:772), and for a snowpack-less subcatchment
+    // netPrecip is then rainfall + snowfall (subcatch.c:793). Since snowfall
+    // carries the gage snow catch factor, omitting the split here made
+    // snowpack-less subcatchments diverge from legacy whenever SCF != 1.0.
+    //
+    // splitPrecip() also applies the subcatchment rain/snow scale factors.
+    // Any subcatchment rainfall forcing resolves on top (OVERRIDE replaces the
     // gage value, ADD augments it) so it cannot be clobbered by the gage
     // re-read — same pattern as the PET forcing below.
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        int gi = ctx.subcatches.gage[ui];
-        double rain_inhr = 0.0;
-        if (gi >= 0 && gi < ctx.n_gages())
-            rain_inhr = ctx.gages.rainfall[static_cast<std::size_t>(gi)];
+        gage::PrecipSplit p = gage::splitPrecip(ctx, ui);  // ft/sec
+        double rain_inhr = p.rainfall * ucf::UCF(ucf::RAINFALL, ctx.options);
         rain_inhr = ctx.forcing.effective_rainfall(ui, rain_inhr);
-        precip_[ui] = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
+        double rain = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
+        double snow = ctx.forcing.effective_snowfall(ui, p.snowfall);
+        precip_[ui] = rain + snow;
         ctx.subcatches.rainfall[ui] = precip_[ui];  // ft/sec (internal units)
     }
 
