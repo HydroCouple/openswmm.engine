@@ -37,6 +37,7 @@
 #include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/NodeData.hpp"
+#include "../../data/StorageGeometry.hpp"
 
 #include "../InputParseUtils.hpp"
 
@@ -252,20 +253,43 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         }
         const std::string shape = Tokenizer::to_upper(tok[4]);
 
-        if (shape == "TABULAR") {
+        // Unknown keyword ⇒ leave the row at its FUNCTIONAL default, matching how
+        // every other handler here treats an unrecognised keyword (e.g. LinksHandler's
+        // SHAPE_MAP miss): these handlers have no error channel to report into.
+        StorageShape sshape = StorageShape::FUNCTIONAL;
+        storage_shape_from_keyword(shape, sshape);
+        S.shape[srow] = sshape;
+
+        if (sshape == StorageShape::TABULAR) {
             // Next token is curve name — resolve to index in post-parse pass
             S.curve[srow] = -1;
             if (tok.size() > 5)
                 S.curve_name[srow] = tok[5];
-        } else if (shape == "FUNCTIONAL") {
+        } else if (sshape == StorageShape::FUNCTIONAL) {
             // A1, A2, A0
             if (tok.size() > 5) S.a[srow] = to_double(tok[5]);
             if (tok.size() > 6) S.b[srow] = to_double(tok[6]);
             if (tok.size() > 7) S.c[srow] = to_double(tok[7]);
+        } else {
+            // CYLINDRICAL / CONICAL / PARABOLIC / PYRAMIDAL — three raw dimensions
+            // (L, W, Z). Keep them verbatim for lossless round-trip AND derive the
+            // quadratic area coefficients the solver evaluates (legacy discards the
+            // raw values at this point; we don't).
+            if (tok.size() > 5) S.p1[srow] = to_double(tok[5]);
+            if (tok.size() > 6) S.p2[srow] = to_double(tok[6]);
+            if (tok.size() > 7) S.p3[srow] = to_double(tok[7]);
+            double a = 0.0, b = 0.0, c = 0.0;
+            if (storage_shape_coeffs(sshape, S.p1[srow], S.p2[srow], S.p3[srow], a, b, c)) {
+                S.a[srow] = a;
+                S.b[srow] = b;
+                S.c[srow] = c;
+            }
+            S.curve[srow] = -1;
         }
 
-        // Optional: SurDepth, Fevap, Seep
-        const int param_offset = (shape == "TABULAR") ? 6 : 8;
+        // Optional: SurDepth, Fevap, Seep — TABULAR consumes one token for the curve
+        // name, every other shape consumes three numeric params.
+        const int param_offset = (sshape == StorageShape::TABULAR) ? 6 : 8;
         if (static_cast<int>(tok.size()) > param_offset)
             ctx.nodes.sur_depth[idx] = to_double(tok[param_offset]);
         if (static_cast<int>(tok.size()) > param_offset + 1)

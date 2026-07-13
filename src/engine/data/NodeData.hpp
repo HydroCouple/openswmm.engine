@@ -70,6 +70,30 @@ enum class DividerType : int8_t {
     WEIR           = 3
 };
 
+/**
+ * @brief Storage-unit surface-area relation.
+ *
+ * @details Values mirror legacy `enum StorageType` (src/legacy/engine/enums.h:833-847)
+ *          ordinal-for-ordinal, so the int carried by the C API is the same code the
+ *          legacy solver uses.
+ *
+ *          The relation determines how the StorageData a/b/c coefficients are read —
+ *          they are **overloaded**:
+ *            - FUNCTIONAL:            Area = c + a*d^b        (power law)
+ *            - CYLINDRICAL..PYRAMIDAL: Area = c + a*d + b*d²   (quadratic)
+ *          See StorageGeometry.hpp for the raw-parameter → coefficient mapping.
+ *
+ * @see Legacy: StorageType in src/legacy/engine/enums.h
+ */
+enum class StorageShape : int8_t {
+    TABULAR     = 0,  ///< Area vs. depth from a curve (StorageData::curve)
+    FUNCTIONAL  = 1,  ///< Area = c + a*d^b
+    CYLINDRICAL = 2,  ///< Elliptical cylinder  (p1 = major axis, p2 = minor axis)
+    CONICAL     = 3,  ///< Elliptical cone      (p1, p2 = base axes, p3 = side slope)
+    PARABOLOID  = 4,  ///< Elliptical paraboloid(p1, p2 = top axes,  p3 = height ≠ 0)
+    PYRAMIDAL   = 5   ///< Rectangular pyramid  (p1 = length, p2 = width, p3 = side slope)
+};
+
 // ============================================================================
 // NodeData — SoA layout
 // ============================================================================
@@ -446,6 +470,13 @@ struct NodeData {
     /// @see Legacy: NodeStats[i].avgDepth
     std::vector<double>     stat_sum_depth;
 
+    /// Cumulative stored volume for computing average (internal ft³), storage nodes
+    /// only. Accumulated per routing step alongside stat_sum_depth so the Storage
+    /// Volume Summary's average is the true time-average of the node's nonlinear
+    /// volume, not volume-of-the-average-depth (which understates a convex curve).
+    /// @see Legacy: StorageStats[k].avgVol
+    std::vector<double>     stat_sum_volume;
+
     /// Date/time when maximum depth occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: NodeStats[i].maxDepthDate
     std::vector<double>     stat_max_depth_date;
@@ -595,6 +626,7 @@ struct NodeData {
         stat_max_overflow.assign(un, 0.0);
         stat_max_overflow_date.assign(un, 0.0);
         stat_sum_depth.assign(un, 0.0);
+        stat_sum_volume.assign(un, 0.0);
         stat_max_depth_date.assign(un, 0.0);
         stat_max_rpt_depth.assign(un, 0.0);
         stat_max_inflow_date.assign(un, 0.0);
@@ -646,6 +678,7 @@ struct NodeData {
         g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
         g(stat_max_depth, 0.0); g(stat_max_overflow, 0.0);
         g(stat_max_overflow_date, 0.0); g(stat_sum_depth, 0.0);
+        g(stat_sum_volume, 0.0);
         g(stat_max_depth_date, 0.0); g(stat_max_rpt_depth, 0.0);
         g(stat_max_inflow_date, 0.0); g(stat_time_surcharged, 0.0);
         g(stat_max_surcharge_height, 0.0);
@@ -688,7 +721,7 @@ struct NodeData {
         e(comments); e(tags); e(rpt_flag);
 
         e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
-        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_max_depth_date);
+        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_sum_volume); e(stat_max_depth_date);
         e(stat_max_rpt_depth); e(stat_max_inflow_date); e(stat_time_surcharged);
         e(stat_max_surcharge_height); e(stat_outfall_avg_flow); e(stat_max_lat_inflow);
         e(stat_max_total_inflow); e(stat_lat_inflow_vol); e(stat_total_inflow_vol);

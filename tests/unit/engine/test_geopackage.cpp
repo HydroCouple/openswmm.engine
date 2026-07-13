@@ -17,6 +17,7 @@
 
 #include "core/SimulationContext.hpp"
 #include "data/NodeData.hpp"
+#include "data/StorageGeometry.hpp"
 #include "data/LinkData.hpp"
 #include "data/SubcatchData.hpp"
 #include "data/GageData.hpp"
@@ -194,10 +195,15 @@ protected:
             ctx.subcatches.infil_p3.resize(n);
             ctx.subcatches.infil_p4.resize(n);
             ctx.subcatches.infil_p5.resize(n);
+            ctx.subcatches.rain_scale_factor.resize(n, 1.0);
+            ctx.subcatches.snow_scale_factor.resize(n, 1.0);
             ctx.spatial.subcatch_polygon_x.resize(n);
             ctx.spatial.subcatch_polygon_y.resize(n);
 
             ctx.subcatches.outlet_node[idx] = i;
+            // S1 gets non-default precip scale factors; S2 keeps 1.0.
+            ctx.subcatches.rain_scale_factor[idx] = (i == 0) ? 0.5 : 1.0;
+            ctx.subcatches.snow_scale_factor[idx] = (i == 0) ? 1.3 : 1.0;
             ctx.subcatches.area[idx] = 5.0;
             ctx.subcatches.width[idx] = 500.0;
             ctx.subcatches.slope[idx] = 0.01;
@@ -536,6 +542,146 @@ TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
     EXPECT_EQ(ID.link_name[uid], "DivLink");
 }
 
+// Storage shapes (STORAGE_SHAPES_PLAN check 5, .gpkg side): the geometric shapes
+// carry a `shape` keyword plus raw dimensions p1/p2/p3 in the storages table. Write
+// all four, read them back, and assert the shape, the raw dimensions AND the derived
+// area coefficients survive — the .gpkg must be as lossless as the .inp.
+TEST_F(GeoPackageTest, StorageShapeChildTableRoundTrip) {
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.spatial.crs = "EPSG:4326";
+
+    struct Case { const char* name; StorageShape shape; double p1, p2, p3; };
+    const Case cases[] = {
+        {"SCYL", StorageShape::CYLINDRICAL, 30.0, 20.0, 0.0},
+        {"SCON", StorageShape::CONICAL,     30.0, 20.0, 2.5},
+        {"SPAR", StorageShape::PARABOLOID,  30.0, 20.0, 8.0},
+        {"SPYR", StorageShape::PYRAMIDAL,   30.0, 20.0, 2.5},
+    };
+
+    for (const auto& cse : cases) {
+        const int idx = ctx.node_names.add(cse.name);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.spatial.node_x.push_back(static_cast<double>(idx));
+        ctx.spatial.node_y.push_back(0.0);
+
+        auto& S = ctx.node_subtypes.storages;
+        const auto sr = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::STORAGE));
+        S.shape[sr] = cse.shape;
+        S.p1[sr] = cse.p1; S.p2[sr] = cse.p2; S.p3[sr] = cse.p3;
+        double a = 0, b = 0, c = 0;
+        ASSERT_TRUE(storage_shape_coeffs(cse.shape, cse.p1, cse.p2, cse.p3, a, b, c));
+        S.a[sr] = a; S.b[sr] = b; S.c[sr] = c;
+    }
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "shp"), 0);
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "shp"), 0);
+
+    for (const auto& cse : cases) {
+        const int idx = in.node_names.find(cse.name);
+        ASSERT_GE(in.node_subtypes.storage_row(idx), 0) << cse.name;
+        const auto ur = static_cast<std::size_t>(in.node_subtypes.storage_row(idx));
+        const auto& S = in.node_subtypes.storages;
+        EXPECT_EQ(S.shape[ur], cse.shape) << cse.name << ": shape not preserved";
+        EXPECT_DOUBLE_EQ(S.p1[ur], cse.p1) << cse.name;
+        EXPECT_DOUBLE_EQ(S.p2[ur], cse.p2) << cse.name;
+        EXPECT_DOUBLE_EQ(S.p3[ur], cse.p3) << cse.name;
+        double a = 0, b = 0, c = 0;
+        ASSERT_TRUE(storage_shape_coeffs(cse.shape, cse.p1, cse.p2, cse.p3, a, b, c));
+        EXPECT_DOUBLE_EQ(S.a[ur], a) << cse.name << ": coeff a";
+        EXPECT_DOUBLE_EQ(S.b[ur], b) << cse.name << ": coeff b";
+        EXPECT_DOUBLE_EQ(S.c[ur], c) << cse.name << ": coeff c";
+    }
+}
+
+// A .gpkg written before the shape columns existed does not have them at all —
+// SELECTing them fails with "no such column", not NULL. The reader probes with
+// column_exists() and falls back to the pre-shape rule (curve_name set => TABULAR,
+// else FUNCTIONAL). Simulate that legacy file by dropping the four columns from a
+// freshly written db, then assert the read still succeeds with the fallback shape.
+TEST_F(GeoPackageTest, LegacyGpkgWithoutShapeColumnsFallsBack) {
+    using namespace openswmm::gpkg;
+
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;
+    ctx.spatial.crs = "EPSG:4326";
+
+    // Two curve-less storages (would-be FUNCTIONAL) and one with a curve (TABULAR).
+    auto add_storage = [&](const char* nm, const char* curve) {
+        const int idx = ctx.node_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.spatial.node_x.push_back(static_cast<double>(idx));
+        ctx.spatial.node_y.push_back(0.0);
+        auto& S = ctx.node_subtypes.storages;
+        const auto sr = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::STORAGE));
+        // Write it as a geometric shape so, if the fallback DIDN'T fire, the columns
+        // we drop would otherwise have said PYRAMIDAL — proving the fallback is real.
+        S.shape[sr] = StorageShape::PYRAMIDAL;
+        S.p1[sr] = 30.0; S.p2[sr] = 20.0; S.p3[sr] = 2.5;
+        S.a[sr] = 250.0; S.b[sr] = 25.0; S.c[sr] = 600.0;
+        if (curve) S.curve_name[sr] = curve;
+    };
+    add_storage("SFUN", nullptr);
+    add_storage("STAB", "SomeCurve");
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "legacy"), 0);
+
+    // Drop the post-shipping columns to mimic a pre-shape file (DROP COLUMN needs
+    // SQLite >= 3.35, which the vendored build has).
+    {
+        DbPtr db = open_database(db_path_);
+        for (const char* col : {"shape", "p1", "p2", "p3"})
+            exec(db.get(), std::string("ALTER TABLE storages DROP COLUMN ") + col);
+    }
+
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "legacy"), 0)
+        << "reader must tolerate a .gpkg that predates the shape columns";
+
+    const auto& S = in.node_subtypes.storages;
+    const int ifun = in.node_names.find("SFUN");
+    const auto ufun = static_cast<std::size_t>(in.node_subtypes.storage_row(ifun));
+    EXPECT_EQ(S.shape[ufun], StorageShape::FUNCTIONAL)
+        << "curve-less legacy storage must fall back to FUNCTIONAL";
+
+    const int itab = in.node_names.find("STAB");
+    const auto utab = static_cast<std::size_t>(in.node_subtypes.storage_row(itab));
+    EXPECT_EQ(S.shape[utab], StorageShape::TABULAR)
+        << "curved legacy storage must fall back to TABULAR";
+}
+
+// A .gpkg written before the precip scale-factor columns existed must still
+// open, with the reader defaulting both factors to 1.0 (a true no-op).
+TEST_F(GeoPackageTest, LegacyGpkgWithoutScaleColumnsDefaultsToOne) {
+    auto ctx_out = build_test_context();   // S1 has non-default factors
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "legacy"), 0);
+
+    {
+        DbPtr db = open_database(db_path_);
+        for (const char* col : {"rain_scale_factor", "snow_scale_factor"})
+            exec(db.get(), std::string("ALTER TABLE subcatchments DROP COLUMN ") + col);
+    }
+
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "legacy"), 0)
+        << "reader must tolerate a .gpkg that predates the scale columns";
+
+    const int s1 = in.subcatch_names.find("S1");
+    ASSERT_GE(s1, 0);
+    EXPECT_DOUBLE_EQ(in.subcatches.rain_scale_factor[s1], 1.0)
+        << "missing column must default to 1.0, not 0.0";
+    EXPECT_DOUBLE_EQ(in.subcatches.snow_scale_factor[s1], 1.0);
+}
+
 // Phase 7: relational link child tables (conduits/pumps/orifices/weirs/outlets):
 // lossless field-set round-trip with the param1/param2 -> NAMED column mapping.
 // Emphasis on weir + outlet (no QA model exercises them) and the TABULAR outlet
@@ -771,6 +917,14 @@ TEST_F(GeoPackageTest, SubcatchmentsRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.frac_imperv[s1], 0.25);
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.n_imperv[s1], 0.01);
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.n_perv[s1], 0.1);
+
+    // Precipitation scale factors round-trip; S2 keeps the 1.0 default.
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.rain_scale_factor[s1], 0.5);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.snow_scale_factor[s1], 1.3);
+    int s2 = ctx_in.subcatch_names.find("S2");
+    ASSERT_GE(s2, 0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.rain_scale_factor[s2], 1.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.snow_scale_factor[s2], 1.0);
 }
 
 TEST_F(GeoPackageTest, InfiltrationRoundTrip) {

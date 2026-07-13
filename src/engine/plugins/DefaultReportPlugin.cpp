@@ -21,6 +21,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
+#include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
 
 #include <version.h>
 
@@ -1642,24 +1643,38 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx.nodes.type[uj] != NodeType::STORAGE) continue;
 
-                double full_vol = ctx.nodes.full_volume[uj];
-                // Average volume approximated from average depth
-                double avg_depth = ctx.nodes.stat_sum_depth[uj] / static_cast<double>(report_steps);
-                // Max depth to max volume
-                double max_depth = ctx.nodes.stat_max_depth[uj];
+                const double full_vol = ctx.nodes.full_volume[uj];
+                const double max_depth = ctx.nodes.stat_max_depth[uj];
 
-                // For functional storage: Volume = A * depth^B + C * depth
-                // Approximate: use depth ratio for percentage
-                double pct_avg = (ctx.nodes.full_depth[uj] > 0.0) ?
-                    avg_depth / ctx.nodes.full_depth[uj] * 100.0 : 0.0;
-                double pct_max = (ctx.nodes.full_depth[uj] > 0.0) ?
-                    max_depth / ctx.nodes.full_depth[uj] * 100.0 : 0.0;
+                // Volume from the node's actual depth→volume relation, not a linear
+                // depth ratio. Storage surface area varies with depth for FUNCTIONAL,
+                // TABULAR and the geometric shapes, so full_vol*(depth/full_depth) is
+                // exact only for a constant-area unit and grossly overstates the rest
+                // (a shallow functional/geometric node was reported ~20x too full).
+                // Average is the true time-average accumulated per routing step
+                // (stat_sum_volume); maximum is exact — V(d) is monotonic, so the max
+                // volume occurs at the max depth. node::getVolume returns internal ft³
+                // from the same relation the solver routes on.
+                const int us =
+                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+                // const_cast: getVolume takes a mutable TableData* for the tabular
+                // curve's lookup cursor cache; the report context is const and this
+                // is a read-only computation, so mutating the cursor is benign.
+                auto* tbls = const_cast<TableData*>(&ctx.tables);
+                const double avg_vol_ft3 =
+                    ctx.nodes.stat_sum_volume[uj] / static_cast<double>(report_steps);
+                const double max_vol_ft3 = node::getVolume(
+                    ctx.nodes, j, max_depth, tbls, us, &ctx.node_subtypes);
+
+                // Percent full is by VOLUME (legacy semantics), not by depth.
+                double pct_avg = (full_vol > 0.0) ? avg_vol_ft3 / full_vol * 100.0 : 0.0;
+                double pct_max = (full_vol > 0.0) ? max_vol_ft3 / full_vol * 100.0 : 0.0;
                 pct_avg = std::min(pct_avg, 100.0);
                 pct_max = std::min(pct_max, 100.0);
 
-                // Volume approximation (using full_volume ratio); ft³ → 1000 ft³|m³
-                double avg_vol = full_vol * (pct_avg / 100.0) * svol_ucf / 1000.0;
-                double max_vol = full_vol * (pct_max / 100.0) * svol_ucf / 1000.0;
+                // ft³ → 1000 ft³|m³
+                const double avg_vol = avg_vol_ft3 * svol_ucf / 1000.0;
+                const double max_vol = max_vol_ft3 * svol_ucf / 1000.0;
 
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
