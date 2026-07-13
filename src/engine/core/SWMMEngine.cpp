@@ -1837,12 +1837,18 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
         const int n_active = static_cast<int>(rom1d_active_map_.size());
 
-        // Deterministic head reference h_det for the Manning-sensitivity term
-        // (b_j = P^T h_det) and for quantile reconstruction.
+        // Deterministic head reference h_det (quantile anchor) and the DEPTH
+        // field (head − invert) as the Manning-sensitivity reference: roughness
+        // acts on conveyance, so its sensitivity must scale the depth
+        // component only — projecting absolute head lets (mm−1)·b_j scale the
+        // immovable invert relief and overestimates spread by orders of
+        // magnitude on sloped networks (PR 10 finding, VALIDATION.md).
         for (int ai = 0; ai < n_active; ++ai) {
-            const auto ui = static_cast<std::size_t>(
-                rom1d_active_map_[static_cast<std::size_t>(ai)]);
-            rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+            const auto uai = static_cast<std::size_t>(ai);
+            const auto ui  = static_cast<std::size_t>(rom1d_active_map_[uai]);
+            rom1d_h_buf_[uai]    = ctx_.nodes.head[ui];
+            rom1d_sens_buf_[uai] =
+                std::max(ctx_.nodes.head[ui] - rom1d_invert_buf_[uai], 0.0);
         }
 
         // Per-node dh/dt forcing from the just-completed DynWave step. Under
@@ -1858,7 +1864,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             }
         }
         rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
-                        rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data());
+                        rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data(),
+                        rom1d_sens_buf_.data());
         // computeQuantiles() is called only at report boundaries (postOutputSnapshot)
     }
 
@@ -4303,6 +4310,7 @@ void SWMMEngine::buildROM1D() noexcept {
     rom1d_dh_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     rom1d_h_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     rom1d_invert_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_sens_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     for (int ai = 0; ai < n_active; ++ai) {
         auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
         rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];

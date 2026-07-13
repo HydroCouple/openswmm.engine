@@ -119,6 +119,19 @@ as the total-head form did.
 - `buildROM1D()`: the `seed(h0)` call now just zeroes δa and primes
   `h_det_last_`.
 
+## 6b. Refinement (PR 10): depth as the Manning-sensitivity reference (1D)
+
+The MC validation (VALIDATION.md §3) showed that projecting the **absolute
+head** into `b_j` lets the `(mm−1)·b_j` steady state scale the network's
+invert relief — which roughness cannot physically move — overestimating
+spread by orders of magnitude on sloped networks. `advance()` therefore
+accepts an optional *sensitivity reference* field used only for the `b_j`
+projection; the engine passes **depth** (head − invert), while absolute head
+remains the anchor for reconstruction, quantiles, and `h_det_last_`. The 2D
+ROM needs no such parameter — it operates in depth space natively. Callers
+that pass no reference retain the §3 behavior (h_det projection), which is
+what every closed-form unit invariant in §4 tests.
+
 ## 7. 2D port (PR 7 summary)
 
 Identical structure with the 2D specifics: `h_det` = the CVODE solution

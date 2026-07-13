@@ -234,7 +234,7 @@ struct SpectralROM1D {
      *   rate  = λ_j·K1d / mm_i
      *   g     = −λ_j·K1d·(1/mm_i − 1)·b_j + (rm_i − 1)·r_j
      *   δa   ← (δa − g/rate)·exp(−rate·dt) + g/rate
-     * with b_j = P[:,j]^T·h_det_active recomputed at every call.
+     * with b_j = P[:,j]^T·(sensitivity reference) recomputed at every call.
      *
      * @param dt              Timestep (s).
      * @param K1d             Effective 1D conductance scale (1/s).
@@ -243,9 +243,22 @@ struct SpectralROM1D {
      *                        h_det_last_ for reconstructHead().
      * @param runoff_per_node Per-active-node runoff rate (m/s), length n_nodes.
      *                        May be null (no forcing-sensitivity term).
+     * @param sens_ref        Optional Manning-sensitivity reference field
+     *                        (length n_nodes). When non-null, b_j is projected
+     *                        from THIS field instead of h_det_active. The
+     *                        engine passes the DEPTH field (head − invert):
+     *                        roughness acts on conveyance, i.e. on the depth
+     *                        component of head — using absolute head lets the
+     *                        (mm−1)·b_j steady state scale the immovable
+     *                        invert relief and overestimates spread by orders
+     *                        of magnitude on sloped networks (measured ~15×
+     *                        median in the PR-10 MC validation; see
+     *                        docs/uncertainty/VALIDATION.md). Null preserves
+     *                        the h_det projection (standalone/unit-test use).
      */
     void advance(double dt, double K1d, const double* h_det_active,
-                 const double* runoff_per_node);
+                 const double* runoff_per_node,
+                 const double* sens_ref = nullptr);
 
     /**
      * @brief Reconstruct per-node head distribution and extract quantiles.

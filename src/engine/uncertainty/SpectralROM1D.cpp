@@ -151,12 +151,19 @@ void SpectralROM1D::seed(const double* h_nodes) {
 
 void SpectralROM1D::advance(double dt, double K1d,
                              const double* h_det_active,
-                             const double* runoff_per_node) {
+                             const double* runoff_per_node,
+                             const double* sens_ref) {
     assert(is_ready());
     assert(h_det_active != nullptr);
 
     auto nn = static_cast<std::size_t>(n_nodes);
     auto nk = static_cast<std::size_t>(n_kept);
+
+    // Manning-sensitivity reference: the field whose modal content the
+    // (mm−1)-scaled steady state tracks. Default = h_det; the engine passes
+    // depth (head − invert) so roughness sensitivity acts on conveyance, not
+    // on the immovable invert relief (PR 10 finding, VALIDATION.md).
+    const double* bref = sens_ref ? sens_ref : h_det_active;
 
     // ---- Step 1: Deviation mode energy E_j = mean_i(δa²_{i,j}) --------------
     for (std::size_t j = 0; j < nk; ++j) {
@@ -168,12 +175,12 @@ void SpectralROM1D::advance(double dt, double K1d,
         mode_energy_[j] = sum_sq / static_cast<double>(n_ensemble);
     }
 
-    // ---- Step 2: Project deterministic head and runoff into coarse space ----
+    // ---- Step 2: Project sensitivity reference and runoff into coarse space -
     for (std::size_t j = 0; j < nk; ++j) {
         const double* Pj = &basis->P[j * nn];
         double dot_b = 0.0;
         for (std::size_t i = 0; i < nn; ++i)
-            dot_b += Pj[i] * h_det_active[i];
+            dot_b += Pj[i] * bref[i];
         b_coarse[j] = dot_b;
     }
     if (runoff_per_node) {

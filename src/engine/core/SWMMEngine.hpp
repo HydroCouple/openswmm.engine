@@ -347,6 +347,7 @@ private:
     std::vector<double> rom1d_dh_buf_;       ///< per-active-node dh/dt forcing buffer (reused each step)
     std::vector<double> rom1d_h_buf_;        ///< per-active-node deterministic head buffer (reused each step)
     std::vector<double> rom1d_invert_buf_;   ///< per-active-node invert elevations (filled once at build)
+    std::vector<double> rom1d_sens_buf_;     ///< per-active-node depth (head − invert): Manning-sensitivity reference (PR 10)
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path
