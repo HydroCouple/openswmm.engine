@@ -70,3 +70,48 @@ add_custom_command(TARGET test_engine_regression POST_BUILD
 # helper colocates them next to the test exe so $<ORIGIN>/@loader_path
 # resolves them.
 openswmm_stage_test_runtime_deps(test_engine_regression)
+
+# ============================================================================
+# PR 10 — ROM vs brute-force Monte Carlo coverage validation
+# ============================================================================
+
+add_executable(test_rom_coverage
+    test_rom_coverage.cpp
+)
+
+target_link_libraries(test_rom_coverage
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+
+target_include_directories(test_rom_coverage
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+
+if(MSVC)
+    target_compile_options(test_rom_coverage PRIVATE /EHsc)
+endif()
+
+set_target_properties(test_rom_coverage PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+add_test(
+    NAME    test_rom_coverage
+    COMMAND $<TARGET_FILE:test_rom_coverage>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_tests_properties(test_rom_coverage PROPERTIES LABELS "regression")
+
+add_custom_command(TARGET test_rom_coverage POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_rom_coverage>
+        ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:test_rom_coverage>
+)
+
+openswmm_stage_test_runtime_deps(test_rom_coverage)

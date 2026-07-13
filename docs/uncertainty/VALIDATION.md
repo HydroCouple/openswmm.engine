@@ -1,0 +1,91 @@
+# ROM vs Brute-Force Monte Carlo — Validation Report (Reform PR 10)
+
+Status: measured results from `tests/regression/test_rom_coverage.cpp`
+(2026-07-08, macOS/clang, this repository). This PR closes the reform
+checklist: it measures the composite effect of PRs 4–9.
+
+## 1. Experiment
+
+- **Network**: the Phase-9 five-junction chain (J1→…→J5→O1, 100 m circular
+  conduits at 5% slope, Manning n = 0.013), 0.1 m³/s dry-weather inflow at J1
+  — free-surface, conveyance-controlled flow (depths ≈ 0.47 m, no surcharge).
+- **Reference**: 21 deterministic engine runs (no ROM) with every conduit's
+  Manning's n scaled by the LHS strata midpoints of ±20% — the identical prior
+  the ROM stratifies. Empirical q05/q50/q95 per (junction, minute) from the 21
+  sorted heads.
+- **ROM run**: same network, `[UNCERTAINTY] 1D MANNINGS_N 0.20`, M = 50,
+  deviation-form 1D ROM (PRs 6+9), depth sensitivity reference (§3).
+- **Window**: 60 report times over 1 h; coverage evaluated for t > 60 s,
+  width compared in the saturated regime (t ≥ 30 min; §4). 22 engine runs
+  complete in ~90 ms total.
+
+## 2. Results (measured)
+
+| Metric | Checklist floor | Measured | Test assertion |
+|---|---|---|---|
+| Coverage: ROM [q05,q95] ∋ MC median | ≥ 0.90 | **0.997** (294/295) | ≥ 0.95 |
+| Width ratio ROM/MC in [0.3, 3.0] (saturated) | ≥ 0.80 | **1.000** (155/155) | ≥ 0.95 |
+| Width ratio min / median / max | — | **0.676 / 1.251 / 1.610** | median ∈ [0.5, 2.0] |
+
+The ROM band is a calibrated estimate of the brute-force band in this regime:
+it brackets the Monte-Carlo median essentially always, and its width sits
+within a factor of ~1.6 of the truth everywhere, with a slightly conservative
+median (1.25×) — the right side for a linearized surrogate to err on.
+
+## 3. Finding fixed during validation: depth sensitivity reference
+
+The first run of this experiment failed spectacularly (coverage 0.56, width
+ratio median **14.7×**, max **2769×**). Root cause: the 1D ROM's
+Manning-sensitivity forcing projected the **absolute head** (invert + depth),
+so its `(mm−1)·b_j` steady state scaled the network's entire invert relief
+(~25 m here) by the Manning multiplier — but inverts cannot move; roughness
+acts only on conveyance, i.e. on the *depth* component. (The 2D ROM never had
+this defect: it works in depth space by construction.)
+
+Fix (this PR): `SpectralROM1D::advance()` accepts an optional Manning
+**sensitivity reference** field; the engine passes depth (head − invert).
+Absolute head remains the quantile anchor and reconstruction reference —
+only the `b_j` projection inside the sensitivity term changes. Standalone /
+unit-test callers that pass no reference keep the previous behavior. With the
+fix, the width-ratio median moved 14.7 → 1.25.
+
+## 4. Documented behaviors and limitations observed
+
+1. **Spread spin-up is by design.** Deviation-form spread starts at exactly
+   zero at seed and grows toward the parametric steady state
+   `δa = (mm−1)·b_j` with per-mode time constants `1/(λ_j·K1d)` — minutes to
+   tens of minutes on this network, slowest at the upstream end. Width
+   comparisons are therefore made in the saturated regime; in the first
+   ~10 minutes the ROM under-reports spread relative to an always-saturated
+   MC reference. Interpretation for users: the band reflects parameter
+   uncertainty *accumulated since simulation start*, converging upward to the
+   full parametric band.
+2. **Surcharge / backwater regime over-predicts.** An earlier fixture variant
+   (0.5 m³/s inflow, J1 flooded, whole chain surcharged ~4 m) showed the ROM
+   over-predicting steady spread by ~50–190×: under surcharge, heads are set
+   by mass balance and backwater, nearly independent of n, while the ROM's
+   conveyance-based sensitivity still scales with (large) depth. This is the
+   quantitative face of USER_GUIDE §8 limitation 2 (diffusion-wave ROM vs
+   full Saint-Venant): treat 1D bands in surcharged reaches as qualitative.
+3. **Front-arrival timing spread is not captured.** In the same surcharged
+   variant, a filling front's arrival time varied ~minutes across MC members,
+   producing transient 2–4 m empirical widths at front passage that the ROM
+   (an amplitude-sensitivity method anchored to the deterministic trajectory)
+   does not represent. Phase/timing uncertainty is out of scope for the
+   current formulation.
+4. **Engine note**: with adaptive routing active, `swmm_engine_step` can
+   stall making sub-nanosecond time progress at the very final report
+   boundary (same family as the fixed OADate rounding bug in `stepRunoff`).
+   The test sidesteps it (END_TIME beyond the sampling window) and guards
+   with a stall detector; an engine-side fix is a candidate follow-up.
+
+## 5. Reproduction
+
+```
+ctest --test-dir build/darwin-tests-local -R test_rom_coverage
+```
+
+The test prints the measured summary line
+(`[ROM-vs-MC] samples=… coverage=… width-ratio …`) on every run; assertion
+thresholds are the checklist floors tightened toward the measured actuals
+with margin for solver noise across platforms.
