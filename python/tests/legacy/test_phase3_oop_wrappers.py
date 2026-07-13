@@ -256,6 +256,20 @@ class TestLegacySubcatchments(unittest.TestCase):
         self.assertGreater(n_imperv, 0.0)
         s.finalize()
 
+    def test_scale_factors_round_trip(self):
+        s = _make_solver()
+        s.initialize()
+        subs = LegacySubcatchments(s)
+        sc = subs[0]
+        # Unscaled model reads back the 1.0 defaults.
+        self.assertAlmostEqual(sc.rain_scale_factor, 1.0)
+        self.assertAlmostEqual(sc.snow_scale_factor, 1.0)
+        sc.rain_scale_factor = 0.5
+        sc.snow_scale_factor = 1.3
+        self.assertAlmostEqual(sc.rain_scale_factor, 0.5)
+        self.assertAlmostEqual(sc.snow_scale_factor, 1.3)
+        s.finalize()
+
     def test_lid_count_zero(self):
         """Site drainage example has no LIDs — may raise if unsupported."""
         s = _make_solver()

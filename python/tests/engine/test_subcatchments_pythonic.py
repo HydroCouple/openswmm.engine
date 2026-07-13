@@ -70,6 +70,39 @@ class TestSubcatchmentProperties:
                      "snow_depth", "evap", "infil"):
             assert isinstance(getattr(s0, attr), float)
 
+    def test_scale_factors_default_to_one(self, opened_solver):
+        s0 = opened_solver.subcatchments[0]
+        assert s0.rain_scale_factor == pytest.approx(1.0)
+        assert s0.snow_scale_factor == pytest.approx(1.0)
+
+    def test_scale_factors_round_trip(self, opened_solver):
+        s0 = opened_solver.subcatchments[0]
+        s0.rain_scale_factor = 0.5
+        s0.snow_scale_factor = 1.3
+        assert s0.rain_scale_factor == pytest.approx(0.5)
+        assert s0.snow_scale_factor == pytest.approx(1.3)
+
+    def test_scale_factors_reject_nonpositive(self, opened_solver):
+        s0 = opened_solver.subcatchments[0]
+        with pytest.raises(Exception):
+            s0.rain_scale_factor = 0.0
+        with pytest.raises(Exception):
+            s0.snow_scale_factor = -1.0
+
+    def test_four_precip_factors_are_independent(self, opened_solver):
+        # rain vs snow scale on the subcatchment, and vs the gage's own two
+        # factors — the set most likely to get cross-wired.
+        s0 = opened_solver.subcatchments[0]
+        s0.rain_scale_factor = 0.7
+        s0.snow_scale_factor = 1.9
+        g = s0.gage
+        g.scale_factor = 2.3
+        g.snow_factor = 1.4
+        assert s0.rain_scale_factor == pytest.approx(0.7)
+        assert s0.snow_scale_factor == pytest.approx(1.9)
+        assert g.scale_factor == pytest.approx(2.3)
+        assert g.snow_factor == pytest.approx(1.4)
+
 
 class TestInfiltration:
     def test_view_exposes_model_enum(self, opened_solver):
