@@ -3,7 +3,7 @@
 #
 # Project:     openswmm.engine
 # Description: Open Storm Water Management Model Engine
-# Version:     6.0.0-alpha.1 (refactored engine) / 6.0.0-beta.1 (legacy engine wrapper)
+# Version:     6.0.0-alpha.3 (refactored engine) / 5.3.0-beta.3 (legacy engine wrapper)
 #
 # This is the root CMake file for the openswmm.engine project which contains:
 #   - openswmm_legacy_engine : Original EPA SWMM 5.x C solver (preserved unmodified)
@@ -34,10 +34,19 @@ project(
 )
 
 # Pre-release label for the refactored engine (e.g. "alpha.1", "beta.1", "rc.1"). Leave empty for a final release.
-set(OPENSWMM_PRERELEASE "alpha.2" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
+set(OPENSWMM_PRERELEASE "alpha.3" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
 
-# Pre-release label for the legacy engine wrapper. Advances to beta ahead of the refactored engine.
-set(OPENSWMM_LEGACY_PRERELEASE "beta.1" CACHE STRING "Pre-release tag for the legacy engine wrapper (e.g. beta.1, rc.1). Empty for a final release.")
+# Legacy SWMM engine version (EPA SWMM 5.x lineage, independent of the OpenSWMM
+# Engine version). Single source of truth: src/legacy/engine/CMakeLists.txt
+# derives the generated legacy_version.h from these.
+set(LEGACY_SWMM_VERSION_MAJOR 5)
+set(LEGACY_SWMM_VERSION_MINOR 3)
+set(LEGACY_SWMM_VERSION_PATCH 0)
+set(LEGACY_SWMM_VERSION "${LEGACY_SWMM_VERSION_MAJOR}.${LEGACY_SWMM_VERSION_MINOR}.${LEGACY_SWMM_VERSION_PATCH}")
+
+# Pre-release label for the legacy engine wrapper, applied to the legacy 5.3.0 base.
+# Stays on the beta track (the legacy solver is feature-frozen), ahead of the refactored engine.
+set(OPENSWMM_LEGACY_PRERELEASE "beta.3" CACHE STRING "Pre-release tag for the legacy engine wrapper (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
 
 if(OPENSWMM_PRERELEASE)
     set(OPENSWMM_FULL_VERSION "${PROJECT_VERSION}-${OPENSWMM_PRERELEASE}")
@@ -46,9 +55,9 @@ else()
 endif()
 
 if(OPENSWMM_LEGACY_PRERELEASE)
-    set(OPENSWMM_LEGACY_FULL_VERSION "${PROJECT_VERSION}-${OPENSWMM_LEGACY_PRERELEASE}")
+    set(OPENSWMM_LEGACY_FULL_VERSION "${LEGACY_SWMM_VERSION}-${OPENSWMM_LEGACY_PRERELEASE}")
 else()
-    set(OPENSWMM_LEGACY_FULL_VERSION "${PROJECT_VERSION}")
+    set(OPENSWMM_LEGACY_FULL_VERSION "${LEGACY_SWMM_VERSION}")
 endif()
 
 message(STATUS "OpenSWMM Engine version (refactored): ${OPENSWMM_FULL_VERSION}")

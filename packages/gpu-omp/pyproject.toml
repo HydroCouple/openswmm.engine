@@ -21,7 +21,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "openswmm-gpu-omp"
-version = "6.0.0a2"
+version = "6.0.0a3"
 description = "OpenMP (Kokkos) GPU-plugin companion for the OpenSWMM 2D surface solver."
 requires-python = ">=3.10"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -41,7 +41,7 @@ classifiers = [
 # Runtime version-locked to the base package: the plugin and the engine share
 # the GpuPluginAbi C ABI, and the loader additionally enforces the ABI version
 # at dlopen() time (GpuPluginAbi.h OPENSWMM_GPU_ABI_VERSION).
-dependencies = ["openswmm == 6.0.0a2"]
+dependencies = ["openswmm == 6.0.0a3"]
 
 [project.urls]
 Homepage   = "https://github.com/hydrocouple/openswmm.engine"

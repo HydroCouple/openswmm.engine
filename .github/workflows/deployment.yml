@@ -426,7 +426,7 @@ jobs:
           # numpy (the base wheel's only runtime dep) is pulled from PyPI as a wheel.
           "$PY" -m pip install --only-binary :all: numpy
           # The project wheels MUST come from the local wheelhouse, never PyPI.
-          # openswmm / openswmm-gpu-omp are pre-releases (6.0.0a2), and a *stable*
+          # openswmm / openswmm-gpu-omp are pre-releases (6.0.0a3), and a *stable*
           # openswmm-gpu-omp 0.0.0 placeholder exists on PyPI; without --no-index pip
           # prefers that stable stub over our local pre-release and installs an empty
           # package (ModuleNotFoundError: openswmm_gpu_omp). --no-index also makes a

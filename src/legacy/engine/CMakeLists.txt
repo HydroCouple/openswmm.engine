@@ -44,17 +44,14 @@ else()
     add_compile_definitions(NO_OPENMP)
 endif()
 
-# Legacy SWMM version (independent of the OpenSWMM Engine version)
-set(LEGACY_SWMM_VERSION_MAJOR 5)
-set(LEGACY_SWMM_VERSION_MINOR 3)
-set(LEGACY_SWMM_VERSION_PATCH 0)
-set(LEGACY_SWMM_VERSION "${LEGACY_SWMM_VERSION_MAJOR}.${LEGACY_SWMM_VERSION_MINOR}.${LEGACY_SWMM_VERSION_PATCH}")
+# Legacy SWMM version (independent of the OpenSWMM Engine version).
+# LEGACY_SWMM_VERSION{,_MAJOR,_MINOR,_PATCH} are defined in the root CMakeLists.txt.
 set(LEGACY_SWMM_VERSION_FULL "${LEGACY_SWMM_VERSION} (Build ${LEGACY_SWMM_VERSION})")
 
 # OpenSWMM wrapper pre-release tag for the legacy engine integration
-# (e.g. "beta.1", "rc.1", or "" for a stable release).
-set(OPENSWMM_LEGACY_PRERELEASE "beta.1" CACHE STRING
-    "Pre-release tag for the legacy SWMM engine wrapper (e.g. beta.1, rc.1). Empty for a stable release.")
+# (e.g. "beta.3", "rc.1", or "" for a stable release).
+set(OPENSWMM_LEGACY_PRERELEASE "beta.3" CACHE STRING
+    "Pre-release tag for the legacy SWMM engine wrapper (e.g. alpha.1, beta.1, rc.1). Empty for a stable release.")
 
 if(OPENSWMM_LEGACY_PRERELEASE)
     set(OPENSWMM_LEGACY_FULL_VERSION "${LEGACY_SWMM_VERSION}-${OPENSWMM_LEGACY_PRERELEASE}")
