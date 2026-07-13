@@ -10,6 +10,7 @@
 
 #include "Gage.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include <cmath>
 #include <algorithm>
@@ -47,16 +48,38 @@ double convertRainfall(double raw_value, GageState& state) {
     return r * state.units_factor * state.scale_factor * state.adjust_factor;
 }
 
-void separatePrecip(GageState& state, double intensity,
-                    double temperature, double snow_temp) {
-    if (temperature <= snow_temp) {
-        state.snowfall = intensity * state.snow_factor;
-        state.rainfall = 0.0;
+PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
+    PrecipSplit out{};
+
+    const int gi = ctx.subcatches.gage[sub];
+    if (gi < 0 || gi >= ctx.n_gages()) return out;
+    const auto ug = static_cast<std::size_t>(gi);
+
+    // Gage intensity already carries units_factor * scale_factor * adjust_factor
+    // (see convertRainfall above), matching legacy Gage[].rainfall.
+    const double intensity = ctx.gages.rainfall[ug];
+
+    // Legacy gage.c:517 — the IgnoreSnowmelt guard is part of the split, not a
+    // downstream concern. With snowmelt ignored, ALL precip is treated as rain
+    // regardless of temperature.
+    const bool is_snowing = !ctx.options.ignore_snow_melt &&
+                            (ctx.climate_state.temperature <= ctx.options.snow_divt);
+
+    if (is_snowing) {
+        // snowfall = gage_intensity * SCF * subcatch snow scale
+        out.snowfall = intensity
+                     * ctx.gages.snow_factor[ug]
+                     * ctx.subcatches.snow_scale_factor[sub];
     } else {
-        state.rainfall = intensity;
-        state.snowfall = 0.0;
+        // rainfall = gage_intensity * subcatch rain scale
+        out.rainfall = intensity * ctx.subcatches.rain_scale_factor[sub];
     }
-    state.total_precip = state.rainfall + state.snowfall;
+
+    // Convert to internal units (ft/sec), matching legacy's / UCF(RAINFALL).
+    const double ucf_rain = ucf::UCF(ucf::RAINFALL, ctx.options);
+    out.rainfall /= ucf_rain;
+    out.snowfall /= ucf_rain;
+    return out;
 }
 
 void updatePastRain(GageState& state, double current_time) {

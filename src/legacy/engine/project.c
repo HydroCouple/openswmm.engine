@@ -1160,6 +1160,8 @@ void createObjects()
         Subcatch[j].gwDeepFlowExpr = NULL;
         Subcatch[j].snowpack    = NULL;
         Subcatch[j].lidArea     = 0.0;
+        Subcatch[j].rainScaleFactor = 1.0;
+        Subcatch[j].snowScaleFactor = 1.0;
         for (k = 0; k < Nobjects[POLLUT]; k++)
         {
             Subcatch[j].initBuildup[k] = 0.0;

@@ -143,6 +143,9 @@ static const char* gN(const SimulationContext& c, int i) {
 static const char* tN(const SimulationContext& c, int i) {
     return (i>=0 && i<static_cast<int>(c.table_names.size())) ? c.table_names.name_of(i).c_str() : "*";
 }
+static const char* spN(const SimulationContext& c, int i) {
+    return (i>=0 && i<static_cast<int>(c.snowpack_names.size())) ? c.snowpack_names.name_of(i).c_str() : "*";
+}
 static const char* pN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_pollutants()) ? c.pollutant_names.name_of(i).c_str() : "*";
 }
@@ -905,12 +908,33 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }}
 
     // [SUBCATCHMENTS]
+    // Grammar: Name RainGage Outlet Area %Imperv Width %Slope CurbLen
+    //          [Snowpack] [RainScale] [SnowScale]
+    // The Snowpack token (8) was previously never written, silently dropping
+    // snow pack assignments on round-trip. It is now emitted whenever a pack is
+    // assigned, and also as a '*' placeholder when a scale factor needs to be
+    // written past it (same convention as the [RAINGAGES] FILE start date).
+    // Scale factors are omitted entirely when both are 1.0, so models that do
+    // not use them round-trip byte-identically to before.
     if(ctx.n_subcatches()>0){sec(f,"SUBCATCHMENTS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s\n","Name","RainGage","Outlet","Area","%%Imperv","Width","%%Slope","CurbLen");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------","----------");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n","Name","RainGage","Outlet","Area","%%Imperv","Width","%%Slope","CurbLen","Snowpack","RainScale","SnowScale");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------","----------","----------------","----------","----------");
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
     write_obj_comment(f, ctx.subcatches.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f\n",ctx.subcatch_names.name_of(j).c_str(),gN(ctx,ctx.subcatches.gage[u]),nN(ctx,ctx.subcatches.outlet_node[u]),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
+    const int  sp = ctx.subcatches.snowpack[u];
+    const double rsf = ctx.subcatches.rain_scale_factor[u];
+    const double ssf = ctx.subcatches.snow_scale_factor[u];
+    const bool need_scale = (rsf!=1.0 || ssf!=1.0);
+    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f",ctx.subcatch_names.name_of(j).c_str(),gN(ctx,ctx.subcatches.gage[u]),nN(ctx,ctx.subcatches.outlet_node[u]),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
+    // Token 8 must be present to reach tokens 9/10 positionally.
+    if(sp>=0 || need_scale) std::fprintf(f," %-16s",spN(ctx,sp));
+    if(need_scale){
+        // RainScale must be written even when 1.0 if SnowScale is not, to hold
+        // the position of token 10.
+        std::fprintf(f," %-10.4g",rsf);
+        if(ssf!=1.0) std::fprintf(f," %-10.4g",ssf);
+    }
+    std::fprintf(f,"\n");
     }}
 
     // [SUBAREAS]

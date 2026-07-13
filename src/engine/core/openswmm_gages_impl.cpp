@@ -138,7 +138,9 @@ SWMM_ENGINE_API int swmm_gage_set_snow_factor(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     if (factor <= 0.0) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
-    CHECK_GEOMETRY(ctx);
+    // No CHECK_GEOMETRY: the snow catch factor (SCF) is a scalar precipitation
+    // multiplier, not geometry — settable mid-run for calibration/RTC, matching
+    // swmm_gage_set_scale_factor and the subcatchment scale-factor setters.
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     ctx.gages.snow_factor[static_cast<std::size_t>(idx)] = factor;
     return SWMM_OK;

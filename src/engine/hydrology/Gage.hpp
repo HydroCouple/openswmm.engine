@@ -19,6 +19,7 @@
 #define OPENSWMM_GAGE_HPP
 
 #include "../data/SubcatchData.hpp"
+#include <cstddef>
 #include <vector>
 
 namespace openswmm {
@@ -80,15 +81,37 @@ struct GageState {
 double convertRainfall(double raw_value, GageState& state);
 
 /**
- * @brief Separate rainfall from snowfall based on temperature.
- *
- * @param state       [in/out] Gage state. Sets rainfall/snowfall/total_precip.
- * @param intensity   Total precipitation intensity (project units/sec).
- * @param temperature Current air temperature (project units).
- * @param snow_temp   Snow temperature threshold (project units).
+ * @brief Result of splitting a gage's precipitation for one subcatchment.
  */
-void separatePrecip(GageState& state, double intensity,
-                    double temperature, double snow_temp);
+struct PrecipSplit {
+    double rainfall = 0.0;  ///< Rainfall (ft/sec, internal units)
+    double snowfall = 0.0;  ///< Snowfall (ft/sec, internal units)
+};
+
+/**
+ * @brief Split a subcatchment's gage precipitation into rain and snow.
+ *
+ * @details The single source of truth for the rain/snow split, mirroring legacy
+ *          gage_getPrecip() (gage.c:513-523) and adding the subcatchment-level
+ *          scale factors. Applies, in order:
+ *            - the IgnoreSnowmelt guard and the temperature test
+ *            - the gage snow catch factor (SCF) on the snow branch
+ *            - the subcatchment rain/snow scale factors
+ *            - conversion to internal units (ft/sec)
+ *
+ *          Both the snowpack path (SWMMEngine) and the plain runoff path
+ *          (RunoffSolver) MUST route through this. They previously duplicated
+ *          the logic and drifted: the snowpack path dropped the SCF entirely and
+ *          the runoff path performed no split at all.
+ *
+ *          API/forcing overrides are applied by the CALLER, after this returns —
+ *          they are absolute injections and are deliberately not scaled.
+ *
+ * @param ctx  Simulation context (gages, subcatchments, climate, options).
+ * @param sub  Subcatchment index.
+ * @returns Rainfall and snowfall in ft/sec. Zero if the subcatchment has no gage.
+ */
+PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub);
 
 /**
  * @brief Update past n-hour rainfall accumulation.

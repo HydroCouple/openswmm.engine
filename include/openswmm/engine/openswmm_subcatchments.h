@@ -976,6 +976,51 @@ SWMM_ENGINE_API int swmm_subcatch_get_tag(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_subcatch_set_tag(SWMM_Engine engine, int idx,
                                             const char* tag);
 
+/**
+ * @brief Set the subcatchment's rainfall scale factor (optional token 9 of
+ *        [SUBCATCHMENTS]; default 1.0 = no scaling).
+ *
+ * @details Multiplies the gage-derived rainfall for this subcatchment only,
+ *          composing multiplicatively with the gage's own scale factor:
+ *              rainfall = gage_rain * gage_scale_factor * rain_scale_factor
+ *          API/forcing rainfall overrides are NOT scaled by this.
+ *
+ *          Settable mid-run (no geometry lock), so it can be driven by a
+ *          calibration or RTC loop.
+ *
+ * @param factor Must be > 0.0.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM if factor <= 0.0.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_rain_scale_factor(SWMM_Engine engine, int idx,
+                                            double factor);
+
+/** @brief Get the subcatchment's rainfall scale factor. @see swmm_subcatch_set_rain_scale_factor */
+SWMM_ENGINE_API int swmm_subcatch_get_rain_scale_factor(SWMM_Engine engine, int idx,
+                                            double* factor);
+
+/**
+ * @brief Set the subcatchment's snowfall scale factor (optional token 10 of
+ *        [SUBCATCHMENTS]; default 1.0 = no scaling).
+ *
+ * @details Composes multiplicatively with the gage snow catch factor (SCF):
+ *              snowfall = gage_rain * gage_scale_factor * gage_snow_factor
+ *                                   * snow_scale_factor
+ *          Distinct from the gage SCF: SCF corrects a physical gage's
+ *          snow-catch deficiency, while this represents spatial variation
+ *          across the catchment (orographic gradient, canopy, drifting).
+ *
+ *          Settable mid-run (no geometry lock).
+ *
+ * @param factor Must be > 0.0.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM if factor <= 0.0.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_snow_scale_factor(SWMM_Engine engine, int idx,
+                                            double factor);
+
+/** @brief Get the subcatchment's snowfall scale factor. @see swmm_subcatch_set_snow_scale_factor */
+SWMM_ENGINE_API int swmm_subcatch_get_snow_scale_factor(SWMM_Engine engine, int idx,
+                                            double* factor);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

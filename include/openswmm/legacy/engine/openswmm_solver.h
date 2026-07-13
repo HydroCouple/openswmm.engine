@@ -247,6 +247,20 @@ typedef enum
     /*! \brief Snow pack cold content on a snow subarea (in or mm of melt
      *         equivalent). Settable while the simulation is running. */
     swmm_SUBCATCH_SNOW_COLDC,
+    /*! \brief Subcatchment rainfall scale factor (optional token 9 of
+     *         [SUBCATCHMENTS]; default 1.0 = no scaling). Multiplies the
+     *         gage-derived rainfall for this subcatchment only, composing
+     *         multiplicatively with the gage's own scale factor. API-prescribed
+     *         rainfall is NOT scaled by it. Must be > 0. Settable while the
+     *         simulation is running. */
+    swmm_SUBCATCH_RAIN_SCALE_FACTOR,
+    /*! \brief Subcatchment snowfall scale factor (optional token 10 of
+     *         [SUBCATCHMENTS]; default 1.0 = no scaling). Composes
+     *         multiplicatively with the gage snow catch factor (SCF): SCF
+     *         corrects the physical gage's snow-catch deficiency, while this
+     *         represents spatial variation across the catchment. Must be > 0.
+     *         Settable while the simulation is running. */
+    swmm_SUBCATCH_SNOW_SCALE_FACTOR,
 } swmm_SubcatchProperty;
 
 /*!
