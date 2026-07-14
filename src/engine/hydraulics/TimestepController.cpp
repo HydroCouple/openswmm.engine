@@ -54,6 +54,14 @@ double TimestepController::compute_next(
     if (sim_remaining > 0.0 && dt > sim_remaining) {
         dt = std::max(sim_remaining, 0.001);  // legacy floor: 1 msec
     }
+    
+    // Step 2b: Prevent stalling at final boundary due to floating-point precision
+    // When sim_remaining is extremely small (sub-nanosecond), the adaptive 
+    // time stepping can stall. Apply the same floor logic as stepRunoff fix.
+    // This prevents infinite loops when dt approaches machine epsilon.
+    if (sim_remaining > 0.0 && sim_remaining < 1e-9) {
+        dt = std::min(dt, sim_remaining);
+    }
 
     // Step 3: Align to control rule event boundary
     //         (matching legacy: if nextRoutingTime >= nextRuleTime, shorten)
@@ -85,18 +93,27 @@ void TimestepController::advance(
     SimulationContext& ctx,
     double             dt_taken
 ) noexcept {
-    ctx.current_time += dt_taken;
+    // Prevent stalling at final boundary due to floating-point precision
+    // When dt_taken is extremely small (sub-nanosecond), advance the simulation
+    // clock by at least the minimum representable time step to ensure progress.
+    // This mirrors the fix applied to stepRunoff for OADate rounding.
+    double dt_effective = dt_taken;
+    if (dt_taken > 0.0 && dt_taken < 1e-9) {
+        dt_effective = std::max(dt_taken, 1e-9);
+    }
+    
+    ctx.current_time += dt_effective;
     // Use decompose-recompose arithmetic (matching legacy getDateTime)
     // to avoid floating-point divergence from simple division.
     ctx.current_date  = datetime::addSeconds(ctx.options.start_date, ctx.current_time);
 
     if (ctx.dt_output_remaining > 0.0) {
-        ctx.dt_output_remaining -= dt_taken;
+        ctx.dt_output_remaining -= dt_effective;
         if (ctx.dt_output_remaining < 0.0) ctx.dt_output_remaining = 0.0;
     }
 
     if (ctx.dt_controls_remaining > 0.0) {
-        ctx.dt_controls_remaining -= dt_taken;
+        ctx.dt_controls_remaining -= dt_effective;
         if (ctx.dt_controls_remaining < 0.0) ctx.dt_controls_remaining = 0.0;
     }
 }
