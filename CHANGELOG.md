@@ -11,6 +11,63 @@ set in `CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json`, and
 `python/pyproject.toml` for all work merged since the `v6.0.0-alpha.1`
 tag, so it's used here instead of a generic "Unreleased" heading.
 
+## [6.0.0-alpha.3] — Cross-section geometry API + SWMM_XSectShape renumbering
+
+### Fixed
+
+- **`SWMM_XSectShape` selected the wrong cross-section for every code from 8
+  up.** `swmm_link_set_xsect`/`get_xsect` pass the shape straight through with a
+  `static_cast` to the engine's storage enum (`openswmm::XsectShape`), but the
+  published `SWMM_XSECT_*` constants followed a different ordering — so
+  `SWMM_XSECT_IRREGULAR` (19) stored a vertical ellipse, `SWMM_XSECT_EGGSHAPED`
+  (14) stored a baskethandle, and so on. Only codes 0–7 and `SWMM_XSECT_STREET`
+  were correct. The constants are now the storage codes, and 26 `static_assert`s
+  in `openswmm_links_impl.cpp` pin the two together so the cast is provably
+  sound and any future drift breaks the build instead of the model.
+  **Breaking for C code that hard-coded the old integers**; code that passed the
+  constants symbolically is corrected by recompiling. Five shapes that had no
+  constant at all (`BASKETHANDLE`, `SEMICIRCULAR`, `CUSTOM`, `FORCE_MAIN`,
+  `DUMMY`) were added. `swmm_xsect_shape_name()` resolves a code at runtime.
+- **Python `XSectShape.IRREGULAR` / `CUSTOM` / `FORCE_MAIN` were mismapped.**
+  Their values (16/17/18) were read by the engine as `RECT_TRIANG` /
+  `RECT_ROUND` / `HORIZ_ELLIPSE`, so assigning them silently produced the wrong
+  cross-section. The enum now mirrors the engine's codes exactly and gained the
+  seven shapes it was missing (`RECT_TRIANG`, `RECT_ROUND`, `HORIZ_ELLIPSE`,
+  `VERT_ELLIPSE`, `ARCH`, `STREET_XSECT`, `DUMMY`) — all 26 are now nameable.
+- **`_geometry._GEOM_LABELS_EXTRA` labelled the wrong shape codes.** The
+  ellipse/arch labels sat on 19/20/21 rather than 18/19/20. The table is folded
+  into `_GEOM_LABELS`, now keyed by enum member and covering every shape.
+
+### Added
+
+- **Standalone cross-section geometry API** (`openswmm_xsect.h`). Exposes the
+  engine's own geometry kernels — area, top width, hydraulic radius, section
+  factor, critical depth, and their inverses — as a reference implementation
+  usable with no model open. Sections are built from shape + Geom1–Geom4, from
+  transect / shape-curve / street data, or from a link of an open model
+  (`swmm_link_create_xsect`), in which case the handle deep-copies the geometry
+  the engine actually built and outlives the engine. Every scalar query has an
+  `_array` counterpart. There is no geometry maths in the new code: it delegates
+  to `xsect::setParams` and the `xsect::` kernels, so results match a simulation
+  exactly.
+- **`XSectionGeometry`** in `openswmm.engine` — the Python surface for the
+  above, with scalar-or-NumPy dispatch on every query, `from_transect` /
+  `from_curve` / `from_street` / `from_link` constructors, and a required
+  keyword-only `units` argument (no default, so a unit system is never silently
+  assumed). Also `shape_name()`, and a new `xsect_geometry` guide page.
+- **`Links.get_xsect_info()`** — implements the method `_geometry` had
+  documented since it was written but which never existed, returning the
+  already-exported-but-never-constructed `CrossSection`. Also
+  `link.xsect.info()` and `link.xsect.geometry()`, plus `CrossSection.from_raw`.
+
+### Changed
+
+- `link::applyTabulatedXSectParams` (new, in `Link.cpp`) consolidates the
+  IRREGULAR / CUSTOM / STREET full-flow property derivation that previously
+  lived only inside `PostParseResolver`, so the standalone constructors and the
+  resolver share one legacy-parity implementation. Behaviour is unchanged —
+  `ctest` is green including all transect/street parity tests.
+
 ## [6.0.0-alpha.3] — Precipitation scaling (gage SCF fix + per-subcatchment factors)
 
 See `plans/PRECIP_SCALING_IMPLEMENTATION_PLAN.md` and

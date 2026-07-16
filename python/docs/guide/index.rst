@@ -47,6 +47,7 @@ domain.
 
    nodes
    links
+   xsect_geometry
    subcatchments
    gages
 

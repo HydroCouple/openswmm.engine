@@ -41,6 +41,7 @@ cimport numpy as np
 from ._common cimport *
 from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
 from ._exceptions import ElementNotFoundError, StaleObjectError
+from ._geometry import CrossSection
 
 
 # =============================================================================
@@ -49,6 +50,18 @@ from ._exceptions import ElementNotFoundError, StaleObjectError
 
 cdef inline SWMM_Engine _h(solver):
     return <SWMM_Engine><size_t>solver.handle
+
+
+cdef object _xsect_info(solver, int idx):
+    """Read a link's cross-section into a :class:`CrossSection`.
+
+    Shared by ``Links.get_xsect_info`` and ``link.xsect.info()`` so the two
+    can't disagree.
+    """
+    cdef int shape = 0
+    cdef double g1 = 0.0, g2 = 0.0, g3 = 0.0, g4 = 0.0
+    _check(swmm_link_get_xsect(_h(solver), idx, &shape, &g1, &g2, &g3, &g4))
+    return CrossSection.from_raw(shape, g1, g2, g3, g4)
 
 
 cdef inline int _resolve_link(solver, object key) except -1:
@@ -186,6 +199,32 @@ cdef class XSection:
         """Return the cross-section as a ``(shape, geom1, geom2, geom3, geom4)`` tuple."""
         s, g1, g2, g3, g4 = self._read()
         return (XSectShape(s), g1, g2, g3, g4)
+
+    def info(self):
+        """Return this cross-section as a :class:`CrossSection`.
+
+        The labelled counterpart of :meth:`as_tuple` — see
+        :attr:`CrossSection.geom_labels` for named geometry parameters.
+        """
+        _check_fresh(self._link)
+        return _xsect_info(self._link._solver, self._link._index)
+
+    def geometry(self):
+        """Return an :class:`XSectionGeometry` for this link's cross-section.
+
+        Gives access to the engine's geometry kernels — area, top width,
+        hydraulic radius, critical depth and their inverses — for the geometry
+        the engine actually built, including transect tables. The result
+        deep-copies its geometry, so it stays valid after the solver closes.
+
+        @return: An :class:`~openswmm.engine.XSectionGeometry`.
+        @raise LifecycleError: The model is still being built; finalize or open
+            it first.
+        @raise BadParamError: The link has no cross-section (e.g. a pump).
+        """
+        _check_fresh(self._link)
+        from ._xsect import XSectionGeometry
+        return XSectionGeometry.from_link(self._link)
 
     def __iter__(self):
         return iter(self.as_tuple())
@@ -905,6 +944,22 @@ cdef class Links:
         cdef bytes b = new_id.encode('utf-8')
         _check(swmm_link_rename(_h(self._solver), i, b))
         self._solver._bump_generation()
+
+    def get_xsect_info(self, key) -> CrossSection:
+        """Return the cross-section of the link identified by *key*.
+
+        @param key: A link index or id.
+        @return: A :class:`CrossSection` with the shape name and labelled
+            geometry parameters.
+
+        .. code-block:: python
+
+            xs = s.links.get_xsect_info("C1")
+            xs.shape_name       # "CIRCULAR"
+            xs.geom_labels      # {"diameter": 1.2}
+        """
+        cdef int i = _resolve_link(self._solver, key)
+        return _xsect_info(self._solver, i)
 
     # ---- Bulk numpy properties ------------------------------------
 

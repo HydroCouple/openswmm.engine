@@ -85,6 +85,7 @@ A domain-split C API replaces the monolithic legacy interface. Full reference at
 ### Additional Features
 
 - **Hot Start API** — Save, load, modify, and query hot-start files through a stable C ABI.
+- **Cross-Section Geometry** — `XSectionGeometry` exposes the engine's own geometry kernels (area, top width, hydraulic radius, section factor, critical depth, and their inverses) for all 26 shapes, standalone or per-link, with scalar or NumPy-batch evaluation.
 - **CRS Support** — Coordinate reference systems specified in `[OPTIONS]`.
 - **User Flags** — Typed `[USER_FLAGS]` / `[USER_FLAG_VALUES]` sections attach custom metadata (boolean, integer, real, string) to nodes, links, subcatchments, or gages.
 - **Extension Options** — Unrecognized `[OPTIONS]` keys are preserved and exposed to plugins at runtime.
