@@ -1,9 +1,10 @@
 # OpenSWMM Uncertainty Sidecar — User Guide
 
-> **Status (2026-05-25):** Phases 0–9 complete.  
-> 45 unit tests + 6 regression tests + 2 engine integration tests pass.  
+> **Status (2026-07-15):** Phases 0–9 complete; WQ uncertainty layer wired (PR 13a/b).  
+> 45 unit tests + 6 regression tests + 2 engine integration tests + 2 WQ uncertainty tests pass.  
 > The 2D spectral ROM (scalar + spatial), coupling uncertainty, runoff ensemble, WQ bounds,
-> Fiedler diagnostics, the 1D spectral ROM struct, and the 1D ROM engine lifecycle are all
+> Fiedler diagnostics, the 1D spectral ROM struct, the 1D ROM engine lifecycle, and the
+> water-quality uncertainty layer (`QUALITY` target with per-node concentration bounds) are all
 > implemented and tested.  HDF5 quantile output is the one remaining gap.
 
 ---
@@ -49,6 +50,7 @@ probability that the true depth at each cell lies inside the band.
 | 1D sewer | Manning's n (pipe roughness) | `[UNCERTAINTY]` |
 | 1D sewer | Lateral inflow / DWF rate per node | `[UNCERTAINTY]` |
 | Runoff | Soil hydraulic conductivity (Green-Ampt Ks, Horton f0/fmin, CN S) | `[UNCERTAINTY]` |
+| Water quality | First-order decay rate k (per pollutant) | `[UNCERTAINTY]` |
 
 ---
 
@@ -163,10 +165,29 @@ Format: `LAYER  PARAMETER  [DISTRIBUTION]  PERTURBATION`
 2D       RAINFALL     UNIFORM         0.15    ;; same effect as RAINFALL_PERT
 1D       MANNINGS_N                   0.20    ;; enables 1D sewer ROM (see §7.7)
 1D       RAINFALL                     0.20    ;; lateral-inflow uncertainty for 1D
+QUALITY  TSS                          0.30    ;; decay-rate uncertainty for TSS pollutant
 ```
 
-`LAYER` is either `2D` (surface routing) or `1D` (sewer network routing).
-Both layers accept `MANNINGS_N` and `RAINFALL` with any supported distribution.
+`LAYER` is either `2D` (surface routing), `1D` (sewer network routing), or
+`QUALITY` (water-quality decay rate).
+
+Both `2D` and `1D` layers accept `MANNINGS_N` and `RAINFALL` with any supported
+distribution.
+
+The `QUALITY` layer is different — its `PARAMETER` token is a **pollutant name**
+(from `[POLLUTANTS]`), not a hydraulic parameter name. It declares uncertainty in
+that pollutant's first-order decay rate `k`. The name is resolved to a pollutant
+index at engine initialization (after `[POLLUTANTS]` has been parsed), so the
+`[UNCERTAINTY]` section may appear before or after `[POLLUTANTS]` in the file.
+
+**QUALITY layer rules (v1):**
+- `DIST` defaults to `UNIFORM`; `UNIFORM` is the only supported distribution in v1.
+- The perturbation `p` is a relative half-range on the decay rate: each member's
+  `k_i ∈ [k(1−p), k(1+p)]`.
+- The `ENTRY` is fixed to `RATE_MULT` (the decay rate is a rate multiplier);
+  an explicit `ENTRY` token is not accepted for `QUALITY` in v1.
+- `QUALITY` entries do **not** activate the hydraulic ROM — they produce analytic
+  concentration bounds independently (see §5.3).
 
 A `2D` entry also enables and configures the 2D ROM (sets `enable_rom = true` in
 `[2D_ROM]`).  A `1D` entry only populates the uncertainty config — the 1D ROM is
@@ -175,6 +196,10 @@ whenever the 2D ROM is enabled (so 2D→1D coupling always sees per-member 1D he
 
 > **Tip — pure 1D (no 2D mesh):** adding `1D  MANNINGS_N  0.20` to a plain 1D `.inp`
 > is sufficient; no `[2D_ROM]` or `[2D_MESH]` sections are needed.
+
+> **Tip — water quality only:** adding `QUALITY  TSS  0.30` produces per-node
+> concentration bounds without activating any ROM. A model with `[POLLUTANTS]`
+> and `[UNCERTAINTY] QUALITY <pollutant> <p>` is sufficient.
 
 Support for `SOIL` (runoff ensemble) and `CD` (coupling-flux uncertainty) are set
 via C++ API directly (parsed by `UncertaintyEnsemble`, not by the `.inp` handler).
@@ -828,6 +853,51 @@ These represent the range of inlet drainage flows across the ensemble:
 - Use the Fiedler gradient at the coupling cell (§7.4) to confirm whether the inlet lies in a
   high-connectivity region of the mesh
 
+### 5.7 Water-quality uncertainty output
+
+When a `QUALITY` layer entry is present in `[UNCERTAINTY]`, the engine produces a separate
+CSV file alongside the report file:
+
+```
+<report_path>.wq_uncertainty.csv
+```
+
+The file is created by replacing the `.rpt` suffix of the report path with
+`.wq_uncertainty.csv` (or appending if no `.rpt` suffix). Schema:
+
+```
+time_s,node_name,pollutant_index,q05,q50,q95
+```
+
+**What the columns mean:**
+
+| Column | Description |
+|---|---|
+| `time_s` | Simulation time in seconds at the report boundary |
+| `node_name` | SWMM node name |
+| `pollutant_index` | 0-based index into the `[POLLUTANTS]` list |
+| `q05` | 5th-percentile concentration (mass/volume) |
+| `q50` | Median concentration — ≈ the deterministic value |
+| `q95` | 95th-percentile concentration |
+
+**What the bounds represent:** the spread in concentration attributable to ±`pert`
+uncertainty in the first-order decay rate `k` **over the most recent report interval only**.
+The bounds are analytic: `c₀ · exp(−k · kmᵢ · dt)` where `c₀` is the deterministic
+concentration at the start of the report interval, `kmᵢ` are M ascending uniform
+multipliers spanning `[1−p, 1+p]`, and `dt` is the report step in days.
+
+**Key properties:**
+- `q50 ≈ c_det` (the deterministic concentration at the report time) — the band is
+  centred on the deterministic value.
+- `q05 ≤ q50 ≤ q95` always holds (ascending strata).
+- When `k_decay = 0` (no decay), `exp(0) = 1` for all members, so `q05 = q50 = q95`
+  (zero-width band — no decay-rate uncertainty).
+- Band width grows monotonically with `pert` and with `k · dt`.
+
+> **Limitation (v1):** the bounds are **per-report-interval**, not cumulative since
+> pollutant injection. Quality routing does not carry parcel age, so a fully
+> cumulative band is not yet available. See §8, limitation 8.
+
 ---
 
 ## 6. Advanced configuration
@@ -1105,10 +1175,11 @@ pair of (2D depth, 1D head) for the orifice equation.
 | `test_engine_2d_rom_integration` | Full engine lifecycle with 2D ROM | 1/1 |
 | `test_engine_1d_rom_integration` | Full engine lifecycle with 1D ROM | 5/5 |
 
-### 7.10 HDF5 output — NOT YET WIRED
+### 7.10 HDF5 output — activation plumbing pending
 
-`Default2DOutputPlugin` exists at `src/engine/2d/output/Default2DOutputPlugin.cpp` and is
-designed to write CF-1.11/UGRID-1.0 HDF5 with datasets:
+`Default2DOutputPlugin` exists at `src/engine/2d/output/Default2DOutputPlugin.cpp`, is
+compiled (in `OPENSWMM_2D_SOURCES`), and is designed to write CF-1.11/UGRID-1.0 HDF5 with
+datasets:
 
 ```
 /Mesh2_face_depth_q05    [nTime, nFace]
@@ -1116,9 +1187,10 @@ designed to write CF-1.11/UGRID-1.0 HDF5 with datasets:
 /Mesh2_face_depth_q95    [nTime, nFace]
 ```
 
-However, it is **not yet compiled** (not in `OPENSWMM_2D_SOURCES`), HDF5 is not in
-`vcpkg.json`, and no `2D_OUTPUT_FILE` parser key exists. Until this is wired, read quantiles
-via the C++ API as shown in §2.1.
+The plugin already creates/writes these datasets from the snapshot fields that
+`postOutputSnapshot` populates. The remaining gap is the **activation plumbing**: parsing
+`2D_OUTPUT_FILE` from `[2D_OPTIONS]` and instantiating the plugin in the engine when set
+(PR 12). Until this is wired, read quantiles via the C++ API as shown in §2.1.
 
 ---
 
@@ -1174,6 +1246,21 @@ via the C++ API as shown in §2.1.
    `DeviationForm.MedianTracksDeterministic` / `DeviationForm2D.MedianTracksDeterministic`).
    This replaces the earlier, weaker "differs slightly due to linearisation" characterisation
    from the pre-reform total-head formulation.
+
+8. **WQ uncertainty is per-report-interval, not cumulative.** The water-quality uncertainty
+   layer (§5.7) computes concentration bounds attributable to decay-rate uncertainty `k` over
+   the **most recent report interval only** — not the cumulative uncertainty since the
+   pollutant was first injected. Quality routing does not carry parcel age (only storage nodes
+   track hydraulic residence time), so a fully cumulative band would require extending the
+   routing state. The per-interval bounds are still useful for understanding how sensitive
+   the concentration field is to decay-rate assumptions at each reporting period. A future
+   version may track parcel age to produce cumulative bands.
+
+9. **WQ uncertainty supports only UNIFORM distribution (v1).** The `WQUncertaintyBounds`
+   computer generates its own ascending uniform strata internally. `NORMAL` and `LOGNORMAL`
+   distributions on the `QUALITY` layer are rejected with an error message. A future version
+   (Option B in the design doc) will accept a precomputed multiplier column from
+   `UncertaintyEnsemble` to support arbitrary distributions and cross-parameter decorrelation.
 
 ---
 

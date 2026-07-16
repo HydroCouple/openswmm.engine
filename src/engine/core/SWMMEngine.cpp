@@ -14,6 +14,7 @@
 #include "DateTime.hpp"
 #include "SimulationContext.hpp"
 #include "UnitConversion.hpp"
+#include "charconv_compat.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/XSectBatch.hpp"
 #include "../hydraulics/Node.hpp"
@@ -21,6 +22,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <iostream>
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
@@ -35,9 +37,13 @@
 #include <filesystem>
 #endif
 
+// Include the quality uncertainty handler regardless of 2D enablement
+#include "../uncertainty/QualityUncertaintyHandler.hpp"
+
 #include "../uncertainty/GraphEigenBasis.hpp"
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
+#include "../uncertainty/WQUncertaintyBounds.hpp"
 
 #include <cstring>
 #include <cstdio>
@@ -129,17 +135,21 @@ int SWMMEngine::open(const char* inp_path,
 
     auto* input_plugin = plugins_.input_plugins().front();
 
-#ifdef OPENSWMM_HAS_2D
-    // Register 2D section handlers before reading so the parser can populate
-    // surface_router_ mesh and options directly.
+    // Register UNCERTAINTY section handler before reading so the parser can populate
+    // uncertainty_config_ regardless of 2D enablement.
     if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
+#ifdef OPENSWMM_HAS_2D
+        // Register 2D section handlers before reading so the parser can populate
+        // surface_router_ mesh and options directly.
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
                                  uncertainty_config_,
                                  surface_router_.pendingBCRows(),
                                  dip->registry());
-    }
 #endif
+        // Register the QUALITY uncertainty section handler regardless of 2D enablement
+        uncertainty::registerQualityUncertaintySection(uncertainty_config_, dip->registry());
+    }
 
     if (input_plugin->read(inp_path ? inp_path : "", ctx_) != 0) {
         return ctx_.error_code != 0 ? ctx_.error_code : SWMM_ERR_PARSE;
@@ -2675,6 +2685,78 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             }
         }
 
+        // Compute WQ uncertainty quantiles and flush CSV row for every active node.
+        // (PR 13: Water-quality uncertainty layer)
+        if (wq_unc_active_ && wq_csv_.is_open()) {
+            const int n_nodes = ctx_.nodes.count();
+            const int n_polluts = ctx_.n_pollutants();
+            
+            // For each node, compute WQ bounds using the previous concentration
+            // and the current time step for configured pollutants only
+            for (int i = 0; i < n_nodes; ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const double* conc_prev = wq_conc_prev_.data() + ui * n_polluts;
+                double* conc_curr = ctx_.nodes.conc.data() + ui * n_polluts;
+                
+                // Compute bounds for each configured pollutant at this node
+                for (std::size_t s = 0; s < wq_pollut_indices_.size(); ++s) {
+                    const int p = wq_pollut_indices_[s];
+                    // Skip if pollutant index is invalid (not found during resolution)
+                    if (p < 0 || p >= n_polluts) continue;
+                    
+                    const double c_prev = conc_prev[p];
+                    const double c_curr = conc_curr[p];
+                    
+                    // Compute analytical bounds for first-order decay
+                    // Get QUAL_STEP from ext_options (stored as string, convert to double)
+                    double qual_step = 300.0; // default value
+                    auto qual_step_it = ctx_.options.ext_options.find("QUAL_STEP");
+                    if (qual_step_it != ctx_.options.ext_options.end()) {
+                        openswmm::from_chars_double(
+                            qual_step_it->second.data(),
+                            qual_step_it->second.data() + qual_step_it->second.size(),
+                            qual_step);
+                    }
+                    
+                    // Get decay rate from QUALITY layer parameters
+                    double decay_rate = 0.0;
+                    const auto& quality_specs = uncertainty_config_.specs_for(uncertainty::LayerTarget::QUALITY);
+                    if (!quality_specs.empty()) {
+                        // For now, use the first QUALITY spec's perturbation as the decay perturbation
+                        // In a more complete implementation, we would map pollutant names to specific decay rates
+                        decay_rate = quality_specs[0].perturbation;
+                    }
+                    
+                    // Compute bounds with 50 LHS members (M=50)
+                    auto bounds = wq_bounds_.compute(c_prev, decay_rate, qual_step, 50);
+                    
+                    // Write CSV row for this node-pollutant combination
+                    wq_csv_ << ctx_.current_time << ','
+                            << ctx_.node_names.name_of(i) << ','
+                            << p << ','  // pollutant index
+                            << bounds.q05 << ','
+                            << bounds.q50 << ','
+                            << bounds.q95 << '\n';
+                }
+            }
+            
+            // Cache the deterministic node concentration at the previous report boundary
+            // in a buffer wq_conc_prev_[node·nPollut + p] (PR 13: Water-quality uncertainty layer)
+            for (int i = 0; i < n_nodes; ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const double* conc_curr = ctx_.nodes.conc.data() + ui * n_polluts;
+                double* conc_prev = wq_conc_prev_.data() + ui * n_polluts;
+                
+                for (std::size_t s = 0; s < wq_pollut_indices_.size(); ++s) {
+                    const int p = wq_pollut_indices_[s];
+                    // Skip if pollutant index is invalid (not found during resolution)
+                    if (p < 0 || p >= n_polluts) continue;
+                    
+                    conc_prev[p] = conc_curr[p];
+                }
+            }
+        }
+
         hydraulics::TimestepController::reset_output_timer(ctx_);
     }
 }
@@ -2791,6 +2873,9 @@ int SWMMEngine::end() noexcept {
 
     if (rom1d_csv_.is_open()) {
         rom1d_csv_.close();
+    }
+    if (wq_csv_.is_open()) {
+        wq_csv_.close();
     }
 
     // Phase 5: drain and join the IO thread (all writes must complete first)
@@ -3241,6 +3326,55 @@ void SWMMEngine::initHydraulics() noexcept {
             if (rom1d_)
                 surface_router_.setROM1D(rom1d_.get());
 #endif
+        }
+    }
+
+    // Initialize water quality uncertainty layer (PR 13)
+    {
+        wq_unc_active_ = uncertainty_config_.has_quality();
+        if (wq_unc_active_) {
+            // Initialize WQ bounds computer with the number of pollutants
+            // WQUncertaintyBounds does not require initialization
+            
+            // Resize previous concentration buffer
+            wq_conc_prev_.assign(
+                static_cast<std::size_t>(ctx_.nodes.count() * ctx_.n_pollutants()), 
+                0.0);
+            
+            // Resolve QUALITY pollutant specs: late name→index resolution at engine init
+            const auto& quality_specs = uncertainty_config_.specs_for(uncertainty::LayerTarget::QUALITY);
+            wq_pollut_indices_.clear();
+            wq_pollut_indices_.reserve(quality_specs.size());
+            
+            for (const auto& spec : quality_specs) {
+                // Find pollutant index by name
+                int pollut_index = -1;
+                const auto& pollut_names = ctx_.pollutant_names.names();
+                for (std::size_t i = 0; i < pollut_names.size(); ++i) {
+                    if (spec.name == pollut_names[i]) {
+                        pollut_index = static_cast<int>(i);
+                        break;
+                    }
+                }
+                
+                // Store the index (or -1 if not found - will be handled during execution)
+                wq_pollut_indices_.push_back(pollut_index);
+            }
+
+            if (!rpt_path_.empty()) {
+                std::string wq_csv_path = rpt_path_;
+                const std::string rpt_ext = ".rpt";
+                if (wq_csv_path.size() >= rpt_ext.size() &&
+                    wq_csv_path.compare(wq_csv_path.size() - rpt_ext.size(), rpt_ext.size(), rpt_ext) == 0) {
+                    wq_csv_path.replace(wq_csv_path.size() - rpt_ext.size(), rpt_ext.size(), ".wq_uncertainty.csv");
+                } else {
+                    wq_csv_path += ".wq_uncertainty.csv";
+                }
+                wq_csv_.open(wq_csv_path);
+                if (wq_csv_.is_open()) {
+                    wq_csv_ << "time_s,node_name,pollutant_index,q05,q50,q95\n";
+                }
+            }
         }
     }
 

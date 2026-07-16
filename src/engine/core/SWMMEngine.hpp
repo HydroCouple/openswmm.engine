@@ -68,6 +68,7 @@ namespace openswmm::twoD { class Default2DOutputPlugin; }
 #include "../uncertainty/GraphEigenBasis.hpp"
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
+#include "../uncertainty/WQUncertaintyBounds.hpp"
 
 #include <fstream>
 #include <functional>
@@ -286,6 +287,9 @@ public:
     /** @brief 1D spectral ROM quantiles (null if not built or network too small). */
     const uncertainty::SpectralROM1D* rom1d() const noexcept { return rom1d_.get(); }
 
+    /** @brief Check if water quality uncertainty layer is active. */
+    bool wq_unc_active() const noexcept { return wq_unc_active_; }
+
 private:
     // -----------------------------------------------------------------------
     // Sub-systems
@@ -348,6 +352,13 @@ private:
     std::vector<double> rom1d_h_buf_;        ///< per-active-node deterministic head buffer (reused each step)
     std::vector<double> rom1d_invert_buf_;   ///< per-active-node invert elevations (filled once at build)
     std::vector<double> rom1d_sens_buf_;     ///< per-active-node depth (head − invert): Manning-sensitivity reference (PR 10)
+
+    // Water quality uncertainty layer (PR 13)
+    std::vector<double> wq_conc_prev_;       ///< Previous report boundary concentrations (node·nPollut + p)
+    std::ofstream wq_csv_;                   ///< WQ uncertainty quantile CSV (written at report intervals)
+    uncertainty::WQUncertaintyBounds wq_bounds_; ///< Analytical WQ bounds computer
+    std::vector<int> wq_pollut_indices_;     ///< Pollutant indices for QUALITY layer sources
+    bool wq_unc_active_ = false;             ///< True if QUALITY layer is active
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path

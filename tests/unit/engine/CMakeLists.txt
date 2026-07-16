@@ -439,6 +439,87 @@ add_test(
 )
 set_tests_properties(test_engine_1d_rom_integration PROPERTIES LABELS "unit")
 
+# Water-quality uncertainty layer integration test
+add_executable(test_engine_wq_uncertainty
+    test_engine_wq_uncertainty.cpp
+)
+target_link_libraries(test_engine_wq_uncertainty
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        GTest::gmock
+        # On MSVC, link against the internal static library so tests can
+        # call non-exported C++ symbols without per-test source tracking.
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_wq_uncertainty
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_wq_uncertainty PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_wq_uncertainty PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_wq_uncertainty)
+add_test(
+    NAME    test_engine_wq_uncertainty
+    COMMAND $<TARGET_FILE:test_engine_wq_uncertainty>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_wq_uncertainty PROPERTIES LABELS "unit")
+
+# GridFileReader unit test (SR-2a) — needs HDF5 for fixture generation
+add_executable(test_grid_file_reader
+    test_grid_file_reader.cpp
+)
+target_link_libraries(test_grid_file_reader
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_grid_file_reader
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+# HDF5 is needed for fixture generation in SetUp()
+if(TARGET hdf5::hdf5-shared)
+    target_link_libraries(test_grid_file_reader PRIVATE hdf5::hdf5-shared)
+elseif(TARGET hdf5::hdf5-static)
+    target_link_libraries(test_grid_file_reader PRIVATE hdf5::hdf5-static)
+else()
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_grid_file_reader PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_grid_file_reader PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
+if(MSVC)
+    target_compile_options(test_grid_file_reader PRIVATE /EHsc)
+endif()
+set_target_properties(test_grid_file_reader PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_grid_file_reader)
+add_test(
+    NAME    test_grid_file_reader
+    COMMAND $<TARGET_FILE:test_grid_file_reader>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_grid_file_reader PROPERTIES LABELS "unit")
+
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_executable(test_engine_geopackage test_geopackage.cpp)

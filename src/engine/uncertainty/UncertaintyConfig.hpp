@@ -83,6 +83,13 @@ struct UncertaintyConfig {
         return false;
     }
 
+    /// True if any active QUALITY uncertainty source is configured.
+    bool has_quality() const noexcept {
+        for (const auto& s : sources)
+            if (s.layer == LayerTarget::QUALITY && s.is_active()) return true;
+        return false;
+    }
+
     /// All active specs targeting @p layer, in parse order (PR 9c).
     /// Generic accessor for registry consumers — includes user-defined names
     /// that have no dedicated convenience accessor.
