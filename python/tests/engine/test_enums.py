@@ -92,16 +92,27 @@ class TestLinkType:
 # XSectShape
 # ---------------------------------------------------------------------------
 class TestXSectShape:
-    """Verify XSectShape values."""
+    """Verify XSectShape values.
+
+    These are the engine's storage codes (``openswmm::XsectShape`` /
+    ``SWMM_XSectShape``), not the legacy SWMM 5 ``XsectType`` ordering.
+
+    Renumbered in 6.0: IRREGULAR/CUSTOM/FORCE_MAIN previously carried 16/17/18,
+    which the engine read as RECT_TRIANG/RECT_ROUND/HORIZ_ELLIPSE — so
+    assigning them silently produced the wrong cross-section. The seven shapes
+    the enum had been missing were added at the same time.
+    ``test_xsect_geometry.TestShapeEnumParity`` pins these against the engine
+    itself; this module just pins the literals.
+    """
 
     def test_circular_is_zero(self):
         assert XSectShape.CIRCULAR == 0
 
     def test_force_main(self):
-        assert XSectShape.FORCE_MAIN == 18
+        assert XSectShape.FORCE_MAIN == 23
 
     def test_member_count(self):
-        assert len(XSectShape) == 19
+        assert len(XSectShape) == 26
 
     def test_known_values(self):
         expected = {
@@ -110,8 +121,10 @@ class TestXSectShape:
             "PARABOLIC": 6, "POWER": 7, "MODBASKETHANDLE": 8,
             "EGGSHAPED": 9, "HORSESHOE": 10, "GOTHIC": 11,
             "CATENARY": 12, "SEMIELLIPTICAL": 13, "BASKETHANDLE": 14,
-            "SEMICIRCULAR": 15, "IRREGULAR": 16, "CUSTOM": 17,
-            "FORCE_MAIN": 18,
+            "SEMICIRCULAR": 15, "RECT_TRIANG": 16, "RECT_ROUND": 17,
+            "HORIZ_ELLIPSE": 18, "VERT_ELLIPSE": 19, "ARCH": 20,
+            "IRREGULAR": 21, "CUSTOM": 22, "FORCE_MAIN": 23,
+            "STREET_XSECT": 24, "DUMMY": 25,
         }
         for name, val in expected.items():
             assert XSectShape[name].value == val

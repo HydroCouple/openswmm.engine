@@ -251,6 +251,13 @@ class OutletRatingType(IntEnum):
 class XSectShape(IntEnum):
     """Cross-section shape codes.
 
+    Mirrors the engine's ``SWMM_XSectShape`` storage codes exactly.
+
+    .. warning::
+       **Renumbered in 6.0.** ``IRREGULAR``, ``CUSTOM`` and ``FORCE_MAIN``
+       previously carried 16/17/18, which the engine read as
+       ``RECT_TRIANG``/``RECT_ROUND``/``HORIZ_ELLIPSE``.
+
     @cvar CIRCULAR: Circular pipe.
     @cvar FILLED_CIRCULAR: Filled circular pipe.
     @cvar RECT_CLOSED: Closed rectangular.
@@ -267,9 +274,16 @@ class XSectShape(IntEnum):
     @cvar SEMIELLIPTICAL: Semi-elliptical pipe.
     @cvar BASKETHANDLE: Baskethandle-shaped pipe.
     @cvar SEMICIRCULAR: Semi-circular pipe.
+    @cvar RECT_TRIANG: Rectangular-triangular channel.
+    @cvar RECT_ROUND: Rectangular-round channel.
+    @cvar HORIZ_ELLIPSE: Horizontal elliptical pipe.
+    @cvar VERT_ELLIPSE: Vertical elliptical pipe.
+    @cvar ARCH: Arch pipe.
     @cvar IRREGULAR: Irregular (from transect data).
     @cvar CUSTOM: Custom shape (from shape curve).
     @cvar FORCE_MAIN: Force main (pressurized).
+    @cvar STREET_XSECT: Street cross-section.
+    @cvar DUMMY: Dummy — no geometry.
     """
 
     CIRCULAR = 0
@@ -288,9 +302,16 @@ class XSectShape(IntEnum):
     SEMIELLIPTICAL = 13
     BASKETHANDLE = 14
     SEMICIRCULAR = 15
-    IRREGULAR = 16
-    CUSTOM = 17
-    FORCE_MAIN = 18
+    RECT_TRIANG = 16
+    RECT_ROUND = 17
+    HORIZ_ELLIPSE = 18
+    VERT_ELLIPSE = 19
+    ARCH = 20
+    IRREGULAR = 21
+    CUSTOM = 22
+    FORCE_MAIN = 23
+    STREET_XSECT = 24
+    DUMMY = 25
 
 
 # =============================================================================
