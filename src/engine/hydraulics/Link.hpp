@@ -143,6 +143,36 @@ XSectParams buildXSectParams(
  */
 int translateShape(XsectShape link_shape);
 
+/**
+ * @brief Derive the full-flow properties of a tabulated cross-section.
+ *
+ * @details The counterpart of xsect::setParams() for the three shapes whose
+ *          geometry comes from a transect table rather than a formula:
+ *          IRREGULAR, CUSTOM and STREET_XSECT. Fills the y_full/a_full/r_full/
+ *          w_max/s_full/s_max/a_bot/yw_max fields of @p xs from the built
+ *          table, and attaches the table pointers.
+ *
+ *          Beyond a/r/w_full this sets the PHYSICAL s_max and a_bot (the area
+ *          at the maximum section factor), which drive link_getYnorm's getAofS
+ *          normal-depth solve and the flow limit q_max. Leaving s_max = s_full
+ *          and a_bot = 0 diverges every transect whose section factor peaks
+ *          below full depth.
+ *
+ * @note PARITY: legacy getTransectParams (xsect.c:1339-1358) for IRREGULAR /
+ *       STREET_XSECT, and setCustomXsectParams (xsect.c:668-700) for CUSTOM.
+ *       @p xs.type must already be set to the batch XSectShape code.
+ *
+ * @param xs      [in/out] Params to fill; `type` must be set on entry.
+ * @param td      Built transect table (buildTables / buildCustomTables output).
+ * @param y_full  Full depth (ft). Used only by CUSTOM, whose table is built at
+ *                unit height and scaled here; ignored for IRREGULAR/STREET,
+ *                which take y_full from @p td.
+ * @param transect_idx  Index to record in `xs.transect`, or -1 when the table
+ *                      is owned rather than pooled.
+ */
+void applyTabulatedXSectParams(XSectParams& xs, const transect::TransectData& td,
+                               double y_full, int transect_idx);
+
 } // namespace link
 
 } // namespace openswmm

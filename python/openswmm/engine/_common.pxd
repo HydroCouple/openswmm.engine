@@ -1105,6 +1105,78 @@ cdef extern from "openswmm_climate.h":
     cdef int swmm_climate_set_adjust_conductivity(SWMM_Engine e, const double* values, int count)
 
 
+cdef extern from "openswmm_xsect.h":
+
+    # --- Opaque handle ---
+    ctypedef void* SWMM_XSect
+
+    # --- Construction / destruction ---
+    cdef int swmm_xsect_create(int shape, double g1, double g2, double g3,
+                               double g4, int unit_system, SWMM_XSect* out)
+    cdef int swmm_xsect_create_irregular(const double* stations,
+                                         const double* elevations, int n_pts,
+                                         double x_left_bank, double x_right_bank,
+                                         double n_left, double n_channel,
+                                         double n_right, double length_factor,
+                                         int unit_system, SWMM_XSect* out)
+    cdef int swmm_xsect_create_custom(double y_full, const double* curve_depths,
+                                      const double* curve_widths, int n_pts,
+                                      int unit_system, SWMM_XSect* out)
+    cdef int swmm_xsect_create_street(double width, double curb_height,
+                                      double slope, double roughness,
+                                      double gutter_depression,
+                                      double gutter_width, int sides,
+                                      double back_width, double back_slope,
+                                      double back_roughness,
+                                      int unit_system, SWMM_XSect* out)
+    cdef int swmm_link_create_xsect(SWMM_Engine e, int link_idx, SWMM_XSect* out)
+    cdef int swmm_xsect_free(SWMM_XSect xs)
+
+    # --- Identity ---
+    cdef int swmm_xsect_get_shape(SWMM_XSect xs, int* shape)
+    cdef int swmm_xsect_get_units(SWMM_XSect xs, int* unit_system, int* flow_units)
+    cdef const char* swmm_xsect_shape_name(int shape)
+
+    # --- Queries ---
+    # Declared nogil: these are pure geometry maths over an owned handle — they
+    # touch no Python state — so _xsect.pyx releases the GIL around them, which
+    # is what makes the array forms worth having.
+    cdef int swmm_xsect_area_of_depth(SWMM_XSect xs, double depth, double* area) nogil
+    cdef int swmm_xsect_width_of_depth(SWMM_XSect xs, double depth, double* width) nogil
+    cdef int swmm_xsect_hydrad_of_depth(SWMM_XSect xs, double depth, double* hydrad) nogil
+    cdef int swmm_xsect_depth_of_area(SWMM_XSect xs, double area, double* depth) nogil
+    cdef int swmm_xsect_hydrad_of_area(SWMM_XSect xs, double area, double* hydrad) nogil
+    cdef int swmm_xsect_sectfactor_of_area(SWMM_XSect xs, double area, double* sf) nogil
+    cdef int swmm_xsect_area_of_sectfactor(SWMM_XSect xs, double sf, double* area) nogil
+    cdef int swmm_xsect_dsda(SWMM_XSect xs, double area, double* dsda) nogil
+    cdef int swmm_xsect_critical_depth(SWMM_XSect xs, double flow, double* ycrit) nogil
+    cdef int swmm_xsect_full_properties(SWMM_XSect xs, double* y_full,
+                                        double* a_full, double* r_full,
+                                        double* w_max, double* s_full,
+                                        double* a_max) nogil
+    cdef int swmm_xsect_is_open(SWMM_XSect xs, int* is_open) nogil
+
+    # --- Queries (array) ---
+    cdef int swmm_xsect_area_of_depth_array(SWMM_XSect xs, const double* inp,
+                                            int n, double* out) nogil
+    cdef int swmm_xsect_width_of_depth_array(SWMM_XSect xs, const double* inp,
+                                             int n, double* out) nogil
+    cdef int swmm_xsect_hydrad_of_depth_array(SWMM_XSect xs, const double* inp,
+                                              int n, double* out) nogil
+    cdef int swmm_xsect_depth_of_area_array(SWMM_XSect xs, const double* inp,
+                                            int n, double* out) nogil
+    cdef int swmm_xsect_hydrad_of_area_array(SWMM_XSect xs, const double* inp,
+                                             int n, double* out) nogil
+    cdef int swmm_xsect_sectfactor_of_area_array(SWMM_XSect xs, const double* inp,
+                                                 int n, double* out) nogil
+    cdef int swmm_xsect_area_of_sectfactor_array(SWMM_XSect xs, const double* inp,
+                                                 int n, double* out) nogil
+    cdef int swmm_xsect_dsda_array(SWMM_XSect xs, const double* inp, int n,
+                                   double* out) nogil
+    cdef int swmm_xsect_critical_depth_array(SWMM_XSect xs, const double* inp,
+                                             int n, double* out) nogil
+
+
 # --- Shared helpers ---
 cdef inline void _check(int code) except *:
     """Raise the right ``EngineError`` subclass for a non-zero ``code``.

@@ -18,6 +18,7 @@ set(_engine_modules
     _edit
     _nodes
     _links
+    _xsect
     _subcatchments
     _gages
     _hotstart

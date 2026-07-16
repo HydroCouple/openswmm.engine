@@ -1341,7 +1341,6 @@ void resolve_cross_references(SimulationContext& ctx) {
         switch (shape) {
         case XsectShape::CUSTOM: {
             // Properties already set from CUSTOM shape curve above.
-            // PARITY: mirror legacy xsect_setCustomXsectParams (xsect.c:668-700).
             a_full = ctx.links.xsect_a_full[uj];
             r_full = ctx.links.xsect_r_full[uj];
             w_max  = ctx.links.xsect_w_max[uj];
@@ -1351,53 +1350,27 @@ void resolve_cross_references(SimulationContext& ctx) {
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
-                // xsect.c:685-686 — scale the unit-height shape sMax/aMax
-                s_max = td.s_max * y_full * y_full * std::pow(y_full, 2.0/3.0);
-                ctx.links.xsect_a_bot[uj] = td.a_max * y_full * y_full;
-                // xsect.c:688-699 — height at lowest widest point from the
-                // (normalized) width table
-                int iMax = 0;
-                double wtMax = td.width_tbl[0];
-                for (int i = 1; i < transect::N_TRANSECT_TBL; ++i) {
-                    if (td.width_tbl[i] < wtMax) break;
-                    wtMax = td.width_tbl[i];
-                    iMax = i;
-                }
-                yw_max = y_full * static_cast<double>(iMax) /
-                         static_cast<double>(transect::N_TRANSECT_TBL - 1);
+                XSectParams xs;
+                xs.type = link::translateShape(shape);
+                link::applyTabulatedXSectParams(xs, td, y_full, ci);
+                a_full = xs.a_full; r_full = xs.r_full; w_max = xs.w_max;
+                s_full = xs.s_full; s_max = xs.s_max; yw_max = xs.yw_max;
+                ctx.links.xsect_a_bot[uj] = xs.a_bot;
             }
             break;
         }
 
         case XsectShape::IRREGULAR: {
-            // PARITY: legacy getTransectParams (xsect.c:1339-1358). Beyond
-            // a/r/w_full this sets sFull, the PHYSICAL sMax, aBot (= area at the
-            // max section factor) and ywMax (height at the lowest widest point).
-            // These feed link_getYnorm's getAofS normal-depth solve (initial
-            // conduit depth) and the flow-limit q_max — leaving sMax=sFull /
-            // aBot=0 diverges every transect whose section factor peaks below
-            // full depth (see the s_max/a_max note in Transect.cpp buildTables).
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
-                a_full = td.a_full;
-                r_full = td.r_full;
-                w_max  = td.w_max;
-                y_full = td.y_full;
-                s_full = a_full * std::pow(r_full, 2.0/3.0);   // xsect.c:1343
-                s_max  = td.s_max;                              // xsect.c:1344 (absolute)
-                ctx.links.xsect_a_bot[uj] = td.a_max;           // xsect.c:1345
-                // xsect.c:1347-1358 — height at lowest widest point from the
-                // (normalized) width table
-                int iMax = 0;
-                double wtMax = td.width_tbl[0];
-                for (int i = 1; i < transect::N_TRANSECT_TBL; ++i) {
-                    if (td.width_tbl[i] < wtMax) break;
-                    wtMax = td.width_tbl[i];
-                    iMax = i;
-                }
-                yw_max = y_full * static_cast<double>(iMax) /
-                         static_cast<double>(transect::N_TRANSECT_TBL - 1);
+                XSectParams xs;
+                xs.type = link::translateShape(shape);
+                link::applyTabulatedXSectParams(xs, td, y_full, ci);
+                y_full = xs.y_full; a_full = xs.a_full; r_full = xs.r_full;
+                w_max  = xs.w_max;  s_full = xs.s_full; s_max  = xs.s_max;
+                yw_max = xs.yw_max;
+                ctx.links.xsect_a_bot[uj] = xs.a_bot;
             } else {
                 // Fallback if transect not resolved
                 a_full = w_max * y_full;
@@ -1411,17 +1384,18 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
 
         case XsectShape::STREET_XSECT: {
-            // Properties already set from street tables above.
+            // Properties already set from street tables above. NB: unlike the
+            // IRREGULAR/CUSTOM branches this deliberately leaves xsect_a_bot
+            // untouched.
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
-                a_full = td.a_full;
-                r_full = td.r_full;
-                w_max  = td.w_max;
-                y_full = td.y_full;
-                s_full = a_full * std::pow(r_full, 2.0/3.0);
-                s_max  = s_full;
-                yw_max = y_full;
+                XSectParams xs;
+                xs.type = link::translateShape(shape);
+                link::applyTabulatedXSectParams(xs, td, y_full, ci);
+                y_full = xs.y_full; a_full = xs.a_full; r_full = xs.r_full;
+                w_max  = xs.w_max;  s_full = xs.s_full; s_max  = xs.s_max;
+                yw_max = xs.yw_max;
             } else {
                 // Fallback if street not resolved
                 a_full = w_max * y_full;

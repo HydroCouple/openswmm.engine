@@ -31,6 +31,9 @@ The package is split by domain to mirror the C header organisation:
    * - :class:`Links`
      - ``openswmm_links.h``
      - Link get/set, control settings, bulk arrays
+   * - :class:`XSectionGeometry`
+     - ``openswmm_xsect.h``
+     - Cross-section geometry kernels (standalone or per-link)
    * - :class:`Subcatchments`
      - ``openswmm_subcatchments.h``
      - Subcatchment runoff, rainfall override
@@ -171,6 +174,7 @@ from ._exceptions import (
 from ._model import ModelBuilder
 from ._edit import ModelEditor, ImpactEntry, ConversionResult
 from ._geometry import CrossSection
+from ._xsect import XSectionGeometry, shape_name
 from ._report import (
     get_report_snapshot,
     ReportSnapshot,
@@ -281,6 +285,8 @@ __all__ = [
     "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
     # --- Geometry helpers ---
     "CrossSection",
+    "XSectionGeometry",
+    "shape_name",
     # --- Report snapshot ---
     "get_report_snapshot",
     "ReportSnapshot", "RoutingDiagnostics",

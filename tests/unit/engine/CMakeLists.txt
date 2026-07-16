@@ -121,6 +121,8 @@ target_compile_definitions(test_engine_xsection PRIVATE
 add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
+# Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
+add_gtest_unit(test_engine_xsect_api         test_xsect_api.cpp)
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)

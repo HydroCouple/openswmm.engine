@@ -113,6 +113,19 @@ Links
    :undoc-members:
    :show-inheritance:
 
+Cross-Section Geometry
+----------------------
+
+.. automodule:: openswmm.engine._xsect
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: openswmm.engine._geometry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Subcatchments
 -------------
 
