@@ -505,6 +505,15 @@ private:
     void updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                               int& unconv_shared);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
+    /// Canonical commit of an accepted node depth candidate: reapplies the
+    /// physical lower bound and the flooding/ponding upper cap, then derives
+    /// overflow, volume, dYdT (CFL) and the depth/head pair from that SAME
+    /// candidate. The ONLY place an accepted depth becomes committed state.
+    /// Called by setNodeDepth() for the raw Picard result and by the
+    /// accepted-Anderson branch in updateNodeDepthsTeam(), so a mixed depth
+    /// can never leave volume/overflow/dYdT describing the unmixed candidate.
+    void commitNodeDepthState(SimulationContext& ctx, int node_idx,
+                              double y_new, double dV, double dt);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:

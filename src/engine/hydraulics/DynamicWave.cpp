@@ -2729,10 +2729,26 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                     double y_anderson = (1.0 - alpha) * aa_g_prev_[ui] + alpha * g_k;
 
                     // Physical bounds safeguard: depth must be >= 0
-                    // Fall back to standard Picard if Anderson produces unphysical result
+                    // Fall back to standard Picard if Anderson produces
+                    // unphysical result. (With alpha clamped to [0,1],
+                    // y_anderson is a convex blend of two committed, already-
+                    // bounded depths, so this check is a belt-and-braces
+                    // guard rather than an active constraint.)
                     if (y_anderson >= 0.0) {
-                        nodes.depth[ui] = y_anderson;
-                        nodes.head[ui] = nodes.invert_elev[ui] + y_anderson;
+                        // Commit the ACCEPTED depth through the same canonical
+                        // state-commit routine used for the raw Picard result,
+                        // so volume, overflow and dYdT (CFL) describe the
+                        // mixed depth rather than the unmixed candidate g_k.
+                        // This matters when the accepted mix is the FINAL
+                        // Picard iteration: that state feeds flooding totals,
+                        // mass balance, storage losses and the next adaptive
+                        // timestep. dV is recomputed from the same inputs and
+                        // arithmetic order as setNodeDepth() (inflow/outflow
+                        // are unchanged since that call, same iteration).
+                        const double dQ = nodes.inflow[ui] - nodes.outflow[ui];
+                        const double dV =
+                            0.5 * (nodes.old_net_inflow[ui] + dQ) * dt;
+                        commitNodeDepthState(ctx, i, y_anderson, dV, dt);
                     }
                     // else: keep g_k (standard Picard result from setNodeDepth)
                 }
@@ -2962,14 +2978,54 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         }
     }
 
+    // --- Commit the accepted candidate through the canonical routine ---
+    // (bounds, flooding/ponding caps, overflow, volume, dYdT, depth/head).
+    commitNodeDepthState(ctx, node_idx, y_new, dV, dt);
+}
+
+// ============================================================================
+// commitNodeDepthState -- canonical commit of an accepted node depth
+// ============================================================================
+//
+// The ONLY place an accepted depth candidate becomes committed node state:
+// the physical lower bound, the flooding/ponding upper cap, overflow, volume,
+// dYdT (used by the CFL adaptive-timestep logic) and the depth/head pair are
+// all derived here from the SAME candidate.
+//
+// Callers: setNodeDepth() for the ordinary Picard result, and the accepted-
+// Anderson branch in updateNodeDepthsTeam(). Before this helper existed, the
+// Anderson branch overwrote only depth and head, so an accepted mix on the
+// FINAL Picard iteration left volume, overflow and dYdT describing the
+// unmixed candidate — feeding inconsistent state into flooding totals, mass
+// balance, next-step storage losses and the next adaptive routing step.
+//
+// With Anderson OFF (the default) the single call from setNodeDepth()
+// performs the identical arithmetic the previously-inlined block did, in the
+// same order — bit-exact with the prior behavior.
+
+void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
+                                    double y_new, double dV, double dt) {
+    auto& nodes = ctx.nodes;
+    auto ui = static_cast<std::size_t>(node_idx);
+    const NodeTile& t = node_tile_[ui];
+
     // --- Depth cannot be negative ---
     y_new = std::max(y_new, 0.0);
 
+    // --- Ponding eligibility (same rule as setNodeDepth's entry logic) ---
+    const bool is_coupled =
+        (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+    const bool can_pond =
+        (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
+
     // --- Determine max non-flooded depth ---
-    double y_max = full_depth;
+    double y_max = t.full_depth;
     if (!can_pond) y_max += t.sur_depth;
 
     // --- Flooding logic (matching legacy getFloodedDepth) ---
+    // Reset first so a re-commit (accepted Anderson mix after the raw Picard
+    // commit) cannot inherit stale overflow from the earlier candidate.
+    nodes.overflow[ui] = 0.0;
     if (y_new > y_max) {
         if (!can_pond) {
             // Non-ponded flooding: cap at max, excess is overflow
@@ -2991,7 +3047,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
 
     // --- Compute change in depth w.r.t. time (for CFL) ---
     if (dt > 0.0) {
-        xnode_.dYdT[ui] = std::fabs(y_new - y_old) / dt;
+        xnode_.dYdT[ui] = std::fabs(y_new - nodes.old_depth[ui]) / dt;
     }
 
     // --- Save new depth ---
