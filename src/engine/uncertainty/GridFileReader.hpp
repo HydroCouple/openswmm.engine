@@ -120,6 +120,7 @@ public:
     const std::string& units()   const noexcept { return units_; }
     const std::string& crs()    const noexcept { return crs_; }
     bool has_location()          const noexcept { return has_location_; }
+    bool has_family_code()       const noexcept { return has_family_code_; }
 
     /// Grid coordinate arrays (cell centers). Valid after open().
     const std::vector<double>& x_coords() const noexcept { return x_coords_; }
@@ -164,6 +165,11 @@ public:
     /// Pointer to the next spread plane, or nullptr if no next plane.
     const float* spread_next() const noexcept;
 
+    /// Pointer to the current family_code plane (ny*nx uint8 values), or
+    /// nullptr when the file's root family is not MIXED. Each cell's code maps
+    /// to a GridFamily: 0=NORMAL, 1=LOGNORMAL, 2=UNIFORM.
+    const uint8_t* family_code_now() const noexcept;
+
     /// Time value of the current plane.
     double time_now() const noexcept;
 
@@ -185,6 +191,7 @@ private:
     bool read_time_axis_();
     bool read_plane_(int t, std::vector<float>& loc_buf,
                               std::vector<float>& sp_buf) const;
+    bool read_family_code_plane_();
 
     // HDF5 file handle
     void* file_id_;  // hid_t stored as void* to avoid leaking HDF5 into header
@@ -198,6 +205,7 @@ private:
     std::string units_;
     std::string crs_;
     bool has_location_ = false;
+    bool has_family_code_ = false;
 
     std::vector<double> x_coords_;
     std::vector<double> y_coords_;
@@ -208,6 +216,7 @@ private:
     int next_index_ = -1;
     std::vector<float> loc_cur_, loc_next_;
     std::vector<float> sp_cur_, sp_next_;
+    std::vector<uint8_t> family_code_;  // (ny*nx) — only when family == MIXED
 
     // last_error_ is mutable so const plane-reading methods can set it
     mutable std::string last_error_;

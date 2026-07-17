@@ -28,12 +28,14 @@
 #include <vector>
 
 #include "openswmm/engine/openswmm_engine.h"
+#define private public
 #include "core/SWMMEngine.hpp"
+#undef private
 
 namespace {
 
 // Path to the test input file
-static const char* k_inp_path = "tests/unit/engine/data/wq_uncertainty_test.inp";
+static const char* k_inp_path = "wq_uncertainty_test.inp";
 static const char* k_rpt_path = "/tmp/wq_uncertainty_test.rpt";
 
 } // anonymous namespace

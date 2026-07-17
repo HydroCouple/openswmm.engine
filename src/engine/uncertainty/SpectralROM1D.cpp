@@ -49,6 +49,29 @@ void SpectralROM1D::clearEnsembleRunoff() {
     ensemble_runoff_.clear();
 }
 
+void SpectralROM1D::setSoftForcing(const double* loc, const double* spread,
+                                  DistType family) noexcept {
+    soft_loc_field_ = loc;
+    soft_spread_field_ = spread;
+    // Select the per-member coefficient c_i by family. UNIFORM uses the raw
+    // half-range band (2u-1); NORMAL/LOGNORMAL use the standard-normal quantile
+    // z_i (LOGNORMAL via the delta linearization, caller scales spread by loc).
+    soft_max_abs_coeff_ = 0.0;
+    for (int i = 0; i < n_ensemble; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const double c = (family == DistType::UNIFORM)
+            ? (2.0 * soft_u_[ui] - 1.0)
+            : soft_z_[ui];
+        soft_coeff_[ui] = c;
+        soft_max_abs_coeff_ = std::max(soft_max_abs_coeff_, std::abs(c));
+    }
+}
+
+void SpectralROM1D::clearSoftForcing() noexcept {
+    soft_loc_field_ = nullptr;
+    soft_spread_field_ = nullptr;
+}
+
 // ============================================================================
 // addRegisteredParam / clearRegisteredParams (PR 9b)
 // ============================================================================
@@ -99,6 +122,7 @@ void SpectralROM1D::initialize() {
     sort_buf_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
     mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
     h_det_last_.assign(static_cast<std::size_t>(n_nodes), 0.0);
+    soft_r_spread_.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     mode_active.assign(static_cast<std::size_t>(n_kept), true);
     n_modes_active = n_kept;
@@ -128,6 +152,17 @@ void SpectralROM1D::initialize() {
             auto ui = static_cast<std::size_t>(i);
             runoff_mult[ui] = r_lo + runoff_t[ui] * (r_hi - r_lo);
         }
+    }
+
+    soft_z_.resize(static_cast<std::size_t>(n_ensemble));
+    soft_u_.resize(static_cast<std::size_t>(n_ensemble));
+    soft_coeff_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
+    soft_max_abs_coeff_ = 0.0;
+    const auto soft_u = shuffledStrata(n_ensemble, sample_seed + 4);
+    for (int i = 0; i < n_ensemble; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        soft_u_[ui] = soft_u[ui];
+        soft_z_[ui] = probit(soft_u[ui]);
     }
 }
 
@@ -183,16 +218,28 @@ void SpectralROM1D::advance(double dt, double K1d,
             dot_b += Pj[i] * bref[i];
         b_coarse[j] = dot_b;
     }
-    if (runoff_per_node) {
+    const double* loc_field = soft_loc_field_ ? soft_loc_field_ : runoff_per_node;
+    if (loc_field) {
         for (std::size_t j = 0; j < nk; ++j) {
             const double* Pj = &basis->P[j * nn];
             double dot = 0.0;
             for (std::size_t i = 0; i < nn; ++i)
-                dot += Pj[i] * runoff_per_node[i];
+                dot += Pj[i] * loc_field[i];
             r_coarse[j] = dot;
         }
     } else {
         std::fill(r_coarse.begin(), r_coarse.end(), 0.0);
+    }
+    if (soft_spread_field_) {
+        for (std::size_t j = 0; j < nk; ++j) {
+            const double* Pj = &basis->P[j * nn];
+            double dot = 0.0;
+            for (std::size_t i = 0; i < nn; ++i)
+                dot += Pj[i] * soft_spread_field_[i];
+            soft_r_spread_[j] = dot;
+        }
+    } else {
+        std::fill(soft_r_spread_.begin(), soft_r_spread_.end(), 0.0);
     }
     // Registered FORCING_VECTOR fields (PR 9b): re-project each per call
     // (the fields are live engine buffers that change every routing step).
@@ -252,9 +299,11 @@ void SpectralROM1D::advance(double dt, double K1d,
             ep.max_dev = std::max(ep.max_dev, std::abs(th - 1.0));
     }
 
-    const double rain_scale = (runoff_per_node != nullptr)
+    const double rain_scale = (loc_field != nullptr)
                                ? std::abs(dt) * max_rain_dev : 0.0;
     const double mann_scale = std::abs(dt) * K1d * max_mann_dev;
+    const double soft_scale = (soft_spread_field_ != nullptr)
+                               ? std::abs(dt) * soft_max_abs_coeff_ : 0.0;
 
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
@@ -264,6 +313,8 @@ void SpectralROM1D::advance(double dt, double K1d,
                           std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
         bool by_manning = mann_scale > 0.0 &&
                           lam * std::abs(b_coarse[j]) * mann_scale >= mode_drop_threshold;
+        bool by_soft    = soft_scale > 0.0 &&
+                  std::abs(soft_r_spread_[j]) * soft_scale >= mode_drop_threshold;
         bool by_vector  = false;
         for (const auto& ep : extra_params_) {
             if (ep.entry == ParamEntry::FORCING_VECTOR &&
@@ -272,7 +323,7 @@ void SpectralROM1D::advance(double dt, double K1d,
                 break;
             }
         }
-        mode_active[j] = by_energy || by_rain || by_manning || by_vector;
+        mode_active[j] = by_energy || by_rain || by_manning || by_soft || by_vector;
         if (mode_active[j]) ++n_modes_active;
     }
 
@@ -300,6 +351,8 @@ void SpectralROM1D::advance(double dt, double K1d,
             const double rate = lam * K1d / mm;
             double g          = -lam * K1d * inv_mm_1 * b_coarse[j]
                                 + scale_1 * r_coarse[j];
+            if (soft_spread_field_)
+                g += soft_coeff_[ui] * soft_r_spread_[j];
             if (has_extra) {
                 for (const auto& ep : extra_params_)
                     if (ep.entry == ParamEntry::FORCING_VECTOR)

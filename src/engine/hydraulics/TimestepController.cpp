@@ -54,14 +54,6 @@ double TimestepController::compute_next(
     if (sim_remaining > 0.0 && dt > sim_remaining) {
         dt = std::max(sim_remaining, 0.001);  // legacy floor: 1 msec
     }
-    
-    // Step 2b: Prevent stalling at final boundary due to floating-point precision
-    // When sim_remaining is extremely small (sub-nanosecond), the adaptive 
-    // time stepping can stall. Apply the same floor logic as stepRunoff fix.
-    // This prevents infinite loops when dt approaches machine epsilon.
-    if (sim_remaining > 0.0 && sim_remaining < 1e-9) {
-        dt = std::min(dt, sim_remaining);
-    }
 
     // Step 3: Align to control rule event boundary
     //         (matching legacy: if nextRoutingTime >= nextRuleTime, shorten)
@@ -93,27 +85,36 @@ void TimestepController::advance(
     SimulationContext& ctx,
     double             dt_taken
 ) noexcept {
-    // Prevent stalling at final boundary due to floating-point precision
-    // When dt_taken is extremely small (sub-nanosecond), advance the simulation
-    // clock by at least the minimum representable time step to ensure progress.
-    // This mirrors the fix applied to stepRunoff for OADate rounding.
-    double dt_effective = dt_taken;
-    if (dt_taken > 0.0 && dt_taken < 1e-9) {
-        dt_effective = std::max(dt_taken, 1e-9);
+    // Compute total simulation duration using the same floor(+0.5) rounding
+    // as simulation_complete() to avoid OADate representation mismatch.
+    const double total_sec = std::floor(
+        (ctx.options.end_date - ctx.options.start_date) * SEC_PER_DAY + 0.5);
+
+    ctx.current_time += dt_taken;
+
+    // Snap to the final boundary when within 1 ms — prevents sub-nanosecond
+    // stalls at the last report boundary caused by accumulated floating-point
+    // error in current_time. Without this, simulation_complete() may fail by
+    // a microscopic margin (current_msec < total_msec) and the engine loops
+    // making imperceptible progress. 1 ms matches the legacy floor in
+    // compute_next() Step 2 and the stepRunoff rounding fix.
+    if (ctx.current_time > 0.0 &&
+        total_sec - ctx.current_time > 0.0 &&
+        total_sec - ctx.current_time < 0.001) {
+        ctx.current_time = total_sec;
     }
-    
-    ctx.current_time += dt_effective;
+
     // Use decompose-recompose arithmetic (matching legacy getDateTime)
     // to avoid floating-point divergence from simple division.
     ctx.current_date  = datetime::addSeconds(ctx.options.start_date, ctx.current_time);
 
     if (ctx.dt_output_remaining > 0.0) {
-        ctx.dt_output_remaining -= dt_effective;
+        ctx.dt_output_remaining -= dt_taken;
         if (ctx.dt_output_remaining < 0.0) ctx.dt_output_remaining = 0.0;
     }
 
     if (ctx.dt_controls_remaining > 0.0) {
-        ctx.dt_controls_remaining -= dt_effective;
+        ctx.dt_controls_remaining -= dt_taken;
         if (ctx.dt_controls_remaining < 0.0) ctx.dt_controls_remaining = 0.0;
     }
 }

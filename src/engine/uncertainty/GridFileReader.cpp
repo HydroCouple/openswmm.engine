@@ -137,6 +137,7 @@ GridFileReader::GridFileReader(GridFileReader&& other) noexcept
     , units_(std::move(other.units_))
     , crs_(std::move(other.crs_))
     , has_location_(other.has_location_)
+    , has_family_code_(other.has_family_code_)
     , x_coords_(std::move(other.x_coords_))
     , y_coords_(std::move(other.y_coords_))
     , time_axis_(std::move(other.time_axis_))
@@ -146,6 +147,7 @@ GridFileReader::GridFileReader(GridFileReader&& other) noexcept
     , loc_next_(std::move(other.loc_next_))
     , sp_cur_(std::move(other.sp_cur_))
     , sp_next_(std::move(other.sp_next_))
+    , family_code_(std::move(other.family_code_))
     , last_error_(std::move(other.last_error_))
 {
     other.file_id_ = nullptr;
@@ -165,6 +167,7 @@ GridFileReader& GridFileReader::operator=(GridFileReader&& other) noexcept {
         units_         = std::move(other.units_);
         crs_           = std::move(other.crs_);
         has_location_  = other.has_location_;
+        has_family_code_ = other.has_family_code_;
         x_coords_      = std::move(other.x_coords_);
         y_coords_      = std::move(other.y_coords_);
         time_axis_     = std::move(other.time_axis_);
@@ -174,6 +177,7 @@ GridFileReader& GridFileReader::operator=(GridFileReader&& other) noexcept {
         loc_next_      = std::move(other.loc_next_);
         sp_cur_        = std::move(other.sp_cur_);
         sp_next_       = std::move(other.sp_next_);
+        family_code_   = std::move(other.family_code_);
         last_error_    = std::move(other.last_error_);
         other.file_id_ = nullptr;
         other.cur_index_ = -1;
@@ -241,6 +245,7 @@ void GridFileReader::close() {
     units_.clear();
     crs_.clear();
     has_location_ = false;
+    has_family_code_ = false;
     x_coords_.clear();
     y_coords_.clear();
     time_axis_.clear();
@@ -250,6 +255,7 @@ void GridFileReader::close() {
     loc_next_.clear();
     sp_cur_.clear();
     sp_next_.clear();
+    family_code_.clear();
     last_error_.clear();
 }
 
@@ -355,6 +361,25 @@ bool GridFileReader::validate_schema_() {
         }
     }
 
+    // Optional: /family_code — required when root family == MIXED (SR-4b).
+    // Must be 2-D (ny, nx) uint8, one code per cell (0=NORMAL, 1=LOGNORMAL,
+    // 2=UNIFORM). Validated here (existence + dimensions); codes are read and
+    // checked at read_family_code_plane_() time.
+    has_family_code_ = dataset_exists(file, "/family_code");
+    if (has_family_code_) {
+        std::vector<hsize_t> fc_dims;
+        if (!get_dataset_dims(file, "/family_code", fc_dims)) {
+            last_error_ = "GridFileReader: cannot read '/family_code' dimensions";
+            return false;
+        }
+        if (fc_dims.size() != 2
+            || static_cast<int>(fc_dims[0]) != ny_
+            || static_cast<int>(fc_dims[1]) != nx_) {
+            last_error_ = "GridFileReader: '/family_code' must be 2-D (ny, nx)";
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -393,6 +418,21 @@ bool GridFileReader::read_metadata_() {
     // Optional attributes: units, crs
     read_string_attr(file, "units", units_);
     read_string_attr(file, "crs", crs_);
+
+    // When family == MIXED, /family_code must be present (validated in
+    // validate_schema_). Conversely, /family_code without family=MIXED is
+    // accepted but ignored — it does not change the single-family evaluation.
+    if (family_ == GridFamily::MIXED && !has_family_code_) {
+        last_error_ = "GridFileReader: root family='MIXED' requires a "
+                      "/family_code dataset (ny, nx uint8)";
+        return false;
+    }
+
+    // Read the static /family_code plane once (it does not vary with time).
+    if (has_family_code_) {
+        if (!read_family_code_plane_())
+            return false;
+    }
 
     return true;
 }
@@ -518,6 +558,43 @@ bool GridFileReader::read_plane_(int t, std::vector<float>& loc_buf,
 }
 
 // ============================================================================
+// read_family_code_plane_() — read the static /family_code dataset (SR-4b)
+// ============================================================================
+
+bool GridFileReader::read_family_code_plane_() {
+    hid_t file = reinterpret_cast<hid_t>(file_id_);
+    const auto plane_size = static_cast<std::size_t>(ny_ * nx_);
+
+    hid_t ds = H5Dopen(file, "/family_code", H5P_DEFAULT);
+    if (ds < 0) {
+        last_error_ = "GridFileReader: cannot open '/family_code'";
+        return false;
+    }
+
+    family_code_.resize(plane_size);
+    if (H5Dread(ds, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                family_code_.data()) < 0) {
+        last_error_ = "GridFileReader: cannot read '/family_code' data";
+        H5Dclose(ds);
+        return false;
+    }
+    H5Dclose(ds);
+
+    // Validate codes: each must be 0 (NORMAL), 1 (LOGNORMAL), or 2 (UNIFORM).
+    for (std::size_t i = 0; i < plane_size; ++i) {
+        if (family_code_[i] > 2) {
+            last_error_ = "GridFileReader: /family_code has invalid value "
+                          + std::to_string(family_code_[i])
+                          + " at index " + std::to_string(i)
+                          + " (supported: 0=NORMAL, 1=LOGNORMAL, 2=UNIFORM)";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// ============================================================================
 // advance()
 // ============================================================================
 
@@ -586,6 +663,11 @@ const float* GridFileReader::location_next() const noexcept {
 const float* GridFileReader::spread_next() const noexcept {
     if (next_index_ < 0) return nullptr;
     return sp_next_.data();
+}
+
+const uint8_t* GridFileReader::family_code_now() const noexcept {
+    if (!has_family_code_ || family_code_.empty()) return nullptr;
+    return family_code_.data();
 }
 
 double GridFileReader::time_now() const noexcept {

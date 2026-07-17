@@ -151,10 +151,11 @@ protected:
 // Test that the engine doesn't stall at the final boundary
 TEST_F(FinalBoundaryStallTest, NoStallAtFinalBoundary) {
     std::cout << "Starting test..." << std::endl;
-    // Open the engine with the site drainage model
+    // Open the engine with the PR 11 stall test fixture (END_TIME on a report
+    // boundary, adaptive stepping via ROUTING_STEP=10s + MINIMUM_STEP=0.5s).
     int err = swmm_engine_open(engine_, 
-                               "site_drainage_model.inp", 
-                               "", 
+                               "pr11_stall_test.inp", 
+                               "/tmp/pr11_stall_test.rpt", 
                                "", 
                                nullptr);
     std::cout << "swmm_engine_open returned: " << err << std::endl;
@@ -187,7 +188,8 @@ TEST_F(FinalBoundaryStallTest, NoStallAtFinalBoundary) {
     } while (elapsed > 0.0);
     
     // Simulation should have run for a reasonable number of steps
-    EXPECT_GT(step_count, 100) << "Too few steps — simulation may not have run";
+    EXPECT_GT(step_count, 1) << "Too few steps — simulation may not have run";
+    EXPECT_LT(step_count, 1000) << "Too many steps — possible stall";
     std::cout << "Simulation completed in " << step_count << " steps" << std::endl;
 
     // End the simulation

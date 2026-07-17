@@ -463,6 +463,77 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     extendAndWrite2D(ds_face_depth_q50_, quantile_ptr(snap.surface_depth_q50), n_faces_);
     extendAndWrite2D(ds_face_depth_q95_, quantile_ptr(snap.surface_depth_q95), n_faces_);
 
+    // 1D ROM quantiles — lazy-create /rom1d group on first non-empty snapshot,
+    // then append one time step per update.
+    if (!snap.rom1d_head_q05.empty()) {
+        if (!rom1d_group_created_) {
+            n_rom1d_nodes_ = snap.rom1d_head_q05.size();
+
+            hid_t grp = H5Gcreate2(file_id_, "rom1d", H5P_DEFAULT,
+                                    H5P_DEFAULT, H5P_DEFAULT);
+            if (grp >= 0) {
+                // Create unlimited datasets [nTime, nActiveNode]
+                hsize_t dims[2]    = { 1, n_rom1d_nodes_ };
+                hsize_t maxdims[2] = { H5S_UNLIMITED, n_rom1d_nodes_ };
+                hsize_t chunk[2]   = { 1, n_rom1d_nodes_ };
+
+                auto makeDS = [&](const char* name) -> hid_t {
+                    hid_t space = H5Screate_simple(2, dims, maxdims);
+                    hid_t plist = H5Pcreate(H5P_DATASET_CREATE);
+                    H5Pset_chunk(plist, 2, chunk);
+                    H5Pset_deflate(plist, 4);
+                    hid_t ds = H5Dcreate2(grp, name, H5T_NATIVE_DOUBLE, space,
+                                           H5P_DEFAULT, plist, H5P_DEFAULT);
+                    H5Pclose(plist);
+                    H5Sclose(space);
+                    return ds;
+                };
+
+                ds_rom1d_head_q05_ = makeDS("node_head_q05");
+                ds_rom1d_head_q50_ = makeDS("node_head_q50");
+                ds_rom1d_head_q95_ = makeDS("node_head_q95");
+
+                // Write node-name index table [nActiveNode] (variable-length strings)
+                {
+                    hid_t strtype = H5Tcopy(H5T_C_S1);
+                    H5Tset_size(strtype, H5T_VARIABLE);
+                    H5Tset_strpad(strtype, H5T_STR_NULLTERM);
+
+                    hsize_t ndim = n_rom1d_nodes_;
+                    hid_t space = H5Screate_simple(1, &ndim, nullptr);
+                    ds_rom1d_node_names_ = H5Dcreate2(grp, "node_names", strtype,
+                                                       space, H5P_DEFAULT,
+                                                       H5P_DEFAULT, H5P_DEFAULT);
+
+                    // Build const char* array for write
+                    std::vector<const char*> names;
+                    names.reserve(snap.rom1d_node_names.size());
+                    for (const auto& n : snap.rom1d_node_names)
+                        names.push_back(n.c_str());
+                    // If names are empty, fill with placeholder
+                    if (names.empty())
+                        names.resize(n_rom1d_nodes_, "");
+
+                    H5Dwrite(ds_rom1d_node_names_, strtype, H5S_ALL, H5S_ALL,
+                             H5P_DEFAULT, names.data());
+                    H5Sclose(space);
+                    H5Tclose(strtype);
+                }
+
+                H5Gclose(grp);
+                rom1d_group_created_ = true;
+            }
+        }
+
+        // Append 1D ROM quantile row
+        if (rom1d_group_created_) {
+            hsize_t n_active = n_rom1d_nodes_;
+            extendAndWrite2D(ds_rom1d_head_q05_, snap.rom1d_head_q05.data(), n_active);
+            extendAndWrite2D(ds_rom1d_head_q50_, snap.rom1d_head_q50.data(), n_active);
+            extendAndWrite2D(ds_rom1d_head_q95_, snap.rom1d_head_q95.data(), n_active);
+        }
+    }
+
     ++n_steps_;
     return 0;
 }
@@ -491,6 +562,10 @@ int Default2DOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
     closeDS(ds_face_depth_q05_);
     closeDS(ds_face_depth_q50_);
     closeDS(ds_face_depth_q95_);
+    closeDS(ds_rom1d_head_q05_);
+    closeDS(ds_rom1d_head_q50_);
+    closeDS(ds_rom1d_head_q95_);
+    closeDS(ds_rom1d_node_names_);
 
     if (file_id_ != H5I_INVALID_HID) {
         H5Fclose(file_id_);

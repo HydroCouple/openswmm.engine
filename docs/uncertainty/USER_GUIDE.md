@@ -1175,22 +1175,54 @@ pair of (2D depth, 1D head) for the orifice equation.
 | `test_engine_2d_rom_integration` | Full engine lifecycle with 2D ROM | 1/1 |
 | `test_engine_1d_rom_integration` | Full engine lifecycle with 1D ROM | 5/5 |
 
-### 7.10 HDF5 output — activation plumbing pending
+### 7.10 HDF5 output
 
-`Default2DOutputPlugin` exists at `src/engine/2d/output/Default2DOutputPlugin.cpp`, is
-compiled (in `OPENSWMM_2D_SOURCES`), and is designed to write CF-1.11/UGRID-1.0 HDF5 with
-datasets:
+`Default2DOutputPlugin` (`src/engine/2d/output/Default2DOutputPlugin.cpp`) writes
+CF-1.11/UGRID-1.0 HDF5 output when `[2D_OPTIONS] OUTPUT_FILE <path>` is specified
+in the `.inp` file. The plugin is injected automatically by the engine — no
+`[PLUGINS]` entry is required.
+
+**Activation**: add `OUTPUT_FILE <path>` to `[2D_OPTIONS]`:
+
+```ini
+[2D_OPTIONS]
+OUTPUT_FILE  results.h5
+```
+
+The path is resolved relative to the `.inp` file directory if relative. The
+plugin creates the file at `prepare()` time (truncating any existing file),
+writes static mesh topology in `prepareMeshAndDatasets()` (called from
+`start()` after the mesh is built), and appends one time step per report
+interval via `update()` on the IO thread.
+
+**2D ROM quantile datasets** (written when the 2D ROM is active):
 
 ```
-/Mesh2_face_depth_q05    [nTime, nFace]
-/Mesh2_face_depth_q50    [nTime, nFace]
-/Mesh2_face_depth_q95    [nTime, nFace]
+/Mesh2_face_depth_q05    [nTime, nFace]   — 5th-percentile depth (m)
+/Mesh2_face_depth_q50    [nTime, nFace]   — Median depth (m)
+/Mesh2_face_depth_q95    [nTime, nFace]   — 95th-percentile depth (m)
 ```
 
-The plugin already creates/writes these datasets from the snapshot fields that
-`postOutputSnapshot` populates. The remaining gap is the **activation plumbing**: parsing
-`2D_OUTPUT_FILE` from `[2D_OPTIONS]` and instantiating the plugin in the engine when set
-(PR 12). Until this is wired, read quantiles via the C++ API as shown in §2.1.
+**1D ROM quantile datasets** (written when the 1D ROM is active, PR 12b):
+
+```
+/rom1d/node_head_q05     [nTime, nActiveNode]   — 5th-percentile head (m)
+/rom1d/node_head_q50     [nTime, nActiveNode]   — Median head (m)
+/rom1d/node_head_q95     [nTime, nActiveNode]   — 95th-percentile head (m)
+/rom1d/node_names        [nActiveNode]          — Variable-length string node names
+```
+
+The `/rom1d` group is created lazily on the first snapshot that contains
+non-empty 1D ROM quantile fields. The `node_names` dataset provides the
+active-node index table so readers can map quantile rows back to SWMM node
+names. The existing `.uncertainty.csv` file (§5) continues to be written
+as the zero-dependency path — both outputs are produced simultaneously.
+
+**Reading the file**: the HDF5 output follows CF-1.11 and UGRID-1.0
+conventions for unstructured triangular meshes, making it directly readable
+by ParaView, QGIS, or any CF/UGRID-aware tool. The `/rom1d` group is a
+custom extension outside the CF/UGRID standard; read it with h5py or
+xarray as a supplementary group.
 
 ---
 
@@ -1233,10 +1265,12 @@ The plugin already creates/writes these datasets from the snapshot fields that
    (`0xdeadbeef01`, `0xcafebabe02`). Full seed control from the shared ensemble seed is not
    yet implemented.
 
-6. **1D ROM quantiles not written to output file.** The 1D ROM is now fully wired into the
-   engine (`buildROM1D()` / `computeK1d()` / advance per step). Quantiles are accessible via
-   `SWMMEngine::rom1d()` (see §7.7) but are not yet written to the binary output or any HDF5
-   file.  For now, read them via the C++ cast API after each `swmm_engine_step()` call.
+6. **1D ROM quantiles now written to HDF5.** The 1D ROM is fully wired into the
+   engine (`buildROM1D()` / `computeK1d()` / advance per step). Quantiles are
+   accessible via `SWMMEngine::rom1d()` (see §7.7) and are now also written to
+   the `/rom1d` group in the HDF5 output file when `OUTPUT_FILE` is specified
+   (§7.10). The `.uncertainty.csv` file continues as the zero-dependency path.
+   Both outputs are produced simultaneously when both are configured.
 
 7. **q50 vs deterministic output.** Under the deviation formulation (reform PRs 6–7), q50 is
    *provably* bounded close to the deterministic CVODE/DynWave result: at 0% perturbation the
@@ -1368,3 +1402,105 @@ spread = ds["Mesh2_face_depth_q95"] - ds["Mesh2_face_depth_q05"]
 
 For ParaView: open the `.h5` file, select `Mesh2_face_depth_q95` and subtract
 `Mesh2_face_depth_q05` via a Calculator filter to visualise the uncertainty band width.
+
+---
+
+## 11. Soft Rainfall — Supplying Your Own Rainfall Distributions
+
+The soft-rainfall feature lets you supply per-gage or per-grid rainfall
+uncertainty as a location-scale family (NORMAL, LOGNORMAL, UNIFORM) without
+materializing an ensemble. The deterministic rain IS the location parameter;
+the uncertainty supplies only the spread. The ROM propagates the spread through
+its modal ODE via the two-projection form `f_ij = r_loc[j] + c_i · r_spread[j]`,
+where `c_i` is the family-selected per-member coefficient.
+
+### 11.1 `[SOFT_RAINGAGES]` — Per-Gage Soft Rainfall
+
+```
+[SOFT_RAINGAGES]
+RG1  NORMAL   CV        0.30
+RG2  LOGNORMAL SD        TIMESERIES SPREAD_TS
+RG3  UNIFORM  HALFRANGE 1.5
+```
+
+**Grammar**: `Gage Family SpreadKind SpreadSource|TIMESERIES <name>`
+
+- **Gage**: name of a gage defined in `[RAINGAGES]`.
+- **Family**: `NORMAL`, `LOGNORMAL`, or `UNIFORM`.
+- **SpreadKind**: `SD` (absolute standard deviation), `CV` (coefficient of
+  variation, relative), or `HALFRANGE` (absolute uniform half-range; only
+  valid with `UNIFORM`).
+- **SpreadSource**: a non-negative constant, or `TIMESERIES <name>` for a
+  time-varying spread.
+
+**Per-member evaluation** (§4.3 of the design doc):
+- NORMAL: `rain_i = loc + z_i · sd`
+- LOGNORMAL: `rain_i = loc · exp(z_i · σ_log)` (delta-linearized as
+  `loc + z_i · loc · σ_log` in the ROM; warn when CV > 0.5)
+- UNIFORM: `rain_i = loc + (2u_i − 1) · halfrange`
+
+where `u_i = shuffledStrata(M, seed+4)[i]` and `z_i = probit(u_i)`.
+
+A `[SOFT_RAINGAGES]` entry activates the 1D network ROM on its own. The ROM's
+forcing field is the dh/dt head-rate buffer, so the gage-level spread is
+mapped as `spread_now[n] = dh/dt[n] · area-weighted relative spread`.
+
+### 11.2 `[SOFT_RAINFALL_GRID]` — Gridded Soft Rainfall
+
+```
+[SOFT_RAINFALL_GRID]
+2D     radar_grid.h5  CENTROID  FORCE_LOCATION
+RUNOFF radar_grid.h5  CENTROID  FORCE_LOCATION
+INFLOWS node_grid.h5  CENTROID  FORCE_LOCATION  NODES  nodes.txt
+```
+
+**Grammar**: `Target File Mapping [Options]`
+
+- **Target**: `2D` (per-cell surface rainfall), `RUNOFF` (per-subcatchment),
+  or `INFLOWS` (per-node lateral inflow).
+- **File**: path to an HDF5 grid file (§11.3).
+- **Mapping**: `CENTROID` (nearest cell center). `BILINEAR` and `AREA_MEAN`
+  are planned (SR-4a).
+- **Options**: `FORCE_LOCATION` (the grid's `/location` plane overrides the
+  deterministic rainfall; without it, the model's existing rain is the location
+  and the grid supplies spread only). `NODES <file>` (for INFLOWS target only:
+  a text file listing node names, one per line).
+
+### 11.3 HDF5 Grid File Layout
+
+```
+/               attrs: family ("NORMAL"|"LOGNORMAL"|"UNIFORM"|"MIXED"),
+                       spread_kind ("SD"|"CV"|"HALFRANGE"), units, crs (optional)
+/time           (T)        float64
+/x, /y          (nx),(ny)  float64  grid coordinates (cell centers)
+/location       (T,ny,nx)  float32  — optional (deterministic location parameter)
+/spread         (T,ny,nx)  float32  — required (spread: SD, CV, or HALFRANGE)
+/family_code    (ny,nx)    uint8    — ONLY when family == "MIXED"
+```
+
+- `float32` everywhere (rainfall precision does not warrant float64).
+- `/location` is optional: when absent, the model's existing rain input is the
+  location parameter and the file supplies spread only.
+- `/spread` is required: `0` at a pixel/time means hard (no uncertainty) there.
+- `/family_code` (MIXED only): per-cell distribution family
+  (0=NORMAL, 1=LOGNORMAL, 2=UNIFORM). The ROM uses the NORMAL coefficient `z_i`
+  for all cells as a v1 approximation; UNIFORM cells have their spread
+  pre-scaled by the coefficient range ratio. Exact per-cell per-member dispatch
+  is the design's deferred cold path.
+
+### 11.4 pybme Round-Trip Example
+
+The `scripts/uncertainty/pybme_soft_rain_example.py` script demonstrates the
+full workflow: synthetic gages + radar → pybme BME posterior (mean, sd) →
+§3.3-conformant HDF5 → engine run → q05–q95 band plot. The
+`write_soft_rain_hdf5()` function in the script is a standalone schema-writer
+helper that others can copy. If pybme is not installed, the script falls back
+to a Gaussian posterior approximation.
+
+### 11.5 Deprecation Note: Scalar `RAINFALL` in `[UNCERTAINTY]`
+
+The scalar `RAINFALL` parameter in `[UNCERTAINTY]` (which applies a single
+multiplier to all rainfall) is superseded by the soft-rainfall feature. For
+new work, prefer `[SOFT_RAINGAGES]` (per-gage location-scale families) or
+`[SOFT_RAINFALL_GRID]` (gridded) for spatially distributed rainfall uncertainty.
+The scalar path remains functional for backward compatibility.

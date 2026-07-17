@@ -10,6 +10,8 @@
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/GridMappingWeights.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -303,8 +305,234 @@ double SurfaceRouter2D::totalExchangeFlow() const {
 }
 
 
+// ============================================================================
+// initGridRainfall (SR-2c) — build CENTROID mapping + open grid file
+// ============================================================================
+
+bool SurfaceRouter2D::initGridRainfall(
+    const uncertainty::SoftGridSourceSpec& spec,
+    const std::string& inp_dir)
+{
+    // Resolve relative path against the .inp directory
+    std::string path = spec.file_path;
+    if (!path.empty() && path[0] != '/' && !inp_dir.empty()) {
+        path = inp_dir + "/" + path;
+    }
+
+    if (!grid_reader_.open(path)) {
+        // Failed to open — fall back to gage path silently (warning could be emitted)
+        return false;
+    }
+    grid_reader_opened_ = true;
+
+    int nx = grid_reader_.nx();
+    int ny = grid_reader_.ny();
+    const auto& x_coords = grid_reader_.x_coords();
+    const auto& y_coords = grid_reader_.y_coords();
+
+    // Build CENTROID mapping: for each triangle centroid, find the containing
+    // pixel (nearest cell center). Clamp to edge for centroids outside the grid.
+    int nt = mesh_.n_triangles();
+    grid_px_.resize(static_cast<std::size_t>(nt));
+
+    for (int i = 0; i < nt; ++i) {
+        double cx = mesh_.tri_cx[static_cast<std::size_t>(i)];
+        double cy = mesh_.tri_cy[static_cast<std::size_t>(i)];
+
+        // Find nearest x index (binary search or linear — grids are small)
+        int ix = 0;
+        for (int j = 1; j < nx; ++j) {
+            if (std::abs(cx - x_coords[static_cast<std::size_t>(j)])
+                < std::abs(cx - x_coords[static_cast<std::size_t>(ix)]))
+                ix = j;
+        }
+
+        // Find nearest y index
+        int iy = 0;
+        for (int j = 1; j < ny; ++j) {
+            if (std::abs(cy - y_coords[static_cast<std::size_t>(j)])
+                < std::abs(cy - y_coords[static_cast<std::size_t>(iy)]))
+                iy = j;
+        }
+
+        // Flat index into (ny, nx) plane — row-major: [iy * nx + ix]
+        grid_px_[static_cast<std::size_t>(i)] =
+            static_cast<uint32_t>(iy * nx + ix);
+    }
+
+    // SR-4a: BILINEAR mapping — 4-pixel weighted gather per triangle centroid.
+    // Requires at least a 2x2 grid; degenerate grids fall back to CENTROID.
+    grid_mapping_ = spec.mapping;
+    if (grid_mapping_ == uncertainty::GridMapping::BILINEAR) {
+        if (nx < 2 || ny < 2) {
+            grid_mapping_ = uncertainty::GridMapping::CENTROID;  // fall back
+        } else {
+            grid_bilin_idx_.assign(static_cast<std::size_t>(4 * nt), 0);
+            grid_bilin_w_.assign(static_cast<std::size_t>(4 * nt), 0.0f);
+            for (int i = 0; i < nt; ++i) {
+                double cx = mesh_.tri_cx[static_cast<std::size_t>(i)];
+                double cy = mesh_.tri_cy[static_cast<std::size_t>(i)];
+                uint32_t idx4[4];
+                double w4[4];
+                uncertainty::bilinearWeights(cx, cy, x_coords, y_coords, idx4, w4);
+                const auto base = static_cast<std::size_t>(4 * i);
+                for (int k = 0; k < 4; ++k) {
+                    grid_bilin_idx_[base + static_cast<std::size_t>(k)] = idx4[k];
+                    grid_bilin_w_[base + static_cast<std::size_t>(k)] =
+                        static_cast<float>(w4[k]);
+                }
+            }
+        }
+    }
+
+    grid_spread_.assign(static_cast<std::size_t>(nt), 0.0);
+    grid_2d_active_ = true;
+    return true;
+}
+
+// ============================================================================
+// updateRainfall — gage fallback + grid-forced path (SR-2c)
+// ============================================================================
+
 void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
     int nt = mesh_.n_triangles();
+
+    // SR-2c/SR-3b: map the 2D grid source each step. /location overrides the
+    // deterministic gage-0 rainfall path when present; /spread is always
+    // mapped for soft forcing into the ROM.
+    if (grid_2d_active_ && grid_reader_opened_) {
+        // Advance the grid reader to the current simulation time
+        double t_now = ctx.current_time;
+        // Advance until the current plane covers t_now
+        while (grid_reader_.has_current() && grid_reader_.location_next() != nullptr
+               && grid_reader_.time_next() < t_now) {
+            if (!grid_reader_.advance()) break;
+        }
+        // If we haven't started advancing yet, do the first advance
+        if (!grid_reader_.has_current()) {
+            grid_reader_.advance();
+        }
+
+        // Unit conversion factor: grid units → m/s
+        double to_m_per_s;
+        if (static_cast<int>(ctx.options.flow_units) < 3)
+            to_m_per_s = 0.0254 / 3600.0; // in/hr -> m/s
+        else
+            to_m_per_s = 0.001 / 3600.0;  // mm/hr -> m/s
+
+        int nx = grid_reader_.nx();
+        int ny = grid_reader_.ny();
+        const float* loc = grid_reader_.location_now();
+        const float* spread = grid_reader_.spread_now();
+
+        // SR-4a: gather a grid field value for triangle i under the active
+        // mapping. CENTROID = single containing pixel; BILINEAR = 4-pixel
+        // weighted sum. Out-of-range pixels contribute zero.
+        const auto npix = static_cast<uint32_t>(nx * ny);
+        auto gather = [&](const float* field, int i) -> double {
+            if (grid_mapping_ == uncertainty::GridMapping::BILINEAR
+                && !grid_bilin_idx_.empty()) {
+                const auto base = static_cast<std::size_t>(4 * i);
+                double acc = 0.0;
+                for (int k = 0; k < 4; ++k) {
+                    uint32_t px = grid_bilin_idx_[base + static_cast<std::size_t>(k)];
+                    if (px < npix)
+                        acc += static_cast<double>(grid_bilin_w_[base + static_cast<std::size_t>(k)])
+                               * static_cast<double>(field[px]);
+                }
+                return acc;
+            }
+            uint32_t px = grid_px_[static_cast<std::size_t>(i)];
+            return (px >= npix) ? 0.0 : static_cast<double>(field[px]);
+        };
+
+        // Deterministic location override only when /location is present.
+        if (loc) {
+            for (int i = 0; i < nt; ++i) {
+                state_.rainfall[i] = gather(loc, i) * to_m_per_s;
+            }
+        }
+
+        // Map spread plane into model rain units for the ROM soft-forcing path.
+        if (spread) {
+            const uint8_t* fcodes = grid_reader_.family_code_now();
+            for (int i = 0; i < nt; ++i) {
+                double sp = gather(spread, i) * to_m_per_s;
+
+                // SR-4b: for MIXED family, UNIFORM cells use the centered band
+                // (2u-1) while the ROM's shared coefficient column uses z_i
+                // (NORMAL). Pre-scale UNIFORM cell spreads by the ratio of the
+                // UNIFORM coefficient range to the normal coefficient range so
+                // the band width is conservatively comparable under the single
+                // z_i column. This is a documented v1 approximation; exact
+                // per-cell per-member dispatch is the design's deferred cold path.
+                // The family code is selected by the CENTROID pixel even under
+                // BILINEAR (the family assignment is categorical, not smooth).
+                if (fcodes && grid_reader_.family() == GridFamily::MIXED) {
+                    uint32_t px = grid_px_[static_cast<std::size_t>(i)];
+                    if (px < npix && fcodes[px] == 2) {  // UNIFORM
+                        // max|2u-1| ≈ 1.0; max|z| ≈ 3.0 for M=50 — scale up
+                        // the UNIFORM spread so z_i · spread_eff ≈ (2u_i-1) · spread
+                        // in expectation. The factor 3.0 is max|z| for typical M.
+                        sp *= 3.0;
+                    }
+                }
+
+                grid_spread_[static_cast<std::size_t>(i)] = sp;
+            }
+
+#ifdef OPENSWMM_HAS_2D
+            if (auto* rom = cvode_solver_.rom()) {
+                using openswmm::uncertainty::DistType;
+                DistType fam;
+                GridFamily gf = grid_reader_.family();
+                if (gf == GridFamily::UNIFORM)        fam = DistType::UNIFORM;
+                else if (gf == GridFamily::LOGNORMAL)  fam = DistType::LOGNORMAL;
+                else                                   fam = DistType::NORMAL;  // MIXED uses NORMAL coefficient
+                rom->setSoftForcing(state_.rainfall.empty() ? nullptr : state_.rainfall.data(),
+                                    grid_spread_.data(), fam);
+            }
+#endif
+
+            // SR-3c: warn once when lognormal delta-linearization is likely weak.
+            // For MIXED, check LOGNORMAL cells (family_code == 1).
+            if (!grid_soft_warned_) {
+                const bool check_lognormal =
+                    (grid_reader_.family() == GridFamily::LOGNORMAL)
+                    || (grid_reader_.family() == GridFamily::MIXED && fcodes);
+                if (check_lognormal) {
+                    double max_cv = 0.0;
+                    for (int i = 0; i < nt; ++i) {
+                        double loc_i = state_.rainfall[static_cast<std::size_t>(i)];
+                        if (loc_i <= 1.0e-30) continue;
+                        if (grid_reader_.family() == GridFamily::MIXED) {
+                            uint32_t px = grid_px_[static_cast<std::size_t>(i)];
+                            if (fcodes[px] != 1) continue;  // only LOGNORMAL cells
+                        }
+                        max_cv = std::max(max_cv,
+                                          std::abs(grid_spread_[static_cast<std::size_t>(i)] / loc_i));
+                    }
+                    if (max_cv > 0.5) {
+                        ctx.warnings.push_back(
+                            "WARNING: soft rainfall LOGNORMAL delta approximation has CV > 0.5 "
+                            "(max CV = " + std::to_string(max_cv)
+                            + ") for the active 2D grid source"
+                            + (grid_reader_.family() == GridFamily::MIXED ? " (MIXED family)" : "")
+                            + ".");
+                        grid_soft_warned_ = true;
+                    }
+                }
+            }
+        } else {
+#ifdef OPENSWMM_HAS_2D
+            if (auto* rom = cvode_solver_.rom()) rom->clearSoftForcing();
+#endif
+        }
+
+        if (loc) return;
+    }
+
+    // --- Legacy gage-0 fallback (unchanged when no grid source) ---
     int n_gages = ctx.n_gages();
 
     if (n_gages <= 0) {

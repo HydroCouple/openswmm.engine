@@ -22,6 +22,7 @@
 
 #include <hdf5.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -67,6 +68,7 @@ struct GridFileParams {
     bool omit_x = false;
     bool omit_y = false;
     bool omit_spread = false;
+    bool include_family_code = false;  // auto-set when family == "MIXED"
 };
 
 /// Write a grid file to @p path per @p params. Returns true on success.
@@ -179,6 +181,23 @@ bool write_grid_file(const std::string& path, const GridFileParams& p) {
                  loc_data.data());
         H5Dclose(lds);
         H5Sclose(lspace);
+    }
+
+    // /family_code (ny, nx) uint8 — required when family == "MIXED" (SR-4b).
+    // Codes: 0=NORMAL, 1=LOGNORMAL, 2=UNIFORM. Checkerboard pattern by default.
+    if (p.include_family_code || std::string(p.family) == "MIXED") {
+        std::vector<uint8_t> fc_data(ny * nx);
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i)
+                fc_data[j * nx + i] = static_cast<uint8_t>((j + i) % 3);
+        hsize_t fcdims[2] = { static_cast<hsize_t>(ny), static_cast<hsize_t>(nx) };
+        hid_t fcspace = H5Screate_simple(2, fcdims, nullptr);
+        hid_t fcds = H5Dcreate2(file, "/family_code", H5T_NATIVE_UINT8, fcspace,
+                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(fcds, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 fc_data.data());
+        H5Dclose(fcds);
+        H5Sclose(fcspace);
     }
 
     H5Fclose(file);
@@ -332,6 +351,12 @@ TEST_F(GridFileReaderSchema, SupportsAllFamilies) {
         else if (std::string(fam) == "LOGNORMAL") EXPECT_EQ(reader.family(), GridFamily::LOGNORMAL);
         else if (std::string(fam) == "UNIFORM")   EXPECT_EQ(reader.family(), GridFamily::UNIFORM);
         else if (std::string(fam) == "MIXED")     EXPECT_EQ(reader.family(), GridFamily::MIXED);
+        // MIXED family must have /family_code
+        if (std::string(fam) == "MIXED") {
+            EXPECT_TRUE(reader.has_family_code());
+        } else {
+            EXPECT_FALSE(reader.has_family_code());
+        }
         std::remove(path.c_str());
     }
 }
@@ -475,4 +500,131 @@ TEST_F(GridFileReaderStreaming, CannotOpenNonexistentFile) {
     GridFileReader reader;
     EXPECT_FALSE(reader.open("/tmp/does_not_exist_grid_reader_test.h5"));
     EXPECT_FALSE(reader.last_error().empty());
+}
+
+// ---------------------------------------------------------------------------
+// SR-4b: MIXED family /family_code round-trip (checkerboard 2-family fixture)
+// ---------------------------------------------------------------------------
+
+TEST(GridFileReaderMixed, FamilyCodeCheckerboardRoundTrip) {
+    std::string path = test_file_path("mixed_checkerboard");
+    GridFileParams p;
+    p.family = "MIXED";
+    write_grid_file(path, p);
+
+    GridFileReader reader;
+    ASSERT_TRUE(reader.open(path)) << reader.last_error();
+
+    EXPECT_EQ(reader.family(), GridFamily::MIXED);
+    EXPECT_TRUE(reader.has_family_code());
+
+    // advance() loads the first plane; /family_code is static (no time dim).
+    ASSERT_TRUE(reader.advance());
+    const uint8_t* fc = reader.family_code_now();
+    ASSERT_NE(fc, nullptr);
+
+    // Verify the checkerboard: (j+i) % 3 → codes 0,1,2
+    const int ny = 3, nx = 4;
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i)
+            EXPECT_EQ(fc[j * nx + i], static_cast<uint8_t>((j + i) % 3))
+                << " at (j=" << j << ", i=" << i << ")";
+
+    // family_code persists across plane advances (it's static)
+    ASSERT_TRUE(reader.advance());
+    EXPECT_EQ(reader.family_code_now(), fc);
+
+    std::remove(path.c_str());
+}
+
+TEST(GridFileReaderMixed, MixedFamilyWithoutFamilyCodeRejected) {
+    std::string path = test_file_path("mixed_no_fc");
+    GridFileParams p;
+    p.family = "MIXED";
+    p.include_family_code = false;  // explicitly suppress auto-generation
+    // Override: write_grid_file auto-adds /family_code for MIXED, so we
+    // manually write the file without it.
+    {
+        hid_t file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+        ASSERT_GE(file, 0);
+        write_string_attr(file, "family", "MIXED");
+        write_string_attr(file, "spread_kind", "SD");
+        write_string_attr(file, "units", "mm/hr");
+        // /time
+        { double t[5] = {0,100,200,300,400}; hsize_t d[1] = {5};
+          hid_t s = H5Screate_simple(1, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/time", H5T_NATIVE_DOUBLE, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, t);
+          H5Dclose(ds); H5Sclose(s); }
+        // /x, /y
+        { double x[4] = {0,100,200,300}; hsize_t d[1] = {4};
+          hid_t s = H5Screate_simple(1, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/x", H5T_NATIVE_DOUBLE, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, x);
+          H5Dclose(ds); H5Sclose(s); }
+        { double y[3] = {0,200,400}; hsize_t d[1] = {3};
+          hid_t s = H5Screate_simple(1, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/y", H5T_NATIVE_DOUBLE, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, y);
+          H5Dclose(ds); H5Sclose(s); }
+        // /spread (no /family_code)
+        { float sp[60] = {0}; hsize_t d[3] = {5,3,4};
+          hid_t s = H5Screate_simple(3, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/spread", H5T_NATIVE_FLOAT, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_FLOAT, H5S_ALL, H5S_ALL, H5P_DEFAULT, sp);
+          H5Dclose(ds); H5Sclose(s); }
+        H5Fclose(file);
+    }
+
+    GridFileReader reader;
+    EXPECT_FALSE(reader.open(path));
+    EXPECT_FALSE(reader.last_error().empty());
+    EXPECT_NE(reader.last_error().find("family_code"), std::string::npos);
+
+    std::remove(path.c_str());
+}
+
+TEST(GridFileReaderMixed, InvalidFamilyCodeValueRejected) {
+    std::string path = test_file_path("mixed_bad_code");
+    {
+        hid_t file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+        ASSERT_GE(file, 0);
+        write_string_attr(file, "family", "MIXED");
+        write_string_attr(file, "spread_kind", "SD");
+        write_string_attr(file, "units", "mm/hr");
+        { double t[5] = {0,100,200,300,400}; hsize_t d[1] = {5};
+          hid_t s = H5Screate_simple(1, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/time", H5T_NATIVE_DOUBLE, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, t);
+          H5Dclose(ds); H5Sclose(s); }
+        { double x[4] = {0,100,200,300}; hsize_t d[1] = {4};
+          hid_t s = H5Screate_simple(1, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/x", H5T_NATIVE_DOUBLE, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, x);
+          H5Dclose(ds); H5Sclose(s); }
+        { double y[3] = {0,200,400}; hsize_t d[1] = {3};
+          hid_t s = H5Screate_simple(1, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/y", H5T_NATIVE_DOUBLE, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, y);
+          H5Dclose(ds); H5Sclose(s); }
+        { float sp[60] = {0}; hsize_t d[3] = {5,3,4};
+          hid_t s = H5Screate_simple(3, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/spread", H5T_NATIVE_FLOAT, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_FLOAT, H5S_ALL, H5S_ALL, H5P_DEFAULT, sp);
+          H5Dclose(ds); H5Sclose(s); }
+        // /family_code with an invalid code (3)
+        { uint8_t fc[12] = {0,1,2, 0,1,3, 0,1,2}; hsize_t d[2] = {3,4};
+          hid_t s = H5Screate_simple(2, d, nullptr);
+          hid_t ds = H5Dcreate2(file, "/family_code", H5T_NATIVE_UINT8, s, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+          H5Dwrite(ds, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, fc);
+          H5Dclose(ds); H5Sclose(s); }
+        H5Fclose(file);
+    }
+
+    GridFileReader reader;
+    EXPECT_FALSE(reader.open(path));
+    EXPECT_FALSE(reader.last_error().empty());
+    EXPECT_NE(reader.last_error().find("invalid value"), std::string::npos);
+
+    std::remove(path.c_str());
 }

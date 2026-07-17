@@ -27,10 +27,15 @@
 #include "data/SolverOptions2D.hpp"
 #include "data/BoundaryData.hpp"
 #include "coupling/NodeCoupling.hpp"
+#include "../uncertainty/GridFileReader.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "solver/CvodeSurfaceSolver.hpp"
 #endif
+
+#include <vector>
+namespace openswmm::uncertainty { struct SoftGridSourceSpec; }
+namespace openswmm::uncertainty { enum class GridMapping : int8_t; }
 
 namespace openswmm {
 struct SimulationContext;
@@ -152,6 +157,24 @@ public:
     BoundaryData& boundary() noexcept { return boundary_; }
 
     /**
+     * @brief Initialize 2D gridded rainfall forcing from a SoftGridSourceSpec (SR-2c).
+     *
+     * Opens the HDF5 grid file, builds the CENTROID mapping (pixel index per
+     * triangle centroid), and marks the grid as active. Called from
+     * SWMMEngine::initialize() when a 2D-target grid source with /location
+     * is configured.
+     *
+     * @param spec  The grid source specification (file path, mapping, etc.).
+     * @param inp_dir  Directory of the parent .inp file (for relative path resolution).
+     * @return true on success; false on error (call last_error via grid_reader_).
+     */
+    bool initGridRainfall(const uncertainty::SoftGridSourceSpec& spec,
+                          const std::string& inp_dir);
+
+    /// True if 2D gridded rainfall forcing is active (SR-2c).
+    bool gridRainfallActive() const noexcept { return grid_2d_active_; }
+
+    /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
      *
      * V-E3. Populated by the input parser during reading (before the
@@ -231,8 +254,24 @@ private:
     CvodeSurfaceSolver cvode_solver_;
 #endif
 
+    std::vector<double> grid_spread_;       ///< SR-3b: mapped spread plane in model rain units
+    bool grid_soft_warned_ = false;         ///< SR-3c: lognormal CV>0.5 warning emitted once
+
     /// Update rainfall from system rain gages.
     void updateRainfall(SimulationContext& ctx);
+
+    // --- SR-2c: Gridded rainfall forcing (deterministic /location plane) ---
+    bool   grid_2d_active_ = false;          ///< True when a 2D-target grid source with /location is active
+    GridFileReader grid_reader_;             ///< HDF5 grid file reader (one 2D source in v1)
+    std::vector<uint32_t> grid_px_;          ///< CENTROID mapping: pixel index per triangle centroid
+    // SR-4a: BILINEAR mapping — 4-pixel weighted gather per triangle centroid.
+    // Value-initialized ({}) to 0 == GridMapping::CENTROID (forward-declared
+    // enum with int8_t underlying type; set explicitly in initGridRainfall).
+    uncertainty::GridMapping grid_mapping_{};
+    std::vector<uint32_t> grid_bilin_idx_;   ///< 4 pixel indices per triangle (row-major: [4*i + k])
+    std::vector<float>    grid_bilin_w_;     ///< 4 bilinear weights per triangle (sum to 1)
+    bool   grid_reader_opened_ = false;      ///< True after grid_reader_.open() succeeded
+    double grid_last_time_ = -1.0;           ///< Last grid time plane advanced to
 };
 
 } // namespace openswmm::twoD
