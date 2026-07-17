@@ -1006,10 +1006,19 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     // Post-Picard: update per-node non-convergence counts (matching legacy
     // updateConvergenceStats: increment count for each unconverged node when
     // the overall step did not converge).
+    //
+    // Outfalls are excluded: their `converged` flag is deliberately left
+    // FALSE by updateNodeDepthsTeam (to keep outfall-connected links from
+    // being bypassed mid-Picard), but they are never tested for convergence
+    // and cannot cause a step to fail. Counting them here ranked boundary
+    // outfalls at the top of "Most Frequent Nonconverging Nodes" (at exactly
+    // the overall failed-step percentage), hiding the junctions/storage nodes
+    // actually responsible. Reporting-only change: does not touch the
+    // converged flags, unconv_shared, step convergence, or findBypassedLinks.
     if (!converged) {
         for (int i = 0; i < n_nodes_; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            if (!xnode_.converged[ui])
+            if (!node_tile_[ui].is_outfall && !xnode_.converged[ui])
                 ++ctx.nodes.stat_non_converged_count[ui];
         }
     }
