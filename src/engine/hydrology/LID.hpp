@@ -68,6 +68,13 @@ struct LIDGroupSoA {
     LIDType type = LIDType::BIO_CELL;
     int count = 0;
 
+    // Unit-conversion factors for the model's flow units (legacy UCF()).
+    // Layer parameters are converted to internal ft / ft-per-sec at init();
+    // these two factors also drive the underdrain head/rate conversion in
+    // getDrainRate(). Defaults are the US-customary values (issue #102).
+    double ucf_raindepth = 12.0;    ///< ft → in|mm  (RAINDEPTH)
+    double ucf_rainfall  = 43200.0; ///< ft/sec → in/hr|mm/hr  (RAINFALL)
+
     std::vector<int> subcatch_idx;     ///< Which subcatchment this unit belongs to
     std::vector<int> control_idx;      ///< LID control index (into ctx.lid_controls)
     std::vector<double> area;          ///< Unit area (ft2)
@@ -178,6 +185,18 @@ public:
     LIDGroupSoA& group(int type_index) { return groups_[static_cast<size_t>(type_index)]; }
     const LIDGroupSoA& group(int type_index) const { return groups_[static_cast<size_t>(type_index)]; }
     int numGroups() const { return static_cast<int>(groups_.size()); }
+
+    /// Total water currently stored across all LID units (ft³): per-unit
+    /// stored depth (wb_final_vol, ft) × unit area (ft²). Feeds the
+    /// subcatchment runoff-continuity storage term (issue #102 C).
+    double totalStoredVolume() const;
+    /// Total initial LID storage (ft³): wb_init_vol (ft) × area (ft²).
+    double totalInitVolume() const;
+    /// Cumulative LID exfiltration to native soil (ft³): wb_infil × area.
+    /// Added to the runoff-continuity infiltration term (legacy VlidInfil).
+    double totalInfilVolume() const;
+    /// Cumulative LID evaporation (ft³): wb_evap × area (legacy VlidEvap).
+    double totalEvapVolume() const;
 
     /**
      * @brief Compute LID performance for all units (batch by type).
