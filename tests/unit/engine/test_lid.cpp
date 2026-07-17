@@ -219,6 +219,27 @@ TEST(LIDModelBuilder, MultipleTypesDistributed) {
     EXPECT_EQ(solver.group(2).count, 0); // GR
 }
 
+TEST(LIDModelBuilder, ReplicateNumberScalesAreaAndWidth) {
+    auto ctx = makeLidContext("BC",
+        {0.5, 0.0, 0.1, 1.0, 0.0},
+        {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
+        {1.0, 0.5, 0.0, 0.0},
+        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
+    ctx.lid_usage.number[0] = 3;  // three replicate units
+
+    LIDSolver solver;
+    solver.init(ctx);
+
+    const auto& g = solver.group(0);
+    // Legacy aggregates lidArea = area × number (lid.c:1688) and scales width
+    // with it so the Manning width/area ratio — and thus the per-unit depth
+    // dynamics — are unchanged while flux/volume totals cover every replicate.
+    EXPECT_NEAR(g.area[0], 3.0 * 1000.0, 1e-10);
+    EXPECT_NEAR(g.full_width[0], 3.0 * 50.0, 1e-10);
+    // Subcatchment LID footprint must also carry the replicate count.
+    EXPECT_NEAR(ctx.subcatches.total_lid_area_ft2[0], 3.0 * 1000.0, 1e-10);
+}
+
 TEST(LIDModelBuilder, ManningAlphaComputed) {
     auto ctx = makeLidContext("BC",
         {0.5, 0.0, 0.05, 2.0, 0.0},  // roughness=0.05, slope entered as % (2 → 0.02)

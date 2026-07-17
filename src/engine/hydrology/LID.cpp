@@ -234,11 +234,19 @@ void LIDSolver::init(SimulationContext& ctx) {
         g.ucf_raindepth = ucfRainDepth;
         g.ucf_rainfall  = ucfRainfall;
 
-        // Usage-level fields
+        // Usage-level fields. Fold the replicate count (Number) into area and
+        // width — legacy aggregates as lidArea = area × number everywhere
+        // (lid.c:1688 runon divisor, 1168 subcatch total, 1445 stored volume).
+        // Scaling BOTH area and width keeps the Manning width/area ratio, so
+        // the depth-based per-unit dynamics are those of one representative
+        // unit while all flux/volume aggregation covers every replicate.
+        int num = (uj < ctx.lid_usage.number.size()) ? ctx.lid_usage.number[uj] : 1;
+        if (num < 1) num = 1;
+        double n_units = static_cast<double>(num);
         g.subcatch_idx[us] = ctx.lid_usage.subcatch_index[uj];
         g.control_idx[us]  = li;
-        g.area[us]         = ctx.lid_usage.area[uj] / ucfLength2;  // ft²|m² → ft²
-        g.full_width[us]   = ctx.lid_usage.width[uj] / ucfLength;  // ft|m → ft
+        g.area[us]         = ctx.lid_usage.area[uj] * n_units / ucfLength2;  // ft²|m² → ft²
+        g.full_width[us]   = ctx.lid_usage.width[uj] * n_units / ucfLength;  // ft|m → ft
         g.from_imperv[us]  = ctx.lid_usage.from_imperv[uj] / 100.0;  // % → fraction
         g.from_perv[us]    = (uj < ctx.lid_usage.from_perv.size())
                              ? ctx.lid_usage.from_perv[uj] / 100.0 : 0.0;
