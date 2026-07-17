@@ -256,7 +256,15 @@ void updateConvergenceStats()
     int i;
     NonConvergeCount++;
     for (i = 0; i < Nobjects[NODE]; i++)
+    {
+        // --- skip outfalls: findNodeDepths never tests them for convergence
+        //     (their flag stays FALSE so outfall-connected links are not
+        //     bypassed), so counting them here wrongly ranked boundary nodes
+        //     under "Most Frequent Nonconverging Nodes". Diagnostic-only
+        //     change: hydraulic convergence & bypass logic are unaffected.
+        if ( Node[i].type == OUTFALL ) continue;
         stats_updateConvergenceStats(i, Xnode[i].converged);
+    }
 }
 
 //=============================================================================
