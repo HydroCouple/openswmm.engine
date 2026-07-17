@@ -2778,8 +2778,30 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
         // only (outfalls take the `continue` above), matching the former
         // sequential pass / legacy findNodeDepths' final scan. Integer count:
         // the cross-thread combine below is order-free, hence bit-exact.
+        //
+        // Require BOTH the raw Picard residual |G(y_k) - y_k| AND the accepted
+        // (possibly Anderson-mixed) movement |depth - y_k| to be within
+        // tolerance. Testing accepted movement alone let an Anderson mix that
+        // lands back near y_last mark a node converged while the operator
+        // residual was still large — e.g. when alpha clamps to 1 the mix
+        // returns g_prev, and if the previous iteration did not itself mix then
+        // y_last == g_prev, so the movement is exactly zero regardless of how
+        // far G(y_last) actually is. That false convergence is not local: the
+        // flag feeds findBypassedLinks() (which freezes both endpoint links)
+        // and the loop-exit test t_converged = (unconv_shared == 0), so a
+        // network that all false-converges exits the Picard loop with an
+        // unconverged hydraulic state.
+        //
+        // With Anderson off / fallback nodes.depth[ui] == g_k, so
+        // accepted_movement == raw_residual and this collapses bit-exactly to
+        // the previous single-test behavior. Only an accepted mix is affected:
+        // small mixed movement can no longer hide a large raw residual, and a
+        // large accepted jump can no longer be declared converged on the
+        // strength of a small raw residual alone.
+        const double raw_residual      = std::fabs(g_k - y_last);
+        const double accepted_movement = std::fabs(nodes.depth[ui] - y_last);
         const uint8_t conv_flag =
-            (std::fabs(nodes.depth[ui] - y_last) <= head_tol) ? 1 : 0;
+            (raw_residual <= head_tol && accepted_movement <= head_tol) ? 1 : 0;
         xnode_.converged[ui] = conv_flag;
         if (!conv_flag) ++local_unconv;
     }
