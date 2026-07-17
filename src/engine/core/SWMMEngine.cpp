@@ -568,7 +568,9 @@ int SWMMEngine::initialize() noexcept {
         // Read the legacy EPA SWMM5 `.hsf` routing state (the format SAVE writes
         // and the de-facto interchange format). Native OPENSWMM_HS_V1 files are
         // applied via the C-API swmm_hotstart_apply path instead.
-        const int rc = HotStartManager::apply_legacy_routing(hs_path, ctx_);
+        const int rc = HotStartManager::apply_legacy_routing(
+            hs_path, ctx_,
+            [this](const std::string& m) { ctx_.warnings.push_back(m); });
         if (rc != 0) {
             set_error(CFFI_ERR_HOTSTART,
                       ("USE HOTSTART: " + HotStartManager::last_io_error()).c_str());
