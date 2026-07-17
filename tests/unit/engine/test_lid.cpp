@@ -142,12 +142,15 @@ TEST(LIDModelBuilder, SingleBioCellPopulated) {
 
     const auto& g = solver.group(0); // BIO_CELL
     EXPECT_EQ(g.count, 1);
-    EXPECT_NEAR(g.surf_store[0], 0.5, 1e-10);
-    EXPECT_NEAR(g.soil_thick[0], 1.5, 1e-10);
+    // Layer depths arrive in user units (inches, US) and are converted to
+    // internal ft at init (÷ UCF(RAINDEPTH) = 12); porosity is dimensionless
+    // and the drain coeff stays in user units (issue #102).
+    EXPECT_NEAR(g.surf_store[0], 0.5 / 12.0, 1e-10);
+    EXPECT_NEAR(g.soil_thick[0], 1.5 / 12.0, 1e-10);
     EXPECT_NEAR(g.soil_poros[0], 0.45, 1e-10);
-    EXPECT_NEAR(g.stor_thick[0], 1.0, 1e-10);
+    EXPECT_NEAR(g.stor_thick[0], 1.0 / 12.0, 1e-10);
     EXPECT_NEAR(g.drain_coeff[0], 0.5, 1e-10);
-    EXPECT_NEAR(g.area[0], 1000.0, 1e-10);
+    EXPECT_NEAR(g.area[0], 1000.0, 1e-10);  // ft² (US: UCF(LENGTH)=1)
 }
 
 TEST(LIDModelBuilder, InitialSaturationSetsState) {
@@ -156,7 +159,7 @@ TEST(LIDModelBuilder, InitialSaturationSetsState) {
         {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
         {1.0, 0.5, 0.0, 0.0},
         {0.0, 0.5, 0.0, 0.0, 0.0, 0.0},
-        1000.0, 50.0, 0.5  // 50% initial saturation
+        1000.0, 50.0, 50.0  // init_sat is a PERCENT (0-100): 50 → 0.5 fraction
     );
 
     LIDSolver solver;
@@ -165,8 +168,8 @@ TEST(LIDModelBuilder, InitialSaturationSetsState) {
     const auto& g = solver.group(0);
     // Soil: wp + initSat * (poros - wp) = 0.10 + 0.5*(0.45 - 0.10) = 0.275
     EXPECT_NEAR(g.soil_moist[0], 0.275, 1e-10);
-    // Storage: initSat * thickness = 0.5 * 1.0 = 0.5
-    EXPECT_NEAR(g.stor_depth[0], 0.5, 1e-10);
+    // Storage: initSat * thickness (thickness converted in → ft: 1.0/12).
+    EXPECT_NEAR(g.stor_depth[0], 0.5 * (1.0 / 12.0), 1e-10);
 }
 
 TEST(LIDModelBuilder, MultipleTypesDistributed) {
@@ -216,14 +219,36 @@ TEST(LIDModelBuilder, MultipleTypesDistributed) {
     EXPECT_EQ(solver.group(2).count, 0); // GR
 }
 
+TEST(LIDModelBuilder, ReplicateNumberScalesAreaAndWidth) {
+    auto ctx = makeLidContext("BC",
+        {0.5, 0.0, 0.1, 1.0, 0.0},
+        {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
+        {1.0, 0.5, 0.0, 0.0},
+        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
+    ctx.lid_usage.number[0] = 3;  // three replicate units
+
+    LIDSolver solver;
+    solver.init(ctx);
+
+    const auto& g = solver.group(0);
+    // Legacy aggregates lidArea = area × number (lid.c:1688) and scales width
+    // with it so the Manning width/area ratio — and thus the per-unit depth
+    // dynamics — are unchanged while flux/volume totals cover every replicate.
+    EXPECT_NEAR(g.area[0], 3.0 * 1000.0, 1e-10);
+    EXPECT_NEAR(g.full_width[0], 3.0 * 50.0, 1e-10);
+    // Subcatchment LID footprint must also carry the replicate count.
+    EXPECT_NEAR(ctx.subcatches.total_lid_area_ft2[0], 3.0 * 1000.0, 1e-10);
+}
+
 TEST(LIDModelBuilder, ManningAlphaComputed) {
     auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.05, 0.02, 0.0},  // roughness=0.05, slope=2%
+        {0.5, 0.0, 0.05, 2.0, 0.0},  // roughness=0.05, slope entered as % (2 → 0.02)
         {0,0,0,0,0,0,0}, {0,0,0,0}, {0,0,0,0,0,0});
 
     LIDSolver solver;
     solver.init(ctx);
     const auto& g = solver.group(0);
+    // surf_slope is converted %→fraction (2.0/100 = 0.02); alpha = 1.49·√s/n.
     double expected_alpha = 1.49 * std::sqrt(0.02) / 0.05;
     EXPECT_NEAR(g.surf_alpha[0], expected_alpha, 1e-6);
 }
