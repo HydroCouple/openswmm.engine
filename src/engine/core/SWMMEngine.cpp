@@ -1374,10 +1374,6 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //   lidInflow = (qImperv * fromImperv + qPerv * fromPerv) / lidArea
         // where qImperv/qPerv are CFS from non-LID impervious/pervious subareas.
         const auto& rsoa = runoff_.soa();
-        // Gage rainfall is stored in project rain units (in/hr | mm/hr); the LID
-        // solver runs in internal ft/sec, so convert (issue #102). The subarea
-        // runon terms below are already CFS ÷ ft² = ft/sec.
-        const double RAIN_TO_FTSEC = 1.0 / ucf::UCF(ucf::RAINFALL, ctx_.options);
         for (int t = 0; t < lid_.numGroups(); ++t) {
             auto& g = lid_.group(t);
             if (g.count == 0) continue;
@@ -1389,11 +1385,11 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     continue;
                 }
                 auto usc = static_cast<std::size_t>(sc);
-                // Gage rainfall for this subcatchment (in/hr|mm/hr → ft/sec)
-                int gage = ctx_.subcatches.gage[usc];
-                double rain = (gage >= 0)
-                    ? ctx_.gages.rainfall[static_cast<std::size_t>(gage)] * RAIN_TO_FTSEC
-                    : 0.0;
+                // Subcatchment precipitation (ft/sec, internal units) — set by
+                // RunoffSolver from the gage AFTER applying per-subcatchment
+                // rainfall forcing and snowmelt, so the LID sees the same
+                // precip the rest of the subcatchment does (issue #102).
+                double rain = ctx_.subcatches.rainfall[usc];
                 // Per-subarea runoff CFS from non-LID area (set by RunoffSolver, Gap #23)
                 double q_imperv = rsoa.imperv_runoff_cfs[usc];
                 double q_perv   = rsoa.perv_runoff_cfs[usc];
