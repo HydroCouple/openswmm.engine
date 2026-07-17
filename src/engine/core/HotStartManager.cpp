@@ -672,13 +672,84 @@ int HotStartManager::apply_legacy_routing(
             std::to_string(ctx.n_nodes()) + "/" + std::to_string(ctx.n_links()) + ")";
         return 3;
     }
-    if (nSub != 0) {
-        // The runoff section (legacy readRunoff) is not yet parsed, so the
-        // file offset for the routing records can't be located. Routing-only
-        // hotstarts (extran*) work; subcatchment hotstarts are a follow-up.
-        tl_last_io_error =
-            "Hotstart with subcatchments is not yet supported (routing-only)";
-        return 4;
+
+    // --- runoff (subcatchment) section ---
+    // Legacy initializeFromHotstartFile() calls readRunoff() BEFORE readRouting()
+    // for fileVersion >= 3, and readRouting() itself consumes an inline 2-float
+    // groundwater block per subcatchment for fileVersion == 2. The refactored
+    // engine applies only the routing (node/link) state, but it MUST advance the
+    // stream past the runoff section to reach the routing records — otherwise
+    // every model that has subcatchments (i.e. almost all real models) was
+    // rejected outright with "Hot start file error" (#93), even though legacy
+    // reads the same file fine.
+    //
+    // The runoff record layout is NOT self-describing: each subcatchment's
+    // length depends on whether it has groundwater and/or a snowpack, exactly as
+    // legacy saveRunoff() wrote it. We reconstruct that length from the CURRENT
+    // model's structure (gw_aquifer[i] >= 0 mirrors legacy Subcatch[i].
+    // groundwater != NULL; snowpack[i] >= 0 mirrors Subcatch[i].snowpack !=
+    // NULL) — the same "model must match the file" assumption legacy
+    // readRunoff() itself relies on, since the file records subcatchment state
+    // positionally with no per-object type tags.
+    if (nSub != ctx.n_subcatches()) {
+        tl_last_io_error = "Hotstart subcatchment count mismatch (file " +
+            std::to_string(nSub) + " vs model " +
+            std::to_string(ctx.n_subcatches()) + ")";
+        return 3;
+    }
+
+    if (nSub > 0) {
+        // Routing state IS applied below; subcatchment runoff/infiltration/
+        // groundwater/snowpack/buildup state in the file is skipped, not
+        // applied — a continuation run is hydraulically hot-started but its
+        // hydrology restarts cold. Surface that so it is not silently lossy.
+        const std::string msg =
+            "USE HOTSTART: subcatchment runoff/infiltration/groundwater/"
+            "snowpack state was skipped (routing state applied only)";
+        if (warn_cb) warn_cb(msg);
+    }
+
+    if (version >= 3 && nSub > 0) {
+        // Skip the readRunoff() section. All fields legacy wrote here are
+        // 8-byte doubles (saveRunoff). Per subcatchment: 3 sub-area ponded
+        // depths + total runoff (4), infiltration state (6), +4 if it has
+        // groundwater, +15 (3 surfaces x 5) if it has a snowpack, and — only
+        // when pollutants exist — runoff + ponded quality (2*nPollut) plus
+        // per-land-use buildup and last-swept (nLand*(nPollut+1)).
+        const auto& sub = ctx.subcatches;
+        std::streamoff skip_doubles = 0;
+        for (int i = 0; i < nSub; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            std::streamoff nd = 4 + 6;
+            if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0) nd += 4;
+            if (ui < sub.snowpack.size()   && sub.snowpack[ui]   >= 0) nd += 15;
+            if (nPollut > 0) {
+                nd += 2 * static_cast<std::streamoff>(nPollut);
+                nd += static_cast<std::streamoff>(nLand) *
+                      (static_cast<std::streamoff>(nPollut) + 1);
+            }
+            skip_doubles += nd;
+        }
+        file.seekg(skip_doubles * static_cast<std::streamoff>(sizeof(double)),
+                   std::ios::cur);
+        if (!file) {
+            tl_last_io_error =
+                "Hotstart runoff section truncated in '" + path + "'";
+            return 1;
+        }
+    }
+    else if (version == 2 && nSub > 0) {
+        // fileVersion 2 has no separate runoff section; legacy readRouting()
+        // instead reads 2 floats (GW moisture content, water-table elevation)
+        // per subcatchment immediately before the node records.
+        file.seekg(static_cast<std::streamoff>(nSub) * 2 *
+                   static_cast<std::streamoff>(sizeof(float)),
+                   std::ios::cur);
+        if (!file) {
+            tl_last_io_error =
+                "Hotstart v2 groundwater block truncated in '" + path + "'";
+            return 1;
+        }
     }
 
     auto& nodes = ctx.nodes;
