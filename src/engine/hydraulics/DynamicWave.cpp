@@ -2723,10 +2723,22 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                 double dr2 = dr * dr;
 
                 if (dr2 > 1e-30) {  // avoid division by zero
+                    // Two-point Anderson / Aitken coefficient. alpha =
+                    // r_k*dr/dr^2 = r_k/(r_k - r_km1) is the weight on the
+                    // PREVIOUS mapped value: the textbook secant update is
+                    //   y = g_k - alpha*(g_k - g_prev)
+                    //     = (1 - alpha)*g_k + alpha*g_prev,
+                    // which zeroes the linear-model blended residual
+                    // (1-alpha)*r_k + alpha*r_km1. The [0,1] clamp keeps the
+                    // update interpolation-only (no extrapolation), so with
+                    // same-sign shrinking residuals (alpha < 0 unclamped) the
+                    // blend degenerates to the NEW Picard iterate g_k — never
+                    // to the older one.
                     double alpha = std::max(0.0, std::min(1.0, r_k * dr / dr2));
 
-                    // Anderson mixed update
-                    double y_anderson = (1.0 - alpha) * aa_g_prev_[ui] + alpha * g_k;
+                    // Anderson mixed update (alpha weights g_prev; the
+                    // complementary weight goes to the current g_k)
+                    double y_anderson = (1.0 - alpha) * g_k + alpha * aa_g_prev_[ui];
 
                     // Physical bounds safeguard: depth must be >= 0
                     // Fall back to standard Picard if Anderson produces
