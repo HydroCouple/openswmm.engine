@@ -17,8 +17,12 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unistd.h>   // getpid
 
 namespace {
+
+// Per-process temp prefix to avoid collisions under parallel ctest -j.
+const std::string g_pfx = "/tmp/sr1b_" + std::to_string(getpid()) + "_";
 
 // Chain network J1..J5 → O1, one subcatchment per junction, constant rain.
 // A [SOFT_RAINGAGES] entry (when requested) attaches gage-level spread.
@@ -117,9 +121,9 @@ double runCase(const std::string& inp, const std::string& rpt,
 }
 
 TEST(SoftRainGageEngine, NonzeroCvProducesHeadBands) {
-    const std::string inp = "/tmp/sr1b_cv.inp";
-    const std::string rpt = "/tmp/sr1b_cv.rpt";
-    const std::string csv = "/tmp/sr1b_cv.uncertainty.csv";
+    const std::string inp = g_pfx + "cv.inp";
+    const std::string rpt = g_pfx + "cv.rpt";
+    const std::string csv = g_pfx + "cv.uncertainty.csv";
     writeChainInp(inp, "RG1 NORMAL CV 0.30");
 
     bool found = false;
@@ -129,9 +133,9 @@ TEST(SoftRainGageEngine, NonzeroCvProducesHeadBands) {
 }
 
 TEST(SoftRainGageEngine, ZeroSpreadCollapsesBandsExactly) {
-    const std::string inp = "/tmp/sr1b_zero.inp";
-    const std::string rpt = "/tmp/sr1b_zero.rpt";
-    const std::string csv = "/tmp/sr1b_zero.uncertainty.csv";
+    const std::string inp = g_pfx + "zero.inp";
+    const std::string rpt = g_pfx + "zero.rpt";
+    const std::string csv = g_pfx + "zero.uncertainty.csv";
     writeChainInp(inp, "RG1 NORMAL CV 0.0");
 
     bool found = false;
@@ -141,12 +145,12 @@ TEST(SoftRainGageEngine, ZeroSpreadCollapsesBandsExactly) {
 }
 
 TEST(SoftRainGageEngine, LargerCvWidensBands) {
-    const std::string inp_a = "/tmp/sr1b_small.inp";
-    const std::string inp_b = "/tmp/sr1b_large.inp";
-    const std::string rpt_a = "/tmp/sr1b_small.rpt";
-    const std::string rpt_b = "/tmp/sr1b_large.rpt";
-    const std::string csv_a = "/tmp/sr1b_small.uncertainty.csv";
-    const std::string csv_b = "/tmp/sr1b_large.uncertainty.csv";
+    const std::string inp_a = g_pfx + "small.inp";
+    const std::string inp_b = g_pfx + "large.inp";
+    const std::string rpt_a = g_pfx + "small.rpt";
+    const std::string rpt_b = g_pfx + "large.rpt";
+    const std::string csv_a = g_pfx + "small.uncertainty.csv";
+    const std::string csv_b = g_pfx + "large.uncertainty.csv";
     writeChainInp(inp_a, "RG1 NORMAL CV 0.20");
     writeChainInp(inp_b, "RG1 NORMAL CV 0.60");
 

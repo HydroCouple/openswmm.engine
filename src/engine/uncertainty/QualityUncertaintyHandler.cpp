@@ -93,8 +93,18 @@ std::string parseQualityUncertaintyLine(
     if (ok) {
         // New order: PERT [DIST] [ENTRY]
         pert = t2_num;
-        if (tokens.size() >= 4) dist_str  = tokens[3];
-        if (tokens.size() >= 5) entry_str = tokens[4];
+        // tokens[3] could be DIST or ENTRY (DIST omitted). If it's a known
+        // ENTRY keyword, treat it as ENTRY and keep the default DIST.
+        auto is_entry_kw = [](const std::string& s) {
+            return iequals(s, "QUALITY_MULT");
+        };
+        if (tokens.size() >= 4) {
+            if (is_entry_kw(tokens[3]))
+                entry_str = tokens[3];
+            else
+                dist_str  = tokens[3];
+        }
+        if (tokens.size() >= 5 && entry_str.empty()) entry_str = tokens[4];
     } else {
         // Legacy order: DIST PERT
         if (tokens.size() < 4)

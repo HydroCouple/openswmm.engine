@@ -19,8 +19,12 @@
 #include <fstream>
 #include <iomanip>
 #include <string>
+#include <unistd.h>   // getpid
 
 namespace {
+
+// Per-process temp prefix to avoid collisions under parallel ctest -j.
+const std::string g_pfx = "/tmp/sr2d_" + std::to_string(getpid()) + "_";
 
 void writeStringAttr(hid_t loc, const char* name, const char* value) {
     hid_t atype = H5Tcopy(H5T_C_S1);
@@ -82,7 +86,7 @@ TEST(SoftRainGridEngine, RunoffTargetMatchesEquivalentGageRun) {
     int steps = 0;
   };
 
-  const std::string grid_path = makeGridFile("/tmp/sr2d_runoff_grid.h5", "in/hr", 1.0f, 2.0f, 3.0f, 4.0f);
+  const std::string grid_path = makeGridFile(g_pfx + "runoff_grid.h5", "in/hr", 1.0f, 2.0f, 3.0f, 4.0f);
 
   auto write_runoff_inp = [&](const std::string& path, double gage_inhr, bool use_grid) {
     std::ofstream f(path);
@@ -140,10 +144,10 @@ TEST(SoftRainGridEngine, RunoffTargetMatchesEquivalentGageRun) {
     return out;
   };
 
-  const std::string control_inp = "/tmp/sr2d_runoff_control.inp";
-  const std::string control_rpt = "/tmp/sr2d_runoff_control.rpt";
-  const std::string grid_inp = "/tmp/sr2d_runoff_grid.inp";
-  const std::string grid_rpt = "/tmp/sr2d_runoff_grid.rpt";
+  const std::string control_inp = g_pfx + "runoff_control.inp";
+  const std::string control_rpt = g_pfx + "runoff_control.rpt";
+  const std::string grid_inp = g_pfx + "runoff_grid.inp";
+  const std::string grid_rpt = g_pfx + "runoff_grid.rpt";
 
   // Control run: equivalent gage rainfall at 2 in/hr.
   write_runoff_inp(control_inp, 2.0, false);
@@ -175,10 +179,10 @@ TEST(SoftRainGridEngine, RunoffTargetMatchesEquivalentGageRun) {
 }
 
 TEST(SoftRainGridEngine, InflowsTargetDrivesNodeLateralInflowAndRoutingTotals) {
-    const std::string grid_path = makeGridFile("/tmp/sr2d_inflows_grid.h5", "CMS", 0.01f, 0.02f, 0.03f, 0.04f);
-    const std::string nodes_path = "/tmp/sr2d_nodes.txt";
-    const std::string inp_path  = "/tmp/sr2d_inflows.inp";
-    const std::string rpt_path  = "/tmp/sr2d_inflows.rpt";
+    const std::string grid_path = makeGridFile(g_pfx + "inflows_grid.h5", "CMS", 0.01f, 0.02f, 0.03f, 0.04f);
+    const std::string nodes_path = g_pfx + "nodes.txt";
+    const std::string inp_path  = g_pfx + "inflows.inp";
+    const std::string rpt_path  = g_pfx + "inflows.rpt";
 
     {
         std::ofstream nf(nodes_path);
@@ -248,7 +252,7 @@ TEST(SoftRainGridEngine, RunoffTargetAbsoluteContinuityClosure) {
     // Use a longer simulation (2 hours) so surface storage stabilizes.
     const double rain_inhr = 1.0;
     const std::string grid_path =
-        makeGridFile("/tmp/sr2d_closure_grid.h5", "in/hr",
+        makeGridFile(g_pfx + "closure_grid.h5", "in/hr",
                      static_cast<float>(rain_inhr), static_cast<float>(rain_inhr),
                      static_cast<float>(rain_inhr), static_cast<float>(rain_inhr));
 
@@ -311,10 +315,10 @@ TEST(SoftRainGridEngine, RunoffTargetAbsoluteContinuityClosure) {
         return c;
     };
 
-    const std::string ctrl_inp = "/tmp/sr2d_closure_ctrl.inp";
-    const std::string ctrl_rpt = "/tmp/sr2d_closure_ctrl.rpt";
-    const std::string grid_inp = "/tmp/sr2d_closure_grid.inp";
-    const std::string grid_rpt = "/tmp/sr2d_closure_grid.rpt";
+    const std::string ctrl_inp = g_pfx + "closure_ctrl.inp";
+    const std::string ctrl_rpt = g_pfx + "closure_ctrl.rpt";
+    const std::string grid_inp = g_pfx + "closure_grid.inp";
+    const std::string grid_rpt = g_pfx + "closure_grid.rpt";
     write_closure_inp(ctrl_inp, false);
     write_closure_inp(grid_inp, true);
 

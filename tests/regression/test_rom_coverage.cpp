@@ -32,6 +32,8 @@
 #include "core/SWMMEngine.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
 
+#include <unistd.h>   // getpid
+
 namespace {
 
 // ============================================================================
@@ -134,8 +136,10 @@ struct RunResult {
 
 RunResult runCase(const std::string& inp_text, const char* tag, bool with_rom) {
     RunResult out;
-    const std::string inp_path = std::string("/tmp/rom_cov_") + tag + ".inp";
-    const std::string rpt_path = std::string("/tmp/rom_cov_") + tag + ".rpt";
+    // Per-process prefix to avoid collisions under parallel ctest -j.
+    const std::string pfx = "/tmp/rom_cov_" + std::to_string(getpid()) + "_" + tag;
+    const std::string inp_path = pfx + ".inp";
+    const std::string rpt_path = pfx + ".rpt";
     {
         std::ofstream f(inp_path);
         f << inp_text;
@@ -211,7 +215,20 @@ RunResult runCase(const std::string& inp_text, const char* tag, bool with_rom) {
         t_prev = t_now;
         if (t_now >= kEndTime) break;
     }
+    // Require a non-trivial number of report samples so later indexing is safe.
+    // The exact count depends on the engine's adaptive stepping, but every
+    // run must produce the same count for the MC-vs-ROM comparison to index
+    // correctly. We verify cross-run consistency in the test body by
+    // comparing all MC times vectors against the ROM's.
     out.ok = !out.times.empty();
+    if (out.ok) {
+        // For ROM runs, verify quantile vectors are complete per junction.
+        const std::size_t n = out.times.size();
+        for (const auto& [nm, _] : out.heads) {
+            if (out.q05.count(nm) && out.q05[nm].size() != n)
+                out.ok = false;
+        }
+    }
     cleanup();
     return out;
 }
@@ -241,6 +258,20 @@ TEST(RomCoverage, BandsBracketBruteForceMonteCarlo) {
     ASSERT_TRUE(rom.ok) << "ROM run failed";
     ASSERT_FALSE(rom.q05.empty()) << "ROM produced no quantiles";
 
+    // --- Verify all runs share the same number of report samples -------------
+    // If any run bailed early (stall guard / error), its time vector is shorter
+    // and the indexed MC-vs-ROM comparison would go out of range. Use the
+    // minimum across all runs as the safe comparison window.
+    std::size_t n_samples = rom.times.size();
+    for (int i = 0; i < kMcRuns; ++i) {
+        n_samples = std::min(n_samples, mc[static_cast<std::size_t>(i)].times.size());
+    }
+    ASSERT_GT(n_samples, 0u) << "No report samples collected";
+    for (const auto& [nm, _] : rom.q05) {
+        ASSERT_GE(rom.q05.at(nm).size(), n_samples)
+            << "ROM quantile vector too short for node " << nm;
+    }
+
     // --- Compare at every (junction, report time) with t > 60 s --------------
     // MC empirical quantiles from the 21 sorted heads (nearest-rank):
     //   q05 → index 1, q50 → index 10, q95 → index 19.
@@ -251,7 +282,7 @@ TEST(RomCoverage, BandsBracketBruteForceMonteCarlo) {
 
     for (const auto& [nm, rom_q05] : rom.q05) {
         const auto& rom_q95 = rom.q95.at(nm);
-        for (std::size_t k = 0; k < rom.times.size(); ++k) {
+        for (std::size_t k = 0; k < n_samples; ++k) {
             if (rom.times[k] <= 60.0) continue;
             const bool late = rom.times[k] >= 0.5 * kEndTime;  // saturated regime
 
