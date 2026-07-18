@@ -141,8 +141,8 @@ Controls the ROM solver. All keywords are optional; defaults shown.
 | `K_EFF` | `≤ 0 → AUTO` | any | Effective diffusive conductance (m^(4/3)/s). Values ≤ 0 activate AUTO mode (see §4.8). |
 | `MANNINGS_CORR_LEN` | `0.0` | ≥ 0 | Spatial correlation length (m) for Manning's n field. 0 = uniform scalar per member (fast). |
 | `RAINFALL_CORR_LEN` | `0.0` | ≥ 0 | Spatial correlation length (m) for rainfall field. 0 = uniform scalar per member. |
-| `WET_RESEED_FRACTION` | `0.05` | [0, 1] | Trigger a ROM reseed when the wet-cell count changes by more than this fraction of n_tri. Prevents stale seeds on rapidly advancing wetting fronts. |
-| `WET_RESEED_MIN_INTERVAL` | `60.0` | ≥ 0 | Minimum simulation time (s) between consecutive reseeds. Prevents excessive reseeding on oscillating fronts. |
+| `WET_RESEED_FRACTION` | `0.05` | [0, 1] | 2D-only. Rebuild the ROM basis (and reset every member's deviation to zero) when the wet-cell count changes by more than this fraction of n_tri, so the ROM extends coverage to newly-wet cells. Not a periodic drift correction — see §4.5, §6.3. No 1D equivalent; the 1D ROM never reseeds. |
+| `WET_RESEED_MIN_INTERVAL` | `60.0` | ≥ 0 | Minimum simulation time (s) between consecutive wet-domain rebuilds. Prevents excessive rebuilding on an oscillating wetting front. |
 | `PARAMETRIC_TAILS` | `NO` | YES/NO | Fit a log-normal to the wet-member sub-population and use the analytic 95th percentile as q95 (reduces noise from top 1–2 samples when M is small). q05/q50 remain sort-based. |
 | `MODE_DROP_THRESHOLD` | `1e-10` | ≥ 0 | Drop mode j from `advance()` when its energy E_j and rainfall forcing are both below this threshold. Automatically reactivated by rainfall. |
 
@@ -331,26 +331,37 @@ parameter design for M members.
 
 **At the first `CvodeSurfaceSolver::advance()` call** — seeding:
 
-`seedROM()` projects the current CVODE depth array h onto the eigenbasis:
+`seedROM()` zeroes every member's modal deviation and stores the current CVODE depth array `h`
+as the deterministic reference `h_det`:
 ```
-a[i,j] = P[:,j]ᵀ · h    for all members i = 0..M−1
+δa[i,j] = 0    for all members i = 0..M−1
+h_det   = h
 ```
-Every member starts from the same deterministic IC, so spread = 0 at seed time. The different
-LHS multipliers (`mannings_mult[i]`, `rainfall_mult[i]`) give each member a different decay
-rate and forcing on the very next `advance()` call, so spread grows immediately.
+Every member starts exactly on the deterministic solution (deviation form — see §4.6), so
+spread = 0 at seed time. The different LHS multipliers (`mannings_mult[i]`, `rainfall_mult[i]`)
+give each member a different Manning-sensitivity and forcing-sensitivity term on the very next
+`advance()` call, so spread grows immediately — and the nominal member (`mult = 1`) stays
+exactly on `h_det` for the rest of the run.
 
 **At each subsequent CVODE step** — advance and quantiles:
 
-1. `applyCouplingFluxToROM()` injects per-member drainage fluxes at coupling points (if any; see §4.11).
-2. `SpectralROM::advance(dt, K_eff, rainfall)` updates all M×k coefficients via the exponential integrator.
-3. `computeQuantiles()` reconstructs per-cell depths for all M members and sorts to get q05/q50/q95.
+1. `applyCouplingFluxToROM()` injects per-member drainage-flux *deviations* at coupling points
+   (if any; see §4.11) — only the difference from the deterministic exchange is applied.
+2. `SpectralROM::advance(dt, K_eff, rainfall, h_cell, h_det)` updates all M×k deviations via the
+   exponential integrator, using the live CVODE depth as `h_det`.
+3. `computeQuantiles(h_det, parametric_tails)` reconstructs per-cell depths for all M members
+   (`h_det + P·δa`, floored at 0) and sorts to get q05/q50/q95.
 
-**Reseeding** — keeping the ROM aligned with a moving wetting front:
+**Basis rebuild on wet-domain growth** — extending ROM coverage, not correcting drift:
 
 If the wet-cell count changes by more than `WET_RESEED_FRACTION × n_tri` since the last seed,
-and at least `WET_RESEED_MIN_INTERVAL` seconds have elapsed, the ROM reseeds from the current
-CVODE depth. Spread briefly collapses to zero and re-grows as members diverge under their
-different multipliers.
+and at least `WET_RESEED_MIN_INTERVAL` seconds have elapsed, the ROM rebuilds its depth-weighted
+basis and re-seeds from the current CVODE depth (all deviations reset to zero). This exists
+solely to extend the ROM's coverage to a newly-wet region that the previous basis didn't
+represent — it is not a periodic correction for accumulated drift (the deviation formulation
+has no drift to correct: the nominal member never leaves the deterministic trajectory). Spread
+briefly collapses to zero at a rebuild and re-grows as members diverge again; the median is
+unaffected either way, since it already tracks `h_det`.
 
 #### 1D ROM — what runs when
 
@@ -361,9 +372,11 @@ from `ctx_.nodes.type` and excluded from the active set — they are fixed-head 
 cannot carry spreading uncertainty. `NetworkLaplacian1D::buildUniform()` assembles the graph
 Laplacian in CSR format over the remaining active nodes. `GraphEigenBasis::build()` runs
 Lanczos+QL to extract k eigenvectors and eigenvalues. The ROM is then seeded immediately from
-the current hydraulic state:
+the current hydraulic state — every member's modal deviation zeroed, and the current heads
+stored as the deterministic reference:
 ```
-a[i,j] = P[:,j]ᵀ · h_active    for all members i = 0..M−1
+δa[i,j] = 0                    for all members i = 0..M−1
+h_det_active = h_active
 ```
 where `h_active` contains only the heads of active (non-outfall) nodes in the ROM's index
 space. The `full_to_active[]` map (indexed by SWMM node index) records which active ROM index
@@ -373,11 +386,15 @@ corresponds to each node, and returns −1 for outfalls.
 
 1. `computeK1d()` estimates mean diffusion-wave diffusivity from current conduit depths, slopes,
    and roughnesses, then normalises by conduit length² to yield K1d [1/s].
-2. `SpectralROM1D::advance(dt, K1d, nullptr)` updates all M×k coefficients.
-3. `computeQuantiles()` reconstructs per-active-node head quantiles.
+2. `SpectralROM1D::advance(dt, K1d, h_det_active, runoff)` updates all M×k deviations, using the
+   current active-node heads as the live deterministic reference `h_det_active`.
+3. `computeQuantiles(h_det_active, invert_active)` reconstructs per-active-node head quantiles
+   (`h_det_active + P·δa`, clamped to each node's invert elevation).
 
-The 1D ROM is **not automatically reseeded** during a simulation run. It seeds once at
-`initialize()` from the hydraulic initial condition and evolves through the event from there.
+The 1D ROM has **no reseed mechanism at all**. It seeds once at `initialize()` and, from then
+on, only ever advances the deviation ODE — there is nothing to periodically re-anchor, because
+the nominal member (all multipliers = 1) never leaves the deterministic trajectory by
+construction (deviation form — see §4.6).
 
 #### How the sidecar attaches — five hook points
 
@@ -389,10 +406,10 @@ quantity the deterministic solver computes anyway:
 | Hook | What the sidecar reads | How it is used |
 |---|---|---|
 | `initialize()` | Mesh/network topology — triangle connectivity, conduit node pairs, cell areas, conduit lengths | Assembles the Laplacian eigenbasis: the same operator CVODE will invert at every Newton step |
-| First `CvodeSurfaceSolver::advance()` | CVODE depth array `h[]` (current state after solver warmup) | Seeds all M members: `a[i,j] = P[:,j]ᵀ · h` |
-| Each `advance()` | Current wet-cell depths, Manning's n values, bed slopes | Computes K_eff (2D) or K1d (1D) — the same linearisation coefficient the solver uses for its Jacobian |
-| Coupling exchange | Deterministic DYNWAVE node heads from `computeCouplingExchange()` | Per-member orifice equation — M realisations of what the inlet head difference is |
-| Reseed check | CVODE's current wet-cell count | Decides when the seed state has drifted too far from the deterministic solution to trust |
+| First `CvodeSurfaceSolver::advance()` | CVODE depth array `h[]` (current state after solver warmup) | Seeds all M members: zeroes every deviation, stores `h` as `h_det` |
+| Each `advance()` | Current wet-cell depths, Manning's n values, bed slopes, and the live deterministic depth/head (`h_det`) | Computes K_eff (2D) or K1d (1D); `h_det` supplies the Manning-sensitivity forcing term (§4.6) |
+| Coupling exchange | Deterministic DYNWAVE node heads from `computeCouplingExchange()` | Per-member orifice equation — M realisations of what the inlet head difference is, applied as a deviation from the deterministic exchange |
+| Wet-domain check (2D only) | CVODE's current wet-cell count | Decides when the ROM basis needs rebuilding to cover newly-wet cells (not a drift correction — the 1D ROM has no equivalent hook at all) |
 
 This is the barnacle design: the ROM attaches to the hull at initialization, moves with the
 solver through every timestep, draws parameters from quantities the solver already computes,
@@ -410,43 +427,64 @@ and emits three extra depth fields per cell without altering the solver's own tr
 | Basis shared with preconditioner? | Yes, if `SpectralPrecond2D` active | No — always a standalone `GraphEigenBasis` |
 | Output quantiles sized | n_tri (triangles) | n_active_nodes (excluding outfalls) |
 
-### 4.6 The ROM ODE (full definition)
+### 4.6 The ROM ODE (full definition — deviation form)
 
-The 2D diffusion-wave equation (linearised about the current deterministic state) is:
+**This subsection describes the current deviation-form implementation (reform PRs 6–7).**
+The full normative derivation lives in `docs/uncertainty/DEVIATION_FORM.md`; this is the
+condensed version for this guide.
 
-```
-∂h/∂t = K_eff · L · h + r(x)
-```
-
-where `L` is the graph Laplacian of the triangulation and `r(x)` is the per-cell rainfall rate.
-Projecting onto the Laplacian eigenbasis `P` (columns = eigenvectors, eigenvalues `λ_j`):
-
-```
-da_j/dt = −rate_j(θ) · a_j  +  f_j(θ)
-
-rate_j(θ) = λ_j · K_eff / mannings_mult[i]     (mode-j decay rate for member i)
-f_j(θ)    = r_coarse[j] · rainfall_mult[i]     (mode-j forcing for member i)
-
-r_coarse[j] = P[:,j]ᵀ · rainfall_field
-```
-
-Each ensemble member carries its own `(mannings_mult, rainfall_mult)` drawn from the LHS design.
-The ODE is **solved exactly** via the exponential integrator — no substep limit, no Krylov solves:
+The real deterministic depth/head field `h_det` is whatever SWMM's ordinary DynWave/CVODE
+solver computes at each routing step — the ROM never advances `h_det` itself. Instead, each
+ensemble member `i` tracks only its **modal deviation** from that live reference:
 
 ```
-a_j(t+dt) = (a_j(t) − f_j/rate_j) · exp(−rate_j · dt)  +  f_j/rate_j
+δa_i = P^T (h_i − h_det)         (member i's deviation, projected onto the eigenbasis)
+b_j  = P[:,j]^T · h_det          (projection of the real deterministic field itself)
 ```
 
-When `rate_j` is near zero (near-null mode or K_eff ≈ 0), the solver falls back to Euler.
-Reconstructed cell depths are clamped to ≥ 0.
+Linearising the diffusion-wave equation about `h_det` and projecting the *difference* between
+member `i`'s dynamics and the deterministic dynamics onto mode `j` gives:
+
+```
+d(δa[i,j])/dt = −rate[i,j] · δa[i,j]  +  g[i,j]
+
+rate[i,j] = λ_j · keff[i,j]                                    (mode-j decay rate for member i)
+
+g[i,j]    = −λ_j · (keff[i,j] − keff_nominal[j]) · b_j[j]       (Manning-sensitivity forcing)
+            + (f[i,j] − r_coarse[j])                            (forcing-sensitivity forcing)
+
+r_coarse[j] = P[:,j]^T · rainfall_field                (nominal, mult = 1, forcing projection)
+```
+
+`keff[i,j]` is member `i`'s per-mode effective conductance — `K_eff / mannings_mult[i]` on the
+scalar path, or the per-cell Rayleigh-quotient value on the spatial Manning path (§4.10);
+`keff_nominal[j]` is the same quantity at `mannings_mult = 1`. `f[i,j]` is member `i`'s rainfall
+forcing (scalar `r_coarse[j] · rainfall_mult[i]`, spatial, or ensemble-runoff — see §4.10).
+
+**The defining property**: for the nominal member (`mannings_mult[i] = 1`,
+`rainfall_mult[i] = 1`), every term in `g[i,j]` is identically zero, so `δa[i,j] ≡ 0` for all
+time — that member's reconstructed depth equals `h_det` exactly, not approximately. There is
+nothing to drift and therefore nothing to periodically re-anchor (see §6.3).
+
+Each `(member, mode)` pair is still solved **exactly** via the exponential integrator — no
+substep limit, no Krylov solves:
+
+```
+steady[i,j]    = g[i,j] / rate[i,j]
+δa[i,j](t+dt)  = (δa[i,j](t) − steady[i,j]) · exp(−rate[i,j] · dt)  +  steady[i,j]
+```
+
+When `rate[i,j]` is near zero (near-null mode or K_eff ≈ 0), the solver falls back to Euler.
+Reconstructed cell depths are `h_det[t] + Σ_j P[j,t] · δa[i,j]`, clamped to ≥ 0 (2D; the ROM
+works in depth space) or to the node invert elevation (1D; the ROM works in head space).
 
 **Connection to the CVODE Jacobian:**  
 For the linearised system `∂h/∂t = K_eff · L · h`, the Jacobian is `J = K_eff · L`. Its
-eigenvalues are exactly `{λ_j · K_eff}` — the same values that appear as the ROM's per-mode
-decay rates. The ROM basis P is not arbitrary: it diagonalises the operator that CVODE's
-Newton–Krylov solver is implicitly inverting at each timestep. The k retained modes are the k
-slowest-decaying directions of the linearised dynamics — the most persistent patterns in the
-solution space and therefore the ones that carry the most uncertainty at the timescales of
+eigenvalues are exactly `{λ_j · K_eff}` — the same values that appear as the ROM's nominal
+per-mode decay rates. The ROM basis P is not arbitrary: it diagonalises the operator that
+CVODE's Newton–Krylov solver is implicitly inverting at each timestep. The k retained modes are
+the k slowest-decaying directions of the linearised dynamics — the most persistent patterns in
+the solution space and therefore the ones that carry the most uncertainty at the timescales of
 interest. Modes with high `λ_j` decay so fast (sub-second) that they contribute negligible
 uncertainty by the time the CVODE step completes; they are safely discarded.
 
@@ -672,28 +710,34 @@ routing step is:
 current CVODE surface depth and the DYNWAVE node head. This updates `ctx_.nodes.lat_flow[]`
 and drives the deterministic 1D DYNWAVE solve — exactly as in a run with no ROM.
 
-**Step 2 — per-member ROM exchange**
+**Step 2 — per-member ROM exchange (difference form)**
 
 `applyCouplingFluxToROM()` re-runs the orifice equation independently for all M ensemble
-members at each non-outfall coupling point:
+members at each non-outfall coupling point, then applies only each member's *deviation* from
+the deterministic flux — the deterministic exchange itself is already inside `h_det` via
+Step 1, so applying the absolute per-member flux would double-count it:
 
-- **2D head per member**: reconstructed from 2D ROM coefficients:
-  `h_2d[i][ci] = max(0, Σ_j P[ci,j] · a[i,j])`
+- **2D depth per member**: reconstructed from the 2D ROM deviation:
+  `h_2d[i][ci] = max(0, h_det[ci] + Σ_j P[ci,j] · δa[i,j])`
 - **1D head per member**: if the 1D ROM is registered,
   `h_1d[i] = rom1d->reconstructHead(i, full_to_active[cp.node_idx])`; for outfall nodes
   (`full_to_active == −1`) the shared deterministic head is used as a fallback.
+- **Deterministic reference flow**: `Q_det = Cd · A · sign(dh_det) · √(2g|dh_det|)`, computed
+  once from `h_det` and the shared deterministic 1D head — nominal `Cd` (no `cd_mult`).
 - **Orifice flow per member**:
-  `Q_i = Cd · A · sign(h_2d[i] − h_1d[i]) · √(2g|h_2d[i] − h_1d[i]|)`, capped by
-  available depth in the 2D cell.
-- **2D ROM coefficient update** (for each retained mode j):
-  `a[i,j] += P[j,ci] · (−Q_i · dt / tri_area)`
+  `Q_i = Cd · cd_mult[i] · A · sign(h_2d[i] − h_1d[i]) · √(2g|h_2d[i] − h_1d[i]|)`, capped by
+  available depth in the 2D cell. Orifice discharge does **not** depend on Manning's n (that
+  governs surface conveyance, not the inlet) — per-member spread here comes from `cd_mult`
+  (§4.7), not from `mannings_mult`.
+- **2D ROM deviation update** (for each retained mode j): only the difference is applied —
+  `δa[i,j] += P[j,ci] · (−(Q_i − Q_det) · dt / tri_area)`
 
 **Step 3 — independent ROM advances**
 
 After coupling, `SpectralROM::advance()` and `SpectralROM1D::advance()` run independently for
-the remainder of the routing step using their respective K_eff and K1d. The coupling flux
-injected in Step 2 is a one-shot impulse on the 2D ROM coefficients; the 2D ROM then evolves
-freely until the next routing step.
+the remainder of the routing step using their respective K_eff and K1d. The coupling
+deviation injected in Step 2 is a one-shot impulse on the 2D ROM's modal deviations; the 2D
+ROM then evolves freely until the next routing step.
 
 **What the 1D ROM is not updated by:**
 
@@ -778,8 +822,9 @@ The ROM cannot represent spread at spatial scales finer than the kth eigenmode. 
 `SurfaceRouter2D::couplingOutput()` returns per-coupling-point bounds `{q_min, q_max}` (m³/s).
 These represent the range of inlet drainage flows across the ensemble:
 
-- `q_max − q_min` large → the inlet flow is sensitive to Manning's n uncertainty (surface
-  conveyance to the inlet drives the variability)
+- `q_max − q_min` large → the inlet flow is sensitive to discharge-coefficient (`cd_pert`)
+  uncertainty and/or per-member 2D depth or 1D head spread. Orifice discharge does not depend
+  on Manning's n (§4.11), so Manning perturbation alone produces no coupling-flux spread.
 - Use the Fiedler gradient at the coupling cell (§7.4) to confirm whether the inlet lies in a
   high-connectivity region of the mesh
 
@@ -824,21 +869,26 @@ explicitly if needed:
 K_EFF    8.5    ; m^(4/3)/s — set from logged AUTO value
 ```
 
-### 6.3 Reseeding
+### 6.3 Reseeding (2D only — basis coverage, not drift correction)
 
-The ROM seeds from the current deterministic depth field. As the wetting front advances, the
-seed state becomes stale and spread may be underestimated. `WET_RESEED_FRACTION` controls how
-aggressively the ROM reseeds:
+Under the deviation formulation, the ROM's median always tracks the live deterministic depth
+field (§4.6) — there is no periodic drift to correct, and the 1D ROM has no reseed mechanism
+at all. The one remaining reseed trigger is 2D-specific and purely about **basis coverage**:
+the ROM's eigenbasis is built over the wet region at seed time, so as the wetting front
+advances into previously-dry cells, the basis needs rebuilding to represent them.
+`WET_RESEED_FRACTION` controls how aggressively this rebuild fires:
 
 ```ini
 [2D_ROM]
-WET_RESEED_FRACTION       0.02   ; reseed when wet area changes by 2% of domain
+WET_RESEED_FRACTION       0.02   ; rebuild when wet area changes by 2% of domain
 WET_RESEED_MIN_INTERVAL   30.0   ; at most once every 30 s
 ```
 
-After each reseed, spread briefly collapses to zero (all members restart from the same
-deterministic state) and then re-grows. If your output frequency is coarser than the reseed
-interval, this collapse is not visible in the output.
+After each rebuild, every member's deviation resets to zero (all members restart exactly on
+the deterministic solution) and spread re-grows from there — but the median is unaffected,
+since it already equalled the deterministic solution before and after the rebuild. If your
+output frequency is coarser than the rebuild interval, the brief spread reset is not visible
+in the output.
 
 ### 6.4 Parametric tails
 
@@ -871,11 +921,11 @@ The core ROM struct. Methods:
 
 | Method | What it does |
 |---|---|
-| `initialize()` | Allocates `a_ensemble[M×k]`, builds LHS design (or uses external samples). |
-| `seed(h_full)` | Projects current deterministic depth onto basis: `a_i = Pᵀ h` for all members. |
-| `advance(dt, K_eff, rainfall, h_cell)` | Advances all members via exact exponential integrator. Optionally uses per-mode Rayleigh K_eff. |
-| `computeQuantiles(parametric_tails)` | Reconstructs per-cell depths, sorts, fills q05/q50/q95. |
-| `applyCouplingFlux(cps, heads, mesh, dt, rom1d)` | Applies per-member orifice flux at each coupling point; updates ROM coefficients; fills `coupling_unc_output`. |
+| `initialize()` | Allocates `a_ensemble[M×k]` (modal deviations), builds LHS design (or uses external samples). |
+| `seed(h_full)` | Zeroes every member's modal deviation and stores `h_full` as the deterministic reference `h_det_last_`. |
+| `advance(dt, K_eff, rainfall, h_cell, h_det)` | Advances all members' deviations via exact exponential integrator, using the live deterministic depth `h_det` for the Manning-sensitivity term. Optionally uses per-mode Rayleigh K_eff via `h_cell`. |
+| `computeQuantiles(h_det, parametric_tails)` | Reconstructs per-cell depths as `h_det + P·δa`, sorts, fills q05/q50/q95. |
+| `applyCouplingFlux(cps, heads, mesh, dt, rom1d)` | Applies only each member's *deviation* from the deterministic orifice flux at each coupling point (§4.11); updates ROM deviations; fills `coupling_unc_output`. |
 | `setEnsembleRainfall(rates)` | Replaces scalar rainfall_mult path with per-member runoff rates from RunoffEnsemble. |
 | `setExternalSamples(mann, rain)` | Injects UncertaintyEnsemble's LHS columns instead of building internal ones. |
 | `setCdSamples(cd)` | Injects discharge-coefficient LHS column. |
@@ -1074,11 +1124,16 @@ via the C++ API as shown in §2.1.
 
 ## 8. Known limitations
 
-1. **Linear ROM around the seed state.** The Galerkin ROM linearises the diffusion-wave
-   operator at the moment of seeding. If the free surface deforms significantly between seed
-   events, the ROM diverges from the deterministic solution. The `WET_RESEED_FRACTION` guard
-   partially mitigates this but does not fix it for rapidly evolving wetting fronts or
-   hydraulic jumps.
+1. **Linear ROM operator can go stale between basis rebuilds.** The Galerkin ROM linearises the
+   diffusion-wave operator (the eigenbasis `P` and its per-mode conductances) at the moment of
+   the last basis build; it does *not* re-linearise every step. Under the deviation formulation
+   this no longer causes the median to diverge — the median always equals the live deterministic
+   solution regardless of basis age (§4.6) — but the *spread* (the Manning- and
+   forcing-sensitivity magnitude) is computed against that possibly-stale operator, so it can be
+   under- or over-estimated if the true diffusive structure (wet-cell coverage, effective
+   conductance) has moved significantly since the last rebuild. The `WET_RESEED_FRACTION` guard
+   (2D) and periodic `updateBasis()` calls (1D) limit how stale the operator can get; neither
+   guarantees perfect spread accuracy for rapidly evolving wetting fronts or hydraulic jumps.
 
 2. **1D ROM is diffusion-wave; DYNWAVE is not.** SWMM's 1D solver integrates the full
    Saint-Venant equations (continuity + momentum). The 1D ROM propagates uncertainty using a
@@ -1111,10 +1166,14 @@ via the C++ API as shown in §2.1.
    `SWMMEngine::rom1d()` (see §7.7) but are not yet written to the binary output or any HDF5
    file.  For now, read them via the C++ cast API after each `swmm_engine_step()` call.
 
-7. **q50 bias vs deterministic output.** For non-zero perturbations the ROM median q50 differs
-   slightly from the deterministic CVODE result due to linearisation. For 0% perturbation (all
-   members identical) q50 matches CVODE exactly by construction. A formal bias validation test
-   (0% perturbation → q50 within 2% of no-ROM output) is on the roadmap.
+7. **q50 vs deterministic output.** Under the deviation formulation (reform PRs 6–7), q50 is
+   *provably* bounded close to the deterministic CVODE/DynWave result: at 0% perturbation the
+   two are identical to machine precision (tested — `DeviationForm.ZeroPerturbationIsExact` /
+   `DeviationForm2D.ZeroPerturbationIsExact`), and at nonzero perturbation the median stays
+   within 25% of the local spread of the deterministic value (tested —
+   `DeviationForm.MedianTracksDeterministic` / `DeviationForm2D.MedianTracksDeterministic`).
+   This replaces the earlier, weaker "differs slightly due to linearisation" characterisation
+   from the pre-reform total-head formulation.
 
 ---
 

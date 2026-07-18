@@ -82,6 +82,16 @@ struct UncertaintyConfig {
             if (s.is_active()) return true;
         return false;
     }
+
+    /// All active specs targeting @p layer, in parse order (PR 9c).
+    /// Generic accessor for registry consumers — includes user-defined names
+    /// that have no dedicated convenience accessor.
+    std::vector<UncertaintySourceSpec> specs_for(LayerTarget layer) const {
+        std::vector<UncertaintySourceSpec> out;
+        for (const auto& s : sources)
+            if (s.layer == layer && s.is_active()) out.push_back(s);
+        return out;
+    }
 };
 
 } // namespace openswmm::uncertainty

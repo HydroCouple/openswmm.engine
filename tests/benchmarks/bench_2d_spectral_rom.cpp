@@ -178,9 +178,9 @@ static void BenchROM(benchmark::State& state, ROMParams p) {
         rom.seed(surf.depth.data());
 
         for (int s = 0; s < n_steps; ++s)
-            rom.advance(dt_rom, K_eff, rainfall.data());
+            rom.advance(dt_rom, K_eff, rainfall.data(), nullptr, surf.depth.data());
 
-        rom.computeQuantiles();
+        rom.computeQuantiles(surf.depth.data());
 
         // Prevent dead-code elimination: read one quantile value
         benchmark::DoNotOptimize(rom.q95[0]);

@@ -64,6 +64,7 @@
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 #include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/UncertaintyEnsemble.hpp"
 #include "../uncertainty/GraphEigenBasis.hpp"
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
@@ -344,6 +345,9 @@ private:
     std::unique_ptr<uncertainty::SpectralROM1D>   rom1d_;
     std::vector<int>    rom1d_active_map_;   ///< active_idx → full_node_idx (for head extraction)
     std::vector<double> rom1d_dh_buf_;       ///< per-active-node dh/dt forcing buffer (reused each step)
+    std::vector<double> rom1d_h_buf_;        ///< per-active-node deterministic head buffer (reused each step)
+    std::vector<double> rom1d_invert_buf_;   ///< per-active-node invert elevations (filled once at build)
+    std::vector<double> rom1d_sens_buf_;     ///< per-active-node depth (head − invert): Manning-sensitivity reference (PR 10)
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path

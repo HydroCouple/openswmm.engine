@@ -18,6 +18,7 @@
 #include "uncertainty/NetworkLaplacian1D.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <vector>
@@ -140,17 +141,36 @@ TEST(SpectralROM, LHSDesignCoversRange) {
 // ============================================================================
 
 TEST(SpectralROM, LHSDesignMonotonicity) {
-    // Manning's strata are in ascending order; rainfall in descending order
-    // (the decorrelation construction).
+    // Manning's strata are in ascending order (the reference column).  Since
+    // PR 5, rainfall is an independent Fisher-Yates shuffle of the same
+    // strata rather than a reversed column, so it is NOT monotone in either
+    // direction; the contract is LHS coverage (sorted columns match Manning's
+    // strata pattern exactly) plus near-zero rank correlation with Manning.
     Fixture f;
-    int M = f.rom.n_ensemble;
+    const int M = f.rom.n_ensemble;
     for (int i = 0; i + 1 < M; ++i) {
         EXPECT_LT(f.rom.mannings_mult[static_cast<std::size_t>(i)],
                   f.rom.mannings_mult[static_cast<std::size_t>(i + 1)])
             << "mannings_mult not monotone at i=" << i;
-        EXPECT_GT(f.rom.rainfall_mult[static_cast<std::size_t>(i)],
-                  f.rom.rainfall_mult[static_cast<std::size_t>(i + 1)])
-            << "rainfall_mult not monotone at i=" << i;
+    }
+
+    bool rainfall_ascending = true, rainfall_descending = true;
+    for (int i = 0; i + 1 < M; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (f.rom.rainfall_mult[ui] >= f.rom.rainfall_mult[ui + 1]) rainfall_ascending = false;
+        if (f.rom.rainfall_mult[ui] <= f.rom.rainfall_mult[ui + 1]) rainfall_descending = false;
+    }
+    EXPECT_FALSE(rainfall_ascending) << "rainfall_mult should not be strictly ascending";
+    EXPECT_FALSE(rainfall_descending) << "rainfall_mult should not be strictly descending";
+
+    auto sorted_mann = f.rom.mannings_mult;
+    auto sorted_rain = f.rom.rainfall_mult;
+    std::sort(sorted_mann.begin(), sorted_mann.end());
+    std::sort(sorted_rain.begin(), sorted_rain.end());
+    for (int i = 0; i < M; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(sorted_rain[ui], sorted_mann[ui], 1.0e-10)
+            << "rainfall strata coverage differs at i=" << i;
     }
 }
 
@@ -168,15 +188,15 @@ TEST(SpectralROM, SeedThenQuantilesTight) {
     std::vector<double> h(static_cast<std::size_t>(n), 0.5);
 
     f.rom.seed(h.data());
-    f.rom.computeQuantiles();
+    f.rom.computeQuantiles(h.data());
 
+    // Deviation form: seed zeroes all deviations, so quantiles equal the
+    // deterministic reference EXACTLY (no basis-truncation loss).
     for (int t = 0; t < n; ++t) {
-        EXPECT_DOUBLE_EQ(f.rom.q05[static_cast<std::size_t>(t)],
-                         f.rom.q50[static_cast<std::size_t>(t)])
-            << "q05 != q50 at t=" << t;
-        EXPECT_DOUBLE_EQ(f.rom.q50[static_cast<std::size_t>(t)],
-                         f.rom.q95[static_cast<std::size_t>(t)])
-            << "q50 != q95 at t=" << t;
+        auto ut = static_cast<std::size_t>(t);
+        EXPECT_DOUBLE_EQ(f.rom.q05[ut], h[ut]) << "q05 != h_det at t=" << t;
+        EXPECT_DOUBLE_EQ(f.rom.q50[ut], h[ut]) << "q50 != h_det at t=" << t;
+        EXPECT_DOUBLE_EQ(f.rom.q95[ut], h[ut]) << "q95 != h_det at t=" << t;
     }
 }
 
@@ -197,9 +217,9 @@ TEST(SpectralROM, QuantilesOrderPreserved) {
     // Advance several steps with rainfall forcing
     std::vector<double> rain(static_cast<std::size_t>(n), 1e-5);
     for (int step = 0; step < 10; ++step)
-        f.rom.advance(30.0, 5.0, rain.data());
+        f.rom.advance(30.0, 5.0, rain.data(), nullptr, h.data());
 
-    f.rom.computeQuantiles();
+    f.rom.computeQuantiles(h.data());
 
     for (int t = 0; t < n; ++t) {
         EXPECT_LE(f.rom.q05[static_cast<std::size_t>(t)],
@@ -227,9 +247,9 @@ TEST(SpectralROM, SpreadIncreasesAfterAdvance) {
     // Advance with rainfall to drive member divergence
     std::vector<double> rain(static_cast<std::size_t>(n), 1e-4);
     for (int step = 0; step < 20; ++step)
-        f.rom.advance(60.0, 5.0, rain.data());
+        f.rom.advance(60.0, 5.0, rain.data(), nullptr, h.data());
 
-    f.rom.computeQuantiles();
+    f.rom.computeQuantiles(h.data());
 
     double max_spread = 0.0;
     for (int t = 0; t < n; ++t) {
@@ -248,40 +268,47 @@ TEST(SpectralROM, SpreadIncreasesAfterAdvance) {
 // Without rainfall, all modes decay exponentially.  After enough time, all
 // ensemble coefficients should be much smaller than the initial projection.
 
-TEST(SpectralROM, NullRainfallDecays) {
-    Fixture f;
-    // Disable mode dropping: this test checks the exponential integrator, not
-    // the active-set gate (dropped modes freeze at threshold amplitude, not 0).
-    f.rom.mode_drop_threshold = 0.0;
+// Deviation form: when the deterministic reference decays to zero, b_j → 0
+// drags every member's deviation to zero with it (the band collapses onto the
+// decayed reference).  Replaces the old total-head "coefficients decay" test.
+TEST(SpectralROM, DecayingReferenceDrivesDeviationsToZero) {
+    Fixture f(/*N=*/5, /*k=*/6, /*M=*/20, /*m_pert=*/0.30, /*r_pert=*/0.0);
+    f.rom.mode_drop_threshold = 0.0;  // exercise the integrator, not the gate
     int n = f.rom.n_tri;
     int nk = f.rom.n_kept;
     int M  = f.rom.n_ensemble;
 
-    std::vector<double> h(static_cast<std::size_t>(n), 1.0);
-    f.rom.seed(h.data());
+    // Off-centre bump so the reference has non-zero modal content (b_j != 0).
+    std::vector<double> h_det(static_cast<std::size_t>(n));
+    double sign0 = (f.basis.P[0] >= 0.0) ? 1.0 : -1.0;
+    for (int t = 0; t < n; ++t)
+        h_det[static_cast<std::size_t>(t)] =
+            1.0 + sign0 * f.basis.P[static_cast<std::size_t>(t)] * 0.5;
+    f.rom.seed(h_det.data());
 
-    // Record initial max |a|
-    double a0_max = 0.0;
+    // Build non-zero deviations first (Manning sensitivity against the bump).
+    for (int step = 0; step < 20; ++step)
+        f.rom.advance(30.0, 5.0, nullptr, nullptr, h_det.data());
+    double a_mid_max = 0.0;
     for (int i = 0; i < M; ++i)
-        for (int j = 0; j < nk; ++j) {
-            double a = f.rom.a_ensemble[static_cast<std::size_t>(i * nk + j)];
-            a0_max = std::max(a0_max, std::fabs(a));
-        }
-    ASSERT_GT(a0_max, 0.0);
+        for (int j = 0; j < nk; ++j)
+            a_mid_max = std::max(a_mid_max,
+                std::fabs(f.rom.a_ensemble[static_cast<std::size_t>(i * nk + j)]));
+    ASSERT_GT(a_mid_max, 0.0) << "deviations must build up first";
 
-    // Advance many large timesteps with no forcing
-    for (int step = 0; step < 200; ++step)
-        f.rom.advance(100.0, 10.0, nullptr);
-
+    // Now decay the reference to zero: deviations must follow it down.
+    for (int step = 0; step < 300; ++step) {
+        for (double& v : h_det) v *= 0.9;
+        f.rom.advance(100.0, 10.0, nullptr, nullptr, h_det.data());
+    }
     double a_final_max = 0.0;
     for (int i = 0; i < M; ++i)
-        for (int j = 0; j < nk; ++j) {
-            double a = f.rom.a_ensemble[static_cast<std::size_t>(i * nk + j)];
-            a_final_max = std::max(a_final_max, std::fabs(a));
-        }
+        for (int j = 0; j < nk; ++j)
+            a_final_max = std::max(a_final_max,
+                std::fabs(f.rom.a_ensemble[static_cast<std::size_t>(i * nk + j)]));
 
-    EXPECT_LT(a_final_max, 1e-6 * a0_max)
-        << "Coefficients should have decayed by at least 6 orders of magnitude";
+    EXPECT_LT(a_final_max, 1e-6 * a_mid_max)
+        << "deviations should decay with the vanishing reference";
 }
 
 // ============================================================================
@@ -297,8 +324,8 @@ TEST(SpectralROM, DepthsNonNegative) {
     h[0] = 5.0;  // impulse on one cell
 
     f.rom.seed(h.data());
-    f.rom.advance(60.0, 5.0, nullptr);
-    f.rom.computeQuantiles();
+    f.rom.advance(60.0, 5.0, nullptr, nullptr, h.data());
+    f.rom.computeQuantiles(h.data());
 
     for (int t = 0; t < n; ++t) {
         EXPECT_GE(f.rom.q05[static_cast<std::size_t>(t)], 0.0)
@@ -317,9 +344,12 @@ TEST(SpectralROM, DepthsNonNegative) {
 //   a_ss = f_j / rate_j = (r_coarse[j] * rm) / (lam_j * K_eff / mm)
 // After a very long timestep, a_j → a_ss regardless of initial condition.
 
-TEST(SpectralROM, SteadyStateWithForcing) {
-    // Use a single member with no perturbation (mannings_pert=rainfall_pert=0)
-    // so all members are identical and we can check the analytical steady state.
+// Deviation form: with a frozen reference and Manning perturbation (no rain),
+// each member's deviation converges to the closed-form fixed point
+//   δa_ss[i,j] = (mm_i − 1)·b_j,   b_j = P[:,j]^T·h_det
+// (the K_eff Rayleigh factor cancels exactly).  Replaces the old total-head
+// a_ss = r_coarse/lam steady-state check.
+TEST(SpectralROM, FrozenReferenceSaturatesAtAnalyticSteadyState) {
     MeshData mesh = makeStructuredMesh(5);
     SpectralPrecond2D basis;
     ASSERT_TRUE(basis.build(mesh, 4));
@@ -327,152 +357,40 @@ TEST(SpectralROM, SteadyStateWithForcing) {
     SpectralROM rom;
     rom.basis         = &basis;
     rom.n_ensemble    = 10;
-    rom.mannings_pert = 0.0;  // all members identical
+    rom.mannings_pert = 0.20;
     rom.rainfall_pert = 0.0;
+    rom.mode_drop_threshold = 0.0;  // let every mode converge
     rom.initialize();
 
     int n  = rom.n_tri;
     int nk = rom.n_kept;
     int M  = rom.n_ensemble;
 
-    // Zero initial state
-    std::vector<double> h0(static_cast<std::size_t>(n), 0.0);
-    rom.seed(h0.data());
-
-    // Constant rainfall = uniform 1e-4 m/s
-    const double K_eff   = 8.0;
-    const double rain_v  = 1e-4;
-    std::vector<double> rain(static_cast<std::size_t>(n), rain_v);
-
-    // Advance with a huge dt → should be at steady state
-    rom.advance(1e9, K_eff, rain.data());
-
-    // With zero perturbation, all members have mm=rm=1.
-    // a_ss[j] = r_coarse[j] / lam_j = (P[:,j]^T * rain) / lam_j
-    for (int j = 0; j < nk; ++j) {
-        // Compute r_coarse[j] = sum_t P[j*n+t] * rain_v = rain_v * sum_t P[j*n+t]
-        double r_proj = 0.0;
-        for (int t = 0; t < n; ++t)
-            r_proj += basis.P[static_cast<std::size_t>(j * n + t)] * rain_v;
-
-        double lam = basis.eigenvalues[static_cast<std::size_t>(j)];
-        double a_ss = r_proj / (lam * K_eff);
-
-        for (int i = 0; i < M; ++i) {
-            double a_got = rom.a_ensemble[static_cast<std::size_t>(i * nk + j)];
-            EXPECT_NEAR(a_got, a_ss, 1e-10 * std::fabs(a_ss) + 1e-14)
-                << "member=" << i << " mode=" << j
-                << ": expected a_ss=" << a_ss << ", got=" << a_got;
-        }
-    }
-}
-
-// ============================================================================
-// ApplyCouplingFluxDrainsTargetCell
-// ============================================================================
-// When 2D head > 1D head, drainage should reduce the reconstructed depth at
-// the coupling cell for every ensemble member.
-
-TEST(SpectralROM, ApplyCouplingFluxDrainsTargetCell) {
-    Fixture f;  // N=5, 50 triangles, k=6, M=20, flat domain (vz=0)
-    int n  = f.rom.n_tri;
-    int nk = f.rom.n_kept;
-    int M  = f.rom.n_ensemble;
-
-    // Seed with the first mode shape scaled so that cell 0 has positive
-    // reconstructed depth.  A uniform depth has zero ROM projection (null mode
-    // excluded), so modal content must be introduced explicitly.
-    std::vector<double> h0(static_cast<std::size_t>(n));
-    double sign0 = (f.basis.P[0] >= 0.0) ? 1.0 : -1.0;
+    // Off-centre bump reference → non-zero modal content b_j.
+    std::vector<double> h_det(static_cast<std::size_t>(n));
+    double sign0 = (basis.P[0] >= 0.0) ? 1.0 : -1.0;
     for (int t = 0; t < n; ++t)
-        h0[static_cast<std::size_t>(t)] =
-            sign0 * f.basis.P[static_cast<std::size_t>(t)] * 0.5;
-    f.rom.seed(h0.data());
+        h_det[static_cast<std::size_t>(t)] =
+            1.0 + sign0 * basis.P[static_cast<std::size_t>(t)] * 0.5;
+    rom.seed(h_det.data());
 
-    // Coupling at cell 0: node head = 0.0 m < 2D head → drainage expected
-    CouplingPoint cp;
-    cp.cell_idx      = 0;
-    cp.vertex_idx    = -1;
-    cp.node_idx      = 0;
-    cp.cd            = 0.6;
-    cp.area          = 0.04;   // m²
-    cp.is_outfall    = false;
-    cp.has_flap_gate = false;
+    // Advance to convergence (large dt, no rainfall).
+    const double K_eff = 8.0;
+    for (int step = 0; step < 5; ++step)
+        rom.advance(1e6, K_eff, nullptr, nullptr, h_det.data());
 
-    std::vector<double> node_heads(1, 0.0);
-    double dt = 10.0;
-
-    // Helper: reconstruct depth at cell `ci` for member `i`
-    auto h_at = [&](int ci, int i) {
-        double h = 0.0;
-        for (int j = 0; j < nk; ++j)
-            h += f.basis.P[static_cast<std::size_t>(j * n + ci)]
-               * f.rom.a_ensemble[static_cast<std::size_t>(i * nk + j)];
-        return h;
-    };
-
-    std::vector<double> h_before(static_cast<std::size_t>(M));
-    for (int i = 0; i < M; ++i)
-        h_before[static_cast<std::size_t>(i)] = h_at(0, i);
-
-    std::vector<CouplingPoint> cps = {cp};
-    f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt);
-
-    for (int i = 0; i < M; ++i) {
-        double h_aft = h_at(0, i);
-        EXPECT_LT(h_aft, h_before[static_cast<std::size_t>(i)])
-            << "Member " << i << ": depth at coupling cell should decrease after drainage";
-    }
-}
-
-// ============================================================================
-// ApplyCouplingFluxBackflowIncreasesDepth
-// ============================================================================
-// When 1D head > 2D head, backflow from sewer should increase depth at the
-// coupling cell.
-
-TEST(SpectralROM, ApplyCouplingFluxBackflowIncreasesDepth) {
-    Fixture f;
-    int n  = f.rom.n_tri;
-    int nk = f.rom.n_kept;
-    int M  = f.rom.n_ensemble;
-
-    // Near-dry surface (0.01 m depth) → absolute head ≈ 0.01 m
-    std::vector<double> h0(static_cast<std::size_t>(n), 0.01);
-    f.rom.seed(h0.data());
-
-    // Coupling at cell 0: node head = 1.0 m >> 2D head → backflow expected
-    CouplingPoint cp;
-    cp.cell_idx      = 0;
-    cp.vertex_idx    = -1;
-    cp.node_idx      = 0;
-    cp.cd            = 0.6;
-    cp.area          = 0.04;
-    cp.is_outfall    = false;
-    cp.has_flap_gate = false;
-
-    std::vector<double> node_heads(1, 1.0);
-    double dt = 10.0;
-
-    auto h_at = [&](int ci, int i) {
-        double h = 0.0;
-        for (int j = 0; j < nk; ++j)
-            h += f.basis.P[static_cast<std::size_t>(j * n + ci)]
-               * f.rom.a_ensemble[static_cast<std::size_t>(i * nk + j)];
-        return h;
-    };
-
-    std::vector<double> h_before(static_cast<std::size_t>(M));
-    for (int i = 0; i < M; ++i)
-        h_before[static_cast<std::size_t>(i)] = h_at(0, i);
-
-    std::vector<CouplingPoint> cps = {cp};
-    f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt);
-
-    for (int i = 0; i < M; ++i) {
-        double h_aft = h_at(0, i);
-        EXPECT_GT(h_aft, h_before[static_cast<std::size_t>(i)])
-            << "Member " << i << ": depth at coupling cell should increase with backflow";
+    for (int j = 0; j < nk; ++j) {
+        double b_j = 0.0;
+        for (int t = 0; t < n; ++t)
+            b_j += basis.P[static_cast<std::size_t>(j * n + t)]
+                 * h_det[static_cast<std::size_t>(t)];
+        for (int i = 0; i < M; ++i) {
+            double mm       = rom.mannings_mult[static_cast<std::size_t>(i)];
+            double expected = (mm - 1.0) * b_j;
+            double got      = rom.a_ensemble[static_cast<std::size_t>(i * nk + j)];
+            EXPECT_NEAR(got, expected, 1e-9 * std::fabs(expected) + 1e-12)
+                << "member=" << i << " mode=" << j;
+        }
     }
 }
 
@@ -497,8 +415,13 @@ TEST(SpectralROM, PerModeKeffDeepCellsDecayFaster) {
     int nk = f.rom.n_kept;
     int M  = f.rom.n_ensemble;
 
-    // Uniform initial amplitudes: seed with flat depth field
-    std::vector<double> h0(static_cast<std::size_t>(n), 0.5);
+    // Off-centre bump reference (non-zero modal content b_j) so the Manning-
+    // sensitivity forcing — which is scaled by keff — actually drives δa.
+    std::vector<double> h0(static_cast<std::size_t>(n));
+    double sign0 = (f.basis.P[0] >= 0.0) ? 1.0 : -1.0;
+    for (int t = 0; t < n; ++t)
+        h0[static_cast<std::size_t>(t)] =
+            0.5 + sign0 * f.basis.P[static_cast<std::size_t>(t)] * 0.5;
     f.rom.seed(h0.data());
 
     // Depth field: first half deep, second half shallow
@@ -511,7 +434,7 @@ TEST(SpectralROM, PerModeKeffDeepCellsDecayFaster) {
 
     // --- advance with uniform K_eff (h_cell = null) ---
     std::vector<double> a0(f.rom.a_ensemble);  // save initial state
-    f.rom.advance(dt, K_eff, nullptr, nullptr);
+    f.rom.advance(dt, K_eff, nullptr, nullptr, h0.data());
     // Compute total energy (sum of |a_j|) after uniform advance
     double energy_uniform = 0.0;
     for (int i = 0; i < M; ++i)
@@ -521,7 +444,7 @@ TEST(SpectralROM, PerModeKeffDeepCellsDecayFaster) {
 
     // --- restore and advance with per-mode K_eff (h_cell provided) ---
     f.rom.a_ensemble = a0;
-    f.rom.advance(dt, K_eff, nullptr, h_nonuniform.data());
+    f.rom.advance(dt, K_eff, nullptr, h_nonuniform.data(), h0.data());
     double energy_permode = 0.0;
     for (int i = 0; i < M; ++i)
         for (int j = 0; j < nk; ++j)
@@ -619,12 +542,12 @@ TEST(SpectralROM, OptionASkippedWhenBasisIsDepthWeighted) {
     auto a_before = f.rom.a_ensemble;
 
     // Advance with h_cell (Option A path)
-    f.rom.advance(10.0, 5.0, nullptr, h_nonuniform.data());
+    f.rom.advance(10.0, 5.0, nullptr, h_nonuniform.data(), h0.data());
     auto a_with_h = f.rom.a_ensemble;
 
     // Restore and advance without h_cell
     f.rom.a_ensemble = a_before;
-    f.rom.advance(10.0, 5.0, nullptr, nullptr);
+    f.rom.advance(10.0, 5.0, nullptr, nullptr, h0.data());
     auto a_null = f.rom.a_ensemble;
 
     // With depth-weighted basis, both paths must produce identical results
@@ -656,8 +579,8 @@ TEST(SpectralROM, DrySeedProducesZeroQuantiles) {
 
     std::vector<double> h_dry(static_cast<std::size_t>(n), 0.0);
     f.rom.seed(h_dry.data());
-    f.rom.advance(30.0, 5.0, nullptr, nullptr);
-    f.rom.computeQuantiles();
+    f.rom.advance(30.0, 5.0, nullptr, nullptr, h_dry.data());
+    f.rom.computeQuantiles(h_dry.data());
 
     for (int t = 0; t < n; ++t) {
         EXPECT_NEAR(f.rom.q05[static_cast<std::size_t>(t)], 0.0, 1e-10)
@@ -667,72 +590,6 @@ TEST(SpectralROM, DrySeedProducesZeroQuantiles) {
         EXPECT_NEAR(f.rom.q95[static_cast<std::size_t>(t)], 0.0, 1e-10)
             << "q95 should be zero for dry-domain seed at cell " << t;
     }
-}
-
-// ============================================================================
-// Problem 5: Manning-scaled coupling — higher Manning's n drains less
-// ============================================================================
-// Members with mannings_mult > 1 should have Q scaled down by 1/mm, so the
-// depth decrease at the coupling cell is smaller than for mm < 1 members.
-
-TEST(SpectralROM, CouplingFluxHighManningsDrainsLess) {
-    Fixture f;  // M=20, mannings_pert=0.20 → mm ∈ [0.8, 1.2] via LHS
-    int n  = f.rom.n_tri;
-    int nk = f.rom.n_kept;
-    int M  = f.rom.n_ensemble;
-
-    // Seed with first-mode shape so cell 0 has positive depth
-    double sign0 = (f.basis.P[0] >= 0.0) ? 1.0 : -1.0;
-    std::vector<double> h0(static_cast<std::size_t>(n));
-    for (int t = 0; t < n; ++t)
-        h0[static_cast<std::size_t>(t)] =
-            sign0 * f.basis.P[static_cast<std::size_t>(t)] * 0.3;
-    f.rom.seed(h0.data());
-
-    // Coupling that drains from cell 0: 2D head > 1D head
-    CouplingPoint cp;
-    cp.cell_idx      = 0;
-    cp.vertex_idx    = -1;
-    cp.node_idx      = 0;
-    cp.cd            = 0.6;
-    cp.area          = 1.0e-4;  // small area keeps Q_base below the h*tri_area/dt drainage cap
-                                 // even for shallow corner cells (h_2d ≈ 0.005–0.04 m)
-    cp.is_outfall    = false;
-    cp.has_flap_gate = false;
-
-    // 1D node head well below 2D surface so all members drain outward
-    std::vector<double> node_heads(1, -1.0);
-    double dt = 10.0;
-
-    // Snapshot a_j for member with lowest and highest mm
-    // LHS with M=20, pert=0.20: mm[0]=0.81, mm[M-1]=1.19 (ascending LHS)
-    int lo_idx = 0;                            // lowest mm → drains most
-    int hi_idx = M - 1;                        // highest mm → drains least
-    ASSERT_LT(f.rom.mannings_mult[static_cast<std::size_t>(lo_idx)],
-              f.rom.mannings_mult[static_cast<std::size_t>(hi_idx)]);
-
-    // Helper: reconstruct depth at cell 0 for member i
-    auto h_at = [&](int i) {
-        double h = 0.0;
-        for (int j = 0; j < nk; ++j)
-            h += f.basis.P[static_cast<std::size_t>(j * n)]
-               * f.rom.a_ensemble[static_cast<std::size_t>(i * nk + j)];
-        return h;
-    };
-
-    double h_lo_before = h_at(lo_idx);
-    double h_hi_before = h_at(hi_idx);
-
-    std::vector<CouplingPoint> cps = {cp};
-    f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt);
-
-    double delta_lo = h_lo_before - h_at(lo_idx);  // decrease for low-mm member
-    double delta_hi = h_hi_before - h_at(hi_idx);  // decrease for high-mm member
-
-    EXPECT_GT(delta_lo, 0.0)  << "Low-mm member should lose depth at coupling cell";
-    EXPECT_GT(delta_hi, 0.0)  << "High-mm member should also lose depth";
-    EXPECT_GT(delta_lo, delta_hi)
-        << "Low Manning's n member should drain more than high Manning's n member";
 }
 
 // ============================================================================
@@ -771,14 +628,14 @@ TEST(SpectralROM, ParametricQ95CanExceedSortBasedForSmallEnsemble) {
     // Advance to create spread across members.
     // dt=5.0, K_eff=1.0: enough decay variation across mm ∈ [0.6,1.4] to
     // produce measurable spread without over-decaying to below DRY_THRESH.
-    rom.advance(5.0, 1.0, nullptr, nullptr);
+    rom.advance(5.0, 1.0, nullptr, nullptr, h0.data());
 
     // Sort-based quantiles
-    rom.computeQuantiles(false);
+    rom.computeQuantiles(h0.data(), false);
     std::vector<double> q95_sort = rom.q95;
 
     // Log-normal parametric quantiles
-    rom.computeQuantiles(true);
+    rom.computeQuantiles(h0.data(), true);
     std::vector<double> q95_param = rom.q95;
 
     // For at least one cell with positive depth, the parametric q95 must differ
@@ -812,15 +669,21 @@ TEST(SpectralROM, ModesDroppedAfterDecay) {
         h_full[t] = 0.05 * (1.0 + std::cos(t * 0.7) + std::sin(t * 1.3));
     f.rom.seed(h_full.data());
 
-    // Large dt advance: coefficients decay to ~0 (exp(-rate*2000) → 0).
-    f.rom.advance(2000.0, 1.0, nullptr, nullptr);
+    // Build deviation energy against the bump reference (Manning sensitivity).
+    for (int s = 0; s < 5; ++s)
+        f.rom.advance(30.0, 1.0, nullptr, nullptr, h_full.data());
+
+    // Now decay to a ZERO reference with no rain: b_j → 0 removes the Manning
+    // sensitivity forcing, so deviations decay (exp(-rate*2000) → 0).
+    std::vector<double> h_zero(static_cast<std::size_t>(nt), 0.0);
+    f.rom.advance(2000.0, 1.0, nullptr, nullptr, h_zero.data());
 
     // Second advance: energy is computed from the decayed (~0) coefficients;
-    // all E_j << 1e-10 → modes are dropped.
-    f.rom.advance(1.0, 1.0, nullptr, nullptr);
+    // all E_j << 1e-10 and no forcing → modes are dropped.
+    f.rom.advance(1.0, 1.0, nullptr, nullptr, h_zero.data());
 
     EXPECT_LT(f.rom.n_modes_active, f.rom.n_kept)
-        << "n_modes_active should decrease when all coefficients have decayed below threshold";
+        << "n_modes_active should decrease when all deviations have decayed below threshold";
 }
 
 // ============================================================================
@@ -836,18 +699,21 @@ TEST(SpectralROM, DroppedModesReactivateWithRainfall) {
     for (int t = 0; t < nt; ++t)
         h_full[t] = 0.05 * (1.0 + std::cos(t * 0.7) + std::sin(t * 1.3));
     f.rom.seed(h_full.data());
-    f.rom.advance(2000.0, 1.0, nullptr, nullptr);
-    f.rom.advance(1.0,    1.0, nullptr, nullptr);
+    for (int s = 0; s < 5; ++s)
+        f.rom.advance(30.0, 1.0, nullptr, nullptr, h_full.data());
+    std::vector<double> h_zero(static_cast<std::size_t>(nt), 0.0);
+    f.rom.advance(2000.0, 1.0, nullptr, nullptr, h_zero.data());
+    f.rom.advance(1.0,    1.0, nullptr, nullptr, h_zero.data());
     ASSERT_LT(f.rom.n_modes_active, f.rom.n_kept) << "precondition: modes must be dropped first";
 
-    // Advance WITH spatially-varying rainfall.  A uniform rainfall field
-    // projects to zero on all Laplacian eigenmodes (they are orthogonal to the
-    // constant vector), so only a non-uniform field satisfies the rain criterion.
+    // Advance WITH spatially-varying rainfall (zero reference so only the rain
+    // criterion can reactivate).  A uniform rainfall field projects to zero on
+    // all Laplacian eigenmodes, so only a non-uniform field satisfies it.
     std::vector<double> rainfall(static_cast<std::size_t>(nt));
     for (int t = 0; t < nt; ++t)
         rainfall[static_cast<std::size_t>(t)] =
             1.0e-3 * (1.0 + std::cos(static_cast<double>(t) * 0.7));
-    f.rom.advance(1.0, 1.0, rainfall.data(), nullptr);
+    f.rom.advance(1.0, 1.0, rainfall.data(), nullptr, h_zero.data());
 
     EXPECT_GT(f.rom.n_modes_active, 0)
         << "Rainfall forcing should reactivate at least one mode";
@@ -873,7 +739,7 @@ TEST(SpectralROM, AllModesActiveAfterFreshSeed) {
     for (int t = 0; t < nt; ++t)
         h_full[t] = 0.5 * (1.0 + std::cos(t * 0.7) + std::sin(t * 1.3));
     f.rom.seed(h_full.data());
-    f.rom.advance(1.0, 1.0, nullptr, nullptr);
+    f.rom.advance(1.0, 1.0, nullptr, nullptr, h_full.data());
 
     // Energy at start of this advance was from the seed (high) → all active.
     EXPECT_EQ(f.rom.n_modes_active, f.rom.n_kept)
@@ -914,8 +780,11 @@ TEST(UncertaintyEnsemble, SamplesInRange) {
     }
 }
 
-// Manning ascending, rainfall descending — low cross-correlation by design.
-TEST(UncertaintyEnsemble, ManningAscendingRainfallDescending) {
+// Manning ascending (reference column); rainfall an independent Fisher-Yates
+// shuffle of the same strata (PR 5) — near-zero rank correlation with
+// Manning, LHS coverage exact, but NOT monotone in either direction (unlike
+// the old reversed-column scheme, which gave exact rank correlation -1).
+TEST(UncertaintyEnsemble, ManningAscendingRainfallShuffled) {
     UncertaintyEnsemble ens;
     ens.n_members = 20;
     ens.mannings_pert_2d = 0.20;
@@ -926,8 +795,25 @@ TEST(UncertaintyEnsemble, ManningAscendingRainfallDescending) {
         auto ui = static_cast<std::size_t>(i);
         EXPECT_LT(ens.mannings_mult_2d[ui], ens.mannings_mult_2d[ui + 1])
             << "mannings_mult not ascending at i=" << i;
-        EXPECT_GT(ens.rainfall_mult_2d[ui], ens.rainfall_mult_2d[ui + 1])
-            << "rainfall_mult not descending at i=" << i;
+    }
+
+    bool rainfall_ascending = true, rainfall_descending = true;
+    for (int i = 0; i + 1 < ens.n_members; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ens.rainfall_mult_2d[ui] >= ens.rainfall_mult_2d[ui + 1]) rainfall_ascending = false;
+        if (ens.rainfall_mult_2d[ui] <= ens.rainfall_mult_2d[ui + 1]) rainfall_descending = false;
+    }
+    EXPECT_FALSE(rainfall_ascending) << "rainfall_mult_2d should not be strictly ascending";
+    EXPECT_FALSE(rainfall_descending) << "rainfall_mult_2d should not be strictly descending";
+
+    auto sorted_mann = ens.mannings_mult_2d;
+    auto sorted_rain = ens.rainfall_mult_2d;
+    std::sort(sorted_mann.begin(), sorted_mann.end());
+    std::sort(sorted_rain.begin(), sorted_rain.end());
+    for (int i = 0; i < ens.n_members; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(sorted_rain[ui], sorted_mann[ui], 1.0e-10)
+            << "rainfall strata coverage differs at i=" << i;
     }
 }
 
@@ -1049,14 +935,14 @@ TEST(SpectralROMSpatial, ScalarLimitManningSameAsScalarPath) {
 
     // --- Scalar path ---
     f.rom.seed(h.data());
-    f.rom.advance(dt, K_eff, rain.data(), h.data());
+    f.rom.advance(dt, K_eff, rain.data(), h.data(), h.data());
     std::vector<double> a_scalar(f.rom.a_ensemble);  // copy
 
     // --- Spatial path: spatial_mannings/rainfall set to uniform scalar values ---
     f.rom.spatial_mannings.fromScalar(f.rom.mannings_mult, n_tri);
     f.rom.spatial_rainfall.fromScalar(f.rom.rainfall_mult, n_tri);
     f.rom.seed(h.data());  // reset to same IC
-    f.rom.advance(dt, K_eff, rain.data(), h.data());
+    f.rom.advance(dt, K_eff, rain.data(), h.data(), h.data());
 
     ASSERT_EQ(f.rom.a_ensemble.size(), a_scalar.size());
     for (std::size_t k = 0; k < a_scalar.size(); ++k)
@@ -1080,98 +966,21 @@ TEST(SpectralROMSpatial, ScalarLimitQuantilesSame) {
 
     // Scalar path.
     f.rom.seed(h.data());
-    f.rom.advance(dt, K_eff, nullptr);
-    f.rom.computeQuantiles();
+    f.rom.advance(dt, K_eff, nullptr, nullptr, h.data());
+    f.rom.computeQuantiles(h.data());
     std::vector<double> q50_scalar(f.rom.q50);
 
     // Spatial path with uniform fields.
     f.rom.spatial_mannings.fromScalar(f.rom.mannings_mult, n_tri);
     f.rom.seed(h.data());
-    f.rom.advance(dt, K_eff, nullptr);
-    f.rom.computeQuantiles();
+    f.rom.advance(dt, K_eff, nullptr, nullptr, h.data());
+    f.rom.computeQuantiles(h.data());
 
     ASSERT_EQ(f.rom.q50.size(), q50_scalar.size());
     for (int t = 0; t < n_tri; ++t)
         EXPECT_NEAR(f.rom.q50[static_cast<std::size_t>(t)],
                     q50_scalar[static_cast<std::size_t>(t)], 1e-9)
             << "q50 mismatch at cell " << t;
-}
-
-// ============================================================================
-// Spatial field — coupling uses per-cell W_n (Phase 2)
-// ============================================================================
-
-// applyCouplingFlux() with spatial_mannings should use W_n[i][coupling_cell],
-// not the global mannings_mult[i].  Two runs with different W_n at the coupling
-// cell (but same mannings_mult) should produce different ROM coefficient changes.
-TEST(SpectralROMSpatial, CouplingUsesPerCellMannings) {
-    Fixture f(/*N=*/5, /*k=*/6, /*M=*/20);
-    int n_tri = f.mesh.n_triangles();
-
-    // Seed with any depth (the backflow case doesn't depend on ROM reconstructed depth).
-    std::vector<double> h(static_cast<std::size_t>(n_tri), 0.05);
-    f.rom.seed(h.data());
-
-    // Coupling point at the first triangle.
-    const int ci = 0;
-    std::vector<CouplingPoint> cps(1);
-    cps[0].cell_idx   = ci;
-    cps[0].node_idx   = 0;
-    cps[0].is_outfall = false;
-    cps[0].cd         = 0.5;
-    cps[0].area       = 0.1;
-    // Use BACKFLOW (node head well above the 2D surface elevation + depth) so Q < 0
-    // and the drainage clamp (h_2d * tri_area / dt) is never applied — Q is always nonzero.
-    const double cell_z = f.mesh.tri_cz[static_cast<std::size_t>(ci)];
-    std::vector<double> node_heads = {cell_z + 1.0};  // 1 m above surface
-    const double dt = 5.0;
-
-    // --- Run A: scalar path ---
-    std::vector<double> a_before(f.rom.a_ensemble);
-    f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt);
-    std::vector<double> delta_scalar(f.rom.a_ensemble.size());
-    for (std::size_t k = 0; k < delta_scalar.size(); ++k)
-        delta_scalar[k] = f.rom.a_ensemble[k] - a_before[k];
-
-    // --- Run B: spatial path, W_n at coupling cell = 2.0 (high Manning → less drainage) ---
-    // Reset coefficients.
-    f.rom.a_ensemble = a_before;
-    f.rom.spatial_mannings.allocate(f.rom.n_ensemble, n_tri);
-    // Fill with 1.0 everywhere, then set cell ci to 2.0 for all members.
-    for (int i = 0; i < f.rom.n_ensemble; ++i)
-        for (int t = 0; t < n_tri; ++t)
-            f.rom.spatial_mannings.at(i, t) = 1.0;
-    for (int i = 0; i < f.rom.n_ensemble; ++i)
-        f.rom.spatial_mannings.at(i, ci) = 2.0;
-
-    f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, dt);
-    std::vector<double> delta_spatial(f.rom.a_ensemble.size());
-    for (std::size_t k = 0; k < f.rom.a_ensemble.size(); ++k)
-        delta_spatial[k] = f.rom.a_ensemble[k] - a_before[k];
-
-    // Backflow case: Q < 0 (water enters from node into 2D domain).
-    // Higher W_n → smaller |Q| → smaller |delta_a|.
-    // Scalar mannings_mult for mid-range members ≈ 1; spatial W_n at ci = 2.0.
-    // So |delta_spatial| < |delta_scalar| for those members.
-    // At minimum: the two runs must produce different coefficient changes.
-    bool found_diff = false;
-    for (std::size_t k = 0; k < delta_scalar.size(); ++k)
-        if (std::abs(delta_scalar[k] - delta_spatial[k]) > 1e-12) {
-            found_diff = true; break;
-        }
-    EXPECT_TRUE(found_diff) << "spatial W_n=2.0 produced same delta as scalar W_n≈1.0";
-
-    // Directional check: spatial (W_n=2.0) should have smaller coefficient changes
-    // than scalar (W_n≈1.0) because higher Manning's n reduces exchange.
-    bool found_smaller = false;
-    for (std::size_t k = 0; k < delta_scalar.size(); ++k) {
-        if (std::abs(delta_scalar[k]) > 1e-12)
-            if (std::abs(delta_spatial[k]) < std::abs(delta_scalar[k]) - 1e-12) {
-                found_smaller = true; break;
-            }
-    }
-    EXPECT_TRUE(found_smaller)
-        << "spatial W_n=2.0 should produce smaller coefficient changes than scalar W_n≈1.0";
 }
 
 // ============================================================================
@@ -1233,7 +1042,7 @@ TEST(SpectralROM, EnsembleRainfallHigherRateGivesMoreDepth) {
 
     // Advance many steps so forcing accumulates.
     for (int step = 0; step < 30; ++step)
-        rom.advance(60.0, 5.0, rain.data());
+        rom.advance(60.0, 5.0, rain.data(), nullptr, h0.data());
 
     // Compute total modal energy per member (Σ_j a_{i,j}²): proxy for
     // depth magnitude since all members have identical decay rates.
@@ -1280,14 +1089,14 @@ TEST(SpectralROM, ClearEnsembleRainfallRevertsToScalarPath) {
     const double mean_rain = 1e-5;  // mean of the sine field ≈ mean_rain
 
     // --- Scalar path (rainfall_pert=0 → all rainfall_mult=1) ---
-    f.rom.advance(30.0, 5.0, rain.data());
+    f.rom.advance(30.0, 5.0, rain.data(), nullptr, h0.data());
     std::vector<double> a_scalar(f.rom.a_ensemble);
 
     // --- Ensemble path: all rates equal to mean_rain → scale_i = 1 for all i ---
     f.rom.a_ensemble = a_seed;
     std::vector<double> uniform_rates(static_cast<std::size_t>(M), mean_rain);
     f.rom.setEnsembleRainfall(uniform_rates);
-    f.rom.advance(30.0, 5.0, rain.data());
+    f.rom.advance(30.0, 5.0, rain.data(), nullptr, h0.data());
     std::vector<double> a_ensemble_uniform(f.rom.a_ensemble);
 
     // Both paths apply the same per-member scale (=1) → identical coefficients.
@@ -1298,7 +1107,7 @@ TEST(SpectralROM, ClearEnsembleRainfallRevertsToScalarPath) {
     // --- After clear: advance from same starting point → same as scalar ---
     f.rom.a_ensemble = a_seed;
     f.rom.clearEnsembleRainfall();
-    f.rom.advance(30.0, 5.0, rain.data());
+    f.rom.advance(30.0, 5.0, rain.data(), nullptr, h0.data());
 
     for (std::size_t k = 0; k < static_cast<std::size_t>(M * nk); ++k)
         EXPECT_NEAR(f.rom.a_ensemble[k], a_scalar[k], 1e-12)
@@ -1488,16 +1297,99 @@ TEST(SpectralROM, CouplingFluxFallsBackForOutfallNode) {
 }
 
 // ============================================================================
+// PR 7 (reform) — difference-form coupling
+// ============================================================================
+
+// Deviation form: the deterministic coupling exchange is already inside h_det,
+// so with zero perturbation every member's flux equals Q_det and δQ_i = 0 —
+// applyCouplingFlux must leave every member coefficient unchanged, while the
+// diagnostic still reports the (nonzero) deterministic flux bounds.
+TEST(SpectralROM, CouplingFluxAppliesOnlyDifference) {
+    Fixture f;
+    f.rom.mannings_pert = 0.0;
+    f.rom.rainfall_pert = 0.0;
+    f.rom.cd_pert       = 0.0;
+    f.rom.initialize();
+
+    int nt = f.rom.n_tri;
+    // First-mode reference so the coupling cell has positive deterministic depth.
+    double sign0 = (f.basis.P[0] >= 0.0) ? 1.0 : -1.0;
+    std::vector<double> h2d(static_cast<std::size_t>(nt));
+    for (int t = 0; t < nt; ++t)
+        h2d[static_cast<std::size_t>(t)] =
+            0.20 + sign0 * f.basis.P[static_cast<std::size_t>(t)] * 0.10;
+    f.rom.seed(h2d.data());
+    const std::vector<double> a_before = f.rom.a_ensemble;
+
+    CouplingPoint cp;
+    cp.cell_idx = 0; cp.vertex_idx = -1; cp.node_idx = 0;
+    cp.cd = 0.6; cp.area = 1.0e-4; cp.is_outfall = false; cp.has_flap_gate = false;
+    std::vector<CouplingPoint> cps = {cp};
+    std::vector<double> node_heads(1, 0.0);  // 1D head below → drainage
+
+    f.rom.applyCouplingFlux(cps, node_heads.data(), f.mesh, 10.0);
+
+    // No member coefficient changed (δQ_i = 0 for all).
+    for (std::size_t k = 0; k < a_before.size(); ++k)
+        EXPECT_NEAR(f.rom.a_ensemble[k], a_before[k], 1.0e-15) << "k=" << k;
+
+    // Diagnostic still reports the deterministic flux, and it is nonzero.
+    ASSERT_TRUE(f.rom.coupling_unc_output.is_valid());
+    EXPECT_NEAR(f.rom.coupling_unc_output.q_min[0],
+                f.rom.coupling_unc_output.q_max[0], 1.0e-14);
+    EXPECT_GT(f.rom.coupling_unc_output.q_max[0], 0.0)
+        << "deterministic drainage flux should be positive";
+}
+
+// Coupling flux spread comes from Cd (cd_pert), NOT Manning — the deviation
+// form removed the orifice /mannings_mult scaling (orifice discharge does not
+// depend on surface roughness).
+TEST(SpectralROM, CouplingSpreadFromCdNotManning) {
+    auto spread_for = [](double m_pert, double c_pert) {
+        MeshData mesh = makeStructuredMesh(5);
+        SpectralPrecond2D basis;
+        EXPECT_TRUE(basis.build(mesh, 6));
+        SpectralROM rom;
+        rom.basis         = &basis;
+        rom.n_ensemble    = 20;
+        rom.mannings_pert = m_pert;
+        rom.rainfall_pert = 0.0;
+        rom.cd_pert       = c_pert;
+        rom.initialize();
+        int nt = rom.n_tri;
+        double sign0 = (basis.P[0] >= 0.0) ? 1.0 : -1.0;
+        std::vector<double> h2d(static_cast<std::size_t>(nt));
+        for (int t = 0; t < nt; ++t)
+            h2d[static_cast<std::size_t>(t)] =
+                0.20 + sign0 * basis.P[static_cast<std::size_t>(t)] * 0.10;
+        rom.seed(h2d.data());
+        CouplingPoint cp;
+        cp.cell_idx = 0; cp.vertex_idx = -1; cp.node_idx = 0;
+        cp.cd = 0.6; cp.area = 1.0e-4; cp.is_outfall = false; cp.has_flap_gate = false;
+        std::vector<CouplingPoint> cps = {cp};
+        std::vector<double> node_heads(1, 0.0);
+        rom.applyCouplingFlux(cps, node_heads.data(), mesh, 10.0);
+        return rom.coupling_unc_output.q_max[0] - rom.coupling_unc_output.q_min[0];
+    };
+
+    // Cd perturbation → spread; Manning perturbation alone → NO spread.
+    EXPECT_GT(spread_for(/*m*/0.0, /*cd*/0.15), 1.0e-8)
+        << "Cd perturbation must create coupling flux spread";
+    EXPECT_NEAR(spread_for(/*m*/0.20, /*cd*/0.0), 0.0, 1.0e-14)
+        << "Manning perturbation must NOT affect orifice coupling flux (/mm removed)";
+}
+
+// ============================================================================
 // Phase 5B — CouplingUncertaintyOutput diagnostics
 // ============================================================================
 
 // applyCouplingFlux() must populate coupling_unc_output with q_min ≤ q_max
-// at every non-outfall coupling point, and q_min == q_max when all members
-// see the same flux (mannings_pert=0, no rom1d).
+// at every non-outfall coupling point, and drive spread via Cd (cd_pert).
 TEST(SpectralROM, CouplingUncOutputPopulatedAfterCouplingFlux) {
     Fixture f;
-    f.rom.mannings_pert = 0.20;  // nonzero → spread expected
+    f.rom.mannings_pert = 0.00;
     f.rom.rainfall_pert = 0.00;
+    f.rom.cd_pert       = 0.15;  // Cd variation → coupling flux spread
     f.rom.initialize();
 
     int nt = f.rom.n_tri;
@@ -1538,9 +1430,9 @@ TEST(SpectralROM, CouplingUncOutputPopulatedAfterCouplingFlux) {
     // Non-outfall coupling point (cp0): q_min ≤ q_max.
     EXPECT_LE(f.rom.coupling_unc_output.q_min[0], f.rom.coupling_unc_output.q_max[0]);
 
-    // Manning mult ∈ [0.8, 1.2] → Q_i = Cd*A*sqrt(2g*h)/mm[i] differs per member.
+    // Cd mult ∈ [0.85, 1.15] → Q_i = Cd·cd_mult[i]·A·sqrt(2g·h) differs per member.
     EXPECT_GT(f.rom.coupling_unc_output.q_max[0] - f.rom.coupling_unc_output.q_min[0], 1.0e-8)
-        << "20% Manning pert should create clear flux spread";
+        << "15% Cd pert should create clear flux spread";
 
     // Outfall coupling point (cp1): output stays at 0.0 (skipped by ROM).
     EXPECT_DOUBLE_EQ(f.rom.coupling_unc_output.q_min[1], 0.0);
@@ -1668,6 +1560,117 @@ TEST(SpectralROM, CouplingUncOutputNoSpreadWithZeroPert) {
     EXPECT_NEAR(f.rom.coupling_unc_output.q_min[0],
                 f.rom.coupling_unc_output.q_max[0], 1.0e-14)
         << "zero perturbation should give q_min == q_max";
+}
+
+// ============================================================================
+// PR 7 (reform) — DeviationForm invariants (2D)
+// ============================================================================
+
+namespace {
+// Off-centre bump reference with non-zero modal content (b_j != 0).
+std::vector<double> bumpRef(const SpectralPrecond2D& basis, int nt, double base) {
+    std::vector<double> h(static_cast<std::size_t>(nt));
+    double sign0 = (basis.P[0] >= 0.0) ? 1.0 : -1.0;
+    for (int t = 0; t < nt; ++t)
+        h[static_cast<std::size_t>(t)] =
+            base + sign0 * basis.P[static_cast<std::size_t>(t)] * 0.10;
+    return h;
+}
+double maxSpread2D(const SpectralROM& rom) {
+    double s = 0.0;
+    for (int t = 0; t < rom.n_tri; ++t)
+        s = std::max(s, rom.q95[static_cast<std::size_t>(t)]
+                      - rom.q05[static_cast<std::size_t>(t)]);
+    return s;
+}
+}  // namespace
+
+// pert=0 → deviations identically zero → q05==q50==q95==h_det to 1e-12, for
+// arbitrary time-varying reference/forcing.  Impossible under the total-head form.
+TEST(DeviationForm2D, ZeroPerturbationIsExact) {
+    Fixture f(/*N=*/5, /*k=*/6, /*M=*/20, /*m_pert=*/0.0, /*r_pert=*/0.0);
+    int nt = f.rom.n_tri;
+    auto h0 = bumpRef(f.basis, nt, 0.5);
+    f.rom.seed(h0.data());
+
+    std::vector<double> h_det(static_cast<std::size_t>(nt));
+    std::vector<double> rain(static_cast<std::size_t>(nt));
+    for (int step = 0; step < 60; ++step) {
+        double phase = 0.05 * step;
+        for (int t = 0; t < nt; ++t) {
+            h_det[static_cast<std::size_t>(t)] =
+                h0[static_cast<std::size_t>(t)] * (1.0 + 0.5 * std::sin(phase + 0.3 * t));
+            rain[static_cast<std::size_t>(t)] = 1e-5 * (1.0 + std::cos(phase + 0.7 * t));
+        }
+        f.rom.advance(15.0, 5.0, rain.data(), nullptr, h_det.data());
+    }
+    f.rom.computeQuantiles(h_det.data());
+    for (int t = 0; t < nt; ++t) {
+        auto ut = static_cast<std::size_t>(t);
+        EXPECT_NEAR(f.rom.q05[ut], h_det[ut], 1e-12) << "t=" << t;
+        EXPECT_NEAR(f.rom.q50[ut], h_det[ut], 1e-12) << "t=" << t;
+        EXPECT_NEAR(f.rom.q95[ut], h_det[ut], 1e-12) << "t=" << t;
+    }
+}
+
+// Median stays bracketed inside the spread around the deterministic reference.
+TEST(DeviationForm2D, MedianTracksDeterministic) {
+    Fixture f(/*N=*/5, /*k=*/6, /*M=*/50, /*m_pert=*/0.20, /*r_pert=*/0.0);
+    int nt = f.rom.n_tri;
+    auto h_det = bumpRef(f.basis, nt, 0.5);
+    f.rom.seed(h_det.data());
+    for (int step = 0; step < 40; ++step)
+        f.rom.advance(30.0, 5.0, nullptr, nullptr, h_det.data());
+    f.rom.computeQuantiles(h_det.data());
+    for (int t = 0; t < nt; ++t) {
+        auto ut = static_cast<std::size_t>(t);
+        double spread = f.rom.q95[ut] - f.rom.q05[ut];
+        EXPECT_LE(std::abs(f.rom.q50[ut] - h_det[ut]), 0.25 * spread + 1e-12)
+            << "median drifted outside 25% of spread at t=" << t;
+    }
+}
+
+// Sustained reference growth → total spread non-decreasing after transient.
+TEST(DeviationForm2D, SpreadNeverCollapses) {
+    Fixture f(/*N=*/5, /*k=*/6, /*M=*/20, /*m_pert=*/0.20, /*r_pert=*/0.0);
+    int nt = f.rom.n_tri;
+    auto h0 = bumpRef(f.basis, nt, 0.2);
+    f.rom.seed(h0.data());
+    std::vector<double> h_det(static_cast<std::size_t>(nt));
+    double prev = -1.0;
+    for (int step = 0; step < 200; ++step) {
+        double grow = 1.0 + static_cast<double>(step) / 200.0;
+        for (int t = 0; t < nt; ++t)
+            h_det[static_cast<std::size_t>(t)] = h0[static_cast<std::size_t>(t)] * grow;
+        f.rom.advance(5.0, 1.0, nullptr, nullptr, h_det.data());
+        if (step > 40) {
+            f.rom.computeQuantiles(h_det.data());
+            double total = 0.0;
+            for (int t = 0; t < nt; ++t)
+                total += f.rom.q95[static_cast<std::size_t>(t)]
+                       - f.rom.q05[static_cast<std::size_t>(t)];
+            if (prev >= 0.0) EXPECT_GE(total, prev * 0.95) << "spread collapsed at step " << step;
+            prev = total;
+        }
+    }
+    EXPECT_GT(prev, 0.0);
+}
+
+// spread(0.2) > spread(0.1) > 0 under identical forcing.
+TEST(DeviationForm2D, SpreadScalesWithManningPert) {
+    auto run = [](double pert) {
+        Fixture f(/*N=*/5, /*k=*/6, /*M=*/20, pert, /*r_pert=*/0.0);
+        int nt = f.rom.n_tri;
+        auto h_det = bumpRef(f.basis, nt, 0.5);
+        f.rom.seed(h_det.data());
+        for (int step = 0; step < 40; ++step)
+            f.rom.advance(30.0, 5.0, nullptr, nullptr, h_det.data());
+        f.rom.computeQuantiles(h_det.data());
+        return maxSpread2D(f.rom);
+    };
+    double s10 = run(0.10), s20 = run(0.20);
+    EXPECT_GT(s10, 0.0);
+    EXPECT_GT(s20, s10) << "doubling the perturbation must widen the band";
 }
 
 // ============================================================================

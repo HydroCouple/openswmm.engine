@@ -349,25 +349,39 @@ std::string parseUncertaintyLine(
     SolverOptions2D& opts,
     openswmm::uncertainty::UncertaintyConfig& config)
 {
-    // Format: LAYER PARAMETER [DISTRIBUTION] PERTURBATION
-    // Minimal: "2D MANNINGS_N 0.20"  (DISTRIBUTION defaults to UNIFORM)
-    //          "2D RAINFALL UNIFORM 0.15"
+    // Grammar (PR 9c — PARAMETER_REGISTRY.md §6):
+    //   new    : LAYER NAME PERT [DIST] [ENTRY]     e.g. "1D INFLOW 0.3 LOGNORMAL FORCING_VECTOR"
+    //   legacy : LAYER NAME [DIST] PERT             e.g. "2D RAINFALL UNIFORM 0.15"
+    // Disambiguation: if tokens[2] parses as a number the new order is in
+    // effect, otherwise the legacy DIST-first order.
     if (tokens.size() < 3)
-        return "Expected LAYER PARAMETER [DISTRIBUTION] PERTURBATION";
+        return "Expected LAYER NAME PERT [DIST] [ENTRY]";
 
     const auto& layer_str = tokens[0];
     const auto& param_str = tokens[1];
 
-    // Determine whether optional DISTRIBUTION token is present
-    // (3 tokens → no dist; 4+ tokens → dist is tokens[2])
+    bool ok = false;
     std::string dist_str  = "UNIFORM";
-    std::string pert_str;
-    if (tokens.size() >= 4) {
-        dist_str = tokens[2];
-        pert_str = tokens[3];
+    std::string entry_str;                 // empty = derive from NAME
+    double      pert      = 0.0;
+
+    const double t2_num = tryParseDouble(tokens[2], ok);
+    if (ok) {
+        // New order: PERT [DIST] [ENTRY]
+        pert = t2_num;
+        if (tokens.size() >= 4) dist_str  = tokens[3];
+        if (tokens.size() >= 5) entry_str = tokens[4];
     } else {
-        pert_str = tokens[2];
+        // Legacy order: DIST PERT
+        if (tokens.size() < 4)
+            return "Expected LAYER NAME PERT [DIST] [ENTRY] (or legacy LAYER NAME DIST PERT)";
+        dist_str = tokens[2];
+        pert = tryParseDouble(tokens[3], ok);
+        if (!ok)
+            return "PERTURBATION must be a non-negative number";
     }
+    if (pert < 0.0)
+        return "PERTURBATION must be a non-negative number";
 
     // --- Parse LAYER ---
     openswmm::uncertainty::LayerTarget layer;
@@ -389,20 +403,42 @@ std::string parseUncertaintyLine(
     else
         return "Unknown DISTRIBUTION '" + dist_str + "' (UNIFORM / NORMAL / LOGNORMAL)";
 
-    // --- Parse PERTURBATION ---
-    bool ok = false;
-    double pert = tryParseDouble(pert_str, ok);
-    if (!ok || pert < 0.0)
-        return "PERTURBATION must be a non-negative number";
-
-    // --- Validate PARAMETER for Phase 0/1 scope ---
+    // --- Resolve NAME and ENTRY ---
     std::string param_upper = param_str;
     std::transform(param_upper.begin(), param_upper.end(), param_upper.begin(),
                    [](unsigned char c){ return static_cast<char>(std::toupper(c)); });
 
-    if (param_upper != "MANNINGS_N" && param_upper != "RAINFALL")
-        return "Unsupported PARAMETER '" + param_str
-               + "' (supported: MANNINGS_N, RAINFALL)";
+    openswmm::uncertainty::ParamEntry entry;
+    bool entry_known = true;
+    if (!entry_str.empty()) {
+        // Explicit ENTRY — accepts any NAME (the generality win).
+        if (iequals(entry_str, "RATE_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::RATE_MULT;
+        else if (iequals(entry_str, "FORCING_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::FORCING_MULT;
+        else if (iequals(entry_str, "FORCING_VECTOR"))
+            entry = openswmm::uncertainty::ParamEntry::FORCING_VECTOR;
+        else if (iequals(entry_str, "COUPLING_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::COUPLING_MULT;
+        else
+            return "Unknown ENTRY '" + entry_str
+                   + "' (RATE_MULT / FORCING_MULT / FORCING_VECTOR / COUPLING_MULT)";
+    } else {
+        // Name-implied default entry; unknown NAME without ENTRY is an error.
+        if (param_upper == "MANNINGS_N")
+            entry = openswmm::uncertainty::ParamEntry::RATE_MULT;
+        else if (param_upper == "RAINFALL")
+            entry = openswmm::uncertainty::ParamEntry::FORCING_MULT;
+        else if (param_upper == "INFLOW")
+            entry = openswmm::uncertainty::ParamEntry::FORCING_VECTOR;
+        else
+            entry_known = false;
+        if (!entry_known)
+            return "Unknown PARAMETER '" + param_str
+                   + "' without an explicit ENTRY (known names: MANNINGS_N, "
+                     "RAINFALL, INFLOW; or supply RATE_MULT / FORCING_MULT / "
+                     "FORCING_VECTOR / COUPLING_MULT)";
+    }
 
     // --- Build spec and record ---
     openswmm::uncertainty::UncertaintySourceSpec spec;
@@ -410,6 +446,7 @@ std::string parseUncertaintyLine(
     spec.layer       = layer;
     spec.dist        = dist;
     spec.perturbation = pert;
+    spec.entry       = entry;
     config.sources.push_back(spec);
 
     // For 2D specs, [UNCERTAINTY] takes precedence over [2D_ROM] values.

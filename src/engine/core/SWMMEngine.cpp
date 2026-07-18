@@ -1823,7 +1823,9 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
 #endif
 
-    // B3++. Advance 1D spectral ROM for uncertainty propagation.
+    // B3++. Advance 1D spectral ROM for uncertainty propagation (deviation form:
+    //        members carry only their deviation from the deterministic run, so
+    //        no reseeding is ever needed and spread is never collapsed).
     if (rom1d_ && rom1d_->is_ready()) {
         // Update eigenbasis from last-converged DYNWAVE Jacobian (warm-start re-solve).
         if (router_.dwSolver().isHSnapshotValid()) {
@@ -1833,13 +1835,27 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         }
         const double K1d = computeK1d();
 
-        // Build per-node dh/dt forcing from the just-completed DynWave step.
-        // Using actual head-rate change instead of lat_flow/area avoids needing
-        // junction storage areas and captures all flow contributions correctly.
-        // Members with different Manning's n decay at different rates from this
-        // common forcing, producing physically meaningful head spread.
+        const int n_active = static_cast<int>(rom1d_active_map_.size());
+
+        // Deterministic head reference h_det (quantile anchor) and the DEPTH
+        // field (head − invert) as the Manning-sensitivity reference: roughness
+        // acts on conveyance, so its sensitivity must scale the depth
+        // component only — projecting absolute head lets (mm−1)·b_j scale the
+        // immovable invert relief and overestimates spread by orders of
+        // magnitude on sloped networks (PR 10 finding, VALIDATION.md).
+        for (int ai = 0; ai < n_active; ++ai) {
+            const auto uai = static_cast<std::size_t>(ai);
+            const auto ui  = static_cast<std::size_t>(rom1d_active_map_[uai]);
+            rom1d_h_buf_[uai]    = ctx_.nodes.head[ui];
+            rom1d_sens_buf_[uai] =
+                std::max(ctx_.nodes.head[ui] - rom1d_invert_buf_[uai], 0.0);
+        }
+
+        // Per-node dh/dt forcing from the just-completed DynWave step. Under
+        // the deviation form its projection enters only scaled by
+        // (runoff_mult - 1), so with the engine default runoff_pert = 0 it
+        // contributes nothing — by construction, not by hotfix.
         if (!rom1d_dh_buf_.empty()) {
-            const int n_active = static_cast<int>(rom1d_active_map_.size());
             for (int ai = 0; ai < n_active; ++ai) {
                 const auto ui = static_cast<std::size_t>(
                     rom1d_active_map_[static_cast<std::size_t>(ai)]);
@@ -1847,20 +1863,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                     (ctx_.nodes.depth[ui] - ctx_.nodes.old_depth[ui]) / dt_routing;
             }
         }
-        rom1d_->advance(dt_routing, K1d,
-                        rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data());
+        rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
+                        rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data(),
+                        rom1d_sens_buf_.data());
         // computeQuantiles() is called only at report boundaries (postOutputSnapshot)
-
-        // Reseed if hydraulic state has drifted significantly from seed state
-        if (!rom1d_active_map_.empty()) {
-            const int n_active = static_cast<int>(rom1d_active_map_.size());
-            std::vector<double> h_active(static_cast<std::size_t>(n_active));
-            for (int ai = 0; ai < n_active; ++ai) {
-                auto ui = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
-                h_active[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
-            }
-            rom1d_->checkAndReseed(h_active.data(), ctx_.current_time);
-        }
     }
 
     // B3a. Inlet capture (street inlet HEC-22 calculations)
@@ -2647,24 +2653,25 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
         }
 
         // Compute 1D ROM quantiles and flush CSV row for every active node.
-        // q50 = actual DynWave head (best deterministic estimate).
-        // q05/q95 = DynWave head ± ROM ensemble spread around the ROM median.
-        // This corrects for the excluded null Laplacian mode: the ROM captures
-        // only spatial deviation, so we anchor the central value to DynWave.
+        // Deviation form: quantiles are natively anchored to the deterministic
+        // DynWave head (reconstruction = h_det + P·δa, clamped at the node
+        // invert), so q05/q50/q95 are written directly — no manual re-anchoring.
         if (rom1d_ && rom1d_->is_ready() && rom1d_csv_.is_open()) {
-            rom1d_->computeQuantiles();
             const int n_active = static_cast<int>(rom1d_active_map_.size());
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui = static_cast<std::size_t>(
+                    rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+            }
+            rom1d_->computeQuantiles(rom1d_h_buf_.data(), rom1d_invert_buf_.data());
             for (int ai = 0; ai < n_active; ++ai) {
                 const auto ui  = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
                 const auto uai = static_cast<std::size_t>(ai);
-                const double h_det = ctx_.nodes.head[ui];
-                const double spread_lo = rom1d_->q50[uai] - rom1d_->q05[uai];
-                const double spread_hi = rom1d_->q95[uai] - rom1d_->q50[uai];
                 rom1d_csv_ << ctx_.current_time                   << ','
                            << ctx_.node_names.name_of(static_cast<int>(ui)) << ','
-                           << (h_det - spread_lo)                 << ','
-                           << h_det                               << ','
-                           << (h_det + spread_hi)                 << '\n';
+                           << rom1d_->q05[uai]                    << ','
+                           << rom1d_->q50[uai]                    << ','
+                           << rom1d_->q95[uai]                    << '\n';
             }
         }
 
@@ -4228,6 +4235,22 @@ void SWMMEngine::buildROM1D() noexcept {
         // If !snap.valid: keep uniform weights (cold start or first initialize())
     }
 
+    // Normalize weights to mean 1.0: preserves the relative conductance
+    // structure (which conduit is stiffer than another) while keeping the
+    // Laplacian's eigenvalue scale matching the topological (uniform-weight)
+    // Laplacian that computeK1d()'s L^2 normalization is calibrated against.
+    // Without this, weights are absolute conductances (0.5*dt*dqdh) that scale
+    // with the routing timestep, so lambda_j*K1d jumps in magnitude the moment
+    // the first weighted rebuild replaces the cold-start uniform basis.
+    {
+        double sum_w = 0.0;
+        for (double w : weights) sum_w += w;
+        if (sum_w > 0.0) {
+            const double scale = static_cast<double>(n_conduits) / sum_w;
+            for (double& w : weights) w *= scale;
+        }
+    }
+
     std::vector<int> active_map, full_to_active;
     uncertainty::CsrGraph g = uncertainty::NetworkLaplacian1D::buildWeighted(
         n_full, n_conduits,
@@ -4282,11 +4305,51 @@ void SWMMEngine::buildROM1D() noexcept {
 
     rom1d_->initialize();
 
-    // Store active map for head extraction in stepRouting (checkAndReseed)
+    // Store active map + per-step buffers for head extraction in stepRouting
     rom1d_active_map_ = active_map;
     rom1d_dh_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_h_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_invert_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_sens_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    for (int ai = 0; ai < n_active; ++ai) {
+        auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
+        rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];
+    }
 
-    // Seed from current node heads (all members start identical)
+    // Register non-built-in 1D uncertainty specs on the ROM (PR 9c; see
+    // PARAMETER_REGISTRY.md §6). MANNINGS_N/RAINFALL are the built-in path
+    // handled above; every other active 1D spec gets a registry-generated
+    // column. FORCING_VECTOR params (e.g. INFLOW) use the per-node dh/dt
+    // buffer as their field — the same DynWave head-rate forcing the built-in
+    // runoff scale multiplies — so an INFLOW member with θ = 1.3 experiences
+    // the observed lateral-inflow-driven head changes 30% stronger.
+    // rom1d_dh_buf_ is allocated above and never resized, so the pointer
+    // stays valid for the ROM's lifetime.
+    {
+        uncertainty::UncertaintyEnsemble reg;
+        reg.n_members = rom1d_->n_ensemble;
+        reg.registerDefaults();  // occupy legacy seed offsets 0..3
+        bool any_extra = false;
+        for (const auto& s : uncertainty_config_.specs_for(uncertainty::LayerTarget::ONE_D)) {
+            if (s.name == "MANNINGS_N" || s.name == "RAINFALL") continue;
+            reg.registerParam(s.name, s.layer, s.entry, s.dist, s.perturbation);
+            any_extra = true;
+        }
+        if (any_extra) {
+            reg.generate();
+            for (const auto& s : uncertainty_config_.specs_for(uncertainty::LayerTarget::ONE_D)) {
+                if (s.name == "MANNINGS_N" || s.name == "RAINFALL") continue;
+                const auto* col = reg.column(s.name, uncertainty::LayerTarget::ONE_D);
+                if (!col) continue;
+                const double* field =
+                    (s.entry == uncertainty::ParamEntry::FORCING_VECTOR)
+                        ? rom1d_dh_buf_.data() : nullptr;
+                rom1d_->addRegisteredParam(s.entry, *col, field);
+            }
+        }
+    }
+
+    // Seed: zero all deviations, prime h_det_last_ from current node heads
     std::vector<double> h0(static_cast<std::size_t>(n_active));
     for (int ai = 0; ai < n_active; ++ai) {
         auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
@@ -4317,8 +4380,11 @@ void SWMMEngine::buildROM1D() noexcept {
 
 double SWMMEngine::computeK1d() noexcept {
     // Diffusion-wave diffusivity D = h^(5/3) / (2n*sqrt(S))  [m²/s].
-    // GraphEigenBasis eigenvalues are dimensionless (topological, not spatial),
-    // so D must be normalised by L² to give K1d in 1/s:
+    // GraphEigenBasis eigenvalues are dimensionless (topological, not spatial):
+    // the weighted Laplacian built in buildROM1D()/updateBasis() is normalized
+    // to mean edge weight 1.0, so its eigenvalue scale matches the pure
+    // topological Laplacian regardless of the absolute conductance magnitude
+    // or routing dt. D must still be normalised by L² to give K1d in 1/s:
     //   K1d = D / L² = h^(5/3) / (2n * sqrt(S) * L²)
     // This ensures lambda_j * K1d has units 1/s in the ROM advance equation.
     double sum_k = 0.0;

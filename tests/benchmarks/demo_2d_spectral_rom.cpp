@@ -160,7 +160,7 @@ int main() {
     rom.seed(h0.data());
 
     // Initial quantiles immediately after seed (all members identical → tight)
-    rom.computeQuantiles();
+    rom.computeQuantiles(h0.data());
     double q50_peak0 = *std::max_element(rom.q50.begin(), rom.q50.end());
     std::printf("Seeded.  Peak q50 at t=0: %.5f m (vs bump amplitude %.3f m)\n",
                 q50_peak0, bump_amp);
@@ -178,8 +178,8 @@ int main() {
     // No rainfall (nullptr) — isolates Manning's n uncertainty
     double t = 0.0;
     for (int step = 0; step < n_steps; ++step) {
-        rom.advance(dt, K_eff, nullptr);
-        rom.computeQuantiles();
+        rom.advance(dt, K_eff, nullptr, nullptr, h0.data());
+        rom.computeQuantiles(h0.data());
         t += dt;
 
         // Peak cell (maximum q50)

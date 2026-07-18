@@ -1151,6 +1151,98 @@ TEST(InputParsing, UncertaintyMultipleLinesAccumulate) {
 }
 
 // ============================================================================
+// [UNCERTAINTY] parser tests (PR 9c — registry grammar)
+// ============================================================================
+
+// New order LAYER NAME PERT [DIST] [ENTRY] with explicit entry.
+TEST(InputParsing, ParseUncertaintyNewOrderWithDistAndEntry) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    auto err = parseUncertaintyLine(
+        {"1D", "INFLOW", "0.30", "LOGNORMAL", "FORCING_VECTOR"}, opts, config);
+    EXPECT_TRUE(err.empty()) << err;
+    ASSERT_EQ(config.sources.size(), std::size_t{1});
+    EXPECT_EQ(config.sources[0].name,  "INFLOW");
+    EXPECT_EQ(config.sources[0].layer, LayerTarget::ONE_D);
+    EXPECT_EQ(config.sources[0].dist,  DistType::LOGNORMAL);
+    EXPECT_EQ(static_cast<int>(config.sources[0].entry),
+              static_cast<int>(ParamEntry::FORCING_VECTOR));
+    EXPECT_DOUBLE_EQ(config.sources[0].perturbation, 0.30);
+}
+
+// Known names imply their entry when none is given (new token order).
+TEST(InputParsing, ParseUncertaintyEntryDefaultsFromName) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    ASSERT_TRUE(parseUncertaintyLine({"1D", "MANNINGS_N", "0.20"}, opts, config).empty());
+    ASSERT_TRUE(parseUncertaintyLine({"1D", "RAINFALL",   "0.10"}, opts, config).empty());
+    ASSERT_TRUE(parseUncertaintyLine({"1D", "INFLOW",     "0.30"}, opts, config).empty());
+    ASSERT_EQ(config.sources.size(), std::size_t{3});
+    EXPECT_EQ(static_cast<int>(config.sources[0].entry),
+              static_cast<int>(ParamEntry::RATE_MULT));
+    EXPECT_EQ(static_cast<int>(config.sources[1].entry),
+              static_cast<int>(ParamEntry::FORCING_MULT));
+    EXPECT_EQ(static_cast<int>(config.sources[2].entry),
+              static_cast<int>(ParamEntry::FORCING_VECTOR));
+}
+
+// Unknown NAME is accepted when an explicit ENTRY says how it enters the ODE.
+TEST(InputParsing, ParseUncertaintyUnknownNameWithExplicitEntryAccepted) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    auto err = parseUncertaintyLine(
+        {"1D", "MY_KNOB", "0.10", "NORMAL", "RATE_MULT"}, opts, config);
+    EXPECT_TRUE(err.empty()) << err;
+    ASSERT_EQ(config.sources.size(), std::size_t{1});
+    EXPECT_EQ(config.sources[0].name, "MY_KNOB");
+    EXPECT_EQ(static_cast<int>(config.sources[0].entry),
+              static_cast<int>(ParamEntry::RATE_MULT));
+    EXPECT_EQ(config.sources[0].dist, DistType::NORMAL);
+}
+
+// Unknown ENTRY token is rejected with the supported list.
+TEST(InputParsing, ParseUncertaintyUnknownEntryRejected) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    auto err = parseUncertaintyLine(
+        {"1D", "MY_KNOB", "0.10", "UNIFORM", "BOGUS_ENTRY"}, opts, config);
+    EXPECT_FALSE(err.empty());
+    EXPECT_NE(err.find("RATE_MULT"), std::string::npos)
+        << "error should list the supported entries: " << err;
+    EXPECT_TRUE(config.sources.empty());
+}
+
+// Legacy token order LAYER NAME DIST PERT still accepted; name-implied entry set.
+TEST(InputParsing, ParseUncertaintyLegacyOrderStillAccepted) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    auto err = parseUncertaintyLine(
+        {"1D", "MANNINGS_N", "LOGNORMAL", "0.20"}, opts, config);
+    EXPECT_TRUE(err.empty()) << err;
+    ASSERT_EQ(config.sources.size(), std::size_t{1});
+    EXPECT_EQ(config.sources[0].dist, DistType::LOGNORMAL);
+    EXPECT_DOUBLE_EQ(config.sources[0].perturbation, 0.20);
+    EXPECT_EQ(static_cast<int>(config.sources[0].entry),
+              static_cast<int>(ParamEntry::RATE_MULT));
+}
+
+// specs_for(layer) returns all active specs of that layer, parse order.
+TEST(InputParsing, UncertaintySpecsForLayerAccessor) {
+    SolverOptions2D opts;
+    UncertaintyConfig config;
+    parseUncertaintyLine({"2D", "MANNINGS_N", "0.20"}, opts, config);
+    parseUncertaintyLine({"1D", "RAINFALL",   "0.10"}, opts, config);
+    parseUncertaintyLine({"1D", "INFLOW", "0.30", "LOGNORMAL", "FORCING_VECTOR"},
+                         opts, config);
+    const auto one_d = config.specs_for(LayerTarget::ONE_D);
+    ASSERT_EQ(one_d.size(), std::size_t{2});
+    EXPECT_EQ(one_d[0].name, "RAINFALL");
+    EXPECT_EQ(one_d[1].name, "INFLOW");
+    EXPECT_EQ(config.specs_for(LayerTarget::TWO_D).size(), std::size_t{1});
+    EXPECT_TRUE(config.specs_for(LayerTarget::RUNOFF).empty());
+}
+
+// ============================================================================
 // AUTO K_eff tests (PR 4)
 // ============================================================================
 //

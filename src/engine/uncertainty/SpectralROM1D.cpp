@@ -6,6 +6,7 @@
  */
 
 #include "SpectralROM1D.hpp"
+#include "LhsShuffle.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -49,6 +50,31 @@ void SpectralROM1D::clearEnsembleRunoff() {
 }
 
 // ============================================================================
+// addRegisteredParam / clearRegisteredParams (PR 9b)
+// ============================================================================
+
+void SpectralROM1D::addRegisteredParam(ParamEntry entry,
+                                       const std::vector<double>& column,
+                                       const double* field) {
+    if (static_cast<int>(column.size()) != n_ensemble)
+        throw std::invalid_argument(
+            "SpectralROM1D::addRegisteredParam: column size must equal n_ensemble");
+    if (entry == ParamEntry::FORCING_VECTOR && field == nullptr)
+        throw std::invalid_argument(
+            "SpectralROM1D::addRegisteredParam: FORCING_VECTOR requires a field");
+    ExtraParam ep;
+    ep.entry  = entry;
+    ep.column = column;
+    ep.field  = field;
+    ep.rv.assign(static_cast<std::size_t>(n_kept), 0.0);
+    extra_params_.push_back(std::move(ep));
+}
+
+void SpectralROM1D::clearRegisteredParams() {
+    extra_params_.clear();
+}
+
+// ============================================================================
 // initialize
 // ============================================================================
 
@@ -64,12 +90,15 @@ void SpectralROM1D::initialize() {
     a_ensemble.assign(static_cast<std::size_t>(n_ensemble) *
                       static_cast<std::size_t>(n_kept), 0.0);
     r_coarse.assign(static_cast<std::size_t>(n_kept), 0.0);
+    b_coarse.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     q05.assign(static_cast<std::size_t>(n_nodes), 0.0);
     q50.assign(static_cast<std::size_t>(n_nodes), 0.0);
     q95.assign(static_cast<std::size_t>(n_nodes), 0.0);
 
     sort_buf_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
+    mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
+    h_det_last_.assign(static_cast<std::size_t>(n_nodes), 0.0);
 
     mode_active.assign(static_cast<std::size_t>(n_kept), true);
     n_modes_active = n_kept;
@@ -90,10 +119,14 @@ void SpectralROM1D::initialize() {
         for (int i = 0; i < n_ensemble; ++i) {
             double t = (static_cast<double>(i) + 0.5) / static_cast<double>(n_ensemble);
             mannings_mult[static_cast<std::size_t>(i)] = m_lo + t * (m_hi - m_lo);
-            // Reversed for decorrelation with Manning
-            double t_r = (static_cast<double>(n_ensemble - 1 - i) + 0.5)
-                       / static_cast<double>(n_ensemble);
-            runoff_mult[static_cast<std::size_t>(i)] = r_lo + t_r * (r_hi - r_lo);
+        }
+        // Independent Fisher-Yates shuffle (sample_seed+1) of the same strata,
+        // giving near-zero rank correlation with Manning instead of the exact
+        // -1 a reversed column would give.
+        const auto runoff_t = shuffledStrata(n_ensemble, sample_seed + 1);
+        for (int i = 0; i < n_ensemble; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            runoff_mult[ui] = r_lo + runoff_t[ui] * (r_hi - r_lo);
         }
     }
 }
@@ -105,53 +138,11 @@ void SpectralROM1D::initialize() {
 void SpectralROM1D::seed(const double* h_nodes) {
     assert(is_ready());
 
-    auto nn = static_cast<std::size_t>(n_nodes);
-    auto nk = static_cast<std::size_t>(n_kept);
-
-    for (std::size_t j = 0; j < nk; ++j) {
-        const double* Pj = &basis->P[j * nn];
-        double dot = 0.0;
-        for (std::size_t i = 0; i < nn; ++i)
-            dot += Pj[i] * h_nodes[i];
-        for (int m = 0; m < n_ensemble; ++m)
-            a_ensemble[static_cast<std::size_t>(m) * nk + j] = dot;
-    }
-
-    // Update reseed bookkeeping so checkAndReseed() has a valid baseline
-    seed_heads_.assign(h_nodes, h_nodes + nn);
-    double sum = 0.0;
-    for (std::size_t i = 0; i < nn; ++i) sum += h_nodes[i];
-    seed_mean_head_ = sum / static_cast<double>(nn);
-}
-
-// ============================================================================
-// checkAndReseed
-// ============================================================================
-
-void SpectralROM1D::checkAndReseed(const double* current_heads, double sim_time) {
-    if (!is_ready() || seed_heads_.empty()) return;
-
-    auto nn = static_cast<std::size_t>(n_nodes);
-
-    // Compute mean absolute change from seed state
-    double mean_change = 0.0;
-    for (std::size_t i = 0; i < nn; ++i)
-        mean_change += std::abs(current_heads[i] - seed_heads_[i]);
-    mean_change /= static_cast<double>(nn);
-
-    const double threshold = reseed_head_fraction * std::max(seed_mean_head_, 0.01);
-    if (mean_change <= threshold) return;
-    // Only apply interval guard after the first reseed (last_reseed_time_==0 means never reseeded)
-    if (last_reseed_time_ > 0.0 && sim_time - last_reseed_time_ <= reseed_min_interval) return;
-
-    seed(current_heads);
-
-    // Update bookkeeping
-    seed_heads_.assign(current_heads, current_heads + nn);
-    last_reseed_time_ = sim_time;
-    double sum = 0.0;
-    for (std::size_t i = 0; i < nn; ++i) sum += current_heads[i];
-    seed_mean_head_ = sum / static_cast<double>(nn);
+    // Deviation form: every member starts exactly on the deterministic
+    // trajectory (δa = 0). h_nodes primes h_det_last_ for reconstructHead()
+    // until the first advance() supplies a fresh deterministic reference.
+    std::fill(a_ensemble.begin(), a_ensemble.end(), 0.0);
+    h_det_last_.assign(h_nodes, h_nodes + static_cast<std::size_t>(n_nodes));
 }
 
 // ============================================================================
@@ -159,24 +150,39 @@ void SpectralROM1D::checkAndReseed(const double* current_heads, double sim_time)
 // ============================================================================
 
 void SpectralROM1D::advance(double dt, double K1d,
-                             const double* runoff_per_node) {
+                             const double* h_det_active,
+                             const double* runoff_per_node,
+                             const double* sens_ref) {
     assert(is_ready());
+    assert(h_det_active != nullptr);
 
     auto nn = static_cast<std::size_t>(n_nodes);
     auto nk = static_cast<std::size_t>(n_kept);
 
-    // ---- Step 1: Mode energy E_j = mean_i(a²_{i,j}) -------------------------
+    // Manning-sensitivity reference: the field whose modal content the
+    // (mm−1)-scaled steady state tracks. Default = h_det; the engine passes
+    // depth (head − invert) so roughness sensitivity acts on conveyance, not
+    // on the immovable invert relief (PR 10 finding, VALIDATION.md).
+    const double* bref = sens_ref ? sens_ref : h_det_active;
+
+    // ---- Step 1: Deviation mode energy E_j = mean_i(δa²_{i,j}) --------------
     for (std::size_t j = 0; j < nk; ++j) {
         double sum_sq = 0.0;
         for (int i = 0; i < n_ensemble; ++i) {
             double aij = a_ensemble[static_cast<std::size_t>(i) * nk + j];
             sum_sq += aij * aij;
         }
-        // store in r_coarse temporarily — replaced below
-        r_coarse[j] = sum_sq / static_cast<double>(n_ensemble);
+        mode_energy_[j] = sum_sq / static_cast<double>(n_ensemble);
     }
 
-    // ---- Step 2: Project runoff into coarse space ----------------------------
+    // ---- Step 2: Project sensitivity reference and runoff into coarse space -
+    for (std::size_t j = 0; j < nk; ++j) {
+        const double* Pj = &basis->P[j * nn];
+        double dot_b = 0.0;
+        for (std::size_t i = 0; i < nn; ++i)
+            dot_b += Pj[i] * bref[i];
+        b_coarse[j] = dot_b;
+    }
     if (runoff_per_node) {
         for (std::size_t j = 0; j < nk; ++j) {
             const double* Pj = &basis->P[j * nn];
@@ -188,73 +194,123 @@ void SpectralROM1D::advance(double dt, double K1d,
     } else {
         std::fill(r_coarse.begin(), r_coarse.end(), 0.0);
     }
+    // Registered FORCING_VECTOR fields (PR 9b): re-project each per call
+    // (the fields are live engine buffers that change every routing step).
+    for (auto& ep : extra_params_) {
+        if (ep.entry != ParamEntry::FORCING_VECTOR) continue;
+        for (std::size_t j = 0; j < nk; ++j) {
+            const double* Pj = &basis->P[j * nn];
+            double dot = 0.0;
+            for (std::size_t i = 0; i < nn; ++i)
+                dot += Pj[i] * ep.field[i];
+            ep.rv[j] = dot;
+        }
+    }
+    h_det_last_.assign(h_det_active, h_det_active + nn);
 
-    // ---- Step 3: Active set --------------------------------------------------
+    // Per-member effective multipliers from registered extra params
+    // (PARAMETER_REGISTRY.md §5). Products over an empty list are exactly 1.0,
+    // so the no-extra-params path is bit-identical to the built-in behavior.
+    auto rate_mult_prod = [this](std::size_t ui) {
+        double prod = 1.0;
+        for (const auto& ep : extra_params_)
+            if (ep.entry == ParamEntry::RATE_MULT) prod *= ep.column[ui];
+        return prod;
+    };
+    auto forcing_mult_prod = [this](std::size_t ui) {
+        double prod = 1.0;
+        for (const auto& ep : extra_params_)
+            if (ep.entry == ParamEntry::FORCING_MULT) prod *= ep.column[ui];
+        return prod;
+    };
+
+    // ---- Step 3: Active set ---------------------------------------------------
+    // A mode participates when its current deviation energy OR either
+    // first-order forcing-sensitivity magnitude exceeds the drop threshold.
+    // Both forcing scales use |multiplier − 1| (deviation form): zero
+    // perturbation ⇒ zero forcing ⇒ modes stay inactive and δa stays 0.
     const bool has_ensemble_runoff = !ensemble_runoff_.empty()
                                       && (runoff_per_node != nullptr)
                                       && (mean_ensemble_runoff_ > 1.0e-30);
-    double max_scale = 1.0 + runoff_pert;
-    if (has_ensemble_runoff) {
-        for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
-            max_scale = std::max(max_scale,
-                                 ensemble_runoff_[i] / mean_ensemble_runoff_);
+    double max_rain_dev = 0.0;   // max_i |scale_i − 1|  (incl. FORCING_MULT extras)
+    for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i) {
+        const double base = has_ensemble_runoff
+            ? (ensemble_runoff_[i] / mean_ensemble_runoff_)
+            : runoff_mult[i];
+        max_rain_dev = std::max(max_rain_dev,
+                                std::abs(base * forcing_mult_prod(i) - 1.0));
     }
+    double max_mann_dev = 0.0;   // max_i |1/mm_eff_i − 1|  (incl. RATE_MULT extras)
+    for (std::size_t i = 0; i < static_cast<std::size_t>(n_ensemble); ++i)
+        max_mann_dev = std::max(max_mann_dev,
+            std::abs(1.0 / (mannings_mult[i] * rate_mult_prod(i)) - 1.0));
+    // Per-FORCING_VECTOR-param max deviation max_i |θ_i − 1|.
+    for (auto& ep : extra_params_) {
+        if (ep.entry != ParamEntry::FORCING_VECTOR) continue;
+        ep.max_dev = 0.0;
+        for (double th : ep.column)
+            ep.max_dev = std::max(ep.max_dev, std::abs(th - 1.0));
+    }
+
     const double rain_scale = (runoff_per_node != nullptr)
-                               ? std::abs(dt) * max_scale : 0.0;
+                               ? std::abs(dt) * max_rain_dev : 0.0;
+    const double mann_scale = std::abs(dt) * K1d * max_mann_dev;
+
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
-        double Ej = a_ensemble[j];  // placeholder; recalculate from Step 1 result
-        // Recover E_j: r_coarse now holds projected runoff, but we need E_j.
-        // E_j was saved in sort_buf_ as a side-channel? No — use a separate pass.
-        // Fix: keep mode_energy separate from r_coarse.
-        (void)Ej;
-        bool by_rain = rain_scale > 0.0 &&
-                       std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
-        mode_active[j] = by_rain;  // energy check done below
+        const double lam = basis->eigenvalues[j];
+        bool by_energy  = mode_energy_[j] >= mode_drop_threshold;
+        bool by_rain    = rain_scale > 0.0 &&
+                          std::abs(r_coarse[j]) * rain_scale >= mode_drop_threshold;
+        bool by_manning = mann_scale > 0.0 &&
+                          lam * std::abs(b_coarse[j]) * mann_scale >= mode_drop_threshold;
+        bool by_vector  = false;
+        for (const auto& ep : extra_params_) {
+            if (ep.entry == ParamEntry::FORCING_VECTOR &&
+                ep.max_dev * std::abs(dt) * std::abs(ep.rv[j]) >= mode_drop_threshold) {
+                by_vector = true;
+                break;
+            }
+        }
+        mode_active[j] = by_energy || by_rain || by_manning || by_vector;
         if (mode_active[j]) ++n_modes_active;
     }
 
-    // Recalculate energy properly (Steps 1 was overwritten above).
-    // Recompute E_j directly here.
-    for (std::size_t j = 0; j < nk; ++j) {
-        double sum_sq = 0.0;
-        for (int i = 0; i < n_ensemble; ++i) {
-            double aij = a_ensemble[static_cast<std::size_t>(i) * nk + j];
-            sum_sq += aij * aij;
-        }
-        double Ej = sum_sq / static_cast<double>(n_ensemble);
-        if (Ej >= mode_drop_threshold) {
-            if (!mode_active[j]) { mode_active[j] = true; ++n_modes_active; }
-        }
-    }
-
-    // ---- Step 4: Advance modes -----------------------------------------------
+    // ---- Step 4: Advance deviations (exact exponential step) ------------------
+    //   d(δa)/dt = −rate·δa + g,   rate = λ_j·K1d/mm_i
+    //   g = −λ_j·K1d·(1/mm_i − 1)·b_j + (scale_i − 1)·r_j
     const double rate_floor = 1.0e-12;
+
+    const bool has_extra = !extra_params_.empty();
 
     for (int i = 0; i < n_ensemble; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double* ai = &a_ensemble[ui * nk];
-        double mm = mannings_mult[ui];
-        double rm = runoff_mult[ui];
+        const double mm       = mannings_mult[ui] * rate_mult_prod(ui);
+        const double inv_mm_1 = 1.0 / mm - 1.0;
+        const double base     = has_ensemble_runoff
+            ? (ensemble_runoff_[ui] / mean_ensemble_runoff_)
+            : runoff_mult[ui];
+        const double scale_1  = base * forcing_mult_prod(ui) - 1.0;
 
         for (std::size_t j = 0; j < nk; ++j) {
             if (!mode_active[j]) continue;
 
-            double lam  = basis->eigenvalues[j];
-            double rate = lam * K1d / mm;
-
-            double fj;
-            if (has_ensemble_runoff) {
-                fj = r_coarse[j] * (ensemble_runoff_[ui] / mean_ensemble_runoff_);
-            } else {
-                fj = r_coarse[j] * rm;
+            const double lam  = basis->eigenvalues[j];
+            const double rate = lam * K1d / mm;
+            double g          = -lam * K1d * inv_mm_1 * b_coarse[j]
+                                + scale_1 * r_coarse[j];
+            if (has_extra) {
+                for (const auto& ep : extra_params_)
+                    if (ep.entry == ParamEntry::FORCING_VECTOR)
+                        g += (ep.column[ui] - 1.0) * ep.rv[j];
             }
 
             if (rate > rate_floor) {
-                double steady = fj / rate;
+                const double steady = g / rate;
                 ai[j] = (ai[j] - steady) * std::exp(-rate * dt) + steady;
             } else {
-                ai[j] += fj * dt;
+                ai[j] += g * dt;
             }
         }
     }
@@ -264,8 +320,10 @@ void SpectralROM1D::advance(double dt, double K1d,
 // computeQuantiles
 // ============================================================================
 
-void SpectralROM1D::computeQuantiles() {
+void SpectralROM1D::computeQuantiles(const double* h_det_active,
+                                      const double* invert_active) {
     assert(is_ready());
+    assert(h_det_active != nullptr);
 
     auto nn = static_cast<std::size_t>(n_nodes);
     auto nk = static_cast<std::size_t>(n_kept);
@@ -276,10 +334,9 @@ void SpectralROM1D::computeQuantiles() {
     int idx95 = std::min(n_ensemble - 1,
                          static_cast<int>(0.95 * (static_cast<double>(M) - 1.0) + 0.5));
 
-    // Recon buffer: H[node, member] = Σ_j P[j,node] * a[member,j]  (nn × M).
-    // Compute as H = P_active^T * A_active^T in a single node-major pass:
-    //   for each active mode j: H[t, i] += P[j,t] * a[i,j]
-    // Intermediate storage is recon_buf_ (nn × M, row-major: row = node).
+    // Recon buffer: H[node, member] = h_det[node] + Σ_j P[j,node]·δa[member,j]
+    // (nn × M). Computed as one node-major pass per active mode; intermediate
+    // storage is recon_buf_ (row-major: row = node).
     recon_buf_.assign(nn * M, 0.0);
 
     for (std::size_t j = 0; j < nk; ++j) {
@@ -293,11 +350,19 @@ void SpectralROM1D::computeQuantiles() {
         }
     }
 
-    // Clamp, sort each node's row, extract quantiles.
+    // Add the deterministic reference, clamp to the physical floor (node
+    // invert) when supplied, sort each node's row, extract quantiles.
     for (std::size_t t = 0; t < nn; ++t) {
         double* row = &recon_buf_[t * M];
-        for (std::size_t i = 0; i < M; ++i)
-            row[i] = std::max(row[i], 0.0);
+        const double h_det = h_det_active[t];
+        if (invert_active) {
+            const double floor_t = invert_active[t];
+            for (std::size_t i = 0; i < M; ++i)
+                row[i] = std::max(h_det + row[i], floor_t);
+        } else {
+            for (std::size_t i = 0; i < M; ++i)
+                row[i] = h_det + row[i];
+        }
         std::sort(row, row + M);
         q05[t] = row[static_cast<std::size_t>(idx05)];
         q50[t] = row[static_cast<std::size_t>(idx50)];
@@ -330,6 +395,12 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
         if (max_delta / (max_prev + 1.0e-12) < basis_update_tol) return;
     }
 
+    // Past this point we are committed to attempting a rebuild this call.
+    // Every exit below — success or failure — must stamp last_basis_update_time_
+    // so a persistently failing rebuild backs off for basis_update_interval
+    // instead of retrying full Lanczos on every routing step.
+    ++basis_updates_attempted_;
+
     // --- Build new weighted Laplacian ------------------------------------
     // Dry-start guard: if all weights are zero/floor, skip this update.
     std::vector<double> weights(static_cast<std::size_t>(n_conduits));
@@ -341,7 +412,21 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     }
     if (!any_wet) {
         conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
         return;
+    }
+
+    // Normalize weights to mean 1.0 (same rationale as SWMMEngine::buildROM1D):
+    // preserves relative conductance structure while keeping the eigenvalue
+    // scale matching the topological Laplacian, independent of routing dt.
+    {
+        double sum_w = 0.0;
+        for (double w : weights) sum_w += w;
+        if (sum_w > 0.0) {
+            const double scale = static_cast<double>(n_conduits) / sum_w;
+            for (double& w : weights) w *= scale;
+        }
     }
 
     // Derive is_outfall from full_to_active: negative entry → outfall.
@@ -361,6 +446,8 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     if (static_cast<int>(active_map_new.size()) != n_nodes ||
         static_cast<int>(active_map_new.size()) < 4) {
         conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
         return;
     }
 
@@ -371,11 +458,21 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
         basis_owned_ = std::make_unique<GraphEigenBasis>();
         basis_owned_->null_tol = basis->null_tol;
     }
-    if (!basis_owned_->build(L_new, n_kept, P_old.data())) return;
+    if (!basis_owned_->build(L_new, n_kept, P_old.data())) {
+        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
+        return;
+    }
     // Sanity check: basis must have exactly n_kept modes (Lanczos must not have
     // broken down prematurely — the combo v0 starting vector prevents this for
     // normal networks, but guard against degenerate geometry).
-    if (basis_owned_->num_kept != n_kept) return;
+    if (basis_owned_->num_kept != n_kept) {
+        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+        last_basis_update_time_ = sim_time;
+        ++basis_updates_failed_;
+        return;
+    }
 
     basis = basis_owned_.get();  // switch raw pointer to new owned basis
 
@@ -424,7 +521,7 @@ double SpectralROM1D::reconstructHead(int member, int active_node) const noexcep
     auto nk = static_cast<std::size_t>(n_kept);
     auto nn = static_cast<std::size_t>(n_nodes);
     const double* ai = &a_ensemble[ui * nk];
-    double h = 0.0;
+    double h = h_det_last_[uk];   // deterministic reference (last advance/seed)
     for (std::size_t j = 0; j < nk; ++j) {
         if (!mode_active[j]) continue;
         h += basis->P[j * nn + uk] * ai[j];

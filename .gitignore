@@ -51,6 +51,7 @@ vcpkg_installed/
 # Legacy test generated report files
 tests/unit/legacy/engine/data/hotstart/*.rpt
 tests/unit/legacy/engine/data/hotstart/*.hsf
+tests/unit/legacy/engine/data/hotstart/*.out
 
 # Fortran tool build artifacts
 tools/**/*.o
