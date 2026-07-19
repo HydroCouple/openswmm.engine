@@ -12,6 +12,7 @@
 #include "SurfaceFluxCalculator.hpp"
 #include "../data/ActiveSetData.hpp"
 #include "../mesh/VertexReconstruction.hpp"
+#include "../mesh/VfrClosure.hpp"
 #include "../coupling/NodeCoupling.hpp"   // live node-coupling helpers (macro-step path)
 #include "../../data/NodeData.hpp"        // 1D node state read by the live coupling
 #if defined(OPENSWMM_HAVE_HYPRE)
@@ -43,20 +44,51 @@ namespace openswmm::twoD {
 namespace {
 // ---------------------------------------------------------------------------
 // Volume ⇄ (free-surface η, mean depth h̄) reconstruction — the single place
-// the integrated-state interpretation lives. Flat-cell closure: depth = V/A,
-// η = tri_cz + depth, so the conserved volume relates linearly to the free
-// surface (V = A·(η − tri_cz)). The smooth (V/A)^(5/3) conductance vanishes at
-// the dry limit on its own, so no explicit wet/dry shutoff is needed.
+// the integrated-state interpretation lives, selected by CELL_CLOSURE:
+//
+//   FLAT (legacy): depth = V/A, η = tri_cz + depth — exact only for a fully
+//     wetted cell; on a partially wet cell it overstates η (up to 2/3 of the
+//     cell relief), the driver of the uphill-creep artifact.
+//   VFR: η from the exact planar-bed stage–storage relation through the
+//     cell's vertex elevations (VfrClosure.hpp), C¹-regularized by the
+//     VFR_MIN_WET_FRAC wet-area floor so dη/dV stays bounded for the
+//     Newton/FD-Jacobian path. depth stays the MEAN depth V/A (unchanged
+//     meaning for evap/coupling ramps).
+//
+// The smooth (V/A)^(5/3) conductance vanishes at the dry limit on its own,
+// so no explicit wet/dry shutoff is needed under either closure.
+// See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
 // ---------------------------------------------------------------------------
-inline void reconstructFromVolume(const MeshData& m, int i, double V,
+inline void reconstructFromVolume(const MeshData& m, const SolverOptions2D& o,
+                                  int i, double V,
                                   double& head, double& depth) noexcept {
     const double A = m.tri_area[i];
     const double v = (V > 0.0) ? V : 0.0;
     depth = (A > 1.0e-30) ? v / A : 0.0;
-    head  = m.tri_cz[i] + depth;
+    if (o.cell_closure == CellClosure2D::VFR) {
+        double z1 = m.vz[m.tri_v0[i]];
+        double z2 = m.vz[m.tri_v1[i]];
+        double z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        head = vfrEtaFromMeanDepth(z1, z2, z3, depth, o.vfr_min_wet_frac);
+    } else {
+        head = m.tri_cz[i] + depth;
+    }
 }
 
-inline double volumeFromHead(const MeshData& m, int i, double head) noexcept {
+inline double volumeFromHead(const MeshData& m, const SolverOptions2D& o,
+                             int i, double head) noexcept {
+    if (o.cell_closure == CellClosure2D::VFR) {
+        double z1 = m.vz[m.tri_v0[i]];
+        double z2 = m.vz[m.tri_v1[i]];
+        double z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        // Regularized forward relation — the exact inverse of the closure
+        // above, so head ↔ volume seeding round-trips (a head seeded at the
+        // closure's dry anchor maps back to exactly V = 0).
+        return m.tri_area[i]
+               * vfrMeanDepthFromEta(z1, z2, z3, head, o.vfr_min_wet_frac);
+    }
     const double d = head - m.tri_cz[i];
     return (d > 0.0) ? m.tri_area[i] * d : 0.0;
 }
@@ -100,7 +132,8 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
         if (masked && !as->cell_active[i]) continue;
-        reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
+        reconstructFromVolume(mesh, opts, i, y_data[i],
+                              state.head[i], state.depth[i]);
     }
 
     // 2. Reconstruct vertex heads on the RHS path to preserve existing held
@@ -254,7 +287,20 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
         }
         double inv_area = (mesh.tri_area[i] > 1.0e-30)
                               ? 1.0 / mesh.tri_area[i] : 0.0;
-        D[i] = -T_sum * inv_area;
+        // Chain rule ∂F/∂V = (∂F/∂η)·(dη/dV). FLAT: dη/dV = 1/A. VFR:
+        // dη/dV = 1/(A·max(w, ε)) — partially wet cells respond faster, and
+        // the diagonal must say so or the preconditioner underestimates M at
+        // the wetting front (costing Krylov iterations, never correctness).
+        double detadv = inv_area;
+        if (ctx->opts->cell_closure == CellClosure2D::VFR) {
+            double z1 = mesh.vz[mesh.tri_v0[i]];
+            double z2 = mesh.vz[mesh.tri_v1[i]];
+            double z3 = mesh.vz[mesh.tri_v2[i]];
+            vfrSort3(z1, z2, z3);
+            detadv *= vfrDEtaDMeanDepth(z1, z2, z3, state.head[i],
+                                        ctx->opts->vfr_min_wet_frac);
+        }
+        D[i] = -T_sum * detadv;
     }
     return 0;
 }
@@ -417,7 +463,7 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // mirror into state.volume so totalVolume() is correct before the first step.
     double* y_data = N_VGetArrayPointer(y_);
     for (int i = 0; i < nt; ++i) {
-        y_data[i] = volumeFromHead(mesh, i, state.head[i]);
+        y_data[i] = volumeFromHead(mesh, opts, i, state.head[i]);
         state.volume[i] = y_data[i];
     }
     for (int k = 0; k < nc_; ++k) y_data[nt + k] = 0.0;  // ∫Q dt accumulators start at 0
@@ -563,7 +609,7 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
     for (int i = 0; i < nt; ++i) {
         const double V = y_data[i];
         ctx_.state->volume[i] = V;
-        reconstructFromVolume(*ctx_.mesh, i, V,
+        reconstructFromVolume(*ctx_.mesh, *ctx_.opts, i, V,
                               ctx_.state->head[i], ctx_.state->depth[i]);
     }
 
@@ -591,7 +637,8 @@ void CvodeSurfaceSolver::reinitialize(double t0) {
     // free surface and mirror into state.volume.
     double* y_data = N_VGetArrayPointer(y_);
     for (int i = 0; i < nt; ++i) {
-        y_data[i] = volumeFromHead(*ctx_.mesh, i, ctx_.state->head[i]);
+        y_data[i] = volumeFromHead(*ctx_.mesh, *ctx_.opts, i,
+                                   ctx_.state->head[i]);
         ctx_.state->volume[i] = y_data[i];
     }
 

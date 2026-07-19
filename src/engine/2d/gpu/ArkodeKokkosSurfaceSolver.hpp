@@ -53,6 +53,7 @@ struct ArkodeKokkosContext {
     InertialEdgeViews* edges  = nullptr;
     DView              prec_wq;          ///< [ne] friction-damped q-diagonal
     double             dry_depth = 1.0e-3;
+    double             vfr_eps   = 1.0e-2; ///< VFR wet-fraction floor (VFR_MIN_WET_FRAC)
     int                nt = 0;
     int                ne = 0;
 };

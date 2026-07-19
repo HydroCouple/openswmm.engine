@@ -60,6 +60,7 @@ struct KokkosSolverContext {
     double      dry_depth   = 1.0e-3;
     double      limiter_eps = 1.0e-6;
     double      flux_dh_eps = 4.0e-3;   ///< √|Δη| regularization (FLUX_DH_EPS)
+    double      vfr_eps     = 1.0e-2;   ///< VFR wet-fraction floor (VFR_MIN_WET_FRAC)
     bool        prec_diag_built = false; ///< Jacobi diagonal cached (lag reuse)
 #if defined(OPENSWMM_HAVE_HYPRE)
     bool                     use_amg = false;   ///< PRECONDITIONER=AMG selected

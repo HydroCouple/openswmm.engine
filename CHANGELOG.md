@@ -11,6 +11,60 @@ set in `CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json`, and
 `python/pyproject.toml` for all work merged since the `v6.0.0-alpha.1`
 tag, so it's used here instead of a generic "Unreleased" heading.
 
+## [6.0.0-alpha.3] — Object deletion: complete referential integrity + new delete APIs
+
+### Changed
+
+- **2D surface routing: VFR is now the default cell closure.** `CELL_CLOSURE`
+  defaults to `VFR` and `FACE_RECONSTRUCTION` to `VFR_FACE` (were `FLAT`/`MEAN`).
+  The Begnudelli & Sanders (2006/2007) volume/free-surface closure restores the
+  C-property at shorelines and removes the "water climbs uphill" artifact of the
+  flat closure (which overstates a partially wet cell's free surface by up to
+  two-thirds of its relief). Default on **all** backends — serial CVODE, serial
+  ARKODE, and the Kokkos OpenMP/GPU path. **`CELL_CLOSURE FLAT` /
+  `FACE_RECONSTRUCTION MEAN` restore the legacy behavior** and remain selectable.
+  `VFR_MIN_WET_FRAC` (default `0.01`, range `(0, 0.5]`) tunes the wetted-area
+  floor that keeps the closure C¹ for the implicit solvers. See
+  `plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md`.
+
+### Added
+
+- **Nine new delete + `analyze_impact` API pairs** covering every remaining
+  data-object type: `swmm_pollutant_delete`, `swmm_pattern_delete`,
+  `swmm_aquifer_delete`, `swmm_snowpack_delete`, `swmm_lid_delete`,
+  `swmm_street_delete`, `swmm_inlet_delete`, `swmm_landuse_delete`, and
+  `swmm_hydrograph_delete` (name-keyed). Each cascades or nullifies every
+  cross-reference and reports the impact set; `analyze_impact` previews the
+  same set without mutating. `SWMM_RefType` gained 15 additive values
+  (`SWMM_REF_EXT_INFLOW` … `SWMM_REF_CONTROL_RULE`).
+- **`swmm_control_find_references`** — read-only scan reporting which control
+  rules reference an object by name (word-boundary match on NODE/LINK/CONDUIT/
+  PUMP/ORIFICE/WEIR/OUTLET clauses, case-insensitive). Node/link
+  `analyze_impact` and delete reports now include affected rules as
+  `SWMM_REF_CONTROL_RULE` entries; **rule text is never edited by a delete**.
+- **`swmm_control_remove_rule`** — remove a single rule by index (previously
+  only `swmm_control_clear_rules` existed).
+
+### Fixed
+
+- **Node delete left dangling references** in ext-inflow / DWF / RDII rows
+  (rows now cascade-deleted, survivors renumbered), the positional treatment
+  expression matrix (the deleted node's stripe is now erased — previously every
+  node after it silently read its neighbor's treatment), and subcatchment
+  `gw_node` (now nullified, previously only renumbered).
+- **Subcatchment delete** now cascades LID-usage rows, clears LID `drain_to`
+  and snowpack `removal_subcatch` name references.
+- **Rain-gage delete** now clears unit-hydrograph gage assignments.
+- **Table/timeseries delete** now clears the gage `ts_name` mirror and
+  ext-inflow `ts_name` references, and nullifies + renumbers the subcatchment
+  adjustment-pattern indices (`n_perv`/`d_store`/`infil`), which index tables
+  and were previously silently misaligned by any table delete.
+- **Street delete** resets STREET cross-sections on referencing conduits to
+  CIRCULAR (mirrors transect delete) instead of leaving a dangling name.
+- `swmm_pattern_remove` and `swmm_hydrograph_remove_group` now delegate to the
+  same deleters as the new APIs (one code path; pattern removal previously
+  missed nothing but reported nothing either).
+
 ## [6.0.0-alpha.3] — Cross-section geometry API + SWMM_XSectShape renumbering
 
 ### Fixed

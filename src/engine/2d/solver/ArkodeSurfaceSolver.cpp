@@ -11,6 +11,7 @@
 #include "ArkodeSurfaceSolver.hpp"
 #include "SurfaceFluxCalculator.hpp"
 #include "../mesh/VertexReconstruction.hpp"
+#include "../mesh/VfrClosure.hpp"
 #include "../coupling/NodeCoupling.hpp"   // live node-coupling helpers (macro-step path)
 #include "../../data/NodeData.hpp"        // 1D node state read by the live coupling
 #if defined(OPENSWMM_HAVE_HYPRE)
@@ -36,20 +37,39 @@ namespace openswmm::twoD {
 
 namespace {
 // ---------------------------------------------------------------------------
-// Volume ⇄ free-surface reconstruction — the flat-cell closure. Mirrors the
-// identical helpers in CvodeSurfaceSolver.cpp (the conserved state V relates
-// linearly to η through V = A·(η − tri_cz); the smooth conductance vanishes at
-// the dry limit on its own). Both integrators share this closure; kept inline
-// per translation unit to avoid a header just for two trivial functions.
+// Volume ⇄ free-surface reconstruction, selected by CELL_CLOSURE. Mirrors the
+// identical helpers in CvodeSurfaceSolver.cpp: FLAT is the legacy flat-cell
+// closure η = tri_cz + V/A; VFR reconstructs η from the planar-bed VFR
+// relation (VfrClosure.hpp), C¹-regularized by VFR_MIN_WET_FRAC. depth stays
+// the mean depth V/A under both. The smooth conductance vanishes at the dry
+// limit on its own. See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
 // ---------------------------------------------------------------------------
-inline void reconstructFromVolume(const MeshData& m, int i, double V,
+inline void reconstructFromVolume(const MeshData& m, const SolverOptions2D& o,
+                                  int i, double V,
                                   double& head, double& depth) noexcept {
     const double A = m.tri_area[i];
     const double v = (V > 0.0) ? V : 0.0;
     depth = (A > 1.0e-30) ? v / A : 0.0;
-    head  = m.tri_cz[i] + depth;
+    if (o.cell_closure == CellClosure2D::VFR) {
+        double z1 = m.vz[m.tri_v0[i]];
+        double z2 = m.vz[m.tri_v1[i]];
+        double z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        head = vfrEtaFromMeanDepth(z1, z2, z3, depth, o.vfr_min_wet_frac);
+    } else {
+        head = m.tri_cz[i] + depth;
+    }
 }
-inline double volumeFromHead(const MeshData& m, int i, double head) noexcept {
+inline double volumeFromHead(const MeshData& m, const SolverOptions2D& o,
+                             int i, double head) noexcept {
+    if (o.cell_closure == CellClosure2D::VFR) {
+        double z1 = m.vz[m.tri_v0[i]];
+        double z2 = m.vz[m.tri_v1[i]];
+        double z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        return m.tri_area[i]
+               * vfrMeanDepthFromEta(z1, z2, z3, head, o.vfr_min_wet_frac);
+    }
     const double d = head - m.tri_cz[i];
     return (d > 0.0) ? m.tri_area[i] * d : 0.0;
 }
@@ -109,7 +129,7 @@ int ArkodeSurfaceSolver::fi_fn(double /*t*/, N_Vector y, N_Vector ydot,
     // 1. Reconstruct head / mean depth from the integrated cell volume.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
-        reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
+        reconstructFromVolume(mesh, opts, i, y_data[i], state.head[i], state.depth[i]);
     }
 
     // 2. Reconstruct vertex heads on the RHS path to preserve existing held
@@ -169,7 +189,7 @@ int ArkodeSurfaceSolver::fe_inertial_fn(double /*t*/, N_Vector y, N_Vector ydot,
         const double hmin = opts.dry_depth;
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
         for (int i = 0; i < nt; ++i)
-            reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
+            reconstructFromVolume(mesh, opts, i, y_data[i], state.head[i], state.depth[i]);
 
         // Continuity divergence ADDED to the cell source rows.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
@@ -224,7 +244,7 @@ int ArkodeSurfaceSolver::fi_inertial_fn(double /*t*/, N_Vector y, N_Vector ydot,
     // Reconstruct head / depth from the integrated cell volume.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i)
-        reconstructFromVolume(mesh, i, y_data[i], state.head[i], state.depth[i]);
+        reconstructFromVolume(mesh, opts, i, y_data[i], state.head[i], state.depth[i]);
 
     // Cell rows: continuity divergence only when gravity is implicit; otherwise
     // the cells carry no implicit term (transport is explicit).
@@ -400,7 +420,23 @@ int ArkodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/
         }
         double inv_area = (mesh.tri_area[i] > 1.0e-30)
                               ? 1.0 / mesh.tri_area[i] : 0.0;
-        D[i] = -T_sum * inv_area;
+        // Chain rule ∂F/∂V = (∂F/∂η)·(dη/dV). FLAT: dη/dV = 1/A. VFR:
+        // dη/dV = 1/(A·max(w, ε)) — partially wet cells respond faster, so the
+        // preconditioner diagonal must carry the factor or it underestimates M
+        // at the wetting front. CVODE's stiff BDF tolerates the mismatch (extra
+        // Krylov iterations); ARKStep's DIRK stage solve does NOT — without this
+        // the implicit stage fails to converge, steps collapse to hmin and the
+        // advance exhausts MAX_CVODE_STEPS. Mirrors CvodeSurfaceSolver::psetup_fn.
+        double detadv = inv_area;
+        if (ctx->opts->cell_closure == CellClosure2D::VFR) {
+            double z1 = mesh.vz[mesh.tri_v0[i]];
+            double z2 = mesh.vz[mesh.tri_v1[i]];
+            double z3 = mesh.vz[mesh.tri_v2[i]];
+            vfrSort3(z1, z2, z3);
+            detadv *= vfrDEtaDMeanDepth(z1, z2, z3, state.head[i],
+                                        ctx->opts->vfr_min_wet_frac);
+        }
+        D[i] = -T_sum * detadv;
     }
     return 0;
 }
@@ -561,7 +597,7 @@ void ArkodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
 
     double* y_data = N_VGetArrayPointer(y_);
     for (int i = 0; i < nt; ++i) {
-        y_data[i] = volumeFromHead(mesh, i, state.head[i]);
+        y_data[i] = volumeFromHead(mesh, opts, i, state.head[i]);
         state.volume[i] = y_data[i];
     }
     for (int e = 0; e < ne_; ++e) y_data[nt + e] = 0.0;          // q starts at rest
@@ -610,7 +646,15 @@ void ArkodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
 
     ARKodeSetMinStep(arkode_mem_, opts.min_timestep);
     ARKodeSetMaxStep(arkode_mem_, opts.max_timestep);
-    ARKodeSetMaxNumSteps(arkode_mem_, opts.max_cvode_steps);
+    // Per-window internal-step guard. MAX_CVODE_STEPS is calibrated for CVODE's
+    // adaptive-order BDF; ARKStep's fixed order-3 DIRK takes structurally more,
+    // smaller steps for the same window — measured ~2× on the diffusive-wave
+    // face-gate (VFR_FACE) path. Scale the guard for ARKODE so the CVODE-tuned
+    // default (500) does not spuriously exhaust and freeze a window (which would
+    // silently drop that window's forcing); MAX_CVODE_STEPS stays the user knob.
+    constexpr long kArkodeStepGuardFactor = 4;
+    ARKodeSetMaxNumSteps(arkode_mem_,
+                         kArkodeStepGuardFactor * opts.max_cvode_steps);
 
     // SPGMR for the implicit-stage Newton–Krylov solve. PREC_LEFT for JACOBI/AMG
     // and for the inertial block-Jacobi preconditioner.
@@ -674,7 +718,7 @@ double ArkodeSurfaceSolver::advance(double t_current, double t_target) {
     for (int i = 0; i < nt; ++i) {
         const double V = y_data[i];
         ctx_.state->volume[i] = V;
-        reconstructFromVolume(*ctx_.mesh, i, V,
+        reconstructFromVolume(*ctx_.mesh, *ctx_.opts, i, V,
                               ctx_.state->head[i], ctx_.state->depth[i]);
     }
 
@@ -712,7 +756,7 @@ void ArkodeSurfaceSolver::reinitialize(double t0) {
     int nt = ctx_.mesh->n_triangles();
     double* y_data = N_VGetArrayPointer(y_);
     for (int i = 0; i < nt; ++i) {
-        y_data[i] = volumeFromHead(*ctx_.mesh, i, ctx_.state->head[i]);
+        y_data[i] = volumeFromHead(*ctx_.mesh, *ctx_.opts, i, ctx_.state->head[i]);
         ctx_.state->volume[i] = y_data[i];
     }
     // q (edges) and accumulators keep their current values across a hot-start.

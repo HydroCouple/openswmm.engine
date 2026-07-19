@@ -145,6 +145,25 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.preconditioner = PreconditionerType::AMG;
         else
             return "Unknown PRECONDITIONER: " + val;
+    } else if (iequals(key, "CELL_CLOSURE")) {
+        if (iequals(val, "FLAT"))
+            opts.cell_closure = CellClosure2D::FLAT;
+        else if (iequals(val, "VFR"))
+            opts.cell_closure = CellClosure2D::VFR;
+        else
+            return "Unknown CELL_CLOSURE: " + val;
+    } else if (iequals(key, "FACE_RECONSTRUCTION")) {
+        if (iequals(val, "MEAN"))
+            opts.face_reconstruction = FaceDepth2D::MEAN;
+        else if (iequals(val, "VFR_FACE"))
+            opts.face_reconstruction = FaceDepth2D::VFR_FACE;
+        else
+            return "Unknown FACE_RECONSTRUCTION: " + val;
+    } else if (iequals(key, "VFR_MIN_WET_FRAC")) {
+        const double frac = tryParseDouble(val, ok);
+        if (!ok || frac <= 0.0 || frac > 0.5)
+            return "Invalid VFR_MIN_WET_FRAC value (expected (0, 0.5])";
+        opts.vfr_min_wet_frac = frac;
     } else if (iequals(key, "RAINFALL_MODE")) {
         if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
@@ -180,6 +199,7 @@ bool is2DOptionKey(const std::string& key) {
         "ACTIVE_SET", "ACTIVE_SET_HALO",
         "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
         "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
+        "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
     };
     for (const char* k : kKeys) {
@@ -230,6 +250,12 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         }
         return "JACOBI";
     }
+    if (iequals(key, "CELL_CLOSURE"))
+        return (opts.cell_closure == CellClosure2D::VFR) ? "VFR" : "FLAT";
+    if (iequals(key, "FACE_RECONSTRUCTION"))
+        return (opts.face_reconstruction == FaceDepth2D::VFR_FACE) ? "VFR_FACE"
+                                                                   : "MEAN";
+    if (iequals(key, "VFR_MIN_WET_FRAC")) return fmt_g(opts.vfr_min_wet_frac);
     if (iequals(key, "RAINFALL_MODE")) {
         switch (opts.rainfall_mode) {
             case RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";

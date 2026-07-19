@@ -14,6 +14,9 @@
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "../mesh/VfrClosure.hpp"
+
+#include <algorithm>
 #include "../data/BoundaryData.hpp"
 
 #include <cvode/cvode.h>
@@ -23,6 +26,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cstdlib>
+#include <cstdio>
 
 // The kernels treat the SUNDIALS vector payload as double. SUNDIALS must be
 // built in double precision (the default). Fail fast otherwise.
@@ -91,6 +95,37 @@ void CvodeKokkosSurfaceSolver::uploadMesh() {
     mesh_v_.vert_ptr        = mirrorI(m.vert_stencil_ptr, "vert_ptr");
     mesh_v_.vert_idx        = mirrorI(m.vert_stencil_idx, "vert_idx");
     mesh_v_.vert_wt         = mirrorD(m.vert_stencil_wt,  "vert_wt");
+
+    // VFR closure inputs, sorted on the host once. Per-cell sorted vertex
+    // elevations, and per-edge (nt*3) sorted shared-edge endpoint elevations
+    // (edge e is opposite vertex e ⇒ endpoints are the other two vertices,
+    // mirroring SurfaceFluxCalculator::edgeEndpointZ so both incident cells see
+    // the same (z_lo,z_hi) and interior fluxes stay antisymmetric).
+    std::vector<double> z1(nt_), z2(nt_), z3(nt_);
+    std::vector<double> elo(static_cast<std::size_t>(nt_) * 3),
+                        ehi(static_cast<std::size_t>(nt_) * 3);
+    auto sort3 = [](double& a, double& b, double& c) {
+        if (a > b) std::swap(a, b);
+        if (b > c) std::swap(b, c);
+        if (a > b) std::swap(a, b);
+    };
+    for (int t = 0; t < nt_; ++t) {
+        const int v[3] = {m.tri_v0[t], m.tri_v1[t], m.tri_v2[t]};
+        double a = m.vz[v[0]], b = m.vz[v[1]], c = m.vz[v[2]];
+        sort3(a, b, c);
+        z1[t] = a; z2[t] = b; z3[t] = c;
+        for (int e = 0; e < 3; ++e) {
+            const double za = m.vz[v[(e + 1) % 3]];
+            const double zb = m.vz[v[(e + 2) % 3]];
+            elo[t * 3 + e] = (za < zb) ? za : zb;
+            ehi[t * 3 + e] = (za < zb) ? zb : za;
+        }
+    }
+    mesh_v_.tri_z1    = mirrorD(z1,  "tri_z1");
+    mesh_v_.tri_z2    = mirrorD(z2,  "tri_z2");
+    mesh_v_.tri_z3    = mirrorD(z3,  "tri_z3");
+    mesh_v_.edge_z_lo = mirrorD(elo, "edge_z_lo");
+    mesh_v_.edge_z_hi = mirrorD(ehi, "edge_z_hi");
 }
 
 void CvodeKokkosSurfaceSolver::uploadSources() {
@@ -130,13 +165,17 @@ void CvodeKokkosSurfaceSolver::uploadBoundaryDynamic() {
 
 void CvodeKokkosSurfaceSolver::seedVolumeFromHead() {
     // y is the cell volume V; seed it from the (possibly externally edited)
-    // free surface: V = A·max(η − tri_cz, 0). Mirror into state.volume so
-    // totalVolume() is correct before the first step (matches the serial
-    // CvodeSurfaceSolver::initialize seed).
+    // free surface via the VFR closure: V = A·h̄(η) (matches the serial
+    // CvodeSurfaceSolver::initialize seed under CELL_CLOSURE=VFR). A dry cell
+    // seeded at its VFR dry anchor round-trips to V = 0 exactly.
+    const auto& m = *mesh_host_;
+    const double eps = opts_host_->vfr_min_wet_frac;
     std::vector<double> V(static_cast<std::size_t>(nt_));
     for (int i = 0; i < nt_; ++i) {
-        const double d = state_host_->head[i] - mesh_host_->tri_cz[i];
-        V[i] = (d > 0.0) ? mesh_host_->tri_area[i] * d : 0.0;
+        double z1 = m.vz[m.tri_v0[i]], z2 = m.vz[m.tri_v1[i]], z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        V[i] = m.tri_area[i]
+             * vfrMeanDepthFromEta(z1, z2, z3, state_host_->head[i], eps);
         state_host_->volume[i] = V[i];
     }
     copyToDevice(V, y_->View());
@@ -148,12 +187,16 @@ void CvodeKokkosSurfaceSolver::downloadState() {
     // solver does after CVode (CvodeSurfaceSolver::advance; reconstructFromVolume:
     // h̄ = V/A, η = tri_cz + h̄).
     copyToHost(y_->View(), state_host_->volume);
+    const auto& m = *mesh_host_;
+    const double eps = opts_host_->vfr_min_wet_frac;
     for (int i = 0; i < nt_; ++i) {
-        const double A = mesh_host_->tri_area[i];
+        const double A = m.tri_area[i];
         const double v = (state_host_->volume[i] > 0.0) ? state_host_->volume[i] : 0.0;
         const double d = (A > 1.0e-30) ? v / A : 0.0;
         state_host_->depth[i] = d;
-        state_host_->head[i]  = mesh_host_->tri_cz[i] + d;
+        double z1 = m.vz[m.tri_v0[i]], z2 = m.vz[m.tri_v1[i]], z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        state_host_->head[i]  = vfrEtaFromMeanDepth(z1, z2, z3, d, eps);
     }
 
     // Diagnostic fields the 2D HDF5 writer reads. The serial solver leaves
@@ -178,7 +221,7 @@ int CvodeKokkosSurfaceSolver::rhs_cb(sunrealtype /*t*/, N_Vector y,
                                      N_Vector ydot, void* user_data) {
     auto* c = static_cast<KokkosSolverContext*>(user_data);
     evaluateRhs(*c->mesh, *c->state, viewOf(y), viewOf(ydot),
-                c->dry_depth, c->limiter_eps, c->flux_dh_eps);
+                c->dry_depth, c->limiter_eps, c->flux_dh_eps, c->vfr_eps);
     Kokkos::fence();
     return 0;
 }
@@ -207,7 +250,7 @@ int CvodeKokkosSurfaceSolver::psetup_cb(sunrealtype /*t*/, N_Vector /*y*/,
     // JACOBI: the cached diagonal is γ-free (γ is applied in psolve), so it
     // stays valid until CVODE requests a fresh Jacobian.
     if (!recompute && c->prec_diag_built) return 0;
-    precondSetup(*c->mesh, *c->state);
+    precondSetup(*c->mesh, *c->state, c->flux_dh_eps);
     Kokkos::fence();
     c->prec_diag_built = true;
     return 0;
@@ -312,6 +355,7 @@ void CvodeKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& stat
     ctx_.dry_depth   = opts.dry_depth;
     ctx_.limiter_eps = opts.limiter_epsilon;
     ctx_.flux_dh_eps = dh_eps;
+    ctx_.vfr_eps     = opts.vfr_min_wet_frac;
 
     cvode_mem_ = CVodeCreate(CV_BDF, sun_ctx_);
     if (!cvode_mem_) throw std::runtime_error("CVodeCreate failed");

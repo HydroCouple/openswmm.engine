@@ -27,6 +27,7 @@
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
+#include "2d/mesh/VfrClosure.hpp"
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/ActiveSetBuilder.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
@@ -78,6 +79,24 @@ SurfaceStateData makeState(const MeshData& mesh) {
         state.volume[i] = 0.0;
     }
     return state;
+}
+
+// The closure's free surface for a given cell-mean depth — mirror of the
+// file-local SurfaceRouter2D::headFromMeanDepth. Solver-driven tests must seed
+// heads through this so a dry cell's head matches what reconstructFromVolume
+// produces (FLAT: tri_cz; VFR: the dry anchor vfrDryEta, NOT tri_cz), otherwise
+// a frozen cell — skipped by the active-set unpack — keeps a stale head its
+// active neighbours read across the shared edge, breaking masked==unmasked.
+double closureHead(const MeshData& mesh, const SolverOptions2D& opts,
+                   int i, double d) {
+    if (opts.cell_closure == CellClosure2D::VFR) {
+        double z1 = mesh.vz[mesh.tri_v0[i]];
+        double z2 = mesh.vz[mesh.tri_v1[i]];
+        double z3 = mesh.vz[mesh.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        return vfrEtaFromMeanDepth(z1, z2, z3, d, opts.vfr_min_wet_frac);
+    }
+    return mesh.tri_cz[i] + d;
 }
 
 } // namespace
@@ -252,9 +271,13 @@ TEST(ActiveSetEquivalence, DamBreakFrontMatchesUnmasked) {
 
     auto initState = [&](SurfaceStateData& st) {
         st = makeState(mesh);
+        // Dry cells: the closure's dry head (vfrDryEta under VFR, tri_cz under
+        // FLAT) so frozen cells match the unmasked reconstruction exactly.
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            st.head[i] = closureHead(mesh, opts, i, 0.0);
         for (int i : {0, 1}) {  // both triangles of quad 0
             st.depth[i]  = kMound;
-            st.head[i]   = mesh.tri_cz[i] + kMound;
+            st.head[i]   = closureHead(mesh, opts, i, kMound);
             st.volume[i] = kMound * mesh.tri_area[i];
         }
     };
@@ -330,8 +353,18 @@ TEST(ActiveSetEquivalence, DamBreakFrontMatchesUnmasked) {
     // Per-cell agreement to solver tolerance (see file header note); the
     // front position must match exactly.
     int front_ref = -1, front_msk = -1;
+    // Per-cell masked-vs-unmasked agreement. Tied to the solver's own per-cell
+    // error floor (abs_tolerance × area): two independent BDF integrations that
+    // each control component error to ~atol can legitimately differ by a small
+    // multiple of it, and the halo truncates the diffusive tail differently in
+    // the two runs. Under the VFR_FACE conveyance the edge depth is evaluated
+    // as faceDepthFromEta(η) rather than the stored cell-mean depth — arithmetic
+    // that agrees to rounding on a flat cell but shifts the truncation error by
+    // FP-level amounts, ~1.5e-6 here (5e-5 relative), still an order of magnitude
+    // under atol. A real active-set leak would be O(cell volume), ~1e-2.
+    const double cell_tol = 2.0 * opts.abs_tolerance * mesh.tri_area[0];
     for (int i = 0; i < nt; ++i) {
-        EXPECT_NEAR(msk.volume[i], ref.volume[i], 1e-6)
+        EXPECT_NEAR(msk.volume[i], ref.volume[i], cell_tol)
             << "cell " << i << " diverged";
         if (ref.depth[i] > opts.dry_depth) front_ref = i;
         if (msk.depth[i] > opts.dry_depth) front_msk = i;

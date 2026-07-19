@@ -8,6 +8,7 @@
  */
 
 #include "VertexReconstruction.hpp"
+#include "VfrClosure.hpp"
 #include "../data/ActiveSetData.hpp"
 
 #include <vector>
@@ -173,50 +174,14 @@ void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
 
 double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
                                 double zc) {
-    // Sort the three vertex elevations: z1 <= z2 <= z3.
+    // Delegates to the shared VFR closure (VfrClosure.hpp) with eps = 0 — the
+    // EXACT relation, the same math this function carried before the solver
+    // adopted the closure. Single source of truth: render and solver cannot
+    // drift apart. (NaN mean_depth: !(NaN > 0) → lowest vertex, as before.)
     double z1 = za, z2 = zb, z3 = zc;
-    if (z1 > z2) std::swap(z1, z2);
-    if (z2 > z3) std::swap(z2, z3);
-    if (z1 > z2) std::swap(z1, z2);
-
+    vfrSort3(z1, z2, z3);
     if (!(mean_depth > 0.0)) return z1;
-
-    const double zbar   = (z1 + z2 + z3) / 3.0;
-    const double relief = z3 - z1;
-
-    // Effectively flat cell, or fully wet (eta >= z3 <=> h >= z3 - zbar):
-    // the flat closure is exact.
-    if (relief < 1.0e-9 || mean_depth >= z3 - zbar)
-        return zbar + mean_depth;
-
-    // Mean depth when the waterline sits exactly at z2 (branch boundary).
-    const double h_at_z2 = (z2 - z1) * (z2 - z1) / (3.0 * relief);
-
-    if (mean_depth <= h_at_z2) {
-        // Lower branch (z1 < eta <= z2): closed-form cube root.
-        // h(eta) = (eta - z1)^3 / (3 (z2 - z1)(z3 - z1))
-        return z1 + std::cbrt(3.0 * mean_depth * (z2 - z1) * relief);
-    }
-
-    // Upper branch (z2 < eta < z3): h(eta) = (eta - zbar)
-    //   + (z3 - eta)^3 / (3 (z3 - z1)(z3 - z2)).
-    // h is strictly increasing in eta (dh/deta = A_wet/A > 0 here), so a
-    // safeguarded Newton on the bracket [z2, z3] converges unconditionally.
-    const double denom = 3.0 * relief * (z3 - z2);
-    double lo = z2, hi = z3;
-    double eta = zbar + mean_depth;                 // flat-closure initial guess
-    if (eta <= lo || eta >= hi) eta = 0.5 * (lo + hi);
-    for (int it = 0; it < 64; ++it) {
-        const double dz3 = z3 - eta;
-        const double f  = (eta - zbar) + dz3 * dz3 * dz3 / denom - mean_depth;
-        if (f > 0.0) hi = eta; else lo = eta;
-        const double df = 1.0 - dz3 * dz3 / (relief * (z3 - z2));  // A_wet/A
-        double next = (df > 1.0e-12) ? eta - f / df : 0.5 * (lo + hi);
-        if (next <= lo || next >= hi) next = 0.5 * (lo + hi);      // safeguard
-        if (std::abs(next - eta) < 1.0e-12 * (1.0 + relief)) return next;
-        eta = next;
-    }
-    return eta;
+    return vfrEtaFromMeanDepth(z1, z2, z3, mean_depth, 0.0);
 }
 
 

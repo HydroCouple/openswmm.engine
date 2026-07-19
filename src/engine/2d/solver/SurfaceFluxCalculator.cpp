@@ -35,6 +35,44 @@ inline int tri_nbr(const MeshData& mesh, int t, int e) {
 
 inline double sq(double x) noexcept { return x * x; }
 
+// Endpoint bed elevations of local edge e of triangle t, sorted z_lo <= z_hi.
+// MeshBuilder convention: edge e is opposite vertex e; its endpoints are the
+// triangle's other two vertices (same rule as MeshBuilder::edgeVertices and
+// recomputeVertexZDependents). For an interior edge both incident cells see
+// the same two vertices, so both compute identical (z_lo, z_hi) — the face
+// depth below stays antisymmetric and the FV flux mass-conservative.
+inline void edgeEndpointZ(const MeshData& mesh, int t, int e,
+                          double& z_lo, double& z_hi) noexcept {
+    const int v[3] = {mesh.tri_v0[t], mesh.tri_v1[t], mesh.tri_v2[t]};
+    const double za = mesh.vz[v[(e + 1) % 3]];
+    const double zb = mesh.vz[v[(e + 2) % 3]];
+    z_lo = (za < zb) ? za : zb;
+    z_hi = (za < zb) ? zb : za;
+}
+
+// Effective conveyance depth at an edge from the upwind free surface η and the
+// edge's endpoint bed elevations — Begnudelli & Sanders (2007) Eq. 14, adapted
+// to the diffusive wave (it replaces the upwind CELL-MEAN depth in the Manning
+// conveyance). Piecewise C¹ in η:
+//   η ≤ z_lo          : 0                        (wetting gate: bed above water)
+//   z_lo < η ≤ z_hi   : (η − z_lo)² / (2(z_hi − z_lo))   (partially submerged)
+//   η > z_hi          : η − (z_lo + z_hi)/2      (fully submerged: mean depth)
+// The quadratic branch matches value AND slope at both joins, so the flux
+// stays C¹ for the implicit (Newton/FD-Jacobian) solvers — no new Hermite
+// bands. A cell with water pooled below the whole shared edge conveys nothing
+// across it (kills the uphill-creep / slope-stranding artifacts, per the
+// paper's sloping-bed and roughened-bed tests).
+inline double faceDepthFromEta(double eta, double z_lo, double z_hi) noexcept {
+    if (eta <= z_lo) return 0.0;
+    const double dz = z_hi - z_lo;
+    if (dz < 1.0e-9) return eta - z_lo;             // level edge
+    if (eta <= z_hi) {
+        const double t = eta - z_lo;
+        return t * t / (2.0 * dz);
+    }
+    return eta - 0.5 * (z_lo + z_hi);
+}
+
 // Head-difference regularization for the diffusive-wave flux. The collapsed
 // Manning flux carries √|Δη|, whose derivative ∂F/∂Δη ∝ 1/√|Δη| → ∞ as the
 // water surface flattens — so in deep, near-level ponding (post-storm drainage)
@@ -69,12 +107,15 @@ inline double regSqrt(double x, double eps) noexcept {
 // (SurfaceRouter2D::resolveBoundaryValues); a RATING_CURVE is resolved there
 // into edge_bc_flow, so it is handled identically to SPECIFIED_FLOW here.
 inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& state,
+                               const SolverOptions2D& opts,
                                double dh_eps, int i, int idx) noexcept {
     const BoundaryData* b = state.boundary;
     if (!b) return 0.0;
     const double L = mesh.edge_length[idx];
     const double n = mesh.mannings_n[i];
     const double depth = state.depth[i];
+    const bool vfr_face =
+        (opts.face_reconstruction == FaceDepth2D::VFR_FACE);
     switch (static_cast<BoundaryType>(b->edge_bc_type[idx])) {
         case BoundaryType::WALL:
             return 0.0;
@@ -82,7 +123,17 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
             // Manning normal-flow outlet: per-metre outflow q = (1/n)·h^(5/3)·√S.
             const double S = b->edge_bed_slope[idx];
             if (S <= 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
-            const double h53 = depth * std::cbrt(depth * depth);
+            // §VFR_FACE: convey with the depth AT the boundary edge (Eq. 14
+            // from the cell's free surface) instead of the cell mean, so a
+            // cell whose water pools away from the outlet edge does not leak.
+            double h_out = depth;
+            if (vfr_face) {
+                double z_lo, z_hi;
+                edgeEndpointZ(mesh, i, idx % 3, z_lo, z_hi);
+                h_out = faceDepthFromEta(state.head[i], z_lo, z_hi);
+                if (h_out <= 0.0) return 0.0;
+            }
+            const double h53 = h_out * std::cbrt(h_out * h_out);
             return -(h53 * std::sqrt(S) / n) * L;
         }
         case BoundaryType::SPECIFIED_FLOW:
@@ -99,8 +150,19 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
             const double A    = mesh.tri_area[i];
             const double dx_b = (L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0;
             if (dx_b <= 1.0e-12) return 0.0;
-            const double h_up = (dh > 0.0) ? depth
-                                           : std::max(h_bc - mesh.tri_cz[i], 0.0);
+            double h_up;
+            if (vfr_face) {
+                // §VFR_FACE: upwind depth AT the boundary edge from whichever
+                // side is higher (cell surface on outflow, prescribed stage on
+                // inflow) — mirrors the interior Eq. 14 treatment.
+                double z_lo, z_hi;
+                edgeEndpointZ(mesh, i, idx % 3, z_lo, z_hi);
+                h_up = faceDepthFromEta((dh > 0.0) ? state.head[i] : h_bc,
+                                        z_lo, z_hi);
+            } else {
+                h_up = (dh > 0.0) ? depth
+                                  : std::max(h_bc - mesh.tri_cz[i], 0.0);
+            }
             if (h_up <= 0.0) return 0.0;
             const double h53     = h_up * std::cbrt(h_up * h_up);
             const double sign_dh = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
@@ -252,7 +314,8 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
             if (nbr < 0) {
                 // Domain boundary: no-flux wall by default; apply the configured
                 // boundary condition when one is attached (state.boundary).
-                state.edge_flux[idx] = boundaryEdgeFlux(mesh, state, dh_eps, i, idx);
+                state.edge_flux[idx] = boundaryEdgeFlux(mesh, state, opts,
+                                                        dh_eps, i, idx);
                 continue;
             }
 
@@ -279,6 +342,24 @@ void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
             if (depth_up <= 0.0) {
                 state.edge_flux[idx] = 0.0;
                 continue;
+            }
+
+            // §VFR_FACE — B&S (2007) Eq. 14 face reconstruction: the conveyance
+            // depth is evaluated AT THE EDGE from the upwind free surface and
+            // the edge's endpoint bed elevations, not as the upwind cell mean.
+            // Zero when the upwind surface sits below the whole edge (the
+            // wetting gate — water pooled in a low corner cannot climb across
+            // a higher shared edge). Both incident cells compute the same
+            // (z_lo, z_hi, η_up), so antisymmetry / conservation is untouched.
+            if (opts.face_reconstruction == FaceDepth2D::VFR_FACE) {
+                double z_lo, z_hi;
+                edgeEndpointZ(mesh, i, e, z_lo, z_hi);
+                const double eta_up = (upstream == i) ? h_L : h_R;
+                depth_up = faceDepthFromEta(eta_up, z_lo, z_hi);
+                if (depth_up <= 0.0) {
+                    state.edge_flux[idx] = 0.0;
+                    continue;
+                }
             }
 
             // Unified well-balanced flux for the Manning diffusive wave.

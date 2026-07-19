@@ -11,6 +11,9 @@
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "../mesh/VfrClosure.hpp"
+
+#include <algorithm>
 #include "../solver/InertialEdges.hpp"
 
 #include <arkode/arkode.h>
@@ -21,6 +24,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cstdlib>
+#include <cstdio>
 
 static_assert(sizeof(sunrealtype) == sizeof(double),
               "ArkodeKokkosSurfaceSolver requires a double-precision SUNDIALS build");
@@ -76,6 +80,23 @@ void ArkodeKokkosSurfaceSolver::uploadMesh() {
     mesh_v_.tri_nbr1   = mirrorI(m.tri_nbr1,   "tri_nbr1");
     mesh_v_.tri_nbr2   = mirrorI(m.tri_nbr2,   "tri_nbr2");
     mesh_v_.edge_length= mirrorD(m.edge_length,"edge_length");
+
+    // VFR closure inputs: per-cell sorted vertex elevations (the inertial cell
+    // reconstruct uses these; the inertial face still uses E.zface).
+    std::vector<double> z1(nt_), z2(nt_), z3(nt_);
+    auto sort3 = [](double& a, double& b, double& c) {
+        if (a > b) std::swap(a, b);
+        if (b > c) std::swap(b, c);
+        if (a > b) std::swap(a, b);
+    };
+    for (int t = 0; t < nt_; ++t) {
+        double a = m.vz[m.tri_v0[t]], b = m.vz[m.tri_v1[t]], c = m.vz[m.tri_v2[t]];
+        sort3(a, b, c);
+        z1[t] = a; z2[t] = b; z3[t] = c;
+    }
+    mesh_v_.tri_z1 = mirrorD(z1, "tri_z1");
+    mesh_v_.tri_z2 = mirrorD(z2, "tri_z2");
+    mesh_v_.tri_z3 = mirrorD(z3, "tri_z3");
 }
 
 void ArkodeKokkosSurfaceSolver::uploadEdges() {
@@ -103,11 +124,15 @@ void ArkodeKokkosSurfaceSolver::uploadSources() {
 }
 
 void ArkodeKokkosSurfaceSolver::seedState() {
-    // V = A·max(η − tri_cz, 0) from the host free surface; q starts at rest.
+    // V = A·h̄(η) from the host free surface via the VFR closure; q starts at rest.
+    const auto& m = *mesh_host_;
+    const double eps = opts_host_->vfr_min_wet_frac;
     std::vector<double> y(static_cast<std::size_t>(nt_ + ne_), 0.0);
     for (int i = 0; i < nt_; ++i) {
-        const double d = state_host_->head[i] - mesh_host_->tri_cz[i];
-        y[i] = (d > 0.0) ? mesh_host_->tri_area[i] * d : 0.0;
+        double z1 = m.vz[m.tri_v0[i]], z2 = m.vz[m.tri_v1[i]], z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        y[i] = m.tri_area[i]
+             * vfrMeanDepthFromEta(z1, z2, z3, state_host_->head[i], eps);
         state_host_->volume[i] = y[i];
     }
     Kokkos::deep_copy(y_->View(), HostConstD(y.data(), y.size()));
@@ -119,12 +144,16 @@ void ArkodeKokkosSurfaceSolver::downloadState() {
     auto Vsub = Kokkos::subview(yv, Kokkos::make_pair(0, nt_));
     Kokkos::deep_copy(HostMutD(state_host_->volume.data(),
                                static_cast<std::size_t>(nt_)), Vsub);
+    const auto& m = *mesh_host_;
+    const double eps = opts_host_->vfr_min_wet_frac;
     for (int i = 0; i < nt_; ++i) {
-        const double A = mesh_host_->tri_area[i];
+        const double A = m.tri_area[i];
         const double v = (state_host_->volume[i] > 0.0) ? state_host_->volume[i] : 0.0;
         const double d = (A > 1.0e-30) ? v / A : 0.0;
         state_host_->depth[i] = d;
-        state_host_->head[i]  = mesh_host_->tri_cz[i] + d;
+        double z1 = m.vz[m.tri_v0[i]], z2 = m.vz[m.tri_v1[i]], z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        state_host_->head[i]  = vfrEtaFromMeanDepth(z1, z2, z3, d, eps);
     }
     // Project q → edge_flux on device, then copy to host (SurfaceRouter2D reads
     // state.edge_flux for continuity / velocity / mass balance and skips its DW
@@ -142,7 +171,7 @@ int ArkodeKokkosSurfaceSolver::fe_cb(sunrealtype, N_Vector y, N_Vector ydot,
                                      void* user_data) {
     auto* c = static_cast<ArkodeKokkosContext*>(user_data);
     evaluateInertialFe(*c->mesh, *c->state, *c->edges,
-                       viewOf(y), viewOf(ydot), c->dry_depth);
+                       viewOf(y), viewOf(ydot), c->dry_depth, c->vfr_eps);
     Kokkos::fence();
     return 0;
 }
@@ -151,7 +180,7 @@ int ArkodeKokkosSurfaceSolver::fi_cb(sunrealtype, N_Vector y, N_Vector ydot,
                                      void* user_data) {
     auto* c = static_cast<ArkodeKokkosContext*>(user_data);
     evaluateInertialFi(*c->mesh, *c->state, *c->edges,
-                       viewOf(y), viewOf(ydot), c->dry_depth);
+                       viewOf(y), viewOf(ydot), c->dry_depth, c->vfr_eps);
     Kokkos::fence();
     return 0;
 }
@@ -162,7 +191,7 @@ int ArkodeKokkosSurfaceSolver::psetup_cb(sunrealtype, N_Vector y, N_Vector,
     auto* c = static_cast<ArkodeKokkosContext*>(user_data);
     if (jcurPtr) *jcurPtr = SUNTRUE;   // friction diagonal recomputed each call
     precondInertialSetup(*c->mesh, *c->state, *c->edges,
-                         viewOf(y), c->prec_wq, gamma, c->dry_depth);
+                         viewOf(y), c->prec_wq, gamma, c->dry_depth, c->vfr_eps);
     Kokkos::fence();
     return 0;
 }
@@ -223,6 +252,7 @@ void ArkodeKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& sta
     ctx_.edges     = &edges_v_;
     ctx_.prec_wq   = prec_wq_;
     ctx_.dry_depth = opts.dry_depth;
+    ctx_.vfr_eps   = opts.vfr_min_wet_frac;
     ctx_.nt        = nt_;
     ctx_.ne        = ne_;
 

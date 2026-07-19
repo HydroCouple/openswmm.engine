@@ -100,6 +100,52 @@ enum class MomentumType : int8_t {
 };
 
 /**
+ * @brief Volume → free-surface closure for a 2D cell.
+ *
+ * FLAT (default, legacy) reconstructs η = tri_cz + V/A — exact only for a
+ * fully wetted cell. On a partially wet (slope/step-spanning) cell it
+ * overstates η by up to two-thirds of the cell relief, which is the driver of
+ * the water-climbs-uphill artifact (spurious head pushes thin films upslope;
+ * lake-at-rest is not a steady state at shorelines).
+ *
+ * VFR reconstructs η from the exact stage–storage relation of the plane bed
+ * through the cell's three vertex elevations (Begnudelli & Sanders 2006/2007
+ * volume/free-surface relationships), C¹-regularized for the implicit solvers
+ * by a wetted-area-fraction floor (VFR_MIN_WET_FRAC). Restores the C-property
+ * at shorelines. CPU solvers (CVODE/ARKODE) only; the Kokkos GPU backends
+ * degrade to FLAT with a one-line notice until ported.
+ *
+ * Parsed from [2D_OPTIONS] CELL_CLOSURE (FLAT|VFR).
+ * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
+ */
+enum class CellClosure2D : int8_t {
+    FLAT = 0,   ///< Legacy flat-cell closure η = tri_cz + V/A (default).
+    VFR  = 1    ///< Planar-bed VFR closure (regularized), CPU solvers only.
+};
+
+/**
+ * @brief Effective conveyance depth at a shared edge for the diffusive-wave flux.
+ *
+ * MEAN (default, legacy) uses the upwind cell's MEAN depth V/A — blind to
+ * where the waterline sits relative to the edge, so a cell with water pooled
+ * in its low corner can discharge across an edge whose bed is entirely above
+ * the waterline (uphill creep), and drainage strands water on slopes.
+ *
+ * VFR_FACE reconstructs the depth at the edge from the upwind free surface
+ * and the edge's two endpoint bed elevations (Begnudelli & Sanders 2007,
+ * Eq. 14, adapted as the Manning conveyance depth): zero when the upwind
+ * surface is below the whole edge (no flow — the wetting gate), the exact
+ * partially-submerged mean when the waterline crosses the edge. C¹ in η.
+ *
+ * Parsed from [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE).
+ * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
+ */
+enum class FaceDepth2D : int8_t {
+    MEAN     = 0,   ///< Legacy: upwind cell-mean depth (default).
+    VFR_FACE = 1    ///< B&S Eq. 14 face depth + wetting gate.
+};
+
+/**
  * @brief How raingage rainfall is mapped onto the 2D mesh cells.
  *
  * NATURAL_NEIGHBOUR (default) spatially interpolates the located raingages onto
@@ -188,6 +234,29 @@ struct SolverOptions2D {
     // Parsed from [2D_OPTIONS] RAINFALL_MODE; env OPENSWMM_2D_RAINFALL_MODE
     // (natural|system) overrides.
     RainfallMode       rainfall_mode   = RainfallMode::NATURAL_NEIGHBOUR;
+
+    // Volume → free-surface cell closure. Default VFR (Phase-5 rollout of
+    // plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md, 2026-07-19): the planar-bed
+    // volume/free-surface relation restores the C-property at shorelines and
+    // removes the flat-closure water-climbs-uphill artifact. FLAT (legacy
+    // η = tri_cz + V/A) remains selectable for A/B. Parsed from
+    // [2D_OPTIONS] CELL_CLOSURE (FLAT|VFR).
+    CellClosure2D      cell_closure    = CellClosure2D::VFR;
+
+    // Effective conveyance depth at shared edges. Default VFR_FACE (Phase-5):
+    // the B&S Eq. 14 face depth + wetting gate stops flow across an edge whose
+    // bed sits above the upwind surface (the second half of the artifact fix).
+    // MEAN (legacy upwind cell-mean depth) remains selectable. Parsed from
+    // [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE). Independent of
+    // CELL_CLOSURE so the two pieces can be A/B'd separately.
+    FaceDepth2D        face_reconstruction = FaceDepth2D::VFR_FACE;
+
+    /// Wetted-area-fraction floor ε of the regularized VFR closure: below wet
+    /// fraction ε the η(V) relation continues linearly (slope 1/(εA)), bounding
+    /// dη/dV for the implicit solvers' Newton/Jacobian path. Exact elsewhere.
+    /// Only used when CELL_CLOSURE = VFR. Parsed from [2D_OPTIONS]
+    /// VFR_MIN_WET_FRAC; valid range (0, 0.5].
+    double             vfr_min_wet_frac = 0.01;
 
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
     // Default to AMG (hypre BoomerAMG): the only preconditioner with

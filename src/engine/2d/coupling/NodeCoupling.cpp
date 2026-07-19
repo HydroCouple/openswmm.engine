@@ -120,6 +120,42 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
     }
 }
 
+/// Wet-masked 2D free surface at a coupling vertex: depth-weighted average of
+/// the incident WET cells' η (depth ≥ dry_depth), falling back to the vertex
+/// ground elevation when every incident cell is dry. Used for the coupling
+/// head under CELL_CLOSURE = VFR instead of the pseudo-Laplacian vert_head,
+/// which blends DRY-cell heads (= bed elevations) into shoreline vertices and
+/// so reads ≈ terrain over a pond — the failure modes documented at the
+/// stencil-depth scan below and (for outfalls) in updateOutfallBoundaries.
+/// Same weighting rule as reconstructVertexRenderDepths, evaluated on demand
+/// for the handful of coupling vertices inside the RHS (O(stencil) each).
+inline double wetVertexEta(const MeshData& mesh, const SurfaceStateData& state,
+                           int v, double dry_depth) noexcept {
+    const int s = mesh.vert_stencil_ptr[v];
+    const int e = mesh.vert_stencil_ptr[v + 1];
+    double num = 0.0, den = 0.0;
+    for (int k = s; k < e; ++k) {
+        const int t = mesh.vert_stencil_idx[k];
+        const double h = state.depth[t];
+        if (!(h >= dry_depth)) continue;            // dry skip (NaN-robust)
+        num += h * state.head[t];
+        den += h;
+    }
+    return (den > 0.0) ? num / den : mesh.vz[v];
+}
+
+/// Coupling head h_2d at a coupling point: wet-masked vertex η under the VFR
+/// closure, the legacy pseudo-Laplacian vert_head under FLAT (bit-identical
+/// default), the cell head for triangle-coupled points.
+inline double couplingHead2D(const CouplingPoint& cp, const MeshData& mesh,
+                             const SurfaceStateData& state,
+                             const SolverOptions2D& opts) noexcept {
+    if (cp.vertex_idx < 0) return state.head[cp.cell_idx];
+    if (opts.cell_closure == CellClosure2D::VFR)
+        return wetVertexEta(mesh, state, cp.vertex_idx, opts.dry_depth);
+    return state.vert_head[cp.vertex_idx];
+}
+
 } // anonymous namespace
 
 
@@ -132,8 +168,9 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     const int  ci = cp.cell_idx;
 
     // Live 2D head at the coupling point (reconstructed this RHS call).
-    const double h_2d = (cp.vertex_idx >= 0) ? state.vert_head[cp.vertex_idx]
-                                             : state.head[ci];
+    // VFR closure: wet-masked vertex η (dry terrain can't fake a surface);
+    // FLAT: the legacy pseudo-Laplacian vert_head, bit-identical.
+    const double h_2d = couplingHead2D(cp, mesh, state, opts);
     // 1D node head — frozen across the 2D advance window.
     const double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
 
@@ -327,13 +364,9 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
 
         // 2D head at the coupling point (bed elevation z_2d no longer needed —
         // the capped-pipe driver is the head difference h_2d − h_1d, not the
-        // surface ponding depth).
-        double h_2d;
-        if (cp.vertex_idx >= 0) {
-            h_2d = state.vert_head[cp.vertex_idx];
-        } else {
-            h_2d = state.head[ci];
-        }
+        // surface ponding depth). VFR closure: wet-masked vertex η; FLAT: the
+        // legacy pseudo-Laplacian vert_head (bit-identical default).
+        double h_2d = couplingHead2D(cp, mesh, state, opts);
 
         // 1D node head. The 1D engine always stores heads in feet (US internal
         // units, every project); convert to the 2D solver's SI internal length
