@@ -365,6 +365,84 @@ TEST(RDIISolverInit, InitFromContext) {
     EXPECT_NEAR(solver.uh_params[0].tBase[0][0], 7200.0, 1e-6);
 }
 
+TEST(RDIISolverInit, WarnsWhenAllOverridesMonthlyParams) {
+    auto ctx = makeRdiiContext(1, 1);
+
+    // A month-specific entry followed by an ALL entry for the same
+    // response — the ALL entry silently overrides July's values, so a
+    // WARNING 13 must be issued (matching legacy rdii_readUnitHydParams).
+    UnitHydEntry e{};
+    e.name = "UH1";
+    e.month = 6;     // July (0-based)
+    e.response = 0;  // SHORT
+    e.r = 0.2;
+    e.t = 1.0;
+    e.k = 1.0;
+    ctx.unit_hyds.add(e);
+
+    e.month = -1;  // ALL
+    e.r = 0.5;
+    ctx.unit_hyds.add(e);
+
+    RDIISolver solver;
+    solver.init(ctx);
+
+    ASSERT_EQ(ctx.warnings.size(), 1u);
+    EXPECT_NE(ctx.warnings[0].find("WARNING 13"), std::string::npos);
+    EXPECT_NE(ctx.warnings[0].find("UH1"), std::string::npos);
+
+    // The values entered last (ALL) are the ones used for July
+    EXPECT_NEAR(solver.uh_params[0].r[6][0], 0.5, 1e-10);
+}
+
+TEST(RDIISolverInit, NoWarningForDistinctMonthsAndResponses) {
+    auto ctx = makeRdiiContext(1, 1);
+
+    // Different months and different responses never overlap — no warning
+    UnitHydEntry e{};
+    e.name = "UH1";
+    e.response = 0;  // SHORT
+    e.r = 0.2;
+    e.t = 1.0;
+    e.k = 1.0;
+
+    e.month = 0;  // January
+    ctx.unit_hyds.add(e);
+    e.month = 1;  // February
+    ctx.unit_hyds.add(e);
+    e.month = 0;  // January again but for a different response
+    e.response = 1;  // MEDIUM
+    ctx.unit_hyds.add(e);
+
+    RDIISolver solver;
+    solver.init(ctx);
+
+    EXPECT_TRUE(ctx.warnings.empty());
+}
+
+TEST(RDIISolverInit, WarnsWhenSameMonthRepeated) {
+    auto ctx = makeRdiiContext(1, 1);
+
+    // The same month specified twice for the same response
+    UnitHydEntry e{};
+    e.name = "UH1";
+    e.month = 3;     // April
+    e.response = 2;  // LONG
+    e.r = 0.1;
+    e.t = 2.0;
+    e.k = 1.5;
+    ctx.unit_hyds.add(e);
+    e.r = 0.3;
+    ctx.unit_hyds.add(e);
+
+    RDIISolver solver;
+    solver.init(ctx);
+
+    ASSERT_EQ(ctx.warnings.size(), 1u);
+    EXPECT_NE(ctx.warnings[0].find("WARNING 13"), std::string::npos);
+    EXPECT_NEAR(solver.uh_params[0].r[3][2], 0.3, 1e-10);
+}
+
 // ============================================================================
 // Convolution Tests
 // ============================================================================

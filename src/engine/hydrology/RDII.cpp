@@ -12,6 +12,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/ErrorCodes.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -153,6 +154,12 @@ void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
 // init() — populate UH params from parsed data, allocate per-response buffers.
 // ---------------------------------------------------------------------------
 void RDIISolver::init(SimulationContext& ctx) {
+    // Tracks which (month, response) slots each UH group has already been
+    // assigned, so repeated assignments to the same month (e.g. an ALL entry
+    // overriding earlier month-specific entries) can be flagged — matching
+    // legacy WARN13 issued from rdii_readUnitHydParams().
+    std::unordered_map<int, std::array<std::array<bool, 3>, 12>> params_seen;
+
     // Populate UH params from parsed [HYDROGRAPHS] data
     for (const auto& entry : ctx.unit_hyds.entries) {
         int idx = findUnitHyd(entry.name);
@@ -168,6 +175,19 @@ void RDIISolver::init(SimulationContext& ctx) {
         int m_start = (entry.month < 0) ? 0  : entry.month;
         int m_end   = (entry.month < 0) ? 11 : entry.month;
         int k = entry.response;
+
+        // Warn once per entry that re-assigns an already-assigned month;
+        // the values entered last are the ones used.
+        auto& seen = params_seen[idx];
+        bool repeated = false;
+        for (int m = m_start; m <= m_end; ++m) {
+            if (seen[static_cast<size_t>(m)][static_cast<size_t>(k)]) repeated = true;
+            seen[static_cast<size_t>(m)][static_cast<size_t>(k)] = true;
+        }
+        if (repeated) {
+            ctx.warnings.push_back(
+                format_warning(WARN_UH_PARAMS_REPEATED, entry.name));
+        }
 
         for (int m = m_start; m <= m_end; ++m) {
             uh.r[m][k]       = entry.r;

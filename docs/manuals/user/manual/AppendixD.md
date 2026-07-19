@@ -971,6 +971,7 @@ PRIORITY value
     *   **Dmax**: maximum initial abstraction depth.
     *   **Drec**: initial abstraction recovery rate (per day).
     *   **D0**: initial abstraction depth already filled at start.
+*   **Remarks:** Lines are processed in the order they appear, and an entry for **ALL** assigns its values to every month of the year. An ALL entry therefore overrides any month-specific values entered on earlier lines (e.g., if entries appear in the order JAN through SEP, ALL, OCT, NOV, DEC, the ALL entry replaces the values entered for JAN through SEP, leaving only OCT, NOV, and DEC with their own values). Whenever parameters for the same month and response type are supplied more than once, the values entered last are used and WARNING 13 is written to the status report.
 
 ---
 
