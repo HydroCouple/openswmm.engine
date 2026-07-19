@@ -792,6 +792,11 @@ void resolve_cross_references(SimulationContext& ctx) {
             if (sub_idx >= 0) {
                 ctx.subcatches.outlet_subcatch[us] = sub_idx;
                 ctx.subcatches.outlet_node[us] = -1;
+            } else {
+                // Outlet references neither a node nor a subcatchment — legacy
+                // raises a fatal ERR_NAME (209 undefined object). Surface it so
+                // the open fails instead of silently dropping the outlet.
+                ctx.errors.push_back(format_error(ERR_NAME, name));
             }
         }
     }
@@ -814,14 +819,28 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Subcatchment gage re-resolution
     // -------------------------------------------------------------------------
-    // If SUBCATCHMENTS parsed before RAINGAGES, gage indices may be -1.
-    // The handler stored the name in the gage field via gage_names.find().
-    // No name stored — just re-validate indices are in range.
+    // If SUBCATCHMENTS parsed before RAINGAGES, gage indices may be -1. The
+    // handler stored the gage NAME in gage_name for exactly this case: re-resolve
+    // from the name, and raise a fatal ERR_NAME (209) if it names no defined gage
+    // (legacy project.c behavior). A blank name means no gage assigned (allowed).
     for (int s = 0; s < n_subcatch; ++s) {
         auto us = static_cast<std::size_t>(s);
         int gi = ctx.subcatches.gage[us];
-        if (gi < 0 || gi >= n_gages) {
+        if (gi >= 0 && gi < n_gages) continue;  // already resolved and in range
+
+        const auto& name = (us < ctx.subcatches.gage_name.size())
+                               ? ctx.subcatches.gage_name[us]
+                               : std::string{};
+        if (name.empty()) {
             ctx.subcatches.gage[us] = -1;
+            continue;
+        }
+        int idx = ctx.gage_names.find(name);
+        if (idx >= 0 && idx < n_gages) {
+            ctx.subcatches.gage[us] = idx;
+        } else {
+            ctx.subcatches.gage[us] = -1;
+            ctx.errors.push_back(format_error(ERR_NAME, name));
         }
     }
 
@@ -834,8 +853,11 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (r < 0) continue;
         auto& S = ctx.node_subtypes.storages;
         const auto ur = static_cast<std::size_t>(r);
-        if (S.curve[ur] < 0 && !S.curve_name[ur].empty())
+        if (S.curve[ur] < 0 && !S.curve_name[ur].empty()) {
             S.curve[ur] = ctx.table_names.find(S.curve_name[ur]);
+            if (S.curve[ur] < 0)
+                ctx.errors.push_back(format_error(ERR_NAME, S.curve_name[ur]));
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -886,6 +908,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.link_subtypes.pumps.curve[upr] >= 0) continue; // already resolved
         if (ctx.links.pump_curve_name[uj].empty()) continue;
         ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+        if (ctx.link_subtypes.pumps.curve[upr] < 0)
+            ctx.errors.push_back(format_error(ERR_NAME, ctx.links.pump_curve_name[uj]));
     }
 
     // Outlet (TABULAR) rating curve name resolution — curve name stored in
@@ -901,6 +925,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.link_subtypes.outlets.curve[uolr] >= 0) continue; // already resolved
         if (ctx.links.pump_curve_name[uj].empty()) continue;
         ctx.link_subtypes.outlets.curve[uolr] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+        if (ctx.link_subtypes.outlets.curve[uolr] < 0)
+            ctx.errors.push_back(format_error(ERR_NAME, ctx.links.pump_curve_name[uj]));
     }
 
     // Convert pump startup/shutoff depths from display units → internal (ft)
@@ -1506,15 +1532,20 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         double slope;
         if (delta >= length) {
+            // Elevation drop meets or exceeds the conduit length (legacy WARNING 08)
             slope = delta / length;
+            ctx.warnings.push_back(
+                format_warning(WARN_ELEV_DROP_EXCEEDS, ctx.link_names.name_of(j)));
         } else {
             // slope = elev drop / horizontal distance
             slope = delta / std::sqrt(length * length - delta * delta);
         }
 
-        // Apply minimum slope
+        // Apply minimum slope (legacy WARNING 05)
         if (ctx.options.min_slope > 0.0 && slope < ctx.options.min_slope) {
             slope = ctx.options.min_slope;
+            ctx.warnings.push_back(
+                format_warning(WARN_MIN_SLOPE, ctx.link_names.name_of(j)));
         }
 
         // Negative slope for adverse gradient

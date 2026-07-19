@@ -188,20 +188,31 @@ int SWMMEngine::open(const char* inp_path,
             if (!err.empty()) {
                 ctx_.error_code    = SWMM_ERR_PARSE;
                 ctx_.error_message = err;
+                ctx_.errors.push_back(err);
+                write_open_failure_report();
                 return SWMM_ERR_PARSE;
             }
         }
     }
 #endif
 
-    // Warn about unknown/skipped sections
+    // Warn about unknown/skipped sections. Route through push_report_warning so
+    // the warning reaches the .rpt (legacy report_writeWarningMsg), not just the
+    // API callback. Wording matches legacy input.c ("Unknown section '[X]' ...");
+    // the "at line N" locus is omitted (source line numbers are not retained by
+    // the parser — see plan Phase 6).
     for (const auto& tag : input_plugin->skipped_sections()) {
-        emit_warning(100,
-            ("Unknown input section [" + tag + "] — skipped").c_str());
+        push_report_warning(
+            "WARNING: Unknown section '[" + tag + "]' will be skipped.", 100);
     }
 
     // Resolve cross-references (forward refs, final array sizing, head init)
     input::resolve_cross_references(ctx_);
+
+    // Project-level sanity checks + step-clamp warnings (legacy project_validate:
+    // WARNING 01/06/07). Must run before the fatal gate below so any warnings it
+    // records reach the report.
+    validate_project();
 
     // Post-parse validation errors accumulated during resolution (e.g.
     // ERR_TRANSECT_MANNING 227 for a zero channel Manning's n) are fatal:
@@ -210,6 +221,11 @@ int SWMMEngine::open(const char* inp_path,
     // with broken derived state.
     if (!ctx_.errors.empty()) {
         set_error(SWMM_ERR_PARSE, ctx_.errors.front().c_str());
+        // Write the accumulated errors/warnings to the report file, matching
+        // legacy where a failed open still produces a .rpt containing the error
+        // (report_writeErrorMsg). Without this the diagnostics would only reach
+        // stderr and the .rpt would be absent.
+        write_open_failure_report();
         return SWMM_ERR_PARSE;
     }
 
@@ -4193,6 +4209,49 @@ void SWMMEngine::set_step_end_callback(SWMM_StepEndCallback cb, void* ud) noexce
 // Private helpers
 // ============================================================================
 
+void SWMMEngine::validate_project() noexcept {
+    auto& opt = ctx_.options;
+
+    // WARNING 01: wet-weather routing step reduced to a rain gage's recording
+    // interval (legacy gage_validate / gage.c). Progressively clamp WetStep to
+    // the smallest gage interval it exceeds, warning per gage.
+    const int ng = ctx_.n_gages();
+    for (int g = 0; g < ng; ++g) {
+        const double interval =
+            static_cast<double>(ctx_.gages.interval_sec[static_cast<std::size_t>(g)]);
+        if (interval > 0.0 && opt.wet_step > interval) {
+            opt.wet_step = interval;
+            ctx_.warnings.push_back(
+                format_warning(WARN_WET_STEP_REDUCED, ctx_.gage_names.name_of(g)));
+        }
+    }
+
+    // WARNING 06: dry-weather step increased to the wet-weather step (legacy
+    // project.c). Empty object id, matching legacy.
+    if (opt.dry_step < opt.wet_step) {
+        opt.dry_step = opt.wet_step;
+        ctx_.warnings.push_back(format_warning(WARN_DRY_STEP_INCREASED, ""));
+    }
+
+    // WARNING 07: routing step reduced to the wet-weather step (legacy project.c).
+    if (opt.routing_step > opt.wet_step) {
+        opt.routing_step = opt.wet_step;
+        ctx_.warnings.push_back(format_warning(WARN_ROUTING_STEP_REDUCED, ""));
+    }
+}
+
+void SWMMEngine::write_open_failure_report() noexcept {
+    if (rpt_path_.empty() || ctx_.options.rpt_disabled) return;
+    try {
+        DefaultReportPlugin rp(rpt_path_);
+        rp.initialize({}, nullptr);
+        rp.prepare(ctx_);    // opens the file + writes title/errors/warnings
+        rp.finalize(ctx_);   // flush
+    } catch (...) {
+        // Never let report-writing throw out of the open() error path.
+    }
+}
+
 void SWMMEngine::set_error(int code, const char* message) noexcept {
     ctx_.error_code    = code;
     ctx_.error_message = message ? message : "";
@@ -4209,6 +4268,16 @@ void SWMMEngine::emit_warning(int code, const char* message) noexcept {
             callbacks_.warning_ud
         );
     }
+}
+
+void SWMMEngine::push_report_warning(const std::string& message,
+                                     int code) noexcept {
+    try {
+        ctx_.warnings.push_back(message);
+    } catch (...) {
+        // Out-of-memory while recording a warning is non-fatal; still notify.
+    }
+    emit_warning(code, message.c_str());
 }
 
 void SWMMEngine::emit_progress() noexcept {
@@ -4332,7 +4401,20 @@ void SWMMEngine::initHydraulics() noexcept {
     // 1a. Initialize optional 2D surface routing module.
     //     Builds mesh topology, vertex stencils, resolves coupling maps,
     //     suppresses ponding at coupled nodes, and initializes CVODE.
-    surface_router_.initialize(ctx_);
+    //     initialize() throws std::runtime_error on invalid 2D input (bad mesh,
+    //     unknown coupled node, out-of-range edge). This function is noexcept, so
+    //     an escaping exception would std::terminate the process. Catch it and
+    //     route the message through the error path so it reaches the .rpt and the
+    //     open fails gracefully, exactly like a 1D validation error.
+    try {
+        surface_router_.initialize(ctx_);
+    } catch (const std::exception& e) {
+        ctx_.errors.push_back(std::string("2D initialization failed: ") + e.what());
+        set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+    } catch (...) {
+        ctx_.errors.push_back("2D initialization failed: unknown error.");
+        set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+    }
 #endif
 
     // 1b. Configure OpenMP thread count from THREADS option.

@@ -306,11 +306,15 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens,
                                       MeshData& mesh) {
     if (tokens.size() < 2) return "Expected VERTEX_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]";
 
-    // Try to parse as integer index first
+    // Token is VERTEX_INDEX_OR_TAG. Try a numeric index first, but if the number
+    // is out of range fall back to a tag lookup — meshes can name vertices with
+    // numeric tags (e.g. "5001"), which must not be mis-read as an index and
+    // rejected as out-of-range.
     bool ok = false;
     int vidx = tryParseInt(tokens[0], ok);
+    if (ok && (vidx < 0 || vidx >= mesh.n_vertices()))
+        ok = false;  // numeric but not a valid index — treat as a tag
     if (!ok) {
-        // Try as tag name
         vidx = findVertexByTag(mesh, tokens[0]);
         if (vidx < 0) return "Unknown vertex index or tag: " + tokens[0];
     }
@@ -340,8 +344,13 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
                                         MeshData& mesh) {
     if (tokens.size() < 2) return "Expected TRIANGLE_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]";
 
+    // Token is TRIANGLE_INDEX_OR_TAG. Try a numeric index first, but fall back to
+    // a tag lookup when the number is out of range (numeric triangle tags must
+    // not be mis-read as indices and rejected).
     bool ok = false;
     int tidx = tryParseInt(tokens[0], ok);
+    if (ok && (tidx < 0 || tidx >= mesh.n_triangles()))
+        ok = false;  // numeric but not a valid index — treat as a tag
     if (!ok) {
         tidx = findTriangleByTag(mesh, tokens[0]);
         if (tidx < 0) return "Unknown triangle index or tag: " + tokens[0];

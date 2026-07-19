@@ -117,7 +117,10 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
 
         ensure_subcatch_capacity(ctx, idx);
 
-        // Gage — resolve index, may be -1 if gage not yet parsed
+        // Gage — resolve index, may be -1 if gage not yet parsed. Store the
+        // name so PostParseResolver can re-resolve a forward reference and
+        // raise ERR_NAME for a truly undefined gage (legacy fatal).
+        ctx.subcatches.gage_name[idx] = tok[1];
         ctx.subcatches.gage[idx] = ctx.gage_names.find(tok[1]);
 
         // Outlet: could be a node or another subcatchment
