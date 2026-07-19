@@ -596,6 +596,18 @@ void convert_internal_to_display(SimulationContext& ctx) {
             const int olr = ctx.link_subtypes.outlet_row(j);
             if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] *= len;
         }
+        // Pump startup/shutoff depths — mirror the display→internal conversion
+        // applied at load (the "/= ucf_len" block in resolve_cross_references).
+        // Without this the writer dumps internal feet, inflating them ×3.28084
+        // per save/open cycle on SI projects.
+        const int pr = ctx.link_subtypes.pump_row(j);
+        if (pr >= 0) {
+            const auto upr = static_cast<std::size_t>(pr);
+            if (ctx.link_subtypes.pumps.startup[upr] > 0.0)
+                ctx.link_subtypes.pumps.startup[upr] *= len;
+            if (ctx.link_subtypes.pumps.shutoff[upr] > 0.0)
+                ctx.link_subtypes.pumps.shutoff[upr] *= len;
+        }
     }
 
     // --- Subcatchments ---
