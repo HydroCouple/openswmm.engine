@@ -145,6 +145,7 @@ private:
     hid_t ds_face_continuity_err_  = H5I_INVALID_HID;
     hid_t ds_edge_flux_            = H5I_INVALID_HID;
     hid_t ds_node_head_            = H5I_INVALID_HID;
+    hid_t ds_node_depth_           = H5I_INVALID_HID;
 
     // Cumulative envelopes — fixed [nFace], overwritten in place each update()
     hid_t ds_face_max_depth_          = H5I_INVALID_HID;

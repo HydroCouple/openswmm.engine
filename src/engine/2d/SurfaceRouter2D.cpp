@@ -610,6 +610,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         window_target_    = effective_window_;
         clean_windows_    = 0;
     }
+
+    // Seed the render-only vertex free surface so the first snapshot (before
+    // any advance window fires — e.g. a hotstart-restored wet state) already
+    // carries a physically consistent field instead of the resize() zeros.
+    reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
+                                  options_.num_threads);
 }
 
 
@@ -943,6 +949,12 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
 
     // Cell-centred velocity reconstruction (RT0) from the refreshed fluxes.
     computeFaceVelocity(mesh_, state_, options_);
+
+    // Render/output-only vertex free surface (signed depths) from the accepted
+    // end-of-window depths. Wet-masked so dry-cell bed elevations never lift
+    // the rendered water surface (solver vert_head keeps its own semantics).
+    reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
+                                  options_.num_threads);
 
     // Update statistics
     state_.update_statistics(mesh_.tri_area, dt, options_.num_threads);
