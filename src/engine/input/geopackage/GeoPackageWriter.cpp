@@ -1206,8 +1206,9 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx,
     if (ctx.rdii_decay.count() > 0) {
         auto stmt = prepare(db,
             "INSERT INTO rdii_decay (simulation_id, uh_name, response, "
-            "k_dep, k_0, k_T, T_ref, theta_rec, T_freeze) "
-            "VALUES (?,?,?,?,?,?,?,?,?)");
+            "k_dep, k_0, k_T, T_ref, theta_rec, T_freeze, "
+            "snow_on, snow_T, snow_ddf) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
         static const char* responses[] = {"SHORT","MEDIUM","LONG"};
         for (const auto& e : ctx.rdii_decay.entries) {
             if (e.response < 0 || e.response > 2) continue;
@@ -1222,6 +1223,9 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx,
             sqlite3_bind_double(stmt.get(), 7, e.T_ref);
             sqlite3_bind_double(stmt.get(), 8, e.theta_rec);
             sqlite3_bind_double(stmt.get(), 9, e.T_freeze);
+            sqlite3_bind_int   (stmt.get(), 10, e.snow_on ? 1 : 0);
+            sqlite3_bind_double(stmt.get(), 11, e.snow_T);
+            sqlite3_bind_double(stmt.get(), 12, e.snow_ddf);
             sqlite3_step(stmt.get());
         }
     }

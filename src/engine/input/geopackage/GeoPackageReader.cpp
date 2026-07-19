@@ -1330,9 +1330,16 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
 
     // RDII exponential-decay parameters (optional — older GeoPackages won't have it)
     if (table_exists(db, "rdii_decay")) {
-        auto stmt = prepare(db,
-            "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze "
-            "FROM rdii_decay WHERE simulation_id = ?");
+        // Snow columns are newer than the table itself — files written before
+        // the degree-day snow model lack them and read as snow-off.
+        const bool has_snow = column_exists(db, "rdii_decay", "snow_on");
+        auto stmt = prepare(db, has_snow
+            ? "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
+              "T_freeze, snow_on, snow_T, snow_ddf "
+              "FROM rdii_decay WHERE simulation_id = ?"
+            : "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
+              "T_freeze "
+              "FROM rdii_decay WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             RDIIDecayEntry e{};
@@ -1348,6 +1355,11 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
             e.T_ref     = sqlite3_column_double(stmt.get(), 5);
             e.theta_rec = sqlite3_column_double(stmt.get(), 6);
             e.T_freeze  = sqlite3_column_double(stmt.get(), 7);
+            if (has_snow) {
+                e.snow_on  = sqlite3_column_int(stmt.get(), 8) != 0;
+                e.snow_T   = sqlite3_column_double(stmt.get(), 9);
+                e.snow_ddf = sqlite3_column_double(stmt.get(), 10);
+            }
             ctx.rdii_decay.add(e);
         }
     }

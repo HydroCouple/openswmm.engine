@@ -1592,19 +1592,24 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"\n");
     }}
 
-    // [RDII_DECAY] (exponential IA decay parameters)
+    // [RDII_DECAY] (exponential IA decay parameters; optional degree-day snow
+    // clause "SNOW snow_T snow_ddf" appended to rows with the snow model on)
     if(ctx.rdii_decay.count()>0){sec(f,"RDII_DECAY");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s\n",
-        "UHGroup","Response","k_dep","k_0","k_T","T_ref","theta_rec","T_freeze");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s\n",
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
+        "UHGroup","Response","k_dep","k_0","k_T","T_ref","theta_rec","T_freeze",
+        "Snow","snow_T","snow_ddf");
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
         "----------------","--------","----------","----------","----------",
-        "--------","----------","----------");
+        "--------","----------","----------","----","--------","----------");
     static const char* decayResp[]={"SHORT","MEDIUM","LONG"};
     for(const auto& e:ctx.rdii_decay.entries){
     const char* r=(e.response>=0&&e.response<=2)?decayResp[e.response]:"SHORT";
-    std::fprintf(f,"%-16s %-8s %10.5f %10.5f %10.5f %8.2f %10.5f %10.5f\n",
+    std::fprintf(f,"%-16s %-8s %10.5f %10.5f %10.5f %8.2f %10.5f %10.5f",
         e.uh_name.c_str(),r,
         e.k_dep,e.k_0,e.k_T,e.T_ref,e.theta_rec,e.T_freeze);
+    if(e.snow_on)
+        std::fprintf(f," SNOW %8.2f %10.5f",e.snow_T,e.snow_ddf);
+    std::fprintf(f,"\n");
     }}
 
     // [PATTERNS]

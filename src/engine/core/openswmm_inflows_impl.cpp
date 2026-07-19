@@ -13,6 +13,7 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_inflows.h"
 #include "../data/InflowData.hpp"
+#include "../edit/ObjectDeleter.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -381,12 +382,14 @@ SWMM_ENGINE_API int swmm_hydrograph_group_id(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_rdii_decay_add(SWMM_Engine engine, const char* uh_name,
                                           int response,
                                           double k_dep, double k_0, double k_T,
-                                          double T_ref, double theta_rec, double T_freeze) {
+                                          double T_ref, double theta_rec, double T_freeze,
+                                          int snow_on, double snow_T, double snow_ddf) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     if (!uh_name) return SWMM_ERR_BADPARAM;
     if (response < 0 || response > 2) return SWMM_ERR_BADPARAM;
     if (k_dep < 0.0 || k_0 < 0.0 || k_T < 0.0) return SWMM_ERR_BADPARAM;
+    if (snow_ddf < 0.0) return SWMM_ERR_BADPARAM;
 
     openswmm::RDIIDecayEntry e{};
     e.uh_name   = uh_name;
@@ -397,6 +400,9 @@ SWMM_ENGINE_API int swmm_rdii_decay_add(SWMM_Engine engine, const char* uh_name,
     e.T_ref     = T_ref;
     e.theta_rec = theta_rec;
     e.T_freeze  = T_freeze;
+    e.snow_on   = (snow_on != 0);
+    e.snow_T    = snow_T;
+    e.snow_ddf  = snow_ddf;
     ctx.rdii_decay.add(e);
     return SWMM_OK;
 }
@@ -405,13 +411,15 @@ SWMM_ENGINE_API int swmm_rdii_decay_get(SWMM_Engine engine, int entry_idx,
                                           char* uh_buf, int buflen,
                                           int* response,
                                           double* k_dep, double* k_0, double* k_T,
-                                          double* T_ref, double* theta_rec, double* T_freeze) {
+                                          double* T_ref, double* theta_rec, double* T_freeze,
+                                          int* snow_on, double* snow_T, double* snow_ddf) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(entry_idx >= 0 && entry_idx < ctx.rdii_decay.count());
     if (!uh_buf || buflen <= 0 || !response ||
         !k_dep || !k_0 || !k_T ||
-        !T_ref || !theta_rec || !T_freeze)
+        !T_ref || !theta_rec || !T_freeze ||
+        !snow_on || !snow_T || !snow_ddf)
         return SWMM_ERR_BADPARAM;
 
     const auto& e = ctx.rdii_decay.entries[static_cast<std::size_t>(entry_idx)];
@@ -423,6 +431,9 @@ SWMM_ENGINE_API int swmm_rdii_decay_get(SWMM_Engine engine, int entry_idx,
     *T_ref     = e.T_ref;
     *theta_rec = e.theta_rec;
     *T_freeze  = e.T_freeze;
+    *snow_on   = e.snow_on ? 1 : 0;
+    *snow_T    = e.snow_T;
+    *snow_ddf  = e.snow_ddf;
     return SWMM_OK;
 }
 
@@ -551,29 +562,9 @@ SWMM_ENGINE_API int swmm_hydrograph_remove_group(SWMM_Engine engine, const char*
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     if (!uh_name || !*uh_name) return SWMM_ERR_BADPARAM;
-    const std::string name(uh_name);
 
-    auto& uh = ctx.unit_hyds;
-    uh.entries.erase(
-        std::remove_if(uh.entries.begin(), uh.entries.end(),
-                       [&](const openswmm::UnitHydEntry& e) { return e.name == name; }),
-        uh.entries.end());
-
-    for (std::size_t i = uh.gage_assignments.size(); i-- > 0;) {
-        if (uh.gage_assignments[i] == name) erase_uh_gage_assignment(uh, i);
-    }
-
-    auto& dd = ctx.rdii_decay;
-    dd.entries.erase(
-        std::remove_if(dd.entries.begin(), dd.entries.end(),
-                       [&](const openswmm::RDIIDecayEntry& e) { return e.uh_name == name; }),
-        dd.entries.end());
-
-    auto& ra = ctx.rdii_assigns;
-    for (int i = ra.count() - 1; i >= 0; --i) {
-        if (ra.uh_name[static_cast<std::size_t>(i)] == name) ra.erase(i);
-    }
-
+    // Same code path as swmm_hydrograph_delete, minus the impact report.
+    openswmm::edit::delete_hydrograph(ctx, uh_name);
     return SWMM_OK;
 }
 
@@ -654,12 +645,14 @@ SWMM_ENGINE_API int swmm_hydrograph_group_rename(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_rdii_decay_set(SWMM_Engine engine, const char* uh_name,
                                           int response,
                                           double k_dep, double k_0, double k_T,
-                                          double T_ref, double theta_rec, double T_freeze) {
+                                          double T_ref, double theta_rec, double T_freeze,
+                                          int snow_on, double snow_T, double snow_ddf) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     if (!uh_name || !*uh_name) return SWMM_ERR_BADPARAM;
     if (response < 0 || response > 2) return SWMM_ERR_BADPARAM;
     if (k_dep < 0.0 || k_0 < 0.0 || k_T < 0.0) return SWMM_ERR_BADPARAM;
+    if (snow_ddf < 0.0) return SWMM_ERR_BADPARAM;
 
     const std::string name(uh_name);
     const int existing = find_decay_entry(ctx.rdii_decay, name, response);
@@ -667,6 +660,7 @@ SWMM_ENGINE_API int swmm_rdii_decay_set(SWMM_Engine engine, const char* uh_name,
         auto& e = ctx.rdii_decay.entries[static_cast<std::size_t>(existing)];
         e.k_dep = k_dep; e.k_0 = k_0; e.k_T = k_T;
         e.T_ref = T_ref; e.theta_rec = theta_rec; e.T_freeze = T_freeze;
+        e.snow_on = (snow_on != 0); e.snow_T = snow_T; e.snow_ddf = snow_ddf;
         return SWMM_OK;
     }
 
@@ -679,6 +673,9 @@ SWMM_ENGINE_API int swmm_rdii_decay_set(SWMM_Engine engine, const char* uh_name,
     e.T_ref     = T_ref;
     e.theta_rec = theta_rec;
     e.T_freeze  = T_freeze;
+    e.snow_on   = (snow_on != 0);
+    e.snow_T    = snow_T;
+    e.snow_ddf  = snow_ddf;
     ctx.rdii_decay.add(e);
     return SWMM_OK;
 }

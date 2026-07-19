@@ -252,7 +252,7 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
 // handle_rdii_decay()
 // ============================================================================
 // [RDII_DECAY] section format:
-//   UHGroup  Response  k_dep  k_0  k_T  T_ref  theta_rec  T_freeze
+//   UHGroup  Response  k_dep  k_0  k_T  T_ref  theta_rec  T_freeze  [SNOW snow_T snow_ddf]
 //
 // Where Response is "SHORT"/"MEDIUM"/"LONG". Coefficients with units:
 //   k_dep     1/(project rain-depth unit) — depletion rate, 1/in for US-unit
@@ -263,6 +263,14 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
 //   T_ref     deg C  — reference temperature
 //   theta_rec 1/degC — temperature sensitivity
 //   T_freeze  deg C  — recovery suppressed below this temperature
+//
+// Optional degree-day snow model — literal keyword SNOW followed by:
+//   snow_T    deg C  — rain/snow partition threshold & melt base
+//   snow_ddf  project rain-depth unit/degC/day — degree-day melt factor
+//             (snow_ddf = 0 with SNOW on is accumulate-only: cold-period
+//              precipitation is withheld from the IA model and never melts)
+// Rows without the SNOW keyword run the exponential IA model with no snow
+// partition (fully backward compatible).
 //
 // One row per (UH group, response). A group with no row uses the legacy
 // linear IA model; a group with one row falls back to linear on the two
@@ -292,6 +300,15 @@ void handle_rdii_decay(SimulationContext& ctx, const std::vector<std::string>& l
         e.T_freeze  = to_double(tok[7]);
 
         if (e.k_dep < 0.0 || e.k_0 < 0.0 || e.k_T < 0.0) continue;
+
+        // Optional degree-day snow model: SNOW snow_T snow_ddf
+        if (tok.size() > 8 && Tokenizer::to_upper(tok[8]) == "SNOW") {
+            if (tok.size() < 11) continue;   // malformed snow clause
+            e.snow_on  = true;
+            e.snow_T   = to_double(tok[9]);
+            e.snow_ddf = to_double(tok[10]);
+            if (e.snow_ddf < 0.0) continue;
+        }
 
         ctx.rdii_decay.add(e);
     }
