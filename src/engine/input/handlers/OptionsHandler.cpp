@@ -349,7 +349,12 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // -----------------------------------------------------------------
         } else {
             opt.ext_options[key] = val;
-            // Record a warning (non-fatal)
+            // Record a warning (non-fatal). Push to ctx.warnings so it reaches
+            // the .rpt (legacy project.c warns per unknown keyword); keep the
+            // legacy wording, and retain warning_code for the C API.
+            ctx.warnings.push_back(
+                "WARNING: Unknown option keyword '" + tokens[0] +
+                "' in [OPTIONS] section - option will be ignored.");
             if (ctx.warning_code == 0) {
                 ctx.warning_code = 101;  // SWMM_WARN_UNKNOWN_OPTION
             }

@@ -88,6 +88,7 @@ add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
 add_gtest_unit(test_engine_timeseries_file_roundtrip test_timeseries_file_roundtrip.cpp)
 add_gtest_unit(test_engine_pathresolver      test_pathresolver.cpp)
 add_gtest_unit(test_engine_postparse_resolver test_postparse_resolver.cpp)
+add_gtest_unit(test_engine_warning_error_parity test_warning_error_parity.cpp)
 add_gtest_unit(test_engine_outfall_stage_data test_outfall_stage_data.cpp)
 add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
@@ -196,6 +197,7 @@ add_gtest_unit(test_engine_runoff_interface_capi test_runoff_interface_capi.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
+add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 add_gtest_unit(test_engine_tags           test_tags.cpp)
 # Engine gaps BN-LINK-01a / -01b — symmetric getters for initial-flow /
@@ -344,6 +346,12 @@ if(OPENSWMM_BUILD_2D)
     # Dry-cell active-set masking: builder units (seed/halo/breach/cleanup),
     # option round-trip, and masked-vs-unmasked dam-break equivalence.
     add_gtest_unit(test_engine_2d_active_set test_2d_active_set.cpp)
+    # VFR (volume–free-surface) closure + VFR_FACE edge gate: closure math
+    # (round-trip / monotone / C¹ / dry anchor), lake-at-rest C-property at a
+    # shoreline (zero fluxes under VFR, spurious under FLAT — the uphill-creep
+    # driver), Eq. 14 wetting gate, and option round-trip. See
+    # plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
+    add_gtest_unit(test_engine_2d_vfr_closure test_2d_vfr_closure.cpp)
 endif()
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation

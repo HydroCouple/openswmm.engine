@@ -520,12 +520,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // window destabilises the exchange (oscillation → clamped negative cells →
     // mass loss). Always confirm the reported 2D continuity after enabling it.
     if (options_.coupling_interval > 1) {
-        std::fprintf(stderr,
-            "[openswmm 2D] WARNING: COUPLING_INTERVAL=%d advances the 2D solver "
-            "over a %d-step macro-window (experimental). This is an explicit "
-            "coupling sub-cycle and is CFL-limited — verify the 2D continuity "
-            "error in the report; reduce the interval if it grows.\n",
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "WARNING: 2D COUPLING_INTERVAL=%d advances the solver over a "
+            "%d-step macro-window (experimental, CFL-limited) — verify the 2D "
+            "continuity error; reduce the interval if it grows.",
             options_.coupling_interval, options_.coupling_interval);
+        ctx.warnings.push_back(buf);
     }
 
     // Seed the global 2D mass balance. init_storage is the surface volume at
@@ -571,9 +572,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const bool supported = (options_.integrator == IntegratorType::CVODE)
                             && (options_.momentum   == MomentumType::DW);
         if (want && !supported) {
-            std::fprintf(stderr,
-                "[openswmm 2D] NOTICE: ACTIVE_SET requires the CVODE "
-                "diffusive-wave solver; masking disabled for this run.\n");
+            ctx.warnings.push_back(
+                "WARNING: 2D ACTIVE_SET requires the CVODE diffusive-wave "
+                "solver; masking disabled for this run.");
             want = false;
         }
         active_set_.enabled = false;   // seed pass must take the full loops
@@ -838,10 +839,12 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
             && activeSetBreached(mesh_, state_, active_set_)) {
             active_set_.enabled = false;
             state_.active_set   = nullptr;
-            std::fprintf(stderr,
-                "[openswmm 2D] WARNING: wet front outran the active-set halo "
-                "twice in one window at t=%.1f s; masking disabled for the "
-                "rest of the run (results stay conservative).\n", sim_time_);
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "WARNING: 2D wet front outran the active-set halo twice in one "
+                "window at t=%.1f s; masking disabled for the rest of the run "
+                "(results stay conservative).", sim_time_);
+            ctx.warnings.push_back(buf);
         }
     }
 
@@ -857,11 +860,12 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     if (advance_failed) {
         ++failed_advance_windows_;
         if (failed_advance_windows_ == 1) {
-            std::fprintf(stderr,
-                "[openswmm 2D] WARNING: 2D solver advance failed at t=%.1f s "
-                "(window %.3f s); the surface is held frozen for this window. "
-                "Total occurrences are reported at the end of the run.\n",
-                sim_time_, dt);
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "WARNING: 2D solver advance failed at t=%.1f s (window %.3f s); "
+                "the surface is held frozen for this window. Total occurrences "
+                "are reported at the end of the run.", sim_time_, dt);
+            ctx.warnings.push_back(buf);
         }
         solver_->reinitialize(sim_time_);
         if (!live_coupling) {
@@ -994,19 +998,20 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     }
 #endif
     if (outfall_clamp_windows_ > 0) {
-        std::fprintf(stderr,
-            "[openswmm 2D] WARNING: outfall withdrawal was capped by the water "
-            "available on the 2D surface in %ld advance window(s). The 1D "
-            "network may have drawn tailwater the surface could not supply; "
-            "check the outfall stage coupling and the 2D continuity block.\n",
-            outfall_clamp_windows_);
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "WARNING: 2D outfall withdrawal was capped by the water available "
+            "on the surface in %ld advance window(s); check the outfall stage "
+            "coupling and the 2D continuity block.", outfall_clamp_windows_);
+        ctx.warnings.push_back(buf);
     }
     if (failed_advance_windows_ > 0) {
-        std::fprintf(stderr,
-            "[openswmm 2D] WARNING: the 2D solver failed to integrate %ld "
-            "advance window(s); the surface was held frozen over them. "
-            "Consider raising MAX_CVODE_STEPS or the tolerances.\n",
-            failed_advance_windows_);
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "WARNING: the 2D solver failed to integrate %ld advance window(s); "
+            "the surface was held frozen over them. Consider raising "
+            "MAX_CVODE_STEPS or the tolerances.", failed_advance_windows_);
+        ctx.warnings.push_back(buf);
     }
     active_ = false;
 }
