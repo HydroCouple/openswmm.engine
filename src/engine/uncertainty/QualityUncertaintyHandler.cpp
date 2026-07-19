@@ -135,10 +135,10 @@ std::string parseQualityUncertaintyLine(
         return "QUALITY layer only supports UNIFORM distribution";
 
     // --- Resolve NAME and ENTRY ---
-    std::string param_upper = param_str;
-    std::transform(param_upper.begin(), param_upper.end(), param_upper.begin(),
-                   [](unsigned char c){ return static_cast<char>(std::toupper(c)); });
-
+    // Preserve the pollutant NAME exactly as written on the [UNCERTAINTY] line.
+    // Pollutant names in NameIndex are stored verbatim from [POLLUTANTS] and
+    // looked up case-sensitively, so uppercasing here would break resolution
+    // for any non-uppercase pollutant name.
     ParamEntry entry;
     if (!entry_str.empty()) {
         // Explicit ENTRY — accepts any pollutant NAME.
@@ -153,7 +153,7 @@ std::string parseQualityUncertaintyLine(
 
     // --- Build spec and record ---
     UncertaintySourceSpec spec;
-    spec.name        = param_upper;
+    spec.name        = param_str;
     spec.layer       = layer;
     spec.dist        = dist;
     spec.perturbation = pert;

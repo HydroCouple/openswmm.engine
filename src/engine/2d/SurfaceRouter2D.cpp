@@ -456,8 +456,19 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
         // Map spread plane into model rain units for the ROM soft-forcing path.
         if (spread) {
             const uint8_t* fcodes = grid_reader_.family_code_now();
+            const GridSpreadKind sk = grid_reader_.spread_kind();
             for (int i = 0; i < nt; ++i) {
-                double sp = gather(spread, i) * to_m_per_s;
+                // Honor the file's spread_kind. SD and HALFRANGE are absolute
+                // rates converted like the location field; CV is a relative,
+                // dimensionless coefficient that must be scaled by the local
+                // location value to become an absolute rate.
+                double sp;
+                if (sk == GridSpreadKind::CV) {
+                    const double loc_val = loc ? gather(loc, i) : 0.0;
+                    sp = gather(spread, i) * loc_val * to_m_per_s;
+                } else {
+                    sp = gather(spread, i) * to_m_per_s;
+                }
 
                 // SR-4b: for MIXED family, UNIFORM cells use the centered band
                 // (2u-1) while the ROM's shared coefficient column uses z_i

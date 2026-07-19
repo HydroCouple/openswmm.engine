@@ -521,7 +521,15 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
                 }
 
                 H5Gclose(grp);
-                rom1d_group_created_ = true;
+
+                // Only mark the group created if every quantile dataset was
+                // created successfully; otherwise a later extendAndWrite2D()
+                // would run against an invalid handle (H5Dcreate2 can return
+                // H5I_INVALID_HID).
+                rom1d_group_created_ =
+                    (ds_rom1d_head_q05_ != H5I_INVALID_HID &&
+                     ds_rom1d_head_q50_ != H5I_INVALID_HID &&
+                     ds_rom1d_head_q95_ != H5I_INVALID_HID);
             }
         }
 

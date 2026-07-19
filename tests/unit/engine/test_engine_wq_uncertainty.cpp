@@ -76,17 +76,12 @@ TEST(EngineWQUncertainty, LifecycleIntegration) {
     error = swmm_engine_start(handle, 0);
     ASSERT_EQ(error, 0) << "Failed to start engine: " << error;
 
-    // Run simulation steps
-    double elapsed_time;
-    double current_time = 0.0;
-    double end_time = 60.0 / 86400.0; // 1 minute in days
-    while (current_time < end_time) {
+    // Run the simulation to completion so report boundaries are reached.
+    double elapsed_time = 1.0;
+    do {
         error = swmm_engine_step(handle, &elapsed_time);
         ASSERT_EQ(error, 0) << "Failed to step engine: " << error;
-        error = swmm_get_current_time(handle, &current_time);
-        ASSERT_EQ(error, 0) << "Failed to get current time: " << error;
-        if (elapsed_time <= 0.0) break;
-    }
+    } while (elapsed_time > 0.0);
 
     // End simulation
     error = swmm_engine_end(handle);
@@ -118,17 +113,12 @@ TEST(EngineWQUncertainty, CSVOutput) {
     error = swmm_engine_start(handle, 0);
     ASSERT_EQ(error, 0) << "Failed to start engine: " << error;
 
-    // Run simulation steps
-    double elapsed_time;
-    double current_time = 0.0;
-    double end_time = 60.0 / 86400.0; // 1 minute in days
-    while (current_time < end_time) {
+    // Run the simulation to completion so report boundaries are reached.
+    double elapsed_time = 1.0;
+    do {
         error = swmm_engine_step(handle, &elapsed_time);
         ASSERT_EQ(error, 0) << "Failed to step engine: " << error;
-        error = swmm_get_current_time(handle, &current_time);
-        ASSERT_EQ(error, 0) << "Failed to get current time: " << error;
-        if (elapsed_time <= 0.0) break;
-    }
+    } while (elapsed_time > 0.0);
 
     // End simulation
     error = swmm_engine_end(handle);
@@ -155,14 +145,14 @@ TEST(EngineWQUncertainty, CSVOutput) {
     EXPECT_EQ(header, "time_s,node_name,pollutant,q05,q50,q95");
 
     std::string row;
-    if (std::getline(csv_file, row)) {
-        std::stringstream row_stream(row);
-        std::vector<std::string> cols;
-        std::string col;
-        while (std::getline(row_stream, col, ',')) cols.push_back(col);
-        ASSERT_GE(cols.size(), 6u);
-        EXPECT_EQ(cols[2], "TSS");
-    }
+    ASSERT_TRUE(std::getline(csv_file, row))
+        << "WQ uncertainty CSV must contain at least one data row";
+    std::stringstream row_stream(row);
+    std::vector<std::string> cols;
+    std::string col;
+    while (std::getline(row_stream, col, ',')) cols.push_back(col);
+    ASSERT_EQ(cols.size(), 6u);
+    EXPECT_EQ(cols[2], "TSS");
 
     // Clean up
     std::remove(k_rpt_path);

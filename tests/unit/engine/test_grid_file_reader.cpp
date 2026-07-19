@@ -29,6 +29,13 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#  include <process.h>   // _getpid
+#  define getpid _getpid
+#else
+#  include <unistd.h>    // getpid
+#endif
+
 using openswmm::GridFileReader;
 using openswmm::GridFamily;
 using openswmm::GridSpreadKind;

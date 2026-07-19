@@ -40,7 +40,12 @@
 #include "uncertainty/SpectralROM1D.hpp"
 #include "uncertainty/LhsShuffle.hpp"
 
-#include <unistd.h>   // getpid
+#if defined(_WIN32)
+#  include <process.h>   // _getpid
+#  define getpid _getpid
+#else
+#  include <unistd.h>    // getpid
+#endif
 
 namespace {
 

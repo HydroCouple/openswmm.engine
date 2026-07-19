@@ -3679,17 +3679,15 @@ void SWMMEngine::initHydraulics() noexcept {
             wq_pollut_perturbations_.reserve(quality_specs.size());
             
             for (const auto& spec : quality_specs) {
-                // Find pollutant index by name
-                int pollut_index = -1;
-                const auto& pollut_names = ctx_.pollutant_names.names();
-                for (std::size_t i = 0; i < pollut_names.size(); ++i) {
-                    if (spec.name == pollut_names[i]) {
-                        pollut_index = static_cast<int>(i);
-                        break;
-                    }
+                // Resolve the configured pollutant NAME to its index through the
+                // canonical NameIndex (case-sensitive, matching [POLLUTANTS]).
+                const int pollut_index = ctx_.pollutant_names.find(spec.name);
+                if (pollut_index < 0) {
+                    emit_warning(SWMM_ERR_PARSE,
+                        ("[UNCERTAINTY] QUALITY: pollutant '" + spec.name +
+                         "' not found in [POLLUTANTS]; its uncertainty bounds "
+                         "will not be reported.").c_str());
                 }
-                
-                // Store the index (or -1 if not found - will be handled during execution)
                 wq_pollut_indices_.push_back(pollut_index);
                 wq_pollut_perturbations_.push_back(spec.perturbation);
             }
