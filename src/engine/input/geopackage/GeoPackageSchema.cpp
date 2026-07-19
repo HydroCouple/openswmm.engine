@@ -573,6 +573,9 @@ CREATE TABLE IF NOT EXISTS unit_hydrographs (
 );
 
 -- RDII exponential-decay IA parameters (one row per UH group x response).
+-- snow_on/snow_T/snow_ddf: optional degree-day snow model (accumulate SWE at
+-- T <= snow_T; melt at snow_ddf*(T - snow_T) per day above it). Older files
+-- without the snow columns read as snow-off.
 -- @see docs/RDII_ExpDecay_Implementation.md
 CREATE TABLE IF NOT EXISTS rdii_decay (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -585,6 +588,9 @@ CREATE TABLE IF NOT EXISTS rdii_decay (
     T_ref           REAL NOT NULL,
     theta_rec       REAL NOT NULL,
     T_freeze        REAL NOT NULL,
+    snow_on         INTEGER DEFAULT 0,
+    snow_T          REAL DEFAULT 1.0,
+    snow_ddf        REAL DEFAULT 0,
     UNIQUE(simulation_id, uh_name, response)
 );
 

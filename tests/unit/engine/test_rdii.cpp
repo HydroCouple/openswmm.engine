@@ -885,6 +885,7 @@ TEST(RdiiDecayParse, EightTokenRowPopulatesEntry) {
     EXPECT_NEAR(e.T_ref, 10.0, 1e-12);
     EXPECT_NEAR(e.theta_rec, 0.055, 1e-12);
     EXPECT_NEAR(e.T_freeze, 0.0, 1e-12);
+    EXPECT_FALSE(e.snow_on);  // no SNOW clause → degree-day snow model off
 }
 
 TEST(RdiiDecayParse, AllThreeResponses) {
@@ -933,6 +934,33 @@ TEST(RdiiDecayParse, SkipsNegativeRates) {
     };
     input::handle_rdii_decay(ctx, lines);
     EXPECT_EQ(ctx.rdii_decay.count(), 1);
+}
+
+TEST(RdiiDecayParse, SnowClauseParsed) {
+    SimulationContext ctx;
+    std::vector<std::string> lines = {
+        "G1 SHORT 0.15 0.010 0.070 10.0 0.055 0.0 SNOW 1.0 3.0",
+    };
+    input::handle_rdii_decay(ctx, lines);
+    ASSERT_EQ(ctx.rdii_decay.count(), 1);
+    const auto& e = ctx.rdii_decay.entries[0];
+    EXPECT_TRUE(e.snow_on);
+    EXPECT_NEAR(e.snow_T, 1.0, 1e-12);
+    EXPECT_NEAR(e.snow_ddf, 3.0, 1e-12);
+}
+
+TEST(RdiiDecayParse, MalformedSnowClauseSkipsRow) {
+    SimulationContext ctx;
+    std::vector<std::string> lines = {
+        "G1 SHORT  0.15 0.01 0.07 10.0 0.05 0.0 SNOW 1.0",      // missing ddf
+        "G1 MEDIUM 0.15 0.01 0.07 10.0 0.05 0.0 SNOW 1.0 -3.0", // ddf < 0
+        "G1 LONG   0.15 0.01 0.07 10.0 0.05 0.0 SNOW 1.0 0.0",  // good (accumulate-only)
+    };
+    input::handle_rdii_decay(ctx, lines);
+    ASSERT_EQ(ctx.rdii_decay.count(), 1);
+    EXPECT_EQ(ctx.rdii_decay.entries[0].response, 2);
+    EXPECT_TRUE(ctx.rdii_decay.entries[0].snow_on);
+    EXPECT_NEAR(ctx.rdii_decay.entries[0].snow_ddf, 0.0, 1e-12);
 }
 
 TEST(RdiiDecayInit, ResolvesEntriesToDecayParams) {
@@ -1262,6 +1290,120 @@ TEST(RdiiDecayReference, UnitSystemPairing) {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Degree-day snow model — pins the snow partition inside updateIA_exp to the
+// reference IAModel (snow=True) implementation:
+//   T <= snow_T :  SWE += P ; liquid input = 0            (snowfall)
+//   T >  snow_T :  melt = min(SWE, snow_ddf*(T-snow_T)*dt_days)
+//                  SWE -= melt ; liquid input = P + melt  (rain-on-snow adds)
+// ----------------------------------------------------------------------------
+
+TEST(RdiiDecaySnow, SnowfallAccumulatesAndRecoveryStillRuns) {
+    // T = 0 deg C (32 F) <= snow_T = 1: a 5 mm pulse becomes SWE, liquid
+    // input is zero, and the step follows the dry recovery branch. With
+    // T_freeze = -5 recovery is NOT suppressed:
+    //   k_rec = 0.05 + 0.02*exp(0.1*(0-20)) = 0.052706705664732 1/hr
+    //   avail(24 h from empty) = 10*(1 - exp(-k_rec*24)) = 7.177496782351577
+    SimulationContext ctx;
+    ctx.options.temp_source = 1;
+    ctx.climate_state.temperature = 32.0;  // deg F → 0 deg C
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;
+    rd.ia_used = 10.0;                     // empty bucket
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.3;
+    dp.k_0 = 0.05; dp.k_T = 0.02; dp.theta_rec = 0.1;
+    dp.T_ref = 20.0; dp.T_freeze = -5.0;
+    dp.snow_on = true; dp.snow_T = 1.0; dp.snow_ddf = 3.0;
+
+    double ex = updateIA_exp(uh, rd, dp, 0, 0, 5.0, 86400.0, ctx);
+    EXPECT_DOUBLE_EQ(ex, 0.0);
+    EXPECT_NEAR(rd.swe, 5.0, 1e-12);
+    EXPECT_NEAR(10.0 - rd.ia_used, 7.177496782351577, 1e-12);
+}
+
+TEST(RdiiDecaySnow, RainOnSnowFullMeltAddsToRainfall) {
+    // SWE = 10 mm, T = 10 deg C (50 F), snow_T = 1, ddf = 3 mm/degC/day over
+    // one day: potential melt = 3*9 = 27 > SWE → melt = 10 (SWE-limited).
+    // Liquid input = 5 + 10 = 15 mm through a full 10 mm bucket, k_dep = 0.3:
+    //   consumed = 10*(1 - exp(-0.3*15)) = 9.888910034617577
+    //   excess   = 15 - consumed         = 5.111089965382423
+    SimulationContext ctx;
+    ctx.options.temp_source = 1;
+    ctx.climate_state.temperature = 50.0;  // deg F → 10 deg C
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;
+    rd.swe = 10.0;
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.3;
+    dp.snow_on = true; dp.snow_T = 1.0; dp.snow_ddf = 3.0;
+
+    double ex = updateIA_exp(uh, rd, dp, 0, 0, 5.0, 86400.0, ctx);
+    EXPECT_DOUBLE_EQ(rd.swe, 0.0);
+    EXPECT_NEAR(ex, 5.111089965382423, 1e-12);
+    EXPECT_NEAR(10.0 - rd.ia_used, 0.111089965382423, 1e-12);
+}
+
+TEST(RdiiDecaySnow, DdfLimitedMelt) {
+    // SWE = 10 mm, T = 3 deg C (37.4 F), snow_T = 1, ddf = 1 mm/degC/day over
+    // one day: melt = min(10, 1*2*1) = 2 mm; SWE drops to 8.
+    // Liquid input = 5 + 2 = 7 mm; over-drain regime (consumed would be
+    // 8.775... > 7) so excess clamps to 0 and avail = 10*exp(-0.3*7).
+    SimulationContext ctx;
+    ctx.options.temp_source = 1;
+    ctx.climate_state.temperature = 37.4;  // deg F → 3 deg C
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;
+    rd.swe = 10.0;
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.3;
+    dp.snow_on = true; dp.snow_T = 1.0; dp.snow_ddf = 1.0;
+
+    double ex = updateIA_exp(uh, rd, dp, 0, 0, 5.0, 86400.0, ctx);
+    EXPECT_NEAR(rd.swe, 8.0, 1e-12);
+    EXPECT_DOUBLE_EQ(ex, 0.0);
+    EXPECT_NEAR(10.0 - rd.ia_used, 1.224564282529819, 1e-9);
+}
+
+TEST(RdiiDecaySnow, MeltAloneProducesLiquidInput) {
+    // Warm dry step (P = 0) with SWE on the ground still yields liquid input
+    // from melt — snowmelt-driven RDII with no concurrent rainfall.
+    SimulationContext ctx;
+    ctx.options.temp_source = 1;
+    ctx.climate_state.temperature = 50.0;  // 10 deg C
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;
+    rd.swe = 4.0;
+    rd.ia_used = 10.0;                     // empty bucket → nothing abstracted
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.3;
+    dp.snow_on = true; dp.snow_T = 1.0; dp.snow_ddf = 3.0;
+
+    // avail = 0 → consumed = 0 → excess = full melt depth (4 mm).
+    double ex = updateIA_exp(uh, rd, dp, 0, 0, 0.0, 86400.0, ctx);
+    EXPECT_DOUBLE_EQ(rd.swe, 0.0);
+    EXPECT_NEAR(ex, 4.0, 1e-12);
+}
+
+TEST(RdiiDecaySnow, SnowOffIgnoresSweState) {
+    // With snow_on = false the partition must not run: rainfall passes
+    // straight to the IA step and any (stale) SWE state is untouched.
+    SimulationContext ctx;
+    ctx.options.temp_source = 1;
+    ctx.climate_state.temperature = 32.0;  // 0 deg C — would be snowfall if on
+    UnitHydParams uh = makeIaOnlyUH(10.0);
+    UHResponseData rd;
+    rd.swe = 3.0;
+    ExpDecayParams dp;
+    dp.active = true; dp.k_dep = 0.3;
+
+    double ex = updateIA_exp(uh, rd, dp, 0, 0, 5.0, 300.0, ctx);
+    EXPECT_NEAR(rd.swe, 3.0, 1e-12);
+    // Same trajectory as the wet golden trace, pulse 1.
+    EXPECT_DOUBLE_EQ(ex, 0.0);
+    EXPECT_NEAR(10.0 - rd.ia_used, 2.231301601484298, 1e-12);
+}
+
 TEST(RdiiDecayInit, WarnsWhenKdepZero) {
     auto ctx = makeRdiiContext(1, 1);
     ctx.gage_names.add("G1");
@@ -1459,20 +1601,28 @@ TEST_F(RdiiCApiTest, RdiiDecayAddCountGet) {
 
     ASSERT_EQ(swmm_rdii_decay_add(engine, "SanSewer", 0 /*SHORT*/,
                                    0.15, 0.010, 0.070,
-                                   10.0, 0.055, 0.0), SWMM_OK);
+                                   10.0, 0.055, 0.0,
+                                   1 /*snow_on*/, 1.0, 3.0), SWMM_OK);
     ASSERT_EQ(swmm_rdii_decay_add(engine, "SanSewer", 1 /*MEDIUM*/,
                                    0.10, 0.008, 0.037,
-                                   10.0, 0.055, 0.0), SWMM_OK);
+                                   10.0, 0.055, 0.0,
+                                   0, 1.0, 0.0), SWMM_OK);
     EXPECT_EQ(swmm_rdii_decay_count(engine), 2);
 
     char buf[64];
     int response = -99;
     double k_dep=0, k_0=0, k_T=0, T_ref=0, theta_rec=0, T_freeze=0;
+    int snow_on = -99;
+    double snow_T=0, snow_ddf=0;
     ASSERT_EQ(swmm_rdii_decay_get(engine, 0, buf, sizeof(buf),
                                    &response, &k_dep, &k_0, &k_T,
-                                   &T_ref, &theta_rec, &T_freeze), SWMM_OK);
+                                   &T_ref, &theta_rec, &T_freeze,
+                                   &snow_on, &snow_T, &snow_ddf), SWMM_OK);
     EXPECT_STREQ(buf, "SanSewer");
     EXPECT_EQ(response, 0);
+    EXPECT_EQ(snow_on, 1);
+    EXPECT_NEAR(snow_T,   1.0, 1e-12);
+    EXPECT_NEAR(snow_ddf, 3.0, 1e-12);
     EXPECT_NEAR(k_dep, 0.15,  1e-12);
     EXPECT_NEAR(k_0,   0.010, 1e-12);
     EXPECT_NEAR(k_T,   0.070, 1e-12);
@@ -1484,18 +1634,22 @@ TEST_F(RdiiCApiTest, RdiiDecayAddCountGet) {
 TEST_F(RdiiCApiTest, RdiiDecayRejectsBadInputs) {
     // bad response
     EXPECT_EQ(swmm_rdii_decay_add(engine, "UH", 3, 0.1, 0.01, 0.01,
-                                   10.0, 0.0, 0.0),
+                                   10.0, 0.0, 0.0, 0, 1.0, 0.0),
               SWMM_ERR_BADPARAM);
     // negative coefficient
     EXPECT_EQ(swmm_rdii_decay_add(engine, "UH", 0, -0.1, 0.01, 0.01,
-                                   10.0, 0.0, 0.0),
+                                   10.0, 0.0, 0.0, 0, 1.0, 0.0),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_rdii_decay_add(engine, "UH", 0, 0.1, -0.01, 0.01,
-                                   10.0, 0.0, 0.0),
+                                   10.0, 0.0, 0.0, 0, 1.0, 0.0),
+              SWMM_ERR_BADPARAM);
+    // negative degree-day factor
+    EXPECT_EQ(swmm_rdii_decay_add(engine, "UH", 0, 0.1, 0.01, 0.01,
+                                   10.0, 0.0, 0.0, 1, 1.0, -3.0),
               SWMM_ERR_BADPARAM);
     // null name
     EXPECT_EQ(swmm_rdii_decay_add(engine, nullptr, 0, 0.1, 0.01, 0.01,
-                                   10.0, 0.0, 0.0),
+                                   10.0, 0.0, 0.0, 0, 1.0, 0.0),
               SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_rdii_decay_count(engine), 0);
 }

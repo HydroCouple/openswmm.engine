@@ -65,10 +65,11 @@ protected:
     int findDecay(const char* uh, int response) const {
         const int n = swmm_rdii_decay_count(engine);
         for (int i = 0; i < n; ++i) {
-            char buf[64]; int r = -2;
-            double k_dep, k_0, k_T, T_ref, theta, T_freeze;
+            char buf[64]; int r = -2; int snow_on = 0;
+            double k_dep, k_0, k_T, T_ref, theta, T_freeze, snow_T, snow_ddf;
             if (swmm_rdii_decay_get(engine, i, buf, sizeof(buf), &r,
-                                    &k_dep, &k_0, &k_T, &T_ref, &theta, &T_freeze) != SWMM_OK)
+                                    &k_dep, &k_0, &k_T, &T_ref, &theta, &T_freeze,
+                                    &snow_on, &snow_T, &snow_ddf) != SWMM_OK)
                 continue;
             if (std::strcmp(buf, uh) == 0 && r == response) return i;
         }
@@ -185,8 +186,8 @@ TEST_F(HydrographMutationTest, RemoveGroupCascadesToAllReferences) {
     ASSERT_EQ(swmm_hydrograph_set_rtk(engine, "G2", -1, 0, 0.4, 2.0, 2.5), SWMM_OK);
     ASSERT_EQ(swmm_hydrograph_set_gage(engine, "G1", "RG1"), SWMM_OK);
     ASSERT_EQ(swmm_hydrograph_set_gage(engine, "G2", "RG2"), SWMM_OK);
-    ASSERT_EQ(swmm_rdii_decay_set(engine, "G1", 0, 0.1, 0.05, 0.0, 10.0, 0.0, 0.0), SWMM_OK);
-    ASSERT_EQ(swmm_rdii_decay_set(engine, "G2", 0, 0.2, 0.05, 0.0, 10.0, 0.0, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_rdii_decay_set(engine, "G1", 0, 0.1, 0.05, 0.0, 10.0, 0.0, 0.0, 0, 1.0, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_rdii_decay_set(engine, "G2", 0, 0.2, 0.05, 0.0, 10.0, 0.0, 0.0, 0, 1.0, 0.0), SWMM_OK);
     ASSERT_EQ(swmm_rdii_add(engine, j1_idx, "G1", 10.0), SWMM_OK);
     ASSERT_EQ(swmm_rdii_add(engine, j2_idx, "G1", 20.0), SWMM_OK);
     ASSERT_EQ(swmm_rdii_add(engine, j1_idx, "G2", 30.0), SWMM_OK);
@@ -272,7 +273,7 @@ TEST_F(HydrographMutationTest, GroupRenameWalksAllFourContainers) {
     ASSERT_EQ(swmm_hydrograph_set_rtk(engine, "G1", -1, 0, 0.3, 1.0, 2.0), SWMM_OK);
     ASSERT_EQ(swmm_hydrograph_set_rtk(engine, "G1",  3, 1, 0.2, 1.5, 2.0), SWMM_OK);
     ASSERT_EQ(swmm_hydrograph_set_gage(engine, "G1", "RG1"), SWMM_OK);
-    ASSERT_EQ(swmm_rdii_decay_set(engine, "G1", 0, 0.1, 0.05, 0.0, 10.0, 0.0, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_rdii_decay_set(engine, "G1", 0, 0.1, 0.05, 0.0, 10.0, 0.0, 0.0, 0, 1.0, 0.0), SWMM_OK);
     ASSERT_EQ(swmm_rdii_add(engine, j1_idx, "G1", 12.5), SWMM_OK);
 
     // Locate G1 in the group index list.
@@ -327,23 +328,29 @@ TEST_F(HydrographMutationTest, DecaySetUpsertAndRemoveIdempotent) {
     EXPECT_EQ(swmm_rdii_decay_count(engine), 0);
 
     ASSERT_EQ(swmm_rdii_decay_set(engine, "G1", 0,
-                                  0.1, 0.05, 0.02, 10.0, 0.05, 0.0), SWMM_OK);
+                                  0.1, 0.05, 0.02, 10.0, 0.05, 0.0,
+                                  0, 1.0, 0.0), SWMM_OK);
     EXPECT_EQ(swmm_rdii_decay_count(engine), 1);
 
-    // Upsert in-place.
+    // Upsert in-place — also switches the degree-day snow model on.
     ASSERT_EQ(swmm_rdii_decay_set(engine, "G1", 0,
-                                  0.2, 0.1, 0.04, 12.0, 0.06, -1.0), SWMM_OK);
+                                  0.2, 0.1, 0.04, 12.0, 0.06, -1.0,
+                                  1, 0.5, 2.5), SWMM_OK);
     EXPECT_EQ(swmm_rdii_decay_count(engine), 1);
 
-    char buf[64]; int r = -1;
-    double k_dep, k_0, k_T, T_ref, theta, T_freeze;
+    char buf[64]; int r = -1; int snow_on = -1;
+    double k_dep, k_0, k_T, T_ref, theta, T_freeze, snow_T, snow_ddf;
     ASSERT_EQ(swmm_rdii_decay_get(engine, 0, buf, sizeof(buf), &r,
-                                  &k_dep, &k_0, &k_T, &T_ref, &theta, &T_freeze), SWMM_OK);
+                                  &k_dep, &k_0, &k_T, &T_ref, &theta, &T_freeze,
+                                  &snow_on, &snow_T, &snow_ddf), SWMM_OK);
     EXPECT_STREQ(buf, "G1");
     EXPECT_EQ(r, 0);
     EXPECT_DOUBLE_EQ(k_dep, 0.2);
     EXPECT_DOUBLE_EQ(T_ref, 12.0);
     EXPECT_DOUBLE_EQ(T_freeze, -1.0);
+    EXPECT_EQ(snow_on, 1);
+    EXPECT_DOUBLE_EQ(snow_T, 0.5);
+    EXPECT_DOUBLE_EQ(snow_ddf, 2.5);
 
     // Remove + idempotent re-remove.
     EXPECT_EQ(swmm_rdii_decay_remove(engine, "G1", 0), SWMM_OK);
@@ -371,11 +378,17 @@ TEST_F(HydrographMutationTest, BadParametersRejected) {
               SWMM_ERR_BADPARAM);
 
     EXPECT_EQ(swmm_rdii_decay_set(engine, "G1", -1,
-                                  0.1, 0.0, 0.0, 10.0, 0.0, 0.0), SWMM_ERR_BADPARAM);
+                                  0.1, 0.0, 0.0, 10.0, 0.0, 0.0,
+                                  0, 1.0, 0.0), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_rdii_decay_set(engine, "G1",  3,
-                                  0.1, 0.0, 0.0, 10.0, 0.0, 0.0), SWMM_ERR_BADPARAM);
+                                  0.1, 0.0, 0.0, 10.0, 0.0, 0.0,
+                                  0, 1.0, 0.0), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_rdii_decay_set(engine, "G1",  0,
-                                  -0.1, 0.0, 0.0, 10.0, 0.0, 0.0), SWMM_ERR_BADPARAM);
+                                  -0.1, 0.0, 0.0, 10.0, 0.0, 0.0,
+                                  0, 1.0, 0.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_rdii_decay_set(engine, "G1",  0,
+                                  0.1, 0.0, 0.0, 10.0, 0.0, 0.0,
+                                  1, 1.0, -2.0), SWMM_ERR_BADPARAM);
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +437,8 @@ TEST_F(HydrographMutationTest, MultipleGroupsStayIndependentAcrossRemoves) {
 TEST_F(HydrographMutationTest, DecaySetWithoutPriorGroupStillInserts) {
     EXPECT_EQ(swmm_hydrograph_count(engine), 0);
     EXPECT_EQ(swmm_rdii_decay_set(engine, "PHANTOM", 0,
-                                  0.1, 0.05, 0.0, 10.0, 0.0, 0.0), SWMM_OK);
+                                  0.1, 0.05, 0.0, 10.0, 0.0, 0.0,
+                                  0, 1.0, 0.0), SWMM_OK);
     EXPECT_EQ(swmm_rdii_decay_count(engine), 1);
     EXPECT_GE(findDecay("PHANTOM", 0), 0);
 

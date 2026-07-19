@@ -213,6 +213,10 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_get_storage_curve(SWMM_Engine e, int idx, int* curve_idx)
     cdef int swmm_node_set_storage_functional(SWMM_Engine e, int idx, double a, double b, double c)
     cdef int swmm_node_get_storage_functional(SWMM_Engine e, int idx, double* a, double* b, double* c)
+    cdef int swmm_node_set_storage_shape(SWMM_Engine e, int idx, int shape)
+    cdef int swmm_node_get_storage_shape(SWMM_Engine e, int idx, int* shape)
+    cdef int swmm_node_set_storage_geometry(SWMM_Engine e, int idx, double p1, double p2, double p3)
+    cdef int swmm_node_get_storage_geometry(SWMM_Engine e, int idx, double* p1, double* p2, double* p3)
     cdef int swmm_node_set_storage_seep_rate(SWMM_Engine e, int idx, double rate)
     cdef int swmm_node_get_storage_seep_rate(SWMM_Engine e, int idx, double* rate)
     cdef int swmm_node_set_exfil_params(SWMM_Engine e, int idx, double suction, double ksat, double imd)
@@ -695,12 +699,14 @@ cdef extern from "openswmm_inflows.h":
     cdef int swmm_rdii_decay_add(SWMM_Engine e, const char* uh_name,
                                   int response,
                                   double k_dep, double k_0, double k_T,
-                                  double T_ref, double theta_rec, double T_freeze)
+                                  double T_ref, double theta_rec, double T_freeze,
+                                  int snow_on, double snow_T, double snow_ddf)
     cdef int swmm_rdii_decay_get(SWMM_Engine e, int entry_idx,
                                   char* uh_buf, int buflen,
                                   int* response,
                                   double* k_dep, double* k_0, double* k_T,
-                                  double* T_ref, double* theta_rec, double* T_freeze)
+                                  double* T_ref, double* theta_rec, double* T_freeze,
+                                  int* snow_on, double* snow_T, double* snow_ddf)
     cdef int swmm_rdii_decay_count(SWMM_Engine e)
     # Read / remove side (added in the 2026 binding refresh) — entry-index keyed
     cdef int swmm_ext_inflow_get(SWMM_Engine e, int entry_idx, int* node_idx, char* constituent_buf, int constituent_buflen, char* ts_buf, int ts_buflen, char* type_buf, int type_buflen, double* m_factor, double* s_factor, double* baseline, char* pattern_buf, int pattern_buflen)
@@ -720,7 +726,7 @@ cdef extern from "openswmm_inflows.h":
     cdef int swmm_hydrograph_group_rename(SWMM_Engine e, int idx, const char* new_id)
     cdef int swmm_hydrograph_set_gage(SWMM_Engine e, const char* uh_name, const char* gage_name)
     # RDII decay editing — (uh_name, response) keyed
-    cdef int swmm_rdii_decay_set(SWMM_Engine e, const char* uh_name, int response, double k_dep, double k_0, double k_T, double T_ref, double theta_rec, double T_freeze)
+    cdef int swmm_rdii_decay_set(SWMM_Engine e, const char* uh_name, int response, double k_dep, double k_0, double k_T, double T_ref, double theta_rec, double T_freeze, int snow_on, double snow_T, double snow_ddf)
     cdef int swmm_rdii_decay_remove(SWMM_Engine e, const char* uh_name, int response)
 
 cdef extern from "openswmm_controls.h":

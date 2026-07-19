@@ -74,6 +74,9 @@ class RDIIDecayEntry(NamedTuple):
     T_ref: float
     theta_rec: float
     T_freeze: float
+    snow_on: bool = False
+    snow_T: float = 1.0
+    snow_ddf: float = 0.0
 
 
 class Inflows:
@@ -436,12 +439,20 @@ class Inflows:
 
     def add_rdii_decay(self, str uh_name, int response,
                        double k_dep, double k_0, double k_T,
-                       double T_ref, double theta_rec, double T_freeze) -> None:
-        """Add an exponential-decay RDII entry to unit-hydrograph *uh_name*."""
+                       double T_ref, double theta_rec, double T_freeze,
+                       bint snow_on=False, double snow_T=1.0,
+                       double snow_ddf=0.0) -> None:
+        """Add an exponential-decay RDII entry to unit-hydrograph *uh_name*.
+
+        Optional degree-day snow model: with C{snow_on}, precipitation at
+        temperatures at or below C{snow_T} (deg C) accumulates as SWE, and
+        above it melts at C{snow_ddf} (project rain-depth unit/degC/day).
+        """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = uh_name.encode('utf-8')
         _check(swmm_rdii_decay_add(
-            h, b, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze))
+            h, b, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze,
+            1 if snow_on else 0, snow_T, snow_ddf))
 
     def get_rdii_decay(self, int idx) -> RDIIDecayEntry:
         """Return the :class:`RDIIDecayEntry` at *idx*."""
@@ -450,13 +461,17 @@ class Inflows:
         cdef int response = 0
         cdef double k_dep = 0, k_0 = 0, k_T = 0
         cdef double T_ref = 0, theta_rec = 0, T_freeze = 0
+        cdef int snow_on = 0
+        cdef double snow_T = 0, snow_ddf = 0
         _check(swmm_rdii_decay_get(
             h, idx, buf, 128, &response,
-            &k_dep, &k_0, &k_T, &T_ref, &theta_rec, &T_freeze))
+            &k_dep, &k_0, &k_T, &T_ref, &theta_rec, &T_freeze,
+            &snow_on, &snow_T, &snow_ddf))
         return RDIIDecayEntry(
             uh_name=buf.decode('utf-8'), response=response,
             k_dep=k_dep, k_0=k_0, k_T=k_T,
-            T_ref=T_ref, theta_rec=theta_rec, T_freeze=T_freeze)
+            T_ref=T_ref, theta_rec=theta_rec, T_freeze=T_freeze,
+            snow_on=bool(snow_on), snow_T=snow_T, snow_ddf=snow_ddf)
 
     @property
     def rdii_decay_count(self) -> int:
@@ -465,7 +480,9 @@ class Inflows:
 
     def set_rdii_decay(self, str uh_name, int response,
                        double k_dep, double k_0, double k_T,
-                       double T_ref, double theta_rec, double T_freeze) -> None:
+                       double T_ref, double theta_rec, double T_freeze,
+                       bint snow_on=False, double snow_T=1.0,
+                       double snow_ddf=0.0) -> None:
         """Upsert the IA-decay row for one (group, response).
 
         Like L{add_rdii_decay} but overwrites an existing row instead of
@@ -480,11 +497,16 @@ class Inflows:
         @param T_ref: Reference temperature (deg C).
         @param theta_rec: Recovery temperature sensitivity (1/deg C).
         @param T_freeze: Recovery suppressed below this temperature (deg C).
+        @param snow_on: Enable the degree-day snow model for this row.
+        @param snow_T: Rain/snow partition threshold & melt base (deg C).
+        @param snow_ddf: Degree-day melt factor (project rain-depth
+            unit/degC/day); must be >= 0.
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef bytes b = uh_name.encode('utf-8')
         _check(swmm_rdii_decay_set(
-            h, b, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze))
+            h, b, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze,
+            1 if snow_on else 0, snow_T, snow_ddf))
 
     def remove_rdii_decay(self, str uh_name, int response) -> None:
         """Remove the IA-decay row for one (group, response). Idempotent.

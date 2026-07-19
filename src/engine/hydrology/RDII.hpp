@@ -54,6 +54,14 @@ struct ExpDecayParams {
     double T_ref     = 10.0;  ///< Reference temperature (deg C)
     double theta_rec = 0.0;   ///< Temperature sensitivity (1/deg C)
     double T_freeze  = 0.0;   ///< Recovery suppressed below this temperature (deg C)
+
+    // Optional degree-day snow model. When `snow_on`, precipitation at
+    // T <= snow_T accumulates as SWE with no liquid input; at T > snow_T,
+    // melt = min(SWE, snow_ddf*(T - snow_T)*dt_days) is added to rainfall
+    // (rain-on-snow) before the IA depletion step.
+    bool   snow_on   = false; ///< Degree-day snow model enabled
+    double snow_T    = 1.0;   ///< Rain/snow threshold & melt base (deg C)
+    double snow_ddf  = 0.0;   ///< Degree-day melt factor (project-depth/degC/day)
 };
 
 /// Per-response (SHORT/MEDIUM/LONG) unit hydrograph data.
@@ -65,6 +73,7 @@ struct UHResponseData {
     int    max_periods = 0;             ///< buffer capacity
     int    has_past_rain = 0;           ///< true if any non-zero past rain
     double ia_used     = 0.0;           ///< initial abstraction used so far
+    double swe         = 0.0;           ///< snow water equivalent (project depth; degree-day snow model)
     long   dry_seconds = 0;             ///< seconds since last non-zero rainfall
 
     void allocate(int n) {
@@ -74,6 +83,7 @@ struct UHResponseData {
         period = 0;
         has_past_rain = 0;
         ia_used = 0.0;
+        swe = 0.0;
         dry_seconds = static_cast<long>(n) * 300 + 1; // start dry
     }
 };
@@ -84,7 +94,10 @@ struct UHResponseData {
 double getRecoveryRate(const ExpDecayParams& dp, double T_celsius);
 
 /// One exponential-IA update step: mass-consistent depletion when
-/// rainDepth > 0, temperature-dependent recovery otherwise.
+/// rainDepth > 0, temperature-dependent recovery otherwise. When the row's
+/// degree-day snow model is on, the precipitation input is partitioned
+/// through the SWE store (accumulate below snow_T; melt above it) before
+/// the depletion/recovery branch runs.
 /// Returns the excess rainfall depth (project rain-depth units).
 /// Exposed for unit testing against the reference IAModel implementation.
 double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
