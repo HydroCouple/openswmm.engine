@@ -72,6 +72,7 @@
 #include "SimulationOptions.hpp"
 #include "SpatialFrame.hpp"
 #include "UserFlags.hpp"
+#include "../uncertainty/SoftRainData.hpp"
 #include "../data/QualityData.hpp"
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
@@ -396,6 +397,12 @@ struct SimulationContext {
      * @see Legacy: Gage[] in globals.h + TGage in objects.h
      */
     GageData gages;
+
+    /**
+     * @brief Gage-level soft rainfall configuration (SR-1a).
+     * @details Separate from GageData so the deterministic gage path stays untouched.
+     */
+    uncertainty::SoftRainData soft_rain;
 
     /**
      * @brief Pollutant definitions and per-object quality state.
@@ -1048,6 +1055,7 @@ struct SimulationContext {
         links      = LinkData{};
         subcatches = SubcatchData{};
         gages      = GageData{};
+        soft_rain  = uncertainty::SoftRainData{};
         pollutants = PollutantData{};
         tables     = TableData{};
 
@@ -1167,6 +1175,7 @@ struct SimulationContext {
         links.shrink_to_fit();
         subcatches.shrink_to_fit();
         gages.shrink_to_fit();
+        soft_rain.shrink_to_fit();
         pollutants.shrink_to_fit();
         landuses.shrink_to_fit();
         buildup.shrink_to_fit();

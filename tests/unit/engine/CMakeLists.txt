@@ -79,6 +79,12 @@ endfunction()
 add_gtest_unit(test_engine_tokenizer         test_tokenizer.cpp)
 add_gtest_unit(test_engine_timeseries_cursor test_timeseries_cursor.cpp)
 add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
+add_gtest_unit(test_engine_soft_rain_parser  test_soft_rain_parser.cpp)
+add_gtest_unit(test_engine_soft_forcing_rom  test_soft_forcing_rom.cpp)
+add_gtest_unit(test_engine_soft_rain_grid_parser test_soft_rain_grid_parser.cpp)
+add_gtest_unit(test_engine_soft_rain_grid_engine test_soft_rain_grid_engine.cpp)
+add_gtest_unit(test_engine_soft_rain_gage_engine test_soft_rain_gage_engine.cpp)
+add_gtest_unit(test_engine_grid_mapping_weights test_grid_mapping_weights.cpp)
 add_gtest_unit(test_engine_csv_timeseries    test_csv_timeseries.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
@@ -148,6 +154,8 @@ add_gtest_unit(test_engine_control_rule_validate test_control_rule_validate_api.
 add_gtest_unit(test_engine_controls_legacy_parity test_controls_legacy_parity.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 add_gtest_unit(test_engine_links_pump_stats_bulk test_links_pump_stats_bulk.cpp)
+add_gtest_unit(test_engine_final_boundary_stall test_engine_final_boundary_stall.cpp)
+add_gtest_unit(test_engine_soft_rain_grid_targets test_soft_rain_grid_targets.cpp)
 add_gtest_unit(test_engine_nodes_bulk_phase3 test_nodes_bulk_phase3.cpp)
 add_gtest_unit(test_engine_links_bulk_phase3 test_links_bulk_phase3.cpp)
 add_gtest_unit(test_engine_subcatchments_bulk_phase3 test_subcatchments_bulk_phase3.cpp)
@@ -437,6 +445,131 @@ add_test(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
 set_tests_properties(test_engine_1d_rom_integration PROPERTIES LABELS "unit")
+
+# Water-quality uncertainty layer integration test
+add_executable(test_engine_wq_uncertainty
+    test_engine_wq_uncertainty.cpp
+)
+target_link_libraries(test_engine_wq_uncertainty
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        GTest::gmock
+        # On MSVC, link against the internal static library so tests can
+        # call non-exported C++ symbols without per-test source tracking.
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_wq_uncertainty
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_wq_uncertainty PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_wq_uncertainty PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_wq_uncertainty)
+add_test(
+    NAME    test_engine_wq_uncertainty
+    COMMAND $<TARGET_FILE:test_engine_wq_uncertainty>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_wq_uncertainty PROPERTIES LABELS "unit")
+
+# GridFileReader unit test (SR-2a) — needs HDF5 for fixture generation
+add_executable(test_grid_file_reader
+    test_grid_file_reader.cpp
+)
+target_link_libraries(test_grid_file_reader
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_grid_file_reader
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+# HDF5 is needed for fixture generation in SetUp()
+if(TARGET hdf5::hdf5-shared)
+    target_link_libraries(test_grid_file_reader PRIVATE hdf5::hdf5-shared)
+elseif(TARGET hdf5::hdf5-static)
+    target_link_libraries(test_grid_file_reader PRIVATE hdf5::hdf5-static)
+else()
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_grid_file_reader PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_grid_file_reader PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
+if(MSVC)
+    target_compile_options(test_grid_file_reader PRIVATE /EHsc)
+endif()
+set_target_properties(test_grid_file_reader PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_grid_file_reader)
+add_test(
+    NAME    test_grid_file_reader
+    COMMAND $<TARGET_FILE:test_grid_file_reader>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_grid_file_reader PROPERTIES LABELS "unit")
+
+# SR-2c focused 2D gridded-rain smoke test — needs HDF5 for fixture generation
+add_executable(test_engine_soft_rain_grid_2d
+    test_soft_rain_grid_2d.cpp
+)
+target_link_libraries(test_engine_soft_rain_grid_2d
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_soft_rain_grid_2d
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(TARGET hdf5::hdf5-shared)
+    target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE hdf5::hdf5-shared)
+elseif(TARGET hdf5::hdf5-static)
+    target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE hdf5::hdf5-static)
+else()
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_engine_soft_rain_grid_2d PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
+if(MSVC)
+    target_compile_options(test_engine_soft_rain_grid_2d PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_soft_rain_grid_2d PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_soft_rain_grid_2d)
+add_test(
+    NAME    test_engine_soft_rain_grid_2d
+    COMMAND $<TARGET_FILE:test_engine_soft_rain_grid_2d>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_soft_rain_grid_2d PROPERTIES LABELS "unit")
 
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)

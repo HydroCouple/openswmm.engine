@@ -233,6 +233,14 @@ struct SimulationSnapshot {
     std::vector<double> surface_depth_q05;  ///< 5th-percentile depth per triangle (m)
     std::vector<double> surface_depth_q50;  ///< Median depth per triangle (m)
     std::vector<double> surface_depth_q95;  ///< 95th-percentile depth per triangle (m)
+
+    // ---- 1D ROM quantile fields (empty when 1D ROM is not active) ----------
+    /// Per active-node head quantiles (length = n_active_nodes, indexed by
+    /// rom1d_active_map). Written to /rom1d group in HDF5 when present.
+    std::vector<double> rom1d_head_q05;     ///< 5th-percentile head per active node (m)
+    std::vector<double> rom1d_head_q50;     ///< Median head per active node (m)
+    std::vector<double> rom1d_head_q95;     ///< 95th-percentile head per active node (m)
+    std::vector<std::string> rom1d_node_names; ///< Node names for the active-node index table
 };
 
 } /* namespace openswmm */

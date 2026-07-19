@@ -322,6 +322,26 @@ struct SpectralROM {
     void clearEnsembleRainfall();
 
     /**
+     * @brief Supply a location/spread forcing pair for soft rainfall.
+     *
+     * The deterministic forcing projection uses @p loc (when non-null); the
+     * uncertainty sensitivity uses c_i * (P^T spread) with the per-member
+     * coefficient c_i selected by @p family (fixed at initialize()):
+     *   - NORMAL / LOGNORMAL : c_i = z_i = probit(u_i)
+     *   - UNIFORM            : c_i = 2*u_i - 1
+     * For LOGNORMAL the caller passes spread = sigma_log * loc (delta form).
+     *
+     * Both pointers are NON-OWNING and must remain valid until changed or
+     * cleared. Passing nullptr for @p spread disables the soft spread path.
+     */
+    void setSoftForcing(const double* loc, const double* spread,
+                        openswmm::uncertainty::DistType family
+                            = openswmm::uncertainty::DistType::NORMAL) noexcept;
+
+    /// Clear the soft forcing path and revert to the legacy forcing inputs.
+    void clearSoftForcing() noexcept;
+
+    /**
      * @brief Register an additional uncertain parameter column (PR 9b).
      *
      * Same contract as SpectralROM1D::addRegisteredParam
@@ -360,6 +380,14 @@ private:
 
     /// Mean of ensemble_rainfall_; used to normalise per-member multipliers.
     double mean_ensemble_rain_ = 0.0;
+
+    const double* soft_loc_field_ = nullptr;
+    const double* soft_spread_field_ = nullptr;
+    std::vector<double> soft_r_spread_;
+    std::vector<double> soft_u_;             ///< Fixed shuffled-strata percentiles u_i.
+    std::vector<double> soft_z_;             ///< probit(u_i) — normal/lognormal coefficient.
+    std::vector<double> soft_coeff_;         ///< Active per-member coefficient c_i (family-selected).
+    double soft_max_abs_coeff_ = 0.0;        ///< max_i |c_i| for mode activation.
 
     /// One registered extra parameter (PR 9b). `rv` is the per-mode
     /// projection scratch for FORCING_VECTOR fields, refreshed each advance().

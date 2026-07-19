@@ -85,7 +85,25 @@ void TimestepController::advance(
     SimulationContext& ctx,
     double             dt_taken
 ) noexcept {
+    // Compute total simulation duration using the same floor(+0.5) rounding
+    // as simulation_complete() to avoid OADate representation mismatch.
+    const double total_sec = std::floor(
+        (ctx.options.end_date - ctx.options.start_date) * SEC_PER_DAY + 0.5);
+
     ctx.current_time += dt_taken;
+
+    // Snap to the final boundary when within 1 ms — prevents sub-nanosecond
+    // stalls at the last report boundary caused by accumulated floating-point
+    // error in current_time. Without this, simulation_complete() may fail by
+    // a microscopic margin (current_msec < total_msec) and the engine loops
+    // making imperceptible progress. 1 ms matches the legacy floor in
+    // compute_next() Step 2 and the stepRunoff rounding fix.
+    if (ctx.current_time > 0.0 &&
+        total_sec - ctx.current_time > 0.0 &&
+        total_sec - ctx.current_time < 0.001) {
+        ctx.current_time = total_sec;
+    }
+
     // Use decompose-recompose arithmetic (matching legacy getDateTime)
     // to avoid floating-point divergence from simple division.
     ctx.current_date  = datetime::addSeconds(ctx.options.start_date, ctx.current_time);

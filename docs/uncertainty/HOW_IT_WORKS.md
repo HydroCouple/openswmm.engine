@@ -550,3 +550,47 @@ in this repository's engineering checklists — not a silent trap.
 - **Ongoing refinement work**, including the remaining limitation described
   in §8, is tracked in this repository's engineering checklists at the
   project root.
+
+---
+
+## 11. Supplying your own rainfall distributions (soft rainfall)
+
+The "soft rainfall" feature is a different way to think about rainfall
+uncertainty. Instead of sampling a scalar multiplier that applies uniformly
+to all rain, you supply a **location-scale family** per gage or per grid cell:
+
+- The deterministic rain IS the location parameter (the median / center).
+- You supply only the **spread** (standard deviation, CV, or half-range).
+- The ROM propagates the spread through its modal ODE using the
+  two-projection form `f_ij = r_loc[j] + c_i · r_spread[j]`, where `c_i` is
+  the family-selected per-member coefficient:
+  - **NORMAL / LOGNORMAL**: `c_i = z_i = probit(u_i)` (standard-normal quantile)
+  - **UNIFORM**: `c_i = 2·u_i − 1` (centered half-range band)
+
+where `u_i = shuffledStrata(M, seed+4)[i]` — the same Latin-hypercube strata
+the ROM already uses for Manning's n and other parameters, just with a
+different seed offset (+4) so rainfall and roughness are decorrelated.
+
+**The key insight** (the "location-parameter move" from the design doc): you
+don't need to materialize an ensemble of rainfall fields. The deterministic
+rain is the location; the spread is a single per-cell/plane field that the ROM
+projects once per step. Member `i`'s realized forcing is
+`loc + c_i · spread` — computed on demand inside the ROM's advance, never
+stored as an M×N array. This is 50× smaller than a materialized ensemble.
+
+**How to use it**: see `[SOFT_RAINGAGES]` and `[SOFT_RAINFALL_GRID]` in
+`USER_GUIDE.md` §11. The pybme round-trip example
+(`scripts/uncertainty/pybme_soft_rain_example.py`) shows the full workflow:
+synthetic gages + radar → BME posterior → HDF5 grid file → engine run →
+uncertainty band plot.
+
+**MIXED family**: when a grid file declares `family=MIXED`, each cell carries
+its own distribution family via a `/family_code` uint8 plane. The ROM uses
+the NORMAL coefficient `z_i` for all cells as a v1 approximation; UNIFORM
+cells have their spread pre-scaled by the coefficient range ratio. Exact
+per-cell per-member dispatch is the design's deferred cold path.
+
+**Deprecation note**: the scalar `RAINFALL` parameter in `[UNCERTAINTY]`
+(which applies a single multiplier to all rainfall) is superseded by soft
+rainfall for new work. The scalar path remains functional for backward
+compatibility.

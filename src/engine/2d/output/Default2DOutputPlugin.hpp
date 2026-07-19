@@ -137,6 +137,14 @@ private:
     hid_t ds_face_depth_q50_       = H5I_INVALID_HID;
     hid_t ds_face_depth_q95_       = H5I_INVALID_HID;
 
+    // 1D ROM quantile datasets (lazy-created in update() when first non-empty)
+    hid_t ds_rom1d_head_q05_       = H5I_INVALID_HID;
+    hid_t ds_rom1d_head_q50_       = H5I_INVALID_HID;
+    hid_t ds_rom1d_head_q95_       = H5I_INVALID_HID;
+    hid_t ds_rom1d_node_names_     = H5I_INVALID_HID;  ///< Variable-length string [nActiveNode]
+    hsize_t n_rom1d_nodes_         = 0;                 ///< Active node count (set on first write)
+    bool   rom1d_group_created_    = false;             ///< True after /rom1d group + datasets created
+
     hsize_t n_faces_  = 0;
     hsize_t n_nodes_  = 0;
     hsize_t n_steps_  = 0;  ///< Current time step count (grows with each update)

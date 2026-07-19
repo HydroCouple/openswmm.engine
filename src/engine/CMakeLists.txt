@@ -42,6 +42,12 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     math/*.cpp
     uncertainty/*.cpp
 )
+
+# Explicitly add QualityUncertaintyHandler files to ensure they're included
+list(APPEND OPENSWMM_ENGINE_SOURCES "uncertainty/QualityUncertaintyHandler.cpp")
+
+# Explicitly add GridFileReader (SR-2a) — HDF5 grid-file reader for soft rainfall
+list(APPEND OPENSWMM_ENGINE_SOURCES "uncertainty/GridFileReader.cpp")
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS

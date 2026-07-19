@@ -176,6 +176,7 @@ public:
         rom1d_ = rom1d;
     }
 
+    SpectralROM* rom() noexcept { return rom_.get(); }
     /// Access the ROM sidecar (null if enable_rom was false).
     const SpectralROM* rom() const noexcept { return rom_.get(); }
 

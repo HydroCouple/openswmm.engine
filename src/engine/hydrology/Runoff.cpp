@@ -249,6 +249,20 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double rain_inhr = 0.0;
         if (gi >= 0 && gi < ctx.n_gages())
             rain_inhr = ctx.gages.rainfall[static_cast<std::size_t>(gi)];
+
+        // Runtime subcatch rainfall forcing (SR-2d) is expressed in the same
+        // user rain units as the gage path (in/hr or mm/hr). Apply it here,
+        // before unit conversion, so the forcing survives the solver's normal
+        // rainfall→net-precip path instead of being overwritten by the gage
+        // lookup below.
+        if (ui < ctx.forcing.subcatch_rainfall_mode.size()) {
+            if (ctx.forcing.subcatch_rainfall_mode[ui] == ForcingMode::OVERRIDE) {
+                rain_inhr = ctx.forcing.subcatch_rainfall_value[ui];
+            } else if (ctx.forcing.subcatch_rainfall_mode[ui] == ForcingMode::ADD) {
+                rain_inhr += ctx.forcing.subcatch_rainfall_value[ui];
+            }
+        }
+
         precip_[ui] = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
         ctx.subcatches.rainfall[ui] = precip_[ui];  // ft/sec (internal units)
     }

@@ -607,6 +607,34 @@ TEST(ROMQuality, RegisteredInflowParamProducesSpread) {
         << "a registered 1D INFLOW FORCING_VECTOR param must produce spread";
 }
 
+// Review fix #1: a line like `1D MY_KNOB 0.10 RATE_MULT` (new order, DIST
+// omitted, ENTRY in position 4) must be accepted — not rejected as an
+// unknown distribution.
+TEST(UncertaintyParser, NewOrderEntryOnlyWithoutDist) {
+    std::string inp = k_inp_1d;
+    const std::string old_line = "1D  MANNINGS_N  0.20";
+    const std::string new_line = "1D  MY_KNOB  0.10  RATE_MULT";
+    auto pos = inp.find(old_line);
+    ASSERT_NE(pos, std::string::npos);
+    inp.replace(pos, old_line.size(), new_line);
+
+    const char* inp_path = "/tmp/rom1d_entry_only.inp";
+    const char* rpt_path = "/tmp/rom1d_entry_only.rpt";
+    {
+        std::ofstream f(inp_path);
+        f << inp;
+    }
+
+    // The engine must open successfully (no parse error).
+    SWMM_Engine handle = swmm_engine_create();
+    ASSERT_NE(handle, nullptr);
+    EXPECT_EQ(swmm_engine_open(handle, inp_path, rpt_path, nullptr, nullptr), SWMM_OK)
+        << "ENTRY-only line (DIST omitted) must parse without error";
+    swmm_engine_destroy(handle);
+    std::remove(inp_path);
+    std::remove(rpt_path);
+}
+
 } // anonymous namespace
 
 #ifndef OPENSWMM_HAS_2D

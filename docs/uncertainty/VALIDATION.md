@@ -89,3 +89,50 @@ The test prints the measured summary line
 (`[ROM-vs-MC] samples=… coverage=… width-ratio …`) on every run; assertion
 thresholds are the checklist floors tightened toward the measured actuals
 with margin for solver noise across platforms.
+
+---
+
+# Soft-Rainfall ROM vs Monte Carlo — Validation (SR-5)
+
+Status: measured results from `tests/regression/test_soft_rain_coverage.cpp`
+(2026-07-16). Analog of the reform PR-10 experiment above, for the soft-rainfall
+location-scale forcing path instead of the Manning's-n parameter.
+
+## 1. Experiment
+
+- **Network**: 5 large-area storage nodes (J1..J5) fed by 5 subcatchments
+  (S1..S5) on a single rain gage RG1, chained to a free outfall. Storage area
+  is large so heads rise gradually across the whole 1 h run (transient dh/dt),
+  keeping the rainfall-rate-driven soft spread active at every report boundary.
+- **Prior**: NORMAL, CV = 0.20 on the gage rainfall (a location-scale family;
+  the deterministic rain is the location, CV·rain is the standard deviation).
+- **Reference (MC)**: 21 deterministic engine runs (no ROM), each with the gage
+  rain scaled by the materialized member `1 + z_i·CV`, `z_i = probit((i+0.5)/21)`
+  — the same NORMAL prior the ROM propagates, no soft-forcing linearization.
+- **ROM**: identical network with `[SOFT_RAINGAGES] RG1 NORMAL CV 0.20`, M = 50.
+- **Window**: 12 report times over 1 h across 5 junctions; coverage evaluated
+  for t > 60 s; width ratio evaluated in the saturated regime (second half).
+
+## 2. Results (measured)
+
+| Metric | Checklist floor | Measured | Test assertion |
+|---|---|---|---|
+| Coverage: ROM [q05,q95] ∋ MC median | ≥ 0.90 | **1.000** (60/60) | ≥ 0.90 |
+| Width ratio ROM/MC in [0.3, 3.0] (saturated) | ≥ 0.80 | **1.000** (35/35) | ≥ 0.80 |
+| Width ratio min / median / max | — | **0.754 / 0.821 / 0.872** | — |
+
+The soft-rain ROM band brackets the Monte-Carlo median at every sample. Its
+width is slightly narrower than the brute-force band (median ratio ~0.82) — the
+expected mild under-prediction of the delta-linearized location-scale forcing
+(`loc + z_i·spread`) relative to the fully nonlinear rain→runoff→routing
+response — but comfortably inside the [0.3×, 3×] band. This is the soft-rainfall
+analog of the PR-10 credibility check and closes Wave SR-E.
+
+## 3. Reproduction
+
+```
+ctest --test-dir build/darwin-tests-local -R test_soft_rain_coverage
+```
+
+The test prints `[SoftRain-vs-MC] samples=… coverage=… width-ratio …` on every
+run; thresholds are the SR-5 checklist floors.

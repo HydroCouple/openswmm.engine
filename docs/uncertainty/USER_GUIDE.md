@@ -1,9 +1,10 @@
 # OpenSWMM Uncertainty Sidecar — User Guide
 
-> **Status (2026-05-25):** Phases 0–9 complete.  
-> 45 unit tests + 6 regression tests + 2 engine integration tests pass.  
+> **Status (2026-07-15):** Phases 0–9 complete; WQ uncertainty layer wired (PR 13a/b).  
+> 45 unit tests + 6 regression tests + 2 engine integration tests + 2 WQ uncertainty tests pass.  
 > The 2D spectral ROM (scalar + spatial), coupling uncertainty, runoff ensemble, WQ bounds,
-> Fiedler diagnostics, the 1D spectral ROM struct, and the 1D ROM engine lifecycle are all
+> Fiedler diagnostics, the 1D spectral ROM struct, the 1D ROM engine lifecycle, and the
+> water-quality uncertainty layer (`QUALITY` target with per-node concentration bounds) are all
 > implemented and tested.  HDF5 quantile output is the one remaining gap.
 
 ---
@@ -49,6 +50,7 @@ probability that the true depth at each cell lies inside the band.
 | 1D sewer | Manning's n (pipe roughness) | `[UNCERTAINTY]` |
 | 1D sewer | Lateral inflow / DWF rate per node | `[UNCERTAINTY]` |
 | Runoff | Soil hydraulic conductivity (Green-Ampt Ks, Horton f0/fmin, CN S) | `[UNCERTAINTY]` |
+| Water quality | First-order decay rate k (per pollutant) | `[UNCERTAINTY]` |
 
 ---
 
@@ -163,10 +165,29 @@ Format: `LAYER  PARAMETER  [DISTRIBUTION]  PERTURBATION`
 2D       RAINFALL     UNIFORM         0.15    ;; same effect as RAINFALL_PERT
 1D       MANNINGS_N                   0.20    ;; enables 1D sewer ROM (see §7.7)
 1D       RAINFALL                     0.20    ;; lateral-inflow uncertainty for 1D
+QUALITY  TSS                          0.30    ;; decay-rate uncertainty for TSS pollutant
 ```
 
-`LAYER` is either `2D` (surface routing) or `1D` (sewer network routing).
-Both layers accept `MANNINGS_N` and `RAINFALL` with any supported distribution.
+`LAYER` is either `2D` (surface routing), `1D` (sewer network routing), or
+`QUALITY` (water-quality decay rate).
+
+Both `2D` and `1D` layers accept `MANNINGS_N` and `RAINFALL` with any supported
+distribution.
+
+The `QUALITY` layer is different — its `PARAMETER` token is a **pollutant name**
+(from `[POLLUTANTS]`), not a hydraulic parameter name. It declares uncertainty in
+that pollutant's first-order decay rate `k`. The name is resolved to a pollutant
+index at engine initialization (after `[POLLUTANTS]` has been parsed), so the
+`[UNCERTAINTY]` section may appear before or after `[POLLUTANTS]` in the file.
+
+**QUALITY layer rules (v1):**
+- `DIST` defaults to `UNIFORM`; `UNIFORM` is the only supported distribution in v1.
+- The perturbation `p` is a relative half-range on the decay rate: each member's
+  `k_i ∈ [k(1−p), k(1+p)]`.
+- The `ENTRY` is fixed to `RATE_MULT` (the decay rate is a rate multiplier);
+  an explicit `ENTRY` token is not accepted for `QUALITY` in v1.
+- `QUALITY` entries do **not** activate the hydraulic ROM — they produce analytic
+  concentration bounds independently (see §5.3).
 
 A `2D` entry also enables and configures the 2D ROM (sets `enable_rom = true` in
 `[2D_ROM]`).  A `1D` entry only populates the uncertainty config — the 1D ROM is
@@ -175,6 +196,10 @@ whenever the 2D ROM is enabled (so 2D→1D coupling always sees per-member 1D he
 
 > **Tip — pure 1D (no 2D mesh):** adding `1D  MANNINGS_N  0.20` to a plain 1D `.inp`
 > is sufficient; no `[2D_ROM]` or `[2D_MESH]` sections are needed.
+
+> **Tip — water quality only:** adding `QUALITY  TSS  0.30` produces per-node
+> concentration bounds without activating any ROM. A model with `[POLLUTANTS]`
+> and `[UNCERTAINTY] QUALITY <pollutant> <p>` is sufficient.
 
 Support for `SOIL` (runoff ensemble) and `CD` (coupling-flux uncertainty) are set
 via C++ API directly (parsed by `UncertaintyEnsemble`, not by the `.inp` handler).
@@ -828,6 +853,51 @@ These represent the range of inlet drainage flows across the ensemble:
 - Use the Fiedler gradient at the coupling cell (§7.4) to confirm whether the inlet lies in a
   high-connectivity region of the mesh
 
+### 5.7 Water-quality uncertainty output
+
+When a `QUALITY` layer entry is present in `[UNCERTAINTY]`, the engine produces a separate
+CSV file alongside the report file:
+
+```
+<report_path>.wq_uncertainty.csv
+```
+
+The file is created by replacing the `.rpt` suffix of the report path with
+`.wq_uncertainty.csv` (or appending if no `.rpt` suffix). Schema:
+
+```
+time_s,node_name,pollutant_index,q05,q50,q95
+```
+
+**What the columns mean:**
+
+| Column | Description |
+|---|---|
+| `time_s` | Simulation time in seconds at the report boundary |
+| `node_name` | SWMM node name |
+| `pollutant_index` | 0-based index into the `[POLLUTANTS]` list |
+| `q05` | 5th-percentile concentration (mass/volume) |
+| `q50` | Median concentration — ≈ the deterministic value |
+| `q95` | 95th-percentile concentration |
+
+**What the bounds represent:** the spread in concentration attributable to ±`pert`
+uncertainty in the first-order decay rate `k` **over the most recent report interval only**.
+The bounds are analytic: `c₀ · exp(−k · kmᵢ · dt)` where `c₀` is the deterministic
+concentration at the start of the report interval, `kmᵢ` are M ascending uniform
+multipliers spanning `[1−p, 1+p]`, and `dt` is the report step in days.
+
+**Key properties:**
+- `q50 ≈ c_det` (the deterministic concentration at the report time) — the band is
+  centred on the deterministic value.
+- `q05 ≤ q50 ≤ q95` always holds (ascending strata).
+- When `k_decay = 0` (no decay), `exp(0) = 1` for all members, so `q05 = q50 = q95`
+  (zero-width band — no decay-rate uncertainty).
+- Band width grows monotonically with `pert` and with `k · dt`.
+
+> **Limitation (v1):** the bounds are **per-report-interval**, not cumulative since
+> pollutant injection. Quality routing does not carry parcel age, so a fully
+> cumulative band is not yet available. See §8, limitation 8.
+
 ---
 
 ## 6. Advanced configuration
@@ -1105,20 +1175,54 @@ pair of (2D depth, 1D head) for the orifice equation.
 | `test_engine_2d_rom_integration` | Full engine lifecycle with 2D ROM | 1/1 |
 | `test_engine_1d_rom_integration` | Full engine lifecycle with 1D ROM | 5/5 |
 
-### 7.10 HDF5 output — NOT YET WIRED
+### 7.10 HDF5 output
 
-`Default2DOutputPlugin` exists at `src/engine/2d/output/Default2DOutputPlugin.cpp` and is
-designed to write CF-1.11/UGRID-1.0 HDF5 with datasets:
+`Default2DOutputPlugin` (`src/engine/2d/output/Default2DOutputPlugin.cpp`) writes
+CF-1.11/UGRID-1.0 HDF5 output when `[2D_OPTIONS] OUTPUT_FILE <path>` is specified
+in the `.inp` file. The plugin is injected automatically by the engine — no
+`[PLUGINS]` entry is required.
+
+**Activation**: add `OUTPUT_FILE <path>` to `[2D_OPTIONS]`:
+
+```ini
+[2D_OPTIONS]
+OUTPUT_FILE  results.h5
+```
+
+The path is resolved relative to the `.inp` file directory if relative. The
+plugin creates the file at `prepare()` time (truncating any existing file),
+writes static mesh topology in `prepareMeshAndDatasets()` (called from
+`start()` after the mesh is built), and appends one time step per report
+interval via `update()` on the IO thread.
+
+**2D ROM quantile datasets** (written when the 2D ROM is active):
 
 ```
-/Mesh2_face_depth_q05    [nTime, nFace]
-/Mesh2_face_depth_q50    [nTime, nFace]
-/Mesh2_face_depth_q95    [nTime, nFace]
+/Mesh2_face_depth_q05    [nTime, nFace]   — 5th-percentile depth (m)
+/Mesh2_face_depth_q50    [nTime, nFace]   — Median depth (m)
+/Mesh2_face_depth_q95    [nTime, nFace]   — 95th-percentile depth (m)
 ```
 
-However, it is **not yet compiled** (not in `OPENSWMM_2D_SOURCES`), HDF5 is not in
-`vcpkg.json`, and no `2D_OUTPUT_FILE` parser key exists. Until this is wired, read quantiles
-via the C++ API as shown in §2.1.
+**1D ROM quantile datasets** (written when the 1D ROM is active, PR 12b):
+
+```
+/rom1d/node_head_q05     [nTime, nActiveNode]   — 5th-percentile head (m)
+/rom1d/node_head_q50     [nTime, nActiveNode]   — Median head (m)
+/rom1d/node_head_q95     [nTime, nActiveNode]   — 95th-percentile head (m)
+/rom1d/node_names        [nActiveNode]          — Variable-length string node names
+```
+
+The `/rom1d` group is created lazily on the first snapshot that contains
+non-empty 1D ROM quantile fields. The `node_names` dataset provides the
+active-node index table so readers can map quantile rows back to SWMM node
+names. The existing `.uncertainty.csv` file (§5) continues to be written
+as the zero-dependency path — both outputs are produced simultaneously.
+
+**Reading the file**: the HDF5 output follows CF-1.11 and UGRID-1.0
+conventions for unstructured triangular meshes, making it directly readable
+by ParaView, QGIS, or any CF/UGRID-aware tool. The `/rom1d` group is a
+custom extension outside the CF/UGRID standard; read it with h5py or
+xarray as a supplementary group.
 
 ---
 
@@ -1161,10 +1265,12 @@ via the C++ API as shown in §2.1.
    (`0xdeadbeef01`, `0xcafebabe02`). Full seed control from the shared ensemble seed is not
    yet implemented.
 
-6. **1D ROM quantiles not written to output file.** The 1D ROM is now fully wired into the
-   engine (`buildROM1D()` / `computeK1d()` / advance per step). Quantiles are accessible via
-   `SWMMEngine::rom1d()` (see §7.7) but are not yet written to the binary output or any HDF5
-   file.  For now, read them via the C++ cast API after each `swmm_engine_step()` call.
+6. **1D ROM quantiles now written to HDF5.** The 1D ROM is fully wired into the
+   engine (`buildROM1D()` / `computeK1d()` / advance per step). Quantiles are
+   accessible via `SWMMEngine::rom1d()` (see §7.7) and are now also written to
+   the `/rom1d` group in the HDF5 output file when `OUTPUT_FILE` is specified
+   (§7.10). The `.uncertainty.csv` file continues as the zero-dependency path.
+   Both outputs are produced simultaneously when both are configured.
 
 7. **q50 vs deterministic output.** Under the deviation formulation (reform PRs 6–7), q50 is
    *provably* bounded close to the deterministic CVODE/DynWave result: at 0% perturbation the
@@ -1174,6 +1280,21 @@ via the C++ API as shown in §2.1.
    `DeviationForm.MedianTracksDeterministic` / `DeviationForm2D.MedianTracksDeterministic`).
    This replaces the earlier, weaker "differs slightly due to linearisation" characterisation
    from the pre-reform total-head formulation.
+
+8. **WQ uncertainty is per-report-interval, not cumulative.** The water-quality uncertainty
+   layer (§5.7) computes concentration bounds attributable to decay-rate uncertainty `k` over
+   the **most recent report interval only** — not the cumulative uncertainty since the
+   pollutant was first injected. Quality routing does not carry parcel age (only storage nodes
+   track hydraulic residence time), so a fully cumulative band would require extending the
+   routing state. The per-interval bounds are still useful for understanding how sensitive
+   the concentration field is to decay-rate assumptions at each reporting period. A future
+   version may track parcel age to produce cumulative bands.
+
+9. **WQ uncertainty supports only UNIFORM distribution (v1).** The `WQUncertaintyBounds`
+   computer generates its own ascending uniform strata internally. `NORMAL` and `LOGNORMAL`
+   distributions on the `QUALITY` layer are rejected with an error message. A future version
+   (Option B in the design doc) will accept a precomputed multiplier column from
+   `UncertaintyEnsemble` to support arbitrary distributions and cross-parameter decorrelation.
 
 ---
 
@@ -1281,3 +1402,105 @@ spread = ds["Mesh2_face_depth_q95"] - ds["Mesh2_face_depth_q05"]
 
 For ParaView: open the `.h5` file, select `Mesh2_face_depth_q95` and subtract
 `Mesh2_face_depth_q05` via a Calculator filter to visualise the uncertainty band width.
+
+---
+
+## 11. Soft Rainfall — Supplying Your Own Rainfall Distributions
+
+The soft-rainfall feature lets you supply per-gage or per-grid rainfall
+uncertainty as a location-scale family (NORMAL, LOGNORMAL, UNIFORM) without
+materializing an ensemble. The deterministic rain IS the location parameter;
+the uncertainty supplies only the spread. The ROM propagates the spread through
+its modal ODE via the two-projection form `f_ij = r_loc[j] + c_i · r_spread[j]`,
+where `c_i` is the family-selected per-member coefficient.
+
+### 11.1 `[SOFT_RAINGAGES]` — Per-Gage Soft Rainfall
+
+```
+[SOFT_RAINGAGES]
+RG1  NORMAL   CV        0.30
+RG2  LOGNORMAL SD        TIMESERIES SPREAD_TS
+RG3  UNIFORM  HALFRANGE 1.5
+```
+
+**Grammar**: `Gage Family SpreadKind SpreadSource|TIMESERIES <name>`
+
+- **Gage**: name of a gage defined in `[RAINGAGES]`.
+- **Family**: `NORMAL`, `LOGNORMAL`, or `UNIFORM`.
+- **SpreadKind**: `SD` (absolute standard deviation), `CV` (coefficient of
+  variation, relative), or `HALFRANGE` (absolute uniform half-range; only
+  valid with `UNIFORM`).
+- **SpreadSource**: a non-negative constant, or `TIMESERIES <name>` for a
+  time-varying spread.
+
+**Per-member evaluation** (§4.3 of the design doc):
+- NORMAL: `rain_i = loc + z_i · sd`
+- LOGNORMAL: `rain_i = loc · exp(z_i · σ_log)` (delta-linearized as
+  `loc + z_i · loc · σ_log` in the ROM; warn when CV > 0.5)
+- UNIFORM: `rain_i = loc + (2u_i − 1) · halfrange`
+
+where `u_i = shuffledStrata(M, seed+4)[i]` and `z_i = probit(u_i)`.
+
+A `[SOFT_RAINGAGES]` entry activates the 1D network ROM on its own. The ROM's
+forcing field is the dh/dt head-rate buffer, so the gage-level spread is
+mapped as `spread_now[n] = dh/dt[n] · area-weighted relative spread`.
+
+### 11.2 `[SOFT_RAINFALL_GRID]` — Gridded Soft Rainfall
+
+```
+[SOFT_RAINFALL_GRID]
+2D     radar_grid.h5  CENTROID  FORCE_LOCATION
+RUNOFF radar_grid.h5  CENTROID  FORCE_LOCATION
+INFLOWS node_grid.h5  CENTROID  FORCE_LOCATION  NODES  nodes.txt
+```
+
+**Grammar**: `Target File Mapping [Options]`
+
+- **Target**: `2D` (per-cell surface rainfall), `RUNOFF` (per-subcatchment),
+  or `INFLOWS` (per-node lateral inflow).
+- **File**: path to an HDF5 grid file (§11.3).
+- **Mapping**: `CENTROID` (nearest cell center). `BILINEAR` and `AREA_MEAN`
+  are planned (SR-4a).
+- **Options**: `FORCE_LOCATION` (the grid's `/location` plane overrides the
+  deterministic rainfall; without it, the model's existing rain is the location
+  and the grid supplies spread only). `NODES <file>` (for INFLOWS target only:
+  a text file listing node names, one per line).
+
+### 11.3 HDF5 Grid File Layout
+
+```
+/               attrs: family ("NORMAL"|"LOGNORMAL"|"UNIFORM"|"MIXED"),
+                       spread_kind ("SD"|"CV"|"HALFRANGE"), units, crs (optional)
+/time           (T)        float64
+/x, /y          (nx),(ny)  float64  grid coordinates (cell centers)
+/location       (T,ny,nx)  float32  — optional (deterministic location parameter)
+/spread         (T,ny,nx)  float32  — required (spread: SD, CV, or HALFRANGE)
+/family_code    (ny,nx)    uint8    — ONLY when family == "MIXED"
+```
+
+- `float32` everywhere (rainfall precision does not warrant float64).
+- `/location` is optional: when absent, the model's existing rain input is the
+  location parameter and the file supplies spread only.
+- `/spread` is required: `0` at a pixel/time means hard (no uncertainty) there.
+- `/family_code` (MIXED only): per-cell distribution family
+  (0=NORMAL, 1=LOGNORMAL, 2=UNIFORM). The ROM uses the NORMAL coefficient `z_i`
+  for all cells as a v1 approximation; UNIFORM cells have their spread
+  pre-scaled by the coefficient range ratio. Exact per-cell per-member dispatch
+  is the design's deferred cold path.
+
+### 11.4 pybme Round-Trip Example
+
+The `scripts/uncertainty/pybme_soft_rain_example.py` script demonstrates the
+full workflow: synthetic gages + radar → pybme BME posterior (mean, sd) →
+§3.3-conformant HDF5 → engine run → q05–q95 band plot. The
+`write_soft_rain_hdf5()` function in the script is a standalone schema-writer
+helper that others can copy. If pybme is not installed, the script falls back
+to a Gaussian posterior approximation.
+
+### 11.5 Deprecation Note: Scalar `RAINFALL` in `[UNCERTAINTY]`
+
+The scalar `RAINFALL` parameter in `[UNCERTAINTY]` (which applies a single
+multiplier to all rainfall) is superseded by the soft-rainfall feature. For
+new work, prefer `[SOFT_RAINGAGES]` (per-gage location-scale families) or
+`[SOFT_RAINFALL_GRID]` (gridded) for spatially distributed rainfall uncertainty.
+The scalar path remains functional for backward compatibility.

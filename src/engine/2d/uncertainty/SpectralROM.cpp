@@ -61,6 +61,26 @@ void SpectralROM::clearEnsembleRainfall() {
     ensemble_rainfall_.clear();
 }
 
+void SpectralROM::setSoftForcing(const double* loc, const double* spread,
+                                openswmm::uncertainty::DistType family) noexcept {
+    soft_loc_field_ = loc;
+    soft_spread_field_ = spread;
+    soft_max_abs_coeff_ = 0.0;
+    for (int i = 0; i < n_ensemble; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const double c = (family == openswmm::uncertainty::DistType::UNIFORM)
+            ? (2.0 * soft_u_[ui] - 1.0)
+            : soft_z_[ui];
+        soft_coeff_[ui] = c;
+        soft_max_abs_coeff_ = std::max(soft_max_abs_coeff_, std::abs(c));
+    }
+}
+
+void SpectralROM::clearSoftForcing() noexcept {
+    soft_loc_field_ = nullptr;
+    soft_spread_field_ = nullptr;
+}
+
 // ============================================================================
 // addRegisteredParam / clearRegisteredParams (PR 9b)
 // ============================================================================
@@ -114,6 +134,7 @@ void SpectralROM::initialize() {
     keff_modes_.assign(static_cast<std::size_t>(n_kept), 0.0);
     mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
     h_weight_.assign(static_cast<std::size_t>(n_tri), 1.0);
+    soft_r_spread_.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     // All modes start active; mode_active is updated at the start of each advance().
     mode_active.assign(static_cast<std::size_t>(n_kept), true);
@@ -172,6 +193,17 @@ void SpectralROM::initialize() {
         }
     }
 
+    soft_z_.resize(static_cast<std::size_t>(n_ensemble));
+    soft_u_.resize(static_cast<std::size_t>(n_ensemble));
+    soft_coeff_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
+    soft_max_abs_coeff_ = 0.0;
+    const auto soft_u = openswmm::uncertainty::shuffledStrata(n_ensemble, sample_seed + 4);
+    for (int i = 0; i < n_ensemble; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        soft_u_[ui] = soft_u[ui];
+        soft_z_[ui] = openswmm::uncertainty::probit(soft_u[ui]);
+    }
+
 }
 
 // ============================================================================
@@ -211,6 +243,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
     }
 
     // ---- Step 2: Project rainfall and deterministic depth into coarse space -
+    const double* loc_field = soft_loc_field_ ? soft_loc_field_ : rainfall;
     std::fill(r_coarse.begin(), r_coarse.end(), 0.0);
     for (std::size_t j = 0; j < nk; ++j) {
         const double* Pj = &basis->P[j * nt];
@@ -218,12 +251,23 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         for (std::size_t t = 0; t < nt; ++t)
             dot_b += Pj[t] * h_det[t];
         b_coarse[j] = dot_b;
-        if (rainfall) {
+        if (loc_field) {
             double dot_r = 0.0;
             for (std::size_t t = 0; t < nt; ++t)
-                dot_r += Pj[t] * rainfall[t];
+                dot_r += Pj[t] * loc_field[t];
             r_coarse[j] = dot_r;
         }
+    }
+    if (soft_spread_field_) {
+        for (std::size_t j = 0; j < nk; ++j) {
+            const double* Pj = &basis->P[j * nt];
+            double dot = 0.0;
+            for (std::size_t t = 0; t < nt; ++t)
+                dot += Pj[t] * soft_spread_field_[t];
+            soft_r_spread_[j] = dot;
+        }
+    } else {
+        std::fill(soft_r_spread_.begin(), soft_r_spread_.end(), 0.0);
     }
     // Registered FORCING_VECTOR fields (PR 9b): re-project each per call.
     for (auto& ep : extra_params_) {
@@ -341,9 +385,11 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         for (double th : ep.column)
             ep.max_dev = std::max(ep.max_dev, std::abs(th - 1.0));
     }
-    const double rain_scale = (rainfall != nullptr)
+    const double rain_scale = (loc_field != nullptr)
                                ? std::abs(dt) * max_rain_dev : 0.0;
     const double mann_scale = std::abs(dt) * max_mann_dev;
+    const double soft_scale = (soft_spread_field_ != nullptr)
+                               ? std::abs(dt) * soft_max_abs_coeff_ : 0.0;
 
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
@@ -354,6 +400,8 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         bool by_manning = mann_scale > 0.0 &&
                           lam * keff_modes_[j] * std::abs(b_coarse[j]) * mann_scale
                               >= mode_drop_threshold;
+        bool by_soft    = soft_scale > 0.0 &&
+                          std::abs(soft_r_spread_[j]) * soft_scale >= mode_drop_threshold;
         bool by_vector  = false;
         for (const auto& ep : extra_params_) {
             if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR &&
@@ -362,7 +410,7 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                 break;
             }
         }
-        mode_active[j] = by_energy || by_rain || by_manning || by_vector;
+        mode_active[j] = by_energy || by_rain || by_manning || by_soft || by_vector;
         if (mode_active[j]) ++n_modes_active;
     }
 
@@ -420,6 +468,8 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             const double rate = lam * keff_ji;
             double g          = -lam * (keff_ji - keff_modes_[j]) * b_coarse[j]
                                 + (fj - r_coarse[j]);
+            if (soft_spread_field_)
+                g += soft_coeff_[ui] * soft_r_spread_[j];
             if (has_extra) {
                 for (const auto& ep : extra_params_)
                     if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR)

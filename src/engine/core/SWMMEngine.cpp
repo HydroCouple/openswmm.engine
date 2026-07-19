@@ -1,12 +1,9 @@
 /**
  * @file SWMMEngine.cpp
  * @brief Implementation of the SWMMEngine lifecycle manager.
- *
- * @see SWMMEngine.hpp
  * @ingroup engine_core
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  MIT License
  */
 
@@ -14,6 +11,7 @@
 #include "DateTime.hpp"
 #include "SimulationContext.hpp"
 #include "UnitConversion.hpp"
+#include "charconv_compat.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/XSectBatch.hpp"
 #include "../hydraulics/Node.hpp"
@@ -21,6 +19,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <iostream>
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
@@ -35,13 +34,19 @@
 #include <filesystem>
 #endif
 
+// Include the quality uncertainty handler regardless of 2D enablement
+#include "../uncertainty/QualityUncertaintyHandler.hpp"
+
 #include "../uncertainty/GraphEigenBasis.hpp"
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
+#include "../uncertainty/WQUncertaintyBounds.hpp"
+#include "../uncertainty/GridMappingWeights.hpp"
 
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include "ErrorCodes.hpp"
@@ -99,6 +104,12 @@ int SWMMEngine::open(const char* inp_path,
 
     // Reset context for a fresh run
     ctx_.reset();
+    uncertainty_config_ = uncertainty::UncertaintyConfig{};
+    soft_grid_runtimes_.clear();
+    wq_unc_active_ = false;
+    wq_pollut_indices_.clear();
+    wq_pollut_perturbations_.clear();
+    wq_conc_prev_.clear();
 
     rpt_path_ = rpt_path ? rpt_path : "";
     out_path_ = out_path ? out_path : "";
@@ -129,17 +140,30 @@ int SWMMEngine::open(const char* inp_path,
 
     auto* input_plugin = plugins_.input_plugins().front();
 
-#ifdef OPENSWMM_HAS_2D
-    // Register 2D section handlers before reading so the parser can populate
-    // surface_router_ mesh and options directly.
+    // Register UNCERTAINTY section handler before reading so the parser can populate
+    // uncertainty_config_ regardless of 2D enablement.
     if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
+#ifdef OPENSWMM_HAS_2D
+        // Register 2D section handlers before reading so the parser can populate
+        // surface_router_ mesh and options directly. The 2D [UNCERTAINTY] parser
+        // handles ALL layers (1D / 2D / RUNOFF / QUALITY), so no separate QUALITY
+        // handler is registered here — doing so would override the full parser
+        // and reject 1D/2D lines.
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
                                  uncertainty_config_,
                                  surface_router_.pendingBCRows(),
                                  dip->registry());
-    }
+#else
+        // Without the 2D module the full parser is unavailable; register the
+        // QUALITY-only [UNCERTAINTY] handler so WQ uncertainty still parses.
+        uncertainty::registerQualityUncertaintySection(uncertainty_config_, dip->registry());
 #endif
+        // Register the [SOFT_RAINGAGES] section handler (SR-1a)
+        uncertainty::registerSoftRaingagesSection(dip->registry());
+        // Register the [SOFT_RAINFALL_GRID] section handler (SR-2b)
+        uncertainty::registerSoftRainfallGridSection(uncertainty_config_, dip->registry());
+    }
 
     if (input_plugin->read(inp_path ? inp_path : "", ctx_) != 0) {
         return ctx_.error_code != 0 ? ctx_.error_code : SWMM_ERR_PARSE;
@@ -459,7 +483,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     resetStepMassBalance();
 
     // ---- Apply user-injected runtime forcings ----
-    applyForcings(dt_next);
+        stageSoftGridForcings();
+        applyForcings(dt_next);
 
     // ---- Full simulation pipeline (matching legacy swmm_step order) ----
     // Reference: swmm5.c::execRouting() → runoff_execute() + routing_execute()
@@ -581,6 +606,21 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         for (int g = 0; g < ctx_.n_gages(); ++g) {
             if (ctx_.gages.rainfall[static_cast<std::size_t>(g)] > 0.0)
                 is_raining = true;
+        }
+        // SR-2d: a RUNOFF grid override may supply rainfall even when the
+        // gage reads zero. Detect it here so the runoff clock uses the wet
+        // step (matching the equivalent gage-driven run) — otherwise the
+        // nonlinear reservoir dynamics diverge on the coarser dry step.
+        if (!is_raining) {
+            for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                if (ui < ctx_.forcing.subcatch_rainfall_mode.size() &&
+                    ctx_.forcing.subcatch_rainfall_mode[ui] != ForcingMode::NONE &&
+                    ctx_.forcing.subcatch_rainfall_value[ui] > 0.0) {
+                    is_raining = true;
+                    break;
+                }
+            }
         }
 
         // A2. Update climate state
@@ -1863,6 +1903,47 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                     (ctx_.nodes.depth[ui] - ctx_.nodes.old_depth[ui]) / dt_routing;
             }
         }
+
+        // Gage-level soft rainfall spread (SR-1b). loc = dh/dt head-rate (so the
+        // deterministic projection is unchanged), spread = loc · area-weighted
+        // relative spread of the contributing gages. Under deviation form the
+        // member field is loc + c_i·spread (SOFT_RAINFALL_DESIGN.md §4.3).
+        if (soft_rain_1d_active_ && !rom1d_soft_spread_.empty()) {
+            const auto& sr = ctx_.soft_rain;
+            auto relSpread1D = [&](int g) -> double {
+                const auto ug = static_cast<std::size_t>(g);
+                const double sval = (sr.spread_ts[ug] >= 0)
+                    ? table_tseries_lookup_cursor(ctx_.tables[sr.spread_ts[ug]],
+                                                  ctx_.current_date)
+                    : sr.spread_const[ug];
+                if (sval <= 0.0) return 0.0;
+                switch (sr.spread_kind[ug]) {
+                    case uncertainty::SoftSpreadKind::CV:
+                        return sval;                       // already relative
+                    case uncertainty::SoftSpreadKind::SD:
+                    case uncertainty::SoftSpreadKind::HALFRANGE: {
+                        const double rain = std::abs(ctx_.gages.rainfall[ug]);
+                        return (rain > 1.0e-12) ? sval / rain : 0.0;
+                    }
+                }
+                return 0.0;
+            };
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto uai = static_cast<std::size_t>(ai);
+                const double dh = rom1d_dh_buf_[uai];
+                rom1d_soft_loc_[uai] = dh;
+                double numer = 0.0;
+                for (int k = rom1d_soft_off_[uai]; k < rom1d_soft_off_[uai + 1]; ++k)
+                    numer += rom1d_soft_area_[static_cast<std::size_t>(k)]
+                             * relSpread1D(rom1d_soft_gage_[static_cast<std::size_t>(k)]);
+                const double tot = rom1d_soft_node_area_[uai];
+                const double rel = (tot > 0.0) ? numer / tot : 0.0;
+                rom1d_soft_spread_[uai] = dh * rel;
+            }
+            rom1d_->setSoftForcing(rom1d_soft_loc_.data(), rom1d_soft_spread_.data(),
+                                   soft_rain_1d_family_);
+        }
+
         rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
                         rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data(),
                         rom1d_sens_buf_.data());
@@ -2394,6 +2475,20 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
     // still reflect the just-completed routing step. current_date is at the
     // report boundary.
     if (hydraulics::TimestepController::output_due(ctx_)) {
+        // Compute 1D ROM head quantiles once per report boundary. This is done
+        // up front (not inside the plugin-gated snapshot block) so the CSV
+        // sidecar is written correctly even when no output plugin is attached.
+        // Quantiles are anchored to the current DynWave heads (deviation form:
+        // reconstruction = h_det + P·δa, clamped at the node invert).
+        if (rom1d_ && rom1d_->is_ready()) {
+            const int n_active = static_cast<int>(rom1d_active_map_.size());
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui = static_cast<std::size_t>(
+                    rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+            }
+            rom1d_->computeQuantiles(rom1d_h_buf_.data(), rom1d_invert_buf_.data());
+        }
         if (save_results_ && !plugins_.empty()) {
             // Build a SimulationSnapshot from the current context.
             // Vector assignments are O(n) memcpy; the I/O thread consumes
@@ -2649,6 +2744,29 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             }
 #endif
 
+            // 1D ROM quantiles — populate the snapshot for HDF5 output.
+            // The CSV write happens separately below (after post); this block
+            // only copies the quantiles (already computed once above) into the
+            // snapshot so Default2DOutputPlugin can write the /rom1d group.
+            if (rom1d_ && rom1d_->is_ready()) {
+                const int n_active = static_cast<int>(rom1d_active_map_.size());
+                snap.rom1d_head_q05.assign(rom1d_->q05.data(),
+                    rom1d_->q05.data() + static_cast<std::size_t>(n_active));
+                snap.rom1d_head_q50.assign(rom1d_->q50.data(),
+                    rom1d_->q50.data() + static_cast<std::size_t>(n_active));
+                snap.rom1d_head_q95.assign(rom1d_->q95.data(),
+                    rom1d_->q95.data() + static_cast<std::size_t>(n_active));
+                // Build node-name index table (once per snapshot — could be cached)
+                snap.rom1d_node_names.clear();
+                snap.rom1d_node_names.reserve(static_cast<std::size_t>(n_active));
+                for (int ai = 0; ai < n_active; ++ai) {
+                    const auto ui = static_cast<std::size_t>(
+                        rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                    snap.rom1d_node_names.push_back(
+                        ctx_.node_names.name_of(static_cast<int>(ui)));
+                }
+            }
+
             io_thread_.post(std::move(snap));
         }
 
@@ -2656,14 +2774,9 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
         // Deviation form: quantiles are natively anchored to the deterministic
         // DynWave head (reconstruction = h_det + P·δa, clamped at the node
         // invert), so q05/q50/q95 are written directly — no manual re-anchoring.
+        // Quantiles were already computed above for the snapshot; reuse them.
         if (rom1d_ && rom1d_->is_ready() && rom1d_csv_.is_open()) {
             const int n_active = static_cast<int>(rom1d_active_map_.size());
-            for (int ai = 0; ai < n_active; ++ai) {
-                const auto ui = static_cast<std::size_t>(
-                    rom1d_active_map_[static_cast<std::size_t>(ai)]);
-                rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
-            }
-            rom1d_->computeQuantiles(rom1d_h_buf_.data(), rom1d_invert_buf_.data());
             for (int ai = 0; ai < n_active; ++ai) {
                 const auto ui  = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
                 const auto uai = static_cast<std::size_t>(ai);
@@ -2672,6 +2785,59 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                            << rom1d_->q05[uai]                    << ','
                            << rom1d_->q50[uai]                    << ','
                            << rom1d_->q95[uai]                    << '\n';
+            }
+        }
+
+        // Compute WQ uncertainty quantiles and flush CSV row for every active node.
+        // (PR 13: Water-quality uncertainty layer)
+        if (wq_unc_active_ && wq_csv_.is_open()) {
+            const int n_nodes = ctx_.nodes.count();
+            const int n_polluts = ctx_.n_pollutants();
+            const double report_dt_days = ctx_.options.report_step / 86400.0;
+            
+            // For each node, compute WQ bounds using the previous concentration
+            // and the current time step for configured pollutants only
+            for (int i = 0; i < n_nodes; ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const double* conc_prev = wq_conc_prev_.data() + ui * n_polluts;
+                
+                // Compute bounds for each configured pollutant at this node
+                for (std::size_t s = 0; s < wq_pollut_indices_.size(); ++s) {
+                    const int p = wq_pollut_indices_[s];
+                    // Skip if pollutant index is invalid (not found during resolution)
+                    if (p < 0 || p >= n_polluts) continue;
+                    
+                    const double c_prev = conc_prev[p];
+                    const double decay_rate = ctx_.pollutants.k_decay[static_cast<std::size_t>(p)];
+                    wq_bounds_.decay_pert = wq_pollut_perturbations_[s];
+
+                    // Compute bounds with 50 LHS members (M=50).
+                    auto bounds = wq_bounds_.compute(c_prev, decay_rate, report_dt_days, 50);
+                    
+                    // Write CSV row for this node-pollutant combination
+                    wq_csv_ << ctx_.current_time << ','
+                            << ctx_.node_names.name_of(i) << ','
+                            << ctx_.pollutant_names.name_of(p) << ','
+                            << bounds.q05 << ','
+                            << bounds.q50 << ','
+                            << bounds.q95 << '\n';
+                }
+            }
+            
+            // Cache the deterministic node concentration at the previous report boundary
+            // in a buffer wq_conc_prev_[node·nPollut + p] (PR 13: Water-quality uncertainty layer)
+            for (int i = 0; i < n_nodes; ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const double* conc_curr = ctx_.nodes.conc.data() + ui * n_polluts;
+                double* conc_prev = wq_conc_prev_.data() + ui * n_polluts;
+                
+                for (std::size_t s = 0; s < wq_pollut_indices_.size(); ++s) {
+                    const int p = wq_pollut_indices_[s];
+                    // Skip if pollutant index is invalid (not found during resolution)
+                    if (p < 0 || p >= n_polluts) continue;
+                    
+                    conc_prev[p] = conc_curr[p];
+                }
             }
         }
 
@@ -2792,6 +2958,9 @@ int SWMMEngine::end() noexcept {
     if (rom1d_csv_.is_open()) {
         rom1d_csv_.close();
     }
+    if (wq_csv_.is_open()) {
+        wq_csv_.close();
+    }
 
     // Phase 5: drain and join the IO thread (all writes must complete first)
     io_thread_.stop();
@@ -2885,6 +3054,232 @@ int SWMMEngine::close() noexcept {
 // ============================================================================
 // applyForcings — inject user-specified runtime forcing values
 // ============================================================================
+
+void SWMMEngine::initSoftGridRuntimes() noexcept {
+    soft_grid_runtimes_.clear();
+
+    auto nearest_index = [](const std::vector<double>& coords, double value) -> int {
+        if (coords.empty()) return -1;
+        int best = 0;
+        for (int i = 1; i < static_cast<int>(coords.size()); ++i) {
+            if (std::abs(value - coords[static_cast<std::size_t>(i)])
+                < std::abs(value - coords[static_cast<std::size_t>(best)])) {
+                best = i;
+            }
+        }
+        return best;
+    };
+
+    auto subcatch_centroid = [this](int idx, double& x, double& y) -> bool {
+        auto ui = static_cast<std::size_t>(idx);
+        if (ui < ctx_.spatial.subcatch_polygon_x.size() &&
+            ui < ctx_.spatial.subcatch_polygon_y.size() &&
+            !ctx_.spatial.subcatch_polygon_x[ui].empty() &&
+            ctx_.spatial.subcatch_polygon_x[ui].size() == ctx_.spatial.subcatch_polygon_y[ui].size()) {
+            const auto& xs = ctx_.spatial.subcatch_polygon_x[ui];
+            const auto& ys = ctx_.spatial.subcatch_polygon_y[ui];
+            double sx = 0.0, sy = 0.0;
+            for (std::size_t k = 0; k < xs.size(); ++k) {
+                sx += xs[k];
+                sy += ys[k];
+            }
+            x = sx / static_cast<double>(xs.size());
+            y = sy / static_cast<double>(ys.size());
+            return true;
+        }
+        if (ui < ctx_.spatial.subcatch_x.size() && ui < ctx_.spatial.subcatch_y.size()) {
+            x = ctx_.spatial.subcatch_x[ui];
+            y = ctx_.spatial.subcatch_y[ui];
+            return true;
+        }
+        return false;
+    };
+
+    auto trim = [](std::string s) -> std::string {
+        const auto first = s.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return {};
+        const auto last = s.find_last_not_of(" \t\r\n");
+        return s.substr(first, last - first + 1);
+    };
+
+    std::string inp_dir;
+    if (!ctx_.inp_file_path.empty()) {
+        inp_dir = std::filesystem::path(ctx_.inp_file_path).parent_path().string();
+    }
+
+    for (const auto& spec : uncertainty_config_.grid_sources) {
+        if (!spec.force_location) continue;
+        if (spec.target != uncertainty::GridTarget::RUNOFF &&
+            spec.target != uncertainty::GridTarget::INFLOWS) continue;
+
+        SoftGridRuntime runtime;
+        runtime.target = spec.target;
+        runtime.force_location = spec.force_location;
+        runtime.file_path = spec.file_path;
+        runtime.nodes_file = spec.nodes_file;
+        runtime.mapping = spec.mapping;
+
+        std::string resolved = spec.file_path;
+        if (!resolved.empty() && resolved[0] != '/' && !inp_dir.empty()) {
+            resolved = (std::filesystem::path(inp_dir) / resolved).string();
+        }
+        if (!runtime.reader.open(resolved) || !runtime.reader.has_location()) {
+            continue;
+        }
+
+        const int nx = runtime.reader.nx();
+        const auto& xs = runtime.reader.x_coords();
+        const auto& ys = runtime.reader.y_coords();
+
+        if (spec.target == uncertainty::GridTarget::RUNOFF) {
+            // SR-4a: AREA_MEAN uses polygon∩pixel area weights (subcatchments);
+            // build a per-target CSR. Falls back to CENTROID (with a warning)
+            // for subcatchments lacking a usable polygon.
+            const bool want_area_mean =
+                (spec.mapping == uncertainty::GridMapping::AREA_MEAN);
+            bool area_mean_used = false;
+            bool warned_fallback = false;
+            if (want_area_mean) {
+                runtime.csr_off.push_back(0);
+            }
+            for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                double cx = 0.0, cy = 0.0;
+                if (!subcatch_centroid(i, cx, cy)) continue;
+
+                if (want_area_mean) {
+                    const auto ui = static_cast<std::size_t>(i);
+                    std::vector<uint32_t> wpx;
+                    std::vector<float> ww;
+                    if (ui < ctx_.spatial.subcatch_polygon_x.size() &&
+                        ui < ctx_.spatial.subcatch_polygon_y.size()) {
+                        uncertainty::polygonPixelWeights(ctx_.spatial.subcatch_polygon_x[ui],
+                                              ctx_.spatial.subcatch_polygon_y[ui],
+                                              xs, ys, wpx, ww);
+                    }
+                    if (!wpx.empty()) {
+                        runtime.target_indices.push_back(i);
+                        for (std::size_t k = 0; k < wpx.size(); ++k) {
+                            runtime.csr_px.push_back(wpx[k]);
+                            runtime.csr_w.push_back(ww[k]);
+                        }
+                        runtime.csr_off.push_back(static_cast<int>(runtime.csr_px.size()));
+                        // Keep a representative pixel for any CENTROID-style use.
+                        runtime.pixel_indices.push_back(wpx[0]);
+                        area_mean_used = true;
+                        continue;
+                    }
+                    // Fall back to CENTROID for this subcatchment.
+                    if (!warned_fallback) {
+                        ctx_.warnings.push_back(
+                            "WARNING: AREA_MEAN grid mapping fell back to CENTROID for "
+                            "one or more subcatchments without a usable [POLYGONS] outline.");
+                        warned_fallback = true;
+                    }
+                }
+
+                int ix = nearest_index(xs, cx);
+                int iy = nearest_index(ys, cy);
+                if (ix < 0 || iy < 0) continue;
+                runtime.target_indices.push_back(i);
+                const auto px = static_cast<uint32_t>(iy * nx + ix);
+                runtime.pixel_indices.push_back(px);
+                if (want_area_mean) {
+                    // Single-pixel CSR row (weight 1) so the staging loop stays uniform.
+                    runtime.csr_px.push_back(px);
+                    runtime.csr_w.push_back(1.0f);
+                    runtime.csr_off.push_back(static_cast<int>(runtime.csr_px.size()));
+                }
+            }
+            // If AREA_MEAN was requested but nothing used real polygon weights,
+            // drop the CSR so staging uses the plain CENTROID path.
+            if (want_area_mean && !area_mean_used) {
+                runtime.mapping = uncertainty::GridMapping::CENTROID;
+                runtime.csr_off.clear();
+                runtime.csr_px.clear();
+                runtime.csr_w.clear();
+            }
+        } else if (spec.target == uncertainty::GridTarget::INFLOWS) {
+            std::vector<int> node_indices;
+            if (!spec.nodes_file.empty()) {
+                std::string nodes_path = spec.nodes_file;
+                if (!nodes_path.empty() && nodes_path[0] != '/' && !inp_dir.empty()) {
+                    nodes_path = (std::filesystem::path(inp_dir) / nodes_path).string();
+                }
+                std::ifstream f(nodes_path);
+                std::string line;
+                while (std::getline(f, line)) {
+                    line = trim(line);
+                    if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+                    int idx = ctx_.node_names.find(line);
+                    if (idx >= 0) node_indices.push_back(idx);
+                }
+            } else {
+                for (int i = 0; i < ctx_.n_nodes(); ++i) node_indices.push_back(i);
+            }
+
+            for (int idx : node_indices) {
+                auto ui = static_cast<std::size_t>(idx);
+                if (ui >= ctx_.spatial.node_x.size() || ui >= ctx_.spatial.node_y.size()) continue;
+                int ix = nearest_index(xs, ctx_.spatial.node_x[ui]);
+                int iy = nearest_index(ys, ctx_.spatial.node_y[ui]);
+                if (ix < 0 || iy < 0) continue;
+                runtime.target_indices.push_back(idx);
+                runtime.pixel_indices.push_back(static_cast<uint32_t>(iy * nx + ix));
+            }
+        }
+
+        soft_grid_runtimes_.push_back(std::move(runtime));
+    }
+}
+
+void SWMMEngine::stageSoftGridForcings() noexcept {
+    for (auto& runtime : soft_grid_runtimes_) {
+        if (!runtime.reader.has_current()) {
+            if (!runtime.reader.advance()) continue;
+        }
+        while (runtime.reader.has_current() && runtime.reader.spread_next() != nullptr
+               && runtime.reader.time_next() < ctx_.current_time) {
+            if (!runtime.reader.advance()) break;
+        }
+
+        const float* loc = runtime.reader.location_now();
+        if (!loc) continue;
+
+        if (runtime.target == uncertainty::GridTarget::RUNOFF) {
+            const bool use_csr =
+                (runtime.mapping == uncertainty::GridMapping::AREA_MEAN)
+                && !runtime.csr_off.empty();
+            for (std::size_t k = 0; k < runtime.target_indices.size(); ++k) {
+                const int idx = runtime.target_indices[k];
+                const auto ui = static_cast<std::size_t>(idx);
+                double value;
+                if (use_csr) {
+                    // Area-weighted mean over the polygon∩pixel intersections.
+                    value = 0.0;
+                    const int lo = runtime.csr_off[k];
+                    const int hi = runtime.csr_off[k + 1];
+                    for (int m = lo; m < hi; ++m)
+                        value += static_cast<double>(runtime.csr_w[static_cast<std::size_t>(m)])
+                                 * static_cast<double>(loc[runtime.csr_px[static_cast<std::size_t>(m)]]);
+                } else {
+                    value = static_cast<double>(loc[runtime.pixel_indices[k]]);
+                }
+                ctx_.forcing.subcatch_rainfall_mode[ui] = ForcingMode::OVERRIDE;
+                ctx_.forcing.subcatch_rainfall_value[ui] = value;
+                ctx_.forcing.subcatch_rainfall_persist[ui] = ForcingPersist::RESET;
+            }
+        } else if (runtime.target == uncertainty::GridTarget::INFLOWS) {
+            for (std::size_t k = 0; k < runtime.target_indices.size(); ++k) {
+                const int idx = runtime.target_indices[k];
+                const auto ui = static_cast<std::size_t>(idx);
+                const uint32_t px = runtime.pixel_indices[k];
+                ctx_.forcing.node_lat_inflow_mode[ui] = ForcingMode::ADD;
+                ctx_.forcing.node_lat_inflow_value[ui] = static_cast<double>(loc[px]);
+                ctx_.forcing.node_lat_inflow_persist[ui] = ForcingPersist::RESET;
+            }
+        }
+    }
+}
 
 void SWMMEngine::applyForcings(double dt) noexcept {
     auto& f = ctx_.forcing;
@@ -3225,12 +3620,33 @@ void SWMMEngine::initHydraulics() noexcept {
     //     Builds mesh topology, vertex stencils, resolves coupling maps,
     //     suppresses ponding at coupled nodes, and initializes CVODE.
     surface_router_.initialize(ctx_);
+
+    // SR-2c: Initialize 2D gridded rainfall forcing when a 2D-target grid source
+    // with /location is configured. The grid file is opened and the CENTROID
+    // mapping (pixel index per triangle centroid) is precomputed once.
+    for (const auto& gs : uncertainty_config_.grid_sources) {
+        if (gs.target == uncertainty::GridTarget::TWO_D && gs.force_location) {
+            std::string inp_dir;
+            if (!ctx_.inp_file_path.empty())
+                inp_dir = std::filesystem::path(ctx_.inp_file_path).parent_path().string();
+            surface_router_.initGridRainfall(gs, inp_dir);
+            break;  // v1: one 2D grid source
+        }
+    }
 #endif
+
+    // SR-2d: initialize RUNOFF/INFLOWS gridded-rain runtimes.
+    initSoftGridRuntimes();
 
     // 1b. Build optional 1D spectral ROM when any uncertainty source is configured
     //     or when the 2D ROM is active (so per-member 1D heads feed the coupling).
     {
         bool need_rom1d = uncertainty_config_.has_1d();
+        // Gage-level soft rainfall (SR-1b) is itself a 1D uncertainty source:
+        // any configured soft gage should activate the network ROM.
+        for (int g = 0; g < ctx_.soft_rain.count() && !need_rom1d; ++g)
+            if (ctx_.soft_rain.configured[static_cast<std::size_t>(g)])
+                need_rom1d = true;
 #ifdef OPENSWMM_HAS_2D
         need_rom1d = need_rom1d ||
                      (surface_router_.isActive() && surface_router_.options().enable_rom);
@@ -3241,6 +3657,55 @@ void SWMMEngine::initHydraulics() noexcept {
             if (rom1d_)
                 surface_router_.setROM1D(rom1d_.get());
 #endif
+        }
+    }
+
+    // Initialize water quality uncertainty layer (PR 13)
+    {
+        wq_unc_active_ = uncertainty_config_.has_quality();
+        if (wq_unc_active_) {
+            // Initialize WQ bounds computer with the number of pollutants
+            // WQUncertaintyBounds does not require initialization
+            
+            // Seed previous concentrations from the deterministic initial state
+            // so the first report interval is anchored to the actual start state.
+            wq_conc_prev_ = ctx_.nodes.conc;
+            
+            // Resolve QUALITY pollutant specs: late name→index resolution at engine init
+            const auto& quality_specs = uncertainty_config_.specs_for(uncertainty::LayerTarget::QUALITY);
+            wq_pollut_indices_.clear();
+            wq_pollut_perturbations_.clear();
+            wq_pollut_indices_.reserve(quality_specs.size());
+            wq_pollut_perturbations_.reserve(quality_specs.size());
+            
+            for (const auto& spec : quality_specs) {
+                // Resolve the configured pollutant NAME to its index through the
+                // canonical NameIndex (case-sensitive, matching [POLLUTANTS]).
+                const int pollut_index = ctx_.pollutant_names.find(spec.name);
+                if (pollut_index < 0) {
+                    emit_warning(SWMM_ERR_PARSE,
+                        ("[UNCERTAINTY] QUALITY: pollutant '" + spec.name +
+                         "' not found in [POLLUTANTS]; its uncertainty bounds "
+                         "will not be reported.").c_str());
+                }
+                wq_pollut_indices_.push_back(pollut_index);
+                wq_pollut_perturbations_.push_back(spec.perturbation);
+            }
+
+            if (!rpt_path_.empty()) {
+                std::string wq_csv_path = rpt_path_;
+                const std::string rpt_ext = ".rpt";
+                if (wq_csv_path.size() >= rpt_ext.size() &&
+                    wq_csv_path.compare(wq_csv_path.size() - rpt_ext.size(), rpt_ext.size(), rpt_ext) == 0) {
+                    wq_csv_path.replace(wq_csv_path.size() - rpt_ext.size(), rpt_ext.size(), ".wq_uncertainty.csv");
+                } else {
+                    wq_csv_path += ".wq_uncertainty.csv";
+                }
+                wq_csv_.open(wq_csv_path);
+                if (wq_csv_.is_open()) {
+                    wq_csv_ << "time_s,node_name,pollutant,q05,q50,q95\n";
+                }
+            }
         }
     }
 
@@ -4185,6 +4650,87 @@ void SWMMEngine::initMassBalance() noexcept {
 }
 
 // ============================================================================
+// initSoftRain1D() — per-active-node gage-level soft rainfall CSR (SR-1b)
+// ============================================================================
+
+void SWMMEngine::initSoftRain1D(const std::vector<int>& active_map) noexcept {
+    const auto n_active = active_map.size();
+    rom1d_soft_loc_.assign(n_active, 0.0);
+    rom1d_soft_spread_.assign(n_active, 0.0);
+    rom1d_soft_node_area_.assign(n_active, 0.0);
+    rom1d_soft_off_.assign(n_active + 1, 0);
+    rom1d_soft_gage_.clear();
+    rom1d_soft_area_.clear();
+    soft_rain_1d_active_ = false;
+
+    const auto& sr = ctx_.soft_rain;
+    if (sr.count() == 0) return;
+
+    // Reverse map: full node index → active index (−1 if not in the active set).
+    std::vector<int> full_to_active(static_cast<std::size_t>(ctx_.nodes.count()), -1);
+    for (std::size_t ai = 0; ai < n_active; ++ai) {
+        const auto ui = static_cast<std::size_t>(active_map[ai]);
+        if (ui < full_to_active.size())
+            full_to_active[ui] = static_cast<int>(ai);
+    }
+
+    // Count configured contributions per active node and accumulate total area.
+    std::vector<int> counts(n_active, 0);
+    const int n_sub = ctx_.subcatches.count();
+    uncertainty::DistType resolved_family = uncertainty::DistType::NORMAL;
+    bool family_seen = false;
+    bool family_mixed = false;
+    for (int s = 0; s < n_sub; ++s) {
+        const int node = ctx_.subcatches.outlet_node[static_cast<std::size_t>(s)];
+        if (node < 0 || node >= ctx_.nodes.count()) continue;
+        const int ai = full_to_active[static_cast<std::size_t>(node)];
+        if (ai < 0) continue;
+        const double a = ctx_.subcatches.area[static_cast<std::size_t>(s)];
+        rom1d_soft_node_area_[static_cast<std::size_t>(ai)] += a;
+        const int g = ctx_.subcatches.gage[static_cast<std::size_t>(s)];
+        if (g < 0 || g >= sr.count()) continue;
+        if (!sr.configured[static_cast<std::size_t>(g)]) continue;
+        ++counts[static_cast<std::size_t>(ai)];
+        const auto fam = sr.family[static_cast<std::size_t>(g)];
+        if (!family_seen) { resolved_family = fam; family_seen = true; }
+        else if (fam != resolved_family) family_mixed = true;
+    }
+
+    // Build CSR offsets.
+    for (std::size_t ai = 0; ai < n_active; ++ai)
+        rom1d_soft_off_[ai + 1] = rom1d_soft_off_[ai] + counts[ai];
+    const auto nnz = static_cast<std::size_t>(rom1d_soft_off_[n_active]);
+    if (nnz == 0) return;
+    rom1d_soft_gage_.assign(nnz, -1);
+    rom1d_soft_area_.assign(nnz, 0.0);
+
+    // Fill CSR (reuse counts as a running cursor).
+    std::vector<int> cursor(rom1d_soft_off_.begin(),
+                            rom1d_soft_off_.begin() + static_cast<std::ptrdiff_t>(n_active));
+    for (int s = 0; s < n_sub; ++s) {
+        const int node = ctx_.subcatches.outlet_node[static_cast<std::size_t>(s)];
+        if (node < 0 || node >= ctx_.nodes.count()) continue;
+        const int ai = full_to_active[static_cast<std::size_t>(node)];
+        if (ai < 0) continue;
+        const int g = ctx_.subcatches.gage[static_cast<std::size_t>(s)];
+        if (g < 0 || g >= sr.count()) continue;
+        if (!sr.configured[static_cast<std::size_t>(g)]) continue;
+        const auto k = static_cast<std::size_t>(cursor[static_cast<std::size_t>(ai)]++);
+        rom1d_soft_gage_[k] = g;
+        rom1d_soft_area_[k] = ctx_.subcatches.area[static_cast<std::size_t>(s)];
+    }
+
+    if (family_mixed) {
+        ctx_.warnings.push_back(
+            "WARNING: soft rainfall gages use mixed distribution families; the 1D "
+            "ROM shares a single member-coefficient family (using the first "
+            "configured gage's family) under COHERENCE FULL.");
+    }
+    soft_rain_1d_family_ = resolved_family;
+    soft_rain_1d_active_ = true;
+}
+
+// ============================================================================
 // buildROM1D() — build + seed the 1D spectral ROM
 // ============================================================================
 
@@ -4279,6 +4825,12 @@ void SWMMEngine::buildROM1D() noexcept {
     rom1d_->full_to_active = std::move(full_to_active);
     rom1d_->n_full_nodes   = n_full;
 
+    // Default: no Manning uncertainty unless explicitly configured (2D options
+    // or an explicit [UNCERTAINTY] 1D MANNINGS_N spec). The SpectralROM1D struct
+    // default (0.20) is meant for standalone unit tests; in the engine it must
+    // not silently inject roughness spread into e.g. a soft-rain-only run.
+    rom1d_->mannings_pert = 0.0;
+
 #ifdef OPENSWMM_HAS_2D
     if (surface_router_.isActive()) {
         const auto& opts  = surface_router_.options();
@@ -4316,7 +4868,15 @@ void SWMMEngine::buildROM1D() noexcept {
         rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];
     }
 
-    // Register non-built-in 1D uncertainty specs on the ROM (PR 9c; see
+    // Gage-level soft rainfall → 1D ROM (SR-1b). Build a per-active-node CSR of
+    // the subcatchments draining to that node whose gage carries a soft-rain
+    // spread, and record the total drained area (all subcatchments) so the
+    // per-step relative spread is the area-weighted fraction of the node's
+    // total runoff that is uncertain. See SOFT_RAINFALL_DESIGN.md §1 (Move 2),
+    // §4.3: member i field = loc + c_i·spread with a single shared family.
+    initSoftRain1D(active_map);
+
+
     // PARAMETER_REGISTRY.md §6). MANNINGS_N/RAINFALL are the built-in path
     // handled above; every other active 1D spec gets a registry-generated
     // column. FORCING_VECTOR params (e.g. INFLOW) use the per-node dh/dt

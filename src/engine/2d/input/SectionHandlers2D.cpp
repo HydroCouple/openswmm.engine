@@ -340,6 +340,8 @@ std::string parse2DROMLine(const std::vector<std::string>& tokens,
     return {};
 }
 
+
+
 // ============================================================================
 // parseUncertaintyLine
 // ============================================================================
@@ -369,8 +371,20 @@ std::string parseUncertaintyLine(
     if (ok) {
         // New order: PERT [DIST] [ENTRY]
         pert = t2_num;
-        if (tokens.size() >= 4) dist_str  = tokens[3];
-        if (tokens.size() >= 5) entry_str = tokens[4];
+        // tokens[3] could be DIST or ENTRY (DIST omitted). If it's a known
+        // ENTRY keyword, treat it as ENTRY and keep the default DIST.
+        auto is_entry_kw = [](const std::string& s) {
+            return iequals(s, "RATE_MULT") || iequals(s, "FORCING_MULT")
+                || iequals(s, "FORCING_VECTOR") || iequals(s, "COUPLING_MULT")
+                || iequals(s, "QUALITY_MULT");
+        };
+        if (tokens.size() >= 4) {
+            if (is_entry_kw(tokens[3]))
+                entry_str = tokens[3];
+            else
+                dist_str  = tokens[3];
+        }
+        if (tokens.size() >= 5 && entry_str.empty()) entry_str = tokens[4];
     } else {
         // Legacy order: DIST PERT
         if (tokens.size() < 4)
@@ -389,8 +403,10 @@ std::string parseUncertaintyLine(
         layer = openswmm::uncertainty::LayerTarget::TWO_D;
     else if (iequals(layer_str, "1D"))
         layer = openswmm::uncertainty::LayerTarget::ONE_D;
+    else if (iequals(layer_str, "QUALITY"))
+        layer = openswmm::uncertainty::LayerTarget::QUALITY;
     else
-        return "Unsupported LAYER '" + layer_str + "' (supported: '2D', '1D')";
+        return "Unsupported LAYER '" + layer_str + "' (supported: '2D', '1D', 'QUALITY')";
 
     // --- Parse DISTRIBUTION ---
     openswmm::uncertainty::DistType dist;
@@ -402,6 +418,13 @@ std::string parseUncertaintyLine(
         dist = openswmm::uncertainty::DistType::LOGNORMAL;
     else
         return "Unknown DISTRIBUTION '" + dist_str + "' (UNIFORM / NORMAL / LOGNORMAL)";
+
+    // --- QUALITY layer validation ---
+    if (layer == openswmm::uncertainty::LayerTarget::QUALITY) {
+        // QUALITY layer only supports UNIFORM distribution
+        if (dist != openswmm::uncertainty::DistType::UNIFORM)
+            return "QUALITY layer only supports UNIFORM distribution";
+    }
 
     // --- Resolve NAME and ENTRY ---
     std::string param_upper = param_str;
@@ -420,9 +443,11 @@ std::string parseUncertaintyLine(
             entry = openswmm::uncertainty::ParamEntry::FORCING_VECTOR;
         else if (iequals(entry_str, "COUPLING_MULT"))
             entry = openswmm::uncertainty::ParamEntry::COUPLING_MULT;
+        else if (iequals(entry_str, "QUALITY_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::QUALITY_MULT;
         else
             return "Unknown ENTRY '" + entry_str
-                   + "' (RATE_MULT / FORCING_MULT / FORCING_VECTOR / COUPLING_MULT)";
+                   + "' (RATE_MULT / FORCING_MULT / FORCING_VECTOR / COUPLING_MULT / QUALITY_MULT)";
     } else {
         // Name-implied default entry; unknown NAME without ENTRY is an error.
         if (param_upper == "MANNINGS_N")
@@ -431,6 +456,8 @@ std::string parseUncertaintyLine(
             entry = openswmm::uncertainty::ParamEntry::FORCING_MULT;
         else if (param_upper == "INFLOW")
             entry = openswmm::uncertainty::ParamEntry::FORCING_VECTOR;
+        else if (layer == openswmm::uncertainty::LayerTarget::QUALITY)
+            entry = openswmm::uncertainty::ParamEntry::QUALITY_MULT;
         else
             entry_known = false;
         if (!entry_known)
@@ -554,6 +581,9 @@ std::string parse2DBoundaryConditionsLine(
     pending_rows.push_back(std::move(row));
     return {};
 }
+
+
+
 
 
 // ============================================================================

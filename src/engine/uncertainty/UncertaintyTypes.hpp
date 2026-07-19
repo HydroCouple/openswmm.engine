@@ -27,6 +27,7 @@ enum class LayerTarget : int8_t {
     TWO_D  = 1,  ///< 2D surface routing
     ONE_D  = 2,  ///< 1D sewer / network routing
     RUNOFF = 3,  ///< Subcatchment runoff
+    QUALITY = 4, ///< Water quality decay rate uncertainty
 };
 
 // ============================================================================
@@ -57,6 +58,7 @@ enum class ParamEntry : int8_t {
     FORCING_MULT   = 1,  ///< Scales the ROM's forcing projection; sensitivity (θ−1)·r_j. Prototype: rainfall.
     FORCING_VECTOR = 2,  ///< Scales a registered per-node field v; sensitivity (θ−1)·(Pᵀv)_j. Prototype: inflow/DWF.
     COUPLING_MULT  = 3,  ///< Scales the 2D↔1D orifice exchange flux (outside the modal ODE). Prototype: Cd.
+    QUALITY_MULT   = 4,  ///< Scales the water quality decay rate; sensitivity affects QUALITY layer. Prototype: decay rate uncertainty.
 };
 
 // ============================================================================
