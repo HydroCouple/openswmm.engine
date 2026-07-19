@@ -1217,7 +1217,11 @@ int writeInpFile(const SimulationContext& ctx_internal,
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %12.6f %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
+    // Length and roughness are emitted at full double precision (%.15g), not a
+    // fixed 4/6-decimal field: real models carry sub-metre lengths and 1/n-derived
+    // roughness with many significant figures, and truncating them perturbs the
+    // routing solution — noticeable on large, control-heavy (chaos-sensitive) models.
+    std::fprintf(f,"%-16s %-16s %-16s %15.15g %15.15g %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
     }}
 
     // [PUMPS]
@@ -1226,8 +1230,13 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------------","----------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::PUMP)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    const int pr=ctx.link_subtypes.pump_row(j);
-    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s 0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,(pr>=0)?ctx.link_subtypes.pumps.curve[static_cast<size_t>(pr)]:-1),ctx.links.setting[u]>0?"ON":"OFF");
+    const int pr=ctx.link_subtypes.pump_row(j); const auto& PD=ctx.link_subtypes.pumps;
+    // Emit the real startup/shutoff depths (and initial state) rather than a
+    // hardcoded "0 0": those are the wet-well depths at which the pump switches
+    // on/off. Dropping them makes every pump run unconditionally on re-read,
+    // changing the pumping regime and downstream flooding/continuity.
+    const char* pstat=(pr>=0)?(PD.init_state[static_cast<size_t>(pr)]?"ON":"OFF"):(ctx.links.setting[u]>0?"ON":"OFF");
+    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s %.10g %.10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,(pr>=0)?PD.curve[static_cast<size_t>(pr)]:-1),pstat,(pr>=0)?PD.startup[static_cast<size_t>(pr)]:0.0,(pr>=0)?PD.shutoff[static_cast<size_t>(pr)]:0.0);
     }}
 
     // [ORIFICES]
@@ -1242,12 +1251,29 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     // [WEIRS]
     if(hasLT(ctx,LinkType::WEIR)){sec(f,"WEIRS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s\n","Name","FromNode","ToNode","Type","CrestHt","Cd","Gated","EndCon","EndCoeff");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s\n","Name","FromNode","ToNode","Type","CrestHt","Cd","Gated","EndCon","EndCoeff","Surcharge");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------","----------");
+    static const char* WEIR_TYPE[]={"TRANSVERSE","SIDEFLOW","V-NOTCH","TRAPEZOIDAL"};
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::WEIR)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int wr=ctx.link_subtypes.weir_row(j); const auto& WD=ctx.link_subtypes.weirs;
-    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f NO       0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),"TRANSVERSE",(wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,(wr>=0)?WD.cd[static_cast<size_t>(wr)]:0.0);
+    // Emit the real weir type, gate, end-contractions, end-coeff and the
+    // can-surcharge flag rather than hardcoding TRANSVERSE/NO/0/0: dropping the
+    // surcharge flag defaults it back to YES on re-read, changing drowned-weir
+    // flow (weir↔orifice switch) and hence overflow/flooding.
+    const int wt=(wr>=0)?static_cast<int>(WD.weir_type[static_cast<size_t>(wr)]):0;
+    const char* wtStr=(wt>=0&&wt<4)?WEIR_TYPE[wt]:"TRANSVERSE";
+    const char* wgate=ctx.links.has_flap_gate[u]?"YES":"NO";
+    const char* wsurch=(wr>=0&&WD.can_surcharge[static_cast<size_t>(wr)])?"YES":"NO";
+    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f %-8s %10.4f %10.4f %s\n",
+        ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),
+        wtStr,
+        (wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,
+        (wr>=0)?WD.cd[static_cast<size_t>(wr)]:0.0,
+        wgate,
+        (wr>=0)?WD.end_contractions[static_cast<size_t>(wr)]:0.0,
+        (wr>=0)?WD.cd2[static_cast<size_t>(wr)]:0.0,
+        wsurch);
     }}
 
     // [OUTLETS]
@@ -1257,7 +1283,23 @@ int writeInpFile(const SimulationContext& ctx_internal,
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::OUTLET)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int olr=ctx.link_subtypes.outlet_row(j); const auto& OUT=ctx.link_subtypes.outlets;
-    std::fprintf(f,"%-16s %-16s %-16s %10.4f FUNCTIONAL   %10g %10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(olr>=0)?OUT.coeff[static_cast<size_t>(olr)]:0.0,(olr>=0)?OUT.expon[static_cast<size_t>(olr)]:0.0);
+    // Rating type (param1): 0 FUNCTIONAL/HEAD, 1 FUNCTIONAL/DEPTH, 2 TABULAR/HEAD,
+    // 3 TABULAR/DEPTH. Legacy SWMM requires the compound TYPE token (and the curve
+    // name for TABULAR); a bare "FUNCTIONAL" both loses the rating curve and
+    // segfaults the legacy parser (strcomp(NULL,"HEAD")).
+    const int otype=(olr>=0)?static_cast<int>(OUT.outlet_type[static_cast<size_t>(olr)]):0;
+    const bool otab=(otype>=2), odepth=(otype==1||otype==3);
+    const char* otypeStr=otab?(odepth?"TABULAR/DEPTH":"TABULAR/HEAD")
+                              :(odepth?"FUNCTIONAL/DEPTH":"FUNCTIONAL/HEAD");
+    const double ocrest=(olr>=0)?OUT.crest_height[static_cast<size_t>(olr)]:ctx.links.offset1[u];
+    const char* ogate=ctx.links.has_flap_gate[u]?"YES":"NO";
+    if(otab){
+        const int oci=(olr>=0)?OUT.curve[static_cast<size_t>(olr)]:-1;
+        const char* ocurve=(oci>=0)?tN(ctx,oci):ctx.links.pump_curve_name[u].c_str();
+        std::fprintf(f,"%-16s %-16s %-16s %10.4f %-16s %-16s %s\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ocrest,otypeStr,ocurve,ogate);
+    } else {
+        std::fprintf(f,"%-16s %-16s %-16s %10.4f %-16s %10g %10g %s\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ocrest,otypeStr,(olr>=0)?OUT.coeff[static_cast<size_t>(olr)]:0.0,(olr>=0)?OUT.expon[static_cast<size_t>(olr)]:0.0,ogate);
+    }
     }}
 
     // [XSECTIONS]
@@ -1265,7 +1307,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","Link","Shape","Geom1","Geom2","Geom3","Geom4","Barrels");
     std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    if(ctx.links.type[u]==LinkType::PUMP)continue;
+    // [XSECTIONS] applies to conduits, orifices and weirs only. Pumps and
+    // outlets have no cross-section; emitting one (a default CIRCULAR with
+    // Geom1=0) makes legacy SWMM reject it with ERROR 211 (invalid number).
+    if(ctx.links.type[u]==LinkType::PUMP||ctx.links.type[u]==LinkType::OUTLET)continue;
     const int cr=ctx.link_subtypes.conduit_row(j);
     const int xbarrels=(cr>=0)?ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)]:1;
     // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
@@ -1282,6 +1327,19 @@ int writeInpFile(const SimulationContext& ctx_internal,
             ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,xbarrels);
         continue;
     }
+    // CUSTOM cross-sections reference a named shape curve: Geom1 is the max
+    // height and the Geom2 slot holds the curve NAME (not a dimension), barrels
+    // stay in the Geom5 column. Emitting numeric geometry drops the curve name,
+    // so legacy SWMM reads "0.0000" as the curve id (ERROR 209). The name is
+    // retained in pump_curve_name by the [XSECTIONS] parser.
+    if(ctx.links.xsect_shape[u]==XsectShape::CUSTOM){
+        const double cy=(ctx.links.xsect_geom1[u]!=0.0)?ctx.links.xsect_geom1[u]:ctx.links.xsect_y_full[u];
+        std::fprintf(f,"%-16s %-16s %.15g %-16s %12.4f %12.4f %8d\n",
+            ctx.link_names.name_of(j).c_str(),
+            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
+            cy,ctx.links.pump_curve_name[u].c_str(),0.0,0.0,xbarrels);
+        continue;
+    }
     double g1,g2,g3,g4;
     if(ctx.links.xsect_geom1[u]!=0.0){
         g1=ctx.links.xsect_geom1[u]; g2=ctx.links.xsect_geom2[u];
@@ -1289,7 +1347,9 @@ int writeInpFile(const SimulationContext& ctx_internal,
     } else {
         g1=ctx.links.xsect_y_full[u]; g2=ctx.links.xsect_w_max[u]; g3=0.0; g4=0.0;
     }
-    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
+    // Full precision on the geometry: xsect dimensions (e.g. CUSTOM/irregular
+    // heights like 0.61875) set conduit conveyance; %.4f truncation perturbs routing.
+    std::fprintf(f,"%-16s %-16s %.15g %.15g %.15g %.15g %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
     }}
 
     // [LOSSES]
@@ -1476,7 +1536,9 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-12s %-16s %-16s %-16s %-16s\n",
         "----------------","----------------","------------","----------------","----------------","----------------","----------------");
     for(int j=0;j<ctx.dwf_inflows.count();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %-16s %12.6f",
+    // Full precision on the average value: DWF base flows are small (~1e-4 m3/s)
+    // with many significant figures; %.6f truncation shifts the base sewage load.
+    std::fprintf(f,"%-16s %-16s %.15g",
         nN(ctx,ctx.dwf_inflows.node_idx[u]),
         ctx.dwf_inflows.constituent[u].c_str(),
         ctx.dwf_inflows.avg_value[u]);
@@ -1628,7 +1690,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,";%.*s\n",static_cast<int>(e-s),tb.comment.data()+s);
         if(e==tb.comment.size())break;s=e+2;}
     }
-    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.6f %12.6f\n",tN(ctx,t),lbl,tb.x[k],tb.y[k]);
+    // The curve TYPE keyword goes on the FIRST row only; continuation rows are
+    // "Name X Y". Legacy SWMM reads a repeated type on a later row as the
+    // X-value → ERROR 211 (invalid number).
+    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.6f %12.6f\n",tN(ctx,t),(k==0?lbl:""),tb.x[k],tb.y[k]);
     }}}
 
     // Geospatial block — section order matches the legacy SWMM GUI ExportMap():
