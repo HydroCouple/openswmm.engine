@@ -61,7 +61,7 @@ public:
     /// so a slightly stale hierarchy only affects the Krylov iteration count,
     /// never the converged solution. The first call always builds.
     void setup(const MeshData& mesh, const SurfaceStateData& state, double gamma,
-               bool recompute = true);
+               bool recompute = true, const double* deta_dv = nullptr);
 
     /// Apply one BoomerAMG V-cycle: z ≈ M⁻¹ r  (n entries each).
     void solve(const double* r, double* z, int n);

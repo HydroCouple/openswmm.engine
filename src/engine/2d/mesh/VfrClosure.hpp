@@ -147,6 +147,13 @@ inline double vfrEtaFromMeanDepth(double z1, double z2, double z3,
     if (relief < kVfrFlatRelief)
         return zbar + ((mean_depth > 0.0) ? mean_depth : 0.0);
 
+    // Fully wet: flat closure is exact. Checked FIRST — it is the dominant case
+    // in deep water (e.g. flooded urban meshes) and skips the ε-tail's sqrt/cubic
+    // switch-point evaluation below, which every cell would otherwise pay each
+    // RHS. The fully-wet threshold z3−z̄ always exceeds the ε-tail depth h_s, so
+    // reordering is exact (the two branches never overlap).
+    if (mean_depth >= z3 - zbar) return zbar + mean_depth;
+
     // Regularized tail: below the switch depth h_s the closure is linear.
     double eta_s = z1, h_s = 0.0;
     if (eps > 0.0) {
@@ -157,9 +164,6 @@ inline double vfrEtaFromMeanDepth(double z1, double z2, double z3,
     } else if (!(mean_depth > 0.0)) {
         return z1;                                // exact relation, dry limit
     }
-
-    // Fully wet: flat closure is exact.
-    if (mean_depth >= z3 - zbar) return zbar + mean_depth;
 
     // Lower branch (z1 < η ≤ z2): closed-form cube root.
     const double d21     = z2 - z1;

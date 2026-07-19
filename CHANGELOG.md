@@ -13,22 +13,22 @@ tag, so it's used here instead of a generic "Unreleased" heading.
 
 ## [6.0.0-alpha.3] — Object deletion: complete referential integrity + new delete APIs
 
-### Changed
-
-- **2D surface routing: VFR is now the default cell closure.** `CELL_CLOSURE`
-  defaults to `VFR` and `FACE_RECONSTRUCTION` to `VFR_FACE` (were `FLAT`/`MEAN`).
-  The Begnudelli & Sanders (2006/2007) volume/free-surface closure restores the
-  C-property at shorelines and removes the "water climbs uphill" artifact of the
-  flat closure (which overstates a partially wet cell's free surface by up to
-  two-thirds of its relief). Default on **all** backends — serial CVODE, serial
-  ARKODE, and the Kokkos OpenMP/GPU path. **`CELL_CLOSURE FLAT` /
-  `FACE_RECONSTRUCTION MEAN` restore the legacy behavior** and remain selectable.
-  `VFR_MIN_WET_FRAC` (default `0.01`, range `(0, 0.5]`) tunes the wetted-area
-  floor that keeps the closure C¹ for the implicit solvers. See
-  `plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md`.
-
 ### Added
 
+- **2D surface routing: VFR cell closure (opt-in).** New `[2D_OPTIONS]` keys
+  `CELL_CLOSURE` (`FLAT` | `VFR`), `FACE_RECONSTRUCTION` (`MEAN` | `VFR_FACE`),
+  and `VFR_MIN_WET_FRAC` (default `0.01`, range `(0, 0.5]`). The Begnudelli &
+  Sanders (2006/2007) volume/free-surface closure restores the C-property at
+  shorelines and removes the "water climbs uphill" artifact of the flat closure
+  (which overstates a partially wet cell's free surface by up to two-thirds of
+  its relief). Implemented on **all** backends — serial CVODE, serial ARKODE, and
+  the Kokkos OpenMP/GPU path (device VFR kernels + preconditioner chain-rule).
+  **The default stays `FLAT`/`MEAN`**: VFR resolves the shoreline wetting/drying
+  the flat closure freezes out, so it costs ~3–8× more CVODE steps and is best
+  reserved for shallow-water / gentle-slope cases (pair with
+  `PRECONDITIONER=JACOBI` and a looser `REL_TOLERANCE` on small meshes). The GUI
+  exposes all three keys in Simulation Options → 2D. See
+  `plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md`.
 - **Nine new delete + `analyze_impact` API pairs** covering every remaining
   data-object type: `swmm_pollutant_delete`, `swmm_pattern_delete`,
   `swmm_aquifer_delete`, `swmm_snowpack_delete`, `swmm_lid_delete`,

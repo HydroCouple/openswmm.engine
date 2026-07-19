@@ -235,21 +235,22 @@ struct SolverOptions2D {
     // (natural|system) overrides.
     RainfallMode       rainfall_mode   = RainfallMode::NATURAL_NEIGHBOUR;
 
-    // Volume → free-surface cell closure. Default VFR (Phase-5 rollout of
-    // plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md, 2026-07-19): the planar-bed
-    // volume/free-surface relation restores the C-property at shorelines and
-    // removes the flat-closure water-climbs-uphill artifact. FLAT (legacy
-    // η = tri_cz + V/A) remains selectable for A/B. Parsed from
-    // [2D_OPTIONS] CELL_CLOSURE (FLAT|VFR).
-    CellClosure2D      cell_closure    = CellClosure2D::VFR;
+    // Volume → free-surface cell closure. Default FLAT (legacy η = tri_cz + V/A):
+    // fast and the right choice for typical deep-water urban flooding, where a
+    // partially wet cell is the exception. VFR (planar-bed volume/free-surface,
+    // fully implemented on all backends) restores the C-property at shorelines
+    // and removes the water-climbs-uphill artifact, but resolves the shoreline
+    // wetting/drying FLAT freezes out — ~3–8× more CVODE steps — so it is OPT-IN
+    // (best on shallow water / gentle slopes; pair with PRECONDITIONER=JACOBI and
+    // a looser REL_TOLERANCE on small meshes). Parsed from [2D_OPTIONS]
+    // CELL_CLOSURE (FLAT|VFR). See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
+    CellClosure2D      cell_closure    = CellClosure2D::FLAT;
 
-    // Effective conveyance depth at shared edges. Default VFR_FACE (Phase-5):
-    // the B&S Eq. 14 face depth + wetting gate stops flow across an edge whose
-    // bed sits above the upwind surface (the second half of the artifact fix).
-    // MEAN (legacy upwind cell-mean depth) remains selectable. Parsed from
-    // [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE). Independent of
-    // CELL_CLOSURE so the two pieces can be A/B'd separately.
-    FaceDepth2D        face_reconstruction = FaceDepth2D::VFR_FACE;
+    // Effective conveyance depth at shared edges. Default MEAN (legacy upwind
+    // cell-mean depth). VFR_FACE (B&S Eq. 14 face depth + wetting gate) pairs
+    // with CELL_CLOSURE=VFR to complete the artifact fix; opt-in for the same
+    // reason. Parsed from [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE).
+    FaceDepth2D        face_reconstruction = FaceDepth2D::MEAN;
 
     /// Wetted-area-fraction floor ε of the regularized VFR closure: below wet
     /// fraction ε the η(V) relation continues linearly (slope 1/(εA)), bounding
