@@ -87,7 +87,7 @@ void HypreAmgPreconditioner::initialize(const MeshData& mesh) {
 
 void HypreAmgPreconditioner::setup(const MeshData& mesh,
                                     const SurfaceStateData& state, double gamma,
-                                    bool recompute) {
+                                    bool recompute, const double* deta_dv) {
     if (n_ <= 0) return;
 
     // Lagged preconditioner: when CVODE says the saved Jacobian is still current
@@ -99,7 +99,7 @@ void HypreAmgPreconditioner::setup(const MeshData& mesh,
     if (!recompute && hierarchy_built_) return;
 
     // Refresh M = I − γ·J and overwrite the matrix values (structure is fixed).
-    jac_.assemble(mesh, state, gamma);
+    jac_.assemble(mesh, state, gamma, 1.0e-9, deta_dv);
 
     auto A = static_cast<HYPRE_IJMatrix>(A_);
     HYPRE_IJMatrixInitialize(A);

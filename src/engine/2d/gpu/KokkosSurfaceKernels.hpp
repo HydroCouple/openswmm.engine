@@ -271,6 +271,10 @@ double vfrEtaFromMeanDepth(double z1, double z2, double z3,
     if (relief < kVfrFlatReliefDev())
         return zbar + ((mean_depth > 0.0) ? mean_depth : 0.0);
 
+    // Fully wet checked first — dominant case in deep water; skips the ε-tail
+    // sqrt/cubic switch-point evaluation (mirrors the host VfrClosure.hpp).
+    if (mean_depth >= z3 - zbar) return zbar + mean_depth;
+
     double eta_s = z1, h_s = 0.0;
     if (eps > 0.0) {
         eta_s = vfrStageAtWetFraction(z1, z2, z3, eps);
@@ -280,7 +284,6 @@ double vfrEtaFromMeanDepth(double z1, double z2, double z3,
     } else if (!(mean_depth > 0.0)) {
         return z1;
     }
-    if (mean_depth >= z3 - zbar) return zbar + mean_depth;
 
     const double d21     = z2 - z1;
     const double h_at_z2 = d21 * d21 / (3.0 * relief);

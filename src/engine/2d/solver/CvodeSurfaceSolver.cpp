@@ -241,7 +241,30 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
                             && as->n_active() < bypass_frac * ntot;
         if (!bypass) {
             const bool force = recompute || !solver->amg_used_last_setup_;
-            solver->amg_precond_->setup(mesh, state, gamma, force);
+            // VFR: hand the AMG assembly the per-cell dη/dV chain-rule factor so
+            // M = I − γJ is scaled correctly at wetting fronts. Without it the
+            // BoomerAMG hierarchy is mis-scaled under VFR and costs MORE Krylov
+            // iterations than no preconditioner. Only when the matrix is actually
+            // (re)assembled (force); FLAT passes nullptr ⇒ bit-identical.
+            const double* deta = nullptr;
+            std::vector<double> deta_dv;
+            if (force && ctx->opts->cell_closure == CellClosure2D::VFR) {
+                const int nt = mesh.n_triangles();
+                deta_dv.resize(static_cast<std::size_t>(nt));
+                for (int i = 0; i < nt; ++i) {
+                    const double inv_area = (mesh.tri_area[i] > 1.0e-30)
+                                                ? 1.0 / mesh.tri_area[i] : 0.0;
+                    double z1 = mesh.vz[mesh.tri_v0[i]];
+                    double z2 = mesh.vz[mesh.tri_v1[i]];
+                    double z3 = mesh.vz[mesh.tri_v2[i]];
+                    vfrSort3(z1, z2, z3);
+                    deta_dv[i] = inv_area
+                        * vfrDEtaDMeanDepth(z1, z2, z3, state.head[i],
+                                            ctx->opts->vfr_min_wet_frac);
+                }
+                deta = deta_dv.data();
+            }
+            solver->amg_precond_->setup(mesh, state, gamma, force, deta);
             solver->amg_used_last_setup_ = true;
             return 0;
         }

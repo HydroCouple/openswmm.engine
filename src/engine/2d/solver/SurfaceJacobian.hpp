@@ -50,8 +50,11 @@ public:
 
     /// Refresh the CSR values for M = I − γ·J from the current head/edge_flux.
     /// Cheap: writes only the precomputed entry positions, no reallocation.
+    /// @param deta_dv  Optional per-cell dη/dV (VFR chain-rule factor). nullptr
+    ///                 ⇒ the flat 1/A scaling (bit-identical to the legacy path).
     void assemble(const MeshData& mesh, const SurfaceStateData& state,
-                  double gamma, double dh_floor = 1.0e-9);
+                  double gamma, double dh_floor = 1.0e-9,
+                  const double* deta_dv = nullptr);
 
     int           rows()   const noexcept { return n_; }
     int           nnz()    const noexcept { return static_cast<int>(col_idx_.size()); }

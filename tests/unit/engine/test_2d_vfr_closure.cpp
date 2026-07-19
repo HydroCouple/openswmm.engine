@@ -351,19 +351,19 @@ TEST(VfrFaceGate, InteriorFluxStaysAntisymmetric) {
 
 TEST(VfrOptions, ParseAndFormatRoundTrip) {
     SolverOptions2D opts;
-    EXPECT_EQ(opts.cell_closure, CellClosure2D::VFR);           // default (Phase 5)
-    EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::VFR_FACE); // default (Phase 5)
-
-    // Legacy FLAT/MEAN still parse (kept selectable for A/B).
-    EXPECT_TRUE(parse2DOptionsLine({"CELL_CLOSURE", "FLAT"}, opts).empty());
-    EXPECT_EQ(opts.cell_closure, CellClosure2D::FLAT);
-    EXPECT_TRUE(parse2DOptionsLine({"FACE_RECONSTRUCTION", "MEAN"}, opts).empty());
-    EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::MEAN);
+    EXPECT_EQ(opts.cell_closure, CellClosure2D::FLAT);          // default (opt-in VFR)
+    EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::MEAN);     // default (opt-in VFR)
 
     EXPECT_TRUE(parse2DOptionsLine({"CELL_CLOSURE", "VFR"}, opts).empty());
     EXPECT_EQ(opts.cell_closure, CellClosure2D::VFR);
     EXPECT_TRUE(parse2DOptionsLine({"FACE_RECONSTRUCTION", "VFR_FACE"}, opts).empty());
     EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::VFR_FACE);
+
+    // And back to the legacy pair.
+    EXPECT_TRUE(parse2DOptionsLine({"CELL_CLOSURE", "FLAT"}, opts).empty());
+    EXPECT_EQ(opts.cell_closure, CellClosure2D::FLAT);
+    EXPECT_TRUE(parse2DOptionsLine({"FACE_RECONSTRUCTION", "MEAN"}, opts).empty());
+    EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::MEAN);
     EXPECT_TRUE(parse2DOptionsLine({"VFR_MIN_WET_FRAC", "0.02"}, opts).empty());
     EXPECT_NEAR(opts.vfr_min_wet_frac, 0.02, 1e-15);
 
@@ -375,7 +375,12 @@ TEST(VfrOptions, ParseAndFormatRoundTrip) {
     EXPECT_TRUE(is2DOptionKey("FACE_RECONSTRUCTION"));
     EXPECT_TRUE(is2DOptionKey("VFR_MIN_WET_FRAC"));
 
+    EXPECT_EQ(format2DOptionValue(opts, "CELL_CLOSURE"), "FLAT");
+    EXPECT_EQ(format2DOptionValue(opts, "FACE_RECONSTRUCTION"), "MEAN");
+    EXPECT_EQ(format2DOptionValue(opts, "VFR_MIN_WET_FRAC"), "0.02");
+
+    parse2DOptionsLine({"CELL_CLOSURE", "VFR"}, opts);
+    parse2DOptionsLine({"FACE_RECONSTRUCTION", "VFR_FACE"}, opts);
     EXPECT_EQ(format2DOptionValue(opts, "CELL_CLOSURE"), "VFR");
     EXPECT_EQ(format2DOptionValue(opts, "FACE_RECONSTRUCTION"), "VFR_FACE");
-    EXPECT_EQ(format2DOptionValue(opts, "VFR_MIN_WET_FRAC"), "0.02");
 }

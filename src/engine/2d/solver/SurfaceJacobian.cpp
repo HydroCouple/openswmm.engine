@@ -58,12 +58,19 @@ void SurfaceJacobian::buildSparsity(const MeshData& mesh) {
 }
 
 void SurfaceJacobian::assemble(const MeshData& mesh, const SurfaceStateData& state,
-                                double gamma, double dh_floor) {
+                                double gamma, double dh_floor,
+                                const double* deta_dv) {
     std::fill(values_.begin(), values_.end(), 0.0);
 
+    // ∂F/∂V = (∂F/∂η)·(dη/dV). Under FLAT, dη/dV = 1/A. Under VFR the caller
+    // passes a per-cell dη/dV array (1/(A·max(w,ε))) so the diagonal uses cell
+    // i's factor and each off-diagonal uses the NEIGHBOUR's factor — the AMG
+    // preconditioner is otherwise mis-scaled at wetting fronts, where it can
+    // cost more Krylov iterations than no preconditioner at all.
     for (int i = 0; i < n_; ++i) {
-        const double inv_area = (mesh.tri_area[i] > 1.0e-30)
-                                    ? 1.0 / mesh.tri_area[i] : 0.0;
+        const double inv_area_i = (mesh.tri_area[i] > 1.0e-30)
+                                      ? 1.0 / mesh.tri_area[i] : 0.0;
+        const double dedv_i = deta_dv ? deta_dv[i] : inv_area_i;
         double diag = 1.0;  // identity term of M = I − γJ
         for (int e = 0; e < 3; ++e) {
             const int nb = tri_nbr(mesh, i, e);
@@ -71,8 +78,12 @@ void SurfaceJacobian::assemble(const MeshData& mesh, const SurfaceStateData& sta
             const double dh = std::abs(state.head[i] - state.head[nb]);
             const double F  = std::abs(state.edge_flux[i * 3 + e]);
             const double T  = F / std::max(dh, dh_floor);   // transmissivity
-            const double m_off = -gamma * T * inv_area;      // M_ij = −γ T / A_i
-            diag -= m_off;                                   // M_ii += γ T / A_i
+            // FLAT keeps the original approximation (cell i's inv_area for the
+            // off-diagonal too) so the flat path is bit-identical; VFR uses the
+            // neighbour's true dη/dV.
+            const double dedv_nb = deta_dv ? deta_dv[nb] : inv_area_i;
+            const double m_off = -gamma * T * dedv_nb;       // M_ij = −γ T dη/dV_j
+            diag += gamma * T * dedv_i;                      // M_ii += γ T dη/dV_i
             values_[static_cast<std::size_t>(
                 edge_pos_[static_cast<std::size_t>(i) * 3 + e])] += m_off;
         }
