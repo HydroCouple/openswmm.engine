@@ -3711,6 +3711,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_edge_flux      = st.edge_flux;
     for (double& f : snap.surface_edge_flux) f = -f;
     snap.surface_vert_head      = st.vert_head;
+    snap.surface_vert_depth     = st.vert_depth_signed;
     snap.surface_face_vx        = st.face_vx;
     snap.surface_face_vy        = st.face_vy;
     for (double& v : snap.surface_face_vx) v = -v;

@@ -404,6 +404,18 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_head(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_vertex_get_heads_bulk(SWMM_Engine engine,
                                                     double* heads);
 
+/** @brief Bulk get render-oriented SIGNED vertex depths (m) at all vertices.
+ *
+ *  The wet-masked, depth-weighted free-surface reconstruction eta_v - z_v:
+ *  dry-cell bed elevations never contribute (unlike the vertex heads above,
+ *  which are the solver field with dry-cell head = bed elevation). Negative
+ *  over the dry side of partially wet cells (sub-cell shoreline intercept),
+ *  0 where no incident cell is wet. This is the field GUIs should interpolate
+ *  for water-surface rendering and profiles.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_vertex_get_render_depths_bulk(SWMM_Engine engine,
+                                                            double* depths);
+
 /* =========================================================================
  * 2D Solver Statistics
  * ========================================================================= */

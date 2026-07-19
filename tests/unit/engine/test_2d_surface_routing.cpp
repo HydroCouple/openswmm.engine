@@ -426,6 +426,189 @@ TEST(VertexReconstruction, ReconstructsLinearFieldAccurately) {
 
 
 // ============================================================================
+// Cell Free-Surface Closure Tests (render/output eta(V) inversion)
+// ============================================================================
+
+// Analytic mean depth h(eta) for a planar-bed triangular cell with sorted
+// vertex elevations z1 <= z2 <= z3 — the forward relation the inversion must
+// round-trip. Mirrors the piecewise form documented in VertexReconstruction.hpp.
+static double meanDepthAtEta(double eta, double z1, double z2, double z3) {
+    const double zbar = (z1 + z2 + z3) / 3.0;
+    if (eta <= z1) return 0.0;
+    if (eta >= z3) return eta - zbar;
+    if (eta <= z2)
+        return (eta - z1) * (eta - z1) * (eta - z1)
+               / (3.0 * (z2 - z1) * (z3 - z1));
+    return (eta - zbar)
+           + (z3 - eta) * (z3 - eta) * (z3 - eta)
+             / (3.0 * (z3 - z1) * (z3 - z2));
+}
+
+TEST(CellFreeSurface, FlatCellMatchesFlatClosure) {
+    // Zero-relief cell: eta = zbar + h exactly.
+    EXPECT_NEAR(cellFreeSurfaceElevation(0.7, 2.0, 2.0, 2.0), 2.7, 1e-12);
+    EXPECT_NEAR(cellFreeSurfaceElevation(0.0, 2.0, 2.0, 2.0), 2.0, 1e-12);
+}
+
+TEST(CellFreeSurface, FullyWetReducesToFlatClosure) {
+    // z = {0, 0.5, 1}, zbar = 0.5. Fully wet when h >= z3 - zbar = 0.5.
+    EXPECT_NEAR(cellFreeSurfaceElevation(0.5, 0.0, 0.5, 1.0), 1.0, 1e-9);
+    EXPECT_NEAR(cellFreeSurfaceElevation(2.0, 0.0, 0.5, 1.0), 2.5, 1e-9);
+}
+
+TEST(CellFreeSurface, RoundTripsTiltedCell) {
+    // eta -> h (analytic forward) -> eta (inversion under test), across both
+    // partial-wet branches and several bed shapes, in any vertex order.
+    const double beds[][3] = {
+        {0.0, 0.5, 1.0},   // general tilt
+        {0.0, 0.0, 1.0},   // z1 == z2 (branch A degenerate)
+        {0.0, 1.0, 1.0},   // z2 == z3 (branch B degenerate)
+        {3.0, 3.2, 7.0},   // step-like cell with datum offset
+    };
+    for (const auto& z : beds) {
+        for (double frac : {0.05, 0.25, 0.5, 0.75, 0.95, 1.0}) {
+            const double eta   = z[0] + frac * (z[2] - z[0]);
+            const double h     = meanDepthAtEta(eta, z[0], z[1], z[2]);
+            if (!(h > 0.0)) continue;
+            // Scrambled argument order must not matter.
+            const double eta_r = cellFreeSurfaceElevation(h, z[2], z[0], z[1]);
+            EXPECT_NEAR(eta_r, eta, 1e-8)
+                << "bed {" << z[0] << "," << z[1] << "," << z[2]
+                << "} frac " << frac;
+        }
+    }
+}
+
+TEST(CellFreeSurface, PartialWetSitsBelowFlatClosure) {
+    // On a tilted cell, a small volume must NOT be reported at zbar + h (the
+    // flat closure) — the water pools on the low side, eta < zbar + h. This is
+    // the step-cell overstatement the closure exists to remove.
+    const double z1 = 0.0, z2 = 0.5, z3 = 1.0, zbar = 0.5;
+    const double h  = 0.05;
+    const double eta = cellFreeSurfaceElevation(h, z1, z2, z3);
+    EXPECT_LT(eta, zbar + h);
+    EXPECT_GT(eta, z1);
+    // And it must round-trip mass: h(eta) == h.
+    EXPECT_NEAR(meanDepthAtEta(eta, z1, z2, z3), h, 1e-10);
+}
+
+
+// ============================================================================
+// Vertex Render Reconstruction Tests (wet-masked signed depths)
+// ============================================================================
+
+// Step mesh: unit-square split into two triangles with T1's private vertex
+// raised — T0 (v0,v1,v3) low, T1 (v0,v3,v2) climbing to a crest at v2.
+//
+//   v2 (0,1, z=5) ---- v3 (1,1, z=0)
+//     |    \  T1  |
+//     | T0   \    |
+//   v0 (0,0, z=0) ---- v1 (1,0, z=0)
+//
+static MeshData makeStepMesh() {
+    MeshData mesh;
+    mesh.resize_vertices(4);
+    mesh.vx = {0.0, 1.0, 0.0, 1.0};
+    mesh.vy = {0.0, 0.0, 1.0, 1.0};
+    mesh.vz = {0.0, 0.0, 5.0, 0.0};
+
+    mesh.resize_triangles(2);
+    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
+    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.mannings_n[0] = 0.035;
+    mesh.mannings_n[1] = 0.035;
+
+    buildMeshTopology(mesh);
+    return mesh;
+}
+
+TEST(VertexRenderReconstruction, DryNeighborDoesNotRaiseWaterSurface) {
+    auto mesh = makeStepMesh();
+    buildVertexStencils(mesh);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+
+    // T0 wet (flat bed, depth 0.5 => eta = 0.5); T1 dry. The old solver-field
+    // export blended T1's bed (tri_cz = 5/3) into the shared vertices v0/v3,
+    // lifting the rendered surface up the step with no driving head.
+    const double dry = 1.0e-3;
+    state.depth[0] = 0.5;
+    state.depth[1] = 0.0;
+
+    reconstructVertexRenderDepths(mesh, state, dry);
+
+    const double eta0 = cellFreeSurfaceElevation(
+        0.5, mesh.vz[0], mesh.vz[1], mesh.vz[3]);   // T0's free surface (0.5)
+
+    // Shared vertices see ONLY the wet cell's eta.
+    EXPECT_NEAR(state.vert_depth_signed[0], eta0 - mesh.vz[0], 1e-12);
+    EXPECT_NEAR(state.vert_depth_signed[1], eta0 - mesh.vz[1], 1e-12);
+    EXPECT_NEAR(state.vert_depth_signed[3], eta0 - mesh.vz[3], 1e-12);
+    // Crest vertex v2 is touched only by the dry T1: dry (exactly 0).
+    EXPECT_DOUBLE_EQ(state.vert_depth_signed[2], 0.0);
+    // No-new-maxima: no WET vertex (positive signed depth) may imply a free
+    // surface above the only wet cell's eta. (A dry vertex's 0 means "no
+    // water", not eta = z_v, so it is excluded.)
+    for (int v = 0; v < mesh.n_vertices(); ++v)
+        if (state.vert_depth_signed[v] > 0.0)
+            EXPECT_LE(state.vert_depth_signed[v] + mesh.vz[v], eta0 + 1e-12)
+                << "vertex " << v << " implies water above the driving head";
+}
+
+TEST(VertexRenderReconstruction, LakeAtRestIsFlat) {
+    auto mesh = makeUnitSquareMesh();   // flat bed z = 0
+    buildVertexStencils(mesh);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    state.depth[0] = 0.7;
+    state.depth[1] = 0.7;
+
+    reconstructVertexRenderDepths(mesh, state, 1.0e-3);
+
+    for (int v = 0; v < mesh.n_vertices(); ++v)
+        EXPECT_NEAR(state.vert_depth_signed[v], 0.7, 1e-12)
+            << "lake at rest is not flat at vertex " << v;
+}
+
+TEST(VertexRenderReconstruction, AllDryYieldsZero) {
+    auto mesh = makeStepMesh();
+    buildVertexStencils(mesh);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+
+    reconstructVertexRenderDepths(mesh, state, 1.0e-3);
+
+    for (int v = 0; v < mesh.n_vertices(); ++v)
+        EXPECT_DOUBLE_EQ(state.vert_depth_signed[v], 0.0);
+}
+
+TEST(VertexRenderReconstruction, SubCellShorelineIsSigned) {
+    // Wet cell spanning a step: its high vertex must carry a NEGATIVE signed
+    // depth (eta below the vertex), so the barycentric blend crosses zero at
+    // the sub-cell shoreline instead of snapping at a cell boundary.
+    auto mesh = makeStepMesh();
+    buildVertexStencils(mesh);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    state.depth[0] = 0.5;    // flat T0: eta = 0.5
+    state.depth[1] = 0.2;    // tilted T1 (z 0..5): partially wet
+
+    reconstructVertexRenderDepths(mesh, state, 1.0e-3);
+
+    // v2 (z=5) is touched only by the wet T1 whose eta << 5.
+    EXPECT_LT(state.vert_depth_signed[2], 0.0);
+    // And the implied eta at v2 equals T1's cell eta (single-cell stencil).
+    const double eta1 = cellFreeSurfaceElevation(
+        0.2, mesh.vz[0], mesh.vz[3], mesh.vz[2]);
+    EXPECT_NEAR(state.vert_depth_signed[2] + mesh.vz[2], eta1, 1e-12);
+}
+
+
+// ============================================================================
 // Gradient Computation Tests
 // ============================================================================
 
@@ -1736,6 +1919,8 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_face_nodes"));
     EXPECT_TRUE(exists("Mesh2_face_depth"));
     EXPECT_TRUE(exists("Mesh2_face_head"));
+    EXPECT_TRUE(exists("Mesh2_node_head"));
+    EXPECT_TRUE(exists("Mesh2_node_depth"));
     EXPECT_TRUE(exists("Mesh2_face_vx"));
     EXPECT_TRUE(exists("Mesh2_face_vy"));
     EXPECT_TRUE(exists("Mesh2_face_continuity_err"));

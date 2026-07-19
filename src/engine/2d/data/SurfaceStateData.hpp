@@ -84,6 +84,14 @@ struct SurfaceStateData {
     // Reconstructed head at vertices — [0, n_vertices)
     std::vector<double> vert_head;      ///< Head reconstructed at vertices
 
+    /// Render/output-only SIGNED vertex depth η_v − z_v (m) — wet-masked,
+    /// depth-weighted reconstruction (reconstructVertexRenderDepths). Unlike
+    /// vert_head, dry-cell bed elevations never contribute, so this field is
+    /// safe to interpolate for the water surface; negative over the dry side
+    /// of partially wet cells (sub-cell shoreline), 0 where no incident cell
+    /// is wet. NOT used by the solver.
+    std::vector<double> vert_depth_signed;
+
     // Cell-centred velocity (RT0 reconstruction from edge fluxes) — per triangle
     std::vector<double> face_vx;        ///< Cell velocity X component (m/s)
     std::vector<double> face_vy;        ///< Cell velocity Y component (m/s)
@@ -152,6 +160,7 @@ struct SurfaceStateData {
         grad_hx_lim.assign(nt, 0.0);
         grad_hy_lim.assign(nt, 0.0);
         vert_head.assign(nv, 0.0);
+        vert_depth_signed.assign(nv, 0.0);
         face_vx.assign(nt, 0.0);
         face_vy.assign(nt, 0.0);
         cell_continuity_err.assign(nt, 0.0);

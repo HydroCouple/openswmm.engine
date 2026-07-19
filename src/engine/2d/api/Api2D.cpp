@@ -578,6 +578,17 @@ int swmm_2d_vertex_get_heads_bulk(SWMM_Engine engine, double* heads) {
     return SWMM_OK;
 }
 
+int swmm_2d_vertex_get_render_depths_bulk(SWMM_Engine engine, double* depths) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!depths) return SWMM_ERR_BADPARAM;
+
+    auto& s = router2d.state();
+    std::memcpy(depths, s.vert_depth_signed.data(),
+                s.vert_depth_signed.size() * sizeof(double));
+    return SWMM_OK;
+}
+
 // ============================================================================
 // 2D Solver Statistics
 // ============================================================================
