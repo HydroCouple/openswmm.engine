@@ -92,6 +92,10 @@ struct MeshViews {
     CIView tri_nbr0, tri_nbr1, tri_nbr2;                   ///< [n_tri]
     CDView edge_length, edge_nx, edge_ny, edge_conveyance; ///< [n_tri*3]
 
+    // VFR closure inputs, pre-sorted on the host at initialize.
+    CDView tri_z1, tri_z2, tri_z3;      ///< [n_tri] sorted vertex elevations
+    CDView edge_z_lo, edge_z_hi;        ///< [n_tri*3] sorted shared-edge endpoints
+
     // Vertex reconstruction stencil (CSR).
     CIView vert_ptr;   ///< [n_vert+1]
     CIView vert_idx;   ///< [nnz]
@@ -158,14 +162,22 @@ enum : int { BC_WALL = 0, BC_NORMAL_FLOW = 1, BC_SPECIFIED_STAGE = 2,
 // boundaryEdgeFlux so every backend agrees. h_bc / q_flow are resolved on the
 // host (timeseries / rating) and uploaded; a RATING_CURVE arrives as a per-metre
 // flow in q_flow, handled identically to SPECIFIED_FLOW.
+KOKKOS_INLINE_FUNCTION double faceDepthFromEta(double eta, double z_lo, double z_hi);
+
 KOKKOS_INLINE_FUNCTION
 double boundaryEdgeFlux(int bc, double slope, double h_bc, double q_flow,
                         double depth, double head, double tri_cz, double area,
-                        double L, double n, double dh_eps) {
+                        double L, double n, double dh_eps,
+                        double edge_z_lo, double edge_z_hi) {
     switch (bc) {
         case BC_NORMAL_FLOW: {
             if (slope <= 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
-            const double h53 = depth * Kokkos::cbrt(depth * depth);
+            // §VFR_FACE: convey with the depth AT the boundary edge from the
+            // cell's free surface, so a cell whose water pools away from the
+            // outlet edge does not leak.
+            const double h_out = faceDepthFromEta(head, edge_z_lo, edge_z_hi);
+            if (h_out <= 0.0) return 0.0;
+            const double h53 = h_out * Kokkos::cbrt(h_out * h_out);
             return -(h53 * Kokkos::sqrt(slope) / n) * L;
         }
         case BC_SPECIFIED_FLOW:
@@ -176,8 +188,10 @@ double boundaryEdgeFlux(int bc, double slope, double h_bc, double q_flow,
             const double dh   = head - h_bc;
             const double dx_b = (L > 1.0e-12) ? (2.0 * area) / (3.0 * L) : 0.0;
             if (dx_b <= 1.0e-12) return 0.0;
-            const double h_up = (dh > 0.0) ? depth
-                                           : Kokkos::fmax(h_bc - tri_cz, 0.0);
+            // §VFR_FACE: upwind depth AT the boundary edge from whichever side
+            // is higher (cell surface on outflow, prescribed stage on inflow).
+            const double h_up = faceDepthFromEta((dh > 0.0) ? head : h_bc,
+                                                 edge_z_lo, edge_z_hi);
             if (h_up <= 0.0) return 0.0;
             const double h53 = h_up * Kokkos::cbrt(h_up * h_up);
             const double sgn = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
@@ -189,6 +203,134 @@ double boundaryEdgeFlux(int bc, double slope, double h_bc, double q_flow,
 }
 
 // ---------------------------------------------------------------------------
+// VFR closure — device mirror of src/engine/2d/mesh/VfrClosure.hpp (the single
+// source of truth for the CPU solvers). Duplicated here as KOKKOS_INLINE
+// device functions using Kokkos:: math, the same pattern as regSqrt /
+// boundaryEdgeFlux above (the header's std:: math is not portable to CUDA/HIP
+// device code). Inputs (z1,z2,z3) are pre-SORTED on the host at initialize
+// (MeshViews::tri_z1..3 / edge_z_lo/hi), so no device sort is needed.
+// See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
+// ---------------------------------------------------------------------------
+
+KOKKOS_INLINE_FUNCTION double kVfrFlatReliefDev() { return 1.0e-9; }
+
+/// Wetted-area fraction A_wet/A at stage eta (== dh̄/dη). Sorted inputs.
+KOKKOS_INLINE_FUNCTION
+double vfrWetFraction(double z1, double z2, double z3, double eta) {
+    const double relief = z3 - z1;
+    if (relief < kVfrFlatReliefDev()) return (eta > z1) ? 1.0 : 0.0;
+    if (eta <= z1) return 0.0;
+    if (eta >= z3) return 1.0;
+    if (eta <= z2) {
+        const double d21 = z2 - z1;
+        if (d21 < kVfrFlatReliefDev()) return 0.0;
+        const double t = eta - z1;
+        return t * t / (d21 * relief);
+    }
+    const double d32 = z3 - z2;
+    const double t = z3 - eta;
+    return 1.0 - t * t / (relief * d32);
+}
+
+/// Exact cell-mean depth h̄(η). Sorted inputs.
+KOKKOS_INLINE_FUNCTION
+double vfrMeanDepthFromEtaExact(double z1, double z2, double z3, double eta) {
+    const double zbar   = (z1 + z2 + z3) / 3.0;
+    const double relief = z3 - z1;
+    if (relief < kVfrFlatReliefDev()) return (eta > zbar) ? (eta - zbar) : 0.0;
+    if (eta <= z1) return 0.0;
+    if (eta >= z3) return eta - zbar;
+    if (eta <= z2) {
+        const double d21 = z2 - z1;
+        if (d21 < kVfrFlatReliefDev()) return 0.0;
+        const double t = eta - z1;
+        return t * t * t / (3.0 * d21 * relief);
+    }
+    const double d32 = z3 - z2;
+    const double t   = z3 - eta;
+    return (eta - zbar) + t * t * t / (3.0 * relief * d32);
+}
+
+/// Stage at which the wet fraction equals eps (0<eps<1). Sorted, non-flat.
+KOKKOS_INLINE_FUNCTION
+double vfrStageAtWetFraction(double z1, double z2, double z3, double eps) {
+    const double relief = z3 - z1;
+    const double d21    = z2 - z1;
+    if (eps <= d21 / relief)
+        return z1 + Kokkos::sqrt(eps * d21 * relief);
+    const double d32 = z3 - z2;
+    return z3 - Kokkos::sqrt((1.0 - eps) * relief * d32);
+}
+
+/// Regularized free-surface elevation η(h̄) — the solver closure. Sorted inputs.
+KOKKOS_INLINE_FUNCTION
+double vfrEtaFromMeanDepth(double z1, double z2, double z3,
+                           double mean_depth, double eps) {
+    const double zbar   = (z1 + z2 + z3) / 3.0;
+    const double relief = z3 - z1;
+    if (relief < kVfrFlatReliefDev())
+        return zbar + ((mean_depth > 0.0) ? mean_depth : 0.0);
+
+    double eta_s = z1, h_s = 0.0;
+    if (eps > 0.0) {
+        eta_s = vfrStageAtWetFraction(z1, z2, z3, eps);
+        h_s   = vfrMeanDepthFromEtaExact(z1, z2, z3, eta_s);
+        const double h = (mean_depth > 0.0) ? mean_depth : 0.0;
+        if (h <= h_s) return eta_s - (h_s - h) / eps;
+    } else if (!(mean_depth > 0.0)) {
+        return z1;
+    }
+    if (mean_depth >= z3 - zbar) return zbar + mean_depth;
+
+    const double d21     = z2 - z1;
+    const double h_at_z2 = d21 * d21 / (3.0 * relief);
+    if (mean_depth <= h_at_z2)
+        return z1 + Kokkos::cbrt(3.0 * mean_depth * d21 * relief);
+
+    if (z3 - z2 < kVfrFlatReliefDev()) return zbar + mean_depth;
+
+    const double d32   = z3 - z2;
+    const double denom = 3.0 * relief * d32;
+    double lo = z2, hi = z3;
+    double eta = zbar + mean_depth;
+    if (eta <= lo || eta >= hi) eta = 0.5 * (lo + hi);
+    for (int it = 0; it < 64; ++it) {
+        const double dz3 = z3 - eta;
+        const double f   = (eta - zbar) + dz3 * dz3 * dz3 / denom - mean_depth;
+        if (f > 0.0) hi = eta; else lo = eta;
+        const double df = 1.0 - dz3 * dz3 / (relief * d32);
+        double next = (df > 1.0e-12) ? eta - f / df : 0.5 * (lo + hi);
+        if (next <= lo || next >= hi) next = 0.5 * (lo + hi);
+        if (Kokkos::fabs(next - eta) < 1.0e-12 * (1.0 + relief)) return next;
+        eta = next;
+    }
+    return eta;
+}
+
+/// dη/dh̄ = 1/max(w(η), eps). Sorted inputs. Divide by area A for dη/dV.
+KOKKOS_INLINE_FUNCTION
+double vfrDEtaDMeanDepth(double z1, double z2, double z3,
+                         double eta, double eps) {
+    double w = vfrWetFraction(z1, z2, z3, eta);
+    if (w < eps) w = eps;
+    if (w < 1.0e-12) w = 1.0e-12;
+    return 1.0 / w;
+}
+
+/// B&S Eq. 14 face depth + wetting gate. Sorted endpoint elevations.
+KOKKOS_INLINE_FUNCTION
+double faceDepthFromEta(double eta, double z_lo, double z_hi) {
+    if (eta <= z_lo) return 0.0;
+    const double dz = z_hi - z_lo;
+    if (dz < 1.0e-9) return eta - z_lo;
+    if (eta <= z_hi) {
+        const double t = eta - z_lo;
+        return t * t / (2.0 * dz);
+    }
+    return eta - 0.5 * (z_lo + z_hi);
+}
+
+// ---------------------------------------------------------------------------
 // RHS pipeline. Evaluates ydot = f(y) for the VOLUME formulation: y is the cell
 // water volume V; the free surface η = tri_cz + V/A and mean depth h̄ = V/A are
 // reconstructed per cell and drive the flux pipeline. Mirrors
@@ -196,7 +338,8 @@ double boundaryEdgeFlux(int bc, double slope, double h_bc, double q_flow,
 // ---------------------------------------------------------------------------
 inline void evaluateRhs(const MeshViews& m, const StateViews& s,
                         DView y, DView ydot,
-                        double dry_depth, double limiter_eps, double dh_eps) {
+                        double dry_depth, double limiter_eps, double dh_eps,
+                        double vfr_eps) {
     const int nt = m.n_tri;
     const int nv = m.n_vert;
 
@@ -208,6 +351,8 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
     auto e_len = m.edge_length; auto e_nx = m.edge_nx; auto e_ny = m.edge_ny;
     auto e_conv = m.edge_conveyance;
     auto v_ptr = m.vert_ptr; auto v_idx = m.vert_idx; auto v_wt = m.vert_wt;
+    auto tz1 = m.tri_z1; auto tz2 = m.tri_z2; auto tz3 = m.tri_z3;
+    auto ez_lo = m.edge_z_lo; auto ez_hi = m.edge_z_hi;
 
     auto head = s.head; auto depth = s.depth;
     auto gx = s.grad_hx; auto gy = s.grad_hy;
@@ -218,15 +363,16 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
     auto bc_head = s.edge_bc_head; auto bc_flow = s.edge_bc_flow;
     const bool has_bc = (bc_type.extent(0) > 0);
 
-    // 1. Unpack y -> head, depth (VOLUME formulation): flat-cell closure
-    //    h̄ = V/A, η = tri_cz + h̄ (mirrors reconstructFromVolume).
+    // 1. Unpack y -> head, depth (VOLUME formulation): depth stays the mean
+    //    depth h̄ = V/A; the free surface η is the VFR planar-bed closure
+    //    (mirrors reconstructFromVolume under CELL_CLOSURE=VFR).
     Kokkos::parallel_for("rhs_unpack", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
             const double A = tri_area(i);
             const double v = y(i) > 0.0 ? y(i) : 0.0;
             const double d = (A > 1.0e-30) ? v / A : 0.0;
             depth(i) = d;
-            head(i)  = tri_cz(i) + d;
+            head(i)  = vfrEtaFromMeanDepth(tz1(i), tz2(i), tz3(i), d, vfr_eps);
         });
 
     // 2. Reconstruct head at vertices (pseudo-Laplacian, CSR gather).
@@ -299,14 +445,22 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
                     eflux(idx) = has_bc
                         ? boundaryEdgeFlux(bc_type(idx), bc_slope(idx),
                               bc_head(idx), bc_flow(idx), depth(i), head(i),
-                              tri_cz(i), tri_area(i), e_len(idx), mn(i), dh_eps)
+                              tri_cz(i), tri_area(i), e_len(idx), mn(i), dh_eps,
+                              ez_lo(idx), ez_hi(idx))
                         : 0.0;
                     continue;
                 }
 
                 const double h_L = head(i), h_R = head(nbr);
                 const int up = (h_L >= h_R) ? i : nbr;
-                const double depth_up = depth(up);
+                // §VFR_FACE: conveyance depth AT the shared edge (B&S Eq. 14)
+                // from the upwind free surface and the edge's endpoint beds —
+                // zero when the upwind surface is below the whole edge (wetting
+                // gate). Both incident cells see the same (z_lo,z_hi,η_up), so
+                // the redundant per-cell slots stay antisymmetric.
+                const double eta_up   = (up == i) ? h_L : h_R;
+                const double depth_up = faceDepthFromEta(eta_up, ez_lo(idx),
+                                                         ez_hi(idx));
                 if (depth_up <= 0.0) { eflux(idx) = 0.0; continue; }
 
                 const double dxx = tri_cx(i) - tri_cx(nbr);
@@ -352,14 +506,27 @@ inline void evaluateRhs(const MeshViews& m, const StateViews& s,
 // ---------------------------------------------------------------------------
 
 /// Build the per-cell diagonal D from the most recent edge fluxes/heads.
-inline void precondSetup(const MeshViews& m, const StateViews& s) {
+///
+/// The secant transmissivity T = |F|/|Δη| is floored at the flux's own
+/// head-difference regularization scale (FLUX_DH_EPS), NOT a bare 1e-9. Under
+/// the VFR closure a lake-at-rest shoreline restores the C-property: incident
+/// heads EQUALIZE, so Δη → 0 while |F| carries a small regularized residual.
+/// A 1e-9 floor then makes T (and the Jacobi diagonal D) blow up; the psolve
+/// z = r/(1−γD) collapses the Newton correction toward 0, CVODE's convergence
+/// heuristic passes spuriously, and it accepts non-conservative steps (observed:
+/// mass created, −400% continuity on a small JACOBI mesh). Flooring at the same
+/// Δη scale where the flux is linearized keeps D bounded and the step honest.
+/// FLAT never equalizes heads (that is the artifact), so it never hit this.
+/// The dη/dV chain-rule factor the serial psetup carries is intentionally
+/// omitted here — preconditioner-only, and it compounds the same spike.
+inline void precondSetup(const MeshViews& m, const StateViews& s, double dh_eps) {
     const int nt = m.n_tri;
     auto nb0 = m.tri_nbr0; auto nb1 = m.tri_nbr1; auto nb2 = m.tri_nbr2;
     auto tri_area = m.tri_area;
     auto head = s.head; auto eflux = s.edge_flux; auto D = s.precond_diag;
+    const double dh_floor = Kokkos::fmax(dh_eps, 1.0e-9);
     Kokkos::parallel_for("prec_setup", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
-            constexpr double dh_floor = 1.0e-9;
             const int n0 = nb0(i), n1 = nb1(i), n2 = nb2(i);
             double T_sum = 0.0;
             for (int e = 0; e < 3; ++e) {

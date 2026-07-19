@@ -313,6 +313,12 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                            static_cast<int>(o.rainfall_mode) <= 2
                                ? static_cast<int>(o.rainfall_mode) : 0]);
     std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
+    std::fprintf(f, "%-22s %s\n",    "CELL_CLOSURE",
+                 o.cell_closure == twoD::CellClosure2D::VFR ? "VFR" : "FLAT");
+    std::fprintf(f, "%-22s %s\n",    "FACE_RECONSTRUCTION",
+                 o.face_reconstruction == twoD::FaceDepth2D::VFR_FACE
+                     ? "VFR_FACE" : "MEAN");
+    std::fprintf(f, "%-22s %.12g\n", "VFR_MIN_WET_FRAC",  o.vfr_min_wet_frac);
     if (!o.output_file.empty())
         std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", o.output_file.c_str());
 

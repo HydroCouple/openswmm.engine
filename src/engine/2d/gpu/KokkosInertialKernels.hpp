@@ -50,10 +50,12 @@ KOKKOS_INLINE_FUNCTION constexpr double inertialG() { return 9.80665; }
 // ---------------------------------------------------------------------------
 inline void evaluateInertialFe(const MeshViews& m, const StateViews& s,
                                const InertialEdgeViews& E,
-                               DView y, DView ydot, double dry_depth) {
+                               DView y, DView ydot, double dry_depth,
+                               double vfr_eps) {
     const int nt = m.n_tri;
     const int ne = E.ne;
-    auto tri_cz = m.tri_cz; auto tri_area = m.tri_area;
+    auto tri_area = m.tri_area;
+    auto tz1 = m.tri_z1; auto tz2 = m.tri_z2; auto tz3 = m.tri_z3;
     auto head = s.head; auto depth = s.depth;
     auto rain = s.rainfall; auto coup = s.coupling_flux; auto evap = s.evap_rate;
     auto cL = E.cL; auto cR = E.cR; auto xi = E.xi; auto inv_dx = E.inv_dx;
@@ -61,14 +63,15 @@ inline void evaluateInertialFe(const MeshViews& m, const StateViews& s,
     auto csign = E.cell_sign;
     const double G = inertialG();
 
-    // 1. Reconstruct head/depth + cell source forcing.
+    // 1. Reconstruct head/depth + cell source forcing. VFR cell closure (the
+    //    inertial face still uses zface — plan §6.4 follow-up).
     Kokkos::parallel_for("inert_fe_cells", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
             const double A = tri_area(i);
             const double v = y(i) > 0.0 ? y(i) : 0.0;
             const double d = (A > 1.0e-30) ? v / A : 0.0;
             depth(i) = d;
-            head(i)  = tri_cz(i) + d;
+            head(i)  = vfrEtaFromMeanDepth(tz1(i), tz2(i), tz3(i), d, vfr_eps);
             ydot(i)  = A * (rain(i) + coup(i) - evapSink(evap(i), d, dry_depth));
         });
 
@@ -100,20 +103,23 @@ inline void evaluateInertialFe(const MeshViews& m, const StateViews& s,
 // ---------------------------------------------------------------------------
 inline void evaluateInertialFi(const MeshViews& m, const StateViews& s,
                                const InertialEdgeViews& E,
-                               DView y, DView ydot, double dry_depth) {
+                               DView y, DView ydot, double dry_depth,
+                               double vfr_eps) {
     const int nt = m.n_tri;
     const int ne = E.ne;
-    auto tri_cz = m.tri_cz; auto tri_area = m.tri_area; auto mn = m.mannings_n;
+    auto tri_area = m.tri_area; auto mn = m.mannings_n;
+    auto tz1 = m.tri_z1; auto tz2 = m.tri_z2; auto tz3 = m.tri_z3;
     auto head = s.head;
     auto cL = E.cL; auto cR = E.cR; auto zface = E.zface;
     const double G = inertialG();
 
-    // Reconstruct head (for h_f) and zero the cell rows.
+    // Reconstruct head (for h_f) via the VFR cell closure and zero the cell rows.
     Kokkos::parallel_for("inert_fi_cells", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
             const double A = tri_area(i);
             const double v = y(i) > 0.0 ? y(i) : 0.0;
-            head(i)  = tri_cz(i) + ((A > 1.0e-30) ? v / A : 0.0);
+            const double d = (A > 1.0e-30) ? v / A : 0.0;
+            head(i)  = vfrEtaFromMeanDepth(tz1(i), tz2(i), tz3(i), d, vfr_eps);
             ydot(i)  = 0.0;
         });
 
@@ -143,10 +149,12 @@ inline void evaluateInertialFi(const MeshViews& m, const StateViews& s,
 // ---------------------------------------------------------------------------
 inline void precondInertialSetup(const MeshViews& m, const StateViews& s,
                                  const InertialEdgeViews& E,
-                                 DView y, DView wq, double gamma, double dry_depth) {
+                                 DView y, DView wq, double gamma, double dry_depth,
+                                 double vfr_eps) {
     const int nt = m.n_tri;
     const int ne = E.ne;
-    auto tri_cz = m.tri_cz; auto tri_area = m.tri_area; auto mn = m.mannings_n;
+    auto tri_area = m.tri_area; auto mn = m.mannings_n;
+    auto tz1 = m.tri_z1; auto tz2 = m.tri_z2; auto tz3 = m.tri_z3;
     auto head = s.head;
     auto cL = E.cL; auto cR = E.cR; auto zface = E.zface;
     const double G = inertialG();
@@ -155,7 +163,8 @@ inline void precondInertialSetup(const MeshViews& m, const StateViews& s,
         KOKKOS_LAMBDA(int i) {
             const double A = tri_area(i);
             const double v = y(i) > 0.0 ? y(i) : 0.0;
-            head(i) = tri_cz(i) + ((A > 1.0e-30) ? v / A : 0.0);
+            const double d = (A > 1.0e-30) ? v / A : 0.0;
+            head(i) = vfrEtaFromMeanDepth(tz1(i), tz2(i), tz3(i), d, vfr_eps);
         });
 
     Kokkos::parallel_for("inert_pc_wq", Kokkos::RangePolicy<ExecSpace>(0, ne),

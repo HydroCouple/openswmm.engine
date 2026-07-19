@@ -9,6 +9,7 @@
 #include "SurfaceRouter2D.hpp"
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
+#include "mesh/VfrClosure.hpp"
 #include "solver/ActiveSetBuilder.hpp"
 #include "solver/SurfaceFluxCalculator.hpp"
 #ifdef OPENSWMM_HAS_2D
@@ -43,6 +44,23 @@ void refreshOutputGradients(const MeshData& mesh, SurfaceStateData& state,
     computeUnlimitedGradients(mesh, state, opts.num_threads);
     computeLimitedGradients(mesh, state, opts.limiter_epsilon,
                             opts.num_threads);
+}
+
+// Free surface of cell i at MEAN depth d under the configured closure —
+// mirrors the solvers' reconstructFromVolume (FLAT: tri_cz + d; VFR: the
+// regularized planar-bed inverse). d == 0 gives the closure's dry head, which
+// under VFR is the η(V=0) anchor the solver's head→volume seeding maps back
+// to exactly zero volume.
+double headFromMeanDepth(const MeshData& mesh, const SolverOptions2D& opts,
+                         int i, double d) {
+    if (opts.cell_closure == CellClosure2D::VFR) {
+        double z1 = mesh.vz[mesh.tri_v0[i]];
+        double z2 = mesh.vz[mesh.tri_v1[i]];
+        double z3 = mesh.vz[mesh.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        return vfrEtaFromMeanDepth(z1, z2, z3, d, opts.vfr_min_wet_frac);
+    }
+    return mesh.tri_cz[i] + d;
 }
 
 } // namespace
@@ -288,9 +306,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // BoundaryData / mesh edge slots (sizes boundary_, flips the drained flag).
     drainPendingRows();
 
-    // Set initial heads from ground elevation
+    // Set initial (dry) heads from ground elevation. FLAT: the bed centroid.
+    // VFR: the closure's dry anchor η(V=0) — chosen so the solver's
+    // head → volume seeding returns exactly V = 0 for every dry cell.
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
-        state_.head[i] = mesh_.tri_cz[i];
+        state_.head[i] = headFromMeanDepth(mesh_, options_, i, 0.0);
     }
 
     // Build coupling point descriptors
@@ -395,6 +415,35 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             }
             ctx.nodes.ponded_area[ni] = 0.0;
             ctx.coupled_node[ni] = std::uint8_t{1};
+
+            // Exchange-area sanity: an exchange area far larger than any
+            // conduit the node connects to lets the orifice inject water much
+            // faster than the pipe can convey it — the node then fills within
+            // a window and spills straight back (drain/spill churn: spiky
+            // lateral inflows, large node continuity "errors", and 2D solver
+            // grind at the coupling stencils). xsect_a_full is 1D ft²; convert
+            // to the SI m² of cp.area. Skipped when no conduit area is
+            // resolved yet (a_max == 0) — the guard, not the warning, is load-
+            // bearing.
+            double a_pipe_max = 0.0;
+            for (int l = 0; l < ctx.n_links(); ++l) {
+                auto ul = static_cast<std::size_t>(l);
+                if (ctx.links.node1[ul] == cp.node_idx
+                    || ctx.links.node2[ul] == cp.node_idx)
+                    a_pipe_max = std::max(a_pipe_max, ctx.links.xsect_a_full[ul]);
+            }
+            a_pipe_max *= options_.len_1d_to_2d * options_.len_1d_to_2d; // ft²→m²
+            if (a_pipe_max > 0.0 && cp.area > 10.0 * a_pipe_max) {
+                char abuf[320];
+                std::snprintf(abuf, sizeof(abuf),
+                    "WARNING: 2D-coupled node '%s' has exchange AREA %.3f m² — "
+                    "%.0fx the largest connected conduit area (%.4f m²). The "
+                    "orifice can inject far more than the pipe can convey; "
+                    "expect the node to fill and spill back each window. "
+                    "Consider AREA ~ the inlet/barrel area.",
+                    nname.c_str(), cp.area, cp.area / a_pipe_max, a_pipe_max);
+                ctx.warnings.push_back(abuf);
+            }
         }
 
         // Median-dual footprint of the cells around the coupling point (SI m²).
@@ -828,7 +877,8 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
         state_.reset_state();
         const int ntr = mesh_.n_triangles();
         for (int i = 0; i < ntr; ++i)
-            state_.head[i] = mesh_.tri_cz[i] + state_.depth[i];
+            state_.head[i] = headFromMeanDepth(mesh_, options_, i,
+                                               state_.depth[i]);
         active_set_.halo_rings = std::min(2 * active_set_.halo_rings, 16);
         rebuildActiveSet(mesh_, state_, &boundary_,
                          &coupling_points_, options_, active_set_,
@@ -968,6 +1018,31 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     // integrated, and the held exchanges were un-booked above — so booking
     // them would inject phantom volume into the ledger.
     if (!advance_failed) accumulateMassBalance(ctx, dt);
+
+    // Hand the window's junction-exchange volumes to the 1D side as a delivery
+    // QUEUE: assembleLateralInflows drains coupling_queue at the uniform rate
+    // queue / coupling_delivery_remaining over the following routing steps, so
+    // a multi-step macro window's volume no longer lands on the node as a
+    // single-step pulse (window/routing-step × the physical rate — which
+    // instantly flooded small junctions and drove a drain/spill churn). MUST
+    // run AFTER accumulateMassBalance (which reads coupling_volume as "this
+    // window's exchange"). A failed or quiescent window un-booked its
+    // exchanges above (coupling_volume already 0), so this transfers nothing.
+    // Any jitter leftover still queued from the previous window is preserved
+    // (+=) — the node always receives exactly the booked volume.
+    {
+        bool queued = false;
+        for (const auto& cp : coupling_points_) {
+            if (cp.is_outfall) continue;
+            auto ni = static_cast<std::size_t>(cp.node_idx);
+            if (ctx.nodes.coupling_volume[ni] != 0.0) {
+                ctx.nodes.coupling_queue[ni] += ctx.nodes.coupling_volume[ni];
+                ctx.nodes.coupling_volume[ni] = 0.0;
+                queued = true;
+            }
+        }
+        if (queued) ctx.coupling_delivery_remaining = dt;
+    }
 
     // Refresh the cached CFL hint from the just-accepted state. The 1D engine
     // consults computeCflHint() every routing step, but the 2D state only
