@@ -112,6 +112,7 @@ extern double Qcf[];                   // flow units conversion factors
 // --- functions used to create a RDII file
 static int    readOldUHFormat(int j, int m, char* tok[], int ntoks);
 static void   setUnitHydParams(int j, int i, int m, double x[]);
+static int    markUnitHydParams(int j, int i, int m);
 static void   createRdiiFile(void);
 static int    getNumRdiiNodes(void);
 static void   validateRdii(void);
@@ -212,6 +213,7 @@ void rdii_initUnitHyd(int unitHydIndex)
             UnitHyd[unitHydIndex].r[m][i]       = 0.0;
             UnitHyd[unitHydIndex].tPeak[m][i]   = 0;
             UnitHyd[unitHydIndex].tBase[m][i]   = 0;
+            UnitHyd[unitHydIndex].paramsSet[m][i] = FALSE;
         }
     }
 }
@@ -280,6 +282,11 @@ int rdii_readUnitHydParams(char* tok[], int ntoks)
         }
     }
 
+    // --- issue warning if UH params were previously assigned to this month
+    //     (e.g. an ALL entry overriding earlier month-specific entries)
+    if ( markUnitHydParams(j, k, m) )
+        report_writeWarningMsg(WARN13, UnitHyd[j].ID);
+
     // --- save UH params
     setUnitHydParams(j, k, m, x);
     return 0;
@@ -299,6 +306,7 @@ int readOldUHFormat(int j, int m, char* tok[], int ntoks)
 //
 {
     int    i, k;
+    int    wasSet = FALSE;
     double p[9], x[6];
 
     // --- check for proper number of tokens
@@ -322,6 +330,13 @@ int readOldUHFormat(int j, int m, char* tok[], int ntoks)
         }
     }
 
+    // --- issue warning if UH params were previously assigned to this month
+    for ( k = 0; k < 3; k++)
+    {
+        if ( markUnitHydParams(j, k, m) ) wasSet = TRUE;
+    }
+    if ( wasSet ) report_writeWarningMsg(WARN13, UnitHyd[j].ID);
+
     // --- save UH parameters
     for ( k = 0; k < 3; k++)
     {
@@ -332,6 +347,43 @@ int readOldUHFormat(int j, int m, char* tok[], int ntoks)
         }
     }
     return 0;
+}
+
+//=============================================================================
+
+int markUnitHydParams(int j, int i, int m)
+//
+//  Input:   j = unit hydrograph index
+//           i = type of UH response (short, medium or long term)
+//           m = month of year (0 = all months)
+//  Output:  returns TRUE if parameters were previously assigned to any
+//           month covered by m
+//  Purpose: records the months that UH parameters have been assigned to
+//           so that repeated assignments to the same month can be flagged.
+//
+{
+    int m1, m2;                        // start/end month indexes
+    int wasSet = FALSE;
+
+    // --- find range of months that share same parameter values
+    if ( m == 0 )
+    {
+        m1 = 0;
+        m2 = 11;
+    }
+    else
+    {
+        m1 = m-1;
+        m2 = m1;
+    }
+
+    // --- check & mark each month in the range
+    for (m=m1; m<=m2; m++)
+    {
+        if ( UnitHyd[j].paramsSet[m][i] ) wasSet = TRUE;
+        UnitHyd[j].paramsSet[m][i] = TRUE;
+    }
+    return wasSet;
 }
 
 //=============================================================================

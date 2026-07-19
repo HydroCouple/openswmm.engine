@@ -185,6 +185,7 @@ static const std::unordered_map<int, const char*>& warning_table() {
         {10, "crest elevation is below downstream invert for regulator Link %s."},
         {11, "non-matching attributes in Control Rule %s."},
         {12, "inlet removed due to unsupported shape for Conduit %s."},
+        {13, "parameters for same month provided more than once for Unit Hydrograph %s."},
 
         // New 6.0
         {101, "Time Series %s has duplicate x values."},

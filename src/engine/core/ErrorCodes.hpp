@@ -214,7 +214,7 @@ enum CffiWarnCode : int {
 };
 
 // ============================================================================
-// Warning codes — matching legacy text.h WARN01–WARN12
+// Warning codes — matching legacy text.h WARN01–WARN13
 // ============================================================================
 
 enum WarnCode : int {
@@ -231,6 +231,7 @@ enum WarnCode : int {
     WARN_REGULATOR_CREST_LOW    = 10,  ///< crest elevation is below downstream invert for regulator Link %s
     WARN_CONTROL_RULE_ATTR      = 11,  ///< non-matching attributes in Control Rule %s
     WARN_INLET_REMOVED          = 12,  ///< inlet removed due to unsupported shape for Conduit %s
+    WARN_UH_PARAMS_REPEATED     = 13,  ///< parameters for same month provided more than once for Unit Hydrograph %s
 
     // --- New 6.0 warnings (100+) ---
     WARN_TIMESERIES_DUPLICATE_X = 101, ///< Time Series %s has duplicate x values

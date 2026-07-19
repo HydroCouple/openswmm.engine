@@ -60,6 +60,8 @@
 #define WARN11 "WARNING 11: non-matching attributes in Control Rule"
 #define WARN12 \
 "WARNING 12: inlet removed due to unsupported shape for Conduit"
+#define WARN13 \
+"WARNING 13: parameters for same month provided more than once for Unit Hydrograph"
 
 // Analysis Option Keywords
 #define  w_FLOW_UNITS        "FLOW_UNITS"
