@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
+#include <utility>
 
 namespace openswmm::uncertainty {
 
@@ -44,8 +46,9 @@ double tryParseDouble(const std::string& s, bool& ok) {
 // a line-oriented parser, reporting errors via the SimulationContext.
 using LineParser = std::function<std::string(const std::vector<std::string>&)>;
 
-input::SectionHandler makeSectionHandler(LineParser line_parser) {
-    return [lp = std::move(line_parser)](
+input::SectionHandler makeSectionHandler(std::string section_name,
+                                         LineParser line_parser) {
+    return [sn = std::move(section_name), lp = std::move(line_parser)](
         openswmm::SimulationContext& ctx,
         const std::vector<std::string>& lines)
     {
@@ -56,7 +59,7 @@ input::SectionHandler makeSectionHandler(LineParser line_parser) {
             std::string err = lp(tokens);
             if (!err.empty()) {
                 ctx.error_code = 101; // SWMM_ERR_PARSE_LINE
-                ctx.error_message = "Error parsing [UNCERTAINTY] line: " + err;
+                ctx.error_message = "Error parsing [" + sn + "] line: " + err;
                 return;
             }
         }
@@ -169,7 +172,7 @@ void registerQualityUncertaintySection(UncertaintyConfig& config,
 {
     // [UNCERTAINTY] — scalar parameter uncertainty for QUALITY layer.
     registry.register_custom("UNCERTAINTY",
-        makeSectionHandler([&config](const std::vector<std::string>& tokens) {
+        makeSectionHandler("UNCERTAINTY", [&config](const std::vector<std::string>& tokens) {
             return parseQualityUncertaintyLine(tokens, config);
         }));
 }
@@ -268,7 +271,7 @@ void registerSoftRainfallGridSection(UncertaintyConfig& config,
 {
     // [SOFT_RAINFALL_GRID] — gridded rainfall input (SR-2b, design §3.2).
     registry.register_custom("SOFT_RAINFALL_GRID",
-        makeSectionHandler([&config](const std::vector<std::string>& tokens) {
+        makeSectionHandler("SOFT_RAINFALL_GRID", [&config](const std::vector<std::string>& tokens) {
             return parseSoftRainfallGridLine(tokens, config);
         }));
 }

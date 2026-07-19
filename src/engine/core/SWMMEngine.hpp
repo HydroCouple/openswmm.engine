@@ -388,6 +388,7 @@ private:
     std::ofstream wq_csv_;                   ///< WQ uncertainty quantile CSV (written at report intervals)
     uncertainty::WQUncertaintyBounds wq_bounds_; ///< Analytical WQ bounds computer
     std::vector<int> wq_pollut_indices_;     ///< Pollutant indices for QUALITY layer sources
+    std::vector<double> wq_pollut_perturbations_; ///< Fractional decay perturbation per QUALITY source
     bool wq_unc_active_ = false;             ///< True if QUALITY layer is active
 
     std::string rpt_path_;  ///< Report file path

@@ -403,14 +403,14 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
     if (grid_2d_active_ && grid_reader_opened_) {
         // Advance the grid reader to the current simulation time
         double t_now = ctx.current_time;
-        // Advance until the current plane covers t_now
-        while (grid_reader_.has_current() && grid_reader_.location_next() != nullptr
-               && grid_reader_.time_next() < t_now) {
-            if (!grid_reader_.advance()) break;
-        }
         // If we haven't started advancing yet, do the first advance
         if (!grid_reader_.has_current()) {
-            grid_reader_.advance();
+            if (!grid_reader_.advance()) return;
+        }
+        // Advance until the current plane covers t_now.
+        while (grid_reader_.has_current() && grid_reader_.spread_next() != nullptr
+               && grid_reader_.time_next() < t_now) {
+            if (!grid_reader_.advance()) break;
         }
 
         // Unit conversion factor: grid units → m/s

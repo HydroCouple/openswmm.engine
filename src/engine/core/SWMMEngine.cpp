@@ -108,6 +108,7 @@ int SWMMEngine::open(const char* inp_path,
     soft_grid_runtimes_.clear();
     wq_unc_active_ = false;
     wq_pollut_indices_.clear();
+    wq_pollut_perturbations_.clear();
     wq_conc_prev_.clear();
 
     rpt_path_ = rpt_path ? rpt_path : "";
@@ -2792,13 +2793,13 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
         if (wq_unc_active_ && wq_csv_.is_open()) {
             const int n_nodes = ctx_.nodes.count();
             const int n_polluts = ctx_.n_pollutants();
+            const double report_dt_days = ctx_.options.report_step / 86400.0;
             
             // For each node, compute WQ bounds using the previous concentration
             // and the current time step for configured pollutants only
             for (int i = 0; i < n_nodes; ++i) {
                 const auto ui = static_cast<std::size_t>(i);
                 const double* conc_prev = wq_conc_prev_.data() + ui * n_polluts;
-                double* conc_curr = ctx_.nodes.conc.data() + ui * n_polluts;
                 
                 // Compute bounds for each configured pollutant at this node
                 for (std::size_t s = 0; s < wq_pollut_indices_.size(); ++s) {
@@ -2807,35 +2808,16 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     if (p < 0 || p >= n_polluts) continue;
                     
                     const double c_prev = conc_prev[p];
-                    const double c_curr = conc_curr[p];
-                    
-                    // Compute analytical bounds for first-order decay
-                    // Get QUAL_STEP from ext_options (stored as string, convert to double)
-                    double qual_step = 300.0; // default value
-                    auto qual_step_it = ctx_.options.ext_options.find("QUAL_STEP");
-                    if (qual_step_it != ctx_.options.ext_options.end()) {
-                        openswmm::from_chars_double(
-                            qual_step_it->second.data(),
-                            qual_step_it->second.data() + qual_step_it->second.size(),
-                            qual_step);
-                    }
-                    
-                    // Get decay rate from QUALITY layer parameters
-                    double decay_rate = 0.0;
-                    const auto& quality_specs = uncertainty_config_.specs_for(uncertainty::LayerTarget::QUALITY);
-                    if (!quality_specs.empty()) {
-                        // For now, use the first QUALITY spec's perturbation as the decay perturbation
-                        // In a more complete implementation, we would map pollutant names to specific decay rates
-                        decay_rate = quality_specs[0].perturbation;
-                    }
-                    
-                    // Compute bounds with 50 LHS members (M=50)
-                    auto bounds = wq_bounds_.compute(c_prev, decay_rate, qual_step, 50);
+                    const double decay_rate = ctx_.pollutants.k_decay[static_cast<std::size_t>(p)];
+                    wq_bounds_.decay_pert = wq_pollut_perturbations_[s];
+
+                    // Compute bounds with 50 LHS members (M=50).
+                    auto bounds = wq_bounds_.compute(c_prev, decay_rate, report_dt_days, 50);
                     
                     // Write CSV row for this node-pollutant combination
                     wq_csv_ << ctx_.current_time << ','
                             << ctx_.node_names.name_of(i) << ','
-                            << p << ','  // pollutant index
+                            << ctx_.pollutant_names.name_of(p) << ','
                             << bounds.q05 << ','
                             << bounds.q50 << ','
                             << bounds.q95 << '\n';
@@ -3252,12 +3234,12 @@ void SWMMEngine::initSoftGridRuntimes() noexcept {
 
 void SWMMEngine::stageSoftGridForcings() noexcept {
     for (auto& runtime : soft_grid_runtimes_) {
-        while (runtime.reader.has_current() && runtime.reader.location_next() != nullptr
+        if (!runtime.reader.has_current()) {
+            if (!runtime.reader.advance()) continue;
+        }
+        while (runtime.reader.has_current() && runtime.reader.spread_next() != nullptr
                && runtime.reader.time_next() < ctx_.current_time) {
             if (!runtime.reader.advance()) break;
-        }
-        if (!runtime.reader.has_current()) {
-            runtime.reader.advance();
         }
 
         const float* loc = runtime.reader.location_now();
@@ -3685,15 +3667,16 @@ void SWMMEngine::initHydraulics() noexcept {
             // Initialize WQ bounds computer with the number of pollutants
             // WQUncertaintyBounds does not require initialization
             
-            // Resize previous concentration buffer
-            wq_conc_prev_.assign(
-                static_cast<std::size_t>(ctx_.nodes.count() * ctx_.n_pollutants()), 
-                0.0);
+            // Seed previous concentrations from the deterministic initial state
+            // so the first report interval is anchored to the actual start state.
+            wq_conc_prev_ = ctx_.nodes.conc;
             
             // Resolve QUALITY pollutant specs: late name→index resolution at engine init
             const auto& quality_specs = uncertainty_config_.specs_for(uncertainty::LayerTarget::QUALITY);
             wq_pollut_indices_.clear();
+            wq_pollut_perturbations_.clear();
             wq_pollut_indices_.reserve(quality_specs.size());
+            wq_pollut_perturbations_.reserve(quality_specs.size());
             
             for (const auto& spec : quality_specs) {
                 // Find pollutant index by name
@@ -3708,6 +3691,7 @@ void SWMMEngine::initHydraulics() noexcept {
                 
                 // Store the index (or -1 if not found - will be handled during execution)
                 wq_pollut_indices_.push_back(pollut_index);
+                wq_pollut_perturbations_.push_back(spec.perturbation);
             }
 
             if (!rpt_path_.empty()) {
@@ -3721,7 +3705,7 @@ void SWMMEngine::initHydraulics() noexcept {
                 }
                 wq_csv_.open(wq_csv_path);
                 if (wq_csv_.is_open()) {
-                    wq_csv_ << "time_s,node_name,pollutant_index,q05,q50,q95\n";
+                    wq_csv_ << "time_s,node_name,pollutant,q05,q50,q95\n";
                 }
             }
         }

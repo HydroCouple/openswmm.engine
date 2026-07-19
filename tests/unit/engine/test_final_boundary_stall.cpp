@@ -156,7 +156,7 @@ TEST_F(FinalBoundaryStallTest, NoStallAtFinalBoundary) {
     int err = swmm_engine_open(engine_, 
                                "pr11_stall_test.inp", 
                                "/tmp/pr11_stall_test.rpt", 
-                               "", 
+                               nullptr, 
                                nullptr);
     std::cout << "swmm_engine_open returned: " << err << std::endl;
     ASSERT_EQ(err, SWMM_OK) << "Failed to open engine: " << swmm_get_last_error_msg(engine_);

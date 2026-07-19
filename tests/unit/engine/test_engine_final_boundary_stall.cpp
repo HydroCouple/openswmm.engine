@@ -27,7 +27,7 @@
 
 namespace {
 
-static const char* k_inp_path = "tests/unit/engine/data/pr11_stall_test.inp";
+static const char* k_inp_path = "pr11_stall_test.inp";
 static const char* k_rpt_path = "/tmp/pr11_stall_test.rpt";
 
 } // anonymous namespace

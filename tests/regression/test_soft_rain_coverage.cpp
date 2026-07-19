@@ -180,8 +180,11 @@ RunResult runCase(const std::string& inp_text, const char* tag, bool with_soft) 
     // Require a non-trivial number of report samples so later indexing is safe.
     out.ok = !out.times.empty();
     if (out.ok) {
+        const std::size_t n = out.times.size();
         for (const auto& [nm, _] : out.heads) {
-            if (out.q05.count(nm) && out.q05[nm].size() != expected)
+            if ((out.q05.count(nm) && out.q05[nm].size() != n)
+                || (out.q50.count(nm) && out.q50[nm].size() != n)
+                || (out.q95.count(nm) && out.q95[nm].size() != n))
                 out.ok = false;
         }
     }

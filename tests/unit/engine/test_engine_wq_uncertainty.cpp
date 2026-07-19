@@ -24,6 +24,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,10 @@ TEST(EngineWQUncertainty, LifecycleIntegration) {
 
     // Verify WQ uncertainty is active
     EXPECT_TRUE(engine->wq_unc_active()) << "WQ uncertainty should be active";
+
+    // Verify the report-boundary seed matches the deterministic start state.
+    EXPECT_EQ(engine->wq_conc_prev_.size(), engine->ctx_.nodes.conc.size());
+    EXPECT_THAT(engine->wq_conc_prev_, ::testing::ElementsAreArray(engine->ctx_.nodes.conc));
 
     // Verify pollutant indices are resolved
     // Note: This would require access to private members or additional API
@@ -144,6 +149,20 @@ TEST(EngineWQUncertainty, CSVOutput) {
     }
     std::ifstream csv_file(csv_path);
     EXPECT_TRUE(csv_file.good()) << "WQ uncertainty CSV file should be created";
+
+    std::string header;
+    ASSERT_TRUE(std::getline(csv_file, header));
+    EXPECT_EQ(header, "time_s,node_name,pollutant,q05,q50,q95");
+
+    std::string row;
+    if (std::getline(csv_file, row)) {
+        std::stringstream row_stream(row);
+        std::vector<std::string> cols;
+        std::string col;
+        while (std::getline(row_stream, col, ',')) cols.push_back(col);
+        ASSERT_GE(cols.size(), 6u);
+        EXPECT_EQ(cols[2], "TSS");
+    }
 
     // Clean up
     std::remove(k_rpt_path);
