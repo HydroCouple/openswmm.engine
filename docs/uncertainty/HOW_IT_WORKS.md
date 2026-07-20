@@ -644,3 +644,23 @@ When you supply a grid file with `/location` (deterministic rain) and `/spread`
 - **Spatial correlation** (via `COHERENCE CORR_LEN`): the ROM builds a
   spatially-smooth set of rankings, so members' realizations decorrelate by
   distance.
+
+### Why the reduced-basis trick keeps the ROM fast
+
+When you activate spatial correlation, the engine must generate a correlated rainfall field
+on each time step — originally an `M×n` materialization for all `M` members at `n` space-time
+points. For large meshes (tens of thousands of cells), this can dominate per-step cost or even
+wall-clock time. The *reduced-basis* optimization (automatically selected for large meshes)
+replaces the `M×n` field with a compact spatial decomposition: a small set of `K_s` basis modes
+(typically 10–50) whose weighted combinations reconstruct each member's field. Instead of
+materializing all `M` fields, the engine computes only `K_s` basis projections per step
+(O(K_s·k·n) arithmetic instead of O(M·k·n)), then assembles each member's forcing from the
+basis coefficients (O(M·K_s·k)). Since `K_s ≪ M`, total per-step cost drops significantly.
+
+The basis itself is built once at initialization using an analytic Whittle–Matérn spectral
+decomposition (reproduced in
+[`SPDE_SPATIAL_BASIS.md`](https://github.com/USEPA/Stormwater-Management-Model/blob/develop/docs/uncertainty/SPDE_SPATIAL_BASIS.md))
+with the same correlation length `CORR_LEN <meters>` as the full correlated field — so
+the ROM's behavior is unchanged, only the internal representation is more efficient. This
+eliminated a 64-second field-generation bottleneck on typical large-mesh runs, making spatial
+correlation practical even on production grids.
