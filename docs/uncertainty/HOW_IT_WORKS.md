@@ -594,3 +594,53 @@ per-cell per-member dispatch is the design's deferred cold path.
 (which applies a single multiplier to all rainfall) is superseded by soft
 rainfall for new work. The scalar path remains functional for backward
 compatibility.
+
+### 11.1 Joint vs. marginal correlation — the comonotone vs. spatial choice
+
+**The comonotone path (default — `COHERENCE FULL`)** is the simplest case:
+each member `i` has one scalar coefficient `c_i` that applies everywhere. The
+per-cell ensemble at location t is `{loc[t] + c_1·spread[t], loc[t] + c_2·spread[t], ...}`.
+Since all members scale the spread by the *same* amount, the *spread map itself*
+defines the joint structure — if cell A has twice the spread of cell B, then A's
+ensemble is twice as wide as B's. The marginals (per-cell distributions) are
+correct, and the joint structure is **perfectly correlated across space**: members
+move together everywhere.
+
+**The spatially-correlated path (`COHERENCE CORR_LEN <meters>`)** lets each
+member have a *different* coefficient at each location: `c_i[t]`. The per-cell
+ensemble at location t is `{loc[t] + c_i1[t]·spread[t], loc[t] + c_i2[t]·spread[t], ...}`.
+The rank/copula construction ensures the *marginals are still correct* — the
+sorted ensemble at each cell still matches the input coefficient set — but the
+*joint structure* becomes **spatially decorrelated**: member i's high value in
+cell A does not imply a high value in cell B. At a downstream node, member i's
+contribution from A may partially cancel its contribution from B.
+
+**Why this matters for downstream uncertainty:**
+
+Imagine two upstream cells feeding a single downstream node:
+
+- **Comonotone** (full positive correlation across space): all members either flow
+  wet from both cells or dry from both. Downstream spread is the worst-case sum.
+- **Spatially correlated** (member i wet in A, dry in B; member j dry in A, wet
+  in B): flows partially cancel at the downstream node. Spread is narrower.
+
+**In practical terms**, the comonotone band is conservative (wider) because it
+assumes the worst-case: "every source is either uniformly overestimated or
+underestimated across the whole domain." The spatially-correlated band is more
+physically realistic (narrower) because it accounts for the spatial
+heterogeneity of real storms — a rain cell that misses one region often hits
+another.
+
+**The `/spread` map in context:**
+
+When you supply a grid file with `/location` (deterministic rain) and `/spread`
+(uncertainty), you are specifying:
+- **`/location` per-cell**: the mean rainfall at that cell.
+- **`/spread` per-cell**: the *marginal* standard deviation or half-range at
+  that cell (e.g., from a BME posterior, rain-gauge measurement error, or
+  radar-QPE climatology).
+- **Comonotone structure** (default): the ROM assumes all ensemble members are
+  perfectly correlated — the same realization everywhere.
+- **Spatial correlation** (via `COHERENCE CORR_LEN`): the ROM builds a
+  spatially-smooth set of rankings, so members' realizations decorrelate by
+  distance.
