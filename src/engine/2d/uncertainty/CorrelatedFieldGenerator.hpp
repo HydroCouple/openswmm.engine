@@ -62,6 +62,50 @@ public:
                          double pert, double corr_len, uint64_t seed,
                          SpatialUncertaintyField& out);
 
+    /**
+     * @brief Generate M spatially-correlated *additive coefficient* fields by
+     *        a marginal-preserving Gaussian-copula rank map (CL-1c soft
+     *        coherence).
+     *
+     * Unlike generate() (multiplier fields centred on ~1.0, clamped), this
+     * variant produces signed coefficient fields for the soft-forcing path
+     * whose per-cell marginal over members is *exactly* the input coefficient
+     * set {c_i}. This is essential: the per-cell (local) uncertainty band is
+     * unchanged, while the *spatial* correlation between cells is controlled by
+     * @p corr_len — so downstream accumulation partially cancels and produces
+     * tighter, more physically realistic bands (the feature's purpose).
+     *
+     * Construction:
+     *   1. Draw M spatially-correlated N(0,1) fields g_i[t] via the same
+     *      exponential-smoothing kernel used by generate().
+     *   2. At each cell t, rank the members by g_i[t] and assign the sorted
+     *      coefficients: the member with the p-th smallest g[t] gets the p-th
+     *      smallest coefficient.
+     *
+     * Properties:
+     *   corr_len == 0    : W[i][t] = coeff[i]         (exact comonotone rows)
+     *   corr_len  → ∞    : one ranking for all cells  (comonotone up to a member
+     *                      relabelling — identical quantile bands)
+     *   corr_len small   : rankings vary by cell → spatial decorrelation →
+     *                      narrower downstream bands
+     * The per-cell column mean over members equals mean_i(coeff[i]) exactly
+     * (the whole set {c_i} appears at every cell), preserving the deviation-form
+     * invariant (nominal member zero-deviation, q50 tracks the deterministic
+     * answer).
+     *
+     * @param cx,cy       Cell/node centroid coordinates (length n_cells).
+     * @param n_cells     Number of spatial cells (2D triangles or 1D nodes).
+     * @param coeff       Per-member scalar coefficient c_i (length out.n_members).
+     * @param corr_len    Exponential correlation length (m). 0 ⇒ comonotone.
+     * @param seed        Deterministic reproducibility seed.
+     * @param out         Output field (allocated by this call).
+     */
+    static void generateCoefficientField(const double* cx, const double* cy,
+                                          int n_cells,
+                                          const std::vector<double>& coeff,
+                                          double corr_len, uint64_t seed,
+                                          SpatialUncertaintyField& out);
+
 private:
     /// Build neighbourhood lists: for each cell t, indices of cells within
     /// `radius` metres (inclusive of self).

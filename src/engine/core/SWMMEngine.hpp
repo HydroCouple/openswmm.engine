@@ -383,6 +383,12 @@ private:
     bool soft_rain_1d_active_ = false;        ///< True when any configured gage feeds an active node
     uncertainty::DistType soft_rain_1d_family_ = uncertainty::DistType::NORMAL; ///< Shared member-coefficient family
 
+    // CL-1c correlated coherence (COHERENCE CORR_LEN) for the 1D gage path.
+    double rom1d_soft_corr_len_ = 0.0;        ///< Max correlation length (m) among contributing gages; 0 ⇒ comonotone
+    uncertainty::SoftSpatialField rom1d_soft_field_; ///< Static per-member per-active-node coefficient field (built once)
+    bool rom1d_soft_field_built_ = false;     ///< True once rom1d_soft_field_ has been generated
+    bool rom1d_soft_corr_warned_ = false;     ///< One-shot warning guard (missing 2D build / node coords)
+
     // Water quality uncertainty layer (PR 13)
     std::vector<double> wq_conc_prev_;       ///< Previous report boundary concentrations (node·nPollut + p)
     std::ofstream wq_csv_;                   ///< WQ uncertainty quantile CSV (written at report intervals)
@@ -625,6 +631,13 @@ private:
 
     /** @brief Build the per-active-node gage-level soft rainfall CSR (SR-1b). */
     void initSoftRain1D(const std::vector<int>& active_map) noexcept;
+
+    /// CL-1c: build the static per-member per-active-node correlated
+    /// coefficient field for the 1D soft-rain path (generated once, on the
+    /// first advance where `rom1d_soft_corr_len_ > 0`). Falls back to
+    /// comonotone (leaves the field empty) when node coordinates are missing
+    /// or the build is not 2D-enabled.
+    void buildRom1DSoftField() noexcept;
 
     /** @brief Build + seed the 1D spectral ROM from conduit connectivity and node heads. */
     void buildROM1D() noexcept;

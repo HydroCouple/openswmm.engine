@@ -72,6 +72,12 @@ void writeChainInp(const std::string& path, const char* soft_line) {
     f << "[XSECTIONS]\n";
     for (int i = 1; i <= 5; ++i)
         f << "C" << i << " CIRCULAR 0.5 0 0 0 1\n";
+    // Node coordinates spaced 200 m apart along the chain — required by
+    // COHERENCE CORR_LEN so the correlated field has spatial geometry.
+    f << "\n[COORDINATES]\n";
+    for (int i = 1; i <= 5; ++i)
+        f << "J" << i << " " << ((i - 1) * 200.0) << " 0.0\n";
+    f << "O1 1000.0 0.0\n";
     f << "\n[REPORT]\nINPUT NO\nCONTINUITY YES\nNODES ALL\nLINKS ALL\n\n";
     if (soft_line && soft_line[0] != '\0')
         f << "[SOFT_RAINGAGES]\n" << soft_line << "\n\n";
@@ -99,6 +105,42 @@ double maxBandWidth(const std::string& csv_path, bool& found) {
         worst = std::max(worst, std::abs(q95 - q05));
     }
     return worst;
+}
+
+// Max band width for a single node_name (column 1) — isolates a node's band.
+double bandAtNode(const std::string& csv_path, const std::string& node,
+                  bool& found) {
+    found = false;
+    std::ifstream f(csv_path);
+    if (!f.is_open()) return 0.0;
+    std::string line;
+    std::getline(f, line);  // header
+    double worst = 0.0;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string tok;
+        std::string cols[5];
+        int n = 0;
+        while (n < 5 && std::getline(ss, tok, ',')) cols[n++] = tok;
+        if (n < 5) continue;
+        if (cols[1] != node) continue;
+        found = true;
+        const double q05 = std::stod(cols[2]);
+        const double q95 = std::stod(cols[4]);
+        worst = std::max(worst, std::abs(q95 - q05));
+    }
+    return worst;
+}
+
+// Byte-for-byte file comparison (regression lock for the comonotone path).
+bool filesIdentical(const std::string& a, const std::string& b) {
+    std::ifstream fa(a, std::ios::binary), fb(b, std::ios::binary);
+    if (!fa.is_open() || !fb.is_open()) return false;
+    std::stringstream sa, sb;
+    sa << fa.rdbuf();
+    sb << fb.rdbuf();
+    return sa.str() == sb.str();
 }
 
 int runToEnd(SWMM_Engine handle, int max_steps = 5000) {
@@ -165,6 +207,78 @@ TEST(SoftRainGageEngine, LargerCvWidensBands) {
     ASSERT_TRUE(fa);
     ASSERT_TRUE(fb);
     EXPECT_GT(band_b, band_a) << "tripling CV should widen the head bands";
+}
+
+// ---------------------------------------------------------------------------
+// CL-1c: COHERENCE CORR_LEN correlated coherence (1D gage path)
+// ---------------------------------------------------------------------------
+
+TEST(SoftRainGageEngine, CorrLenUnsetMatchesComonotone) {
+    // Absent COHERENCE must be byte-for-byte identical to explicit COHERENCE
+    // FULL — both take the comonotone scalar path (regression lock).
+    const std::string inp_a = g_pfx + "unset.inp";
+    const std::string inp_b = g_pfx + "full.inp";
+    const std::string rpt_a = g_pfx + "unset.rpt";
+    const std::string rpt_b = g_pfx + "full.rpt";
+    const std::string csv_a = g_pfx + "unset.uncertainty.csv";
+    const std::string csv_b = g_pfx + "full.uncertainty.csv";
+    writeChainInp(inp_a, "RG1 NORMAL CV 0.30");
+    writeChainInp(inp_b, "RG1 NORMAL CV 0.30 COHERENCE FULL");
+
+    bool fa = false, fb = false;
+    runCase(inp_a, rpt_a, csv_a, fa);
+    runCase(inp_b, rpt_b, csv_b, fb);
+    ASSERT_TRUE(fa);
+    ASSERT_TRUE(fb);
+    EXPECT_TRUE(filesIdentical(csv_a, csv_b))
+        << "absent COHERENCE must equal COHERENCE FULL byte-for-byte";
+}
+
+TEST(SoftRainGageEngine, LargeCorrLenApproachesComonotone) {
+    // corr_len ≫ domain (nodes span 800 m) ⇒ one ranking for all nodes ⇒
+    // comonotone up to a member relabelling ⇒ quantile bands ~ identical.
+    const std::string inp_a = g_pfx + "cmono.inp";
+    const std::string inp_b = g_pfx + "biglen.inp";
+    const std::string rpt_a = g_pfx + "cmono.rpt";
+    const std::string rpt_b = g_pfx + "biglen.rpt";
+    const std::string csv_a = g_pfx + "cmono.uncertainty.csv";
+    const std::string csv_b = g_pfx + "biglen.uncertainty.csv";
+    writeChainInp(inp_a, "RG1 NORMAL CV 0.30");
+    writeChainInp(inp_b, "RG1 NORMAL CV 0.30 COHERENCE CORR_LEN 100000");
+
+    bool fa = false, fb = false;
+    const double band_a = runCase(inp_a, rpt_a, csv_a, fa);
+    const double band_b = runCase(inp_b, rpt_b, csv_b, fb);
+    ASSERT_TRUE(fa);
+    ASSERT_TRUE(fb);
+    ASSERT_GT(band_a, 1.0e-6);
+    EXPECT_NEAR(band_b, band_a, 0.05 * band_a)
+        << "very large corr_len should reproduce comonotone bands within ~5%";
+}
+
+TEST(SoftRainGageEngine, SmallCorrLenNarrowsDownstreamBands) {
+    // corr_len ≪ node spacing (200 m) ⇒ each node ranks independently ⇒ the
+    // most-downstream node's band narrows vs comonotone (spatial cancellation).
+    const std::string inp_a = g_pfx + "cmono2.inp";
+    const std::string inp_b = g_pfx + "smalllen.inp";
+    const std::string rpt_a = g_pfx + "cmono2.rpt";
+    const std::string rpt_b = g_pfx + "smalllen.rpt";
+    const std::string csv_a = g_pfx + "cmono2.uncertainty.csv";
+    const std::string csv_b = g_pfx + "smalllen.uncertainty.csv";
+    writeChainInp(inp_a, "RG1 NORMAL CV 0.40");
+    writeChainInp(inp_b, "RG1 NORMAL CV 0.40 COHERENCE CORR_LEN 20");
+
+    bool fa = false, fb = false;
+    runCase(inp_a, rpt_a, csv_a, fa);
+    runCase(inp_b, rpt_b, csv_b, fb);
+    bool na = false, nb = false;
+    const double dn_a = bandAtNode(csv_a, "J5", na);
+    const double dn_b = bandAtNode(csv_b, "J5", nb);
+    ASSERT_TRUE(na);
+    ASSERT_TRUE(nb);
+    ASSERT_GT(dn_a, 1.0e-6);
+    EXPECT_LT(dn_b, dn_a)
+        << "small corr_len should narrow the downstream (J5) band vs comonotone";
 }
 
 } // anonymous namespace

@@ -31,6 +31,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
 #include "../2d/output/Default2DOutputPlugin.hpp"
+#include "../2d/uncertainty/CorrelatedFieldGenerator.hpp"
 #include <filesystem>
 #endif
 
@@ -1940,8 +1941,20 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 const double rel = (tot > 0.0) ? numer / tot : 0.0;
                 rom1d_soft_spread_[uai] = dh * rel;
             }
+            // CL-1c: correlated coherence. The per-member coefficient field
+            // W_i[t] depends only on the (fixed) coefficients c_i, node geometry
+            // and corr_len — NOT on the time-varying spread magnitude — so it is
+            // generated once and reused. The spread enters advance() per step
+            // via the projection Σ_t P_j[t]·spread[t]·W_i[t].
+            const uncertainty::SoftSpatialField* soft_field = nullptr;
+            if (rom1d_soft_corr_len_ > 0.0) {
+                if (!rom1d_soft_field_built_)
+                    buildRom1DSoftField();
+                if (rom1d_soft_field_.is_spatial())
+                    soft_field = &rom1d_soft_field_;
+            }
             rom1d_->setSoftForcing(rom1d_soft_loc_.data(), rom1d_soft_spread_.data(),
-                                   soft_rain_1d_family_);
+                                   soft_rain_1d_family_, soft_field);
         }
 
         rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
@@ -4662,6 +4675,9 @@ void SWMMEngine::initSoftRain1D(const std::vector<int>& active_map) noexcept {
     rom1d_soft_gage_.clear();
     rom1d_soft_area_.clear();
     soft_rain_1d_active_ = false;
+    rom1d_soft_corr_len_ = 0.0;
+    rom1d_soft_field_built_ = false;
+    rom1d_soft_field_.clear();
 
     const auto& sr = ctx_.soft_rain;
     if (sr.count() == 0) return;
@@ -4718,6 +4734,11 @@ void SWMMEngine::initSoftRain1D(const std::vector<int>& active_map) noexcept {
         const auto k = static_cast<std::size_t>(cursor[static_cast<std::size_t>(ai)]++);
         rom1d_soft_gage_[k] = g;
         rom1d_soft_area_[k] = ctx_.subcatches.area[static_cast<std::size_t>(s)];
+        // CL-1c: resolve a single correlation length for the 1D coefficient
+        // field as the max over contributing configured gages (v1 policy —
+        // per-gage fields would require multiple generator passes).
+        const double cl = ctx_.soft_rain.corr_len[static_cast<std::size_t>(g)];
+        if (cl > rom1d_soft_corr_len_) rom1d_soft_corr_len_ = cl;
     }
 
     if (family_mixed) {
@@ -4728,6 +4749,71 @@ void SWMMEngine::initSoftRain1D(const std::vector<int>& active_map) noexcept {
     }
     soft_rain_1d_family_ = resolved_family;
     soft_rain_1d_active_ = true;
+}
+
+// ============================================================================
+// buildRom1DSoftField() — CL-1c static correlated coefficient field (1D)
+// ============================================================================
+
+void SWMMEngine::buildRom1DSoftField() noexcept {
+    // Mark as attempted up-front so a fallback (missing coords / no-2D build)
+    // does not retry the generator every routing step.
+    rom1d_soft_field_built_ = true;
+    rom1d_soft_field_.clear();
+
+    if (!rom1d_ || !soft_rain_1d_active_ || rom1d_soft_corr_len_ <= 0.0) return;
+
+    const int n_active = static_cast<int>(rom1d_active_map_.size());
+    const int M = rom1d_->n_ensemble;
+    if (n_active <= 0 || M <= 0) return;
+
+    // Populate the ROM's family-selected per-member coefficients c_i.
+    rom1d_->setSoftForcing(rom1d_soft_loc_.data(), rom1d_soft_spread_.data(),
+                           soft_rain_1d_family_);
+    const auto& coeff = rom1d_->softCoeff();
+    if (static_cast<int>(coeff.size()) != M) return;
+
+#ifdef OPENSWMM_HAS_2D
+    if (ctx_.spatial.node_x.empty() || ctx_.spatial.node_y.empty()) {
+        if (!rom1d_soft_corr_warned_) {
+            ctx_.warnings.push_back(
+                "WARNING: COHERENCE CORR_LEN for soft raingages requires node "
+                "[COORDINATES]; none found — falling back to comonotone (FULL).");
+            rom1d_soft_corr_warned_ = true;
+        }
+        return;
+    }
+
+    // Active-node centroid coordinates.
+    std::vector<double> nx(static_cast<std::size_t>(n_active));
+    std::vector<double> ny(static_cast<std::size_t>(n_active));
+    for (int ai = 0; ai < n_active; ++ai) {
+        const auto ui = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
+        nx[static_cast<std::size_t>(ai)] = ctx_.spatial.node_x[ui];
+        ny[static_cast<std::size_t>(ai)] = ctx_.spatial.node_y[ui];
+    }
+
+    // Marginal-preserving rank/copula field: the per-node ensemble is exactly
+    // {c_i}, so local bands are unchanged while corr_len governs the spatial
+    // correlation (and hence downstream cancellation).
+    twoD::SpatialUncertaintyField tmp;
+    twoD::CorrelatedFieldGenerator::generateCoefficientField(
+        nx.data(), ny.data(), n_active, coeff, rom1d_soft_corr_len_,
+        UINT64_C(0x1d50f7c0de5eed01), tmp);
+
+    // Copy into the 2D-independent SoftSpatialField consumed by the 1D ROM.
+    rom1d_soft_field_.n_members = tmp.n_members;
+    rom1d_soft_field_.n_cells   = tmp.n_cells;
+    rom1d_soft_field_.values    = std::move(tmp.values);
+#else
+    (void)coeff;
+    if (!rom1d_soft_corr_warned_) {
+        ctx_.warnings.push_back(
+            "WARNING: COHERENCE CORR_LEN for soft raingages requires a "
+            "2D-enabled build — falling back to comonotone (FULL).");
+        rom1d_soft_corr_warned_ = true;
+    }
+#endif
 }
 
 // ============================================================================

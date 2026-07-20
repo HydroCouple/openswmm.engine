@@ -12,6 +12,9 @@
 #include "../core/SimulationContext.hpp"
 #include "../uncertainty/UncertaintyConfig.hpp"
 #include "../uncertainty/GridMappingWeights.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "uncertainty/CorrelatedFieldGenerator.hpp"
+#endif
 
 #include <stdexcept>
 #include <cmath>
@@ -387,6 +390,12 @@ bool SurfaceRouter2D::initGridRainfall(
 
     grid_spread_.assign(static_cast<std::size_t>(nt), 0.0);
     grid_2d_active_ = true;
+    // CL-1c: record the coherence correlation length; the correlated field is
+    // generated lazily on first use (it depends only on the ROM coefficients,
+    // triangle geometry and corr_len — all fixed after init).
+    grid_soft_corr_len_ = (spec.coherence == uncertainty::Coherence::CORR_LEN)
+                              ? spec.corr_len : 0.0;
+    grid_soft_field_built_ = false;
     return true;
 }
 
@@ -500,8 +509,32 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
                 if (gf == GridFamily::UNIFORM)        fam = DistType::UNIFORM;
                 else if (gf == GridFamily::LOGNORMAL)  fam = DistType::LOGNORMAL;
                 else                                   fam = DistType::NORMAL;  // MIXED uses NORMAL coefficient
-                rom->setSoftForcing(state_.rainfall.empty() ? nullptr : state_.rainfall.data(),
-                                    grid_spread_.data(), fam);
+                const double* loc_ptr =
+                    state_.rainfall.empty() ? nullptr : state_.rainfall.data();
+
+                // CL-1c: correlated coherence. The per-member coefficient field
+                // W_i[t] depends only on the (fixed) coefficients c_i, triangle
+                // geometry and corr_len — not on the time-varying spread — so it
+                // is generated once and reused. The spread enters the ROM per
+                // step via the projection Σ_t P_j[t]·spread[t]·W_i[t].
+                const SpatialUncertaintyField* soft_field = nullptr;
+                if (grid_soft_corr_len_ > 0.0) {
+                    if (!grid_soft_field_built_) {
+                        grid_soft_field_built_ = true;
+                        // Populate the ROM's family-selected coefficients first.
+                        rom->setSoftForcing(loc_ptr, grid_spread_.data(), fam);
+                        const auto& coeff = rom->softCoeff();
+                        if (static_cast<int>(coeff.size()) == rom->n_ensemble) {
+                            CorrelatedFieldGenerator::generateCoefficientField(
+                                mesh_.tri_cx.data(), mesh_.tri_cy.data(),
+                                mesh_.n_triangles(), coeff, grid_soft_corr_len_,
+                                UINT64_C(0x2d50f7c0de5eed02), grid_soft_field_);
+                        }
+                    }
+                    if (grid_soft_field_.is_spatial())
+                        soft_field = &grid_soft_field_;
+                }
+                rom->setSoftForcing(loc_ptr, grid_spread_.data(), fam, soft_field);
             }
 #endif
 

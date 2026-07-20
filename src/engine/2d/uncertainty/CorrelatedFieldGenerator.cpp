@@ -184,6 +184,79 @@ void CorrelatedFieldGenerator::generate(const double* cx, const double* cy,
     }
 }
 
+// ---------------------------------------------------------------------------
+// Coefficient-field generation (CL-1c soft coherence): marginal-preserving
+// Gaussian-copula rank map. Signed, unclamped; per-cell ensemble is exactly
+// the input coefficient set {c_i}, so local bands are unchanged while spatial
+// correlation (hence downstream cancellation) is governed by corr_len.
+// ---------------------------------------------------------------------------
+
+void CorrelatedFieldGenerator::generateCoefficientField(
+    const double* cx, const double* cy, int n_cells,
+    const std::vector<double>& coeff, double corr_len,
+    uint64_t seed, SpatialUncertaintyField& out) {
+
+    const int M = static_cast<int>(coeff.size());
+    if (M <= 0 || n_cells <= 0)
+        throw std::invalid_argument(
+            "CorrelatedFieldGenerator: n_members and n_cells must be > 0");
+
+    out.allocate(M, n_cells);
+
+    // Comonotone: constant rows W[i][t] = coeff[i] (member i is the same
+    // percentile everywhere). Exact bit-identical comonotone limit.
+    if (corr_len <= 0.0) {
+        out.fromScalar(coeff, n_cells);
+        return;
+    }
+
+    // Sorted coefficients (ascending) for the rank map.
+    std::vector<double> sorted_coeff(coeff);
+    std::sort(sorted_coeff.begin(), sorted_coeff.end());
+
+    // Draw + smooth M spatially-correlated N(0,1) fields g[i*n + t].
+    const double search_radius = 3.0 * corr_len;
+    auto nbhd = buildNeighbourhood(cx, cy, n_cells, search_radius);
+    const double inv_ell = 1.0 / corr_len;
+    uint64_t rng_state = seed ^ UINT64_C(0xc0ffee5eed1dea11);
+
+    std::vector<double> g(static_cast<std::size_t>(M) *
+                          static_cast<std::size_t>(n_cells), 0.0);
+    std::vector<double> z_raw(static_cast<std::size_t>(n_cells));
+    for (int i = 0; i < M; ++i) {
+        for (int t = 0; t < n_cells; ++t)
+            z_raw[static_cast<std::size_t>(t)] = boxMuller(rng_state);
+        double* gi = g.data() + static_cast<std::size_t>(i) * n_cells;
+        for (int t = 0; t < n_cells; ++t) {
+            const auto& nb = nbhd[static_cast<std::size_t>(t)];
+            const double xt = cx[t], yt = cy[t];
+            double num = 0.0, denom = 0.0;
+            for (int s : nb) {
+                const double dx = cx[s] - xt, dy = cy[s] - yt;
+                const double d  = std::sqrt(dx * dx + dy * dy);
+                const double w  = std::exp(-d * inv_ell);
+                num   += w * z_raw[static_cast<std::size_t>(s)];
+                denom += w;
+            }
+            gi[t] = num / denom;
+        }
+    }
+
+    // Rank-map per cell: the member with the p-th smallest g[t] receives the
+    // p-th smallest coefficient. The per-cell ensemble is thus exactly {c_i}.
+    std::vector<int> order(static_cast<std::size_t>(M));
+    for (int t = 0; t < n_cells; ++t) {
+        for (int i = 0; i < M; ++i) order[static_cast<std::size_t>(i)] = i;
+        std::sort(order.begin(), order.end(), [&](int a, int b) {
+            return g[static_cast<std::size_t>(a) * n_cells + t]
+                 < g[static_cast<std::size_t>(b) * n_cells + t];
+        });
+        for (int p = 0; p < M; ++p)
+            out.values[static_cast<std::size_t>(order[static_cast<std::size_t>(p)]) * n_cells + t]
+                = sorted_coeff[static_cast<std::size_t>(p)];
+    }
+}
+
 } // namespace openswmm::twoD
 
 #endif // OPENSWMM_HAS_2D

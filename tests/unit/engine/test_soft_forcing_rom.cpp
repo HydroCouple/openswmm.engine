@@ -512,5 +512,63 @@ TEST(SoftForcingCorrelated, ZeroSpreadStillZeroBand) {
     }
 }
 
+// 2D ROM: a constant-row spatial field (W_i[t] = c_i ∀t) must reproduce the
+// comonotone scalar soft path exactly, confirming the shared spatial machinery
+// on the 2D SpectralROM.
+TEST(SoftForcingCorrelated2D, ComonotoneFieldMatchesScalarPath) {
+    MeshData mesh = makeStructuredMesh();
+    SpectralPrecond2D basis;
+    ASSERT_TRUE(basis.build(mesh, 6));
+
+    const int nt = basis.n_triangles;
+    std::vector<double> h_det(static_cast<std::size_t>(nt), 0.0);
+    std::vector<double> loc(static_cast<std::size_t>(nt));
+    std::vector<double> spread(static_cast<std::size_t>(nt));
+    const double* mode0 = &basis.P[0];
+    const double* mode1 = &basis.P[static_cast<std::size_t>(nt)];
+    for (int i = 0; i < nt; ++i) {
+        loc[static_cast<std::size_t>(i)]    = mode0[i];
+        spread[static_cast<std::size_t>(i)] = 0.3 * mode0[i] + 0.2 * mode1[i];
+    }
+
+    SpectralROM a;
+    a.basis = &basis;
+    a.n_ensemble = 11;
+    a.mannings_pert = 0.0;
+    a.rainfall_pert = 0.0;
+    a.initialize();
+    a.seed(h_det.data());
+    a.setSoftForcing(loc.data(), spread.data(), DistType::NORMAL);
+    a.advance(1.0, 0.0, nullptr, nullptr, h_det.data());
+    a.computeQuantiles(h_det.data());
+
+    SpectralROM c;
+    c.basis = &basis;
+    c.n_ensemble = 11;
+    c.mannings_pert = 0.0;
+    c.rainfall_pert = 0.0;
+    c.initialize();
+    c.seed(h_det.data());
+    c.setSoftForcing(loc.data(), spread.data(), DistType::NORMAL);
+    SpatialUncertaintyField field;
+    field.allocate(c.n_ensemble, nt);
+    for (int i = 0; i < c.n_ensemble; ++i)
+        for (int t = 0; t < nt; ++t)
+            field.at(i, t) = c.soft_coeff_[static_cast<std::size_t>(i)];
+    c.setSoftForcing(loc.data(), spread.data(), DistType::NORMAL, &field);
+    c.advance(1.0, 0.0, nullptr, nullptr, h_det.data());
+    c.computeQuantiles(h_det.data());
+
+    ASSERT_EQ(a.n_modes_active, c.n_modes_active);
+    for (std::size_t j = 0; j < a.a_ensemble.size(); ++j)
+        EXPECT_NEAR(a.a_ensemble[j], c.a_ensemble[j], 1.0e-14) << "flat index " << j;
+    for (int t = 0; t < nt; ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        EXPECT_NEAR(a.q05[ut], c.q05[ut], 1.0e-14);
+        EXPECT_NEAR(a.q50[ut], c.q50[ut], 1.0e-14);
+        EXPECT_NEAR(a.q95[ut], c.q95[ut], 1.0e-14);
+    }
+}
+
 } // anonymous namespace
 

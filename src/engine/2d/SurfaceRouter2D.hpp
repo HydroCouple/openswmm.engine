@@ -31,6 +31,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "solver/CvodeSurfaceSolver.hpp"
+#include "uncertainty/SpatialUncertaintyField.hpp"
 #endif
 
 #include <vector>
@@ -256,6 +257,13 @@ private:
 
     std::vector<double> grid_spread_;       ///< SR-3b: mapped spread plane in model rain units
     bool grid_soft_warned_ = false;         ///< SR-3c: lognormal CV>0.5 warning emitted once
+
+    // CL-1c correlated coherence (COHERENCE CORR_LEN) for the 2D grid path.
+    double grid_soft_corr_len_ = 0.0;       ///< Correlation length (m) of the active grid source; 0 ⇒ comonotone
+    bool   grid_soft_field_built_ = false;  ///< True once grid_soft_field_ has been generated
+#ifdef OPENSWMM_HAS_2D
+    SpatialUncertaintyField grid_soft_field_; ///< Static per-member per-cell coefficient field (built once)
+#endif
 
     /// Update rainfall from system rain gages.
     void updateRainfall(SimulationContext& ctx);

@@ -197,6 +197,11 @@ struct SpectralROM1D {
     /// Clear the soft forcing path and revert to the legacy forcing inputs.
     void clearSoftForcing() noexcept;
 
+    /// Per-member soft-forcing coefficient c_i (family-selected in
+    /// setSoftForcing). Empty until setSoftForcing() has been called. Used by
+    /// the engine to seed the CL-1c correlated coefficient field.
+    const std::vector<double>& softCoeff() const noexcept { return soft_coeff_; }
+
     /**
      * @brief Register an additional uncertain parameter column (PR 9b).
      *

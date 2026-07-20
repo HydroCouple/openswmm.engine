@@ -219,3 +219,44 @@ TEST(SoftRainGrid2D, LognormalHighCvWarnsOnce) {
 
     std::remove(grid_path.c_str());
 }
+
+// CL-1c: initGridRainfall records the coherence correlation length from the
+// spec, and COHERENCE FULL / default leaves it at 0 (comonotone).
+TEST(SoftRainGrid2D, InitRecordsCoherenceCorrLen) {
+    SimulationContext ctx;
+    ctx.options.flow_units = FlowUnits::CMS;
+    ctx.gage_names.add("RG1");
+    ctx.gages.resize(1);
+
+    const std::string grid_path = makeGridFile();
+
+    // Default coherence (FULL) ⇒ corr_len stays 0.
+    {
+        SurfaceRouter2D router;
+        router.mesh() = makeUnitSquareMesh();
+        router.state().resize(router.mesh().n_triangles(), router.mesh().n_vertices());
+        SoftGridSourceSpec spec;
+        spec.file_path = grid_path;
+        spec.target = GridTarget::TWO_D;
+        spec.mapping = GridMapping::CENTROID;
+        ASSERT_TRUE(router.initGridRainfall(spec, ""));
+        EXPECT_DOUBLE_EQ(router.grid_soft_corr_len_, 0.0);
+    }
+
+    // COHERENCE CORR_LEN 250 ⇒ recorded on the router.
+    {
+        SurfaceRouter2D router;
+        router.mesh() = makeUnitSquareMesh();
+        router.state().resize(router.mesh().n_triangles(), router.mesh().n_vertices());
+        SoftGridSourceSpec spec;
+        spec.file_path = grid_path;
+        spec.target = GridTarget::TWO_D;
+        spec.mapping = GridMapping::CENTROID;
+        spec.coherence = openswmm::uncertainty::Coherence::CORR_LEN;
+        spec.corr_len = 250.0;
+        ASSERT_TRUE(router.initGridRainfall(spec, ""));
+        EXPECT_DOUBLE_EQ(router.grid_soft_corr_len_, 250.0);
+    }
+
+    std::remove(grid_path.c_str());
+}

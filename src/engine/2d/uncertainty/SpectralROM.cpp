@@ -62,9 +62,11 @@ void SpectralROM::clearEnsembleRainfall() {
 }
 
 void SpectralROM::setSoftForcing(const double* loc, const double* spread,
-                                openswmm::uncertainty::DistType family) noexcept {
+                                openswmm::uncertainty::DistType family,
+                                const SpatialUncertaintyField* soft_field) noexcept {
     soft_loc_field_ = loc;
     soft_spread_field_ = spread;
+    soft_field_ = soft_field;
     soft_max_abs_coeff_ = 0.0;
     for (int i = 0; i < n_ensemble; ++i) {
         const auto ui = static_cast<std::size_t>(i);
@@ -74,11 +76,34 @@ void SpectralROM::setSoftForcing(const double* loc, const double* spread,
         soft_coeff_[ui] = c;
         soft_max_abs_coeff_ = std::max(soft_max_abs_coeff_, std::abs(c));
     }
+
+    // CL-1c: a supplied spatial field must be dimensionally consistent and its
+    // per-cell column mean must match c̄ (mean_i c_i) so the nominal member
+    // stays zero-deviation and q50 tracks the deterministic answer. Debug-only.
+#ifndef NDEBUG
+    if (soft_field_ != nullptr && soft_field_->is_spatial()) {
+        assert(soft_field_->n_members == n_ensemble &&
+               "soft spatial field n_members must equal n_ensemble");
+        double cbar = 0.0;
+        for (int i = 0; i < n_ensemble; ++i)
+            cbar += soft_coeff_[static_cast<std::size_t>(i)];
+        cbar /= static_cast<double>(n_ensemble);
+        for (int t = 0; t < soft_field_->n_cells; ++t) {
+            double colmean = 0.0;
+            for (int i = 0; i < n_ensemble; ++i)
+                colmean += soft_field_->at(i, t);
+            colmean /= static_cast<double>(n_ensemble);
+            assert(std::abs(colmean - cbar) < 1.0e-9 &&
+                   "soft spatial field column mean must equal mean_i(c_i)");
+        }
+    }
+#endif
 }
 
 void SpectralROM::clearSoftForcing() noexcept {
     soft_loc_field_ = nullptr;
     soft_spread_field_ = nullptr;
+    soft_field_ = nullptr;
 }
 
 // ============================================================================
@@ -135,6 +160,7 @@ void SpectralROM::initialize() {
     mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
     h_weight_.assign(static_cast<std::size_t>(n_tri), 1.0);
     soft_r_spread_.assign(static_cast<std::size_t>(n_kept), 0.0);
+    soft_spatial_absmax_.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     // All modes start active; mode_active is updated at the start of each advance().
     mode_active.assign(static_cast<std::size_t>(n_kept), true);
@@ -269,6 +295,36 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
     } else {
         std::fill(soft_r_spread_.begin(), soft_r_spread_.end(), 0.0);
     }
+    // CL-1c: correlated-coherence per-member projection. When a spatial field
+    // is active, the comonotone factorization c_i·(Pᵀspread)_j no longer holds;
+    // each member gets its own R_{ij} = Σ_t P_j[t]·spread[t]·W_i[t] (O(M·k·n)).
+    // A constant field (W_i[t] = c_i ∀t) reduces this exactly to
+    // c_i·soft_r_spread_[j], so the comonotone limit is bit-identical.
+    const bool use_soft_spatial = (soft_field_ != nullptr) &&
+                                  soft_field_->is_spatial() &&
+                                  (soft_spread_field_ != nullptr);
+    if (use_soft_spatial) {
+        assert(soft_field_->n_members == n_ensemble);
+        assert(static_cast<std::size_t>(soft_field_->n_cells) == nt);
+        soft_r_spread_spatial_.assign(
+            static_cast<std::size_t>(n_ensemble) * nk, 0.0);
+        std::fill(soft_spatial_absmax_.begin(), soft_spatial_absmax_.end(), 0.0);
+        for (int i = 0; i < n_ensemble; ++i) {
+            const double* Wi = &soft_field_->values[
+                static_cast<std::size_t>(i) * nt];
+            double* Ri = &soft_r_spread_spatial_[
+                static_cast<std::size_t>(i) * nk];
+            for (std::size_t j = 0; j < nk; ++j) {
+                const double* Pj = &basis->P[j * nt];
+                double dot = 0.0;
+                for (std::size_t t = 0; t < nt; ++t)
+                    dot += Pj[t] * soft_spread_field_[t] * Wi[t];
+                Ri[j] = dot;
+                const double ad = std::abs(dot);
+                if (ad > soft_spatial_absmax_[j]) soft_spatial_absmax_[j] = ad;
+            }
+        }
+    }
     // Registered FORCING_VECTOR fields (PR 9b): re-project each per call.
     for (auto& ep : extra_params_) {
         if (ep.entry != openswmm::uncertainty::ParamEntry::FORCING_VECTOR) continue;
@@ -389,7 +445,9 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                                ? std::abs(dt) * max_rain_dev : 0.0;
     const double mann_scale = std::abs(dt) * max_mann_dev;
     const double soft_scale = (soft_spread_field_ != nullptr)
-                               ? std::abs(dt) * soft_max_abs_coeff_ : 0.0;
+                               ? (use_soft_spatial ? std::abs(dt)
+                                                   : std::abs(dt) * soft_max_abs_coeff_)
+                               : 0.0;
 
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
@@ -401,7 +459,9 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                           lam * keff_modes_[j] * std::abs(b_coarse[j]) * mann_scale
                               >= mode_drop_threshold;
         bool by_soft    = soft_scale > 0.0 &&
-                          std::abs(soft_r_spread_[j]) * soft_scale >= mode_drop_threshold;
+                          (use_soft_spatial ? soft_spatial_absmax_[j]
+                                            : std::abs(soft_r_spread_[j])) * soft_scale
+                              >= mode_drop_threshold;
         bool by_vector  = false;
         for (const auto& ep : extra_params_) {
             if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR &&
@@ -468,8 +528,12 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
             const double rate = lam * keff_ji;
             double g          = -lam * (keff_ji - keff_modes_[j]) * b_coarse[j]
                                 + (fj - r_coarse[j]);
-            if (soft_spread_field_)
-                g += soft_coeff_[ui] * soft_r_spread_[j];
+            if (soft_spread_field_) {
+                if (use_soft_spatial)
+                    g += soft_r_spread_spatial_[ui * nk + j];
+                else
+                    g += soft_coeff_[ui] * soft_r_spread_[j];
+            }
             if (has_extra) {
                 for (const auto& ep : extra_params_)
                     if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR)
