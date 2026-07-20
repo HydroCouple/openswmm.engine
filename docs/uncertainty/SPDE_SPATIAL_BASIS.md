@@ -3,6 +3,7 @@
 Status: normative design note for CL-2b/CL-2c, written 2026-07-20.
 Implements the "spatial basis construction" task of `CORR_LEN_PR_CHECKLIST.md`
 Phase 2. Component: `src/engine/uncertainty/SpdeSpatialBasis.{hpp,cpp}`.
+CL-2c (ROM integration of the reduced basis) completed 2026-07-20 — see §10.
 
 ## 1. Problem
 
@@ -147,10 +148,8 @@ v_pq = e_p · e_q · (1 + λ_pq/κ²)^{−3}         (dimensionless; v_00 = 1)
   reduced-projection path must fold `g(t)` into the mode fields
   (`ψ_m(t) = g(t)·φ_m(t)`) before projecting, or normalize its reconstructed
   band per node; the raw linear form is only variance-correct after `g`.
-
-## 5. Per-member coefficients — comonotone anchoring
-
-`a` is `M × K_s`, `a_im = w_m · ξ_im`:
+    *(Resolved in CL-2c: `SpdeSpatialBasis::normalizedModes()` returns
+    `ψ_m = g·φ_m`; the ROM projects `ψ_m`. See §10.)*
 
 - **Mode 0 (constant): `ξ_i0 = c_i`**, the ROM's *existing* per-member soft
   coefficient (`softCoeff()` — `probit(u_i)` for NORMAL/LOGNORMAL, `2u_i−1`
@@ -272,3 +271,52 @@ Degenerate geometry (all points coincident) builds the DC-only basis.
 3. **`a_i0` is anchored to the existing member coefficients `c_i`** rather
    than a fresh `seed+4` draw — exact comonotone limit and member-identity
    continuity (§5). Higher modes follow the checklist's `seed+4+m` schedule.
+
+## 10. CL-2c — ROM integration of the reduced basis (completed 2026-07-20)
+
+The reduced basis is consumed by both ROMs and both engine paths.
+
+**Seam fold.** `SpdeSpatialBasis::normalizedModes(a, M, ψ)` returns
+`ψ_m(t) = g(t)·φ_m(t)` (K_s × n), computing `g(t)` from the *same* per-cell
+empirical variance arithmetic as `materializeField()`. Folding `g` into the
+modes makes the reduced projection variance-correct (§4).
+
+**ROM path.** `SpectralROM1D::setSoftForcingReduced()` and
+`SpectralROM::setSoftForcingReduced()` (2D) store non-owning pointers to `ψ_m`
+(K_s × n) and `a_im` (M × K_s). Each `advance()`:
+
+```
+R_m[j]   = Σ_t P_j[t]·spread[t]·ψ_m(t)     (K_s·k projections)   O(K_s·k·n)
+R_{ij}   = Σ_m a_im·R_m[j]                 (per-member assembly)  O(M·K_s·k)
+```
+
+`R_{ij}` is written into the *same* `soft_r_spread_spatial_` buffer the CL-1c
+materialized path fills, so mode activation, the deviation-form forcing
+`g += R_{ij}`, and all downstream code are unchanged. The reduced `R_{ij}`
+equals the materialized-field `R_{ij}` up to summation order (test
+`ReducedProjectionMatchesMaterializedField`: < 1e-9 relative). `K_s = 1`
+reproduces the comonotone scalar path exactly.
+
+**Engine wiring.** `SWMMEngine::buildRom1DSoftField()` (1D gage) and
+`SurfaceRouter2D::updateRainfall()` (2D grid) build the basis once, sample
+coefficients (mode 0 = the ROM's `softCoeff()`), and choose:
+- `K_s < M` → reduced projection (`setSoftForcingReduced` with `ψ = normalizedModes`);
+- `K_s ≥ M` → materialize from the basis (`materializeField`) and use the
+  existing CL-1c `setSoftForcing(soft_field)` path.
+Either way the 64 s CL-1 `generateCoefficientField` is replaced by a ~ms
+analytic SPDE build. The 1D path no longer needs `OPENSWMM_HAS_2D` (the basis
+is 2D-independent; only node `[COORDINATES]` are required).
+
+**Cost caveat (from CL-2a).** Even with `K_s ≪ M`, the total per-step ROM cost
+is dominated by quantile reconstruction (`O(M·n)`, unaffected by the basis), so
+the per-step speedup is bounded (~19 % at 10k cells). The decisive win is the
+one-time field generation: **64 s → ~60 ms** at 10k cells (measured,
+`BuildAndMaterializeFastOnLargePointSet`).
+
+**Equivalence & regression.** `test_soft_rain_corr_coverage` (CL-1e), re-run
+against the SPDE reduced path: coverage 1.000, width-ratio 0.485/0.700/0.827,
+downstream narrowing 0.608 — within the CL-1e thresholds. Comonotone stays
+bit-identical (`CorrLenUnsetMatchesComonotone`); large-ℓ approaches comonotone
+(`LargeCorrLenApproachesComonotone`); small-ℓ narrows downstream
+(`SmallCorrLenNarrowsDownstreamBands`). Full gate 88/88.
+

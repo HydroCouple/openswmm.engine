@@ -135,6 +135,32 @@ public:
                           std::vector<double>& field_out) const;
 
     /**
+     * @brief Materialize the per-point-normalized mode fields
+     *        ψ_m(t) = g(t)·φ_m(t) (K_s × n_points row-major) — the "CL-2c seam".
+     *
+     * The reduced-projection path (CL-2c) computes the per-member per-mode
+     * forcing as `R_{ij} = Σ_m a_im · Σ_t P_j[t]·spread[t]·ψ_m(t)`. For this to
+     * reproduce the materialized field's variance-correct band, the per-point
+     * normalization `g(t)` (design note §4) must be folded into the mode fields
+     * *before* projection — a raw `φ_m` projection is only correct up to the
+     * boundary-driven variance non-stationarity `g` removes.
+     *
+     * `g(t) = √(Var_i(c_i) / rawvar(t))` with `rawvar(t)` the empirical per-cell
+     * member variance of `D_i(t) = Σ_m a_im·φ_m(t)` — computed identically to
+     * materializeField(), so a reduced projection over `ψ_m` matches a direct
+     * projection over the materialized field to floating-point round-off.
+     *
+     * @param a          Per-member modal coefficients (n_members × K_s), from
+     *                   sampleCoefficients().
+     * @param n_members  Number of members M (≥ 2; for M < 2, g ≡ 1 and ψ = φ).
+     * @param psi_out    Resized to K_s × n_points row-major.
+     * @throws std::logic_error if not built; std::invalid_argument on size
+     *         mismatch (a.size() != n_members·K_s).
+     */
+    void normalizedModes(const std::vector<double>& a, int n_members,
+                         std::vector<double>& psi_out) const;
+
+    /**
      * @brief The covariance model the basis targets: Matérn ν=2 correlation
      *        ρ(d) = ½(κd)²K₂(κd), κ = 1/corr_len. ρ(0) = 1.
      */

@@ -459,3 +459,125 @@ TEST(SpdeSpatialBasis, ThrowsOnInvalidArgs) {
     basis.sampleCoefficients(c2, DistType::NORMAL, 1, a);
     EXPECT_THROW(basis.materializeField(a, 7, W), std::invalid_argument);
 }
+
+// ===========================================================================
+// CL-2c — reduced-projection equivalence (normalizedModes / the g(t) seam)
+// ===========================================================================
+
+// Synthetic reduced modal basis P (k × n row-major) — deterministic cosine
+// columns; any fixed P works, the reduced/materialized identity is basis-free.
+static std::vector<double> makeProjP(int k, int n) {
+    constexpr double kPi = 3.14159265358979323846;
+    std::vector<double> P(static_cast<std::size_t>(k) * n);
+    for (int j = 0; j < k; ++j)
+        for (int t = 0; t < n; ++t)
+            P[static_cast<std::size_t>(j) * n + t] =
+                std::cos((j + 1) * kPi * (t + 0.5) / n);
+    return P;
+}
+
+// The reduced projection R_{ij} = Σ_m a_im·(Σ_t P_j[t]·spread[t]·ψ_m[t]) must
+// equal the direct projection over the materialized field
+// R_{ij} = Σ_t P_j[t]·spread[t]·W_i[t] — the two differ only in summation
+// order because ψ_m already folds in the per-point normalization g(t) that
+// materializeField applies. This is the "CL-2c seam" (design note §4).
+TEST(SpdeSpatialBasisReduced, ReducedProjectionMatchesMaterializedField) {
+    std::vector<double> x, y;
+    makeGrid(12, 15.0, x, y);          // 144 points, 165 m domain
+    const int n = static_cast<int>(x.size());
+    const int M = 40;
+    const double ell = 45.0;           // moderate ℓ → K_s > 1 and < M
+
+    SpdeSpatialBasis basis;
+    basis.build(x.data(), y.data(), n, ell);
+    ASSERT_GT(basis.n_modes(), 1);     // genuinely reduced (not the DC-only case)
+    ASSERT_LT(basis.n_modes(), M);
+
+    std::vector<double> a;
+    basis.sampleCoefficients(familyCoeff(M, DistType::NORMAL, 7),
+                             DistType::NORMAL, 7, a);
+    const int Ks = basis.n_modes();
+
+    // Materialized field W (M × n) and normalized modes ψ (K_s × n).
+    std::vector<double> W, psi;
+    basis.materializeField(a, M, W);
+    basis.normalizedModes(a, M, psi);
+
+    // A non-trivial spread plane and a synthetic k-mode projection basis.
+    const int k = 6;
+    const std::vector<double> P = makeProjP(k, n);
+    std::vector<double> spread(static_cast<std::size_t>(n));
+    for (int t = 0; t < n; ++t) spread[static_cast<std::size_t>(t)] = 0.5 + 0.5 * (t % 7);
+
+    // Direct (materialized): R_mat[i][j] = Σ_t P_j[t]·spread[t]·W_i[t].
+    std::vector<double> R_mat(static_cast<std::size_t>(M) * k, 0.0);
+    for (int i = 0; i < M; ++i)
+        for (int j = 0; j < k; ++j) {
+            double s = 0.0;
+            for (int t = 0; t < n; ++t)
+                s += P[static_cast<std::size_t>(j) * n + t] *
+                     spread[static_cast<std::size_t>(t)] *
+                     W[static_cast<std::size_t>(i) * n + t];
+            R_mat[static_cast<std::size_t>(i) * k + j] = s;
+        }
+
+    // Reduced: R_m[j] = Σ_t P_j[t]·spread[t]·ψ_m[t]; R_red[i][j] = Σ_m a_im·R_m[j].
+    std::vector<double> Rm(static_cast<std::size_t>(Ks) * k, 0.0);
+    for (int m = 0; m < Ks; ++m)
+        for (int j = 0; j < k; ++j) {
+            double s = 0.0;
+            for (int t = 0; t < n; ++t)
+                s += P[static_cast<std::size_t>(j) * n + t] *
+                     spread[static_cast<std::size_t>(t)] *
+                     psi[static_cast<std::size_t>(m) * n + t];
+            Rm[static_cast<std::size_t>(m) * k + j] = s;
+        }
+    std::vector<double> R_red(static_cast<std::size_t>(M) * k, 0.0);
+    for (int i = 0; i < M; ++i)
+        for (int j = 0; j < k; ++j) {
+            double s = 0.0;
+            for (int m = 0; m < Ks; ++m)
+                s += a[static_cast<std::size_t>(i) * Ks + m] *
+                     Rm[static_cast<std::size_t>(m) * k + j];
+            R_red[static_cast<std::size_t>(i) * k + j] = s;
+        }
+
+    double worst = 0.0, scale = 0.0;
+    for (std::size_t idx = 0; idx < R_mat.size(); ++idx) {
+        worst = std::max(worst, std::abs(R_mat[idx] - R_red[idx]));
+        scale = std::max(scale, std::abs(R_mat[idx]));
+    }
+    // Pure summation-order difference → machine precision (relative).
+    EXPECT_LT(worst, 1.0e-9 * (scale + 1.0))
+        << "reduced projection must equal materialized projection (seam fold); "
+        << "worst=" << worst << " scale=" << scale;
+}
+
+// Comonotone limit: ℓ ≫ domain ⇒ K_s = 1, g ≡ 1, ψ_0 ≡ 1, so the reduced
+// projection reproduces the scalar c_i·(Pᵀspread)_j exactly.
+TEST(SpdeSpatialBasisReduced, ComonotoneLimitExactReduced) {
+    std::vector<double> x, y;
+    makeGrid(8, 10.0, x, y);
+    const int n = static_cast<int>(x.size());
+    const int M = 24;
+    const double ell = 1.0e6;          // ℓ ≫ domain ⇒ constant mode only
+
+    SpdeSpatialBasis basis;
+    basis.build(x.data(), y.data(), n, ell);
+    ASSERT_EQ(basis.n_modes(), 1);
+
+    const std::vector<double> c = familyCoeff(M, DistType::NORMAL, 3);
+    std::vector<double> a, psi;
+    basis.sampleCoefficients(c, DistType::NORMAL, 3, a);
+    basis.normalizedModes(a, M, psi);
+
+    // K_s = 1 ⇒ ψ_0(t) ≡ 1 for all t (g ≡ 1, φ_0 ≡ 1).
+    for (int t = 0; t < n; ++t)
+        EXPECT_NEAR(psi[static_cast<std::size_t>(t)], 1.0, 1.0e-12);
+
+    // a_i0 = w_0·c_i with w_0 = 1 (single mode).
+    for (int i = 0; i < M; ++i)
+        EXPECT_NEAR(a[static_cast<std::size_t>(i)], c[static_cast<std::size_t>(i)],
+                    1.0e-12);
+}
+

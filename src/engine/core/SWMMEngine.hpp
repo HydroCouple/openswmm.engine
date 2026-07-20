@@ -69,6 +69,7 @@ namespace openswmm::twoD { class Default2DOutputPlugin; }
 #include "../uncertainty/GraphEigenBasis.hpp"
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
+#include "../uncertainty/SpdeSpatialBasis.hpp"
 #include "../uncertainty/WQUncertaintyBounds.hpp"
 
 #include <fstream>
@@ -388,6 +389,15 @@ private:
     uncertainty::SoftSpatialField rom1d_soft_field_; ///< Static per-member per-active-node coefficient field (built once)
     bool rom1d_soft_field_built_ = false;     ///< True once rom1d_soft_field_ has been generated
     bool rom1d_soft_corr_warned_ = false;     ///< One-shot warning guard (missing 2D build / node coords)
+
+    // CL-2c reduced spatial basis (replaces the CL-1c materialized field's 64 s
+    // generation with a ~ms analytic SPDE build). Built once alongside
+    // rom1d_soft_field_; when K_s < M the ROM uses the reduced projection over
+    // rom1d_soft_psi_ + rom1d_soft_a_, else the materialized field is used.
+    uncertainty::SpdeSpatialBasis rom1d_soft_basis_; ///< SPDE Whittle–Matérn ν=2 basis over active nodes
+    std::vector<double> rom1d_soft_psi_;      ///< Normalized mode fields ψ_m(t), K_s × n_active row-major (NON-OWNING to ROM)
+    std::vector<double> rom1d_soft_a_;        ///< Per-member modal coefficients a_im, M × K_s row-major
+    bool rom1d_soft_reduced_ = false;         ///< True when the reduced projection path is active (K_s < M)
 
     // Water quality uncertainty layer (PR 13)
     std::vector<double> wq_conc_prev_;       ///< Previous report boundary concentrations (node·nPollut + p)

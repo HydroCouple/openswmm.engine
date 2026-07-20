@@ -96,6 +96,23 @@ void SpectralROM1D::clearSoftForcing() noexcept {
     soft_loc_field_ = nullptr;
     soft_spread_field_ = nullptr;
     soft_field_ = nullptr;
+    soft_reduced_psi_ = nullptr;
+    soft_reduced_a_ = nullptr;
+    soft_reduced_ks_ = 0;
+}
+
+void SpectralROM1D::setSoftForcingReduced(const double* loc, const double* spread,
+                                          DistType family,
+                                          const double* psi_modes,
+                                          const double* a_coeffs,
+                                          int n_modes) noexcept {
+    // Reuse the scalar location + comonotone-coefficient setup (soft_field
+    // stays null; the reduced basis takes precedence in advance()).
+    setSoftForcing(loc, spread, family, nullptr);
+    soft_reduced_psi_ = psi_modes;
+    soft_reduced_a_   = a_coeffs;
+    soft_reduced_ks_  = (psi_modes != nullptr && a_coeffs != nullptr)
+                        ? n_modes : 0;
 }
 
 // ============================================================================
@@ -273,9 +290,17 @@ void SpectralROM1D::advance(double dt, double K1d,
     // each member gets its own R_{ij} = Σ_t P_j[t]·spread[t]·W_i[t] (the
     // O(M·k·n) path). A constant field (W_i[t] = c_i ∀t) reduces this exactly
     // to c_i·soft_r_spread_[j], so the comonotone limit is bit-identical.
-    const bool soft_spatial = (soft_field_ != nullptr) &&
+    const bool soft_reduced = (soft_reduced_psi_ != nullptr) &&
+                              (soft_reduced_a_ != nullptr) &&
+                              (soft_reduced_ks_ > 0) &&
+                              (soft_spread_field_ != nullptr);
+    const bool soft_spatial = !soft_reduced &&
+                              (soft_field_ != nullptr) &&
                               soft_field_->is_spatial() &&
                               (soft_spread_field_ != nullptr);
+    // Either spatial path fills soft_r_spread_spatial_ / soft_spatial_absmax_;
+    // downstream mode-activation and forcing use this combined flag.
+    const bool soft_use_rij = soft_spatial || soft_reduced;
     if (soft_spatial) {
         assert(soft_field_->n_members == n_ensemble);
         assert(static_cast<std::size_t>(soft_field_->n_cells) == nn);
@@ -294,6 +319,43 @@ void SpectralROM1D::advance(double dt, double K1d,
                     dot += Pj[t] * soft_spread_field_[t] * Wi[t];
                 Ri[j] = dot;
                 const double ad = std::abs(dot);
+                if (ad > soft_spatial_absmax_[j]) soft_spatial_absmax_[j] = ad;
+            }
+        }
+    } else if (soft_reduced) {
+        // CL-2c reduced-basis projection. ψ_m already folds in the per-point
+        // normalization g(t) (SpdeSpatialBasis::normalizedModes — the "seam"),
+        // so R_{ij} = Σ_m a_im·(Σ_t P_j[t]·spread[t]·ψ_m[t]) reproduces the
+        // materialized field's R_{ij} up to summation order.
+        const auto Ks = static_cast<std::size_t>(soft_reduced_ks_);
+        // R_m[j] = Σ_t P_j[t]·spread[t]·ψ_m(t)  (K_s·k projections).
+        soft_reduced_rm_.assign(Ks * nk, 0.0);
+        for (std::size_t m = 0; m < Ks; ++m) {
+            const double* psim = soft_reduced_psi_ + m * nn;
+            double* Rm = &soft_reduced_rm_[m * nk];
+            for (std::size_t j = 0; j < nk; ++j) {
+                const double* Pj = &basis->P[j * nn];
+                double dot = 0.0;
+                for (std::size_t t = 0; t < nn; ++t)
+                    dot += Pj[t] * soft_spread_field_[t] * psim[t];
+                Rm[j] = dot;
+            }
+        }
+        // R_{ij} = Σ_m a_im·R_m[j]  (M·K_s·k reconstruction).
+        soft_r_spread_spatial_.assign(
+            static_cast<std::size_t>(n_ensemble) * nk, 0.0);
+        std::fill(soft_spatial_absmax_.begin(), soft_spatial_absmax_.end(), 0.0);
+        for (int i = 0; i < n_ensemble; ++i) {
+            const double* ai = soft_reduced_a_ +
+                               static_cast<std::size_t>(i) * Ks;
+            double* Ri = &soft_r_spread_spatial_[
+                static_cast<std::size_t>(i) * nk];
+            for (std::size_t j = 0; j < nk; ++j) {
+                double s = 0.0;
+                for (std::size_t m = 0; m < Ks; ++m)
+                    s += ai[m] * soft_reduced_rm_[m * nk + j];
+                Ri[j] = s;
+                const double ad = std::abs(s);
                 if (ad > soft_spatial_absmax_[j]) soft_spatial_absmax_[j] = ad;
             }
         }
@@ -360,10 +422,11 @@ void SpectralROM1D::advance(double dt, double K1d,
                                ? std::abs(dt) * max_rain_dev : 0.0;
     const double mann_scale = std::abs(dt) * K1d * max_mann_dev;
     // Soft-forcing activation scale. Comonotone: |dt|·max_i|c_i| times
-    // |soft_r_spread_[j]|. Spatial (CL-1b): the coefficient is already folded
-    // into R_{ij}, so the scale is |dt| times max_i|R_{ij}| = soft_spatial_absmax_[j].
+    // |soft_r_spread_[j]|. Spatial (CL-1b/CL-2c): the coefficient is already
+    // folded into R_{ij}, so the scale is |dt| times max_i|R_{ij}| =
+    // soft_spatial_absmax_[j].
     const double soft_scale = (soft_spread_field_ != nullptr)
-                               ? (soft_spatial ? std::abs(dt)
+                               ? (soft_use_rij ? std::abs(dt)
                                                : std::abs(dt) * soft_max_abs_coeff_)
                                : 0.0;
 
@@ -376,7 +439,7 @@ void SpectralROM1D::advance(double dt, double K1d,
         bool by_manning = mann_scale > 0.0 &&
                           lam * std::abs(b_coarse[j]) * mann_scale >= mode_drop_threshold;
         bool by_soft    = soft_scale > 0.0 &&
-                  (soft_spatial ? soft_spatial_absmax_[j]
+                  (soft_use_rij ? soft_spatial_absmax_[j]
                                 : std::abs(soft_r_spread_[j])) * soft_scale
                       >= mode_drop_threshold;
         bool by_vector  = false;
@@ -416,7 +479,7 @@ void SpectralROM1D::advance(double dt, double K1d,
             double g          = -lam * K1d * inv_mm_1 * b_coarse[j]
                                 + scale_1 * r_coarse[j];
             if (soft_spread_field_) {
-                if (soft_spatial)
+                if (soft_use_rij)
                     g += soft_r_spread_spatial_[ui * nk + j];
                 else
                     g += soft_coeff_[ui] * soft_r_spread_[j];

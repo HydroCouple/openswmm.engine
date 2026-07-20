@@ -396,6 +396,12 @@ bool SurfaceRouter2D::initGridRainfall(
     grid_soft_corr_len_ = (spec.coherence == uncertainty::Coherence::CORR_LEN)
                               ? spec.corr_len : 0.0;
     grid_soft_field_built_ = false;
+#ifdef OPENSWMM_HAS_2D
+    grid_soft_reduced_ = false;
+    grid_soft_basis_.clear();
+    grid_soft_psi_.clear();
+    grid_soft_a_.clear();
+#endif
     return true;
 }
 
@@ -512,29 +518,57 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
                 const double* loc_ptr =
                     state_.rainfall.empty() ? nullptr : state_.rainfall.data();
 
-                // CL-1c: correlated coherence. The per-member coefficient field
-                // W_i[t] depends only on the (fixed) coefficients c_i, triangle
-                // geometry and corr_len — not on the time-varying spread — so it
-                // is generated once and reused. The spread enters the ROM per
-                // step via the projection Σ_t P_j[t]·spread[t]·W_i[t].
-                const SpatialUncertaintyField* soft_field = nullptr;
-                if (grid_soft_corr_len_ > 0.0) {
-                    if (!grid_soft_field_built_) {
-                        grid_soft_field_built_ = true;
-                        // Populate the ROM's family-selected coefficients first.
-                        rom->setSoftForcing(loc_ptr, grid_spread_.data(), fam);
-                        const auto& coeff = rom->softCoeff();
-                        if (static_cast<int>(coeff.size()) == rom->n_ensemble) {
-                            CorrelatedFieldGenerator::generateCoefficientField(
-                                mesh_.tri_cx.data(), mesh_.tri_cy.data(),
-                                mesh_.n_triangles(), coeff, grid_soft_corr_len_,
-                                UINT64_C(0x2d50f7c0de5eed02), grid_soft_field_);
+                // CL-1c/CL-2c: correlated coherence. The per-member coefficient
+                // field W_i[t] depends only on the (fixed) coefficients c_i,
+                // triangle geometry and corr_len — not on the time-varying
+                // spread — so the basis is built once and reused. The spread
+                // enters the ROM per step via Σ_t P_j[t]·spread[t]·W_i[t].
+                if (grid_soft_corr_len_ > 0.0 && !grid_soft_field_built_) {
+                    grid_soft_field_built_ = true;
+                    // Populate the ROM's family-selected coefficients first.
+                    rom->setSoftForcing(loc_ptr, grid_spread_.data(), fam);
+                    const std::vector<double> coeff = rom->softCoeff();  // copy
+                    const int M = rom->n_ensemble;
+                    if (static_cast<int>(coeff.size()) == M && M >= 2) {
+                        try {
+                            grid_soft_basis_.build(mesh_.tri_cx.data(),
+                                                   mesh_.tri_cy.data(),
+                                                   mesh_.n_triangles(),
+                                                   grid_soft_corr_len_);
+                            grid_soft_basis_.sampleCoefficients(
+                                coeff, fam, UINT64_C(0x2d50f7c0de5eed02),
+                                grid_soft_a_);
+                            const int Ks = grid_soft_basis_.n_modes();
+                            if (Ks < M) {
+                                // CL-2c reduced projection: fold g(t) into ψ_m
+                                // (the "seam", design note §4).
+                                grid_soft_basis_.normalizedModes(
+                                    grid_soft_a_, M, grid_soft_psi_);
+                                grid_soft_reduced_ = true;
+                            } else {
+                                grid_soft_basis_.materializeField(
+                                    grid_soft_a_, M, grid_soft_field_.values);
+                                grid_soft_field_.n_members = M;
+                                grid_soft_field_.n_cells   = mesh_.n_triangles();
+                                grid_soft_reduced_ = false;
+                            }
+                        } catch (const std::exception&) {
+                            grid_soft_reduced_ = false;  // comonotone fallback
                         }
                     }
-                    if (grid_soft_field_.is_spatial())
-                        soft_field = &grid_soft_field_;
                 }
-                rom->setSoftForcing(loc_ptr, grid_spread_.data(), fam, soft_field);
+                if (grid_soft_corr_len_ > 0.0 && grid_soft_reduced_) {
+                    rom->setSoftForcingReduced(
+                        loc_ptr, grid_spread_.data(), fam,
+                        grid_soft_psi_.data(), grid_soft_a_.data(),
+                        grid_soft_basis_.n_modes());
+                } else {
+                    const SpatialUncertaintyField* soft_field =
+                        (grid_soft_corr_len_ > 0.0 && grid_soft_field_.is_spatial())
+                            ? &grid_soft_field_ : nullptr;
+                    rom->setSoftForcing(loc_ptr, grid_spread_.data(), fam,
+                                        soft_field);
+                }
             }
 #endif
 

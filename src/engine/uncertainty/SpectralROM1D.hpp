@@ -197,6 +197,41 @@ struct SpectralROM1D {
     /// Clear the soft forcing path and revert to the legacy forcing inputs.
     void clearSoftForcing() noexcept;
 
+    /**
+     * @brief Correlated soft forcing via a reduced spatial basis (CL-2c).
+     *
+     * Equivalent to `setSoftForcing(loc, spread, family)` for the location and
+     * comonotone-coefficient setup, but replaces the materialized `M×n` field
+     * of the CL-1b/CL-1c path with a reduced basis: `K_s` per-point-normalized
+     * mode fields `ψ_m(t)` (from `SpdeSpatialBasis::normalizedModes`, so the
+     * per-point normalization `g(t)` is already folded in) and per-member modal
+     * coefficients `a_im`. Member i's per-mode forcing sensitivity becomes
+     *
+     *     R_{ij} = Σ_m a_im · Σ_t P_j[t]·spread[t]·ψ_m(t)
+     *
+     * computed as `K_s` mode projections + an `M×K_s` reconstruction per
+     * advance — `O(K_s·k·n) + O(M·K_s·k)` instead of the materialized path's
+     * `O(M·k·n)`. Numerically equals the materialized field's `R_{ij}` (the two
+     * only differ in summation order). `K_s = 1` (comonotone limit) reproduces
+     * the scalar `c_i` path exactly.
+     *
+     * Both @p psi_modes and @p a_coeffs are NON-OWNING and must outlive the ROM
+     * (or be cleared). @p psi_modes is `K_s × n_nodes` row-major; @p a_coeffs is
+     * `n_ensemble × K_s` row-major. Takes precedence over any `soft_field` set
+     * via setSoftForcing.
+     *
+     * @param loc        Location field (may be null); same role as setSoftForcing.
+     * @param spread     Spread field (non-null to activate); NON-OWNING.
+     * @param family     Distribution family (selects the comonotone c_i).
+     * @param psi_modes  Normalized mode fields ψ_m(t), K_s × n_nodes row-major.
+     * @param a_coeffs   Per-member modal coefficients a_im, M × K_s row-major.
+     * @param n_modes    Number of retained basis modes K_s (≥ 1).
+     */
+    void setSoftForcingReduced(const double* loc, const double* spread,
+                               DistType family,
+                               const double* psi_modes, const double* a_coeffs,
+                               int n_modes) noexcept;
+
     /// Per-member soft-forcing coefficient c_i (family-selected in
     /// setSoftForcing). Empty until setSoftForcing() has been called. Used by
     /// the engine to seed the CL-1c correlated coefficient field.
@@ -359,6 +394,16 @@ private:
     std::vector<double> soft_r_spread_spatial_;
     /// Per-mode max_i |R_{ij}| for the spatial mode-activation criterion.
     std::vector<double> soft_spatial_absmax_;
+
+    /// CL-2c reduced spatial basis. When set (takes precedence over
+    /// soft_field_), the per-member per-mode projection R_{ij} is assembled
+    /// from K_s normalized mode fields ψ_m and per-member coefficients a_im
+    /// instead of a materialized M×n field. Both pointers NON-OWNING.
+    const double* soft_reduced_psi_ = nullptr;  ///< ψ_m(t), K_s × n_nodes row-major.
+    const double* soft_reduced_a_   = nullptr;  ///< a_im, n_ensemble × K_s row-major.
+    int           soft_reduced_ks_  = 0;        ///< K_s (0 ⇒ inactive).
+    /// Scratch R_m[j] = Σ_t P_j[t]·spread[t]·ψ_m(t), K_s × n_kept row-major.
+    std::vector<double> soft_reduced_rm_;
 
     /// One registered extra parameter (PR 9b). `rv` is the per-mode
     /// projection scratch for FORCING_VECTOR fields, refreshed each advance().

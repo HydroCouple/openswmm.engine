@@ -282,3 +282,53 @@ ctest --test-dir build/darwin-tests-local -R test_corr_len_profile
 The benchmark prints `=== CL-2a Profiling Gate ===` with all measured and
 extrapolated numbers on every run.  The test always passes (it is a benchmark,
 not a correctness test).
+
+---
+
+# CL-2b / CL-2c — SPDE Reduced Spatial Basis (Correlated Soft Rain)
+
+Status: measured results from `tests/unit/engine/test_spde_spatial_basis.cpp`
+(CL-2b + CL-2c) and the re-run of `test_soft_rain_corr_coverage.cpp` against the
+reduced path (2026-07-20). Design note: `docs/uncertainty/SPDE_SPATIAL_BASIS.md`.
+
+## 1. What CL-2b/CL-2c deliver
+
+CL-2b replaced the CL-1 materialized `M×n` correlated field with an analytic
+Whittle–Matérn ν=2 spatial basis (`K_s` Neumann-cosine modes). CL-2c integrated
+it into both ROMs (1D gage, 2D grid) via a reduced projection
+`R_{ij} = Σ_m a_im·(Pᵀ(spread⊙ψ_m))_j`, folding the per-point normalization
+`g(t)` into the mode fields (`ψ_m = g·φ_m`, the "seam").
+
+## 2. Results (measured)
+
+| Metric | CL-1 (materialized) | CL-2 (SPDE reduced) | Source |
+|---|---|---|---|
+| Field generation, 10k cells, M=50 | **64,159 ms** | **~60 ms** | `BuildAndMaterializeFastOnLargePointSet` |
+| Covariance RMS vs Matérn ν=2 | 0.027 | **0.042** | `EmpiricalCovarianceMatchesMatern` |
+| Reduced vs materialized `R_{ij}` | — | **< 1e-9 (rel)** | `ReducedProjectionMatchesMaterializedField` |
+| Comonotone limit (K_s=1) | exact | **exact** | `ComonotoneLimitExactReduced` |
+| CL-1e coverage (reduced path) | 1.000 | **1.000** (60/60) | `test_soft_rain_corr_coverage` |
+| CL-1e width-ratio min/med/max | 0.482/0.711/0.878 | **0.485/0.700/0.827** | `test_soft_rain_corr_coverage` |
+| CL-1e downstream narrowing (ℓ=30) | 0.701 | **0.608** | `test_soft_rain_corr_coverage` |
+
+## 3. Interpretation
+
+- **The generation win is the prize**: 64 s → ~60 ms (~1000×) one-time, making
+  `CORR_LEN` practical on large meshes. This is delivered by the basis build
+  regardless of whether the per-step path is reduced or materialized.
+- **Per-step reduced projection** (`K_s < M`) replaces the O(M·k·n) materialized
+  projection with O(K_s·k·n) + O(M·K_s·k). Per the CL-2a caveat, the total
+  per-step ROM speedup is capped at ~19 % because quantile reconstruction
+  (O(M·n)) is unaffected — the reduced projection is correctness-preserving,
+  not the dominant per-step saving.
+- **Numerical equivalence**: the reduced projection reproduces the materialized
+  field's `R_{ij}` to machine precision (same basis + coefficients, differing
+  only in summation order). Against the CL-1 rank-map reference (CL-1e), the
+  SPDE path shifts the bands slightly tighter (Gaussian-linear marginals vs the
+  rank map's exact family marginals) but stays inside every CL-1e threshold.
+
+## 4. Reproduction
+
+```
+ctest --test-dir build/darwin-tests-local -R "test_engine_spde_spatial_basis|test_soft_rain_corr_coverage"
+```

@@ -308,4 +308,69 @@ void SpdeSpatialBasis::materializeField(const std::vector<double>& a,
     }
 }
 
+void SpdeSpatialBasis::normalizedModes(const std::vector<double>& a,
+                                       int n_members,
+                                       std::vector<double>& psi_out) const {
+    if (!is_built())
+        throw std::logic_error("SpdeSpatialBasis::normalizedModes: build() first");
+    const int K = n_modes_;
+    const int n = n_points_;
+    if (n_members <= 0 ||
+        a.size() != static_cast<std::size_t>(n_members) * static_cast<std::size_t>(K))
+        throw std::invalid_argument(
+            "SpdeSpatialBasis::normalizedModes: a must be n_members x n_modes");
+
+    // Start from the raw modes; ψ_m(t) = g(t)·φ_m(t).
+    psi_out.assign(phi_.begin(), phi_.end());
+    if (n_members < 2) return;   // g ≡ 1 (matches materializeField).
+
+    const int M = n_members;
+    const double invM1 = 1.0 / static_cast<double>(M - 1);
+
+    // Target = Var_i(c_i), recovered from mode-0 column a_i0 = w_0·c_i
+    // (identical to materializeField()).
+    const double w0 = w_[0];
+    double m0 = 0.0;
+    for (int i = 0; i < M; ++i)
+        m0 += a[static_cast<std::size_t>(i) * K];
+    m0 /= M;
+    double var0 = 0.0;
+    for (int i = 0; i < M; ++i) {
+        const double d = a[static_cast<std::size_t>(i) * K] - m0;
+        var0 += d * d;
+    }
+    const double target_var = (w0 > 0.0) ? (var0 * invM1) / (w0 * w0) : 0.0;
+    if (target_var <= 0.0) return;   // degenerate: zero-spread coefficients.
+
+    // Per point t: rawvar(t) = Var_i(Σ_m a_im·φ_m(t)) via a length-M scratch
+    // (same arithmetic as materializeField, so g(t) matches to fp round-off).
+    std::vector<double> D(static_cast<std::size_t>(M));
+    for (int t = 0; t < n; ++t) {
+        double mean = 0.0;
+        for (int i = 0; i < M; ++i) {
+            const double* ai = a.data() + static_cast<std::size_t>(i) *
+                                          static_cast<std::size_t>(K);
+            double d = 0.0;
+            for (int m = 0; m < K; ++m)
+                d += ai[m] * phi_[static_cast<std::size_t>(m) *
+                                  static_cast<std::size_t>(n) +
+                                  static_cast<std::size_t>(t)];
+            D[static_cast<std::size_t>(i)] = d;
+            mean += d;
+        }
+        mean /= M;
+        double rv = 0.0;
+        for (int i = 0; i < M; ++i) {
+            const double d = D[static_cast<std::size_t>(i)] - mean;
+            rv += d * d;
+        }
+        rv *= invM1;
+        const double g = (rv > 1.0e-300) ? std::sqrt(target_var / rv) : 1.0;
+        if (g == 1.0) continue;
+        for (int m = 0; m < K; ++m)
+            psi_out[static_cast<std::size_t>(m) * static_cast<std::size_t>(n) +
+                    static_cast<std::size_t>(t)] *= g;
+    }
+}
+
 } // namespace openswmm::uncertainty

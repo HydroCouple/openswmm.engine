@@ -28,6 +28,7 @@
 #include "data/BoundaryData.hpp"
 #include "coupling/NodeCoupling.hpp"
 #include "../uncertainty/GridFileReader.hpp"
+#include "../uncertainty/SpdeSpatialBasis.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "solver/CvodeSurfaceSolver.hpp"
@@ -263,6 +264,13 @@ private:
     bool   grid_soft_field_built_ = false;  ///< True once grid_soft_field_ has been generated
 #ifdef OPENSWMM_HAS_2D
     SpatialUncertaintyField grid_soft_field_; ///< Static per-member per-cell coefficient field (built once)
+    // CL-2c reduced spatial basis (replaces the CL-1c materialized field's
+    // O(M·n·n_nbr) generation with a ~ms analytic SPDE build). When K_s < M the
+    // ROM uses the reduced projection over grid_soft_psi_ + grid_soft_a_.
+    openswmm::uncertainty::SpdeSpatialBasis grid_soft_basis_; ///< SPDE ν=2 basis over triangle centroids
+    std::vector<double> grid_soft_psi_;     ///< Normalized mode fields ψ_m(t), K_s × n_tri row-major
+    std::vector<double> grid_soft_a_;       ///< Per-member modal coefficients a_im, M × K_s row-major
+    bool grid_soft_reduced_ = false;        ///< True when the reduced projection path is active (K_s < M)
 #endif
 
     /// Update rainfall from system rain gages.
