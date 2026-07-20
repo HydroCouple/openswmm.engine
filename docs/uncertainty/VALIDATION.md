@@ -204,3 +204,81 @@ ctest --test-dir build/darwin-tests-local -R test_soft_rain_corr_coverage
 
 The test prints `[SoftRainCorr-vs-MC] …` and `[SoftRainCorr-narrowing] …` on
 every run; thresholds are the CL-1e checklist floors.
+
+---
+
+# CL-2a — Profiling Gate: Correlated Projection Cost (Phase-2 Decision)
+
+Status: measured results from `tests/regression/test_corr_len_profile.cpp`
+(2026-07-20). The CL-2a profiling gate benchmarks the correlated soft-forcing
+projection (the O(M·k·n) inner loop in `SpectralROM::advance`) on a large mesh
+and compares it to the comonotone baseline and the total per-step ROM cost. If
+the correlated projection is < ~5% of the total routing-step time, CL-1 is
+sufficient and CL-2 (reduced-basis optimization) is not worth building.
+
+## 1. Experiment
+
+- **Mesh**: 70×70 structured triangular grid = **9,800 triangles** in a 1 km
+  square domain.  (The CL-2a checklist specifies ≥ 20k cells; the Lanczos
+  eigensolve on 20k triangles with k=20 takes minutes on this machine, so we
+  measure at 10k/k=10 and extrapolate linearly — the projection inner loop is a
+  simple dot product whose wall time scales exactly as M·k·n.)
+- **ROM**: M = 50 ensemble members, k = 10 retained modes, ℓ = 200 m.
+- **Measured**: 3 warm-up + 20 timed `advance()` calls for each path
+  (comonotone scalar `c_i` vs correlated spatial field), plus 20 timed
+  `computeQuantiles()` calls.
+- **Hardware**: macOS, Apple Silicon (base configuration).
+
+## 2. Results (measured)
+
+| Component | Measured (9.8k tri, k=10) | Extrapolated (20k tri, k=20) |
+|---|---|---|
+| Field generation (one-time) | **64,159 ms** | ~130,000 ms |
+| Comonotone advance | **1.5 ms/step** | ~3 ms/step |
+| Correlated advance | **15.6 ms/step** | ~60 ms/step |
+| Projection delta (corr − comonotone) | **14.1 ms/step** | **57.4 ms/step** |
+| Quantile reconstruction | **57.2 ms/step** | **116.7 ms/step** |
+| Total advance + quantile | **72.7 ms/step** | **174.1 ms/step** |
+| **Projection as % of total** | **19.3%** | **33.0%** |
+
+## 3. Decision: **PROCEED to CL-2**
+
+The correlated projection is **19.3%** of the total per-step ROM cost at 10k
+triangles (k=10) and extrapolates to **33%** at the CL-2a target of 20k
+triangles (k=20) — well above the 5% decision gate.  CL-1's O(M·k·n) per-step
+projection is a significant fraction of the ROM's per-step cost on large meshes.
+
+**However**, two observations refine the CL-2 priority:
+
+1. **Quantile reconstruction is the larger per-step cost** (57 ms vs 14 ms at
+   10k).  Even with a perfect CL-2 reduced basis (K_s ≪ M, projection drops to
+   O(K_s·k·n)), the total per-step cost would drop from 72.7 ms to ~58.6 ms —
+   only a ~19% improvement.  The quantile cost O(M·n) is independent of the
+   spatial basis and would not be affected by CL-2.
+
+2. **Field generation is the dominant one-time cost** (64 seconds at 10k
+   triangles).  This is a *startup* cost, not per-step, but it is the single
+   largest time component and would benefit from optimization regardless of
+   CL-2.  The `CorrelatedFieldGenerator::generateCoefficientField` neighbourhood
+   search (3ℓ radius, exponential kernel) is O(n · avg_neighbours) — for ℓ=200
+   m on a 10 m grid, avg_neighbours ≈ 120, giving ~1.2M kernel evaluations.  A
+   spatial index (grid bucketing) would reduce this; the current implementation
+   already uses grid-indexed neighbourhoods but the per-cell sorting/ranking
+   step adds O(M · n · log M) overhead.
+
+**Recommendation**: CL-2 is justified for large meshes (≥ 10k cells) where the
+projection is > 15% of per-step cost.  But the field-generation one-time cost
+(64+ seconds) is the more urgent optimization target — it makes `CORR_LEN`
+ impractical for interactive use on large meshes regardless of the per-step
+projection cost.  CL-2b should consider optimizing field generation alongside
+the reduced-basis projection.
+
+## 4. Reproduction
+
+```
+ctest --test-dir build/darwin-tests-local -R test_corr_len_profile
+```
+
+The benchmark prints `=== CL-2a Profiling Gate ===` with all measured and
+extrapolated numbers on every run.  The test always passes (it is a benchmark,
+not a correctness test).
