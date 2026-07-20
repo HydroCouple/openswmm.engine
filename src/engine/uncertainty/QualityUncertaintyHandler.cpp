@@ -229,6 +229,8 @@ std::string parseSoftRainfallGridLine(
     // --- Parse Options (tokens 3+) ---
     bool force_location = false;
     std::string nodes_file;
+    Coherence coherence = Coherence::FULL;
+    double corr_len = 0.0;
     for (std::size_t i = 3; i < tokens.size(); ++i) {
         if (iequals(tokens[i], "FORCE_LOCATION")) {
             force_location = true;
@@ -239,8 +241,30 @@ std::string parseSoftRainfallGridLine(
             // Strip quotes
             if (nodes_file.size() >= 2 && nodes_file.front() == '"' && nodes_file.back() == '"')
                 nodes_file = nodes_file.substr(1, nodes_file.size() - 2);
+        } else if (iequals(tokens[i], "COHERENCE")) {
+            // COHERENCE FULL | COHERENCE CORR_LEN <meters>  (design §6, CL-1a)
+            if (i + 1 >= tokens.size())
+                return "COHERENCE requires a mode (FULL or CORR_LEN <meters>)";
+            const std::string& mode = tokens[++i];
+            if (iequals(mode, "FULL")) {
+                coherence = Coherence::FULL;
+                corr_len  = 0.0;
+            } else if (iequals(mode, "CORR_LEN")) {
+                if (i + 1 >= tokens.size())
+                    return "CORR_LEN requires a positive numeric argument (meters)";
+                bool ok2 = false;
+                const double v = tryParseDouble(tokens[++i], ok2);
+                if (!ok2)
+                    return "CORR_LEN argument must be a numeric value (meters)";
+                if (v <= 0.0)
+                    return "CORR_LEN must be a positive number of meters";
+                coherence = Coherence::CORR_LEN;
+                corr_len  = v;
+            } else {
+                return "COHERENCE mode '" + mode + "' not yet supported (use FULL or CORR_LEN <meters>)";
+            }
         } else {
-            return "Unknown option '" + tokens[i] + "' (supported: FORCE_LOCATION, NODES <file>)";
+            return "Unknown option '" + tokens[i] + "' (supported: FORCE_LOCATION, NODES <file>, COHERENCE FULL|CORR_LEN <meters>)";
         }
     }
 
@@ -257,6 +281,8 @@ std::string parseSoftRainfallGridLine(
     spec.mapping        = mapping;
     spec.force_location = force_location;
     spec.nodes_file     = nodes_file;
+    spec.coherence      = coherence;
+    spec.corr_len       = corr_len;
     config.grid_sources.push_back(spec);
 
     return {};
@@ -284,7 +310,7 @@ std::string parseSoftRaingagesLine(openswmm::SimulationContext& ctx,
                                    const std::vector<std::string>& tokens)
 {
     if (tokens.size() < 4)
-        return "Expected: Gage Family SpreadKind SpreadSource";
+        return "Expected: Gage Family SpreadKind SpreadSource [COHERENCE FULL|CORR_LEN <meters>]";
 
     const std::string& gage_name = tokens[0];
     const int gage_idx = ctx.gage_names.find(gage_name);
@@ -311,18 +337,57 @@ std::string parseSoftRaingagesLine(openswmm::SimulationContext& ctx,
     if ((sk == SoftSpreadKind::SD || sk == SoftSpreadKind::CV) && family == DistType::UNIFORM)
         return "SD/CV are not valid with UNIFORM family; use HALFRANGE";
 
+    GageCoherence coherence = GageCoherence::FULL;
+    double corr_len = 0.0;
+
+    // Helper to consume an optional COHERENCE clause starting at tokens[i].
+    // Returns an empty string on success or an error description; advances i
+    // past the consumed tokens (COHERENCE + mode + [value]).
+    auto parse_coherence = [&](std::size_t& i) -> std::string {
+        if (!iequals(tokens[i], "COHERENCE"))
+            return "Unknown option '" + tokens[i] + "' (supported: COHERENCE FULL|CORR_LEN <meters>)";
+        if (i + 1 >= tokens.size())
+            return "COHERENCE requires a mode (FULL or CORR_LEN <meters>)";
+        const std::string& mode = tokens[++i];
+        if (iequals(mode, "FULL")) {
+            coherence = GageCoherence::FULL;
+            corr_len  = 0.0;
+        } else if (iequals(mode, "CORR_LEN")) {
+            if (i + 1 >= tokens.size())
+                return "CORR_LEN requires a positive numeric argument (meters)";
+            bool ok2 = false;
+            const double v = tryParseDouble(tokens[++i], ok2);
+            if (!ok2)
+                return "CORR_LEN argument must be a numeric value (meters)";
+            if (v <= 0.0)
+                return "CORR_LEN must be a positive number of meters";
+            coherence = GageCoherence::CORR_LEN;
+            corr_len  = v;
+        } else {
+            return "COHERENCE mode '" + mode + "' not yet supported (use FULL or CORR_LEN <meters>)";
+        }
+        return {};
+    };
+
     ctx.soft_rain.family[ui] = family;
     ctx.soft_rain.spread_kind[ui] = sk;
     ctx.soft_rain.spread_const[ui] = 0.0;
     ctx.soft_rain.spread_ts[ui] = -1;
     ctx.soft_rain.spread_ts_name[ui].clear();
     ctx.soft_rain.configured[ui] = true;
+    ctx.soft_rain.coherence[ui] = GageCoherence::FULL;
+    ctx.soft_rain.corr_len[ui]  = 0.0;
 
     if (iequals(tokens[3], "TIMESERIES")) {
         if (tokens.size() < 5)
             return "TIMESERIES spread source requires a timeseries name";
         ctx.soft_rain.spread_ts_name[ui] = tokens[4];
         ctx.soft_rain.spread_ts[ui] = ctx.table_names.find(tokens[4]);
+        // Optional COHERENCE may follow the timeseries name (tokens[5+]).
+        for (std::size_t i = 5; i < tokens.size(); ++i) {
+            std::string err = parse_coherence(i);
+            if (!err.empty()) return err;
+        }
     } else {
         bool ok = false;
         const double spread = tryParseDouble(tokens[3], ok);
@@ -331,7 +396,15 @@ std::string parseSoftRaingagesLine(openswmm::SimulationContext& ctx,
         if (spread < 0.0)
             return "SpreadSource must be non-negative";
         ctx.soft_rain.spread_const[ui] = spread;
+        // Optional COHERENCE may follow the constant spread (tokens[4+]).
+        for (std::size_t i = 4; i < tokens.size(); ++i) {
+            std::string err = parse_coherence(i);
+            if (!err.empty()) return err;
+        }
     }
+
+    ctx.soft_rain.coherence[ui] = coherence;
+    ctx.soft_rain.corr_len[ui]  = corr_len;
 
     return {};
 }
