@@ -50,9 +50,11 @@ void SpectralROM1D::clearEnsembleRunoff() {
 }
 
 void SpectralROM1D::setSoftForcing(const double* loc, const double* spread,
-                                  DistType family) noexcept {
+                                  DistType family,
+                                  const SoftSpatialField* soft_field) noexcept {
     soft_loc_field_ = loc;
     soft_spread_field_ = spread;
+    soft_field_ = soft_field;
     // Select the per-member coefficient c_i by family. UNIFORM uses the raw
     // half-range band (2u-1); NORMAL/LOGNORMAL use the standard-normal quantile
     // z_i (LOGNORMAL via the delta linearization, caller scales spread by loc).
@@ -65,11 +67,35 @@ void SpectralROM1D::setSoftForcing(const double* loc, const double* spread,
         soft_coeff_[ui] = c;
         soft_max_abs_coeff_ = std::max(soft_max_abs_coeff_, std::abs(c));
     }
+
+    // CL-1b: when a spatial field is supplied it must be dimensionally
+    // consistent and its per-node column mean must match the scalar-coefficient
+    // mean c̄, so the nominal member stays zero-deviation and q50 tracks the
+    // deterministic answer. Checked only in debug builds (config-time cost).
+#ifndef NDEBUG
+    if (soft_field_ != nullptr && soft_field_->is_spatial()) {
+        assert(soft_field_->n_members == n_ensemble &&
+               "soft spatial field n_members must equal n_ensemble");
+        double cbar = 0.0;
+        for (int i = 0; i < n_ensemble; ++i)
+            cbar += soft_coeff_[static_cast<std::size_t>(i)];
+        cbar /= static_cast<double>(n_ensemble);
+        for (int t = 0; t < soft_field_->n_cells; ++t) {
+            double colmean = 0.0;
+            for (int i = 0; i < n_ensemble; ++i)
+                colmean += soft_field_->at(i, t);
+            colmean /= static_cast<double>(n_ensemble);
+            assert(std::abs(colmean - cbar) < 1.0e-9 &&
+                   "soft spatial field column mean must equal mean_i(c_i)");
+        }
+    }
+#endif
 }
 
 void SpectralROM1D::clearSoftForcing() noexcept {
     soft_loc_field_ = nullptr;
     soft_spread_field_ = nullptr;
+    soft_field_ = nullptr;
 }
 
 // ============================================================================
@@ -123,6 +149,7 @@ void SpectralROM1D::initialize() {
     mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
     h_det_last_.assign(static_cast<std::size_t>(n_nodes), 0.0);
     soft_r_spread_.assign(static_cast<std::size_t>(n_kept), 0.0);
+    soft_spatial_absmax_.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     mode_active.assign(static_cast<std::size_t>(n_kept), true);
     n_modes_active = n_kept;
@@ -241,6 +268,36 @@ void SpectralROM1D::advance(double dt, double K1d,
     } else {
         std::fill(soft_r_spread_.begin(), soft_r_spread_.end(), 0.0);
     }
+    // CL-1b: correlated-coherence per-member projection. When a spatial field
+    // is active, the comonotone factorization c_i·(Pᵀspread)_j no longer holds;
+    // each member gets its own R_{ij} = Σ_t P_j[t]·spread[t]·W_i[t] (the
+    // O(M·k·n) path). A constant field (W_i[t] = c_i ∀t) reduces this exactly
+    // to c_i·soft_r_spread_[j], so the comonotone limit is bit-identical.
+    const bool soft_spatial = (soft_field_ != nullptr) &&
+                              soft_field_->is_spatial() &&
+                              (soft_spread_field_ != nullptr);
+    if (soft_spatial) {
+        assert(soft_field_->n_members == n_ensemble);
+        assert(static_cast<std::size_t>(soft_field_->n_cells) == nn);
+        soft_r_spread_spatial_.assign(
+            static_cast<std::size_t>(n_ensemble) * nk, 0.0);
+        std::fill(soft_spatial_absmax_.begin(), soft_spatial_absmax_.end(), 0.0);
+        for (int i = 0; i < n_ensemble; ++i) {
+            const double* Wi = &soft_field_->values[
+                static_cast<std::size_t>(i) * nn];
+            double* Ri = &soft_r_spread_spatial_[
+                static_cast<std::size_t>(i) * nk];
+            for (std::size_t j = 0; j < nk; ++j) {
+                const double* Pj = &basis->P[j * nn];
+                double dot = 0.0;
+                for (std::size_t t = 0; t < nn; ++t)
+                    dot += Pj[t] * soft_spread_field_[t] * Wi[t];
+                Ri[j] = dot;
+                const double ad = std::abs(dot);
+                if (ad > soft_spatial_absmax_[j]) soft_spatial_absmax_[j] = ad;
+            }
+        }
+    }
     // Registered FORCING_VECTOR fields (PR 9b): re-project each per call
     // (the fields are live engine buffers that change every routing step).
     for (auto& ep : extra_params_) {
@@ -302,8 +359,13 @@ void SpectralROM1D::advance(double dt, double K1d,
     const double rain_scale = (loc_field != nullptr)
                                ? std::abs(dt) * max_rain_dev : 0.0;
     const double mann_scale = std::abs(dt) * K1d * max_mann_dev;
+    // Soft-forcing activation scale. Comonotone: |dt|·max_i|c_i| times
+    // |soft_r_spread_[j]|. Spatial (CL-1b): the coefficient is already folded
+    // into R_{ij}, so the scale is |dt| times max_i|R_{ij}| = soft_spatial_absmax_[j].
     const double soft_scale = (soft_spread_field_ != nullptr)
-                               ? std::abs(dt) * soft_max_abs_coeff_ : 0.0;
+                               ? (soft_spatial ? std::abs(dt)
+                                               : std::abs(dt) * soft_max_abs_coeff_)
+                               : 0.0;
 
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
@@ -314,7 +376,9 @@ void SpectralROM1D::advance(double dt, double K1d,
         bool by_manning = mann_scale > 0.0 &&
                           lam * std::abs(b_coarse[j]) * mann_scale >= mode_drop_threshold;
         bool by_soft    = soft_scale > 0.0 &&
-                  std::abs(soft_r_spread_[j]) * soft_scale >= mode_drop_threshold;
+                  (soft_spatial ? soft_spatial_absmax_[j]
+                                : std::abs(soft_r_spread_[j])) * soft_scale
+                      >= mode_drop_threshold;
         bool by_vector  = false;
         for (const auto& ep : extra_params_) {
             if (ep.entry == ParamEntry::FORCING_VECTOR &&
@@ -351,8 +415,12 @@ void SpectralROM1D::advance(double dt, double K1d,
             const double rate = lam * K1d / mm;
             double g          = -lam * K1d * inv_mm_1 * b_coarse[j]
                                 + scale_1 * r_coarse[j];
-            if (soft_spread_field_)
-                g += soft_coeff_[ui] * soft_r_spread_[j];
+            if (soft_spread_field_) {
+                if (soft_spatial)
+                    g += soft_r_spread_spatial_[ui * nk + j];
+                else
+                    g += soft_coeff_[ui] * soft_r_spread_[j];
+            }
             if (has_extra) {
                 for (const auto& ep : extra_params_)
                     if (ep.entry == ParamEntry::FORCING_VECTOR)

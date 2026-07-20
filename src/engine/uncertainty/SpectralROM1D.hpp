@@ -37,6 +37,7 @@
 #include "GraphEigenBasis.hpp"
 #include "NetworkLaplacian1D.hpp"
 #include "UncertaintyTypes.hpp"
+#include "SoftSpatialField.hpp"
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -176,9 +177,22 @@ struct SpectralROM1D {
      *
      * Both pointers are NON-OWNING and must remain valid until changed or
      * cleared. Passing nullptr for @p spread disables the soft spread path.
+     *
+     * @param soft_field Optional per-member spatial coefficient field
+     *        (`COHERENCE CORR_LEN`, CL-1b). NON-OWNING; must outlive the ROM
+     *        or be cleared. When null (default) or non-spatial, the comonotone
+     *        scalar `c_i` path is used and the result is bit-identical to the
+     *        pre-CL-1b behaviour. When spatial, member i's per-mode forcing
+     *        sensitivity becomes `Σ_t P_j[t]·spread[t]·W_i[t]` (a per-member
+     *        projection) in place of the scalar `c_i · (P^T spread)_j`. The
+     *        field's `n_cells` must equal the number of active ROM nodes and
+     *        `n_members` must equal n_ensemble; its per-node column mean over
+     *        members must equal mean_i(c_i) so q50 still tracks the
+     *        deterministic answer (checked by assertion in debug builds).
      */
     void setSoftForcing(const double* loc, const double* spread,
-                        DistType family = DistType::NORMAL) noexcept;
+                        DistType family = DistType::NORMAL,
+                        const SoftSpatialField* soft_field = nullptr) noexcept;
 
     /// Clear the soft forcing path and revert to the legacy forcing inputs.
     void clearSoftForcing() noexcept;
@@ -330,6 +344,16 @@ private:
     std::vector<double> soft_z_;             ///< probit(u_i) — normal/lognormal coefficient.
     std::vector<double> soft_coeff_;         ///< Active per-member coefficient c_i (family-selected).
     double soft_max_abs_coeff_ = 0.0;        ///< max_i |c_i| for mode activation.
+
+    /// CL-1b correlated-coherence (`COHERENCE CORR_LEN`) spatial field. When
+    /// non-null and spatial, replaces the scalar `c_i · (P^T spread)_j` term
+    /// with the per-member projection `Σ_t P_j[t]·spread[t]·W_i[t]`. NON-OWNING.
+    const SoftSpatialField* soft_field_ = nullptr;
+    /// Per-member per-mode projection R_{ij} = Σ_t P_j[t]·spread[t]·W_i[t],
+    /// row-major [i * n_kept + j]; populated each advance() when spatial.
+    std::vector<double> soft_r_spread_spatial_;
+    /// Per-mode max_i |R_{ij}| for the spatial mode-activation criterion.
+    std::vector<double> soft_spatial_absmax_;
 
     /// One registered extra parameter (PR 9b). `rv` is the per-mode
     /// projection scratch for FORCING_VECTOR fields, refreshed each advance().
