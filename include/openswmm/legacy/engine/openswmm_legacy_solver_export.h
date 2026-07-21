@@ -9,20 +9,20 @@
 #  ifndef EXPORT_OPENSWMMCORE_SOLVER_API
 #    ifdef openswmm_legacy_engine_EXPORTS
         /* We are building this library */
-#      define EXPORT_OPENSWMMCORE_SOLVER_API __attribute__((visibility("default")))
+#      define EXPORT_OPENSWMMCORE_SOLVER_API __declspec(dllexport)
 #    else
         /* We are using this library */
-#      define EXPORT_OPENSWMMCORE_SOLVER_API __attribute__((visibility("default")))
+#      define EXPORT_OPENSWMMCORE_SOLVER_API __declspec(dllimport)
 #    endif
 #  endif
 
 #  ifndef OPENSWMM_LEGACY_SOLVER_NO_EXPORT
-#    define OPENSWMM_LEGACY_SOLVER_NO_EXPORT __attribute__((visibility("hidden")))
+#    define OPENSWMM_LEGACY_SOLVER_NO_EXPORT 
 #  endif
 #endif
 
 #ifndef OPENSWMM_LEGACY_SOLVER_DEPRECATED
-#  define OPENSWMM_LEGACY_SOLVER_DEPRECATED __attribute__ ((__deprecated__))
+#  define OPENSWMM_LEGACY_SOLVER_DEPRECATED __declspec(deprecated)
 #endif
 
 #ifndef OPENSWMM_LEGACY_SOLVER_DEPRECATED_EXPORT

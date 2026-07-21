@@ -132,9 +132,15 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
         # Propagate the C++20 standard to nvcc; nvcc does not inherit CXX_STANDARD.
         set(CMAKE_CUDA_STANDARD 20)
         set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-        # Separable compilation is required when device code spans multiple TUs
-        # (Kokkos parallel kernels across GpuPluginCuda + CvodeKokkosSurfaceSolver).
-        set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+        # Must stay OFF: vcpkg's Kokkos overlay port builds without
+        # Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE, and Kokkos' desul atomics
+        # headers hard-error (C1189) if a consumer enables RDC (-rdc=true)
+        # while the Kokkos it links against was built without it. All the
+        # device code here goes through Kokkos parallel_for/functors (no
+        # __global__ kernels or device-side symbols shared across TUs), so
+        # non-separable compilation is sufficient despite spanning two .cpp
+        # files.
+        set(CMAKE_CUDA_SEPARABLE_COMPILATION OFF)
     endif()
 
     add_library(openswmm_gpu_cuda SHARED
@@ -151,7 +157,14 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
         set_target_properties(openswmm_gpu_cuda PROPERTIES
             CUDA_STANDARD 20
             CUDA_STANDARD_REQUIRED ON
-            CUDA_SEPARABLE_COMPILATION ON)
+            CUDA_SEPARABLE_COMPILATION OFF)
+        # CUDA 13.x's CCCL headers (pulled in via Kokkos) hard-error (C1189)
+        # under cl.exe's traditional preprocessor. The Kokkos vcpkg port
+        # applies this to its OWN build via CMAKE_CUDA_FLAGS, but that doesn't
+        # propagate to this target's CUDA compilation, which needs its own
+        # -Xcompiler=/Zc:preprocessor.
+        target_compile_options(openswmm_gpu_cuda PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>)
     endif()
 
     target_include_directories(openswmm_gpu_cuda PRIVATE

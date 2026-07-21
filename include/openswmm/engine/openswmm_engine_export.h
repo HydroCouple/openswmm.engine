@@ -9,20 +9,20 @@
 #  ifndef SWMM_ENGINE_API
 #    ifdef openswmm_engine_EXPORTS
         /* We are building this library */
-#      define SWMM_ENGINE_API __attribute__((visibility("default")))
+#      define SWMM_ENGINE_API __declspec(dllexport)
 #    else
         /* We are using this library */
-#      define SWMM_ENGINE_API __attribute__((visibility("default")))
+#      define SWMM_ENGINE_API __declspec(dllimport)
 #    endif
 #  endif
 
 #  ifndef OPENSWMM_ENGINE_NO_EXPORT
-#    define OPENSWMM_ENGINE_NO_EXPORT __attribute__((visibility("hidden")))
+#    define OPENSWMM_ENGINE_NO_EXPORT 
 #  endif
 #endif
 
 #ifndef OPENSWMM_ENGINE_DEPRECATED
-#  define OPENSWMM_ENGINE_DEPRECATED __attribute__ ((__deprecated__))
+#  define OPENSWMM_ENGINE_DEPRECATED __declspec(deprecated)
 #endif
 
 #ifndef OPENSWMM_ENGINE_DEPRECATED_EXPORT

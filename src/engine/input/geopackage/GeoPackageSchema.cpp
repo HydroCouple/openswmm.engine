@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS gpkg_geometry_columns (
 // ============================================================================
 // Part A: Model Input tables
 // ============================================================================
+// MSVC caps a single string literal token at 16380 bytes (C2026). This DDL
+// block is split into adjacent R"SQL(...)SQL" literals (compile-time
+// concatenated into one PART_A_DDL) to stay under that cap — if you add
+// tables here and hit C2026 again, add another split rather than growing an
+// existing chunk past ~15KB.
 
 static const char* PART_A_DDL = R"SQL(
 -- Options (key-value)
@@ -481,7 +486,7 @@ CREATE TABLE IF NOT EXISTS snowpacks (
     removal_subcatch TEXT,
     UNIQUE(simulation_id, snowpack_id, surface_type)
 );
-
+)SQL" R"SQL(
 -- Monthly climate adjustments
 CREATE TABLE IF NOT EXISTS adjustments (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
