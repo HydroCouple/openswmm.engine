@@ -201,6 +201,19 @@ public:
     SimulationContext&       context()       noexcept { return ctx_; }
     const SimulationContext& context() const noexcept { return ctx_; }
 
+    /// Editor/GUI support: when enabled, open() keeps the engine in OPENED
+    /// state (with all parsed data retained) even when post-parse validation
+    /// records errors, instead of aborting the open. Must be set BEFORE
+    /// calling open() — open()'s ctx_.reset() does not touch this flag, so it
+    /// persists across opens until explicitly changed. Errors/warnings are
+    /// still recorded in context().errors/warnings either way; this only
+    /// controls whether they are treated as fatal. Callers that enable this
+    /// are expected to do a fresh, strict (non-lenient) open before actually
+    /// running a simulation — a leniently-opened engine may have incomplete
+    /// derived state (the very thing the strict fatal-gate exists to catch).
+    void set_lenient_open(bool enable) noexcept { lenient_open_ = enable; }
+    bool lenient_open() const noexcept { return lenient_open_; }
+
     /// Groundwater solver access (for C API state injection).
     groundwater::GWSolver&       gwSolver()       noexcept { return groundwater_; }
     const groundwater::GWSolver& gwSolver() const noexcept { return groundwater_; }
@@ -427,6 +440,10 @@ private:
     // end-of-step-rate×dt bookkeeping under-counts runoff volume.
     bool has_runoff_ = false;  ///< Prev step generated runoff (legacy HasRunoff)
     bool has_snow_   = false;  ///< Prev step had snow cover   (legacy HasSnow)
+
+    /// See set_lenient_open(). Not touched by ctx_.reset() so it survives
+    /// open()'s context reset — callers set it before calling open().
+    bool lenient_open_ = false;
 
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results

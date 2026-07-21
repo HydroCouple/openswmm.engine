@@ -285,6 +285,75 @@ SWMM_ENGINE_API int         swmm_get_last_error    (SWMM_Engine engine);
 SWMM_ENGINE_API const char* swmm_get_last_error_msg(SWMM_Engine engine);
 SWMM_ENGINE_API const char* swmm_error_message     (int code);
 
+/**
+ * @brief Enable/disable lenient open for editor/GUI callers.
+ *
+ * @details Must be called AFTER swmm_engine_create() and BEFORE
+ *          swmm_engine_open(). When enabled, a subsequent open() that
+ *          accumulates post-parse validation errors (undefined objects,
+ *          missing curves, ...) still leaves the engine in the OPENED state
+ *          with all parsed data retained, instead of aborting the open.
+ *          The accumulated errors/warnings are still recorded and readable
+ *          via swmm_get_error_count/_at and swmm_get_warning_count/_at
+ *          either way — this only controls whether they are treated as
+ *          fatal. Does not affect swmm_get_last_error/_msg (the single
+ *          "most recent error" slot), which is only set when open() actually
+ *          fails (e.g. an unreadable file) — a lenient open that "succeeds"
+ *          despite validation errors leaves that slot untouched.
+ *
+ *          Intended for loading a model for editing when it may have
+ *          validation errors that don't block editing (e.g. in a GUI's model
+ *          browser). Callers that enable this are expected to do a fresh,
+ *          strict (non-lenient) open before actually running a simulation —
+ *          a leniently-opened engine may have incomplete derived state, which
+ *          is exactly what the default strict behavior exists to catch.
+ *
+ * @param engine  Engine handle.
+ * @param enable  Nonzero to enable lenient open; 0 to restore strict
+ *                (default) behavior.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_engine_set_lenient_open(SWMM_Engine engine, int enable);
+
+/**
+ * @brief Count of post-parse validation errors accumulated by the last open().
+ *
+ * @details Populated regardless of lenient-open mode; only its effect on
+ *          open()'s return value/state differs. Cleared on the next open().
+ *
+ * @param engine  Engine handle.
+ * @returns Error count (>= 0), or a negative error code for an invalid handle.
+ */
+SWMM_ENGINE_API int swmm_get_error_count(SWMM_Engine engine);
+
+/**
+ * @brief Read back one accumulated validation error message by index.
+ *
+ * @param engine  Engine handle.
+ * @param index   Zero-based index (0..swmm_get_error_count()-1).
+ * @returns The error message, or "" if index is out of range or engine is
+ *          invalid. Valid until the next open() on this engine.
+ */
+SWMM_ENGINE_API const char* swmm_get_error_at(SWMM_Engine engine, int index);
+
+/**
+ * @brief Count of post-parse validation warnings accumulated by the last open().
+ *
+ * @param engine  Engine handle.
+ * @returns Warning count (>= 0), or a negative error code for an invalid handle.
+ */
+SWMM_ENGINE_API int swmm_get_warning_count(SWMM_Engine engine);
+
+/**
+ * @brief Read back one accumulated validation warning message by index.
+ *
+ * @param engine  Engine handle.
+ * @param index   Zero-based index (0..swmm_get_warning_count()-1).
+ * @returns The warning message, or "" if index is out of range or engine is
+ *          invalid. Valid until the next open() on this engine.
+ */
+SWMM_ENGINE_API const char* swmm_get_warning_at(SWMM_Engine engine, int index);
+
 /* =========================================================================
  * Simulation timing
  * ========================================================================= */

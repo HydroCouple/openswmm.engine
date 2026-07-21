@@ -260,6 +260,20 @@ struct NodeData {
      */
     std::vector<double>     coupling_volume;
 
+    /**
+     * @brief Queued 1D↔2D exchange VOLUME awaiting smoothed delivery (1D units, ft³).
+     *
+     * @details SurfaceRouter2D::advance() moves a macro-window's coupling_volume
+     *          here (+=, so leftover jitter from a still-draining previous window
+     *          is preserved) rather than letting it land as a single-step pulse.
+     *          assembleLateralInflows drains this at the uniform rate
+     *          coupling_queue/ctx.coupling_delivery_remaining on each routing step
+     *          until the queue empties or the context's coupling_delivery_remaining
+     *          reaches 0. In-memory only (not serialized to hotstart), same as
+     *          coupling_volume.
+     */
+    std::vector<double>     coupling_queue;
+
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
     // assembleQualityInflows() writes these; mixAtNodes() reads them.
@@ -597,6 +611,7 @@ struct NodeData {
         iface_inflow.assign(un, 0.0);
         coupling_inflow.assign(un, 0.0);
         coupling_volume.assign(un, 0.0);
+        coupling_queue.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
         qual_vol_in.assign(un, 0.0);
@@ -663,7 +678,7 @@ struct NodeData {
         g(lat_flow, 0.0); g(user_lat_flow, 0.0);
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
-        g(coupling_inflow, 0.0); g(coupling_volume, 0.0);
+        g(coupling_inflow, 0.0); g(coupling_volume, 0.0); g(coupling_queue, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
@@ -713,7 +728,7 @@ struct NodeData {
         e(lat_flow); e(user_lat_flow);
         e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
         e(rdii_inflow); e(iface_inflow);
-        e(coupling_inflow); e(coupling_volume);
+        e(coupling_inflow); e(coupling_volume); e(coupling_queue);
         e(qual_vol_in); e(lid_drain_qual_vol);
         e(inflow); e(outflow); e(overflow); e(losses);
         e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
@@ -813,6 +828,7 @@ struct NodeData {
         iface_inflow.shrink_to_fit();
         coupling_inflow.shrink_to_fit();
         coupling_volume.shrink_to_fit();
+        coupling_queue.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
@@ -901,12 +917,13 @@ struct NodeData {
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
         std::fill(old_inflow.begin(), old_inflow.end(), 0.0);
-        // coupling_inflow / coupling_volume are NOT cleared by clearInflowSources
-        // (coupling_volume is the carry-across-steps field — its end-of-step value
-        // must persist into the next step's assembly), so zero them explicitly on
-        // cold start.
+        // coupling_inflow / coupling_volume / coupling_queue are NOT cleared by
+        // clearInflowSources (coupling_volume/coupling_queue are carry-across-steps
+        // fields — their end-of-step value must persist into the next step's
+        // assembly), so zero them explicitly on cold start.
         std::fill(coupling_inflow.begin(), coupling_inflow.end(), 0.0);
         std::fill(coupling_volume.begin(), coupling_volume.end(), 0.0);
+        std::fill(coupling_queue.begin(), coupling_queue.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);
