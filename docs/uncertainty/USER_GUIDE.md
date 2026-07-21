@@ -1504,3 +1504,98 @@ multiplier to all rainfall) is superseded by the soft-rainfall feature. For
 new work, prefer `[SOFT_RAINGAGES]` (per-gage location-scale families) or
 `[SOFT_RAINFALL_GRID]` (gridded) for spatially distributed rainfall uncertainty.
 The scalar path remains functional for backward compatibility.
+
+### 11.6 Spatial correlation — `COHERENCE` option (CL-1 + CL-2, v1 complete)
+
+The default soft-rainfall behaviour (`COHERENCE FULL`) is **comonotone**: every
+ensemble member uses the same scalar coefficient across all space, so member i
+is uniformly wet or dry everywhere. This is conservative and fast, but can
+produce artificially wide downstream bands because per-member perturbations
+never cancel.
+
+**Problem:** storm tracks in reality are spatially heterogeneous. A member that
+is wet in region A may be dry in region B, allowing downstream hydrographs to
+decorrelate rather than compound. The `COHERENCE CORR_LEN <meters>` option
+introduces **spatially-varying per-member coefficients**, decorrelating space
+and producing tighter, more physical bands.
+
+**Syntax:**
+
+```ini
+[SOFT_RAINGAGES]
+RG1  NORMAL  CV  0.30  COHERENCE FULL              ;; comonotone (default)
+RG2  NORMAL  CV  0.30  COHERENCE CORR_LEN 500     ;; 500 m spatial correlation
+
+[SOFT_RAINFALL_GRID]
+2D    radar_grid.h5  CENTROID  FORCE_LOCATION  COHERENCE FULL          ;; comonotone
+2D    radar_grid.h5  CENTROID  FORCE_LOCATION  COHERENCE CORR_LEN 1000 ;; 1 km
+```
+
+**Mechanics:** When `CORR_LEN` is set to a positive value, `CorrelatedFieldGenerator`
+builds an M×n field (M members, n cells/nodes) by:
+
+1. Drawing i.i.d. N(0,1) random samples at each spatial location (cell centroid or node
+   coordinate).
+2. Smoothing with an exponential kernel over a 3·ℓ neighborhood, where ℓ is the
+   correlation length.
+3. Ranking members by their smoothed field values at each location and assigning the
+   global ensemble coefficients {c_i} by rank.
+
+Result: **per-cell ensemble exactly matches the input coeff set {c_i}** (marginal
+correctness), but members have **different signs/magnitudes in different cells**
+(spatial decorrelation). As ℓ → ∞, the field collapses to a scalar (comonotone
+limit); as ℓ → 0, each cell's ensemble becomes independent.
+
+**Physical interpretation — "storm track uncertainty":** imagine a localized heavy
+rainfall nucleus moving across a domain. Member i might catch the nucleus in cell
+A (high rainfall, low coefficient) and miss it in cell B (low rainfall, high
+coefficient). Downstream, the two cells' uncertainties partially cancel instead of
+compounding.
+
+**Cost and limitations:**
+
+- **Runtime cost:** the comonotone path projects `Pᵀ·spread` once per step —
+  O(k·n) work (k modes over n cells), then a scalar `c_i` scaling per member.
+  The correlated path adds per-member projections: O(M·k·n) with the
+  materialized field. When the **reduced spatial basis** is active (CL-2,
+  automatically selected for large meshes when `K_s < M`), this drops to
+  O(K_s·k·n) basis projections + O(M·K_s·k) reconstruction, `K_s ≪ M`. For
+  M=50, k=10, n=10k cells the correlated overhead is a few ms/step — typically
+  a small fraction of total simulation time.
+- **Storage:** the correlated field (or its `K_s`-mode basis) is built **once at
+  initialization and reused every advance** — it is not regenerated per step.
+  The materialized path holds a persistent M×n array; the reduced-basis path
+  stores only the K_s × n mode fields plus the M × K_s coefficients, avoiding
+  the full M×n materialization on large meshes.
+- **Comonotone bit-identical:** `COHERENCE FULL` or omitted `COHERENCE` reproduces
+  the scalar path exactly (regression-locked).
+- **Uniform prior assumption:** the rank/copula construction assumes a uniform
+  ordering of members across space — for non-uniform families (e.g., LOGNORMAL),
+  interpret the bands as a qualitative indicator, not a calibrated statistic.
+
+**Typical settings:**
+
+| Scale | ℓ (m) | Use case |
+|---|---|---|
+| 100–500 | Small domain (< 5 km) urban catchment | mesoscale storm variability |
+| 500–2000 | Medium domain (5–20 km) regional model | synoptic-scale heterogeneity |
+| > 5000 | Large domain or very heterogeneous terrain | landscape-scale patchiness |
+| 0 or absent | | comonotone (default, fastest) |
+
+**Example — coastal stormwater with approaching storm surge:**
+
+```ini
+[SOFT_RAINGAGES]
+RG_NORTH   NORMAL  CV  0.25  COHERENCE CORR_LEN 800
+RG_CENTRAL NORMAL  CV  0.25  COHERENCE CORR_LEN 800
+RG_SOUTH   NORMAL  CV  0.25  COHERENCE CORR_LEN 800
+```
+
+At a single node near the coast, the q95 − q05 band is narrower than if all three
+gages had independent coefficients (comonotone would give the widest band, since
+all three members move together). At an inland node, members' uncertainties
+partially cancel because the storm nucleus was off-center for that region.
+
+**Deprecation note:** the related `MANNINGS_CORR_LEN` option (§6.1) applies
+spatially-correlated Manning's n fields; `COHERENCE CORR_LEN` is the rainfall
+equivalent.

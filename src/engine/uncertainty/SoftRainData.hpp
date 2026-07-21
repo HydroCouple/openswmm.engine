@@ -22,6 +22,18 @@ enum class SoftSpreadKind : int8_t {
     HALFRANGE = 2,
 };
 
+/**
+ * @brief Spatial coherence mode for a soft-rain gage (design §6, CL-1a).
+ *
+ * Mirrors the grid-level `Coherence` enum. `FULL` (default) is comonotone;
+ * `CORR_LEN` enables a per-gage finite correlation length. `corr_len == 0`
+ * (absent) ⇒ comonotone, preserving the pre-CL-1 bit-identical path.
+ */
+enum class GageCoherence : int8_t {
+    FULL     = 0,  ///< Comonotone — one scalar c_i per member (default)
+    CORR_LEN = 1,  ///< Spatially correlated field with finite correlation length
+};
+
 struct SoftRainData {
     std::vector<DistType>       family;         ///< Distribution family per gage
     std::vector<SoftSpreadKind> spread_kind;    ///< SD | CV | HALFRANGE per gage
@@ -29,6 +41,8 @@ struct SoftRainData {
     std::vector<int>            spread_ts;      ///< TIMESERIES index or -1
     std::vector<std::string>    spread_ts_name; ///< Deferred timeseries name for late resolution
     std::vector<bool>           configured;     ///< True when the gage has a soft-rain entry
+    std::vector<GageCoherence>  coherence;      ///< CL-1a: per-gage coherence mode
+    std::vector<double>         corr_len;       ///< CL-1a: per-gage correlation length (m); 0 ⇒ comonotone
 
     int count() const noexcept { return static_cast<int>(configured.size()); }
 
@@ -40,6 +54,8 @@ struct SoftRainData {
         spread_ts.assign(un, -1);
         spread_ts_name.assign(un, std::string{});
         configured.assign(un, false);
+        coherence.assign(un, GageCoherence::FULL);
+        corr_len.assign(un, 0.0);
     }
 
     void grow_to(int n) {
@@ -51,6 +67,8 @@ struct SoftRainData {
         spread_ts.resize(un, -1);
         spread_ts_name.resize(un, std::string{});
         configured.resize(un, false);
+        coherence.resize(un, GageCoherence::FULL);
+        corr_len.resize(un, 0.0);
     }
 
     void reset_state() noexcept {
@@ -64,6 +82,8 @@ struct SoftRainData {
         spread_ts.shrink_to_fit();
         spread_ts_name.shrink_to_fit();
         configured.shrink_to_fit();
+        coherence.shrink_to_fit();
+        corr_len.shrink_to_fit();
     }
 };
 

@@ -333,13 +333,56 @@ struct SpectralROM {
      *
      * Both pointers are NON-OWNING and must remain valid until changed or
      * cleared. Passing nullptr for @p spread disables the soft spread path.
+     *
+     * @param soft_field Optional per-member spatial coefficient field
+     *        (`COHERENCE CORR_LEN`, CL-1c). NON-OWNING; must outlive the ROM or
+     *        be cleared. When null (default) or non-spatial, the comonotone
+     *        scalar `c_i` path is used and the result is bit-identical to the
+     *        pre-CL-1c behaviour. When spatial, member i's per-mode forcing
+     *        sensitivity becomes `Σ_t P_j[t]·spread[t]·W_i[t]` (a per-member
+     *        projection) in place of the scalar `c_i · (P^T spread)_j`. The
+     *        field's `n_cells` must equal n_triangles and `n_members` must
+     *        equal n_ensemble; its per-cell column mean over members must equal
+     *        mean_i(c_i) so q50 still tracks the deterministic answer (checked
+     *        by assertion in debug builds).
      */
     void setSoftForcing(const double* loc, const double* spread,
                         openswmm::uncertainty::DistType family
-                            = openswmm::uncertainty::DistType::NORMAL) noexcept;
+                            = openswmm::uncertainty::DistType::NORMAL,
+                        const SpatialUncertaintyField* soft_field = nullptr) noexcept;
 
     /// Clear the soft forcing path and revert to the legacy forcing inputs.
     void clearSoftForcing() noexcept;
+
+    /**
+     * @brief Correlated soft forcing via a reduced spatial basis (CL-2c).
+     *
+     * Reduced-basis analogue of `setSoftForcing(loc, spread, family,
+     * soft_field)`: instead of a materialized `M×n` field, member i's per-mode
+     * forcing sensitivity is assembled from `K_s` per-point-normalized mode
+     * fields `ψ_m(t)` (`SpdeSpatialBasis::normalizedModes`, so the per-point
+     * normalization `g(t)` is already folded in) and per-member modal
+     * coefficients `a_im`:
+     *
+     *     R_{ij} = Σ_m a_im · Σ_t P_j[t]·spread[t]·ψ_m(t)
+     *
+     * — `O(K_s·k·n) + O(M·K_s·k)` per advance instead of `O(M·k·n)`, and
+     * numerically equal to the materialized field's `R_{ij}` up to summation
+     * order. `K_s = 1` reproduces the comonotone scalar `c_i` path exactly.
+     *
+     * @p psi_modes (K_s × n_tri row-major) and @p a_coeffs (n_ensemble × K_s
+     * row-major) are NON-OWNING and must outlive the ROM (or be cleared). Takes
+     * precedence over any `soft_field` set via setSoftForcing.
+     */
+    void setSoftForcingReduced(const double* loc, const double* spread,
+                               openswmm::uncertainty::DistType family,
+                               const double* psi_modes, const double* a_coeffs,
+                               int n_modes) noexcept;
+
+    /// Per-member soft-forcing coefficient c_i (family-selected in
+    /// setSoftForcing). Empty until setSoftForcing() has been called. Used by
+    /// the engine to seed the CL-1c correlated coefficient field.
+    const std::vector<double>& softCoeff() const noexcept { return soft_coeff_; }
 
     /**
      * @brief Register an additional uncertain parameter column (PR 9b).
@@ -388,6 +431,26 @@ private:
     std::vector<double> soft_z_;             ///< probit(u_i) — normal/lognormal coefficient.
     std::vector<double> soft_coeff_;         ///< Active per-member coefficient c_i (family-selected).
     double soft_max_abs_coeff_ = 0.0;        ///< max_i |c_i| for mode activation.
+
+    /// CL-1c correlated-coherence (`COHERENCE CORR_LEN`) spatial field. When
+    /// non-null and spatial, replaces the scalar `c_i · (P^T spread)_j` term
+    /// with the per-member projection `Σ_t P_j[t]·spread[t]·W_i[t]`. NON-OWNING.
+    const SpatialUncertaintyField* soft_field_ = nullptr;
+    /// Per-member per-mode projection R_{ij} = Σ_t P_j[t]·spread[t]·W_i[t],
+    /// row-major [i * n_kept + j]; populated each advance() when spatial.
+    std::vector<double> soft_r_spread_spatial_;
+    /// Per-mode max_i |R_{ij}| for the spatial mode-activation criterion.
+    std::vector<double> soft_spatial_absmax_;
+
+    /// CL-2c reduced spatial basis. When set (takes precedence over
+    /// soft_field_), R_{ij} is assembled from K_s normalized mode fields ψ_m
+    /// and per-member coefficients a_im instead of a materialized M×n field.
+    /// Both pointers NON-OWNING.
+    const double* soft_reduced_psi_ = nullptr;  ///< ψ_m(t), K_s × n_tri row-major.
+    const double* soft_reduced_a_   = nullptr;  ///< a_im, n_ensemble × K_s row-major.
+    int           soft_reduced_ks_  = 0;        ///< K_s (0 ⇒ inactive).
+    /// Scratch R_m[j] = Σ_t P_j[t]·spread[t]·ψ_m(t), K_s × n_kept row-major.
+    std::vector<double> soft_reduced_rm_;
 
     /// One registered extra parameter (PR 9b). `rv` is the per-mode
     /// projection scratch for FORCING_VECTOR fields, refreshed each advance().

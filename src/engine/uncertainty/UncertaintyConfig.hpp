@@ -38,6 +38,19 @@ enum class GridTarget : int8_t {
 };
 
 /**
+ * @brief Spatial coherence mode for soft rainfall (design §6, CL-1a).
+ *
+ * `FULL` (the default) is *comonotone*: every ensemble member shares one
+ * scalar coefficient across all space. `CORR_LEN` introduces a finite spatial
+ * correlation length via `CorrelatedFieldGenerator`, so a member can be wet in
+ * one region and dry in another.
+ */
+enum class Coherence : int8_t {
+    FULL     = 0,  ///< Comonotone — one scalar c_i per member (default)
+    CORR_LEN = 1,  ///< Spatially correlated field with finite correlation length
+};
+
+/**
  * @brief Specification for one `[SOFT_RAINFALL_GRID]` line (design §3.2, §4.2).
  *
  * Parsed at input time; the GridFileReader is opened and the mapping is
@@ -49,6 +62,8 @@ struct SoftGridSourceSpec {
     GridMapping    mapping = GridMapping::CENTROID;
     bool           force_location = false;  ///< D4: explicit FORCE_LOCATION keyword
     std::string    nodes_file;              ///< INFLOWS target: node list file path (empty = all)
+    Coherence      coherence = Coherence::FULL; ///< CL-1a: spatial coherence mode
+    double         corr_len = 0.0;           ///< CL-1a: correlation length (m); 0 ⇒ comonotone
 };
 
 /**

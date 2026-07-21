@@ -31,6 +31,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
 #include "../2d/output/Default2DOutputPlugin.hpp"
+#include "../2d/uncertainty/CorrelatedFieldGenerator.hpp"
 #include <filesystem>
 #endif
 
@@ -1940,8 +1941,29 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 const double rel = (tot > 0.0) ? numer / tot : 0.0;
                 rom1d_soft_spread_[uai] = dh * rel;
             }
-            rom1d_->setSoftForcing(rom1d_soft_loc_.data(), rom1d_soft_spread_.data(),
-                                   soft_rain_1d_family_);
+            // CL-1c/CL-2c: correlated coherence. The per-member coefficient
+            // field W_i[t] depends only on the (fixed) coefficients c_i, node
+            // geometry and corr_len — NOT on the time-varying spread magnitude
+            // — so it is generated once and reused. The spread enters advance()
+            // per step via the projection Σ_t P_j[t]·spread[t]·W_i[t].
+            if (rom1d_soft_corr_len_ > 0.0 && !rom1d_soft_field_built_)
+                buildRom1DSoftField();
+            if (rom1d_soft_corr_len_ > 0.0 && rom1d_soft_reduced_) {
+                // CL-2c reduced projection (K_s < M): pass the normalized mode
+                // fields ψ_m and per-member coefficients a_im.
+                rom1d_->setSoftForcingReduced(
+                    rom1d_soft_loc_.data(), rom1d_soft_spread_.data(),
+                    soft_rain_1d_family_, rom1d_soft_psi_.data(),
+                    rom1d_soft_a_.data(), rom1d_soft_basis_.n_modes());
+            } else {
+                // CL-1c materialized field (K_s ≥ M or comonotone/no field).
+                const uncertainty::SoftSpatialField* soft_field =
+                    (rom1d_soft_corr_len_ > 0.0 && rom1d_soft_field_.is_spatial())
+                        ? &rom1d_soft_field_ : nullptr;
+                rom1d_->setSoftForcing(rom1d_soft_loc_.data(),
+                                       rom1d_soft_spread_.data(),
+                                       soft_rain_1d_family_, soft_field);
+            }
         }
 
         rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
@@ -4662,6 +4684,13 @@ void SWMMEngine::initSoftRain1D(const std::vector<int>& active_map) noexcept {
     rom1d_soft_gage_.clear();
     rom1d_soft_area_.clear();
     soft_rain_1d_active_ = false;
+    rom1d_soft_corr_len_ = 0.0;
+    rom1d_soft_field_built_ = false;
+    rom1d_soft_field_.clear();
+    rom1d_soft_basis_.clear();
+    rom1d_soft_psi_.clear();
+    rom1d_soft_a_.clear();
+    rom1d_soft_reduced_ = false;
 
     const auto& sr = ctx_.soft_rain;
     if (sr.count() == 0) return;
@@ -4718,6 +4747,11 @@ void SWMMEngine::initSoftRain1D(const std::vector<int>& active_map) noexcept {
         const auto k = static_cast<std::size_t>(cursor[static_cast<std::size_t>(ai)]++);
         rom1d_soft_gage_[k] = g;
         rom1d_soft_area_[k] = ctx_.subcatches.area[static_cast<std::size_t>(s)];
+        // CL-1c: resolve a single correlation length for the 1D coefficient
+        // field as the max over contributing configured gages (v1 policy —
+        // per-gage fields would require multiple generator passes).
+        const double cl = ctx_.soft_rain.corr_len[static_cast<std::size_t>(g)];
+        if (cl > rom1d_soft_corr_len_) rom1d_soft_corr_len_ = cl;
     }
 
     if (family_mixed) {
@@ -4728,6 +4762,85 @@ void SWMMEngine::initSoftRain1D(const std::vector<int>& active_map) noexcept {
     }
     soft_rain_1d_family_ = resolved_family;
     soft_rain_1d_active_ = true;
+}
+
+// ============================================================================
+// buildRom1DSoftField() — CL-2c SPDE reduced spatial basis (1D)
+// ============================================================================
+
+void SWMMEngine::buildRom1DSoftField() noexcept {
+    // Mark as attempted up-front so a fallback (missing coords) does not retry
+    // the basis build every routing step.
+    rom1d_soft_field_built_ = true;
+    rom1d_soft_field_.clear();
+    rom1d_soft_basis_.clear();
+    rom1d_soft_psi_.clear();
+    rom1d_soft_a_.clear();
+    rom1d_soft_reduced_ = false;
+
+    if (!rom1d_ || !soft_rain_1d_active_ || rom1d_soft_corr_len_ <= 0.0) return;
+
+    const int n_active = static_cast<int>(rom1d_active_map_.size());
+    const int M = rom1d_->n_ensemble;
+    if (n_active <= 0 || M < 2) return;
+
+    // Populate the ROM's family-selected per-member coefficients c_i.
+    rom1d_->setSoftForcing(rom1d_soft_loc_.data(), rom1d_soft_spread_.data(),
+                           soft_rain_1d_family_);
+    const std::vector<double> coeff = rom1d_->softCoeff();  // copy (setSoftForcing rebinds)
+    if (static_cast<int>(coeff.size()) != M) return;
+
+    // Node [COORDINATES] give the spatial geometry the correlation length acts
+    // over. SpdeSpatialBasis is 2D-independent (analytic cosine eigenpairs), so
+    // — unlike the CL-1c materialized generator — no OPENSWMM_HAS_2D build is
+    // required; only the coordinates.
+    if (ctx_.spatial.node_x.empty() || ctx_.spatial.node_y.empty()) {
+        if (!rom1d_soft_corr_warned_) {
+            ctx_.warnings.push_back(
+                "WARNING: COHERENCE CORR_LEN for soft raingages requires node "
+                "[COORDINATES]; none found — falling back to comonotone (FULL).");
+            rom1d_soft_corr_warned_ = true;
+        }
+        return;
+    }
+
+    // Active-node coordinates.
+    std::vector<double> nx(static_cast<std::size_t>(n_active));
+    std::vector<double> ny(static_cast<std::size_t>(n_active));
+    for (int ai = 0; ai < n_active; ++ai) {
+        const auto ui = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
+        nx[static_cast<std::size_t>(ai)] = ctx_.spatial.node_x[ui];
+        ny[static_cast<std::size_t>(ai)] = ctx_.spatial.node_y[ui];
+    }
+
+    // Build the SPDE (Whittle–Matérn ν=2) basis over the active nodes and draw
+    // per-member modal coefficients anchored to the comonotone c_i on mode 0.
+    try {
+        rom1d_soft_basis_.build(nx.data(), ny.data(), n_active,
+                                rom1d_soft_corr_len_);
+    } catch (const std::exception&) {
+        return;  // invalid geometry → comonotone fallback (already cleared).
+    }
+    rom1d_soft_basis_.sampleCoefficients(coeff, soft_rain_1d_family_,
+                                         UINT64_C(0x1d50f7c0de5eed01),
+                                         rom1d_soft_a_);
+
+    const int Ks = rom1d_soft_basis_.n_modes();
+    if (Ks < M) {
+        // CL-2c reduced projection: fold the per-point normalization g(t) into
+        // the mode fields (ψ_m = g·φ_m — the "seam", design note §4) and let
+        // the ROM assemble R_{ij} = Σ_m a_im·(Pᵀ(spread⊙ψ_m))_j per step.
+        rom1d_soft_basis_.normalizedModes(rom1d_soft_a_, M, rom1d_soft_psi_);
+        rom1d_soft_reduced_ = true;
+    } else {
+        // K_s ≥ M: the reduced projection loses to a materialized field, but
+        // the basis still replaces the 64 s CL-1 generator with a ~ms build.
+        rom1d_soft_basis_.materializeField(rom1d_soft_a_, M,
+                                           rom1d_soft_field_.values);
+        rom1d_soft_field_.n_members = M;
+        rom1d_soft_field_.n_cells   = n_active;
+        rom1d_soft_reduced_ = false;
+    }
 }
 
 // ============================================================================

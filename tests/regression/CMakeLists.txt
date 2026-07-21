@@ -159,3 +159,99 @@ add_custom_command(TARGET test_soft_rain_coverage POST_BUILD
 )
 
 openswmm_stage_test_runtime_deps(test_soft_rain_coverage)
+
+# ============================================================================
+# CL-1e — correlated soft-rainfall ROM coverage vs correlated Monte Carlo
+# ============================================================================
+add_executable(test_soft_rain_corr_coverage
+    test_soft_rain_corr_coverage.cpp
+)
+
+target_link_libraries(test_soft_rain_corr_coverage
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+
+target_include_directories(test_soft_rain_corr_coverage
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+
+# The test calls CorrelatedFieldGenerator directly to materialize the MC
+# reference field; the generator header is guarded by OPENSWMM_HAS_2D.
+target_compile_definitions(test_soft_rain_corr_coverage PRIVATE OPENSWMM_HAS_2D=1)
+
+if(MSVC)
+    target_compile_options(test_soft_rain_corr_coverage PRIVATE /EHsc)
+endif()
+
+set_target_properties(test_soft_rain_corr_coverage PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+add_test(
+    NAME    test_soft_rain_corr_coverage
+    COMMAND $<TARGET_FILE:test_soft_rain_corr_coverage>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_tests_properties(test_soft_rain_corr_coverage PROPERTIES LABELS "regression")
+
+add_custom_command(TARGET test_soft_rain_corr_coverage POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_soft_rain_corr_coverage>
+        ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:test_soft_rain_corr_coverage>
+)
+
+openswmm_stage_test_runtime_deps(test_soft_rain_corr_coverage)
+
+# ============================================================================
+# CL-2a — profiling gate for the COHERENCE CORR_LEN reduced-basis decision
+# ============================================================================
+add_executable(test_corr_len_profile
+    test_corr_len_profile.cpp
+)
+
+target_link_libraries(test_corr_len_profile
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+
+target_include_directories(test_corr_len_profile
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+
+# The benchmark builds a 2D mesh + SpectralROM directly; the 2D headers are
+# guarded by OPENSWMM_HAS_2D.
+target_compile_definitions(test_corr_len_profile PRIVATE OPENSWMM_HAS_2D=1)
+
+if(MSVC)
+    target_compile_options(test_corr_len_profile PRIVATE /EHsc)
+endif()
+
+set_target_properties(test_corr_len_profile PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+add_test(
+    NAME    test_corr_len_profile
+    COMMAND $<TARGET_FILE:test_corr_len_profile>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_tests_properties(test_corr_len_profile PROPERTIES LABELS "regression")
+
+add_custom_command(TARGET test_corr_len_profile POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_corr_len_profile>
+        ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:test_corr_len_profile>
+)
+
+openswmm_stage_test_runtime_deps(test_corr_len_profile)
