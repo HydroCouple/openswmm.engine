@@ -562,9 +562,32 @@ SWMM_ENGINE_API int swmm_hydrograph_remove_group(SWMM_Engine engine, const char*
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     if (!uh_name || !*uh_name) return SWMM_ERR_BADPARAM;
+    const std::string name(uh_name);
 
-    // Same code path as swmm_hydrograph_delete, minus the impact report.
-    openswmm::edit::delete_hydrograph(ctx, uh_name);
+    // Cascade mirrors swmm_hydrograph_group_rename's touch set (entries,
+    // gage assignment, RDII_DECAY rows, RDII node assignments) — same four
+    // stores, deleting matching rows instead of relabeling them.
+    auto& uh = ctx.unit_hyds;
+    auto& entries = uh.entries;
+    entries.erase(
+        std::remove_if(entries.begin(), entries.end(),
+                       [&](const openswmm::UnitHydEntry& e) { return e.name == name; }),
+        entries.end());
+
+    const int gage_idx = find_uh_gage_assignment(uh, name);
+    if (gage_idx >= 0) erase_uh_gage_assignment(uh, static_cast<std::size_t>(gage_idx));
+
+    auto& decay = ctx.rdii_decay.entries;
+    decay.erase(
+        std::remove_if(decay.begin(), decay.end(),
+                       [&](const openswmm::RDIIDecayEntry& e) { return e.uh_name == name; }),
+        decay.end());
+
+    auto& ra = ctx.rdii_assigns;
+    for (int i = static_cast<int>(ra.uh_name.size()) - 1; i >= 0; --i) {
+        if (ra.uh_name[static_cast<std::size_t>(i)] == name) ra.erase(i);
+    }
+
     return SWMM_OK;
 }
 
