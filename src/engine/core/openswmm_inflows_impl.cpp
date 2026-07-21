@@ -563,8 +563,21 @@ SWMM_ENGINE_API int swmm_hydrograph_remove_group(SWMM_Engine engine, const char*
     auto& ctx = to_engine(engine)->context();
     if (!uh_name || !*uh_name) return SWMM_ERR_BADPARAM;
 
-    // Same code path as swmm_hydrograph_delete, minus the impact report.
-    openswmm::edit::delete_hydrograph(ctx, uh_name);
+    // PRE-EXISTING UPSTREAM BUG (unrelated to this port): this called
+    // openswmm::edit::delete_hydrograph(ctx, uh_name), which is declared
+    // nowhere - ObjectDeleter.hpp's delete_* family takes an index and
+    // returns CascadeResult (cascading reference cleanup), not a name
+    // string, so this was never a real overload of that family either.
+    // Minimal local fix: erase every unit_hyds entry matching this name,
+    // mirroring swmm_hydrograph_remove_entry's single-entry erase just
+    // above. Does NOT replicate whatever "impact report" the comment
+    // refers to - that lives in a cascade-aware path this function
+    // never actually reached. Report upstream separately.
+    const std::string name(uh_name);
+    auto& v = ctx.unit_hyds.entries;
+    v.erase(std::remove_if(v.begin(), v.end(),
+                            [&name](const auto& e) { return e.name == name; }),
+            v.end());
     return SWMM_OK;
 }
 
