@@ -23,6 +23,7 @@
 #include "2d/uncertainty/SpatialUncertaintyField.hpp"
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>

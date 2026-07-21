@@ -67,6 +67,13 @@ void SpectralROM::setSoftForcing(const double* loc, const double* spread,
     soft_loc_field_ = loc;
     soft_spread_field_ = spread;
     soft_field_ = soft_field;
+    // Switching to the scalar/materialized path must retire any previously
+    // configured reduced basis, otherwise advance() would keep taking the
+    // reduced path and dereference now-stale pointers. setSoftForcingReduced()
+    // re-arms these after calling us, so the clear-then-set order is safe.
+    soft_reduced_psi_ = nullptr;
+    soft_reduced_a_ = nullptr;
+    soft_reduced_ks_ = 0;
     soft_max_abs_coeff_ = 0.0;
     for (int i = 0; i < n_ensemble; ++i) {
         const auto ui = static_cast<std::size_t>(i);

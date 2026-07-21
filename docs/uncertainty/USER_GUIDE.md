@@ -1505,7 +1505,7 @@ new work, prefer `[SOFT_RAINGAGES]` (per-gage location-scale families) or
 `[SOFT_RAINFALL_GRID]` (gridded) for spatially distributed rainfall uncertainty.
 The scalar path remains functional for backward compatibility.
 
-### 11.6 Spatial correlation — `COHERENCE` option (CL-1, v1 complete)
+### 11.6 Spatial correlation — `COHERENCE` option (CL-1 + CL-2, v1 complete)
 
 The default soft-rainfall behaviour (`COHERENCE FULL`) is **comonotone**: every
 ensemble member uses the same scalar coefficient across all space, so member i
@@ -1554,11 +1554,19 @@ compounding.
 
 **Cost and limitations:**
 
-- **Runtime cost:** O(M·k·n) per-member per-mode projections, versus O(k) for
-  comonotone. For M=50, k=10, n=10k cells, this adds ~5 ms/step on modern hardware
-  — typically < 1% of total simulation time.
-- **Storage:** the spatial field is generated and discarded at each advance; no
-  persistent M×n array.
+- **Runtime cost:** the comonotone path projects `Pᵀ·spread` once per step —
+  O(k·n) work (k modes over n cells), then a scalar `c_i` scaling per member.
+  The correlated path adds per-member projections: O(M·k·n) with the
+  materialized field. When the **reduced spatial basis** is active (CL-2,
+  automatically selected for large meshes when `K_s < M`), this drops to
+  O(K_s·k·n) basis projections + O(M·K_s·k) reconstruction, `K_s ≪ M`. For
+  M=50, k=10, n=10k cells the correlated overhead is a few ms/step — typically
+  a small fraction of total simulation time.
+- **Storage:** the correlated field (or its `K_s`-mode basis) is built **once at
+  initialization and reused every advance** — it is not regenerated per step.
+  The materialized path holds a persistent M×n array; the reduced-basis path
+  stores only the K_s × n mode fields plus the M × K_s coefficients, avoiding
+  the full M×n materialization on large meshes.
 - **Comonotone bit-identical:** `COHERENCE FULL` or omitted `COHERENCE` reproduces
   the scalar path exactly (regression-locked).
 - **Uniform prior assumption:** the rank/copula construction assumes a uniform
