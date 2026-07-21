@@ -287,6 +287,325 @@ set_tests_properties(test_engine_2d_surface PROPERTIES
     LABELS "unit"
     ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
 
+# ---- Uncertainty sidecar tests (port/p2-sidecar-on-rel) ----
+
+# Spectral coarse correction — compiled from source (no engine shared-lib dependency)
+add_executable(test_engine_spectral_correction
+    test_spectral_correction.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/hydraulics/SpectralCoarse.cpp
+)
+target_link_libraries(test_engine_spectral_correction
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_spectral_correction
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_spectral_correction PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_spectral_correction PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_spectral_correction
+    COMMAND $<TARGET_FILE:test_engine_spectral_correction>
+)
+set_tests_properties(test_engine_spectral_correction PROPERTIES LABELS "unit")
+
+# 2D spectral ROM — SpectralPrecond2D + SpectralROM (uncertainty ensemble).
+add_executable(test_engine_2d_spectral_rom
+    test_2d_spectral_rom.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SpectralPrecond2D.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/uncertainty/SpectralROM.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/GraphEigenBasis.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpectralROM1D.cpp
+)
+target_link_libraries(test_engine_2d_spectral_rom
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_2d_spectral_rom
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+target_compile_definitions(test_engine_2d_spectral_rom PRIVATE OPENSWMM_HAS_2D=1)
+if(MSVC)
+    target_compile_options(test_engine_2d_spectral_rom PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_spectral_rom PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_2d_spectral_rom
+    COMMAND $<TARGET_FILE:test_engine_2d_spectral_rom>
+)
+set_tests_properties(test_engine_2d_spectral_rom PROPERTIES LABELS "unit")
+
+# 1D spectral ROM — GraphEigenBasis + NetworkLaplacian1D + SpectralROM1D.
+# Compiled from source: no engine shared-lib or SUNDIALS dependency.
+add_executable(test_engine_spectral_rom1d
+    test_spectral_rom1d.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/GraphEigenBasis.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpectralROM1D.cpp
+)
+target_link_libraries(test_engine_spectral_rom1d
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_spectral_rom1d
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_spectral_rom1d PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_spectral_rom1d PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_spectral_rom1d
+    COMMAND $<TARGET_FILE:test_engine_spectral_rom1d>
+)
+set_tests_properties(test_engine_spectral_rom1d PROPERTIES LABELS "unit")
+
+# 2D spatial uncertainty field + correlated field generator tests.
+add_executable(test_engine_2d_spatial_field
+    test_2d_spatial_field.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/uncertainty/CorrelatedFieldGenerator.cpp
+)
+target_link_libraries(test_engine_2d_spatial_field
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+)
+target_include_directories(test_engine_2d_spatial_field
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+target_compile_definitions(test_engine_2d_spatial_field PRIVATE OPENSWMM_HAS_2D=1)
+if(MSVC)
+    target_compile_options(test_engine_2d_spatial_field PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_spatial_field PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+)
+add_test(
+    NAME    test_engine_2d_spatial_field
+    COMMAND $<TARGET_FILE:test_engine_2d_spatial_field>
+)
+set_tests_properties(test_engine_2d_spatial_field PROPERTIES LABELS "unit")
+
+# Phase 8 integration test — full engine lifecycle with 2D ROM.
+# Links against openswmm_engine (needs CVODE + full 2D pipeline).
+add_executable(test_engine_2d_rom_integration
+    test_engine_2d_rom_integration.cpp
+)
+target_link_libraries(test_engine_2d_rom_integration
+    PRIVATE
+        GTest::gtest GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_2d_rom_integration
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+target_compile_definitions(test_engine_2d_rom_integration PRIVATE OPENSWMM_HAS_2D=1)
+if(MSVC)
+    target_compile_options(test_engine_2d_rom_integration PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_2d_rom_integration PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+add_test(
+    NAME    test_engine_2d_rom_integration
+    COMMAND $<TARGET_FILE:test_engine_2d_rom_integration>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_2d_rom_integration PROPERTIES LABELS "unit")
+
+add_executable(test_engine_1d_rom_integration
+    test_engine_1d_rom_integration.cpp
+)
+target_link_libraries(test_engine_1d_rom_integration
+    PRIVATE
+        GTest::gtest GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+target_include_directories(test_engine_1d_rom_integration
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_1d_rom_integration PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_1d_rom_integration PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+add_test(
+    NAME    test_engine_1d_rom_integration
+    COMMAND $<TARGET_FILE:test_engine_1d_rom_integration>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_1d_rom_integration PROPERTIES LABELS "unit")
+
+# Water-quality uncertainty layer integration test
+add_executable(test_engine_wq_uncertainty
+    test_engine_wq_uncertainty.cpp
+)
+target_link_libraries(test_engine_wq_uncertainty
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        GTest::gmock
+        # On MSVC, link against the internal static library so tests can
+        # call non-exported C++ symbols without per-test source tracking.
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_wq_uncertainty
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(MSVC)
+    target_compile_options(test_engine_wq_uncertainty PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_wq_uncertainty PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_wq_uncertainty)
+add_test(
+    NAME    test_engine_wq_uncertainty
+    COMMAND $<TARGET_FILE:test_engine_wq_uncertainty>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_wq_uncertainty PROPERTIES LABELS "unit")
+
+# GridFileReader unit test (SR-2a) — needs HDF5 for fixture generation
+add_executable(test_grid_file_reader
+    test_grid_file_reader.cpp
+)
+target_link_libraries(test_grid_file_reader
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_grid_file_reader
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+# HDF5 is needed for fixture generation in SetUp()
+if(TARGET hdf5::hdf5-shared)
+    target_link_libraries(test_grid_file_reader PRIVATE hdf5::hdf5-shared)
+elseif(TARGET hdf5::hdf5-static)
+    target_link_libraries(test_grid_file_reader PRIVATE hdf5::hdf5-static)
+else()
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_grid_file_reader PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_grid_file_reader PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
+if(MSVC)
+    target_compile_options(test_grid_file_reader PRIVATE /EHsc)
+endif()
+set_target_properties(test_grid_file_reader PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_grid_file_reader)
+add_test(
+    NAME    test_grid_file_reader
+    COMMAND $<TARGET_FILE:test_grid_file_reader>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_grid_file_reader PROPERTIES LABELS "unit")
+
+# SR-2c focused 2D gridded-rain smoke test — needs HDF5 for fixture generation
+add_executable(test_engine_soft_rain_grid_2d
+    test_soft_rain_grid_2d.cpp
+)
+target_link_libraries(test_engine_soft_rain_grid_2d
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+        openswmm_legacy_engine
+)
+target_include_directories(test_engine_soft_rain_grid_2d
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+if(TARGET hdf5::hdf5-shared)
+    target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE hdf5::hdf5-shared)
+elseif(TARGET hdf5::hdf5-static)
+    target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE hdf5::hdf5-static)
+else()
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_engine_soft_rain_grid_2d PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
+if(MSVC)
+    target_compile_options(test_engine_soft_rain_grid_2d PRIVATE /EHsc)
+endif()
+set_target_properties(test_engine_soft_rain_grid_2d PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_soft_rain_grid_2d)
+add_test(
+    NAME    test_engine_soft_rain_grid_2d
+    COMMAND $<TARGET_FILE:test_engine_soft_rain_grid_2d>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_soft_rain_grid_2d PROPERTIES LABELS "unit")
+
+# Simple add_gtest_unit()-based sidecar tests (link against openswmm_engine).
+add_gtest_unit(test_engine_soft_rain_parser  test_soft_rain_parser.cpp)
+add_gtest_unit(test_engine_soft_forcing_rom  test_soft_forcing_rom.cpp)
+add_gtest_unit(test_engine_spde_spatial_basis test_spde_spatial_basis.cpp)
+add_gtest_unit(test_engine_soft_rain_grid_parser test_soft_rain_grid_parser.cpp)
+add_gtest_unit(test_engine_soft_rain_grid_engine test_soft_rain_grid_engine.cpp)
+add_gtest_unit(test_engine_soft_rain_gage_engine test_soft_rain_gage_engine.cpp)
+add_gtest_unit(test_engine_grid_mapping_weights test_grid_mapping_weights.cpp)
+add_gtest_unit(test_engine_runoff_ensemble  test_runoff_ensemble.cpp)
+add_gtest_unit(test_engine_final_boundary_stall test_engine_final_boundary_stall.cpp)
+add_gtest_unit(test_engine_soft_rain_grid_targets test_soft_rain_grid_targets.cpp)
 # Exercise the default acceleration path end-to-end: with the GPU plugin built
 # and co-located with the engine, runtime `auto`/omp must discover and load it.
 # Runs the 2D example through the CLI and asserts the omp backend was selected.

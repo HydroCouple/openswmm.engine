@@ -40,7 +40,14 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     output/*.cpp
     plugins/*.cpp
     math/*.cpp
+    uncertainty/*.cpp
 )
+
+# Explicitly add QualityUncertaintyHandler files to ensure they're included
+list(APPEND OPENSWMM_ENGINE_SOURCES "uncertainty/QualityUncertaintyHandler.cpp")
+
+# Explicitly add GridFileReader (SR-2a) — HDF5 grid-file reader for soft rainfall
+list(APPEND OPENSWMM_ENGINE_SOURCES "uncertainty/GridFileReader.cpp")
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
@@ -56,6 +63,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     output/*.hpp
     plugins/*.hpp
     math/*.hpp
+    uncertainty/*.hpp
 )
 list(FILTER OPENSWMM_ENGINE_HEADERS EXCLUDE REGEX "input/geopackage/.*")
 
@@ -447,6 +455,12 @@ if(OPENSWMM_BUILD_2D)
 
     # CVODE wrapper requires SUNDIALS
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
+
+    # Spectral preconditioner + uncertainty ROM sidecar (graph-Laplacian
+    # eigenbasis, shared by the 2D CVODE path and the ROM ensemble).
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SpectralPrecond2D.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/SpectralROM.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/CorrelatedFieldGenerator.cpp)
 
     # ARKODE/ARKStep IMEX wrapper (alternative integrator, OPENSWMM_2D_INTEGRATOR
     # = arkode). Reuses the same SUNDIALS already linked for CVODE. The unique-
