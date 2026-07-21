@@ -1,0 +1,70 @@
+[TITLE]
+WQ Uncertainty Test Input File
+
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2025
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2025
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2025
+END_TIME             00:01:00
+REPORT_STEP          00:00:30
+ROUTING_STEP         0:00:15
+QUAL_STEP            300
+QUAL_STEADY_STATE    YES
+MIN_SURFAREA         1.0
+MAX_TRIALS           8
+HEAD_TOLERANCE       0.005
+MINIMUM_STEP         0.5
+THREADS              1
+
+[QUALITY]
+TSS
+
+[POLLUTANTS]
+;;               MassUnits    RainConc     GWConc       I&IConc      DecayCoef  SnowOnly  CoPollut
+;;Name           (mg/L)       (mg/L)       (mg/L)       (mg/L)       (1/d)      (YES/NO)  Name
+TSS              mg/L         0.0          0.0          0.0          0.01       NO
+
+[JUNCTIONS]
+;;Name  Elevation  MaxDepth  InitDepth  SurDepth  Aponded
+J1      100        5         1.0        0         0
+
+[OUTFALLS]
+;;Name  Elevation  Type  Stage  Gated
+O1      95         FREE         NO
+
+[CONDUITS]
+;;Name  From  To   Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
+C1      J1    O1   100     0.013      0         0          0         0
+
+[XSECTIONS]
+;;Link  Shape    Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR 1.0    0      0      0      1
+
+[DWF]
+;;Node  Constituent  Baseline
+J1      FLOW         0.1
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries   Type      Mfactor  Sfactor  Baseline
+J1      FLOW         inflow1      FLOW      1.0      1.0      0.0
+
+[CURVES]
+;;Name           Type         X-Value      Y-Value
+inflow1          FLOW         0            0.1
+inflow1          FLOW         60           0.1
+
+[REPORT]
+INPUT      NO
+CONTINUITY YES
+FLOWSTATS  YES
+CONTROLS   NO
+SUBCATCHMENTS NONE
+NODES      ALL
+LINKS      ALL
+
+[UNCERTAINTY]
+QUALITY  TSS  0.30

@@ -1,0 +1,230 @@
+[TITLE]
+;;Project Title/Notes
+Example 3: site drainage with TSS water quality routing.
+
+[OPTIONS]
+;;Option             Value
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+
+START_DATE           01/01/1998
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/1998
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/1998
+END_TIME             18:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             5
+REPORT_STEP          00:05:00
+WET_STEP             00:01:00
+DRY_STEP             00:05:00
+ROUTING_STEP         0:00:05
+RULE_STEP            00:00:00
+
+INERTIAL_DAMPING     PARTIAL
+NORMAL_FLOW_LIMITED  SLOPE
+FORCE_MAIN_EQUATION  H-W
+VARIABLE_STEP        0.75
+LENGTHENING_STEP     0
+MIN_SURFAREA         12.566
+MAX_TRIALS           8
+HEAD_TOLERANCE       0.005
+SYS_FLOW_TOL         5
+LAT_FLOW_TOL         5
+MINIMUM_STEP         0.5
+THREADS              1
+
+[EVAPORATION]
+;;Data Source    Parameters
+;;-------------- ----------------
+CONSTANT         0.0
+DRY_ONLY         NO
+
+[RAINGAGES]
+;;Name           Format    Interval SCF      Source
+;;-------------- --------- ------ ------ ----------
+RainGage         VOLUME    0:05     1.0      TIMESERIES 2-yr
+
+[SUBCATCHMENTS]
+;;Name           Rain Gage        Outlet           Area     %Imperv  Width    %Slope   CurbLen  SnowPack
+;;-------------- ---------------- ---------------- -------- -------- -------- -------- -------- ----------------
+S1               RainGage         J1               4.55     56.8     1587     2        1680
+S2               RainGage         J2               4.74     63.0     1653     2        1680
+S3               RainGage         J3               3.74     39.5     1456     3.1      930
+S4               RainGage         J7               6.79     49.9     2331     3.1      2250
+S5               RainGage         J10              4.79     87.7     1670     2        2480
+S6               RainGage         J11              1.98     95.0     690      2        1100
+S7               RainGage         J10              2.33     0.0      907      3.1      565
+
+[SUBAREAS]
+;;Subcatchment   N-Imperv   N-Perv     S-Imperv   S-Perv     PctZero    RouteTo    PctRouted
+;;-------------- ---------- ---------- ---------- ---------- ---------- ---------- ----------
+S1               0.015      0.24       0.06       0.3        25         OUTLET
+S2               0.015      0.24       0.06       0.3        25         OUTLET
+S3               0.015      0.24       0.06       0.3        25         OUTLET
+S4               0.015      0.24       0.06       0.3        25         OUTLET
+S5               0.015      0.24       0.06       0.3        25         OUTLET
+S6               0.015      0.24       0.06       0.3        25         OUTLET
+S7               0.015      0.24       0.06       0.3        25         OUTLET
+
+[INFILTRATION]
+;;Subcatchment   Param1     Param2     Param3     Param4     Param5
+;;-------------- ---------- ---------- ---------- ---------- ----------
+S1               4.5        0.2        6.5        7          0
+S2               4.5        0.2        6.5        7          0
+S3               4.5        0.2        6.5        7          0
+S4               4.5        0.2        6.5        7          0
+S5               4.5        0.2        6.5        7          0
+S6               4.5        0.2        6.5        7          0
+S7               4.5        0.2        6.5        7          0
+
+[JUNCTIONS]
+;;Name           Elevation  MaxDepth   InitDepth  SurDepth   Aponded
+;;-------------- ---------- ---------- ---------- ---------- ----------
+J1               4973       0          0          0          0
+J2               4969       0          0          0          0
+J3               4973       0          0          0          0
+J4               4971       0          0          0          0
+J5               4969.8     0          0          0          0
+J6               4969       0          0          0          0
+J7               4971.5     0          0          0          0
+J8               4966.5     0          0          0          0
+J9               4964.8     0          0          0          0
+J10              4963.8     0          0          0          0
+J11              4963       0          0          0          0
+
+[OUTFALLS]
+;;Name           Elevation  Type       Stage Data       Gated    Route To
+;;-------------- ---------- ---------- ---------------- -------- ----------------
+O1               4962       FREE                        NO
+
+[CONDUITS]
+;;Name           From Node        To Node          Length     Roughness  InOffset   OutOffset  InitFlow   MaxFlow
+;;-------------- ---------------- ---------------- ---------- ---------- ---------- ---------- ---------- ----------
+C1               J1               J5               185.00     0.05       0          0          0          0
+C2               J2               J11              526.00     0.016      0          4          0          0
+C3               J3               J4               109.00     0.016      0          0          0          0
+C4               J4               J5               133.00     0.05       0          0          0          0
+C5               J5               J6               207.00     0.05       0          0          0          0
+C6               J7               J6               140.00     0.05       0          0          0          0
+C7               J6               J8               95.00      0.016      0          0          0          0
+C8               J8               J9               166.00     0.05       0          0          0          0
+C9               J9               J10              320.00     0.05       0          0          0          0
+C10              J10              J11              145.00     0.05       0          0          0          0
+C11              J11              O1               89.00      0.016      0          0          0          0
+
+[XSECTIONS]
+;;Link           Shape        Geom1            Geom2      Geom3      Geom4      Barrels    Culvert
+;;-------------- ------------ ---------------- ---------- ---------- ---------- ---------- ----------
+C1               TRAPEZOIDAL  3                5          5          5          1
+C2               TRAPEZOIDAL  1                0          0.0001     25         1
+C3               CIRCULAR     2.25             0          0          0          1
+C4               TRAPEZOIDAL  3                5          5          5          1
+C5               TRAPEZOIDAL  3                5          5          5          1
+C6               TRAPEZOIDAL  3                5          5          5          1
+C7               CIRCULAR     3.5              0          0          0          1
+C8               TRAPEZOIDAL  3                5          5          5          1
+C9               TRAPEZOIDAL  3                5          5          5          1
+C10              TRAPEZOIDAL  3                5          5          5          1
+C11              CIRCULAR     4.75             0          0          0          1
+
+[POLLUTANTS]
+;;Name           Units  Crain      Cgw        Crdii      Kdecay     SnowOnly   Co-Pollutant     Co-Frac    Cdwf       Cinit
+;;-------------- ------ ---------- ---------- ---------- ---------- ---------- ---------------- ---------- ---------- ----------
+TSS              MG/L   0.0        0.0        0.0        0.0        NO         *                0.0        0          0
+
+[LANDUSES]
+;;               Sweeping   Fraction   Last
+;;Name           Interval   Available  Swept
+;;-------------- ---------- ---------- ----------
+Residential      0          0          0
+Commercial       0          0          0
+
+[COVERAGES]
+;;Subcatchment   Land Use         Percent
+;;-------------- ---------------- ----------
+S1               Residential      100
+S2               Residential      100
+S3               Residential      100
+S4               Residential      100
+S5               Commercial       100
+S6               Commercial       100
+S7               Residential      100
+
+[BUILDUP]
+;;Land Use       Pollutant        Function   Coeff1     Coeff2     Coeff3     Per Unit
+;;-------------- ---------------- ---------- ---------- ---------- ---------- ----------
+Residential      TSS              EXP        0.11       0.5        0.0        CURB
+Commercial       TSS              EXP        0.15       0.2        0.0        CURB
+
+[WASHOFF]
+;;Land Use       Pollutant        Function   Coeff1     Coeff2     SweepRmvl  BmpRmvl
+;;-------------- ---------------- ---------- ---------- ---------- ---------- ----------
+Residential      TSS              EXP        2          1.8        0.0        0.0
+Commercial       TSS              EXP        4          2.2        0.0        0.0
+
+[TIMESERIES]
+;;Name           Date       Time       Value
+;;-------------- ---------- ---------- ----------
+2-yr          	0:06	0
+2-yr          	0:12	0.00284
+2-yr          	0:18	0.00284
+2-yr          	0:24	0.00284
+2-yr          	0:30	0.003124
+2-yr          	0:36	0.00284
+2-yr          	0:42	0.003124
+2-yr          	0:48	0.00284
+2-yr          	0:54	0.003124
+2-yr          	1:00	0.003124
+2-yr          	1:30	0.003408
+2-yr          	2:00	0.003408
+2-yr          	2:30	0.003692
+2-yr          	3:00	0.003692
+2-yr          	3:30	0.003976
+2-yr          	4:00	0.003976
+2-yr          	4:30	0.00426
+2-yr          	5:00	0.004544
+2-yr          	5:30	0.004828
+2-yr          	6:00	0.005112
+2-yr          	6:30	0.005396
+2-yr          	7:00	0.00568
+2-yr          	7:30	0.005964
+2-yr          	8:00	0.006248
+2-yr          	8:30	0.007384
+2-yr          	9:00	0.00852
+2-yr          	9:30	0.009088
+2-yr          	10:00	0.010792
+2-yr          	10:30	0.013632
+2-yr          	11:00	0.018744
+2-yr          	11:30	0.030104
+2-yr          	11:42	0.067592
+2-yr          	11:48	0.135184
+2-yr          	11:54	0.216976
+2-yr          	12:00	0.389364
+2-yr          	12:06	0.270084
+2-yr          	12:12	0.05396
+2-yr          	12:30	0.034648
+2-yr          	13:00	0.019312
+2-yr          	13:30	0.014768
+2-yr          	14:00	0.01136
+2-yr          	14:30	0.009656
+2-yr          	15:00	0.008804
+2-yr          	15:30	0.007668
+2-yr          	16:00	0.006816
+2-yr          	16:30	0.006248
+2-yr          	17:00	0.005964
+2-yr          	17:30	0.005396
+2-yr          	18:00	0.005112
+
+[REPORT]
+;;Reporting Options
+SUBCATCHMENTS ALL
+NODES ALL
+LINKS ALL
+
