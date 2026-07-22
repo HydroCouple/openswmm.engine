@@ -5355,19 +5355,29 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     double sum_rdii = 0.0;
     double sum_ext  = 0.0;
 
+    // Re-derive the 1D↔2D coupling RATE from the exchange VOLUME the 2D module
+    // queued across the step boundary (nodes.coupling_queue, 1D ft³) at a
+    // uniform rate spread over coupling_delivery_remaining seconds, so a
+    // multi-step COUPLING_INTERVAL macro window's exchange volume does not
+    // land on the node as a single-step pulse (that instantly flooded small
+    // junctions and drove a drain/spill churn — see SurfaceRouter2D.cpp's
+    // advancePostRouting). coupling_delivery_remaining counts down by
+    // dt_routing every call; once it reaches 0 the queue is either empty or
+    // any residual sits idle until the next window re-arms the clock.
+    const bool draining_coupling_queue =
+        ctx_.coupling_delivery_remaining > 0.0 && dt_routing > 0.0;
+
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
 
-        // Re-derive the 1D↔2D coupling RATE from the exchange VOLUME carried
-        // across the step boundary by the 2D module (coupling_volume, 1D ft³).
-        // Dividing by THIS step's dt makes the 1D node receive exactly the volume
-        // the 2D side exchanged, regardless of how the timestep changed since it
-        // was computed — the fix for the VARIABLE_STEP non-conservation. Delivered
-        // once: cleared so it is not re-applied on a later step (e.g. the
-        // intermediate steps of a COUPLING_INTERVAL > 1 macro window).
-        ctx_.nodes.coupling_inflow[uj] =
-            (dt_routing > 0.0) ? ctx_.nodes.coupling_volume[uj] / dt_routing : 0.0;
-        ctx_.nodes.coupling_volume[uj] = 0.0;
+        if (draining_coupling_queue) {
+            const double rate =
+                ctx_.nodes.coupling_queue[uj] / ctx_.coupling_delivery_remaining;
+            ctx_.nodes.coupling_inflow[uj] = rate;
+            ctx_.nodes.coupling_queue[uj] -= rate * dt_routing;
+        } else {
+            ctx_.nodes.coupling_inflow[uj] = 0.0;
+        }
 
         // PARITY: accumulate in legacy routing_execute source ORDER
         // (routing.c:466-473): external → dry-weather → wet-weather (per
@@ -5393,6 +5403,13 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         // updateRoutingMassBalance as routing_flooding. See review §11.
         if (ctx_.nodes.coupling_inflow[uj] > 0.0)
             sum_ext += ctx_.nodes.coupling_inflow[uj];
+    }
+
+    // Count down the delivery window once per call (not per node — all
+    // coupled nodes share the same macro-step clock).
+    if (draining_coupling_queue) {
+        ctx_.coupling_delivery_remaining =
+            std::max(0.0, ctx_.coupling_delivery_remaining - dt_routing);
     }
 
     // Wet-weather runoff: per subcatchment in index order, exactly like

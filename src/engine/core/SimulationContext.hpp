@@ -412,6 +412,22 @@ struct SimulationContext {
      */
     double dt_controls_remaining = 0.0;
 
+    /**
+     * @brief Time remaining (seconds) to finish draining nodes.coupling_queue.
+     *
+     * @details Set to the macro window's dt by SurfaceRouter2D::advancePostRouting
+     *          whenever it folds a window's coupling_volume into coupling_queue;
+     *          decremented by dt_routing each routing step in
+     *          assembleLateralInflows, which drains the queue at the uniform
+     *          rate queue/coupling_delivery_remaining so a multi-step
+     *          COUPLING_INTERVAL window's exchange volume is spread out instead
+     *          of landing on the node as a single-step pulse. 0.0 means no
+     *          pending delivery (queue already empty or never populated).
+     *          Not per-node: all coupled nodes drain against the same window
+     *          clock since they share the same macro-step boundary.
+     */
+    double coupling_delivery_remaining = 0.0;
+
     // =========================================================================
     // Object data stores (Structure-of-Arrays)
     // =========================================================================
@@ -1207,6 +1223,7 @@ struct SimulationContext {
         current_time = 0.0;
         current_date = 0.0;
         dt_controls_remaining = 0.0;
+        coupling_delivery_remaining = 0.0;
         elapsed_ms = 0.0;
         old_elapsed_ms = 0.0;
         next_report_ms = 0.0;
@@ -1294,6 +1311,7 @@ struct SimulationContext {
         current_time = 0.0;
         current_date = options.start_date;
         dt_controls_remaining = 0.0;
+        coupling_delivery_remaining = 0.0;
         elapsed_ms = 0.0;
         old_elapsed_ms = 0.0;
         // Legacy swmm5.c:721 — ReportTime = 1000 * ReportStep (ms from SIM start)
