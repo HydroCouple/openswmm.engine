@@ -171,6 +171,15 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.jacobian = Jacobian2D::ANALYTIC;
         else
             return "Unknown JACOBIAN: " + val + " (expected FD|ANALYTIC)";
+    } else if (iequals(key, "ATOL_AREA_REF")) {
+        if (iequals(val, "AUTO")) {
+            opts.atol_area_ref = -1.0;   // median cell area at setup
+        } else {
+            opts.atol_area_ref = tryParseDouble(val, ok);
+            if (!ok || opts.atol_area_ref < 0.0)
+                return "Invalid ATOL_AREA_REF value (expected AUTO, 0, or a "
+                       "positive area in m²)";
+        }
     } else if (iequals(key, "RAINFALL_MODE")) {
         if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
@@ -207,7 +216,7 @@ bool is2DOptionKey(const std::string& key) {
         "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
         "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC", "JACOBIAN",
-        "OUTPUT_FILE",
+        "ATOL_AREA_REF", "OUTPUT_FILE",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
