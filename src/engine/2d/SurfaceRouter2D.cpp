@@ -312,6 +312,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
         state_.head[i] = headFromMeanDepth(mesh_, options_, i, 0.0);
     }
+    // Seed the vertex heads once from the dry cell heads: the all-vertex pass
+    // now runs per accepted window (not per RHS eval), so pre-first-window
+    // consumers (output snapshots, first inject) must not read zeros.
+    reconstructVertexHeads(mesh_, state_, options_.num_threads);
 
     // Build coupling point descriptors
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
@@ -1139,6 +1143,14 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
                 std::max(ctx.coupling_delivery_remaining, dt);
     }
 
+    // Refresh the all-vertex pseudo-Laplacian heads once per accepted window
+    // (Phase 1 hoist: this pass used to run inside every RHS/Jv evaluation).
+    // Every between-window consumer — output plugins, held-exchange
+    // evaluation, outfall boundary updates, next window's inject weights —
+    // reads exactly the values the in-RHS pass would have left behind, since
+    // the cell heads are frozen between windows.
+    reconstructVertexHeads(mesh_, state_, options_.num_threads);
+
     // Refresh accepted-state output gradients once per window for snapshots
     // and API reads instead of inside every CVODE nonlinear/Jv evaluation.
     refreshOutputGradients(mesh_, state_, options_);
@@ -1277,6 +1289,25 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     }
 #ifdef OPENSWMM_HAS_2D
     if (solver_) {
+        // Publish cumulative integrator statistics BEFORE finalize() frees the
+        // solver memory the counters live in (the "2D Solver Statistics" report
+        // block reads these — the throughput numbers each reformulation phase
+        // is measured against).
+        const auto s = solver_->run_stats();
+        auto& mb = ctx.mass_balance_2d;
+        mb.solver_nsteps         = s.nsteps;
+        mb.solver_nrhs           = s.nrhs;
+        mb.solver_nrhs_ls        = s.nrhs_ls;
+        mb.solver_nni            = s.nni;
+        mb.solver_nli            = s.nli;
+        mb.solver_nsetups        = s.nsetups;
+        mb.solver_netfails       = s.netfails;
+        mb.solver_nncfails       = s.nncfails;
+        mb.solver_failed_windows = failed_advance_windows_;
+        mb.solver_last_h         = s.last_h;
+        mb.solver_avg_h          = (s.nsteps > 0 && sim_time_ > 0.0)
+                                       ? sim_time_ / static_cast<double>(s.nsteps)
+                                       : 0.0;
         solver_->finalize();
     }
 #endif

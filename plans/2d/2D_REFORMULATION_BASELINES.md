@@ -16,11 +16,12 @@ Bellinge gate.
 |---|---|---|---|---|---|---|
 | B1 | weir_culvert (GUI examples/demo_weir_culvert) | small mesh / 42 h | **60.28 s** | 0.003% | drain 626.602, spill 0 | user 58.7 s ⇒ ~serial |
 | B2 | road_culvert (GUI examples/demo_road_culvert) | ~8k tris / 18 h | **44.32 s** | −0.020% | drain 47,006.995, spill 8,499.067 | user 172.6 s ⇒ OMP threads active |
-| B3 | overdraw repro ×3 (~/Downloads/7_SWMM/overdraw_repro) | 4 tris / 1 h | <1 s | **0.000% ×3** (default, NO_INTERP, tight-tol) | drain 40.637 (default) | the conservation gate |
-| B4 | scale100k (gen_scaling_mesh 224×224) | 100,352 tris / 3 h | (running — fill in) | | pure 2D, walls | uncoupled MOL floor |
+| B3 | overdraw repro ×3 (~/Downloads/7_SWMM/overdraw_repro) | 4 tris / 1 h | <1 s | **0.003% / 0.038% / 0.000%** (default / NO_INTERP / tight-tol; 2D block readout, post-`c88e31f9`) | drain 40.637 (default) | the conservation gate; readout MUST grep the "2D Surface Routing Continuity" block (the first "Continuity Error" in the .rpt is the always-0.000 runoff block) |
+| B4 | scale100k (gen_scaling_mesh 224×224) | 100,352 tris / 3 h | **15.72 s** | 0.000% | pure 2D, walls | uncoupled MOL floor confirmed healthy |
 | MS-A(10²) | gen_multiscale_mesh --dx-fine 20 | 8,192 tris / 3 h | **1.70 s** | 0.000% | pure 2D | area ratio 10²:1 |
 | MS-A(10⁴) | gen_multiscale_mesh (default) | 8,192 tris / 3 h | **28.29 s** | 0.000% | pure 2D | area ratio 10⁴:1 — **16.6× slower than 10²:1 at identical tri count = the large-cell problem, quantified** (Phase 4 gate: ≤2×) |
-| MS-B | gen_coupled_multiscale (new) | 8,192 tris + 5 inlets / 3 h | (running — fill in) | | two-way drain/spill | coupled multiscale = miniature Bellinge; windows collapse to ~0.6 s, hundreds of failed windows (Phase 3 gate: minimum 1D step ≥ 1 s, wall ≪) |
+| MS-B (pre-fix) | gen_coupled_multiscale (new) | 8,192 tris + 5 inlets / 3 h | **1073.21 s** | **−2.613%** | drain 21,944, spill 14,038 (36 k m³ churned for ~7.9 k net) | pre-`c88e31f9` record: miniature Bellinge — 646 failed windows, 1D avg step 0.67 s, 12.95% non-converging |
+| MS-B | same, post-`c88e31f9` (volume-exact resync) | 8,192 tris + 5 inlets / 3 h | **1052.62 s** | **+0.006%** (was −2.613%) | drain 21,757, spill 14,168 | **resync fix validated at scale**: −2.6% → 0.006% continuity. Wall still pathological (655 failed windows, 1D min step 0.50 s, 15% non-converging) — the window/coupling architecture Phase 3 replaces. Phase 3 target: min 1D step ≥ 1 s, wall ≪ 1053 s |
 
 Bellinge (BellingeSWMM_v021_nopervious + sliver .2dm): **excluded** until the
 mesh is regenerated in the GUI (fixed pipeline). Reference pathology numbers,

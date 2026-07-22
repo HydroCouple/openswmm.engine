@@ -86,6 +86,27 @@ public:
         return kEmpty;
     }
 
+    /// Cumulative integrator statistics over the whole run — the throughput
+    /// numbers every reformulation-phase gate reads (BDF steps, Newton/Krylov
+    /// iterations, RHS evaluations, preconditioner builds, failures, last step).
+    /// nrhs_ls == the finite-difference J·v cost (one RHS per Krylov iteration
+    /// under matrix-free SPGMR); it drops to ~0 once an analytic J·v lands.
+    struct RunStats {
+        long   nsteps    = 0;   ///< internal BDF steps
+        long   nrhs      = 0;   ///< nonlinear RHS evaluations
+        long   nrhs_ls   = 0;   ///< RHS evals inside the linear solver (FD J·v)
+        long   nni       = 0;   ///< Newton (nonlinear solver) iterations
+        long   nli       = 0;   ///< Krylov (GMRES) iterations
+        long   nsetups   = 0;   ///< preconditioner setups
+        long   netfails  = 0;   ///< error-test failures
+        long   nncfails  = 0;   ///< nonlinear convergence failures
+        double last_h    = 0.0; ///< last accepted internal step (s)
+        double avg_h     = 0.0; ///< sim-time / nsteps (s), filled by the caller
+    };
+
+    /// Read cumulative statistics. Default: zeros (backend has no counters).
+    virtual RunStats run_stats() const noexcept { return {}; }
+
     /// True once initialize() has completed and the solver is ready.
     virtual bool is_initialized() const noexcept = 0;
 };

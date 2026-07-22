@@ -137,11 +137,13 @@ int CvodeSurfaceSolver::rhs_fn(double t, N_Vector y, N_Vector ydot,
                               state.head[i], state.depth[i]);
     }
 
-    // 2. Reconstruct vertex heads on the RHS path to preserve existing held
-    // coupling behaviour. The diffusive-wave edge flux itself uses centroid
-    // head differences; output gradients are refreshed once per accepted
-    // window by SurfaceRouter2D instead of inside every RHS/Jv evaluation.
-    reconstructVertexHeads(mesh, state, opts.num_threads);
+    // 2. Vertex heads are NOT reconstructed here. The diffusive-wave edge flux
+    // uses centroid head differences only; the few coupling-point consumers
+    // inside this RHS (live orifice head, deviation scatter weights) evaluate
+    // their single vertex on demand via vertexHeadAt(), and the all-vertex
+    // pseudo-Laplacian pass runs once per accepted window in SurfaceRouter2D
+    // (Phase 1 hoist — this pass used to run on every RHS/Jv evaluation and
+    // was ~25% of the pipeline while feeding nothing the flux reads).
     // 3. Compute edge fluxes
     computeEdgeFluxes(mesh, state, opts);
 
@@ -305,7 +307,7 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
             // iterations than no preconditioner. Only when the matrix is actually
             // (re)assembled (force); FLAT passes nullptr ⇒ bit-identical.
             const double* deta = nullptr;
-            std::vector<double> deta_dv;
+            std::vector<double>& deta_dv = solver->deta_dv_buf_;  // reused across psetups
             if (force && ctx->opts->cell_closure == CellClosure2D::VFR) {
                 const int nt = mesh.n_triangles();
                 deta_dv.resize(static_cast<std::size_t>(nt));
@@ -777,6 +779,29 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
     CVodeGetLastStep(cvode_mem_, &last_h_);
 
     return t_reached;
+}
+
+
+ISurfaceSolver::RunStats CvodeSurfaceSolver::run_stats() const noexcept {
+    RunStats s;
+    if (!cvode_mem_) return s;
+    void* m = cvode_mem_;
+    CVodeGetNumSteps(m, &s.nsteps);
+    CVodeGetNumRhsEvals(m, &s.nrhs);
+    CVodeGetNumNonlinSolvIters(m, &s.nni);
+    CVodeGetNumErrTestFails(m, &s.netfails);
+    CVodeGetNumNonlinSolvConvFails(m, &s.nncfails);
+    // SPGMR (matrix-free) linear-solver counters. nrhs_ls is the FD J·v cost:
+    // one RHS evaluation per Krylov iteration — the multiplier an analytic J·v
+    // removes. Present only when a Krylov linear solver is attached.
+    CVodeGetNumLinIters(m, &s.nli);
+    CVodeGetNumLinRhsEvals(m, &s.nrhs_ls);
+    CVodeGetNumPrecSolves(m, &s.nsetups);   // psolve applications
+    long nsetup = 0;
+    CVodeGetNumPrecEvals(m, &nsetup);
+    s.nsetups = nsetup;                      // psetup (preconditioner) builds
+    s.last_h  = last_h_;
+    return s;
 }
 
 
