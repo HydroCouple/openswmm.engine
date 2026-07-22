@@ -547,10 +547,24 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     if (!abstol_)
         throw std::runtime_error("N_VNew (atol) failed");
     {
+        // Multi-scale error-control floor (ATOL_AREA_REF): atol_i = abs_tol ·
+        // max(A_i, √(A_i·A_ref)). Resolve A_ref once — AUTO uses the median cell
+        // area (robust to a few extreme cells vs the mean); 0 disables the floor
+        // (legacy pure A_i); a positive option pins it. A_ref ≤ 0 ⇒ floor off.
+        double a_ref = opts.atol_area_ref;
+        if (a_ref < 0.0 && nt > 0) {           // AUTO: median cell area
+            std::vector<double> areas(mesh.tri_area.begin(),
+                                      mesh.tri_area.begin() + nt);
+            const std::size_t mid = areas.size() / 2;
+            std::nth_element(areas.begin(), areas.begin() + mid, areas.end());
+            a_ref = areas[mid];
+        }
         double* av = N_VGetArrayPointer(abstol_);
         for (int i = 0; i < nt; ++i) {
-            const double A = mesh.tri_area[i];
-            av[i] = opts.abs_tolerance * ((A > 1.0e-30) ? A : 1.0);
+            const double A = (mesh.tri_area[i] > 1.0e-30) ? mesh.tri_area[i] : 1.0;
+            const double scale = (a_ref > 0.0) ? std::max(A, std::sqrt(A * a_ref))
+                                               : A;
+            av[i] = opts.abs_tolerance * scale;
         }
         // Accumulators carry a huge atol so their error never constrains the
         // step (they are diagnostic quadrature, not part of the cell dynamics);

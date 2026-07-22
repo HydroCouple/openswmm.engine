@@ -195,6 +195,19 @@ struct SolverOptions2D {
     double min_timestep      = 0.001;   ///< Min CVODE internal step (s)
     double rel_tolerance     = 1.0e-4;  ///< CVODE relative tolerance
     double abs_tolerance     = 1.0e-6;  ///< CVODE absolute tolerance (m)
+
+    /// Multi-scale error-control floor. The per-cell absolute tolerance becomes
+    /// atol_i = abs_tolerance · max(A_i, √(A_i·A_ref)) with A_ref the median cell
+    /// area. On a mesh with wide cell-size variation this lifts the WRMS
+    /// tolerance of cells far below the reference scale by √(A_ref/A_i), so a few
+    /// tiny cells at a coarse-cell interface stop pinning the BDF step (and the
+    /// global error demand) for the whole domain — the extra permitted volume
+    /// error ≈ abs_tolerance·√(A_i·A_ref) is basin-invisible. Conservation is
+    /// untouched (BDF conserves mass at any tolerance); only local accuracy is
+    /// redistributed. Parsed from [2D_OPTIONS] ATOL_AREA_REF: AUTO (default) uses
+    /// the median area; 0 disables the floor (pure abs_tolerance·A_i, legacy);
+    /// a positive value pins A_ref explicitly (m²).
+    double atol_area_ref     = -1.0;    ///< <0 = AUTO (median), 0 = off, >0 = A_ref (m²)
     double dry_depth         = 0.001;   ///< Dry cell threshold (m)
     double limiter_epsilon   = 1.0e-6;  ///< Slope limiter epsilon
     /// Head-difference regularization (m) for the diffusive-wave flux √|Δη|.
