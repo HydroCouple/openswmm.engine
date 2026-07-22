@@ -123,6 +123,9 @@ public:
      */
     void reinitialize(double t0) override;
 
+    /// Re-time at @p t0 keeping SIGNED cell volumes (failed-window freeze).
+    void resyncFromVolumes(double t0) override;
+
     /**
      * @brief Release all SUNDIALS resources.
      */

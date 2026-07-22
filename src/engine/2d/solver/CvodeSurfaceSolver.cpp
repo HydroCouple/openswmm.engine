@@ -780,6 +780,29 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
 }
 
 
+void CvodeSurfaceSolver::resyncFromVolumes(double t0) {
+    if (!cvode_mem_) return;
+
+    // Failed-window freeze resync: state.volume still holds the window-start
+    // values (advance() returned before the copy-out), INCLUDING any negative
+    // volumes a previous window's sink overdraw left behind. Reseed y from
+    // them directly — a head-based reseed (reinitialize) would clamp those
+    // cells at the dry anchor and create their debt as new water, which is
+    // exactly the phantom-volume mechanism measured on the tight-tolerance
+    // overdraw repro (−1.8%) and at scale on Bellinge.
+    int nt = ctx_.mesh->n_triangles();
+    double* y_data = N_VGetArrayPointer(y_);
+    for (int i = 0; i < nt; ++i)
+        y_data[i] = ctx_.state->volume[i];
+
+    CVodeReInit(cvode_mem_, t0, y_);
+    precond_diag_.clear();
+#if defined(OPENSWMM_HAVE_HYPRE)
+    if (amg_precond_) amg_precond_->invalidate();
+#endif
+}
+
+
 void CvodeSurfaceSolver::reinitialize(double t0) {
     if (!cvode_mem_) return;
 

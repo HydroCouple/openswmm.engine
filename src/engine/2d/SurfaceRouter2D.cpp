@@ -1042,7 +1042,11 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
                 "are reported at the end of the run.", sim_time_, dt);
             ctx.warnings.push_back(buf);
         }
-        solver_->reinitialize(sim_time_);
+        // Volume-exact resync: reinitialize() would reseed from the clamped
+        // head reconstruction and zero any negative-volume debt, creating
+        // water on every failed window (the dominant residual leak in the
+        // failed-window regime).
+        solver_->resyncFromVolumes(sim_time_);
         // The 1D already consumed its side of the exchange per routing step,
         // but the frozen surface never moved the matching water. Redeliver the
         // window's accumulated junction volumes NEGATED through the delivery

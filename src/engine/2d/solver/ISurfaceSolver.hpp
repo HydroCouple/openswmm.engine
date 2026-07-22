@@ -61,6 +61,14 @@ public:
     /// Reinitialize the integrator at @p t0 after external state edits.
     virtual void reinitialize(double t0) = 0;
 
+    /// Re-time the integrator at @p t0 keeping the SIGNED cell volumes from
+    /// state.volume. Used by the failed-window freeze path: reinitialize()
+    /// reseeds from the reconstructed head, which clamps at the dry anchor and
+    /// silently zeroes negative-volume debt (creating water); this variant
+    /// preserves it. Default falls back to reinitialize() for backends that
+    /// have not implemented volume-exact resync.
+    virtual void resyncFromVolumes(double t0) { reinitialize(t0); }
+
     /// Release all backend resources.
     virtual void finalize() = 0;
 
