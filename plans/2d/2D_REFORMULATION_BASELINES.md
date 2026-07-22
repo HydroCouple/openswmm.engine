@@ -55,6 +55,36 @@ alongside the graded-atol large-cell work — not a blanket Phase 3 default flip
 FLAT stays the default; VFR/VFR_FACE remain opt-in and are now analytic-J·v
 capable. Artifacts: /tmp/wv.rpt, /tmp/rv.rpt, ms_a_r10000_vfr.inp.
 
+## Phase 3d finding — live coupling is NO LONGER "10× slower" (2026-07-22)
+
+The strategy docs' central premise (`2D_SOLVER_STEPPING_PERFORMANCE_PLAN.md`
+Phase 3: "the 1D↔2D orifice coupling stiffness is THE obstacle … ~10× SLOWER")
+no longer holds. Measured on weir, current engine:
+
+| Path | Wall | BDF steps | Krylov iters | J·v |
+|---|---|---|---|---|
+| HELD (default) | 47.7 s | 75,808 | 59,242 | analytic |
+| LIVE (`OPENSWMM_2D_LIVE_COUPLING=1`) | 60.0 s | **75,824** | 175,830 | FD |
+
+The live path takes the SAME number of BDF steps as held — the stiff orifice is
+NOT collapsing the step. The entire 1.26× penalty is finite-difference J·v
+(175,830 FD-Jv RHS evals), because the analytic Jacobian falls back to FD on the
+live path. The accumulated fixes (clock-resync guard, volume-exact resync,
+Phase 1 lighter RHS) already removed the step collapse that motivated the whole
+"coupling-aware preconditioner" line.
+
+**Implication:** the definitive fix is NOT a coupling-aware preconditioner (the
+step count is already fine) — it is the analytic ORIFICE TANGENT so the live
+path uses analytic J·v like the held path. That tangent is clean ONLY under
+**single-cell coupling** (η_2d = η_cell, scatter weight 1): the current
+vertex-STENCIL scatter has head-dependent weights whose tangent is as messy as
+the deleted deviation's. So Phase 3d's real content is: single-cell coupling
+(a coupling-distribution behavior change) → trivial orifice tangent → analytic
+live J·v → live becomes competitive with/faster than held → make live the
+default (the conservative, temporal-approximation-free coupling). This is a
+deliberate behavior change (single-cell vs stencil exchange distribution) and is
+the next major increment.
+
 ## Fixture provenance
 
 - `examples/imex_scaling/ms_a_r100.inp` ← `gen_multiscale_mesh.py ms_a_r100.inp --dx-fine 20`
