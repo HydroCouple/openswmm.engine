@@ -39,6 +39,7 @@
 #include "SimulationContext.hpp"
 #include "../plugins/PluginFactory.hpp"
 #include "../output/IOThread.hpp"
+#include "../uncertainty/GridFileReader.hpp"
 #include "../hydraulics/Routing.hpp"
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Gage.hpp"
@@ -64,7 +65,15 @@
 #include "../2d/SurfaceRouter2D.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
+#include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/UncertaintyEnsemble.hpp"
+#include "../uncertainty/GraphEigenBasis.hpp"
+#include "../uncertainty/NetworkLaplacian1D.hpp"
+#include "../uncertainty/SpectralROM1D.hpp"
+#include "../uncertainty/SpdeSpatialBasis.hpp"
+#include "../uncertainty/WQUncertaintyBounds.hpp"
 
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <string>
@@ -323,6 +332,15 @@ public:
     const twoD::SurfaceRouter2D& surfaceRouter2D() const noexcept { return surface_router_; }
 #endif
 
+    /** @brief Access the hydraulic router (for statistics / diagnostics). */
+    Router&       router()       noexcept { return router_; }
+    const Router& router() const noexcept { return router_; }
+
+    /** @brief 1D spectral ROM quantiles (null if not built or network too small). */
+    const uncertainty::SpectralROM1D* rom1d() const noexcept { return rom1d_.get(); }
+
+    /** @brief Check if water quality uncertainty layer is active. */
+    bool wq_unc_active() const noexcept { return wq_unc_active_; }
 
 private:
     // -----------------------------------------------------------------------
@@ -392,9 +410,72 @@ private:
     /// and SimulationContext::reset() intentionally preserves them.
     void wire2DModelIO() noexcept;
 #endif
+    uncertainty::UncertaintyConfig uncertainty_config_; ///< Parsed [UNCERTAINTY] config
+
+    struct SoftGridRuntime {
+        uncertainty::GridTarget target = uncertainty::GridTarget::TWO_D;
+        bool force_location = false;
+        std::string file_path;
+        std::string nodes_file;
+        GridFileReader reader;
+        std::vector<int> target_indices;       ///< subcatch/node indices in parse order
+        std::vector<uint32_t> pixel_indices;   ///< nearest grid-cell center per target index
+        // SR-4a: AREA_MEAN mapping — polygon∩pixel sparse weights (CSR by target).
+        uncertainty::GridMapping mapping = uncertainty::GridMapping::CENTROID;
+        std::vector<int> csr_off;              ///< CSR row offsets (n_targets+1); empty ⇒ CENTROID
+        std::vector<uint32_t> csr_px;          ///< CSR pixel indices
+        std::vector<float> csr_w;              ///< CSR area-fraction weights (row-sum 1)
+    };
+    std::vector<SoftGridRuntime> soft_grid_runtimes_; ///< RUNOFF/INFLOWS grid forcing runtimes
+
+    // 1D spectral ROM for uncertainty propagation (owned)
+    std::unique_ptr<uncertainty::GraphEigenBasis> rom1d_basis_;
+    std::unique_ptr<uncertainty::SpectralROM1D>   rom1d_;
+    std::vector<int>    rom1d_active_map_;   ///< active_idx → full_node_idx (for head extraction)
+    std::vector<double> rom1d_dh_buf_;       ///< per-active-node dh/dt forcing buffer (reused each step)
+    std::vector<double> rom1d_h_buf_;        ///< per-active-node deterministic head buffer (reused each step)
+    std::vector<double> rom1d_invert_buf_;   ///< per-active-node invert elevations (filled once at build)
+    std::vector<double> rom1d_sens_buf_;     ///< per-active-node depth (head − invert): Manning-sensitivity reference (PR 10)
+
+    // Gage-level soft rainfall → 1D ROM forcing (SR-1b). loc = dh/dt head-rate
+    // (so the deterministic projection is unchanged; under deviation form its
+    // runoff_pert=0 scaling contributes nothing), spread = loc · area-weighted
+    // relative spread of the contributing gages draining to each active node.
+    std::vector<double> rom1d_soft_loc_;     ///< per-active-node soft location field (= dh_buf)
+    std::vector<double> rom1d_soft_spread_;  ///< per-active-node soft spread field
+    std::vector<double> rom1d_soft_node_area_; ///< total subcatchment area draining to each active node
+    std::vector<int>    rom1d_soft_off_;     ///< CSR offsets into the configured-subcatchment lists (n_active+1)
+    std::vector<int>    rom1d_soft_gage_;     ///< CSR gage index per configured subcatchment contribution
+    std::vector<double> rom1d_soft_area_;     ///< CSR area per configured subcatchment contribution
+    bool soft_rain_1d_active_ = false;        ///< True when any configured gage feeds an active node
+    uncertainty::DistType soft_rain_1d_family_ = uncertainty::DistType::NORMAL; ///< Shared member-coefficient family
+
+    // CL-1c correlated coherence (COHERENCE CORR_LEN) for the 1D gage path.
+    double rom1d_soft_corr_len_ = 0.0;        ///< Max correlation length (m) among contributing gages; 0 ⇒ comonotone
+    uncertainty::SoftSpatialField rom1d_soft_field_; ///< Static per-member per-active-node coefficient field (built once)
+    bool rom1d_soft_field_built_ = false;     ///< True once rom1d_soft_field_ has been generated
+    bool rom1d_soft_corr_warned_ = false;     ///< One-shot warning guard (missing 2D build / node coords)
+
+    // CL-2c reduced spatial basis (replaces the CL-1c materialized field's 64 s
+    // generation with a ~ms analytic SPDE build). Built once alongside
+    // rom1d_soft_field_; when K_s < M the ROM uses the reduced projection over
+    // rom1d_soft_psi_ + rom1d_soft_a_, else the materialized field is used.
+    uncertainty::SpdeSpatialBasis rom1d_soft_basis_; ///< SPDE Whittle–Matérn ν=2 basis over active nodes
+    std::vector<double> rom1d_soft_psi_;      ///< Normalized mode fields ψ_m(t), K_s × n_active row-major (NON-OWNING to ROM)
+    std::vector<double> rom1d_soft_a_;        ///< Per-member modal coefficients a_im, M × K_s row-major
+    bool rom1d_soft_reduced_ = false;         ///< True when the reduced projection path is active (K_s < M)
+
+    // Water quality uncertainty layer (PR 13)
+    std::vector<double> wq_conc_prev_;       ///< Previous report boundary concentrations (node·nPollut + p)
+    std::ofstream wq_csv_;                   ///< WQ uncertainty quantile CSV (written at report intervals)
+    uncertainty::WQUncertaintyBounds wq_bounds_; ///< Analytical WQ bounds computer
+    std::vector<int> wq_pollut_indices_;     ///< Pollutant indices for QUALITY layer sources
+    std::vector<double> wq_pollut_perturbations_; ///< Fractional decay perturbation per QUALITY source
+    bool wq_unc_active_ = false;             ///< True if QUALITY layer is active
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path
+    std::ofstream rom1d_csv_; ///< 1D ROM quantile CSV (written at report intervals)
 
     // Runoff clock (matching legacy OldRunoffTime / NewRunoffTime)
     // Runoff advances on its own timestep (300 sec wet, 3600 sec dry);
@@ -700,6 +781,24 @@ private:
      * @param dt  Routing timestep (seconds) — for mass balance accumulation.
      */
     void applyForcings(double dt) noexcept;
+    void initSoftGridRuntimes() noexcept;
+    void stageSoftGridForcings() noexcept;
+
+    /** @brief Build the per-active-node gage-level soft rainfall CSR (SR-1b). */
+    void initSoftRain1D(const std::vector<int>& active_map) noexcept;
+
+    /// CL-1c: build the static per-member per-active-node correlated
+    /// coefficient field for the 1D soft-rain path (generated once, on the
+    /// first advance where `rom1d_soft_corr_len_ > 0`). Falls back to
+    /// comonotone (leaves the field empty) when node coordinates are missing
+    /// or the build is not 2D-enabled.
+    void buildRom1DSoftField() noexcept;
+
+    /** @brief Build + seed the 1D spectral ROM from conduit connectivity and node heads. */
+    void buildROM1D() noexcept;
+
+    /** @brief Compute effective 1D Manning conductance K1d (m^(4/3)/s) from current state. */
+    double computeK1d() noexcept;
 
     /**
      * @brief Project-level validation + step-clamp warnings (legacy project_validate).
