@@ -164,6 +164,13 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         if (!ok || frac <= 0.0 || frac > 0.5)
             return "Invalid VFR_MIN_WET_FRAC value (expected (0, 0.5])";
         opts.vfr_min_wet_frac = frac;
+    } else if (iequals(key, "JACOBIAN")) {
+        if (iequals(val, "FD"))
+            opts.jacobian = Jacobian2D::FD;
+        else if (iequals(val, "ANALYTIC"))
+            opts.jacobian = Jacobian2D::ANALYTIC;
+        else
+            return "Unknown JACOBIAN: " + val + " (expected FD|ANALYTIC)";
     } else if (iequals(key, "RAINFALL_MODE")) {
         if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
@@ -199,7 +206,7 @@ bool is2DOptionKey(const std::string& key) {
         "ACTIVE_SET", "ACTIVE_SET_HALO",
         "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
         "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
-        "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
+        "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC", "JACOBIAN",
         "OUTPUT_FILE",
     };
     for (const char* k : kKeys) {

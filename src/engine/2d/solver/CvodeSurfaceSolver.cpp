@@ -10,7 +10,9 @@
 
 #include "CvodeSurfaceSolver.hpp"
 #include "SurfaceFluxCalculator.hpp"
+#include "SurfaceTangent.hpp"
 #include "../data/ActiveSetData.hpp"
+#include "../data/BoundaryData.hpp"
 #include "../mesh/VertexReconstruction.hpp"
 #include "../mesh/VfrClosure.hpp"
 #include "../coupling/NodeCoupling.hpp"   // live node-coupling helpers (macro-step path)
@@ -668,6 +670,92 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
             throw std::runtime_error("CVodeSetPreconditioner (AMG) failed");
     }
 #endif
+
+    // ------------------------------------------------------------------
+    // Analytic Jacobian-vector product (Phase 2). Replaces SUNDIALS'
+    // finite-difference J·v (a full flux-pipeline recompute per Krylov
+    // iteration) with the closed-form sparse mat-vec in SurfaceTangent.
+    // ------------------------------------------------------------------
+    use_analytic_jv_ = analyticJvEligible(state, opts);
+    if (use_analytic_jv_) {
+        tangents_.resize(nt);
+        err = CVodeSetJacTimes(cvode_mem_, jtsetup_fn, jtimes_fn);
+        if (err != CV_SUCCESS)
+            throw std::runtime_error("CVodeSetJacTimes failed");
+    }
+    // else: leave SUNDIALS' internal difference-quotient J·v in place.
+}
+
+
+bool CvodeSurfaceSolver::analyticJvEligible(const SurfaceStateData& state,
+                                            const SolverOptions2D& opts) const {
+    // Env override for A/B sweeps.
+    if (const char* e = std::getenv("OPENSWMM_2D_JACOBIAN")) {
+        if (std::strcmp(e, "fd") == 0)       return false;
+        if (std::strcmp(e, "analytic") == 0) { /* fall through to eligibility */ }
+    } else if (opts.jacobian == Jacobian2D::FD) {
+        return false;
+    }
+    // The analytic tangent covers the interior flux + evaporation sink. It does
+    // NOT linearize y-dependent boundaries, the live-RHS orifice, or the held
+    // path's interpolated deviation scatter (whose upwind weights depend on y),
+    // so fall back to FD when any is present. The deviation apparatus is deleted
+    // in Phase 3, after which analytic is the default for all coupled models
+    // too; here it is skipped whenever a coupling series with points is attached
+    // (unless the deviation is explicitly disabled via OPENSWMM_2D_NO_INTERP).
+    if (state.node_coupling != nullptr) return false;
+    if (state.coupling_series != nullptr && state.coupling_series->ncp > 0 &&
+        std::getenv("OPENSWMM_2D_NO_INTERP") == nullptr)
+        return false;
+    // Active-set masking pins frozen cells' ydot to 0; the tangent does not
+    // mask, so its rows would be nonzero there. Active set is opt-in (default
+    // off) and removed in Phase 3 — stay on FD when it is enabled.
+    if (state.active_set != nullptr && state.active_set->enabled) return false;
+    const BoundaryData* b = state.boundary;
+    if (b) {
+        const int ne = static_cast<int>(b->edge_bc_type.size());
+        for (int i = 0; i < ne; ++i) {
+            const auto t = static_cast<BoundaryType>(b->edge_bc_type[i]);
+            if (t == BoundaryType::NORMAL_FLOW ||
+                t == BoundaryType::SPECIFIED_STAGE)
+                return false;
+        }
+    }
+    return true;
+}
+
+
+int CvodeSurfaceSolver::jtsetup_fn(double /*t*/, N_Vector y, N_Vector /*fy*/,
+                                    void* user_data) {
+    auto* ctx = static_cast<CvodeSolverContext*>(user_data);
+    auto& mesh  = *ctx->mesh;
+    auto& state = *ctx->state;
+    auto& opts  = *ctx->opts;
+    const int nt = mesh.n_triangles();
+
+    // Unpack y → (η, depth) so the tangent linearizes about THIS y (the state
+    // arrays may otherwise hold the last RHS perturbation point).
+    const double* yd = N_VGetArrayPointer(y);
+    const ActiveSetData* as = state.active_set;
+    const bool masked = (as != nullptr) && as->enabled;
+#pragma omp parallel for schedule(static) num_threads(opts.num_threads)
+    for (int i = 0; i < nt; ++i) {
+        if (masked && !as->cell_active[i]) continue;
+        reconstructFromVolume(mesh, opts, i, yd[i], state.head[i], state.depth[i]);
+    }
+    buildSurfaceTangents(mesh, state, opts, ctx->solver->tangents_);
+    return 0;
+}
+
+
+int CvodeSurfaceSolver::jtimes_fn(N_Vector v, N_Vector Jv, double /*t*/,
+                                   N_Vector /*y*/, N_Vector /*fy*/,
+                                   void* user_data, N_Vector /*tmp*/) {
+    auto* ctx = static_cast<CvodeSolverContext*>(user_data);
+    applyTangentJv(*ctx->mesh, *ctx->opts, ctx->solver->tangents_,
+                   ctx->solver->nc_,
+                   N_VGetArrayPointer(v), N_VGetArrayPointer(Jv));
+    return 0;
 }
 
 

@@ -268,6 +268,11 @@ TEST(ActiveSetEquivalence, DamBreakFrontMatchesUnmasked) {
     // identical settings, which is what the equivalence assertion needs).
     opts.min_timestep   = 1.0e-6;
     opts.abs_tolerance  = 1.0e-5;
+    // This test isolates active-set masking equivalence, so both runs must use
+    // the SAME J·v. The masked run auto-falls-back to finite-difference J·v
+    // (the analytic tangent does not mask frozen cells); pin the reference to
+    // FD too, or the two solvers differ by more than the per-cell tolerance.
+    opts.jacobian       = Jacobian2D::FD;
 
     auto initState = [&](SurfaceStateData& st) {
         st = makeState(mesh);
