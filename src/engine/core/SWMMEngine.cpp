@@ -5358,16 +5358,48 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
 
-        // Re-derive the 1D↔2D coupling RATE from the exchange VOLUME carried
-        // across the step boundary by the 2D module (coupling_volume, 1D ft³).
-        // Dividing by THIS step's dt makes the 1D node receive exactly the volume
-        // the 2D side exchanged, regardless of how the timestep changed since it
-        // was computed — the fix for the VARIABLE_STEP non-conservation. Delivered
-        // once: cleared so it is not re-applied on a later step (e.g. the
-        // intermediate steps of a COUPLING_INTERVAL > 1 macro window).
-        ctx_.nodes.coupling_inflow[uj] =
-            (dt_routing > 0.0) ? ctx_.nodes.coupling_volume[uj] / dt_routing : 0.0;
-        ctx_.nodes.coupling_volume[uj] = 0.0;
+        // Re-derive the 1D↔2D coupling RATE from the exchange VOLUME queued by
+        // SurfaceRouter2D::fireAdvanceWindow (coupling_queue, 1D ft³), drained
+        // at the uniform rate queue / coupling_delivery_remaining. Delivering a
+        // VOLUME (not a rate) keeps the exchange conservative under
+        // VARIABLE_STEP; draining it over the remaining delivery window (the 2D
+        // advance window it was accumulated over) removes the single-step pulse
+        // the old volume/dt dump produced — a window/routing-step-sized rate
+        // spike (e.g. ×5 for COUPLING_WINDOW 10 s over a 2 s ROUTING_STEP) that
+        // flooded small junctions instantly and drove a drain/spill churn. The
+        // step where remaining ≤ dt flushes the remainder exactly, so the node
+        // always receives the full queued volume before the next window's
+        // exchange arrives (jitter leftovers carry over in the queue). When the
+        // 2D advance fires every routing step (the AUTO default), remaining ≤
+        // dt on the first delivery step and this is byte-for-byte the legacy
+        // one-step delivery.
+        {
+            double q_couple = 0.0;
+            if (dt_routing > 0.0 && ctx_.nodes.coupling_queue[uj] != 0.0) {
+                if (ctx_.coupling_delivery_remaining > dt_routing) {
+                    q_couple = ctx_.nodes.coupling_queue[uj]
+                               / ctx_.coupling_delivery_remaining;
+                    ctx_.nodes.coupling_queue[uj] -= q_couple * dt_routing;
+                } else {
+                    q_couple = ctx_.nodes.coupling_queue[uj] / dt_routing;
+                    ctx_.nodes.coupling_queue[uj] = 0.0;
+                }
+            }
+            // Decoupled-timestep path (2026-07 plan): the per-step exchange
+            // evaluator (computeCouplingExchangeStep) books each routing
+            // step's exchange VOLUME into coupling_volume at the END of step
+            // N; consume it here at the start of step N+1 by re-deriving the
+            // rate against THIS step's dt — the node receives exactly the
+            // booked volume regardless of how the timestep changes
+            // (VARIABLE_STEP-conservative, the contract documented on
+            // NodeData::coupling_volume). Composes with the queue drain above
+            // (failure redelivery / live-path window totals).
+            if (dt_routing > 0.0 && ctx_.nodes.coupling_volume[uj] != 0.0) {
+                q_couple += ctx_.nodes.coupling_volume[uj] / dt_routing;
+                ctx_.nodes.coupling_volume[uj] = 0.0;
+            }
+            ctx_.nodes.coupling_inflow[uj] = q_couple;
+        }
 
         // PARITY: accumulate in legacy routing_execute source ORDER
         // (routing.c:466-473): external → dry-weather → wet-weather (per
@@ -5394,6 +5426,12 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         if (ctx_.nodes.coupling_inflow[uj] > 0.0)
             sum_ext += ctx_.nodes.coupling_inflow[uj];
     }
+
+    // One tick of the coupling delivery window per routing step (NOT per
+    // node). Clamped at 0; stays 0 until the next 2D advance queues volumes.
+    if (ctx_.coupling_delivery_remaining > 0.0)
+        ctx_.coupling_delivery_remaining =
+            std::max(0.0, ctx_.coupling_delivery_remaining - dt_routing);
 
     // Wet-weather runoff: per subcatchment in index order, exactly like
     // legacy addWetWeatherInflows (routing.c:709-717).

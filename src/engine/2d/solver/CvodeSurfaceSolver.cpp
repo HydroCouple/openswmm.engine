@@ -25,6 +25,7 @@
 #include <sunlinsol/sunlinsol_spgmr.h>
 #include <sundials/sundials_context.h>
 
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -107,7 +108,7 @@ inline N_Vector makeStateVec(int n, int nthreads, SUNContext ctx) {
 // RHS function — registered as CVRhsFn callback
 // ============================================================================
 
-int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
+int CvodeSurfaceSolver::rhs_fn(double t, N_Vector y, N_Vector ydot,
                                  void* user_data) {
     auto* ctx = static_cast<CvodeSolverContext*>(user_data);
     auto& mesh  = *ctx->mesh;
@@ -161,6 +162,63 @@ int CvodeSurfaceSolver::rhs_fn(double /*t*/, N_Vector y, N_Vector ydot,
             const double Q = computeNodeCouplingQ(cps[k], mesh, state, nodes, opts);
             scatterCouplingToYdot(mesh, state, cps[k], -Q, ydot_data);  // cells lose drain Q
             ydot_data[nt + k] = Q;                                      // dA_k/dt = Q
+        }
+    }
+
+    // 8. Interpolated-exchange deviation (decoupled-timestep coupling). The
+    //    held coupling_flux source carries each point's MEAN exchange rate for
+    //    the window (assembleRHS above); here the per-routing-step sampled
+    //    series adds its ZERO-MEAN, volume-preserving temporal shape:
+    //        dev_k(t) = dev_scale[k]·lerp_k(t) − dev_mean[k]
+    //    dev has no dependence on y, so it adds no stiffness and cancels out
+    //    of the finite-difference Jv products; ∫dev dt == 0 by construction,
+    //    so conservation is untouched. Points with dev_scale == 0 (degenerate
+    //    series, or a backend-fallback window) contribute nothing.
+    // Held-path deviation accumulators live in nt+k. Zero them unconditionally
+    // here (node_coupling==null on this path, so these slots are ours): if the
+    // series block below is skipped this eval, the integral must still not
+    // accumulate stale ydot.
+    if (state.node_coupling == nullptr)
+        for (int k = 0; k < ctx->solver->nc_; ++k) ydot_data[nt + k] = 0.0;
+
+    if (state.coupling_series != nullptr && state.coupling_series->points != nullptr
+        && !state.coupling_series->t.empty()
+        && !state.coupling_series->dev_scale.empty()) {
+        const auto& cs  = *state.coupling_series;
+        const auto& pts = *cs.points;
+        const int   ncp = cs.ncp;
+        const auto& ts  = cs.t;
+        const int   ns  = static_cast<int>(ts.size());
+
+        // Bracket t in the shared sample times (hold-extrapolate both ends).
+        int hi = static_cast<int>(
+            std::upper_bound(ts.begin(), ts.end(), t) - ts.begin());
+        int lo = hi - 1;
+        double w = 0.0;   // lerp weight toward sample hi
+        if (hi <= 0)            { lo = hi = 0; }
+        else if (hi >= ns)      { lo = hi = ns - 1; }
+        else {
+            const double span = ts[static_cast<std::size_t>(hi)]
+                              - ts[static_cast<std::size_t>(lo)];
+            w = (span > 0.0) ? (t - ts[static_cast<std::size_t>(lo)]) / span : 0.0;
+        }
+
+        const double* qlo = cs.q.data() + static_cast<std::size_t>(lo) * ncp;
+        const double* qhi = cs.q.data() + static_cast<std::size_t>(hi) * ncp;
+        const int ncap = std::min(ncp, ctx->solver->nc_);
+        for (int k = 0; k < ncp; ++k) {
+            const double sc = cs.dev_scale[static_cast<std::size_t>(k)];
+            if (sc == 0.0) continue;
+            const double q  = qlo[k] + w * (qhi[k] - qlo[k]);
+            const double dev = sc * q - cs.dev_mean[static_cast<std::size_t>(k)];
+            // Accumulate the deviation's EXACT CVODE integral per point so the
+            // caller can book its net (ideally 0, but nonzero from the
+            // quadrature mismatch) back conservatively. Written even when dev
+            // rounds to 0 this eval — the slot is a running integral.
+            if (k < ncap) ydot_data[nt + k] = dev;
+            if (dev == 0.0) continue;
+            scatterCouplingToYdot(mesh, state, pts[static_cast<std::size_t>(k)],
+                                  dev, ydot_data);
         }
     }
 
@@ -471,8 +529,20 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // accumulators. nc_ == 0 (default / held-flux path) ⇒ ntot == nt, byte-for-
     // byte identical to the legacy solver. The accumulators are pure quadrature
     // (nothing depends on them), carried so the 1D↔2D booking is conservative.
+    // Live path: one ∫Q dt accumulator per live node-coupling point. Held +
+    // interpolated path: one ∫dev dt accumulator per coupling series point, so
+    // the interpolated deviation's exact CVODE integral is captured and its
+    // (numerical, quadrature-mismatch) net can be booked back conservatively —
+    // a piecewise-linear deviation scaled by the trapezoid rule does NOT
+    // integrate to zero under CVODE's BDF quadrature, which otherwise leaks
+    // exchange volume. The two paths are mutually exclusive (node_coupling is
+    // null on the held path), so the nt+k slots never collide.
     nc_ = (state.node_coupling != nullptr)
-              ? static_cast<int>(state.node_coupling->size()) : 0;
+              ? static_cast<int>(state.node_coupling->size())
+              : (state.coupling_series != nullptr
+                 && state.coupling_series->points != nullptr)
+                    ? static_cast<int>(state.coupling_series->points->size())
+                    : 0;
     const int ntot = nt + nc_;
 
     // Create N_Vector wrapping state.depth (threaded when THREADS > 1).
@@ -604,6 +674,28 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
 
     int nt = ctx_.mesh->n_triangles();
 
+    // Clock-resync guard. The router can move sim time without advancing the
+    // integrator (quiescent-window skip; failed-window freeze reinitializes at
+    // the window START but the router then declares the window elapsed). CVode
+    // always integrates from its INTERNAL time, so a lagging clock makes the
+    // next advance integrate the freshly-held forcing over the whole gap —
+    // creating volume from nothing (e.g. held rain × gap seconds). Re-time the
+    // integrator to t_current keeping the CURRENT y: no state reseed (a head
+    // reseed would zero negative volumes), only the step/order history is
+    // dropped — which is correct anyway, since the held forcing changed.
+    {
+        double t_int = t_current;
+        CVodeGetCurrentTime(cvode_mem_, &t_int);
+        if (std::abs(t_int - t_current)
+            > 1.0e-9 * std::max(1.0, std::abs(t_current))) {
+            CVodeReInit(cvode_mem_, t_current, y_);
+            precond_diag_.clear();
+#if defined(OPENSWMM_HAVE_HYPRE)
+            if (amg_precond_) amg_precond_->invalidate();
+#endif
+        }
+    }
+
     // Snapshot the ∫Q dt accumulators so the per-window node-coupling exchange
     // is y[nt+k](end) − y[nt+k](start). Not reset between windows (a reset would
     // need CVodeReInit, discarding the step-size/order history we want to keep).
@@ -612,12 +704,48 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
         for (int k = 0; k < nc_; ++k) coupling_accum_start_[k] = ys[nt + k];
     }
 
+    // TEMP P1 diagnostics (OPENSWMM_2D_DEBUG_SINK=1): verify the BDF linear
+    // invariant  d/dt[Σ_cells y − Σ_slots y] = Σ_i A_i·(rain_i+coupling_flux_i)
+    // over this advance, and expose the internal clock / actual span.
+    static const bool dbg_sink =
+        (std::getenv("OPENSWMM_2D_DEBUG_SINK") != nullptr);
+    double dbg_cells0 = 0.0, dbg_slots0 = 0.0, dbg_src_rate = 0.0;
+    double dbg_tin = t_current;
+    if (dbg_sink) {
+        const double* ys = N_VGetArrayPointer(y_);
+        for (int i = 0; i < nt; ++i) dbg_cells0 += ys[i];
+        for (int k = 0; k < nc_; ++k) dbg_slots0 += ys[nt + k];
+        for (int i = 0; i < nt; ++i)
+            dbg_src_rate += ctx_.mesh->tri_area[i]
+                            * (ctx_.state->rainfall[i]
+                               + ctx_.state->coupling_flux[i]);
+        CVodeGetCurrentTime(cvode_mem_, &dbg_tin);
+    }
+
     // Set stop time to guarantee exact arrival
     CVodeSetStopTime(cvode_mem_, t_target);
 
     // Advance CVODE
     double t_reached = t_current;
     int flag = CVode(cvode_mem_, t_target, y_, &t_reached, CV_NORMAL);
+
+    if (dbg_sink) {
+        const double* ys = N_VGetArrayPointer(y_);
+        double cells1 = 0.0, slots1 = 0.0;
+        for (int i = 0; i < nt; ++i) cells1 += ys[i];
+        for (int k = 0; k < nc_; ++k) slots1 += ys[nt + k];
+        long nst = 0;
+        CVodeGetNumSteps(cvode_mem_, &nst);
+        const double span   = t_reached - t_current;
+        const double dcell  = cells1 - dbg_cells0;
+        const double dslot  = slots1 - dbg_slots0;
+        const double expect = dbg_src_rate * span;
+        std::fprintf(stderr,
+            "[sink] span=[%.2f,%.2f] tin=%.2f reached=%.2f flag=%d nst=%ld | "
+            "src_rate=%.5f expect=%.4f dcell=%.4f dslot=%.4f DEFECT=%.4f\n",
+            t_current, t_target, dbg_tin, t_reached, flag, nst,
+            dbg_src_rate, expect, dcell, dslot, dcell - dslot - expect);
+    }
 
     if (flag < 0) {
         // CVODE failure — leave state unchanged

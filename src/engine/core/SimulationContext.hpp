@@ -769,6 +769,21 @@ struct SimulationContext {
      */
     std::vector<std::uint8_t> coupled_node;
 
+    /**
+     * @brief Remaining seconds of the current 1D↔2D coupling delivery window.
+     * @details Set by SurfaceRouter2D::fireAdvanceWindow to the length of the
+     *          2D advance window whose junction-exchange volumes it just moved
+     *          into NodeData::coupling_queue. assembleLateralInflows drains the
+     *          queue at the uniform rate queue/remaining, counts this down once
+     *          per routing step, and flushes the whole remainder on the step
+     *          where remaining ≤ dt — so the 1D node receives exactly the
+     *          exchanged volume spread over the window instead of as a
+     *          single-step pulse. 0 (the cold-start default, and the steady
+     *          state when the 2D advance fires every routing step) reproduces
+     *          the legacy one-step delivery exactly.
+     */
+    double coupling_delivery_remaining = 0.0;
+
     // =========================================================================
     // Mass balance accumulators (SoA — vectorisable batch updates)
     // =========================================================================
