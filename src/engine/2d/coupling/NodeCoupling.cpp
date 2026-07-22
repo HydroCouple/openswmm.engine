@@ -7,6 +7,7 @@
  */
 
 #include "NodeCoupling.hpp"
+#include "../mesh/VertexReconstruction.hpp"  // vertexHeadAt (on-demand single-vertex head)
 #include "../../core/SimulationContext.hpp"
 
 #include <cmath>
@@ -78,7 +79,7 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
     int v = cp.vertex_idx;
     int start = mesh.vert_stencil_ptr[v];
     int end   = mesh.vert_stencil_ptr[v + 1];
-    double hv = state.vert_head[v];
+    double hv = vertexHeadAt(mesh, state, v);
     double vx = mesh.vx[v];
     double vy = mesh.vy[v];
     double sign = (Q >= 0.0) ? 1.0 : -1.0;  // source → downhill, sink → uphill
@@ -153,7 +154,7 @@ inline double couplingHead2D(const CouplingPoint& cp, const MeshData& mesh,
     if (cp.vertex_idx < 0) return state.head[cp.cell_idx];
     if (opts.cell_closure == CellClosure2D::VFR)
         return wetVertexEta(mesh, state, cp.vertex_idx, opts.dry_depth);
-    return state.vert_head[cp.vertex_idx];
+    return vertexHeadAt(mesh, state, cp.vertex_idx);
 }
 
 } // anonymous namespace
@@ -264,7 +265,7 @@ void scatterCouplingToYdot(const MeshData& mesh, const SurfaceStateData& state,
     const int v = cp.vertex_idx;
     const int start = mesh.vert_stencil_ptr[v];
     const int end   = mesh.vert_stencil_ptr[v + 1];
-    const double hv = state.vert_head[v];
+    const double hv = vertexHeadAt(mesh, state, v);
     const double vx = mesh.vx[v];
     const double vy = mesh.vy[v];
     const double sign = (Q >= 0.0) ? 1.0 : -1.0;  // source → downhill, sink → uphill

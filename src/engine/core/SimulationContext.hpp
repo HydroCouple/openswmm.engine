@@ -1006,6 +1006,22 @@ struct SimulationContext {
         double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
         bool   active                = false;///< True if the 2D module ran
 
+        // Cumulative integrator statistics (published by SurfaceRouter2D at
+        // finalize from ISurfaceSolver::run_stats). Printed as the "2D Solver
+        // Statistics" report block — the throughput numbers every solver
+        // reformulation phase is measured against. -1 = not populated.
+        long   solver_nsteps         = -1;   ///< internal BDF steps
+        long   solver_nrhs           = 0;    ///< nonlinear RHS evaluations
+        long   solver_nrhs_ls        = 0;    ///< RHS evals in the linear solver (FD J·v)
+        long   solver_nni            = 0;    ///< Newton iterations
+        long   solver_nli            = 0;    ///< Krylov (GMRES) iterations
+        long   solver_nsetups        = 0;    ///< preconditioner setups
+        long   solver_netfails       = 0;    ///< error-test failures
+        long   solver_nncfails       = 0;    ///< nonlinear convergence failures
+        long   solver_failed_windows = 0;    ///< frozen (failed) advance windows
+        double solver_avg_h          = 0.0;  ///< mean accepted internal step (s)
+        double solver_last_h         = 0.0;  ///< last accepted internal step (s)
+
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in

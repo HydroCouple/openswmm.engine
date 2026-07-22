@@ -145,6 +145,9 @@ public:
         return last_coupling_exchange_;
     }
 
+    /// Cumulative CVODE + SPGMR statistics (read live from the solver memory).
+    RunStats run_stats() const noexcept override;
+
     /// Check if solver is initialized.
     bool is_initialized() const noexcept override { return cvode_mem_ != nullptr; }
 
@@ -175,6 +178,10 @@ private:
     /// psolve_fn. Phase 1 stores diag(J) as a heuristic per-cell value
     /// (sum of edge transmissivities, normalised by cell area, negated).
     std::vector<double> precond_diag_;
+
+    /// Scratch for the VFR dη/dV chain-rule factors handed to the AMG
+    /// assembly — a member so psetup does not allocate per call.
+    std::vector<double> deta_dv_buf_;
 
 #if defined(OPENSWMM_HAVE_HYPRE)
     /// hypre BoomerAMG preconditioner (PRECONDITIONER=AMG). Null unless AMG is

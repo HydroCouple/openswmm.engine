@@ -47,6 +47,27 @@ void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
                              int nthreads = 1);
 
 /**
+ * @brief Pseudo-Laplacian head at ONE vertex, evaluated on demand from the
+ *        current cell heads.
+ *
+ * Same CSR stencil and weights as reconstructVertexHeads(), for callers that
+ * need a handful of vertices at the current evaluation state (the coupling
+ * points inside the CVODE RHS) without paying the all-vertex pass on every
+ * RHS/Jv evaluation. The all-vertex pass still runs once per accepted window
+ * so every between-window consumer (output, held-exchange evaluation, outfall
+ * boundaries) sees exactly the values it saw when the pass lived in the RHS.
+ */
+inline double vertexHeadAt(const MeshData& mesh, const SurfaceStateData& state,
+                           int v) noexcept {
+    const int start = mesh.vert_stencil_ptr[v];
+    const int end   = mesh.vert_stencil_ptr[v + 1];
+    double h = 0.0;
+    for (int k = start; k < end; ++k)
+        h += mesh.vert_stencil_wt[k] * state.head[mesh.vert_stencil_idx[k]];
+    return h;
+}
+
+/**
  * @brief Free-surface elevation η of one triangular cell from its mean depth
  *        (render/output closure).
  *
