@@ -25,6 +25,8 @@
 #include "2d/mesh/VfrClosure.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
 #include "2d/solver/SurfaceTangent.hpp"
+#include "2d/coupling/NodeCoupling.hpp"
+#include "data/NodeData.hpp"
 
 using namespace openswmm::twoD;
 
@@ -238,4 +240,97 @@ TEST(AnalyticJv, MatchesFiniteDifferenceSpecifiedStage) {
     }
     EXPECT_LT(max_rel, 1.0e-5)
         << "SPECIFIED_STAGE boundary analytic vs FD J·v mismatch: " << max_rel;
+}
+
+// Single-cell live orifice coupling (Phase 3d): parity of the analytic coupling
+// tangent — the driving-cell diagonal fold (−dQ/dV_c) AND the augmented ∫Q dt
+// accumulator row (dQ/dV_c·v[c]) — against a central difference of the full live
+// RHS (interior flux + −Q scatter + accumulator). This is the gate that lets the
+// live path run analytic J·v instead of the finite-difference fallback.
+TEST(AnalyticJv, MatchesFiniteDifferenceSingleCellCoupling) {
+    auto mesh = makeGridMesh(6, 6, 10.0, 0.01);
+    const int nt = mesh.n_triangles();
+
+    SolverOptions2D opts;
+    opts.num_threads = 1;
+    SurfaceStateData state;
+    state.resize(nt, mesh.n_vertices());
+
+    // One junction node coupled to an interior cell as a single-cell (centroid)
+    // point. Geometry chosen so the exchange sits in smooth regions of every gate
+    // (orifice √-law, cap gate fully open, wet ramp saturated) — the tangent must
+    // still match FD there, and the smoothness keeps the outer FD clean.
+    const int ccell   = nt / 2;
+    const double bed   = mesh.tri_cz[ccell];
+    const double L1D   = opts.len_1d_to_2d;         // ft → m (0.3048)
+
+    openswmm::NodeData nodes;
+    nodes.type.assign(1, openswmm::NodeType::JUNCTION);
+    nodes.invert_elev.assign(1, (bed - 2.0) / L1D);         // deep invert
+    nodes.full_depth.assign(1, 1.0 / L1D);                  // crown = bed − 1.0 m
+    nodes.head.assign(1, (bed + 0.15) / L1D);               // h_1d ≈ bed + 0.15 m
+    nodes.depth.assign(1, nodes.head[0] - nodes.invert_elev[0]);
+
+    std::vector<CouplingPoint> cps(1);
+    cps[0].cell_idx   = ccell;
+    cps[0].vertex_idx = -1;          // single-cell / centroid coupling
+    cps[0].node_idx   = 0;
+    cps[0].cd         = 0.6;
+    cps[0].area       = 1.0;
+    cps[0].is_outfall = false;
+    cps[0].has_flap_gate = false;
+    state.node_coupling = &cps;
+    state.nodes_1d      = &nodes;
+
+    const int nc   = 1;
+    const int ntot = nt + nc;
+
+    std::mt19937 rng(77);
+    std::uniform_real_distribution<double> ud(0.05, 0.55);
+    std::vector<double> V(ntot, 0.0), v(ntot);
+    for (int i = 0; i < nt; ++i) V[i] = ud(rng) * mesh.tri_area[i];
+    V[ccell] = 0.40 * mesh.tri_area[ccell];    // firmly draining (Δh ≈ +0.25 m)
+    for (int i = 0; i < ntot; ++i) v[i] = ud(rng) - 0.3;
+
+    // Full live RHS (interior + single-cell coupling), used for the outer FD.
+    auto liveRhs = [&](const std::vector<double>& Vf, std::vector<double>& yd) {
+        reconstruct(mesh, opts, state, Vf);
+        computeEdgeFluxes(mesh, state, opts);
+        assembleRHS(mesh, state, opts, yd.data());
+        for (int k = 0; k < nc; ++k) {
+            const double Q = computeNodeCouplingQ(cps[k], mesh, state, nodes, opts);
+            yd[cps[k].cell_idx] += -Q;    // cell loses the drain
+            yd[nt + k]           = Q;     // dC_k/dt = Q
+        }
+    };
+
+    // Analytic J·v (interior tangent + coupling FD linearization, one build).
+    reconstruct(mesh, opts, state, V);
+    SurfaceTangents tang;
+    buildSurfaceTangents(mesh, state, opts, tang);
+    std::vector<double> Jv(ntot, 0.0);
+    applyTangentJv(mesh, opts, tang, nc, v.data(), Jv.data());
+
+    // Central-difference J·v of the full live RHS.
+    const double eps = 1.0e-4;
+    std::vector<double> Vp(ntot), Vm(ntot), yp(ntot), ym(ntot);
+    for (int i = 0; i < ntot; ++i) { Vp[i] = V[i] + eps * v[i]; Vm[i] = V[i] - eps * v[i]; }
+    liveRhs(Vp, yp);
+    liveRhs(Vm, ym);
+
+    double max_rel = 0.0, max_abs = 0.0;
+    bool saw_coupling_row = false;
+    for (int i = 0; i < ntot; ++i) {
+        const double fd = (yp[i] - ym[i]) / (2.0 * eps);
+        const double aerr = std::abs(Jv[i] - fd);
+        max_abs = std::max(max_abs, aerr);
+        const double scale = std::max(std::abs(fd), 1.0e-4);
+        max_rel = std::max(max_rel, aerr / scale);
+        if (i >= nt && std::abs(fd) > 1.0e-6) saw_coupling_row = true;
+    }
+    EXPECT_TRUE(saw_coupling_row)
+        << "accumulator row dQ/dV·v[c] was ~0 — test geometry did not exercise it";
+    EXPECT_LT(max_rel, 1.0e-5)
+        << "single-cell coupling analytic vs FD J·v mismatch: max_rel=" << max_rel
+        << " max_abs=" << max_abs;
 }

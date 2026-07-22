@@ -347,20 +347,43 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Live (implicit) coupling path — OPT-IN via OPENSWMM_2D_LIVE_COUPLING. The
     // orifice exchange is evaluated inside the CVODE RHS against the live 2D head
     // so it self-limits and integrates stably/conservatively over a large
-    // macro-window (the held-flux source becomes unstable there). It is correct
-    // and conservative, but CURRENTLY SLOW: the orifice is stiff and the
-    // diffusion-stencil preconditioner does not yet capture its Jacobian, so
-    // CVODE cannot take the large step (see §6 of the plan — a coupling-aware
-    // preconditioner is the remaining piece). Kept behind an env flag so the
-    // default + the fast held macro-step (COUPLING_INTERVAL) paths are unaffected.
-    // Build the non-outfall point list and publish it (+ the 1D node data, frozen
-    // during an advance) on the state BEFORE solver_->initialize(), which sizes
-    // the augmented state vector (nt cells + one ∫Q dt accumulator per point).
-    // Outfall coupling stays on the held path (transferOutfallDischarges).
+    // macro-window (the held-flux source becomes unstable there). Phase 3d makes
+    // each point SINGLE-CELL (centroid) so the orifice ∂Q/∂V is a clean diagonal
+    // term the analytic J·v now assembles (SurfaceTangent) — the live path uses
+    // analytic J·v like the held path instead of the finite-difference fallback
+    // that was its ~1.26× penalty. Kept behind an env flag so the default + the
+    // fast held macro-step (COUPLING_INTERVAL) paths are unaffected while the
+    // single-cell exchange distribution is validated. Build the non-outfall point
+    // list and publish it (+ the 1D node data, frozen during an advance) on the
+    // state BEFORE solver_->initialize(), which sizes the augmented state vector
+    // (nt cells + one ∫Q dt accumulator per point). Outfall coupling stays on the
+    // held path (transferOutfallDischarges).
     if (std::getenv("OPENSWMM_2D_LIVE_COUPLING") != nullptr) {
         node_coupling_points_.clear();
-        for (const auto& cp : coupling_points_)
-            if (!cp.is_outfall) node_coupling_points_.push_back(cp);
+        for (const auto& cp : coupling_points_) {
+            if (cp.is_outfall) continue;
+            // Single-cell coupling (Phase 3d): map each point to ONE driving cell
+            // so the orifice exchange depends on a single cell volume — the form
+            // whose Jacobian is a clean diagonal term (analytic J·v on the live
+            // path). A vertex point becomes a centroid point (vertex_idx = −1) at
+            // the LOWEST-bed incident cell (where water pools, so the wet/dry ramp
+            // reflects the real pond, not an incidentally-dry neighbour).
+            CouplingPoint sc = cp;
+            if (cp.vertex_idx >= 0) {
+                const int v  = cp.vertex_idx;
+                const int s  = mesh_.vert_stencil_ptr[v];
+                const int e  = mesh_.vert_stencil_ptr[v + 1];
+                int    lo    = cp.cell_idx;
+                double zlo   = (lo >= 0) ? mesh_.tri_cz[lo] : 1.0e300;
+                for (int k = s; k < e; ++k) {
+                    const int t = mesh_.vert_stencil_idx[k];
+                    if (mesh_.tri_cz[t] < zlo) { zlo = mesh_.tri_cz[t]; lo = t; }
+                }
+                sc.cell_idx   = lo;
+                sc.vertex_idx = -1;
+            }
+            node_coupling_points_.push_back(sc);
+        }
         if (!node_coupling_points_.empty()) {
             state_.node_coupling = &node_coupling_points_;
             state_.nodes_1d      = &ctx.nodes;

@@ -658,12 +658,16 @@ bool CvodeSurfaceSolver::analyticJvEligible(const SurfaceStateData& state,
     } else if (opts.jacobian == Jacobian2D::FD) {
         return false;
     }
-    // The analytic tangent covers the interior flux, the evaporation sink, and
-    // the y-dependent boundary edges (NORMAL_FLOW / SPECIFIED_STAGE). It does
-    // NOT yet linearize the live-RHS orifice, so fall back to FD only there.
-    // The held path (mean-rate coupling_flux source, constant per window) is
-    // fully covered.
-    if (state.node_coupling != nullptr) return false;
+    // The analytic tangent covers the interior flux, the evaporation sink, the
+    // y-dependent boundary edges (NORMAL_FLOW / SPECIFIED_STAGE), and — under
+    // SINGLE-CELL live coupling — the orifice exchange ∂Q_k/∂V_c (Phase 3d). A
+    // legacy vertex-STENCIL live point has a y-dependent scatter whose tangent is
+    // not assembled here, so fall back to FD if any live point is not single-cell
+    // (centroid). The held path (node_coupling == null) is fully covered.
+    if (state.node_coupling != nullptr) {
+        for (const auto& cp : *state.node_coupling)
+            if (cp.vertex_idx >= 0) return false;   // stencil point ⇒ FD
+    }
     // Active-set masking pins frozen cells' ydot to 0; the tangent does not
     // mask, so its rows would be nonzero there. Active set is opt-in (default
     // off) and removed later in Phase 3 — stay on FD when it is enabled.

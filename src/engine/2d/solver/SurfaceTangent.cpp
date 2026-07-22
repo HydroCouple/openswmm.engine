@@ -9,6 +9,7 @@
 #include "SurfaceTangent.hpp"
 #include "../mesh/VfrClosure.hpp"
 #include "../data/BoundaryData.hpp"
+#include "../coupling/NodeCoupling.hpp"  // computeNodeCouplingQ (orifice FD linearization)
 
 #include <cmath>
 
@@ -246,6 +247,58 @@ void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
         }
         tang.diag[i] = diag;
     }
+
+    // --- Live single-cell orifice-coupling tangent (Phase 3d) -----------------
+    // Each live coupling point is a single-cell (centroid) point: Q_k depends
+    // only on the driving cell c's volume (η_c and h̄_c both from V_c). Linearize
+    // Q_k about V_c by a local central FD — perturb (head, depth) consistently
+    // with a ±dV volume bump (depth = V/A exactly; dη = dEtaDV·dV; the central
+    // difference cancels the O(dV²) closure curvature). Assembled once per setup
+    // (2 Q evals per point, « cells), so applyTangentJv stays a pure SpMV. The
+    // cell-row self term −dQ/dV_c folds into diag[c]; the accumulator rows get
+    // dQ/dV_c. Runs serially after the threaded cell loop (no race on diag[]).
+    if (state.node_coupling != nullptr && state.nodes_1d != nullptr) {
+        const auto& cps   = *state.node_coupling;
+        const auto& nodes = *state.nodes_1d;
+        const int   nc    = static_cast<int>(cps.size());
+        tang.coupling_cell.assign(static_cast<std::size_t>(nc), -1);
+        tang.coupling_dQdV.assign(static_cast<std::size_t>(nc), 0.0);
+        for (int k = 0; k < nc; ++k) {
+            const CouplingPoint& cp = cps[k];
+            const int c = cp.cell_idx;
+            // Only single-cell centroid points are analytically linearizable
+            // here; a vertex-stencil point (legacy live path) is left at −1 and
+            // makes analyticJvEligible fall back to FD for the whole system.
+            if (cp.vertex_idx >= 0 || c < 0) continue;
+
+            const double A     = mesh.tri_area[c];
+            if (A <= 1.0e-30) continue;
+            const double detaC = dEtaDV(mesh, state, opts, c);
+            const double h0    = state.head[c];
+            const double d0    = state.depth[c];
+            // Volume step scaled to the cell (never below a small floor so a dry
+            // cell still gets a finite, well-conditioned difference).
+            const double dV = 1.0e-6 * A * std::max(d0, opts.dry_depth) + 1.0e-12;
+            const double dh = detaC * dV;
+            const double dd = dV / A;
+
+            state.head[c] = h0 + dh;  state.depth[c] = d0 + dd;
+            const double Qp = computeNodeCouplingQ(cp, mesh, state, nodes, opts);
+            state.head[c] = h0 - dh;  state.depth[c] = d0 - dd;
+            const double Qm = computeNodeCouplingQ(cp, mesh, state, nodes, opts);
+            state.head[c] = h0;       state.depth[c] = d0;   // restore
+
+            const double dQdV = (Qp - Qm) / (2.0 * dV);
+            tang.coupling_cell[k] = c;
+            tang.coupling_dQdV[k] = dQdV;
+            // ydot_c += −Q ⇒ ∂(ydot_c)/∂V_c = −dQ/dV_c. Additive if two points
+            // share a cell.
+            tang.diag[c] -= dQdV;
+        }
+    } else {
+        tang.coupling_cell.clear();
+        tang.coupling_dQdV.clear();
+    }
 }
 
 void applyTangentJv(const MeshData& mesh, const SolverOptions2D& opts,
@@ -263,9 +316,14 @@ void applyTangentJv(const MeshData& mesh, const SolverOptions2D& opts,
         }
         Jv[i] = acc;
     }
-    // Augmented accumulator rows are y-independent on the held path (time-only
-    // deviation forcing) ⇒ their J·v row is exactly zero.
-    for (int k = 0; k < nc; ++k) Jv[nt + k] = 0.0;
+    // Augmented ∫Q dt accumulator rows. Live single-cell coupling: row k depends
+    // only on its driving cell c, dC_k/dt = Q_k ⇒ (J·v)_k = dQ_k/dV_c · v[c].
+    // Held path (no coupling tangent stored): the row is y-independent ⇒ zero.
+    const int ncc = static_cast<int>(tang.coupling_cell.size());
+    for (int k = 0; k < nc; ++k) {
+        const int c = (k < ncc) ? tang.coupling_cell[k] : -1;
+        Jv[nt + k] = (c >= 0) ? tang.coupling_dQdV[k] * v[c] : 0.0;
+    }
 }
 
 }  // namespace openswmm::twoD
