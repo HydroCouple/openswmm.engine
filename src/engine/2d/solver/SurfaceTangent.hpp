@@ -15,14 +15,15 @@
  *          under OpenMP and antisymmetric (mass-conservative) by construction.
  *
  * Scope: the interior flux divergence, the y-dependent boundary edges
- * (NORMAL_FLOW / SPECIFIED_STAGE — the diagonal ∂F_bc/∂V_i), and the
- * evaporation sink — i.e. the whole DEFAULT (held-coupling) RHS, including the
- * outfall tailwater boundary. The augmented accumulator rows are zero on that
- * path (the held coupling_flux source is constant in y). The live-RHS orifice
- * path (opt-in) has y-dependent accumulator rows; buildSurfaceTangents does not
- * linearize it, so the caller keeps finite-difference J·v whenever
- * state.node_coupling != null (a later Phase 3 step adds the coupling tangent
- * for the preconditioner).
+ * (NORMAL_FLOW / SPECIFIED_STAGE — the diagonal ∂F_bc/∂V_i), the evaporation
+ * sink, and — under single-cell live coupling (Phase 3d) — the orifice exchange
+ * ∂Q_k/∂V_c (its self term on diag[c] and the augmented ∫Q dt accumulator rows).
+ * The orifice tangent is a local central FD of computeNodeCouplingQ about the
+ * driving cell volume, assembled ONCE per linear-solve setup (a handful of Q
+ * evals, «cells) so J·v stays a pure SpMV — consistent with SUNDIALS' own FD J·v
+ * by construction. On the default (held) path node_coupling == null, the orifice
+ * loop is skipped, and the accumulator rows are exactly zero (the mean-rate
+ * coupling_flux source is constant in y).
  *
  * @ingroup engine_2d
  *
@@ -58,6 +59,17 @@ struct SurfaceTangents {
     std::vector<double> dfdvi;    ///< size n_triangles*3
     std::vector<double> dfdvnbr;  ///< size n_triangles*3
     std::vector<double> diag;     ///< size n_triangles
+
+    // Live single-cell orifice-coupling linearization (Phase 3d). One entry per
+    // live coupling point k (single-cell centroid points only): the point's
+    // driving cell c = coupling_cell[k] and dQ_k/dV_c = coupling_dQdV[k]. The
+    // cell-row self term −dQ/dV_c is already folded into diag[c] by
+    // buildSurfaceTangents; these two vectors additionally drive the augmented
+    // ∫Q dt accumulator rows in applyTangentJv (Jv[nt+k] = dQ/dV_c · v[c]).
+    // Empty on the default (held) path — accumulator rows are then zero.
+    std::vector<int>    coupling_cell;   ///< size nc (or empty); −1 = no tangent
+    std::vector<double> coupling_dQdV;   ///< size nc (or empty)
+
     int                 nt = 0;
 
     void resize(int n) {

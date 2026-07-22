@@ -85,6 +85,45 @@ default (the conservative, temporal-approximation-free coupling). This is a
 deliberate behavior change (single-cell vs stencil exchange distribution) and is
 the next major increment.
 
+## Phase 3d RESULT — single-cell analytic live coupling IMPLEMENTED (2026-07-22)
+
+Built the single-cell live-coupling analytic orifice tangent (opt-in; default
+HELD path byte-unchanged). Each live coupling point is now a single-cell
+(centroid) point at the lowest-bed incident cell, so `computeNodeCouplingQ` /
+`scatterCouplingToYdot` do single-cell exchange with NO change (their
+`vertex_idx < 0` branch already reads the cell head and scatters weight-1). The
+orifice tangent `∂Q_k/∂V_c` is a LOCAL central FD of `computeNodeCouplingQ`
+about the driving cell (2 Q-evals/point, assembled once per linear-solve setup
+in `buildSurfaceTangents`), folded onto `diag[c]` (self term) and the augmented
+∫Q dt accumulator rows — so `applyTangentJv` stays a pure SpMV and matches
+SUNDIALS' own FD J·v by construction. `analyticJvEligible` now passes on the
+live path when every point is single-cell. RHS unchanged.
+
+A/B (`build/darwin`, same build, artifacts in `plans/2d/phase3d_ab/`):
+
+| Model | HELD (default) | LIVE analytic | LIVE FD (prior) | Krylov held→live | Nonlin conv fails held→live |
+|---|---|---|---|---|---|
+| weir 42 h | 46.85 s, 0.025% | **45.46 s, 0.036%** | 60.0 s | 59,242 → 32,842 (−44%) | 0 → 0 |
+| road 18 h | 23.95 s, 0.013% | **15.34 s, −0.052%** | (n/a rerun) | 193,984 → 114,827 (−41%) | **1,229 → 4** |
+
+Both live runs report **FD Jv = 0** (analytic tangent active, no fallback — the
+old ~1.26× FD-Jv penalty is gone). The mechanism is exactly the plan's: the
+orifice ∂Q/∂V on the Newton diagonal makes the stiff exchange visible to Newton
+— road's nonlinear convergence failures collapse 1,229 → 4, which is where the
+36% wall win comes from. Conservation holds (all < |0.1%|); the ∫Q dt ledger is
+independent of the J·v method. Gates: analytic-Jv parity 4/4 (incl. new
+single-cell coupling regime to 1e-5), 2D ctests 13/13, repro conservation
+default −0.001% == NO_INTERP −0.001% (default path byte-identical), live −0.016%.
+
+Exchange TOTALS shift held→live (weir drain 626→571; road spill 12.1k→15.3k,
+drain 42.0k→38.3k) — the continuous in-ODE coupling vs the window mean-rate
+(the ~11% temporal-approximation removal). Both conserve, but the answers
+DIFFER, so this is a genuine coupling-physics behavior change: it stays **opt-in
+behind `OPENSWMM_2D_LIVE_COUPLING`**. Flipping live to default (and validating
+which coupling is more physically correct) needs the Bellinge gate (Phase 5,
+blocked on mesh regen). To A/B held-vs-live-vs-FD: `OPENSWMM_2D_LIVE_COUPLING=1`
+alone = single-cell + analytic; add `OPENSWMM_2D_JACOBIAN=fd` = single-cell + FD.
+
 ## Fixture provenance
 
 - `examples/imex_scaling/ms_a_r100.inp` ← `gen_multiscale_mesh.py ms_a_r100.inp --dx-fine 20`
