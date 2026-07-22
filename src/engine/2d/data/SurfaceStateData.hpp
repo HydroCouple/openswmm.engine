@@ -27,6 +27,7 @@ namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advan
 namespace openswmm::twoD {
 
 struct CouplingPoint;  // fwd decl — 1D↔2D coupling descriptor (NodeCoupling.hpp)
+struct CouplingForcingSeries;  // fwd decl — sampled exchange series (NodeCoupling.hpp)
 struct ActiveSetData;  // fwd decl — dry-cell wet-front mask (ActiveSetData.hpp)
 
 /**
@@ -62,6 +63,16 @@ struct SurfaceStateData {
     /// `nodes_1d` is the 1D node data, frozen for the duration of the advance.
     const NodeData*                   nodes_1d        = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
+
+    /// Non-owning view of the per-window sampled exchange series (owned by
+    /// SurfaceRouter2D; see CouplingForcingSeries). When set and finalized
+    /// (dev_scale nonzero for a point), the CVODE RHS adds the zero-mean
+    /// time-interpolated deviation of the 1D↔2D exchange on top of the held
+    /// mean-rate coupling_flux source, so the 2D sees the within-window
+    /// temporal shape of the exchange without any change to the exchanged
+    /// volume. nullptr (or all dev_scale == 0) ⇒ mean-rate forcing only —
+    /// the conservative baseline every backend understands.
+    const CouplingForcingSeries*      coupling_series = nullptr;
 
     /// Non-owning view of the dry-cell active-set mask (owned by
     /// SurfaceRouter2D; rebuilt once per advance window). nullptr or

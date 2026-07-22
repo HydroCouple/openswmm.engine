@@ -256,11 +256,10 @@ private:
     std::vector<CouplingPoint> node_coupling_points_;
 
     bool   active_           = false;
-    int    coupling_counter_ = 0;
     double sim_time_         = 0.0;
-    /// Routing time accumulated since the last 2D advance (COUPLING_INTERVAL
+    /// Routing time accumulated since the last 2D advance (time-based
     /// macro-step). Lets the 2D solver integrate one large adaptive window over
-    /// `interval` routing steps instead of being hard-stopped every step.
+    /// many routing steps instead of being hard-stopped every step.
     double pending_dt_       = 0.0;
     bool   force_next_window_ = false;
 
@@ -268,11 +267,35 @@ private:
     /// per-step delta in the global mass balance.
     double prev_boundary_cum_ = 0.0;
 
-    /// Net SI exchange (m³/s, +into 2D) actually applied per outfall node this
-    /// window by transferOutfallDischarges — after the withdrawal cap. The
-    /// mass-balance ledger books these (not the raw 1D rates) so a clamped
-    /// withdrawal is never double-counted.
-    std::unordered_map<int, double> outfall_applied_q_;
+    // ── Decoupled-timestep coupling accumulators (2026-07 plan) ─────────────
+    /// Per-coupling-point junction exchange volume (m³, + = 2D→1D drain,
+    /// − = 1D→2D spill) accumulated by computeCouplingExchangeStep every 1D
+    /// routing step since the last fired window. Indexed like coupling_points_.
+    std::vector<double> window_exchange_accum_;
+    /// Per-coupling-point outfall exchange volume (m³, + = 1D discharge onto
+    /// the surface, − = withdrawal) accumulated per routing step. Indexed like
+    /// coupling_points_ (non-outfall slots stay 0).
+    std::vector<double> window_outfall_accum_;
+    /// Per-cell withdrawal budget (m³) for the CURRENT window, seeded from
+    /// max(0, cell volume) at the last window boundary. Junction drains and
+    /// outfall withdrawals draw it down so their window-cumulative total can
+    /// never overdraw the frozen 2D state.
+    std::vector<double> window_avail_budget_;
+    /// Sampled per-step exchange series for the CURRENT window (published on
+    /// state_.coupling_series). advancePostRouting appends one row per routing
+    /// step; fireAdvanceWindow finalizes the zero-mean deviation coefficients
+    /// the CVODE RHS interpolates ("interpolate the temporally misaligned
+    /// fluxes" — user refinement 2026-07-20).
+    CouplingForcingSeries coupling_series_;
+    /// Scratch row reused by the per-step sampling (net 2D-source rates).
+    std::vector<double> series_row_;
+    /// At least one outfall withdrawal was clamped by the budget this window.
+    bool window_had_outfall_clamp_ = false;
+    /// Seed window_avail_budget_ from the current (just-accepted) 2D state,
+    /// zero both accumulators, and clear the series samples — called at
+    /// initialize() and after every fired window (success, failure, or
+    /// quiescent skip).
+    void resetWindowAccumulators();
     /// Windows in which at least one outfall withdrawal hit the availability
     /// cap; reported once at finalize().
     long outfall_clamp_windows_ = 0;

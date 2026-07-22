@@ -163,14 +163,50 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
                             const MeshData& mesh,
                             const SurfaceStateData& state,
                             const NodeData& nodes,
-                            const SolverOptions2D& opts) noexcept {
+                            const SolverOptions2D& opts,
+                            const double* provisional_vol_m3) noexcept {
     const auto ni = static_cast<std::size_t>(cp.node_idx);
     const int  ci = cp.cell_idx;
+
+    // Provisional-state helpers (per-step decoupled path only; nullptr on the
+    // live-RHS path, where CVODE's own state is already current). When given,
+    // provisional_vol_m3[i] is the volume cell i still holds after the
+    // exchange already committed this window, so depth/head are re-derived
+    // from it under the FLAT closure (h = V/A, η = z_c + h). The VFR inverse
+    // is deliberately not applied here: this is a self-limiting correction on
+    // an explicit sub-step, and the flat form is monotone in the same
+    // direction — the exact closure still governs the solver's own state.
+    const auto provDepth = [&](int i) noexcept {
+        const double a = mesh.tri_area[i];
+        const double v = std::max(0.0, provisional_vol_m3[i]);
+        return (a > 1.0e-30) ? v / a : 0.0;
+    };
 
     // Live 2D head at the coupling point (reconstructed this RHS call).
     // VFR closure: wet-masked vertex η (dry terrain can't fake a surface);
     // FLAT: the legacy pseudo-Laplacian vert_head, bit-identical.
-    const double h_2d = couplingHead2D(cp, mesh, state, opts);
+    double h_2d;
+    if (provisional_vol_m3 == nullptr) {
+        h_2d = couplingHead2D(cp, mesh, state, opts);
+    } else if (cp.vertex_idx < 0) {
+        h_2d = mesh.tri_cz[ci] + provDepth(ci);
+    } else {
+        // Wet-depth-weighted η over the stencil, on provisional depths —
+        // mirrors wetVertexEta so a drying stencil lowers the driving head
+        // instead of holding the window-start surface.
+        const int v = cp.vertex_idx;
+        const int s = mesh.vert_stencil_ptr[v];
+        const int e = mesh.vert_stencil_ptr[v + 1];
+        double num = 0.0, den = 0.0;
+        for (int k = s; k < e; ++k) {
+            const int t = mesh.vert_stencil_idx[k];
+            const double d = provDepth(t);
+            if (!(d >= opts.dry_depth)) continue;
+            num += d * (mesh.tri_cz[t] + d);
+            den += d;
+        }
+        h_2d = (den > 0.0) ? num / den : mesh.vz[v];
+    }
     // 1D node head — frozen across the 2D advance window.
     const double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
 
@@ -182,11 +218,14 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
         const int s = mesh.vert_stencil_ptr[v];
         const int e = mesh.vert_stencil_ptr[v + 1];
         depth_2d_avail = 0.0;
-        for (int k = s; k < e; ++k)
+        for (int k = s; k < e; ++k) {
+            const int t = mesh.vert_stencil_idx[k];
             depth_2d_avail = std::max(depth_2d_avail,
-                                      state.depth[mesh.vert_stencil_idx[k]]);
+                (provisional_vol_m3 == nullptr) ? state.depth[t] : provDepth(t));
+        }
     } else {
-        depth_2d_avail = state.depth[ci];
+        depth_2d_avail = (provisional_vol_m3 == nullptr) ? state.depth[ci]
+                                                         : provDepth(ci);
     }
     const double depth_1d_avail = nodes.depth[ni] * opts.len_1d_to_2d;
 
@@ -704,6 +743,212 @@ int transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
         applied_q[cp.node_idx] = Q_net;
     }
     return clamped;
+}
+
+
+namespace {
+
+/// Remaining withdrawal budget (m³) visible to a coupling point: the whole
+/// vertex stencil for vertex coupling, the single cell for centroid coupling.
+inline double budgetAvail(const MeshData& mesh, const CouplingPoint& cp,
+                          const std::vector<double>& cell_budget_m3) noexcept {
+    if (cp.vertex_idx < 0)
+        return std::max(0.0, cell_budget_m3[static_cast<std::size_t>(cp.cell_idx)]);
+    double avail = 0.0;
+    const int v = cp.vertex_idx;
+    for (int k = mesh.vert_stencil_ptr[v]; k < mesh.vert_stencil_ptr[v + 1]; ++k)
+        avail += std::max(0.0,
+            cell_budget_m3[static_cast<std::size_t>(mesh.vert_stencil_idx[k])]);
+    return avail;
+}
+
+/// Draw `vol` (m³, ≥ 0) down from the budget cells a coupling point taps.
+/// Cells are floored at 0 with the undrawn share spilling to the remaining
+/// cells (two greedy passes): budgetAvail sums max(0, ·), so an unclamped
+/// weighted subtraction that pushes one cell negative while another stays
+/// positive would let repeated draws exceed the true pool — the budget must
+/// consume exactly `vol` from the non-negative mass or it is not a cap.
+inline void budgetDraw(const MeshData& mesh, const CouplingPoint& cp,
+                       double vol, std::vector<double>& cell_budget_m3) noexcept {
+    if (vol <= 0.0) return;
+    if (cp.vertex_idx < 0) {
+        auto& b = cell_budget_m3[static_cast<std::size_t>(cp.cell_idx)];
+        b = std::max(0.0, b - vol);
+        return;
+    }
+    const int v = cp.vertex_idx;
+    const int s = mesh.vert_stencil_ptr[v];
+    const int e = mesh.vert_stencil_ptr[v + 1];
+    // Pass 1: weighted draw, clamped per cell; collect the undrawn remainder.
+    double remainder = 0.0;
+    for (int k = s; k < e; ++k) {
+        auto& b = cell_budget_m3[static_cast<std::size_t>(mesh.vert_stencil_idx[k])];
+        const double want = vol * mesh.vert_stencil_wt[k];
+        const double take = std::min(want, std::max(0.0, b));
+        b -= take;
+        remainder += want - take;
+    }
+    // Pass 2: greedy spill of the remainder into cells with budget left.
+    for (int k = s; k < e && remainder > 0.0; ++k) {
+        auto& b = cell_budget_m3[static_cast<std::size_t>(mesh.vert_stencil_idx[k])];
+        const double take = std::min(remainder, std::max(0.0, b));
+        b -= take;
+        remainder -= take;
+    }
+    // Any residual means the caller drew more than budgetAvail reported —
+    // impossible when the per-step cap uses budgetAvail, so drop it.
+}
+
+/// Credit `vol` (m³, ≥ 0) of water ADDED to the cells a coupling point feeds
+/// (1D→2D spill, outfall discharge). Keeps the budget a faithful provisional
+/// volume so the next sub-step's driving head sees the water this window has
+/// already committed to putting on the surface, not just what it took off.
+inline void budgetCredit(const MeshData& mesh, const CouplingPoint& cp,
+                         double vol, std::vector<double>& cell_budget_m3) noexcept {
+    if (vol <= 0.0) return;
+    if (cp.vertex_idx < 0) {
+        cell_budget_m3[static_cast<std::size_t>(cp.cell_idx)] += vol;
+        return;
+    }
+    const int v = cp.vertex_idx;
+    for (int k = mesh.vert_stencil_ptr[v]; k < mesh.vert_stencil_ptr[v + 1]; ++k)
+        cell_budget_m3[static_cast<std::size_t>(mesh.vert_stencil_idx[k])] +=
+            vol * mesh.vert_stencil_wt[k];
+}
+
+} // anonymous namespace
+
+
+void computeCouplingExchangeStep(const std::vector<CouplingPoint>& cps,
+                                 const MeshData& mesh,
+                                 const SurfaceStateData& state,
+                                 SimulationContext& ctx,
+                                 const SolverOptions2D& opts,
+                                 double dt,
+                                 std::vector<double>& accum_m3,
+                                 std::vector<double>& cell_budget_m3,
+                                 double* sample_row) {
+    if (dt <= 0.0) return;
+    auto& nodes = ctx.nodes;
+
+    for (std::size_t k = 0; k < cps.size(); ++k) {
+        const auto& cp = cps[k];
+        if (cp.is_outfall) continue;  // outfalls: accumulateOutfallDischargeStep
+
+        const auto ni = static_cast<std::size_t>(cp.node_idx);
+
+        // Continuous capped-pipe orifice against a PROVISIONALLY DRAWN-DOWN 2D
+        // state and the LIVE 1D head.
+        //
+        // The 2D state is frozen for the whole window, so evaluating the
+        // orifice against it every routing step would repeat the same
+        // full-rate drain N times: the surface never appears to empty, and the
+        // exchange scales with the window length (measured: ×5 at a 5-step
+        // window — physically wrong, and it wrecked the 1D continuity). The
+        // per-cell budget carries the water this window has ALREADY committed
+        // to moving, so the remaining budget is the provisional volume the
+        // surface still holds; feeding that back as the driving depth/head
+        // makes the per-step exchange self-limit exactly as the live-RHS path
+        // does inside CVODE, and keeps the window total independent of how the
+        // window is subdivided.
+        double Q = computeNodeCouplingQ(cp, mesh, state, nodes, opts,
+                                        cell_budget_m3.data());
+
+        // 1D-side caps at the routing-step scale (mirrors the held path).
+        if (Q > 0.0) {
+            // Drain INTO the pipe: bounded by node headroom this step…
+            // (A full node — available ≤ 0 — deliberately keeps Q: the orifice
+            // sign already guarantees h_2d > h_1d there, which is exactly the
+            // surcharge drain-back case the held path admits.)
+            const double available = (nodes.full_volume[ni] - nodes.volume[ni])
+                                     * opts.vol_1d_to_2d;
+            if (available > 0.0)
+                Q = std::min(Q, available / dt);
+            // …and by the remaining frozen-2D withdrawal budget for the window.
+            Q = std::min(Q, budgetAvail(mesh, cp, cell_budget_m3) / dt);
+        } else if (Q < 0.0) {
+            // Spill OUT of the pipe: only the flood store above the crown is
+            // spillable (identical to the held path).
+            const double flooded = (nodes.volume[ni] - nodes.full_volume[ni])
+                                   * opts.vol_1d_to_2d;
+            Q = std::max(Q, -std::max(0.0, flooded) / dt);
+        }
+        if (Q == 0.0) continue;
+
+        const double vol_m3 = Q * dt;                 // m³ this routing step
+        if (Q > 0.0) budgetDraw(mesh, cp, vol_m3, cell_budget_m3);
+        else         budgetCredit(mesh, cp, -vol_m3, cell_budget_m3);
+
+        // Book to the 1D node (ft³) for consumption at the start of the next
+        // routing step (assembleLateralInflows: rate = coupling_volume / dt).
+        nodes.coupling_volume[ni] += Q * opts.flow_2d_to_1d * dt;
+
+        // Accumulate the SI volume for the 2D-side window injection.
+        accum_m3[k] += vol_m3;
+
+        // Series sample: drain-positive Q is a 2D SINK, so the net 2D-source
+        // rate is −Q.
+        if (sample_row) sample_row[k] = -Q;
+    }
+}
+
+
+int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps,
+                                   const MeshData& mesh,
+                                   const SurfaceStateData& state,
+                                   const SimulationContext& ctx,
+                                   const SolverOptions2D& opts,
+                                   double dt,
+                                   std::vector<double>& accum_m3,
+                                   std::vector<double>& cell_budget_m3,
+                                   double* sample_row) {
+    (void)state;
+    if (dt <= 0.0) return 0;
+    const auto& nodes = ctx.nodes;
+    int clamped = 0;
+
+    for (std::size_t k = 0; k < cps.size(); ++k) {
+        const auto& cp = cps[k];
+        if (!cp.is_outfall) continue;
+
+        const auto ni = static_cast<std::size_t>(cp.node_idx);
+
+        // LIVE net signed 1D→2D exchange this routing step (see
+        // transferOutfallDischarges for the sign/BC discussion).
+        double Q_net = (nodes.inflow[ni] - nodes.outflow[ni]) * opts.flow_1d_to_2d;
+
+        // Withdrawal capped by the shared frozen-2D budget (window-cumulative).
+        if (Q_net < 0.0) {
+            const double Q_min = -budgetAvail(mesh, cp, cell_budget_m3) / dt;
+            if (Q_net < Q_min) { Q_net = Q_min; ++clamped; }
+        }
+        if (Q_net == 0.0) continue;
+
+        const double vol_m3 = Q_net * dt;             // m³ this routing step
+        if (Q_net < 0.0) budgetDraw(mesh, cp, -vol_m3, cell_budget_m3);
+        else             budgetCredit(mesh, cp, vol_m3, cell_budget_m3);
+
+        accum_m3[k] += vol_m3;
+
+        // Series sample: Q_net is already net-2D-source-positive.
+        if (sample_row) sample_row[k] = Q_net;
+    }
+    return clamped;
+}
+
+
+void injectAccumulatedExchange(const std::vector<CouplingPoint>& cps,
+                               const MeshData& mesh,
+                               SurfaceStateData& state,
+                               const std::vector<double>& accum_m3,
+                               double window_dt,
+                               double sign) {
+    if (window_dt <= 0.0) return;
+    for (std::size_t k = 0; k < cps.size(); ++k) {
+        const double vol = accum_m3[k];
+        if (vol == 0.0) continue;
+        scatterCouplingFlux(mesh, state, cps[k], sign * vol / window_dt);
+    }
 }
 
 } // namespace openswmm::twoD

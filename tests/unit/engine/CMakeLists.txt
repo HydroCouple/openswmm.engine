@@ -340,6 +340,11 @@ if(OPENSWMM_BUILD_2D)
     # guards the per-window-volume carry that keeps the staggered exchange
     # mass-conservative when the routing dt varies between produce and consume.
     add_gtest_unit(test_engine_2d_coupling_conservation test_2d_coupling_conservation.cpp)
+    # Decoupled 1D/2D timesteps (2026-07 plan): per-step accumulated +
+    # RHS-interpolated exchange across multi-step macro windows, legacy
+    # COUPLING_INTERVAL → time-window mapping, withdrawal budget, and the
+    # failed-window redelivery invariant (frozen surface ⇒ net-zero exchange).
+    add_gtest_unit(test_engine_2d_decoupled_stepping test_2d_decoupled_stepping.cpp)
     # Rainfall→mesh interpolation (natural-neighbour / IDW) + RAINFALL_MODE
     # option round-trip. Pure geometry over the engine-exported interpolator.
     add_gtest_unit(test_engine_2d_rainfall_interp test_2d_rainfall_interp.cpp)

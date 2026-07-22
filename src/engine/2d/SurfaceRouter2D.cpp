@@ -546,6 +546,26 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         else if (std::strcmp(m, "dw") == 0)  options_.momentum = MomentumType::DW;
     }
 
+    // Decoupled-timestep coupling state: per-point window accumulators, the
+    // per-cell withdrawal budget, and the sampled exchange series the CVODE
+    // RHS interpolates. Published on the state like node_coupling — and, like
+    // it, BEFORE solver_->initialize(), which sizes the augmented state (one
+    // ∫dev dt accumulator per series point) from state.coupling_series. Wiring
+    // it after left nc_ == 0: the deviation was scattered into the cells with
+    // no accumulator, so its BDF-quadrature residual leaked exchange volume
+    // uncorrected (the eps reconciliation read an empty vector).
+    window_exchange_accum_.assign(coupling_points_.size(), 0.0);
+    window_outfall_accum_.assign(coupling_points_.size(), 0.0);
+    window_avail_budget_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+    series_row_.assign(coupling_points_.size(), 0.0);
+    coupling_series_.points = &coupling_points_;
+    coupling_series_.ncp    = static_cast<int>(coupling_points_.size());
+    coupling_series_.dev_scale.assign(coupling_points_.size(), 0.0);
+    coupling_series_.dev_mean.assign(coupling_points_.size(), 0.0);
+    coupling_series_.clearSamples();
+    state_.coupling_series = &coupling_series_;
+    window_had_outfall_clamp_ = false;
+
     // Construct the time integrator. The backend (serial CPU vs. a runtime-
     // loaded GPU plugin) is resolved by makeSurfaceSolver from the
     // OPENSWMM_2D_BACKEND policy; absent/unusable plugins fall back to the
@@ -557,10 +577,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
 #endif
 
     active_ = true;
-    coupling_counter_ = 0;
     sim_time_ = 0.0;
     pending_dt_ = 0.0;
     force_next_window_ = false;
+
+    resetWindowAccumulators();
 
     // COUPLING_INTERVAL > 1 advances the 2D solver over a multi-routing-step
     // macro-window so CVODE can take large adaptive steps (big speedup). This is
@@ -638,12 +659,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     }
 
     // Resolve the effective 2D advance-window policy (time-based macro-step).
-    // Explicit COUPLING_WINDOW wins; AUTO (−1, the default) defers to an
-    // explicit legacy COUPLING_INTERVAL > 1, otherwise the user's declared
-    // [OPTIONS] ROUTING_STEP is taken as the acceptable coupling cadence —
-    // variable-step collapse of the 1D solver then cannot drag the 2D advance
-    // cadence (and its per-advance cost) down with it. Behavior-preserving for
-    // healthy models: window == nominal routing step fires every step.
+    // Explicit COUPLING_WINDOW wins; AUTO (−1, the default) maps a legacy
+    // COUPLING_INTERVAL N > 1 to the TIME window N × nominal ROUTING_STEP
+    // (2026-07 decoupling plan — step-count gating is retired: under 1D
+    // variable-step collapse an N-step interval degenerated to an advance per
+    // MINIMUM_STEP, exactly the cadence collapse the time window exists to
+    // prevent, while the time mapping preserves the model author's intended
+    // cadence in physical time). AUTO alone takes the declared ROUTING_STEP as
+    // the acceptable coupling cadence. Behavior-preserving for healthy models:
+    // window == nominal routing step fires every step.
     {
         double win = options_.coupling_window;
         if (const char* env = std::getenv("OPENSWMM_2D_COUPLING_WINDOW")) {
@@ -653,7 +677,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
         if (win < 0.0) {
             win = (options_.coupling_interval > 1)
-                      ? 0.0  // legacy step-count gating stays in charge
+                      ? options_.coupling_interval * ctx.options.routing_step
                       : std::min(ctx.options.routing_step, options_.max_timestep);
         }
         effective_window_ = std::max(0.0, win);
@@ -692,25 +716,50 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
                                           double t) {
     if (!active_) return;
 
+    // ── Per-step decoupled exchange (2026-07 plan) ──────────────────────────
+    // The 1D and 2D domains proceed on their own clocks: the exchange is
+    // evaluated EVERY routing step against the live 1D heads and the frozen 2D
+    // state, booked to the 1D node for next-step consumption, and accumulated
+    // as a volume for the 2D window injection. The window fire below no longer
+    // samples heads at all — it injects exactly what accumulated.
+    // Junctions skip this on the live-RHS path (exchange evaluated inside the
+    // solver); outfalls accumulate per-step on both paths.
+    std::fill(series_row_.begin(), series_row_.end(), 0.0);
+    if (!state_.node_coupling)
+        computeCouplingExchangeStep(coupling_points_, mesh_, state_, ctx,
+                                    options_, routing_dt,
+                                    window_exchange_accum_,
+                                    window_avail_budget_,
+                                    series_row_.data());
+    if (accumulateOutfallDischargeStep(coupling_points_, mesh_, state_, ctx,
+                                       options_, routing_dt,
+                                       window_outfall_accum_,
+                                       window_avail_budget_,
+                                       series_row_.data()) > 0)
+        window_had_outfall_clamp_ = true;
+    // Append this step's sample row (time = END of the routing step) to the
+    // window's exchange series for the RHS-side temporal interpolation.
+    if (!coupling_points_.empty()) {
+        coupling_series_.t.push_back(t);
+        coupling_series_.q.insert(coupling_series_.q.end(),
+                                  series_row_.begin(), series_row_.end());
+    }
+
     // Macro-step subcycling. Accumulate the routing time elapsed since the last
     // 2D advance, then (when it is time to fire) integrate the 2D solver over
     // the WHOLE accumulated window in a single advance() call. This lets CVODE
     // take large adaptive internal steps instead of being hard-stopped on every
     // ~routing-step boundary — the dominant cost driver for the semi-discrete
-    // solver. Two gating policies:
-    //   - Time-based (effective_window_ > 0, the default via COUPLING_WINDOW
-    //     AUTO = nominal ROUTING_STEP): fire when the accumulated routing time
-    //     reaches the window. The window is physical time, so 1D variable-step
-    //     collapse cannot shrink the 2D cadence — exactly the regime where a
-    //     step-count interval degenerates to advance-per-0.2s.
-    //   - Legacy step-count (COUPLING_INTERVAL > 1 with COUPLING_WINDOW unset).
-    // The coupling / forcing source terms are held constant across the window,
-    // and every downstream term (the solver advance, sim_time_, boundary-flux,
-    // continuity, statistics, and the mass-balance ledgers) uses the same
-    // accumulated `dt`, so the 1D↔2D exchange stays conservative over the macro
-    // step. dt varies under VARIABLE_STEP, so accumulate the actual elapsed time.
+    // solver. Gating is TIME-based only (effective_window_, resolved at
+    // initialize(); legacy COUPLING_INTERVAL now maps to a time window there):
+    // the window is physical time, so 1D variable-step collapse cannot shrink
+    // the 2D cadence — exactly the regime where the old step-count interval
+    // degenerated to an advance per MINIMUM_STEP. Every downstream term (the
+    // solver advance, sim_time_, boundary-flux, continuity, statistics, and
+    // the mass-balance ledgers) uses the same accumulated `dt`, so the 1D↔2D
+    // exchange stays conservative over the macro step. dt varies under
+    // VARIABLE_STEP, so accumulate the actual elapsed time.
     pending_dt_ += routing_dt;
-    ++coupling_counter_;
     last_t_ = t;
     const bool force_window = force_next_window_;
     if (!force_window && effective_window_ > 0.0) {
@@ -718,14 +767,10 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
         // systematically overshoot: the alternative is overshooting by a whole
         // step). A window equal to the actual routing step fires every step.
         if (pending_dt_ + 0.5 * routing_dt < effective_window_) return;
-    } else if (!force_window && options_.coupling_interval > 1
-               && coupling_counter_ < options_.coupling_interval) {
-        return;  // Defer the 2D advance; keep accumulating elapsed routing time.
     }
     force_next_window_ = false;
     const double dt = pending_dt_;   // the 2D macro-step
     pending_dt_ = 0.0;
-    coupling_counter_ = 0;
     fireAdvanceWindow(ctx, dt, t);
 }
 
@@ -736,11 +781,31 @@ void SurfaceRouter2D::prepareOneShotForcing(SimulationContext& ctx) {
     if (pending_dt_ > 0.0) {
         const double dt = pending_dt_;
         pending_dt_ = 0.0;
-        coupling_counter_ = 0;
         force_next_window_ = false;
         fireAdvanceWindow(ctx, dt, last_t_);
     }
     force_next_window_ = true;
+}
+
+
+void SurfaceRouter2D::resetWindowAccumulators() {
+    std::fill(window_exchange_accum_.begin(), window_exchange_accum_.end(), 0.0);
+    std::fill(window_outfall_accum_.begin(), window_outfall_accum_.end(), 0.0);
+    // Withdrawal budget = the water each cell actually holds right now (the
+    // state the next window's per-step evaluations will read as frozen).
+    const int nt = mesh_.n_triangles();
+    for (int i = 0; i < nt; ++i)
+        window_avail_budget_[static_cast<std::size_t>(i)] =
+            std::max(0.0, state_.volume[static_cast<std::size_t>(i)]);
+    coupling_series_.clearSamples();
+    // Deviation coefficients stay from the LAST fired window on purpose: the
+    // solver only integrates inside fireAdvanceWindow, so they are re-derived
+    // (or zeroed) before every advance; clearing them here as well keeps a
+    // failed window from replaying a stale shape.
+    std::fill(coupling_series_.dev_scale.begin(),
+              coupling_series_.dev_scale.end(), 0.0);
+    std::fill(coupling_series_.dev_mean.begin(),
+              coupling_series_.dev_mean.end(), 0.0);
 }
 
 
@@ -749,28 +814,81 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     // Save 2D state
     state_.save_state();
 
-    // Node coupling. Default (held-flux) path: pre-compute the per-window
-    // exchange here and inject it as a held source + 1D lateral inflow. Live
-    // macro-step path (state_.node_coupling set, COUPLING_INTERVAL > 1): the
-    // orifice is evaluated INSIDE the CVODE RHS against the live 2D head so it
-    // self-limits and stays stable over the large window; the conservative
-    // ∫Q dt it integrates is booked to the 1D node + 2D ledger AFTER the advance.
+    // Decoupled-timestep coupling (2026-07 plan): the exchange was evaluated
+    // and booked to the 1D EVERY routing step (advancePostRouting); here the
+    // accumulated volumes are delivered to the 2D as the window source. The
+    // MEAN rate per point goes into the held coupling_flux (the conservative
+    // baseline: active-set seeding, quiescence, and every backend read it);
+    // the sampled per-step series is finalized below into a zero-mean
+    // deviation the CVODE RHS interpolates in time. Live macro-step path
+    // (state_.node_coupling set): the junction accumulators are identically
+    // zero (the orifice is evaluated inside the RHS); outfall accumulators
+    // apply on both paths.
     const bool live_coupling = (state_.node_coupling != nullptr);
-    if (!live_coupling)
-        computeCouplingExchange(coupling_points_, mesh_, state_, ctx, options_, dt);
-    else
-        // The held path zeroes coupling_flux inside computeCouplingExchange;
-        // the live path skips it, and scatterCouplingFlux ACCUMULATES (+=), so
-        // without this reset the per-window outfall injection below compounds
-        // across windows (and a failed window's flux would leak into the next).
-        std::fill(state_.coupling_flux.begin(), state_.coupling_flux.end(), 0.0);
-
-    // Transfer outfall discharges into 2D cells (both paths). Withdrawal is
-    // capped at the water available in the receiving cells; the ledger books
-    // the applied (clamped) rates from outfall_applied_q_.
-    if (transferOutfallDischarges(coupling_points_, mesh_, state_, ctx, options_,
-                                  dt, outfall_applied_q_) > 0)
+    std::fill(state_.coupling_flux.begin(), state_.coupling_flux.end(), 0.0);
+    // Junction accum is drain-positive (2D sink) → sign −1; outfall accum is
+    // discharge-positive (2D source) → sign +1.
+    injectAccumulatedExchange(coupling_points_, mesh_, state_,
+                              window_exchange_accum_, dt, -1.0);
+    injectAccumulatedExchange(coupling_points_, mesh_, state_,
+                              window_outfall_accum_, dt, +1.0);
+    if (window_had_outfall_clamp_) {
         ++outfall_clamp_windows_;
+        window_had_outfall_clamp_ = false;
+    }
+
+    // Finalize the interpolated-forcing series: per point, scale the sampled
+    // rate interpolant so its window integral equals the accumulated volume
+    // exactly, and record the mean it deviates around. lerp with hold at both
+    // ends over [t − dt, t]; trapezoid integral on the sample grid.
+    {
+        const int ncp = coupling_series_.ncp;
+        const int ns  = static_cast<int>(coupling_series_.t.size());
+        std::fill(coupling_series_.dev_scale.begin(),
+                  coupling_series_.dev_scale.end(), 0.0);
+        std::fill(coupling_series_.dev_mean.begin(),
+                  coupling_series_.dev_mean.end(), 0.0);
+        // Debug escape hatch: OPENSWMM_2D_NO_INTERP=1 keeps the accumulated
+        // exchange on the mean-rate baseline only (dev_scale stays 0), for
+        // isolating the temporal-interpolation term when diagnosing solver
+        // behaviour. Conservation is identical either way.
+        static const bool no_interp =
+            (std::getenv("OPENSWMM_2D_NO_INTERP") != nullptr);
+        if (!no_interp && ncp > 0 && ns >= 2 && dt > 0.0) {
+            const double t0 = t - dt;
+            const auto&  ts = coupling_series_.t;
+            const auto&  qs = coupling_series_.q;
+            for (int k = 0; k < ncp; ++k) {
+                // Net source volume for this point (m³): junction accums are
+                // drain-positive, so the source volume is their negation.
+                const auto  uk = static_cast<std::size_t>(k);
+                const double v_src = coupling_points_[uk].is_outfall
+                                     ? window_outfall_accum_[uk]
+                                     : -window_exchange_accum_[uk];
+                if (v_src == 0.0) continue;
+                // ∫ hold-lerp-hold over [t0, t]: leading hold + interior
+                // trapezoids + trailing hold (trailing span is 0 when the
+                // last sample lands on the window end, the usual case).
+                double integ = std::max(0.0, ts.front() - t0)
+                               * qs[static_cast<std::size_t>(0) * ncp + uk];
+                for (int s = 1; s < ns; ++s) {
+                    const double h = ts[static_cast<std::size_t>(s)]
+                                   - ts[static_cast<std::size_t>(s - 1)];
+                    integ += 0.5 * h
+                             * (qs[static_cast<std::size_t>(s - 1) * ncp + uk]
+                                + qs[static_cast<std::size_t>(s) * ncp + uk]);
+                }
+                integ += std::max(0.0, t - ts.back())
+                         * qs[static_cast<std::size_t>(ns - 1) * ncp + uk];
+                // Degenerate-series guard: an interpolant whose integral has
+                // collapsed (oscillating signs) cannot be scaled to the target
+                // volume without blowing up — fall back to the mean alone.
+                if (std::abs(integ) < 1.0e-12 * std::abs(v_src)) continue;
+                coupling_series_.dev_scale[uk] = v_src / integ;
+                coupling_series_.dev_mean[uk]  = v_src / dt;
+            }
+        }
+    }
 
     // Update rainfall from system gages
     updateRainfall(ctx);
@@ -836,19 +954,26 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     }
     if (quiescent) {
         ++quiescent_windows_;
-        // The solver will not run, so no exchange can be applied this window.
-        // Un-book the held exchanges (mirrors the failure path): a runtime
-        // coupling forcing can zero coupling_flux AFTER computeCouplingExchange
-        // / transferOutfallDischarges wrote their ledger entries, which would
-        // otherwise book an exchange the surface never moved.
-        for (const auto& cp : coupling_points_)
-            if (!cp.is_outfall)
-                ctx.nodes.coupling_volume[
-                    static_cast<std::size_t>(cp.node_idx)] = 0.0;
-        outfall_applied_q_.clear();
+        // No un-booking needed here (unlike the old window-sampled path): a
+        // quiescent window implies every per-step exchange in it was zero —
+        // any nonzero accumulator would have left coupling_flux nonzero above
+        // and disabled the skip — so the 1D consumed nothing all window.
     }
 
     bool advance_failed = false;
+
+    // TEMP overdraw diagnostics (OPENSWMM_2D_DEBUG_COUPLE=1).
+    static const bool dbg_couple =
+        (std::getenv("OPENSWMM_2D_DEBUG_COUPLE") != nullptr);
+    const double dbg_vol_before = dbg_couple ? totalVolume() : 0.0;
+    double dbg_drain_booked = 0.0, dbg_spill_booked = 0.0, dbg_outf_booked = 0.0;
+    if (dbg_couple) {
+        for (std::size_t k = 0; k < coupling_points_.size(); ++k) {
+            const double j = window_exchange_accum_[k];
+            if (j > 0) dbg_drain_booked += j; else dbg_spill_booked += -j;
+            dbg_outf_booked += window_outfall_accum_[k];
+        }
+    }
 
 #ifdef OPENSWMM_HAS_2D
     if (!quiescent) {
@@ -918,13 +1043,29 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
             ctx.warnings.push_back(buf);
         }
         solver_->reinitialize(sim_time_);
+        // The 1D already consumed its side of the exchange per routing step,
+        // but the frozen surface never moved the matching water. Redeliver the
+        // window's accumulated junction volumes NEGATED through the delivery
+        // queue: the 1D gives back what the 2D never gave up (and vice versa
+        // for spills), so the combined system stays mass-conservative.
+        // Spread over a window-length of routing steps to avoid a pulse.
+        // (Outfall accumulators: the 1D's outfall discharge is part of its
+        // normal outflow accounting, not lateral inflow — matching the old
+        // failure handling, the undelivered surface source is simply not
+        // booked to the 2D ledger.)
         if (!live_coupling) {
-            for (const auto& cp : coupling_points_)
-                if (!cp.is_outfall)
-                    ctx.nodes.coupling_volume[
-                        static_cast<std::size_t>(cp.node_idx)] = 0.0;
+            bool requeued = false;
+            for (std::size_t k = 0; k < coupling_points_.size(); ++k) {
+                const auto& cp = coupling_points_[k];
+                if (cp.is_outfall || window_exchange_accum_[k] == 0.0) continue;
+                ctx.nodes.coupling_queue[static_cast<std::size_t>(cp.node_idx)] +=
+                    -window_exchange_accum_[k] * options_.flow_2d_to_1d;
+                requeued = true;
+            }
+            if (requeued)
+                ctx.coupling_delivery_remaining =
+                    std::max(ctx.coupling_delivery_remaining, dt);
         }
-        outfall_applied_q_.clear();
 
         // Stability guard: halve the macro window so the retry pressure eases
         // (a window below the routing step degenerates to fire-every-step);
@@ -958,6 +1099,40 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
             const auto ni = static_cast<std::size_t>(node_coupling_points_[k].node_idx);
             ctx.nodes.coupling_volume[ni] += exch[k] * options_.flow_2d_to_1d;
         }
+    }
+
+    // Held + interpolated path — deviation reconciliation. The interpolated
+    // deviation is built to be net-zero, but its trapezoid scaling leaves a
+    // small residual under CVODE's BDF quadrature (measured: it leaks a few %
+    // of the exchange). The augmented accumulator captured that residual's
+    // EXACT integral ε_k (net extra 2D SOURCE volume, m³) per coupling point.
+    // Fold ε_k into the booked exchange so the 1D receipt, the 2D ledger, and
+    // the actual 2D volume change all close. MUST precede accumulateMassBalance
+    // (which reads the accumulators) — hence here, before sim_time_ += dt.
+    if (!live_coupling && dt > 0.0 && !advance_failed) {
+        const std::vector<double>& eps = solver_->last_coupling_exchange();
+        const std::size_t n = std::min(eps.size(), coupling_points_.size());
+        bool requeued = false;
+        for (std::size_t k = 0; k < n; ++k) {
+            const double e = eps[k];   // ∫dev dt: net extra 2D source (m³)
+            if (e == 0.0) continue;
+            if (coupling_points_[k].is_outfall) {
+                // Outfall source booked mean+dev; no 1D lateral-inflow side.
+                window_outfall_accum_[k] += e;
+            } else {
+                // Net 2D→1D drain is reduced by the extra source e. The 1D
+                // already consumed the mean per-step, so hand ε_k back through
+                // the delivery queue and shrink the ledger term to match.
+                window_exchange_accum_[k] -= e;
+                ctx.nodes.coupling_queue[
+                    static_cast<std::size_t>(coupling_points_[k].node_idx)] +=
+                        -e * options_.flow_2d_to_1d;
+                requeued = true;
+            }
+        }
+        if (requeued)
+            ctx.coupling_delivery_remaining =
+                std::max(ctx.coupling_delivery_remaining, dt);
     }
 
     // Refresh accepted-state output gradients once per window for snapshots
@@ -994,6 +1169,33 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
         }
     }
 
+    if (dbg_couple) {
+        double eps_sum = 0.0;
+        if (!live_coupling && !advance_failed) {
+            const auto& eps = solver_->last_coupling_exchange();
+            for (double e : eps) eps_sum += e;
+        }
+        const double vol_after = totalVolume();
+        double rain_vol = 0.0;
+        const int ntq = mesh_.n_triangles();
+        for (int i = 0; i < ntq; ++i)
+            rain_vol += state_.rainfall[static_cast<std::size_t>(i)]
+                        * mesh_.tri_area[static_cast<std::size_t>(i)] * dt;
+        const double net_booked_2d_out =
+            dbg_drain_booked - dbg_spill_booked - dbg_outf_booked;
+        // Conservation: dVol == rain_in − net_coupling_out (no evap/boundary here).
+        const double expect_dVol = rain_vol - net_booked_2d_out;
+        std::fprintf(stderr,
+            "[couple] t=%.1f dt=%.2f fail=%d quiet=%d | dVol=%.3f rain=%.3f "
+            "drain=%.3f spill=%.3f outf=%.3f net_out=%.3f eps=%.4f | "
+            "expect_dVol=%.3f RESID=%.3f\n",
+            t, dt, int(advance_failed), int(quiescent),
+            vol_after - dbg_vol_before, rain_vol,
+            dbg_drain_booked, dbg_spill_booked, dbg_outf_booked,
+            net_booked_2d_out, eps_sum, expect_dVol,
+            (vol_after - dbg_vol_before) - expect_dVol);
+    }
+
     sim_time_ += dt;
 
     // Per-cell continuity residual (local mass-balance diagnostic). old_depth
@@ -1015,22 +1217,20 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
 
     // Accumulate the global 2D mass-balance terms for this step. A failed
     // (frozen) window moved no water — rainfall/evaporation/exchange were not
-    // integrated, and the held exchanges were un-booked above — so booking
-    // them would inject phantom volume into the ledger.
+    // integrated, and the accumulated junction volumes were re-queued back to
+    // the 1D above — so booking them would inject phantom volume.
     if (!advance_failed) accumulateMassBalance(ctx, dt);
 
-    // Hand the window's junction-exchange volumes to the 1D side as a delivery
-    // QUEUE: assembleLateralInflows drains coupling_queue at the uniform rate
+    // LIVE path only: hand the window's junction-exchange volumes (booked as
+    // window totals by the live-RHS block above) to the 1D side as a delivery
+    // QUEUE — assembleLateralInflows drains it at the uniform rate
     // queue / coupling_delivery_remaining over the following routing steps, so
-    // a multi-step macro window's volume no longer lands on the node as a
-    // single-step pulse (window/routing-step × the physical rate — which
-    // instantly flooded small junctions and drove a drain/spill churn). MUST
+    // the multi-step window total does not land as a single-step pulse. MUST
     // run AFTER accumulateMassBalance (which reads coupling_volume as "this
-    // window's exchange"). A failed or quiescent window un-booked its
-    // exchanges above (coupling_volume already 0), so this transfers nothing.
-    // Any jitter leftover still queued from the previous window is preserved
-    // (+=) — the node always receives exactly the booked volume.
-    {
+    // window's exchange"). The default per-step path books coupling_volume in
+    // step-sized increments consumed directly at the next routing step — its
+    // volumes never route through this queue.
+    if (live_coupling) {
         bool queued = false;
         for (const auto& cp : coupling_points_) {
             if (cp.is_outfall) continue;
@@ -1052,6 +1252,11 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
 
     // Clear RESET forcings
     state_.clear_reset_forcings();
+
+    // Re-seed the withdrawal budget from the just-accepted state and zero the
+    // window accumulators + series for the next window (all outcomes: the
+    // failed path re-queued its volumes above; the quiescent path had none).
+    resetWindowAccumulators();
 }
 
 
@@ -1063,7 +1268,6 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     if (active_ && pending_dt_ > 0.0) {
         const double dt = pending_dt_;
         pending_dt_ = 0.0;
-        coupling_counter_ = 0;
         force_next_window_ = false;
         fireAdvanceWindow(ctx, dt, last_t_);
     }
@@ -1257,34 +1461,30 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     mb.evap_out += evap_vol * dt;
     state_.evap_loss_total += evap_vol * dt;
 
-    // Coupling and outfall exchange. The junction term reads nodes.coupling_volume
-    // (the per-window exchange VOLUME, 1D ft³, just written above); the outfall term
-    // reads nodes.inflow/outflow (1D flow units). Both convert to SI for the 2D
-    // ledger. coupling_volume is a per-NODE total (computeCouplingExchange / the
-    // live booking accumulate all coupling points for a node into it), so dedupe by
-    // node index to avoid double counting when several points map to one node.
+    // Coupling and outfall exchange, from the per-window accumulators (m³,
+    // SI-native, already capped/clamped — exactly what the 2D domain was asked
+    // to move). Junction sign: + = 2D→1D drain (out of 2D), − = 1D→2D spill.
+    // Outfall sign: + = pipe discharge into 2D (source), − = withdrawal. On
+    // the live macro-step path the junction exchange is instead booked as a
+    // per-node window total in nodes.coupling_volume (written by the live
+    // booking block above) — read it with a per-node dedupe, matching the
+    // per-node aggregation of that path.
+    const bool live = (state_.node_coupling != nullptr);
     std::unordered_set<int> seen;
-    for (const auto& cp : coupling_points_) {
-        if (!seen.insert(cp.node_idx).second) continue;
-        auto ni = static_cast<std::size_t>(cp.node_idx);
+    for (std::size_t k = 0; k < coupling_points_.size(); ++k) {
+        const auto& cp = coupling_points_[k];
         if (cp.is_outfall) {
-            // Net signed 1D→2D exchange at the outfall — exactly the quantity
-            // transferOutfallDischarges injected into coupling_flux this window
-            // (AFTER its withdrawal cap), so the ledger matches what the 2D
-            // domain actually received/gave up. Positive = pipe discharge into
-            // 2D (source); negative = surface water drawn back (withdrawal).
-            auto it = outfall_applied_q_.find(cp.node_idx);
-            double q = (it != outfall_applied_q_.end()) ? it->second : 0.0;
-            if (q > 0.0) mb.outfall_in  += q * dt;
-            else         mb.outfall_out += -q * dt;
+            const double v = window_outfall_accum_[k];
+            if (v > 0.0) mb.outfall_in  += v;
+            else         mb.outfall_out += -v;
+        } else if (!live) {
+            const double v = window_exchange_accum_[k];
+            if (v > 0.0) mb.coupling_2d_to_1d_out += v;
+            else         mb.coupling_1d_to_2d_in  += -v;
         } else {
-            // Positive = 2D→1D drainage (out of 2D); negative = 1D→2D spill.
-            // coupling_volume is the exchanged VOLUME for this window (1D units,
-            // ft³, just written by computeCouplingExchange / the live booking);
-            // convert ft³→m³ and book directly — no ·dt (already a volume). This
-            // is the exact volume the 1D side will receive next step, so the two
-            // ledgers stay matched under VARIABLE_STEP.
-            double vol = ctx.nodes.coupling_volume[ni] * options_.vol_1d_to_2d;
+            if (!seen.insert(cp.node_idx).second) continue;
+            const double vol = ctx.nodes.coupling_volume[
+                static_cast<std::size_t>(cp.node_idx)] * options_.vol_1d_to_2d;
             if (vol > 0.0) mb.coupling_2d_to_1d_out += vol;
             else           mb.coupling_1d_to_2d_in  += -vol;
         }

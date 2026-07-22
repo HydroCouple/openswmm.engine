@@ -193,9 +193,15 @@ struct SolverOptions2D {
     double flux_dh_eps       = 0.004;   ///< Diffusive-flux gradient floor (m)
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
     int    max_krylov_dim    = 30;      ///< Max Krylov subspace dimension
-    int    coupling_interval = 0;       ///< 0 = every SWMM step
+    /// Legacy 2D advance cadence in ROUTING STEPS. Step-count gating itself is
+    /// retired (2026-07 decoupling plan): under AUTO COUPLING_WINDOW a value
+    /// N > 1 now resolves to the TIME window N × nominal ROUTING_STEP, which
+    /// preserves the author's intended cadence in physical time instead of
+    /// collapsing with the 1D variable step. Parsed/serialized unchanged.
+    int    coupling_interval = 0;       ///< 0 = every SWMM step (via AUTO window)
     /// 2D advance window in SECONDS of simulation time. −1 = AUTO (window =
-    /// the nominal [OPTIONS] ROUTING_STEP, clamped to MAX_TIMESTEP); 0 =
+    /// the nominal [OPTIONS] ROUTING_STEP, clamped to MAX_TIMESTEP; or
+    /// COUPLING_INTERVAL × ROUTING_STEP when that legacy key is > 1); 0 =
     /// advance every routing step; > 0 = explicit window length. A time-based
     /// window is immune to 1D variable-step collapse — a step-count
     /// COUPLING_INTERVAL silently shrinks with the routing step, which is
