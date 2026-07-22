@@ -326,6 +326,8 @@ add_executable(test_engine_2d_spectral_rom
     test_2d_spectral_rom.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/2d/solver/SpectralPrecond2D.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/2d/uncertainty/SpectralROM.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/2d/mesh/MeshBuilder.cpp
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/UncertaintyEnsemble.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/GraphEigenBasis.cpp
     ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpectralROM1D.cpp
 )
