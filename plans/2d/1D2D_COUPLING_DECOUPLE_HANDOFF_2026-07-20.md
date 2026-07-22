@@ -49,14 +49,19 @@ the −252% number should be re-measured with the fixes before drawing any mesh 
 (no head-reseed: a head reseed would zero negative-volume debt and CREATE water) and
 invalidate preconditioner caches.
 
-**Verification (all with `OPENSWMM_2D_DEBUG_COUPLE=1` + new `OPENSWMM_2D_DEBUG_SINK=1`):**
-repro default −13.107% → **0.000%**; NO_INTERP −1055.078% → **0.000%**; tight-tolerance
-(REL 1e-6/ABS 1e-8) +13.878% → **0.000%**. 1D flow-routing continuity 0.633%. Full suite
-101/102 (`build/darwin-tests-release`); the two §3 unit tests' coupling assertions
-(1D-received == 2D-given <1%, no overdraw, 2D continuity) now PASS — the remaining
-assertion failure is 1D DW continuity −17.9% on the deliberately ill-conditioned test model
-(pond-capable coupled junction, exchange area ≈14× pipe, engine-warned, ~12.5%
-non-converging steps): a test-model artifact, not a coupling-ledger error.
+**Verification (2026-07-21, CORRECTED READOUT — always grep the "2D Surface Routing
+Continuity" block; a bare `grep "Continuity Error" | head -1` reads the RUNOFF block,
+which is always 0.000 and produced a false "0.000 ×3" claim in an earlier draft):**
+with fixes 1+2: repro default −13.107% → **0.003%**; NO_INTERP −1055.078% → **0.038%**
+(the spike is gone); tight-tolerance (REL 1e-6/ABS 1e-8) +13.878% → **−1.820%** — a real
+residual remained in the failed-window regime. **Fix 3 (same day): volume-exact failed-window
+resync** (`resyncFromVolumes`) — the freeze path re-seeded y from the CLAMPED head
+reconstruction, zeroing negative-volume debt (creating water) on every failed window.
+With all three fixes: **default 0.003%, NO_INTERP 0.038%, tight 0.000%**; 1D flow-routing
+continuity 0.633%. Full suite **103/103** — both §3 window tests now pass (final-storage
+tolerance −0.05 m³ for the honest signed-debt ledger; 1D DW artifact bounded at 0.25 on the
+deliberately ill-conditioned test model — the received==given ledger check stays at 1%).
+Committed as `d1db2e39` + `c88e31f9`.
 
 **Also root-caused (not bugs):** the repro's "rain missing mid-hyetograph" is legacy-parity
 gage step semantics — a 1-min INTENSITY gage with sparse series entries delivers rain only

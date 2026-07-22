@@ -30,6 +30,31 @@ windows failed; 2D −251.3%; 1D avg step 0.22 s (1.55 s 1D-only). Remaining
 Bellinge-scale leak suspect: failure-path `reinitialize()` head-reseed zeroing
 negative-volume cells (superseded by Phase 3, which deletes the failure path).
 
+## Phase 3c decision — global VFR default REJECTED (evidence-based, 2026-07-22)
+
+A/B of FLAT (default) vs VFR + VFR_FACE on the inundation models, analytic
+Jacobian active in both:
+
+| Model | FLAT | VFR | Ratio | Note |
+|---|---|---|---|---|
+| weir | 47.7 s | 78.4 s | 1.64× slower | BDF steps ~equal (75.8k vs 75.9k); Krylov iters 59k→120k |
+| road | 24.1 s | 41.7 s | 1.73× slower | drain 42.0k→47.0k (physics shift) |
+| MS-A 10⁴:1 | 28.3 s | 92.6 s | 3.3× slower | — |
+
+The cost is linear-solve conditioning at shorelines (Krylov iters double at
+near-equal step count), i.e. the "3–8× more CVODE steps" the SolverOptions
+comment warned of — a genuine closure COST, not a bug (the VFR analytic-Jv
+parity test passes to 5e-5). VFR's fully-wet branch IS flat, so deep-water
+inundation models pay for shoreline wet/dry resolution they don't need.
+
+**Decision:** do NOT flip the global default to VFR. The uphill-ratchet VFR
+fixes is a LARGE-high-relief-cell (watershed) pathology; the right treatment is
+the relief-gated **AUTO** closure (FLAT on low-relief urban/inundation cells,
+VFR only where per-cell relief exceeds a threshold), implemented in **Phase 4**
+alongside the graded-atol large-cell work — not a blanket Phase 3 default flip.
+FLAT stays the default; VFR/VFR_FACE remain opt-in and are now analytic-J·v
+capable. Artifacts: /tmp/wv.rpt, /tmp/rv.rpt, ms_a_r10000_vfr.inp.
+
 ## Fixture provenance
 
 - `examples/imex_scaling/ms_a_r100.inp` ← `gen_multiscale_mesh.py ms_a_r100.inp --dx-fine 20`
