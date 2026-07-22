@@ -357,6 +357,10 @@ if(OPENSWMM_BUILD_2D)
     # driver), Eq. 14 wetting gate, and option round-trip. See
     # plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
     add_gtest_unit(test_engine_2d_vfr_closure test_2d_vfr_closure.cpp)
+    # Analytic J·v (SurfaceTangent) parity vs central-difference of the RHS —
+    # guards the analytic CVODE Jacobian that replaces the finite-difference
+    # matrix-free J·v (Phase 2 of the 2D reformulation).
+    add_gtest_unit(test_engine_2d_analytic_jv test_2d_analytic_jv.cpp)
 endif()
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation

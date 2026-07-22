@@ -146,6 +146,21 @@ enum class FaceDepth2D : int8_t {
 };
 
 /**
+ * @brief How the CVODE linear solver forms Jacobian-vector products.
+ *
+ * FD (default while validating): SUNDIALS' matrix-free difference quotient of
+ * the RHS — every Krylov iteration re-runs the whole flux pipeline. ANALYTIC:
+ * the closed-form tangent (SurfaceTangent) as a sparse mat-vec, eliminating that
+ * per-iteration RHS. ANALYTIC covers the interior + evaporation RHS; the solver
+ * auto-falls-back to FD when a y-dependent boundary (NORMAL_FLOW / SPECIFIED_
+ * STAGE) or the live-coupling path is present. Parsed from [2D_OPTIONS] JACOBIAN.
+ */
+enum class Jacobian2D : int8_t {
+    FD       = 0,   ///< finite-difference J·v (SUNDIALS default)
+    ANALYTIC = 1    ///< analytic sparse J·v (SurfaceTangent)
+};
+
+/**
  * @brief How raingage rainfall is mapped onto the 2D mesh cells.
  *
  * NATURAL_NEIGHBOUR (default) spatially interpolates the located raingages onto
@@ -257,6 +272,13 @@ struct SolverOptions2D {
     // with CELL_CLOSURE=VFR to complete the artifact fix; opt-in for the same
     // reason. Parsed from [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE).
     FaceDepth2D        face_reconstruction = FaceDepth2D::MEAN;
+
+    /// Jacobian-vector product mode for the CVODE Krylov solve. Default ANALYTIC
+    /// (the closed-form tangent — kills the finite-difference J·v that dominates
+    /// the solve); auto-falls-back to FD when a y-dependent boundary or the
+    /// live-coupling path is active. Parsed from [2D_OPTIONS] JACOBIAN (FD|ANALYTIC);
+    /// env OPENSWMM_2D_JACOBIAN (fd|analytic) overrides for A/B sweeps.
+    Jacobian2D         jacobian        = Jacobian2D::ANALYTIC;
 
     /// Wetted-area-fraction floor ε of the regularized VFR closure: below wet
     /// fraction ε the η(V) relation continues linearly (slope 1/(εA)), bounding

@@ -437,6 +437,7 @@ if(OPENSWMM_BUILD_2D)
         2d/data/*.cpp
         2d/mesh/*.cpp
         2d/solver/SurfaceFluxCalculator.cpp
+        2d/solver/SurfaceTangent.cpp
         2d/solver/ActiveSetBuilder.cpp
         2d/coupling/*.cpp
         2d/input/*.cpp

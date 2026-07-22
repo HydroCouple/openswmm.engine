@@ -31,6 +31,7 @@
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "ISurfaceSolver.hpp"
+#include "SurfaceTangent.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 
@@ -234,6 +235,27 @@ private:
                           N_Vector r, N_Vector z,
                           double gamma, double delta, int lr,
                           void* user_data);
+
+    /**
+     * @brief Analytic J·v setup — rebuild the linearization about the current y.
+     * Registered as CVLsJacTimesSetupFn (once per linear-solver setup).
+     */
+    static int jtsetup_fn(double t, N_Vector y, N_Vector fy, void* user_data);
+
+    /**
+     * @brief Analytic J·v apply — the sparse mat-vec (once per Krylov iteration).
+     * Registered as CVLsJacTimesVecFn. Replaces the finite-difference J·v.
+     */
+    static int jtimes_fn(N_Vector v, N_Vector Jv, double t, N_Vector y,
+                         N_Vector fy, void* user_data, N_Vector tmp);
+
+    /// True when this run uses the analytic J·v (no y-dependent boundary / live
+    /// coupling); decided at initialize by analyticJvEligible().
+    bool analyticJvEligible(const SurfaceStateData& state,
+                            const SolverOptions2D& opts) const;
+
+    bool            use_analytic_jv_ = false;  ///< analytic vs FD J·v this run
+    SurfaceTangents tangents_;                 ///< precomputed J·v coefficients
 };
 
 } // namespace openswmm::twoD
