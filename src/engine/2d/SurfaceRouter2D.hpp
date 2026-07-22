@@ -281,14 +281,6 @@ private:
     /// outfall withdrawals draw it down so their window-cumulative total can
     /// never overdraw the frozen 2D state.
     std::vector<double> window_avail_budget_;
-    /// Sampled per-step exchange series for the CURRENT window (published on
-    /// state_.coupling_series). advancePostRouting appends one row per routing
-    /// step; fireAdvanceWindow finalizes the zero-mean deviation coefficients
-    /// the CVODE RHS interpolates ("interpolate the temporally misaligned
-    /// fluxes" — user refinement 2026-07-20).
-    CouplingForcingSeries coupling_series_;
-    /// Scratch row reused by the per-step sampling (net 2D-source rates).
-    std::vector<double> series_row_;
     /// At least one outfall withdrawal was clamped by the budget this window.
     bool window_had_outfall_clamp_ = false;
     /// Seed window_avail_budget_ from the current (just-accepted) 2D state,

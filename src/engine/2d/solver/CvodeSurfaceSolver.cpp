@@ -168,63 +168,11 @@ int CvodeSurfaceSolver::rhs_fn(double t, N_Vector y, N_Vector ydot,
             ydot_data[nt + k] = Q;                                      // dA_k/dt = Q
         }
     }
-
-    // 8. Interpolated-exchange deviation (decoupled-timestep coupling). The
-    //    held coupling_flux source carries each point's MEAN exchange rate for
-    //    the window (assembleRHS above); here the per-routing-step sampled
-    //    series adds its ZERO-MEAN, volume-preserving temporal shape:
-    //        dev_k(t) = dev_scale[k]·lerp_k(t) − dev_mean[k]
-    //    dev has no dependence on y, so it adds no stiffness and cancels out
-    //    of the finite-difference Jv products; ∫dev dt == 0 by construction,
-    //    so conservation is untouched. Points with dev_scale == 0 (degenerate
-    //    series, or a backend-fallback window) contribute nothing.
-    // Held-path deviation accumulators live in nt+k. Zero them unconditionally
-    // here (node_coupling==null on this path, so these slots are ours): if the
-    // series block below is skipped this eval, the integral must still not
-    // accumulate stale ydot.
-    if (state.node_coupling == nullptr)
-        for (int k = 0; k < ctx->solver->nc_; ++k) ydot_data[nt + k] = 0.0;
-
-    if (state.coupling_series != nullptr && state.coupling_series->points != nullptr
-        && !state.coupling_series->t.empty()
-        && !state.coupling_series->dev_scale.empty()) {
-        const auto& cs  = *state.coupling_series;
-        const auto& pts = *cs.points;
-        const int   ncp = cs.ncp;
-        const auto& ts  = cs.t;
-        const int   ns  = static_cast<int>(ts.size());
-
-        // Bracket t in the shared sample times (hold-extrapolate both ends).
-        int hi = static_cast<int>(
-            std::upper_bound(ts.begin(), ts.end(), t) - ts.begin());
-        int lo = hi - 1;
-        double w = 0.0;   // lerp weight toward sample hi
-        if (hi <= 0)            { lo = hi = 0; }
-        else if (hi >= ns)      { lo = hi = ns - 1; }
-        else {
-            const double span = ts[static_cast<std::size_t>(hi)]
-                              - ts[static_cast<std::size_t>(lo)];
-            w = (span > 0.0) ? (t - ts[static_cast<std::size_t>(lo)]) / span : 0.0;
-        }
-
-        const double* qlo = cs.q.data() + static_cast<std::size_t>(lo) * ncp;
-        const double* qhi = cs.q.data() + static_cast<std::size_t>(hi) * ncp;
-        const int ncap = std::min(ncp, ctx->solver->nc_);
-        for (int k = 0; k < ncp; ++k) {
-            const double sc = cs.dev_scale[static_cast<std::size_t>(k)];
-            if (sc == 0.0) continue;
-            const double q  = qlo[k] + w * (qhi[k] - qlo[k]);
-            const double dev = sc * q - cs.dev_mean[static_cast<std::size_t>(k)];
-            // Accumulate the deviation's EXACT CVODE integral per point so the
-            // caller can book its net (ideally 0, but nonzero from the
-            // quadrature mismatch) back conservatively. Written even when dev
-            // rounds to 0 this eval — the slot is a running integral.
-            if (k < ncap) ydot_data[nt + k] = dev;
-            if (dev == 0.0) continue;
-            scatterCouplingToYdot(mesh, state, pts[static_cast<std::size_t>(k)],
-                                  dev, ydot_data);
-        }
-    }
+    // (The interpolated-deviation forcing was deleted in Phase 3: the held path
+    // carries each point's MEAN exchange rate in coupling_flux — conservative,
+    // y-independent, and analytic-Jacobian-transparent. The deviation's y-
+    // dependent scatter was the sole term blocking the analytic J·v on coupled
+    // models and the source of the trapezoid-vs-BDF quadrature reconciliation.)
 
     return 0;  // Success
 }
@@ -541,12 +489,12 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // integrate to zero under CVODE's BDF quadrature, which otherwise leaks
     // exchange volume. The two paths are mutually exclusive (node_coupling is
     // null on the held path), so the nt+k slots never collide.
+    // Augmented ∫Q dt accumulator rows: one per LIVE node-coupling point. The
+    // held path carries no augmented state (its exchange is the mean-rate
+    // coupling_flux source, booked per routing step — no in-solver quadrature).
     nc_ = (state.node_coupling != nullptr)
               ? static_cast<int>(state.node_coupling->size())
-              : (state.coupling_series != nullptr
-                 && state.coupling_series->points != nullptr)
-                    ? static_cast<int>(state.coupling_series->points->size())
-                    : 0;
+              : 0;
     const int ntot = nt + nc_;
 
     // Create N_Vector wrapping state.depth (threaded when THREADS > 1).
@@ -697,16 +645,11 @@ bool CvodeSurfaceSolver::analyticJvEligible(const SurfaceStateData& state,
         return false;
     }
     // The analytic tangent covers the interior flux + evaporation sink. It does
-    // NOT linearize y-dependent boundaries, the live-RHS orifice, or the held
-    // path's interpolated deviation scatter (whose upwind weights depend on y),
-    // so fall back to FD when any is present. The deviation apparatus is deleted
-    // in Phase 3, after which analytic is the default for all coupled models
-    // too; here it is skipped whenever a coupling series with points is attached
-    // (unless the deviation is explicitly disabled via OPENSWMM_2D_NO_INTERP).
+    // NOT yet linearize y-dependent boundaries or the live-RHS orifice, so fall
+    // back to FD when either is present. The held path (mean-rate coupling_flux
+    // source, constant per window) is fully covered — the deviation scatter that
+    // used to block it was deleted in Phase 3.
     if (state.node_coupling != nullptr) return false;
-    if (state.coupling_series != nullptr && state.coupling_series->ncp > 0 &&
-        std::getenv("OPENSWMM_2D_NO_INTERP") == nullptr)
-        return false;
     // Active-set masking pins frozen cells' ydot to 0; the tangent does not
     // mask, so its rows would be nonzero there. Active set is opt-in (default
     // off) and removed in Phase 3 — stay on FD when it is enabled.

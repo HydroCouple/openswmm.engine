@@ -49,39 +49,6 @@ struct CouplingPoint {
 };
 
 /**
- * @brief Sampled 1D↔2D exchange time-series for one 2D advance window.
- *
- * @details Decoupled-timestep coupling (2026-07 plan, "interpolate the
- *          temporally misaligned fluxes"): every 1D routing step appends one
- *          row of per-coupling-point net 2D-source rates (m³/s, + into the 2D
- *          domain) sampled at that step. When the 2D window fires, the mean
- *          rate of each point's accumulated volume is injected as the held
- *          coupling_flux source (the conservative baseline every backend
- *          understands), and this series is finalized into a ZERO-MEAN
- *          deviation the CVODE RHS adds on top:
- *
- *              dev_k(t) = dev_scale[k]·lerp_k(t) − dev_mean[k]
- *
- *          with dev_scale chosen so ∫(mean + dev) dt over the window equals
- *          the accumulated volume EXACTLY — the interpolation shapes the
- *          forcing in time without ever changing the exchanged volume.
- *          Backends that ignore the series (ARKODE, GPU plugins) integrate
- *          the mean alone and remain conservative. dev_scale[k] == 0 disables
- *          the deviation for point k (degenerate series guard).
- */
-struct CouplingForcingSeries {
-    /// Coupling points the rows are indexed by (aliases the router's list).
-    const std::vector<CouplingPoint>* points = nullptr;
-    int ncp = 0;                 ///< Row stride == points->size().
-    std::vector<double> t;       ///< Absolute sample times (s), increasing.
-    std::vector<double> q;       ///< Flat [sample][cp] rates, stride ncp (m³/s).
-    std::vector<double> dev_scale;  ///< Per-point interpolant scale (0 = off).
-    std::vector<double> dev_mean;   ///< Per-point mean rate subtracted (m³/s).
-
-    void clearSamples() { t.clear(); q.clear(); }
-};
-
-/**
  * @brief Build the list of coupling points from mesh coupling maps.
  *
  * Resolves vertex/triangle → node mappings into CouplingPoint descriptors.

@@ -550,24 +550,16 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         else if (std::strcmp(m, "dw") == 0)  options_.momentum = MomentumType::DW;
     }
 
-    // Decoupled-timestep coupling state: per-point window accumulators, the
-    // per-cell withdrawal budget, and the sampled exchange series the CVODE
-    // RHS interpolates. Published on the state like node_coupling — and, like
-    // it, BEFORE solver_->initialize(), which sizes the augmented state (one
-    // ∫dev dt accumulator per series point) from state.coupling_series. Wiring
-    // it after left nc_ == 0: the deviation was scattered into the cells with
-    // no accumulator, so its BDF-quadrature residual leaked exchange volume
-    // uncorrected (the eps reconciliation read an empty vector).
+    // Decoupled-timestep coupling state: per-point window accumulators and the
+    // per-cell withdrawal budget. The exchange is booked to the 1D every routing
+    // step and injected into the 2D as the held MEAN-rate coupling_flux source
+    // when the window fires — conservative and y-independent. (The RHS-side
+    // interpolated deviation was deleted in Phase 3; it was the only term that
+    // blocked the analytic Jacobian on coupled models and it required a
+    // trapezoid-vs-BDF quadrature reconciliation to stay conservative.)
     window_exchange_accum_.assign(coupling_points_.size(), 0.0);
     window_outfall_accum_.assign(coupling_points_.size(), 0.0);
     window_avail_budget_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
-    series_row_.assign(coupling_points_.size(), 0.0);
-    coupling_series_.points = &coupling_points_;
-    coupling_series_.ncp    = static_cast<int>(coupling_points_.size());
-    coupling_series_.dev_scale.assign(coupling_points_.size(), 0.0);
-    coupling_series_.dev_mean.assign(coupling_points_.size(), 0.0);
-    coupling_series_.clearSamples();
-    state_.coupling_series = &coupling_series_;
     window_had_outfall_clamp_ = false;
 
     // Construct the time integrator. The backend (serial CPU vs. a runtime-
@@ -728,26 +720,18 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // samples heads at all — it injects exactly what accumulated.
     // Junctions skip this on the live-RHS path (exchange evaluated inside the
     // solver); outfalls accumulate per-step on both paths.
-    std::fill(series_row_.begin(), series_row_.end(), 0.0);
     if (!state_.node_coupling)
         computeCouplingExchangeStep(coupling_points_, mesh_, state_, ctx,
                                     options_, routing_dt,
                                     window_exchange_accum_,
                                     window_avail_budget_,
-                                    series_row_.data());
+                                    /*sample_row*/ nullptr);
     if (accumulateOutfallDischargeStep(coupling_points_, mesh_, state_, ctx,
                                        options_, routing_dt,
                                        window_outfall_accum_,
                                        window_avail_budget_,
-                                       series_row_.data()) > 0)
+                                       /*sample_row*/ nullptr) > 0)
         window_had_outfall_clamp_ = true;
-    // Append this step's sample row (time = END of the routing step) to the
-    // window's exchange series for the RHS-side temporal interpolation.
-    if (!coupling_points_.empty()) {
-        coupling_series_.t.push_back(t);
-        coupling_series_.q.insert(coupling_series_.q.end(),
-                                  series_row_.begin(), series_row_.end());
-    }
 
     // Macro-step subcycling. Accumulate the routing time elapsed since the last
     // 2D advance, then (when it is time to fire) integrate the 2D solver over
@@ -801,15 +785,6 @@ void SurfaceRouter2D::resetWindowAccumulators() {
     for (int i = 0; i < nt; ++i)
         window_avail_budget_[static_cast<std::size_t>(i)] =
             std::max(0.0, state_.volume[static_cast<std::size_t>(i)]);
-    coupling_series_.clearSamples();
-    // Deviation coefficients stay from the LAST fired window on purpose: the
-    // solver only integrates inside fireAdvanceWindow, so they are re-derived
-    // (or zeroed) before every advance; clearing them here as well keeps a
-    // failed window from replaying a stale shape.
-    std::fill(coupling_series_.dev_scale.begin(),
-              coupling_series_.dev_scale.end(), 0.0);
-    std::fill(coupling_series_.dev_mean.begin(),
-              coupling_series_.dev_mean.end(), 0.0);
 }
 
 
@@ -839,59 +814,6 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     if (window_had_outfall_clamp_) {
         ++outfall_clamp_windows_;
         window_had_outfall_clamp_ = false;
-    }
-
-    // Finalize the interpolated-forcing series: per point, scale the sampled
-    // rate interpolant so its window integral equals the accumulated volume
-    // exactly, and record the mean it deviates around. lerp with hold at both
-    // ends over [t − dt, t]; trapezoid integral on the sample grid.
-    {
-        const int ncp = coupling_series_.ncp;
-        const int ns  = static_cast<int>(coupling_series_.t.size());
-        std::fill(coupling_series_.dev_scale.begin(),
-                  coupling_series_.dev_scale.end(), 0.0);
-        std::fill(coupling_series_.dev_mean.begin(),
-                  coupling_series_.dev_mean.end(), 0.0);
-        // Debug escape hatch: OPENSWMM_2D_NO_INTERP=1 keeps the accumulated
-        // exchange on the mean-rate baseline only (dev_scale stays 0), for
-        // isolating the temporal-interpolation term when diagnosing solver
-        // behaviour. Conservation is identical either way.
-        static const bool no_interp =
-            (std::getenv("OPENSWMM_2D_NO_INTERP") != nullptr);
-        if (!no_interp && ncp > 0 && ns >= 2 && dt > 0.0) {
-            const double t0 = t - dt;
-            const auto&  ts = coupling_series_.t;
-            const auto&  qs = coupling_series_.q;
-            for (int k = 0; k < ncp; ++k) {
-                // Net source volume for this point (m³): junction accums are
-                // drain-positive, so the source volume is their negation.
-                const auto  uk = static_cast<std::size_t>(k);
-                const double v_src = coupling_points_[uk].is_outfall
-                                     ? window_outfall_accum_[uk]
-                                     : -window_exchange_accum_[uk];
-                if (v_src == 0.0) continue;
-                // ∫ hold-lerp-hold over [t0, t]: leading hold + interior
-                // trapezoids + trailing hold (trailing span is 0 when the
-                // last sample lands on the window end, the usual case).
-                double integ = std::max(0.0, ts.front() - t0)
-                               * qs[static_cast<std::size_t>(0) * ncp + uk];
-                for (int s = 1; s < ns; ++s) {
-                    const double h = ts[static_cast<std::size_t>(s)]
-                                   - ts[static_cast<std::size_t>(s - 1)];
-                    integ += 0.5 * h
-                             * (qs[static_cast<std::size_t>(s - 1) * ncp + uk]
-                                + qs[static_cast<std::size_t>(s) * ncp + uk]);
-                }
-                integ += std::max(0.0, t - ts.back())
-                         * qs[static_cast<std::size_t>(ns - 1) * ncp + uk];
-                // Degenerate-series guard: an interpolant whose integral has
-                // collapsed (oscillating signs) cannot be scaled to the target
-                // volume without blowing up — fall back to the mean alone.
-                if (std::abs(integ) < 1.0e-12 * std::abs(v_src)) continue;
-                coupling_series_.dev_scale[uk] = v_src / integ;
-                coupling_series_.dev_mean[uk]  = v_src / dt;
-            }
-        }
     }
 
     // Update rainfall from system gages
@@ -1109,39 +1031,9 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
         }
     }
 
-    // Held + interpolated path — deviation reconciliation. The interpolated
-    // deviation is built to be net-zero, but its trapezoid scaling leaves a
-    // small residual under CVODE's BDF quadrature (measured: it leaks a few %
-    // of the exchange). The augmented accumulator captured that residual's
-    // EXACT integral ε_k (net extra 2D SOURCE volume, m³) per coupling point.
-    // Fold ε_k into the booked exchange so the 1D receipt, the 2D ledger, and
-    // the actual 2D volume change all close. MUST precede accumulateMassBalance
-    // (which reads the accumulators) — hence here, before sim_time_ += dt.
-    if (!live_coupling && dt > 0.0 && !advance_failed) {
-        const std::vector<double>& eps = solver_->last_coupling_exchange();
-        const std::size_t n = std::min(eps.size(), coupling_points_.size());
-        bool requeued = false;
-        for (std::size_t k = 0; k < n; ++k) {
-            const double e = eps[k];   // ∫dev dt: net extra 2D source (m³)
-            if (e == 0.0) continue;
-            if (coupling_points_[k].is_outfall) {
-                // Outfall source booked mean+dev; no 1D lateral-inflow side.
-                window_outfall_accum_[k] += e;
-            } else {
-                // Net 2D→1D drain is reduced by the extra source e. The 1D
-                // already consumed the mean per-step, so hand ε_k back through
-                // the delivery queue and shrink the ledger term to match.
-                window_exchange_accum_[k] -= e;
-                ctx.nodes.coupling_queue[
-                    static_cast<std::size_t>(coupling_points_[k].node_idx)] +=
-                        -e * options_.flow_2d_to_1d;
-                requeued = true;
-            }
-        }
-        if (requeued)
-            ctx.coupling_delivery_remaining =
-                std::max(ctx.coupling_delivery_remaining, dt);
-    }
+    // (The held-path deviation reconciliation was deleted in Phase 3 with the
+    // deviation itself: the mean-rate held source carries the full window
+    // exchange with no in-solver quadrature to reconcile.)
 
     // Refresh the all-vertex pseudo-Laplacian heads once per accepted window
     // (Phase 1 hoist: this pass used to run inside every RHS/Jv evaluation).
