@@ -20,6 +20,7 @@
 #include "2d/data/MeshData.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
+#include "2d/data/BoundaryData.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/mesh/VfrClosure.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
@@ -176,4 +177,65 @@ TEST(AnalyticJv, MatchesFiniteDifferenceVfr) {
     }
     // VFR's dη/dV varies across the wetting front, so allow a touch more FD slack.
     EXPECT_LT(max_rel, 5.0e-5) << "VFR analytic vs FD J·v mismatch: " << max_rel;
+}
+
+// Parity with a SPECIFIED_STAGE boundary on every domain-boundary edge — the
+// outfall-tailwater case that gates weir/road/Bellinge onto the analytic path.
+TEST(AnalyticJv, MatchesFiniteDifferenceSpecifiedStage) {
+    auto mesh = makeGridMesh(5, 5, 10.0, 0.01);
+    const int nt = mesh.n_triangles();
+
+    SolverOptions2D opts;
+    opts.num_threads = 1;
+    SurfaceStateData state;
+    state.resize(nt, mesh.n_vertices());
+
+    // Attach a SPECIFIED_STAGE BC (prescribed head) to every boundary edge.
+    BoundaryData bc;
+    const int ne = nt * 3;
+    bc.edge_bc_type.assign(ne, static_cast<int8_t>(BoundaryType::WALL));
+    bc.edge_bed_slope.assign(ne, 0.0);
+    bc.edge_bc_head.assign(ne, 0.0);
+    bc.edge_bc_flow.assign(ne, 0.0);
+    bc.edge_bc_cum_flux.assign(ne, 0.0);
+    for (int i = 0; i < nt; ++i)
+        for (int e = 0; e < 3; ++e) {
+            const int nbr = (e == 0) ? mesh.tri_nbr0[i]
+                          : (e == 1) ? mesh.tri_nbr1[i] : mesh.tri_nbr2[i];
+            if (nbr < 0) {
+                const int slot = i * 3 + e;
+                bc.edge_bc_type[slot] =
+                    static_cast<int8_t>(BoundaryType::SPECIFIED_STAGE);
+                // A stage a little above the local bed so the edge conveys.
+                bc.edge_bc_head[slot] = mesh.tri_cz[i] + 0.20;
+            }
+        }
+    state.boundary = &bc;
+
+    std::mt19937 rng(2024);
+    std::uniform_real_distribution<double> ud(0.05, 0.55);
+    std::vector<double> V(nt), v(nt);
+    for (int i = 0; i < nt; ++i) V[i] = ud(rng) * mesh.tri_area[i];
+    for (int i = 0; i < nt; ++i) v[i] = ud(rng) - 0.3;
+
+    reconstruct(mesh, opts, state, V);
+    SurfaceTangents tang;
+    buildSurfaceTangents(mesh, state, opts, tang);
+    std::vector<double> Jv(nt, 0.0);
+    applyTangentJv(mesh, opts, tang, 0, v.data(), Jv.data());
+
+    const double eps = 1.0e-4;
+    std::vector<double> Vp(nt), Vm(nt), yp(nt), ym(nt);
+    for (int i = 0; i < nt; ++i) { Vp[i] = V[i] + eps * v[i]; Vm[i] = V[i] - eps * v[i]; }
+    rhs(mesh, opts, state, Vp, yp);
+    rhs(mesh, opts, state, Vm, ym);
+
+    double max_rel = 0.0;
+    for (int i = 0; i < nt; ++i) {
+        const double fd = (yp[i] - ym[i]) / (2.0 * eps);
+        const double scale = std::max(std::abs(fd), 1.0e-4);
+        max_rel = std::max(max_rel, std::abs(Jv[i] - fd) / scale);
+    }
+    EXPECT_LT(max_rel, 1.0e-5)
+        << "SPECIFIED_STAGE boundary analytic vs FD J·v mismatch: " << max_rel;
 }

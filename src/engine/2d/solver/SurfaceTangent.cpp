@@ -8,6 +8,7 @@
 
 #include "SurfaceTangent.hpp"
 #include "../mesh/VfrClosure.hpp"
+#include "../data/BoundaryData.hpp"
 
 #include <cmath>
 
@@ -90,6 +91,68 @@ inline double dEtaDV(const MeshData& m, const SurfaceStateData& s,
     return 1.0 / A;   // FLAT: η = z_c + V/A
 }
 
+// ∂F_bc/∂V_i for one boundary edge. Mirrors boundaryEdgeFlux in
+// SurfaceFluxCalculator.cpp exactly (frozen upwind/gate branch, as FD-Jv).
+inline double boundaryTangent(const MeshData& mesh, const SurfaceStateData& state,
+                              const SolverOptions2D& opts, int i, int slot,
+                              double detaI, bool vfr_face, double dh_eps) noexcept {
+    const BoundaryData* b = state.boundary;
+    if (!b) return 0.0;
+    const double L = mesh.edge_length[slot];
+    const double n = mesh.mannings_n[i];
+    const double depth = state.depth[i];
+    const int e = slot % 3;
+
+    switch (static_cast<BoundaryType>(b->edge_bc_type[slot])) {
+        case BoundaryType::NORMAL_FLOW: {
+            const double S = b->edge_bed_slope[slot];
+            if (S <= 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
+            // F = −(h_out^{5/3}·√S/n)·L. h_out = depth (or faceDepth(η_i)).
+            double h_out = depth, dhout_dV = 1.0 / mesh.tri_area[i];
+            if (vfr_face) {
+                double z_lo, z_hi; edgeEndpointZ(mesh, i, e, z_lo, z_hi);
+                h_out = faceDepth(state.head[i], z_lo, z_hi);
+                if (h_out <= 0.0) return 0.0;
+                dhout_dV = faceDepthPrime(state.head[i], z_lo, z_hi) * detaI;
+            }
+            const double dF_dhout = -(5.0 / 3.0) * std::cbrt(h_out * h_out)
+                                    * std::sqrt(S) / n * L;
+            return dF_dhout * dhout_dV;
+        }
+        case BoundaryType::SPECIFIED_STAGE: {
+            if (n <= 0.0) return 0.0;
+            const double h_bc = b->edge_bc_head[slot];
+            const double dh   = state.head[i] - h_bc;
+            const double A    = mesh.tri_area[i];
+            const double dx_b = (L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0;
+            if (dx_b <= 1.0e-12) return 0.0;
+            // Upwind conveyance depth (h_up depends on V_i only on OUTFLOW).
+            double h_up, dhup_dV = 0.0;
+            if (vfr_face) {
+                double z_lo, z_hi; edgeEndpointZ(mesh, i, e, z_lo, z_hi);
+                const double eta_up = (dh > 0.0) ? state.head[i] : h_bc;
+                h_up = faceDepth(eta_up, z_lo, z_hi);
+                if (dh > 0.0) dhup_dV = faceDepthPrime(eta_up, z_lo, z_hi) * detaI;
+            } else {
+                h_up = (dh > 0.0) ? depth
+                                  : std::max(h_bc - mesh.tri_cz[i], 0.0);
+                if (dh > 0.0) dhup_dV = 1.0 / A;
+            }
+            if (h_up <= 0.0) return 0.0;
+            const double C_b  = L / (n * std::sqrt(dx_b));
+            const double h53  = h_up * std::cbrt(h_up * h_up);
+            const double absd = std::abs(dh);
+            const double sign = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
+            const double Phi  = sign * regSqrt(absd, dh_eps);
+            const double dF_dDh  = -C_b * h53 * regSqrtPrime(absd, dh_eps);
+            const double dF_dhup = -C_b * (5.0 / 3.0) * std::cbrt(h_up * h_up) * Phi;
+            return dF_dDh * detaI + dF_dhup * dhup_dV;   // ∂dh/∂V_i = detaI
+        }
+        default:
+            return 0.0;   // WALL / SPECIFIED_FLOW / RATING_CURVE: constant in y
+    }
+}
+
 }  // namespace
 
 void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
@@ -116,7 +179,15 @@ void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
             const int nbr  = tri_nbr(mesh, i, e);
             tang.dfdvi[slot]   = 0.0;
             tang.dfdvnbr[slot] = 0.0;
-            if (nbr < 0) continue;   // boundary: solver stays on FD-Jv (see .hpp)
+            if (nbr < 0) {
+                // Boundary edge: diagonal-only tangent (∂F_bc/∂V_i). The
+                // y-dependent types (NORMAL_FLOW, SPECIFIED_STAGE) mirror the
+                // exact boundaryEdgeFlux formulas; WALL/SPECIFIED_FLOW/RATING
+                // are constant in y ⇒ 0.
+                tang.dfdvi[slot] = boundaryTangent(mesh, state, opts, i, slot,
+                                                   detaI, vfr_face, dh_eps);
+                continue;
+            }
 
             const double h_L = state.head[i];
             const double h_R = state.head[nbr];

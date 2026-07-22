@@ -644,26 +644,16 @@ bool CvodeSurfaceSolver::analyticJvEligible(const SurfaceStateData& state,
     } else if (opts.jacobian == Jacobian2D::FD) {
         return false;
     }
-    // The analytic tangent covers the interior flux + evaporation sink. It does
-    // NOT yet linearize y-dependent boundaries or the live-RHS orifice, so fall
-    // back to FD when either is present. The held path (mean-rate coupling_flux
-    // source, constant per window) is fully covered — the deviation scatter that
-    // used to block it was deleted in Phase 3.
+    // The analytic tangent covers the interior flux, the evaporation sink, and
+    // the y-dependent boundary edges (NORMAL_FLOW / SPECIFIED_STAGE). It does
+    // NOT yet linearize the live-RHS orifice, so fall back to FD only there.
+    // The held path (mean-rate coupling_flux source, constant per window) is
+    // fully covered.
     if (state.node_coupling != nullptr) return false;
     // Active-set masking pins frozen cells' ydot to 0; the tangent does not
     // mask, so its rows would be nonzero there. Active set is opt-in (default
-    // off) and removed in Phase 3 — stay on FD when it is enabled.
+    // off) and removed later in Phase 3 — stay on FD when it is enabled.
     if (state.active_set != nullptr && state.active_set->enabled) return false;
-    const BoundaryData* b = state.boundary;
-    if (b) {
-        const int ne = static_cast<int>(b->edge_bc_type.size());
-        for (int i = 0; i < ne; ++i) {
-            const auto t = static_cast<BoundaryType>(b->edge_bc_type[i]);
-            if (t == BoundaryType::NORMAL_FLOW ||
-                t == BoundaryType::SPECIFIED_STAGE)
-                return false;
-        }
-    }
     return true;
 }
 

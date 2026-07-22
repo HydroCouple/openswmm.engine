@@ -14,13 +14,15 @@
  *          flux recompute), matching the RHS's per-cell gather so it is race-free
  *          under OpenMP and antisymmetric (mass-conservative) by construction.
  *
- * Scope: the interior + boundary flux divergence and the evaporation sink — i.e.
- * the whole DEFAULT (held-coupling) RHS. The augmented accumulator rows are
- * y-independent on that path (the deviation forcing is a function of time only),
- * so their J·v row is exactly zero. The live-RHS orifice path (opt-in) has
- * y-dependent accumulator rows; buildSurfaceTangents does not linearize it, so
- * the caller keeps finite-difference J·v whenever state.node_coupling != null
- * (Phase 3 adds the coupling tangent for the preconditioner).
+ * Scope: the interior flux divergence, the y-dependent boundary edges
+ * (NORMAL_FLOW / SPECIFIED_STAGE — the diagonal ∂F_bc/∂V_i), and the
+ * evaporation sink — i.e. the whole DEFAULT (held-coupling) RHS, including the
+ * outfall tailwater boundary. The augmented accumulator rows are zero on that
+ * path (the held coupling_flux source is constant in y). The live-RHS orifice
+ * path (opt-in) has y-dependent accumulator rows; buildSurfaceTangents does not
+ * linearize it, so the caller keeps finite-difference J·v whenever
+ * state.node_coupling != null (a later Phase 3 step adds the coupling tangent
+ * for the preconditioner).
  *
  * @ingroup engine_2d
  *
