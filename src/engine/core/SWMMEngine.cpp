@@ -4890,18 +4890,23 @@ void SWMMEngine::initHydraulics() noexcept {
         ctx_.errors.push_back("2D initialization failed: unknown error.");
         set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
     }
+
+    // SR-2c: Initialize 2D gridded rainfall forcing when a 2D-target grid source
+    // with /location is configured. The grid file is opened and the CENTROID
+    // mapping (pixel index per triangle centroid) is precomputed once.
+    for (const auto& gs : uncertainty_config_.grid_sources) {
+        if (gs.target == uncertainty::GridTarget::TWO_D && gs.force_location) {
+            std::string inp_dir;
+            if (!ctx_.inp_file_path.empty())
+                inp_dir = std::filesystem::path(ctx_.inp_file_path).parent_path().string();
+            surface_router_.initGridRainfall(gs, inp_dir);
+            break;  // v1: one 2D grid source
+        }
+    }
 #endif
 
-    // 1b. Build the optional 1D spectral ROM when any uncertainty source is
-    //     configured. DEFERRED (chunk 5, SolverOptions2D.hpp reconciliation):
-    //     the sidecar also auto-activates this "when the active 2D ROM is on"
-    //     (surface_router_.options().enable_rom, doesn't exist upstream yet)
-    //     and forwards the built ROM to the 2D module for per-member coupling
-    //     heads (surface_router_.setROM1D(), needs chunk 5's rom()/setROM1D()
-    //     accessors) — both left out until that reconciliation lands; until
-    //     then the 1D ROM only activates from an explicit [UNCERTAINTY] 1D
-    //     spec or a configured soft raingage, and its heads don't yet feed
-    //     back into the 2D coupling path.
+    // 1b. Build optional 1D spectral ROM when any uncertainty source is configured
+    //     or when the 2D ROM is active (so per-member 1D heads feed the coupling).
     {
         bool need_rom1d = uncertainty_config_.has_1d();
         // Gage-level soft rainfall (SR-1b) is itself a 1D uncertainty source:
@@ -4909,8 +4914,19 @@ void SWMMEngine::initHydraulics() noexcept {
         for (int g = 0; g < ctx_.soft_rain.count() && !need_rom1d; ++g)
             if (ctx_.soft_rain.configured[static_cast<std::size_t>(g)])
                 need_rom1d = true;
+#ifdef OPENSWMM_HAS_2D
+        need_rom1d = need_rom1d ||
+                     (surface_router_.isActive() && surface_router_.options().enable_rom);
+#endif
         if (need_rom1d) {
             buildROM1D();
+            // DEFERRED (PR P3 ROM re-homing — see .memory/current.md):
+            // surface_router_.setROM1D(rom1d_.get()) would forward the built
+            // ROM to the 2D module for per-member coupling heads, but
+            // SurfaceRouter2D no longer owns a CvodeSurfaceSolver directly
+            // (replaced by unique_ptr<ISurfaceSolver>), so rom()/setROM1D()
+            // don't exist yet. 1D ROM heads don't feed back into the 2D
+            // coupling path until that re-homing lands.
         }
     }
 
@@ -6351,13 +6367,12 @@ void SWMMEngine::buildROM1D() noexcept {
     const int n_active = static_cast<int>(active_map.size());
     if (n_active < 4) return;  // GraphEigenBasis::build requires >= 4 nodes
 
-    // Mode count: a reasonable default, capped by the active-node count.
-    // DEFERRED (chunk 5, SolverOptions2D.hpp reconciliation — the sidecar's
-    // rom_modes field on SolverOptions2D does not exist upstream yet): the
-    // "inherit from 2D ROM options when 2D is active" behavior is not wired;
-    // 1D ROM sizing currently always uses this default or an explicit
-    // [UNCERTAINTY] 1D spec (below).
+    // Determine mode count from 2D ROM options (if active) or a reasonable default
     int k_modes = std::min(20, n_active - 1);
+#ifdef OPENSWMM_HAS_2D
+    if (surface_router_.isActive())
+        k_modes = std::min(surface_router_.options().rom_modes, n_active - 1);
+#endif
 
     rom1d_basis_ = std::make_unique<uncertainty::GraphEigenBasis>();
     if (!rom1d_basis_->build(g, k_modes)) {
@@ -6377,11 +6392,17 @@ void SWMMEngine::buildROM1D() noexcept {
     // not silently inject roughness spread into e.g. a soft-rain-only run.
     rom1d_->mannings_pert = 0.0;
 
-    // DEFERRED (chunk 5, SolverOptions2D.hpp reconciliation — rom_members/
-    // rom_mannings_pert don't exist upstream yet): "inherit ensemble size and
-    // Manning's perturbation from the active 2D ROM options" is not wired.
-    // rom1d_ uses its own defaults / explicit [UNCERTAINTY] 1D specs (below)
-    // until that reconciliation lands.
+#ifdef OPENSWMM_HAS_2D
+    if (surface_router_.isActive()) {
+        const auto& opts  = surface_router_.options();
+        rom1d_->n_ensemble = opts.rom_members;
+        rom1d_->mannings_pert = opts.rom_mannings_pert;
+        // runoff_pert intentionally NOT inherited from 2D opts: the 1D ROM forcing
+        // is dh/dt (not rainfall), so applying 2D rainfall_pert here creates
+        // spurious rm_i × mm_i decorrelation that inverts the spread ordering.
+        // Only set via explicit "1D RAINFALL" in [UNCERTAINTY].
+    }
+#endif
 
     // Default: no runoff perturbation for 1D ROM unless explicitly configured.
     // (The SpectralROM1D struct default is 0.20 but that is meant for standalone

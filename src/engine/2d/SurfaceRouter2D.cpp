@@ -17,6 +17,8 @@
 #endif
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/GridMappingWeights.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -1142,7 +1144,227 @@ double SurfaceRouter2D::totalExchangeFlow() const {
 }
 
 
+// ============================================================================
+// initGridRainfall (SR-2c) — build CENTROID mapping + open grid file
+// ============================================================================
+
+bool SurfaceRouter2D::initGridRainfall(
+    const uncertainty::SoftGridSourceSpec& spec,
+    const std::string& inp_dir)
+{
+    // Resolve relative path against the .inp directory
+    std::string path = spec.file_path;
+    if (!path.empty() && path[0] != '/' && !inp_dir.empty()) {
+        path = inp_dir + "/" + path;
+    }
+
+    if (!grid_reader_.open(path)) {
+        // Failed to open — fall back to gage path silently (warning could be emitted)
+        return false;
+    }
+    grid_reader_opened_ = true;
+
+    int nx = grid_reader_.nx();
+    int ny = grid_reader_.ny();
+    const auto& x_coords = grid_reader_.x_coords();
+    const auto& y_coords = grid_reader_.y_coords();
+
+    // Build CENTROID mapping: for each triangle centroid, find the containing
+    // pixel (nearest cell center). Clamp to edge for centroids outside the grid.
+    int nt = mesh_.n_triangles();
+    grid_px_.resize(static_cast<std::size_t>(nt));
+
+    for (int i = 0; i < nt; ++i) {
+        double cx = mesh_.tri_cx[static_cast<std::size_t>(i)];
+        double cy = mesh_.tri_cy[static_cast<std::size_t>(i)];
+
+        // Find nearest x index (binary search or linear — grids are small)
+        int ix = 0;
+        for (int j = 1; j < nx; ++j) {
+            if (std::abs(cx - x_coords[static_cast<std::size_t>(j)])
+                < std::abs(cx - x_coords[static_cast<std::size_t>(ix)]))
+                ix = j;
+        }
+
+        // Find nearest y index
+        int iy = 0;
+        for (int j = 1; j < ny; ++j) {
+            if (std::abs(cy - y_coords[static_cast<std::size_t>(j)])
+                < std::abs(cy - y_coords[static_cast<std::size_t>(iy)]))
+                iy = j;
+        }
+
+        // Flat index into (ny, nx) plane — row-major: [iy * nx + ix]
+        grid_px_[static_cast<std::size_t>(i)] =
+            static_cast<uint32_t>(iy * nx + ix);
+    }
+
+    // SR-4a: BILINEAR mapping — 4-pixel weighted gather per triangle centroid.
+    // Requires at least a 2x2 grid; degenerate grids fall back to CENTROID.
+    grid_mapping_ = spec.mapping;
+    if (grid_mapping_ == uncertainty::GridMapping::BILINEAR) {
+        if (nx < 2 || ny < 2) {
+            grid_mapping_ = uncertainty::GridMapping::CENTROID;  // fall back
+        } else {
+            grid_bilin_idx_.assign(static_cast<std::size_t>(4 * nt), 0);
+            grid_bilin_w_.assign(static_cast<std::size_t>(4 * nt), 0.0f);
+            for (int i = 0; i < nt; ++i) {
+                double cx = mesh_.tri_cx[static_cast<std::size_t>(i)];
+                double cy = mesh_.tri_cy[static_cast<std::size_t>(i)];
+                uint32_t idx4[4];
+                double w4[4];
+                uncertainty::bilinearWeights(cx, cy, x_coords, y_coords, idx4, w4);
+                const auto base = static_cast<std::size_t>(4 * i);
+                for (int k = 0; k < 4; ++k) {
+                    grid_bilin_idx_[base + static_cast<std::size_t>(k)] = idx4[k];
+                    grid_bilin_w_[base + static_cast<std::size_t>(k)] =
+                        static_cast<float>(w4[k]);
+                }
+            }
+        }
+    }
+
+    grid_spread_.assign(static_cast<std::size_t>(nt), 0.0);
+    grid_2d_active_ = true;
+    // CL-1c: record the coherence correlation length; the correlated field is
+    // generated lazily on first use (it depends only on the ROM coefficients,
+    // triangle geometry and corr_len — all fixed after init).
+    grid_soft_corr_len_ = (spec.coherence == uncertainty::Coherence::CORR_LEN)
+                              ? spec.corr_len : 0.0;
+    grid_soft_field_built_ = false;
+#ifdef OPENSWMM_HAS_2D
+    grid_soft_reduced_ = false;
+    grid_soft_basis_.clear();
+    grid_soft_psi_.clear();
+    grid_soft_a_.clear();
+#endif
+    return true;
+}
+
+// ============================================================================
+// updateRainfall — gage fallback + grid-forced path (SR-2c)
+// ============================================================================
+
 void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
+    const int nt = mesh_.n_triangles();
+
+    // SR-2c/SR-3b: map the 2D grid source each step. /location overrides the
+    // deterministic gage rainfall path when present; /spread is mapped for
+    // soft forcing into the ROM.
+    // NOTE: the ROM soft-forcing consumption (rom->setSoftForcing/*Reduced,
+    // CL-1c/CL-2c correlated-coherence build) is deferred pending the PR-P3
+    // ROM re-homing (SurfaceRouter2D no longer owns a CvodeSurfaceSolver
+    // directly — see .memory/current.md). The deterministic /location
+    // gathering below is independent of the ROM and lands now.
+    bool grid_location_applied = false;
+    if (grid_2d_active_ && grid_reader_opened_) {
+        double t_now = ctx.current_time;
+        bool grid_ready = grid_reader_.has_current() || grid_reader_.advance();
+        if (grid_ready) {
+            while (grid_reader_.has_current() && grid_reader_.spread_next() != nullptr
+                   && grid_reader_.time_next() < t_now) {
+                if (!grid_reader_.advance()) break;
+            }
+
+            double to_m_per_s;
+            if (static_cast<int>(ctx.options.flow_units) < 3)
+                to_m_per_s = 0.0254 / 3600.0; // in/hr -> m/s
+            else
+                to_m_per_s = 0.001 / 3600.0;  // mm/hr -> m/s
+
+            int nx = grid_reader_.nx();
+            int ny = grid_reader_.ny();
+            const float* loc = grid_reader_.location_now();
+            const float* spread = grid_reader_.spread_now();
+
+            // SR-4a: gather a grid field value for triangle i under the active
+            // mapping. CENTROID = single containing pixel; BILINEAR = 4-pixel
+            // weighted sum. Out-of-range pixels contribute zero.
+            const auto npix = static_cast<uint32_t>(nx * ny);
+            auto gather = [&](const float* field, int i) -> double {
+                if (grid_mapping_ == uncertainty::GridMapping::BILINEAR
+                    && !grid_bilin_idx_.empty()) {
+                    const auto base = static_cast<std::size_t>(4 * i);
+                    double acc = 0.0;
+                    for (int k = 0; k < 4; ++k) {
+                        uint32_t px = grid_bilin_idx_[base + static_cast<std::size_t>(k)];
+                        if (px < npix)
+                            acc += static_cast<double>(grid_bilin_w_[base + static_cast<std::size_t>(k)])
+                                   * static_cast<double>(field[px]);
+                    }
+                    return acc;
+                }
+                uint32_t px = grid_px_[static_cast<std::size_t>(i)];
+                return (px >= npix) ? 0.0 : static_cast<double>(field[px]);
+            };
+
+            // Deterministic location override only when /location is present.
+            if (loc) {
+                for (int i = 0; i < nt; ++i) {
+                    state_.rainfall[i] = gather(loc, i) * to_m_per_s;
+                }
+                grid_location_applied = true;
+            }
+
+            // Map spread plane into model rain units (retained for a future
+            // ROM-consumption pass; not read by anything yet in this build).
+            if (spread) {
+                const uint8_t* fcodes = grid_reader_.family_code_now();
+                const GridSpreadKind sk = grid_reader_.spread_kind();
+                for (int i = 0; i < nt; ++i) {
+                    double sp;
+                    if (sk == GridSpreadKind::CV) {
+                        const double loc_val = loc ? gather(loc, i) : 0.0;
+                        sp = gather(spread, i) * loc_val * to_m_per_s;
+                    } else {
+                        sp = gather(spread, i) * to_m_per_s;
+                    }
+                    if (fcodes && grid_reader_.family() == GridFamily::MIXED) {
+                        uint32_t px = grid_px_[static_cast<std::size_t>(i)];
+                        if (px < npix && fcodes[px] == 2) {  // UNIFORM
+                            sp *= 3.0;
+                        }
+                    }
+                    grid_spread_[static_cast<std::size_t>(i)] = sp;
+                }
+
+                // SR-3c: warn once when lognormal delta-linearization is likely weak.
+                if (!grid_soft_warned_) {
+                    const bool check_lognormal =
+                        (grid_reader_.family() == GridFamily::LOGNORMAL)
+                        || (grid_reader_.family() == GridFamily::MIXED && fcodes);
+                    if (check_lognormal) {
+                        double max_cv = 0.0;
+                        for (int i = 0; i < nt; ++i) {
+                            double loc_i = state_.rainfall[static_cast<std::size_t>(i)];
+                            if (loc_i <= 1.0e-30) continue;
+                            if (grid_reader_.family() == GridFamily::MIXED) {
+                                uint32_t px = grid_px_[static_cast<std::size_t>(i)];
+                                if (fcodes[px] != 1) continue;  // only LOGNORMAL cells
+                            }
+                            max_cv = std::max(max_cv,
+                                              std::abs(grid_spread_[static_cast<std::size_t>(i)] / loc_i));
+                        }
+                        if (max_cv > 0.5) {
+                            ctx.warnings.push_back(
+                                "WARNING: soft rainfall LOGNORMAL delta approximation has CV > 0.5 "
+                                "(max CV = " + std::to_string(max_cv)
+                                + ") for the active 2D grid source"
+                                + (grid_reader_.family() == GridFamily::MIXED ? " (MIXED family)" : "")
+                                + ".");
+                            grid_soft_warned_ = true;
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+
+    // Grid /location fully determines rainfall for this step; skip the
+    // gage-based path below entirely so it doesn't overwrite the grid values.
+    if (grid_location_applied) return;
+
     const int n_gages = ctx.n_gages();
 
     if (n_gages <= 0 || options_.rainfall_mode == RainfallMode::NONE) {

@@ -30,13 +30,19 @@
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
 #include "mesh/RainfallInterpolator.hpp"
+#include "../uncertainty/GridFileReader.hpp"
 
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include "../uncertainty/SpdeSpatialBasis.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
+#include "uncertainty/SpatialUncertaintyField.hpp"
 #endif
+
+namespace openswmm::uncertainty { struct SoftGridSourceSpec; }
+namespace openswmm::uncertainty { enum class GridMapping : int8_t; }
 
 namespace openswmm {
 struct SimulationContext;
@@ -178,6 +184,24 @@ public:
 
     /// Access per-edge boundary-condition data (mutable, for forcing/parsing).
     BoundaryData& boundary() noexcept { return boundary_; }
+
+    /**
+     * @brief Initialize 2D gridded rainfall forcing from a SoftGridSourceSpec (SR-2c).
+     *
+     * Opens the HDF5 grid file, builds the CENTROID mapping (pixel index per
+     * triangle centroid), and marks the grid as active. Called from
+     * SWMMEngine::initialize() when a 2D-target grid source with /location
+     * is configured.
+     *
+     * @param spec  The grid source specification (file path, mapping, etc.).
+     * @param inp_dir  Directory of the parent .inp file (for relative path resolution).
+     * @return true on success; false on error (call last_error via grid_reader_).
+     */
+    bool initGridRainfall(const uncertainty::SoftGridSourceSpec& spec,
+                          const std::string& inp_dir);
+
+    /// True if 2D gridded rainfall forcing is active (SR-2c).
+    bool gridRainfallActive() const noexcept { return grid_2d_active_; }
 
     /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
@@ -327,6 +351,40 @@ private:
     /// Update rainfall from the rain gages (natural-neighbour interpolation or
     /// the uniform SYSTEM mean, per options_.rainfall_mode).
     void updateRainfall(SimulationContext& ctx);
+
+    // --- SR-2c: Gridded rainfall forcing (deterministic /location plane) ---
+    bool   grid_2d_active_ = false;          ///< True when a 2D-target grid source with /location is active
+    GridFileReader grid_reader_;             ///< HDF5 grid file reader (one 2D source in v1)
+    std::vector<uint32_t> grid_px_;          ///< CENTROID mapping: pixel index per triangle centroid
+    // SR-4a: BILINEAR mapping — 4-pixel weighted gather per triangle centroid.
+    // Value-initialized ({}) to 0 == GridMapping::CENTROID (forward-declared
+    // enum with int8_t underlying type; set explicitly in initGridRainfall).
+    uncertainty::GridMapping grid_mapping_{};
+    std::vector<uint32_t> grid_bilin_idx_;   ///< 4 pixel indices per triangle (row-major: [4*i + k])
+    std::vector<float>    grid_bilin_w_;     ///< 4 bilinear weights per triangle (sum to 1)
+    bool   grid_reader_opened_ = false;      ///< True after grid_reader_.open() succeeded
+    double grid_last_time_ = -1.0;           ///< Last grid time plane advanced to
+
+    std::vector<double> grid_spread_;       ///< SR-3b: mapped spread plane in model rain units
+    bool grid_soft_warned_ = false;         ///< SR-3c: lognormal CV>0.5 warning emitted once
+
+    // CL-1c correlated coherence (COHERENCE CORR_LEN) for the 2D grid path.
+    // NOTE: the ROM-consumption side of this (rom->setSoftForcing/*Reduced,
+    // in updateRainfall()) is deferred pending the PR-P3 ROM re-homing —
+    // see .memory/current.md. These fields are populated by initGridRainfall()
+    // regardless (harmless when unconsumed) so that port lands mechanically.
+    double grid_soft_corr_len_ = 0.0;       ///< Correlation length (m) of the active grid source; 0 ⇒ comonotone
+    bool   grid_soft_field_built_ = false;  ///< True once grid_soft_field_ has been generated
+#ifdef OPENSWMM_HAS_2D
+    SpatialUncertaintyField grid_soft_field_; ///< Static per-member per-cell coefficient field (built once)
+    // CL-2c reduced spatial basis (replaces the CL-1c materialized field's
+    // O(M·n·n_nbr) generation with a ~ms analytic SPDE build). When K_s < M the
+    // ROM uses the reduced projection over grid_soft_psi_ + grid_soft_a_.
+    openswmm::uncertainty::SpdeSpatialBasis grid_soft_basis_; ///< SPDE ν=2 basis over triangle centroids
+    std::vector<double> grid_soft_psi_;     ///< Normalized mode fields ψ_m(t), K_s × n_tri row-major
+    std::vector<double> grid_soft_a_;       ///< Per-member modal coefficients a_im, M × K_s row-major
+    bool grid_soft_reduced_ = false;        ///< True when the reduced projection path is active (K_s < M)
+#endif
 
     /// Static per-cell rainfall-interpolation weights. Built once in
     /// initialize() (gage positions are fixed for a run); applied each step in
