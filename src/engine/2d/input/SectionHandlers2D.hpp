@@ -27,6 +27,7 @@
 #include "../data/SolverOptions2D.hpp"
 #include "../SurfaceRouter2D.hpp"
 #include "../../input/SectionRegistry.hpp"
+#include "../../uncertainty/UncertaintyConfig.hpp"
 
 #include <string>
 #include <vector>
@@ -90,6 +91,43 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens,
  */
 std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
                                         MeshData& mesh);
+
+/**
+ * @brief Parse a single line from the [2D_ROM] section.
+ *
+ * Format: PARAMETER VALUE
+ *
+ * Recognised parameters (case-insensitive): ENABLE, MEMBERS, MODES,
+ * MANNINGS_PERT, RAINFALL_PERT, K_EFF, WET_RESEED_FRACTION,
+ * WET_RESEED_MIN_INTERVAL, PARAMETRIC_TAILS, MODE_DROP_THRESHOLD.
+ *
+ * @param tokens Whitespace-split tokens.
+ * @param opts   Solver options to update.
+ * @return Empty string on success, or error description.
+ */
+std::string parse2DROMLine(const std::vector<std::string>& tokens,
+                            SolverOptions2D& opts);
+
+/**
+ * @brief Parse a single line from the [UNCERTAINTY] section.
+ *
+ * Format: LAYER PARAMETER DISTRIBUTION PERTURBATION
+ *
+ * Phase 0/1 scope: only LAYER=2D, PARAMETER=MANNINGS_N or RAINFALL are
+ * accepted.  Unsupported combinations are rejected with an error.
+ *
+ * When a [UNCERTAINTY] entry is present it OVERRIDES the corresponding
+ * legacy scalar field in SolverOptions2D (rom_mannings_pert /
+ * rom_rainfall_pert) with [UNCERTAINTY] taking precedence.
+ *
+ * @param tokens  Whitespace-split tokens.
+ * @param opts    Solver options (updated for ROM enable + perturbations).
+ * @param config  Uncertainty config to append the source spec to.
+ * @return Empty string on success, or error description.
+ */
+std::string parseUncertaintyLine(const std::vector<std::string>& tokens,
+                                  SolverOptions2D& opts,
+                                  openswmm::uncertainty::UncertaintyConfig& config);
 
 /**
  * @brief V-E3 — parse a single line from the [2D_BOUNDARY_CONDITIONS]
@@ -159,10 +197,12 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
  *
  * @param mesh     Mesh data to populate.
  * @param options  Solver options to populate.
+ * @param config   Uncertainty config to populate (from [UNCERTAINTY]).
  * @param registry Section registry to register handlers into.
  */
 void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
+                        openswmm::uncertainty::UncertaintyConfig& config,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         input::SectionRegistry& registry);

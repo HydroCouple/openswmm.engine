@@ -165,17 +165,33 @@ int SWMMEngine::open(const char* inp_path,
 
     auto* input_plugin = plugins_.input_plugins().front();
 
-#ifdef OPENSWMM_HAS_2D
-    // Register 2D section handlers before reading so the parser can populate
-    // surface_router_ mesh and options directly.
+    // Register UNCERTAINTY section handler before reading so the parser can
+    // populate uncertainty_config_ regardless of 2D enablement.
     if (auto* dip = dynamic_cast<DefaultInputPlugin*>(input_plugin)) {
+#ifdef OPENSWMM_HAS_2D
+        // Register 2D section handlers before reading so the parser can populate
+        // surface_router_ mesh and options directly. The 2D [UNCERTAINTY] parser
+        // handles ALL layers (1D / 2D / RUNOFF / QUALITY), so no separate QUALITY
+        // handler is registered here — doing so would override the full parser
+        // and reject 1D/2D lines.
         twoD::register2DSections(surface_router_.mesh(),
                                  surface_router_.options(),
+                                 uncertainty_config_,
                                  surface_router_.pendingBCRows(),
                                  surface_router_.pendingEdgeConveyanceRows(),
                                  dip->registry());
+#else
+        // Without the 2D module the full parser is unavailable; register the
+        // QUALITY-only [UNCERTAINTY] handler so WQ uncertainty still parses.
+        uncertainty::registerQualityUncertaintySection(uncertainty_config_, dip->registry());
+#endif
+        // Register the [SOFT_RAINGAGES] section handler (SR-1a)
+        uncertainty::registerSoftRaingagesSection(dip->registry());
+        // Register the [SOFT_RAINFALL_GRID] section handler (SR-2b)
+        uncertainty::registerSoftRainfallGridSection(uncertainty_config_, dip->registry());
     }
 
+#ifdef OPENSWMM_HAS_2D
     // Scan the inline .inp for `;; UNITS: SI (m)` so SurfaceRouter2D::initialize
     // can skip its FLOW_UNITS-based mesh scaling when the producer declared
     // the mesh is already SI. The external-mesh path runs its own prescan

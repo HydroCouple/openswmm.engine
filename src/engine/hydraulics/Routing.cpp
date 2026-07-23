@@ -271,6 +271,8 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
             dw_solver_.anderson_accel = ctx.options.anderson_accel;
+            dw_solver_.spectral_accel = ctx.options.spectral_accel;
+            dw_solver_.spectral_num_modes = ctx.options.spectral_num_modes;
 
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
