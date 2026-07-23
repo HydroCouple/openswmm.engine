@@ -2704,12 +2704,16 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //        members carry only their deviation from the deterministic run, so
     //        no reseeding is ever needed and spread is never collapsed).
     if (rom1d_ && rom1d_->is_ready()) {
-        // DEFERRED (PR P3, see buildROM1D()'s matching note above): warm-start
-        // eigenbasis re-solve from the live DYNWAVE Jacobian needs the public
-        // SWMM_OperatorSnapshot, not H_sym PR 2's private HSnapshot (which
-        // doesn't exist upstream). The basis built once in buildROM1D() (over
-        // the uniform/topological Laplacian) is used for the ROM's lifetime
-        // until that re-homing lands.
+        // Update eigenbasis from last-converged DYNWAVE Jacobian (warm-start re-solve).
+        // NOTE (PR P3): reads H_sym PR 2's private HSnapshot; the checklist's
+        // intended long-term replacement is the public SWMM_OperatorSnapshot,
+        // which re-homes this consumption and then deletes HSnapshot. Until
+        // that lands, HSnapshot is the mechanically-ported interim mechanism.
+        if (router_.dwSolver().isHSnapshotValid()) {
+            const auto snap = router_.dwSolver().lastConvergedH();
+            rom1d_->updateBasis(snap.conduit_off, snap.conduit_n1, snap.conduit_n2,
+                                snap.n_conduits, ctx_.current_time);
+        }
         const double K1d = computeK1d();
 
         const int n_active = static_cast<int>(rom1d_active_map_.size());
@@ -6278,22 +6282,33 @@ void SWMMEngine::buildROM1D() noexcept {
             is_outfall[ui] = 1;
     }
 
-    // Per-conduit conductance weights, ideally from the last-converged H
-    // snapshot (conduit_off[ci] = 0.5*dt*dqdh, proportional to hydraulic
-    // conductance) so the graph Laplacian reflects actual pipe depths and
-    // roughnesses rather than pure topology.
-    //
-    // DEFERRED (PR P3, see HSYM_RESIDUALS_PR_CHECKLIST.md §0.5.4 /
-    // .memory/current.md): H_sym PR 2's private DWSolver::lastConvergedH()/
-    // HSnapshot does not exist upstream. The intended replacement is the
-    // public SWMM_OperatorSnapshot from wiesner/pr/operator-snapshot
-    // (unmerged, stale) — re-homing that consumption is explicitly PR P3's
-    // job, not this mechanical port. Until then, always use uniform weights
-    // (the topological Laplacian) — the same fallback this code already used
-    // for the cold-start / not-yet-converged case, so this is a strict subset
-    // of previously-exercised behavior, not a new code path.
+    // Build per-conduit conductance weights from the last-converged H snapshot.
+    // conduit_off[ci] = 0.5*dt*dqdh, which is proportional to hydraulic
+    // conductance.  At initialize() time the DW solver has not yet run, so
+    // the snapshot is empty (valid == false) and we fall back to uniform weights
+    // (the topological Laplacian).  After the first DYNWAVE step the snapshot
+    // contains real weights reflecting actual pipe depths and roughnesses.
+    // NOTE (PR P3): reads H_sym PR 2's private HSnapshot, mechanically ported
+    // in DynamicWave.hpp/.cpp; the checklist's long-term plan re-homes this
+    // onto the public SWMM_OperatorSnapshot and then deletes HSnapshot.
     const int n_conduits = static_cast<int>(n1_vec.size());
     std::vector<double> weights(static_cast<std::size_t>(n_conduits), 1.0);
+    {
+        const auto snap = router_.dwSolver().lastConvergedH();
+        if (snap.valid && snap.n_conduits == n_conduits) {
+            bool any_nonzero = false;
+            for (int ci = 0; ci < n_conduits; ++ci) {
+                double w = std::max(snap.conduit_off[ci], 1e-6);
+                weights[static_cast<std::size_t>(ci)] = w;
+                if (snap.conduit_off[ci] > 1e-6) any_nonzero = true;
+            }
+            if (!any_nonzero) {
+                // Dry-start: all dqdh == 0 — fall back to uniform weights
+                std::fill(weights.begin(), weights.end(), 1.0);
+            }
+        }
+        // If !snap.valid: keep uniform weights (cold start or first initialize())
+    }
 
     // Normalize weights to mean 1.0: preserves the relative conductance
     // structure (which conduit is stiffer than another) while keeping the

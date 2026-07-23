@@ -28,6 +28,7 @@
 #ifndef OPENSWMM_DYNAMIC_WAVE_HPP
 #define OPENSWMM_DYNAMIC_WAVE_HPP
 
+#include "SpectralCoarse.hpp"
 #include "XSectBatch.hpp"
 #include "../core/Constants.hpp"
 #include "../core/SimulationOptions.hpp"
@@ -57,6 +58,34 @@ using constants::SLOT_CROWN_CUTOFF;
 using constants::SLOT_WIDTH_FACTOR;
 using constants::FUDGE;
 using constants::MIN_SURFAREA;
+
+// ============================================================================
+// HSnapshot — read-only view of the last-converged DYNWAVE Picard Jacobian H
+//
+// Exposed by DWSolver::lastConvergedH() after each execute() call.
+// Contains only const pointers/values — nothing can be written through them.
+// Valid until the next execute() call.
+// ============================================================================
+
+/**
+ * @brief Read-only snapshot of H = surfArea/dt − dQ/dH components after
+ *        the last converged DYNWAVE Picard iteration.
+ *
+ * Used by the ROM sidecar to build a Jacobian-informed Laplacian basis
+ * (H_sym = (H+H^T)/2) without touching any solver state.
+ */
+struct HSnapshot {
+    /// 0.5*dt*dqdh per conduit (ci-indexed, length n_conduits).
+    /// Proportional to the off-diagonal conductance of H.
+    const double* conduit_off  = nullptr;
+    /// Upstream node index per conduit (ci-indexed), full node space.
+    const int*    conduit_n1   = nullptr;
+    /// Downstream node index per conduit (ci-indexed), full node space.
+    const int*    conduit_n2   = nullptr;
+    int    n_conduits = 0;
+    double dt         = 0.0;
+    bool   valid      = false;  ///< false until first execute() completes
+};
 
 // ============================================================================
 // Dynamic Preissmann Slot (DPS) configuration and per-link state
@@ -220,7 +249,9 @@ public:
     double omega      = OMEGA;
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
-    bool   anderson_accel = false;       ///< Enable Anderson acceleration
+    bool   anderson_accel  = false;  ///< Enable Anderson acceleration
+    bool   spectral_accel  = false;  ///< Enable spectral coarse correction
+    int    spectral_num_modes = 10;  ///< Coarse modes to retain (clamped to usable count)
 
     /// Evaporation rate (ft/s) — set by Router::step() each timestep so that
     /// solveMomentumBatch can recompute dq6 per Picard iteration (Gap #14).
@@ -442,6 +473,23 @@ private:
     std::vector<double> aa_r_prev_;     ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
     std::vector<uint8_t> aa_skip_;      ///< Per-node flag: skip AA this iteration
 
+    // Spectral coarse correction
+    SpectralCoarse spectral_;  ///< Two-level spectral coarse correction state
+
+    // Pre-allocated working arrays for spectral correction (size = n_active)
+    std::vector<double> spectral_adiag_;      ///< Semi-implicit diagonal per active node
+    std::vector<double> spectral_coff_;       ///< Off-diagonal coupling per conduit
+    std::vector<double> spectral_resid_;      ///< Depth residual per active node
+    std::vector<double> spectral_corr_;       ///< Correction output per active node
+    std::vector<double> y_spectral_prev_;     ///< Depths at start of previous sweep
+    std::vector<double> spectral_acc_corr_;   ///< Accumulated corrections this timestep
+
+    int64_t total_picard_sweeps_ = 0;     ///< Cumulative Picard sweeps this instance
+
+    // H snapshot — populated once per execute() call after Picard convergence
+    std::vector<double> snap_conduit_off_;  ///< 0.5*dt*dqdh[ci], ci-indexed
+    double snap_dt_    = 0.0;
+    bool   snap_valid_ = false;
 
     // Per-conduit momentum category (rebuilt each Picard iteration).
     // solveMomentumBatch dispatches on category_[uj] inline — no auxiliary
@@ -514,6 +562,8 @@ private:
     /// can never leave volume/overflow/dYdT describing the unmixed candidate.
     void commitNodeDepthState(SimulationContext& ctx, int node_idx,
                               double y_new, double dV, double dt);
+    void initSpectral(const SimulationContext& ctx);
+    void applySpectralCorrection(SimulationContext& ctx, double dt);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:
@@ -535,6 +585,33 @@ public:
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
     const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
+
+    /// Read-only access to spectral coarse correction state (for testing/diagnostics).
+    const SpectralCoarse& spectralState() const { return spectral_; }
+
+    /// Cumulative Picard sweeps executed across all routing steps since init().
+    int64_t totalPicardSweeps() const { return total_picard_sweeps_; }
+
+    /**
+     * @brief Return a read-only snapshot of the last-converged H components.
+     *
+     * Valid after the first execute() call; valid() is false beforehand.
+     * The snapshot's pointers remain valid until the next execute() call.
+     */
+    HSnapshot lastConvergedH() const noexcept {
+        HSnapshot s;
+        s.conduit_off = snap_conduit_off_.empty()
+                        ? nullptr : snap_conduit_off_.data();
+        s.conduit_n1  = tile_n1_.empty()  ? nullptr : tile_n1_.data();
+        s.conduit_n2  = tile_n2_.empty()  ? nullptr : tile_n2_.data();
+        s.n_conduits  = n_conduits_;
+        s.dt          = snap_dt_;
+        s.valid       = snap_valid_;
+        return s;
+    }
+
+    /// True once execute() has been called at least once.
+    bool isHSnapshotValid() const noexcept { return snap_valid_; }
 
     /// Read-only access to DPS per-conduit state arrays (for tests/diagnostics).
     const DPSLinkArrays& dpsState() const { return dps_; }

@@ -557,6 +557,98 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
             dps_.t_s[uci] = 0.0;
         }
     }
+
+    // Spectral coarse correction (topology-invariant, built once per instance)
+    initSpectral(ctx);
+}
+
+// ============================================================================
+// initSpectral
+// ============================================================================
+
+void DWSolver::initSpectral(const SimulationContext& ctx) {
+    if (!spectral_accel) return;
+
+    const auto& nodes = ctx.nodes;
+
+    // Build outfall flag array
+    std::vector<int> is_outfall(static_cast<std::size_t>(n_nodes_), 0);
+    for (int i = 0; i < n_nodes_; ++i) {
+        if (nodes.type[static_cast<std::size_t>(i)] == NodeType::OUTFALL)
+            is_outfall[static_cast<std::size_t>(i)] = 1;
+    }
+
+    // Collect conduit n1/n2 from the dense tile (already built)
+    std::vector<int> cn1(static_cast<std::size_t>(n_conduits_));
+    std::vector<int> cn2(static_cast<std::size_t>(n_conduits_));
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        auto uci = static_cast<std::size_t>(ci);
+        cn1[uci] = tile_n1_[uci];
+        cn2[uci] = tile_n2_[uci];
+    }
+
+    spectral_.num_modes = spectral_num_modes;
+    bool ok = spectral_.init(n_nodes_, n_conduits_,
+                             is_outfall.data(),
+                             cn1.data(), cn2.data(),
+                             spectral_num_modes);
+    if (!ok) { spectral_accel = false; return; }  // non-fatal disable
+
+    // Pre-allocate hot-path working arrays (avoid per-timestep allocation)
+    auto na = static_cast<std::size_t>(spectral_.n_active);
+    auto nc = static_cast<std::size_t>(n_conduits_);
+    spectral_adiag_.resize(na, 0.0);
+    spectral_coff_.resize(nc, 0.0);
+    spectral_resid_.resize(na, 0.0);
+    spectral_corr_.resize(na, 0.0);
+    y_spectral_prev_.resize(na, 0.0);
+    spectral_acc_corr_.resize(na, 0.0);
+}
+
+// ============================================================================
+// applySpectralCorrection — coarse-grid correction appended after each Picard
+//                           sweep to damp smooth (network-scale) error modes.
+// ============================================================================
+
+void DWSolver::applySpectralCorrection(SimulationContext& ctx, double dt) {
+    auto& nodes = ctx.nodes;
+    auto na = static_cast<std::size_t>(spectral_.n_active);
+    auto nc = static_cast<std::size_t>(n_conduits_);
+
+    // Diagonal: semi-implicit denominator for each active node
+    for (std::size_t ai = 0; ai < na; ++ai) {
+        auto ui = static_cast<std::size_t>(spectral_.active_map[static_cast<int>(ai)]);
+        double d = xnode_.new_surf_area[ui] - 0.5 * dt * xnode_.sumdqdh[ui];
+        spectral_adiag_[ai] = std::max(d, min_surf_area_);
+    }
+    // Off-diagonal: 0.5 * dt * dqdh for each conduit tile
+    for (std::size_t ci = 0; ci < nc; ++ci) {
+        auto uj = static_cast<std::size_t>(tile_uj_[ci]);
+        spectral_coff_[ci] = 0.5 * dt * dqdh_[uj];
+    }
+
+    if (!spectral_.assembleCoarseOperator(spectral_adiag_.data(), n_conduits_,
+                                           tile_n1_.data(), tile_n2_.data(),
+                                           spectral_coff_.data()))
+        return;
+
+    // Depth change since previous sweep = Picard residual proxy
+    for (std::size_t ai = 0; ai < na; ++ai) {
+        auto ui = static_cast<std::size_t>(spectral_.active_map[static_cast<int>(ai)]);
+        spectral_resid_[ai] = nodes.depth[ui] - y_spectral_prev_[ai];
+    }
+
+    // Restrict → coarse solve → prolongate (with backtracking in applyCorrection)
+    spectral_.applyCorrection(spectral_resid_.data(), spectral_corr_.data(), head_tol);
+
+    // Apply correction, clamp depths non-negative, and accumulate for possible undo
+    for (std::size_t ai = 0; ai < na; ++ai) {
+        auto ui = static_cast<std::size_t>(spectral_.active_map[static_cast<int>(ai)]);
+        double corr = spectral_corr_[ai];
+        nodes.depth[ui] = std::max(0.0, nodes.depth[ui] + corr);
+        nodes.head[ui]  = nodes.invert_elev[ui] + nodes.depth[ui];
+        spectral_acc_corr_[ai] += corr;
+    }
 }
 
 // ============================================================================
@@ -897,6 +989,12 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     int  unconv_shared   = 0;   // shared team tally (see updateNodeDepthsTeam)
     const bool has_nc    = static_cast<bool>(non_conduit_fn);
 
+    // Zero accumulated spectral corrections at the start of each timestep.
+    // If the timestep doesn't converge we undo these below to prevent bias
+    // from carrying into subsequent timesteps.
+    if (spectral_accel && spectral_.enabled)
+        std::fill(spectral_acc_corr_.begin(), spectral_acc_corr_.end(), 0.0);
+
 #pragma omp parallel num_threads(num_threads_) if(num_threads_ > 1) default(shared)
     {
 #if defined(__APPLE__)
@@ -910,6 +1008,20 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         bool t_converged = false;  // per-thread replica of `converged`
 
         while (t_steps < max_trials) {
+            // Snapshot depths BEFORE this sweep so spectral_resid_ captures a
+            // single Picard step (depth_after_sweep - depth_before_sweep), not
+            // accumulated drift. Single-threaded: writes shared working state.
+            if (spectral_accel && spectral_.enabled) {
+#pragma omp single
+                {
+                    auto na = static_cast<std::size_t>(spectral_.n_active);
+                    for (std::size_t ai = 0; ai < na; ++ai) {
+                        auto ui = static_cast<std::size_t>(spectral_.active_map[static_cast<int>(ai)]);
+                        y_spectral_prev_[ai] = ctx.nodes.depth[ui];
+                    }
+                }
+            }
+
             // Step 0: init node states (team `omp for nowait` — overlaps with
             // geometry STEP A, which touches none of its outputs).
             initNodeStates(ctx);
@@ -979,6 +1091,16 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             updateNodeDepthsTeam(ctx, dt, t_steps, unconv_shared);
             t_converged = (unconv_shared == 0);
 
+            // Spectral coarse correction: smooth the error after the first
+            // sweep. Single-threaded: mutates shared node depth/head state
+            // and the stateful spectral_ coarse-solve working arrays.
+            if (spectral_accel && spectral_.enabled && !t_converged && t_steps >= 1) {
+#pragma omp single
+                {
+                    applySpectralCorrection(ctx, dt);
+                }
+            }
+
             t_steps++;
 
             if (t_steps > 1) {
@@ -1021,12 +1143,47 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             if (!node_tile_[ui].is_outfall && !xnode_.converged[ui])
                 ++ctx.nodes.stat_non_converged_count[ui];
         }
+
+        // Undo accumulated spectral corrections for this non-converging
+        // timestep. Each accepted correction is O(head_tol) or smaller, but
+        // over many non-converging timesteps they accumulate into systematic
+        // depth bias. Rolling back here keeps the carry-forward state
+        // uncontaminated.
+        if (spectral_accel && spectral_.enabled) {
+            auto& nodes = ctx.nodes;
+            auto na = static_cast<std::size_t>(spectral_.n_active);
+            for (std::size_t ai = 0; ai < na; ++ai) {
+                auto ui = static_cast<std::size_t>(spectral_.active_map[static_cast<int>(ai)]);
+                nodes.depth[ui] = std::max(0.0, nodes.depth[ui] - spectral_acc_corr_[ai]);
+                nodes.head[ui]  = nodes.invert_elev[ui] + nodes.depth[ui];
+            }
+        }
     }
 
     // Post-Picard: update DPS temporal state (P decay, surcharge tracking)
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         updateDPSState(ctx, dt);
     }
+
+    // Capture H snapshot after the Picard loop (read dqdh_ into a ci-indexed
+    // copy). The snapshot is valid until the next execute() call. Taken here,
+    // after the persistent-team parallel region has ended and any Anderson-
+    // accepted depths are already committed through the canonical node state
+    // update (updateNodeDepthsTeam/commitNodeDepthState) — never from mixing
+    // intermediates.
+    if (n_conduits_ > 0) {
+        snap_conduit_off_.resize(static_cast<std::size_t>(n_conduits_));
+        const double half_dt = 0.5 * dt;
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            auto uci = static_cast<std::size_t>(ci);
+            auto uj  = static_cast<std::size_t>(tile_uj_[ci]);
+            snap_conduit_off_[uci] = half_dt * dqdh_[uj];
+        }
+    }
+    snap_dt_    = dt;
+    snap_valid_ = true;
+
+    total_picard_sweeps_ += steps;
 
     // Record the actual final convergence (legacy counts a step as
     // non-converging only when this is false, even if it used all MaxTrials —
