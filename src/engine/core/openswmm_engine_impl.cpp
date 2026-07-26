@@ -206,6 +206,35 @@ SWMM_ENGINE_API const char* swmm_get_last_error_msg(SWMM_Engine engine) {
     return to_engine(engine)->last_error_message();
 }
 
+SWMM_ENGINE_API void swmm_engine_set_lenient_open(SWMM_Engine engine, int on) {
+    if (!engine) return;
+    to_engine(engine)->set_lenient_open(on != 0);
+}
+
+SWMM_ENGINE_API int swmm_get_error_count(SWMM_Engine engine) {
+    if (!engine) return 0;
+    return static_cast<int>(to_engine(engine)->context().errors.size());
+}
+
+SWMM_ENGINE_API const char* swmm_get_error_at(SWMM_Engine engine, int index) {
+    if (!engine) return "";
+    const auto& errs = to_engine(engine)->context().errors;
+    if (index < 0 || index >= static_cast<int>(errs.size())) return "";
+    return errs[static_cast<std::size_t>(index)].c_str();
+}
+
+SWMM_ENGINE_API int swmm_get_warning_count(SWMM_Engine engine) {
+    if (!engine) return 0;
+    return static_cast<int>(to_engine(engine)->context().warnings.size());
+}
+
+SWMM_ENGINE_API const char* swmm_get_warning_at(SWMM_Engine engine, int index) {
+    if (!engine) return "";
+    const auto& warns = to_engine(engine)->context().warnings;
+    if (index < 0 || index >= static_cast<int>(warns.size())) return "";
+    return warns[static_cast<std::size_t>(index)].c_str();
+}
+
 SWMM_ENGINE_API const char* swmm_error_message(int code) {
     switch (code) {
         case SWMM_OK:            return "Success";

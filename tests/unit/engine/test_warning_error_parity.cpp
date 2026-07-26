@@ -102,3 +102,107 @@ TEST(WarningErrorParity, RuntimeWarningsRecorded) {
     EXPECT_TRUE(contains(rpt_text, "WARNING 07")) << rpt_text;  // routing step reduced
     EXPECT_TRUE(contains(rpt_text, "WARNING 08")) << rpt_text;  // elev drop exceeds length
 }
+
+// ===========================================================================
+// Lenient (permissive) open — swmm_engine_set_lenient_open + the error/warning
+// accumulation accessors (swmm_get_error_count/_at, swmm_get_warning_count/_at).
+//
+// Contract under test: a lenient open of the SAME model that fails a strict
+// open (undefined gage/outlet '*' -> ERROR 209) must instead reach OPENED with
+// every parsed object intact and editable, while the post-parse validation
+// errors stay queryable. Mirrors the GUI editor load path in
+// openswmm.gui/src/layers/swmmmodellayer.cpp (set_lenient_open before open;
+// error/warning read-back in adoptOpenEngine). No lifecycle is run — a broken
+// model cannot initialize/step, which is exactly why the GUI loads it for edit
+// only. Fixtures are the SAME committed files under data/ used above.
+// ===========================================================================
+
+#include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_links.h>
+
+namespace {
+
+// Lenient-open the fixture WITHOUT running the lifecycle. Empty rpt/out paths
+// mirror the editor load (no report written). Caller owns the engine.
+SWMM_Engine open_lenient(const char* inp) {
+    SWMM_Engine e = swmm_engine_create();
+    EXPECT_NE(e, nullptr);
+    swmm_engine_set_lenient_open(e, 1);
+    const int rc = swmm_engine_open(e, inp, "", "", nullptr);
+    EXPECT_EQ(rc, SWMM_OK) << "lenient open must not fail on post-parse errors";
+    return e;
+}
+
+}  // namespace
+
+// A lenient open of the broken model reaches OPENED with all parsed objects
+// intact (2 nodes J1/O1, 1 link C1) and leaves the single last-error slot
+// untouched (that slot is only set when open() actually fails).
+TEST(LenientOpen, BrokenModelReachesOpenedWithObjectsIntact) {
+    SWMM_Engine e = open_lenient("warnerr_undefined_outlet.inp");
+    int state = -1;
+    EXPECT_EQ(swmm_engine_get_state(e, &state), SWMM_OK);
+    EXPECT_EQ(state, SWMM_STATE_OPENED);
+    EXPECT_EQ(swmm_get_last_error(e), SWMM_OK);
+    EXPECT_EQ(swmm_node_count(e), 2);
+    EXPECT_EQ(swmm_link_count(e), 1);
+    swmm_engine_destroy(e);
+}
+
+// The post-parse validation errors accumulated during the lenient open are
+// enumerable; indices out of range (and negative) return "" rather than crash.
+TEST(LenientOpen, AccumulatedErrorsAreQueryable) {
+    SWMM_Engine e = open_lenient("warnerr_undefined_outlet.inp");
+    const int n = swmm_get_error_count(e);
+    EXPECT_GE(n, 1) << "the undefined gage/outlet reference must be recorded";
+    bool any_msg = false;
+    for (int i = 0; i < n; ++i) {
+        const char* msg = swmm_get_error_at(e, i);
+        ASSERT_NE(msg, nullptr);
+        if (msg[0] != '\0') any_msg = true;
+    }
+    EXPECT_TRUE(any_msg) << "a recorded error must carry a message";
+    EXPECT_STREQ(swmm_get_error_at(e, n), "");
+    EXPECT_STREQ(swmm_get_error_at(e, -1), "");
+    swmm_engine_destroy(e);
+}
+
+// The accumulators are cleared at the start of each open() via ctx_.reset():
+// re-opening a clean model on the same handle must show zero errors. open() only
+// proceeds from the CREATED or CLOSED state, so the handle must be closed between
+// opens; close() does not touch the accumulators, so the zeroing is open()'s doing.
+TEST(LenientOpen, ErrorsClearedOnNextOpen) {
+    SWMM_Engine e = swmm_engine_create();
+    swmm_engine_set_lenient_open(e, 1);
+    ASSERT_EQ(swmm_engine_open(e, "warnerr_undefined_outlet.inp", "", "", nullptr),
+              SWMM_OK);
+    ASSERT_GE(swmm_get_error_count(e), 1);
+    ASSERT_EQ(swmm_engine_close(e), SWMM_OK);  // lifecycle: reopen requires CLOSED
+    ASSERT_GE(swmm_get_error_count(e), 1);     // close() alone does not clear them
+    ASSERT_EQ(swmm_engine_open(e, "warnerr_base.inp", "", "", nullptr), SWMM_OK);
+    EXPECT_EQ(swmm_get_error_count(e), 0);
+    swmm_engine_destroy(e);
+}
+
+// Strict (default) open of the same fixture still fails — but the errors are
+// populated regardless of mode, so they remain queryable after the failure,
+// and the single last-error slot IS set (unlike the lenient path).
+TEST(LenientOpen, StrictOpenStillFailsButRecordsErrors) {
+    SWMM_Engine e = swmm_engine_create();
+    const int rc = swmm_engine_open(e, "warnerr_undefined_outlet.inp", "", "",
+                                    nullptr);
+    EXPECT_EQ(rc, SWMM_ERR_PARSE);
+    EXPECT_GE(swmm_get_error_count(e), 1);
+    EXPECT_STRNE(swmm_get_last_error_msg(e), "");
+    swmm_engine_destroy(e);
+}
+
+// The accessors are null-handle safe (the GUI may query a handle whose open
+// failed): counts are 0, messages are "", and the setter is a no-op.
+TEST(LenientOpen, AccessorsAreNullHandleSafe) {
+    EXPECT_EQ(swmm_get_error_count(nullptr), 0);
+    EXPECT_EQ(swmm_get_warning_count(nullptr), 0);
+    EXPECT_STREQ(swmm_get_error_at(nullptr, 0), "");
+    EXPECT_STREQ(swmm_get_warning_at(nullptr, 0), "");
+    swmm_engine_set_lenient_open(nullptr, 1);  // must not crash
+}

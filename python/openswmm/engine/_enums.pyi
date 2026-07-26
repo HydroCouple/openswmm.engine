@@ -213,6 +213,17 @@ class OutfallType(IntEnum):
     TIMESERIES = 4
 
 
+class StorageShape(IntEnum):
+    """Storage-unit surface-area relation codes."""
+
+    TABULAR = 0
+    FUNCTIONAL = 1
+    CYLINDRICAL = 2
+    CONICAL = 3
+    PARABOLOID = 4
+    PYRAMIDAL = 5
+
+
 class OrificeType(IntEnum):
     """Orifice flow-attack classification.
 

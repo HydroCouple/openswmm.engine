@@ -82,6 +82,41 @@ SWMM_ENGINE_API int swmm_control_get_id(SWMM_Engine engine, int idx, char* buf, 
 SWMM_ENGINE_API int swmm_control_clear_rules(SWMM_Engine engine);
 
 /**
+ * @brief Remove one control rule by index.
+ *
+ * @details Later rule indices shift down by one. BUILDING/OPENED state only.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based rule index (0..swmm_control_count()-1).
+ * @returns SWMM_OK, SWMM_ERR_LIFECYCLE, SWMM_ERR_BADHANDLE, or
+ *          SWMM_ERR_BADINDEX.
+ */
+SWMM_ENGINE_API int swmm_control_remove_rule(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Find control rules whose text references an object by name.
+ *
+ * @details Scans each rule's clauses for an object-type keyword (NODE, LINK,
+ *          CONDUIT, PUMP, ORIFICE, WEIR, OUTLET) immediately followed by
+ *          @p object_name (case-insensitive, matching legacy rule parsing).
+ *          Read-only — no delete ever edits rule text; callers decide what to
+ *          do with affected rules.
+ *
+ * @param engine            Engine handle.
+ * @param object_name       Object name to search for.
+ * @param rule_indices_out  Receives matching rule indices, ascending (may be
+ *                          NULL to query the count only).
+ * @param n_inout           In: capacity of rule_indices_out (ignored when it
+ *                          is NULL). Out: total number of matching rules.
+ * @returns SWMM_OK, SWMM_ERR_BADHANDLE, or SWMM_ERR_BADPARAM if object_name
+ *          or n_inout is NULL.
+ */
+SWMM_ENGINE_API int swmm_control_find_references(SWMM_Engine engine,
+                                                 const char* object_name,
+                                                 int* rule_indices_out,
+                                                 int* n_inout);
+
+/**
  * @brief Validate a control-rule text block without storing it.
  *
  * @details Runs the engine's control-rule parser against the engine's live

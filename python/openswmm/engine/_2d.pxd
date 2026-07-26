@@ -57,6 +57,7 @@ cdef extern from "openswmm_2d.h":
     # State — per vertex
     int swmm_2d_vertex_get_head(void* engine, int idx, double* head)
     int swmm_2d_vertex_get_heads_bulk(void* engine, double* heads) nogil
+    int swmm_2d_vertex_get_render_depths_bulk(void* engine, double* depths) nogil
 
     # Statistics
     int swmm_2d_get_max_depth(void* engine, double* max_depth)

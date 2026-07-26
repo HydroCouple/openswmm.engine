@@ -94,6 +94,8 @@ A domain-split C API replaces the monolithic legacy interface. Full reference at
 - **HEC-22 Inlet Analysis** — Street inlet capture with grate and curb inlets (SWMM 5.2).
 - **Variable Speed Pumps** — Type 5 pump curves with speed scaling.
 - **New Storage Shapes** — Conical and pyramidal shapes with elliptical and rectangular bases.
+- **Model Editing with Impact Analysis** — `ModelEditor` previews and cascades deletions across all 22 referenceable object categories (nodes, links, subcatchments, gages, tables, transects, pollutants, patterns, aquifers, snowpacks, LID controls, streets, inlet designs, land uses, unit hydrographs, and more), plus node/link type conversion.
+- **Lenient Model Loading** — `Solver.set_lenient_open()` loads a model with validation errors into an editable `OPENED` state instead of failing, exposing them via `Solver.open_errors` / `Solver.open_warnings` for editor/GUI workflows.
 
 ## Quick Start
 
