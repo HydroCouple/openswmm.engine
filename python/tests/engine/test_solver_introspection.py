@@ -8,41 +8,50 @@ Surfaces the previously-unwrapped engine lifecycle functions
 
 from __future__ import annotations
 
+import unittest
+
 from datetime import datetime
 
-import pytest
-
-pytest.importorskip("openswmm.engine._solver")
+try:
+    import openswmm.engine._solver  # noqa: F401
+except ImportError as _exc:  # pragma: no cover - environment dependent
+    raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
 from openswmm.engine import EngineState
 
-
-class TestTimeIntrospection:
-    def test_sim_window(self, opened_solver):
-        start = opened_solver.sim_start_time
-        end = opened_solver.sim_end_time
-        assert isinstance(start, datetime)
-        assert isinstance(end, datetime)
-        assert end > start
-
-    def test_event_count(self, opened_solver):
-        n = opened_solver.event_count
-        assert isinstance(n, int)
-        assert n >= 0
+from tests.engine._solver_cases import EngineSolverCase
 
 
-class TestProgressCallback:
-    def test_progress_fires_monotonic(self, initialized_solver):
+class TestTimeIntrospection(EngineSolverCase):
+    def test_sim_window(self):
+        solver = self.opened_solver()
+        start = solver.sim_start_time
+        end = solver.sim_end_time
+        self.assertIsInstance(start, datetime)
+        self.assertIsInstance(end, datetime)
+        self.assertGreater(end, start)
+
+    def test_event_count(self):
+        solver = self.opened_solver()
+        n = solver.event_count
+        self.assertIsInstance(n, int)
+        self.assertGreaterEqual(n, 0)
+
+
+class TestProgressCallback(EngineSolverCase):
+    def test_progress_fires_monotonic(self):
+        solver = self.initialized_solver()
         fractions: list[float] = []
-        initialized_solver.set_progress_callback(fractions.append)
-        initialized_solver.start()
-        while initialized_solver.state == EngineState.RUNNING:
-            initialized_solver.step()
+        solver.set_progress_callback(fractions.append)
+        solver.start()
+        while solver.state == EngineState.RUNNING:
+            solver.step()
         # Callback fired, fractions are valid and non-decreasing.
-        assert fractions, "progress callback never fired"
-        assert all(0.0 <= f <= 1.0 + 1e-9 for f in fractions)
-        assert fractions == sorted(fractions)
+        self.assertTrue(fractions, "progress callback never fired")
+        self.assertTrue(all(0.0 <= f <= 1.0 + 1e-9 for f in fractions))
+        self.assertEqual(fractions, sorted(fractions))
 
-    def test_unregister(self, initialized_solver):
-        initialized_solver.set_progress_callback(lambda f: None)
-        initialized_solver.set_progress_callback(None)  # must not raise
+    def test_unregister(self):
+        solver = self.initialized_solver()
+        solver.set_progress_callback(lambda f: None)
+        solver.set_progress_callback(None)  # must not raise

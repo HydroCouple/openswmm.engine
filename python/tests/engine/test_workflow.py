@@ -1,22 +1,22 @@
 """Integration workflow tests exercising new Python binding features."""
 
 import os
-import pytest
+import unittest
 
 from openswmm.engine import (
     Solver, ModelBuilder, NodeType, LinkType, XSectShape,
     run, run_with_callback,
 )
-from tests.engine.conftest import SITE_DRAINAGE_INP
+from tests._paths import SITE_DRAINAGE_INP, artifact_dir
 
 
 # ---------------------------------------------------------------------------
 # Programmatic build → run → read
 # ---------------------------------------------------------------------------
-class TestBuildRunRead:
+class TestBuildRunRead(unittest.TestCase):
     """Build a model programmatically, run it, verify outputs exist."""
 
-    def test_build_and_run(self, tmp_path):
+    def test_build_and_run(self):
         m = ModelBuilder()
         m.add_node("J1", NodeType.JUNCTION)
         m.add_node("OUT1", NodeType.OUTFALL)
@@ -30,50 +30,53 @@ class TestBuildRunRead:
         m.validate()
         m.finalize()
         solver = m.to_solver()
-        assert solver.handle != 0
+        self.assertNotEqual(solver.handle, 0)
         solver.destroy()
 
 
 # ---------------------------------------------------------------------------
 # Callback-driven simulation
 # ---------------------------------------------------------------------------
-class TestCallbackDrivenRun:
+class TestCallbackDrivenRun(unittest.TestCase):
     """Run a simulation using the module-level run_with_callback function."""
 
-    def test_progress_reported(self, tmp_path):
-        rpt = str(tmp_path / "cb.rpt")
-        out = str(tmp_path / "cb.out")
+    def test_progress_reported(self):
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "cb.rpt")
+        out = os.path.join(d, "cb.out")
         progress = []
         run_with_callback(SITE_DRAINAGE_INP, rpt, out, lambda p: progress.append(p))
-        assert len(progress) > 0
-        assert os.path.exists(rpt)
+        self.assertGreater(len(progress), 0)
+        self.assertTrue(os.path.exists(rpt))
 
 
 # ---------------------------------------------------------------------------
 # Module-level run
 # ---------------------------------------------------------------------------
-class TestModuleRun:
+class TestModuleRun(unittest.TestCase):
     """Module-level run() completes without error."""
 
-    def test_run_creates_outputs(self, tmp_path):
-        rpt = str(tmp_path / "run.rpt")
-        out = str(tmp_path / "run.out")
+    def test_run_creates_outputs(self):
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "run.rpt")
+        out = os.path.join(d, "run.out")
         run(SITE_DRAINAGE_INP, rpt, out)
-        assert os.path.exists(rpt)
-        assert os.path.exists(out)
+        self.assertTrue(os.path.exists(rpt))
+        self.assertTrue(os.path.exists(out))
 
 
 # ---------------------------------------------------------------------------
 # Stride-based stepping
 # ---------------------------------------------------------------------------
-class TestStrideBasedStepping:
+class TestStrideBasedStepping(unittest.TestCase):
     """Use stride() to advance multiple steps at once."""
 
-    def test_stride_loop(self, tmp_path):
+    def test_stride_loop(self):
         from datetime import timedelta
 
-        rpt = str(tmp_path / "stride.rpt")
-        out = str(tmp_path / "stride.out")
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "stride.rpt")
+        out = os.path.join(d, "stride.out")
         s = Solver(SITE_DRAINAGE_INP, rpt, out)
         s.open()
         s.initialize()
@@ -85,7 +88,7 @@ class TestStrideBasedStepping:
             if elapsed <= timedelta(0):
                 break
             total_elapsed = elapsed
-        assert total_elapsed > timedelta(0)
+        self.assertGreater(total_elapsed, timedelta(0))
 
         s.end()
         s.report()

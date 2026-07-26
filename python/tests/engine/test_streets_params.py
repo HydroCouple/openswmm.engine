@@ -6,14 +6,20 @@ covering the newly-added inverse street-parameter accessor.
 
 from __future__ import annotations
 
-import pytest
+import unittest
 
-pytest.importorskip("openswmm.engine._infrastructure")
+try:
+    import openswmm.engine._infrastructure  # noqa: F401
+except ImportError as _exc:  # pragma: no cover - environment dependent
+    raise unittest.SkipTest(f"requires compiled engine: {_exc}")
+
+from tests.engine._solver_cases import EngineSolverCase
 
 
-class TestStreetGetParams:
-    def test_set_then_get_round_trip(self, opened_solver):
-        streets = opened_solver.infrastructure.streets
+class TestStreetGetParams(EngineSolverCase):
+    def test_set_then_get_round_trip(self):
+        solver = self.opened_solver()
+        streets = solver.infrastructure.streets
         idx = streets.add("ST_TEST")
         streets.set_params(
             idx,
@@ -22,9 +28,9 @@ class TestStreetGetParams:
             back_width=10.0, back_slope=0.02, back_n=0.02,
         )
         p = streets.get_params(idx)
-        assert p["t_crown"] == pytest.approx(0.5)
-        assert p["h_curb"] == pytest.approx(0.6)
-        assert p["sx"] == pytest.approx(0.04)
-        assert p["n_road"] == pytest.approx(0.016)
-        assert p["sides"] == 2
-        assert p["back_width"] == pytest.approx(10.0)
+        self.assertAlmostEqual(p["t_crown"], 0.5, places=6)
+        self.assertAlmostEqual(p["h_curb"], 0.6, places=6)
+        self.assertAlmostEqual(p["sx"], 0.04, places=6)
+        self.assertAlmostEqual(p["n_road"], 0.016, places=6)
+        self.assertEqual(p["sides"], 2)
+        self.assertAlmostEqual(p["back_width"], 10.0, places=6)

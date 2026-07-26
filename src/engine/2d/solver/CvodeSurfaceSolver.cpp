@@ -729,6 +729,7 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
         CVodeGetCurrentTime(cvode_mem_, &t_int);
         if (std::abs(t_int - t_current)
             > 1.0e-9 * std::max(1.0, std::abs(t_current))) {
+            accumulateStats();   // preserve cumulative counters across the reset
             CVodeReInit(cvode_mem_, t_current, y_);
             precond_diag_.clear();
 #if defined(OPENSWMM_HAVE_HYPRE)
@@ -821,25 +822,47 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
 }
 
 
+// Fold the live CVODE counters into the acc_* totals. Called just before each
+// CVodeReInit (which resets the live counters). Together with run_stats() adding
+// the live counters back on top, this makes the reported throughput cumulative
+// across every ReInit — fixing the "0 BDF steps / N frozen windows" misreport.
+void CvodeSurfaceSolver::accumulateStats() noexcept {
+    if (!cvode_mem_) return;
+    void* m = cvode_mem_;
+    long v = 0;
+    CVodeGetNumSteps(m, &v);                acc_nsteps_   += v;
+    CVodeGetNumRhsEvals(m, &v);             acc_nrhs_     += v;
+    CVodeGetNumNonlinSolvIters(m, &v);      acc_nni_      += v;
+    CVodeGetNumErrTestFails(m, &v);         acc_netfails_ += v;
+    CVodeGetNumNonlinSolvConvFails(m, &v);  acc_nncfails_ += v;
+    CVodeGetNumLinIters(m, &v);             acc_nli_      += v;
+    CVodeGetNumLinRhsEvals(m, &v);          acc_nrhs_ls_  += v;
+    CVodeGetNumPrecEvals(m, &v);            acc_nsetups_  += v;
+}
+
 ISurfaceSolver::RunStats CvodeSurfaceSolver::run_stats() const noexcept {
     RunStats s;
+    s.last_h = last_h_;
+    // acc_* hold the totals folded in before each ReInit; add the live counters
+    // for the current (post-last-ReInit) window. If the solver is already freed,
+    // acc_* alone are the answer.
+    s.nsteps   = acc_nsteps_;   s.nrhs     = acc_nrhs_;    s.nrhs_ls  = acc_nrhs_ls_;
+    s.nni      = acc_nni_;      s.nli      = acc_nli_;     s.nsetups  = acc_nsetups_;
+    s.netfails = acc_netfails_; s.nncfails = acc_nncfails_;
     if (!cvode_mem_) return s;
     void* m = cvode_mem_;
-    CVodeGetNumSteps(m, &s.nsteps);
-    CVodeGetNumRhsEvals(m, &s.nrhs);
-    CVodeGetNumNonlinSolvIters(m, &s.nni);
-    CVodeGetNumErrTestFails(m, &s.netfails);
-    CVodeGetNumNonlinSolvConvFails(m, &s.nncfails);
+    long v = 0;
+    CVodeGetNumSteps(m, &v);                s.nsteps   += v;
+    CVodeGetNumRhsEvals(m, &v);             s.nrhs     += v;
+    CVodeGetNumNonlinSolvIters(m, &v);      s.nni      += v;
+    CVodeGetNumErrTestFails(m, &v);         s.netfails += v;
+    CVodeGetNumNonlinSolvConvFails(m, &v);  s.nncfails += v;
     // SPGMR (matrix-free) linear-solver counters. nrhs_ls is the FD J·v cost:
     // one RHS evaluation per Krylov iteration — the multiplier an analytic J·v
     // removes. Present only when a Krylov linear solver is attached.
-    CVodeGetNumLinIters(m, &s.nli);
-    CVodeGetNumLinRhsEvals(m, &s.nrhs_ls);
-    CVodeGetNumPrecSolves(m, &s.nsetups);   // psolve applications
-    long nsetup = 0;
-    CVodeGetNumPrecEvals(m, &nsetup);
-    s.nsetups = nsetup;                      // psetup (preconditioner) builds
-    s.last_h  = last_h_;
+    CVodeGetNumLinIters(m, &v);             s.nli      += v;
+    CVodeGetNumLinRhsEvals(m, &v);          s.nrhs_ls  += v;
+    CVodeGetNumPrecEvals(m, &v);            s.nsetups  += v;   // psetup builds
     return s;
 }
 
@@ -859,6 +882,7 @@ void CvodeSurfaceSolver::resyncFromVolumes(double t0) {
     for (int i = 0; i < nt; ++i)
         y_data[i] = ctx_.state->volume[i];
 
+    accumulateStats();   // preserve cumulative counters across the reset
     CVodeReInit(cvode_mem_, t0, y_);
     precond_diag_.clear();
 #if defined(OPENSWMM_HAVE_HYPRE)
@@ -880,6 +904,7 @@ void CvodeSurfaceSolver::reinitialize(double t0) {
         ctx_.state->volume[i] = y_data[i];
     }
 
+    accumulateStats();   // preserve cumulative counters across the reset
     CVodeReInit(cvode_mem_, t0, y_);
 
     // Invalidate the lagged preconditioner caches: the state was re-seeded, so

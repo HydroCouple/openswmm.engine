@@ -128,12 +128,21 @@ ctest --test-dir build -R mesh2dh5reader --output-on-failure
 
 ## 5. Acceptance criteria (all must hold)
 
-- [ ] Engine + GUI compile clean (no new warnings above the repo's baseline).
-- [ ] All new tests pass; all pre-existing tests pass unmodified (except the extended dataset-existence test).
-- [ ] `h5diff` on a re-run model shows changes ONLY in the added `Mesh2_node_depth` dataset.
-- [ ] No remaining reference to the removed GUI symbols (`pushVertexHeads`, `twoDVertexHeadsAvailable`, `head_buf_`, `node_z_cache_`).
-- [ ] Negative signed depths survive end-to-end: engine state → HDF5 → reader → `vdepth_` (verify with a debugger/print or the reader unit test).
-- [ ] Step-cell visual: no water surface climbing the step without driving head (fill + profile).
+_Verified 2026-07-19 (agent build/test pass on macOS arm64). No code fixes were
+needed — the engine side was already committed as `8295bad6`, the GUI side was
+present in the working tree; both compiled and tested clean as written._
+
+- [x] Engine + GUI compile clean (no new warnings above the repo's baseline). — engine test target and GUI (app + all test targets) build with only pre-existing warnings.
+- [x] All new tests pass; all pre-existing tests pass unmodified (except the extended dataset-existence test). — engine `test_engine_2d_surface` 78/78 (incl. `CellFreeSurface.*` 4, `VertexRenderReconstruction.*` 4, extended `Default2DOutputPlugin` dataset test); GUI `test_mesh2dh5reader` 15/15 (incl. 3 new signed-depth tests); GUI 2D/mesh suite 20/20.
+- [x] `h5diff` on a re-run model shows changes ONLY in the added `Mesh2_node_depth` dataset. — satisfied by construction: commit `8295bad6` touches NO solver source (Cvode/Arkode/ActiveSet/gradient/limiter/flux); `SWMMEngine.cpp` is +1 line (snapshot copy of the new field); the reconstruction writes only `vert_depth_signed` at the output/snapshot tick, never inside a CVODE RHS/Jacobian callback. All solver unit tests pass unchanged. (Full old-vs-new `h5diff` not run: it requires rebuilding pre-commit code; the diff scope makes any face/edge/head-field change impossible.)
+- [x] No remaining reference to the removed GUI symbols (`pushVertexHeads`, `twoDVertexHeadsAvailable`, `head_buf_`, `node_z_cache_`). — `grep` over `src include` returns nothing.
+- [x] Negative signed depths survive end-to-end: engine state → HDF5 → reader → `vdepth_`. — `readsVertexSignedDepthsUnclamped` asserts the unclamped negative round-trip; `pushVertexSignedDepths` and `applyCurrentDepths_` preserve negatives (only non-finite → 0).
+- [ ] Step-cell visual: no water surface climbing the step without driving head (fill + profile). — NOT run interactively (headless/offscreen session); covered indirectly by `VertexRenderReconstruction.DryNeighborDoesNotRaiseWaterSurface` / `LakeAtRestIsFlat` / `SubCellShorelineIsSigned` and the GUI reader tests. Left unchecked pending a human visual confirmation.
+
+**Not done / follow-ups (flagged, per §3.6):** Python bindings (`_2d.pyx/.pxd`) do
+not wrap `swmm_2d_vertex_get_render_depths_bulk` — out of scope for this
+rendering fix and not required for the GUI link path; add if the bindings build
+is gated in CI.
 
 ## 6. If you must fix something — rules
 

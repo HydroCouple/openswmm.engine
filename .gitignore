@@ -18,6 +18,7 @@ upload/
 docs/html/
 
 # add python ignore files and file types
+python/tests/_artifacts/
 python/build/
 python/dist/
 python/OpenSWMMCore.egg-info/

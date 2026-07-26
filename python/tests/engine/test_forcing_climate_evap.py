@@ -17,8 +17,7 @@ All tests run against the real handle-based ``openswmm.engine.Solver``
 from __future__ import annotations
 
 import os
-
-import pytest
+import unittest
 
 from openswmm.engine import Solver, ForcingMode
 
@@ -57,7 +56,7 @@ def _solver(name, replacements=()):
     return s
 
 
-class TestGlobalEvapOverride:
+class TestGlobalEvapOverride(unittest.TestCase):
     def test_drives_subcatchment_evap(self):
         """M4: a global prescription evaporates from every subcatchment."""
         s = _solver("cevap_global")
@@ -66,10 +65,13 @@ class TestGlobalEvapOverride:
                 s.step()
             s.forcing.climate_evap(1.2, persist=True)
             s.step()
-            assert s.forcing.climate_evap_rate() == pytest.approx(1.2, rel=1e-6)
+            self.assertAlmostEqual(
+                s.forcing.climate_evap_rate(), 1.2, delta=1.2e-6)
             # Both subcatchments evaporate (PET-limited, so up to the rate).
-            assert 0.0 < s.subcatchments["S1"].evap <= 1.2 * 1.01
-            assert 0.0 < s.subcatchments["S2"].evap <= 1.2 * 1.01
+            self.assertGreater(s.subcatchments["S1"].evap, 0.0)
+            self.assertLessEqual(s.subcatchments["S1"].evap, 1.2 * 1.01)
+            self.assertGreater(s.subcatchments["S2"].evap, 0.0)
+            self.assertLessEqual(s.subcatchments["S2"].evap, 1.2 * 1.01)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -83,8 +85,8 @@ class TestGlobalEvapOverride:
             s.forcing.subcatchment_evap("S1", 3.0, persist=True)
             s.step()
             # S1 follows its own (higher) PET; S2 follows the global rate.
-            assert s.subcatchments["S1"].evap > 1.5
-            assert s.subcatchments["S2"].evap <= 1.0 * 1.01
+            self.assertGreater(s.subcatchments["S1"].evap, 1.5)
+            self.assertLessEqual(s.subcatchments["S2"].evap, 1.0 * 1.01)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -96,12 +98,12 @@ class TestGlobalEvapOverride:
             s.forcing.climate_evap(1.0, persist=True)
         s.end()
         try:
-            assert abs(s.mass_balance.runoff_continuity_error) < 0.5
+            self.assertLess(abs(s.mass_balance.runoff_continuity_error), 0.5)
         finally:
             s.close(); s.destroy()
 
 
-class TestDryOnlyToggle:
+class TestDryOnlyToggle(unittest.TestCase):
     def test_toggle_suppresses_and_resumes(self):
         """M5: DRY_ONLY on suppresses evap during rain; off resumes it."""
         s = _solver("cevap_dryonly")
@@ -110,20 +112,22 @@ class TestDryOnlyToggle:
             # Step into the active storm.
             for _ in range(4):
                 s.step()
-            assert s.subcatchments["S1"].evap > 0.0  # evaporating during rain
+            self.assertGreater(
+                s.subcatchments["S1"].evap, 0.0)  # evaporating during rain
 
             # Turn DRY_ONLY on: surface evap stops while it rains.
             s.forcing.climate_dry_only(True)
-            assert s.forcing.get_climate_dry_only() is True
+            self.assertIs(s.forcing.get_climate_dry_only(), True)
             s.forcing.climate_evap(2.0, persist=True)
             s.step()
-            assert s.subcatchments["S1"].evap == pytest.approx(0.0, abs=1e-12)
+            self.assertAlmostEqual(
+                s.subcatchments["S1"].evap, 0.0, delta=1e-12)
 
             # Turn it back off: evap resumes.
             s.forcing.climate_dry_only(False)
-            assert s.forcing.get_climate_dry_only() is False
+            self.assertIs(s.forcing.get_climate_dry_only(), False)
             s.forcing.climate_evap(2.0, persist=True)
             s.step()
-            assert s.subcatchments["S1"].evap > 0.0
+            self.assertGreater(s.subcatchments["S1"].evap, 0.0)
         finally:
             s.end(); s.close(); s.destroy()

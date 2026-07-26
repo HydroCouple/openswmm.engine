@@ -6,8 +6,9 @@ persist vs one-shot reset, clearing, the climate evap rate getter, and
 adjustment composition.
 
 All tests run against the real handle-based ``openswmm.engine.Solver``
-(no mocks). Report/output files are written to ``tests/engine/output``
-so they remain reviewable after the run.
+(no mocks). Report/output files are written to reviewable folders
+(``tests/engine/output`` and ``tests/_artifacts``) so they remain
+inspectable after the run.
 
 @author: Caleb Buahin
 """
@@ -16,9 +17,10 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from openswmm.engine import Solver, ForcingMode
+
+from tests._paths import artifact_dir
+from tests.engine._solver_cases import EngineSolverCase
 
 # The bundled site-drainage model uses CONSTANT evaporation of 0.0 in/day
 # (DRY_ONLY NO, US units) and a 2-yr design storm beginning at sim start,
@@ -51,27 +53,19 @@ _DETERMINISTIC_RUNOFF = (
 )
 
 
-@pytest.fixture
-def pet_solver(request):
-    """A running Solver whose rpt/out files land in a reviewable folder."""
-    os.makedirs(_OUT_DIR, exist_ok=True)
-    base = os.path.join(_OUT_DIR, f"pet_{request.node.name}")
-    inp = _derived_model("pet_base.inp")
-    s = Solver(inp, base + ".rpt", base + ".out")
-    s.open()
-    s.initialize()
-    s.start()
-    yield s
-    try:
-        s.end()
-        s.report()
-    except Exception:
-        pass
-    try:
-        s.close()
-    except Exception:
-        pass
-    s.destroy()
+class PetSolverCase(EngineSolverCase):
+    """Base case providing a running Solver for PET prescription tests."""
+
+    def pet_solver(self):
+        """A running Solver whose rpt/out files land in a reviewable folder."""
+        base = os.path.join(artifact_dir(self), "pet")
+        inp = _derived_model("pet_base.inp")
+        s = Solver(inp, base + ".rpt", base + ".out")
+        s.open()
+        s.initialize()
+        s.start()
+        self.addCleanup(self._end_close_destroy, s)
+        return s
 
 
 def _spinup(s, n=_SPINUP_STEPS):
@@ -79,55 +73,55 @@ def _spinup(s, n=_SPINUP_STEPS):
         s.step()
 
 
-class TestOverride:
-    def test_override_takes_effect(self, pet_solver):
+class TestOverride(PetSolverCase):
+    def test_override_takes_effect(self):
         """Case 1: prescribed PET drives evap loss; untouched subcatch stays dry."""
-        s = pet_solver
+        s = self.pet_solver()
         _spinup(s)
         s.forcing.subcatchment_evap("S1", _PET, persist=True)
         s.step()
         s1 = s.subcatchments["S1"]
         s2 = s.subcatchments["S2"]
         # Storm is active, so ponded depth >> PET rate: loss equals the rate.
-        assert s1.evap == pytest.approx(_PET, rel=1e-3)
+        self.assertAlmostEqual(s1.evap, _PET, delta=_PET * 1e-3)
         # Climate evap is 0.0, so the unforced subcatchment shows none.
-        assert s2.evap == pytest.approx(0.0, abs=1e-12)
+        self.assertAlmostEqual(s2.evap, 0.0, delta=1e-12)
 
-    def test_add_mode(self, pet_solver):
+    def test_add_mode(self):
         """Case 5: ADD augments the climate rate (0.0 here)."""
-        s = pet_solver
+        s = self.pet_solver()
         _spinup(s)
         s.forcing.subcatchment_evap(
             "S1", 1.5, mode=ForcingMode.ADD, persist=True)
         s.step()
-        assert s.subcatchments["S1"].evap == pytest.approx(1.5, rel=1e-3)
+        self.assertAlmostEqual(s.subcatchments["S1"].evap, 1.5, delta=1.5 * 1e-3)
 
-    def test_one_shot_resets_after_one_step(self, pet_solver):
+    def test_one_shot_resets_after_one_step(self):
         """Case 6: persist=False affects exactly one step."""
-        s = pet_solver
+        s = self.pet_solver()
         _spinup(s)
         s.forcing.subcatchment_evap("S1", _PET, persist=False)
         s.step()
-        assert s.subcatchments["S1"].evap == pytest.approx(_PET, rel=1e-3)
+        self.assertAlmostEqual(s.subcatchments["S1"].evap, _PET, delta=_PET * 1e-3)
         s.step()
-        assert s.subcatchments["S1"].evap == pytest.approx(0.0, abs=1e-12)
+        self.assertAlmostEqual(s.subcatchments["S1"].evap, 0.0, delta=1e-12)
 
-    def test_clear_reverts_to_climate(self, pet_solver):
+    def test_clear_reverts_to_climate(self):
         """Case 4: clearing reverts to the climate-derived rate (0.0)."""
-        s = pet_solver
+        s = self.pet_solver()
         _spinup(s)
         s.forcing.subcatchment_evap("S1", _PET, persist=True)
         s.step()
-        assert s.subcatchments["S1"].evap > 0.0
+        self.assertGreater(s.subcatchments["S1"].evap, 0.0)
         s.forcing.clear_all()
         s.step()
-        assert s.subcatchments["S1"].evap == pytest.approx(0.0, abs=1e-12)
+        self.assertAlmostEqual(s.subcatchments["S1"].evap, 0.0, delta=1e-12)
 
 
-class TestCappingAndMassBalance:
-    def test_capping_to_available_water(self, pet_solver):
+class TestCappingAndMassBalance(PetSolverCase):
+    def test_capping_to_available_water(self):
         """Case 2: an extreme PET cannot evaporate more than is available."""
-        s = pet_solver
+        s = self.pet_solver()
         extreme = 1.0e6  # in/day — far beyond any plausible ponded volume
         s.forcing.subcatchment_evap("S1", extreme, persist=True)
         for _ in range(_SPINUP_STEPS):
@@ -135,50 +129,52 @@ class TestCappingAndMassBalance:
         s1 = s.subcatchments["S1"]
         # Loss is capped by available water: strictly below the demand,
         # and never negative.
-        assert 0.0 <= s1.evap < extreme
+        self.assertGreaterEqual(s1.evap, 0.0)
+        self.assertLess(s1.evap, extreme)
 
-    def test_mass_balance_continuity(self, pet_solver):
+    def test_mass_balance_continuity(self):
         """Case 3: persistent prescription keeps runoff continuity sound."""
-        s = pet_solver
+        s = self.pet_solver()
         s.forcing.subcatchment_evap("S1", _PET, persist=True)
         s.forcing.subcatchment_evap("S2", _PET, persist=True)
         while s.step():
             pass
         s.end()
         err = s.mass_balance.runoff_continuity_error
-        assert abs(err) < 0.5
+        self.assertLess(abs(err), 0.5)
 
-    def test_evap_appears_in_runoff_totals(self, pet_solver):
+    def test_evap_appears_in_runoff_totals(self):
         """Case 3 (totals): forced evaporation shows up in the system totals."""
         from openswmm.engine import RunoffTotal
-        s = pet_solver
+        s = self.pet_solver()
         s.forcing.subcatchment_evap("S1", _PET, persist=True)
         for _ in range(2 * _SPINUP_STEPS):
             s.step()
         total_evap = s.mass_balance.runoff_total(RunoffTotal.EVAP)
-        assert total_evap > 0.0
+        self.assertGreater(total_evap, 0.0)
 
 
-class TestClimateRateGetter:
-    def test_getter_matches_model_climate(self, pet_solver):
+class TestClimateRateGetter(PetSolverCase):
+    def test_getter_matches_model_climate(self):
         """L9/R8: the model's constant evap is 0.0 in/day."""
-        s = pet_solver
+        s = self.pet_solver()
         _spinup(s)
-        assert s.forcing.climate_evap_rate() == pytest.approx(0.0, abs=1e-12)
+        self.assertAlmostEqual(s.forcing.climate_evap_rate(), 0.0, delta=1e-12)
 
-    def test_adjustment_composition_round_trip(self, pet_solver):
+    def test_adjustment_composition_round_trip(self):
         """Case 13: read rate, apply caller-side adjustment, prescribe result.
 
         The engine applies the composed rate verbatim — no further
         engine-side adjustment.
         """
-        s = pet_solver
+        s = self.pet_solver()
         _spinup(s)
         base = s.forcing.climate_evap_rate()  # 0.0 for this model
         composed = base * 0.8 + 1.2           # caller-side logic
         s.forcing.subcatchment_evap("S1", composed, persist=True)
         s.step()
-        assert s.subcatchments["S1"].evap == pytest.approx(composed, rel=1e-3)
+        self.assertAlmostEqual(
+            s.subcatchments["S1"].evap, composed, delta=abs(composed) * 1e-3)
 
 
 def _derived_model(name, replacements=()):
@@ -199,7 +195,7 @@ def _derived_model(name, replacements=()):
     return path
 
 
-class TestDryOnlyBypass:
+class TestDryOnlyBypass(PetSolverCase):
     def test_prescription_bypasses_dry_only(self):
         """Case 7: prescribed PET evaporates even when DRY_ONLY suppresses
         the climate rate during rainfall."""
@@ -215,16 +211,16 @@ class TestDryOnlyBypass:
         try:
             _spinup(s)  # storm is active → DRY_ONLY zeroes climate evap
             s.step()
-            assert s.subcatchments["S2"].evap == pytest.approx(0.0, abs=1e-12)
+            self.assertAlmostEqual(s.subcatchments["S2"].evap, 0.0, delta=1e-12)
             s.forcing.subcatchment_evap("S1", _PET, persist=True)
             s.step()
-            assert s.subcatchments["S1"].evap == pytest.approx(_PET, rel=1e-3)
+            self.assertAlmostEqual(s.subcatchments["S1"].evap, _PET, delta=_PET * 1e-3)
         finally:
             s.close()
             s.destroy()
 
 
-class TestSIUnits:
+class TestSIUnits(PetSolverCase):
     def test_si_prescription_round_trips_in_mm_day(self):
         """Case 9: on an SI model the API accepts and reports mm/day."""
         inp = _derived_model("pet_si_units.inp", [
@@ -240,21 +236,22 @@ class TestSIUnits:
             _spinup(s)
             s.forcing.subcatchment_evap("S1", pet_mm_day, persist=True)
             s.step()
-            assert s.subcatchments["S1"].evap == pytest.approx(
-                pet_mm_day, rel=1e-3)
+            self.assertAlmostEqual(
+                s.subcatchments["S1"].evap, pet_mm_day,
+                delta=pet_mm_day * 1e-3)
         finally:
             s.close()
             s.destroy()
 
 
-class TestErrorPaths:
-    def test_bad_subcatchment_raises(self, pet_solver):
+class TestErrorPaths(PetSolverCase):
+    def test_bad_subcatchment_raises(self):
         """Case 12: unknown ids and bad indices are rejected."""
-        s = pet_solver
-        with pytest.raises(Exception):
+        s = self.pet_solver()
+        with self.assertRaises(Exception):
             s.forcing.subcatchment_evap("NO_SUCH_SUBCATCH", _PET)
 
-    def test_bad_mode_raises(self, pet_solver):
-        s = pet_solver
-        with pytest.raises(Exception):
+    def test_bad_mode_raises(self):
+        s = self.pet_solver()
+        with self.assertRaises(Exception):
             s.forcing.subcatchment_evap("S1", _PET, mode=99)

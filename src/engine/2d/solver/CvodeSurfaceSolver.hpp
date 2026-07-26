@@ -164,6 +164,17 @@ private:
     long   last_nsteps_ = 0;
     double last_h_      = 0.0;
 
+    // Cumulative CVODE throughput counters. The CVodeGetNum* counters are RESET
+    // by every CVodeReInit (clock-resync / reseed / reinitialize), so a plain
+    // run_stats() at finalize reports only the last (often quiescent/frozen)
+    // window — hence the long-standing "0 BDF steps / N frozen windows" misreport.
+    // accumulateStats() folds the live counters into these totals just before each
+    // ReInit; run_stats() returns acc_* + the live (post-last-ReInit) counters.
+    long acc_nsteps_ = 0, acc_nrhs_ = 0, acc_nrhs_ls_ = 0;
+    long acc_nni_ = 0, acc_nli_ = 0, acc_nsetups_ = 0;
+    long acc_netfails_ = 0, acc_nncfails_ = 0;
+    void accumulateStats() noexcept;   ///< fold live counters into acc_* before a CVodeReInit
+
     // ── Live node-coupling (macro-step) state augmentation ────────────────────
     // When state.node_coupling is set (COUPLING_INTERVAL > 1), the state vector
     // is augmented to nt + nc_: the extra nc_ entries A_k = ∫Q_k dt accumulate
