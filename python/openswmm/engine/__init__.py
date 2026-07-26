@@ -249,8 +249,8 @@ from ._enums import (
     # Lifecycle / errors
     ErrorCode, EngineState, WarnCode, ObjectType,
     # Hydraulics
-    FlowUnits, RouteModel, NodeType, LinkType, OutfallType, XSectShape,
-    OrificeType, WeirType, OutletRatingType,
+    FlowUnits, RouteModel, NodeType, LinkType, OutfallType, StorageShape,
+    XSectShape, OrificeType, WeirType, OutletRatingType,
     # Hydrology
     InfilModel, GageDataSource, GageRainType,
     # Water quality / LID
@@ -309,7 +309,7 @@ __all__ = [
     "ErrorCode", "EngineState", "WarnCode", "ObjectType",
     # --- Enumerations: hydraulics ---
     "FlowUnits", "RouteModel", "NodeType", "LinkType",
-    "OutfallType", "XSectShape",
+    "OutfallType", "StorageShape", "XSectShape",
     "OrificeType", "WeirType", "OutletRatingType",
     # --- Enumerations: hydrology ---
     "InfilModel", "GageDataSource", "GageRainType",

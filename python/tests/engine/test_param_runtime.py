@@ -23,10 +23,16 @@ Real handle-based solver; artifacts under tests/engine/output.
 from __future__ import annotations
 
 import os
+import unittest
 
-import pytest
+import numpy as np
 
-from openswmm.engine import Solver
+try:
+    import openswmm.engine  # noqa: F401
+except ImportError as _exc:  # pragma: no cover - environment dependent
+    raise unittest.SkipTest(f"requires compiled engine: {_exc}")
+
+from openswmm.engine import Solver  # noqa: E402
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
@@ -48,7 +54,7 @@ def _open(inp, name):
 # --------------------------------------------------------------------------- #
 # P6 — time-pattern factors
 # --------------------------------------------------------------------------- #
-class TestPatternFactorsRuntime:
+class TestPatternFactorsRuntime(unittest.TestCase):
     def _biggest_dwf_node(self, s):
         idx = max(range(len(s.nodes)), key=lambda i: s.nodes[i].lateral_inflow)
         return s.nodes[idx]
@@ -61,13 +67,14 @@ class TestPatternFactorsRuntime:
                 s.step()
             node = self._biggest_dwf_node(s)
             before = node.lateral_inflow
-            assert before > 1e-9, "expected a DWF-fed node"
+            self.assertGreater(before, 1e-9, "expected a DWF-fed node")
             # Scale every pattern's factors up 10x.
             for p in s.patterns:
                 p.set_factors([x * 10.0 for x in p.factors])
             s.step()
             after = node.lateral_inflow
-            assert after > before * 1.5, (
+            self.assertGreater(
+                after, before * 1.5,
                 f"DWF inflow did not respond to pattern edit "
                 f"(before={before}, after={after})")
         finally:
@@ -83,7 +90,7 @@ class TestPatternFactorsRuntime:
             n = len(p.factors)
             new = [0.5] * n
             p.set_factors(new)
-            assert p.factors == pytest.approx(new)
+            np.testing.assert_allclose(p.factors, new, rtol=1e-6)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -91,27 +98,27 @@ class TestPatternFactorsRuntime:
 # --------------------------------------------------------------------------- #
 # P4 — street sweeping
 # --------------------------------------------------------------------------- #
-class TestSweepRuntime:
+class TestSweepRuntime(unittest.TestCase):
     def test_sweep_params_round_trip_no_corruption(self):
         """P4: sweep interval/removal set mid-run round-trip; run stays sane."""
         s = _open(_LANDUSE_INP, "p4_sweep")
         try:
             lus = list(s.quality.landuses)
-            assert lus, "fixture must define land uses"
+            self.assertTrue(lus, "fixture must define land uses")
             lu = lus[0]
             for _ in range(10):
                 s.step()
             lu.sweep_interval = 5.0
             lu.sweep_removal = 0.65
-            assert lu.sweep_interval == pytest.approx(5.0)
-            assert lu.sweep_removal == pytest.approx(0.65)
+            self.assertAlmostEqual(lu.sweep_interval, 5.0, places=6)
+            self.assertAlmostEqual(lu.sweep_removal, 0.65, places=6)
             # Continue: no NaN/Inf, run completes.
             import math
             for _ in range(20):
                 if not s.step():
                     break
                 for i in range(len(s.nodes)):
-                    assert math.isfinite(s.nodes[i].depth)
+                    self.assertTrue(math.isfinite(s.nodes[i].depth))
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -122,10 +129,10 @@ class TestSweepRuntime:
 _EMC = 3  # WashoffFunc.EMC — concentration = coeff regardless of buildup
 
 
-class TestBuildupWashoffRuntime:
+class TestBuildupWashoffRuntime(unittest.TestCase):
     def _first_landuse_pollutant(self, s):
         lus = list(s.quality.landuses)
-        assert lus, "fixture must define land uses"
+        self.assertTrue(lus, "fixture must define land uses")
         return lus[0].id, s.pollutants[0].id
 
     def test_washoff_round_trip(self):
@@ -137,8 +144,8 @@ class TestBuildupWashoffRuntime:
                 s.step()
             s.quality.set_washoff(lu, pol, func=_EMC, coeff=123.0, expon=0.0)
             info = s.quality.get_washoff(lu, pol)
-            assert info["coeff"] == pytest.approx(123.0)
-            assert int(info["func"]) == _EMC
+            self.assertAlmostEqual(info["coeff"], 123.0, places=6)
+            self.assertEqual(int(info["func"]), _EMC)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -153,7 +160,8 @@ class TestBuildupWashoffRuntime:
             s.quality.set_buildup(lu, pol, func=int(info0["func"]),
                                   c1=88.0, c2=info0["c2"], c3=info0["c3"],
                                   normalizer=info0["normalizer"])
-            assert s.quality.get_buildup(lu, pol)["c1"] == pytest.approx(88.0)
+            self.assertAlmostEqual(
+                s.quality.get_buildup(lu, pol)["c1"], 88.0, places=6)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -175,7 +183,7 @@ class TestBuildupWashoffRuntime:
             for _ in range(5):
                 s.step()
             after = max(s.nodes[i].quality(pol) for i in range(len(s.nodes)))
-            assert after > before + 1.0, (before, after)
+            self.assertGreater(after, before + 1.0, (before, after))
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -194,7 +202,7 @@ class TestBuildupWashoffRuntime:
 from openswmm.engine import LifecycleError
 
 
-class TestInfiltrationParams:
+class TestInfiltrationParams(unittest.TestCase):
     def test_horton_pre_start_round_trip(self):
         """P1: Horton parameters set before start() take effect and round-trip."""
         os.makedirs(_OUT_DIR, exist_ok=True)
@@ -204,12 +212,14 @@ class TestInfiltrationParams:
         try:
             sub = s.subcatchments[0]
             sub.infiltration.set_horton(4.5, 0.6, 3.0, 6.0)
-            assert sub.infiltration.horton == pytest.approx((4.5, 0.6, 3.0, 6.0))
+            np.testing.assert_allclose(
+                sub.infiltration.horton, (4.5, 0.6, 3.0, 6.0), rtol=1e-6)
             # The pre-start edit survives into the run.
             s.initialize(); s.start()
             for _ in range(3):
                 s.step()
-            assert sub.infiltration.horton == pytest.approx((4.5, 0.6, 3.0, 6.0))
+            np.testing.assert_allclose(
+                sub.infiltration.horton, (4.5, 0.6, 3.0, 6.0), rtol=1e-6)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -219,7 +229,7 @@ class TestInfiltrationParams:
         try:
             for _ in range(5):
                 s.step()
-            with pytest.raises(LifecycleError):
+            with self.assertRaises(LifecycleError):
                 s.subcatchments[0].infiltration.set_horton(3.0, 0.5, 4.0, 7.0)
         finally:
             s.end(); s.close(); s.destroy()
@@ -232,7 +242,7 @@ class TestInfiltrationParams:
 # mid-run, no cache). init_conc only seeds state at start() and has no per-step
 # consumer, so it is now guarded to pre-start (raises LifecycleError mid-run).
 # --------------------------------------------------------------------------- #
-class TestKineticsRuntime:
+class TestKineticsRuntime(unittest.TestCase):
     def test_kdecay_round_trip(self):
         """P5: decay constant set mid-run round-trips (read live each step)."""
         s = _open(_LANDUSE_INP, "p5_kdecay_rt")
@@ -241,7 +251,7 @@ class TestKineticsRuntime:
                 s.step()
             p = s.pollutants[0]
             p.kdecay = 0.35
-            assert p.kdecay == pytest.approx(0.35)
+            self.assertAlmostEqual(p.kdecay, 0.35, places=6)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -253,7 +263,7 @@ class TestKineticsRuntime:
                 s.step()
             p = s.pollutants[0]
             p.snow_only = True
-            assert bool(p.snow_only) is True
+            self.assertIs(bool(p.snow_only), True)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -263,7 +273,7 @@ class TestKineticsRuntime:
         try:
             for _ in range(5):
                 s.step()
-            with pytest.raises(LifecycleError):
+            with self.assertRaises(LifecycleError):
                 s.pollutants[0].init_conc = 5.0
         finally:
             s.end(); s.close(); s.destroy()
@@ -281,7 +291,7 @@ _DWF_INP = os.path.join(
     _REPO_ROOT, "tests", "unit", "engine", "data", "refactored_small.inp")
 
 
-class TestInflowBaselineRuntime:
+class TestInflowBaselineRuntime(unittest.TestCase):
     def test_dwf_baseline_edit_changes_inflow(self):
         """P7/P8: raising a DWF baseline mid-run increases the node's inflow."""
         os.makedirs(_OUT_DIR, exist_ok=True)
@@ -289,7 +299,7 @@ class TestInflowBaselineRuntime:
         s = Solver(_DWF_INP, base + ".rpt", base + ".out")
         s.open(); s.initialize(); s.start()
         try:
-            assert s.inflows.dwf_count > 0
+            self.assertGreater(s.inflows.dwf_count, 0)
             node_idx, constituent, avg = s.inflows.get_dwf(0)[:3]
             for _ in range(10):
                 s.step()
@@ -297,7 +307,7 @@ class TestInflowBaselineRuntime:
             s.inflows.set_dwf_baseline(0, avg * 20.0 + 1.0)
             s.step()
             after = s.nodes[node_idx].lateral_inflow
-            assert after > before + 1e-9, (before, after)
+            self.assertGreater(after, before + 1e-9, (before, after))
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -316,8 +326,8 @@ class TestInflowBaselineRuntime:
             s.inflows.set_external_baseline(idx, 42.0)
             s.inflows.set_external_scale(idx, 3.0)
             row = s.inflows.get_external(idx)
-            assert row[6] == pytest.approx(42.0)   # baseline
-            assert row[5] == pytest.approx(3.0)     # s_factor
+            self.assertAlmostEqual(row[6], 42.0, places=6)   # baseline
+            self.assertAlmostEqual(row[5], 3.0, places=6)     # s_factor
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -335,7 +345,7 @@ class TestInflowBaselineRuntime:
 from openswmm.engine import BadParamError
 
 
-class TestTreatmentRuntime:
+class TestTreatmentRuntime(unittest.TestCase):
     def test_treatment_set_mid_run_reduces_quality(self):
         """P3: a mid-run "R = 0.95" treatment cuts node quality; clear recovers."""
         s = _open(_LANDUSE_INP, "p3_treat_effect")
@@ -350,18 +360,18 @@ class TestTreatmentRuntime:
                 s.step()
             ni = max(range(len(s.nodes)), key=lambda i: s.nodes[i].quality(pol))
             before = s.nodes[ni].quality(pol)
-            assert before > 10.0, "expected a washoff-loaded node"
+            self.assertGreater(before, 10.0, "expected a washoff-loaded node")
             s.quality.set_treatment(ni, pol, "R = 0.95")
             for _ in range(3):
                 s.step()
             treated = s.nodes[ni].quality(pol)
-            assert treated < before * 0.5, (before, treated)
+            self.assertLess(treated, before * 0.5, (before, treated))
             # Clearing the expression lets quality recover.
             s.quality.clear_treatment(ni, pol)
             for _ in range(3):
                 s.step()
             recovered = s.nodes[ni].quality(pol)
-            assert recovered > treated, (treated, recovered)
+            self.assertGreater(recovered, treated, (treated, recovered))
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -373,9 +383,9 @@ class TestTreatmentRuntime:
             for _ in range(5):
                 s.step()
             s.quality.set_treatment(0, pol, "R = 0.5")
-            assert s.quality.get_treatment(0, pol).strip() == "R = 0.5"
+            self.assertEqual(s.quality.get_treatment(0, pol).strip(), "R = 0.5")
             s.quality.clear_treatment(0, pol)
-            assert s.quality.get_treatment(0, pol).strip() == ""
+            self.assertEqual(s.quality.get_treatment(0, pol).strip(), "")
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -387,9 +397,9 @@ class TestTreatmentRuntime:
             for _ in range(5):
                 s.step()
             s.quality.set_treatment(0, pol, "R = 0.5")
-            with pytest.raises(BadParamError):
+            with self.assertRaises(BadParamError):
                 s.quality.set_treatment(0, pol, "not a treatment expr")
-            assert s.quality.get_treatment(0, pol).strip() == "R = 0.5"
+            self.assertEqual(s.quality.get_treatment(0, pol).strip(), "R = 0.5")
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -440,7 +450,7 @@ def _derive_lid_rb_model():
     return path
 
 
-class TestLidParamsRuntime:
+class TestLidParamsRuntime(unittest.TestCase):
     _EDIT_STEP = 720   # 3 h — storm over, barrels full, runoff receded
     _END_STEP = 760
 
@@ -466,11 +476,12 @@ class TestLidParamsRuntime:
         """
         base = self._run("p11_drain_base")
         edit = self._run("p11_drain_edit", edit_at=self._EDIT_STEP)
-        assert base[:self._EDIT_STEP] == pytest.approx(edit[:self._EDIT_STEP], abs=1e-12)
+        np.testing.assert_allclose(base[:self._EDIT_STEP],
+                                   edit[:self._EDIT_STEP], rtol=0, atol=1e-12)
         pre = edit[self._EDIT_STEP - 1]
         post = max(edit[self._EDIT_STEP:])
-        assert post > max(pre, 1e-3) * 10, (pre, post)
-        assert max(base[self._EDIT_STEP:]) < post / 10
+        self.assertGreater(post, max(pre, 1e-3) * 10, (pre, post))
+        self.assertLess(max(base[self._EDIT_STEP:]), post / 10)
 
     def test_layer_setters_guarded_while_running(self):
         """P11: surface/soil/storage are pre-start-only; drain is not guarded."""
@@ -479,12 +490,12 @@ class TestLidParamsRuntime:
             for _ in range(5):
                 s.step()
             lids = s.infrastructure.lids
-            with pytest.raises(LifecycleError):
+            with self.assertRaises(LifecycleError):
                 lids.set_surface(0, storage=1.0, roughness=0.1, slope=0.01)
-            with pytest.raises(LifecycleError):
+            with self.assertRaises(LifecycleError):
                 lids.set_soil(0, thick=12.0, porosity=0.5, fc=0.2, wp=0.1,
                               ksat=0.5, kslope=10.0)
-            with pytest.raises(LifecycleError):
+            with self.assertRaises(LifecycleError):
                 lids.set_storage(0, thick=36.0, void_frac=0.75, ksat=0.5)
             lids.set_drain(0, coeff=1.0, expon=0.5, offset=0.0)  # allowed
         finally:
@@ -500,17 +511,17 @@ class TestLidParamsRuntime:
             lids = s.infrastructure.lids
             lids.set_storage(0, thick=24.0, void_frac=0.5, ksat=0.0)
             lids.set_drain(0, coeff=2.0, expon=0.5, offset=1.0)
-            with pytest.raises(BadParamError):
+            with self.assertRaises(BadParamError):
                 lids.set_soil(0, thick=12.0, porosity=1.5, fc=0.2, wp=0.1,
                               ksat=0.5, kslope=10.0)   # porosity > 1
-            with pytest.raises(BadParamError):
+            with self.assertRaises(BadParamError):
                 lids.set_drain(0, coeff=-1.0, expon=0.5, offset=0.0)
             s.initialize(); s.start()
             import math
             for _ in range(20):
                 s.step()
-            assert all(math.isfinite(s.nodes[i].depth)
-                       for i in range(len(s.nodes)))
+            self.assertTrue(all(math.isfinite(s.nodes[i].depth)
+                                for i in range(len(s.nodes))))
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -533,7 +544,7 @@ _GW_INP = os.path.join(
     _REPO_ROOT, "tests", "unit", "engine", "data", "refactored_small.inp")
 
 
-class TestAquiferParamsRuntime:
+class TestAquiferParamsRuntime(unittest.TestCase):
     def test_flux_param_round_trip_mid_run(self):
         """P10: a flux-coefficient edit round-trips mid-run (settable while running)."""
         os.makedirs(_OUT_DIR, exist_ok=True)
@@ -541,23 +552,25 @@ class TestAquiferParamsRuntime:
         s = Solver(_GW_INP, base + ".rpt", base + ".out")
         s.open(); s.initialize(); s.start()
         try:
-            assert len(s.aquifers) > 0
+            self.assertGreater(len(s.aquifers), 0)
             for _ in range(5):
                 s.step()
             k = s.aquifers.get_param(0, AquiferParam.CONDUCTIVITY)
             s.aquifers.set_param(0, AquiferParam.CONDUCTIVITY, k * 2.0 + 1.0)
-            assert s.aquifers.get_param(0, AquiferParam.CONDUCTIVITY) == \
-                pytest.approx(k * 2.0 + 1.0)
+            self.assertAlmostEqual(
+                s.aquifers.get_param(0, AquiferParam.CONDUCTIVITY),
+                k * 2.0 + 1.0, places=6)
             s.aquifers.set_param(0, AquiferParam.UPPER_EVAP_FRAC, 0.42)
-            assert s.aquifers.get_param(0, AquiferParam.UPPER_EVAP_FRAC) == \
-                pytest.approx(0.42)
+            self.assertAlmostEqual(
+                s.aquifers.get_param(0, AquiferParam.UPPER_EVAP_FRAC),
+                0.42, places=6)
             # Run stays sane.
             import math
             for _ in range(20):
                 if not s.step():
                     break
-                assert all(math.isfinite(s.nodes[i].depth)
-                           for i in range(len(s.nodes)))
+                self.assertTrue(all(math.isfinite(s.nodes[i].depth)
+                                    for i in range(len(s.nodes))))
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -573,7 +586,7 @@ class TestAquiferParamsRuntime:
             for p in (AquiferParam.POROSITY, AquiferParam.WILTING_POINT,
                       AquiferParam.FIELD_CAPACITY, AquiferParam.BOTTOM_ELEV,
                       AquiferParam.WATER_TABLE_ELEV, AquiferParam.UPPER_MOISTURE):
-                with pytest.raises(LifecycleError):
+                with self.assertRaises(LifecycleError):
                     s.aquifers.set_param(0, p, 0.3)
         finally:
             s.end(); s.close(); s.destroy()
@@ -586,10 +599,11 @@ class TestAquiferParamsRuntime:
         s.open()
         try:
             s.aquifers.set_param(0, AquiferParam.POROSITY, 0.45)
-            assert s.aquifers.get_param(0, AquiferParam.POROSITY) == pytest.approx(0.45)
-            with pytest.raises(BadParamError):
+            self.assertAlmostEqual(
+                s.aquifers.get_param(0, AquiferParam.POROSITY), 0.45, places=6)
+            with self.assertRaises(BadParamError):
                 s.aquifers.set_param(0, AquiferParam.POROSITY, 1.5)   # fraction > 1
-            with pytest.raises(BadParamError):
+            with self.assertRaises(BadParamError):
                 s.aquifers.set_param(0, AquiferParam.CONDUCTIVITY, -1.0)
         finally:
             s.close(); s.destroy()   # never started — no end()

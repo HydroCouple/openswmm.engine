@@ -8,32 +8,33 @@ controls collection yields :class:`ControlRule` named-tuples where
 Migrated to the v1 Pythonic bindings.
 """
 
-import pytest
+import unittest
 
 from openswmm.engine import ModelBuilder
 from openswmm.engine._exceptions import BadParamError
 
 
-@pytest.fixture
-def controls():
+def _controls():
     """A :class:`Controls` view on a fresh ModelBuilder solver."""
     m = ModelBuilder()
     solver = m.to_solver()
     return solver.controls
 
 
-class TestControlRuleNameExtraction:
+class TestControlRuleNameExtraction(unittest.TestCase):
     """``controls[i].id`` returns the canonical name parsed from rule text."""
 
-    def test_canonical_name(self, controls):
+    def test_canonical_name(self):
+        controls = _controls()
         controls.append(
             "RULE PumpOnHigh\n"
             "IF NODE J1 DEPTH > 5\n"
             "THEN PUMP P1 STATUS = ON"
         )
-        assert controls[0].id == "PumpOnHigh"
+        self.assertEqual(controls[0].id, "PumpOnHigh")
 
-    def test_lowercase_keyword(self, controls):
+    def test_lowercase_keyword(self):
+        controls = _controls()
         controls.append(
             "rule WeirBypass\n"
             "IF NODE J2 DEPTH < 1\n"
@@ -44,27 +45,19 @@ class TestControlRuleNameExtraction:
             "IF NODE T1 DEPTH < 2\n"
             "THEN PUMP P2 STATUS = ON"
         )
-        assert controls[0].id == "WeirBypass"
-        assert controls[1].id == "TankFill"
+        self.assertEqual(controls[0].id, "WeirBypass")
+        self.assertEqual(controls[1].id, "TankFill")
 
-    def test_leading_whitespace(self, controls):
+    def test_leading_whitespace(self):
+        controls = _controls()
         controls.append(
             "  \t\nRULE OrificeClose\n"
             "IF NODE J3 DEPTH > 10\n"
             "THEN ORIFICE O1 SETTING = 0"
         )
-        assert controls[0].id == "OrificeClose"
+        self.assertEqual(controls[0].id, "OrificeClose")
 
-    @pytest.mark.parametrize(
-        "malformed_text",
-        [
-            "IF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON",
-            "RULE\n",
-            "RULES are not RULE\n",
-            "   \n\t\n",
-        ],
-    )
-    def test_malformed_rule_returns_empty_id(self, controls, malformed_text):
+    def test_malformed_rule_returns_empty_id(self):
         """In the a2 API the engine cannot extract a name from a malformed
         rule, so ``swmm_control_get_id`` returns ``SWMM_ERR_BADPARAM`` and
         indexing the rule raises :class:`BadParamError` (was an empty-string
@@ -72,31 +65,41 @@ class TestControlRuleNameExtraction:
         succeeds and the count increments — but the ``id`` field is
         unavailable. Callers must catch this to fall back to a sentinel
         display name."""
-        controls.append(malformed_text)
-        idx = len(controls) - 1
-        # The malformed rule is stored (count incremented) ...
-        assert idx == 0
-        # ... but its name cannot be parsed, so ``.id`` access raises.
-        with pytest.raises(BadParamError):
-            _ = controls[idx].id
+        for malformed_text in [
+            "IF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON",
+            "RULE\n",
+            "RULES are not RULE\n",
+            "   \n\t\n",
+        ]:
+            with self.subTest(malformed_text=malformed_text):
+                controls = _controls()
+                controls.append(malformed_text)
+                idx = len(controls) - 1
+                # The malformed rule is stored (count incremented) ...
+                self.assertEqual(idx, 0)
+                # ... but its name cannot be parsed, so ``.id`` access raises.
+                with self.assertRaises(BadParamError):
+                    _ = controls[idx].id
 
-    def test_bad_index_raises(self, controls):
+    def test_bad_index_raises(self):
+        controls = _controls()
         controls.append(
             "RULE R1\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON"
         )
-        with pytest.raises(IndexError):
+        with self.assertRaises(IndexError):
             _ = controls[1]
-        with pytest.raises(IndexError):
+        with self.assertRaises(IndexError):
             # Negative-index wrap reaches -1 which still resolves out of range
             # for a single-element collection.
             _ = controls[-2]
 
-    def test_get_id_independent_of_clear(self, controls):
+    def test_get_id_independent_of_clear(self):
+        controls = _controls()
         controls.append(
             "RULE R1\nIF NODE J1 DEPTH > 5\nTHEN PUMP P1 STATUS = ON"
         )
-        assert controls[0].id == "R1"
+        self.assertEqual(controls[0].id, "R1")
         controls.clear()
-        assert len(controls) == 0
-        with pytest.raises(IndexError):
+        self.assertEqual(len(controls), 0)
+        with self.assertRaises(IndexError):
             _ = controls[0]

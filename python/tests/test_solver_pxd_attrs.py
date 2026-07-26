@@ -17,6 +17,7 @@ every model (2026-06-11).
 from __future__ import annotations
 
 import re
+import unittest
 from pathlib import Path
 
 _ENGINE_DIR = Path(__file__).resolve().parent.parent / "openswmm" / "engine"
@@ -62,23 +63,25 @@ def _declared_attrs(pxd_source: str) -> set[str]:
     return declared
 
 
-class TestSolverPxdAttrs:
+class TestSolverPxdAttrs(unittest.TestCase):
     def test_every_assigned_attr_is_declared(self):
         assigned = _assigned_attrs(_solver_class_body(_PYX.read_text()))
         declared = _declared_attrs(_PXD.read_text())
         missing = sorted(assigned - declared)
-        assert not missing, (
+        self.assertFalse(missing, (
             f"{len(missing)} attribute(s) assigned on Solver in _solver.pyx "
             f"but not declared in _solver.pxd: {missing}\n\n"
             "Add a 'cdef object <name>' (or typed) slot to the Solver block "
             "in _solver.pxd — undeclared assignments compile but raise "
             "AttributeError at runtime on every Solver instance."
-        )
+        ))
 
     def test_sanity_known_attrs_found(self):
         # Guard the parser itself: these have been in both files for a while.
         assigned = _assigned_attrs(_solver_class_body(_PYX.read_text()))
         declared = _declared_attrs(_PXD.read_text())
         for name in ("_handle", "_options", "_userflags", "_surface2d"):
-            assert name in assigned, f"parser failed to see assignment of {name}"
-            assert name in declared, f"parser failed to see declaration of {name}"
+            self.assertIn(name, assigned,
+                          f"parser failed to see assignment of {name}")
+            self.assertIn(name, declared,
+                          f"parser failed to see declaration of {name}")

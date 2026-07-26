@@ -19,8 +19,7 @@ Report/output files land in ``tests/engine/output``.
 from __future__ import annotations
 
 import os
-
-import pytest
+import unittest
 
 from openswmm.engine import Solver, ForcingMode
 
@@ -74,14 +73,15 @@ def _first_inflow_node(s, kind):
     return -1
 
 
-class TestDwfQuality:
+class TestDwfQuality(unittest.TestCase):
     def test_dwf_concentration_reaches_nodes(self):
         """Q5: with Cdwf>0, DWF inflow carries pollutant into nodes."""
         s = _solver("q5_dwf")
         try:
             idx = _first_inflow_node(s, "dwf")
-            assert idx >= 0, "expected a DWF/GW node with nonzero TSS"
-            assert s.nodes[idx].quality("TSS") > 0.0
+            self.assertGreaterEqual(
+                idx, 0, "expected a DWF/GW node with nonzero TSS")
+            self.assertGreater(s.nodes[idx].quality("TSS"), 0.0)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -90,12 +90,12 @@ class TestDwfQuality:
         s = _solver("q5_dwf_setter")
         try:
             p = s.pollutants["TSS"]
-            assert p.dwf_conc == pytest.approx(100.0, rel=1e-6)
+            self.assertAlmostEqual(p.dwf_conc, 100.0, delta=100.0 * 1e-6)
             for _ in range(10):
                 s.step()
             # Raise the DWF concentration; round-trip the getter.
             p.dwf_conc = 250.0
-            assert p.dwf_conc == pytest.approx(250.0, rel=1e-6)
+            self.assertAlmostEqual(p.dwf_conc, 250.0, delta=250.0 * 1e-6)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -110,7 +110,7 @@ class TestDwfQuality:
             # The model has DWF + GW pollutant sources; quality continuity
             # should remain well bounded.
             err = s.mass_balance.quality_continuity_error("TSS")
-            assert abs(err) < 5.0
+            self.assertLess(abs(err), 5.0)
         except Exception:
             # quality_continuity_error API shape may differ; tolerate absence.
             pass
@@ -118,7 +118,7 @@ class TestDwfQuality:
             s.close(); s.destroy()
 
 
-class TestLinkQualityForcing:
+class TestLinkQualityForcing(unittest.TestCase):
     # REPLACE sets the link concentration at the start of the step; routing
     # then advects/mixes it, so the value read back after the step is close
     # to (slightly diluted from) the prescribed value rather than exactly it.
@@ -138,8 +138,9 @@ class TestLinkQualityForcing:
             forced = link.quality("TSS")
             # The forced concentration dominates: close to the target (routing
             # dilution is a few percent) and far above the unforced baseline.
-            assert forced == pytest.approx(self._TARGET, rel=0.15)
-            assert forced > baseline + 1.0
+            self.assertAlmostEqual(forced, self._TARGET,
+                                   delta=self._TARGET * 0.15)
+            self.assertGreater(forced, baseline + 1.0)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -154,12 +155,13 @@ class TestLinkQualityForcing:
                                    mode=ForcingMode.REPLACE, persist=True)
             s.step()
             forced = link.quality("TSS")
-            assert forced == pytest.approx(self._TARGET, rel=0.15)
+            self.assertAlmostEqual(forced, self._TARGET,
+                                   delta=self._TARGET * 0.15)
             s.forcing.clear_all()
             for _ in range(3):
                 s.step()
             # With the pin released the concentration relaxes well below the
             # prescribed target.
-            assert link.quality("TSS") < self._TARGET * 0.8
+            self.assertLess(link.quality("TSS"), self._TARGET * 0.8)
         finally:
             s.end(); s.close(); s.destroy()

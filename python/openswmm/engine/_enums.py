@@ -295,6 +295,31 @@ class OutfallType(IntEnum):
     TIMESERIES = 4
 
 
+class StorageShape(IntEnum):
+    """Storage-unit surface-area relation codes.
+
+    Ordinals match the C API's ``SWMM_StorageShape`` (and the legacy solver's
+    ``enum StorageType``), so the same int is valid on both engines. The four
+    geometric shapes take three raw dimensions (see
+    :attr:`StorageView.geometry`); TABULAR takes a curve; FUNCTIONAL takes the
+    a/b/c power-law coefficients.
+
+    @cvar TABULAR: Area vs. depth from a curve.
+    @cvar FUNCTIONAL: ``Area = c + a*d^b``.
+    @cvar CYLINDRICAL: Elliptical cylinder: p1 = major axis, p2 = minor axis.
+    @cvar CONICAL: Elliptical cone: p1, p2 = base axes, p3 = side slope.
+    @cvar PARABOLOID: Elliptical paraboloid: p1, p2 = top axes, p3 = height (≠ 0).
+    @cvar PYRAMIDAL: Rectangular pyramid: p1 = length, p2 = width, p3 = side slope.
+    """
+
+    TABULAR = 0
+    FUNCTIONAL = 1
+    CYLINDRICAL = 2
+    CONICAL = 3
+    PARABOLOID = 4
+    PYRAMIDAL = 5
+
+
 class XSectShape(IntEnum):
     """Cross-section shape codes.
 

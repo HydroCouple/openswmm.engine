@@ -50,7 +50,7 @@ import numpy as np
 cimport numpy as np
 
 from ._common cimport *
-from ._enums import NodeType, OutfallType
+from ._enums import NodeType, OutfallType, StorageShape
 from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
@@ -156,6 +156,40 @@ cdef class StorageView:
         a, b, c = value
         _check(swmm_node_set_storage_functional(
             _h(self._node._solver), self._node._index, a, b, c))
+
+    @property
+    def shape(self):
+        """The surface-area relation as a :class:`StorageShape`."""
+        _check_fresh(self._node)
+        cdef int v = 0
+        _check(swmm_node_get_storage_shape(_h(self._node._solver), self._node._index, &v))
+        return StorageShape(v)
+
+    @shape.setter
+    def shape(self, value) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_storage_shape(
+            _h(self._node._solver), self._node._index, int(value)))
+
+    @property
+    def geometry(self) -> tuple:
+        """``(p1, p2, p3)`` raw dimensions of a geometric storage shape.
+
+        Meaning depends on the current :attr:`shape` — see
+        :class:`StorageShape`. Zeros for a non-geometric shape.
+        """
+        _check_fresh(self._node)
+        cdef double p1 = 0.0, p2 = 0.0, p3 = 0.0
+        _check(swmm_node_get_storage_geometry(
+            _h(self._node._solver), self._node._index, &p1, &p2, &p3))
+        return (p1, p2, p3)
+
+    @geometry.setter
+    def geometry(self, value) -> None:
+        _check_fresh(self._node)
+        p1, p2, p3 = value
+        _check(swmm_node_set_storage_geometry(
+            _h(self._node._solver), self._node._index, p1, p2, p3))
 
     @property
     def seep_rate(self) -> float:
