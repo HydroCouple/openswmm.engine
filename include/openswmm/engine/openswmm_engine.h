@@ -285,6 +285,25 @@ SWMM_ENGINE_API int         swmm_get_last_error    (SWMM_Engine engine);
 SWMM_ENGINE_API const char* swmm_get_last_error_msg(SWMM_Engine engine);
 SWMM_ENGINE_API const char* swmm_error_message     (int code);
 
+/**
+ * Enable permissive ("lenient") open on this engine. When enabled, a subsequent
+ * swmm_engine_open() records post-parse validation errors (undefined objects,
+ * missing curves, bad references) but still leaves the engine OPENED with all
+ * parsed objects intact and editable, instead of failing. Use for editor/GUI
+ * loads that must show as much of a broken model as possible; the accumulated
+ * errors are readable via swmm_get_error_count/at. Hard reader failures still
+ * fail the open. Default is strict (0). Running a model still needs a fresh,
+ * strict open.
+ */
+SWMM_ENGINE_API void        swmm_engine_set_lenient_open(SWMM_Engine engine, int on);
+
+/* Enumerate the errors/warnings accumulated on the engine during open (e.g.
+ * after a lenient open). Index is 0-based; out-of-range returns "". */
+SWMM_ENGINE_API int         swmm_get_error_count   (SWMM_Engine engine);
+SWMM_ENGINE_API const char* swmm_get_error_at      (SWMM_Engine engine, int index);
+SWMM_ENGINE_API int         swmm_get_warning_count (SWMM_Engine engine);
+SWMM_ENGINE_API const char* swmm_get_warning_at    (SWMM_Engine engine, int index);
+
 /* =========================================================================
  * Simulation timing
  * ========================================================================= */

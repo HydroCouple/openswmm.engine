@@ -24,6 +24,11 @@ cdef extern from "openswmm_engine.h":
     # --- Error reporting ---
     cdef int         swmm_get_last_error(SWMM_Engine e)
     cdef const char* swmm_get_last_error_msg(SWMM_Engine e)
+    cdef void        swmm_engine_set_lenient_open(SWMM_Engine e, int on)
+    cdef int         swmm_get_error_count(SWMM_Engine e)
+    cdef const char* swmm_get_error_at(SWMM_Engine e, int index)
+    cdef int         swmm_get_warning_count(SWMM_Engine e)
+    cdef const char* swmm_get_warning_at(SWMM_Engine e, int index)
     cdef const char* swmm_error_message(int code)
 
     # --- Engine lifecycle ---
@@ -736,6 +741,8 @@ cdef extern from "openswmm_controls.h":
     cdef int swmm_control_get_rule(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_control_get_id(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_control_clear_rules(SWMM_Engine e)
+    cdef int swmm_control_remove_rule(SWMM_Engine e, int idx)
+    cdef int swmm_control_find_references(SWMM_Engine e, const char* object_name, int* rule_indices_out, int* n_inout)
     cdef int swmm_control_set_link_setting(SWMM_Engine e, int link_idx, double setting)
     cdef int swmm_control_set_link_status(SWMM_Engine e, int link_idx, int status)
 
@@ -959,13 +966,28 @@ cdef extern from "openswmm_edit.h":
 
     # Reference type enum
     cdef enum SWMM_RefType:
-        SWMM_REF_NODE        = 0
-        SWMM_REF_LINK        = 1
-        SWMM_REF_SUBCATCH    = 2
-        SWMM_REF_GAGE        = 3
-        SWMM_REF_TABLE       = 4
-        SWMM_REF_TRANSECT    = 5
-        SWMM_REF_INLET_USAGE = 6
+        SWMM_REF_NODE         = 0
+        SWMM_REF_LINK         = 1
+        SWMM_REF_SUBCATCH     = 2
+        SWMM_REF_GAGE         = 3
+        SWMM_REF_TABLE        = 4
+        SWMM_REF_TRANSECT     = 5
+        SWMM_REF_INLET_USAGE  = 6
+        SWMM_REF_EXT_INFLOW   = 7
+        SWMM_REF_DWF_INFLOW   = 8
+        SWMM_REF_RDII_ASSIGN  = 9
+        SWMM_REF_TREATMENT    = 10
+        SWMM_REF_LID_USAGE    = 11
+        SWMM_REF_SNOWPACK     = 12
+        SWMM_REF_HYDROGRAPH   = 13
+        SWMM_REF_POLLUTANT    = 14
+        SWMM_REF_PATTERN      = 15
+        SWMM_REF_AQUIFER      = 16
+        SWMM_REF_LID_CONTROL  = 17
+        SWMM_REF_STREET       = 18
+        SWMM_REF_INLET_DESIGN = 19
+        SWMM_REF_LANDUSE      = 20
+        SWMM_REF_CONTROL_RULE = 21
 
     # Impact entry
     cdef struct SWMM_ImpactEntry:
@@ -998,6 +1020,15 @@ cdef extern from "openswmm_edit.h":
     cdef int swmm_gage_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
     cdef int swmm_table_analyze_impact   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
     cdef int swmm_transect_analyze_impact(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_pollutant_analyze_impact(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_pattern_analyze_impact  (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_aquifer_analyze_impact  (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_snowpack_analyze_impact (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_lid_analyze_impact      (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_street_analyze_impact   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_inlet_analyze_impact    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_landuse_analyze_impact  (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_hydrograph_analyze_impact(SWMM_Engine e, const char* uh_name, SWMM_ImpactReport* out)
 
     # Deletion (cascade + renumber)
     cdef int swmm_node_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
@@ -1006,6 +1037,15 @@ cdef extern from "openswmm_edit.h":
     cdef int swmm_gage_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
     cdef int swmm_table_delete   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
     cdef int swmm_transect_delete(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_pollutant_delete(SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_pattern_delete  (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_aquifer_delete  (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_snowpack_delete (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_lid_delete      (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_street_delete   (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_inlet_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_landuse_delete  (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
+    cdef int swmm_hydrograph_delete(SWMM_Engine e, const char* uh_name, SWMM_ImpactReport* out)
 
     # In-place type conversion
     cdef int swmm_node_convert(SWMM_Engine e, int idx, int new_type,

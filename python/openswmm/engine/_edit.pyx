@@ -71,6 +71,21 @@ _REF_TYPE_NAMES = {
     4: "table",
     5: "transect",
     6: "inlet_usage",
+    7: "ext_inflow",
+    8: "dwf_inflow",
+    9: "rdii_assign",
+    10: "treatment",
+    11: "lid_usage",
+    12: "snowpack",
+    13: "hydrograph",
+    14: "pollutant",
+    15: "pattern",
+    16: "aquifer",
+    17: "lid_control",
+    18: "street",
+    19: "inlet_design",
+    20: "landuse",
+    21: "control_rule",
 }
 
 
@@ -297,6 +312,94 @@ cdef class ModelEditor:
             return ti
         return int(id_or_idx)
 
+    cdef int _pollutant_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_pollutant_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
+    cdef int _pattern_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_pattern_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
+    cdef int _aquifer_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_aquifer_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
+    cdef int _snowpack_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_snowpack_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
+    cdef int _lid_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_lid_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
+    cdef int _street_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_street_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
+    cdef int _inlet_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_inlet_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
+    cdef int _landuse_idx(self, object id_or_idx) except -1:
+        cdef bytes b
+        cdef int i
+        if isinstance(id_or_idx, str):
+            b = id_or_idx.encode('utf-8')
+            i = swmm_landuse_index(self._handle, b)
+            if i < 0:
+                raise ElementNotFoundError(id_or_idx)
+            return i
+        return int(id_or_idx)
+
     # =========================================================================
     # Impact analysis (non-destructive)
     # =========================================================================
@@ -407,6 +510,165 @@ cdef class ModelEditor:
         report.entries = NULL
         report.n_entries = 0
         _check(swmm_transect_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_pollutant_impact(self, id_or_idx) -> list:
+        """Preview which objects reference a pollutant, without deleting it.
+
+        @param id_or_idx: Pollutant name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects describing what would be
+            affected.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._pollutant_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_pollutant_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_pattern_impact(self, id_or_idx) -> list:
+        """Preview which objects reference a time pattern, without deleting it.
+
+        @param id_or_idx: Pattern name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects describing what would be
+            affected.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._pattern_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_pattern_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_aquifer_impact(self, id_or_idx) -> list:
+        """Preview which subcatchments reference an aquifer.
+
+        @param id_or_idx: Aquifer name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._aquifer_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_aquifer_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_snowpack_impact(self, id_or_idx) -> list:
+        """Preview which subcatchments reference a snowpack.
+
+        @param id_or_idx: Snowpack name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._snowpack_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_snowpack_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_lid_impact(self, id_or_idx) -> list:
+        """Preview which LID-usage rows reference a LID control.
+
+        @param id_or_idx: LID control name (C{str}) or zero-based index
+            (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._lid_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_lid_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_street_impact(self, id_or_idx) -> list:
+        """Preview which inlet-usage rows reference a street.
+
+        @param id_or_idx: Street name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._street_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_street_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_inlet_impact(self, id_or_idx) -> list:
+        """Preview which inlet-usage rows reference an inlet design.
+
+        @param id_or_idx: Inlet design name (C{str}) or zero-based index
+            (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._inlet_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_inlet_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_landuse_impact(self, id_or_idx) -> list:
+        """Preview which objects reference a land use.
+
+        @param id_or_idx: Land-use name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._landuse_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_landuse_analyze_impact(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def analyze_hydrograph_impact(self, str uh_name) -> list:
+        """Preview which objects reference a unit-hydrograph group by name.
+
+        Unit-hydrograph groups are keyed by name (they have no stable index —
+        a group is the set of C{[HYDROGRAPHS]} lines sharing one name).
+
+        @param uh_name: Unit-hydrograph group name.
+        @type uh_name: str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise EngineError: On C API failure (including an unknown name).
+        """
+        cdef bytes nb = uh_name.encode('utf-8')
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_hydrograph_analyze_impact(self._handle, nb, &report))
         return _impact_report_to_list(&report)
 
     # =========================================================================
@@ -549,6 +811,210 @@ cdef class ModelEditor:
         report.entries = NULL
         report.n_entries = 0
         _check(swmm_transect_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_pollutant(self, id_or_idx) -> list:
+        """Delete a pollutant and re-pack every per-pollutant matrix.
+
+        Cascades ext-inflow / DWF rows that name the pollutant; re-packs
+        buildup / washoff columns, treatment expressions, and per-object
+        concentration state; nullifies co-pollutant references and LID removal
+        pairs; renumbers surviving co-pollutant indices.
+
+        @param id_or_idx: Pollutant name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects describing what changed.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._pollutant_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_pollutant_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_pattern(self, id_or_idx) -> list:
+        """Delete a time pattern and clear all name-based references.
+
+        Clears matching DWF C{pat1..4}, ext-inflow baseline patterns, aquifer
+        ET patterns, and the global evaporation-recovery pattern. Unlike the
+        report-less ``patterns`` collection removal, this reports what was
+        cleared and rejects out-of-range indices.
+
+        @param id_or_idx: Pattern name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects describing what was cleared.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._pattern_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_pattern_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_aquifer(self, id_or_idx) -> list:
+        """Delete an aquifer; referencing subcatchments lose their groundwater.
+
+        Subcatchment C{gw_aquifer} references are set to C{-1} and surviving
+        aquifer indices are renumbered.
+
+        @param id_or_idx: Aquifer name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._aquifer_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_aquifer_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_snowpack(self, id_or_idx) -> list:
+        """Delete a snowpack; clear referencing subcatchments and renumber.
+
+        Referencing subcatchments' snowpack index and raw-name mirror are
+        cleared, and surviving snowpack indices are renumbered.
+
+        @param id_or_idx: Snowpack name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._snowpack_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_snowpack_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_lid(self, id_or_idx) -> list:
+        """Delete a LID control; cascade-delete referencing LID-usage rows.
+
+        LID-usage rows referencing the control are cascade-deleted and
+        surviving C{lid_index} values are renumbered.
+
+        @param id_or_idx: LID control name (C{str}) or zero-based index
+            (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._lid_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_lid_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_street(self, id_or_idx) -> list:
+        """Delete a street; cascade-delete referencing inlet-usage rows.
+
+        Inlet-usage rows referencing the street are cascade-deleted
+        (consistent with link deletion) and C{street_index} values are
+        renumbered.
+
+        @param id_or_idx: Street name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._street_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_street_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_inlet(self, id_or_idx) -> list:
+        """Delete an inlet design; cascade-delete referencing inlet-usage rows.
+
+        Inlet-usage rows referencing the design are cascade-deleted and
+        C{design_index} values are renumbered.
+
+        @param id_or_idx: Inlet design name (C{str}) or zero-based index
+            (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._inlet_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_inlet_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_landuse(self, id_or_idx) -> list:
+        """Delete a land use; re-pack buildup/washoff and coverage columns.
+
+        Buildup / washoff rows and subcatchment coverage columns for the land
+        use are re-packed.
+
+        @param id_or_idx: Land-use name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @return: List of L{ImpactEntry} objects.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise KeyError: If C{id_or_idx} is a name and it is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._landuse_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_landuse_delete(self._handle, idx, &report))
+        return _impact_report_to_list(&report)
+
+    def delete_hydrograph(self, str uh_name) -> list:
+        """Delete a unit-hydrograph group by name.
+
+        Cascade-deletes RDII assignments using the group, then removes the
+        group's parameter lines, gage assignment, and RDII-decay rows.
+
+        @param uh_name: Unit-hydrograph group name.
+        @type uh_name: str
+        @return: List of L{ImpactEntry} objects describing what was deleted.
+        @rtype: list[L{ImpactEntry}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise EngineError: On C API failure (including an unknown name).
+        """
+        cdef bytes nb = uh_name.encode('utf-8')
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        _check(swmm_hydrograph_delete(self._handle, nb, &report))
         return _impact_report_to_list(&report)
 
     # =========================================================================

@@ -59,6 +59,10 @@ Quickstart
      - Insert in the middle. Emulated by clear + rebuild.
    * - ``del s.controls[i]`` / ``s.controls.clear()``
      - Remove entries.
+   * - ``s.controls.remove_rule(i)``
+     - Remove a single rule by zero-based index; later rule indices
+       shift down by one. Raises :exc:`IndexError` if *i* is out of
+       range.
 
 Direct runtime actions
 ----------------------
@@ -86,6 +90,21 @@ Validate a rule before appending it:
     if not ok:
         raise ValueError(f"bad rule: {msg}")
     s.controls.append(rule_text)
+
+Find rules that reference an object
+-----------------------------------
+
+``find_references(object_name)`` scans every rule's clauses for an
+object-type keyword (``NODE``, ``LINK``, ``CONDUIT``, ``PUMP``,
+``ORIFICE``, ``WEIR``, ``OUTLET``) immediately followed by *object_name*
+(case-insensitive) and returns the ascending list of matching zero-based
+rule indices. It is read-only — no rule text is edited. Combine it with
+:meth:`remove_rule` to prune rules before deleting an object:
+
+.. code-block:: python
+
+    for i in reversed(s.controls.find_references("OR1")):
+        s.controls.remove_rule(i)     # delete from the end so indices stay valid
 
 ----
 

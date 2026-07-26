@@ -230,6 +230,25 @@ cdef class Solver:
         if self._handle == NULL:
             raise MemoryError("Failed to allocate SWMM engine handle")
 
+    def set_lenient_open(self, bint on=True) -> None:
+        """Enable or disable permissive ("lenient") open on this engine.
+
+        When enabled, a subsequent :meth:`open` records post-parse validation
+        errors (undefined objects, missing curves, bad references) but still
+        leaves the engine ``OPENED`` with all parsed objects intact and
+        editable, instead of failing. This is intended for editor/GUI loads
+        that must show as much of a broken model as possible; the accumulated
+        errors are then readable via :attr:`open_errors`. Hard reader failures
+        still fail the open. The default is strict. Running a model still needs
+        a fresh, strict open.
+
+        :param on: ``True`` to enable lenient open, ``False`` for strict.
+        :raises EngineError: If the engine handle cannot be allocated.
+        """
+        if self._handle == NULL:
+            self.create()
+        swmm_engine_set_lenient_open(self._handle, 1 if on else 0)
+
     def open(self,
              plugin_lib: Optional[Union[str, "os.PathLike"]] = None) -> None:
         """Open the input file; transition to ``OPENED``.
@@ -462,6 +481,42 @@ cdef class Solver:
         Cython modules). The Python-level surface should never need it.
         """
         return <size_t>self._handle
+
+    @property
+    def open_errors(self) -> list:
+        """Validation errors accumulated on the engine during :meth:`open`.
+
+        Populated primarily after a lenient open (see
+        :meth:`set_lenient_open`); a strict open that succeeds leaves this
+        empty. Each entry is a human-readable message string.
+
+        :rtype: list[str]
+        """
+        cdef int n = swmm_get_error_count(self._handle)
+        cdef int i
+        cdef const char* msg
+        cdef list out = []
+        for i in range(n):
+            msg = swmm_get_error_at(self._handle, i)
+            out.append(msg.decode('utf-8') if msg != NULL else "")
+        return out
+
+    @property
+    def open_warnings(self) -> list:
+        """Warnings accumulated on the engine during :meth:`open`.
+
+        Each entry is a human-readable message string.
+
+        :rtype: list[str]
+        """
+        cdef int n = swmm_get_warning_count(self._handle)
+        cdef int i
+        cdef const char* msg
+        cdef list out = []
+        for i in range(n):
+            msg = swmm_get_warning_at(self._handle, i)
+            out.append(msg.decode('utf-8') if msg != NULL else "")
+        return out
 
     @property
     def generation(self) -> int:

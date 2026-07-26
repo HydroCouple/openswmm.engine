@@ -11,6 +11,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "../edit/ObjectDeleter.hpp"
 #include "../../../include/openswmm/engine/openswmm_tables.h"
 
 namespace {
@@ -250,16 +251,8 @@ SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx) {
     // delete again on a re-resolved-too-late button" path is safe.
     if (idx < 0 || idx >= ctx.patterns.count()) return SWMM_OK;
 
-    const auto u = static_cast<std::size_t>(idx);
-    const std::string removed = ctx.patterns.names[u];
-
-    ctx.patterns.names.erase(ctx.patterns.names.begin() + u);
-    ctx.patterns.types.erase(ctx.patterns.types.begin() + u);
-    ctx.patterns.factors.erase(ctx.patterns.factors.begin() + u);
-
-    for_each_pattern_name_ref(ctx, [&](std::string& slot) {
-        if (slot == removed) slot.clear();
-    });
+    // Same code path as swmm_pattern_delete, minus the impact report.
+    openswmm::edit::delete_pattern(ctx, idx);
     return SWMM_OK;
 }
 

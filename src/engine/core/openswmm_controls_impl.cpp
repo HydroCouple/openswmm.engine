@@ -13,7 +13,9 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_controls.h"
 #include "../controls/Controls.hpp"
+#include "../edit/ObjectDeleter.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <string>
@@ -106,6 +108,34 @@ SWMM_ENGINE_API int swmm_control_clear_rules(SWMM_Engine engine) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     ctx.control_rules.rule_text.clear();
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_control_remove_rule(SWMM_Engine engine, int idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.control_rules.count());
+    ctx.control_rules.rule_text.erase(
+        ctx.control_rules.rule_text.begin() + static_cast<std::ptrdiff_t>(idx));
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_control_find_references(SWMM_Engine engine,
+                                                 const char* object_name,
+                                                 int* rule_indices_out,
+                                                 int* n_inout) {
+    CHECK_HANDLE(engine);
+    if (!object_name || !n_inout) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+
+    const auto hits = openswmm::edit::find_control_rule_refs(ctx, object_name);
+    if (rule_indices_out) {
+        const int cap = *n_inout;
+        const int n_copy = std::min(cap, static_cast<int>(hits.size()));
+        for (int i = 0; i < n_copy; ++i) rule_indices_out[i] = hits[static_cast<std::size_t>(i)];
+    }
+    *n_inout = static_cast<int>(hits.size());
     return SWMM_OK;
 }
 

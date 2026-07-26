@@ -429,6 +429,19 @@ class Surface2D:
         """
         ...
 
+    def get_vertex_render_depths(self) -> npt.NDArray[np.float64]:
+        """Return render-oriented signed water depths at all vertices.
+
+        The wet-masked, depth-weighted free-surface reconstruction
+        C{eta_v - z_v} (m) that GUIs should interpolate for water-surface
+        rendering. GIL is released during the C call.
+
+        @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     # ====================================================================
     # State (depth/velocity) - statistics
     # ====================================================================

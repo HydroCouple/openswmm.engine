@@ -220,13 +220,20 @@ int SWMMEngine::open(const char* inp_path,
     // errors were silently swallowed and the model opened "successfully"
     // with broken derived state.
     if (!ctx_.errors.empty()) {
-        set_error(SWMM_ERR_PARSE, ctx_.errors.front().c_str());
         // Write the accumulated errors/warnings to the report file, matching
         // legacy where a failed open still produces a .rpt containing the error
         // (report_writeErrorMsg). Without this the diagnostics would only reach
         // stderr and the .rpt would be absent.
         write_open_failure_report();
-        return SWMM_ERR_PARSE;
+        if (!lenient_open_) {
+            set_error(SWMM_ERR_PARSE, ctx_.errors.front().c_str());
+            return SWMM_ERR_PARSE;
+        }
+        // Lenient open: keep the errors in ctx_.errors (queryable by the caller)
+        // but do NOT fail — fall through so the engine reaches OPENED with all
+        // parsed objects intact and editable. An editor/GUI can then load as
+        // much of the model as parsed and surface the errors as diagnostics.
+        // Running the model still requires a fresh, strict open.
     }
 
     // Phase 4: load plugins listed in [PLUGINS]

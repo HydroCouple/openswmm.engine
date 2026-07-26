@@ -317,6 +317,22 @@ public:
         return ctx_.error_message.c_str();
     }
 
+    /**
+     * @brief Enable/disable lenient (permissive) open.
+     *
+     * @details When enabled, open() still records post-parse validation errors
+     *          (undefined objects, missing curves, etc.) into ctx.errors and the
+     *          report, but does NOT fail the open — it leaves the engine in the
+     *          OPENED state with all parsed objects intact and editable. This
+     *          lets an editor/GUI load as many objects as feasible from a broken
+     *          model. Hard reader failures (unreadable/malformed file) still
+     *          fail. The default (false) preserves strict, legacy-matching
+     *          behavior for the CLI and simulation. Callers should inspect the
+     *          error list after a lenient open; running such a model still
+     *          requires a fresh, strict open.
+     */
+    void set_lenient_open(bool on) noexcept { lenient_open_ = on; }
+
 #ifdef OPENSWMM_HAS_2D
     /** @brief Access the 2D surface router (for C API delegation). */
     twoD::SurfaceRouter2D&       surfaceRouter2D()       noexcept { return surface_router_; }
@@ -330,6 +346,7 @@ private:
     // -----------------------------------------------------------------------
 
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
+    bool                   lenient_open_ = false;  ///< permissive open (see setter)
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread
 

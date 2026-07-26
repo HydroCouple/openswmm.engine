@@ -220,6 +220,42 @@ class ModelEditor:
         """
         ...
 
+    def analyze_pollutant_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which objects reference a pollutant."""
+        ...
+
+    def analyze_pattern_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which objects reference a time pattern."""
+        ...
+
+    def analyze_aquifer_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which subcatchments reference an aquifer."""
+        ...
+
+    def analyze_snowpack_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which subcatchments reference a snowpack."""
+        ...
+
+    def analyze_lid_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which LID-usage rows reference a LID control."""
+        ...
+
+    def analyze_street_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which inlet-usage rows reference a street."""
+        ...
+
+    def analyze_inlet_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which inlet-usage rows reference an inlet design."""
+        ...
+
+    def analyze_landuse_impact(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Preview which objects reference a land use."""
+        ...
+
+    def analyze_hydrograph_impact(self, uh_name: str) -> list[ImpactEntry]:
+        """Preview which objects reference a unit-hydrograph group by name."""
+        ...
+
     # =========================================================================
     # Deletion
     # =========================================================================
@@ -300,6 +336,42 @@ class ModelEditor:
         @raise RuntimeError: If not in C{BUILDING} or C{OPENED} state.
         @raise EngineError: On C API failure.
         """
+        ...
+
+    def delete_pollutant(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete a pollutant and re-pack every per-pollutant matrix."""
+        ...
+
+    def delete_pattern(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete a time pattern and clear all name-based references."""
+        ...
+
+    def delete_aquifer(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete an aquifer; referencing subcatchments lose groundwater."""
+        ...
+
+    def delete_snowpack(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete a snowpack; clear referencing subcatchments and renumber."""
+        ...
+
+    def delete_lid(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete a LID control; cascade-delete referencing LID-usage rows."""
+        ...
+
+    def delete_street(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete a street; cascade-delete referencing inlet-usage rows."""
+        ...
+
+    def delete_inlet(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete an inlet design; cascade-delete referencing inlet-usage rows."""
+        ...
+
+    def delete_landuse(self, id_or_idx: int | str) -> list[ImpactEntry]:
+        """Delete a land use; re-pack buildup/washoff and coverage columns."""
+        ...
+
+    def delete_hydrograph(self, uh_name: str) -> list[ImpactEntry]:
+        """Delete a unit-hydrograph group by name."""
         ...
 
     # =========================================================================

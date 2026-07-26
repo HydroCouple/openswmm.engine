@@ -46,13 +46,28 @@ extern "C" {
  * @brief Category of an object that holds a cross-reference to a deleted object.
  */
 typedef enum SWMM_RefType {
-    SWMM_REF_NODE        = 0, /**< A node holds a reference. */
-    SWMM_REF_LINK        = 1, /**< A link holds a reference. */
-    SWMM_REF_SUBCATCH    = 2, /**< A subcatchment holds a reference. */
-    SWMM_REF_GAGE        = 3, /**< A rain gage holds a reference. */
-    SWMM_REF_TABLE       = 4, /**< A time series or curve holds a reference. */
-    SWMM_REF_TRANSECT    = 5, /**< A transect holds a reference. */
-    SWMM_REF_INLET_USAGE = 6  /**< An inlet usage entry holds a reference. */
+    SWMM_REF_NODE         = 0,  /**< A node holds a reference. */
+    SWMM_REF_LINK         = 1,  /**< A link holds a reference. */
+    SWMM_REF_SUBCATCH     = 2,  /**< A subcatchment holds a reference. */
+    SWMM_REF_GAGE         = 3,  /**< A rain gage holds a reference. */
+    SWMM_REF_TABLE        = 4,  /**< A time series or curve holds a reference. */
+    SWMM_REF_TRANSECT     = 5,  /**< A transect holds a reference. */
+    SWMM_REF_INLET_USAGE  = 6,  /**< An inlet usage entry holds a reference. */
+    SWMM_REF_EXT_INFLOW   = 7,  /**< An external-inflow row holds a reference. */
+    SWMM_REF_DWF_INFLOW   = 8,  /**< A dry-weather-flow row holds a reference. */
+    SWMM_REF_RDII_ASSIGN  = 9,  /**< An RDII assignment row holds a reference. */
+    SWMM_REF_TREATMENT    = 10, /**< A treatment expression holds a reference. */
+    SWMM_REF_LID_USAGE    = 11, /**< A LID usage row holds a reference. */
+    SWMM_REF_SNOWPACK     = 12, /**< A snowpack holds a reference. */
+    SWMM_REF_HYDROGRAPH   = 13, /**< A unit-hydrograph group holds a reference. */
+    SWMM_REF_POLLUTANT    = 14, /**< A pollutant holds a reference. */
+    SWMM_REF_PATTERN      = 15, /**< A time pattern holds a reference. */
+    SWMM_REF_AQUIFER      = 16, /**< An aquifer holds a reference. */
+    SWMM_REF_LID_CONTROL  = 17, /**< A LID control holds a reference. */
+    SWMM_REF_STREET       = 18, /**< A street holds a reference. */
+    SWMM_REF_INLET_DESIGN = 19, /**< An inlet design holds a reference. */
+    SWMM_REF_LANDUSE      = 20, /**< A land use holds a reference. */
+    SWMM_REF_CONTROL_RULE = 21  /**< A control rule references the object by name. */
 } SWMM_RefType;
 
 /**
@@ -123,6 +138,54 @@ SWMM_ENGINE_API int swmm_table_analyze_impact(
 SWMM_ENGINE_API int swmm_transect_analyze_impact(
     SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
 
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_pollutant_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_pattern_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_aquifer_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_snowpack_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_lid_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_street_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_inlet_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/** @copydoc swmm_node_analyze_impact */
+SWMM_ENGINE_API int swmm_landuse_analyze_impact(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* report_out);
+
+/**
+ * @brief Analyse which objects reference a unit-hydrograph group, without
+ *        deleting it.
+ *
+ * @details Groups are keyed by name (they have no stable index — a group is
+ *          the set of [HYDROGRAPHS] parameter lines sharing one name).
+ *
+ * @param engine      Engine handle.
+ * @param uh_name     Unit-hydrograph group name.
+ * @param report_out  Receives the impact report (may be NULL if not needed).
+ * @returns SWMM_OK, SWMM_ERR_BADHANDLE, or SWMM_ERR_BADPARAM if the name is
+ *          NULL/empty or names no existing group.
+ */
+SWMM_ENGINE_API int swmm_hydrograph_analyze_impact(
+    SWMM_Engine engine, const char* uh_name, SWMM_ImpactReport* report_out);
+
 /* =========================================================================
  * Deletion — BUILDING or OPENED state only
  * ========================================================================= */
@@ -190,6 +253,84 @@ SWMM_ENGINE_API int swmm_table_delete(
  */
 SWMM_ENGINE_API int swmm_transect_delete(
     SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete a pollutant and re-pack every per-pollutant matrix.
+ *
+ * @details Cascades: ext-inflow/DWF rows whose constituent names the
+ *          pollutant. Re-packs: buildup/washoff (per-pollutant columns),
+ *          treatment expressions, per-object concentration state (including
+ *          [LOADINGS] initial buildup). Nullifies: co-pollutant references,
+ *          LID removal pairs. Remaining co_pollut indices are renumbered.
+ */
+SWMM_ENGINE_API int swmm_pollutant_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete a time pattern and clear all name-based references.
+ *
+ * @details Clears matching DWF pat1..4, ext-inflow baseline patterns, aquifer
+ *          ET patterns, and the global evaporation-recovery pattern. Unlike
+ *          @ref swmm_pattern_remove this reports what was cleared and rejects
+ *          out-of-range indices.
+ */
+SWMM_ENGINE_API int swmm_pattern_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete an aquifer; referencing subcatchments lose their groundwater
+ *        (gw_aquifer set to -1) and surviving indices are renumbered.
+ */
+SWMM_ENGINE_API int swmm_aquifer_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete a snowpack; referencing subcatchments' snowpack index and
+ *        raw-name mirror are cleared, surviving indices renumbered.
+ */
+SWMM_ENGINE_API int swmm_snowpack_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete a LID control; LID-usage rows referencing it are
+ *        cascade-deleted and surviving lid_index values renumbered.
+ */
+SWMM_ENGINE_API int swmm_lid_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete a street; inlet-usage rows referencing it are cascade-deleted
+ *        (consistent with link deletion) and street_index values renumbered.
+ */
+SWMM_ENGINE_API int swmm_street_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete an inlet design; inlet-usage rows referencing it are
+ *        cascade-deleted and design_index values renumbered.
+ */
+SWMM_ENGINE_API int swmm_inlet_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete a land use; buildup/washoff rows and subcatchment coverage
+ *        columns for it are re-packed.
+ */
+SWMM_ENGINE_API int swmm_landuse_delete(
+    SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete a unit-hydrograph group by name.
+ *
+ * @details Cascade-deletes RDII assignments using the group, then removes the
+ *          group's parameter lines, gage assignment, and RDII-decay rows.
+ *          @ref swmm_hydrograph_remove_group is the report-less equivalent.
+ *
+ * @returns SWMM_OK, SWMM_ERR_LIFECYCLE, SWMM_ERR_BADHANDLE, or
+ *          SWMM_ERR_BADPARAM if the name is NULL/empty or unknown.
+ */
+SWMM_ENGINE_API int swmm_hydrograph_delete(
+    SWMM_Engine engine, const char* uh_name, SWMM_ImpactReport* cascade_out);
 
 /* =========================================================================
  * Type conversion result — returned by convert functions

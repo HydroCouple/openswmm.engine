@@ -652,6 +652,31 @@ cdef class Surface2D:
         _check(err)
         return arr
 
+    def get_vertex_render_depths(self):
+        """Return render-oriented signed water depths at all vertices.
+
+        This is the wet-masked, depth-weighted free-surface reconstruction
+        C{eta_v - z_v} (m): dry-cell bed elevations never contribute (unlike
+        L{get_vertex_heads}, whose dry-cell value is the bed elevation). The
+        value is negative over the dry side of partially wet cells (sub-cell
+        shoreline intercept) and C{0} where no incident cell is wet. This is
+        the field GUIs should interpolate for water-surface rendering and
+        profiles.
+
+        @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int n = self.n_vertices
+        cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
+        cdef void* eng = self._engine
+        cdef double* p = <double*>arr.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_vertex_get_render_depths_bulk(eng, p)
+        _check(err)
+        return arr
+
     # ====================================================================
     # State (depth/velocity) - statistics
     # ====================================================================
