@@ -17,6 +17,7 @@
 #endif
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "../core/PerfTimers.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -782,6 +783,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     force_next_window_ = false;
     const double dt = pending_dt_;   // the 2D macro-step
     pending_dt_ = 0.0;
+    openswmm::perf::ScopedTimer _pt_window(openswmm::perf::sec_2d_window);
     fireAdvanceWindow(ctx, dt, t);
 }
 
@@ -937,7 +939,11 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
 
     // Advance CVODE by dt
     double t_target = sim_time_ + dt;
-    double t_reached = solver_->advance(sim_time_, t_target);
+    double t_reached;
+    {
+        openswmm::perf::ScopedTimer _pt_adv(openswmm::perf::sec_2d_advance);
+        t_reached = solver_->advance(sim_time_, t_target);
+    }
 
     // Breach check: if the wet front crossed the WHOLE halo within this one
     // window (an outer-ring cell got wet), the wall guard has locally walled

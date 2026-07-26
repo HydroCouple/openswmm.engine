@@ -13,6 +13,7 @@
 #include "SWMMEngine.hpp"
 #include "DateTime.hpp"
 #include "SimulationContext.hpp"
+#include "PerfTimers.hpp"
 #include "UnitConversion.hpp"
 #include "../hydrology/Gage.hpp"
 #include "../hydraulics/Link.hpp"
@@ -2661,7 +2662,11 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //         Router::initNodeFlows() for joint evap+exfil capping.
     exfil_.computeAll(ctx_, dt_routing);
 
-    int iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
+    int iters;
+    {
+        openswmm::perf::ScopedTimer _pt_1d(openswmm::perf::sec_1d_step);
+        iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
+    }
     // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
     // not merely from "used all MaxTrials" — a step converging on the last
     // allowed iteration is converged (dynwave.c:245). Using the real flag here
@@ -3862,6 +3867,19 @@ int SWMMEngine::end() noexcept {
     // taken one window early.
     surface_router_.finalize(ctx_);
 #endif
+
+    // Benchmark aid: attribute wall time between the 2D solve, its window
+    // overhead (rainfall/coupling assembly), and the 1D routing step. Gated
+    // by OPENSWMM_PERF so normal runs are unaffected. (See core/PerfTimers.hpp.)
+    if (std::getenv("OPENSWMM_PERF") != nullptr) {
+        std::fprintf(stderr,
+            "[PERF] 2D-window=%.2fs (CVODE-advance=%.2fs, 2D-overhead=%.2fs)  "
+            "1D-step=%.2fs\n",
+            openswmm::perf::sec_2d_window,
+            openswmm::perf::sec_2d_advance,
+            openswmm::perf::sec_2d_window - openswmm::perf::sec_2d_advance,
+            openswmm::perf::sec_1d_step);
+    }
 
     ctx_.finalize_max_stats();
 
