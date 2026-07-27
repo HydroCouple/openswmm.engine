@@ -1407,7 +1407,9 @@ TEST(SurfaceState, ClearResetForcings) {
 TEST(SolverOptions, DefaultValues) {
     SolverOptions2D opts;
     EXPECT_NEAR(opts.max_timestep, 10.0, 1e-12);
-    EXPECT_NEAR(opts.min_timestep, 0.001, 1e-12);
+    // 0 = no CVODE step floor (a hard floor makes wetting-front corrector
+    // retries unrecoverable — 2026-07 ODE reconfiguration).
+    EXPECT_NEAR(opts.min_timestep, 0.0, 1e-12);
     EXPECT_NEAR(opts.rel_tolerance, 1e-4, 1e-18);
     EXPECT_NEAR(opts.abs_tolerance, 1e-6, 1e-18);
     EXPECT_NEAR(opts.dry_depth, 0.001, 1e-12);

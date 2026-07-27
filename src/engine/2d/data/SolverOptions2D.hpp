@@ -192,7 +192,12 @@ enum class RainfallMode : int8_t {
  */
 struct SolverOptions2D {
     double max_timestep      = 10.0;    ///< Max CVODE internal step (s)
-    double min_timestep      = 0.001;   ///< Min CVODE internal step (s)
+    /// Min CVODE internal step (s). 0 = no floor (CVODE default). A hard
+    /// floor turns wetting-front Newton-corrector retries into UNRECOVERABLE
+    /// failures (the front kink needs h below any fixed floor on fine cells:
+    /// kink magnitude scales as 1/cell-area) — measured as 128k hard failures
+    /// + frozen windows + dropped rainfall on a 13k-cell multiscale mesh.
+    double min_timestep      = 0.0;
     double rel_tolerance     = 1.0e-4;  ///< CVODE relative tolerance
     double abs_tolerance     = 1.0e-6;  ///< CVODE absolute tolerance (m)
 
