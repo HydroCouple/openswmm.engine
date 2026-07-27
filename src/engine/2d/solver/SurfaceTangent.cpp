@@ -174,8 +174,12 @@ void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
     // where the Newton corrector fails. Genuinely-dry cells (V == 0) keep
     // the wet-branch 1/A: the right-derivative that carries the negative
     // Δh feedback stabilizing the corrector on wetting-front cells.
-    static const bool clamp_consistent =
-        (std::getenv("OPENSWMM_2D_TANGENT_CLAMP") != nullptr);
+    // Default ON (paired with the partial-window default); env "0" restores
+    // the unclamped 1/A tangent on debt cells.
+    static const bool clamp_consistent = []{
+        const char* e = std::getenv("OPENSWMM_2D_TANGENT_CLAMP");
+        return !(e && e[0] == '0' && e[1] == '\0');
+    }();
     const double* yv = clamp_consistent ? y : nullptr;
 
     // Per-cell dη/dV (closure chain rule) reused across a cell's three edges.

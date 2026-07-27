@@ -275,9 +275,16 @@ TEST_F(DecoupledStepping2DTest, ExplicitLargeWindow) {
 // frozen surface must not manufacture water in the pipe network. The 2D ledger
 // books no exchange for failed windows, so given_2d_net stays ~0 too.
 TEST_F(DecoupledStepping2DTest, FailedWindowsRedeliver) {
+    // This case validates the LEGACY freeze-only failure contract (surface
+    // held frozen, exchanges fully redelivered). Partial-progress acceptance
+    // — the default since the 2026-07 ODE reconfiguration — deliberately
+    // changes that contract (the surface legitimately moves), so pin the
+    // legacy path for this test.
+    setenv("OPENSWMM_2D_PARTIAL_WINDOW", "0", 1);
     RunResult r = run(dir_, "failed_windows",
                       "COUPLING_WINDOW  30\n"
                       "MAX_CVODE_STEPS  1\n");
+    unsetenv("OPENSWMM_2D_PARTIAL_WINDOW");
     ASSERT_TRUE(r.ok);
 
     // Rain still books into the 2D ledger (60 m³ potential); the exchange must

@@ -238,8 +238,12 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // exactly where the Newton corrector struggles. Guarded on the tangents
     // being built (analytic-J path active) and no active-set mask (tangent
     // rows are not masked).
-    static const bool precond_tangent =
-        (std::getenv("OPENSWMM_2D_PRECOND_TANGENT") != nullptr);
+    // Default ON (7.7× measured on the multiscale storm probe); env "0"
+    // restores the secant-transmissivity assembly.
+    static const bool precond_tangent = []{
+        const char* e = std::getenv("OPENSWMM_2D_PRECOND_TANGENT");
+        return !(e && e[0] == '0' && e[1] == '\0');
+    }();
     const SurfaceTangents& tng = solver->tangents_;
     const bool use_tangent_pc =
         precond_tangent && !masked && tng.nt == mesh.n_triangles();
@@ -625,13 +629,26 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // steps, and the ~6k preconditioner setups. Measured via the (now-correct)
     // 2D Solver Statistics counters.
     warm_start_ = (std::getenv("OPENSWMM_2D_WARMSTART") != nullptr);
-    partial_window_ = (std::getenv("OPENSWMM_2D_PARTIAL_WINDOW") != nullptr);
+    // Default ON (validated: no rewind churn, no dropped rain); set the env
+    // to "0" to restore the legacy freeze-only failure handling.
+    {
+        const char* e = std::getenv("OPENSWMM_2D_PARTIAL_WINDOW");
+        partial_window_ = !(e && e[0] == '0' && e[1] == '\0');
+    }
     if (const char* e = std::getenv("OPENSWMM_2D_MAXORD"))
         CVodeSetMaxOrd(cvode_mem_, std::atoi(e));           // e.g. 2 for stiff restarts
     if (std::getenv("OPENSWMM_2D_STABLIMDET") != nullptr)
         CVodeSetStabLimDet(cvode_mem_, SUNTRUE);            // BDF stability-limit detection
-    if (const char* e = std::getenv("OPENSWMM_2D_LSETUP_FREQ"))
-        CVodeSetLSetupFrequency(cvode_mem_, std::atol(e));  // lag preconditioner setups
+    // Lagged linear-solver setups, default 50 (measured 1.66× alone: the
+    // CVodeReInit-heavy window regime otherwise rebuilds the preconditioner
+    // hierarchy ~per window). Env overrides the frequency; a value <= 0
+    // restores the SUNDIALS default policy.
+    {
+        long lsf = 50;
+        if (const char* e = std::getenv("OPENSWMM_2D_LSETUP_FREQ"))
+            lsf = std::atol(e);
+        if (lsf > 0) CVodeSetLSetupFrequency(cvode_mem_, lsf);
+    }
     if (const char* e = std::getenv("OPENSWMM_2D_NLCONV"))
         CVodeSetNonlinConvCoef(cvode_mem_, std::atof(e));   // loosen Newton conv test
     if (const char* e = std::getenv("OPENSWMM_2D_EPSLIN"))
