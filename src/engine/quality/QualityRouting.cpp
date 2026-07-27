@@ -212,6 +212,11 @@ void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
         double q = nodes.dwf_inflow[ui];
         if (q <= 0.0) continue;
 
+        // Add volume inflow from DWF (legacy qualrout.c uses Node[j].inflow,
+        // which includes DWF, as the mixing denominator). Without this the
+        // mass added below is discarded by mixAtNodes when v_in == 0.
+        nodes.qual_vol_in[ui] += q * dt;
+
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
             double c_dwf = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
@@ -249,6 +254,10 @@ void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
         auto ui = static_cast<std::size_t>(i);
         double q = nodes.gw_inflow[ui];
         if (q <= 0.0) continue;  // pollutant load only for positive inflow
+
+        // Add volume inflow from groundwater (see addDwfLoads: the mass below
+        // is discarded by mixAtNodes unless its carrier volume is counted).
+        nodes.qual_vol_in[ui] += q * dt;
 
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
