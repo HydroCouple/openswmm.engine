@@ -91,4 +91,29 @@ void SurfaceJacobian::assemble(const MeshData& mesh, const SurfaceStateData& sta
     }
 }
 
+void SurfaceJacobian::assembleFromTangents(const MeshData& mesh,
+                                            const double* diag,
+                                            const double* dfdvi,
+                                            const double* dfdvnbr,
+                                            double gamma) {
+    std::fill(values_.begin(), values_.end(), 0.0);
+
+    for (int i = 0; i < n_; ++i) {
+        // Mirror applyTangentJv exactly: dfdvi accumulates on the diagonal for
+        // every edge (boundary tangents live there — no column exists for
+        // them), dfdvnbr lands on the neighbour column.
+        double jii = diag[i];
+        for (int e = 0; e < 3; ++e) {
+            const int slot = static_cast<int>(i) * 3 + e;
+            jii += dfdvi[slot];
+            const int nb = tri_nbr(mesh, i, e);
+            if (nb < 0) continue;
+            values_[static_cast<std::size_t>(
+                edge_pos_[static_cast<std::size_t>(slot)])] +=
+                -gamma * dfdvnbr[slot];
+        }
+        values_[static_cast<std::size_t>(diag_pos_[i])] += 1.0 - gamma * jii;
+    }
+}
+
 } // namespace openswmm::twoD

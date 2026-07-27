@@ -12,6 +12,7 @@
 #include "../coupling/NodeCoupling.hpp"  // computeNodeCouplingQ (orifice FD linearization)
 
 #include <cmath>
+#include <cstdlib>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -157,18 +158,32 @@ inline double boundaryTangent(const MeshData& mesh, const SurfaceStateData& stat
 }  // namespace
 
 void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
-                          const SolverOptions2D& opts, SurfaceTangents& tang) {
+                          const SolverOptions2D& opts, SurfaceTangents& tang,
+                          const double* y) {
     const int nt = mesh.n_triangles();
     if (tang.nt != nt) tang.resize(nt);
 
     const double dh_eps = opts.flux_dh_eps;
     const bool vfr_face = (opts.face_reconstruction == FaceDepth2D::VFR_FACE);
 
+    // Clamp-consistent tangent (env OPENSWMM_2D_TANGENT_CLAMP): the RHS
+    // reconstruction clamps V → max(V, 0), so for a cell in volume DEBT
+    // (V < 0, sink overdraw) the true ∂η/∂V is 0 — the head does not move
+    // until the debt refills. The unclamped 1/A claims sensitivity that the
+    // RHS does not have, an inconsistent Jacobian exactly on the kink set
+    // where the Newton corrector fails. Genuinely-dry cells (V == 0) keep
+    // the wet-branch 1/A: the right-derivative that carries the negative
+    // Δh feedback stabilizing the corrector on wetting-front cells.
+    static const bool clamp_consistent =
+        (std::getenv("OPENSWMM_2D_TANGENT_CLAMP") != nullptr);
+    const double* yv = clamp_consistent ? y : nullptr;
+
     // Per-cell dη/dV (closure chain rule) reused across a cell's three edges.
     // Cheap; recomputed here so the pass is self-contained.
 #pragma omp parallel for schedule(static) num_threads(opts.num_threads)
     for (int i = 0; i < nt; ++i) {
-        const double detaI = dEtaDV(mesh, state, opts, i);
+        const double detaI = (yv && yv[i] < 0.0)
+                                 ? 0.0 : dEtaDV(mesh, state, opts, i);
         double diag = 0.0;
 
         // Evaporation-sink diagonal: ∂(A_i·(−evapSink))/∂V_i = −∂evapSink/∂depth
@@ -228,7 +243,8 @@ void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
             const double dF_dhup = -C * (5.0 / 3.0)
                                    * std::cbrt(depth_up * depth_up) * Phi; // via h_up
 
-            const double detaN = dEtaDV(mesh, state, opts, nbr);
+            const double detaN = (yv && yv[nbr] < 0.0)
+                                     ? 0.0 : dEtaDV(mesh, state, opts, nbr);
             // ∂Δh/∂η_i = +1, ∂Δh/∂η_nbr = −1.
             double dfi = dF_dDh * detaI;
             double dfn = -dF_dDh * detaN;
@@ -273,7 +289,8 @@ void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
 
             const double A     = mesh.tri_area[c];
             if (A <= 1.0e-30) continue;
-            const double detaC = dEtaDV(mesh, state, opts, c);
+            const double detaC = (yv && yv[c] < 0.0)
+                                     ? 0.0 : dEtaDV(mesh, state, opts, c);
             const double h0    = state.head[c];
             const double d0    = state.depth[c];
             // Volume step scaled to the cell (never below a small floor so a dry

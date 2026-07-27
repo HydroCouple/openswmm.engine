@@ -164,6 +164,18 @@ private:
     long   last_nsteps_ = 0;
     double last_h_      = 0.0;
 
+    // Phase-3a experiment (OPENSWMM_2D_WARMSTART): after a CVodeReInit, seed the
+    // next first step with the last successful step size (last_h_) via
+    // CVodeSetInitStep, instead of letting cvHin re-derive a cold h. Removes the
+    // wasted cold-probe on every quiescent/failed-window restart. Read once in
+    // initialize(); 0.0 last_h_ (pre-first-step) makes CVodeSetInitStep a no-op.
+    bool   warm_start_  = false;
+
+    // OPENSWMM_2D_PARTIAL_WINDOW: accept the state CVode reached before a
+    // step failure (tret/zn[0]) as a short window instead of rewinding it.
+    // Read once in initialize(); default off = legacy freeze behaviour.
+    bool   partial_window_ = false;
+
     // Cumulative CVODE throughput counters. The CVodeGetNum* counters are RESET
     // by every CVodeReInit (clock-resync / reseed / reinitialize), so a plain
     // run_stats() at finalize reports only the last (often quiescent/frozen)

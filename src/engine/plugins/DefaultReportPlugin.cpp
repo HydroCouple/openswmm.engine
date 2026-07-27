@@ -879,6 +879,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             srow("Error-Test Failures ......", mb2.solver_netfails);
             srow("Nonlin. Conv. Failures ...", mb2.solver_nncfails);
             srow("Frozen (Failed) Windows ..", mb2.solver_failed_windows);
+            if (mb2.solver_partial_windows > 0)
+                srow("Partial Windows ..........", mb2.solver_partial_windows);
             std::fprintf(f, "\n  Avg Internal Step (s) ....%14.4f", mb2.solver_avg_h);
             std::fprintf(f, "\n  Last Internal Step (s) ...%14.4f", mb2.solver_last_h);
         }

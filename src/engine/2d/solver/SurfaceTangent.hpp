@@ -90,7 +90,8 @@ struct SurfaceTangents {
  * consistent with the flux the RHS applies).
  */
 void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
-                          const SolverOptions2D& opts, SurfaceTangents& tang);
+                          const SolverOptions2D& opts, SurfaceTangents& tang,
+                          const double* y = nullptr);
 
 /**
  * @brief Apply J·v using the precomputed tangents.

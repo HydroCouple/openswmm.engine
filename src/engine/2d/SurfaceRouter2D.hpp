@@ -281,6 +281,23 @@ private:
     /// outfall withdrawals draw it down so their window-cumulative total can
     /// never overdraw the frozen 2D state.
     std::vector<double> window_avail_budget_;
+
+    /// Partial-window carry (OPENSWMM_2D_PARTIAL_WINDOW): the un-absorbed
+    /// fraction of the window exchange/outfall accumulators, re-seeded into
+    /// the next window by resetWindowAccumulators(). Sized lazily on first
+    /// partial window; empty otherwise.
+    std::vector<double> partial_carry_exchange_;
+    std::vector<double> partial_carry_outfall_;
+
+    /// Un-integrated span left behind by partial windows; folded into the
+    /// next scheduled window's target span (keeps the firing cadence at
+    /// effective_window_ — see the cadence note in fireAdvanceWindow).
+    double partial_lag_ = 0.0;
+
+    /// Total span (s) frozen by the catch-up leash (lag beyond ~2 windows is
+    /// declared elapsed un-integrated so the 1D-clock rain sampling cannot
+    /// skew unboundedly against the 2D window span). Warned at finalize.
+    double partial_lag_frozen_ = 0.0;
     /// At least one outfall withdrawal was clamped by the budget this window.
     bool window_had_outfall_clamp_ = false;
     /// Seed window_avail_budget_ from the current (just-accepted) 2D state,
@@ -294,6 +311,10 @@ private:
     /// 2D advance windows the solver failed to integrate (surface held frozen,
     /// exchanges un-booked); reported once at finalize().
     long failed_advance_windows_ = 0;
+    /// 2D advance windows accepted short of their target span
+    /// (OPENSWMM_2D_PARTIAL_WINDOW): forcings booked over the achieved span,
+    /// shortfall carried into the next window.
+    long partial_windows_ = 0;
 
     /// CFL hint cached at the last 2D advance (per-cell celerity minimum over
     /// wet coupling-stencil cells); 1e30 while those are dry. Refreshed by
