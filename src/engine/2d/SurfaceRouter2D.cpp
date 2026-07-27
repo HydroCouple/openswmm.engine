@@ -781,8 +781,19 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
         if (pending_dt_ + 0.5 * routing_dt < effective_window_) return;
     }
     force_next_window_ = false;
-    const double dt = pending_dt_;   // the 2D macro-step
+    // The 2D macro-step: the routing time since the last fire, plus AT MOST
+    // one window's worth of the partial-lag backlog. Folding the WHOLE lag in
+    // at once is a measured runaway: one CVode call has a MAX_CVODE_STEPS
+    // budget, so once the backlog exceeds ~budget·h of span every window
+    // partial-accepts a sliver, the backlog grows without bound, and the
+    // finalize flush drops the un-integrated remainder — silently losing its
+    // rainfall (3.67M vs 1.23M m³ booked on otherwise-identical probes).
+    // Window-sized chunks keep each catch-up attempt inside the step budget.
+    double take = partial_lag_;
+    if (effective_window_ > 0.0) take = std::min(take, effective_window_);
+    const double dt = pending_dt_ + take;
     pending_dt_ = 0.0;
+    partial_lag_ -= take;
     openswmm::perf::ScopedTimer _pt_window(openswmm::perf::sec_2d_window);
     fireAdvanceWindow(ctx, dt, t);
 }
@@ -804,6 +815,20 @@ void SurfaceRouter2D::prepareOneShotForcing(SimulationContext& ctx) {
 void SurfaceRouter2D::resetWindowAccumulators() {
     std::fill(window_exchange_accum_.begin(), window_exchange_accum_.end(), 0.0);
     std::fill(window_outfall_accum_.begin(), window_outfall_accum_.end(), 0.0);
+    // Partial-progress carry: exchange volumes the 1D already consumed but a
+    // short-accepted window did not absorb yet — seed them into the next
+    // window's accumulators so injectAccumulatedExchange delivers them.
+    if (!partial_carry_exchange_.empty()
+        && partial_carry_exchange_.size() == window_exchange_accum_.size()) {
+        for (std::size_t k = 0; k < window_exchange_accum_.size(); ++k) {
+            window_exchange_accum_[k] = partial_carry_exchange_[k];
+            window_outfall_accum_[k]  = partial_carry_outfall_[k];
+        }
+        std::fill(partial_carry_exchange_.begin(),
+                  partial_carry_exchange_.end(), 0.0);
+        std::fill(partial_carry_outfall_.begin(),
+                  partial_carry_outfall_.end(), 0.0);
+    }
     // Withdrawal budget = the water each cell actually holds right now (the
     // state the next window's per-step evaluations will read as frozen).
     const int nt = mesh_.n_triangles();
@@ -912,6 +937,13 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     }
 
     bool advance_failed = false;
+    // Span the solver actually integrated this window. Equal to dt except for
+    // a partial-progress window (OPENSWMM_2D_PARTIAL_WINDOW): the solver
+    // accepted what it reached before a step failure, dt_done < dt, and the
+    // shortfall is pushed back into pending_dt_ below. Frozen and quiescent
+    // windows keep dt (the window is declared elapsed with the state held).
+    double dt_done = dt;
+    bool partial_window = false;
 
     // TEMP overdraw diagnostics (OPENSWMM_2D_DEBUG_COUPLE=1).
     static const bool dbg_couple =
@@ -987,6 +1019,10 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
     // resync the integrator to it, and un-book the held exchanges so neither
     // domain receives water the other never moved.
     advance_failed = (dt > 0.0) && !(t_reached > sim_time_);
+    if (!advance_failed) {
+        dt_done = std::min(dt, t_reached - sim_time_);
+        partial_window = (dt - dt_done) > 1.0e-9 * std::max(1.0, dt);
+    }
     if (advance_failed) {
         ++failed_advance_windows_;
         if (failed_advance_windows_ == 1) {
@@ -1001,7 +1037,11 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
         // head reconstruction and zero any negative-volume debt, creating
         // water on every failed window (the dominant residual leak in the
         // failed-window regime).
-        solver_->resyncFromVolumes(sim_time_);
+        // Resync at the END of the window: the router declares the window
+        // elapsed below (sim_time_ += dt), so re-timing the integrator there
+        // directly avoids a second clock-desync CVodeReInit on the next
+        // advance (the guard would otherwise fire every failed window).
+        solver_->resyncFromVolumes(sim_time_ + dt);
         // The 1D already consumed its side of the exchange per routing step,
         // but the frozen surface never moved the matching water. Redeliver the
         // window's accumulated junction volumes NEGATED through the delivery
@@ -1040,6 +1080,43 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
         // the configured/AUTO target.
         effective_window_ = std::min(window_target_, 2.0 * effective_window_);
         clean_windows_ = 0;
+    }
+
+    // Partial-progress window (OPENSWMM_2D_PARTIAL_WINDOW): the solver
+    // integrated only dt_done < dt before a step failure, so only the
+    // fraction f = dt_done/dt of each accumulated exchange volume actually
+    // entered the surface. Book that fraction (accumulateMassBalance below
+    // reads the scaled accumulators) and CARRY the remainder into the next
+    // window's injection (resetWindowAccumulators re-seeds from the carry):
+    // the 1D keeps what it already consumed per-step and the 2D absorbs the
+    // matching volume over the following spans. Do NOT round-trip the
+    // remainder through the 1D delivery queue (the frozen-window claw-back):
+    // with a still-wet surface the same water would be re-booked to the 1D
+    // every window and a negative give-back into an already-drained node
+    // clamps — manufacturing volume (measured on FailedWindowsRedeliver).
+    // The live path needs none of this: its exchange is the solver's exact
+    // ∫Q dt over dt_done.
+    if (partial_window) {
+        ++partial_windows_;
+        if (!live_coupling) {
+            const double f = dt_done / dt;
+            const std::size_t np = coupling_points_.size();
+            if (partial_carry_exchange_.size() != np) {
+                partial_carry_exchange_.assign(np, 0.0);
+                partial_carry_outfall_.assign(np, 0.0);
+            }
+            for (std::size_t k = 0; k < np; ++k) {
+                if (coupling_points_[k].is_outfall) {
+                    partial_carry_outfall_[k] +=
+                        window_outfall_accum_[k] * (1.0 - f);
+                    window_outfall_accum_[k] *= f;
+                } else {
+                    partial_carry_exchange_[k] +=
+                        window_exchange_accum_[k] * (1.0 - f);
+                    window_exchange_accum_[k] *= f;
+                }
+            }
+        }
     }
 
     // Live-path booking: the solver integrated ∫Q_k dt (m³, +drain/−spill) per
@@ -1101,7 +1178,7 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
         for (int idx = 0; idx < ne; ++idx) {
             if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx])
                 != BoundaryType::WALL) {
-                boundary_.edge_bc_cum_flux[idx] += -state_.edge_flux[idx] * dt;
+                boundary_.edge_bc_cum_flux[idx] += -state_.edge_flux[idx] * dt_done;
             }
         }
     }
@@ -1133,12 +1210,37 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
             (vol_after - dbg_vol_before) - expect_dVol);
     }
 
-    sim_time_ += dt;
+    // Partial window: the 2D clock advances only over the span actually
+    // integrated; the shortfall is held in partial_lag_ and folded into the
+    // NEXT SCHEDULED window's span (advancePostRouting). It must NOT go back
+    // into pending_dt_: that makes the next window fire on the very next
+    // routing step, so the held-forcing discontinuity arrives per routing
+    // step instead of per window — CVODE's error estimator re-triggers on
+    // every boundary, pinning h small (measured cadence-collapse spiral on
+    // the strangled-integrator repro).
+    sim_time_ += dt_done;
+    if (partial_window) {
+        partial_lag_ += dt - dt_done;
+        // Leash the catch-up backlog to ~2 windows. Rainfall is sampled from
+        // the gages at the 1D clock but applied over the (lagging) 2D window
+        // span, so an unbounded lag applies the wrong part of the hyetograph
+        // — measured as 5.6M vs 7.4M m³ booked for the SAME storm on two
+        // otherwise-identical runs. Beyond the leash, freeze the excess span
+        // (declared elapsed un-integrated, nothing booked — the same honest
+        // loss semantics as a frozen window) and account it for the report.
+        const double lag_cap =
+            2.0 * std::max(effective_window_, ctx.options.routing_step);
+        if (partial_lag_ > lag_cap) {
+            partial_lag_frozen_ += partial_lag_ - lag_cap;
+            sim_time_ += partial_lag_ - lag_cap;
+            partial_lag_ = lag_cap;
+        }
+    }
 
     // Per-cell continuity residual (local mass-balance diagnostic). old_depth
     // holds the start-of-step depth saved by save_state() above; depth now
     // holds the end-of-step value.
-    computeCellContinuity(mesh_, state_, options_, dt);
+    computeCellContinuity(mesh_, state_, options_, dt_done);
 
     // Cell-centred velocity reconstruction (RT0) from the refreshed fluxes.
     computeFaceVelocity(mesh_, state_, options_);
@@ -1150,13 +1252,13 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
                                   options_.num_threads);
 
     // Update statistics
-    state_.update_statistics(mesh_.tri_area, dt, options_.num_threads);
+    state_.update_statistics(mesh_.tri_area, dt_done, options_.num_threads);
 
     // Accumulate the global 2D mass-balance terms for this step. A failed
     // (frozen) window moved no water — rainfall/evaporation/exchange were not
     // integrated, and the accumulated junction volumes were re-queued back to
     // the 1D above — so booking them would inject phantom volume.
-    if (!advance_failed) accumulateMassBalance(ctx, dt);
+    if (!advance_failed) accumulateMassBalance(ctx, dt_done);
 
     // LIVE path only: hand the window's junction-exchange volumes (booked as
     // window totals by the live-RHS block above) to the 1D side as a delivery
@@ -1202,9 +1304,39 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     // gating, up to one window of routing time can be pending here — dropping
     // it would end the 2D clock (and the exchange booking) short of the
     // simulation end.
-    if (active_ && pending_dt_ > 0.0) {
-        const double dt = pending_dt_;
+    // Loop until the pending routing time AND the partial-lag backlog are
+    // drained: a single fire can partial-accept and return span to the lag,
+    // and dropping that remainder silently loses its rainfall from the 2D.
+    // Window-sized chunks (same rule as advancePostRouting) keep each fire
+    // inside the CVODE step budget. Frozen windows consume their span by
+    // declaration, so the loop always terminates; the guard bounds a
+    // pathological all-partial tail and reports what was left.
+    int flush_guard = 0;
+    while (active_ && (pending_dt_ > 0.0 || partial_lag_ > 0.0)) {
+        if (++flush_guard > 2000) {
+            // A stiff terminal state (e.g. a report window ending mid-storm)
+            // can partial-accept microseconds per fire — draining the rest
+            // through the window machinery would spin ~indefinitely. Freeze
+            // the remainder honestly: declare it elapsed un-integrated and
+            // say so (the ledger books nothing for it, so continuity stays
+            // consistent; the loss is visible instead of a silent hang).
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "WARNING: 2D finalize flush froze the last %.3f s of "
+                "un-integrated window backlog (stiff terminal state; "
+                "partial-progress tail did not converge).",
+                pending_dt_ + partial_lag_);
+            ctx.warnings.push_back(buf);
+            sim_time_ += pending_dt_ + partial_lag_;
+            pending_dt_ = 0.0;
+            partial_lag_ = 0.0;
+            break;
+        }
+        double take = partial_lag_;
+        if (effective_window_ > 0.0) take = std::min(take, effective_window_);
+        const double dt = pending_dt_ + take;
         pending_dt_ = 0.0;
+        partial_lag_ -= take;
         force_next_window_ = false;
         fireAdvanceWindow(ctx, dt, last_t_);
     }
@@ -1225,6 +1357,16 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
         mb.solver_netfails       = s.netfails;
         mb.solver_nncfails       = s.nncfails;
         mb.solver_failed_windows = failed_advance_windows_;
+        mb.solver_partial_windows = partial_windows_;
+        if (partial_lag_frozen_ > 0.0) {
+            char lbuf[256];
+            std::snprintf(lbuf, sizeof(lbuf),
+                "WARNING: 2D partial-window catch-up leash froze %.1f s of "
+                "un-integrated span across the run (rainfall/forcing for that "
+                "span was not applied to the 2D surface).",
+                partial_lag_frozen_);
+            ctx.warnings.push_back(lbuf);
+        }
         mb.solver_last_h         = s.last_h;
         mb.solver_avg_h          = (s.nsteps > 0 && sim_time_ > 0.0)
                                        ? sim_time_ / static_cast<double>(s.nsteps)

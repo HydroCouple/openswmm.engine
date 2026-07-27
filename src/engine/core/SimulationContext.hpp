@@ -1019,6 +1019,7 @@ struct SimulationContext {
         long   solver_netfails       = 0;    ///< error-test failures
         long   solver_nncfails       = 0;    ///< nonlinear convergence failures
         long   solver_failed_windows = 0;    ///< frozen (failed) advance windows
+        long   solver_partial_windows = 0;   ///< partially-accepted advance windows
         double solver_avg_h          = 0.0;  ///< mean accepted internal step (s)
         double solver_last_h         = 0.0;  ///< last accepted internal step (s)
 

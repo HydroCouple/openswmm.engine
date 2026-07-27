@@ -60,8 +60,13 @@ public:
     /// only γ drifted). GMRES preconditions with the true matrix-free operator,
     /// so a slightly stale hierarchy only affects the Krylov iteration count,
     /// never the converged solution. The first call always builds.
+    /// When the three tangent arrays are non-null, M is assembled EXACTLY from
+    /// the analytic surface tangents (assembleFromTangents) instead of the
+    /// secant transmissivity approximation — see OPENSWMM_2D_PRECOND_TANGENT.
     void setup(const MeshData& mesh, const SurfaceStateData& state, double gamma,
-               bool recompute = true, const double* deta_dv = nullptr);
+               bool recompute = true, const double* deta_dv = nullptr,
+               const double* tdiag = nullptr, const double* tdfdvi = nullptr,
+               const double* tdfdvnbr = nullptr);
 
     /// Apply one BoomerAMG V-cycle: z ≈ M⁻¹ r  (n entries each).
     void solve(const double* r, double* z, int n);

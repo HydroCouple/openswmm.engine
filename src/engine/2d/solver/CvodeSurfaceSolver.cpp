@@ -230,6 +230,20 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     const ActiveSetData* as = state.active_set;
     const bool masked = (as != nullptr) && as->enabled;
 
+    // Tangent-exact preconditioner (env OPENSWMM_2D_PRECOND_TANGENT): build
+    // M = I − γJ from the analytic surface tangents instead of the secant
+    // |F|/|Δη| transmissivity. The secant omits the ∂F/∂h_up upwind-
+    // conveyance term — 10–100× the Δη term at wetting fronts — and
+    // symmetrizes a nonsymmetric operator, so the preconditioner goes inexact
+    // exactly where the Newton corrector struggles. Guarded on the tangents
+    // being built (analytic-J path active) and no active-set mask (tangent
+    // rows are not masked).
+    static const bool precond_tangent =
+        (std::getenv("OPENSWMM_2D_PRECOND_TANGENT") != nullptr);
+    const SurfaceTangents& tng = solver->tangents_;
+    const bool use_tangent_pc =
+        precond_tangent && !masked && tng.nt == mesh.n_triangles();
+
 #if defined(OPENSWMM_HAVE_HYPRE)
     // AMG: assemble M = I − γ·J and rebuild the BoomerAMG hierarchy (only when
     // recompute; setup() reuses the prior hierarchy otherwise).
@@ -274,7 +288,12 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
                 }
                 deta = deta_dv.data();
             }
-            solver->amg_precond_->setup(mesh, state, gamma, force, deta);
+            if (use_tangent_pc)
+                solver->amg_precond_->setup(mesh, state, gamma, force, nullptr,
+                                            tng.diag.data(), tng.dfdvi.data(),
+                                            tng.dfdvnbr.data());
+            else
+                solver->amg_precond_->setup(mesh, state, gamma, force, deta);
             solver->amg_used_last_setup_ = true;
             return 0;
         }
@@ -295,6 +314,19 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     int nt = mesh.n_triangles();
     auto& D = solver->precond_diag_;
     D.assign(static_cast<std::size_t>(nt), 0.0);  // sized BEFORE the parallel loop
+
+    // Tangent-exact Jacobi diagonal: J_ii = diag[i] + Σ_e dfdvi (the exact
+    // coefficients applyTangentJv applies), including the ∂F/∂h_up and
+    // boundary-edge terms the secant sum below omits.
+    if (use_tangent_pc) {
+#pragma omp parallel for schedule(static) num_threads(ctx->opts->num_threads)
+        for (int i = 0; i < nt; ++i) {
+            double jii = tng.diag[i];
+            for (int e = 0; e < 3; ++e) jii += tng.dfdvi[i * 3 + e];
+            D[i] = jii;
+        }
+        return 0;
+    }
 
     // Edge transmissivities, then sum per cell with area normalisation.
     // dh_floor regularises the divide at flat-water (|Δh| → 0). Any value
@@ -587,6 +619,24 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     CVodeSetMaxStep(cvode_mem_, opts.max_timestep);
     CVodeSetMaxNumSteps(cvode_mem_, opts.max_cvode_steps);
 
+    // Phase-3a robustness/perf experiments (all env-gated, default = SUNDIALS
+    // stock behaviour). The frozen-dominated coupled regime restarts CVODE cold
+    // on most windows; these target the wasted first-step probing, the failed
+    // steps, and the ~6k preconditioner setups. Measured via the (now-correct)
+    // 2D Solver Statistics counters.
+    warm_start_ = (std::getenv("OPENSWMM_2D_WARMSTART") != nullptr);
+    partial_window_ = (std::getenv("OPENSWMM_2D_PARTIAL_WINDOW") != nullptr);
+    if (const char* e = std::getenv("OPENSWMM_2D_MAXORD"))
+        CVodeSetMaxOrd(cvode_mem_, std::atoi(e));           // e.g. 2 for stiff restarts
+    if (std::getenv("OPENSWMM_2D_STABLIMDET") != nullptr)
+        CVodeSetStabLimDet(cvode_mem_, SUNTRUE);            // BDF stability-limit detection
+    if (const char* e = std::getenv("OPENSWMM_2D_LSETUP_FREQ"))
+        CVodeSetLSetupFrequency(cvode_mem_, std::atol(e));  // lag preconditioner setups
+    if (const char* e = std::getenv("OPENSWMM_2D_NLCONV"))
+        CVodeSetNonlinConvCoef(cvode_mem_, std::atof(e));   // loosen Newton conv test
+    if (const char* e = std::getenv("OPENSWMM_2D_EPSLIN"))
+        CVodeSetEpsLin(cvode_mem_, std::atof(e));           // loosen Krylov-vs-Newton tol
+
     // ------------------------------------------------------------------
     // Linear solver: SPGMR (Scaled Preconditioned GMRES).
     // ------------------------------------------------------------------
@@ -694,7 +744,7 @@ int CvodeSurfaceSolver::jtsetup_fn(double /*t*/, N_Vector y, N_Vector /*fy*/,
         if (masked && !as->cell_active[i]) continue;
         reconstructFromVolume(mesh, opts, i, yd[i], state.head[i], state.depth[i]);
     }
-    buildSurfaceTangents(mesh, state, opts, ctx->solver->tangents_);
+    buildSurfaceTangents(mesh, state, opts, ctx->solver->tangents_, yd);
     return 0;
 }
 
@@ -731,6 +781,7 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
             > 1.0e-9 * std::max(1.0, std::abs(t_current))) {
             accumulateStats();   // preserve cumulative counters across the reset
             CVodeReInit(cvode_mem_, t_current, y_);
+            if (warm_start_) CVodeSetInitStep(cvode_mem_, last_h_);
             precond_diag_.clear();
 #if defined(OPENSWMM_HAVE_HYPRE)
             if (amg_precond_) amg_precond_->invalidate();
@@ -790,8 +841,24 @@ double CvodeSurfaceSolver::advance(double t_current, double t_target) {
     }
 
     if (flag < 0) {
-        // CVODE failure — leave state unchanged
-        return t_current;
+        // Partial-progress acceptance (env OPENSWMM_2D_PARTIAL_WINDOW): on a
+        // step failure CVode returns tret = tn and yout = zn[0] — the exact
+        // state at the last SUCCESSFUL internal step — so the achieved span
+        // is a valid solution. Accept it as a short window (the caller books
+        // forcings over the achieved span and carries the shortfall into the
+        // next window) instead of rewinding: the legacy freeze path discards
+        // the progress, re-integrates the same window after a cold
+        // CVodeReInit (BDF history + preconditioner lost), and drops the
+        // window's rainfall from the 2D — the measured churn spiral.
+        // No ReInit here: CVODE is internally consistent at tn and the next
+        // advance continues from it with full step/order history.
+        double t_int = t_current;
+        CVodeGetCurrentTime(cvode_mem_, &t_int);
+        if (!partial_window_ || !(t_int > t_current)) {
+            // Disabled, or zero progress — legacy freeze path.
+            return t_current;
+        }
+        t_reached = t_int;
     }
 
     // Copy solution back to state: y is the cell volume V. Store V and the
@@ -884,6 +951,7 @@ void CvodeSurfaceSolver::resyncFromVolumes(double t0) {
 
     accumulateStats();   // preserve cumulative counters across the reset
     CVodeReInit(cvode_mem_, t0, y_);
+    if (warm_start_) CVodeSetInitStep(cvode_mem_, last_h_);
     precond_diag_.clear();
 #if defined(OPENSWMM_HAVE_HYPRE)
     if (amg_precond_) amg_precond_->invalidate();
@@ -906,6 +974,7 @@ void CvodeSurfaceSolver::reinitialize(double t0) {
 
     accumulateStats();   // preserve cumulative counters across the reset
     CVodeReInit(cvode_mem_, t0, y_);
+    if (warm_start_) CVodeSetInitStep(cvode_mem_, last_h_);
 
     // Invalidate the lagged preconditioner caches: the state was re-seeded, so
     // the cached Jacobi diagonal / AMG hierarchy no longer match it. CVODE is

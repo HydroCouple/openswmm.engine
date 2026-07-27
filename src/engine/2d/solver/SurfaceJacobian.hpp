@@ -56,6 +56,16 @@ public:
                   double gamma, double dh_floor = 1.0e-9,
                   const double* deta_dv = nullptr);
 
+    /// Refresh the CSR values for M = I − γ·J EXACTLY from the analytic
+    /// surface tangents (the same coefficients applyTangentJv applies):
+    /// J_ii = diag[i] + Σ_e dfdvi[i·3+e] (boundary-edge terms included),
+    /// J_i,nbr(e) = dfdvnbr[i·3+e]. Unlike assemble(), this carries the
+    /// ∂F/∂h_up upwind-conveyance term that dominates at wetting fronts and
+    /// preserves the operator's nonsymmetry.
+    void assembleFromTangents(const MeshData& mesh, const double* diag,
+                              const double* dfdvi, const double* dfdvnbr,
+                              double gamma);
+
     int           rows()   const noexcept { return n_; }
     int           nnz()    const noexcept { return static_cast<int>(col_idx_.size()); }
     const int*    rowPtr() const noexcept { return row_ptr_.data(); }
