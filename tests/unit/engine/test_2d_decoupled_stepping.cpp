@@ -31,9 +31,27 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+// MSVC has no setenv/unsetenv; use _putenv_s (empty value removes the var).
+static void setEnvVar(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+static void unsetEnvVar(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
@@ -280,11 +298,11 @@ TEST_F(DecoupledStepping2DTest, FailedWindowsRedeliver) {
     // — the default since the 2026-07 ODE reconfiguration — deliberately
     // changes that contract (the surface legitimately moves), so pin the
     // legacy path for this test.
-    setenv("OPENSWMM_2D_PARTIAL_WINDOW", "0", 1);
+    setEnvVar("OPENSWMM_2D_PARTIAL_WINDOW", "0");
     RunResult r = run(dir_, "failed_windows",
                       "COUPLING_WINDOW  30\n"
                       "MAX_CVODE_STEPS  1\n");
-    unsetenv("OPENSWMM_2D_PARTIAL_WINDOW");
+    unsetEnvVar("OPENSWMM_2D_PARTIAL_WINDOW");
     ASSERT_TRUE(r.ok);
 
     // Rain still books into the 2D ledger (60 m³ potential); the exchange must
