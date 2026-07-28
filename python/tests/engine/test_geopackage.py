@@ -29,8 +29,18 @@ class GeoPackageCase(unittest.TestCase):
     fixtures as helper methods."""
 
     def gpkg_path(self):
-        """Path for a per-test GeoPackage file."""
-        return os.path.join(artifact_dir(self), "test.gpkg")
+        """Path for a per-test GeoPackage file.
+
+        The artifact tree persists across runs (it lives in the source
+        checkout so outputs are reviewable), so remove any stale database
+        from a previous run — otherwise rows accumulate and counts double
+        (seen when cibuildwheel runs the suite once per Python version).
+        """
+        path = os.path.join(artifact_dir(self), "test.gpkg")
+        for stale in (path, path + "-wal", path + "-shm"):
+            if os.path.exists(stale):
+                os.remove(stale)
+        return path
 
     def gpkg_with_schema(self):
         """A GeoPackage opened for the first time (creates file)."""
