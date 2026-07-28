@@ -11,6 +11,37 @@ set in `CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json`, and
 `python/pyproject.toml` for all work merged since the `v6.0.0-alpha.1`
 tag, so it's used here instead of a generic "Unreleased" heading.
 
+## [6.0.0-alpha.3] — Control-rule runtime addition + line-precise parse errors
+
+### Fixed
+
+- **`swmm_control_add_rule` silently did nothing after `swmm_engine_initialize`.**
+  Rules are compiled once, inside `initialize()` → `initHydraulics()`; text
+  added afterwards was appended to `ctx.control_rules.rule_text` and never
+  parsed. The call returned `SWMM_OK` and `swmm_control_count` incremented, so
+  the rule looked accepted while having no effect for the entire run. It now
+  compiles into the live `ControlEngine` and takes effect on the next step.
+  Text is parsed into a throwaway engine first, so a rejection cannot leave the
+  live rule set half-mutated, and rejected text is not stored. Behaviour before
+  `initialize()` is unchanged (stored verbatim, compiled later) because a model
+  under construction may legitimately reference objects that do not exist yet.
+- **`ControlEngine::clearRules()`** added and called before the `[CONTROLS]`
+  parse loop. `parseRuleText` appends, so re-running `initialize()` over the
+  same rule store previously stacked a second copy of every rule.
+
+### Changed
+
+- **Control-rule parse errors now name the line and the cause.** Every
+  rejection site in `ControlEngine::parseRuleText` records a 1-based line
+  number (counting blank lines, so it indexes the caller's text directly) plus
+  a specific reason — `"line 4: no link named 'OR_NOPE' exists in the model"`
+  rather than the previous fixed `"Control-rule parser rejected the rule text"`
+  with `line_out` hardcoded to `-1`. Exposed via
+  `ControlEngine::lastParseError()`, and surfaced through
+  `swmm_control_validate_rule` (`errbuf` + `line_out`),
+  `swmm_control_add_rule` (`swmm_get_last_error_msg`), and the
+  `[CONTROLS]` block error raised during `initialize()`.
+
 ## [6.0.0-alpha.3] — Object deletion: complete referential integrity + new delete APIs
 
 ### Added

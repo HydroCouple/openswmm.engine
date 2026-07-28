@@ -209,6 +209,10 @@ public:
     snow::SnowSolver&       snowSolver()       noexcept { return snow_; }
     const snow::SnowSolver& snowSolver() const noexcept { return snow_; }
 
+    /// Control engine access (for C API rule compilation after initialize()).
+    controls::ControlEngine&       controlEngine()       noexcept { return controls_; }
+    const controls::ControlEngine& controlEngine() const noexcept { return controls_; }
+
     /// Inflow solver access (for C API runtime pattern-cache refresh).
     inflow::InflowSolver&       inflowSolver()       noexcept { return inflow_; }
     const inflow::InflowSolver& inflowSolver() const noexcept { return inflow_; }

@@ -33,9 +33,23 @@ extern "C" {
  *          (e.g., "RULE R1\\nIF NODE J1 DEPTH > 5\\nTHEN PUMP P1 STATUS = ON").
  *          Lines are separated by newline characters within the string.
  *
+ *          Behaviour depends on the engine's lifecycle state:
+ *
+ *          - `CREATED` / `BUILDING` / `OPENED` — the text is stored verbatim
+ *            and compiled later by `swmm_engine_initialize()`. It is *not*
+ *            validated here, because the objects a rule references may
+ *            legitimately not exist yet while a model is being built.
+ *          - `INITIALIZED` and beyond — rules have already been compiled, so
+ *            the text is parsed and compiled into the live control engine and
+ *            takes effect immediately. Text the parser rejects is not stored;
+ *            @ref swmm_get_last_error_msg then carries a "line N: reason"
+ *            diagnostic. Use @ref swmm_control_validate_rule to pre-flight.
+ *
  * @param engine     Engine handle.
  * @param rule_text  Null-terminated string containing the full rule text.
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success, SWMM_ERR_BADPARAM if the engine is initialized
+ *          and the parser rejects the text or finds no rule in it, or another
+ *          error code.
  */
 SWMM_ENGINE_API int swmm_control_add_rule(SWMM_Engine engine, const char* rule_text);
 
@@ -134,10 +148,12 @@ SWMM_ENGINE_API int swmm_control_find_references(SWMM_Engine engine,
  *          unchanged.
  *
  *          On reject the function returns @ref SWMM_ERR_BADPARAM and writes
- *          a short human-readable message to @p errbuf (truncated to fit).
- *          Line-precise error reporting is not yet wired through the parser;
- *          @p line_out is set to `-1` on reject. Future work may carry a
- *          1-based line index through the parser.
+ *          a human-readable `"line N: reason"` message to @p errbuf
+ *          (truncated to fit), with the same 1-based line number in
+ *          @p line_out. The line number counts blank lines, so it indexes
+ *          @p rule_text exactly as submitted. When the text parses but
+ *          contains no rule at all, @p line_out is `-1` — there is no
+ *          single offending line.
  *
  * @param engine     Engine handle.
  * @param rule_text  Null-terminated rule text. Same grammar as the
