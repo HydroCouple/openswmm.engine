@@ -346,7 +346,13 @@ int SWMMEngine::open(const char* inp_path,
 // ============================================================================
 
 int SWMMEngine::initialize() noexcept {
-    if (ctx_.state != EngineState::OPENED) {
+    // INITIALIZED is accepted so a caller can re-initialize before start()
+    // (e.g. after adding control rules through the C API); every init_* step
+    // rebuilds from ctx_ rather than appending, and ControlEngine::clearRules
+    // guards the one known stacking hazard. Re-init after start()/end() still
+    // requires a fresh open().
+    if (ctx_.state != EngineState::OPENED &&
+        ctx_.state != EngineState::INITIALIZED) {
         set_error(SWMM_ERR_WRONG_STATE,
                   "swmm_engine_initialize: must call open() first");
         return SWMM_ERR_WRONG_STATE;
