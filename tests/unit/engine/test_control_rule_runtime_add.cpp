@@ -116,7 +116,9 @@ protected:
             f << kModel;
         }
 
-        engine = swmm_engine_new();
+        // swmm_engine_new() enters BUILDING state (programmatic construction);
+        // opening an .inp requires CREATED, i.e. swmm_engine_create().
+        engine = swmm_engine_create();
         ASSERT_NE(engine, nullptr);
         ASSERT_EQ(swmm_engine_open(engine,
                                    inp.string().c_str(),
