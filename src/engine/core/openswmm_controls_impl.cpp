@@ -51,6 +51,26 @@ std::string parse_rule_name(const std::string& rule_text) {
     return std::string(name_begin, static_cast<std::size_t>(s - name_begin));
 }
 
+/// Render a parser rejection as "line N: reason", degrading gracefully when
+/// either half is missing. Shared by validate_rule's errbuf and add_rule's
+/// engine-error string so both report failures identically.
+std::string format_parse_error(const openswmm::controls::ParseError& pe) {
+    std::string msg;
+    if (pe.line > 0) msg = "line " + std::to_string(pe.line) + ": ";
+    msg += pe.message.empty() ? "control-rule parser rejected the rule text"
+                              : pe.message;
+    return msg;
+}
+
+/// Copy `src` into `buf` (capacity `buflen`), truncating as needed and always
+/// null-terminating. No-op when the caller passed no buffer.
+void copy_to_buffer(const std::string& src, char* buf, int buflen) {
+    if (!buf || buflen <= 0) return;
+    const int n = std::min(static_cast<int>(src.size()), buflen - 1);
+    std::memcpy(buf, src.c_str(), static_cast<std::size_t>(n));
+    buf[n] = '\0';
+}
+
 }  // namespace
 
 extern "C" {
@@ -63,7 +83,49 @@ SWMM_ENGINE_API int swmm_control_add_rule(SWMM_Engine engine, const char* rule_t
     CHECK_HANDLE(engine);
     if (!rule_text) return SWMM_ERR_BADPARAM;
 
-    auto& ctx = to_engine(engine)->context();
+    auto* eng = to_engine(engine);
+    auto& ctx = eng->context();
+
+    // Rules are compiled during initialize() (SWMMEngine::initHydraulics), so
+    // text added after that point would sit in the store unparsed and never
+    // take effect. Compile it into the live engine instead.
+    //
+    // Before initialize() the text is stored verbatim and left alone: the
+    // objects a rule references may legitimately not exist yet (a model under
+    // construction adds rules and links in whatever order the caller likes),
+    // so parsing here would reject good rules. initialize() does the real
+    // compile and reports failures through ctx.error_code / errors.
+    const bool defer_compile = (ctx.state == openswmm::EngineState::CREATED ||
+                                ctx.state == openswmm::EngineState::BUILDING ||
+                                ctx.state == openswmm::EngineState::OPENED);
+    if (defer_compile) {
+        ctx.control_rules.rule_text.push_back(rule_text);
+        return SWMM_OK;
+    }
+
+    // Parse into a throwaway engine first: parseRuleText() appends rules as it
+    // goes and only rebuilds the evaluation index once the whole block parses,
+    // so compiling straight into the live engine would leave it half-mutated
+    // on a mid-block rejection. Same trade-off as swmm_control_validate_rule —
+    // a block referencing a VARIABLE / EXPRESSION declared in an *earlier*
+    // block won't resolve here.
+    openswmm::controls::ControlEngine sandbox;
+    const int rc = sandbox.parseRuleText(std::string(rule_text), ctx);
+
+    // rc == 0 means the text held no rule (empty, or only VARIABLE /
+    // EXPRESSION lines) — nothing would be compiled, so storing it would leave
+    // the rule count disagreeing with what the engine actually evaluates.
+    if (rc <= 0) {
+        ctx.error_code    = SWMM_ERR_BADPARAM;
+        ctx.error_message =
+            "swmm_control_add_rule: " +
+            (rc == 0 ? std::string("no RULE block found in rule text")
+                     : format_parse_error(sandbox.lastParseError()));
+        return SWMM_ERR_BADPARAM;
+    }
+
+    // Known-good — compile into the live engine so the rule takes effect now.
+    eng->controlEngine().parseRuleText(std::string(rule_text), ctx);
     ctx.control_rules.rule_text.push_back(rule_text);
 
     return SWMM_OK;
@@ -154,21 +216,20 @@ SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
     openswmm::controls::ControlEngine sandbox;
     const int rc = sandbox.parseRuleText(std::string(rule_text), ctx);
 
-    if (line_out) *line_out = -1;  // Line-precise reporting not yet plumbed.
-
     // rc < 0 → parse error; rc == 0 → no rule found (e.g. empty/whitespace-only
     // input). Both fail validation: the validator's contract is "this string
     // is a valid control rule", and zero rules is not a valid rule.
     if (rc <= 0) {
-        if (errbuf && buflen > 0) {
-            static constexpr char kMsg[] = "Control-rule parser rejected the rule text";
-            const int n = std::min(static_cast<int>(sizeof(kMsg) - 1), buflen - 1);
-            std::memcpy(errbuf, kMsg, static_cast<std::size_t>(n));
-            errbuf[n] = '\0';
-        }
+        const auto& pe = sandbox.lastParseError();
+        // rc == 0 means nothing was rejected, so there is no offending line.
+        if (line_out) *line_out = (rc == 0) ? -1 : pe.line;
+        copy_to_buffer(rc == 0 ? std::string("no RULE block found in rule text")
+                               : format_parse_error(pe),
+                       errbuf, buflen);
         return SWMM_ERR_BADPARAM;
     }
 
+    if (line_out) *line_out = -1;
     if (errbuf && buflen > 0) errbuf[0] = '\0';
     return SWMM_OK;
 }

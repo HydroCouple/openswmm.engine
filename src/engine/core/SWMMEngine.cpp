@@ -4609,14 +4609,23 @@ void SWMMEngine::initHydraulics() noexcept {
     //      / ERR_DATETIME via error_setInpError; we use the same channel
     //      via ctx.error_code / error_message.
     if (ctx_.control_rules.count() > 0) {
+        // parseRuleText() appends, so clear first: initialize() may run more
+        // than once over the same rule store, and swmm_control_add_rule()
+        // compiles into this same engine once the model is initialized.
+        controls_.clearRules();
         for (size_t i = 0; i < ctx_.control_rules.rule_text.size(); ++i) {
             const auto& text = ctx_.control_rules.rule_text[i];
             const int rc = controls_.parseRuleText(text, ctx_);
             if (rc < 0) {
+                const auto& pe = controls_.lastParseError();
                 ctx_.error_code = 217;  // legacy ERR_RULE (error.h:174)
                 ctx_.error_message =
                     "Failed to parse [CONTROLS] rule block #" +
                     std::to_string(i + 1);
+                if (pe.line > 0)
+                    ctx_.error_message += ", line " + std::to_string(pe.line);
+                if (!pe.message.empty())
+                    ctx_.error_message += ": " + pe.message;
                 ctx_.errors.push_back(ctx_.error_message);
                 return;
             }

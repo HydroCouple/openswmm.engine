@@ -905,23 +905,55 @@ static bool parsePremiseRHS(const std::string& tok, ConditionVar lhs_var,
 
 } // anonymous namespace
 
+void ControlEngine::clearRules() {
+    rules_.clear();
+    pid_states_.clear();
+    named_vars_.clear();
+    expressions_.clear();
+    expr_index_.clear();
+    premise_groups_.clear();
+    premise_results_.clear();
+    rule_premise_offset_.clear();
+    total_premises_ = 0;
+    rule_results_.clear();
+    pending_actions_.clear();
+    last_parse_error_ = ParseError{};
+}
+
 int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx) {
-    // Split the text into lines
-    std::vector<std::string> lines;
+    last_parse_error_ = ParseError{};
+
+    // Split the text into lines, keeping each line's 1-based position in the
+    // *original* text (blank lines counted) so a rejection can be reported
+    // against exactly what the caller submitted.
+    struct SourceLine { int number; std::string text; };
+    std::vector<SourceLine> lines;
     {
         std::istringstream iss(text);
         std::string line;
+        int lineno = 0;
         while (std::getline(iss, line)) {
+            ++lineno;
             // Trim leading/trailing whitespace
             size_t start = line.find_first_not_of(" \t\r\n");
             if (start == std::string::npos) continue;
             size_t end = line.find_last_not_of(" \t\r\n");
             std::string trimmed = line.substr(start, end - start + 1);
-            if (!trimmed.empty()) lines.push_back(trimmed);
+            if (!trimmed.empty()) lines.push_back({lineno, std::move(trimmed)});
         }
     }
 
     if (lines.empty()) return 0;
+
+    // Every rejection site reads `return fail("...")`, which records the line
+    // currently being parsed plus a reason before returning the -1 that
+    // callers already test for.
+    int current_line = -1;
+    auto fail = [&](const std::string& why) -> int {
+        last_parse_error_.line = current_line;
+        last_parse_error_.message = why;
+        return -1;
+    };
 
     // State machine: parse lines into rules
     enum class ParseState { IDLE, IN_PREMISES, IN_THEN, IN_ELSE };
@@ -960,8 +992,9 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         return (it == expr_index_.end()) ? -1 : it->second;
     };
 
-    for (const auto& line : lines) {
-        auto toks = tokenize(line);
+    for (const auto& src : lines) {
+        current_line = src.number;
+        auto toks = tokenize(src.text);
         if (toks.empty()) continue;
 
         std::string keyword = to_upper(toks[0]);
@@ -970,11 +1003,13 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         // Format: VARIABLE <name> = <object> <id> <attribute>
         // Mirrors legacy controls.c:864 (controls_addVariable).
         if (keyword == "VARIABLE") {
-            if (toks.size() < 6 || toks[2] != "=") return -1;
+            if (toks.size() < 6 || toks[2] != "=")
+                return fail("expected: VARIABLE <name> = <object> <id> <attribute>");
             int k = 3;
             ConditionVar var; int obj_idx = -1; int extra = 0;
             if (!parsePremiseVariable(toks, k, ctx, var, obj_idx, extra))
-                return -1;
+                return fail("VARIABLE '" + toks[1] +
+                            "' does not name a known object and attribute");
             addNamedVariable(toks[1], var, obj_idx);
             continue;
         }
@@ -983,13 +1018,16 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         // Format: EXPRESSION <name> = <formula tokens...>
         // Mirrors legacy controls.c:891 (controls_addExpression).
         if (keyword == "EXPRESSION") {
-            if (toks.size() < 4 || toks[2] != "=") return -1;
+            if (toks.size() < 4 || toks[2] != "=")
+                return fail("expected: EXPRESSION <name> = <formula>");
             std::string formula;
             for (size_t i = 3; i < toks.size(); ++i) {
                 if (i > 3) formula += ' ';
                 formula += toks[i];
             }
-            if (addExpression(toks[1], formula) < 0) return -1;
+            if (addExpression(toks[1], formula) < 0)
+                return fail("could not parse the formula for EXPRESSION '" +
+                            toks[1] + "'");
             continue;
         }
 
@@ -997,7 +1035,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         if (keyword == "RULE") {
             // If we were building a previous rule, finish it
             if (state != ParseState::IDLE) finishRule();
-            if (toks.size() < 2) return -1;  // error: no rule name
+            if (toks.size() < 2) return fail("RULE is missing its name");
             current_rule.name = toks[1];
             state = ParseState::IDLE;  // wait for IF
             continue;
@@ -1005,9 +1043,10 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
 
         // ---- PRIORITY keyword ----
         if (keyword == "PRIORITY") {
-            if (toks.size() < 2) return -1;
+            if (toks.size() < 2) return fail("PRIORITY is missing its value");
             double p = 0.0;
-            if (!tryParseDouble(toks[1], p)) return -1;
+            if (!tryParseDouble(toks[1], p))
+                return fail("PRIORITY value '" + toks[1] + "' is not a number");
             current_rule.priority = p;
             continue;
         }
@@ -1054,25 +1093,32 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                         k += 1;
                     } else if (!parsePremiseVariable(toks, k, ctx,
                                                      lhs_cv, lhs_idx, lhs_param)) {
-                        return -1;
+                        return fail("'" + toks[static_cast<size_t>(k)] +
+                                    "' is not a known object, variable or "
+                                    "expression in this condition");
                     } else {
                         prem.lhs_var = lhs_cv;
                         prem.lhs_idx = lhs_idx;
                         prem.lhs_param = lhs_param;
                     }
                 } else {
-                    return -1;
+                    return fail("condition clause is empty after " + keyword);
                 }
 
                 // Parse relational operator
-                if (k >= static_cast<int>(toks.size())) return -1;
+                if (k >= static_cast<int>(toks.size()))
+                    return fail("condition is missing a relational operator");
                 int rel = matchRelOp(toks[static_cast<size_t>(k)]);
-                if (rel < 0) return -1;
+                if (rel < 0)
+                    return fail("'" + toks[static_cast<size_t>(k)] +
+                                "' is not a relational operator "
+                                "(expected =, <>, <, <=, > or >=)");
                 prem.op = static_cast<CompareOp>(rel);
                 k++;
 
                 // Parse RHS: either a variable or a constant value
-                if (k >= static_cast<int>(toks.size())) return -1;
+                if (k >= static_cast<int>(toks.size()))
+                    return fail("condition is missing its right-hand value");
 
                 // Try to parse as a variable first — named var, then
                 // object|id|attribute.  (Expressions are LHS-only in legacy.)
@@ -1103,7 +1149,9 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                     k = saved_k;
                     std::string val_tok = toks[static_cast<size_t>(k)];
                     double val = 0.0;
-                    if (!parsePremiseRHS(val_tok, lhs_cv, val)) return -1;
+                    if (!parsePremiseRHS(val_tok, lhs_cv, val))
+                        return fail("'" + val_tok + "' is not a valid value for "
+                                    "this condition variable");
                     prem.rhs_value = val;
                     k++;
                 }
@@ -1141,27 +1189,37 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             std::string obj_type = to_upper(toks[static_cast<size_t>(k)]);
             if (obj_type != "LINK" && obj_type != "CONDUIT" && obj_type != "PUMP" &&
                 obj_type != "ORIFICE" && obj_type != "WEIR" && obj_type != "OUTLET")
-                return -1;
+                return fail("'" + toks[static_cast<size_t>(k)] + "' cannot start an "
+                            "action (expected LINK, CONDUIT, PUMP, ORIFICE, WEIR "
+                            "or OUTLET)");
             k++;
 
             // Parse link name
-            if (k >= static_cast<int>(toks.size())) return -1;
+            if (k >= static_cast<int>(toks.size()))
+                return fail(obj_type + " action is missing its link name");
             int link_idx = ctx.link_names.find(toks[static_cast<size_t>(k)]);
-            if (link_idx < 0) return -1;
+            if (link_idx < 0)
+                return fail("no link named '" + toks[static_cast<size_t>(k)] +
+                            "' exists in the model");
             k++;
 
             // Parse attribute (STATUS or SETTING)
-            if (k >= static_cast<int>(toks.size())) return -1;
+            if (k >= static_cast<int>(toks.size()))
+                return fail("action is missing its attribute (STATUS or SETTING)");
             std::string attr = to_upper(toks[static_cast<size_t>(k)]);
             k++;
 
             // Skip '=' token
-            if (k >= static_cast<int>(toks.size())) return -1;
-            if (toks[static_cast<size_t>(k)] != "=") return -1;
+            if (k >= static_cast<int>(toks.size()))
+                return fail("action is missing '=' after " + attr);
+            if (toks[static_cast<size_t>(k)] != "=")
+                return fail("expected '=' after " + attr + ", found '" +
+                            toks[static_cast<size_t>(k)] + "'");
             k++;
 
             // Parse value / control type
-            if (k >= static_cast<int>(toks.size())) return -1;
+            if (k >= static_cast<int>(toks.size()))
+                return fail("action is missing its value after '='");
 
             Action action;
             action.link_idx = link_idx;
@@ -1171,28 +1229,42 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             if (val_tok == "CURVE") {
                 // Modulated by curve: next token is curve name
                 k++;
-                if (k >= static_cast<int>(toks.size())) return -1;
+                if (k >= static_cast<int>(toks.size()))
+                    return fail("CURVE action is missing its curve name");
                 int ci = ctx.table_names.find(toks[static_cast<size_t>(k)]);
-                if (ci < 0) return -1;
+                if (ci < 0)
+                    return fail("no curve named '" + toks[static_cast<size_t>(k)] +
+                                "' exists in the model");
                 action.type = ActionType::CURVE;
                 action.curve_idx = ci;
             } else if (val_tok == "TIMESERIES") {
                 // Modulated by timeseries: next token is timeseries name
                 k++;
-                if (k >= static_cast<int>(toks.size())) return -1;
+                if (k >= static_cast<int>(toks.size()))
+                    return fail("TIMESERIES action is missing its series name");
                 int ti = ctx.table_names.find(toks[static_cast<size_t>(k)]);
-                if (ti < 0) return -1;
+                if (ti < 0)
+                    return fail("no time series named '" +
+                                toks[static_cast<size_t>(k)] +
+                                "' exists in the model");
                 action.type = ActionType::TIMESERIES;
                 action.tseries_idx = ti;
             } else if (val_tok == "PID") {
                 // PID controller: next 3 tokens are Kp Ki Kd
                 action.type = ActionType::PID;
                 k++;
-                if (k + 2 >= static_cast<int>(toks.size())) return -1;
+                if (k + 2 >= static_cast<int>(toks.size()))
+                    return fail("PID action requires three coefficients: Kp Ki Kd");
                 double kp = 0.0, ki = 0.0, kd = 0.0;
-                if (!tryParseDouble(toks[static_cast<size_t>(k)], kp)) return -1;
-                if (!tryParseDouble(toks[static_cast<size_t>(k + 1)], ki)) return -1;
-                if (!tryParseDouble(toks[static_cast<size_t>(k + 2)], kd)) return -1;
+                if (!tryParseDouble(toks[static_cast<size_t>(k)], kp))
+                    return fail("PID coefficient Kp '" +
+                                toks[static_cast<size_t>(k)] + "' is not a number");
+                if (!tryParseDouble(toks[static_cast<size_t>(k + 1)], ki))
+                    return fail("PID coefficient Ki '" +
+                                toks[static_cast<size_t>(k + 1)] + "' is not a number");
+                if (!tryParseDouble(toks[static_cast<size_t>(k + 2)], kd))
+                    return fail("PID coefficient Kd '" +
+                                toks[static_cast<size_t>(k + 2)] + "' is not a number");
                 PIDState pid;
                 pid.kp = kp;
                 pid.ki = ki;
@@ -1205,10 +1277,14 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 // Direct numeric or status value
                 action.type = ActionType::NUMERIC;
                 if (attr == "STATUS") {
-                    if (!parseStatusValue(val_tok, action.value)) return -1;
+                    if (!parseStatusValue(val_tok, action.value))
+                        return fail("'" + toks[static_cast<size_t>(k)] + "' is not a "
+                                    "valid STATUS (expected ON, OFF, OPEN or CLOSED)");
                 } else {
                     double v = 0.0;
-                    if (!tryParseDouble(toks[static_cast<size_t>(k)], v)) return -1;
+                    if (!tryParseDouble(toks[static_cast<size_t>(k)], v))
+                        return fail("action value '" + toks[static_cast<size_t>(k)] +
+                                    "' is not a number");
                     action.value = v;
                 }
             }
