@@ -102,6 +102,14 @@ public:
         long   nncfails  = 0;   ///< nonlinear convergence failures
         double last_h    = 0.0; ///< last accepted internal step (s)
         double avg_h     = 0.0; ///< sim-time / nsteps (s), filled by the caller
+
+        // Marcher-only telemetry (EXPLICIT integrator). Guarded: n_tiers == 0
+        // and negative fractions mean "not populated" (other backends).
+        double active_frac_min  = -1.0; ///< min active-cell fraction (rebuild samples)
+        double active_frac_mean = -1.0; ///< mean active-cell fraction
+        double active_frac_max  = -1.0; ///< max active-cell fraction
+        long   tier_cells[8]    = {0};  ///< cumulative rebuild-sampled cells per LTS tier
+        int    n_tiers          = 0;    ///< populated tier count (≤ 8)
     };
 
     /// Read cumulative statistics. Default: zeros (backend has no counters).

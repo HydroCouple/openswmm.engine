@@ -1023,6 +1023,14 @@ struct SimulationContext {
         double solver_avg_h          = 0.0;  ///< mean accepted internal step (s)
         double solver_last_h         = 0.0;  ///< last accepted internal step (s)
 
+        // Marcher-only telemetry (EXPLICIT integrator; guarded by n_tiers > 0 /
+        // non-negative fractions — other backends leave the defaults).
+        double solver_active_min     = -1.0; ///< min active-cell fraction
+        double solver_active_mean    = -1.0; ///< mean active-cell fraction
+        double solver_active_max     = -1.0; ///< max active-cell fraction
+        long   solver_tier_cells[8]  = {0};  ///< cumulative cells per LTS tier
+        int    solver_n_tiers        = 0;    ///< populated tier count
+
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in

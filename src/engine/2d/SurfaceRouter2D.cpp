@@ -1634,6 +1634,12 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
         mb.solver_avg_h          = (s.nsteps > 0 && sim_time_ > 0.0)
                                        ? sim_time_ / static_cast<double>(s.nsteps)
                                        : 0.0;
+        mb.solver_active_min     = s.active_frac_min;
+        mb.solver_active_mean    = s.active_frac_mean;
+        mb.solver_active_max     = s.active_frac_max;
+        mb.solver_n_tiers        = s.n_tiers;
+        for (int k = 0; k < s.n_tiers && k < 8; ++k)
+            mb.solver_tier_cells[k] = s.tier_cells[k];
         solver_->finalize();
     }
 #endif
