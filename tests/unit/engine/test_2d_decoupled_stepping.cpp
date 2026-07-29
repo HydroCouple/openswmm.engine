@@ -286,6 +286,35 @@ TEST_F(DecoupledStepping2DTest, ExplicitLargeWindow) {
     writeCsv(dir_, "explicit_window", r, rel);
 }
 
+// Marcher variant (INTEGRATOR EXPLICIT): the windowless co-advance batches the
+// 2D across sync spans of clamp(MAX_TIMESTEP=30 s, routing_step, 60) — the same
+// multi-step cadence the window cases exercise — with live in-marcher exchange
+// and queue-spread delivery. The cross-domain ledger property is identical:
+// what the 1D receives must equal what the 2D gave. The positivity limiter
+// additionally makes negative final storage structurally impossible (no
+// mean-rate overdraw envelope needed, unlike the CVODE window cases above).
+TEST_F(DecoupledStepping2DTest, MarcherSyncBatchesConserve) {
+    RunResult r = run(dir_, "marcher_batches",
+                      "INTEGRATOR EXPLICIT\n");
+    ASSERT_TRUE(r.ok);
+    ASSERT_GT(std::abs(r.given_2d_net), 1.0)
+        << "no meaningful exchange (net " << r.given_2d_net << " m³)";
+
+    const double rel = std::abs(r.received_1d - r.given_2d_net)
+                       / std::abs(r.given_2d_net);
+    EXPECT_LT(rel, 0.01)
+        << "1D-received " << r.received_1d << " m³ != 2D-given "
+        << r.given_2d_net << " m³ across marcher sync batches";
+
+    EXPECT_GE(r.final_storage_2d, 0.0)
+        << "marcher positivity violated: negative 2D storage "
+        << r.final_storage_2d << " m³";
+    EXPECT_LT(std::abs(r.cont_2d), 0.05)      << "2D continuity " << r.cont_2d;
+    EXPECT_LT(std::abs(r.cont_routing), 0.35) << "1D continuity " << r.cont_routing;
+
+    writeCsv(dir_, "marcher_batches", r, rel);
+}
+
 // Strangle the integrator (MAX_CVODE_STEPS 1) so every advance window fails and
 // the surface is held frozen. The 1D consumed per-step exchange volumes DURING
 // each window; the failure path must push them back (negated) through the
