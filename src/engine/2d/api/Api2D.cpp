@@ -311,6 +311,76 @@ int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine, int vertex_idx,
     return SWMM_OK;
 }
 
+int swmm_2d_add_triangle_coupling(SWMM_Engine engine, int tri_idx,
+                                    const char* node_name,
+                                    double cd, double area) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (!node_name || node_name[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (cd <= 0.0 || area <= 0.0) return SWMM_ERR_BADPARAM;
+
+    auto& m = router2d.mesh();
+    openswmm::twoD::MeshData::TriCouplingRow row;
+    row.tri       = tri_idx;
+    row.node_name = node_name;
+    // Resolve now; -1 (unknown) is tolerated — the .inp writer emits the
+    // stored name regardless (same rule as swmm_2d_set_vertex_coupled_node).
+    row.node = eng->context().node_names.find(node_name);
+    row.cd   = cd;
+    row.area = area;
+    m.tri_couplings.push_back(std::move(row));
+
+    // Keep the legacy per-triangle mirror coherent (last row wins).
+    m.tri_coupled_node_name[tri_idx] = node_name;
+    m.tri_coupled_node[tri_idx]      = m.tri_couplings.back().node;
+    m.tri_coupling_cd[tri_idx]       = cd;
+    m.tri_coupling_area[tri_idx]     = area;
+    return SWMM_OK;
+}
+
+int swmm_2d_clear_triangle_couplings(SWMM_Engine engine) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+
+    auto& m = router2d.mesh();
+    m.tri_couplings.clear();
+    for (int t = 0; t < m.n_triangles(); ++t) {
+        m.tri_coupled_node_name[t].clear();
+        m.tri_coupled_node[t]  = -1;
+        m.tri_coupling_cd[t]   = 0.65;
+        m.tri_coupling_area[t] = 1.0;
+    }
+    return SWMM_OK;
+}
+
+int swmm_2d_triangle_coupling_rows(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(router2d.mesh().tri_couplings.size());
+    return SWMM_OK;
+}
+
+int swmm_2d_get_triangle_coupling_row(SWMM_Engine engine, int row_idx,
+                                        int* tri_idx, int* node_idx,
+                                        double* cd, double* area) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!tri_idx || !node_idx || !cd || !area) return SWMM_ERR_BADPARAM;
+
+    const auto& rows = router2d.mesh().tri_couplings;
+    if (row_idx < 0 || row_idx >= static_cast<int>(rows.size()))
+        return SWMM_ERR_BADINDEX;
+
+    const auto& r = rows[static_cast<std::size_t>(row_idx)];
+    *tri_idx  = r.tri;
+    *node_idx = r.node;
+    *cd       = r.cd;
+    *area     = r.area;
+    return SWMM_OK;
+}
+
 int swmm_2d_get_vertex_coupling_cd(SWMM_Engine engine, int vertex_idx,
                                      double* cd) {
     GET_ENGINE(engine);

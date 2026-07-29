@@ -235,6 +235,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for (auto& v : mesh_.vz) v *= f;
         for (auto& a : mesh_.vert_coupling_area) a *= f2;
         for (auto& a : mesh_.tri_coupling_area)  a *= f2;
+        for (auto& r : mesh_.tri_couplings)      r.area *= f2;
         options_.mesh_scaled_to_si = true;
     }
 
@@ -286,18 +287,42 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
     }
 
-    for (int t = 0; t < mesh_.n_triangles(); ++t) {
-        auto& name = mesh_.tri_coupled_node_name[t];
-        if (name.empty()) continue;
-
-        int node_idx = ctx.node_names.find(name);
-        if (node_idx >= 0) {
-            mesh_.tri_coupled_node[t] = node_idx;
-        } else {
-            throw std::runtime_error(
-                "2D triangle " + std::to_string(t)
-                + " coupled to unknown node '" + name + "'");
+    // Cell couplings — the row vector is the source of truth (repeated-row
+    // [2D_TRIANGLE_NODE_MAP]; several nodes may share one triangle). Paths
+    // that still author only the legacy per-triangle arrays (GeoPackage
+    // reader, direct writes) are folded in by synthesising rows first.
+    if (mesh_.tri_couplings.empty()) {
+        for (int t = 0; t < mesh_.n_triangles(); ++t) {
+            const bool named   = !mesh_.tri_coupled_node_name[t].empty();
+            const bool indexed = mesh_.tri_coupled_node[t] >= 0;
+            if (!named && !indexed) continue;
+            MeshData::TriCouplingRow row;
+            row.tri       = t;
+            row.node      = indexed ? mesh_.tri_coupled_node[t] : -1;
+            row.node_name = mesh_.tri_coupled_node_name[t];
+            row.cd        = mesh_.tri_coupling_cd[t];
+            row.area      = mesh_.tri_coupling_area[t];
+            mesh_.tri_couplings.push_back(std::move(row));
         }
+    }
+
+    for (auto& row : mesh_.tri_couplings) {
+        if (row.node < 0) {
+            if (row.node_name.empty()) continue;
+            int node_idx = ctx.node_names.find(row.node_name);
+            if (node_idx < 0) {
+                throw std::runtime_error(
+                    "2D triangle " + std::to_string(row.tri)
+                    + " coupled to unknown node '" + row.node_name + "'");
+            }
+            row.node = node_idx;
+        }
+        // Mirror into the legacy arrays (last row wins) so the existing
+        // getter API and the GeoPackage writer keep working for the
+        // single-coupling case.
+        mesh_.tri_coupled_node[row.tri]  = row.node;
+        mesh_.tri_coupling_cd[row.tri]   = row.cd;
+        mesh_.tri_coupling_area[row.tri] = row.area;
     }
 
     // Initialize surface state

@@ -338,18 +338,21 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         cps.push_back(cp);
     }
 
-    // Triangle-to-node couplings
-    int nt = mesh.n_triangles();
-    for (int t = 0; t < nt; ++t) {
-        int node_idx = mesh.tri_coupled_node[t];
+    // Triangle-to-node couplings — one CouplingPoint per authored row.
+    // mesh.tri_couplings is the source of truth (repeated-row form: several
+    // nodes may couple to the same triangle); legacy-array-only paths were
+    // synthesised into rows during resolve (SurfaceRouter2D).
+    for (const auto& row : mesh.tri_couplings) {
+        const int node_idx = row.node;
         if (node_idx < 0) continue;
+        if (row.tri < 0 || row.tri >= mesh.n_triangles()) continue;
 
         CouplingPoint cp;
-        cp.cell_idx = t;
+        cp.cell_idx = row.tri;
         cp.vertex_idx = -1;  // centroid coupling
         cp.node_idx = node_idx;
-        cp.cd = mesh.tri_coupling_cd[t];
-        cp.area = mesh.tri_coupling_area[t];
+        cp.cd = row.cd;
+        cp.area = row.area;
 
         auto ui = static_cast<std::size_t>(node_idx);
         cp.is_outfall = (ctx.nodes.type[ui] == NodeType::OUTFALL);

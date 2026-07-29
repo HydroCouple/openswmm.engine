@@ -239,6 +239,56 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine,
                                                       int vertex_idx,
                                                       const char* node_name);
 
+/** @brief Append one node→cell coupling row (`[2D_TRIANGLE_NODE_MAP]`
+ *         repeated-row form).
+ *
+ *  A triangle may carry several coupling rows — one per node — so this
+ *  APPENDS rather than overwrites (contrast swmm_2d_set_vertex_coupled_node).
+ *  The node NAME is stored verbatim and resolved against the current model
+ *  (-1 tolerated until re-resolution, mirroring the vertex setter). The
+ *  `.inp` writer emits one `[2D_TRIANGLE_NODE_MAP]` row per coupling.
+ *
+ *  @param tri_idx   Triangle index in `[0, triangle_count)`.
+ *  @param node_name SWMM node id (must be non-empty).
+ *  @param cd        Discharge coefficient; must be > 0 (engine default 0.65).
+ *  @param area      Effective exchange area, m²; must be > 0.
+ *  @return SWMM_OK; SWMM_ERR_BADINDEX on bad triangle; SWMM_ERR_BADPARAM on
+ *          empty name / non-positive cd or area.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_add_triangle_coupling(SWMM_Engine engine,
+                                                    int tri_idx,
+                                                    const char* node_name,
+                                                    double cd,
+                                                    double area);
+
+/** @brief Remove every authored node→cell coupling row (all triangles).
+ *
+ *  Also clears the legacy per-triangle mirror (coupled node, CD, AREA back
+ *  to defaults). Vertex couplings are untouched. Typical use: the GUI's
+ *  Remap 1D↔2D re-authoring the full cell-coupling set.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_clear_triangle_couplings(SWMM_Engine engine);
+
+/** @brief Number of authored node→cell coupling rows.
+ *  @param count Output row count (>= number of distinct coupled triangles).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_triangle_coupling_rows(SWMM_Engine engine,
+                                                     int* count);
+
+/** @brief Read one authored node→cell coupling row by row index.
+ *  @param row_idx   Row index in `[0, swmm_2d_triangle_coupling_rows)`.
+ *  @param tri_idx   Output triangle index.
+ *  @param node_idx  Output SWMM node index (-1 if unresolved).
+ *  @param cd        Output discharge coefficient.
+ *  @param area      Output exchange area (m²).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_triangle_coupling_row(SWMM_Engine engine,
+                                                        int row_idx,
+                                                        int* tri_idx,
+                                                        int* node_idx,
+                                                        double* cd,
+                                                        double* area);
+
 /** @brief Get the coupling discharge coefficient of a vertex
  *         (`[2D_VERTEX_NODE_MAP]` CD column; default 0.65).
  *  @param vertex_idx Vertex index in `[0, vertex_count)`.

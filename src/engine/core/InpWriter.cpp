@@ -431,22 +431,39 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     }
 
     // ---- [2D_TRIANGLE_NODE_MAP] -------------------------------------------------
+    // Repeated-row form: mesh.tri_couplings is the source of truth (several
+    // nodes may couple to one triangle). Fall back to the legacy per-triangle
+    // arrays only when no rows exist (meshes authored before resolve, or via
+    // paths that never synthesised rows).
     {
-        bool any = false;
-        for (int t = 0; t < nt && !any; ++t)
-            any = !node_name_for(mesh.tri_coupled_node_name[t],
-                                 mesh.tri_coupled_node[t]).empty();
-        if (any) {
+        if (!mesh.tri_couplings.empty()) {
             sec(f, "2D_TRIANGLE_NODE_MAP");
             std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE", "CD",
                          "AREA");
-            for (int t = 0; t < nt; ++t) {
-                const std::string cn = node_name_for(
-                    mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
+            for (const auto& row : mesh.tri_couplings) {
+                const std::string cn = node_name_for(row.node_name, row.node);
                 if (cn.empty()) continue;
-                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
-                             mesh.tri_coupling_cd[t],
-                             mesh.tri_coupling_area[t]);
+                if (row.tri < 0 || row.tri >= nt) continue;
+                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", row.tri,
+                             cn.c_str(), row.cd, row.area);
+            }
+        } else {
+            bool any = false;
+            for (int t = 0; t < nt && !any; ++t)
+                any = !node_name_for(mesh.tri_coupled_node_name[t],
+                                     mesh.tri_coupled_node[t]).empty();
+            if (any) {
+                sec(f, "2D_TRIANGLE_NODE_MAP");
+                std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE",
+                             "CD", "AREA");
+                for (int t = 0; t < nt; ++t) {
+                    const std::string cn = node_name_for(
+                        mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
+                    if (cn.empty()) continue;
+                    std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
+                                 mesh.tri_coupling_cd[t],
+                                 mesh.tri_coupling_area[t]);
+                }
             }
         }
     }
