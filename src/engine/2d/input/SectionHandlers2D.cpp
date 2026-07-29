@@ -200,6 +200,54 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         // Stored as the raw token; resolved against the .inp directory in
         // SWMMEngine::open when the Default2DOutputPlugin is instantiated.
         opts.output_file = val;
+    } else if (iequals(key, "INTEGRATOR")) {
+        if (iequals(val, "CVODE"))
+            opts.integrator = IntegratorType::CVODE;
+        else if (iequals(val, "ARKODE"))
+            opts.integrator = IntegratorType::ARKODE;
+        else if (iequals(val, "EXPLICIT"))
+            opts.integrator = IntegratorType::EXPLICIT_LTS;
+        else
+            return "Unknown INTEGRATOR: " + val + " (expected CVODE|ARKODE|EXPLICIT)";
+    } else if (iequals(key, "MOMENTUM")) {
+        if (iequals(val, "DW"))
+            opts.momentum = MomentumType::DW;
+        else if (iequals(val, "INERTIAL"))
+            opts.momentum = MomentumType::INERTIAL;
+        else
+            return "Unknown MOMENTUM: " + val + " (expected DW|INERTIAL)";
+    } else if (iequals(key, "THETA")) {
+        const double th = tryParseDouble(val, ok);
+        if (!ok || th <= 0.0 || th > 1.0)
+            return "Invalid THETA value (expected (0, 1])";
+        opts.theta = th;
+    } else if (iequals(key, "CFL_NUMBER")) {
+        const double c = tryParseDouble(val, ok);
+        if (!ok || c <= 0.0 || c > 1.0)
+            return "Invalid CFL_NUMBER value (expected (0, 1])";
+        opts.cfl_number = c;
+    } else if (iequals(key, "H_MOVE")) {
+        const double h = tryParseDouble(val, ok);
+        if (!ok || h < 0.0)
+            return "Invalid H_MOVE value (expected metres >= 0)";
+        opts.h_move = h;
+    } else if (iequals(key, "LTS_TIERS")) {
+        const int k = tryParseInt(val, ok);
+        if (!ok || k < 1 || k > 8)
+            return "Invalid LTS_TIERS value (expected 1..8)";
+        opts.lts_tiers = k;
+    } else if (iequals(key, "FROUDE_MAX")) {
+        const double f = tryParseDouble(val, ok);
+        if (!ok || f <= 0.0)
+            return "Invalid FROUDE_MAX value (expected > 0)";
+        opts.froude_max = f;
+    } else if (iequals(key, "COUPLING_AREA")) {
+        if (iequals(val, "AUTO"))
+            opts.coupling_area_auto = true;
+        else if (iequals(val, "DEFAULT"))
+            opts.coupling_area_auto = false;
+        else
+            return "Unknown COUPLING_AREA: " + val + " (expected AUTO|DEFAULT)";
     } else {
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
@@ -217,6 +265,8 @@ bool is2DOptionKey(const std::string& key) {
         "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC", "JACOBIAN",
         "ATOL_AREA_REF", "OUTPUT_FILE",
+        "INTEGRATOR", "MOMENTUM", "THETA", "CFL_NUMBER", "H_MOVE",
+        "LTS_TIERS", "FROUDE_MAX", "COUPLING_AREA",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -280,6 +330,22 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         }
         return "NATURAL_NEIGHBOUR";
     }
+    if (iequals(key, "INTEGRATOR")) {
+        switch (opts.integrator) {
+            case IntegratorType::CVODE:        return "CVODE";
+            case IntegratorType::ARKODE:       return "ARKODE";
+            case IntegratorType::EXPLICIT_LTS: return "EXPLICIT";
+        }
+        return "CVODE";
+    }
+    if (iequals(key, "MOMENTUM"))
+        return (opts.momentum == MomentumType::INERTIAL) ? "INERTIAL" : "DW";
+    if (iequals(key, "THETA"))         return fmt_g(opts.theta);
+    if (iequals(key, "CFL_NUMBER"))    return fmt_g(opts.cfl_number);
+    if (iequals(key, "H_MOVE"))        return fmt_g(opts.h_move);
+    if (iequals(key, "LTS_TIERS"))     return std::to_string(opts.lts_tiers);
+    if (iequals(key, "FROUDE_MAX"))    return fmt_g(opts.froude_max);
+    if (iequals(key, "COUPLING_AREA")) return opts.coupling_area_auto ? "AUTO" : "DEFAULT";
     return {};
 }
 
@@ -375,7 +441,10 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens,
     // Optional exchange area
     if (tokens.size() >= 4) {
         double area = tryParseDouble(tokens[3], ok);
-        if (ok) mesh.vert_coupling_area[vidx] = area;
+        if (ok) {
+            mesh.vert_coupling_area[vidx] = area;
+            mesh.vert_coupling_area_set[vidx] = 1;
+        }
     }
 
     return {};
@@ -415,7 +484,10 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
 
     if (tokens.size() >= 4) {
         double area = tryParseDouble(tokens[3], ok);
-        if (ok) row.area = area;
+        if (ok) {
+            row.area = area;
+            row.area_set = true;
+        }
     }
 
     // Keep the legacy per-triangle mirror in step (last row wins), same as
