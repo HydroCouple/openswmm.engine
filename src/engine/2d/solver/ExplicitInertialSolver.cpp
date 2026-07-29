@@ -274,6 +274,10 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         }
     }
 
+    for (std::size_t tk = 0;
+         tk < cells_by_tier_.size() && tk < tier_occupancy_.size(); ++tk)
+        tier_occupancy_[tk] += static_cast<long>(cells_by_tier_[tk].size());
+
     telemetry_.emplace_back(t, static_cast<int>(active_cells_.size()));
 }
 
@@ -638,6 +642,27 @@ ISurfaceSolver::RunStats ExplicitInertialSolver::run_stats() const noexcept {
     s.nsteps = substeps_run_;
     s.nrhs   = face_passes_;
     s.last_h = last_dt_;
+
+    // Marcher telemetry for the report block: active-fraction spread over the
+    // rebuild samples + cumulative tier-occupancy histogram. Must be read
+    // BEFORE finalize() (which clears telemetry_) — SurfaceRouter2D does.
+    if (!telemetry_.empty() && mesh_ && mesh_->n_triangles() > 0) {
+        const double nt = static_cast<double>(mesh_->n_triangles());
+        double mn = 1.0e30, mx = -1.0e30, sum = 0.0;
+        for (const auto& [t, n] : telemetry_) {
+            const double frac = n / nt;
+            mn = std::min(mn, frac);
+            mx = std::max(mx, frac);
+            sum += frac;
+        }
+        s.active_frac_min  = mn;
+        s.active_frac_max  = mx;
+        s.active_frac_mean = sum / static_cast<double>(telemetry_.size());
+    }
+    s.n_tiers = static_cast<int>(
+        std::min(cells_by_tier_.size(), tier_occupancy_.size()));
+    for (int k = 0; k < s.n_tiers; ++k)
+        s.tier_cells[k] = tier_occupancy_[static_cast<std::size_t>(k)];
     return s;
 }
 

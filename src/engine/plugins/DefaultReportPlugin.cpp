@@ -883,7 +883,30 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 srow("Partial Windows ..........", mb2.solver_partial_windows);
             std::fprintf(f, "\n  Avg Internal Step (s) ....%14.4f", mb2.solver_avg_h);
             std::fprintf(f, "\n  Last Internal Step (s) ...%14.4f", mb2.solver_last_h);
+
+            // Marcher-only telemetry (EXPLICIT integrator): active-fraction
+            // spread over rebuild samples + LTS tier-occupancy shares.
+            if (mb2.solver_active_mean >= 0.0) {
+                std::fprintf(f,
+                    "\n  Active Cells min/mean/max %8.1f /%5.1f /%5.1f  (%%)",
+                    100.0 * mb2.solver_active_min,
+                    100.0 * mb2.solver_active_mean,
+                    100.0 * mb2.solver_active_max);
+            }
+            if (mb2.solver_n_tiers > 0) {
+                long total = 0;
+                for (int k = 0; k < mb2.solver_n_tiers; ++k)
+                    total += mb2.solver_tier_cells[k];
+                if (total > 0) {
+                    for (int k = 0; k < mb2.solver_n_tiers; ++k)
+                        std::fprintf(f,
+                            "\n  LTS Tier %d Occupancy (%%) .%14.1f", k,
+                            100.0 * static_cast<double>(mb2.solver_tier_cells[k])
+                                  / static_cast<double>(total));
+                }
+            }
         }
+
     }
 
     WRITE(f, "");

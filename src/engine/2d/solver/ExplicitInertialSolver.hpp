@@ -28,6 +28,7 @@
 #ifndef OPENSWMM_ENGINE_2D_EXPLICIT_INERTIAL_SOLVER_HPP
 #define OPENSWMM_ENGINE_2D_EXPLICIT_INERTIAL_SOLVER_HPP
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -134,6 +135,8 @@ private:
     // assumption on the Bellinge storm slice.
     std::vector<std::pair<double, int>> telemetry_;
     std::string telemetry_path_;
+    /// Cumulative rebuild-sampled cell count per LTS tier (report histogram).
+    std::array<long, 8> tier_occupancy_{};
 };
 
 } // namespace openswmm::twoD
