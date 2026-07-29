@@ -388,6 +388,11 @@ if(OPENSWMM_BUILD_2D)
     # guards the analytic CVODE Jacobian that replaces the finite-difference
     # matrix-free J·v (Phase 2 of the 2D reformulation).
     add_gtest_unit(test_engine_2d_analytic_jv test_2d_analytic_jv.cpp)
+    # Explicit local-inertial marcher (INTEGRATOR EXPLICIT) analytic gates:
+    # exact lake-at-rest (FLAT + VFR), dry-neighbour wall / C-property,
+    # closed-basin conservation + positivity through a dam-break, Manning
+    # steady-slope rain/outflow ledger + normal depth, Froude clamp.
+    add_gtest_unit(test_engine_2d_inertial_marcher test_2d_inertial_marcher.cpp)
 endif()
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation
