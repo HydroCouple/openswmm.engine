@@ -455,6 +455,10 @@ if(OPENSWMM_BUILD_2D)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ArkodeSurfaceSolver.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
 
+    # Explicit local-inertial marcher (INTEGRATOR EXPLICIT) — no SUNDIALS
+    # dependency of its own; shares the InertialEdges layout above.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialSolver.cpp)
+
     # Approximate-Jacobian (diffusion-stencil) assembly — pure C++, shared by
     # the Jacobi and AMG preconditioners. Always compiled.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceJacobian.cpp)

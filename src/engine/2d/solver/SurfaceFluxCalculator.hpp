@@ -86,6 +86,17 @@ inline double evapSink(double rate, double depth, double dry_depth) noexcept {
 }
 
 /**
+ * @brief Boundary-edge flux for cell @p i across flat mesh edge slot @p idx
+ *        (m³/s, inflow-positive). Exported wrapper over the file-local
+ *        boundary kernel so non-DW solvers (the explicit marcher) evaluate
+ *        the identical 5-type boundary math per substep.
+ */
+double computeBoundaryEdgeFlux(const MeshData& mesh,
+                               const SurfaceStateData& state,
+                               const SolverOptions2D& opts,
+                               double dh_eps, int i, int idx) noexcept;
+
+/**
  * @brief Assemble the RHS of the ODE system: dψ/dt for each triangle.
  *
  * Combines edge fluxes, rainfall, evaporation, and coupling fluxes into the

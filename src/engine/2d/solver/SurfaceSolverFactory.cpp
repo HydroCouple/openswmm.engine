@@ -12,6 +12,7 @@
 #include "ISurfaceSolver.hpp"
 #include "CvodeSurfaceSolver.hpp"
 #include "ArkodeSurfaceSolver.hpp"
+#include "ExplicitInertialSolver.hpp"
 #include "GpuPluginAbi.h"
 #include "../data/SolverOptions2D.hpp"
 
@@ -215,6 +216,19 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                      "solver (set CELL_CLOSURE VFR to enable the plugin)\n");
     };
 
+    // Explicit local-inertial marcher (INTEGRATOR EXPLICIT). Checked FIRST:
+    // the marcher is itself an inertial scheme (the router folds momentum →
+    // INERTIAL for the output contract), so the ARKODE-inertial branch below
+    // must not capture it. CPU-only by design — no plugin discovery, no linear
+    // solver, no preconditioner.
+    const bool use_explicit =
+        (integ == "explicit") ||
+        (integ.empty() && opts.integrator == IntegratorType::EXPLICIT_LTS);
+    if (use_explicit) {
+        if (chosen) *chosen = "cpu (explicit local-inertial marcher)";
+        return std::make_unique<ExplicitInertialSolver>();
+    }
+
     if (want_inertial && integ != "cvode") {
         // Local-inertial. Prefer a Kokkos inertial plugin (its augmented [V,q]
         // N_Vector makes the vector ops parallel too); fall back to the serial
@@ -248,21 +262,6 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
             }
         }
         return serial_inertial();
-    }
-
-    // Explicit local-inertial marcher (INTEGRATOR EXPLICIT). CPU-only by
-    // design — no plugin discovery, no linear solver. Until the
-    // ExplicitInertialSolver lands (reimplementation plan Phase 1), fall back
-    // to CVODE with a visible notice rather than silently misrouting.
-    const bool use_explicit =
-        (integ == "explicit") ||
-        (integ.empty() && opts.integrator == IntegratorType::EXPLICIT_LTS);
-    if (use_explicit && integ != "cvode" && integ != "arkode") {
-        std::fprintf(stderr,
-                     "[openswmm 2D] INTEGRATOR EXPLICIT is not available yet "
-                     "(Phase 1 pending); using the CVODE reference solver\n");
-        if (chosen) *chosen = "cpu (serial CVODE; EXPLICIT pending)";
-        return std::make_unique<CvodeSurfaceSolver>();
     }
 
     const bool use_arkode =
