@@ -37,6 +37,8 @@
 #include "../data/BoundaryData.hpp"
 #include "InertialKernels.hpp"
 #include "SurfaceFluxCalculator.hpp"   // evapSink, computeBoundaryEdgeFlux
+#include "../coupling/NodeCoupling.hpp"  // computeNodeCouplingQ (live exchange)
+#include "../../data/NodeData.hpp"
 
 namespace openswmm::twoD {
 
@@ -94,6 +96,18 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     }
     bc_accum_.assign(bc_cell_.size(), 0.0);
 
+    // Live junction exchange (windowless coupling): one ∫Q dt accumulator per
+    // point; spill budget tracked per 1D node. Their cells pin to tier 0 (the
+    // exchange forcing changes at the fastest cadence), as do BC cells.
+    exch_.assign(state.node_coupling ? state.node_coupling->size() : 0, 0.0);
+    node_drawn_.assign(state.nodes_1d ? state.nodes_1d->volume.size() : 0, 0.0);
+    pin_t0_.assign(static_cast<std::size_t>(nt), 0);
+    for (int i : bc_cell_) pin_t0_[static_cast<std::size_t>(i)] = 1;
+    if (state.node_coupling)
+        for (const auto& cp : *state.node_coupling)
+            if (cp.cell_idx >= 0)
+                pin_t0_[static_cast<std::size_t>(cp.cell_idx)] = 1;
+
     reconstructAll();
     t_last_sync_ = 0.0;
     substeps_run_ = face_passes_ = last_steps_ = 0;
@@ -137,6 +151,26 @@ void ExplicitInertialSolver::settleAccumulators() {
     }
 }
 
+void ExplicitInertialSolver::lazySourcesOnly(double t) {
+    const int nt = mesh_->n_triangles();
+    const double dt_lazy = t - t_last_sync_;
+    if (dt_lazy <= 0.0) return;
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+    for (int i = 0; i < nt; ++i) {
+        if (cell_active_[i]) continue;
+        const double src =
+            state_->rainfall[i] + state_->coupling_flux[i]
+            - evapSink(state_->evap_rate[i], state_->depth[i],
+                       opts_->dry_depth);
+        if (src == 0.0) continue;
+        double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
+        state_->volume[i] = (v > 0.0) ? v : 0.0;
+        inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
+                               state_->head[i], state_->depth[i]);
+    }
+    t_last_sync_ = t;
+}
+
 void ExplicitInertialSolver::syncAndRebuild(double t) {
     settleAccumulators();
     const int nt = mesh_->n_triangles();
@@ -171,11 +205,10 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
         const double thresh = cell_active_[i] ? h_off : h_on;
-        if (state_->depth[i] >= thresh || state_->coupling_flux[i] != 0.0)
+        if (state_->depth[i] >= thresh || state_->coupling_flux[i] != 0.0 ||
+            pin_t0_[i])
             next[i] = 1;
     }
-    for (std::size_t k = 0; k < bc_cell_.size(); ++k)
-        next[static_cast<std::size_t>(bc_cell_[k])] = 1;
 
     // 3. One-ring halo so fronts can enter their neighbours within a rebuild
     //    period, then compact the work lists. A face flows only when BOTH
@@ -224,19 +257,10 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             tk = (ratio >= 2.0)
                      ? std::min(K - 1, static_cast<int>(std::log2(ratio)))
                      : 0;
-            if (state_->coupling_flux[i] != 0.0) tk = 0;
+            if (state_->coupling_flux[i] != 0.0 || pin_t0_[i]) tk = 0;
         }
         tier_[i] = static_cast<uint8_t>(tk);
         cells_by_tier_[static_cast<std::size_t>(tk)].push_back(i);
-    }
-    for (std::size_t k = 0; k < bc_cell_.size(); ++k) {
-        const int i = bc_cell_[k];
-        if (cell_active_[i] && tier_[i] != 0) {
-            auto& from = cells_by_tier_[tier_[i]];
-            from.erase(std::find(from.begin(), from.end(), i));
-            tier_[i] = 0;
-            cells_by_tier_[0].push_back(i);
-        }
     }
 
     for (int e = 0; e < edges_.ne; ++e) {
@@ -380,6 +404,45 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
     }
+
+    // Live junction exchange at tier-0 cadence (windowless coupling): the
+    // orifice law against LIVE 2D heads and the routing step's 1D heads.
+    // Drains cap at the exchange-β share of the source cell; spills cap at
+    // the node's stored volume for the whole advance (node_drawn_ ledger) —
+    // the same water cannot spill twice within a routing step.
+    if (!exch_.empty() && &cells == &cells_by_tier_[0] &&
+        state_->node_coupling && state_->nodes_1d) {
+        const auto& pts = *state_->node_coupling;
+        for (std::size_t k = 0; k < pts.size(); ++k) {
+            const auto& cp = pts[k];
+            const int   ci = cp.cell_idx;
+            if (ci < 0 || !cell_active_[ci]) continue;
+            double Q = computeNodeCouplingQ(cp, *mesh_, *state_,
+                                            *state_->nodes_1d, *opts_,
+                                            nullptr);
+            if (Q == 0.0) continue;
+            if (Q > 0.0) {   // 2D → 1D drain: availability share of the cell
+                Q = std::min(Q, opts_->exchange_beta *
+                                    std::max(state_->volume[ci], 0.0) / dt_c);
+            } else {         // 1D → 2D spill: node stored-volume budget
+                const auto ni = static_cast<std::size_t>(cp.node_idx);
+                const double avail =
+                    std::max(0.0, state_->nodes_1d->volume[ni] *
+                                      opts_->vol_1d_to_2d) -
+                    node_drawn_[ni];
+                if (avail <= 0.0) continue;
+                const double want = -Q * dt_c;
+                const double take = std::min(want, avail);
+                node_drawn_[ni] += take;
+                Q = -take / dt_c;
+            }
+            state_->volume[ci] -= Q * dt_c;
+            if (state_->volume[ci] < 0.0) state_->volume[ci] = 0.0;
+            exch_[k] += Q * dt_c;
+            inertial::cellEtaDepth(*mesh_, *opts_, ci, state_->volume[ci],
+                                   state_->head[ci], state_->depth[ci]);
+        }
+    }
 }
 
 void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
@@ -433,11 +496,20 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     if (!initialized_ || t_target <= t_current) return t_target;
 
     double t = t_current;
-    t_last_sync_ = t_current;   // sources before this advance were booked by
-                                // the caller's window/ledger accounting
+    // The lazy-source clock persists across advances (inactive cells may owe
+    // sources for spans straddling advance boundaries); re-anchor only if the
+    // caller's clock went backwards (hotstart / reinit).
+    if (t_last_sync_ > t_current) t_last_sync_ = t_current;
     std::fill(bc_accum_.begin(), bc_accum_.end(), 0.0);
+    std::fill(exch_.begin(), exch_.end(), 0.0);
+    std::fill(node_drawn_.begin(), node_drawn_.end(), 0.0);
     last_steps_ = 0;
-    int cycles_since_rebuild = kRebuildEveryCycles;   // force rebuild on entry
+    // Rebuild cadence persists ACROSS advances: under windowless co-advance
+    // the router calls advance() per ~1 s routing step, and a forced O(nt)
+    // settle+rebuild per call was measured as the dominant cost at 228k
+    // cells. The lazy-source clock still lands exactly (syncAndRebuild at
+    // every entry whose cadence is due, plus the final landing below).
+    int cycles_since_rebuild = cycles_since_rebuild_;
 
     while (t < t_target) {
         if (cycles_since_rebuild >= kRebuildEveryCycles) {
@@ -484,7 +556,17 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         ++cycles_since_rebuild;
     }
 
-    syncAndRebuild(t_target);   // final lazy-source landing
+    cycles_since_rebuild_ = cycles_since_rebuild;
+    // Final lazy-source landing: cheap when nothing is pending — the full
+    // rebuild only runs on its own cadence.
+    if (t_target > t_last_sync_) {
+        if (cycles_since_rebuild_ >= kRebuildEveryCycles) {
+            syncAndRebuild(t_target);
+            cycles_since_rebuild_ = 0;
+        } else {
+            lazySourcesOnly(t_target);
+        }
+    }
 
     // Publish the flux picture the router's output/ledger contract reads
     // (MOMENTUM INERTIAL: no DW recompute). Interior faces re-limit q against
