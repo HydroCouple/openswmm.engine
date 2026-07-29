@@ -610,6 +610,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if (std::strcmp(m, "inertial") == 0) options_.momentum = MomentumType::INERTIAL;
         else if (std::strcmp(m, "dw") == 0)  options_.momentum = MomentumType::DW;
     }
+    // The explicit marcher IS a local-inertial scheme: it owns state_.edge_flux
+    // (prognostic q projection + availability-clamped boundary fluxes), so the
+    // post-advance DW edge-flux recompute must be skipped exactly as for the
+    // ARKODE inertial path. Env override folded above still wins for A/B.
+    {
+        const char* ienv = std::getenv("OPENSWMM_2D_INTEGRATOR");
+        const bool explicit_marcher =
+            (ienv && std::strcmp(ienv, "explicit") == 0) ||
+            (!ienv && options_.integrator == IntegratorType::EXPLICIT_LTS);
+        if (explicit_marcher && !std::getenv("OPENSWMM_2D_MOMENTUM"))
+            options_.momentum = MomentumType::INERTIAL;
+    }
 
     // Decoupled-timestep coupling state: per-point window accumulators and the
     // per-cell withdrawal budget. The exchange is booked to the 1D every routing

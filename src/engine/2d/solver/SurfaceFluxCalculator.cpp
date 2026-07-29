@@ -589,4 +589,11 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
     }
 }
 
+double computeBoundaryEdgeFlux(const MeshData& mesh,
+                               const SurfaceStateData& state,
+                               const SolverOptions2D& opts,
+                               double dh_eps, int i, int idx) noexcept {
+    return boundaryEdgeFlux(mesh, state, opts, dh_eps, i, idx);
+}
+
 } // namespace openswmm::twoD

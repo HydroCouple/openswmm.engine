@@ -26,6 +26,8 @@ void InertialEdges::build(const MeshData& mesh) {
 
     cL.clear(); cR.clear(); xi.clear(); inv_dx.clear(); zface.clear();
     slotL.clear(); slotR.clear();
+    nx.clear(); ny.clear(); mx.clear(); my.clear();
+    inv_dx_normal.clear(); n2_face.clear(); cell_lchar.clear();
 
     // slot_edge[t][e] = unique-edge id incident to (t, local edge e), or −1 for
     // a boundary edge. Filled for BOTH sides of every interior edge.
@@ -56,9 +58,39 @@ void InertialEdges::build(const MeshData& mesh) {
 
             slot_edge[t][e]  = eid;
             if (e2 < 3) slot_edge[nb][e2] = eid;
+
+            // Marcher extension. The mesh stores the OUTWARD normal per cell
+            // slot; cL's slot normal already points cL→cR.
+            const int sl = t * 3 + e;
+            nx.push_back(mesh.edge_nx[sl]);
+            ny.push_back(mesh.edge_ny[sl]);
+            mx.push_back(mesh.edge_mx[sl]);
+            my.push_back(mesh.edge_my[sl]);
+            {
+                const double dxc = mesh.tri_cx[nb] - mesh.tri_cx[t];
+                const double dyc = mesh.tri_cy[nb] - mesh.tri_cy[t];
+                const double chord = std::hypot(dxc, dyc);
+                double dn = std::fabs(dxc * mesh.edge_nx[sl] +
+                                      dyc * mesh.edge_ny[sl]);
+                dn = std::max(dn, 0.3 * chord);   // near-degenerate floor
+                inv_dx_normal.push_back(dn > 1.0e-12 ? 1.0 / dn : 0.0);
+            }
+            {
+                const double nf = 0.5 * (mesh.mannings_n[t] + mesh.mannings_n[nb]);
+                n2_face.push_back(nf * nf);
+            }
         }
     }
     ne = static_cast<int>(cL.size());
+
+    // Per-cell characteristic length L_char = 2A/ξ_max (the smallest altitude).
+    cell_lchar.assign(static_cast<std::size_t>(nt), 0.0);
+    for (int t = 0; t < nt; ++t) {
+        double xi_max = 0.0;
+        for (int e = 0; e < 3; ++e)
+            xi_max = std::max(xi_max, mesh.edge_length[t * 3 + e]);
+        cell_lchar[t] = (xi_max > 0.0) ? 2.0 * mesh.tri_area[t] / xi_max : 0.0;
+    }
 
     // 2. Per-cell CSR incidence with orientation signs.
     cell_ptr.assign(static_cast<std::size_t>(nt) + 1, 0);
