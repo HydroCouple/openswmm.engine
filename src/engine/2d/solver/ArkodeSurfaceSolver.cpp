@@ -9,6 +9,7 @@
 #ifdef OPENSWMM_HAS_2D
 
 #include "ArkodeSurfaceSolver.hpp"
+#include "InertialKernels.hpp"            // canonical V ⇄ η closure pair
 #include "SurfaceFluxCalculator.hpp"
 #include "../mesh/VertexReconstruction.hpp"
 #include "../mesh/VfrClosure.hpp"
@@ -44,34 +45,17 @@ namespace {
 // the mean depth V/A under both. The smooth conductance vanishes at the dry
 // limit on its own. See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
 // ---------------------------------------------------------------------------
+// The canonical pair lives in InertialKernels.hpp (cellEtaDepth /
+// cellVolumeFromEta — bit-identical bodies); these forwarders keep the
+// solver-local names used throughout this file.
 inline void reconstructFromVolume(const MeshData& m, const SolverOptions2D& o,
                                   int i, double V,
                                   double& head, double& depth) noexcept {
-    const double A = m.tri_area[i];
-    const double v = (V > 0.0) ? V : 0.0;
-    depth = (A > 1.0e-30) ? v / A : 0.0;
-    if (o.cell_closure == CellClosure2D::VFR) {
-        double z1 = m.vz[m.tri_v0[i]];
-        double z2 = m.vz[m.tri_v1[i]];
-        double z3 = m.vz[m.tri_v2[i]];
-        vfrSort3(z1, z2, z3);
-        head = vfrEtaFromMeanDepth(z1, z2, z3, depth, o.vfr_min_wet_frac);
-    } else {
-        head = m.tri_cz[i] + depth;
-    }
+    inertial::cellEtaDepth(m, o, i, V, head, depth);
 }
 inline double volumeFromHead(const MeshData& m, const SolverOptions2D& o,
                              int i, double head) noexcept {
-    if (o.cell_closure == CellClosure2D::VFR) {
-        double z1 = m.vz[m.tri_v0[i]];
-        double z2 = m.vz[m.tri_v1[i]];
-        double z3 = m.vz[m.tri_v2[i]];
-        vfrSort3(z1, z2, z3);
-        return m.tri_area[i]
-               * vfrMeanDepthFromEta(z1, z2, z3, head, o.vfr_min_wet_frac);
-    }
-    const double d = head - m.tri_cz[i];
-    return (d > 0.0) ? m.tri_area[i] * d : 0.0;
+    return inertial::cellVolumeFromEta(m, o, i, head);
 }
 
 // State-vector factory: the threaded OpenMP N_Vector when THREADS > 1 (its
