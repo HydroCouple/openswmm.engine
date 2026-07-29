@@ -46,6 +46,14 @@ namespace openswmm::twoD::inertial {
 
 inline constexpr double kGravity = 9.80665;  ///< matches the existing kernels
 
+/// Free-surface difference below which a face slope is numerical zero (m).
+/// Without it, the local-inertial q integrates even 1-ulp closure round-trip
+/// noise up to its Manning equilibrium (√-amplification: Δη ~ 1e-16 sustains
+/// q ~ 1e-6 m²/s), so lake-at-rest would drift measurably. 1e-12 m is far
+/// below any physical head; with the slope zeroed the friction denominator
+/// decays q geometrically and rest states are exact.
+inline constexpr double kEtaDeadband = 1.0e-12;
+
 /// Volume → (η, depth) closure — the SAME semantics as the CVODE/ARKODE
 /// reconstructFromVolume: depth = max(V,0)/A; FLAT η = z_c + depth, VFR η from
 /// the Begnudelli–Sanders planar-bed relation (ε-regularized).
@@ -63,6 +71,23 @@ inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
     } else {
         eta = m.tri_cz[i] + depth;
     }
+}
+
+/// Exact inverse of the closure: cell volume holding free surface η — FLAT
+/// A·max(0, η − z_c); VFR the regularized B&S forward relation (round-trips
+/// with cellEtaDepth). Closure-consistent seeding for tests/hotstart.
+inline double cellVolumeFromEta(const MeshData& m, const SolverOptions2D& o,
+                                int i, double eta) noexcept {
+    if (o.cell_closure == CellClosure2D::VFR) {
+        double z1 = m.vz[m.tri_v0[i]];
+        double z2 = m.vz[m.tri_v1[i]];
+        double z3 = m.vz[m.tri_v2[i]];
+        vfrSort3(z1, z2, z3);
+        return m.tri_area[i]
+               * vfrMeanDepthFromEta(z1, z2, z3, eta, o.vfr_min_wet_frac);
+    }
+    const double d = eta - m.tri_cz[i];
+    return (d > 0.0) ? m.tri_area[i] * d : 0.0;
 }
 
 /// Flow depth at a face: the water surface above the higher of the two

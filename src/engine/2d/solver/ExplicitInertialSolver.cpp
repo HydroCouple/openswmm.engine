@@ -139,12 +139,17 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     active_cells_.clear();
     for (int i = 0; i < nt; ++i)
         if (cell_active_[i]) active_cells_.push_back(i);
+    // A face flows only when BOTH incident cells are active — a one-sided
+    // face would export volume into a cell whose update never runs (measured
+    // as an 18 % basin loss). The 1-ring halo guarantees the front always has
+    // an active receiving cell; the halo's own outer faces stay walls until
+    // the next rebuild admits the next ring.
     active_edges_.clear();
     for (int e = 0; e < edges_.ne; ++e) {
-        if (cell_active_[edges_.cL[e]] || cell_active_[edges_.cR[e]])
+        if (cell_active_[edges_.cL[e]] && cell_active_[edges_.cR[e]])
             active_edges_.push_back(e);
         else
-            q_[e] = 0.0;   // frozen faces carry no stale momentum
+            q_[e] = 0.0;   // walled faces carry no stale momentum
     }
 
     telemetry_.emplace_back(t, static_cast<int>(active_cells_.size()));
@@ -207,8 +212,9 @@ void ExplicitInertialSolver::substep(double dt) {
                                      (qcy_[a] + qcy_[b]) * ed.ny[e]);
             qhat = theta * q_[e] + (1.0 - theta) * qn;
         }
-        const double slope =
-            (state_->head[b] - state_->head[a]) * ed.inv_dx_normal[e];
+        double deta = state_->head[b] - state_->head[a];
+        if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
+        const double slope = deta * ed.inv_dx_normal[e];
         double qn1 = inertial::inertialFaceUpdate(q_[e], qhat, hf, dt, slope,
                                                  ed.n2_face[e]);
         q_[e] = inertial::froudeCap(qn1, hf, opts_->froude_max);
@@ -315,7 +321,18 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     // −flux·dt_done booking recovers the exact ∫F_applied dt integral.
     std::fill(state_->edge_flux.begin(), state_->edge_flux.end(), 0.0);
     for (int e = 0; e < edges_.ne; ++e) {
-        const double F = q_[e] * edges_.xi[e];
+        // Re-limit against the PUBLISHED surface: q was clamped with the face
+        // depth its own update saw, but the subsequent cell pass moved the
+        // heads — a draining front would otherwise publish a super-Froude
+        // flux inconsistent with the published depths. Output-only: the next
+        // substep re-derives its own clamp from fresh state.
+        const double hf = inertial::faceFlowDepth(state_->head[edges_.cL[e]],
+                                                  state_->head[edges_.cR[e]],
+                                                  edges_.zface[e]);
+        double qp = 0.0;
+        if (hf > opts_->dry_depth)
+            qp = inertial::froudeCap(q_[e], hf, opts_->froude_max);
+        const double F = qp * edges_.xi[e];
         state_->edge_flux[edges_.slotL[e]] = -F;
         state_->edge_flux[edges_.slotR[e]] = +F;
     }
