@@ -52,16 +52,28 @@ public:
     bool is_initialized() const noexcept override { return initialized_; }
 
 private:
-    // One explicit substep of length dt over the active set.
-    void substep(double dt);
-    // Recompute η/depth from state volumes for cells [first, last) or the
-    // whole mesh (first < 0).
+    // Recompute η/depth from state volumes for the whole mesh.
     void reconstructAll();
+    // Flush every pending face accumulator into its cell (CSR gather over ALL
+    // cells) and refresh the closure of touched cells. MUST run before any
+    // tier/active-set reassignment: a cell deactivated or re-tiered with a
+    // pending side-accumulator strands flux whose counterpart the other side
+    // already applied — the backstop then realizes it as created volume.
+    void settleAccumulators();
     // Apply lazily-accumulated sources (rain/held coupling) to INACTIVE cells
-    // over [t_last_sync_, t] and rebuild the active cell/edge lists.
+    // over [t_last_sync_, t], rebuild the active cell/edge lists, and assign
+    // the LTS tiers (dt0_ = finest active CFL requirement).
     void syncAndRebuild(double t);
-    // Global CFL-stable dt over the active set.
-    double stableDt() const;
+    // Fire one tier's faces over their Δt: inertial update + Froude cap +
+    // face-cadence positivity share, booking ±ΔM into both side accumulators.
+    void fireFaces(const std::vector<int>& faces, double dt_f);
+    // Fire one tier's cells over their Δt: gather + clear own-side face
+    // accumulators, apply sources, refresh closure + Perot vector; tier-0
+    // firings also evaluate the availability-clamped boundary edges.
+    void fireCells(const std::vector<int>& cells, double dt_c);
+    // One halving-order macro cycle of nsub base substeps: tier k fires every
+    // 2^k substeps.
+    void runMacroCycle(double dt0, int nsub);
 
     MeshData*         mesh_  = nullptr;
     SurfaceStateData* state_ = nullptr;
@@ -72,7 +84,20 @@ private:
     std::vector<double>  qcx_, qcy_;    ///< Perot cell discharge vector (θ < 1)
     std::vector<uint8_t> cell_active_;
     std::vector<int>     active_cells_;
-    std::vector<int>     active_edges_;
+
+    // Tiered LTS. tier_[i] = k means cell i updates every 2^k base substeps
+    // with Δt = 2^k·dt0; face tier = min of its incident cells so a face
+    // always integrates at the finer cadence. Every face firing books the
+    // identical ±ΔM into facc_L_/facc_R_ (single writer per face); each cell
+    // applies + clears its own side at its own firing — conservation across
+    // tier interfaces is exact by construction.
+    std::vector<uint8_t> tier_;         ///< per-cell tier
+    std::vector<uint8_t> face_tier_;    ///< per unique face
+    std::vector<double>  facc_L_;       ///< pending ΔM for the cL side (m³)
+    std::vector<double>  facc_R_;       ///< pending ΔM for the cR side (m³)
+    std::vector<std::vector<int>> cells_by_tier_;
+    std::vector<std::vector<int>> edges_by_tier_;
+    double dt0_ = 0.0;                  ///< base (tier-0) step from the rebuild
     std::vector<int>     bc_cell_;      ///< cells with a non-WALL boundary edge
     std::vector<int>     bc_slot_;      ///< matching flat mesh edge slot
     std::vector<double>  bc_accum_;     ///< ∫F_applied dt per BC entry (m³),
