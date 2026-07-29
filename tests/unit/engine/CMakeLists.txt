@@ -288,17 +288,32 @@ set_tests_properties(test_engine_2d_surface PROPERTIES
     LABELS "unit"
     ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
 
-# Exercise the default acceleration path end-to-end: with the GPU plugin built
-# and co-located with the engine, runtime `auto`/omp must discover and load it.
-# Runs the 2D example through the CLI and asserts the omp backend was selected.
-# (Numeric omp-vs-cpu parity is ~1e-13, covered by the Kokkos parity test and
-# the serial reference in test_engine_2d_surface.)
+# Exercise the acceleration path end-to-end, both sides of the closure guard:
+# the Kokkos plugin implements the VFR closure ONLY, so under the (default)
+# CELL_CLOSURE FLAT the factory must REFUSE it with a visible notice (silently
+# substituting VFR was measured as 2.65M m³ of phantom initial storage on
+# Bellinge), while a VFR model must still discover and load the omp plugin
+# (the default-on policy). (Numeric omp-vs-cpu parity is ~1e-13, covered by
+# the Kokkos parity test and the serial reference in test_engine_2d_surface.)
 if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
     file(COPY ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
          DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+    # VFR variant of the same fixture, generated at configure time.
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
+         _omp_vfr_inp)
+    string(REPLACE "[2D_OPTIONS]" "[2D_OPTIONS]\nCELL_CLOSURE           VFR"
+           _omp_vfr_inp "${_omp_vfr_inp}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp
+         "${_omp_vfr_inp}")
+
     add_test(
         NAME    test_engine_2d_omp_default
         COMMAND $<TARGET_FILE:openswmm> 2d_complete_example.inp 2d_omp_default.rpt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    add_test(
+        NAME    test_engine_2d_omp_vfr
+        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example_vfr.inp 2d_omp_vfr.rpt
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     # Point plugin discovery straight at the freshly built omp plugin. Without
@@ -315,6 +330,10 @@ if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
              "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
     endif()
     set_tests_properties(test_engine_2d_omp_default PROPERTIES
+        LABELS "unit"
+        ENVIRONMENT "${_omp_test_env}"
+        PASS_REGULAR_EXPRESSION "implements CELL_CLOSURE VFR only")
+    set_tests_properties(test_engine_2d_omp_vfr PROPERTIES
         LABELS "unit"
         ENVIRONMENT "${_omp_test_env}"
         PASS_REGULAR_EXPRESSION "using GPU backend: omp")

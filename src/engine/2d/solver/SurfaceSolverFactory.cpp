@@ -202,6 +202,19 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
         (mom.empty() && opts.momentum == MomentumType::INERTIAL);
     const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
 
+    // The Kokkos plugin solvers implement the VFR closure ONLY (their unpack/
+    // readback kernels apply vfrEtaFromMeanDepth unconditionally). Under the
+    // default CELL_CLOSURE FLAT they would silently run different physics than
+    // the CPU path — measured on Bellinge as 2.65M m³ of phantom initial
+    // storage. Refuse the plugin and say so instead of substituting closures.
+    const bool plugin_closure_ok = (opts.cell_closure == CellClosure2D::VFR);
+    auto warn_plugin_closure = [&] {
+        std::fprintf(stderr,
+                     "[openswmm 2D] GPU/OpenMP plugin implements CELL_CLOSURE "
+                     "VFR only; this model uses FLAT — staying on the CPU "
+                     "solver (set CELL_CLOSURE VFR to enable the plugin)\n");
+    };
+
     if (want_inertial && integ != "cvode") {
         // Local-inertial. Prefer a Kokkos inertial plugin (its augmented [V,q]
         // N_Vector makes the vector ops parallel too); fall back to the serial
@@ -222,6 +235,10 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
             return n_cells < min_par;
         }();
         if (!gated) {
+            if (!plugin_closure_ok) {
+                warn_plugin_closure();
+                return serial_inertial();
+            }
             const char* sym = "openswmm_make_gpu_inertial_solver";
             if (mode.empty() || mode == "auto") {
                 for (const char* b : {"cuda", "hip", "sycl", "omp"})
@@ -231,6 +248,21 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
             }
         }
         return serial_inertial();
+    }
+
+    // Explicit local-inertial marcher (INTEGRATOR EXPLICIT). CPU-only by
+    // design — no plugin discovery, no linear solver. Until the
+    // ExplicitInertialSolver lands (reimplementation plan Phase 1), fall back
+    // to CVODE with a visible notice rather than silently misrouting.
+    const bool use_explicit =
+        (integ == "explicit") ||
+        (integ.empty() && opts.integrator == IntegratorType::EXPLICIT_LTS);
+    if (use_explicit && integ != "cvode" && integ != "arkode") {
+        std::fprintf(stderr,
+                     "[openswmm 2D] INTEGRATOR EXPLICIT is not available yet "
+                     "(Phase 1 pending); using the CVODE reference solver\n");
+        if (chosen) *chosen = "cpu (serial CVODE; EXPLICIT pending)";
+        return std::make_unique<CvodeSurfaceSolver>();
     }
 
     const bool use_arkode =
@@ -265,6 +297,10 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
         // plugin is NOT part of the base/portable build (it is opt-in, like the
         // device plugins), so a stock install finds no plugin here and falls
         // through to the serial CPU solver. The base build stays Kokkos-free.
+        if (!plugin_closure_ok) {
+            warn_plugin_closure();
+            return cpu();
+        }
         for (const char* b : {"cuda", "hip", "sycl", "omp"}) {
             if (auto s = try_plugin(b, chosen))
                 return s;
@@ -275,6 +311,10 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     if (mode == "cpu") return cpu();
 
     if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
+        if (!plugin_closure_ok) {
+            warn_plugin_closure();
+            return cpu();
+        }
         if (auto s = try_plugin(mode, chosen))
             return s;
         return cpu();
