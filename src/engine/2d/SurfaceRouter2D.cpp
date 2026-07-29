@@ -883,18 +883,6 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                 static_cast<std::size_t>(node_coupling_points_[k].node_idx);
             ctx.nodes.coupling_volume[ni] += exch[k] * options_.flow_2d_to_1d;
         }
-        bool queued = false;
-        for (const auto& cp : node_coupling_points_) {
-            const auto ni = static_cast<std::size_t>(cp.node_idx);
-            if (ctx.nodes.coupling_volume[ni] != 0.0) {
-                ctx.nodes.coupling_queue[ni] += ctx.nodes.coupling_volume[ni];
-                ctx.nodes.coupling_volume[ni] = 0.0;
-                queued = true;
-            }
-        }
-        if (queued)
-            ctx.coupling_delivery_remaining =
-                std::max(ctx.coupling_delivery_remaining, dt);
     }
 
     // Boundary ledger: the marcher published the WINDOW-MEAN applied flux in
@@ -908,8 +896,27 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                     -state_.edge_flux[idx] * dt;
     }
 
-    // Ledgers every step (conservation bookkeeping is per-step exact) …
+    // Ledgers every batch (accumulateMassBalance reads coupling_volume as
+    // "this batch's exchange", so it MUST run before the queue move below) …
     accumulateMassBalance(ctx, dt);
+
+    // … then hand the batch's junction volumes to the delivery QUEUE so
+    // assembleLateralInflows drains them at a uniform rate over the batch
+    // span instead of a single-step pulse.
+    if (!exch.empty()) {
+        bool queued = false;
+        for (const auto& cp : node_coupling_points_) {
+            const auto ni = static_cast<std::size_t>(cp.node_idx);
+            if (ctx.nodes.coupling_volume[ni] != 0.0) {
+                ctx.nodes.coupling_queue[ni] += ctx.nodes.coupling_volume[ni];
+                ctx.nodes.coupling_volume[ni] = 0.0;
+                queued = true;
+            }
+        }
+        if (queued)
+            ctx.coupling_delivery_remaining =
+                std::max(ctx.coupling_delivery_remaining, dt);
+    }
     state_.clear_reset_forcings();
     resetWindowAccumulators();
 
