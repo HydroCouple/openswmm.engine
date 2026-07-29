@@ -46,6 +46,10 @@ struct CouplingPoint {
     double area;        ///< Effective exchange area (m²)
     bool is_outfall;    ///< True if the SWMM node is an outfall
     bool has_flap_gate; ///< True if outfall has a flap gate
+    /// True when the input authored an explicit AREA token for this point;
+    /// false = defaulted, eligible for the COUPLING_AREA AUTO derivation
+    /// (clamp(1.25 × largest connected conduit area, 0.05, 2.0) m²).
+    bool area_authored = true;
 };
 
 /**
@@ -60,6 +64,23 @@ struct CouplingPoint {
  */
 std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
                                                 const SimulationContext& ctx);
+
+/**
+ * @brief Head sensitivity G = −∂Q/∂h_1d ≥ 0 of the coupling orifice at a
+ *        point (SI: m³/s per m of 1D head, with h_1d in 2D metres).
+ *
+ * @details Windowless-coupling stabilizer (2026-07-29 plan §5.4): scattered
+ *          into the dynamic-wave node continuity denominator (`sumdqdh`) each
+ *          Picard iteration so the exchange stops being a zero-sensitivity
+ *          explicit source — the measured fix for drain/spill iteration churn.
+ *          Gate/ramp derivative terms are dropped to guarantee G ≥ 0 (pure
+ *          damping; the denominator can only grow).
+ */
+double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
+                                 const MeshData& mesh,
+                                 const SurfaceStateData& state,
+                                 const NodeData& nodes,
+                                 const SolverOptions2D& opts) noexcept;
 
 
 /**

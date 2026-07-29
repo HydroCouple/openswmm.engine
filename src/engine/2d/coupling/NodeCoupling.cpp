@@ -257,6 +257,54 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
 }
 
 
+double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
+                                 const MeshData& mesh,
+                                 const SurfaceStateData& state,
+                                 const NodeData& nodes,
+                                 const SolverOptions2D& opts) noexcept {
+    // Mirror of computeNodeCouplingQ with Q = Cd·A_eff·sign(Δh)·√(2g)·φ(|Δh|),
+    // Δh = h_2d − h_1d: the head sensitivity is G = −∂Q/∂h_1d =
+    // Cd·A_eff·√(2g)·φ′(|Δh|) · (gate) · (ramp) ≥ 0. Gate/ramp factors are
+    // treated as constants (each ∈ [0,1]); their derivatives are deliberately
+    // dropped so the sign guarantee — a pure damping term on the 1D node
+    // continuity denominator — can never be violated.
+    const auto ni = static_cast<std::size_t>(cp.node_idx);
+    const double h_2d = couplingHead2D(cp, mesh, state, opts);
+    const double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
+    const double a = std::abs(h_2d - h_1d);
+
+    const double crown =
+        (nodes.invert_elev[ni] + nodes.full_depth[ni]) * opts.len_1d_to_2d;
+    const double h_max = std::max(h_1d, h_2d);
+    const double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni],
+                                       cp.area, cp.area * 2.0);
+
+    // φ′ of the C¹-regularized root: 1/(2√a) beyond ε, linear-finite below.
+    double phi_p;
+    if (a >= ORIFICE_H_EPS) {
+        phi_p = 0.5 / std::sqrt(a);
+    } else {
+        const double inv_sqrt_e = 1.0 / std::sqrt(ORIFICE_H_EPS);
+        phi_p = 1.5 * inv_sqrt_e - (inv_sqrt_e / ORIFICE_H_EPS) * a;
+    }
+    double G = cp.cd * A_eff * std::sqrt(2.0 * GRAVITY) * phi_p;
+
+    constexpr double CAP_BAND = 0.05;
+    const double ct = std::min(1.0, std::max(0.0, (h_max - crown) / CAP_BAND));
+    G *= ct * ct * (3.0 - 2.0 * ct);
+
+    auto wetRamp = [&opts](double d) {
+        const double t = std::min(1.0, std::max(0.0, d / opts.dry_depth));
+        return t * t * (3.0 - 2.0 * t);
+    };
+    const double depth_1d = nodes.depth[ni] * opts.len_1d_to_2d;
+    const double depth_2d =
+        (cp.cell_idx >= 0) ? state.depth[cp.cell_idx] : 0.0;
+    G *= wetRamp(std::max(depth_1d, depth_2d));
+    return (G > 0.0) ? G : 0.0;
+}
+
+
 void scatterCouplingToYdot(const MeshData& mesh, const SurfaceStateData& state,
                            const CouplingPoint& cp, double Q,
                            double* ydot) noexcept {
@@ -316,6 +364,9 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         cp.node_idx = node_idx;
         cp.cd = mesh.vert_coupling_cd[v];
         cp.area = mesh.vert_coupling_area[v];
+        cp.area_authored =
+            v < static_cast<int>(mesh.vert_coupling_area_set.size()) &&
+            mesh.vert_coupling_area_set[static_cast<std::size_t>(v)] != 0;
 
         // Find the triangle that contains this vertex (use first one)
         // The coupling flux is distributed to triangles sharing this vertex
@@ -353,6 +404,7 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         cp.node_idx = node_idx;
         cp.cd = row.cd;
         cp.area = row.area;
+        cp.area_authored = row.area_set;
 
         auto ui = static_cast<std::size_t>(node_idx);
         cp.is_outfall = (ctx.nodes.type[ui] == NodeType::OUTFALL);

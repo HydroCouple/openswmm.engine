@@ -50,6 +50,10 @@ public:
     double last_step_size() const noexcept override { return last_dt_; }
     RunStats run_stats() const noexcept override;
     bool is_initialized() const noexcept override { return initialized_; }
+    const std::vector<double>& last_coupling_exchange()
+        const noexcept override {
+        return exch_;
+    }
 
 private:
     // Recompute η/depth from state volumes for the whole mesh.
@@ -84,6 +88,8 @@ private:
     std::vector<double>  qcx_, qcy_;    ///< Perot cell discharge vector (θ < 1)
     std::vector<uint8_t> cell_active_;
     std::vector<int>     active_cells_;
+    std::vector<uint8_t> pin_t0_;       ///< cells pinned active + tier 0
+                                        ///< (boundary + live coupling)
 
     // Tiered LTS. tier_[i] = k means cell i updates every 2^k base substeps
     // with Δt = 2^k·dt0; face tier = min of its incident cells so a face
@@ -103,7 +109,19 @@ private:
     std::vector<double>  bc_accum_;     ///< ∫F_applied dt per BC entry (m³),
                                         ///< inflow-positive, reset per advance
 
+    // Live junction exchange (windowless coupling): state_->node_coupling
+    // points, evaluated at tier-0 cadence against live 2D heads and the
+    // routing-step 1D heads. exch_[k] = ∫Q_k dt (m³, + = 2D→1D), reset per
+    // advance; node_drawn_ caps a step's total spill at the node's stored
+    // volume so fill-and-spill thrash is structurally impossible.
+    std::vector<double>  exch_;
+    std::vector<double>  node_drawn_;   ///< spill drawn per node this advance (m³)
+
     double t_last_sync_ = 0.0;          ///< lazy-source clock
+    int    cycles_since_rebuild_ = 1000; ///< persists across advances (co-advance)
+    /// Lazy-source landing without the O(nt) rebuild (advance boundaries
+    /// between rebuild cadences).
+    void lazySourcesOnly(double t);
     long   substeps_run_ = 0;           ///< cumulative substeps (whole run)
     long   face_passes_  = 0;           ///< cumulative face-kernel passes
     long   last_steps_   = 0;           ///< substeps in the last advance()
