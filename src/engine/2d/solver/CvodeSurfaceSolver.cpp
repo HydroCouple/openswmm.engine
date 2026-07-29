@@ -239,14 +239,11 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // being built (analytic-J path active) and no active-set mask (tangent
     // rows are not masked).
     // Default ON (7.7× measured on the multiscale storm probe); env "0"
-    // restores the secant-transmissivity assembly.
-    static const bool precond_tangent = []{
-        const char* e = std::getenv("OPENSWMM_2D_PRECOND_TANGENT");
-        return !(e && e[0] == '0' && e[1] == '\0');
-    }();
+    // restores the secant-transmissivity assembly — folded into
+    // opts.precond_tangent per run by SurfaceRouter2D::initialize().
     const SurfaceTangents& tng = solver->tangents_;
     const bool use_tangent_pc =
-        precond_tangent && !masked && tng.nt == mesh.n_triangles();
+        ctx->opts->precond_tangent && !masked && tng.nt == mesh.n_triangles();
 
 #if defined(OPENSWMM_HAVE_HYPRE)
     // AMG: assemble M = I − γ·J and rebuild the BoomerAMG hierarchy (only when
@@ -495,6 +492,22 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
             "CvodeSurfaceSolver: only PRECONDITIONER=NONE, JACOBI, or AMG is "
             "wired; ILU is reserved");
     }
+    // A hard step floor turns wetting-front corrector retries into
+    // UNRECOVERABLE failures (the kink needs h below any fixed floor; measured:
+    // 128k hard failures + 43 frozen windows + an inert surface on Bellinge —
+    // twice). The engine default is 0; an explicit .inp line overrides it, so
+    // warn loudly every time one does.
+    if (opts.min_timestep > 0.0) {
+        std::printf(
+            "\n  WARNING: [2D_OPTIONS] MIN_TIMESTEP %.6g sets a hard CVODE step\n"
+            "  floor. Wetting-front corrector failures below this floor are\n"
+            "  UNRECOVERABLE (frozen 2D windows, dropped rainfall). Delete the\n"
+            "  MIN_TIMESTEP line (engine default 0 = no floor) unless you are\n"
+            "  deliberately reproducing that failure mode.\n\n",
+            opts.min_timestep);
+        std::fflush(stdout);
+    }
+
     PreconditionerType pc = opts.preconditioner;  // effective preconditioner
 #if !defined(OPENSWMM_HAVE_HYPRE)
     if (pc == PreconditionerType::AMG) {

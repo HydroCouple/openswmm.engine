@@ -263,6 +263,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             options_.rainfall_mode = RainfallMode::NONE;
     }
 
+    // Fold the remaining env overrides into options_ per run (these used to be
+    // function-local static caches — process-lifetime, wrong for multi-model /
+    // library use). Behavior-neutral when the env vars are unset.
+    if (const char* s = std::getenv("OPENSWMM_2D_FLUX_DH_EPS")) {
+        const double v = std::atof(s);
+        if (v >= 0.0) options_.flux_dh_eps = v;
+    }
+    if (const char* s = std::getenv("OPENSWMM_2D_TANGENT_CLAMP"))
+        options_.tangent_clamp = !(s[0] == '0' && s[1] == '\0');
+    if (const char* s = std::getenv("OPENSWMM_2D_PRECOND_TANGENT"))
+        options_.precond_tangent = !(s[0] == '0' && s[1] == '\0');
+
     // Precompute the static rainfall-interpolation weights. Gage POSITIONS are
     // fixed for the run, so the natural-neighbour / IDW weights are built once
     // here and only the per-step gage VALUES vary (see updateRainfall). The
