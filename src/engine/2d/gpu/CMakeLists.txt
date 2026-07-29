@@ -318,4 +318,32 @@ if(OPENSWMM_INSTALL)
     install(TARGETS ${_OPENSWMM_GPU_TARGET}
         LIBRARY DESTINATION "${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}"
         RUNTIME DESTINATION "${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}")
+
+    # macOS: the plugin links Homebrew libomp by ABSOLUTE path while the engine
+    # references the bundled @rpath/libomp.dylib — loading both aborts every 2D
+    # run with "OMP: Error #15" (two OpenMP runtimes). The BundleRuntimeDeps
+    # rewrite can miss this plugin (subdirectory install ordering + the
+    # opt-vs-Cellar symlink split), so fix it here, immediately after our own
+    # install rule: rewrite ANY absolute libomp reference to @rpath, make sure
+    # the loader can find the bundled copy next to the CLI (bin/) or the engine
+    # (lib/), and re-sign — install_name_tool invalidates the ad-hoc signature
+    # on arm64, which otherwise SIGKILLs at dlopen.
+    if(APPLE)
+        install(CODE "
+            set(_plugin \"\${CMAKE_INSTALL_PREFIX}/${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}/$<TARGET_FILE_NAME:${_OPENSWMM_GPU_TARGET}>\")
+            if(EXISTS \"\${_plugin}\")
+                execute_process(COMMAND bash -c \"
+                    set -e
+                    plugin='\${_plugin}'
+                    otool -L \\\"\$plugin\\\" | awk 'NR>1 {print \$1}' | grep '/libomp\\.dylib\$' | grep -v '^@' | while read -r old; do
+                        install_name_tool -change \\\"\$old\\\" @rpath/libomp.dylib \\\"\$plugin\\\"
+                    done
+                    for rp in @loader_path @loader_path/../bin @loader_path/../lib; do
+                        install_name_tool -add_rpath \\\"\$rp\\\" \\\"\$plugin\\\" 2>/dev/null || true
+                    done
+                    codesign --force --sign - \\\"\$plugin\\\"
+                \")
+            endif()
+        ")
+    endif()
 endif()
