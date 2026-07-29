@@ -397,6 +397,11 @@ if(OPENSWMM_BUILD_2D)
     # multiscale dam-break, K-tier ≈ global-dt equivalence, and the
     # fine-patch-in-coarse-watershed stability case.
     add_gtest_unit(test_engine_2d_lts_equivalence test_2d_lts_equivalence.cpp)
+    # Windowless co-advance coupling gates: cross-domain conservation through
+    # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
+    # rederivation, conductance sign + FD parity.
+    add_gtest_unit(test_engine_2d_windowless_coupling
+                   test_2d_windowless_coupling.cpp)
 endif()
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation
