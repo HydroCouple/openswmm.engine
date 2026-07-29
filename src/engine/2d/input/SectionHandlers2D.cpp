@@ -401,17 +401,33 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
     if (tidx < 0 || tidx >= mesh.n_triangles())
         return "Triangle index out of range: " + tokens[0];
 
-    mesh.tri_coupled_node_name[tidx] = tokens[1];
+    // Repeated-row form: every line APPENDS a coupling row, so several nodes
+    // may couple to the same triangle. (Previously per-triangle arrays were
+    // overwritten — last line won.)
+    MeshData::TriCouplingRow row;
+    row.tri       = tidx;
+    row.node_name = tokens[1];
 
     if (tokens.size() >= 3) {
         double cd = tryParseDouble(tokens[2], ok);
-        if (ok) mesh.tri_coupling_cd[tidx] = cd;
+        if (ok) row.cd = cd;
     }
 
     if (tokens.size() >= 4) {
         double area = tryParseDouble(tokens[3], ok);
-        if (ok) mesh.tri_coupling_area[tidx] = area;
+        if (ok) row.area = area;
     }
+
+    // Keep the legacy per-triangle mirror in step (last row wins), same as
+    // swmm_2d_add_triangle_coupling. Consumers that run BEFORE resolve —
+    // the GeoPackage writer above all — read these arrays, so leaving them
+    // to SurfaceRouter2D::initialize would drop couplings on an
+    // opened-but-not-initialized model.
+    mesh.tri_coupled_node_name[tidx] = row.node_name;
+    mesh.tri_coupling_cd[tidx]       = row.cd;
+    mesh.tri_coupling_area[tidx]     = row.area;
+
+    mesh.tri_couplings.push_back(std::move(row));
 
     return {};
 }

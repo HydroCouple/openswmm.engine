@@ -325,6 +325,13 @@ endif()
 # plus the GeoPackage write→reopen end-to-end). Needs the full 2D module.
 if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_inp_writer_2d test_inp_writer_2d.cpp)
+    # Repeated-row [2D_TRIANGLE_NODE_MAP] (MESH-REMAP-01) — several nodes may
+    # couple to ONE cell (weir/orifice endpoints). Guards the parser's append
+    # semantics (was last-line-wins), the InpWriter row emission, and the new
+    # swmm_2d_add/clear/rows/get_triangle_coupling_row C API the GUI's
+    # Remap 1D↔2D pushes through.
+    add_gtest_unit(test_engine_2d_triangle_coupling_rows
+                   test_2d_triangle_coupling_rows.cpp)
     # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
     # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
     # always-feet⇄metres coupling factors (the 1D side is always feet-internal).

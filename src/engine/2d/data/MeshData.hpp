@@ -114,6 +114,23 @@ struct MeshData {
     std::vector<std::string> vert_coupled_node_name;
     std::vector<std::string> tri_coupled_node_name;
 
+    /// One authored node→cell coupling row (repeated-row form of
+    /// [2D_TRIANGLE_NODE_MAP]). A triangle may carry several rows — one per
+    /// coupled node — so these live in a flat vector, not per-triangle
+    /// arrays. Source of truth for cell couplings: the parser, the GUI C API
+    /// and (synthesised at resolve time) the legacy per-triangle arrays all
+    /// feed this vector, and buildCouplingPoints() iterates it. The legacy
+    /// arrays above are kept as a last-row-wins mirror for the existing
+    /// getter API and the GeoPackage writer (single-coupling only).
+    struct TriCouplingRow {
+        int         tri  = -1;    ///< Triangle index
+        int         node = -1;    ///< SWMM node index (-1 until resolved)
+        std::string node_name;    ///< Deferred name (cleared after resolve)
+        double      cd   = 0.65;  ///< Discharge coefficient
+        double      area = 1.0;   ///< Effective exchange area
+    };
+    std::vector<TriCouplingRow> tri_couplings;
+
     // -----------------------------------------------------------------------
     // Capacity queries
     // -----------------------------------------------------------------------
