@@ -907,6 +907,51 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
         }
 
+        // 1D <-> 2D Exchange Reconciliation — the coupled-loop ledger books
+        // spill as Flooding Loss and drain as external inflow, so the plain
+        // flow-routing continuity above double-counts exchanged water as both
+        // a loss and a new inflow. Recompute it here with the exchange treated
+        // as an internal transfer between the two domains (report-only; the
+        // underlying ledgers are untouched).
+        if (mb2.coupling_1d_to_2d_in > 0.0 || mb2.coupling_2d_to_1d_out > 0.0) {
+            const auto& mb1 = ctx.mass_balance;
+            // 2D ledger volumes are SI m³; the 1D balance is internal ft³
+            // regardless of flow units (legacy parity; land_vcf/mvol_vcf
+            // convert ft³ → report units), so convert the exchange to ft³.
+            const double m3_to_1d = 1.0 / 0.028316846592;
+            const double spill_1d = mb2.coupling_1d_to_2d_in  * m3_to_1d;
+            const double drain_1d = mb2.coupling_2d_to_1d_out * m3_to_1d;
+
+            WRITE(f, "");
+            WRITE(f, "");
+            std::fprintf(f, "\n  **************************        Volume        Volume");
+            std::fprintf(f, si_report
+                ? "\n  1D <-> 2D Exchange Reconcil.   hectare-m      10^6 ltr"
+                : "\n  1D <-> 2D Exchange Reconcil.   acre-feet      10^6 gal");
+            std::fprintf(f, "\n  **************************     ---------     ---------");
+            auto rowx = [&](const char* label, double vol_1d) {
+                std::fprintf(f, "\n  %s%14.3f%14.3f", label,
+                             vol_1d * land_vcf, vol_1d * mvol_vcf);
+            };
+            rowx("1D -> 2D Spill ...........", spill_1d);
+            rowx("2D -> 1D Drain ...........", drain_1d);
+            rowx("Net 1D -> 2D .............", spill_1d - drain_1d);
+
+            // Flow-routing continuity with the exchange internal: remove the
+            // drain from external inflow and the spill from flooding loss.
+            const double in_adj  = mb1.routing_dry_weather + mb1.routing_wet_weather
+                                 + mb1.routing_gw_inflow + mb1.routing_rdii
+                                 + (mb1.routing_external - drain_1d)
+                                 + mb1.routing_init_storage;
+            const double out_adj = (mb1.routing_flooding - spill_1d)
+                                 + mb1.routing_outflow + mb1.routing_evap_loss
+                                 + mb1.routing_seep_loss + mb1.routing_final_storage;
+            const double err_adj = (in_adj > 0.0)
+                                 ? (in_adj - out_adj) / in_adj : 0.0;
+            std::fprintf(f,
+                "\n  Flow Continuity w/ Exchange Internal (%%) %8.3f",
+                err_adj * 100.0);
+        }
     }
 
     WRITE(f, "");
