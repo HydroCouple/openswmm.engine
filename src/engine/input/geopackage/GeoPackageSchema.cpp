@@ -13,7 +13,7 @@ namespace openswmm::gpkg {
 // GeoPackage metadata tables (OGC standard)
 // ============================================================================
 
-static const char* GPKG_METADATA_DDL = R"SQL(
+static const char GPKG_METADATA_DDL[] = R"SQL(
 -- GeoPackage required metadata tables (OGC 12-128r18)
 CREATE TABLE IF NOT EXISTS gpkg_spatial_ref_sys (
     srs_name                 TEXT NOT NULL,
@@ -58,12 +58,18 @@ CREATE TABLE IF NOT EXISTS gpkg_geometry_columns (
     CONSTRAINT fk_gc_srs FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys(srs_id)
 );
 )SQL";
+static_assert(sizeof(GPKG_METADATA_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part A: Model Input tables
+//
+// Split into four chunks (A1..A4) purely to stay under the MSVC 16380-byte
+// per-string-literal limit (error C2026); the split points are statement
+// boundaries and the concatenation is the original Part A DDL verbatim.
 // ============================================================================
 
-static const char* PART_A_DDL = R"SQL(
+// Part A1: options + the node family (nodes and its 1:1 subtype tables).
+static const char PART_A1_DDL[] = R"SQL(
 -- Options (key-value)
 CREATE TABLE IF NOT EXISTS options (
     simulation_id  TEXT NOT NULL,
@@ -155,6 +161,11 @@ CREATE TABLE IF NOT EXISTS dividers (
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+)SQL";
+static_assert(sizeof(PART_A1_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
+// Part A2: the link family (links and its 1:1 subtype tables).
+static const char PART_A2_DDL[] = R"SQL(
 -- Links (LINESTRING feature table). Phase 7: slim relational base — common
 -- fields + discriminator + geom. Subtype properties live in the
 -- conduits/pumps/orifices/weirs/outlets child tables (1:1 specialization,
@@ -268,6 +279,11 @@ CREATE TABLE IF NOT EXISTS outlets (
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+)SQL";
+static_assert(sizeof(PART_A2_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
+// Part A3: hydrology, connectivity, lookup tables, and inflows.
+static const char PART_A3_DDL[] = R"SQL(
 -- Subcatchments (MULTIPOLYGON feature table)
 CREATE TABLE IF NOT EXISTS subcatchments (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -421,6 +437,11 @@ CREATE TABLE IF NOT EXISTS dwf_inflows (
 );
 CREATE INDEX IF NOT EXISTS idx_dwf_node ON dwf_inflows(simulation_id, node_id);
 
+)SQL";
+static_assert(sizeof(PART_A3_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
+// Part A4: controls, climate, water quality, LID, RDII, and transects.
+static const char PART_A4_DDL[] = R"SQL(
 -- Control rules ([CONTROLS]) — one row per rule; rule_text is the full
 -- multi-line "RULE/IF/THEN/ELSE/PRIORITY" block, stored verbatim (names +
 -- setpoints resolved by the control engine, identically to the .inp path).
@@ -630,12 +651,13 @@ CREATE TABLE IF NOT EXISTS transects (
 );
 CREATE INDEX IF NOT EXISTS idx_transects_lookup ON transects(simulation_id, transect_id, ordinal);
 )SQL";
+static_assert(sizeof(PART_A4_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part B: Simulation Results & Reports
 // ============================================================================
 
-static const char* PART_B_DDL = R"SQL(
+static const char PART_B_DDL[] = R"SQL(
 -- Simulation run registry
 CREATE TABLE IF NOT EXISTS simulations (
     simulation_id              TEXT PRIMARY KEY,
@@ -692,12 +714,13 @@ CREATE TABLE IF NOT EXISTS result_summary (
     PRIMARY KEY (simulation_id, object_type, object_id, variable_id)
 );
 )SQL";
+static_assert(sizeof(PART_B_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part C: Observed / Sensor Data
 // ============================================================================
 
-static const char* PART_C_DDL = R"SQL(
+static const char PART_C_DDL[] = R"SQL(
 CREATE TABLE IF NOT EXISTS observed_series (
     series_id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name              TEXT NOT NULL UNIQUE,
@@ -725,6 +748,7 @@ CREATE TABLE IF NOT EXISTS observed_values (
 CREATE INDEX IF NOT EXISTS idx_obs_values_lookup
     ON observed_values(series_id, timestamp);
 )SQL";
+static_assert(sizeof(PART_C_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part D: External-File Content (Slice IO-5)
@@ -746,7 +770,7 @@ CREATE INDEX IF NOT EXISTS idx_obs_values_lookup
 // split that lets each pollutant row carry its own owning-object FK).
 // ============================================================================
 
-static const char* PART_D_DDL = R"SQL(
+static const char PART_D_DDL[] = R"SQL(
 -- ----------------------------------------------------------------------------
 -- Hot-start state (replaces opaque .hsf snapshots).
 -- ----------------------------------------------------------------------------
@@ -997,6 +1021,7 @@ CREATE TABLE IF NOT EXISTS routing_interface_node_pollutants (
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 )SQL";
+static_assert(sizeof(PART_D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part E — 2D surface-routing mesh (model definition only; 2D simulation
@@ -1025,7 +1050,7 @@ CREATE TABLE IF NOT EXISTS routing_interface_node_pollutants (
 // Part A model table.
 // ============================================================================
 
-static const char* MESH_2D_DDL = R"SQL(
+static const char MESH_2D_DDL[] = R"SQL(
 -- ----------------------------------------------------------------------------
 -- 2D mesh vertices (POINT feature layer; x/y/z are canonical, geom derived).
 -- ----------------------------------------------------------------------------
@@ -1160,6 +1185,7 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
 CREATE INDEX IF NOT EXISTS idx_mesh2d_tc_node
     ON mesh_2d_triangle_coupling(simulation_id, node_id);
 )SQL";
+static_assert(sizeof(MESH_2D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Implementation
@@ -1171,7 +1197,10 @@ void create_schema(sqlite3* db) {
     exec(db, "PRAGMA application_id=0x47504B47"); // 'GPKG'
 
     exec(db, GPKG_METADATA_DDL);
-    exec(db, PART_A_DDL);
+    exec(db, PART_A1_DDL);
+    exec(db, PART_A2_DDL);
+    exec(db, PART_A3_DDL);
+    exec(db, PART_A4_DDL);
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
