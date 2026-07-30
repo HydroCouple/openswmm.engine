@@ -109,6 +109,16 @@ struct SolverOptions2D {
     /// very deep problems. Default 4 mm; 0 = bare √. Parsed from
     /// [2D_OPTIONS] FLUX_DH_EPS; env OPENSWMM_2D_FLUX_DH_EPS overrides.
     double flux_dh_eps       = 0.004;   ///< Diffusive-flux gradient floor (m)
+    /// [2D_OPTIONS] COUPLING_SYNC (s): 1D↔2D co-advance sync-batch span.
+    /// 0 (default) couples every routing step — exchange volumes reach the
+    /// 1D with at most one routing step of lag, which keeps fill-and-spill
+    /// coupling (weir/culvert ponds) free of batch-delay ringing. > 0
+    /// batches the 2D advance over ~SPAN seconds (clamped to
+    /// [routing_step, 60]) — the wall-clock lever for large meshes where
+    /// per-step advances degenerate to the global-dt tail; expect the
+    /// held-exchange error to grow with the span.
+    double coupling_sync     = 0.0;
+
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
     bool   report_2d         = true;    ///< Write 2D results to output
 

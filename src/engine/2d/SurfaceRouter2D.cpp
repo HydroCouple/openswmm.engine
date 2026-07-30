@@ -874,15 +874,27 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     pending_dt_ += routing_dt;
     last_t_ = t;
     // OPENSWMM_2D_SYNC_SPAN (seconds): experimental override of the sync-batch
-    // span for the decoupling-viability study — bypasses both the MAX_TIMESTEP
-    // coupling and the 60 s ceiling. Unset/0 = normal policy.
+    // span for the decoupling-viability study — bypasses the [2D_OPTIONS]
+    // COUPLING_SYNC policy and the 60 s ceiling. Unset/0 = normal policy.
     static const double env_span = [] {
         const char* e = std::getenv("OPENSWMM_2D_SYNC_SPAN");
         return e ? std::atof(e) : 0.0;
     }();
+    // Default: couple every routing step. Exchange volumes booked in a batch
+    // reach the 1D spread over the FOLLOWING span, so the exchange feedback
+    // is delayed by one batch — on fill-and-spill coupling (weir/culvert
+    // ponds) any multi-step span turns that delay into a standing overshoot-
+    // and-correct oscillation (sawtooth pond depths, incoherent velocities;
+    // road_culvert rang at TV/range ≈ 11 with the previous
+    // MAX_TIMESTEP-derived 10 s span, ≈ 3 when coupled per routing step).
+    // COUPLING_SYNC > 0 opts back into batching for large meshes where the
+    // per-step advance overhead dominates.
     const double sync = env_span > 0.0
         ? std::max(env_span, ctx.options.routing_step)
-        : std::clamp(options_.max_timestep, ctx.options.routing_step, 60.0);
+        : (options_.coupling_sync > 0.0
+               ? std::clamp(options_.coupling_sync, ctx.options.routing_step,
+                            60.0)
+               : ctx.options.routing_step);
     if (pending_dt_ + 0.5 * routing_dt >= sync) {
         const double span = pending_dt_;
         pending_dt_ = 0.0;

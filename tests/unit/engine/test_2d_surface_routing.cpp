@@ -951,6 +951,16 @@ TEST(InputParsing, Parse2DOptionsLine) {
     err = parse2DOptionsLine({"LTS_TIERS", "6"}, opts);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(opts.lts_tiers, 6);
+    // COUPLING_SYNC: 0 (default) = couple every routing step; > 0 opts into
+    // sync-batch spans. Negative is rejected.
+    EXPECT_NEAR(opts.coupling_sync, 0.0, 1e-12);
+    err = parse2DOptionsLine({"COUPLING_SYNC", "60"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(opts.coupling_sync, 60.0, 1e-12);
+    EXPECT_EQ(format2DOptionValue(opts, "COUPLING_SYNC"), "60");
+    err = parse2DOptionsLine({"COUPLING_SYNC", "-5"}, opts);
+    EXPECT_FALSE(err.empty()) << "negative COUPLING_SYNC must be rejected";
+    opts.coupling_sync = 0.0;
     EXPECT_EQ(format2DOptionValue(opts, "INTEGRATOR"), "EXPLICIT");
     err = parse2DOptionsLine({"INTEGRATOR", "EXPLICIT"}, opts);
     EXPECT_TRUE(err.empty()) << err;

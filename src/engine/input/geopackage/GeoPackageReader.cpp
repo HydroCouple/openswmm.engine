@@ -163,6 +163,7 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     else if (key == "2D_DRY_DEPTH")         o->dry_depth         = std::stod(val);
     else if (key == "2D_LIMITER_EPSILON")   o->limiter_epsilon   = std::stod(val);
     else if (key == "2D_COUPLING_CD")       o->coupling_cd       = std::stod(val);
+    else if (key == "2D_COUPLING_SYNC")     o->coupling_sync     = std::stod(val);
     else if (key == "2D_MIN_TIMESTEP"    || key == "2D_REL_TOLERANCE" ||
              key == "2D_ABS_TOLERANCE"   || key == "2D_MAX_KRYLOV_DIM" ||
              key == "2D_COUPLING_INTERVAL" || key == "2D_COUPLING_WINDOW" ||
