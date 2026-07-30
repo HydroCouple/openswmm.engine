@@ -24,7 +24,7 @@ patterns — and the C side stores time series and curves in a single
 
 # cython: language_level=3
 
-from ._exceptions import ElementNotFoundError, LifecycleError
+from ._exceptions import ElementNotFoundError, ErrorCode, LifecycleError
 from typing import Tuple
 
 import numpy as np
@@ -46,11 +46,12 @@ def _raise_table_lifecycle(solver, str op):
     Table, curve, and pattern *creation* is valid only in C{BUILDING} or
     C{OPENED} state. The most common trip-up is the C{with Solver(...)}
     context manager, which auto-runs C{open()->initialize()->start()} and so
-    leaves the engine in C{STARTED} by the time the body executes.
+    leaves the engine in C{RUNNING} by the time the body executes.
     """
     state = getattr(solver, "state", None)
     state_txt = state.name if state is not None else "unknown"
     raise LifecycleError(
+        int(ErrorCode.LIFECYCLE),
         f"{op} requires the engine in BUILDING or OPENED state "
         f"(current: {state_txt}). Add tables/curves/patterns on a Solver "
         f"after open() but before initialize()/start(). Note: the "

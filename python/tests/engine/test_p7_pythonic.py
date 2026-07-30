@@ -158,12 +158,12 @@ class TestTables(EngineSolverCase):
     def test_add_timeseries_after_start_raises_friendly(self):
         """Creating a table after start() raises a state-aware LifecycleError."""
         s = self.running_solver()
-        self.assertEqual(s.state, EngineState.STARTED)
+        self.assertEqual(s.state, EngineState.RUNNING)
         with self.assertRaises(LifecycleError) as ctx:
             s.tables.add_timeseries("too_late")
         msg = str(ctx.exception)
         self.assertIn("BUILDING or OPENED", msg)
-        self.assertIn("STARTED", msg)
+        self.assertIn("RUNNING", msg)
 
     def test_add_curve_after_start_raises_friendly(self):
         s = self.running_solver()
@@ -171,7 +171,7 @@ class TestTables(EngineSolverCase):
             s.tables.add_curve("too_late_curve")
         msg = str(ctx.exception)
         self.assertIn("BUILDING or OPENED", msg)
-        self.assertIn("STARTED", msg)
+        self.assertIn("RUNNING", msg)
 
 class TestPatterns(EngineSolverCase):
     def test_collection(self):
