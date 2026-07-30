@@ -4,6 +4,9 @@
 # Working notes not intended for version control
 doc/FlashX_SWMM_crosswalk.md
 doc/Verification_Implementation_Plan.md
+/plans/
+/tools/
+docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 
 # Eclipse Stuff
 .metadata/

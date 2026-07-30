@@ -1,5 +1,0 @@
-tag,wall_s,engine_s,solver_steps,avg_internal_step_s,frozen_windows,err_fail_lines,cont_err_pct,perf,rc
-p2_storm30m_k1,13.9,14.00,522,3.4464,0,1,-2.038;24.453;-0.011,"[PERF] 2D-window=9.60s (CVODE-advance=8.86s, 2D-overhead=0.74s)  1D-step=2.34s",0
-p2_storm30m_k4,9.2,9.00,566,3.1784,0,1,-2.038;24.134;-0.012,"[PERF] 2D-window=5.35s (CVODE-advance=4.30s, 2D-overhead=1.06s)  1D-step=2.26s",0
-p2_storm30m_k4w30,9.6,9.00,568,3.1673,0,1,-2.038;26.060;-0.012,"[PERF] 2D-window=5.98s (CVODE-advance=4.18s, 2D-overhead=1.80s)  1D-step=2.21s",0
-p2_storm30m_k4mt60,8.1,8.00,512,3.5137,0,1,-2.038;24.126;-0.007,"[PERF] 2D-window=4.38s (CVODE-advance=3.54s, 2D-overhead=0.84s)  1D-step=2.38s",0
