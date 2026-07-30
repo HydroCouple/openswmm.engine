@@ -29,10 +29,10 @@ namespace openswmm::twoD {
  *
  * VFR reconstructs η from the exact stage–storage relation of the plane bed
  * through the cell's three vertex elevations (Begnudelli & Sanders 2006/2007
- * volume/free-surface relationships), C¹-regularized for the implicit solvers
- * by a wetted-area-fraction floor (VFR_MIN_WET_FRAC). Restores the C-property
- * at shorelines. CPU solvers (CVODE/ARKODE) only; the Kokkos GPU backends
- * degrade to FLAT with a one-line notice until ported.
+ * volume/free-surface relationships), C¹-regularized by a
+ * wetted-area-fraction floor (VFR_MIN_WET_FRAC). Restores the C-property
+ * at shorelines. CPU solver only; the Kokkos GPU backends degrade to FLAT
+ * with a one-line notice until ported.
  *
  * Parsed from [2D_OPTIONS] CELL_CLOSURE (FLAT|VFR).
  * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
@@ -89,7 +89,7 @@ enum class RainfallMode : int8_t {
 };
 
 /**
- * @brief Configuration for the 2D surface routing CVODE solver.
+ * @brief Configuration for the 2D surface routing solver.
  *
  * Populated from [2D_OPTIONS] input section. Defaults are chosen for
  * typical urban drainage surface routing problems.
@@ -142,8 +142,9 @@ struct SolverOptions2D {
     double             vfr_min_wet_frac = 0.01;
 
     // -----------------------------------------------------------------------
-    // Explicit local-inertial marcher (INTEGRATOR EXPLICIT) options. Ignored by
-    // the CVODE/ARKODE paths. Defaults per the 2026-07-29 reimplementation plan.
+    // Explicit local-inertial marcher (INTEGRATOR EXPLICIT — the only 2D
+    // integrator since the D2 CVODE/ARKODE retirement) options. Defaults per
+    // the 2026-07-29 reimplementation plan.
     // -----------------------------------------------------------------------
     /// Face-update θ weighting (de Almeida & Bates 2013): 1 = pure Bates 2010
     /// (no numerical diffusion), <1 blends the Perot-reconstructed neighbour
