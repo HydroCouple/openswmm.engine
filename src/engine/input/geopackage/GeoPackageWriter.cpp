@@ -1470,6 +1470,7 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_DRY_DEPTH",         fmt_g17(o.dry_depth));
     insert("2D_LIMITER_EPSILON",   fmt_g17(o.limiter_epsilon));
     insert("2D_COUPLING_CD",       fmt_g17(o.coupling_cd));
+    insert("2D_COUPLING_SYNC",     fmt_g17(o.coupling_sync));
     insert("2D_RAINFALL_MODE",     rainfall_mode_token(o.rainfall_mode));
     insert("2D_FLUX_DH_EPS",       fmt_g17(o.flux_dh_eps));
     insert("2D_CELL_CLOSURE",

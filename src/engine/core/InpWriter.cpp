@@ -290,6 +290,7 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     std::fprintf(f, "%-22s %.12g\n", "LIMITER_EPSILON",   o.limiter_epsilon);
     std::fprintf(f, "%-22s %.12g\n", "FLUX_DH_EPS",       o.flux_dh_eps);
     std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD",       o.coupling_cd);
+    std::fprintf(f, "%-22s %.12g\n", "COUPLING_SYNC",     o.coupling_sync);
     std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
                  sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
                            static_cast<int>(o.rainfall_mode) <= 2

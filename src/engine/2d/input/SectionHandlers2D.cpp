@@ -96,6 +96,10 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
+    } else if (iequals(key, "COUPLING_SYNC")) {
+        opts.coupling_sync = tryParseDouble(val, ok);
+        if (!ok || opts.coupling_sync < 0.0)
+            return "Invalid COUPLING_SYNC value (seconds, >= 0)";
     } else if (iequals(key, "LIMITER_EPSILON")) {
         opts.limiter_epsilon = tryParseDouble(val, ok);
         if (!ok) return "Invalid LIMITER_EPSILON value";
@@ -209,7 +213,7 @@ bool is2DRetiredOptionKey(const std::string& key) {
 
 bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
-        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD",
+        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC",
         "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
@@ -236,6 +240,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
     if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
+    if (iequals(key, "COUPLING_SYNC"))     return fmt_g(opts.coupling_sync);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
     if (iequals(key, "CELL_CLOSURE"))
