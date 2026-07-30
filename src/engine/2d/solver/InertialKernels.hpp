@@ -42,6 +42,17 @@
 #include "../data/SolverOptions2D.hpp"
 #include "../mesh/VfrClosure.hpp"
 
+// Portable kernel-function marker (P5 Kokkos port): host builds get plain
+// `inline`; the GPU plugin defines OPENSWMM_KERNEL_FN to
+// KOKKOS_INLINE_FUNCTION *before* including this header so the identical
+// scalar bodies compile for the device (CUDA/HIP/SYCL) as well. The math uses
+// std:: functions deliberately — CUDA/HIP provide device overloads and Kokkos
+// enables relaxed-constexpr; keeping one spelling preserves single-source
+// bit-identity with the serial marcher.
+#ifndef OPENSWMM_KERNEL_FN
+#define OPENSWMM_KERNEL_FN inline
+#endif
+
 namespace openswmm::twoD::inertial {
 
 inline constexpr double kGravity = 9.80665;  ///< matches the existing kernels
@@ -54,23 +65,45 @@ inline constexpr double kGravity = 9.80665;  ///< matches the existing kernels
 /// decays q geometrically and rest states are exact.
 inline constexpr double kEtaDeadband = 1.0e-12;
 
+/// Scalar core of the V → (η, depth) closure (device-callable; the MeshData
+/// wrapper below loads the geometry and forwards — identical ops and order).
+OPENSWMM_KERNEL_FN void etaDepthScalar(double area, double cz,
+                                       double z1, double z2, double z3,
+                                       bool vfr, double vfr_min_wet_frac,
+                                       double V, double& eta,
+                                       double& depth) noexcept {
+    const double v = (V > 0.0) ? V : 0.0;
+    depth = (area > 1.0e-30) ? v / area : 0.0;
+    if (vfr) {
+        vfrSort3(z1, z2, z3);
+        eta = vfrEtaFromMeanDepth(z1, z2, z3, depth, vfr_min_wet_frac);
+    } else {
+        eta = cz + depth;
+    }
+}
+
+/// Scalar core of the η → V inverse (device-callable).
+OPENSWMM_KERNEL_FN double volumeFromEtaScalar(double area, double cz,
+                                              double z1, double z2, double z3,
+                                              bool vfr, double vfr_min_wet_frac,
+                                              double eta) noexcept {
+    if (vfr) {
+        vfrSort3(z1, z2, z3);
+        return area * vfrMeanDepthFromEta(z1, z2, z3, eta, vfr_min_wet_frac);
+    }
+    const double d = eta - cz;
+    return (d > 0.0) ? area * d : 0.0;
+}
+
 /// Volume → (η, depth) closure — the SAME semantics as the CVODE/ARKODE
 /// reconstructFromVolume: depth = max(V,0)/A; FLAT η = z_c + depth, VFR η from
 /// the Begnudelli–Sanders planar-bed relation (ε-regularized).
 inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
                          int i, double V, double& eta, double& depth) noexcept {
-    const double A = m.tri_area[i];
-    const double v = (V > 0.0) ? V : 0.0;
-    depth = (A > 1.0e-30) ? v / A : 0.0;
-    if (o.cell_closure == CellClosure2D::VFR) {
-        double z1 = m.vz[m.tri_v0[i]];
-        double z2 = m.vz[m.tri_v1[i]];
-        double z3 = m.vz[m.tri_v2[i]];
-        vfrSort3(z1, z2, z3);
-        eta = vfrEtaFromMeanDepth(z1, z2, z3, depth, o.vfr_min_wet_frac);
-    } else {
-        eta = m.tri_cz[i] + depth;
-    }
+    etaDepthScalar(m.tri_area[i], m.tri_cz[i],
+                   m.vz[m.tri_v0[i]], m.vz[m.tri_v1[i]], m.vz[m.tri_v2[i]],
+                   o.cell_closure == CellClosure2D::VFR, o.vfr_min_wet_frac,
+                   V, eta, depth);
 }
 
 /// Exact inverse of the closure: cell volume holding free surface η — FLAT
@@ -78,21 +111,16 @@ inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
 /// with cellEtaDepth). Closure-consistent seeding for tests/hotstart.
 inline double cellVolumeFromEta(const MeshData& m, const SolverOptions2D& o,
                                 int i, double eta) noexcept {
-    if (o.cell_closure == CellClosure2D::VFR) {
-        double z1 = m.vz[m.tri_v0[i]];
-        double z2 = m.vz[m.tri_v1[i]];
-        double z3 = m.vz[m.tri_v2[i]];
-        vfrSort3(z1, z2, z3);
-        return m.tri_area[i]
-               * vfrMeanDepthFromEta(z1, z2, z3, eta, o.vfr_min_wet_frac);
-    }
-    const double d = eta - m.tri_cz[i];
-    return (d > 0.0) ? m.tri_area[i] * d : 0.0;
+    return volumeFromEtaScalar(m.tri_area[i], m.tri_cz[i],
+                               m.vz[m.tri_v0[i]], m.vz[m.tri_v1[i]],
+                               m.vz[m.tri_v2[i]],
+                               o.cell_closure == CellClosure2D::VFR,
+                               o.vfr_min_wet_frac, eta);
 }
 
 /// Flow depth at a face: the water surface above the higher of the two
 /// interface beds. ≤ 0 means the face is a wall this substep.
-inline double faceFlowDepth(double etaL, double etaR, double zface) noexcept {
+OPENSWMM_KERNEL_FN double faceFlowDepth(double etaL, double etaR, double zface) noexcept {
     return std::max(etaL, etaR) - zface;
 }
 
@@ -102,7 +130,7 @@ inline double faceFlowDepth(double etaL, double etaR, double zface) noexcept {
 /// face Manning coefficient. Friction is semi-implicit: dividing by
 /// (1 + g·Δt·n²·|q|/h^{7/3}) is unconditionally stable — h^{7/3} written as
 /// h²·cbrt(h) to avoid pow().
-inline double inertialFaceUpdate(double q, double qhat, double hf, double dt,
+OPENSWMM_KERNEL_FN double inertialFaceUpdate(double q, double qhat, double hf, double dt,
                                  double slope, double n2) noexcept {
     const double h73 = hf * hf * std::cbrt(hf);
     const double num = qhat - kGravity * hf * dt * slope;
@@ -113,7 +141,7 @@ inline double inertialFaceUpdate(double q, double qhat, double hf, double dt,
 /// Froude-number clamp: |q| ≤ Fr_max · h_f · √(g·h_f). The steep-face guard —
 /// the local-inertial scheme carries no advection term, so supercritical
 /// acceleration must be capped rather than resolved.
-inline double froudeCap(double q, double hf, double fr_max) noexcept {
+OPENSWMM_KERNEL_FN double froudeCap(double q, double hf, double fr_max) noexcept {
     const double qcap = fr_max * hf * std::sqrt(kGravity * hf);
     return std::clamp(q, -qcap, qcap);
 }
@@ -121,7 +149,7 @@ inline double froudeCap(double q, double hf, double fr_max) noexcept {
 /// Per-cell CFL stable step: dt = α·L_char/(√(g·h) + |u|), with |u| = |q⃗|/h
 /// the cell speed from the Perot reconstruction (pass 0 when unavailable —
 /// the gravity-wave celerity dominates in the flows this scheme is valid for).
-inline double cellCflDt(double alpha, double lchar, double h,
+OPENSWMM_KERNEL_FN double cellCflDt(double alpha, double lchar, double h,
                         double speed) noexcept {
     const double c = std::sqrt(kGravity * h) + speed;
     return (c > 1.0e-12) ? alpha * lchar / c : 1.0e30;
@@ -131,7 +159,7 @@ inline double cellCflDt(double alpha, double lchar, double h,
 /// fluxes (+ explicit sinks) may take at most β·max(V,0) over Δt. Faces leaving
 /// the cell are scaled by λ; the identical scaled flux updates both incident
 /// cells, so conservation is untouched.
-inline double positivityScale(double V, double outflow_m3s, double dt,
+OPENSWMM_KERNEL_FN double positivityScale(double V, double outflow_m3s, double dt,
                               double beta) noexcept {
     if (outflow_m3s <= 0.0 || dt <= 0.0) return 1.0;
     const double avail = beta * std::max(V, 0.0);
