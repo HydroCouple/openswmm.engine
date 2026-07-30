@@ -1,2 +1,0 @@
-tag,wall_s,engine_s,solver_steps,avg_internal_step_s,frozen_windows,err_fail_lines,cont_err_pct,perf,rc
-explicit_storm30m,9.8,10.00,536,3.3563,0,1,-2.038;24.184;-0.212,"[PERF] 2D-window=6.03s (CVODE-advance=5.01s, 2D-overhead=1.02s)  1D-step=2.21s",0
