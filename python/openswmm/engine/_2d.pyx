@@ -11,7 +11,7 @@ Cython wrapper for the 2D surface routing C API.
 The :class:`Surface2D` class wraps the C functions declared in
 ``openswmm_2d.h`` and supports NumPy arrays for bulk data access. The
 2D module is optional and is only available when the package is built
-with ``OPENSWMM_BUILD_2D=ON`` (which also requires SUNDIALS / CVODE).
+with ``OPENSWMM_BUILD_2D=ON``.
 """
 
 cimport numpy as np
@@ -37,9 +37,9 @@ cdef class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
 
     The module solves the depth-averaged shallow-water equations on an
-    unstructured triangular mesh and is integrated in time with CVODE
-    from SUNDIALS. Two-way coupling with the 1D drainage network is
-    supported per-vertex and per-triangle.
+    unstructured triangular mesh and is integrated in time with the
+    explicit local-inertial finite-volume marcher. Two-way coupling with
+    the 1D drainage network is supported per-vertex and per-triangle.
 
     @ivar _engine: Internal pointer to the underlying C{SWMM_Engine}
         handle (managed by the Cython extension).
@@ -455,6 +455,76 @@ cdef class Surface2D:
                                                     &node_idx))
         return node_idx
 
+    def add_triangle_coupling(self, int tri_idx, str node_name,
+                              double cd, double area) -> None:
+        """Append one node->cell coupling row for a triangle.
+
+        Corresponds to the C{[2D_TRIANGLE_NODE_MAP]} repeated-row form. A
+        triangle may carry several coupling rows (one per node), so this
+        APPENDS rather than overwrites (contrast
+        L{set_vertex_coupled_node}). The node name is stored verbatim and
+        resolved against the current model; the C{.inp} writer emits one
+        row per coupling.
+
+        @param tri_idx: Triangle index (0-based).
+        @type tri_idx: int
+        @param node_name: Target 1D node id; must be non-empty.
+        @type node_name: str
+        @param cd: Discharge coefficient; must be > 0 (default 0.65).
+        @type cd: float
+        @param area: Effective exchange area in m^2; must be > 0.
+        @type area: float
+        @raise RuntimeError: If the C API rejects the row (bad triangle
+            index, empty name, or non-positive cd/area).
+        """
+        cdef bytes b = (node_name or "").encode('utf-8')
+        _check(swmm_2d_add_triangle_coupling(self._engine, tri_idx, b,
+                                              cd, area))
+
+    def clear_triangle_couplings(self) -> None:
+        """Remove every authored node->cell coupling row (all triangles).
+
+        Also clears the legacy per-triangle mirror (coupled node, CD and
+        AREA back to defaults). Vertex couplings are untouched.
+
+        @raise RuntimeError: If the C API call fails.
+        """
+        _check(swmm_2d_clear_triangle_couplings(self._engine))
+
+    @property
+    def triangle_coupling_rows(self) -> int:
+        """Number of authored node->cell coupling rows.
+
+        This counts C{[2D_TRIANGLE_NODE_MAP]} rows and is >= the number of
+        distinct coupled triangles (a triangle may carry several rows).
+
+        @return: Row count.
+        @rtype: int
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int count = 0
+        _check(swmm_2d_triangle_coupling_rows(self._engine, &count))
+        return count
+
+    def get_triangle_coupling_row(self, int row_idx):
+        """Read one authored node->cell coupling row by row index.
+
+        @param row_idx: Row index in C{[0, triangle_coupling_rows)}.
+        @type row_idx: int
+        @return: Tuple C{(tri_idx, node_idx, cd, area)} where C{node_idx}
+            is C{-1} if the node name is unresolved.
+        @rtype: tuple[int, int, float, float]
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int tri_idx = 0
+        cdef int node_idx = 0
+        cdef double cd = 0.0
+        cdef double area = 0.0
+        _check(swmm_2d_get_triangle_coupling_row(self._engine, row_idx,
+                                                  &tri_idx, &node_idx,
+                                                  &cd, &area))
+        return (tri_idx, node_idx, cd, area)
+
     # ====================================================================
     # State (depth/velocity) - per triangle bulk arrays
     # ====================================================================
@@ -719,27 +789,32 @@ cdef class Surface2D:
         return val
 
     @property
-    def cvode_steps(self) -> int:
-        """Number of CVODE internal steps in the last advance.
+    def solver_steps(self) -> int:
+        """Number of explicit-marcher sub-steps in the last advance.
+
+        Renamed from C{cvode_steps} with the D2 CVODE/ARKODE retirement.
 
         @return: Step count.
         @rtype: int
         @raise RuntimeError: If the C API call fails.
         """
         cdef long val
-        _check(swmm_2d_get_cvode_steps(self._engine, &val))
+        _check(swmm_2d_get_solver_steps(self._engine, &val))
         return val
 
     @property
-    def cvode_last_step(self) -> float:
-        """Last CVODE internal step size.
+    def solver_last_step(self) -> float:
+        """The explicit marcher's last sub-step size in seconds.
+
+        Renamed from C{cvode_last_step} with the D2 CVODE/ARKODE
+        retirement.
 
         @return: Step size.
         @rtype: float
         @raise RuntimeError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_cvode_last_step(self._engine, &val))
+        _check(swmm_2d_get_solver_last_step(self._engine, &val))
         return val
 
     def get_stat_max_depths(self):

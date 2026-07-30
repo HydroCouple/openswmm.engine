@@ -42,6 +42,14 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_vertex_coupling_area(void* engine, int vidx, double* area)
     int swmm_2d_set_vertex_coupling_area(void* engine, int vidx, double area)
     int swmm_2d_triangle_get_coupled_node(void* engine, int tidx, int* nidx)
+    int swmm_2d_add_triangle_coupling(void* engine, int tidx,
+                                       const char* node_name,
+                                       double cd, double area)
+    int swmm_2d_clear_triangle_couplings(void* engine)
+    int swmm_2d_triangle_coupling_rows(void* engine, int* count)
+    int swmm_2d_get_triangle_coupling_row(void* engine, int row_idx,
+                                           int* tri_idx, int* node_idx,
+                                           double* cd, double* area)
 
     # State — per triangle
     int swmm_2d_get_depth(void* engine, int idx, double* depth)
@@ -63,8 +71,8 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_max_depth(void* engine, double* max_depth)
     int swmm_2d_get_total_volume(void* engine, double* volume)
     int swmm_2d_get_total_exchange_flow(void* engine, double* flow)
-    int swmm_2d_get_cvode_steps(void* engine, long* steps)
-    int swmm_2d_get_cvode_last_step(void* engine, double* h_last)
+    int swmm_2d_get_solver_steps(void* engine, long* steps)
+    int swmm_2d_get_solver_last_step(void* engine, double* h_last)
     int swmm_2d_get_stat_max_depths(void* engine, double* max_depths)
     int swmm_2d_get_stat_max_velocities(void* engine, double* max_velocities)
     int swmm_2d_get_stat_max_continuity_err(void* engine, double* max_errs)

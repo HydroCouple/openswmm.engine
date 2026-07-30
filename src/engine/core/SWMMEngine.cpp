@@ -187,11 +187,22 @@ int SWMMEngine::open(const char* inp_path,
                 surface_router_.pendingEdgeConveyanceRows(),
                 mf, base_dir);
             if (!err.empty()) {
-                ctx_.error_code    = SWMM_ERR_PARSE;
-                ctx_.error_message = err;
-                ctx_.errors.push_back(err);
-                write_open_failure_report();
-                return SWMM_ERR_PARSE;
+                if (lenient_open_) {
+                    // A missing/unreadable external mesh must not make the
+                    // whole model unopenable in an editor — discard any
+                    // partially-read mesh state, record the diagnostic, and
+                    // continue 1D-only. Running still uses a strict open.
+                    surface_router_.mesh() = {};
+                    surface_router_.pendingBCRows().clear();
+                    surface_router_.pendingEdgeConveyanceRows().clear();
+                    ctx_.errors.push_back(err);
+                } else {
+                    ctx_.error_code    = SWMM_ERR_PARSE;
+                    ctx_.error_message = err;
+                    ctx_.errors.push_back(err);
+                    write_open_failure_report();
+                    return SWMM_ERR_PARSE;
+                }
             }
         }
     }
@@ -2692,7 +2703,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
 #ifdef OPENSWMM_HAS_2D
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
-    //      advance CVODE solver, transfer outfall discharges to 2D cells.
+    //      advance the 2D solver, transfer outfall discharges to 2D cells.
     surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
 #endif
 
@@ -3890,7 +3901,7 @@ int SWMMEngine::end() noexcept {
     // by OPENSWMM_PERF so normal runs are unaffected. (See core/PerfTimers.hpp.)
     if (std::getenv("OPENSWMM_PERF") != nullptr) {
         std::fprintf(stderr,
-            "[PERF] 2D-window=%.2fs (CVODE-advance=%.2fs, 2D-overhead=%.2fs)  "
+            "[PERF] 2D-window=%.2fs (2D-advance=%.2fs, 2D-overhead=%.2fs)  "
             "1D-step=%.2fs\n",
             openswmm::perf::sec_2d_window,
             openswmm::perf::sec_2d_advance,
@@ -4442,7 +4453,7 @@ void SWMMEngine::initHydraulics() noexcept {
 #ifdef OPENSWMM_HAS_2D
     // 1a. Initialize optional 2D surface routing module.
     //     Builds mesh topology, vertex stencils, resolves coupling maps,
-    //     suppresses ponding at coupled nodes, and initializes CVODE.
+    //     suppresses ponding at coupled nodes, and initializes the 2D solver.
     //     initialize() throws std::runtime_error on invalid 2D input (bad mesh,
     //     unknown coupled node, out-of-range edge). This function is noexcept, so
     //     an escaping exception would std::terminate the process. Catch it and

@@ -102,7 +102,7 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
  *
  *  When called while the engine is RUNNING, the solver state (`head`,
  *  `depth`) is intentionally **not** rewritten — `head` remains the value
- *  CVODE is integrating; the implied `depth = head - bed` therefore changes
+ *  the solver is integrating; the implied `depth = head - bed` therefore changes
  *  by the same amount as bed. This is the expected physical semantics
  *  ("raising the bed under water reduces water depth there").
  *
@@ -399,7 +399,7 @@ SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,
  * slot on the neighbour triangle so mass conservation is preserved.
  *
  * Safe to call between routing steps. Calling during a routing step is
- * undefined — the CVODE sub-stepper holds a const reference to the mesh.
+ * undefined — the 2D sub-stepper holds a const reference to the mesh.
  * ========================================================================= */
 
 /** @brief Get the per-edge conveyance factor for one edge.
@@ -484,14 +484,18 @@ SWMM_ENGINE_API int swmm_2d_get_total_volume(SWMM_Engine engine, double* volume)
 SWMM_ENGINE_API int swmm_2d_get_total_exchange_flow(SWMM_Engine engine,
                                                       double* flow);
 
-/** @brief Get number of CVODE internal steps taken in the last advance.
+/** @brief Get number of explicit-marcher sub-steps taken in the last advance.
+ *  (Renamed from swmm_2d_get_cvode_steps with the D2 CVODE/ARKODE
+ *  retirement.)
  *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_cvode_steps(SWMM_Engine engine, long* steps);
+SWMM_ENGINE_API int swmm_2d_get_solver_steps(SWMM_Engine engine, long* steps);
 
-/** @brief Get CVODE last internal step size.
+/** @brief Get the explicit marcher's last sub-step size (s).
+ *  (Renamed from swmm_2d_get_cvode_last_step with the D2 CVODE/ARKODE
+ *  retirement.)
  *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_cvode_last_step(SWMM_Engine engine,
-                                                  double* h_last);
+SWMM_ENGINE_API int swmm_2d_get_solver_last_step(SWMM_Engine engine,
+                                                   double* h_last);
 
 /** @brief Get per-triangle max depth statistics (cumulative).
  *  @param max_depths Output array (pre-allocated to triangle_count).
@@ -608,10 +612,11 @@ SWMM_ENGINE_API int swmm_2d_set_dry_depth(SWMM_Engine engine, double dry_depth);
  *
  *  WALL / NORMAL_FLOW / SPECIFIED_STAGE were the original three; the
  *  SPECIFIED_FLOW (3) and RATING_CURVE (4) values were added per GUI plan
- *  §V V-E4 / V-E5. Storage + this C API only at this revision — the
- *  FV-SWE flux integration for non-Wall BCs is deferred to a separate
- *  slice (V-E-FLUX). The solver still treats every boundary edge as
- *  Wall regardless of type today (see SurfaceFluxCalculator.cpp:131).
+ *  §V V-E4 / V-E5. All five types are enforced at flux time by the
+ *  explicit marcher (SurfaceFluxCalculator::boundaryEdgeFlux); timeseries
+ *  and rating-curve driving values are re-resolved every step. Note a
+ *  NORMAL_FLOW edge with zero bed slope produces zero flux (behaves as a
+ *  Wall).
  */
 #define SWMM_2D_BC_WALL            0
 #define SWMM_2D_BC_NORMAL_FLOW     1
@@ -626,7 +631,7 @@ SWMM_ENGINE_API int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count);
 /** @brief Get boundary condition type for an edge.
  *  @param tri_idx Triangle index (0-based).
  *  @param edge    Local edge index (0, 1, or 2).
- *  @param bc_type Output: SWMM_2D_BC_WALL, SWMM_2D_BC_NORMAL_FLOW, or SWMM_2D_BC_SPECIFIED_STAGE.
+ *  @param bc_type Output: one of the SWMM_2D_BC_* constants.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_type(SWMM_Engine engine,
                                                int tri_idx, int edge,

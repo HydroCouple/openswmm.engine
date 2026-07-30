@@ -61,7 +61,7 @@ public:
      * @brief Initialize the 2D module after input parsing is complete.
      *
      * Builds mesh topology, vertex stencils, resolves coupling names,
-     * and initializes the CVODE solver.
+     * and initializes the explicit 2D solver.
      *
      * @param ctx Simulation context (must have mesh_2d populated from parsing).
      */
@@ -74,7 +74,7 @@ public:
      * 1. Update outfall boundary heads from 2D state (before 1D routing)
      * 2. After 1D routing: compute coupling exchange flows
      * 3. Update 2D rainfall from system gages
-     * 4. Advance CVODE by dt_swmm
+     * 4. Advance the explicit 2D solver by dt_swmm
      * 5. Transfer outfall discharges into 2D cells
      * 6. Update statistics
      *
@@ -210,16 +210,16 @@ public:
     /// Get total exchange flow (sum of coupling flows, m³/s).
     double totalExchangeFlow() const;
 #ifdef OPENSWMM_HAS_2D
-    /// Access CVODE solver statistics.
-    long lastCvodeSteps() const {
+    /// Access explicit-marcher sub-step statistics.
+    long lastSolverSteps() const {
         return solver_ ? solver_->last_num_steps() : 0;
     }
-    double lastCvodeStepSize() const {
+    double lastSolverStepSize() const {
         return solver_ ? solver_->last_step_size() : 0.0;
     }
 #else
-    long lastCvodeSteps() const { return 0; }
-    double lastCvodeStepSize() const { return 0.0; }
+    long lastSolverSteps() const { return 0; }
+    double lastSolverStepSize() const { return 0.0; }
 #endif
 
 private:
