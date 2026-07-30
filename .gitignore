@@ -7,7 +7,12 @@ doc/Verification_Implementation_Plan.md
 /plans/
 /tools/
 docs/2D_MULTISCALE_FORMULATION_REVIEW.md
-/examples/
+# Ignore examples/ contents (not the dir itself, so the fixture below can be
+# re-included; git cannot re-include files under an excluded directory).
+/examples/*
+# Keep the canonical 2D fixture — tests/unit/engine/CMakeLists.txt and
+# python/tests/engine/{test_2d_evap,test_surface2d_view}.py load it from here.
+!/examples/2d_complete_example.inp
 
 # Eclipse Stuff
 .metadata/
