@@ -75,8 +75,6 @@ const char* k2DMesh = R"INP(
 [2D_OPTIONS]
 MAX_TIMESTEP        5
 DRY_DEPTH           0.002
-LINEAR_SOLVER       GMRES
-PRECONDITIONER      JACOBI
 REPORT_2D           NO
 
 [2D_VERTICES]

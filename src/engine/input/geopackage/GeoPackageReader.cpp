@@ -6,6 +6,7 @@
 
 #include "GeoPackageReader.hpp"
 #include "ExternalContentReader.hpp"
+#include <stdexcept>
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
 
@@ -159,34 +160,43 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     if (!o) return;
 
     if      (key == "2D_MAX_TIMESTEP")      o->max_timestep      = std::stod(val);
-    else if (key == "2D_MIN_TIMESTEP")      o->min_timestep      = std::stod(val);
-    else if (key == "2D_REL_TOLERANCE")     o->rel_tolerance     = std::stod(val);
-    else if (key == "2D_ABS_TOLERANCE")     o->abs_tolerance     = std::stod(val);
     else if (key == "2D_DRY_DEPTH")         o->dry_depth         = std::stod(val);
     else if (key == "2D_LIMITER_EPSILON")   o->limiter_epsilon   = std::stod(val);
     else if (key == "2D_COUPLING_CD")       o->coupling_cd       = std::stod(val);
-    else if (key == "2D_MAX_KRYLOV_DIM")    o->max_krylov_dim    = std::stoi(val);
-    else if (key == "2D_COUPLING_INTERVAL") o->coupling_interval = std::stoi(val);
-    else if (key == "2D_COUPLING_WINDOW")   o->coupling_window   = std::stod(val);
-    else if (key == "2D_ACTIVE_SET")        o->active_set        = (val == "YES");
-    else if (key == "2D_ACTIVE_SET_HALO")   o->active_set_halo   = std::stoi(val);
-    else if (key == "2D_MAX_CVODE_STEPS")   o->max_cvode_steps   = std::stoi(val);
-    else if (key == "2D_LINEAR_SOLVER") {
-        if      (val == "GMRES")    o->linear_solver = twoD::LinearSolverType::GMRES;
-        else if (val == "BICGSTAB") o->linear_solver = twoD::LinearSolverType::BICGSTAB;
-        else if (val == "TFQMR")    o->linear_solver = twoD::LinearSolverType::TFQMR;
-    }
-    else if (key == "2D_PRECONDITIONER") {
-        if      (val == "NONE")   o->preconditioner = twoD::PreconditionerType::NONE;
-        else if (val == "JACOBI") o->preconditioner = twoD::PreconditionerType::JACOBI;
-        else if (val == "ILU")    o->preconditioner = twoD::PreconditionerType::ILU;
-        else if (val == "AMG")    o->preconditioner = twoD::PreconditionerType::AMG;
+    else if (key == "2D_MIN_TIMESTEP"    || key == "2D_REL_TOLERANCE" ||
+             key == "2D_ABS_TOLERANCE"   || key == "2D_MAX_KRYLOV_DIM" ||
+             key == "2D_COUPLING_INTERVAL" || key == "2D_COUPLING_WINDOW" ||
+             key == "2D_ACTIVE_SET"      || key == "2D_ACTIVE_SET_HALO" ||
+             key == "2D_MAX_CVODE_STEPS" || key == "2D_LINEAR_SOLVER" ||
+             key == "2D_PRECONDITIONER") {
+        // Retired with the CVODE/ARKODE stack (D2, 2026-07-29): same hard-
+        // error policy as the .inp parser — a package authored for the
+        // implicit solvers must not silently run different physics.
+        throw std::runtime_error(
+            "GeoPackage option '" + key + "' was retired with the "
+            "CVODE/ARKODE 2D solvers; re-save the package (the explicit "
+            "local-inertial marcher is the only 2D integrator).");
     }
     else if (key == "2D_RAINFALL_MODE") {
         if      (val == "NATURAL_NEIGHBOUR") o->rainfall_mode = twoD::RainfallMode::NATURAL_NEIGHBOUR;
         else if (val == "SYSTEM")            o->rainfall_mode = twoD::RainfallMode::SYSTEM;
         else if (val == "NONE")              o->rainfall_mode = twoD::RainfallMode::NONE;
     }
+    else if (key == "2D_FLUX_DH_EPS")   o->flux_dh_eps = std::stod(val);
+    else if (key == "2D_CELL_CLOSURE")
+        o->cell_closure = (val == "VFR") ? twoD::CellClosure2D::VFR
+                                         : twoD::CellClosure2D::FLAT;
+    else if (key == "2D_FACE_RECONSTRUCTION")
+        o->face_reconstruction = (val == "VFR_FACE")
+                                     ? twoD::FaceDepth2D::VFR_FACE
+                                     : twoD::FaceDepth2D::MEAN;
+    else if (key == "2D_VFR_MIN_WET_FRAC") o->vfr_min_wet_frac = std::stod(val);
+    else if (key == "2D_THETA")         o->theta        = std::stod(val);
+    else if (key == "2D_CFL_NUMBER")    o->cfl_number   = std::stod(val);
+    else if (key == "2D_H_MOVE")        o->h_move       = std::stod(val);
+    else if (key == "2D_LTS_TIERS")     o->lts_tiers    = std::stoi(val);
+    else if (key == "2D_FROUDE_MAX")    o->froude_max   = std::stod(val);
+    else if (key == "2D_COUPLING_AREA") o->coupling_area_auto = (val == "AUTO");
     else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
     // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).

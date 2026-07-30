@@ -697,50 +697,6 @@ class Surface2D:
         ...
 
     @property
-    def rel_tolerance(self) -> float:
-        """CVODE relative tolerance.
-
-        @return: Relative tolerance.
-        @rtype: float
-        @raise RuntimeError: If the C API call fails.
-        """
-        ...
-
-    @rel_tolerance.setter
-    def rel_tolerance(self, value: float) -> None:
-        """Set the CVODE relative tolerance.
-
-        @param value: New relative tolerance.
-        @type value: float
-        @raise RuntimeError: If the C API rejects the value.
-        """
-        ...
-
-    @property
-    def abs_tolerance(self) -> float:
-        """CVODE absolute tolerance.
-
-        @return: Absolute tolerance.
-        @rtype: float
-        @raise RuntimeError: If the C API call fails.
-        """
-        ...
-
-    @abs_tolerance.setter
-    def abs_tolerance(self, value: float) -> None:
-        """Set the CVODE absolute tolerance.
-
-        @param value: New absolute tolerance.
-        @type value: float
-        @raise RuntimeError: If the C API rejects the value.
-        """
-        ...
-
-    # ====================================================================
-    # Boundary conditions - boundary edges
-    # ====================================================================
-
-    @property
     def boundary_edge_count(self) -> int:
         """Number of boundary edges in the 2D mesh.
 

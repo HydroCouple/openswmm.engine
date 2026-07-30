@@ -37,7 +37,6 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "2d/output/Default2DOutputPlugin.hpp"
-#include "2d/solver/CvodeSurfaceSolver.hpp"
 #include "core/SimulationContext.hpp"
 #include <openswmm/plugin_sdk/SimulationSnapshot.hpp>
 #include <hdf5.h>
@@ -838,67 +837,6 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
 // Edge Flux Tests
 // ============================================================================
 
-TEST(EdgeFlux, ZeroFluxForUniformHead) {
-    // C-property: still water on flat bed → zero flux
-    auto mesh = makeUnitSquareMesh();
-    buildVertexStencils(mesh);
-
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-    SolverOptions2D opts;
-
-    // Uniform depth = 0.1 m on flat bed (z=0)
-    for (int i = 0; i < mesh.n_triangles(); ++i) {
-        state.depth[i] = 0.1;
-        state.head[i]  = 0.1;  // z + depth = 0 + 0.1
-    }
-
-    reconstructVertexHeads(mesh, state);
-    computeUnlimitedGradients(mesh, state);
-    computeLimitedGradients(mesh, state, opts.limiter_epsilon);
-    computeEdgeFluxes(mesh, state, opts);
-
-    int n3 = mesh.n_triangles() * 3;
-    for (int i = 0; i < n3; ++i) {
-        EXPECT_NEAR(state.edge_flux[i], 0.0, 1e-10)
-            << "Edge " << i << " has non-zero flux for C-property test";
-    }
-}
-
-TEST(EdgeFlux, BoundaryEdgesHaveZeroFlux) {
-    auto mesh = makeUnitSquareMesh();
-    buildVertexStencils(mesh);
-
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-    SolverOptions2D opts;
-
-    // Sloped head: h varies between triangles
-    state.depth[0] = 0.2; state.head[0] = 0.2;
-    state.depth[1] = 0.1; state.head[1] = 0.1;
-
-    reconstructVertexHeads(mesh, state);
-    computeUnlimitedGradients(mesh, state);
-    computeLimitedGradients(mesh, state, opts.limiter_epsilon);
-    computeEdgeFluxes(mesh, state, opts);
-
-    // Boundary edges (nbr == -1) must have zero flux
-    for (int t = 0; t < mesh.n_triangles(); ++t) {
-        for (int e = 0; e < 3; ++e) {
-            int nbr = -1;
-            switch (e) {
-                case 0: nbr = mesh.tri_nbr0[t]; break;
-                case 1: nbr = mesh.tri_nbr1[t]; break;
-                case 2: nbr = mesh.tri_nbr2[t]; break;
-            }
-            if (nbr == -1) {
-                EXPECT_NEAR(state.edge_flux[t * 3 + e], 0.0, 1e-15)
-                    << "Boundary edge T" << t << "E" << e << " has non-zero flux";
-            }
-        }
-    }
-}
-
 // Mass conservation: for any shared edge, the flux stored from cell i's
 // perspective and from cell j's perspective must be exact negatives. Both
 // perspectives pick the same upstream cell (the one with the higher head),
@@ -906,176 +844,18 @@ TEST(EdgeFlux, BoundaryEdgesHaveZeroFlux) {
 // sign between the two perspectives, which makes the products exact
 // negatives. Without this property, the discretisation would silently leak
 // or duplicate mass across each interior face.
-TEST(EdgeFlux, SharedEdgeFluxesAreAntisymmetric) {
-    auto mesh = makeUnitSquareMesh();
-    buildVertexStencils(mesh);
-
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-    SolverOptions2D opts;
-
-    // Non-trivial state: heads differ across the shared edge.
-    state.depth[0] = 0.20; state.head[0] = 0.20;
-    state.depth[1] = 0.05; state.head[1] = 0.05;
-
-    reconstructVertexHeads(mesh, state);
-    computeUnlimitedGradients(mesh, state);
-    computeLimitedGradients(mesh, state, opts.limiter_epsilon);
-    computeEdgeFluxes(mesh, state, opts);
-
-    auto nbr_of = [&](int t, int e) {
-        switch (e) {
-            case 0: return mesh.tri_nbr0[t];
-            case 1: return mesh.tri_nbr1[t];
-            case 2: return mesh.tri_nbr2[t];
-        }
-        return -1;
-    };
-
-    bool tested_at_least_one_pair = false;
-    int nt = mesh.n_triangles();
-    for (int t = 0; t < nt; ++t) {
-        for (int e = 0; e < 3; ++e) {
-            int j = nbr_of(t, e);
-            if (j < 0) continue;  // boundary edge: antisymmetry doesn't apply
-            // Find the edge of triangle j that points back at t.
-            int e_back = -1;
-            for (int ej = 0; ej < 3; ++ej) {
-                if (nbr_of(j, ej) == t) { e_back = ej; break; }
-            }
-            ASSERT_GE(e_back, 0)
-                << "Triangle " << j << " does not list " << t
-                << " as a neighbour";
-
-            double f_tj = state.edge_flux[t * 3 + e];
-            double f_jt = state.edge_flux[j * 3 + e_back];
-            EXPECT_NEAR(f_tj + f_jt, 0.0, 1e-12)
-                << "Shared edge T" << t << "↔T" << j
-                << " fluxes are not antisymmetric: f_tj=" << f_tj
-                << ", f_jt=" << f_jt;
-            tested_at_least_one_pair = true;
-        }
-    }
-    EXPECT_TRUE(tested_at_least_one_pair)
-        << "No interior edges in test mesh — antisymmetry was not exercised";
-}
-
 // Global volume budget: with no sources (rainfall=0, coupling=0) and all
 // boundaries as walls, the net rate of change of total water volume must
 // be zero. Every interior edge's outflow contribution from one cell
 // cancels its inflow contribution to the neighbour, and every boundary
 // edge contributes zero — leaving Σ(ydot[i]·area[i]) = 0.
-TEST(EdgeFlux, ClosedSystemVolumeBudget) {
-    auto mesh = makeUnitSquareMesh();
-    buildVertexStencils(mesh);
-
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-    SolverOptions2D opts;
-
-    state.depth[0] = 0.20; state.head[0] = 0.20;
-    state.depth[1] = 0.05; state.head[1] = 0.05;
-    std::fill(state.rainfall.begin(),      state.rainfall.end(),      0.0);
-    std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
-
-    reconstructVertexHeads(mesh, state);
-    computeUnlimitedGradients(mesh, state);
-    computeLimitedGradients(mesh, state, opts.limiter_epsilon);
-    computeEdgeFluxes(mesh, state, opts);
-
-    std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, opts, ydot.data());
-
-    double net_dvol_dt = 0.0;
-    for (int i = 0; i < mesh.n_triangles(); ++i) {
-        net_dvol_dt += ydot[i] * mesh.tri_area[i];
-    }
-    EXPECT_NEAR(net_dvol_dt, 0.0, 1e-12)
-        << "Closed-system volume budget violated: Σ ydot·area = "
-        << net_dvol_dt << " (expected 0 within 1e-12)";
-}
-
-
 // ============================================================================
 // RHS Assembly Tests
 // ============================================================================
 
-TEST(RHSAssembly, RainfallOnlyProducesPositiveRate) {
-    auto mesh = makeUnitSquareMesh();
-
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-
-    // Zero fluxes, constant rainfall = 0.001 m/s
-    std::fill(state.edge_flux.begin(), state.edge_flux.end(), 0.0);
-    std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
-    std::fill(state.rainfall.begin(), state.rainfall.end(), 0.001);
-
-    SolverOptions2D opts;
-    std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, opts, ydot.data());
-
-    // Volume formulation: dV/dt = Σ F + A·sources. With zero flux the rate is
-    // the rainfall volume rate = rainfall · cell area.
-    for (int i = 0; i < mesh.n_triangles(); ++i) {
-        EXPECT_NEAR(ydot[i], 0.001 * mesh.tri_area[i], 1e-12)
-            << "Triangle " << i << " dV/dt != rainfall volume rate";
-    }
-}
-
-TEST(RHSAssembly, CouplingFluxAppearsInRHS) {
-    auto mesh = makeUnitSquareMesh();
-
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-
-    std::fill(state.edge_flux.begin(), state.edge_flux.end(), 0.0);
-    std::fill(state.rainfall.begin(), state.rainfall.end(), 0.0);
-    state.coupling_flux[0] = -0.005;  // Drainage sink
-    state.coupling_flux[1] =  0.003;  // Surcharge source
-
-    SolverOptions2D opts;
-    std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, opts, ydot.data());
-
-    // Volume formulation: the coupling flux (m/s) enters as a volume rate A·q.
-    EXPECT_NEAR(ydot[0], -0.005 * mesh.tri_area[0], 1e-12);
-    EXPECT_NEAR(ydot[1],  0.003 * mesh.tri_area[1], 1e-12);
-}
-
-
 // ============================================================================
 // Per-cell continuity residual (local mass balance diagnostic)
 // ============================================================================
-
-TEST(CellContinuity, ResidualZeroForConsistentStep) {
-    auto mesh = makeUnitSquareMesh();
-
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-
-    // Arbitrary inflow-positive edge fluxes (m³/s) and sources (m/s).
-    state.edge_flux = {0.01, -0.02, 0.005,  -0.01, 0.02, -0.005};
-    state.rainfall[0] = 0.001; state.rainfall[1] = 0.0;
-    state.coupling_flux[0] = -0.003; state.coupling_flux[1] = 0.002;
-
-    // A forward-Euler-consistent depth update must give zero residual.
-    SolverOptions2D opts;
-    std::vector<double> ydot(mesh.n_triangles());
-    assembleRHS(mesh, state, opts, ydot.data());
-
-    const double dt = 7.0;
-    state.save_state();  // old_volume = volume (0)
-    // Forward-Euler-consistent VOLUME update: V = V_old + dV/dt · dt.
-    for (int i = 0; i < mesh.n_triangles(); ++i)
-        state.volume[i] = state.old_volume[i] + ydot[i] * dt;
-
-    computeCellContinuity(mesh, state, opts, dt);
-
-    for (int i = 0; i < mesh.n_triangles(); ++i)
-        EXPECT_NEAR(state.cell_continuity_err[i], 0.0, 1e-12)
-            << "Triangle " << i;
-}
 
 TEST(CellContinuity, DetectsImbalance) {
     auto mesh = makeUnitSquareMesh();
@@ -1156,14 +936,6 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_NEAR(opts.max_timestep, 5.0, 1e-12);
 
-    err = parse2DOptionsLine({"REL_TOLERANCE", "1e-5"}, opts);
-    EXPECT_TRUE(err.empty()) << err;
-    EXPECT_NEAR(opts.rel_tolerance, 1e-5, 1e-18);
-
-    err = parse2DOptionsLine({"LINEAR_SOLVER", "BICGSTAB"}, opts);
-    EXPECT_TRUE(err.empty()) << err;
-    EXPECT_EQ(opts.linear_solver, LinearSolverType::BICGSTAB);
-
     err = parse2DOptionsLine({"REPORT_2D", "NO"}, opts);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_FALSE(opts.report_2d);
@@ -1172,19 +944,32 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_NEAR(opts.dry_depth, 0.005, 1e-12);
 
-    err = parse2DOptionsLine({"COUPLING_INTERVAL", "3"}, opts);
+    // Marcher configuration keys (the only integrator).
+    err = parse2DOptionsLine({"THETA", "0.9"}, opts);
     EXPECT_TRUE(err.empty()) << err;
-    EXPECT_EQ(opts.coupling_interval, 3);
+    EXPECT_NEAR(opts.theta, 0.9, 1e-12);
+    err = parse2DOptionsLine({"LTS_TIERS", "6"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_EQ(opts.lts_tiers, 6);
+    EXPECT_EQ(format2DOptionValue(opts, "INTEGRATOR"), "EXPLICIT");
+    err = parse2DOptionsLine({"INTEGRATOR", "EXPLICIT"}, opts);
+    EXPECT_TRUE(err.empty()) << err;
 
-    // Time-based macro-step window: −1 AUTO (default), 0 every step, > 0 s.
-    EXPECT_NEAR(opts.coupling_window, -1.0, 1e-12);  // default is AUTO
-    err = parse2DOptionsLine({"COUPLING_WINDOW", "7.5"}, opts);
-    EXPECT_TRUE(err.empty()) << err;
-    EXPECT_NEAR(opts.coupling_window, 7.5, 1e-12);
-    EXPECT_EQ(format2DOptionValue(opts, "COUPLING_WINDOW"), "7.5");
-    EXPECT_TRUE(is2DOptionKey("COUPLING_WINDOW"));
-    err = parse2DOptionsLine({"COUPLING_WINDOW", "bogus"}, opts);
-    EXPECT_FALSE(err.empty());
+    // Retired CVODE-stack keys are hard errors (D2, 2026-07-29).
+    for (const char* retired : {"REL_TOLERANCE", "ABS_TOLERANCE",
+                                "MAX_CVODE_STEPS", "LINEAR_SOLVER",
+                                "PRECONDITIONER", "MAX_KRYLOV_DIM",
+                                "COUPLING_INTERVAL", "COUPLING_WINDOW",
+                                "MIN_TIMESTEP", "ACTIVE_SET", "MOMENTUM",
+                                "JACOBIAN", "ATOL_AREA_REF"}) {
+        err = parse2DOptionsLine({retired, "1"}, opts);
+        EXPECT_FALSE(err.empty()) << retired << " must be a hard error";
+        EXPECT_FALSE(is2DOptionKey(retired)) << retired;
+    }
+    err = parse2DOptionsLine({"INTEGRATOR", "CVODE"}, opts);
+    EXPECT_FALSE(err.empty()) << "INTEGRATOR CVODE must be a hard error";
+    err = parse2DOptionsLine({"INTEGRATOR", "ARKODE"}, opts);
+    EXPECT_FALSE(err.empty()) << "INTEGRATOR ARKODE must be a hard error";
 
     // RAINFALL_MODE NONE: no rain on the mesh (subcatchments already capture
     // the storm; rain-on-mesh would double-count it).
@@ -1407,19 +1192,24 @@ TEST(SurfaceState, ClearResetForcings) {
 TEST(SolverOptions, DefaultValues) {
     SolverOptions2D opts;
     EXPECT_NEAR(opts.max_timestep, 10.0, 1e-12);
-    // 0 = no CVODE step floor (a hard floor makes wetting-front corrector
-    // retries unrecoverable — 2026-07 ODE reconfiguration).
-    EXPECT_NEAR(opts.min_timestep, 0.0, 1e-12);
-    EXPECT_NEAR(opts.rel_tolerance, 1e-4, 1e-18);
-    EXPECT_NEAR(opts.abs_tolerance, 1e-6, 1e-18);
     EXPECT_NEAR(opts.dry_depth, 0.001, 1e-12);
-    EXPECT_EQ(opts.max_krylov_dim, 30);
-    EXPECT_EQ(opts.coupling_interval, 0);
+    EXPECT_NEAR(opts.limiter_epsilon, 1e-6, 1e-18);
+    EXPECT_NEAR(opts.flux_dh_eps, 0.004, 1e-12);
+    EXPECT_NEAR(opts.coupling_cd, 0.65, 1e-12);
     EXPECT_TRUE(opts.report_2d);
-    EXPECT_EQ(opts.linear_solver, LinearSolverType::GMRES);
-    // Default is AMG (best available); a build without hypre resolves it to
-    // JACOBI at solver initialize, so the struct default itself is AMG.
-    EXPECT_EQ(opts.preconditioner, PreconditionerType::AMG);
+    EXPECT_EQ(opts.rainfall_mode, RainfallMode::NATURAL_NEIGHBOUR);
+    // Closure defaults: legacy FLAT + upwind cell-mean face depth (VFR is opt-in).
+    EXPECT_EQ(opts.cell_closure, CellClosure2D::FLAT);
+    EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::MEAN);
+    EXPECT_NEAR(opts.vfr_min_wet_frac, 0.01, 1e-12);
+    // Explicit local-inertial marcher — the only 2D integrator since the D2
+    // retirement of the CVODE/ARKODE stack.
+    EXPECT_NEAR(opts.theta, 0.8, 1e-12);
+    EXPECT_NEAR(opts.cfl_number, 0.7, 1e-12);
+    EXPECT_NEAR(opts.h_move, 0.003, 1e-12);
+    EXPECT_EQ(opts.lts_tiers, 4);
+    EXPECT_NEAR(opts.froude_max, 1.5, 1e-12);
+    EXPECT_FALSE(opts.coupling_area_auto);
 }
 
 
@@ -1623,223 +1413,7 @@ TEST(EdgeConveyance, ParserSkipsEmptyTokenList) {
     EXPECT_EQ(pending.size(), 0u);
 }
 
-TEST(EdgeConveyance, FluxCalculatorMultipliesByFactor) {
-    // Reference: unattenuated flux on a unit-square mesh with depth on T0
-    // and a small head step driving flow into T1.  Then re-run with
-    // conveyance 0.5 on the shared interior edge — flux halves.
-    MeshData mesh = makeUnitSquareMesh();
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-
-    state.depth[0] = 0.50;   // T0 wet
-    state.depth[1] = 0.10;   // T1 less wet
-    state.head[0]  = mesh.tri_cz[0] + state.depth[0];
-    state.head[1]  = mesh.tri_cz[1] + state.depth[1];
-
-    SolverOptions2D opts;  // dry_depth = 0.001 by default — both cells wet
-
-    // Reference run with all conveyance = 1.0.
-    computeEdgeFluxes(mesh, state, opts);
-    double ref_T0_e = 0.0, ref_T1_e = 0.0;
-    int shared_e_T0 = -1, shared_e_T1 = -1;
-    for (int e = 0; e < 3; ++e) {
-        const int nbr = (e == 0) ? mesh.tri_nbr0[0]
-                       :(e == 1) ? mesh.tri_nbr1[0]
-                       :           mesh.tri_nbr2[0];
-        if (nbr == 1) { shared_e_T0 = e; ref_T0_e = state.edge_flux[0 * 3 + e]; }
-    }
-    for (int e = 0; e < 3; ++e) {
-        const int nbr = (e == 0) ? mesh.tri_nbr0[1]
-                       :(e == 1) ? mesh.tri_nbr1[1]
-                       :           mesh.tri_nbr2[1];
-        if (nbr == 0) { shared_e_T1 = e; ref_T1_e = state.edge_flux[1 * 3 + e]; }
-    }
-    ASSERT_GE(shared_e_T0, 0);
-    ASSERT_GE(shared_e_T1, 0);
-
-    // Antisymmetry sanity check (no conveyance yet).
-    EXPECT_NEAR(ref_T0_e, -ref_T1_e, 1e-12);
-    EXPECT_GT(std::abs(ref_T0_e), 1e-9);  // non-trivial flux
-
-    // Now halve the conveyance on BOTH slots of the shared edge.
-    mesh.edge_conveyance[0 * 3 + shared_e_T0] = 0.5;
-    mesh.edge_conveyance[1 * 3 + shared_e_T1] = 0.5;
-
-    // Re-init state (depth/head reset to keep the comparison clean).
-    state.depth[0] = 0.50; state.depth[1] = 0.10;
-    state.head[0]  = mesh.tri_cz[0] + state.depth[0];
-    state.head[1]  = mesh.tri_cz[1] + state.depth[1];
-
-    computeEdgeFluxes(mesh, state, opts);
-
-    EXPECT_NEAR(state.edge_flux[0 * 3 + shared_e_T0], 0.5 * ref_T0_e, 1e-12);
-    EXPECT_NEAR(state.edge_flux[1 * 3 + shared_e_T1], 0.5 * ref_T1_e, 1e-12);
-
-    // Antisymmetry still holds with attenuation (mass conservation).
-    EXPECT_NEAR(state.edge_flux[0 * 3 + shared_e_T0],
-                -state.edge_flux[1 * 3 + shared_e_T1], 1e-12);
-}
-
-TEST(EdgeConveyance, ZeroFactorEqualsWall) {
-    // Conveyance 0.0 on the shared interior edge should produce exactly the
-    // same edge_flux as a boundary edge (which the calculator zeros via the
-    // nbr < 0 early-return).
-    MeshData mesh = makeUnitSquareMesh();
-    SurfaceStateData state;
-    state.resize(mesh.n_triangles(), mesh.n_vertices());
-    state.depth[0] = 0.50;
-    state.depth[1] = 0.10;
-    state.head[0]  = mesh.tri_cz[0] + state.depth[0];
-    state.head[1]  = mesh.tri_cz[1] + state.depth[1];
-
-    // Block the shared edge on both slots.
-    for (int e = 0; e < 3; ++e) {
-        if (mesh.tri_nbr0[0] == 1 && e == 0) mesh.edge_conveyance[0 * 3 + e] = 0.0;
-        if (mesh.tri_nbr1[0] == 1 && e == 1) mesh.edge_conveyance[0 * 3 + e] = 0.0;
-        if (mesh.tri_nbr2[0] == 1 && e == 2) mesh.edge_conveyance[0 * 3 + e] = 0.0;
-        if (mesh.tri_nbr0[1] == 0 && e == 0) mesh.edge_conveyance[1 * 3 + e] = 0.0;
-        if (mesh.tri_nbr1[1] == 0 && e == 1) mesh.edge_conveyance[1 * 3 + e] = 0.0;
-        if (mesh.tri_nbr2[1] == 0 && e == 2) mesh.edge_conveyance[1 * 3 + e] = 0.0;
-    }
-
-    SolverOptions2D opts;
-    computeEdgeFluxes(mesh, state, opts);
-
-    // The blocked shared edge → zero flux on both slots.  Other edges
-    // (which are boundary edges of the unit square) are also zero by the
-    // nbr < 0 early-return.  Net result: every slot is zero.
-    for (double f : state.edge_flux) {
-        EXPECT_DOUBLE_EQ(f, 0.0);
-    }
-}
-
 #ifdef OPENSWMM_HAS_2D
-
-// ============================================================================
-// CvodeSurfaceSolver — Phase 1 (BDF + Newton + GMRES + Jacobi) sanity tests
-// ============================================================================
-//
-// These verify the post-restoration solver configuration: that GMRES + (NONE
-// or JACOBI) initialises cleanly, that the Phase-2-reserved configurations
-// fail loudly rather than silently substituting, and that a simple
-// source-only advance succeeds end-to-end. These are NOT convergence tests at
-// small dry_depth; that's the snoopy_lagoon integration question Phase 1 is
-// set up to measure on the host build.
-
-namespace {
-
-// Helper: build a tiny flat-bed mesh + initial-state trio suitable for solver
-// initialisation. Bed elevations are zero everywhere (vertex z = 0), so head
-// = depth and the C-property degenerates trivially.
-struct SolverFixture {
-    MeshData         mesh;
-    SurfaceStateData state;
-    SolverOptions2D  opts;
-
-    void build() {
-        mesh = makeUnitSquareMesh();
-        // rhs_fn calls reconstructVertexHeads(), which iterates
-        // mesh.vert_stencil_ptr; buildVertexStencils must run before any
-        // advance() is attempted.
-        buildVertexStencils(mesh);
-        state.resize(mesh.n_triangles(), mesh.n_vertices());
-        // H-formulation: y_i = head_i = depth_i + z_i. Flat bed (z=0)
-        // initially dry → head = 0.
-        for (int i = 0; i < mesh.n_triangles(); ++i) {
-            state.head[i]  = mesh.tri_cz[i];
-            state.depth[i] = 0.0;
-        }
-    }
-};
-
-} // anonymous namespace
-
-TEST(CvodeSurfaceSolverPhase1, InitializesWithGmresAndNoPreconditioner) {
-    SolverFixture fx; fx.build();
-    fx.opts.linear_solver  = LinearSolverType::GMRES;
-    fx.opts.preconditioner = PreconditionerType::NONE;
-
-    CvodeSurfaceSolver solver;
-    ASSERT_NO_THROW(solver.initialize(fx.mesh, fx.state, fx.opts));
-    EXPECT_TRUE(solver.is_initialized());
-    solver.finalize();
-    EXPECT_FALSE(solver.is_initialized());
-}
-
-TEST(CvodeSurfaceSolverPhase1, InitializesWithGmresAndJacobi) {
-    SolverFixture fx; fx.build();
-    fx.opts.linear_solver  = LinearSolverType::GMRES;
-    fx.opts.preconditioner = PreconditionerType::JACOBI;
-
-    CvodeSurfaceSolver solver;
-    ASSERT_NO_THROW(solver.initialize(fx.mesh, fx.state, fx.opts));
-    EXPECT_TRUE(solver.is_initialized());
-}
-
-TEST(CvodeSurfaceSolverPhase1, RejectsBicgstabLinearSolver) {
-    SolverFixture fx; fx.build();
-    fx.opts.linear_solver  = LinearSolverType::BICGSTAB;
-    fx.opts.preconditioner = PreconditionerType::JACOBI;
-
-    CvodeSurfaceSolver solver;
-    EXPECT_THROW(solver.initialize(fx.mesh, fx.state, fx.opts),
-                 std::runtime_error);
-}
-
-TEST(CvodeSurfaceSolverPhase1, RejectsTfqmrLinearSolver) {
-    SolverFixture fx; fx.build();
-    fx.opts.linear_solver  = LinearSolverType::TFQMR;
-    fx.opts.preconditioner = PreconditionerType::JACOBI;
-
-    CvodeSurfaceSolver solver;
-    EXPECT_THROW(solver.initialize(fx.mesh, fx.state, fx.opts),
-                 std::runtime_error);
-}
-
-TEST(CvodeSurfaceSolverPhase1, RejectsIluPreconditioner) {
-    SolverFixture fx; fx.build();
-    fx.opts.linear_solver  = LinearSolverType::GMRES;
-    fx.opts.preconditioner = PreconditionerType::ILU;
-
-    CvodeSurfaceSolver solver;
-    EXPECT_THROW(solver.initialize(fx.mesh, fx.state, fx.opts),
-                 std::runtime_error);
-}
-
-TEST(CvodeSurfaceSolverPhase1, AdvancesUnderConstantRainfall) {
-    // Smooth, source-only problem: uniform rainfall on a flat mesh with no
-    // head differences. With Δh ≡ 0 everywhere the edge fluxes vanish and
-    // f(y) = R is a constant scalar; this is the easiest possible
-    // convergence test for BDF + Newton + GMRES + Jacobi and exercises the
-    // full attach chain end-to-end without stressing the wet/dry path.
-    SolverFixture fx; fx.build();
-    fx.opts.linear_solver  = LinearSolverType::GMRES;
-    fx.opts.preconditioner = PreconditionerType::JACOBI;
-
-    const double rainfall_rate = 1.0e-4;   // m/s ≈ 360 mm/hr
-    for (int i = 0; i < fx.mesh.n_triangles(); ++i) {
-        fx.state.rainfall[i] = rainfall_rate;
-    }
-
-    CvodeSurfaceSolver solver;
-    ASSERT_NO_THROW(solver.initialize(fx.mesh, fx.state, fx.opts));
-
-    const double dt = 1.0;
-    double t_reached = solver.advance(0.0, dt);
-    EXPECT_NEAR(t_reached, dt, 1e-9)
-        << "CVODE did not reach t_target — corrector may have stalled";
-
-    // Expected depth after 1 s of constant rainfall at 1e-4 m/s.
-    // Tolerance is loose because the cubic Hermite shutoff at depth <
-    // dry_depth attenuates very early rainfall accumulation, and the
-    // H-formulation's depth-derived value passes through max(y-z, 0).
-    const double expected = rainfall_rate * dt;
-    for (int i = 0; i < fx.mesh.n_triangles(); ++i) {
-        EXPECT_NEAR(fx.state.depth[i], expected, 5.0e-6)
-            << "Triangle " << i << " depth = " << fx.state.depth[i]
-            << " (expected ~" << expected << ")";
-    }
-}
 
 TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     namespace fs = std::filesystem;

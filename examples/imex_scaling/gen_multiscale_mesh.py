@@ -33,7 +33,7 @@ Usage:
       [--dx-coarse 200] [--dx-fine 2] [--n-coarse-side 12] [--n-fine 24]
       [--n-trans 8] [--ratio auto] [--slope 0.001] [--patch-depth 0.5]
       [--routing-step 60] [--hours 3] [--rain-mm-hr 50] [--rain-min 60]
-      [--mannings 0.03] [--max-timestep 60] [--max-cvode-steps 200000]
+      [--mannings 0.03] [--max-timestep 60]
 
 The default builds a ~(2*12+8+24+8 = 76)^2-vertex grid ⇒ ~11k triangles with
 Δx_min=2 m, Δx_max=200 m (ratio 100x) — small enough to run quickly, multiscale
@@ -87,7 +87,6 @@ def main():
     ap.add_argument("--rain-min", type=int, default=60)
     ap.add_argument("--mannings", type=float, default=0.03)
     ap.add_argument("--max-timestep", type=float, default=60.0)
-    ap.add_argument("--max-cvode-steps", type=int, default=200000)
     a = ap.parse_args()
 
     spac = graded_spacings(a.dx_coarse, a.dx_fine, a.n_coarse_side,
@@ -193,17 +192,9 @@ def main():
     P("")
     P("[2D_OPTIONS]")
     P(f"MAX_TIMESTEP           {a.max_timestep:g}")
-    P("MIN_TIMESTEP           0.001")
-    P("REL_TOLERANCE          0.0001")
-    P("ABS_TOLERANCE          1e-06")
     P("DRY_DEPTH              0.0001")
     P("LIMITER_EPSILON        1e-06")
     P("COUPLING_CD            0.65")
-    P("MAX_KRYLOV_DIM         30")
-    P("COUPLING_INTERVAL      0")
-    P(f"MAX_CVODE_STEPS        {a.max_cvode_steps}")
-    P("LINEAR_SOLVER          GMRES")
-    P("PRECONDITIONER         AMG")
     P("REPORT_2D              NO")
     P("")
     P("[2D_VERTICES]")

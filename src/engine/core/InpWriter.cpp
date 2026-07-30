@@ -282,32 +282,14 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     // ---- [2D_OPTIONS] -----------------------------------------------------
     // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
     // keys are parse errors on reload).
-    static const char* sLinSolver[] = {"GMRES", "BICGSTAB", "TFQMR"};
-    static const char* sPrecond[]   = {"NONE", "JACOBI", "ILU", "AMG"};
     static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE"};
     sec(f, "2D_OPTIONS");
     std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
     std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
-    std::fprintf(f, "%-22s %.12g\n", "MIN_TIMESTEP",      o.min_timestep);
-    std::fprintf(f, "%-22s %.12g\n", "REL_TOLERANCE",     o.rel_tolerance);
-    std::fprintf(f, "%-22s %.12g\n", "ABS_TOLERANCE",     o.abs_tolerance);
     std::fprintf(f, "%-22s %.12g\n", "DRY_DEPTH",         o.dry_depth);
     std::fprintf(f, "%-22s %.12g\n", "LIMITER_EPSILON",   o.limiter_epsilon);
+    std::fprintf(f, "%-22s %.12g\n", "FLUX_DH_EPS",       o.flux_dh_eps);
     std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD",       o.coupling_cd);
-    std::fprintf(f, "%-22s %d\n",    "MAX_KRYLOV_DIM",    o.max_krylov_dim);
-    std::fprintf(f, "%-22s %d\n",    "COUPLING_INTERVAL", o.coupling_interval);
-    std::fprintf(f, "%-22s %.12g\n", "COUPLING_WINDOW",   o.coupling_window);
-    std::fprintf(f, "%-22s %s\n",    "ACTIVE_SET",        o.active_set ? "YES" : "NO");
-    std::fprintf(f, "%-22s %d\n",    "ACTIVE_SET_HALO",   o.active_set_halo);
-    std::fprintf(f, "%-22s %d\n",    "MAX_CVODE_STEPS",   o.max_cvode_steps);
-    std::fprintf(f, "%-22s %s\n",    "LINEAR_SOLVER",
-                 sLinSolver[static_cast<int>(o.linear_solver) >= 0 &&
-                            static_cast<int>(o.linear_solver) <= 2
-                                ? static_cast<int>(o.linear_solver) : 0]);
-    std::fprintf(f, "%-22s %s\n",    "PRECONDITIONER",
-                 sPrecond[static_cast<int>(o.preconditioner) >= 0 &&
-                          static_cast<int>(o.preconditioner) <= 3
-                              ? static_cast<int>(o.preconditioner) : 0]);
     std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
                  sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
                            static_cast<int>(o.rainfall_mode) <= 2
@@ -319,6 +301,15 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                  o.face_reconstruction == twoD::FaceDepth2D::VFR_FACE
                      ? "VFR_FACE" : "MEAN");
     std::fprintf(f, "%-22s %.12g\n", "VFR_MIN_WET_FRAC",  o.vfr_min_wet_frac);
+    // Explicit-marcher configuration (the only 2D integrator).
+    std::fprintf(f, "%-22s %s\n",    "INTEGRATOR",        "EXPLICIT");
+    std::fprintf(f, "%-22s %.12g\n", "THETA",             o.theta);
+    std::fprintf(f, "%-22s %.12g\n", "CFL_NUMBER",        o.cfl_number);
+    std::fprintf(f, "%-22s %.12g\n", "H_MOVE",            o.h_move);
+    std::fprintf(f, "%-22s %d\n",    "LTS_TIERS",         o.lts_tiers);
+    std::fprintf(f, "%-22s %.12g\n", "FROUDE_MAX",        o.froude_max);
+    std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
+                 o.coupling_area_auto ? "AUTO" : "DEFAULT");
     if (!o.output_file.empty())
         std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", o.output_file.c_str());
 

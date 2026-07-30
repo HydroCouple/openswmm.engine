@@ -78,7 +78,9 @@ REPORT_2D        NO
 """
 
 _MARCHER_KEYS_DEFAULTS = {
-    "INTEGRATOR": "CVODE",
+    # EXPLICIT is the default — and only — 2D integrator (D2 retirement of the
+    # CVODE/ARKODE stack, 2026-07-29); no INTEGRATOR line is required.
+    "INTEGRATOR": "EXPLICIT",
     "THETA": 0.8,
     "CFL_NUMBER": 0.7,
     "LTS_TIERS": 4,
@@ -169,6 +171,12 @@ class TwoDMarcherOptionsTest(unittest.TestCase):
             ext = s.options.ext
             for key, bad in (
                 ("INTEGRATOR", "RK4"),
+                # Retired with the CVODE/ARKODE stack (D2) — hard errors now.
+                ("INTEGRATOR", "CVODE"),
+                ("INTEGRATOR", "ARKODE"),
+                ("LINEAR_SOLVER", "GMRES"),
+                ("MAX_CVODE_STEPS", "500"),
+                ("COUPLING_WINDOW", "30"),
                 ("THETA", "1.5"),
                 ("CFL_NUMBER", "0"),
                 ("LTS_TIERS", "9"),
@@ -197,7 +205,9 @@ class TwoDMarcherOptionsTest(unittest.TestCase):
         with open(rpt) as f:
             txt = f.read()
         self.assertIn("2D Surface Routing Continuity", txt)
-        self.assertIn("Frozen (Failed) Windows ..             0", txt)
+        # Marcher telemetry rows (the window/CVODE stats retired with D2).
+        self.assertIn("Internal Steps", txt)
+        self.assertIn("LTS Tier 0 Occupancy", txt)
         # Engine error lines are "  ERROR nnn:" / "ERROR:" at line start —
         # distinct from the "Error-Test Failures" statistics row label.
         for line in txt.splitlines():

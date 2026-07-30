@@ -67,8 +67,6 @@ const char* k2DSections = R"INP(
 MAX_TIMESTEP        5
 DRY_DEPTH           0.002
 COUPLING_CD         0.7
-LINEAR_SOLVER       GMRES
-PRECONDITIONER      JACOBI
 REPORT_2D           NO
 
 [2D_VERTICES]
@@ -311,17 +309,21 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
 
     // Set exactly like the GUI's 2D Surface Routing tab does.
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "0.005"), 0);
-    ASSERT_EQ(swmm_options_set_ext(eng_a_, "LINEAR_SOLVER", "TFQMR"), 0);
-    ASSERT_EQ(swmm_options_set_ext(eng_a_, "MAX_KRYLOV_DIM", "55"), 0);
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "THETA", "0.9"), 0);
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "LTS_TIERS", "6"), 0);
     // Invalid values are rejected (parse2DOptionsLine validation).
     EXPECT_NE(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "not_a_number"), 0);
+    // Retired CVODE-stack keys are hard errors (D2, 2026-07-29).
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "LINEAR_SOLVER", "GMRES"), 0);
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "MAX_CVODE_STEPS", "500"), 0);
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "INTEGRATOR", "CVODE"), 0);
 
     // Read-back comes from the live SolverOptions2D, not a side store.
     char buf[64] = {};
     ASSERT_EQ(swmm_options_get_ext(eng_a_, "DRY_DEPTH", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.005");
-    ASSERT_EQ(swmm_options_get_ext(eng_a_, "LINEAR_SOLVER", buf, sizeof(buf)), 0);
-    EXPECT_STREQ(buf, "TFQMR");
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "THETA", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "0.9");
 
     // The edits persist: the emitted [2D_OPTIONS] carries them...
     const fs::path inp_b = dir_ / "opt_out.inp";
@@ -332,14 +334,16 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     const std::string dd_line = text.substr(dd, text.find('\n', dd) - dd);
     EXPECT_NE(dd_line.find("0.005"), std::string::npos)
         << "DRY_DEPTH line was: " << dd_line;
-    EXPECT_NE(text.find("TFQMR"), std::string::npos);
+    // ...retired keys are never written back...
+    EXPECT_EQ(text.find("LINEAR_SOLVER"), std::string::npos);
+    EXPECT_EQ(text.find("MAX_CVODE_STEPS"), std::string::npos);
 
     // ...and survive a reload.
     eng_b_ = open_engine(inp_b);
     ASSERT_EQ(swmm_options_get_ext(eng_b_, "DRY_DEPTH", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.005");
-    ASSERT_EQ(swmm_options_get_ext(eng_b_, "MAX_KRYLOV_DIM", buf, sizeof(buf)), 0);
-    EXPECT_STREQ(buf, "55");
+    ASSERT_EQ(swmm_options_get_ext(eng_b_, "LTS_TIERS", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "6");
 
     // Non-2D keys keep the generic ext_options behavior.
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "MY_PLUGIN_KEY", "hello"), 0);

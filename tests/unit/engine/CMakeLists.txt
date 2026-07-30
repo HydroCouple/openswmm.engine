@@ -288,13 +288,13 @@ set_tests_properties(test_engine_2d_surface PROPERTIES
     LABELS "unit"
     ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
 
-# Exercise the acceleration path end-to-end, both sides of the closure guard:
-# the Kokkos plugin implements the VFR closure ONLY, so under the (default)
-# CELL_CLOSURE FLAT the factory must REFUSE it with a visible notice (silently
-# substituting VFR was measured as 2.65M m³ of phantom initial storage on
-# Bellinge), while a VFR model must still discover and load the omp plugin
-# (the default-on policy). (Numeric omp-vs-cpu parity is ~1e-13, covered by
-# the Kokkos parity test and the serial reference in test_engine_2d_surface.)
+# Exercise the acceleration path end-to-end under BOTH cell closures. The
+# Kokkos marcher kernels implement FLAT and VFR alike, so the factory must
+# discover and load the omp plugin in both cases (the default-on policy) — the
+# old closure-refusal guard retired with the CVODE-family solvers, which were
+# VFR-only. Numeric parity is byte-exact by construction (disjoint writes,
+# exact-min reductions); the bench harness verifies .out byte-identity
+# serial-vs-omp on the Bellinge slice.
 if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
     file(COPY ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
          DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
@@ -329,34 +329,15 @@ if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
         list(APPEND _omp_test_env
              "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
     endif()
+    # test_engine_2d_omp_default carries no INTEGRATOR line, so it also gates
+    # the marcher-is-the-default contract; the separate P5
+    # test_engine_2d_omp_explicit became an exact duplicate of it once EXPLICIT
+    # became the default and was dropped.
     set_tests_properties(test_engine_2d_omp_default PROPERTIES
         LABELS "unit"
         ENVIRONMENT "${_omp_test_env}"
-        PASS_REGULAR_EXPRESSION "implements CELL_CLOSURE VFR only")
-    set_tests_properties(test_engine_2d_omp_vfr PROPERTIES
-        LABELS "unit"
-        ENVIRONMENT "${_omp_test_env}"
         PASS_REGULAR_EXPRESSION "using GPU backend: omp")
-
-    # P5: the explicit LTS marcher through the Kokkos plugin (INTEGRATOR
-    # EXPLICIT variant of the same fixture). The marcher kernels implement
-    # BOTH closures, so under the default FLAT the factory must LOAD the
-    # plugin here (no closure refusal — unlike the CVODE-family solvers
-    # gated above). Numeric parity is byte-exact by construction (disjoint
-    # writes, exact-min reductions); the bench harness verifies .out
-    # byte-identity serial-vs-omp on the Bellinge slice.
-    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
-         _omp_expl_inp)
-    string(REPLACE "[2D_OPTIONS]" "[2D_OPTIONS]\nINTEGRATOR             EXPLICIT"
-           _omp_expl_inp "${_omp_expl_inp}")
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_explicit.inp
-         "${_omp_expl_inp}")
-    add_test(
-        NAME    test_engine_2d_omp_explicit
-        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example_explicit.inp 2d_omp_explicit.rpt
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    )
-    set_tests_properties(test_engine_2d_omp_explicit PROPERTIES
+    set_tests_properties(test_engine_2d_omp_vfr PROPERTIES
         LABELS "unit"
         ENVIRONMENT "${_omp_test_env}"
         PASS_REGULAR_EXPRESSION "using GPU backend: omp")
@@ -390,28 +371,21 @@ if(OPENSWMM_BUILD_2D)
     # guards the per-window-volume carry that keeps the staggered exchange
     # mass-conservative when the routing dt varies between produce and consume.
     add_gtest_unit(test_engine_2d_coupling_conservation test_2d_coupling_conservation.cpp)
-    # Decoupled 1D/2D timesteps (2026-07 plan): per-step accumulated +
-    # RHS-interpolated exchange across multi-step macro windows, legacy
-    # COUPLING_INTERVAL → time-window mapping, withdrawal budget, and the
-    # failed-window redelivery invariant (frozen surface ⇒ net-zero exchange).
+    # Decoupled 1D/2D timesteps (2026-07 plan): per-step accumulated exchange
+    # across the marcher's multi-step sync batches, queue-spread delivery, and
+    # the withdrawal budget. The macro-window cases retired with the implicit
+    # solvers.
     add_gtest_unit(test_engine_2d_decoupled_stepping test_2d_decoupled_stepping.cpp)
     # Rainfall→mesh interpolation (natural-neighbour / IDW) + RAINFALL_MODE
     # option round-trip. Pure geometry over the engine-exported interpolator.
     add_gtest_unit(test_engine_2d_rainfall_interp test_2d_rainfall_interp.cpp)
-    # Dry-cell active-set masking: builder units (seed/halo/breach/cleanup),
-    # option round-trip, and masked-vs-unmasked dam-break equivalence.
-    add_gtest_unit(test_engine_2d_active_set test_2d_active_set.cpp)
     # VFR (volume–free-surface) closure + VFR_FACE edge gate: closure math
     # (round-trip / monotone / C¹ / dry anchor), lake-at-rest C-property at a
     # shoreline (zero fluxes under VFR, spurious under FLAT — the uphill-creep
     # driver), Eq. 14 wetting gate, and option round-trip. See
     # plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
     add_gtest_unit(test_engine_2d_vfr_closure test_2d_vfr_closure.cpp)
-    # Analytic J·v (SurfaceTangent) parity vs central-difference of the RHS —
-    # guards the analytic CVODE Jacobian that replaces the finite-difference
-    # matrix-free J·v (Phase 2 of the 2D reformulation).
-    add_gtest_unit(test_engine_2d_analytic_jv test_2d_analytic_jv.cpp)
-    # Explicit local-inertial marcher (INTEGRATOR EXPLICIT) analytic gates:
+    # Explicit local-inertial marcher analytic gates:
     # exact lake-at-rest (FLAT + VFR), dry-neighbour wall / C-property,
     # closed-basin conservation + positivity through a dam-break, Manning
     # steady-slope rain/outflow ledger + normal depth, Froude clamp.
