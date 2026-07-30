@@ -5,881 +5,963 @@ All notable changes to the OpenSWMM Engine are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The `6.0.0-alpha.3` sections below are **unreleased / pending** — no
-`v6.0.0-alpha.3` git tag has been cut yet, but it is the version already
-set in `CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json`, and
-`python/pyproject.toml` for all work merged since the `v6.0.0-alpha.1`
-tag, so it's used here instead of a generic "Unreleased" heading.
+Version boundaries in this file: `6.0.0-alpha.2` covers work merged after the
+`v6.0.0-alpha.1` tag up to and including 2026-07-12; `6.0.0-alpha.3` covers
+everything from the `6.0.0-alpha.3` version bump (2026-07-12) onward. No
+`v6.0.0-alpha.2` tag was ever cut — that version string lived only in
+`CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json` and
+`python/pyproject.toml` — so the `[6.0.0-alpha.2]` heading below is
+retroactive.
 
-## [6.0.0-alpha.3] — Control-rule runtime addition + line-precise parse errors
+> **Known gap.** Work merged between 2026-03-26 and 2026-06-09 — the
+> manufactured-benchmark and analytical-test suites, the LID exfiltration fix,
+> the RDII `IAModel` pinning, transect Error 227, `swmm_NODE_OUTFLOW`, rain-gage
+> scale factors and the cross-section legacy-parity port — is not yet itemized
+> here. See `git log v6.0.0-alpha.1..` for the interim record.
 
-### Fixed
-
-- **`swmm_control_add_rule` silently did nothing after `swmm_engine_initialize`.**
-  Rules are compiled once, inside `initialize()` → `initHydraulics()`; text
-  added afterwards was appended to `ctx.control_rules.rule_text` and never
-  parsed. The call returned `SWMM_OK` and `swmm_control_count` incremented, so
-  the rule looked accepted while having no effect for the entire run. It now
-  compiles into the live `ControlEngine` and takes effect on the next step.
-  Text is parsed into a throwaway engine first, so a rejection cannot leave the
-  live rule set half-mutated, and rejected text is not stored. Behaviour before
-  `initialize()` is unchanged (stored verbatim, compiled later) because a model
-  under construction may legitimately reference objects that do not exist yet.
-- **`ControlEngine::clearRules()`** added and called before the `[CONTROLS]`
-  parse loop. `parseRuleText` appends, so re-running `initialize()` over the
-  same rule store previously stacked a second copy of every rule.
-
-### Changed
-
-- **Control-rule parse errors now name the line and the cause.** Every
-  rejection site in `ControlEngine::parseRuleText` records a 1-based line
-  number (counting blank lines, so it indexes the caller's text directly) plus
-  a specific reason — `"line 4: no link named 'OR_NOPE' exists in the model"`
-  rather than the previous fixed `"Control-rule parser rejected the rule text"`
-  with `line_out` hardcoded to `-1`. Exposed via
-  `ControlEngine::lastParseError()`, and surfaced through
-  `swmm_control_validate_rule` (`errbuf` + `line_out`),
-  `swmm_control_add_rule` (`swmm_get_last_error_msg`), and the
-  `[CONTROLS]` block error raised during `initialize()`.
-
-## [6.0.0-alpha.3] — Object deletion: complete referential integrity + new delete APIs
+## [6.0.0-alpha.3] — 2026-07-29
 
 ### Added
 
-- **2D surface routing: VFR cell closure (opt-in).** New `[2D_OPTIONS]` keys
-  `CELL_CLOSURE` (`FLAT` | `VFR`), `FACE_RECONSTRUCTION` (`MEAN` | `VFR_FACE`),
-  and `VFR_MIN_WET_FRAC` (default `0.01`, range `(0, 0.5]`). The Begnudelli &
-  Sanders (2006/2007) volume/free-surface closure restores the C-property at
-  shorelines and removes the "water climbs uphill" artifact of the flat closure
-  (which overstates a partially wet cell's free surface by up to two-thirds of
-  its relief). Implemented on **all** backends — serial CVODE, serial ARKODE, and
-  the Kokkos OpenMP/GPU path (device VFR kernels + preconditioner chain-rule).
-  **The default stays `FLAT`/`MEAN`**: VFR resolves the shoreline wetting/drying
-  the flat closure freezes out, so it costs ~3–8× more CVODE steps and is best
-  reserved for shallow-water / gentle-slope cases (pair with
-  `PRECONDITIONER=JACOBI` and a looser `REL_TOLERANCE` on small meshes). The GUI
-  exposes all three keys in Simulation Options → 2D. See
-  `plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md`.
-- **Nine new delete + `analyze_impact` API pairs** covering every remaining
-  data-object type: `swmm_pollutant_delete`, `swmm_pattern_delete`,
-  `swmm_aquifer_delete`, `swmm_snowpack_delete`, `swmm_lid_delete`,
-  `swmm_street_delete`, `swmm_inlet_delete`, `swmm_landuse_delete`, and
-  `swmm_hydrograph_delete` (name-keyed). Each cascades or nullifies every
-  cross-reference and reports the impact set; `analyze_impact` previews the
-  same set without mutating. `SWMM_RefType` gained 15 additive values
-  (`SWMM_REF_EXT_INFLOW` … `SWMM_REF_CONTROL_RULE`).
-- **`swmm_control_find_references`** — read-only scan reporting which control
-  rules reference an object by name (word-boundary match on NODE/LINK/CONDUIT/
-  PUMP/ORIFICE/WEIR/OUTLET clauses, case-insensitive). Node/link
-  `analyze_impact` and delete reports now include affected rules as
+- **Decoupled 1D/2D timesteps with conservative per-step exchange booking.** `COUPLING_INTERVAL` is
+  mapped to a physical time window and the old step-count gating is retired, so the 2D advance
+  cadence no longer follows 1D variable-step shrinkage. Junction exchange is accumulated per 1D step
+  against a provisional-drawdown budget, failed windows go onto a redelivery queue, and window
+  exchange volumes are delivered back to the 1D spread over the following steps via
+  `nodes.coupling_queue`. The held (default) coupling path carries the whole window exchange as a
+  single mean-rate `coupling_flux` source — conservative, `y`-independent, and therefore transparent
+  to the analytic Jacobian below. New env diagnostics: `OPENSWMM_2D_DEBUG_COUPLE` (per-window
+  ledger) and `OPENSWMM_2D_DEBUG_SINK` (per-advance BDF linear-invariant defect).
+- **Analytic sparse Jacobian-vector product.** New `SurfaceTangent` module supplies the closed-form
+  tangent of the collapsed Manning diffusive-wave flux — `∂F/∂V_L`, `∂F/∂V_R` per edge via `regSqrt′`,
+  `faceDepth′` and the `dη/dV` closure chain rule — plus the evaporation-sink diagonal, as a
+  per-cell×3 sparse mat-vec that mirrors the RHS gather (race-free, antisymmetric). Registered as
+  the CVODE `JacTimes`, so each Krylov iteration is an SpMV instead of a full finite-difference RHS
+  recompute; on the `road_culvert` demo 78% of all RHS calls were FD J·v. New `[2D_OPTIONS]
+  JACOBIAN` (`FD` | `ANALYTIC`, default `ANALYTIC`; env `OPENSWMM_2D_JACOBIAN` overrides), with
+  automatic fall-back to FD wherever the analytic tangent does not cover a term. The diagonal
+  boundary tangent `∂F_bc/∂V_i` for `NORMAL_FLOW` and `SPECIFIED_STAGE` edges mirrors
+  `boundaryEdgeFlux` exactly — `SPECIFIED_STAGE` is the outfall-tailwater boundary every coupled
+  model with an outfall carries, so it is what lands the analytic Jacobian on the primary targets.
+  Only opt-in live-RHS orifice coupling and active-set masking still force FD. `test_2d_analytic_jv`
+  proves analytic == central-difference J·v to 1e-6 (`FLAT`) / 5e-5 (`VFR`+`VFR_FACE`), with a
+  dedicated `SpecifiedStage` case.
+- **Graded per-cell absolute tolerance for multi-scale meshes.** `atol_i = abs_tolerance ·
+  max(A_i, √(A_i·A_ref))` with `A_ref` the median cell area. On a mesh with wide cell-size variation
+  this lifts the WRMS tolerance of cells far below the reference scale by `√(A_ref/A_i)`, so a
+  handful of tiny cells at a coarse-cell interface no longer pin the BDF step — or the global error
+  demand — for the whole domain. Conservation is untouched (BDF conserves mass at any tolerance);
+  only local accuracy is redistributed. New `[2D_OPTIONS] ATOL_AREA_REF`: `AUTO` (median, default),
+  `0` (off, legacy pure `A_i`), or a positive `A_ref` in m². Exactly a no-op on uniform meshes
+  (`A_i == A_ref ⇒ √(A_i·A_ref) == A_i`), verified at identical BDF step counts.
+- **Partial-progress windows, on by default.** Instead of rewinding a window whose CVode step failed,
+  the solver accepts the state CVode actually reached (`tret = tn`, `yout = zn[0]`) as a short
+  window: forcings are booked over the achieved span, un-absorbed held exchange is carried in-2D
+  into the next injection, and the un-integrated span is held in a catch-up lag drained in
+  window-sized chunks — whole-backlog catch-up blows the `MAX_CVODE_STEPS` budget — leashed at
+  roughly two windows, because rainfall is sampled on the 1D clock but applied over the lagging 2D
+  span and unbounded lag distorts the hyetograph. No `ReInit`, no BDF-history loss, no dropped rain.
+  New "Partial Windows" report row. Set `OPENSWMM_2D_PARTIAL_WINDOW=0` to restore rewinding.
+- **Clamp-consistent analytic tangent, on by default.** The tangent now mirrors the `V <= 0`
+  reconstruction clamp (`dEta/dV = 0` for volume-debt cells; `V = 0` keeps the wet-branch `1/A`). It
+  is paired with partial windows by construction — partial acceptance alone parks the corrector on
+  the kink with an inconsistent Jacobian, a measured 4.8× step balloon. Set
+  `OPENSWMM_2D_TANGENT_CLAMP=0` to restore the unclamped tangent.
+- **Tangent-exact preconditioner, on by default.** `M = I - gamma*J` for BoomerAMG/Jacobi is
+  assembled directly from the surface tangents (`SurfaceJacobian::assembleFromTangents`), carrying
+  the `dF/dh_up` upwind-conveyance term the secant transmissivity omits — 10–100× dominant at
+  wetting fronts — and preserving nonsymmetry. Set `OPENSWMM_2D_PRECOND_TANGENT=0` to restore the
+  secant assembly.
+- **Permanent "2D Solver Statistics" report block** — cumulative BDF steps, nonlinear and FD-J·v RHS
+  evaluations, Newton and Krylov iterations, preconditioner setups, failures, and average/last
+  internal step.
+- **Single-cell analytic live coupling (opt-in).** Each live in-ODE coupling point becomes a
+  single-cell (centroid) point at the lowest-bed incident cell, so `Q_k` depends only on the driving
+  cell volume and its tangent is a clean diagonal. `dQ_k/dV_c` is a local central difference of
+  `computeNodeCouplingQ` about the driving cell (2 Q-evaluations per point, assembled once per
+  linear-solve setup) folded onto `diag[c]` and the augmented integral-`Q·dt` accumulator rows;
+  `applyTangentJv` stays a pure SpMV. `analyticJvEligible` now passes on the live path when every
+  point is single-cell. The RHS is unchanged and the held (default) path is byte-identical. Exchange
+  totals shift held→live (continuous vs mean-rate coupling), so live stays opt-in behind
+  `OPENSWMM_2D_LIVE_COUPLING`.
+- **Wall-time attribution under `OPENSWMM_PERF`.** Header-only chrono accumulators
+  (`core/PerfTimers.hpp`) wrap the per-window 2D advance (`fireAdvanceWindow` + `solver_->advance`)
+  and the 1D router step; `SWMMEngine::end()` prints the split. Zero effect when the variable is
+  unset. Used to establish that the 2D CVODE solve is 82–92% of runtime.
+- **Wet-masked vertex render field.** `cellFreeSurfaceElevation()` performs a planar-bed
+  stage-storage inversion `eta(V)` per cell, so a partially wet step-spanning cell pools water over
+  its wetted fraction instead of the flat closure's `z_c + h` overstating `eta`; it reduces exactly
+  to `z_c + h` when fully wet. `reconstructVertexRenderDepths()` then produces wet-only,
+  depth-weighted **signed** vertex depths (`eta_v - z_v`) with a no-new-maxima clamp — negative over
+  the dry side of a partially wet cell (the sub-cell shoreline), 0 with no wet incident cell.
+  Computed per advance window and at initialize. Exported as the `/Mesh2_node_depth` HDF5 dataset,
+  `SimulationSnapshot::surface_vert_depth`, `swmm_2d_vertex_get_render_depths_bulk` and
+  `Surface2D.get_vertex_render_depths`; `/Mesh2_node_head` and the heads APIs remain for
+  back-compatibility, but they report bed elevation over dry cells and are not suitable for
+  water-surface rendering.
+- **VFR cell closure (opt-in).** New `[2D_OPTIONS]` keys `CELL_CLOSURE` (`FLAT` | `VFR`),
+  `FACE_RECONSTRUCTION` (`MEAN` | `VFR_FACE`) and `VFR_MIN_WET_FRAC` (default `0.01`, range
+  `(0, 0.5]`). The Begnudelli & Sanders (2006/2007) volume/free-surface closure restores the
+  C-property at shorelines and removes the "water climbs uphill" artifact of the flat closure (which
+  overstates a partially wet cell's free surface by up to two-thirds of its relief). Implemented on
+  **all** backends — serial CVODE, serial ARKODE, and the Kokkos OpenMP/GPU path (device VFR kernels
+  + preconditioner chain-rule), and covered by the analytic tangent. **The default stays
+  `FLAT`/`MEAN`** (measured 1.64–3.3× slower than `FLAT` on the inundation benchmarks with the
+  analytic Jacobian active, at near-equal BDF step counts but roughly twice the Krylov iterations —
+  shoreline linear-solve conditioning, not a defect): VFR resolves the shoreline wetting/drying the
+  flat closure freezes out, and is best reserved for shallow-water / gentle-slope cases (pair with
+  `PRECONDITIONER=JACOBI` and a looser `REL_TOLERANCE` on small meshes). The GUI exposes all three
+  keys in Simulation Options → 2D.
+- **A 2D triangle may now carry several coupling rows, one per 1D node.** Previously the last parsed
+  line in `[2D_TRIANGLE_NODE_MAP]` silently won, so two 1D nodes landing in the same 2D cell — a
+  weir's or orifice's two endpoints, typically — left only one of them exchanging.
+  `MeshData::tri_couplings` (`TriCouplingRow`) is now the source of truth; the per-triangle arrays
+  are kept as a last-row-wins mirror for the existing getter API and the GeoPackage writer, and the
+  parser maintains that mirror in step, because consumers that run *before* resolve — the GeoPackage
+  writer above all — read those arrays, so deferring the mirror to `SurfaceRouter2D::initialize`
+  dropped cell couplings on an opened-but-not-initialized model. `SurfaceRouter2D` synthesises rows
+  from the legacy arrays when none exist (the GeoPackage path), resolves row names to indices,
+  mirrors the last row back, and scales row areas by the mesh unit factor; `buildCouplingPoints`
+  emits one `CouplingPoint` per row; `InpWriter` emits one row per coupling, preserving the legacy
+  per-triangle fallback for meshes that never synthesised rows. New C API:
+  `swmm_2d_add_triangle_coupling`, `swmm_2d_clear_triangle_couplings`,
+  `swmm_2d_triangle_coupling_rows` and `swmm_2d_get_triangle_coupling_row`.
+- **Degree-day snow store in the exponential initial-abstraction model.** `[RDII_DECAY]` gains an
+  optional per-response `SNOW snow_T snow_ddf` clause, ported from the reference `IAModel`
+  (sparsehydro): precipitation at `T <= snow_T` accumulates as SWE with no liquid input; above
+  `snow_T` it melts at `snow_ddf*(T - snow_T)` per day, capped by the available SWE, and the melt is
+  added to rainfall ahead of the IA depletion step — so rain-on-snow adds to the driving depth and
+  melt-only steps produce snowmelt-driven RDII. `InflowData`/RDII carry `snow_on`/`snow_T`/`snow_ddf`
+  plus per-response SWE state; eight-token rows stay snow-off, so the section is fully backward
+  compatible. Wired through `InpWriter`, the GeoPackage schema (new snow columns, tolerant reads of
+  older files), `swmm_rdii_decay_add`/`_set`/`_get` (a negative `snow_ddf` is rejected), and the
+  Python bindings (keyword-optional snow arguments, extended `RDIIDecayEntry`). `validateExpDecay`
+  warns when snow is enabled without a temperature source. Snow physics is pinned to
+  reference-derived goldens.
+- **Permissive ("lenient") open.** With lenient open enabled, post-parse validation errors are
+  recorded and the engine still reaches `OPENED`, so an editor can load as much of a broken model as
+  parsed instead of getting nothing. The recorded diagnostics are queryable through
+  `swmm_get_error_count`/`swmm_get_error_at` and `swmm_get_warning_count`/`swmm_get_warning_at`, and
+  from Python via `Solver.set_lenient_open` with `open_errors` / `open_warnings`. **Running still
+  requires a strict open.** The fixtures drain a subcatchment to an undefined outlet node, which is
+  ERROR 209 raised during post-parse cross-reference resolution; an undefined node named in
+  `[CONDUITS]` cannot exercise this path, because the reader accepts it silently and records no
+  error at all.
+- **Nine new delete + `analyze_impact` API pairs** covering every remaining data-object type:
+  `swmm_pollutant_delete`, `swmm_pattern_delete`, `swmm_aquifer_delete`, `swmm_snowpack_delete`,
+  `swmm_lid_delete`, `swmm_street_delete`, `swmm_inlet_delete`, `swmm_landuse_delete`, and
+  `swmm_hydrograph_delete` (name-keyed). Each cascades or nullifies every cross-reference and reports
+  the impact set; `analyze_impact` previews the same set without mutating. `SWMM_RefType` gained 15
+  additive values (`SWMM_REF_EXT_INFLOW` … `SWMM_REF_CONTROL_RULE`).
+- **`swmm_control_find_references`** — read-only scan reporting which control rules reference an
+  object by name (word-boundary match on NODE/LINK/CONDUIT/PUMP/ORIFICE/WEIR/OUTLET clauses,
+  case-insensitive). Node/link `analyze_impact` and delete reports now include affected rules as
   `SWMM_REF_CONTROL_RULE` entries; **rule text is never edited by a delete**.
-- **`swmm_control_remove_rule`** — remove a single rule by index (previously
-  only `swmm_control_clear_rules` existed).
-
-### Fixed
-
-- **Node delete left dangling references** in ext-inflow / DWF / RDII rows
-  (rows now cascade-deleted, survivors renumbered), the positional treatment
-  expression matrix (the deleted node's stripe is now erased — previously every
-  node after it silently read its neighbor's treatment), and subcatchment
-  `gw_node` (now nullified, previously only renumbered).
-- **Subcatchment delete** now cascades LID-usage rows, clears LID `drain_to`
-  and snowpack `removal_subcatch` name references.
-- **Rain-gage delete** now clears unit-hydrograph gage assignments.
-- **Table/timeseries delete** now clears the gage `ts_name` mirror and
-  ext-inflow `ts_name` references, and nullifies + renumbers the subcatchment
-  adjustment-pattern indices (`n_perv`/`d_store`/`infil`), which index tables
-  and were previously silently misaligned by any table delete.
-- **Street delete** resets STREET cross-sections on referencing conduits to
-  CIRCULAR (mirrors transect delete) instead of leaving a dangling name.
-- `swmm_pattern_remove` and `swmm_hydrograph_remove_group` now delegate to the
-  same deleters as the new APIs (one code path; pattern removal previously
-  missed nothing but reported nothing either).
-
-## [6.0.0-alpha.3] — Cross-section geometry API + SWMM_XSectShape renumbering
-
-### Fixed
-
-- **`SWMM_XSectShape` selected the wrong cross-section for every code from 8
-  up.** `swmm_link_set_xsect`/`get_xsect` pass the shape straight through with a
-  `static_cast` to the engine's storage enum (`openswmm::XsectShape`), but the
-  published `SWMM_XSECT_*` constants followed a different ordering — so
-  `SWMM_XSECT_IRREGULAR` (19) stored a vertical ellipse, `SWMM_XSECT_EGGSHAPED`
-  (14) stored a baskethandle, and so on. Only codes 0–7 and `SWMM_XSECT_STREET`
-  were correct. The constants are now the storage codes, and 26 `static_assert`s
-  in `openswmm_links_impl.cpp` pin the two together so the cast is provably
-  sound and any future drift breaks the build instead of the model.
-  **Breaking for C code that hard-coded the old integers**; code that passed the
-  constants symbolically is corrected by recompiling. Five shapes that had no
-  constant at all (`BASKETHANDLE`, `SEMICIRCULAR`, `CUSTOM`, `FORCE_MAIN`,
-  `DUMMY`) were added. `swmm_xsect_shape_name()` resolves a code at runtime.
-- **Python `XSectShape.IRREGULAR` / `CUSTOM` / `FORCE_MAIN` were mismapped.**
-  Their values (16/17/18) were read by the engine as `RECT_TRIANG` /
-  `RECT_ROUND` / `HORIZ_ELLIPSE`, so assigning them silently produced the wrong
-  cross-section. The enum now mirrors the engine's codes exactly and gained the
-  seven shapes it was missing (`RECT_TRIANG`, `RECT_ROUND`, `HORIZ_ELLIPSE`,
-  `VERT_ELLIPSE`, `ARCH`, `STREET_XSECT`, `DUMMY`) — all 26 are now nameable.
-- **`_geometry._GEOM_LABELS_EXTRA` labelled the wrong shape codes.** The
-  ellipse/arch labels sat on 19/20/21 rather than 18/19/20. The table is folded
-  into `_GEOM_LABELS`, now keyed by enum member and covering every shape.
-
-### Added
-
-- **Standalone cross-section geometry API** (`openswmm_xsect.h`). Exposes the
-  engine's own geometry kernels — area, top width, hydraulic radius, section
-  factor, critical depth, and their inverses — as a reference implementation
-  usable with no model open. Sections are built from shape + Geom1–Geom4, from
-  transect / shape-curve / street data, or from a link of an open model
-  (`swmm_link_create_xsect`), in which case the handle deep-copies the geometry
-  the engine actually built and outlives the engine. Every scalar query has an
-  `_array` counterpart. There is no geometry maths in the new code: it delegates
-  to `xsect::setParams` and the `xsect::` kernels, so results match a simulation
-  exactly.
-- **`XSectionGeometry`** in `openswmm.engine` — the Python surface for the
-  above, with scalar-or-NumPy dispatch on every query, `from_transect` /
-  `from_curve` / `from_street` / `from_link` constructors, and a required
-  keyword-only `units` argument (no default, so a unit system is never silently
-  assumed). Also `shape_name()`, and a new `xsect_geometry` guide page.
-- **`Links.get_xsect_info()`** — implements the method `_geometry` had
-  documented since it was written but which never existed, returning the
-  already-exported-but-never-constructed `CrossSection`. Also
-  `link.xsect.info()` and `link.xsect.geometry()`, plus `CrossSection.from_raw`.
+- **`swmm_control_remove_rule`** — remove a single rule by index (previously only
+  `swmm_control_clear_rules` existed).
+- **Python bindings for the object-deletion and control-reference surface.**
+  `ModelEditor.analyze_*_impact` / `delete_*` for all nine entity types, with `_REF_TYPE_NAMES`
+  extended to all 22 `SWMM_RefType` values; `Controls.remove_rule` / `find_references`, and
+  `Controls.__delitem__` now removing in one C call rather than clear-and-re-add.
+- **Standalone cross-section geometry API** (`openswmm_xsect.h`). Exposes the engine's own geometry
+  kernels — area, top width, hydraulic radius, section factor, critical depth, and their inverses —
+  as a reference implementation usable with no model open. Sections are built from shape +
+  Geom1–Geom4, from transect / shape-curve / street data, or from a link of an open model
+  (`swmm_link_create_xsect`), in which case the handle deep-copies the geometry the engine actually
+  built and outlives the engine. Every scalar query has an `_array` counterpart. There is no geometry
+  maths in the new code: it delegates to `xsect::setParams` and the `xsect::` kernels, so results
+  match a simulation exactly.
+- **`XSectionGeometry`** in `openswmm.engine` — the Python surface for the above, with
+  scalar-or-NumPy dispatch on every query, `from_transect` / `from_curve` / `from_street` /
+  `from_link` constructors, and a required keyword-only `units` argument (no default, so a unit
+  system is never silently assumed). Also `shape_name()`, and a new `xsect_geometry` guide page.
+- **`Links.get_xsect_info()`** — implements the method `_geometry` had documented since it was
+  written but which never existed, returning the already-exported-but-never-constructed
+  `CrossSection`. Also `link.xsect.info()` and `link.xsect.geometry()`, plus `CrossSection.from_raw`.
+- **Optional per-subcatchment rainfall and snow scale factors** — trailing tokens 9 and 10 of
+  `[SUBCATCHMENTS]`, both defaulting to `1.0` (a true no-op; default-valued models round-trip
+  byte-identically). They compose multiplicatively with the gage factors:
+  `rainfall = gage_rain × gage.scaleFactor × rainScaleFactor`,
+  `snowfall = gage_rain × gage.scaleFactor × SCF × snowScaleFactor`. Applied to the gage-derived
+  component only — API/forcing overrides are absolute and deliberately unscaled. Token 8 accepts `*`
+  as a "no snow pack" placeholder so tokens 9/10 are reachable without a pack. Exposed across the
+  full stack: C API (`swmm_subcatch_{get,set}_{rain,snow}_scale_factor`, settable mid-run), legacy
+  property enum (`swmm_SUBCATCH_{RAIN,SNOW}_SCALE_FACTOR`), Python bindings
+  (`Subcatchment.{rain,snow}_scale_factor` on both trees), GeoPackage subcatchments table
+  (`rain_scale_factor`/`snow_scale_factor` REAL columns, reader guards a column-existence check so
+  pre-existing `.gpkg` files still open), and the openswmm.mcp
+  `editing_{get,set}_subcatch_{rain,snow}_scale_factor` tools (plus
+  `editing_{get,set}_gage_snow_factor`, closing the last gage-SCF gap). The GUI surfaces all four
+  factors in the Property Browser and the Attribute Table.
 
 ### Changed
 
-- `link::applyTabulatedXSectParams` (new, in `Link.cpp`) consolidates the
-  IRREGULAR / CUSTOM / STREET full-flow property derivation that previously
-  lived only inside `PostParseResolver`, so the standalone constructors and the
-  resolver share one legacy-parity implementation. Behaviour is unchanged —
-  `ctest` is green including all transect/street parity tests.
-
-## [6.0.0-alpha.3] — Precipitation scaling (gage SCF fix + per-subcatchment factors)
-
-See `plans/PRECIP_SCALING_IMPLEMENTATION_PLAN.md` and
-`plans/PRECIP_SCALING_TEST_HANDOFF.md`.
+- **The validated 2D solver regime is now the default**, being the configuration measured fastest
+  *and* hydrologically complete on the 13k-cell, 48-hour Bellinge multiscale benchmark:
+  - `MIN_TIMESTEP` default `0.001` → `0` (no CVODE step floor). Any hard floor makes wetting-front
+    corrector retries unrecoverable — a measured 12k–128k hard failures, each producing a frozen
+    window with its rainfall silently dropped. With no floor the same probe runs with zero hard
+    failures and every window integrated.
+  - Linear-solver setup lag defaults to 50 (was the SUNDIALS stock policy); env
+    `OPENSWMM_2D_LSETUP_FREQ` overrides, `<= 0` restores stock.
+  - Partial-progress windows, the clamp-consistent tangent and the tangent-exact preconditioner are
+    on, each with the env kill-switch documented above.
+- **The C-API-to-Python gap is closed.** `python/tests/test_api_coverage.py` now reports 886 C
+  symbols with **0 unjustified unbound** (was 6 unjustified plus 18 allowlisted-but-in-scope),
+  leaving only the four intentionally-unbound error accessors on the allowlist.
+- **Control-rule parse errors now name the line and the cause.** Every rejection site in
+  `ControlEngine::parseRuleText` records a 1-based line number (counting blank lines, so it indexes
+  the caller's text directly) plus a specific reason — `"line 4: no link named 'OR_NOPE' exists in
+  the model"` rather than the previous fixed `"Control-rule parser rejected the rule text"` with
+  `line_out` hardcoded to `-1`. Exposed via `ControlEngine::lastParseError()`, and surfaced through
+  `swmm_control_validate_rule` (`errbuf` + `line_out`), `swmm_control_add_rule`
+  (`swmm_get_last_error_msg`), and the `[CONTROLS]` block error raised during `initialize()`.
+- `link::applyTabulatedXSectParams` (new, in `Link.cpp`) consolidates the IRREGULAR / CUSTOM /
+  STREET full-flow property derivation that previously lived only inside `PostParseResolver`, so the
+  standalone cross-section constructors and the resolver share one legacy-parity implementation.
+  Behaviour is unchanged — `ctest` is green including all transect/street parity tests.
+- `swmm_pattern_remove` shares the `ObjectDeleter` code path instead of duplicating it.
 
 ### Fixed
 
-- **Refactored engine dropped the gage snow catch factor (SCF) at runtime.**
-  The C++ engine parsed, stored, wrote and API-exposed the `[RAINGAGES]` SCF but
-  never multiplied by it: `separatePrecip()` was dead code with zero call sites,
-  and the live rain/snow split in `SWMMEngine.cpp` used the raw gage intensity.
-  Legacy `gage.c` applies SCF. Snowfall volume now matches legacy. Replaced
-  `separatePrecip()` with `gage::splitPrecip()`, the single source of truth for
-  the split. **Behaviour change for any model with `SCF ≠ 1.0`** — every model
-  in `tests/` and `examples/` uses `SCF = 1.0`, so no shipped baseline moves,
-  but user snow models will.
-- **Refactored engine applied no rain/snow split for snow-pack-less
-  subcatchments.** The non-snow-pack runoff path read raw gage rainfall with no
-  temperature test, so below freezing it received `rain × 1.0` where legacy
-  gives `rain × SCF`. `RunoffSolver::execute()` now routes through
-  `splitPrecip()` too. **Behaviour change for `SCF ≠ 1.0` snow-season models.**
-- **`InpWriter` silently dropped the `[SUBCATCHMENTS]` snow-pack assignment.**
-  Only 8 columns were emitted, so token 8 (Snowpack) was lost on every INP
-  round-trip. The writer now emits it (and a `*` placeholder when a trailing
-  scale factor must reach past an unassigned pack).
-- **`swmm_gage_set_snow_factor` was not settable mid-run.** It carried a
-  `CHECK_GEOMETRY` guard the sibling `swmm_gage_set_scale_factor` deliberately
-  omits, so a calibration/RTC loop could not adjust the SCF after the model was
-  opened. Removed the guard — SCF is a scalar precipitation multiplier, not
-  geometry, and now matches the rainfall scale factor and the new subcatchment
+- **Node convergence was tested on the mixed iterate, not the fixed-point residual (#97).**
+  `updateNodeDepthsTeam()` tested `|nodes.depth - y_last| <= head_tol`, where `nodes.depth` is the
+  possibly Anderson-mixed value. That measures how far the *accepted* iterate moved, not the
+  residual of the hydraulic operator `G`. When the two-point coefficient clamps to 1 the mix
+  returns `g_prev`; if the previous iteration did not itself mix then `y_last == g_prev`, so the
+  accepted movement is exactly zero no matter how far `G(y_last)` actually maps — the node is
+  declared converged with a raw residual of any magnitude. This is not a reporting quirk:
+  `xnode_.converged` feeds `findBypassedLinks()` (which freezes both endpoint links) and the
+  loop-exit test `t_converged = (unconv_shared == 0)`, so a network that all false-converges exits
+  the Picard loop with an unconverged hydraulic state and frozen flows. Convergence now requires
+  **both** the raw Picard residual `|g_k - y_last|` and the accepted movement
+  `|nodes.depth - y_last|` to be within `head_tol`. No extra operator evaluation; with Anderson
+  acceleration off — it remains opt-in and default off — `nodes.depth == g_k`, so the test collapses
+  bit-exactly to the previous behaviour.
+- **The Anderson mixing coefficient was applied to the wrong operand (#98).** The two-point mixer
+  computed `alpha = r_k/(r_k - r_km1)`, the secant weight on the *previous* mapped value (Aitken
+  form `y = g_k - alpha*(g_k - g_prev)`), then blended it onto the *current* one:
+  `y = (1 - alpha)*g_prev + alpha*g_k`. On a sign-changing residual pair (`0.10 → -0.05`) the
+  correct current-value weight is 2/3, which cancels the linear-model residual; the code used 1/3
+  and left 0.05. Worse, on same-sign shrinking residuals (`0.10 → 0.05`) the unclamped coefficient
+  is negative, so the `[0,1]` clamp drove `alpha` to 0 and the mixer returned the *older* mapped
+  value — regressing the iteration exactly when it was converging monotonically. The blend operands
+  are swapped and the coefficient kept, now documented as the previous-value weight. Residual
+  definitions, the `[0,1]` clamp, the `20*head_tol` residual gate and the `dr^2` guard are unchanged.
+- **Anderson-accepted depths bypassed the canonical node state commit (#100).** `setNodeDepth()`
+  commits a complete node state for the raw Picard result — depth, head, volume, overflow, `dYdT` —
+  but the accepted-Anderson branch in `updateNodeDepthsTeam()` overwrote only depth and head. When
+  the accepted mix was the final Picard iteration the node's volume, overflow and timestep-control
+  derivative still described the unmixed candidate, feeding inconsistent state into flooding
+  totals, mass balance, next-step storage losses and the next adaptive routing step. The commit
+  block at the tail of `setNodeDepth()` is refactored into `DWSolver::commitNodeDepthState()` and
+  called from both paths: it reapplies the physical lower bound and the flooding/ponding caps,
+  resets overflow before the flooding branch so a re-commit cannot inherit the raw candidate's
+  overflow, recomputes volume from the accepted depth, and derives `dYdT` and the depth/head pair
+  together. With Anderson off the single call performs the identical arithmetic in the identical
+  order, so the default path is bit-exact.
+- **Outfalls were counted in the per-node nonconvergence statistics (#101)** — an inherited legacy
+  defect, present in both engines. Outfall nodes deliberately keep `converged == FALSE` inside the
+  Picard iteration so outfall-connected links are never bypassed, and the step-convergence test
+  already skips them — but after a failed routing step the per-node statistics counted every false
+  flag, so "Most Frequent Nonconverging Nodes" could rank a boundary outfall first, at exactly the
+  overall failed-step percentage, masking the junctions or storage nodes actually responsible.
+  Outfalls are now filtered where the post-Picard diagnostic counter is incremented:
+  `node_tile_[ui].is_outfall` in `DWSolver::execute` (refactored) and `Node[i].type == OUTFALL` in
+  `updateConvergenceStats` (legacy). Reporting-only: converged flags, `unconv_shared`, the
+  routing-step convergence decision, `findBypassedLinks` and `NonConvergeCount` are unchanged, so
+  hydraulics and the overall failed-step percentage are unaffected.
+- **`USE HOTSTART` rejected every legacy `.hsf` written by a model with subcatchments (#93).** The
+  refactored engine dispatches `USE HOTSTART` to `HotStartManager::apply_legacy_routing()`, which
+  bailed out on any header reporting `nSub != 0` with "Hotstart with subcatchments is not yet
+  supported" — surfaced to Python as `HotStartError`. Legacy `.hsf` version 3/4 files *always*
+  write a subcatchment count and a full `readRunoff()` section ahead of the routing records, so
+  effectively no real model could start from a hot start even though the legacy solver reads the
+  same file fine. The reader now advances the stream past the runoff section instead. The runoff
+  record layout is not self-describing — each subcatchment's length depends on whether it has
+  groundwater and/or a snowpack — so the skip length is reconstructed from the current model
+  structure (`gw_aquifer[i] >= 0` mirrors legacy `Subcatch[i].groundwater != NULL`,
+  `snowpack[i] >= 0` mirrors `Subcatch[i].snowpack != NULL`), which is the same "model must match
+  the file" assumption legacy `readRunoff()` itself relies on. The `fileVersion == 2` inline
+  two-float-per-subcatchment groundwater block is handled, and the subcatchment count is validated
+  against the model rather than misread; a file claiming more subcatchments than the model is
+  rejected rather than misread.
+  **Scope:** routing (node/link) state only. Subcatchment runoff / infiltration / groundwater /
+  snowpack / buildup state in the file is skipped, not applied, so a continuation run is
+  hydraulically hot-started while its hydrology restarts cold. `SWMMEngine` now passes a warn
+  callback into `apply_legacy_routing` so that divergence from legacy is surfaced as a model
+  warning instead of being silently lossy; applying runoff state is a follow-up.
+- **Repeated monthly unit-hydrograph parameters were applied silently (#43).** An `ALL` entry in
+  `[HYDROGRAPHS]` overrides month-specific values entered on earlier lines — e.g. JAN–SEP entries
+  followed by `ALL` leaves only later OCT–DEC entries intact — with no diagnostic. That, and any
+  repeated assignment of the same month/response, now raises the new **WARNING 13** in the status
+  report: the legacy engine tracks assigned months via `TUnitHyd.paramsSet` and issues it from
+  `rdii_readUnitHydParams()`/`readOldUHFormat()`; the refactored engine pushes the matching
+  `WARN_UH_PARAMS_REPEATED` (13) to `ctx.warnings` from `RDIISolver::init()`. The override behaviour
+  is documented in User Manual Appendix D, `[HYDROGRAPHS]` Remarks.
+- **`InpWriter` corrupted `[OUTLETS]`, `[XSECTIONS]`, `[CURVES]`, `[PUMPS]` and `[WEIRS]` on save.**
+  The round trip was not idempotent: some sections crashed the legacy parser, others silently
+  changed results in the refactored engine itself.
+  - `[OUTLETS]` emitted a bare `FUNCTIONAL 0 0` instead of the real rating type
+    (`TABULAR`/`HEAD`/…), curve name and gate flag. The bare form segfaulted the legacy parser
+    (`strcomp(NULL, "HEAD")`) and dropped the rating curve.
+  - `[XSECTIONS]` wrote `0.0000` in place of a `CUSTOM` shape-curve name (Error 209) and emitted
+    OUTLET links as `CIRCULAR 0` (Error 211); OUTLET links are now skipped.
+  - `[CURVES]` repeated the type keyword on every row, which the legacy parser read as an X-value
+    (Error 211); it is now emitted on the first row only.
+  - `[PUMPS]` hardcoded `ON 0 0`, dropping the wet-well startup/shutoff control depths. Zero
+    thresholds make every pump run unconditionally: on the Bellinge model that doubled flooding and
+    drove routing continuity from 0.35% to −4.7%. Real Status/Startup/Shutoff are now written.
+  - `[WEIRS]` hardcoded `TRANSVERSE`/`NO`/`0`/`0`, so weir type, gate, end contractions, end
+    coefficient and the can-surcharge flag were lost — and dropping can-surcharge defaulted it back
+    to `YES` on re-read. All five are now emitted.
+  - Pump startup/shutoff units did not round-trip: the display→feet conversion applied at load had
+    no mirror in `convert_internal_to_display`, so the writer dumped internal feet and inflated the
+    depths by 3.28084× per save/open cycle on SI projects. The feet→display back-conversion was
+    added.
+  - Conduit length and roughness, cross-section geometry and the DWF average value are written at
+    full precision (`%.15g`) instead of being truncated to 4–6 decimals.
+
+  Verified against the Bellinge model: the round trip now reproduces the original in both engines
+  (legacy routing continuity 0.345% vs 0.350%, flooding 0.097 vs 0.097), with no regression on the
+  standard round-trip test models.
+- **The refactored engine accepted input that legacy EPA SWMM rejects, and its warnings never
+  reached the `.rpt`.** Three root causes: the parser/resolver detected problems and then
+  reset-to-`-1`/continued silently; `emit_warning()` was callback-only and never reached
+  `ctx.warnings` or the report; and there was no equivalent of legacy `project_validate`.
+  (`BellingeSWMM_v021_nopervious` — a subcatchment with `*` gage/outlet — is the reported case:
+  legacy raises ERROR 209, the refactored engine ran it.)
+  - New `push_report_warning()` routes warnings to **both** the `.rpt` and the API; unknown-section
+    and unknown-`[OPTIONS]`-keyword warnings now go through the report accumulator using the legacy
+    wording.
+  - An undefined subcatchment outlet or rain gage, and an unresolved storage/pump/outlet curve name,
+    are now fatal `ERR_NAME` (209). `SubcatchData::gage_name` was added so an out-of-order
+    `[RAINGAGES]` section re-resolves instead of false-positiving.
+  - New `validate_project()` reproduces the legacy step-clamp warnings 01/06/07, and WARNING 05
+    (minimum slope) and 08 (elevation drop exceeds length) are emitted at the existing clamp sites.
+  - `write_open_failure_report()` — a failed open now writes the `.rpt` with its ERROR/WARNING lines
+    as legacy does (report `prepare()` runs only in `start()`).
+  - 2D: numeric vertex/triangle tags in `[2D_*_NODE_MAP]` fall back to a tag lookup instead of being
+    mis-read as an out-of-range index; `SurfaceRouter2D::initialize` is wrapped in try/catch so a
+    bad-mesh throw becomes a graceful `.rpt` error rather than `std::terminate` across the `noexcept`
+    boundary; and six stderr-only 2D warnings are routed into `ctx.warnings`.
+
+  Bellinge now emits ERROR 209 to the `.rpt` like legacy, and the 14 standard EPA QA models open
+  with no spurious errors.
+- **`openswmm::discover_all_filters` / `discover_plugins_by_id` were unresolved on Windows.** The
+  engine target sets `WINDOWS_EXPORT_ALL_SYMBOLS OFF` and relies on explicit export macros, but the
+  declarations in `PluginDiscovery.hpp` carried none — which linked fine on ELF/Mach-O (the target's
+  `CXX_VISIBILITY_PRESET` is `default`) while failing with LNK2001 on Windows. Both are now
+  annotated `SWMM_ENGINE_API`, and the header documents the `std::vector`-by-value caveat: safe for
+  consumers built with the same toolchain and C++ runtime as the engine, not across MSVC runtimes.
+- **DWF and groundwater pollutant mass was added without its carrier volume, so it was discarded.**
+  `QualitySolver::addDwfLoads()` and `addGwLoads()` accumulated pollutant mass into
+  `nodes.qual_mass_in` but never added the corresponding inflow volume to `nodes.qual_vol_in`.
+  `mixAtNodes()` short-circuits on `if (v_in <= 0.0) { nodes.conc[idx] = c_old; continue; }`, so a
+  node fed only by dry-weather flow or groundwater stayed at zero concentration forever, passed
+  zero mass downstream — leaving the whole network at 0 — and silently lost that mass from the
+  quality balance. All six sibling loaders (wet weather, LID drain, RDII, interface file, link,
+  inlets) accumulate `qual_vol_in`, and legacy `qualrout.c` mixes on `Node[j].inflow`, which
+  includes DWF and GW. **Expected baseline shift:** models with DWF or groundwater inflow *and*
+  quality routing enabled now report nonzero Dry Weather Inflow and Groundwater Inflow quality rows
+  where they previously reported zero.
+- **`swmm_control_add_rule` silently did nothing after `swmm_engine_initialize`.** Rules are
+  compiled once, inside `initialize()` → `initHydraulics()`; text added afterwards was appended to
+  `ctx.control_rules.rule_text` and never parsed. The call returned `SWMM_OK` and
+  `swmm_control_count` incremented, so the rule looked accepted while having no effect for the
+  entire run. It now compiles into the live `ControlEngine` and takes effect on the next step. Text
+  is parsed into a throwaway engine first, so a rejection cannot leave the live rule set
+  half-mutated, and rejected text is not stored. Behaviour before `initialize()` is unchanged
+  (stored verbatim, compiled later) because a model under construction may legitimately reference
+  objects that do not exist yet.
+- **`ControlEngine::clearRules()`** added and called before the `[CONTROLS]` parse loop.
+  `parseRuleText` appends, so re-running `initialize()` over the same rule store previously stacked
+  a second copy of every rule.
+- **`swmm_engine_initialize` could not be called twice before `start()`.** A second call recompiles
+  stored control rules, which is the contract the control-rule work above depends on, but the state
+  gate accepted only `OPENED` and the second call failed with `SWMM_ERR_LIFECYCLE`. `INITIALIZED` is
+  now accepted as well: every `init_*` step rebuilds from `ctx_` rather than appending, and
+  `ControlEngine::clearRules` already guards the rule-stacking hazard. Re-initializing after
+  `start()`/`end()` still requires a fresh `open()`.
+- **The failed-window freeze created water on every failed window.** New `resyncFromVolumes(t0)` on
+  `ISurfaceSolver` (CVODE override; the default falls back to `reinitialize`): the freeze previously
+  re-seeded `y` from the **clamped** head reconstruction, zeroing negative-volume debt — the
+  dominant residual leak in the failed-window regime. On the overdraw reproducer the tight-tolerance
+  2D block goes from −1.820% to 0.000%.
+- **Quiescent-window skips and failed-window freezes desynchronised the CVODE clock.** Both advanced
+  simulation time without advancing CVODE's internal clock, so the next live window integrated the
+  newly held forcing over the whole gap — 0.4 m³/s of rain × 1080 s of lag produced a +432 m³
+  phantom-volume spike. Added a clock-resync guard in `CvodeSurfaceSolver::advance`. As a follow-on,
+  the failed-window `resyncFromVolumes` now re-times at the window **end**, eliminating the duplicate
+  clock-desync `CVodeReInit` — and its second AMG invalidation — per frozen window;
+  trajectory-equivalent.
+- **The rendered and profiled water surface climbed adverse slopes and bed steps with no driving
+  head.** The solver vertex-head field is a pseudo-Laplacian over *all* incident cells with dry-cell
+  head set to bed elevation, and it was exported directly for rendering, so dry-cell bed elevations
+  blended into shoreline vertices. Rendering now consumes the wet-masked signed render field
+  described above; solver `vert_head`, gradients, limiters, fluxes and active-set semantics are
+  untouched.
+- **"2D Solver Statistics" reported 0 internal BDF steps and 0 RHS evaluations.** `CVodeReInit`
+  (clock resync, reseed, reinitialize) resets the `CVodeGetNum*` counters, and `run_stats()` read
+  them only after the last window — often a quiescent or frozen one. The live counters are now
+  snapshotted into `acc_*` before each of the three `ReInit` sites and `run_stats()` returns
+  `acc_* + live`; an 8-hour storm run goes from 0 to 2,077 BDF steps, matching `DEBUG_SINK`.
+- **GeoPackage observed-series writes swallowed SQLite errors.**
+  `swmm_gpkg_create_observed_series` ignored the `sqlite3_step` result, so a UNIQUE-name violation
+  against a stale `.gpkg` silently returned `last_insert_rowid = 0` as the series id and observed
+  values accumulated under `series_id 0` across runs. Step results are now checked in
+  `create_observed_series` and `write_observed_value` (the bulk writer already did).
+- **`SWMM_XSectShape` selected the wrong cross-section for every code from 8 up.**
+  `swmm_link_set_xsect`/`get_xsect` pass the shape straight through with a `static_cast` to the
+  engine's storage enum (`openswmm::XsectShape`), but the published `SWMM_XSECT_*` constants
+  followed a different ordering — so `SWMM_XSECT_IRREGULAR` (19) stored a vertical ellipse,
+  `SWMM_XSECT_EGGSHAPED` (14) stored a baskethandle, and so on. Only codes 0–7 and
+  `SWMM_XSECT_STREET` were correct. The constants are now the storage codes, and 26
+  `static_assert`s in `openswmm_links_impl.cpp` pin the two together so the cast is provably sound
+  and any future drift breaks the build instead of the model. **Breaking for C code that hard-coded
+  the old integers**; code that passed the constants symbolically is corrected by recompiling. Five
+  shapes that had no constant at all (`BASKETHANDLE`, `SEMICIRCULAR`, `CUSTOM`, `FORCE_MAIN`,
+  `DUMMY`) were added. `swmm_xsect_shape_name()` resolves a code at runtime.
+- **Python `XSectShape.IRREGULAR` / `CUSTOM` / `FORCE_MAIN` were mismapped.** Their values (16/17/18)
+  were read by the engine as `RECT_TRIANG` / `RECT_ROUND` / `HORIZ_ELLIPSE`, so assigning them
+  silently produced the wrong cross-section. The enum now mirrors the engine's codes exactly and
+  gained the seven shapes it was missing (`RECT_TRIANG`, `RECT_ROUND`, `HORIZ_ELLIPSE`,
+  `VERT_ELLIPSE`, `ARCH`, `STREET_XSECT`, `DUMMY`) — all 26 are now nameable.
+- **`_geometry._GEOM_LABELS_EXTRA` labelled the wrong shape codes.** The ellipse/arch labels sat on
+  19/20/21 rather than 18/19/20. The table is folded into `_GEOM_LABELS`, now keyed by enum member
+  and covering every shape.
+- **Node delete left dangling references** in ext-inflow / DWF / RDII rows (rows now cascade-deleted,
+  survivors renumbered), the positional treatment expression matrix (the deleted node's stripe is now
+  erased — previously every node after it silently read its neighbor's treatment), and subcatchment
+  `gw_node` (now nullified, previously only renumbered).
+- **Subcatchment delete** now cascades LID-usage rows, clears LID `drain_to` and snowpack
+  `removal_subcatch` name references.
+- **Rain-gage delete** now clears unit-hydrograph gage assignments.
+- **Table/timeseries delete** now clears the gage `ts_name` mirror and ext-inflow `ts_name`
+  references, and nullifies + renumbers the subcatchment adjustment-pattern indices
+  (`n_perv`/`d_store`/`infil`), which index tables and were previously silently misaligned by any
+  table delete.
+- **Street delete** resets STREET cross-sections on referencing conduits to CIRCULAR (mirrors
+  transect delete) instead of leaving a dangling name.
+- `swmm_hydrograph_remove_group` now delegates to the same deleter as the new APIs.
+- **Refactored engine dropped the gage snow catch factor (SCF) at runtime.** The C++ engine parsed,
+  stored, wrote and API-exposed the `[RAINGAGES]` SCF but never multiplied by it: `separatePrecip()`
+  was dead code with zero call sites, and the live rain/snow split in `SWMMEngine.cpp` used the raw
+  gage intensity. Legacy `gage.c` applies SCF. Snowfall volume now matches legacy. Replaced
+  `separatePrecip()` with `gage::splitPrecip()`, the single source of truth for the split.
+  **Behaviour change for any model with `SCF ≠ 1.0`** — every model in `tests/` and `examples/` uses
+  `SCF = 1.0`, so no shipped baseline moves, but user snow models will.
+- **Refactored engine applied no rain/snow split for snow-pack-less subcatchments.** The
+  non-snow-pack runoff path read raw gage rainfall with no temperature test, so below freezing it
+  received `rain × 1.0` where legacy gives `rain × SCF`. `RunoffSolver::execute()` now routes
+  through `splitPrecip()` too. **Behaviour change for `SCF ≠ 1.0` snow-season models.**
+- **`InpWriter` silently dropped the `[SUBCATCHMENTS]` snow-pack assignment.** Only 8 columns were
+  emitted, so token 8 (Snowpack) was lost on every INP round-trip. The writer now emits it (and a
+  `*` placeholder when a trailing scale factor must reach past an unassigned pack).
+- **`swmm_gage_set_snow_factor` was not settable mid-run.** It carried a `CHECK_GEOMETRY` guard the
+  sibling `swmm_gage_set_scale_factor` deliberately omits, so a calibration/RTC loop could not
+  adjust the SCF after the model was opened. Removed the guard — SCF is a scalar precipitation
+  multiplier, not geometry, and now matches the rainfall scale factor and the new subcatchment
   scale factors.
-
-### Added
-
-- **Optional per-subcatchment rainfall and snow scale factors** — trailing
-  tokens 9 and 10 of `[SUBCATCHMENTS]`, both defaulting to `1.0` (a true
-  no-op; default-valued models round-trip byte-identically). They compose
-  multiplicatively with the gage factors:
-  `rainfall = gage_rain × gage.scaleFactor × rainScaleFactor`,
-  `snowfall = gage_rain × gage.scaleFactor × SCF × snowScaleFactor`.
-  Applied to the gage-derived component only — API/forcing overrides are
-  absolute and deliberately unscaled. Token 8 accepts `*` as a "no snow pack"
-  placeholder so tokens 9/10 are reachable without a pack. Exposed across the
-  full stack: C API (`swmm_subcatch_{get,set}_{rain,snow}_scale_factor`,
-  settable mid-run), legacy property enum (`swmm_SUBCATCH_{RAIN,SNOW}_SCALE_FACTOR`),
-  Python bindings (`Subcatchment.{rain,snow}_scale_factor` on both trees),
-  GeoPackage subcatchments table (`rain_scale_factor`/`snow_scale_factor` REAL
-  columns, reader guards a column-existence check so pre-existing `.gpkg` files
-  still open), and the openswmm.mcp `editing_{get,set}_subcatch_{rain,snow}_scale_factor`
-  tools (plus `editing_{get,set}_gage_snow_factor`, closing the last gage-SCF
-  gap). The GUI surfaces all four factors in the Property Browser and the
-  Attribute Table.
-
-## [6.0.0-alpha.3] — Runtime forcing Phase 4 + §3 legacy quality sources
-
-See `docs/RUNTIME_FORCING_PHASE4_HANDOFF.md`,
-`docs/RUNTIME_FORCING_PHASE4_AUDIT.md` (per-group outcomes), and
-`docs/RUNTIME_FORCING_API_GAP_PLAN.md` §7/§12.
-
-### Fixed
-
-- **`TIMESERIES` / `TIDAL` outfalls read the wrong stage table** — the
-  `[OUTFALLS]` handler read the stage-data name and discarded it, deferring
-  resolution to a post-parse pass that was never written, so
-  `OutfallData::param` kept its default of `0`. Curves and timeseries share
-  one index space (`ctx.tables`) and `Outfall.cpp` guarded only with `>= 0`,
-  so the outfall silently drew its stage from whichever table came first in
-  the model — an unrelated shape curve, in the reported case, pinning the
-  outfall at that curve's y-value with no error. `OutfallData` now carries
-  `param_name` for deferred resolution (mirroring `DividerData::link_name`),
-  `PostParseResolver` resolves it against `ctx.table_names` and type-checks
-  the referent (a `TIMESERIES` outfall may not point at a curve), and an
-  unresolvable name is a fatal `ERR_NAME` as in legacy `outfall_readParams()`
-  rather than a silent misread. Unresolved references now use `-1`, not `0`.
-- **`InpWriter` corrupted `[OUTFALLS]` on save** — the section was emitted as
-  `Name Elev Type Gated [Stage]`, but the canonical (and parsed) order is
-  `Name Elev Type StageData Gated RouteTo`. A `FIXED` outfall's stage was
-  written *after* the gate flag and re-parsed as `0`; `TIDAL`/`TIMESERIES`
-  names and `RouteTo` were never written at all. The writer now emits the
-  canonical column order, resolving the table *name* for `TIDAL`/`TIMESERIES`,
-  and the parser accepts the EPA-GUI `*` stage-data placeholder on
-  `FREE`/`NORMAL` rows without shifting the gate column.
-- **`[FILES]` `USE/SAVE RUNOFF` and `USE/SAVE RDII` now work in the
-  refactored engine** — previously parsed and written back but never
-  consumed. `SAVE RUNOFF` auto-opens the existing binary runoff interface
-  writer from the slot; `USE RUNOFF` replaces each runoff substep with the
-  file's records (legacy `runoff_readFromFile`), driving the runoff clock
-  from the recorded timesteps. New `RdiiInterfaceFile` implements the RDII
-  slots: `SAVE RDII` exports computed flows in the legacy `SWMM5-RDII`
-  binary format; `USE RDII` **bypasses the internal unit-hydrograph
-  computation** (legacy `rdii_openRdii` semantics) and reads either the
-  binary or the legacy text format with step-aligned (non-interpolated)
-  lookup. Open/format failures fail `start()` with legacy errors
-  323/325/343/345. `USE/SAVE RAINFALL` (collated binary rain file) remains
-  unimplemented but now emits WARNING 103 instead of being silently
-  ignored. Plan: `plans/FILES_INTERFACE_GAP_CLOSURE_PLAN_2026-07-02.md`.
-  Tests: `tests/unit/engine/test_files_iface_gaps.cpp`,
-  `python/tests/engine/test_files_iface_gaps.py`.
-
-- **Routing interface files (`[FILES]` `USE INFLOWS` / `SAVE OUTFLOWS`) now
-  work in the refactored engine** — the paths were parsed and stored but the
-  `InterfaceManager` was never opened, so simulations silently ran without
-  the upstream inflows (and wrote no outflows file). `swmm_engine_start()`
-  now opens both files, reads/writes the legacy headers, and fails with
-  legacy errors 351/353/355/357 on open/format problems. Outfall rows are
-  written at reporting cadence (legacy `iface_saveOutletResults`), flows are
-  converted to the declared units on write, interface pollutant loads flow
-  into node quality mixing and the new "External Inflow" row of the quality
-  routing continuity report, and interface flow volume is booked as external
-  inflow in the routing mass balance. Wrong-mode rows (`SAVE INFLOWS` /
-  `USE OUTFLOWS`) are rejected at parse time (legacy `ERR_ITEMS`). Plan:
-  `plans/ROUTING_INTERFACE_FILE_INTEGRATION_PLAN_2026-07-01.md`. Tests:
-  `tests/unit/engine/test_iface_routing.cpp`,
-  `python/tests/engine/test_iface_routing.py`.
-
-### Added
-
-- **Python bindings for 2D vertex coupling CD/AREA** —
-  `Surface2D.get/set_vertex_coupling_cd` and `get/set_vertex_coupling_area`
-  wrap the recently added `swmm_2d_get/set_vertex_coupling_cd` / `_area` C
-  API (the `[2D_VERTEX_NODE_MAP]` CD and AREA columns), closing the binding
-  gap flagged by `python/tests/test_api_coverage.py`. Tests:
-  `python/tests/engine/test_surface2d_view.py::TestVertexCouplingParams`.
-
-- **Python GeoPackage model export** — `Solver.write_with_plugin(path,
-  output_plugin_id)` and the convenience `Solver.write_geopackage(path,
-  crs=...)` so a loaded model can be exported to a `.gpkg` from Python (the C
-  API already had `swmm_model_write_with_plugin`; only `ModelBuilder` wrapped
-  it before). `write_geopackage(crs="EPSG:2284")` applies the CRS via
-  `solver.spatial.crs` first, so every feature layer is tagged with that SRS —
-  without a CRS the geometries get an undefined SRS (`srs_id 0`) and GIS tools
-  cannot place them. Added the `GEOPACKAGE_PLUGIN_ID` constant (the real id is
-  `org.hydrocouple.openswmm.plugins.geopackage`; corrected the stale example in
-  `openswmm_model.h` that omitted `.plugins.`). Tests:
-  `python/tests/engine/test_geopackage_export.py`.
-
-- **GUI-editor round-trip APIs** — getters/setters so the property and
-  category editors can *load* an existing definition, not just write one
-  (closes the gaps in `openswmm.gui/docs/HANDOFF_compile_verify_agent.md`
-  §5.2–§5.2f):
-  - Pollutant: `swmm_pollutant_set_units` (inverse of the existing
-    `_get_units`; pre-start-only).
-  - Aquifer: `swmm_aquifer_get_evap_pattern` / `_set_evap_pattern` — the one
-    string column (`[ETupat]`) the param-code API didn't cover.
-  - Snowpack (previously add/list-only): `swmm_snowpack_set/get_plowable`,
-    `_impervious`, `_pervious` (the seven `[SNOWPACKS]` surface values),
-    `_set/get_removal` (six values) and `_set/get_removal_subcatch`.
-  - Inlet: `swmm_inlet_get_params` (inverse of `_set_params`) and
-    `swmm_inlet_get_type`.
-  - LID: `swmm_lid_get_surface` / `_soil` / `_storage` / `_drain` (inverse of
-    the four layer setters), `swmm_lid_get_type`, and full set/get for the
-    remaining two layers — `swmm_lid_set/get_pavement` (6 values: thick,
-    void-ratio, frac-imperv, ksat, clog-factor, regen-days) and
-    `swmm_lid_set/get_drainmat` (3 values: thick, void-frac, roughness) — so
-    PERM_PAVEMENT and GREEN_ROOF controls now round-trip every layer.
-  - Python bindings for all of the above (`Pollutant.units` setter,
-    `Aquifers.get/set_evap_pattern`, `Snowpacks.set/get_*`,
-    `Inlets.get_params/get_type`,
-    `LIDs.get_surface/soil/storage/drain/type` + `set/get_pavement` +
-    `set/get_drainmat`) with `.pyi` stubs. Tests:
-    `tests/unit/engine/test_editor_roundtrip_api.cpp` (bit-exact C round-trips)
-    and `python/tests/engine/test_editor_roundtrip.py`. All six LID layers are
-    now covered end-to-end.
-
-- **Phase 4 wave B1 — runtime time-pattern factors (P6) & street sweeping
-  (P4).** Audited the mid-run mutation semantics of both groups and added the
-  legacy parity setters so both engines share the contract:
-  - Legacy `swmm_TIME_PATTERN` object type + `swmm_PatternProperty`
-    (`FACTOR` with the factor index in `subIndex`, read-only `COUNT`/`TYPE`)
-    and `swmm_LANDUSE` + `swmm_LanduseProperty`
-    (`SWEEP_INTERVAL`/`SWEEP_REMOVAL`) via new `set/getPatternValue` /
-    `set/getLanduseValue` in `swmm5.c`; settable pre-start and while running
-    (both are per-step lookups). Python `SWMMPatternProperties` /
-    `SWMMLandUseProperties` enums (+ `.pyi`), enum coverage, and parity tests
-    `python/tests/legacy/test_param_runtime.py`.
-  - Refactored audit tests `python/tests/engine/test_param_runtime.py`.
-- **Phase 4 wave B2 — runtime buildup/washoff function coefficients (P2).**
-  Both groups SOUND mid-run; the accumulated buildup pool is preserved (an
-  edit only changes how buildup evolves going forward). Legacy parity:
-  `swmm_LanduseProperty` extended with `BUILDUP_FUNC`/`COEFF1..3`/`NORMALIZER`
-  and `WASHOFF_FUNC`/`COEFF`/`EXPON`/`SWEEP_EFFIC`/`BMP_EFFIC` (pollutant index
-  via `subIndex`); `set/getLanduseValue` gained `subIndex`; buildup edits
-  recompute `maxDays` per `landuse_readBuildup`. Tests in
-  `test_param_runtime.py` (engine + legacy).
-- **Phase 4 wave B3 — infiltration parameters (P1): documented pre-start-only.**
-  The audit found the refactored infiltration setters
-  (`swmm_subcatch_set_infil_horton`/`_green_ampt`/`_curve_number`) are guarded
-  to the editable states by `CHECK_GEOMETRY` and raise `LifecycleError` while
-  running (correcting the gap-plan's "no running guard" note); the
-  per-subcatchment infiltration state is built once at `start()`. P1 is
-  therefore a pre-start edit in both engines (no legacy parity setter). Tests
-  in `test_param_runtime.py::TestInfiltrationParams`.
-- **Phase 4 wave B4 — pollutant kinetics (P5).** `kdecay` / co-pollutant /
-  snow-only are read live each step (sound mid-run, no cache); legacy parity
-  added via `swmm_PollutProperty` `KDECAY`/`CO_POLLUTANT`/`CO_FRACTION`/
-  `SNOW_ONLY` (kdecay accepted in 1/day, stored as the legacy 1/sec). The
-  initial network concentration (`INIT_CONCEN`) has no per-step consumer, so
-  both engines now reject it mid-run (refactored `CHECK_GEOMETRY`
-  → `LifecycleError`; legacy `ERR_API_IS_RUNNING`). `SWMMPollutantProperties`
-  4→9 (+ `.pyi`, enum coverage). Tests in `test_param_runtime.py`.
-- **Phase 4 wave B5 — external-inflow / DWF baselines & scale (P7/P8).** The
-  inflow solver caches ext/DWF definitions at start (same cache class as P6).
-  New direct setters `swmm_ext_inflow_set_scale` / `_set_baseline` and
-  `swmm_dwf_set_baseline` (plus the add/remove paths) now refresh that cache so
-  a mid-run edit takes effect on the next step; bindings
-  `Inflows.set_external_scale` / `_baseline` / `set_dwf_baseline`. Legacy
-  parity for node-keyed `[INFLOWS]`/`[DWF]` baseline editing is deferred (the
-  legacy per-node linked-list inflow model has no flat-index API; runtime
-  inflow control remains available via `swmm_NODE_LATFLOW`) — see the audit
-  doc. Tests: `TestInflowBaselineRuntime`.
-- **Phase 4 wave B6 — treatment expressions (P3).** SOUND mid-run with a
-  cache-refresh fix (same class as P6/P2/P7): the step loop evaluates the
-  compiled-expression cache built at start, so `swmm_treatment_set`/`_clear`
-  now recompile the edited (node, pollutant) cell via
-  `SWMMEngine::refreshTreatment` — an edit/replace/clear takes effect on the
-  next step, and a failed parse is rejected (`BadParamError`) with the
-  previous expression restored. Legacy parity via dedicated functions (an
-  expression cannot ride `setNodeValue`): `swmm_setTreatment` /
-  `swmm_clearTreatment` re-use the `[TREATMENT]` input parser, freeing any
-  prior `MathExpr` so runtime replaces don't leak; Python
-  `Solver.set_treatment`/`clear_treatment` (+ `.pyi`). Tests:
-  `TestTreatmentRuntime` (engine), `TestLegacyTreatment` (legacy).
-- **Phase 4 wave B7 — LID layer parameters (P11).** The four refactored LID
-  setters were silent no-op stubs; they now write `ctx.lid_controls.*` for
-  real. Split contract: surface/soil/storage are **pre-start-only** (they seed
-  per-unit LID state at start; `LifecycleError` mid-run, physical bounds
-  enforced) while the **drain** coefficients are runtime-editable
-  (`SWMMEngine::refreshLIDDrainParams` re-copies the per-unit drain columns
-  the step loop reads — the cistern/rain-barrel RTC knob). Legacy parity for
-  the sound group: `lid_setDrainParams` (`lid.c`, input-file units matching
-  `readDrainData`) + exported `swmm_setLidDrain` + `Solver.set_lid_drain`
-  binding. Tests: `TestLidParamsRuntime` (paired deterministic runs diverge
-  only after the mid-run drain edit), `TestLegacyLidDrain`. Flagged
-  follow-up: the refactored LID module lacks unit conversion of layer params
-  (consumes raw input values; legacy converts via UCF) — see the audit doc.
-- **Phase 4 wave B8 — aquifer parameters (P10).** New setter in both engines
-  (none existed before). Flux coefficients (conductivity, conductivity slope,
-  tension slope, upper-evap fraction, lower-evap depth, lower-loss coefficient)
-  are runtime-editable — refactored `SWMMEngine::refreshAquiferParams` re-derives
-  the groundwater solver's per-subcatchment flux columns on each edit; legacy
-  reads `Aquifer[]` live. Structural / initial-condition parameters (porosity,
-  wilting point, field capacity, bottom/water-table elevation, upper moisture)
-  seed GW state and are pre-start-only (`LifecycleError` / `ERR_API_IS_RUNNING`
-  while running). Refactored `swmm_aquifer_get_param`/`_set_param` +
-  `SWMM_AquiferParam` enum, binding `Aquifers.get_param`/`set_param` +
-  `AquiferParam`; legacy `swmm_AquiferProperty` (800 block) via the existing
-  `swmm_AQUIFER` object case, binding `SWMMAquiferProperties`. Enum coverage
-  +12 (aquifer). Tests: `TestAquiferParamsRuntime`, `TestLegacyAquiferParams`.
-- **Phase 4 wave B9 — adjustment arrays (P9): no setter, decision recorded.**
-  The audit closes the gap matrix without new code: the monthly climate
-  adjustment arrays are covered at runtime by the more direct Phase-1 forcing
-  setters, and the per-subcatchment N-PERV/DSTORE/INFIL adjustment patterns are
-  retunable mid-run via the P6 pattern-factor setter. See the audit doc for the
-  rationale. This completes the Phase 4 parameter-surface audit — every
-  §12.1 group now has a recorded disposition.
-
-- **§3 legacy water-quality source setters — functional tests.** The legacy
-  `setPollutValue` source concentrations (rain/wet-deposition `pptConcen`,
-  groundwater `gwConcen`, RDII `rdiiConcen`, dry-weather `dwfConcen`) and the
-  ponded-surface quality injection are now covered by real-solver tests:
-  `python/tests/legacy/test_quality_sources.py` (Q1 rain → washoff, Q2 GW,
-  Q3 RDII, Q5 DWF, Q6 ponded round-trip + washoff). Each source feeds an
-  existing inflow term already counted in the quality mass balance. Fixtures
-  derive a self-contained inline-storm copy of `legacy_small.inp` (quality
-  routing enabled, orphan external stage timeseries dropped, two-day horizon)
-  with one TSS pollutant whose source columns are set one at a time so each
-  node signal is attributable to a single source; artifacts land in
-  `python/tests/legacy/output/`.
-
-### Fixed
-
-- **Refactored DWF/external-inflow patterns ignored mid-run edits.**
-  `InflowSolver::init` copies pattern factors into a per-step lookup cache, so
-  `swmm_pattern_set_factors` (which mutates `ctx.patterns`) had no effect on
-  DWF/external inflow mid-run (groundwater-evap patterns read the live context
-  and were unaffected). Added `InflowSolver::refreshPatterns` +
-  `SWMMEngine::inflowSolver()`; the setter now refreshes the cache so an edit
-  takes effect on the next step.
-- **Legacy subcatchment pollutant bindings** passed the pollutant index in
-  the `sub_index` slot, but the C `getSubcatchValue`/`setSubcatchValue`
-  pollutant cases read it from `pollutantIndex`. `LegacySubcatchment`
-  `get_pollutant_buildup`, `set_external_pollutant_buildup`, and
-  `set_ponded_concentration` now pass `pollutant_index=` and work at runtime
-  (previously raised an object-index API error).
-
-## [6.0.0-alpha.3] — 2D GPU acceleration, capped-pipe 1D/2D coupling & performance
-
-Commits 2026-06-10 → 2026-07-05, surfaced via a `git-cliff` audit of
-`v6.0.0-alpha.1..HEAD` against this file (see `cliff.toml`) — these landed
-alongside the runtime-forcing work above but were not yet logged.
-
-### Added
-
-- **Portable Kokkos GPU surface solver + HIP/SYCL plugins (2D).** New
-  performance-portable GPU path for the 2D surface router
-  (`docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md`): CVODE control flow,
-  tolerances, and operator-splitting are unchanged — only the `N_Vector`
-  and RHS move to Kokkos, numerically equivalent to the serial CPU
-  reference. `ISurfaceSolver` interface with `SurfaceSolverFactory`
-  resolving the backend at runtime (dlopen a GPU plugin, else fall back to
-  the serial `CvodeSurfaceSolver`; `OPENSWMM_2D_BACKEND` override, auto
-  order cuda → hip → sycl → omp → serial). GPU plugin is opt-in
-  (`OPENSWMM_BUILD_GPU_PLUGIN`) via a stable C ABI (`GpuPluginAbi.h`); base
-  build stays Kokkos-free. New vcpkg `gpu`/`gpu-cuda`/`gpu-hip`/`gpu-sycl`
-  features.
-- **Capped-pipe 1D/2D junction coupling model.** Replaced the two-regime
-  free-inlet/surcharge blend with a bidirectional gradient orifice
-  (`h_2d - h_1d`) gated by a C1 Hermite ramp at the pipe crown: below the
-  crown the node pressurizes internally over its auto-sized ponded shaft
-  with no exchange; the cover only connects the domains once water
-  overtops it. `sur_depth` now solely sizes the 1D Preissmann-slot
-  headroom above the crown. Doc:
-  `docs/1D_2D_COUPLING_CONFIGURATION.md`.
-- **Time-based 2D coupling window.** New `COUPLING_WINDOW` (s) in
-  `[2D_OPTIONS]` (-1 AUTO / 0 every step / >0 s; env
-  `OPENSWMM_2D_COUPLING_WINDOW`; INP + GeoPackage round-trip) decouples
-  the 2D advance cadence from 1D variable-step shrinkage. Adds a
-  quiescence short-circuit (windows with no water/rain/coupling sources
-  and only WALL/NORMAL_FLOW boundaries skip the CVODE advance entirely)
-  and a stencil-scoped CFL hint so a rain-wetted cell far from the network
-  no longer pins the 1D routing step. Bellinge 3h smoke: 15.2s → 9.2s
-  (omp).
-- **Dry-cell active-set masking (wet-front tracking), opt-in.** Restricts
-  every 2D RHS pipeline stage to `active = wet ∪ sourced ∪ halo` while the
-  CVODE system stays full-size (frozen cells get `ydot = 0`, so the BDF
-  history is never invalidated). Opt-in via `[2D_OPTIONS] ACTIVE_SET`
-  (env `OPENSWMM_2D_ACTIVE_SET`); wall-guarded (mask errors are locally
-  conservative, never a leak) with a breach-redo/halo-doubling safety
-  net. `SurfaceStateData` gained an `active_set` pointer — GPU plugin ABI
-  bumped to v2.
+- **The missing `StorageShape` stub in `_enums.pyi`.** `_nodes.pyi` imports it, and without it
+  autodoc fails to import every engine module — which is the entire documented API surface.
+- **`SWMMSubcatchmentProperties.RAIN_SCALE_FACTOR` / `.SNOW_SCALE_FACTOR` were absent from
+  `_solver.pyi`.** The legacy `_subcatchments.py` accessors reference them and they exist in the
+  `_solver.pyx` runtime enum, but mypy reads the stub, so both typing CI jobs failed with
+  `attr-defined` errors.
 
 ### Performance
 
-- **1D dynamic-wave Picard loop:** persistent-team OpenMP threading
-  (team spans the whole iteration loop; CSR node-centric gather replaces
-  the serial link-order scatter, provably bit-identical FP order to
-  legacy at any thread count), batch-geometry kernels parallelized with
-  Apple-Silicon P-core clamp/QoS, and dead-work elimination
-  (loss recompute / node-state init skipped when structurally a no-op).
-  Bellinge: 204s → 56.5s (T=8, Apple Silicon); routing loop 95.8s → 80.1s
-  in the separate bit-parity-preserving optimization pass (bypass-aware
-  batch geometry kernels). All changes gated on a 20-model bit-parity
-  scorecard / byte-identical `.out` files.
-- **2D held-path coupling:** skip zero-exchange coupling stencils in the
-  active set (the exchange is a per-window constant already scattered
-  into `coupling_flux`, so a stencil with zero flux this window
-  contributes nothing) — storm-peak active set drops from ~38% to
-  ~wet+halo (~5%) of the mesh on held-path coupled models.
+- **Vertex-head reconstruction hoisted out of the RHS.** The all-vertex pseudo-Laplacian pass
+  (`reconstructVertexHeads`) ran on every CVODE `rhs_fn`/`Jv` evaluation but is not read by the
+  diffusive-wave edge flux, which uses centroid heads only. It now runs once per accepted window;
+  the few coupling-point consumers inside the RHS evaluate their single vertex on demand via
+  `vertexHeadAt()`, and the field is seeded at initialize so pre-first-window consumers do not read
+  zeros. On vertex-heavy meshes this sheds the whole per-vertex pass from the ~4×10⁵ RHS calls a run
+  makes; conservation is unchanged.
+- **Analytic J·v on the primary targets:** `weir_culvert` 59 s → 47.7 s with Krylov iterations
+  179,170 → 59,242 (the exact Jacobian beats the FD approximation); `road_culvert` 36 s → 24.1 s.
+  Physics matches FD — road drain 42001.3 (FD) vs 42001.8 (analytic), 0.001%.
+- **Analytic live coupling:** `weir` 46.85 s → 45.46 s (Krylov 59,242 → 32,842); `road` 23.95 s →
+  15.34 s, −36% (Krylov −41%, nonlinear convergence failures 1,229 → 4, as the orifice diagonal
+  makes the stiff exchange visible to Newton).
+- **Graded tolerance on MS-A 10⁴:1:** 1,065 → 930 BDF steps (−13%), 12.63 s → 11.45 s, continuity
+  −0.046% → −0.030%.
+- **Tangent-exact preconditioner:** 7.7× on the 8-hour solo storm probe, 606 s → 79 s, Krylov −92%.
+- **New defaults, 8-hour solo storm probe at `THREADS 4`:** 213 s with 12,391 frozen windows and
+  their rainfall dropped → 80 s with zero failures, zero frozen windows, average internal step
+  2.8 s, 2D continuity −0.04%. 48-hour solo: 2,048 s → 358 s. Coupled 48-hour: flow continuity
+  −9.5% → +5.5% with a genuinely live surface — the old "clean" regime's 2D was 99.95% frozen.
 
-## [6.0.0-alpha.3] — User-flag schema bindings + 2D/MCP gap closure
+## [6.0.0-alpha.2] — 2026-07-12
 
-See `docs/API_GAP_CLOSURE_PLAN_2026-06-10.md`.
+The headline of this release is legacy bit-parity for the 1D engine. The refactored engine's
+divergence from legacy EPA SWMM 5.3 was almost entirely ULP-level operand-order and constant
+substitution, which long surcharged runs amplify to macroscopic flow differences, so closing it
+required matching legacy arithmetic op-for-op rather than merely reproducing its formulas. On the
+Bellinge benchmark all 111,828 routing steps are now bit-identical — timestep sequence, iteration
+counts and hex state fingerprints — and every `.out` variable (node depth/head/volume/lateral
+inflow/total inflow/overflow; link flow/depth/velocity/volume/capacity; all subcatchment variables)
+has max |diff| = 0.0 at float32 across all 2,640 report periods. **Outside the elementwise gate:**
+the 15-float per-period system summary block (area-weighted means) is not yet byte-identical.
 
 ### Added
 
-- **Python bindings:** the user-flag schema C API (`swmm_userflag_define`
-  / `undefine` / `def_count` / `def_get` / `value_get` / `value_set` /
-  `value_clear`) is now bound — the last unbound block of the 702-function
-  engine surface. `ModelBuilder` gains `define_userflag`,
-  `undefine_userflag`, `userflag_def_count`, `get_userflag_def`, and
-  `get/set/clear_userflag_value`; the `solver.userflags` view gains
-  `define()`, `undefine()`, `definitions()` (returning `UserFlagDef`
-  records), `get_value()` / `set_value()` / `clear_value()`, real
-  `len()` / iteration over definitions, and STRING-flag support in the
-  mapping interface. New `UserFlagType` enum (BOOLEAN / INTEGER / REAL /
-  STRING). Tests: `python/tests/engine/test_userflags_schema.py`.
-- **Python bindings:** new lazy `Solver.surface2d` property returning the
-  cached `Surface2D` view, so 2D access no longer requires constructing
-  `Surface2D(solver.handle)` by hand.
+- **`SAVE HOTSTART` is implemented** — a legacy-format `.hsf` writer plus the end-of-run trigger, so
+  a run can now produce the hot-start file that `USE HOTSTART` consumes.
+- **First-class `CYLINDRICAL`, `CONICAL`, `PARABOLOID` and `PYRAMIDAL` storage shapes**, stored and
+  validated as geometric shapes rather than being forced through a tabular depth-area curve.
+- **Runtime climate forcing.** Air temperature and wind speed can be prescribed while a simulation
+  runs, in both engines: legacy `swmm_API_TEMPERATURE` (`<= -999` clears) and `swmm_API_WINDSPEED`
+  (negative clears) system properties with read-only `swmm_TEMPERATURE` / `swmm_WINDSPEED`
+  companions; refactored `swmm_forcing_climate_temperature()` / `swmm_forcing_climate_wind()`
+  channels (OVERRIDE/ADD, RESET/PERSIST) with `swmm_climate_get_temperature()` /
+  `swmm_climate_get_wind_speed()`. Temperature is applied *before* the derived climate quantities
+  (saturation vapor pressure, psychrometric constant, Hargreaves moving average) so snowmelt and
+  temperature-evap consumers stay consistent. User units throughout (°F/°C, mph/km/hr). Python:
+  `LegacySystem.set/get/clear_api_temperature` and `…_api_wind_speed`, `Forcing.climate_temperature`
+  / `.climate_wind`, the matching getters, and `ForcingTarget.CLIMATE` for `Forcing.clear`.
+- **Runtime evaporation forcing.** A global evaporation prescription replaces the post-adjustment
+  `Evap.rate` for all consumers including conduits and storage (per-subcatchment PET still wins):
+  legacy `swmm_API_EVAP` system property, refactored `swmm_forcing_climate_evap()` and the read-only
+  `swmm_climate_get_evap_rate()` / `Forcing.climate_evap_rate()` for caller-side adjustment
+  composition. The `DRY_ONLY` flag is togglable at runtime as well (legacy `swmm_EVAP_DRY_ONLY`,
+  refactored `swmm_climate_set/get_dry_only()`). Python: `LegacySystem.set/get/clear_api_evap_rate`
+  and `set/get_evap_dry_only`, `Forcing.climate_evap` / `.climate_dry_only`.
+- **Per-subcatchment PET prescription.** New legacy `swmm_SUBCATCH_API_PET` subcatchment property
+  prescribes a potential-evapotranspiration rate (in/day or mm/day) per subcatchment at runtime; the
+  prescribed rate replaces the climate-derived `Evap.rate` for surface, LID and groundwater
+  upper-zone evaporation, bypassing `DRY_ONLY` and the monthly adjustments, and a negative value
+  clears it. New read-only `swmm_EVAPRATE` returns the current climate-derived rate. Python:
+  `LegacySubcatchment.set_api_pet` / `get_api_pet` / `clear_api_pet`, `LegacySystem.get_evap_rate`.
+- **Per-subcatchment snowfall forcing.** Refactored `swmm_forcing_subcatch_snowfall()` (in/hr US,
+  mm/hr SI as SWE; OVERRIDE/ADD, RESET/PERSIST) with `Forcing.subcatchment_snowfall()` and
+  `ForcingType.SUBCATCH_SNOWFALL`; it resolves on the temperature-split gage snowfall before
+  accumulation, plowing and melt. Legacy already had `swmm_SUBCATCH_API_SNOWFALL`.
+- **Runtime water-quality sources.** Legacy gains a `swmm_POLLUTANT` dispatch with
+  `swmm_POLLUT_RAIN/GW/RDII/DWF_CONCEN` (500 block), all runtime-settable, plus
+  `swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION` settable while running; the refactored engine gains
+  a link-quality forcing channel `swmm_forcing_link_quality()` (REPLACE = concentration, ADD = mass
+  rate, mass-balanced) with `Forcing.link_quality` and `ForcingType.LINK_QUALITY`. Python
+  `SWMMPollutantProperties` enum. Each source feeds an existing inflow term already counted in the
+  quality mass balance.
+- **Runtime hydrologic state injection.** Groundwater moisture and lower-zone depth (legacy
+  `swmm_SUBCATCH_GW_MOISTURE` / `_GW_LOWER_DEPTH` via `gwater_get/setState`; refactored
+  `swmm_subcatch_set/get_gw_state()` with porosity/thickness clamping) and snowpack SWE / free water
+  / ATI / cold content (legacy `swmm_SUBCATCH_SNOW_SWE/_FW/_ATI/_COLDC` per snow subarea via
+  `sub_index`; refactored `swmm_subcatch_set/get_snow_state()`) are now readable and writable
+  mid-run.
+- **2D mesh evaporation** — a depth-limited evaporation sink inside the CVODE RHS, driven by
+  `swmm_2d_force_evap()` / `swmm_2d_force_evap_uniform()` (m/s, OVERRIDE/ADD, RESET/PERSIST) and
+  `Surface2D.force_evap`/`_uniform`; `swmm_2d_get_mass_balance()` gained an `evap_out` total. The 2D
+  solver still has no infiltration sink.
+- **A runtime-editable parameter surface, with an explicit contract per group.** Both engines now
+  expose setters for the parameters that are sound to change mid-run, and reject the ones that are
+  not rather than accepting an edit that silently does nothing:
+  - **Time-pattern factors and street sweeping** — legacy `swmm_TIME_PATTERN` +
+    `swmm_PatternProperty` (`FACTOR` with the factor index in `subIndex`, read-only `COUNT`/`TYPE`)
+    and `swmm_LANDUSE` + `swmm_LanduseProperty` (`SWEEP_INTERVAL`/`SWEEP_REMOVAL`) through new
+    `set/getPatternValue` / `set/getLanduseValue` in `swmm5.c`; both are per-step lookups, so both
+    are settable pre-start and while running. Python `SWMMPatternProperties` /
+    `SWMMLandUseProperties`.
+  - **Buildup / washoff function coefficients** — `swmm_LanduseProperty` extended with
+    `BUILDUP_FUNC`/`COEFF1..3`/`NORMALIZER` and `WASHOFF_FUNC`/`COEFF`/`EXPON`/`SWEEP_EFFIC`/
+    `BMP_EFFIC` (pollutant index via `subIndex`); the accumulated buildup pool is preserved, so an
+    edit only changes how buildup evolves going forward, and buildup edits recompute `maxDays` per
+    `landuse_readBuildup`.
+  - **Pollutant kinetics** — `kdecay` / co-pollutant / snow-only are read live each step; legacy
+    parity via `swmm_PollutProperty` `KDECAY`/`CO_POLLUTANT`/`CO_FRACTION`/`SNOW_ONLY` (kdecay
+    accepted in 1/day, stored as the legacy 1/sec), `SWMMPollutantProperties` 4→9. The initial
+    network concentration (`INIT_CONCEN`) has no per-step consumer, so both engines reject it mid-run
+    (refactored `LifecycleError`, legacy `ERR_API_IS_RUNNING`).
+  - **External-inflow and DWF baselines and scale** — the inflow solver caches its definitions at
+    start, so the new `swmm_ext_inflow_set_scale` / `_set_baseline` / `swmm_dwf_set_baseline` (and
+    the add/remove paths) refresh that cache and a mid-run edit takes effect on the next step;
+    bindings `Inflows.set_external_scale` / `_baseline` / `set_dwf_baseline`. Legacy parity for
+    node-keyed `[INFLOWS]`/`[DWF]` baseline editing is deferred — the legacy per-node linked-list
+    inflow model has no flat-index API — and runtime inflow control remains available through
+    `swmm_NODE_LATFLOW`.
+  - **Treatment expressions** — the step loop evaluates a compiled-expression cache built at start,
+    so `swmm_treatment_set`/`_clear` now recompile the edited (node, pollutant) cell via
+    `SWMMEngine::refreshTreatment`; an edit/replace/clear takes effect on the next step and a failed
+    parse is rejected (`BadParamError`) with the previous expression restored. Legacy parity needs
+    dedicated functions because an expression cannot ride `setNodeValue`: `swmm_setTreatment` /
+    `swmm_clearTreatment` re-use the `[TREATMENT]` input parser and free any prior `MathExpr` so
+    runtime replaces do not leak. Python `Solver.set_treatment` / `clear_treatment`.
+  - **LID layer parameters** — the four refactored LID setters were silent no-op stubs and now write
+    `ctx.lid_controls.*` for real, under a split contract: surface/soil/storage are
+    **pre-start-only** (they seed per-unit LID state at start; `LifecycleError` mid-run, physical
+    bounds enforced) while the **drain** coefficients are runtime-editable
+    (`SWMMEngine::refreshLIDDrainParams` re-copies the per-unit drain columns the step loop reads —
+    the cistern/rain-barrel RTC knob). Legacy parity for the drain group: `lid_setDrainParams` in
+    `lid.c` (input-file units matching `readDrainData`), exported as `swmm_setLidDrain` with a
+    `Solver.set_lid_drain` binding. Known follow-up: the refactored LID module consumes raw input
+    values without the unit conversion legacy applies via UCF.
+  - **Aquifer parameters** — new in both engines. The flux coefficients (conductivity, conductivity
+    slope, tension slope, upper-evap fraction, lower-evap depth, lower-loss coefficient) are
+    runtime-editable — refactored `SWMMEngine::refreshAquiferParams` re-derives the groundwater
+    solver's per-subcatchment flux columns on each edit, legacy reads `Aquifer[]` live — while the
+    structural / initial-condition parameters (porosity, wilting point, field capacity,
+    bottom/water-table elevation, upper moisture) seed GW state and are pre-start-only
+    (`LifecycleError` / `ERR_API_IS_RUNNING`). Refactored `swmm_aquifer_get_param`/`_set_param` +
+    `SWMM_AquiferParam`, binding `Aquifers.get_param`/`set_param` + `AquiferParam`; legacy
+    `swmm_AquiferProperty` (800 block) through the existing `swmm_AQUIFER` object case, binding
+    `SWMMAquiferProperties`.
+  - **Infiltration parameters are pre-start-only** in both engines: the refactored setters
+    (`swmm_subcatch_set_infil_horton`/`_green_ampt`/`_curve_number`) are guarded to the editable
+    states by `CHECK_GEOMETRY` and raise `LifecycleError` while running, because the
+    per-subcatchment infiltration state is built once at `start()`.
+  - **Monthly climate adjustment arrays get no new setter:** they are covered at runtime by the
+    climate forcing channels above, and the per-subcatchment N-PERV/DSTORE/INFIL adjustment patterns
+    are retunable mid-run through the pattern-factor setter.
+- **GUI-editor round-trip APIs** — getters to match the existing setters, so a property or category
+  editor can *load* an existing definition rather than only write one:
+  - Pollutant: `swmm_pollutant_set_units` (inverse of the existing `_get_units`; pre-start-only).
+  - Aquifer: `swmm_aquifer_get_evap_pattern` / `_set_evap_pattern` — the one string column
+    (`[ETupat]`) the param-code API did not cover.
+  - Snowpack (previously add/list-only): `swmm_snowpack_set/get_plowable`, `_impervious`,
+    `_pervious` (the seven `[SNOWPACKS]` surface values), `_set/get_removal` (six values) and
+    `_set/get_removal_subcatch`.
+  - Inlet: `swmm_inlet_get_params` (inverse of `_set_params`) and `swmm_inlet_get_type`.
+  - LID: `swmm_lid_get_surface` / `_soil` / `_storage` / `_drain` (inverse of the four layer
+    setters), `swmm_lid_get_type`, and full set/get for the remaining two layers —
+    `swmm_lid_set/get_pavement` (6 values: thick, void-ratio, frac-imperv, ksat, clog-factor,
+    regen-days) and `swmm_lid_set/get_drainmat` (3 values: thick, void-frac, roughness) — so
+    PERM_PAVEMENT and GREEN_ROOF controls round-trip every layer. All six LID layers are now covered
+    end-to-end.
+  - Python bindings for all of the above (`Pollutant.units` setter, `Aquifers.get/set_evap_pattern`,
+    `Snowpacks.set/get_*`, `Inlets.get_params/get_type`, `LIDs.get_surface/soil/storage/drain/type` +
+    `set/get_pavement` + `set/get_drainmat`) with `.pyi` stubs.
+- **Portable Kokkos GPU surface solver + HIP/SYCL plugins (2D).** A performance-portable GPU path for
+  the 2D surface router: CVODE control flow, tolerances and operator-splitting are unchanged — only
+  the `N_Vector` and RHS move to Kokkos, numerically equivalent to the serial CPU reference. New
+  `ISurfaceSolver` interface with `SurfaceSolverFactory` resolving the backend at runtime (dlopen a
+  GPU plugin, else fall back to the serial `CvodeSurfaceSolver`; `OPENSWMM_2D_BACKEND` override, auto
+  order cuda → hip → sycl → omp → serial). The GPU plugin is opt-in
+  (`OPENSWMM_BUILD_GPU_PLUGIN`) behind a stable C ABI (`GpuPluginAbi.h`); the base build stays
+  Kokkos-free. New vcpkg `gpu`/`gpu-cuda`/`gpu-hip`/`gpu-sycl` features. Strategy:
+  `docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md`.
+- **Capped-pipe 1D/2D junction coupling model.** Replaces the two-regime free-inlet/surcharge blend
+  with a bidirectional gradient orifice (`h_2d - h_1d`) gated by a C1 Hermite ramp at the pipe crown:
+  below the crown the node pressurizes internally over its auto-sized ponded shaft with no exchange;
+  the cover only connects the domains once water overtops it. `sur_depth` now solely sizes the 1D
+  Preissmann-slot headroom above the crown. Doc: `docs/1D_2D_COUPLING_CONFIGURATION.md`.
+- **Time-based 2D coupling window.** New `COUPLING_WINDOW` (s) in `[2D_OPTIONS]` (-1 AUTO / 0 every
+  step / >0 s; env `OPENSWMM_2D_COUPLING_WINDOW`; INP + GeoPackage round-trip) decouples the 2D
+  advance cadence from 1D variable-step shrinkage. Adds a quiescence short-circuit (windows with no
+  water/rain/coupling sources and only WALL/NORMAL_FLOW boundaries skip the CVODE advance entirely)
+  and a stencil-scoped CFL hint so a rain-wetted cell far from the network no longer pins the 1D
+  routing step. Bellinge 3h smoke: 15.2 s → 9.2 s (omp).
+- **Dry-cell active-set masking (wet-front tracking), opt-in.** Restricts every 2D RHS pipeline stage
+  to `active = wet ∪ sourced ∪ halo` while the CVODE system stays full-size (frozen cells get
+  `ydot = 0`, so the BDF history is never invalidated). Opt-in via `[2D_OPTIONS] ACTIVE_SET` (env
+  `OPENSWMM_2D_ACTIVE_SET`); wall-guarded (mask errors are locally conservative, never a leak) with a
+  breach-redo/halo-doubling safety net. `SurfaceStateData` gained an `active_set` pointer — GPU plugin
+  ABI bumped to v2.
+- **Python bindings for the user-flag schema C API** (`swmm_userflag_define` / `undefine` /
+  `def_count` / `def_get` / `value_get` / `value_set` / `value_clear`) — the last unbound block of
+  the 702-function engine surface. `ModelBuilder` gains `define_userflag`, `undefine_userflag`,
+  `userflag_def_count`, `get_userflag_def` and `get/set/clear_userflag_value`; the `solver.userflags`
+  view gains `define()`, `undefine()`, `definitions()` (returning `UserFlagDef` records),
+  `get_value()` / `set_value()` / `clear_value()`, real `len()` / iteration over definitions, and
+  STRING-flag support in the mapping interface. New `UserFlagType` enum (BOOLEAN / INTEGER / REAL /
+  STRING).
+- **Python bindings for 2D vertex coupling CD/AREA** — `Surface2D.get/set_vertex_coupling_cd` and
+  `get/set_vertex_coupling_area` wrap `swmm_2d_get/set_vertex_coupling_cd` / `_area` (the
+  `[2D_VERTEX_NODE_MAP]` CD and AREA columns) — plus a lazy `Solver.surface2d` property returning the
+  cached `Surface2D` view, so 2D access no longer requires constructing `Surface2D(solver.handle)` by
+  hand.
+- **Python GeoPackage model export** — `Solver.write_with_plugin(path, output_plugin_id)` and the
+  convenience `Solver.write_geopackage(path, crs=...)`, so a loaded model can be exported to a
+  `.gpkg` from Python (the C API already had `swmm_model_write_with_plugin`; only `ModelBuilder`
+  wrapped it before). `write_geopackage(crs="EPSG:2284")` applies the CRS via `solver.spatial.crs`
+  first, so every feature layer is tagged with that SRS — without a CRS the geometries get an
+  undefined SRS (`srs_id 0`) and GIS tools cannot place them. Added the `GEOPACKAGE_PLUGIN_ID`
+  constant (the real id is `org.hydrocouple.openswmm.plugins.geopackage`; corrected the stale example
+  in `openswmm_model.h` that omitted `.plugins.`).
+- **DateTime conversion C API** — new `include/openswmm/engine/openswmm_datetime.h` exposes
+  encode/decode/`add_seconds`/`time_diff` primitives matching the legacy `datetime.c` bit-for-bit,
+  reached from Python through `openswmm.engine.datetime_api` plus the high-level
+  `oadate_to_datetime` / `datetime_to_oadate` helpers. All "Julian date" wording is removed from the
+  C API header documentation; the convention is documented as the OLE Automation / Delphi TDateTime
+  epoch (1899-12-30) — **not** astronomical Julian.
+- **New enums:** `OrificeType`, `WeirType`, `OutletRatingType` (in `openswmm_links.h`), and
+  `ErrorCode.DEPENDENCY = 15` (was missing from the Python side).
+- **Documentation for the v1 Python surface** — new `guide/datetime.rst` and `guide/plotting.rst`
+  pages, `guide/concepts.rst`, `guide/error_handling.rst`, every domain guide and the migration page
+  rewritten, and a v0 → v1 cheat sheet appended to `migration/swmm5_to_swmm6.rst`. The Sphinx CI
+  gate (`sphinx-build -W --keep-going`) stays in place and every page renders warning-free against
+  the new `.pyi` stubs.
+- **A typing gate on the Python bindings** — `python/pyproject.toml` ships a `[tool.mypy]` block
+  (default-mode check across the whole `openswmm.engine` package plus strict mode on the pure-Python
+  `_enums`, `_exceptions`, `_dates`), `python/tests/typing/test_surface.py` exercises every public
+  symbol with explicit annotations under strict mode, and a new `.github/workflows/typing.yml` runs
+  both passes on every PR touching the bindings.
+- **Legacy-parity trace tooling** — a per-model parity ladder plus a call-graph provenance matcher
+  and gap-review report, for auditing refactored code against its legacy anchor.
 
 ### Changed
 
-- **Python bindings:** `del solver.userflags[name]` now removes the
-  flag's schema definition and per-object values via
-  `swmm_userflag_undefine` (previously raised `TypeError`); assigning a
-  `str` value auto-defines a STRING flag, mirroring the scalar setters.
-- `python/tests/test_api_coverage.py`: removed 54 stale `KNOWN_UNBOUND`
-  allowlist entries for symbols that had since been bound; the allowlist
-  is now empty and the coverage test enforces the full surface.
-
-## [6.0.0-alpha.3] — Runtime forcing verification pass (handoff build/test/fix)
-
-Builds, runs and verifies the runtime-forcing batch per
-`docs/RUNTIME_FORCING_TESTING_HANDOFF.md`. Full Python suite green
-(833 passed) and the C++ unit suite green (78/78, 2D enabled). Thin bindings
-(§2) and functional tests (§3: M4, M5, S1, S2, T1, Q4, Q5 + GW quality) added.
-
-### Fixed
-
-- **`[POLLUTANTS]` concentrations silently zeroed:** `PostParseResolver`
-  unconditionally re-ran `resize_pollutants()` (which zero-fills) *after*
-  `handle_pollutants` had parsed the values, so every INP rain/GW/RDII/DWF/
-  init concentration loaded as 0 (the DWF/GW/rain quality features did
-  nothing for INP-driven models). Guarded the resize like the adjacent
-  node/link resizes (`if count != n`).
-- **Refactored snow never accumulated:** the `[SUBCATCHMENTS]` snow-pack
-  column was never read (no deferred name resolution) and the snow solver's
-  per-subarea `fArea` was never initialised, so `plowSnow`/melt treated
-  every surface as zero-area. Added `snowpack_name` deferred resolution and
-  `fArea` init (legacy `snow_initSnowpack`).
-- **Climate temperature/wind forcing stuck after clear:** a one-shot or
-  cleared prescription never reverted because the forcing overwrote the same
-  `ClimateState` field it read as the broadcast base. Added
-  `temperature_src`/`wind_speed_src` source bases resolved fresh each step.
-- **`ForcingData::effective_rainfall`/`_snowfall` out-of-bounds:** lacked the
-  size guard `effective_evap_rate` has, segfaulting direct-solver unit tests
-  with unsized forcing arrays.
-- **Legacy `get_value` misread valid negatives:** `swmm_getValueExpanded`'s
-  return was validated by sign, so a sub-freezing air temperature or the
-  −999 API-unset sentinel raised a spurious error. Now keys off the system
-  ERROR_CODE and the API-error sentinel range.
-- **Groundwater inflow quality (audit A5):** GW inflow pollutant mass
-  (`q_gw × c_gw`) was never applied. Added `QualitySolver::addGwLoads()` and
-  a `qual_routing_gw_in` bucket; the report's Groundwater Inflow quality row
-  (previously hardcoded 0) and the quality continuity total now include it
-  (and DWF).
-- **2D mass-balance evaporation (§4.1):** moved the cumulative evap loss from
-  the 2D state mirror into `MassBalance2D::evap_out`, folded into `error()`,
-  and surfaced in the report's 2D continuity block.
-- **`[POLLUTANTS]` writer round-trip:** `InpWriter` now writes the `Cdwf`
-  and `Cinit` columns (§4.4).
-- **numpy 1.x build:** `PatchNumpyPxd.cmake` only rewrites the Cython pxd on
-  numpy ≥ 2.0 (it would break the numpy 1.x build it was meant to support).
-- Deleted dead `SnowSolver::batchATIUpdate`/`batchAccumulate` (§4.3); added
-  scalar `execute`/`plowSnow` convenience overloads (per-subcatchment array
-  signatures broke `test_snow.cpp`).
-
-## [6.0.0-alpha.3] — Runtime forcing API phases 1–3 complete (gap plan rows 5–12)
-
-See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` and
-`docs/RUNTIME_FORCING_TESTING_HANDOFF.md` (functional verification pending).
-
-### Added
-
-- **Global evaporation prescription (M4):** legacy `swmm_API_EVAP` system
-  property (replaces the post-adjustment `Evap.rate` for all consumers
-  incl. conduits/storage; per-subcatchment PET still wins); refactored
-  `swmm_forcing_climate_evap()` channel. Python:
-  `LegacySystem.set/get/clear_api_evap_rate`, `Forcing.climate_evap`.
-- **DRY_ONLY runtime toggle (M5):** legacy `swmm_EVAP_DRY_ONLY`;
-  refactored `swmm_climate_set/get_dry_only()`. Python:
-  `LegacySystem.set/get_evap_dry_only`, `Forcing.climate_dry_only`.
-- **Legacy pollutant source setters (Q1–Q3, Q5):** new `swmm_POLLUTANT`
-  dispatch with `swmm_POLLUT_RAIN/GW/RDII/DWF_CONCEN` (500 block),
-  runtime-settable; `SWMMPollutantProperties` Python enum.
-- **Refactored link quality forcing channel (Q4):**
-  `swmm_forcing_link_quality()` (REPLACE = concentration, ADD = mass rate,
-  mass-balanced); `Forcing.link_quality`; `ForcingType.LINK_QUALITY`.
-- **Legacy ponded-quality injection (Q6):**
-  `swmm_SUBCATCH_POLLUTANT_PONDED_CONCENTRATION` now settable while running.
-- **Groundwater state injection (S1):** legacy `swmm_SUBCATCH_GW_MOISTURE`
-  / `_GW_LOWER_DEPTH` (set/get via `gwater_get/setState`); refactored
-  `swmm_subcatch_set/get_gw_state()` with porosity/thickness clamping.
-- **Snowpack state injection (S2):** legacy `swmm_SUBCATCH_SNOW_SWE/_FW/
-  _ATI/_COLDC` (per snow subarea via sub_index); refactored
-  `swmm_subcatch_set/get_snow_state()`.
-- **2D mesh evaporation (T1):** depth-limited evaporation sink inside the
-  CVODE RHS; `swmm_2d_force_evap()` / `swmm_2d_force_evap_uniform()`
-  (m/s, OVERRIDE/ADD, RESET/PERSIST); `swmm_2d_get_mass_balance()` gained
-  an `evap_out` total; Python `Surface2D.force_evap/_uniform`.
+- **The Python binding surface is a property-style rewrite — breaking for Python callers; the C API
+  is untouched.**
+  - Lifecycle methods (`open`, `initialize`, `start`, `step`, `stride`, `end`, `report`, `close`)
+    **raise on failure** instead of returning integer codes. `step()` and `stride()` return a
+    `datetime.timedelta`, with `timedelta(0)` as the end-of-simulation sentinel. `Solver.state`
+    returns the `EngineState` enum; `Solver.elapsed` and `Solver.routing_step` are `timedelta`; new
+    `Solver.start_datetime`, `end_datetime`, `current_datetime`, `report_start_datetime` return
+    `datetime.datetime`; new `Solver.steps()` iterator and `Solver.until(target)` (accepting
+    `datetime` or `timedelta`). Every file argument accepts `pathlib.Path` / `os.PathLike`.
+  - Views on the solver: `solver.options` is a `MutableMapping` over `[OPTIONS]` plus typed
+    shortcuts (`start_datetime`, `routing_step`, …); `solver.userflags` a `MutableMapping` with
+    auto-typed bool/int/float; `solver.events` a `MutableSequence[Event]` whose entries carry
+    `datetime` `start`/`end`; `solver.save_schedule` a `MutableSequence[SaveScheduleEntry]` for the
+    `[SAVE HOTSTART]` block.
+  - Each `solver.<domain>` returns a collection **indexable by `int | str`**, iterable and
+    `len`-able, whose items are typed wrapper objects with property-style access
+    (`solver.nodes["J1"].depth = 1.2`, `solver.links["C1"].xsect = (XSectShape.CIRCULAR, 1.0, 0, 0,
+    0)`, `solver.subcatchments["S1"].infiltration.set_horton(...)`, `solver.gages["RG1"].rainfall =
+    25.4`, `solver.pollutants["TSS"].kdecay = 0.05`). Per-type sub-views raise `AttributeError` on
+    the wrong node/link type — `node.outfall` only on OUTFALL, `node.storage` only on STORAGE,
+    `link.pump` only on PUMP. Bulk numpy access is now a property pair
+    (`solver.nodes.depths` / `solver.links.flows` / `solver.subcatchments.runoffs`).
+  - `OutputReader` takes a path-agnostic constructor (`str` / `Path`) and exposes typed metadata —
+    `start_datetime`, `report_step` (`timedelta`), `flow_units` (`FlowUnits`), `period_times`
+    (`np.ndarray[datetime64[s]]`), `node_ids` / `link_ids` / `subcatchment_ids`. Variable-selector
+    arguments require an enum (`OutNodeVar` etc.) while object selectors accept `int | str`;
+    `node_attributes(key, period)` returns `Dict[OutNodeVar, float]` and `node_stats(key)` a typed
+    view with `max_depth`, `max_overflow`, `vol_flooded`, `time_flooded`.
+  - `solver.mass_balance.routing_diagnostics` returns the `RoutingDiagnostics` dataclass;
+    `solver.statistics.<domain>_<stat>` are all bulk numpy properties; `HotStart.open(path)` is a
+    classmethod and `HotStart.save_from(solver, path)` a static method, with `sim_datetime`
+    (`datetime`), `warnings` (`list[str]`) and `apply(solver)` on the hot-start; `solver.tables`
+    exposes `TimeSeries.points` as a structured numpy array `(time: datetime64[s], value: float64)`
+    and `solver.patterns` is now a separate indexable collection.
+  - New `EngineError` hierarchy in `openswmm.engine._exceptions`, where every subclass **also**
+    inherits from a standard-library exception: `BadIndexError(IndexError)`,
+    `BadParamError(ValueError)`, `LifecycleError(RuntimeError)`, `HotStartError(RuntimeError)`,
+    `FileError(IOError)`, `ParseError(ValueError)`, `NumericalError(RuntimeError)`,
+    `CRSError(ValueError)`, `DependencyError(RuntimeError)`, `BadHandleError(RuntimeError)`,
+    `PluginError(RuntimeError)`, and
+    `StaleObjectError(LifecycleError)` — raised when a wrapper's generation counter no longer matches
+    the solver's after a rename or delete. Every `EngineError` carries `.code` (raw int),
+    `.code_enum` (`ErrorCode` member) and `.message` (filled by the C API).
+- **Node and link subtype data now live in normalized relational side-tables as the sole store.**
+  The dense per-subtype tables (`StorageData`/`OutfallData`/`DividerData` in `NodeSubtypes.hpp`,
+  `ConduitData`/pump/orifice/weir/outlet in `LinkSubtypes.hpp`, joined to the base object by
+  `node_idx`/`link_idx`) hold all subtype configuration *and* mutable per-step state; the wide
+  `storage_*`/`outfall_*`/`divider_*`/`exfil_*` arrays on `NodeData` and the conduit/pump/structure
+  arrays on `LinkData` are deleted, along with the whole mirror machinery (build-from-wide,
+  `verify_mirror`, `mark_dirty`, `ensure_fresh`). Parse, resolve, edit, compute, IO and the C API all
+  read and write the side-tables directly, and the compiler enforces zero remaining wide-subtype
+  references. `openswmm_nodes.h` and `openswmm_links.h` are byte-unchanged, and the cutover is gated
+  on byte-identical `.out` files for the 18 `epaswmm5_qa` models in both CFS and CMS plus INP-save
+  parity.
+- **The on-disk GeoPackage node and link schemas are normalized to match.** Flat NULL-padded `nodes`
+  and `links` tables become a slim base table (common columns + subtype discriminator + geometry)
+  plus 1:1 child tables — `storages`/`outfalls`/`dividers` and
+  `conduits`/`pumps`/`orifices`/`weirs`/`outlets` — keyed by `(simulation_id, node_id)` /
+  `(simulation_id, link_id)` with a hard `FOREIGN KEY … ON DELETE/UPDATE CASCADE`. The child tables
+  carry the full side-table field set (storage seep/evap/exfil, outfall `route_to`, divider
+  cd/max_depth/curve/link), and the opaque `param1`/`param2` become named columns (orifice
+  orientation `SIDE`/`BOTTOM`, `weir_type`, outlet `rating_type`); `xsect_*`/`has_flap_gate` stay on
+  the link base table because conduit, orifice and weir all share them. **Breaking for existing
+  `.gpkg` files:** a pre-relational file is rejected cleanly with an actionable error — no
+  compatibility view, no crash and no silent misread. `PRAGMA foreign_key_check` is clean and the
+  delete/rename cascades are verified.
+- **`del solver.userflags[name]`** now removes the flag's schema definition and per-object values via
+  `swmm_userflag_undefine` (previously raised `TypeError`), and assigning a `str` value auto-defines
+  a STRING flag, mirroring the scalar setters.
 
 ### Fixed
 
-- **Refactored DWF quality (audit A1):** the `[POLLUTANTS]` `Cdwf` column
-  was parsed and discarded and dry weather quality inflow did not exist.
-  Added `PollutantData.c_dwf`, `QualitySolver::addDwfLoads()` (mirroring
-  RDII loads), a `qual_routing_dw_in` mass-balance bucket included in the
-  continuity error, the report's Dry Weather Inflow row (previously
-  hardcoded 0), and `swmm_pollutant_set/get_dwf_conc()`.
+- **Subcatchment runoff is bit-identical to legacy.** Three operand-order and constant defects: the
+  Manning exponent `MEXP` used `5.0/3.0` where legacy `subcatch.c` carries the truncated literal
+  `1.6666667` (a ~3.3e-8 exponent difference, ~2.3e-7 relative error in every `pow(xDepth, MEXP)`);
+  the `VOLUME`/`CUMULATIVE` rain conversion formed the non-representable `1/12` constant first
+  (`r/(interval/3600)` instead of legacy's `r/interval*3600`); and the Manning alpha reassociation
+  `PHI*w*sqrt/(N*area)` was 1 ULP off legacy's `PHI*w/area*sqrt/N`. Every user-model subcatchment
+  RUNOFF series is now byte-identical to legacy.
+- **Dynamic-wave momentum matches legacy operand order.** `dq2`/`dq4`/`dq5`/`dqdh` divide by length
+  directly rather than multiplying a precomputed reciprocal (`x/L != x*(1/L)`); `dqdh` groups its
+  terms as legacy `dwflow.c:240` does, which matters because `dqdh` feeds the surcharge node-depth
+  Jacobian; the normal-flow limit uses `pow(r1, 2./3.)` on the raw upstream hydraulic radius instead
+  of `cbrt(r1*r1)` on a FUDGE-clamped value; and the Manning friction term drops a non-legacy
+  `max(rWtd, FUDGE)` clamp. The dry-conduit kernel's `dqdh` was brought onto the same divide.
+- **Metric (SI) input conversion divides by the unit factor.** Legacy computes
+  `internal = display / UCF`; the refactored engine multiplied by a precomputed reciprocal. The two
+  differ by up to 1 ULP, which is enough to break the exact flatness of an initial water surface —
+  the momentum then emits a ~2e-15 flow that the under-relaxation sign-flip clamp amplifies to a
+  spurious 0.001 cfs, seeding divergence. Applied to lengths, ponded area, functional-storage
+  `a0`/`a1`, flow fields and seepage. One-time parse-path change; US models take an early return and
+  are unaffected.
+- **Conduit evaporation and seepage loss is recomputed every Picard iteration**, as legacy
+  `dwflow_findConduitFlow` does, and DRY/UP_DRY/DN_DRY conduits are skipped rather than accruing a
+  spurious loss. The refactored engine computed losses once per step for all conduits with no
+  flow-class gate, which both leaked loss onto dry conduits and froze the rate for the whole step
+  instead of tracking the iterate.
+- **Structures, outfalls and `USE HOTSTART`.** Weirs never set the reported link depth; the legacy
+  `weir_getInflow` depth is now set in every branch. Orifice surface-area scatter reproduces legacy
+  `findNonConduitSurfArea` exactly, including on the dry and flap-gate early-exit paths that
+  previously skipped it. Free-outfall boundary depth uses the connecting conduit's critical depth as
+  legacy does, instead of `max(0, stage - invert)` — an outfall below its invert previously sat dry
+  and under-conveyed its conduit.
+- **Legacy-exact 1D reporting semantics**, plus an op-for-op `table_lookup`/`table_interpolate`
+  cursor, storage-volume and pump-regime fixes, a parse-time-floored `TotalDuration` matching
+  `swmm5.c:3198` (no `+0.5` rounding), and a closed orifice reporting frozen depth as legacy's
+  `link_getInflow` early return does.
+- **Transect elevation offset, `Xfactor` and UCF are applied**, making `IRREGULAR` cross-section
+  tables bit-identical to legacy.
+- **Storage depth Newton solve: index and unit bugs (#94).** Two defects in the branch used by
+  `FUNCTIONAL` (nonlinear), `CONICAL` and `PYRAMIDAL` shapes. `TStorageVol` held the storage unit's
+  `subIndex` but forwarded it to functions expecting a *node* index, so any storage node not sitting
+  at the same `Node[]` position as its own `subIndex` — the normal case, once a junction, outfall or
+  divider precedes it — read another node's `fullDepth`/`fullVolume` and `Storage[]` record. That
+  affects US and SI projects alike. Separately, the Newton solve runs in display units but passed its
+  trial depth straight into functions taking internal feet, then differenced the result against a
+  display-unit target: silent under US units, wrong under SI.
+- **`IGNORE_RAINFALL` / `IGNORE_SNOWMELT` / `IGNORE_GROUNDWATER` / `IGNORE_RDII` / `IGNORE_ROUTING` /
+  `IGNORE_QUALITY` are honored at runtime**, matching legacy. They were parsed and stored but not
+  consulted by the process dispatchers, so a model asking to skip a process still ran it.
+- **Pollutant mass was lost when runoff fell below the cutoff (#90).** The mass-balance bookings are
+  now made against the routed runoff rather than only the reported load, so a subcatchment whose
+  reported runoff is zeroed by the cutoff no longer discards its washoff mass.
+- **`TIMESERIES` / `TIDAL` outfalls read the wrong stage table (#92)** — the `[OUTFALLS]` handler
+  read the stage-data name and discarded it, deferring resolution to a post-parse pass that was
+  never written, so `OutfallData::param` kept its default of `0`. Curves and timeseries share one
+  index space (`ctx.tables`) and `Outfall.cpp` guarded only with `>= 0`, so the outfall silently
+  drew its stage from whichever table came first in the model — an unrelated shape curve, in the
+  reported case, pinning the outfall at that curve's y-value with no error. `OutfallData` now carries
+  `param_name` for deferred resolution (mirroring `DividerData::link_name`), `PostParseResolver`
+  resolves it against `ctx.table_names` and type-checks the referent (a `TIMESERIES` outfall may not
+  point at a curve), and an unresolvable name is a fatal `ERR_NAME` as in legacy
+  `outfall_readParams()` rather than a silent misread. Unresolved references now use `-1`, not `0`.
+- **`InpWriter` corrupted `[OUTFALLS]` on save** — the section was emitted as
+  `Name Elev Type Gated [Stage]`, but the canonical (and parsed) order is
+  `Name Elev Type StageData Gated RouteTo`. A `FIXED` outfall's stage was written *after* the gate
+  flag and re-parsed as `0`; `TIDAL`/`TIMESERIES` names and `RouteTo` were never written at all. The
+  writer now emits the canonical column order, resolving the table *name* for `TIDAL`/`TIMESERIES`,
+  and the parser accepts the EPA-GUI `*` stage-data placeholder on `FREE`/`NORMAL` rows without
+  shifting the gate column.
+- **`InpWriter` dropped the `[POLLUTANTS]` `Cdwf` and `Cinit` columns** on save; both are now
+  written.
+- **The GeoPackage round trip was lossy in ten independent ways** (all uncovered while verifying
+  the relational schema above, none of them subtype-specific): a gage SoA under-sizing crash
+  (`grow_to` + store `ts_name`); object read ordering (SQLite returns UNIQUE-index order, not
+  insertion order — every feature and data read now carries `ORDER BY fid`);
+  `[INFLOWS]`/`[DWF]`/`[CONTROLS]`/`[TRANSECTS]` never persisted at all (tables + IO added);
+  cross-sections storing derived rather than raw `[XSECTIONS]` geom1–4, which lost a TRAPEZOIDAL
+  bottom width and side slopes; orifice/weir/outlet type dropped, so a `SIDE` orifice reloaded as
+  `BOTTOM`; adverse-slope conduit `direction` dropped, which cannot be re-derived from the
+  already-reversed positive-slope geometry; and the metric (CMS) unit round-trip, where the `.gpkg`
+  is now a canonical **internal-unit** store (the reader sets `ctx.gpkg_units_internal` so
+  `resolve_cross_references` skips the non-invertible display↔internal conversion, with only the raw
+  link xsect geom1–4 converted in lock-step with the convert pass) — this is the root cause of the
+  GUI's metric-save ×3.2808 inflation. Timeseries now store raw OADate and option dates/steps
+  `%.17g`.
+- **`[FILES]` `USE/SAVE RUNOFF` and `USE/SAVE RDII` now work in the refactored engine** — previously
+  parsed and written back but never consumed. `SAVE RUNOFF` auto-opens the existing binary
+  runoff-interface writer from the slot; `USE RUNOFF` replaces each runoff substep with the file's
+  records (legacy `runoff_readFromFile`), driving the runoff clock from the recorded timesteps. New
+  `RdiiInterfaceFile` implements the RDII slots: `SAVE RDII` exports computed flows in the legacy
+  `SWMM5-RDII` binary format; `USE RDII` **bypasses the internal unit-hydrograph computation**
+  (legacy `rdii_openRdii` semantics) and reads either the binary or the legacy text format with
+  step-aligned (non-interpolated) lookup. Open/format failures fail `start()` with legacy errors
+  323/325/343/345. `USE/SAVE RAINFALL` (collated binary rain file) remains unimplemented but now
+  emits WARNING 103 instead of being silently ignored.
+- **Routing interface files (`[FILES]` `USE INFLOWS` / `SAVE OUTFLOWS`) now work in the refactored
+  engine** — the paths were parsed and stored but the `InterfaceManager` was never opened, so
+  simulations silently ran without the upstream inflows (and wrote no outflows file).
+  `swmm_engine_start()` now opens both files, reads/writes the legacy headers, and fails with legacy
+  errors 351/353/355/357 on open/format problems. Outfall rows are written at reporting cadence
+  (legacy `iface_saveOutletResults`), flows are converted to the declared units on write, interface
+  pollutant loads flow into node quality mixing and the new "External Inflow" row of the
+  quality-routing continuity report, and interface flow volume is booked as external inflow in the
+  routing mass balance. Wrong-mode rows (`SAVE INFLOWS` / `USE OUTFLOWS`) are rejected at parse time
+  (legacy `ERR_ITEMS`).
+- **`[POLLUTANTS]` concentrations were silently zeroed:** `PostParseResolver` unconditionally re-ran
+  `resize_pollutants()` (which zero-fills) *after* `handle_pollutants` had parsed the values, so
+  every INP rain/GW/RDII/DWF/init concentration loaded as 0 — the DWF/GW/rain quality features did
+  nothing for INP-driven models. The resize is now guarded like the adjacent node/link resizes
+  (`if count != n`).
+- **Refactored dry-weather-flow quality did not exist:** the `[POLLUTANTS]` `Cdwf` column was parsed
+  and discarded. Added `PollutantData.c_dwf`, `QualitySolver::addDwfLoads()` (mirroring the RDII
+  loads), a `qual_routing_dw_in` mass-balance bucket included in the continuity error, the report's
+  Dry Weather Inflow row (previously hardcoded 0), and `swmm_pollutant_set/get_dwf_conc()`.
+- **Groundwater inflow quality was never applied:** GW inflow pollutant mass (`q_gw × c_gw`) went
+  nowhere. Added `QualitySolver::addGwLoads()` and a `qual_routing_gw_in` bucket; the report's
+  Groundwater Inflow quality row (previously hardcoded 0) and the quality continuity total now
+  include it.
+- **Refactored snow never accumulated.** The `[SUBCATCHMENTS]` snow-pack column was never read (no
+  deferred name resolution) and the snow solver's per-subarea `fArea` was never initialised, so
+  `plowSnow`/melt treated every surface as zero-area; and `plowSnow()` was never called from the
+  step pipeline at all, so packs could melt but never grow. Added `snowpack_name` deferred
+  resolution and `fArea` init (legacy `snow_initSnowpack`); accumulation + plowing now run each
+  runoff step before melt (matching legacy `runoff.c` order); and the snow solver takes
+  per-subcatchment rain/snow inputs — previously a single area-weighted broadcast — with
+  per-subcatchment rain-on-snow vs degree-day melt selection (matching legacy
+  `snow_getSnowMelt`/`meltSnowpack`).
+- **Legacy `apiSnowfall` continuity hole:** prescribed snowfall influenced melt computations but
+  never accumulated in the pack (only gage snow did, via `snow_plowSnow`) while still counting as
+  rainfall inflow in the runoff mass balance. `snow_plowSnow()` now includes `apiSnowfall`.
+- **Refactored `swmm_subcatch_get_snow_depth()`** was a stub returning 0; it now returns the
+  area-weighted pack SWE in user depth units via the new `SWMMEngine::subcatchSnowDepth()`.
+- **Subcatchment rainfall forcing had no effect:** `applyForcings()` pre-wrote `subcatches.rainfall`,
+  which the runoff solver then overwrote from the gage. `swmm_forcing_subcatch_rainfall()` now
+  resolves inside the runoff solver's rainfall assembly, the same pattern as the PET forcing fix.
+- **Subcatchment evaporation forcing had no effect:** `swmm_forcing_subcatch_evap()` overwrote
+  `evap_loss` before the runoff solver recomputed it. It now prescribes a PET *rate* (user units:
+  in/day US, mm/day SI — previously documented as ft/sec) consumed by the runoff, LID and
+  groundwater solvers, so capping to available water and mass-balance accounting happen along the
+  normal computation paths.
+- **Climate temperature/wind forcing stuck after clear:** a one-shot or cleared prescription never
+  reverted, because the forcing overwrote the same `ClimateState` field it read as the broadcast
+  base. Added `temperature_src`/`wind_speed_src` source bases resolved fresh each step.
+- **`Forcing.clear()` mapped the wrong channels:** the Python binding passed `ForcingTarget`
+  object-kind codes where C `SWMM_ForcingType` channel codes were expected, so clearing a SUBCATCH
+  actually cleared node quality. It now clears every channel belonging to the requested object.
+- **`ForcingData::effective_rainfall`/`_snowfall` read out of bounds:** they lacked the size guard
+  `effective_evap_rate` has, segfaulting direct-solver unit tests with unsized forcing arrays.
+- **Link-quality forcing now sticks after node mixing**, and 2D forcing applied through the one-shot
+  API is no longer overwritten by the next window.
+- **Refactored DWF/external-inflow patterns ignored mid-run edits.** `InflowSolver::init` copies
+  pattern factors into a per-step lookup cache, so `swmm_pattern_set_factors` (which mutates
+  `ctx.patterns`) had no effect on DWF/external inflow mid-run (groundwater-evap patterns read the
+  live context and were unaffected). Added `InflowSolver::refreshPatterns` +
+  `SWMMEngine::inflowSolver()`; the setter now refreshes the cache so an edit takes effect on the
+  next step.
+- **2D mass-balance evaporation** moved from the 2D state mirror into `MassBalance2D::evap_out`,
+  folded into `error()`, and surfaced in the report's 2D continuity block.
+- **Legacy `get_value` misread valid negatives:** `swmm_getValueExpanded`'s return was validated by
+  sign, so a sub-freezing air temperature or the −999 API-unset sentinel raised a spurious error. It
+  now keys off the system ERROR_CODE and the API-error sentinel range.
+- **Legacy subcatchment pollutant bindings** passed the pollutant index in the `sub_index` slot, but
+  the C `getSubcatchValue`/`setSubcatchValue` pollutant cases read it from `pollutantIndex`.
+  `LegacySubcatchment.get_pollutant_buildup`, `set_external_pollutant_buildup` and
+  `set_ponded_concentration` now pass `pollutant_index=` and work at runtime (previously they raised
+  an object-index API error).
+- **Build and packaging:** `gpu-omp` wheels build again (Kokkos/OpenMP, macOS `delocate`); the macOS
+  wheel deployment target is 11.0 rather than 15.0; the musllinux leg re-clones vcpkg per libc; the
+  wheel-smoke job installs the local companion wheel instead of the PyPI `0.0.0` stub; and
+  `PatchNumpyPxd.cmake` only rewrites the Cython pxd on numpy ≥ 2.0, so it no longer breaks the
+  numpy 1.x build it was meant to support.
 
-### Audits
+### Performance
 
-- A3: refactored ponded-quality and buildup setters are runtime-callable
-  (no running guards) — functional verification handed off.
-- A4: the 2D solver has **no infiltration sink** (T2 remains out of scope).
-- Phase 4 parameter-surface audits are execution-gated — protocol in
-  `docs/RUNTIME_FORCING_TESTING_HANDOFF.md` §6.
-
-## [6.0.0-alpha.3] — Snowfall forcing + snow-path repair (gap plan row 4)
-
-See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (item M3).
-
-### Added
-
-- **Per-subcatchment snowfall forcing (M3):** refactored
-  `swmm_forcing_subcatch_snowfall()` (in/hr US, mm/hr SI as SWE;
-  OVERRIDE/ADD, RESET/PERSIST) with `Forcing.subcatchment_snowfall()` and
-  `ForcingType.SUBCATCH_SNOWFALL`; resolves on the temperature-split gage
-  snowfall before accumulation, plowing, and melt. Legacy already had
-  `swmm_SUBCATCH_API_SNOWFALL`.
-- New checked-in snow fixture `python/tests/data/solver/site_drainage_snow.inp`
-  (snow pack on S1, constant 25 °F temperature series).
-
-### Fixed
-
-- **Refactored snow path:** snowfall never accumulated — `plowSnow()` was
-  never called from the step pipeline, so packs could melt but never grow.
-  Accumulation + plowing now runs each runoff step before melt (matching
-  legacy `runoff.c` order), and the snow solver takes per-subcatchment
-  rain/snow inputs (previously a single area-weighted broadcast), with
-  per-subcatchment rain-on-snow vs. degree-day melt selection (matching
-  legacy `snow_getSnowMelt`/`meltSnowpack`).
-- **Legacy `apiSnowfall` continuity hole:** prescribed snowfall influenced
-  melt computations but never accumulated in the pack (only gage snow did,
-  via `snow_plowSnow`), while still counting as rainfall inflow in the
-  runoff mass balance. `snow_plowSnow()` now includes `apiSnowfall`.
-- **Refactored `swmm_subcatch_get_snow_depth()`** was a stub returning 0;
-  it now returns the area-weighted pack SWE in user depth units via the
-  new `SWMMEngine::subcatchSnowDepth()`.
-
-## [6.0.0-alpha.3] — Runtime climate forcing (gap plan rows 1–3)
-
-See `docs/RUNTIME_FORCING_API_GAP_PLAN.md` (items A2, A5, M1, M2).
-
-### Added
-
-- **Air temperature forcing (M1):** legacy `swmm_API_TEMPERATURE` system
-  property (set while running; `<= -999` clears) with read-only
-  `swmm_TEMPERATURE`; refactored `swmm_forcing_climate_temperature()`
-  channel (OVERRIDE/ADD, RESET/PERSIST) with `swmm_climate_get_temperature()`.
-  Applied before derived climate quantities (saturation vapor pressure,
-  psychrometric constant, Hargreaves moving average) so snowmelt and
-  temperature-evap consumers stay consistent. User units (°F US, °C SI).
-- **Wind speed forcing (M2):** legacy `swmm_API_WINDSPEED` (negative
-  clears) with read-only `swmm_WINDSPEED`; refactored
-  `swmm_forcing_climate_wind()` with `swmm_climate_get_wind_speed()`.
-  User units (mph US, km/hr SI).
-- Python: `LegacySystem.set/get/clear_api_temperature` and
-  `…_api_wind_speed`; refactored `Forcing.climate_temperature/_wind`
-  setters, `get_climate_temperature/_wind_speed` getters, and
-  `ForcingTarget.CLIMATE` for `Forcing.clear`.
-
-### Fixed
-
-- **Subcatchment rainfall forcing (A2):** `swmm_forcing_subcatch_rainfall()`
-  previously had no effect — `applyForcings()` pre-wrote
-  `subcatches.rainfall`, which the runoff solver then overwrote from the
-  gage. The forcing now resolves inside the runoff solver's rainfall
-  assembly (same pattern as the PET forcing fix).
-- **`Forcing.clear()` channel mapping (A5):** the Python binding passed
-  `ForcingTarget` object-kind codes where C `SWMM_ForcingType` channel
-  codes were expected, so clearing a SUBCATCH actually cleared node
-  quality. It now clears every channel belonging to the requested object.
-
-## [6.0.0-alpha.3] — Subcatchment PET prescription
-
-See `docs/SUBCATCHMENT_PET_PRESCRIPTION_PLAN.md`.
-
-### Added
-
-- **Legacy engine:** new `swmm_SUBCATCH_API_PET` subcatchment property —
-  prescribe a potential evapotranspiration rate (in/day or mm/day) per
-  subcatchment at runtime. The prescribed rate replaces the climate-derived
-  `Evap.rate` for surface, LID, and groundwater upper-zone evaporation
-  (bypassing `DRY_ONLY` and monthly adjustments); a negative value clears
-  it. New read-only `swmm_EVAPRATE` system property returns the current
-  climate-derived rate. Python: `LegacySubcatchment.set_api_pet` /
-  `get_api_pet` / `clear_api_pet`, `LegacySystem.get_evap_rate`.
-- **Refactored engine:** new `swmm_climate_get_evap_rate()` C API getter
-  and `Forcing.climate_evap_rate()` Python method for caller-side
-  adjustment composition.
-
-### Fixed
-
-- **Refactored engine:** `swmm_forcing_subcatch_evap()` previously had no
-  effect — it overwrote `evap_loss` before the runoff solver recomputed it.
-  It now prescribes a PET *rate* (user units: in/day US, mm/day SI —
-  previously documented as ft/sec) consumed by the runoff, LID, and
-  groundwater solvers, so capping to available water and mass-balance
-  accounting happen along the normal computation paths.
-
-## [6.0.0-alpha.3] — Pythonic Python bindings (v1)
-
-### Changed — **breaking** (Python bindings only; C API unchanged)
-
-A full property-style rewrite of the `openswmm.engine` Python surface.
-See `docs/PYTHONIC_BINDINGS_PLAN.md` and the
-`docs/PYTHONIC_BINDINGS_DONE.md` wrap-up. The C API is untouched.
-
-#### Solver lifecycle
-
-- Lifecycle methods (`open`, `initialize`, `start`, `step`, `stride`,
-  `end`, `report`, `close`) **raise on failure** instead of returning
-  integer codes. `step()` and `stride()` return a
-  `datetime.timedelta`; `timedelta(0)` is the end-of-simulation sentinel.
-- `Solver.state` now returns the `EngineState` enum.
-- `Solver.elapsed` and `Solver.routing_step` are `datetime.timedelta`.
-- New `Solver.start_datetime`, `end_datetime`, `current_datetime`,
-  `report_start_datetime` return `datetime.datetime`.
-- New `Solver.steps()` iterator and `Solver.until(target)` (accepts
-  `datetime` or `timedelta`).
-- Every file argument accepts `pathlib.Path` / `os.PathLike`.
-
-#### Views on the Solver
-
-- `solver.options` — `MutableMapping` over `[OPTIONS]` plus typed
-  shortcuts (`start_datetime`, `routing_step`, …).
-- `solver.userflags` — `MutableMapping` with auto-typed bool/int/float.
-- `solver.events` — `MutableSequence[Event]` (each entry carries
-  `datetime` `start` / `end`).
-- `solver.save_schedule` — `MutableSequence[SaveScheduleEntry]` for the
-  `[SAVE HOTSTART]` block.
-
-#### Domain collections + wrappers
-
-Each `solver.<domain>` returns a collection that is **indexable by
-`int | str`**, iterable, and `len`-able. Items are typed wrapper
-objects with property-style access:
-
-- `solver.nodes["J1"].depth = 1.2`
-- `solver.links["C1"].xsect = (XSectShape.CIRCULAR, 1.0, 0, 0, 0)`
-- `solver.subcatchments["S1"].infiltration.set_horton(...)`
-- `solver.gages["RG1"].rainfall = 25.4`
-- `solver.pollutants["TSS"].kdecay = 0.05`
-
-Per-type sub-views raise `AttributeError` on wrong-type nodes/links:
-`node.outfall` only on OUTFALL, `node.storage` only on STORAGE,
-`link.pump` only on PUMP, etc.
-
-Bulk numpy access is now a property pair:
-`solver.nodes.depths` / `solver.links.flows` / `solver.subcatchments.runoffs`.
-
-#### OutputReader
-
-- Path-agnostic constructor (`str` / `Path`).
-- Typed metadata: `start_datetime`, `report_step` (`timedelta`),
-  `flow_units` (`FlowUnits` enum), `period_times`
-  (`np.ndarray[datetime64[s]]`), `node_ids` / `link_ids` /
-  `subcatchment_ids` lists.
-- Variable-selector arguments require an enum (`OutNodeVar` etc.);
-  object selectors accept `int | str`.
-- `node_attributes(key, period)` returns `Dict[OutNodeVar, float]`.
-- `node_stats(key)` returns a typed view with `max_depth`,
-  `max_overflow`, `vol_flooded`, `time_flooded`.
-
-#### MassBalance, Statistics, HotStart, Tables
-
-- `solver.mass_balance.routing_diagnostics` returns the
-  `RoutingDiagnostics` dataclass.
-- `solver.statistics.<domain>_<stat>` are all bulk numpy properties.
-- `HotStart.open(path)` classmethod / `HotStart.save_from(solver, path)`
-  static; `sim_datetime` (`datetime`), `warnings` (`list[str]`),
-  `apply(solver)` on the hot-start.
-- `solver.tables` exposes `TimeSeries.points` as a structured numpy
-  array `(time: datetime64[s], value: float64)`. `solver.patterns` is a
-  separate indexable collection.
-
-#### Exceptions
-
-New `EngineError` hierarchy in `openswmm.engine._exceptions`. Every
-subclass **also** inherits from a standard-library exception:
-
-- `BadIndexError(EngineError, IndexError)`
-- `BadParamError(EngineError, ValueError)`
-- `LifecycleError(EngineError, RuntimeError)`
-- `HotStartError(EngineError, RuntimeError)`
-- `FileError(EngineError, IOError)`
-- `ParseError(EngineError, ValueError)`
-- `NumericalError(EngineError, RuntimeError)`
-- `CRSError(EngineError, ValueError)`
-- `DependencyError(EngineError, RuntimeError)`
-- `PluginError(EngineError, RuntimeError)`
-- `BadHandleError(EngineError, RuntimeError)`
-- `StaleObjectError(LifecycleError)` — raised when a wrapper's
-  generation counter no longer matches the solver's after a
-  rename/delete.
-
-Every `EngineError` carries `.code` (raw int), `.code_enum`
-(`ErrorCode` member), `.message` (filled by the C API).
-
-#### New enums
-
-- `OrificeType`, `WeirType`, `OutletRatingType` (in `openswmm_links.h`).
-- `ErrorCode.DEPENDENCY = 15` (was missing from the Python side).
-
-#### DateTime conversion C API
-
-- New `include/openswmm/engine/openswmm_datetime.h` exposes
-  encode/decode/`add_seconds`/`time_diff` primitives matching the
-  legacy `datetime.c` bit-for-bit.
-- Reached from Python through `openswmm.engine.datetime_api` (the
-  Cython binding) plus the high-level `oadate_to_datetime` /
-  `datetime_to_oadate` helpers.
-- All "Julian date" wording removed from the C API header
-  documentation; the convention is documented as the OLE Automation /
-  Delphi TDateTime epoch (1899-12-30) — **not** astronomical Julian.
-
-### Documentation
-
-- Sphinx CI gate (`sphinx-build -W --keep-going`) was already in place
-  and is kept; every guide page renders warning-free against the new
-  `.pyi` stubs.
-- New `guide/datetime.rst`, `guide/plotting.rst` pages.
-- `guide/concepts.rst`, `guide/error_handling.rst`, every domain
-  guide and the migration page all rewritten for the v1 surface.
-- v0 → v1 cheat sheet appended to `migration/swmm5_to_swmm6.rst`.
-
-### Test-suite migration (now landed)
-
-The legacy per-domain `test_*.py` files have been processed:
-
-- **Duplicated coverage neutralised** — `test_nodes.py`,
-  `test_links.py`, `test_subcatchments.py`, `test_gages.py`,
-  `test_massbalance.py`, `test_output_reader.py`, `test_hotstart.py`,
-  `test_spatial.py`, `test_infrastructure.py`,
-  `test_quality_pollutants.py`, `test_tables.py`, `test_new_api.py`,
-  `test_new_modules.py`, and all `*_expanded.py` files are now
-  module-level `pytest.skip()` stubs (each names its replacement
-  `*_pythonic.py` file in the docstring). They can be `git rm`-ed in
-  a subsequent sweep without changing CI behaviour.
-- **Unique-scenario tests migrated to v1** — `test_integration.py`,
-  `test_callbacks_and_xsect.py`, `test_workflow.py`,
-  `test_opened_state_editing.py`, `test_concurrent_simulation.py`,
-  `test_controls_advancement.py`, `test_controls_inflows.py`,
-  `test_rdii_advancement.py`, `test_solver.py`. Each uses the v1
-  surface (`solver.nodes["J1"].depth`, `for elapsed in solver.steps()`,
-  `solver.links[0].xsect = (...)`, etc.).
-
-### mypy gate
-
-- `python/pyproject.toml` ships a `[tool.mypy]` block: default-mode
-  check across the whole `openswmm.engine` package plus strict-mode on
-  the pure-Python modules (`_enums`, `_exceptions`, `_dates`).
-- `python/tests/typing/test_surface.py` exercises every public symbol
-  with explicit type annotations — runs under strict mode.
-- New CI workflow `.github/workflows/typing.yml` runs both passes on
-  every PR touching the bindings or the typing test.
+- **1D dynamic-wave Picard loop.** Persistent-team OpenMP threading (the team spans the whole
+  iteration loop; a CSR node-centric gather replaces the serial link-order scatter, provably
+  bit-identical FP order to legacy at any thread count), batch-geometry kernels parallelized with an
+  Apple-Silicon P-core clamp/QoS hint, and dead-work elimination (loss recompute / node-state init
+  skipped when structurally a no-op). Bellinge: 204 s → 56.5 s (T=8, Apple Silicon); the routing
+  loop goes 95.8 s → 80.1 s in a separate bit-parity-preserving optimization pass with
+  phase-timing attribution and bypass-aware batch geometry. Every change is gated on a 20-model
+  bit-parity scorecard with byte-identical `.out` files; the two 1D modes — bit-exact legacy parity
+  versus fast — are documented.
+- **Memory density from the relational side-tables:** ≈17% peak-RSS reduction on a 60k-junction
+  model, and `LinkData` allocates ~29 fewer vectors per link.
+- **2D held-path coupling:** zero-exchange coupling stencils are skipped in the active set (the
+  exchange is a per-window constant already scattered into `coupling_flux`, so a stencil with zero
+  flux this window contributes nothing) — the storm-peak active set drops from ~38% of the mesh to
+  roughly wet+halo (~5%) on held-path coupled models.
 
 ## [6.0.0-alpha.1] — 2026-03-25
 
