@@ -235,6 +235,8 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.ignore_routing = Tokenizer::parse_boolean(val);
         } else if (key == "IGNORE_QUALITY") {
             opt.ignore_quality = Tokenizer::parse_boolean(val);
+        } else if (key == "IGNORE_2D") {
+            opt.ignore_2d = Tokenizer::parse_boolean(val);
 
         // -----------------------------------------------------------------
         // CRS (R06)

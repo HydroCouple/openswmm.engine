@@ -584,6 +584,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-20s %s\n",  "IGNORE_RDII",       o.ignore_rdii?"YES":"NO");
     std::fprintf(f,"%-20s %s\n",  "IGNORE_ROUTING",    o.ignore_routing?"YES":"NO");
     std::fprintf(f,"%-20s %s\n",  "IGNORE_QUALITY",    o.ignore_quality?"YES":"NO");
+    // OpenSWMM extension, not a legacy key — emit only when set so 1D-only
+    // models keep a legacy-clean [OPTIONS] block.
+    if (o.ignore_2d)
+        std::fprintf(f,"%-20s %s\n",  "IGNORE_2D",         "YES");
     std::fprintf(f,"\n");
 
     // --- Group 3: Date / time options (START_DATE .. RULE_STEP) ---

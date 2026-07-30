@@ -323,6 +323,17 @@ struct SimulationOptions {
     /** @brief Ignore water quality. */
     bool ignore_quality = false;
 
+    /**
+     * @brief Ignore the 2D surface-routing module.
+     *
+     * @details Parsed from IGNORE_2D in [OPTIONS] (OpenSWMM extension — not a
+     * legacy key, so the InpWriter emits it only when YES). When set, the 2D
+     * solver never activates even if the model carries a mesh: the GUI's
+     * "2D Surface Routing" module checkbox writes this so unchecking it
+     * genuinely runs the model 1D-only without stripping the mesh sections.
+     */
+    bool ignore_2d = false;
+
     // -----------------------------------------------------------------------
     /**
      * @brief Control rule evaluation interval (seconds).

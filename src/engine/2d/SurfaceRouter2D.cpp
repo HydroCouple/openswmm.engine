@@ -192,6 +192,16 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         return;
     }
 
+    // IGNORE_2D: the module toggle. The mesh stays parsed/editable, but the
+    // solver never activates — the model runs 1D-only.
+    if (ctx.options.ignore_2d) {
+        std::fprintf(stderr,
+                     "[openswmm 2D] IGNORE_2D YES — 2D surface routing "
+                     "disabled; running 1D-only.\n");
+        active_ = false;
+        return;
+    }
+
     // Resolve unit-system conversion factors. The 2D solver runs internally in
     // SI, but the 1D engine ALWAYS computes internally in feet (g=32.2,
     // PHI=1.486) — even for SI/metric FLOW_UNITS, whose metric inputs the 1D
