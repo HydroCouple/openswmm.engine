@@ -43,6 +43,16 @@ Quickstart
         rdii = s.inflows.get_rdii(0)
         print(rdii.node_index, rdii.uh_name, rdii.area)
 
+.. note::
+
+   The ``ts_name`` / ``*_pattern`` arguments must reference a time series
+   or pattern that already exists in the model. Adding an inflow is allowed
+   in any lifecycle state, but **creating** the referenced time series or
+   pattern is only valid in ``BUILDING`` or ``OPENED`` state. If you need to
+   create them, open the solver explicitly and add them before
+   :meth:`~Solver.initialize` / :meth:`~Solver.start` — see the lifecycle
+   note in :doc:`tables`.
+
 ----
 
 Methods
