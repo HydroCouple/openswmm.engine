@@ -337,6 +337,29 @@ if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
         LABELS "unit"
         ENVIRONMENT "${_omp_test_env}"
         PASS_REGULAR_EXPRESSION "using GPU backend: omp")
+
+    # P5: the explicit LTS marcher through the Kokkos plugin (INTEGRATOR
+    # EXPLICIT variant of the same fixture). The marcher kernels implement
+    # BOTH closures, so under the default FLAT the factory must LOAD the
+    # plugin here (no closure refusal — unlike the CVODE-family solvers
+    # gated above). Numeric parity is byte-exact by construction (disjoint
+    # writes, exact-min reductions); the bench harness verifies .out
+    # byte-identity serial-vs-omp on the Bellinge slice.
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
+         _omp_expl_inp)
+    string(REPLACE "[2D_OPTIONS]" "[2D_OPTIONS]\nINTEGRATOR             EXPLICIT"
+           _omp_expl_inp "${_omp_expl_inp}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_explicit.inp
+         "${_omp_expl_inp}")
+    add_test(
+        NAME    test_engine_2d_omp_explicit
+        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example_explicit.inp 2d_omp_explicit.rpt
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(test_engine_2d_omp_explicit PROPERTIES
+        LABELS "unit"
+        ENVIRONMENT "${_omp_test_env}"
+        PASS_REGULAR_EXPRESSION "using GPU backend: omp")
 endif()
 
 # InpWriter [2D_*] emission — end-to-end through the public C API (open a
