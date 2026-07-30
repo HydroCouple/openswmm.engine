@@ -32,7 +32,6 @@ Usage:
       [--dx 10] [--dy 10] [--stride 4] [--bury 1.0] [--slope 0.002]
       [--pipe-diam 0.5] [--routing-step 30] [--hours 2] [--rain-mm-hr 40]
       [--rain-min 60] [--mannings 0.03] [--coupling-cd 0.65] [--coupling-area 1.0]
-      [--max-cvode-steps 200000]
 
 Example: gen_coupled_mesh.py 100 100 coupled_20k.inp  (20k tris, ~676 couplings).
 """
@@ -60,7 +59,6 @@ def main():
     ap.add_argument("--mannings", type=float, default=0.03)
     ap.add_argument("--coupling-cd", type=float, default=0.65)
     ap.add_argument("--coupling-area", type=float, default=1.0)
-    ap.add_argument("--max-cvode-steps", type=int, default=200000)
     a = ap.parse_args()
 
     nx, ny, dx, dy = a.nx, a.ny, a.dx, a.dy
@@ -174,17 +172,9 @@ def main():
 
     P("[2D_OPTIONS]")
     P("MAX_TIMESTEP           60")
-    P("MIN_TIMESTEP           0.001")
-    P("REL_TOLERANCE          0.0001")
-    P("ABS_TOLERANCE          1e-06")
     P("DRY_DEPTH              0.0001")
     P("LIMITER_EPSILON        1e-06")
     P(f"COUPLING_CD            {a.coupling_cd:g}")
-    P("MAX_KRYLOV_DIM         30")
-    P("COUPLING_INTERVAL      0")
-    P(f"MAX_CVODE_STEPS        {a.max_cvode_steps}")
-    P("LINEAR_SOLVER          GMRES")
-    P("PRECONDITIONER         AMG")
     P("REPORT_2D              NO")
     P("")
     P("[2D_VERTICES]")

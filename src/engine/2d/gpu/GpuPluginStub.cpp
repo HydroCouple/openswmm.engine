@@ -3,15 +3,14 @@
  * @brief Placeholder GPU surface-solver plugin (Phase 0 scaffold).
  *
  * @details Implements the GpuPluginAbi.h contract with NO actual GPU backend.
- *          It exists so the runtime discovery / dlopen / fallback wiring
- *          (docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §4.2) can be built and
- *          exercised before the Kokkos kernel lands (Phase 2). The probe
- *          reports "no device", so the core's auto-selection falls back to
- *          the serial CPU CvodeSurfaceSolver.
+ *          It exists so the runtime discovery / dlopen / fallback wiring can be
+ *          built and exercised without a device toolchain. The probe reports
+ *          "no device", so the core's auto-selection falls back to the serial
+ *          CPU ExplicitInertialSolver.
  *
  *          This translation unit deliberately depends on NOTHING beyond the
- *          C ABI header and the C++ standard library — no Kokkos, no SUNDIALS
- *          — so it compiles with a plain host compiler on every platform.
+ *          C ABI header and the C++ standard library — no Kokkos — so it
+ *          compiles with a plain host compiler on every platform.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
@@ -38,7 +37,7 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
 }
 
 extern "C" OPENSWMM_GPU_ABI void*
-openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* /*probe*/) {
+openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
     // The Kokkos/CUDA/HIP/SYCL solver is not implemented until Phase 2.
     return nullptr;
 }

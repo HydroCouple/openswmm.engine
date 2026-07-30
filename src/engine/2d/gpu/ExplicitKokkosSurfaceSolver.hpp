@@ -43,7 +43,7 @@
 
 #include "../solver/ISurfaceSolver.hpp"
 #include "../solver/InertialEdges.hpp"
-#include "KokkosSurfaceKernels.hpp"   // ExecSpace, MemSpace, DView/IView aliases
+#include "KokkosTypes.hpp"
 
 namespace openswmm::twoD::gpu {
 

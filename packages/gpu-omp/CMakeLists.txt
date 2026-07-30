@@ -22,7 +22,7 @@ get_filename_component(OPENSWMM_ENGINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.."
 
 # ----------------------------------------------------------------------------
 # vcpkg: reuse the engine manifest + overlay ports (single source of truth for
-# Kokkos / SUNDIALS[kokkos] versions and the pinned registry baseline), but pull
+# Kokkos version and the pinned registry baseline), but pull
 # ONLY the `gpu` feature — no default features (no full 2D/HDF5; the plugin needs
 # neither). Must be set before project() so the toolchain reads them.
 # ----------------------------------------------------------------------------
@@ -35,18 +35,15 @@ if(NOT DEFINED CACHE{VCPKG_MANIFEST_NO_DEFAULT_FEATURES})
         "Companion pulls only the gpu feature, not the engine defaults" FORCE)
 endif()
 if(NOT DEFINED CACHE{VCPKG_MANIFEST_FEATURES})
-    # gpu   → Kokkos + SUNDIALS[kokkos] for the OpenMP plugin.
-    # hypre → BoomerAMG so the plugin's PRECONDITIONER=AMG path (the Kokkos
-    #         KokkosAmgPreconditioner) is compiled; OPENSWMM_WITH_HYPRE defaults
-    #         ON, so this must be listed or the plugin build fails at
-    #         find_package(HYPRE REQUIRED).
-    set(VCPKG_MANIFEST_FEATURES "gpu;hypre" CACHE STRING
-        "Kokkos + SUNDIALS[kokkos] + hypre BoomerAMG for the OpenMP plugin" FORCE)
+    # gpu → Kokkos for the OpenMP marcher plugin (no SUNDIALS, no hypre since
+    #       the D2 retirement — the explicit marcher needs no linear solver).
+    set(VCPKG_MANIFEST_FEATURES "gpu" CACHE STRING
+        "Kokkos for the OpenMP explicit-marcher plugin" FORCE)
 endif()
 
 # Auto-load the vcpkg toolchain from VCPKG_ROOT (mirrors python/CMakeLists.txt).
 # A non-vcpkg build can instead point CMAKE_PREFIX_PATH at an installed
-# Kokkos + SUNDIALS[kokkos] prefix.
+# Kokkos prefix.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
     set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
         CACHE PATH "vcpkg toolchain file (auto-detected from VCPKG_ROOT)")

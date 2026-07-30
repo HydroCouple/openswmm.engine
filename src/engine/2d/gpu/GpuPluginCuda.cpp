@@ -4,7 +4,7 @@
  *
  * @details Exports the GpuPluginAbi.h contract for the openswmm_gpu_cuda
  *          plugin. Identical in shape to GpuPluginOmp.cpp — the probe advertises
- *          an NVIDIA device and the factory constructs a CvodeKokkosSurfaceSolver
+ *          an NVIDIA device and the factory constructs the Kokkos marcher
  *          — but the solver's execution space is Kokkos::Cuda (selected by the
  *          OPENSWMM_GPU_EXECSPACE_CUDA define the CMake target sets), so the
  *          whole RHS / preconditioner / vector pipeline runs device-resident.
@@ -26,7 +26,6 @@
 
 #include "../solver/GpuPluginAbi.h"
 #include "../solver/ISurfaceSolver.hpp"
-#include "CvodeKokkosSurfaceSolver.hpp"
 #include "ExplicitKokkosSurfaceSolver.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -66,16 +65,6 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
         std::strncpy(out->device_name, "CUDA device", sizeof(out->device_name) - 1);
     }
     return 0;  // usable device present
-}
-
-extern "C" OPENSWMM_GPU_ABI void*
-openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* /*probe*/) {
-    ensureKokkosInitialized();
-    // Up-cast to the interface BEFORE erasing to void* so the core's
-    // static_cast<ISurfaceSolver*> recovers a correctly-adjusted pointer.
-    openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::CvodeKokkosSurfaceSolver();
-    return static_cast<void*>(solver);
 }
 
 extern "C" OPENSWMM_GPU_ABI void*

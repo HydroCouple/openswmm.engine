@@ -968,50 +968,6 @@ cdef class Surface2D:
         """
         _check(swmm_2d_set_dry_depth(self._engine, value))
 
-    @property
-    def rel_tolerance(self) -> float:
-        """CVODE relative tolerance.
-
-        @return: Relative tolerance.
-        @rtype: float
-        @raise RuntimeError: If the C API call fails.
-        """
-        cdef double val
-        _check(swmm_2d_get_rel_tolerance(self._engine, &val))
-        return val
-
-    @rel_tolerance.setter
-    def rel_tolerance(self, double value):
-        """Set the CVODE relative tolerance.
-
-        @param value: New relative tolerance.
-        @type value: float
-        @raise RuntimeError: If the C API rejects the value.
-        """
-        _check(swmm_2d_set_rel_tolerance(self._engine, value))
-
-    @property
-    def abs_tolerance(self) -> float:
-        """CVODE absolute tolerance.
-
-        @return: Absolute tolerance.
-        @rtype: float
-        @raise RuntimeError: If the C API call fails.
-        """
-        cdef double val
-        _check(swmm_2d_get_abs_tolerance(self._engine, &val))
-        return val
-
-    @abs_tolerance.setter
-    def abs_tolerance(self, double value):
-        """Set the CVODE absolute tolerance.
-
-        @param value: New absolute tolerance.
-        @type value: float
-        @raise RuntimeError: If the C API rejects the value.
-        """
-        _check(swmm_2d_set_abs_tolerance(self._engine, value))
-
     # ====================================================================
     # Boundary conditions - boundary edges
     # ====================================================================
