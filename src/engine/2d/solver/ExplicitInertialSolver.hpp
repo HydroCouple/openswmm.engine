@@ -118,6 +118,18 @@ private:
     std::vector<double>  exch_;
     std::vector<double>  node_drawn_;   ///< spill drawn per node this advance (m³)
 
+public:
+    /// Experimental (OPENSWMM_2D_HEAD_RAMP): per-coupling-point 1D head trend
+    /// slope (m/s, 2D frame) extrapolated across the batch — the exchange
+    /// evaluates against h_1d + slope·τ instead of the held batch-start head.
+    /// Empty = held heads (default).
+    void setExchangeHeadSlopes(std::vector<double> slopes) {
+        exch_head_slope_ = std::move(slopes);
+    }
+private:
+    std::vector<double>  exch_head_slope_;
+    double               exch_tau_ = 0.0;  ///< time into current advance (s)
+
     double t_last_sync_ = 0.0;          ///< lazy-source clock
     int    cycles_since_rebuild_ = 1000; ///< persists across advances (co-advance)
     /// Lazy-source landing without the O(nt) rebuild (advance boundaries
