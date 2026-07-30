@@ -95,9 +95,8 @@ option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF
 option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
-option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (requires SUNDIALS)" ON)
-option(OPENSWMM_WITH_HYPRE        "Wire hypre BoomerAMG as a 2D-solver preconditioner (PRECONDITIONER=AMG). ON by default: the `hypre` vcpkg feature is in default-features, so a from-source build gets BoomerAMG (the 2D solver's default/most-robust preconditioner). hypre pulls BLAS/LAPACK (and, depending on the port, an MPI stack, called sequentially via MPI_COMM_SELF). To produce a hypre-free build, set this OFF *and* exclude the `hypre` vcpkg feature together (e.g. VCPKG_MANIFEST_NO_DEFAULT_FEATURES) — they must stay in sync or find_package(HYPRE REQUIRED) fails. Defines OPENSWMM_HAVE_HYPRE and links HYPRE::HYPRE." ON)
-option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos + sundials[kokkos]). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
+option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (explicit local-inertial marcher; HDF5 output)" ON)
+option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
 
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
 if(OPENSWMM_BUILD_TESTS)
@@ -114,7 +113,7 @@ include(GenerateExportHeader)
 # Regexes shared by every install(RUNTIME_DEPENDENCY_SET …) call to keep the
 # OS-provided libraries out of the package (bundling libc / libGL.so.1 /
 # opengl32.dll would break dispatch on the target machine and is forbidden
-# by Apple's bundle rules). Anything NOT matched here — SUNDIALS, HDF5,
+# by Apple's bundle rules). Anything NOT matched here — HDF5,
 # libomp, sqlite3, and any vcpkg-provided OpenGL-stack wrappers (GLEW,
 # GLFW, ANGLE, glbinding) — will be copied next to the executable.
 set(OPENSWMM_RUNTIME_DEP_PRE_EXCLUDES
@@ -197,7 +196,7 @@ endfunction()
 # when openswmm_engine is itself installed by another install(TARGETS …)
 # rule, CMake auto-adds the build-tree engine dylib to the set's
 # POST_EXCLUDE_FILES_STRICT. That strict exclusion prunes the dep walk
-# *through* the engine, so libomp / SUNDIALS / HDF5 — which are deps of
+# *through* the engine, so libomp / HDF5 — which are deps of
 # the engine, not of the CLI — never appear in the resolved set. Probing
 # the installed exe via the template sidesteps that auto-exclusion entirely.
 function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
@@ -222,7 +221,7 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
 
     # Extra DIRECTORIES that file(GET_RUNTIME_DEPENDENCIES) should search
     # when resolving transitive dependencies of the executable. Critically
-    # this is where we point at vcpkg's installed/<triplet>/bin so SUNDIALS,
+    # this is where we point at vcpkg's installed/<triplet>/bin so HDF5,
     # HDF5, sqlite3, etc. (linked by openswmm_engine) get found and copied
     # into the package. Without this, those DLLs show up in the bundle's
     # unresolved-deps warnings on Windows and never get included in the
@@ -337,7 +336,7 @@ install(
 
 # Add testing subdirectories conditionally.
 # Note: testing/benchmarks subdirs are added AFTER add_subdirectory(src) below
-# so that imported third-party targets (OpenMP::OpenMP_CXX, SUNDIALS::cvode,
+# so that imported third-party targets (OpenMP::OpenMP_CXX,
 # hdf5::hdf5-shared, sqlite3) created during the engine configure are visible
 # to the test-tree dependency-staging helper (openswmm_stage_test_runtime_deps).
 # CMake permits forward target references in target_link_libraries, so this

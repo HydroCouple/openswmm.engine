@@ -1,6 +1,6 @@
 {
     "name": "openswmm-engine",
-    "description": "Open Storm Water Management Model Engine — data-oriented, plugin-extensible, reentrant C++20 engine built on the EPA SWMM 5.x foundation.",
+    "description": "Open Storm Water Management Model Engine \u2014 data-oriented, plugin-extensible, reentrant C++20 engine built on the EPA SWMM 5.x foundation.",
     "license": "MIT",
     "homepage": "https://hydrocouple.org/projects/openswmm",
     "version-semver": "6.0.0-alpha.3",
@@ -18,22 +18,19 @@
         },
         {
             "name": "sqlite3",
-            "features": ["rtree"]
+            "features": [
+                "rtree"
+            ]
         }
     ],
     "default-features": [
         "2d",
-        "gpu",
-        "hypre"
+        "gpu"
     ],
     "features": {
         "2d": {
-            "description": "2D surface routing module (SUNDIALS/CVODE solver + HDF5 for CF-1.11/UGRID-1.0 output)",
+            "description": "2D surface routing module (explicit local-inertial marcher + HDF5 for CF-1.11/UGRID-1.0 output)",
             "dependencies": [
-                {
-                    "name": "sundials",
-                    "features": ["openmp"]
-                },
                 {
                     "name": "hdf5",
                     "default-features": false
@@ -61,66 +58,50 @@
             "dependencies": [
                 {
                     "name": "sqlite3",
-                    "features": ["rtree"]
+                    "features": [
+                        "rtree"
+                    ]
                 }
             ]
         },
         "gpu": {
-            "description": "GPU surface-solver plugin backend (Phase 1, OpenMP): Kokkos host-parallel layer plus SUNDIALS with the Kokkos N_Vector. Non-default; pulled only with --x-feature=gpu. Produces a separately loaded plugin, not linked into the base library. Build the plugin with -DOPENSWMM_GPU_BACKEND=omp.",
+            "description": "GPU surface-solver plugin backend (OpenMP): Kokkos host-parallel layer for the explicit marcher. Produces a separately loaded plugin, not linked into the base library. Build the plugin with -DOPENSWMM_GPU_BACKEND=omp.",
             "dependencies": [
                 {
                     "name": "kokkos"
-                },
-                {
-                    "name": "sundials",
-                    "features": ["kokkos"]
                 }
             ]
         },
         "gpu-cuda": {
-            "description": "GPU surface-solver plugin backend (Phase 2, CUDA): Kokkos CUDA device layer plus SUNDIALS with the Kokkos N_Vector. Non-default; --x-feature=gpu-cuda. Requires the CUDA toolkit and OPENSWMM_KOKKOS_CUDA_ARCH; build the plugin with -DOPENSWMM_GPU_BACKEND=cuda on a CUDA host/CI (not macOS).",
+            "description": "GPU surface-solver plugin backend (CUDA): Kokkos CUDA device layer for the explicit marcher. Non-default; --x-feature=gpu-cuda. Requires the CUDA toolkit and OPENSWMM_KOKKOS_CUDA_ARCH; build the plugin with -DOPENSWMM_GPU_BACKEND=cuda on a CUDA host/CI (not macOS).",
             "dependencies": [
                 {
                     "name": "kokkos",
-                    "features": ["cuda"]
-                },
-                {
-                    "name": "sundials",
-                    "features": ["kokkos"]
+                    "features": [
+                        "cuda"
+                    ]
                 }
             ]
         },
         "gpu-hip": {
-            "description": "GPU surface-solver plugin backend (Phase 5, HIP/AMD): Kokkos HIP device layer plus SUNDIALS with the Kokkos N_Vector. Non-default; --x-feature=gpu-hip. Requires ROCm and OPENSWMM_KOKKOS_HIP_ARCH; build the plugin with -DOPENSWMM_GPU_BACKEND=hip on a ROCm host/CI (not macOS).",
+            "description": "GPU surface-solver plugin backend (HIP/AMD): Kokkos HIP device layer for the explicit marcher. Non-default; --x-feature=gpu-hip. Requires ROCm and OPENSWMM_KOKKOS_HIP_ARCH; build the plugin with -DOPENSWMM_GPU_BACKEND=hip on a ROCm host/CI (not macOS).",
             "dependencies": [
                 {
                     "name": "kokkos",
-                    "features": ["rocm"]
-                },
-                {
-                    "name": "sundials",
-                    "features": ["kokkos"]
+                    "features": [
+                        "rocm"
+                    ]
                 }
             ]
         },
         "gpu-sycl": {
-            "description": "GPU surface-solver plugin backend (Phase 5, SYCL/Intel): Kokkos SYCL device layer plus SUNDIALS with the Kokkos N_Vector. Non-default; --x-feature=gpu-sycl. Requires the oneAPI toolkit and OPENSWMM_KOKKOS_SYCL_ARCH; build the plugin with -DOPENSWMM_GPU_BACKEND=sycl on an Intel-GPU host/CI (not macOS).",
+            "description": "GPU surface-solver plugin backend (SYCL/Intel): Kokkos SYCL device layer for the explicit marcher. Non-default; --x-feature=gpu-sycl. Requires the oneAPI toolkit and OPENSWMM_KOKKOS_SYCL_ARCH; build the plugin with -DOPENSWMM_GPU_BACKEND=sycl on an Intel-GPU host/CI (not macOS).",
             "dependencies": [
                 {
                     "name": "kokkos",
-                    "features": ["sycl"]
-                },
-                {
-                    "name": "sundials",
-                    "features": ["kokkos"]
-                }
-            ]
-        },
-        "hypre": {
-            "description": "hypre BoomerAMG algebraic-multigrid preconditioner for the 2D surface solver (PRECONDITIONER=AMG). Non-default; --x-feature=hypre with -DOPENSWMM_WITH_HYPRE=ON. Pulls hypre (and its BLAS/LAPACK, plus an MPI stack on ports that require it); called sequentially via MPI_COMM_SELF.",
-            "dependencies": [
-                {
-                    "name": "hypre"
+                    "features": [
+                        "sycl"
+                    ]
                 }
             ]
         }
