@@ -165,6 +165,13 @@ class TestTables(EngineSolverCase):
         self.assertIn("BUILDING or OPENED", msg)
         self.assertIn("STARTED", msg)
 
+    def test_add_curve_after_start_raises_friendly(self):
+        s = self.running_solver()
+        with self.assertRaises(LifecycleError) as ctx:
+            s.tables.add_curve("too_late_curve")
+        msg = str(ctx.exception)
+        self.assertIn("BUILDING or OPENED", msg)
+        self.assertIn("STARTED", msg)
 
 class TestPatterns(EngineSolverCase):
     def test_collection(self):
