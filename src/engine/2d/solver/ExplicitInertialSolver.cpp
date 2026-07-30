@@ -401,9 +401,28 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         double f = computeBoundaryEdgeFlux(*mesh_, *state_, *opts_,
                                            opts_->flux_dh_eps, i, bc_slot_[k]);
         if (f == 0.0) continue;
-        if (f < 0.0)   // availability clamp on outflow
-            f = std::max(f, -state_->volume[i] / dt_c);
-        state_->volume[i] += dt_c * f;
+        // Clamp the exchange in VOLUME space and re-derive the booked flux
+        // from the applied change, so booking matches application exactly
+        // (no −1 ulp volume dust from the flux-space clamp).
+        const double v_old = state_->volume[i];
+        double v_new = v_old + dt_c * f;
+        const BoundaryData* b = state_->boundary;
+        if (static_cast<BoundaryType>(b->edge_bc_type[bc_slot_[k]])
+                == BoundaryType::SPECIFIED_STAGE) {
+            // Equilibrium clamp: one substep moves the cell AT MOST to the
+            // prescribed stage. The collapsed-Manning conductance of a
+            // boundary edge dwarfs a single cell's storage over dt_c, so an
+            // unclamped explicit exchange overshoots η = h_bc every substep
+            // and rings (bang-bang limit cycle) instead of settling.
+            const double v_eq = inertial::cellVolumeFromEta(
+                *mesh_, *opts_, i, b->edge_bc_head[bc_slot_[k]]);
+            if (f < 0.0) v_new = std::max(v_new, std::min(v_old, v_eq));
+            else         v_new = std::min(v_new, std::max(v_old, v_eq));
+        }
+        if (v_new < 0.0) v_new = 0.0;   // availability clamp (exact floor)
+        f = (v_new - v_old) / dt_c;
+        if (f == 0.0) continue;
+        state_->volume[i] = v_new;
         bc_accum_[k] += dt_c * f;
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);

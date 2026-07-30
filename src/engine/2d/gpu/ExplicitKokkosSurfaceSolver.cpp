@@ -799,11 +799,31 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         }
                     }
                     if (f == 0.0) continue;
-                    if (f < 0.0) {   // availability clamp on outflow
-                        const double fl = -vol(i) / dt_c;
-                        if (f < fl) f = fl;
+                    // Volume-space clamp; booked flux re-derived from the
+                    // applied change (mirrors ExplicitInertialSolver).
+                    const double v_old = vol(i);
+                    double v_new = v_old + dt_c * f;
+                    if (ty == bt_stage) {
+                        // Equilibrium clamp: one substep moves the cell AT
+                        // MOST to the prescribed stage — an unclamped
+                        // explicit exchange overshoots η = h_bc and rings.
+                        const double v_eq = inertial::volumeFromEtaScalar(
+                            area(i), cz(i), vz(v0(i)), vz(v1(i)), vz(v2(i)),
+                            vfr, mwf, bc_head(kk));
+                        if (f < 0.0) {
+                            const double lo =
+                                (v_old < v_eq) ? v_old : v_eq;
+                            if (v_new < lo) v_new = lo;
+                        } else {
+                            const double hi =
+                                (v_old > v_eq) ? v_old : v_eq;
+                            if (v_new > hi) v_new = hi;
+                        }
                     }
-                    vol(i) += dt_c * f;
+                    if (v_new < 0.0) v_new = 0.0;  // availability floor
+                    f = (v_new - v_old) / dt_c;
+                    if (f == 0.0) continue;
+                    vol(i) = v_new;
                     bc_accum(kk) += dt_c * f;
                     double e2, d2;
                     inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)),
