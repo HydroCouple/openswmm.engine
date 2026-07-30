@@ -62,6 +62,7 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "omp")
 
     add_library(openswmm_gpu_omp SHARED
         GpuPluginOmp.cpp
+        ExplicitKokkosSurfaceSolver.cpp
         CvodeKokkosSurfaceSolver.cpp
         ArkodeKokkosSurfaceSolver.cpp
         ../solver/InertialEdges.cpp)
@@ -139,6 +140,7 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
 
     add_library(openswmm_gpu_cuda SHARED
         GpuPluginCuda.cpp
+        ExplicitKokkosSurfaceSolver.cpp
         CvodeKokkosSurfaceSolver.cpp)
 
     # On Windows, mark the device-lambda sources so CMake routes them through nvcc.
@@ -197,6 +199,7 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "hip")
 
     add_library(openswmm_gpu_hip SHARED
         GpuPluginHip.cpp
+        ExplicitKokkosSurfaceSolver.cpp
         CvodeKokkosSurfaceSolver.cpp)
     target_include_directories(openswmm_gpu_hip PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../solver
@@ -242,6 +245,7 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "sycl")
 
     add_library(openswmm_gpu_sycl SHARED
         GpuPluginSycl.cpp
+        ExplicitKokkosSurfaceSolver.cpp
         CvodeKokkosSurfaceSolver.cpp)
     target_include_directories(openswmm_gpu_sycl PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../solver
