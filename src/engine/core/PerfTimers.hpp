@@ -12,8 +12,8 @@
 
 namespace openswmm::perf {
 
-inline double sec_2d_window  = 0.0;  // full 2D advance window (rainfall+coupling+CVODE)
-inline double sec_2d_advance = 0.0;  // pure CVODE solve (solver_->advance)
+inline double sec_2d_window  = 0.0;  // full 2D advance window (rainfall+coupling+solve)
+inline double sec_2d_advance = 0.0;  // pure 2D solve (solver_->advance)
 inline double sec_1d_step    = 0.0;  // 1D routing (router_.step)
 
 // Adds the elapsed wall time between construction and destruction to `acc`.

@@ -16,9 +16,10 @@
  *          cR = max(t,nbr). q_e > 0 means flow cL→cR. So q_e is OUTFLOW from cL
  *          (sign +1) and INFLOW to cR (sign −1).
  *
- *          Boundary edges (nbr < 0) carry NO q DOF here — they are walls in the
- *          closed-basin Phase-2 validation. Prescribed-boundary momentum is a
- *          later addition (plan §3: prescribed boundaries stay explicit).
+ *          Boundary edges (nbr < 0) carry NO q DOF here. Non-Wall boundary
+ *          types are applied as explicit mass sources/sinks on the owning
+ *          cell via SurfaceFluxCalculator::boundaryEdgeFlux (plan §3:
+ *          prescribed boundaries stay explicit — no boundary momentum DOF).
  *
  * @ingroup engine_2d
  *
