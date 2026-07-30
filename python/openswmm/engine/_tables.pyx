@@ -24,7 +24,7 @@ patterns — and the C side stores time series and curves in a single
 
 # cython: language_level=3
 
-from ._exceptions import ElementNotFoundError
+from ._exceptions import ElementNotFoundError, LifecycleError
 from typing import Tuple
 
 import numpy as np
@@ -37,6 +37,29 @@ from ._enums import PatternType, TableType
 
 cdef inline SWMM_Engine _h(solver):
     return <SWMM_Engine><size_t>solver.handle
+
+
+def _raise_table_lifecycle(solver, str op):
+    """Re-raise a table/pattern-creation L{LifecycleError} with actionable
+    guidance about which lifecycle states allow creation.
+
+    Table, curve, and pattern *creation* is valid only in C{BUILDING} or
+    C{OPENED} state. The most common trip-up is the C{with Solver(...)}
+    context manager, which auto-runs C{open()->initialize()->start()} and so
+    leaves the engine in C{STARTED} by the time the body executes.
+    """
+    state = getattr(solver, "state", None)
+    state_txt = state.name if state is not None else "unknown"
+    raise LifecycleError(
+        f"{op} requires the engine in BUILDING or OPENED state "
+        f"(current: {state_txt}). Add tables/curves/patterns on a Solver "
+        f"after open() but before initialize()/start(). Note: the "
+        f"`with Solver(...)` context manager auto-runs "
+        f"open()->initialize()->start(), so use an explicit open() instead:\n"
+        f"    s = Solver('model.inp'); s.open()\n"
+        f"    ts = s.tables.add_timeseries('inflow1'); ts.add(...)\n"
+        f"    s.initialize(); s.start()"
+    )
 
 
 cdef inline int _resolve_table(solver, key) except -1:
@@ -239,18 +262,34 @@ cdef class Tables:
     # ---- Creation -----------------------------------------------
 
     def add_timeseries(self, str ts_id) -> TimeSeries:
-        """Add a new time series *ts_id* and return its :class:`TimeSeries` handle."""
+        """Add a new time series *ts_id* and return its :class:`TimeSeries` handle.
+
+        Valid in ``BUILDING`` or ``OPENED`` state (i.e. on a Solver after
+        ``open()`` but before ``initialize()``/``start()``).
+        """
         cdef bytes b = ts_id.encode('utf-8')
-        _check(swmm_timeseries_add(_h(self._solver), b))
+        cdef int idx
+        try:
+            _check(swmm_timeseries_add(_h(self._solver), b))
+        except LifecycleError:
+            _raise_table_lifecycle(self._solver, "add_timeseries")
         self._solver._bump_generation()
-        cdef int idx = swmm_table_index(_h(self._solver), b)
+        idx = swmm_table_index(_h(self._solver), b)
         return TimeSeries(self._solver, idx)
 
     def add_curve(self, str curve_id, int curve_type=0) -> Curve:
         """``curve_type`` is the legacy CurveType integer code; the C
-        API accepts 0 for the default."""
+        API accepts 0 for the default.
+
+        Valid in ``BUILDING`` or ``OPENED`` state (i.e. on a Solver after
+        ``open()`` but before ``initialize()``/``start()``).
+        """
         cdef bytes b = curve_id.encode('utf-8')
-        _check(swmm_curve_add(_h(self._solver), b, curve_type))
+        cdef int idx
+        try:
+            _check(swmm_curve_add(_h(self._solver), b, curve_type))
+        except LifecycleError:
+            _raise_table_lifecycle(self._solver, "add_curve")
         self._solver._bump_generation()
         cdef int idx = swmm_table_index(_h(self._solver), b)
         return Curve(self._solver, idx)
@@ -420,12 +459,18 @@ cdef class Patterns:
     def add(self, str pattern_id, type=PatternType.HOURLY) -> Pattern:
         """Append a new time pattern and return its wrapper.
 
+        Valid in ``BUILDING`` or ``OPENED`` state (i.e. on a Solver after
+        ``open()`` but before ``initialize()``/``start()``).
+
         @param pattern_id: Unique identifier for the new pattern.
         @param type: The L{PatternType} (defaults to HOURLY).
         @rtype: L{Pattern}
         """
         cdef bytes b = pattern_id.encode('utf-8')
-        _check(swmm_pattern_add(_h(self._solver), b, int(type)))
+        try:
+            _check(swmm_pattern_add(_h(self._solver), b, int(type)))
+        except LifecycleError:
+            _raise_table_lifecycle(self._solver, "patterns.add")
         self._solver._bump_generation()
         # Newly-added pattern is the last one.
         return Pattern(self._solver, swmm_pattern_count(_h(self._solver)) - 1)
