@@ -65,7 +65,7 @@ SWMM_ENGINE_API int swmm_table_get_type(SWMM_Engine engine, int idx, int* type) 
 }
 
 // ============================================================================
-// Creation (BUILDING state only)
+// Creation (BUILDING or OPENED — table refs resolve by name at initialize())
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_timeseries_add(SWMM_Engine engine, const char* id) {
@@ -73,8 +73,7 @@ SWMM_ENGINE_API int swmm_timeseries_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
-        return SWMM_ERR_LIFECYCLE;
+    CHECK_EDITABLE(ctx);
 
     // Check for duplicate ID
     if (ctx.table_names.find(id) >= 0)
@@ -92,8 +91,7 @@ SWMM_ENGINE_API int swmm_curve_add(SWMM_Engine engine, const char* id, int type)
     if (!id) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
-        return SWMM_ERR_LIFECYCLE;
+    CHECK_EDITABLE(ctx);
 
     // Check for duplicate ID
     if (ctx.table_names.find(id) >= 0)
@@ -173,8 +171,7 @@ SWMM_ENGINE_API int swmm_pattern_add(SWMM_Engine engine, const char* id, int typ
     if (!id) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING)
-        return SWMM_ERR_LIFECYCLE;
+    CHECK_EDITABLE(ctx);
 
     ctx.patterns.add(id, type, {});
     return SWMM_OK;

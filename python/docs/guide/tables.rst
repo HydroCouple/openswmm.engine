@@ -26,32 +26,61 @@ Reference: ``openswmm_tables.h``.
 Quickstart
 ==========
 
+.. important::
+
+   **Creating** a time series, curve, or pattern is only valid while the
+   engine is in ``BUILDING`` or ``OPENED`` state — i.e. on a ``Solver``
+   **after** :meth:`~Solver.open` but **before**
+   :meth:`~Solver.initialize` / :meth:`~Solver.start`. The
+   ``with Solver(...) as s:`` context manager auto-runs
+   ``open() → initialize() → start()``, so by the time the block body runs
+   the engine is already ``STARTED`` and ``add_timeseries`` / ``add_curve``
+   / ``patterns.add`` will raise :class:`LifecycleError`. Use an explicit
+   :meth:`~Solver.open` instead, as shown below. (Adding *points* to an
+   existing table, by contrast, is allowed in any state.)
+
 .. code-block:: python
 
     from datetime import datetime
-    from openswmm.engine import Solver, PatternType, XSectShape
+    from openswmm.engine import Solver, PatternType
 
-    with Solver("model.inp") as s:
-        # Add a new time series and populate it.
-        ts = s.tables.add_timeseries("rain1")
-        ts.add(datetime(2024, 6, 15, 0, 0), 0.0)
-        ts.add(datetime(2024, 6, 15, 1, 0), 0.5)
+    s = Solver("model.inp")
+    s.open()                                     # -> OPENED (creation window)
 
-        # Add a curve.
-        curve = s.tables.add_curve("storage1")
-        curve.add_point(0.0, 0.0)
-        curve.add_point(1.0, 100.0)
-        print(curve.lookup(0.5))                # interpolation
+    # Add a new time series and populate it.
+    ts = s.tables.add_timeseries("rain1")
+    ts.add(datetime(2024, 6, 15, 0, 0), 0.0)
+    ts.add(datetime(2024, 6, 15, 1, 0), 0.5)
 
-        # Inspect existing tables — generic helper returns ._PointTable;
-        # use as_timeseries / as_curve for typed views.
-        ts = s.tables.as_timeseries("rain1")
-        pts = ts.points                          # structured numpy array
-        print(pts["time"], pts["value"])
+    # Add a curve.
+    curve = s.tables.add_curve("storage1")
+    curve.add_point(0.0, 0.0)
+    curve.add_point(1.0, 100.0)
+    print(curve.lookup(0.5))                     # interpolation
 
-        # Patterns.
-        s.patterns.add("DLY1", PatternType.DAILY)
-        s.patterns[0].set_factors([1.0]*7)
+    # Patterns.
+    s.patterns.add("DLY1", PatternType.DAILY)
+    s.patterns[0].set_factors([1.0] * 7)
+
+    # Finish arming and run.
+    s.initialize()
+    s.start()
+    for _ in s.steps():
+        pass
+    s.end()
+    s.report()
+    s.close()
+
+Once the model is opened you can still **inspect** and **edit points** of
+existing tables at any point in the lifecycle:
+
+.. code-block:: python
+
+    # Inspect existing tables — generic helper returns ._PointTable;
+    # use as_timeseries / as_curve for typed views.
+    ts = s.tables.as_timeseries("rain1")
+    pts = ts.points                              # structured numpy array
+    print(pts["time"], pts["value"])
 
 ----
 
@@ -60,7 +89,9 @@ Quickstart
 
 * ``len(s.tables)`` / ``for t in s.tables:`` / ``s.tables[key]`` — standard.
 * ``s.tables.add_timeseries(id)`` — returns a :class:`TimeSeries`.
+  *Creation is valid only in* ``BUILDING`` *or* ``OPENED`` *state.*
 * ``s.tables.add_curve(id, curve_type=0)`` — returns a :class:`Curve`.
+  *Creation is valid only in* ``BUILDING`` *or* ``OPENED`` *state.*
 * ``s.tables.as_timeseries(key)`` / ``as_curve(key)`` — typed view of an
   existing entry.
 
