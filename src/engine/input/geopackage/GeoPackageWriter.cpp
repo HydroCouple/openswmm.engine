@@ -214,6 +214,7 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("IGNORE_GROUNDWATER", opts.ignore_groundwater ? "YES" : "NO");
     insert("IGNORE_ROUTING", opts.ignore_routing ? "YES" : "NO");
     insert("IGNORE_QUALITY", opts.ignore_quality ? "YES" : "NO");
+    insert("IGNORE_2D", opts.ignore_2d ? "YES" : "NO");
     insert_d("WET_STEP", opts.wet_step);
     insert_d("DRY_STEP", opts.dry_step);
     insert_d("ROUTING_STEP", opts.routing_step);

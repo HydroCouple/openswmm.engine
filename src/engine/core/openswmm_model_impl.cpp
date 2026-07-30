@@ -813,6 +813,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "IGNORE_RDII")        val = opt.ignore_rdii       ? "YES" : "NO";
     else if (k == "IGNORE_QUALITY")     val = opt.ignore_quality    ? "YES" : "NO";
     else if (k == "IGNORE_ROUTING")     val = opt.ignore_routing    ? "YES" : "NO";
+    else if (k == "IGNORE_2D")          val = opt.ignore_2d         ? "YES" : "NO";
 
     // Routing & Hydraulics — enums + scalars.
     else if (k == "SURCHARGE_METHOD") {
@@ -1067,6 +1068,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
           || k == "IGNORE_RDII"
           || k == "IGNORE_QUALITY"
           || k == "IGNORE_ROUTING"
+          || k == "IGNORE_2D"
           || k == "ANDERSON_ACCEL") {
         std::string vu(v);
         for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
@@ -1082,6 +1084,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (k == "IGNORE_RDII")        opt.ignore_rdii        = b;
         else if (k == "IGNORE_QUALITY")     opt.ignore_quality     = b;
         else if (k == "IGNORE_ROUTING")     opt.ignore_routing     = b;
+        else if (k == "IGNORE_2D")          opt.ignore_2d          = b;
         else if (k == "ANDERSON_ACCEL")     opt.anderson_accel     = b;
     }
 

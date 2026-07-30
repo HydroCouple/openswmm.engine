@@ -229,6 +229,7 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "IGNORE_GROUNDWATER" || key == "IGNORE_GW") ctx.options.ignore_groundwater = (val == "YES");
         else if (key == "IGNORE_ROUTING") ctx.options.ignore_routing = (val == "YES");
         else if (key == "IGNORE_QUALITY") ctx.options.ignore_quality = (val == "YES");
+        else if (key == "IGNORE_2D") ctx.options.ignore_2d = (val == "YES");
         else if (key == "WET_STEP") ctx.options.wet_step = std::stod(val);
         else if (key == "DRY_STEP") ctx.options.dry_step = std::stod(val);
         else if (key == "ROUTING_STEP") ctx.options.routing_step = std::stod(val);
