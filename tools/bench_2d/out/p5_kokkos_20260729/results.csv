@@ -1,6 +1,0 @@
-tag,wall_s,engine_s,solver_steps,avg_internal_step_s,frozen_windows,err_fail_lines,cont_err_pct,perf,rc
-p5_serial_ref,9.1,9.00,1117,1.6106,0,1,-2.038;25.428;-0.007,"[PERF] 2D-window=5.29s (CVODE-advance=4.27s, 2D-overhead=1.02s)  1D-step=2.69s",0
-p5_omp_t1,9.4,9.00,1117,1.6106,0,6,-2.038;25.428;-0.007,"[PERF] 2D-window=5.59s (CVODE-advance=4.56s, 2D-overhead=1.03s)  1D-step=2.72s",0
-p5_omp_t4,7.4,8.00,1117,1.6106,0,6,-2.038;25.428;-0.007,"[PERF] 2D-window=3.56s (CVODE-advance=2.55s, 2D-overhead=1.01s)  1D-step=2.71s",0
-p5_omp_t8,7.1,7.00,1117,1.6106,0,6,-2.038;25.428;-0.007,"[PERF] 2D-window=3.31s (CVODE-advance=2.24s, 2D-overhead=1.07s)  1D-step=2.69s",0
-p5_omp_48h_scf1,715.2,715.00,230108,0.7504,0,6,-0.136;-2.028;-1.866,"[PERF] 2D-window=533.10s (CVODE-advance=407.33s, 2D-overhead=125.76s)  1D-step=169.11s",0

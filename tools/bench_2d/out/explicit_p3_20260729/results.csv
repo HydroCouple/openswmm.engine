@@ -1,7 +1,0 @@
-tag,wall_s,engine_s,solver_steps,avg_internal_step_s,frozen_windows,err_fail_lines,cont_err_pct,perf,rc
-p3_storm30m,181.9,181.00,1950,0.9226,0,1,-2.038;29.999;-0.000,"[PERF] 2D-window=0.00s (CVODE-advance=0.00s, 2D-overhead=0.00s)  1D-step=2.85s",0
-p3b_storm30m,73.2,73.00,1950,0.9226,0,1,-2.038;29.999;-0.000,"[PERF] 2D-window=0.00s (CVODE-advance=0.00s, 2D-overhead=0.00s)  1D-step=3.47s",0
-p3c_storm30m,56.3,56.00,1916,0.9389,0,1,-2.038;30.034;-0.000,"[PERF] 2D-window=0.00s (CVODE-advance=0.00s, 2D-overhead=0.00s)  1D-step=3.15s",0
-p3d_storm30m,10.2,10.00,1117,1.6106,0,1,-2.038;25.428;-0.197,"[PERF] 2D-window=5.81s (CVODE-advance=4.65s, 2D-overhead=1.16s)  1D-step=3.14s",0
-p4_48h_acceptance,3457.0,3457.00,975928,0.1769,0,1,-0.344;-0.260;-0.000,"[PERF] 2D-window=3191.13s (CVODE-advance=3078.60s, 2D-overhead=112.52s)  1D-step=249.42s",0
-p4_48h_t4,1418.0,1418.00,975928,0.1769,0,2,-0.344;-0.260;-0.000,"[PERF] 2D-window=1247.93s (CVODE-advance=1207.97s, 2D-overhead=39.96s)  1D-step=155.15s",0
