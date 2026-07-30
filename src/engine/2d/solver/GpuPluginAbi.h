@@ -109,6 +109,19 @@ OPENSWMM_GPU_ABI void* openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* 
  */
 OPENSWMM_GPU_ABI void* openswmm_make_gpu_inertial_solver(const OpenSwmmGpuProbe* probe);
 
+/**
+ * @brief Construct the GPU EXPLICIT LTS MARCHER surface solver
+ *        (INTEGRATOR=EXPLICIT — P5 Kokkos port of ExplicitInertialSolver).
+ *
+ * OPTIONAL ABI symbol (does not bump OPENSWMM_GPU_ABI_VERSION): the core
+ * dlsym()s it only when the model selects the explicit marcher, and falls back
+ * to the serial CPU ExplicitInertialSolver when a plugin does not export it.
+ * Unlike the CVODE-family plugin solvers this one implements BOTH cell
+ * closures (FLAT and VFR). Returns an ISurfaceSolver* (as void*) owned by the
+ * caller, or NULL.
+ */
+OPENSWMM_GPU_ABI void* openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
