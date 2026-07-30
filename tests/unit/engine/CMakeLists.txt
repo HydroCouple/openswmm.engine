@@ -607,11 +607,37 @@ add_gtest_unit(test_engine_soft_forcing_rom  test_soft_forcing_rom.cpp)
 add_gtest_unit(test_engine_spde_spatial_basis test_spde_spatial_basis.cpp)
 add_gtest_unit(test_engine_soft_rain_grid_parser test_soft_rain_grid_parser.cpp)
 add_gtest_unit(test_engine_soft_rain_grid_engine test_soft_rain_grid_engine.cpp)
+# test_engine_soft_rain_grid_engine uses the HDF5 C API directly for fixture
+# generation (H5Acreate2, H5Dwrite, etc.); the engine links HDF5 PRIVATE, so
+# the test target needs its own link — same pattern as test_grid_file_reader.
+if(TARGET hdf5::hdf5-shared)
+    target_link_libraries(test_engine_soft_rain_grid_engine PRIVATE hdf5::hdf5-shared)
+elseif(TARGET hdf5::hdf5-static)
+    target_link_libraries(test_engine_soft_rain_grid_engine PRIVATE hdf5::hdf5-static)
+else()
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_engine_soft_rain_grid_engine PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_engine_soft_rain_grid_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
 add_gtest_unit(test_engine_soft_rain_gage_engine test_soft_rain_gage_engine.cpp)
 add_gtest_unit(test_engine_grid_mapping_weights test_grid_mapping_weights.cpp)
 add_gtest_unit(test_engine_runoff_ensemble  test_runoff_ensemble.cpp)
 add_gtest_unit(test_engine_final_boundary_stall test_engine_final_boundary_stall.cpp)
 add_gtest_unit(test_engine_soft_rain_grid_targets test_soft_rain_grid_targets.cpp)
+# Same HDF5 direct-API fixture generation as test_engine_soft_rain_grid_engine.
+if(TARGET hdf5::hdf5-shared)
+    target_link_libraries(test_engine_soft_rain_grid_targets PRIVATE hdf5::hdf5-shared)
+elseif(TARGET hdf5::hdf5-static)
+    target_link_libraries(test_engine_soft_rain_grid_targets PRIVATE hdf5::hdf5-static)
+else()
+    if(NOT HDF5_FOUND)
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
+    target_link_libraries(test_engine_soft_rain_grid_targets PRIVATE ${HDF5_C_LIBRARIES})
+    target_include_directories(test_engine_soft_rain_grid_targets PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
 # Exercise the default acceleration path end-to-end: with the GPU plugin built
 # and co-located with the engine, runtime `auto`/omp must discover and load it.
 # Runs the 2D example through the CLI and asserts the omp backend was selected.

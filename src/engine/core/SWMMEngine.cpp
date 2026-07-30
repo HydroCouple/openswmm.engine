@@ -4905,6 +4905,9 @@ void SWMMEngine::initHydraulics() noexcept {
     }
 #endif
 
+    // SR-2d: initialize RUNOFF/INFLOWS gridded-rain runtimes.
+    initSoftGridRuntimes();
+
     // 1b. Build optional 1D spectral ROM when any uncertainty source is configured
     //     or when the 2D ROM is active (so per-member 1D heads feed the coupling).
     {
