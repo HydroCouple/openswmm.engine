@@ -197,6 +197,39 @@ TEST(LenientOpen, StrictOpenStillFailsButRecordsErrors) {
     swmm_engine_destroy(e);
 }
 
+#ifdef OPENSWMM_HAS_2D
+// A [2D_MESH_FILE] pointing at a file that does not exist must not make the
+// model unopenable in an editor: the lenient open reaches OPENED with the 1D
+// objects intact and the broken reference recorded as a queryable error, so
+// the GUI can load the model, warn, and let the user repair the reference.
+TEST(LenientOpen, MissingExternalMeshOpensWithErrorRecorded) {
+    SWMM_Engine e = open_lenient("warnerr_missing_mesh_file.inp");
+    int state = -1;
+    EXPECT_EQ(swmm_engine_get_state(e, &state), SWMM_OK);
+    EXPECT_EQ(state, SWMM_STATE_OPENED);
+    EXPECT_EQ(swmm_node_count(e), 2);
+    EXPECT_EQ(swmm_link_count(e), 1);
+    const int n = swmm_get_error_count(e);
+    ASSERT_GE(n, 1) << "the broken mesh reference must be recorded";
+    bool mentions_mesh = false;
+    for (int i = 0; i < n; ++i)
+        if (contains(swmm_get_error_at(e, i), "2D_MESH_FILE")) mentions_mesh = true;
+    EXPECT_TRUE(mentions_mesh);
+    swmm_engine_destroy(e);
+}
+
+// Strict (run-path) open of the same fixture still fails — graceful mesh
+// degradation is an editor-only concession.
+TEST(LenientOpen, MissingExternalMeshStillFailsStrictOpen) {
+    SWMM_Engine e = swmm_engine_create();
+    const int rc = swmm_engine_open(e, "warnerr_missing_mesh_file.inp", "", "",
+                                    nullptr);
+    EXPECT_EQ(rc, SWMM_ERR_PARSE);
+    EXPECT_TRUE(contains(swmm_get_last_error_msg(e), "2D_MESH_FILE"));
+    swmm_engine_destroy(e);
+}
+#endif  // OPENSWMM_HAS_2D
+
 // The accessors are null-handle safe (the GUI may query a handle whose open
 // failed): counts are 0, messages are "", and the setter is a no-op.
 TEST(LenientOpen, AccessorsAreNullHandleSafe) {
