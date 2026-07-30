@@ -88,10 +88,15 @@ double totalVolume(const SurfaceStateData& s, int nt) {
 }
 
 // Dam-break on the graded strip, K tiers: captures volumes mid-transient
-// (t_mid) and near-settled (t_end).
+// (t_mid) and near-settled (t_end). With mean_win > 0 the end capture is the
+// TIME-MEAN over [t_end - mean_win, t_end] (sampled once per 5 s advance):
+// the closed basin sustains a weakly damped seiche, so an instantaneous
+// end-state sample aliases the K-dependent seiche phase (and the platform's
+// FP contraction), while the time-mean is the settled solution. Same gating
+// rationale as the SpecifiedStageFillAndDrawdownLedger time-mean gates.
 void runGradedDamBreak(int K, double t_mid, double t_end,
                        std::vector<double>* v_mid, std::vector<double>* v_end,
-                       double* sum_drift = nullptr) {
+                       double* sum_drift = nullptr, double mean_win = 0.0) {
     auto mesh = makeGradedStrip(24, 4, 1.0, 1.08, /*slope=*/0.0,
                                 /*n=*/0.10);   // rough: seiches damp out
     SolverOptions2D opts;
@@ -110,9 +115,24 @@ void runGradedDamBreak(int K, double t_mid, double t_end,
     for (double t = 0.0; t < t_mid; t += 5.0)
         solver.advance(t, std::min(t + 5.0, t_mid));
     if (v_mid) *v_mid = state.volume;
-    for (double t = t_mid; t < t_end; t += 5.0)
+    std::vector<double> acc(state.volume.size(), 0.0);
+    int n_samples = 0;
+    for (double t = t_mid; t < t_end; t += 5.0) {
         solver.advance(t, std::min(t + 5.0, t_end));
-    if (v_end) *v_end = state.volume;
+        if (mean_win > 0.0 && t + 5.0 >= t_end - mean_win) {
+            for (std::size_t i = 0; i < acc.size(); ++i)
+                acc[i] += state.volume[i];
+            ++n_samples;
+        }
+    }
+    if (v_end) {
+        if (n_samples > 0) {
+            for (auto& a : acc) a /= n_samples;
+            *v_end = acc;
+        } else {
+            *v_end = state.volume;
+        }
+    }
     if (sum_drift)
         *sum_drift =
             std::fabs(totalVolume(state, mesh.n_triangles()) - sum0) / sum0;
@@ -141,8 +161,8 @@ TEST(LtsEquivalence, ConservationAtEveryTierCount) {
 // ---------------------------------------------------------------------------
 TEST(LtsEquivalence, TierSolutionMatchesGlobalDt) {
     std::vector<double> v1m, v1e, v4m, v4e;
-    runGradedDamBreak(1, 120.0, 1500.0, &v1m, &v1e);
-    runGradedDamBreak(4, 120.0, 1500.0, &v4m, &v4e);
+    runGradedDamBreak(1, 120.0, 1500.0, &v1m, &v1e, nullptr, /*mean_win=*/300.0);
+    runGradedDamBreak(4, 120.0, 1500.0, &v4m, &v4e, nullptr, /*mean_win=*/300.0);
     auto mesh = makeGradedStrip(24, 4, 1.0, 1.08, 0.0, 0.10);
     ASSERT_EQ(v1m.size(), v4m.size());
 
@@ -151,6 +171,12 @@ TEST(LtsEquivalence, TierSolutionMatchesGlobalDt) {
     // this class. The robust equivalences: (a) the divergence is BOUNDED and
     // DECAYS as the solution smooths; (b) bulk arrival matches: the volume
     // that has passed the 2/3-basin station agrees within a few percent.
+    // The end-state capture is the 300 s TIME-MEAN, not an instantaneous
+    // sample: the closed basin's weakly damped seiche never fully stops, and
+    // K = 4 vs K = 1 drift out of phase, so a point sample aliases seiche
+    // phase and platform FP contraction (measured 0.025–0.062 m spread
+    // across x64/arm64 CI on the same commit; the time-mean sits at
+    // ~0.010 m everywhere with the same 0.025 m gate).
     double max_mid = 0.0, max_end = 0.0;
     for (std::size_t i = 0; i < v1m.size(); ++i) {
         const double a = mesh.tri_area[static_cast<int>(i)];
