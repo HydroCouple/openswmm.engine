@@ -291,7 +291,7 @@ cdef class Tables:
         except LifecycleError:
             _raise_table_lifecycle(self._solver, "add_curve")
         self._solver._bump_generation()
-        cdef int idx = swmm_table_index(_h(self._solver), b)
+        idx = swmm_table_index(_h(self._solver), b)
         return Curve(self._solver, idx)
 
     # ---- Internal -----------------------------------------------
