@@ -691,21 +691,21 @@ int swmm_2d_get_total_exchange_flow(SWMM_Engine engine, double* flow) {
     return SWMM_OK;
 }
 
-int swmm_2d_get_cvode_steps(SWMM_Engine engine, long* steps) {
+int swmm_2d_get_solver_steps(SWMM_Engine engine, long* steps) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     if (!steps) return SWMM_ERR_BADPARAM;
 
-    *steps = router2d.lastCvodeSteps();
+    *steps = router2d.lastSolverSteps();
     return SWMM_OK;
 }
 
-int swmm_2d_get_cvode_last_step(SWMM_Engine engine, double* h_last) {
+int swmm_2d_get_solver_last_step(SWMM_Engine engine, double* h_last) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     if (!h_last) return SWMM_ERR_BADPARAM;
 
-    *h_last = router2d.lastCvodeStepSize();
+    *h_last = router2d.lastSolverStepSize();
     return SWMM_OK;
 }
 
@@ -1036,9 +1036,10 @@ int swmm_2d_get_edge_bc_cum_flux(SWMM_Engine engine, int tri_idx, int edge,
 }
 
 // =============================================================================
-// V-E2 / V-E4 / V-E5 — TS-name + SPECIFIED_FLOW + RATING_CURVE storage APIs.
-// Solver flux integration deferred to V-E-FLUX; today these are storage-only
-// (the solver still walls every boundary edge regardless of type).
+// V-E2 / V-E4 / V-E5 — TS-name + SPECIFIED_FLOW + RATING_CURVE APIs. Names
+// set here are lazily resolved to table indices each step
+// (SurfaceRouter2D::resolveBoundaryValues) and consumed at flux time by
+// SurfaceFluxCalculator::boundaryEdgeFlux.
 // =============================================================================
 
 int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,

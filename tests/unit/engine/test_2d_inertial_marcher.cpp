@@ -15,6 +15,9 @@
  *            reaches steady state with outflow = rain inflow (ledger) and
  *            the analytic normal depth.
  *          - Froude clamp honored on a steep dam-break (no runaway |q|).
+ *          - SPECIFIED_STAGE: a dry basin fills through a stage BC to the
+ *            prescribed head (inflow direction), then draws down after the
+ *            BC head is lowered — exact BC-flux ledger in both phases.
  *
  * @ingroup engine_2d
  *
@@ -294,6 +297,83 @@ TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
     }
     h_avg /= h_cnt;
     EXPECT_NEAR(h_avg, h_n, 0.05 * h_n);
+    solver.finalize();
+}
+
+// ---------------------------------------------------------------------------
+// SPECIFIED_STAGE tailwater: a flat DRY basin with a stage BC along x = 0.
+// Phase 1 (inflow — the only BC branch that can drive water INTO the domain):
+// the basin fills through the boundary and equilibrates at η = h_bc. Phase 2
+// (outflow): the BC head is lowered and the basin draws down to the new
+// stage. Both phases carry the exact ledger identity ΔStorage = ∫ q_bc dt
+// (the marcher publishes the window-mean APPLIED flux back into edge_flux,
+// so chunked accumulation books exactly what the cells received).
+// ---------------------------------------------------------------------------
+TEST(InertialMarcher, SpecifiedStageFillAndDrawdownLedger) {
+    auto mesh = makeGridMesh(8, 8, 1.0, [](double, double) { return 0.0; });
+    SolverOptions2D opts;
+    auto state = makeState(mesh);                     // dry everywhere
+
+    BoundaryData boundary;
+    boundary.resize(mesh.n_triangles() * 3);
+    std::vector<int> bc_slots;
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
+                             mesh.tri_nbr2[i]};
+        for (int e = 0; e < 3; ++e) {
+            const int idx = i * 3 + e;
+            if (nbrs[e] >= 0) continue;
+            if (mesh.edge_mx[idx] < 1.0e-9) {         // x = 0 boundary
+                boundary.edge_bc_type[idx] =
+                    static_cast<int8_t>(BoundaryType::SPECIFIED_STAGE);
+                boundary.edge_bc_head[idx] = 0.5;
+                bc_slots.push_back(idx);
+            }
+        }
+    }
+    ASSERT_FALSE(bc_slots.empty());
+    state.boundary = &boundary;
+
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, state, opts);
+
+    // Advance in chunks, accumulating the applied BC volume per window.
+    auto marchAccum = [&](double t0, double t1, int chunks) {
+        double vol_in = 0.0;
+        const double dt = (t1 - t0) / chunks;
+        for (int c = 0; c < chunks; ++c) {
+            solver.advance(t0 + c * dt, t0 + (c + 1) * dt);
+            for (int idx : bc_slots) vol_in += state.edge_flux[idx] * dt;
+            for (int i = 0; i < mesh.n_triangles(); ++i) {
+                ASSERT_GE(state.volume[i], 0.0) << "negative volume";
+                ASSERT_FALSE(std::isnan(state.volume[i]));
+            }
+        }
+        return vol_in;
+    };
+
+    // ---- Phase 1: fill from dry through the stage boundary. ----
+    const double v0     = totalVolume(state, mesh.n_triangles());
+    const double in1    = marchAccum(0.0, 4000.0, 80);
+    const double v1     = totalVolume(state, mesh.n_triangles());
+    EXPECT_GT(in1, 0.0) << "stage BC drove no inflow into the dry basin";
+    EXPECT_GT(v1, 0.0);
+    // Exact ledger: everything that crossed the boundary is in storage.
+    EXPECT_NEAR(v1 - v0, in1, 1.0e-8 * std::max(in1, 1.0e-12));
+    // Equilibrium: every cell's free surface sits at the prescribed stage.
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        EXPECT_NEAR(state.head[i], 0.5, 0.01)
+            << "cell " << i << " not at the prescribed stage after fill";
+
+    // ---- Phase 2: lower the stage; the basin draws down to the new head. ----
+    for (int idx : bc_slots) boundary.edge_bc_head[idx] = 0.2;
+    const double in2 = marchAccum(4000.0, 8000.0, 80);
+    const double v2  = totalVolume(state, mesh.n_triangles());
+    EXPECT_LT(in2, 0.0) << "lowered stage BC drove no outflow";
+    EXPECT_NEAR(v2 - v1, in2, 1.0e-8 * std::max(-in2, 1.0e-12));
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        EXPECT_NEAR(state.head[i], 0.2, 0.01)
+            << "cell " << i << " not drawn down to the lowered stage";
     solver.finalize();
 }
 

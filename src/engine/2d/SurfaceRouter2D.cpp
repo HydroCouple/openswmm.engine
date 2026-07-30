@@ -262,7 +262,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     buildVertexStencils(mesh_);
 
     // Fold the OPENSWMM_2D_RAINFALL_MODE env override into options_ (outside the
-    // OPENSWMM_HAS_2D block — rainfall is applied whether or not the CVODE solver
+    // OPENSWMM_HAS_2D block — rainfall is applied whether or not the 2D solver
     // is compiled). Mirrors the OPENSWMM_2D_MOMENTUM override below.
     if (const char* rm = std::getenv("OPENSWMM_2D_RAINFALL_MODE")) {
         if (std::strcmp(rm, "system") == 0)
@@ -349,6 +349,26 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Drain pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
     // BoundaryData / mesh edge slots (sizes boundary_, flips the drained flag).
     drainPendingRows();
+
+    // A NORMAL_FLOW edge with zero bed slope produces zero Manning flux —
+    // it silently behaves as a Wall (no auto-compute from bed geometry
+    // exists). Warn once with a count so the authored intent isn't lost.
+    {
+        int n_zero_slope = 0;
+        for (std::size_t i = 0; i < boundary_.edge_bc_type.size(); ++i) {
+            if (boundary_.edge_bc_type[i]
+                    == static_cast<int8_t>(BoundaryType::NORMAL_FLOW)
+                && boundary_.edge_bed_slope[i] <= 0.0)
+                ++n_zero_slope;
+        }
+        if (n_zero_slope > 0) {
+            ctx.warnings.push_back(
+                "WARNING: " + std::to_string(n_zero_slope)
+                + " 2D NORMAL_FLOW boundary edge(s) have zero bed slope "
+                  "(PARAM_1) — Manning outflow is zero, so they behave as "
+                  "WALL edges. Author a non-zero slope to enable outflow.");
+        }
+    }
 
     // Set initial (dry) heads from ground elevation. FLAT: the bed centroid.
     // VFR: the closure's dry anchor η(V=0) — chosen so the solver's

@@ -22,9 +22,9 @@ class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
 
     The module solves the depth-averaged shallow-water equations on an
-    unstructured triangular mesh and is integrated in time with CVODE
-    from SUNDIALS. Two-way coupling with the 1D drainage network is
-    supported per-vertex and per-triangle.
+    unstructured triangular mesh and is integrated in time with the
+    explicit local-inertial finite-volume marcher. Two-way coupling with
+    the 1D drainage network is supported per-vertex and per-triangle.
 
     Example::
 
@@ -300,6 +300,30 @@ class Surface2D:
         """
         ...
 
+    def add_triangle_coupling(self, tri_idx: int, node_name: str,
+                              cd: float, area: float) -> None:
+        """Append one node->cell coupling row for a triangle
+        (C{[2D_TRIANGLE_NODE_MAP]} repeated-row form; appends, does not
+        overwrite)."""
+        ...
+
+    def clear_triangle_couplings(self) -> None:
+        """Remove every authored node->cell coupling row; vertex couplings
+        are untouched."""
+        ...
+
+    @property
+    def triangle_coupling_rows(self) -> int:
+        """Number of authored node->cell coupling rows."""
+        ...
+
+    def get_triangle_coupling_row(
+        self, row_idx: int
+    ) -> tuple[int, int, float, float]:
+        """Read one authored row: C{(tri_idx, node_idx, cd, area)};
+        C{node_idx} is C{-1} if unresolved."""
+        ...
+
     # ====================================================================
     # State (depth/velocity) - per triangle bulk arrays
     #
@@ -478,8 +502,10 @@ class Surface2D:
         ...
 
     @property
-    def cvode_steps(self) -> int:
-        """Number of CVODE internal steps in the last advance.
+    def solver_steps(self) -> int:
+        """Number of explicit-marcher sub-steps in the last advance.
+
+        Renamed from C{cvode_steps} with the D2 CVODE/ARKODE retirement.
 
         @return: Step count.
         @rtype: int
@@ -488,8 +514,11 @@ class Surface2D:
         ...
 
     @property
-    def cvode_last_step(self) -> float:
-        """Last CVODE internal step size.
+    def solver_last_step(self) -> float:
+        """The explicit marcher's last sub-step size in seconds.
+
+        Renamed from C{cvode_last_step} with the D2 CVODE/ARKODE
+        retirement.
 
         @return: Step size.
         @rtype: float
