@@ -263,6 +263,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             options_.rainfall_mode = RainfallMode::NONE;
     }
 
+    // Fold the remaining env overrides into options_ per run (these used to be
+    // function-local static caches — process-lifetime, wrong for multi-model /
+    // library use). Behavior-neutral when the env vars are unset.
+    if (const char* s = std::getenv("OPENSWMM_2D_FLUX_DH_EPS")) {
+        const double v = std::atof(s);
+        if (v >= 0.0) options_.flux_dh_eps = v;
+    }
+    if (const char* s = std::getenv("OPENSWMM_2D_TANGENT_CLAMP"))
+        options_.tangent_clamp = !(s[0] == '0' && s[1] == '\0');
+    if (const char* s = std::getenv("OPENSWMM_2D_PRECOND_TANGENT"))
+        options_.precond_tangent = !(s[0] == '0' && s[1] == '\0');
+
     // Precompute the static rainfall-interpolation weights. Gage POSITIONS are
     // fixed for the run, so the natural-neighbour / IDW weights are built once
     // here and only the per-step gage VALUES vary (see updateRainfall). The
@@ -384,7 +396,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // state BEFORE solver_->initialize(), which sizes the augmented state vector
     // (nt cells + one ∫Q dt accumulator per point). Outfall coupling stays on the
     // held path (transferOutfallDischarges).
-    if (std::getenv("OPENSWMM_2D_LIVE_COUPLING") != nullptr) {
+    // Windowless co-advance (explicit marcher): resolved HERE, before the
+    // live-coupling point build below — the marcher path always carries the
+    // single-cell live points (exchange is evaluated per 2D substep inside
+    // the solver against live surface heads).
+    {
+        const char* ienv = std::getenv("OPENSWMM_2D_INTEGRATOR");
+        co_advance_ =
+            (ienv && std::strcmp(ienv, "explicit") == 0) ||
+            (!ienv && options_.integrator == IntegratorType::EXPLICIT_LTS);
+    }
+
+    if (std::getenv("OPENSWMM_2D_LIVE_COUPLING") != nullptr || co_advance_) {
         node_coupling_points_.clear();
         for (const auto& cp : coupling_points_) {
             if (cp.is_outfall) continue;
@@ -443,7 +466,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // convert by squaring the length factor (len_2d_to_1d² ≈ 10.764).
     const double area_2d_to_1d = options_.len_2d_to_1d * options_.len_2d_to_1d;
 
-    for (const auto& cp : coupling_points_) {
+    // Mutable: the COUPLING_AREA AUTO derivation below rewrites cp.area for
+    // points whose input did not author an explicit area.
+    for (auto& cp : coupling_points_) {
         if (cp.is_outfall) continue;
         auto ni = static_cast<std::size_t>(cp.node_idx);
 
@@ -486,6 +511,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                     a_pipe_max = std::max(a_pipe_max, ctx.links.xsect_a_full[ul]);
             }
             a_pipe_max *= options_.len_1d_to_2d * options_.len_1d_to_2d; // ft²→m²
+            // COUPLING_AREA AUTO: derive the exchange area from the largest
+            // connected conduit. Applies to EVERY junction point — the option
+            // is the escape hatch for files that baked in a constant default
+            // (GUI mappers wrote 2.0 m², 10–300× above the pipes on real
+            // models, driving the fill-and-spill churn the warning below
+            // describes), and those tokens are indistinguishable from intent.
+            // Authored values govern whenever AUTO is not requested.
+            if (options_.coupling_area_auto && a_pipe_max > 0.0)
+                cp.area = std::clamp(1.25 * a_pipe_max, 0.05, 2.0);
             if (a_pipe_max > 0.0 && cp.area > 10.0 * a_pipe_max) {
                 char abuf[320];
                 std::snprintf(abuf, sizeof(abuf),
@@ -597,6 +631,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     if (const char* m = std::getenv("OPENSWMM_2D_MOMENTUM")) {
         if (std::strcmp(m, "inertial") == 0) options_.momentum = MomentumType::INERTIAL;
         else if (std::strcmp(m, "dw") == 0)  options_.momentum = MomentumType::DW;
+    }
+    // The explicit marcher IS a local-inertial scheme: it owns state_.edge_flux
+    // (prognostic q projection + availability-clamped boundary fluxes), so the
+    // post-advance DW edge-flux recompute must be skipped exactly as for the
+    // ARKODE inertial path. Env override folded above still wins for A/B.
+    {
+        const char* ienv = std::getenv("OPENSWMM_2D_INTEGRATOR");
+        const bool explicit_marcher =
+            (ienv && std::strcmp(ienv, "explicit") == 0) ||
+            (!ienv && options_.integrator == IntegratorType::EXPLICIT_LTS);
+        if (explicit_marcher && !std::getenv("OPENSWMM_2D_MOMENTUM"))
+            options_.momentum = MomentumType::INERTIAL;
     }
 
     // Decoupled-timestep coupling state: per-point window accumulators and the
@@ -757,9 +803,190 @@ void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx) {
 }
 
 
+void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
+                                    double t) {
+    if (dt <= 0.0) return;
+    perf::ScopedTimer tm_window(perf::sec_2d_window);
+    state_.save_state();
+
+    // Outfall discharge → 2D: accumulate this step's 1D outfall discharge and
+    // inject it as a constant-rate source over the subcycle (same ledger as
+    // the window path). Junction exchange is LIVE inside the marcher. The
+    // clear is targeted: only the cells outfall points scatter into (full
+    // O(nt) fills per ~1 s routing step were a measured overhead driver).
+    if (accumulateOutfallDischargeStep(coupling_points_, mesh_, state_, ctx,
+                                       options_, dt, window_outfall_accum_,
+                                       window_avail_budget_,
+                                       /*sample_row*/ nullptr) > 0)
+        ++outfall_clamp_windows_;
+    for (const auto& cp : coupling_points_) {
+        if (!cp.is_outfall) continue;
+        if (cp.vertex_idx >= 0) {
+            const int s = mesh_.vert_stencil_ptr[cp.vertex_idx];
+            const int e = mesh_.vert_stencil_ptr[cp.vertex_idx + 1];
+            for (int k = s; k < e; ++k)
+                state_.coupling_flux[mesh_.vert_stencil_idx[k]] = 0.0;
+        } else if (cp.cell_idx >= 0) {
+            state_.coupling_flux[cp.cell_idx] = 0.0;
+        }
+    }
+    injectAccumulatedExchange(coupling_points_, mesh_, state_,
+                              window_outfall_accum_, dt, +1.0);
+
+    // Rainfall / forcings on a coarse cadence: gage values change at the gage
+    // timestep (minutes), and the per-cell interpolation apply is O(nt) — per
+    // ~1 s routing step it was a measured overhead driver. Boundary values
+    // resolve every step (cheap, perimeter-sized).
+    co_forcing_elapsed_ += dt;
+    if (co_forcing_elapsed_ >= 30.0 || co_forcing_first_) {
+        updateRainfall(ctx);
+        std::fill(state_.evap_rate.begin(), state_.evap_rate.end(), 0.0);
+        for (std::size_t i = 0; i < state_.depth.size(); ++i) {
+            if (state_.rainfall_forced[i] == 1)
+                state_.rainfall[i] = state_.rainfall_force_val[i];
+            else if (state_.rainfall_forced[i] == 2)
+                state_.rainfall[i] += state_.rainfall_force_val[i];
+            if (state_.evap_forced[i] == 1)
+                state_.evap_rate[i] = state_.evap_force_val[i];
+            else if (state_.evap_forced[i] == 2)
+                state_.evap_rate[i] += state_.evap_force_val[i];
+            if (state_.coupling_forced[i] == 1)
+                state_.coupling_flux[i] = state_.coupling_force_val[i];
+            else if (state_.coupling_forced[i] == 2)
+                state_.coupling_flux[i] += state_.coupling_force_val[i];
+        }
+        co_forcing_elapsed_ = 0.0;
+        co_forcing_first_ = false;
+    }
+    resolveBoundaryValues(ctx, t);
+
+    {
+        perf::ScopedTimer tm_adv(perf::sec_2d_advance);
+        solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
+    }
+    sim_time_ += dt;
+
+    // Junction ledger: the marcher integrated ∫Q_k dt (m³, + = 2D→1D drain)
+    // per live point at substep cadence. Book the batch volume (1D ft³)
+    // through the delivery QUEUE so assembleLateralInflows drains it at a
+    // uniform rate over the batch span instead of a single-step pulse —
+    // cleared then accumulated so points sharing a node sum correctly.
+    const std::vector<double>& exch = solver_->last_coupling_exchange();
+    if (!exch.empty()) {
+        for (const auto& cp : node_coupling_points_)
+            ctx.nodes.coupling_volume[static_cast<std::size_t>(cp.node_idx)] =
+                0.0;
+        const std::size_t n =
+            std::min(exch.size(), node_coupling_points_.size());
+        for (std::size_t k = 0; k < n; ++k) {
+            const auto ni =
+                static_cast<std::size_t>(node_coupling_points_[k].node_idx);
+            ctx.nodes.coupling_volume[ni] += exch[k] * options_.flow_2d_to_1d;
+        }
+    }
+
+    // Boundary ledger: the marcher published the WINDOW-MEAN applied flux in
+    // the boundary slots, so −flux·dt recovers the exact ∫F_applied dt.
+    {
+        const int ne = boundary_.size();
+        for (int idx = 0; idx < ne; ++idx)
+            if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx]) !=
+                BoundaryType::WALL)
+                boundary_.edge_bc_cum_flux[idx] +=
+                    -state_.edge_flux[idx] * dt;
+    }
+
+    // Ledgers every batch (accumulateMassBalance reads coupling_volume as
+    // "this batch's exchange", so it MUST run before the queue move below) …
+    accumulateMassBalance(ctx, dt);
+
+    // … then hand the batch's junction volumes to the delivery QUEUE so
+    // assembleLateralInflows drains them at a uniform rate over the batch
+    // span instead of a single-step pulse.
+    if (!exch.empty()) {
+        bool queued = false;
+        for (const auto& cp : node_coupling_points_) {
+            const auto ni = static_cast<std::size_t>(cp.node_idx);
+            if (ctx.nodes.coupling_volume[ni] != 0.0) {
+                ctx.nodes.coupling_queue[ni] += ctx.nodes.coupling_volume[ni];
+                ctx.nodes.coupling_volume[ni] = 0.0;
+                queued = true;
+            }
+        }
+        if (queued)
+            ctx.coupling_delivery_remaining =
+                std::max(ctx.coupling_delivery_remaining, dt);
+    }
+    state_.clear_reset_forcings();
+    resetWindowAccumulators();
+
+    // … but the full-mesh OUTPUT refresh (vertex heads, gradients, velocity,
+    // render depths, statistics, per-cell continuity) only on a report-scale
+    // cadence: six 228k-cell passes per ~1 s routing step were measured at
+    // ~90 ms/step — 20× the marcher's own advance cost. Outputs are consumed
+    // at REPORT_STEP granularity; exchange/outfall heads use solver-fresh
+    // state.head directly, not these derived fields.
+    co_refresh_elapsed_ += dt;
+    const double refresh_dt =
+        std::max(dt, std::min(ctx.options.report_step > 0.0
+                                  ? ctx.options.report_step
+                                  : 30.0,
+                              30.0));
+    if (co_refresh_elapsed_ >= refresh_dt) {
+        reconstructVertexHeads(mesh_, state_, options_.num_threads);
+        refreshOutputGradients(mesh_, state_, options_);
+        computeCellContinuity(mesh_, state_, options_, co_refresh_elapsed_);
+        computeFaceVelocity(mesh_, state_, options_);
+        reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
+                                      options_.num_threads);
+        state_.update_statistics(mesh_.tri_area, co_refresh_elapsed_,
+                                 options_.num_threads);
+        co_refresh_elapsed_ = 0.0;
+    }
+}
+
+
+void SurfaceRouter2D::computeCouplingConductances(
+    const SimulationContext& ctx,
+    std::vector<std::pair<int, double>>& out) const {
+    if (!active_ || !co_advance_) return;
+    // G in SI is m³/s per metre of (2D-frame) 1D head; the 1D consumes ft³/s
+    // per ft of its own head: flow_2d_to_1d converts the flow, len_1d_to_2d
+    // converts per-metre → per-foot.
+    const double to_1d = options_.flow_2d_to_1d * options_.len_1d_to_2d;
+    for (const auto& cp : node_coupling_points_) {
+        const double g = computeNodeCouplingDQdh1d(cp, mesh_, state_,
+                                                   ctx.nodes, options_);
+        if (g > 0.0) out.emplace_back(cp.node_idx, g * to_1d);
+    }
+}
+
+
 void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_dt,
                                           double t) {
     if (!active_) return;
+
+    // Windowless co-advance (explicit marcher): no failure/carry/claw-back
+    // machinery (the marcher's CFL step is known a priori — it always reaches
+    // its target), live in-marcher exchange, no CFL clamp on the 1D. The 2D
+    // advances in SYNC BATCHES of several routing steps: a ~1 s routing step
+    // is smaller than an LTS macro cycle, so per-step advances would
+    // degenerate every call to the global-dt tail plus an O(nt) settle —
+    // measured as the dominant cost. Exchange volumes booked per batch are
+    // delivered to the 1D through the queue spread (uniform rate over the
+    // batch span), the mechanism the live window path already validated.
+    if (co_advance_) {
+        pending_dt_ += routing_dt;
+        last_t_ = t;
+        const double sync = std::clamp(options_.max_timestep,
+                                       ctx.options.routing_step, 60.0);
+        if (pending_dt_ + 0.5 * routing_dt >= sync) {
+            const double span = pending_dt_;
+            pending_dt_ = 0.0;
+            coAdvanceStep(ctx, span, t);
+        }
+        return;
+    }
 
     // ── Per-step decoupled exchange (2026-07 plan) ──────────────────────────
     // The 1D and 2D domains proceed on their own clocks: the exchange is
@@ -1325,6 +1552,16 @@ void SurfaceRouter2D::fireAdvanceWindow(SimulationContext& ctx, double dt,
 
 
 void SurfaceRouter2D::finalize(SimulationContext& ctx) {
+    // Windowless co-advance: flush the partial sync batch directly (no window
+    // machinery — the marcher always integrates the whole span), then fall
+    // through to the common stats/teardown tail below.
+    if (co_advance_) {
+        if (active_ && pending_dt_ > 0.0) {
+            const double span = pending_dt_;
+            pending_dt_ = 0.0;
+            coAdvanceStep(ctx, span, last_t_);
+        }
+    } else {
     // Flush the partial macro-step window: with time-based or step-count
     // gating, up to one window of routing time can be pending here — dropping
     // it would end the 2D clock (and the exchange booking) short of the
@@ -1365,6 +1602,7 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
         force_next_window_ = false;
         fireAdvanceWindow(ctx, dt, last_t_);
     }
+    }  // !co_advance_
 #ifdef OPENSWMM_HAS_2D
     if (solver_) {
         // Publish cumulative integrator statistics BEFORE finalize() frees the
@@ -1396,6 +1634,12 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
         mb.solver_avg_h          = (s.nsteps > 0 && sim_time_ > 0.0)
                                        ? sim_time_ / static_cast<double>(s.nsteps)
                                        : 0.0;
+        mb.solver_active_min     = s.active_frac_min;
+        mb.solver_active_mean    = s.active_frac_mean;
+        mb.solver_active_max     = s.active_frac_max;
+        mb.solver_n_tiers        = s.n_tiers;
+        for (int k = 0; k < s.n_tiers && k < 8; ++k)
+            mb.solver_tier_cells[k] = s.tier_cells[k];
         solver_->finalize();
     }
 #endif

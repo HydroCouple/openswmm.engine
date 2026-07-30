@@ -24,6 +24,7 @@
 #include "../solver/ISurfaceSolver.hpp"
 #include "CvodeKokkosSurfaceSolver.hpp"
 #include "ArkodeKokkosSurfaceSolver.hpp"
+#include "ExplicitKokkosSurfaceSolver.hpp"
 
 #include <Kokkos_Core.hpp>
 
@@ -78,5 +79,13 @@ openswmm_make_gpu_inertial_solver(const OpenSwmmGpuProbe* /*probe*/) {
     ensureKokkosInitialized();
     openswmm::twoD::ISurfaceSolver* solver =
         new openswmm::twoD::gpu::ArkodeKokkosSurfaceSolver();
+    return static_cast<void*>(solver);
+}
+
+extern "C" OPENSWMM_GPU_ABI void*
+openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
+    ensureKokkosInitialized();
+    openswmm::twoD::ISurfaceSolver* solver =
+        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
     return static_cast<void*>(solver);
 }

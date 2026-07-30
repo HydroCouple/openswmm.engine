@@ -107,6 +107,10 @@ struct MeshData {
     // Coupling parameters (per vertex/triangle coupling point)
     std::vector<double> vert_coupling_cd;       ///< Discharge coefficient (default 0.65)
     std::vector<double> vert_coupling_area;     ///< Effective exchange area (m²)
+    /// 1 when the [2D_VERTEX_NODE_MAP] row authored an explicit AREA token.
+    /// Rows without one keep the 1.0 default value but are eligible for the
+    /// COUPLING_AREA AUTO derivation at coupling-point resolve.
+    std::vector<uint8_t> vert_coupling_area_set;
     std::vector<double> tri_coupling_cd;        ///< Discharge coefficient
     std::vector<double> tri_coupling_area;      ///< Effective exchange area
 
@@ -128,6 +132,9 @@ struct MeshData {
         std::string node_name;    ///< Deferred name (cleared after resolve)
         double      cd   = 0.65;  ///< Discharge coefficient
         double      area = 1.0;   ///< Effective exchange area
+        bool        area_set = false; ///< True when the row authored an
+                                      ///< explicit AREA token (COUPLING_AREA
+                                      ///< AUTO derives the rest at resolve).
     };
     std::vector<TriCouplingRow> tri_couplings;
 
@@ -152,6 +159,7 @@ struct MeshData {
         vert_coupled_node_name.resize(n);
         vert_coupling_cd.resize(n, 0.65);
         vert_coupling_area.resize(n, 1.0);
+        vert_coupling_area_set.resize(n, 0);
     }
 
     void resize_triangles(int nt) {

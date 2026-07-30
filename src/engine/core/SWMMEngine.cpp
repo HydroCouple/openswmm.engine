@@ -924,8 +924,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             }
         }
 #ifdef OPENSWMM_HAS_2D
-        // Optionally constrain dt by 2D CFL hint (prevents coupling interval too large)
-        if (surface_router_.isActive()) {
+        // Optionally constrain dt by 2D CFL hint (prevents coupling interval
+        // too large). NOT on the windowless co-advance path: the marcher owns
+        // 2D stability through its internal CFL subcycling, and exchange
+        // stability is owned by per-substep evaluation + limiter + the node
+        // conductance — clamping the 1D here was measured to drag its average
+        // step 1.55 s → 0.22 s for no benefit.
+        if (surface_router_.isActive() && !surface_router_.usesCoAdvance()) {
             double dt_cfl_2d = surface_router_.computeCflHint(ctx_);
             dt_cfl = std::min(dt_cfl, dt_cfl_2d);
         }
@@ -2661,6 +2666,21 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             dw.nodeSumDqdh(n1) += dqdh;
             if (!is_type4_pump) dw.nodeSumDqdh(n2) += dqdh;
         }
+
+#ifdef OPENSWMM_HAS_2D
+        // Windowless-coupling conductance (2026-07-29 plan §5.4): the 2D
+        // exchange head sensitivity G = −∂Q/∂h ≥ 0 on the node continuity
+        // denominator — pure damping for the drain/spill Picard churn the
+        // zero-sensitivity explicit source produced. Gated to the default
+        // EXPLICIT node continuity until the SEMI_IMPLICIT denominator sign
+        // convention is ruled on (DynamicWave.cpp:2932, pre-existing).
+        if (surface_router_.isActive() && surface_router_.usesCoAdvance() &&
+            ctx_.options.node_continuity == NodeContinuity::EXPLICIT) {
+            std::vector<std::pair<int, double>> gs;
+            surface_router_.computeCouplingConductances(ctx_, gs);
+            for (const auto& [gn, gv] : gs) dw.nodeSumDqdh(gn) += gv;
+        }
+#endif
     };
     // B3-pre. Exfiltration (storage node Green-Ampt seepage).
     //         Must run BEFORE router_.step() so that pre-computed exfil rates

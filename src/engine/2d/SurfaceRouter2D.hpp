@@ -142,6 +142,20 @@ public:
     /// Check if the 2D module is active.
     bool isActive() const noexcept { return active_; }
 
+    /// True on the explicit-marcher path: the 2D co-advances inside every
+    /// routing step (windowless coupling, 2026-07-29 plan §5) — no pending
+    /// window, no CFL hint clamp on the 1D step, exchange evaluated per 2D
+    /// substep against live surface heads.
+    bool usesCoAdvance() const noexcept { return co_advance_; }
+
+    /// Windowless-coupling stabilizer: per coupled node, the exchange head
+    /// sensitivity G = Σ_points −∂Q/∂h_1d ≥ 0 converted to 1D units (ft³/s per
+    /// ft), for the caller to add into the dynamic-wave `sumdqdh` each Picard
+    /// iteration. Appends (node_idx, G) pairs; cheap (O(points)).
+    void computeCouplingConductances(
+        const SimulationContext& ctx,
+        std::vector<std::pair<int, double>>& out) const;
+
     /**
      * @brief Make the parsed mesh editable without a full initialize().
      *
@@ -254,6 +268,19 @@ private:
     /// when COUPLING_INTERVAL > 1. Empty (and state_.node_coupling == nullptr)
     /// on the default held-flux path.
     std::vector<CouplingPoint> node_coupling_points_;
+
+    /// Explicit-marcher windowless path (set at initialize from INTEGRATOR).
+    bool co_advance_ = false;
+    /// Sim time since the last co-advance output refresh (report-scale cadence).
+    double co_refresh_elapsed_ = 0.0;
+    /// Sim time since the last rainfall/forcing refresh (gage-scale cadence).
+    double co_forcing_elapsed_ = 0.0;
+    bool   co_forcing_first_   = true;
+    /// One windowless routing-step co-advance: outfall inject + rainfall + BC
+    /// resolve + solver advance over exactly [t, t+dt] + ledger booking +
+    /// mass balance + output refresh. Replaces the whole window state machine
+    /// on the marcher path.
+    void coAdvanceStep(SimulationContext& ctx, double dt, double t);
 
     bool   active_           = false;
     double sim_time_         = 0.0;

@@ -175,12 +175,9 @@ void buildSurfaceTangents(const MeshData& mesh, SurfaceStateData& state,
     // the wet-branch 1/A: the right-derivative that carries the negative
     // Δh feedback stabilizing the corrector on wetting-front cells.
     // Default ON (paired with the partial-window default); env "0" restores
-    // the unclamped 1/A tangent on debt cells.
-    static const bool clamp_consistent = []{
-        const char* e = std::getenv("OPENSWMM_2D_TANGENT_CLAMP");
-        return !(e && e[0] == '0' && e[1] == '\0');
-    }();
-    const double* yv = clamp_consistent ? y : nullptr;
+    // the unclamped 1/A tangent on debt cells — folded into opts.tangent_clamp
+    // per run by SurfaceRouter2D::initialize().
+    const double* yv = opts.tangent_clamp ? y : nullptr;
 
     // Per-cell dη/dV (closure chain rule) reused across a cell's three edges.
     // Cheap; recomputed here so the pass is self-contained.

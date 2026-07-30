@@ -80,8 +80,13 @@ enum class PreconditionerType : int8_t {
  * OPENSWMM_2D_INTEGRATOR (cvode|arkode) overrides this field.
  */
 enum class IntegratorType : int8_t {
-    CVODE  = 0,     ///< Default: fully-implicit BDF (CvodeSurfaceSolver).
-    ARKODE = 1      ///< ARKStep IMEX additive-RK (ArkodeSurfaceSolver).
+    CVODE        = 0,   ///< Default: fully-implicit BDF (CvodeSurfaceSolver).
+    ARKODE       = 1,   ///< ARKStep IMEX additive-RK (ArkodeSurfaceSolver).
+    EXPLICIT_LTS = 2    ///< Explicit local-inertial marcher with flux-active
+                        ///< sets and tiered local timestepping
+                        ///< (ExplicitInertialSolver). [2D_OPTIONS] INTEGRATOR
+                        ///< EXPLICIT. See workplans/
+                        ///< 2D_SOLVER_REIMPLEMENTATION_PLAN_2026-07-29.md.
 };
 
 /**
@@ -304,6 +309,42 @@ struct SolverOptions2D {
     /// Only used when CELL_CLOSURE = VFR. Parsed from [2D_OPTIONS]
     /// VFR_MIN_WET_FRAC; valid range (0, 0.5].
     double             vfr_min_wet_frac = 0.01;
+
+    // -----------------------------------------------------------------------
+    // Explicit local-inertial marcher (INTEGRATOR EXPLICIT) options. Ignored by
+    // the CVODE/ARKODE paths. Defaults per the 2026-07-29 reimplementation plan.
+    // -----------------------------------------------------------------------
+    /// Face-update θ weighting (de Almeida & Bates 2013): 1 = pure Bates 2010
+    /// (no numerical diffusion), <1 blends the Perot-reconstructed neighbour
+    /// discharge to damp thin-film checkerboarding on steep faces.
+    double theta        = 0.8;    ///< [2D_OPTIONS] THETA, (0, 1]
+    double cfl_number   = 0.7;    ///< [2D_OPTIONS] CFL_NUMBER — α in dt = α·L/√(gh)
+    /// Flux-activation depth (m): cells below it are source-only (lazy rain
+    /// accumulation, no face flux). Hysteresis band ±1 mm around it.
+    double h_move       = 0.003;  ///< [2D_OPTIONS] H_MOVE (m)
+    int    lts_tiers    = 4;      ///< [2D_OPTIONS] LTS_TIERS, 1..8 (1 = global dt)
+    double froude_max   = 1.5;    ///< [2D_OPTIONS] FROUDE_MAX face |u| clamp
+    /// Positivity/exchange availability fraction β: max share of a cell's
+    /// volume that outgoing fluxes (or a coupling drain) may take per own-step.
+    double exchange_beta  = 0.8;
+    /// Optional EMA sub-relaxation of per-substep coupling exchange (1 = off).
+    double exchange_relax = 1.0;
+    /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
+    /// resolve from the largest connected conduit (clamp(1.25·A_conduit,
+    /// 0.05, 2.0) m²) for rows that did not author an explicit area.
+    bool   coupling_area_auto = false;
+
+    // -----------------------------------------------------------------------
+    // Per-run resolutions of what used to be process-lifetime function-local
+    // static env caches (multi-model correctness). Folded from env in
+    // SurfaceRouter2D::initialize(); never parsed/persisted.
+    // -----------------------------------------------------------------------
+    /// Clamp-consistent tangent on volume-debt cells (dη/dV := 0 for V < 0).
+    /// Env OPENSWMM_2D_TANGENT_CLAMP=0 disables. Default ON.
+    bool tangent_clamp   = true;
+    /// Tangent-exact preconditioner assembly (vs secant transmissivity).
+    /// Env OPENSWMM_2D_PRECOND_TANGENT=0 disables. Default ON.
+    bool precond_tangent = true;
 
     LinearSolverType   linear_solver   = LinearSolverType::GMRES;
     // Default to AMG (hypre BoomerAMG): the only preconditioner with

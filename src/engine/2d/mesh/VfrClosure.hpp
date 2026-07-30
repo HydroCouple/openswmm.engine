@@ -44,6 +44,14 @@
 
 #include <cmath>
 
+// Portable kernel-function marker (P5 Kokkos port) — see InertialKernels.hpp.
+// Host builds: plain inline. The GPU plugin defines OPENSWMM_KERNEL_FN to
+// KOKKOS_INLINE_FUNCTION before including so the identical closure bodies are
+// device-callable.
+#ifndef OPENSWMM_KERNEL_FN
+#define OPENSWMM_KERNEL_FN inline
+#endif
+
 namespace openswmm::twoD {
 
 /// Relief below which a cell is treated as flat (metres). Matches the guard
@@ -51,7 +59,7 @@ namespace openswmm::twoD {
 inline constexpr double kVfrFlatRelief = 1.0e-9;
 
 /// Sort three vertex elevations in place so z1 <= z2 <= z3.
-inline void vfrSort3(double& z1, double& z2, double& z3) noexcept {
+OPENSWMM_KERNEL_FN void vfrSort3(double& z1, double& z2, double& z3) noexcept {
     if (z1 > z2) { const double t = z1; z1 = z2; z2 = t; }
     if (z2 > z3) { const double t = z2; z2 = z3; z3 = t; }
     if (z1 > z2) { const double t = z1; z1 = z2; z2 = t; }
@@ -60,7 +68,7 @@ inline void vfrSort3(double& z1, double& z2, double& z3) noexcept {
 /// Wetted-area fraction A_wet/A of the planar-bed cell at stage @p eta.
 /// Piecewise C0, monotone from 0 (η ≤ z1) to 1 (η ≥ z3). This is dh̄/dη.
 /// Inputs must be sorted (z1 <= z2 <= z3).
-inline double vfrWetFraction(double z1, double z2, double z3,
+OPENSWMM_KERNEL_FN double vfrWetFraction(double z1, double z2, double z3,
                              double eta) noexcept {
     const double relief = z3 - z1;
     if (relief < kVfrFlatRelief) return (eta > z1) ? 1.0 : 0.0;
@@ -80,7 +88,7 @@ inline double vfrWetFraction(double z1, double z2, double z3,
 
 /// EXACT cell-mean depth h̄(η) of the planar-bed cell (per unit area; V = A·h̄).
 /// Returns 0 for η ≤ z1. Inputs must be sorted.
-inline double vfrMeanDepthFromEtaExact(double z1, double z2, double z3,
+OPENSWMM_KERNEL_FN double vfrMeanDepthFromEtaExact(double z1, double z2, double z3,
                                        double eta) noexcept {
     const double zbar   = (z1 + z2 + z3) / 3.0;
     const double relief = z3 - z1;
@@ -101,7 +109,7 @@ inline double vfrMeanDepthFromEtaExact(double z1, double z2, double z3,
 
 /// Stage η_s at which the wetted-area fraction equals @p eps (0 < eps < 1).
 /// Inputs must be sorted and non-flat (z3 − z1 ≥ kVfrFlatRelief).
-inline double vfrStageAtWetFraction(double z1, double z2, double z3,
+OPENSWMM_KERNEL_FN double vfrStageAtWetFraction(double z1, double z2, double z3,
                                     double eps) noexcept {
     const double relief = z3 - z1;
     const double d21    = z2 - z1;
@@ -117,7 +125,7 @@ inline double vfrStageAtWetFraction(double z1, double z2, double z3,
 /// the exact relation. The EXACT inverse of vfrEtaFromMeanDepth for the same
 /// eps, so head ↔ volume seeding round-trips (hotstart, reinitialize).
 /// Inputs must be sorted.
-inline double vfrMeanDepthFromEta(double z1, double z2, double z3,
+OPENSWMM_KERNEL_FN double vfrMeanDepthFromEta(double z1, double z2, double z3,
                                   double eta, double eps) noexcept {
     const double relief = z3 - z1;
     if (eps <= 0.0 || relief < kVfrFlatRelief)
@@ -138,7 +146,7 @@ inline double vfrMeanDepthFromEta(double z1, double z2, double z3,
 /// eps == 0 gives the exact relation with η(h̄ ≤ 0) = z1 (render use).
 /// Fully wet (h̄ ≥ z3 − z̄) reduces to the flat closure η = z̄ + h̄ exactly.
 /// Inputs must be sorted.
-inline double vfrEtaFromMeanDepth(double z1, double z2, double z3,
+OPENSWMM_KERNEL_FN double vfrEtaFromMeanDepth(double z1, double z2, double z3,
                                   double mean_depth, double eps) noexcept {
     const double zbar   = (z1 + z2 + z3) / 3.0;
     const double relief = z3 - z1;
@@ -201,7 +209,7 @@ inline double vfrEtaFromMeanDepth(double z1, double z2, double z3,
 /// value a dry cell's head must be seeded with under CELL_CLOSURE = VFR so
 /// that head → volume seeding (vfrMeanDepthFromEta) returns exactly 0.
 /// Inputs must be sorted.
-inline double vfrDryEta(double z1, double z2, double z3, double eps) noexcept {
+OPENSWMM_KERNEL_FN double vfrDryEta(double z1, double z2, double z3, double eps) noexcept {
     return vfrEtaFromMeanDepth(z1, z2, z3, 0.0, eps);
 }
 
@@ -209,7 +217,7 @@ inline double vfrDryEta(double z1, double z2, double z3, double eps) noexcept {
 /// Divide by the cell area A to get dη/dV (the preconditioner chain-rule
 /// factor; equals 1/A for a fully wet cell, matching the flat closure).
 /// Inputs must be sorted.
-inline double vfrDEtaDMeanDepth(double z1, double z2, double z3,
+OPENSWMM_KERNEL_FN double vfrDEtaDMeanDepth(double z1, double z2, double z3,
                                 double eta, double eps) noexcept {
     double w = vfrWetFraction(z1, z2, z3, eta);
     if (w < eps) w = eps;

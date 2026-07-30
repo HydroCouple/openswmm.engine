@@ -47,6 +47,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <numeric>
 
@@ -3155,9 +3156,32 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
     // Apply user's minimum step (from MINIMUM_STEP option, typically 0.5 sec)
     double min_step = ctx.options.min_routing_step;
     min_step = std::max(min_step, MIN_TIMESTEP);
+    const bool floored = dt_min < min_step;
     dt_min = std::max(dt_min, min_step);
     // Round to milliseconds for deterministic behavior
     dt_min = std::floor(1000.0 * dt_min) / 1000.0;
+
+    // Temporary diagnostic (2026-07-29 Task 2, step-shrink investigation):
+    // OPENSWMM_DT_TRACE=1 prints the governing constraint each routing step.
+    static const bool dt_trace = [] {
+        const char* s = std::getenv("OPENSWMM_DT_TRACE");
+        return s && *s && *s != '0';
+    }();
+    if (dt_trace) {
+        const char* gov = "fixed";
+        const char* nm  = "-";
+        if (floored) {
+            gov = "floor";
+        } else if (min_link >= 0) {
+            gov = "link";
+            nm  = ctx.link_names.name_of(min_link).c_str();
+        } else if (min_node >= 0) {
+            gov = "node";
+            nm  = ctx.node_names.name_of(min_node).c_str();
+        }
+        std::fprintf(stderr, "[DT] t=%.3f dt=%.3f gov=%s name=%s\n",
+                     ctx.elapsed_ms / 1000.0, dt_min, gov, nm);
+    }
     return dt_min;
 }
 

@@ -9,6 +9,7 @@
 #ifdef OPENSWMM_HAS_2D
 
 #include "CvodeSurfaceSolver.hpp"
+#include "InertialKernels.hpp"            // canonical V ⇄ η closure pair
 #include "SurfaceFluxCalculator.hpp"
 #include "SurfaceTangent.hpp"
 #include "../data/ActiveSetData.hpp"
@@ -62,38 +63,18 @@ namespace {
 // so no explicit wet/dry shutoff is needed under either closure.
 // See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
 // ---------------------------------------------------------------------------
+// The canonical pair lives in InertialKernels.hpp (cellEtaDepth /
+// cellVolumeFromEta — bit-identical bodies); these forwarders keep the
+// solver-local names used throughout this file.
 inline void reconstructFromVolume(const MeshData& m, const SolverOptions2D& o,
                                   int i, double V,
                                   double& head, double& depth) noexcept {
-    const double A = m.tri_area[i];
-    const double v = (V > 0.0) ? V : 0.0;
-    depth = (A > 1.0e-30) ? v / A : 0.0;
-    if (o.cell_closure == CellClosure2D::VFR) {
-        double z1 = m.vz[m.tri_v0[i]];
-        double z2 = m.vz[m.tri_v1[i]];
-        double z3 = m.vz[m.tri_v2[i]];
-        vfrSort3(z1, z2, z3);
-        head = vfrEtaFromMeanDepth(z1, z2, z3, depth, o.vfr_min_wet_frac);
-    } else {
-        head = m.tri_cz[i] + depth;
-    }
+    inertial::cellEtaDepth(m, o, i, V, head, depth);
 }
 
 inline double volumeFromHead(const MeshData& m, const SolverOptions2D& o,
                              int i, double head) noexcept {
-    if (o.cell_closure == CellClosure2D::VFR) {
-        double z1 = m.vz[m.tri_v0[i]];
-        double z2 = m.vz[m.tri_v1[i]];
-        double z3 = m.vz[m.tri_v2[i]];
-        vfrSort3(z1, z2, z3);
-        // Regularized forward relation — the exact inverse of the closure
-        // above, so head ↔ volume seeding round-trips (a head seeded at the
-        // closure's dry anchor maps back to exactly V = 0).
-        return m.tri_area[i]
-               * vfrMeanDepthFromEta(z1, z2, z3, head, o.vfr_min_wet_frac);
-    }
-    const double d = head - m.tri_cz[i];
-    return (d > 0.0) ? m.tri_area[i] * d : 0.0;
+    return inertial::cellVolumeFromEta(m, o, i, head);
 }
 
 // State-vector factory: threaded OpenMP N_Vector when THREADS > 1 (CVODE clones
@@ -239,14 +220,11 @@ int CvodeSurfaceSolver::psetup_fn(double /*t*/, N_Vector /*y*/, N_Vector /*fy*/,
     // being built (analytic-J path active) and no active-set mask (tangent
     // rows are not masked).
     // Default ON (7.7× measured on the multiscale storm probe); env "0"
-    // restores the secant-transmissivity assembly.
-    static const bool precond_tangent = []{
-        const char* e = std::getenv("OPENSWMM_2D_PRECOND_TANGENT");
-        return !(e && e[0] == '0' && e[1] == '\0');
-    }();
+    // restores the secant-transmissivity assembly — folded into
+    // opts.precond_tangent per run by SurfaceRouter2D::initialize().
     const SurfaceTangents& tng = solver->tangents_;
     const bool use_tangent_pc =
-        precond_tangent && !masked && tng.nt == mesh.n_triangles();
+        ctx->opts->precond_tangent && !masked && tng.nt == mesh.n_triangles();
 
 #if defined(OPENSWMM_HAVE_HYPRE)
     // AMG: assemble M = I − γ·J and rebuild the BoomerAMG hierarchy (only when
@@ -495,6 +473,22 @@ void CvodeSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
             "CvodeSurfaceSolver: only PRECONDITIONER=NONE, JACOBI, or AMG is "
             "wired; ILU is reserved");
     }
+    // A hard step floor turns wetting-front corrector retries into
+    // UNRECOVERABLE failures (the kink needs h below any fixed floor; measured:
+    // 128k hard failures + 43 frozen windows + an inert surface on Bellinge —
+    // twice). The engine default is 0; an explicit .inp line overrides it, so
+    // warn loudly every time one does.
+    if (opts.min_timestep > 0.0) {
+        std::printf(
+            "\n  WARNING: [2D_OPTIONS] MIN_TIMESTEP %.6g sets a hard CVODE step\n"
+            "  floor. Wetting-front corrector failures below this floor are\n"
+            "  UNRECOVERABLE (frozen 2D windows, dropped rainfall). Delete the\n"
+            "  MIN_TIMESTEP line (engine default 0 = no floor) unless you are\n"
+            "  deliberately reproducing that failure mode.\n\n",
+            opts.min_timestep);
+        std::fflush(stdout);
+    }
+
     PreconditionerType pc = opts.preconditioner;  // effective preconditioner
 #if !defined(OPENSWMM_HAVE_HYPRE)
     if (pc == PreconditionerType::AMG) {
