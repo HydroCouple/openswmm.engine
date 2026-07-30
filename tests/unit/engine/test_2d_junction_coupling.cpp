@@ -57,7 +57,7 @@ namespace {
 // patch bed sits at z = 1.0 m = J1's crown elevation, so spill/capture happen at
 // the rim. ALLOW_PONDING is OFF on purpose: only the 2D-coupled exception lets
 // J1's HGL climb above the crown.
-std::string build_junction_model() {
+std::string build_junction_model(const std::string& extra_2d_options) {
     return
         "[OPTIONS]\n"
         "FLOW_UNITS           CMS\n"
@@ -104,6 +104,7 @@ std::string build_junction_model() {
         "LINEAR_SOLVER    GMRES\n"
         "PRECONDITIONER   JACOBI\n"
         "REPORT_2D        NO\n"
+        + extra_2d_options +
         "\n"
         "[2D_VERTICES]\n"
         ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
@@ -132,12 +133,13 @@ struct RunResult {
     double cont_routing = 0.0;
 };
 
-RunResult run_junction_model(const fs::path& dir) {
+RunResult run_junction_model(const fs::path& dir, const std::string& tag,
+                             const std::string& extra_2d_options) {
     RunResult r;
-    const fs::path inp = dir / "junction_coupling.inp";
-    const fs::path rpt = dir / "junction_coupling.rpt";
-    const fs::path out = dir / "junction_coupling.out";
-    { std::ofstream f(inp); f << build_junction_model(); }
+    const fs::path inp = dir / (tag + ".inp");
+    const fs::path rpt = dir / (tag + ".rpt");
+    const fs::path out = dir / (tag + ".out");
+    { std::ofstream f(inp); f << build_junction_model(extra_2d_options); }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -198,7 +200,7 @@ protected:
 // crown, junction spill never fires, and the patch stays dry. Post-fix the HGL
 // rises above the crown, the patch wets on surcharge and drains on capture.
 TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
-    RunResult r = run_junction_model(dir_);
+    RunResult r = run_junction_model(dir_, "junction_coupling", "");
 
     ASSERT_TRUE(r.ok) << "coupled junction run failed";
     ASSERT_EQ(r.n_tri, 2);
@@ -227,6 +229,39 @@ TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
         << "1D routing continuity error too large: " << r.cont_routing;
 
     std::ofstream csv(dir_ / "junction_coupling_massbalance.csv");
+    csv << "metric,value\n"
+        << "peak_j1_depth_m," << r.peak_j1_depth << "\n"
+        << "peak_patch_depth_m," << r.peak_patch_depth << "\n"
+        << "final_patch_depth_m," << r.final_patch_depth << "\n"
+        << "continuity_2d_frac," << r.cont_2d << "\n"
+        << "continuity_routing_frac," << r.cont_routing << "\n";
+}
+
+// Same two-regime physics on the explicit marcher (INTEGRATOR EXPLICIT, live
+// in-marcher exchange, no windows): the coupled-node ponding exception, the
+// surcharge spill, and the inlet recapture must all survive the solver swap.
+TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown_Marcher) {
+    RunResult r = run_junction_model(dir_, "junction_coupling_marcher",
+                                     "INTEGRATOR       EXPLICIT\n");
+
+    ASSERT_TRUE(r.ok) << "coupled junction marcher run failed";
+    ASSERT_EQ(r.n_tri, 2);
+
+    EXPECT_GT(r.peak_j1_depth, 1.05)
+        << "junction HGL did not rise above the crown (peak depth "
+        << r.peak_j1_depth << " m) — coupled-node ponding is not engaged";
+    EXPECT_GT(r.peak_patch_depth, 0.01)
+        << "junction surcharge did not spill onto the 2D mesh (peak depth "
+        << r.peak_patch_depth << " m)";
+    EXPECT_LT(r.final_patch_depth, 0.5 * r.peak_patch_depth)
+        << "surface water was not recaptured through the inlet (final patch depth "
+        << r.final_patch_depth << " m vs peak " << r.peak_patch_depth << " m)";
+    EXPECT_LT(std::abs(r.cont_2d), 0.05)
+        << "2D surface continuity error too large: " << r.cont_2d;
+    EXPECT_LT(std::abs(r.cont_routing), 0.05)
+        << "1D routing continuity error too large: " << r.cont_routing;
+
+    std::ofstream csv(dir_ / "junction_coupling_marcher_massbalance.csv");
     csv << "metric,value\n"
         << "peak_j1_depth_m," << r.peak_j1_depth << "\n"
         << "peak_patch_depth_m," << r.peak_patch_depth << "\n"

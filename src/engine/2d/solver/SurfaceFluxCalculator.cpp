@@ -83,15 +83,9 @@ inline double faceDepthFromEta(double eta, double z_lo, double z_hi) noexcept {
 // the FD Jacobian, AND the diagonal preconditioner (all read the stored flux),
 // so the whole stiff-at-flat-water pathway is regularized in one place.
 // Value comes from SolverOptions2D::flux_dh_eps (default 4 mm, parseable from
-// [2D_OPTIONS] FLUX_DH_EPS); the env var OPENSWMM_2D_FLUX_DH_EPS overrides it
-// when set (handy for sweeps). 0 restores the bare √.
-inline double fluxDhEps(double opt_default) {
-    static const double env = []{
-        const char* s = std::getenv("OPENSWMM_2D_FLUX_DH_EPS");
-        return s ? std::atof(s) : -1.0;   // <0 ⇒ not set
-    }();
-    return (env >= 0.0) ? env : opt_default;
-}
+// [2D_OPTIONS] FLUX_DH_EPS); the env var OPENSWMM_2D_FLUX_DH_EPS override is
+// folded into the options once per SurfaceRouter2D::initialize() — per-run,
+// not process-lifetime. 0 restores the bare √.
 inline double regSqrt(double x, double eps) noexcept {
     if (eps <= 0.0 || x >= eps) return std::sqrt(x);
     const double inv = 1.0 / std::sqrt(eps);
@@ -292,7 +286,7 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
 void computeEdgeFluxes(const MeshData& mesh, SurfaceStateData& state,
                         const SolverOptions2D& opts) {
     int nt = mesh.n_triangles();
-    const double dh_eps = fluxDhEps(opts.flux_dh_eps);  // flux gradient regularization
+    const double dh_eps = opts.flux_dh_eps;  // flux gradient regularization
 
     // Active-set masking: frozen cells' flux slots were zeroed when they left
     // the active set and stay zero — exactly their unmasked value (dry cell,
@@ -593,6 +587,13 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
         state.face_vx[i] = qx * inv_depth;
         state.face_vy[i] = qy * inv_depth;
     }
+}
+
+double computeBoundaryEdgeFlux(const MeshData& mesh,
+                               const SurfaceStateData& state,
+                               const SolverOptions2D& opts,
+                               double dh_eps, int i, int idx) noexcept {
+    return boundaryEdgeFlux(mesh, state, opts, dh_eps, i, idx);
 }
 
 } // namespace openswmm::twoD

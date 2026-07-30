@@ -247,13 +247,61 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
 
     // Source-side wet/dry self-limit on the LIVE depth — this is what makes the
     // continuous coupling stable inside the implicit solve (Q → 0 as the source
-    // empties), replacing the held-flux avail/dt cap of computeCouplingExchange.
+    // empties), replacing the held-flux avail/dt cap of the retired computeCouplingExchange.
     auto wetRamp = [&opts](double d) {
         const double t = std::min(1.0, std::max(0.0, d / opts.dry_depth));
         return t * t * (3.0 - 2.0 * t);
     };
     Q *= (Q > 0.0) ? wetRamp(depth_2d_avail) : wetRamp(depth_1d_avail);
     return Q;
+}
+
+
+double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
+                                 const MeshData& mesh,
+                                 const SurfaceStateData& state,
+                                 const NodeData& nodes,
+                                 const SolverOptions2D& opts) noexcept {
+    // Mirror of computeNodeCouplingQ with Q = Cd·A_eff·sign(Δh)·√(2g)·φ(|Δh|),
+    // Δh = h_2d − h_1d: the head sensitivity is G = −∂Q/∂h_1d =
+    // Cd·A_eff·√(2g)·φ′(|Δh|) · (gate) · (ramp) ≥ 0. Gate/ramp factors are
+    // treated as constants (each ∈ [0,1]); their derivatives are deliberately
+    // dropped so the sign guarantee — a pure damping term on the 1D node
+    // continuity denominator — can never be violated.
+    const auto ni = static_cast<std::size_t>(cp.node_idx);
+    const double h_2d = couplingHead2D(cp, mesh, state, opts);
+    const double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
+    const double a = std::abs(h_2d - h_1d);
+
+    const double crown =
+        (nodes.invert_elev[ni] + nodes.full_depth[ni]) * opts.len_1d_to_2d;
+    const double h_max = std::max(h_1d, h_2d);
+    const double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni],
+                                       cp.area, cp.area * 2.0);
+
+    // φ′ of the C¹-regularized root: 1/(2√a) beyond ε, linear-finite below.
+    double phi_p;
+    if (a >= ORIFICE_H_EPS) {
+        phi_p = 0.5 / std::sqrt(a);
+    } else {
+        const double inv_sqrt_e = 1.0 / std::sqrt(ORIFICE_H_EPS);
+        phi_p = 1.5 * inv_sqrt_e - (inv_sqrt_e / ORIFICE_H_EPS) * a;
+    }
+    double G = cp.cd * A_eff * std::sqrt(2.0 * GRAVITY) * phi_p;
+
+    constexpr double CAP_BAND = 0.05;
+    const double ct = std::min(1.0, std::max(0.0, (h_max - crown) / CAP_BAND));
+    G *= ct * ct * (3.0 - 2.0 * ct);
+
+    auto wetRamp = [&opts](double d) {
+        const double t = std::min(1.0, std::max(0.0, d / opts.dry_depth));
+        return t * t * (3.0 - 2.0 * t);
+    };
+    const double depth_1d = nodes.depth[ni] * opts.len_1d_to_2d;
+    const double depth_2d =
+        (cp.cell_idx >= 0) ? state.depth[cp.cell_idx] : 0.0;
+    G *= wetRamp(std::max(depth_1d, depth_2d));
+    return (G > 0.0) ? G : 0.0;
 }
 
 
@@ -316,6 +364,9 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         cp.node_idx = node_idx;
         cp.cd = mesh.vert_coupling_cd[v];
         cp.area = mesh.vert_coupling_area[v];
+        cp.area_authored =
+            v < static_cast<int>(mesh.vert_coupling_area_set.size()) &&
+            mesh.vert_coupling_area_set[static_cast<std::size_t>(v)] != 0;
 
         // Find the triangle that contains this vertex (use first one)
         // The coupling flux is distributed to triangles sharing this vertex
@@ -353,6 +404,7 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         cp.node_idx = node_idx;
         cp.cd = row.cd;
         cp.area = row.area;
+        cp.area_authored = row.area_set;
 
         auto ui = static_cast<std::size_t>(node_idx);
         cp.is_outfall = (ctx.nodes.type[ui] == NodeType::OUTFALL);
@@ -364,226 +416,6 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
     }
 
     return cps;
-}
-
-
-void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
-                              const MeshData& mesh,
-                              SurfaceStateData& state,
-                              SimulationContext& ctx,
-                              const SolverOptions2D& opts,
-                              double dt) {
-    auto& nodes = ctx.nodes;
-
-    // Clear coupling fluxes on the 2D side
-    std::fill(state.coupling_flux.begin(), state.coupling_flux.end(), 0.0);
-
-    // Clear the dedicated 1D-side coupling source array for every coupled
-    // junction. The signed exchange VOLUME accumulated below (Q·dt) is consumed
-    // by assembleLateralInflows at the start of step N+1, which re-derives the
-    // rate coupling_inflow = coupling_volume/dt and splits it into
-    // routing_external (positive part) and routing_flooding (negative part) for
-    // mass-balance accounting. Carrying a volume (not a rate) keeps the exchange
-    // conservative under VARIABLE_STEP — the 1D node receives exactly Q·dt
-    // regardless of the next step's size. See review §11.
-    //
-    // This replaces the earlier hack of routing coupling Q through
-    // forcing.node_lat_inflow_value with OVERRIDE+PERSIST, which (a)
-    // conflated 2D coupling with user-API forcing and (b) silently dropped
-    // the negative (1D→2D) side from the routing continuity equation
-    // because the mass-balance accumulator at SWMMEngine.cpp:2152 only
-    // sums positive user_lat_flow values.
-    for (const auto& cp : cps) {
-        if (cp.is_outfall) continue;
-        auto ni = static_cast<std::size_t>(cp.node_idx);
-        nodes.coupling_volume[ni] = 0.0;
-    }
-
-    for (const auto& cp : cps) {
-        if (cp.is_outfall) continue;  // Outfalls handled separately
-
-        int ci = cp.cell_idx;
-        auto ni = static_cast<std::size_t>(cp.node_idx);
-
-        // 2D head at the coupling point (bed elevation z_2d no longer needed —
-        // the capped-pipe driver is the head difference h_2d − h_1d, not the
-        // surface ponding depth). VFR closure: wet-masked vertex η; FLAT: the
-        // legacy pseudo-Laplacian vert_head (bit-identical default).
-        double h_2d = couplingHead2D(cp, mesh, state, opts);
-
-        // 1D node head. The 1D engine always stores heads in feet (US internal
-        // units, every project); convert to the 2D solver's SI internal length
-        // so dh below is in metres (opts.len_1d_to_2d == 0.3048 always).
-        double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
-
-        // Available water on each side, used for the source-side wet/dry
-        // ramp below.
-        //
-        // For vertex-coupled points we use the MAXIMUM depth across the
-        // cells in the vertex stencil. Two failure modes to avoid:
-        //   (a) `vert_head - vert_z` is spuriously positive on a fully
-        //       dry mesh whenever the vertex sits at a local low spot —
-        //       the pseudo-Laplacian reconstruction averages neighbour
-        //       cell heads, all of which equal their (higher) centroid z,
-        //       so the reconstructed head exceeds the vertex z by the
-        //       bed-relief amount alone.
-        //   (b) `state.depth[first_tri_containing_v]` is spuriously zero
-        //       on a wet bowl whenever the vertex sits below all of its
-        //       neighbour cells' centroids: the FV grid has no cell at
-        //       the bowl bottom, so each touching cell's depth = max(0,
-        //       head - centroid_z) stays at 0 even when surrounding
-        //       cells hold water. (This is what kills coupling on
-        //       parabolic-bowl-with-central-junction inputs.)
-        //
-        // Max over the vertex stencil resolves both: truly dry → every
-        // stencil cell has depth 0 → ramp 0; any wet stencil cell → the
-        // vertex is at-or-below that cell's bed → ramp 1.
-        double depth_2d_avail;
-        if (cp.vertex_idx >= 0) {
-            int v = cp.vertex_idx;
-            int start = mesh.vert_stencil_ptr[v];
-            int end   = mesh.vert_stencil_ptr[v + 1];
-            depth_2d_avail = 0.0;
-            for (int k = start; k < end; ++k) {
-                depth_2d_avail = std::max(depth_2d_avail,
-                    state.depth[mesh.vert_stencil_idx[k]]);
-            }
-        } else {
-            depth_2d_avail = state.depth[ci];
-        }
-        double depth_1d_avail = nodes.depth[ni] * opts.len_1d_to_2d;
-
-        // ----------------------------------------------------------------
-        // Capped-pipe junction exchange. The manhole/inlet is modelled as a
-        // pipe sealed by a cover at the **surcharge threshold** — the pipe crown
-        //   z_top = (invert + full_depth)·len   (= crown, the slot-engagement point)
-        // Below the crown the 1D node fills sub-full with NO exchange across the
-        // interface — no spill out, no capture in. The cover only connects the
-        // two domains once water reaches the crown (the same point the 1D
-        // dynamic-wave solver engages its Preissmann slot, SLOT_CROWN_CUTOFF),
-        // after which exchange is the BIDIRECTIONAL orifice on the head
-        // difference (h_2d − h_1d): drain INTO the pipe when the surface is
-        // higher, spill OUT onto the surface when the pipe is higher.
-        //
-        // Tying the gate to the crown — NOT crown + sur_depth — keeps the inlet
-        // consistent with the slot (exchange opens exactly when the pipe
-        // surcharges) and leaves `sur_depth` FREE to size the slot's storage
-        // headroom above the crown, so captured surcharge volume is stored in
-        // the slot instead of being dropped. A C¹ Hermite ramp on max(h_1d,h_2d)
-        // across a 5 cm band above the crown opens the gate without a derivative
-        // jump (CVODE/BDF stability). See docs/1D_2D_COUPLING_CONFIGURATION.md.
-        double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni])
-                       * opts.len_1d_to_2d;
-        double z_top = crown;
-        double h_max = std::max(h_1d, h_2d);
-        double A_eff = effectiveArea(h_max, crown, nodes.full_depth[ni],
-                                      cp.area, cp.area * 2.0);
-
-        // Gradient-driven orifice (bidirectional): positive Q = 2D → 1D drain,
-        // negative Q = 1D → 2D spill.
-        double Q = orificeFlow(h_2d - h_1d, cp.cd, A_eff);
-
-        // Capped-pipe gate: no exchange until water reaches the surcharge
-        // threshold z_top (= the slot-trigger depth). Below it the pipe fills
-        // sub-full / pressurises internally; the gate is a C¹ Hermite ramp over
-        // a 5 cm band above z_top.
-        constexpr double CAP_BAND = 0.05;  // m
-        double ct = std::min(1.0, std::max(0.0, (h_max - z_top) / CAP_BAND));
-        double capRamp = ct * ct * (3.0 - 2.0 * ct);
-        Q *= capRamp;
-
-        // Smoothly ramp Q to zero as the source side dries up. A hard cutoff at
-        // opts.dry_depth would step-discontinue ydot and break CVODE's BDF
-        // corrector. For inflow (Q>0) this also enforces "the surface must hold
-        // more than dry_depth to be captured" — and kills the spurious inflow a
-        // dry low-spot vertex's reconstructed depth_2d_surf could otherwise
-        // produce (depth_2d_avail is the robust max-over-stencil wetness).
-        auto wetRamp = [&opts](double d) {
-            double t = std::min(1.0, std::max(0.0, d / opts.dry_depth));
-            return t * t * (3.0 - 2.0 * t);
-        };
-        Q *= (Q > 0.0) ? wetRamp(depth_2d_avail) : wetRamp(depth_1d_avail);
-
-        // Throttle return flow (2D → 1D) if node is at capacity
-        if (Q > 0.0) {
-            // Q > 0 means flow from 2D into 1D node (drainage). Node volumes
-            // are always ft³ (1D US internal units); convert to m³ so the Q_max
-            // cap is in the 2D solver's SI flow units (matching the SI Q above).
-            double available = (nodes.full_volume[ni] - nodes.volume[ni])
-                               * opts.vol_1d_to_2d;
-            if (available > 0.0 && dt > 0.0) {
-                double Q_max = available / dt;
-                Q = std::min(Q, Q_max);
-            } else if (available <= 0.0) {
-                // Node full — only allow if 1D head < 2D head (surcharge drain-back)
-                if (h_1d >= h_2d) Q = 0.0;
-            }
-
-            // Cap drainage at the water actually available in the receiving 2D
-            // cell(s) the sink draws from (the whole stencil for vertex coupling,
-            // one cell for triangle coupling — matching scatterCouplingFlux below
-            // so the cap stays conservative). Without this, the head-driven sink
-            // keeps draining at a fixed rate even after the cell empties, pulling
-            // its volume negative — which becomes a runaway once a working
-            // boundary outflow thins the mesh (the orifice Δh stays positive
-            // because an empty cell's surface floors to its bed).
-            //
-            // Use the SIGNED cell volume, not the depth-floored max(V,0): a cell
-            // already over-drawn negative then contributes negatively, tightening
-            // the cap so the drain backs off and the cell recovers instead of
-            // running away. Clamp at 0 so a net-empty stencil simply stops
-            // draining (never reverses the sign of the exchange). The same
-            // clamped Q feeds both domains, so the exchange stays conservative.
-            if (dt > 0.0) {
-                double avail_2d = 0.0;
-                if (cp.vertex_idx >= 0) {
-                    int vv = cp.vertex_idx;
-                    int s = mesh.vert_stencil_ptr[vv];
-                    int e = mesh.vert_stencil_ptr[vv + 1];
-                    for (int k = s; k < e; ++k)
-                        avail_2d += state.volume[mesh.vert_stencil_idx[k]];  // m³ signed
-                } else {
-                    avail_2d = state.volume[ci];  // m³ signed
-                }
-                double Q_max_2d = std::max(0.0, avail_2d) / dt;
-                Q = std::min(Q, Q_max_2d);
-            }
-        }
-        // Extractive 1D → 2D spill (Q < 0): bound the withdrawal by the water
-        // the 1D node can actually give up — its FLOODED volume above the crown
-        // (the ponded / surcharge store), converted to the 2D solver's SI units.
-        // Symmetric to the 2D-cell cap above: an exchange must move only water
-        // that exists at the source. Without it the head-driven orifice can
-        // withdraw more than the node holds, putting phantom water on the 2D
-        // surface and driving the 1D node volume negative. The pipe's in-line
-        // (below-crown) flow is NOT spillable — only the flood store is.
-        else if (Q < 0.0 && dt > 0.0) {
-            double flooded = (nodes.volume[ni] - nodes.full_volume[ni])
-                             * opts.vol_1d_to_2d;          // m³ above the crown
-            double Q_min = -std::max(0.0, flooded) / dt;   // most-negative allowed
-            Q = std::max(Q, Q_min);
-        }
-
-        // Inject as a dedicated 2D-coupling source on the SWMM node, accumulated
-        // as the exchange VOLUME over this window (Q·dt). Multiple coupling points
-        // targeting the same node accumulate via the += below. Positive = 2D → 1D
-        // (drain into pipe); negative = 1D → 2D (surcharge spill out of pipe). The
-        // signed volume is consumed by assembleLateralInflows at the start of the
-        // next routing step, which divides by that step's dt to feed lat_flow for
-        // the DW solver and folds the sign-split volumes into routing_external
-        // (positive side) and routing_flooding (negative side).
-        //
-        // Q is in the 2D solver's SI flow units (m³/s); the 1D engine's
-        // lateral-inflow sum and continuity accumulators are always in ft³/s
-        // (1D US internal units), so convert back here (flow_2d_to_1d ≈ 35.31).
-        // ·dt makes it a volume (ft³) carried conservatively across the step.
-        nodes.coupling_volume[ni] += Q * opts.flow_2d_to_1d * dt;
-
-        // Record coupling flux back to the 2D cell(s). For vertex coupling the
-        // sink/source is distributed across the stencil weighted by the upwind
-        // HGL slope (see scatterCouplingFlux); negative Q = drainage out of 2D.
-        scatterCouplingFlux(mesh, state, cp, -Q);
-    }
 }
 
 
@@ -686,68 +518,6 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
 }
 
 
-int transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
-                                const MeshData& mesh,
-                                SurfaceStateData& state,
-                                const SimulationContext& ctx,
-                                const SolverOptions2D& opts,
-                                double dt,
-                                std::unordered_map<int, double>& applied_q) {
-    auto& nodes = ctx.nodes;
-    applied_q.clear();
-    int clamped = 0;
-
-    for (const auto& cp : cps) {
-        if (!cp.is_outfall) continue;
-
-        auto ni = static_cast<std::size_t>(cp.node_idx);
-
-        // Net signed 1D→2D exchange at the outfall, in 1D US-internal flow units
-        // (ft³/s). nodes.inflow = pipe discharge OUT of the 1D network (onto the
-        // 2D surface); nodes.outflow = backflow INTO the network (surface water
-        // drawn back through the submerged outfall, driven by the 2D tailwater
-        // that updateOutfallBoundaries / setAllOutfallDepths already prescribed
-        // as the outfall head BC). So the 2D→1D direction is handled naturally
-        // by the head boundary; here we apply the RESULTING 1D flow back to the
-        // 2D domain. Convert to the 2D solver's SI flow units (≈ 0.0283).
-        double Q_net = (nodes.inflow[ni] - nodes.outflow[ni]) * opts.flow_1d_to_2d;
-
-        // Withdrawal cap (Q_net < 0): bound the held sink by the water actually
-        // present in the cell(s) it draws from — the whole stencil for vertex
-        // coupling, one cell for triangle coupling, matching scatterCouplingFlux
-        // so the cap stays conservative. Mirrors the junction drain cap above
-        // (signed volumes, clamped at 0). Without it the sink is held constant
-        // over the whole advance window and pulls cell volumes straight through
-        // zero: the 1D network then books water the surface never had.
-        if (Q_net < 0.0 && dt > 0.0) {
-            double avail_2d = 0.0;
-            if (cp.vertex_idx >= 0) {
-                const int v = cp.vertex_idx;
-                const int s = mesh.vert_stencil_ptr[v];
-                const int e = mesh.vert_stencil_ptr[v + 1];
-                for (int k = s; k < e; ++k)
-                    avail_2d += state.volume[mesh.vert_stencil_idx[k]];  // m³ signed
-            } else {
-                avail_2d = state.volume[cp.cell_idx];  // m³ signed
-            }
-            const double Q_min = -std::max(0.0, avail_2d) / dt;
-            if (Q_net < Q_min) { Q_net = Q_min; ++clamped; }
-        }
-
-        // Positive → pipe discharging onto the surface → 2D source.
-        // Negative → surface water drawn back into the pipe → 2D sink.
-        // Distributed across the stencil (vertex) or single cell (triangle),
-        // mirroring the junction path so head-from-many and flux-into-many stay
-        // consistent.
-        scatterCouplingFlux(mesh, state, cp, Q_net);
-
-        // The ledger must book what was APPLIED to the 2D domain, not the raw
-        // 1D rates — otherwise a clamped withdrawal is double-counted as water
-        // the surface gave up. One entry per node (dedupe matches the ledger's).
-        applied_q[cp.node_idx] = Q_net;
-    }
-    return clamped;
-}
 
 
 namespace {
@@ -918,7 +688,7 @@ int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps,
         const auto ni = static_cast<std::size_t>(cp.node_idx);
 
         // LIVE net signed 1D→2D exchange this routing step (see
-        // transferOutfallDischarges for the sign/BC discussion).
+        // the retired transferOutfallDischarges for the sign/BC discussion).
         double Q_net = (nodes.inflow[ni] - nodes.outflow[ni]) * opts.flow_1d_to_2d;
 
         // Withdrawal capped by the shared frozen-2D budget (window-cumulative).

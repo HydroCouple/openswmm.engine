@@ -50,6 +50,20 @@ struct InertialEdges {
     std::vector<double> zface;        ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m)
     std::vector<int>    slotL, slotR; ///< flat mesh edge slots [tri*3+e] for writeback
 
+    // Explicit-marcher extension (ExplicitInertialSolver). Precomputed here so
+    // the per-substep kernels stay pure arithmetic.
+    std::vector<double> nx, ny;       ///< unit normal, oriented cL→cR
+    std::vector<double> mx, my;       ///< edge midpoint (m)
+    /// 1 / face-normal projected centroid distance: |(c⃗_R−c⃗_L)·n̂|, floored at
+    /// 0.3·|c⃗_R−c⃗_L| against near-degenerate pairs. The projection is the
+    /// correct gradient arm under cell-size disparity; the raw centroid chord
+    /// (inv_dx above) overestimates slopes on non-orthogonal triangle pairs.
+    std::vector<double> inv_dx_normal;
+    std::vector<double> n2_face;      ///< (½(n_L+n_R))² Manning coefficient
+    /// Per-CELL characteristic length L_char = 2A/ξ_max (smallest altitude, m)
+    /// for the CFL step bound dt = α·L_char/√(g·h).
+    std::vector<double> cell_lchar;
+
     // Per-cell CSR incidence for the conservative continuity gather. For cell i,
     // the incident edges are cell_edge[cell_ptr[i] .. cell_ptr[i+1]) with sign
     // cell_sign (+1 if i==cL, −1 if i==cR). Then
