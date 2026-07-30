@@ -219,14 +219,41 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     // Explicit local-inertial marcher (INTEGRATOR EXPLICIT). Checked FIRST:
     // the marcher is itself an inertial scheme (the router folds momentum →
     // INERTIAL for the output contract), so the ARKODE-inertial branch below
-    // must not capture it. CPU-only by design — no plugin discovery, no linear
-    // solver, no preconditioner.
+    // must not capture it. P5: prefer the Kokkos marcher plugin
+    // (openswmm_make_gpu_explicit_solver — OpenMP threads on the host build,
+    // device-resident on CUDA/HIP/SYCL); the serial marcher is always the
+    // fallback. Unlike the CVODE-family plugin solvers the marcher kernels
+    // implement BOTH closures, so no CELL_CLOSURE restriction applies here.
+    // Respects OPENSWMM_2D_BACKEND and the small-mesh launch-overhead gate,
+    // mirroring the policies below.
     const bool use_explicit =
         (integ == "explicit") ||
         (integ.empty() && opts.integrator == IntegratorType::EXPLICIT_LTS);
     if (use_explicit) {
-        if (chosen) *chosen = "cpu (explicit local-inertial marcher)";
-        return std::make_unique<ExplicitInertialSolver>();
+        auto serial_marcher = [&]() -> std::unique_ptr<ISurfaceSolver> {
+            if (chosen) *chosen = "cpu (explicit local-inertial marcher)";
+            return std::make_unique<ExplicitInertialSolver>();
+        };
+        if (mode == "cpu") return serial_marcher();
+
+        const bool gated = (mode.empty() || mode == "auto") && [&] {
+            if (n_cells <= 0) return false;
+            long min_par = 20000;
+            if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
+                min_par = std::atol(s);
+            return n_cells < min_par;
+        }();
+        if (!gated) {
+            const char* sym = "openswmm_make_gpu_explicit_solver";
+            if (mode.empty() || mode == "auto") {
+                for (const char* b : {"cuda", "hip", "sycl", "omp"})
+                    if (auto s = try_plugin(b, chosen, sym)) return s;
+            } else if (mode == "omp" || mode == "cuda" || mode == "hip" ||
+                       mode == "sycl") {
+                if (auto s = try_plugin(mode, chosen, sym)) return s;
+            }
+        }
+        return serial_marcher();
     }
 
     if (want_inertial && integ != "cvode") {
