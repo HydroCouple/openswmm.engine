@@ -4,8 +4,8 @@
  *
  * @details Manages the full 2D workflow within the engine lifecycle:
  *          - Mesh topology construction (after parse)
- *          - CVODE solver initialization
- *          - Per-step coupling, rainfall update, solver advance
+ *          - Explicit-marcher solver initialization
+ *          - Windowless co-advance coupling (sync batches), rainfall update
  *          - Statistics and finalization
  *
  *          Integrates with SWMMEngine via lifecycle hooks:
@@ -22,7 +22,6 @@
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_ROUTER_HPP
 #define OPENSWMM_ENGINE_2D_SURFACE_ROUTER_HPP
 
-#include "data/ActiveSetData.hpp"
 #include "data/MeshData.hpp"
 #include "data/SurfaceStateData.hpp"
 #include "data/SolverOptions2D.hpp"
@@ -125,28 +124,8 @@ public:
      */
     void finalize(SimulationContext& ctx);
 
-    /**
-     * @brief Compute a CFL-like stability hint for the 2D domain.
-     *
-     * Returns an advisory maximum dt based on mesh resolution and wave speeds.
-     * CVODE handles its own sub-stepping, but this prevents the coupling
-     * interval from being too large. Returns a value cached at the last 2D
-     * advance (the state cannot change between advances), so the per-routing-
-     * step call is O(1).
-     *
-     * @param ctx Simulation context.
-     * @return Advisory maximum timestep (seconds).
-     */
-    double computeCflHint(const SimulationContext& ctx) const;
-
     /// Check if the 2D module is active.
     bool isActive() const noexcept { return active_; }
-
-    /// True on the explicit-marcher path: the 2D co-advances inside every
-    /// routing step (windowless coupling, 2026-07-29 plan §5) — no pending
-    /// window, no CFL hint clamp on the 1D step, exchange evaluated per 2D
-    /// substep against live surface heads.
-    bool usesCoAdvance() const noexcept { return co_advance_; }
 
     /// Windowless-coupling stabilizer: per coupled node, the exchange head
     /// sensitivity G = Σ_points −∂Q/∂h_1d ≥ 0 converted to 1D units (ft³/s per
@@ -263,14 +242,11 @@ private:
     std::vector<PendingEdgeConveyanceRow> pending_edge_conveyance_rows_;
 
     std::vector<CouplingPoint> coupling_points_;
-    /// Non-outfall coupling points only, for the live macro-step path. Stable
-    /// storage that state_.node_coupling points at; built once in initialize()
-    /// when COUPLING_INTERVAL > 1. Empty (and state_.node_coupling == nullptr)
-    /// on the default held-flux path.
+    /// Non-outfall coupling points only — the live in-marcher exchange list.
+    /// Stable storage that state_.node_coupling points at; built once in
+    /// initialize().
     std::vector<CouplingPoint> node_coupling_points_;
 
-    /// Explicit-marcher windowless path (set at initialize from INTEGRATOR).
-    bool co_advance_ = false;
     /// Sim time since the last co-advance output refresh (report-scale cadence).
     double co_refresh_elapsed_ = 0.0;
     /// Sim time since the last rainfall/forcing refresh (gage-scale cadence).
@@ -284,106 +260,41 @@ private:
 
     bool   active_           = false;
     double sim_time_         = 0.0;
-    /// Routing time accumulated since the last 2D advance (time-based
-    /// macro-step). Lets the 2D solver integrate one large adaptive window over
-    /// many routing steps instead of being hard-stopped every step.
+    /// Routing time accumulated since the last co-advance sync batch.
     double pending_dt_       = 0.0;
-    bool   force_next_window_ = false;
 
     /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
     /// per-step delta in the global mass balance.
     double prev_boundary_cum_ = 0.0;
 
-    // ── Decoupled-timestep coupling accumulators (2026-07 plan) ─────────────
-    /// Per-coupling-point junction exchange volume (m³, + = 2D→1D drain,
-    /// − = 1D→2D spill) accumulated by computeCouplingExchangeStep every 1D
-    /// routing step since the last fired window. Indexed like coupling_points_.
-    std::vector<double> window_exchange_accum_;
     /// Per-coupling-point outfall exchange volume (m³, + = 1D discharge onto
-    /// the surface, − = withdrawal) accumulated per routing step. Indexed like
+    /// the surface, − = withdrawal) accumulated per sync batch. Indexed like
     /// coupling_points_ (non-outfall slots stay 0).
     std::vector<double> window_outfall_accum_;
-    /// Per-cell withdrawal budget (m³) for the CURRENT window, seeded from
-    /// max(0, cell volume) at the last window boundary. Junction drains and
-    /// outfall withdrawals draw it down so their window-cumulative total can
-    /// never overdraw the frozen 2D state.
+    /// Per-cell withdrawal budget (m³) for the CURRENT sync batch, seeded from
+    /// max(0, cell volume) at the last batch boundary. Outfall withdrawals
+    /// draw it down so their batch-cumulative total can never overdraw the
+    /// state the batch started from.
     std::vector<double> window_avail_budget_;
 
-    /// Partial-window carry (OPENSWMM_2D_PARTIAL_WINDOW): the un-absorbed
-    /// fraction of the window exchange/outfall accumulators, re-seeded into
-    /// the next window by resetWindowAccumulators(). Sized lazily on first
-    /// partial window; empty otherwise.
-    std::vector<double> partial_carry_exchange_;
-    std::vector<double> partial_carry_outfall_;
-
-    /// Un-integrated span left behind by partial windows; folded into the
-    /// next scheduled window's target span (keeps the firing cadence at
-    /// effective_window_ — see the cadence note in fireAdvanceWindow).
-    double partial_lag_ = 0.0;
-
-    /// Total span (s) frozen by the catch-up leash (lag beyond ~2 windows is
-    /// declared elapsed un-integrated so the 1D-clock rain sampling cannot
-    /// skew unboundedly against the 2D window span). Warned at finalize.
-    double partial_lag_frozen_ = 0.0;
-    /// At least one outfall withdrawal was clamped by the budget this window.
-    bool window_had_outfall_clamp_ = false;
-    /// Seed window_avail_budget_ from the current (just-accepted) 2D state,
-    /// zero both accumulators, and clear the series samples — called at
-    /// initialize() and after every fired window (success, failure, or
-    /// quiescent skip).
+    /// Seed window_avail_budget_ from the current state and zero the outfall
+    /// accumulator — called at initialize() and after every sync batch.
     void resetWindowAccumulators();
-    /// Windows in which at least one outfall withdrawal hit the availability
+    /// Batches in which at least one outfall withdrawal hit the availability
     /// cap; reported once at finalize().
     long outfall_clamp_windows_ = 0;
-    /// 2D advance windows the solver failed to integrate (surface held frozen,
-    /// exchanges un-booked); reported once at finalize().
-    long failed_advance_windows_ = 0;
-    /// 2D advance windows accepted short of their target span
-    /// (OPENSWMM_2D_PARTIAL_WINDOW): forcings booked over the achieved span,
-    /// shortfall carried into the next window.
-    long partial_windows_ = 0;
 
-    /// CFL hint cached at the last 2D advance (per-cell celerity minimum over
-    /// wet coupling-stencil cells); 1e30 while those are dry. Refreshed by
-    /// updateCflHint().
-    double cfl_hint_ = 1.0e30;
-    /// Cells participating in the explicit 1D↔2D exchange (coupling-point
-    /// stencils) — the only cells the CFL hint scans. Built at initialize().
-    std::vector<int> cfl_cells_;
-    void updateCflHint();
-
-    /// Dry-cell active-set mask (opt-in via [2D_OPTIONS] ACTIVE_SET). Owned
-    /// here; state_.active_set points at it. Rebuilt once per fired window.
-    ActiveSetData active_set_;
-
-    /// Effective time-based 2D advance window (s), resolved at initialize()
-    /// from COUPLING_WINDOW / AUTO. 0 = time gating off (fire every routing
-    /// step, or per COUPLING_INTERVAL when > 1). May be halved at runtime by
-    /// the stability guard; recovers toward window_target_.
-    double effective_window_ = 0.0;
-    /// Resolved window target the stability guard recovers toward.
-    double window_target_ = 0.0;
-    /// Consecutive clean (non-failed) fired windows since the last halving.
-    int    clean_windows_ = 0;
-    /// Windows skipped entirely (dry mesh, zero sources) — diagnostics.
-    long   quiescent_windows_ = 0;
     /// Simulation time of the most recent routing step (for the finalize flush).
     double last_t_ = 0.0;
-
-    /// Integrate one accumulated macro-step window: coupling exchange, sources,
-    /// solver advance (with failure handling), and booking. Extracted
-    /// from advancePostRouting so finalize() can flush a partial window.
-    void fireAdvanceWindow(SimulationContext& ctx, double dt, double t);
 
     /// One-shot guard: resolve deferred boundary timeseries/curve NAMES to
     /// registry indices on the first advance (ctx.table_names is populated by
     /// then), not at parse time.
     bool boundary_names_resolved_ = false;
 #ifdef OPENSWMM_HAS_2D
-    /// Time integrator, chosen at runtime. Default is the serial CPU
-    /// CvodeSurfaceSolver (constructed in initialize()); a future GPU plugin
-    /// backend slots in here without touching SurfaceRouter2D. See
-    /// docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §2.1.
+    /// Time integrator, chosen at runtime: the serial ExplicitInertialSolver,
+    /// or the Kokkos marcher plugin when installed/eligible (constructed in
+    /// initialize() via makeSurfaceSolver).
     std::unique_ptr<ISurfaceSolver> solver_;
 #endif
 

@@ -1212,6 +1212,11 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
         return SWMM_OK;
     }
 
+    // Keys retired with the CVODE/ARKODE stack (D2) hard-fail here — letting
+    // them fall through to the generic ext_options map would silently persist
+    // them to the next save, where the [2D_OPTIONS] parser hard-errors.
+    if (openswmm::twoD::is2DRetiredOptionKey(key)) return SWMM_ERR_BADPARAM;
+
     // Route [2D_OPTIONS] keys into the live SolverOptions2D so GUI/API
     // edits actually reach the 2D solver and persist (InpWriter emits them
     // in [2D_OPTIONS]; the GeoPackage writer as 2D_* option keys).

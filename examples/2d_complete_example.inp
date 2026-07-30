@@ -142,18 +142,17 @@ LINKS      ALL
 
 [2D_OPTIONS]
 ;;Parameter             Value      ;; Notes
-MAX_TIMESTEP            10.0       ;; Max CVODE internal step (s)
-MIN_TIMESTEP            0.001      ;; Min CVODE internal step (s)
-REL_TOLERANCE           1.0e-4     ;; CVODE relative tolerance
-ABS_TOLERANCE           1.0e-6     ;; CVODE absolute tolerance (m of depth)
+MAX_TIMESTEP            10.0       ;; Max marcher step (s) — caps CFL steps + sync batch
 DRY_DEPTH               0.001      ;; Wet/dry threshold (m)
-LIMITER_EPSILON         1.0e-6     ;; Jawahar-Kamath slope-limiter ε
+LIMITER_EPSILON         1.0e-6     ;; Jawahar-Kamath slope-limiter ε (output gradients)
 COUPLING_CD             0.65       ;; Default discharge coefficient (overridden per-row below)
-LINEAR_SOLVER           GMRES      ;; GMRES (wired); BICGSTAB / TFQMR reserved
-PRECONDITIONER          JACOBI     ;; NONE | JACOBI (wired); ILU reserved
-MAX_KRYLOV_DIM          30         ;; Max Krylov subspace dim
-MAX_CVODE_STEPS         500        ;; Max CVODE steps per advance call
-COUPLING_INTERVAL       0          ;; 0 = couple every SWMM routing step
+INTEGRATOR              EXPLICIT   ;; Explicit local-inertial LTS marcher (the default)
+THETA                   0.8        ;; Momentum θ-weighting (1 = Bates 2010)
+CFL_NUMBER              0.7        ;; Courant safety factor α
+H_MOVE                  0.003      ;; Movement threshold (m) — lazy source-only below
+LTS_TIERS               4          ;; Local-timestepping tiers (1 = global dt)
+FROUDE_MAX              1.5        ;; Supercritical face |u| clamp
+COUPLING_AREA           DEFAULT    ;; AUTO derives exchange areas from conduit areas
 REPORT_2D               YES        ;; Toggle 2D reporting
 OUTPUT_FILE             2d_complete_example.h5   ;; HDF5 output (relative to this .inp)
 

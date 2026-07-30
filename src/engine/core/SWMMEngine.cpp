@@ -923,18 +923,9 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                     std::max(ctx_.routing_stats.max_courant, courant);
             }
         }
-#ifdef OPENSWMM_HAS_2D
-        // Optionally constrain dt by 2D CFL hint (prevents coupling interval
-        // too large). NOT on the windowless co-advance path: the marcher owns
-        // 2D stability through its internal CFL subcycling, and exchange
-        // stability is owned by per-substep evaluation + limiter + the node
-        // conductance — clamping the 1D here was measured to drag its average
-        // step 1.55 s → 0.22 s for no benefit.
-        if (surface_router_.isActive() && !surface_router_.usesCoAdvance()) {
-            double dt_cfl_2d = surface_router_.computeCflHint(ctx_);
-            dt_cfl = std::min(dt_cfl, dt_cfl_2d);
-        }
-#endif
+        // No 2D constraint on the 1D step: the marcher owns 2D stability
+        // through its internal CFL subcycling, and exchange stability is owned
+        // by per-substep evaluation + limiter + the node conductance.
         dt_next = hydraulics::TimestepController::compute_next(ctx_, dt_cfl);
     }
 
@@ -2674,7 +2665,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         // zero-sensitivity explicit source produced. Gated to the default
         // EXPLICIT node continuity until the SEMI_IMPLICIT denominator sign
         // convention is ruled on (DynamicWave.cpp:2932, pre-existing).
-        if (surface_router_.isActive() && surface_router_.usesCoAdvance() &&
+        if (surface_router_.isActive() &&
             ctx_.options.node_continuity == NodeContinuity::EXPLICIT) {
             std::vector<std::pair<int, double>> gs;
             surface_router_.computeCouplingConductances(ctx_, gs);
@@ -5419,20 +5410,18 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         auto uj = static_cast<std::size_t>(j);
 
         // Re-derive the 1D↔2D coupling RATE from the exchange VOLUME queued by
-        // SurfaceRouter2D::fireAdvanceWindow (coupling_queue, 1D ft³), drained
-        // at the uniform rate queue / coupling_delivery_remaining. Delivering a
-        // VOLUME (not a rate) keeps the exchange conservative under
-        // VARIABLE_STEP; draining it over the remaining delivery window (the 2D
-        // advance window it was accumulated over) removes the single-step pulse
-        // the old volume/dt dump produced — a window/routing-step-sized rate
-        // spike (e.g. ×5 for COUPLING_WINDOW 10 s over a 2 s ROUTING_STEP) that
-        // flooded small junctions instantly and drove a drain/spill churn. The
-        // step where remaining ≤ dt flushes the remainder exactly, so the node
-        // always receives the full queued volume before the next window's
-        // exchange arrives (jitter leftovers carry over in the queue). When the
-        // 2D advance fires every routing step (the AUTO default), remaining ≤
-        // dt on the first delivery step and this is byte-for-byte the legacy
-        // one-step delivery.
+        // the 2D co-advance (coupling_queue, 1D ft³), drained at the uniform
+        // rate queue / coupling_delivery_remaining. Delivering a VOLUME (not a
+        // rate) keeps the exchange conservative under VARIABLE_STEP; draining it
+        // over the remaining delivery span (the sync batch it was accumulated
+        // over) removes the single-step pulse a volume/dt dump would produce — a
+        // batch/routing-step-sized rate spike that floods small junctions
+        // instantly and drives a drain/spill churn. The step where
+        // remaining ≤ dt flushes the remainder exactly, so the node always
+        // receives the full queued volume before the next batch's exchange
+        // arrives (jitter leftovers carry over in the queue). When the 2D
+        // co-advance spans a single routing step, remaining ≤ dt on the first
+        // delivery step and this is byte-for-byte a one-step delivery.
         {
             double q_couple = 0.0;
             if (dt_routing > 0.0 && ctx_.nodes.coupling_queue[uj] != 0.0) {

@@ -857,10 +857,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                      mb2.error() * 100.0);
 
-        // 2D Solver Statistics — cumulative integrator throughput. The key
-        // reformulation metric is avg step (design intent: seconds-to-minutes
-        // in calm periods) and FD J·v RHS evals (the matrix-free multiplier an
-        // analytic Jacobian removes). Printed only when populated (>=0).
+        // 2D Solver Statistics — cumulative marcher throughput. Printed only
+        // when populated (>=0).
         if (mb2.solver_nsteps >= 0) {
             WRITE(f, "");
             WRITE(f, "");
@@ -870,17 +868,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             auto srow = [&](const char* label, long v) {
                 std::fprintf(f, "\n  %s%14ld", label, v);
             };
-            srow("Internal BDF Steps .......", mb2.solver_nsteps);
-            srow("Nonlinear RHS Evals ......", mb2.solver_nrhs);
-            srow("Linear-Solver RHS (FD Jv).", mb2.solver_nrhs_ls);
-            srow("Newton Iterations ........", mb2.solver_nni);
-            srow("Krylov Iterations ........", mb2.solver_nli);
-            srow("Preconditioner Setups ....", mb2.solver_nsetups);
-            srow("Error-Test Failures ......", mb2.solver_netfails);
-            srow("Nonlin. Conv. Failures ...", mb2.solver_nncfails);
-            srow("Frozen (Failed) Windows ..", mb2.solver_failed_windows);
-            if (mb2.solver_partial_windows > 0)
-                srow("Partial Windows ..........", mb2.solver_partial_windows);
+            srow("Internal Steps ...........", mb2.solver_nsteps);
+            srow("Face-Kernel Evals ........", mb2.solver_nrhs);
             std::fprintf(f, "\n  Avg Internal Step (s) ....%14.4f", mb2.solver_avg_h);
             std::fprintf(f, "\n  Last Internal Step (s) ...%14.4f", mb2.solver_last_h);
 

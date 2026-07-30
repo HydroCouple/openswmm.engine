@@ -1006,25 +1006,15 @@ struct SimulationContext {
         double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
         bool   active                = false;///< True if the 2D module ran
 
-        // Cumulative integrator statistics (published by SurfaceRouter2D at
+        // Cumulative marcher statistics (published by SurfaceRouter2D at
         // finalize from ISurfaceSolver::run_stats). Printed as the "2D Solver
-        // Statistics" report block — the throughput numbers every solver
-        // reformulation phase is measured against. -1 = not populated.
-        long   solver_nsteps         = -1;   ///< internal BDF steps
-        long   solver_nrhs           = 0;    ///< nonlinear RHS evaluations
-        long   solver_nrhs_ls        = 0;    ///< RHS evals in the linear solver (FD J·v)
-        long   solver_nni            = 0;    ///< Newton iterations
-        long   solver_nli            = 0;    ///< Krylov (GMRES) iterations
-        long   solver_nsetups        = 0;    ///< preconditioner setups
-        long   solver_netfails       = 0;    ///< error-test failures
-        long   solver_nncfails       = 0;    ///< nonlinear convergence failures
-        long   solver_failed_windows = 0;    ///< frozen (failed) advance windows
-        long   solver_partial_windows = 0;   ///< partially-accepted advance windows
+        // Statistics" report block. -1 = not populated.
+        long   solver_nsteps         = -1;   ///< internal (marcher) substeps
+        long   solver_nrhs           = 0;    ///< face-kernel evaluations
         double solver_avg_h          = 0.0;  ///< mean accepted internal step (s)
         double solver_last_h         = 0.0;  ///< last accepted internal step (s)
 
-        // Marcher-only telemetry (EXPLICIT integrator; guarded by n_tiers > 0 /
-        // non-negative fractions — other backends leave the defaults).
+        // Marcher telemetry (guarded by n_tiers > 0 / non-negative fractions).
         double solver_active_min     = -1.0; ///< min active-cell fraction
         double solver_active_mean    = -1.0; ///< mean active-cell fraction
         double solver_active_max     = -1.0; ///< max active-cell fraction

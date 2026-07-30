@@ -2,16 +2,14 @@
  * @file ISurfaceSolver.hpp
  * @brief Backend-neutral interface for the 2D surface-routing time integrator.
  *
- * @details Phase 0 of the portable GPU CVODE strategy
- *          (docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §6). Extracts the solver
- *          contract that SurfaceRouter2D depends on so the concrete solver
- *          can be chosen at runtime:
+ * @details Extracts the solver contract that SurfaceRouter2D depends on so the
+ *          concrete solver can be chosen at runtime:
  *
  *            ISurfaceSolver
- *             ├── CvodeSurfaceSolver        (serial CPU; today's path, default)
- *             └── CvodeKokkosSurfaceSolver  (GPU plugin; lands Phase 2+)
+ *             ├── ExplicitInertialSolver      (serial CPU; default)
+ *             └── ExplicitKokkosSurfaceSolver (GPU/threaded plugin)
  *
- *          This header is dependency-free (no SUNDIALS, no Kokkos): it only
+ *          This header is dependency-free (no Kokkos): it only
  *          forward-declares the 2D data types it passes by reference, so it
  *          compiles regardless of which backend — if any — is available.
  *
@@ -80,31 +78,22 @@ public:
 
     /// Per-point ∫Q dt (m³) from the live node-coupling macro-step path. Default
     /// returns empty for backends that do not implement live coupling (so the
-    /// caller falls back to the held-flux booking). See CvodeSurfaceSolver.
+    /// caller falls back to the held-flux booking). See ExplicitInertialSolver.
     virtual const std::vector<double>& last_coupling_exchange() const noexcept {
         static const std::vector<double> kEmpty;
         return kEmpty;
     }
 
-    /// Cumulative integrator statistics over the whole run — the throughput
-    /// numbers every reformulation-phase gate reads (BDF steps, Newton/Krylov
-    /// iterations, RHS evaluations, preconditioner builds, failures, last step).
-    /// nrhs_ls == the finite-difference J·v cost (one RHS per Krylov iteration
-    /// under matrix-free SPGMR); it drops to ~0 once an analytic J·v lands.
+    /// Cumulative marcher statistics over the whole run — the throughput
+    /// numbers the "2D Solver Statistics" report block reads.
     struct RunStats {
-        long   nsteps    = 0;   ///< internal BDF steps
-        long   nrhs      = 0;   ///< nonlinear RHS evaluations
-        long   nrhs_ls   = 0;   ///< RHS evals inside the linear solver (FD J·v)
-        long   nni       = 0;   ///< Newton (nonlinear solver) iterations
-        long   nli       = 0;   ///< Krylov (GMRES) iterations
-        long   nsetups   = 0;   ///< preconditioner setups
-        long   netfails  = 0;   ///< error-test failures
-        long   nncfails  = 0;   ///< nonlinear convergence failures
+        long   nsteps    = 0;   ///< internal (marcher) substeps
+        long   nrhs      = 0;   ///< face-kernel evaluations
         double last_h    = 0.0; ///< last accepted internal step (s)
         double avg_h     = 0.0; ///< sim-time / nsteps (s), filled by the caller
 
-        // Marcher-only telemetry (EXPLICIT integrator). Guarded: n_tiers == 0
-        // and negative fractions mean "not populated" (other backends).
+        // Marcher telemetry. Guarded: n_tiers == 0 and negative fractions
+        // mean "not populated".
         double active_frac_min  = -1.0; ///< min active-cell fraction (rebuild samples)
         double active_frac_mean = -1.0; ///< mean active-cell fraction
         double active_frac_max  = -1.0; ///< max active-cell fraction

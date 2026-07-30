@@ -1427,15 +1427,6 @@ const char* bc_type_token(const twoD::PendingBoundaryRow& r) {
     return "WALL";
 }
 
-const char* linear_solver_token(twoD::LinearSolverType t) {
-    switch (t) {
-        case twoD::LinearSolverType::GMRES:    return "GMRES";
-        case twoD::LinearSolverType::BICGSTAB: return "BICGSTAB";
-        case twoD::LinearSolverType::TFQMR:    return "TFQMR";
-    }
-    return "GMRES";
-}
-
 const char* rainfall_mode_token(twoD::RainfallMode m) {
     switch (m) {
         case twoD::RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
@@ -1443,16 +1434,6 @@ const char* rainfall_mode_token(twoD::RainfallMode m) {
         case twoD::RainfallMode::NONE:              return "NONE";
     }
     return "NATURAL_NEIGHBOUR";
-}
-
-const char* preconditioner_token(twoD::PreconditionerType t) {
-    switch (t) {
-        case twoD::PreconditionerType::NONE:   return "NONE";
-        case twoD::PreconditionerType::JACOBI: return "JACOBI";
-        case twoD::PreconditionerType::ILU:    return "ILU";
-        case twoD::PreconditionerType::AMG:    return "AMG";
-    }
-    return "JACOBI";
 }
 
 // True when a 2D mesh worth persisting is present (mirrors the
@@ -1485,21 +1466,24 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     };
 
     insert("2D_MAX_TIMESTEP",      fmt_g17(o.max_timestep));
-    insert("2D_MIN_TIMESTEP",      fmt_g17(o.min_timestep));
-    insert("2D_REL_TOLERANCE",     fmt_g17(o.rel_tolerance));
-    insert("2D_ABS_TOLERANCE",     fmt_g17(o.abs_tolerance));
     insert("2D_DRY_DEPTH",         fmt_g17(o.dry_depth));
     insert("2D_LIMITER_EPSILON",   fmt_g17(o.limiter_epsilon));
     insert("2D_COUPLING_CD",       fmt_g17(o.coupling_cd));
-    insert("2D_MAX_KRYLOV_DIM",    std::to_string(o.max_krylov_dim));
-    insert("2D_COUPLING_INTERVAL", std::to_string(o.coupling_interval));
-    insert("2D_COUPLING_WINDOW",   fmt_g17(o.coupling_window));
-    insert("2D_ACTIVE_SET",        o.active_set ? "YES" : "NO");
-    insert("2D_ACTIVE_SET_HALO",   std::to_string(o.active_set_halo));
-    insert("2D_MAX_CVODE_STEPS",   std::to_string(o.max_cvode_steps));
-    insert("2D_LINEAR_SOLVER",     linear_solver_token(o.linear_solver));
-    insert("2D_PRECONDITIONER",    preconditioner_token(o.preconditioner));
     insert("2D_RAINFALL_MODE",     rainfall_mode_token(o.rainfall_mode));
+    insert("2D_FLUX_DH_EPS",       fmt_g17(o.flux_dh_eps));
+    insert("2D_CELL_CLOSURE",
+           o.cell_closure == twoD::CellClosure2D::VFR ? "VFR" : "FLAT");
+    insert("2D_FACE_RECONSTRUCTION",
+           o.face_reconstruction == twoD::FaceDepth2D::VFR_FACE ? "VFR_FACE"
+                                                                : "MEAN");
+    insert("2D_VFR_MIN_WET_FRAC",  fmt_g17(o.vfr_min_wet_frac));
+    // Explicit-marcher configuration (the only 2D integrator).
+    insert("2D_THETA",             fmt_g17(o.theta));
+    insert("2D_CFL_NUMBER",        fmt_g17(o.cfl_number));
+    insert("2D_H_MOVE",            fmt_g17(o.h_move));
+    insert("2D_LTS_TIERS",         std::to_string(o.lts_tiers));
+    insert("2D_FROUDE_MAX",        fmt_g17(o.froude_max));
+    insert("2D_COUPLING_AREA",     o.coupling_area_auto ? "AUTO" : "DEFAULT");
     insert("2D_REPORT_2D",         o.report_2d ? "YES" : "NO");
     // HDF5 results path — 2D outputs always go to HDF5, never gpkg tables.
     // Restored to SolverOptions2D::output_file on read so SWMMEngine::open

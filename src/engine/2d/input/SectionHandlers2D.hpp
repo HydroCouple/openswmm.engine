@@ -140,6 +140,16 @@ std::string parse2DEdgeConveyanceLine(
 bool is2DOptionKey(const std::string& key);
 
 /**
+ * @brief True when @p key (case-insensitive) is a [2D_OPTIONS] parameter
+ *        retired with the CVODE/ARKODE stack (D2, 2026-07-29).
+ *
+ * parse2DOptionsLine hard-errors on these; swmm_options_set_ext uses this
+ * predicate to reject them up front so they can never land in the generic
+ * ext_options map (where they would silently persist to the next save).
+ */
+bool is2DRetiredOptionKey(const std::string& key);
+
+/**
  * @brief Format the current value of a [2D_OPTIONS] parameter as the
  *        string token parse2DOptionsLine accepts (round-trip safe).
  *
