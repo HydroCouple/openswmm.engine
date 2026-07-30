@@ -4,25 +4,20 @@
  *
  * @details 2026-07 decoupling plan. The 1D and 2D domains advance on their own
  *          clocks: the junction/outfall exchange is evaluated EVERY 1D routing
- *          step (live 1D heads vs the frozen 2D state), booked to the 1D node
- *          for next-step consumption, and accumulated per coupling point; when
- *          the 2D macro-window fires, the accumulated volume is injected as the
- *          mean-rate held source plus a zero-mean interpolated deviation the
- *          CVODE RHS evaluates in time ("interpolate the temporally misaligned
- *          fluxes").
+ *          step (live 1D heads vs the current 2D state), booked to the 1D node
+ *          for next-step consumption, and accumulated per coupling point. The
+ *          explicit marcher co-advances the surface across sync batches of
+ *          clamp(MAX_TIMESTEP, routing_step, 60) with live in-marcher exchange
+ *          and queue-spread delivery, so the two clocks meet without a
+ *          macro-window.
  *
- *          Cases:
- *          1. IntervalMapsToTimeWindow — legacy COUPLING_INTERVAL N with AUTO
- *             COUPLING_WINDOW now advances the 2D over N × ROUTING_STEP of
- *             physical time; cross-domain conservation must hold across those
- *             multi-step windows (exercises accumulators + series + budget).
- *          2. ExplicitLargeWindow — same property under an explicit
- *             COUPLING_WINDOW much larger than the routing step.
- *          3. FailedWindowsRedeliver — with the integrator budget strangled
- *             (MAX_CVODE_STEPS 1) every window fails and the surface stays
- *             frozen; the per-step volumes the 1D already consumed must be
- *             redelivered back through the queue so the NET 1D receipt tends
- *             to zero (no phantom water from a solver that never moved any).
+ *          Case: MarcherSyncBatchesConserve — cross-domain conservation across
+ *          multi-step sync batches (exercises accumulators, delivery queue, and
+ *          the withdrawal budget).
+ *
+ *          The three CVODE-era window cases (IntervalMapsToTimeWindow,
+ *          ExplicitLargeWindow, FailedWindowsRedeliver) retired with the
+ *          implicit solvers and their window machinery — see the D2 retirement.
  *
  *          Outputs land in ./decoupled_stepping_out/ (working dir is
  *          tests/unit/engine/data) for review — no temp files.
@@ -31,27 +26,9 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-// MSVC has no setenv/unsetenv; use _putenv_s (empty value removes the var).
-static void setEnvVar(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value);
-#else
-    setenv(name, value, 1);
-#endif
-}
-
-static void unsetEnvVar(const char* name) {
-#ifdef _WIN32
-    _putenv_s(name, "");
-#else
-    unsetenv(name);
-#endif
-}
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
@@ -100,8 +77,6 @@ std::string build_model(const std::string& coupling_lines) {
         "MAX_TIMESTEP     30\n"
         "DRY_DEPTH        0.002\n"
         "COUPLING_CD      0.7\n"
-        "LINEAR_SOLVER    GMRES\n"
-        "PRECONDITIONER   JACOBI\n"
         "REPORT_2D        NO\n"
         + coupling_lines +
         "\n"
@@ -218,84 +193,16 @@ protected:
     }
 };
 
-// Legacy COUPLING_INTERVAL 5 with AUTO window → the 2D advances every
-// 5 × ROUTING_STEP = 30 s of physical time while the 1D takes many variable
-// steps inside each window. The per-step accumulated (and RHS-interpolated)
-// exchange must remain volume-conservative across those windows, and the
-// budget cap must keep the 2D from being overdrawn (final storage ≥ 0,
-// continuities closed).
-TEST_F(DecoupledStepping2DTest, IntervalMapsToTimeWindow) {
-    RunResult r = run(dir_, "interval_window",
-                      "COUPLING_INTERVAL 5\n"
-                      "COUPLING_WINDOW   -1\n");
-    ASSERT_TRUE(r.ok);
-    ASSERT_GT(std::abs(r.given_2d_net), 1.0)
-        << "no meaningful exchange (net " << r.given_2d_net << " m³)";
-
-    const double rel = std::abs(r.received_1d - r.given_2d_net)
-                       / std::abs(r.given_2d_net);
-    // One step's worth of booked-but-unconsumed tail is admissible at sim end.
-    EXPECT_LT(rel, 0.01)
-        << "1D-received " << r.received_1d << " m³ != 2D-given "
-        << r.given_2d_net << " m³ across multi-step windows";
-
-    // Negative final storage is the HONEST ledger under the mean-rate held
-    // path: on this DELIBERATELY ill-conditioned model (pond-capable junction,
-    // exchange area ≈14× the pipe) the window mean-rate drain can transiently
-    // over-withdraw the frozen state, leaving signed debt (resyncFromVolumes
-    // keeps it as debt, not phantom water). Phase 3's interpolated deviation
-    // used to smooth this; deleting the deviation (to unlock the analytic
-    // Jacobian on coupled models) exposes the mean-rate path's stiffness limit
-    // here — a limit the in-ODE live-coupling path (later Phase 3) removes by
-    // self-limiting against the current head. The received==given ledger check
-    // above is the real conservation guard and stays tight; on realistic
-    // coupled models this overdraw is negligible (MS-B −0.013%, repro −0.001%).
-    EXPECT_GE(r.final_storage_2d, -1.0)
-        << "2D storage overdrawn beyond the stiff-model envelope";
-    EXPECT_LT(std::abs(r.cont_2d), 0.05)      << "2D continuity " << r.cont_2d;
-    // 1D DW continuity on this stiff model is a solver artifact independent of
-    // the coupling ledger; bound it below the historical −0.54 failure class.
-    EXPECT_LT(std::abs(r.cont_routing), 0.35) << "1D continuity " << r.cont_routing;
-
-    writeCsv(dir_, "interval_window", r, rel);
-}
-
-// Same property under an explicit COUPLING_WINDOW 30 s (no legacy interval).
-// MAX_CVODE_STEPS is raised so no advance window fails — this case isolates
-// the large-window exchange itself from the failure/redelivery path (which
-// FailedWindowsRedeliver exercises deliberately).
-TEST_F(DecoupledStepping2DTest, ExplicitLargeWindow) {
-    RunResult r = run(dir_, "explicit_window",
-                      "COUPLING_WINDOW 30\n"
-                      "MAX_CVODE_STEPS 100000\n");
-    ASSERT_TRUE(r.ok);
-    ASSERT_GT(std::abs(r.given_2d_net), 1.0);
-
-    const double rel = std::abs(r.received_1d - r.given_2d_net)
-                       / std::abs(r.given_2d_net);
-    EXPECT_LT(rel, 0.01)
-        << "1D-received " << r.received_1d << " m³ != 2D-given "
-        << r.given_2d_net << " m³ under an explicit 30 s window";
-    // Tolerances: see IntervalMapsToTimeWindow — mean-rate held-path stiffness
-    // envelope on this deliberately ill-conditioned model (the ledger check
-    // above is the conservation guard).
-    EXPECT_GE(r.final_storage_2d, -1.0);
-    EXPECT_LT(std::abs(r.cont_2d), 0.05);
-    EXPECT_LT(std::abs(r.cont_routing), 0.35);
-
-    writeCsv(dir_, "explicit_window", r, rel);
-}
-
-// Marcher variant (INTEGRATOR EXPLICIT): the windowless co-advance batches the
-// 2D across sync spans of clamp(MAX_TIMESTEP=30 s, routing_step, 60) — the same
-// multi-step cadence the window cases exercise — with live in-marcher exchange
-// and queue-spread delivery. The cross-domain ledger property is identical:
-// what the 1D receives must equal what the 2D gave. The positivity limiter
-// additionally makes negative final storage structurally impossible (no
-// mean-rate overdraw envelope needed, unlike the CVODE window cases above).
+// The windowless co-advance batches the 2D across sync spans of
+// clamp(MAX_TIMESTEP=30 s, routing_step, 60) with live in-marcher exchange and
+// queue-spread delivery, while the 1D takes many variable steps inside each
+// batch. The cross-domain ledger property: what the 1D receives must equal what
+// the 2D gave. The positivity limiter additionally makes negative final storage
+// structurally impossible, and the withdrawal budget keeps the 2D from being
+// overdrawn. No INTEGRATOR line — the marcher is the default (and only) 2D
+// integrator, so this also gates that default.
 TEST_F(DecoupledStepping2DTest, MarcherSyncBatchesConserve) {
-    RunResult r = run(dir_, "marcher_batches",
-                      "INTEGRATOR EXPLICIT\n");
+    RunResult r = run(dir_, "marcher_batches", "");
     ASSERT_TRUE(r.ok);
     ASSERT_GT(std::abs(r.given_2d_net), 1.0)
         << "no meaningful exchange (net " << r.given_2d_net << " m³)";
@@ -313,38 +220,4 @@ TEST_F(DecoupledStepping2DTest, MarcherSyncBatchesConserve) {
     EXPECT_LT(std::abs(r.cont_routing), 0.35) << "1D continuity " << r.cont_routing;
 
     writeCsv(dir_, "marcher_batches", r, rel);
-}
-
-// Strangle the integrator (MAX_CVODE_STEPS 1) so every advance window fails and
-// the surface is held frozen. The 1D consumed per-step exchange volumes DURING
-// each window; the failure path must push them back (negated) through the
-// delivery queue, so the NET volume the 1D ends up keeping tends to zero — a
-// frozen surface must not manufacture water in the pipe network. The 2D ledger
-// books no exchange for failed windows, so given_2d_net stays ~0 too.
-TEST_F(DecoupledStepping2DTest, FailedWindowsRedeliver) {
-    // This case validates the LEGACY freeze-only failure contract (surface
-    // held frozen, exchanges fully redelivered). Partial-progress acceptance
-    // — the default since the 2026-07 ODE reconfiguration — deliberately
-    // changes that contract (the surface legitimately moves), so pin the
-    // legacy path for this test.
-    setEnvVar("OPENSWMM_2D_PARTIAL_WINDOW", "0");
-    RunResult r = run(dir_, "failed_windows",
-                      "COUPLING_WINDOW  30\n"
-                      "MAX_CVODE_STEPS  1\n");
-    unsetEnvVar("OPENSWMM_2D_PARTIAL_WINDOW");
-    ASSERT_TRUE(r.ok);
-
-    // Rain still books into the 2D ledger (60 m³ potential); the exchange must
-    // not. Net 1D receipt: per-step receipts minus redelivered give-backs —
-    // small vs the ~60 m³ that a working exchange would have moved. The
-    // redelivery spreads each failed window's volume over following steps, so
-    // allow a residual of a couple of windows' worth.
-    EXPECT_LT(std::abs(r.given_2d_net), 1.0e-6)
-        << "2D ledger booked exchange for failed windows: " << r.given_2d_net;
-    EXPECT_LT(std::abs(r.received_1d), 3.0)
-        << "1D kept " << r.received_1d
-        << " m³ net from a surface that never moved — redelivery broken";
-
-    writeCsv(dir_, "failed_windows", r,
-             std::abs(r.received_1d));
 }

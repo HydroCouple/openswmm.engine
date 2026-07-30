@@ -596,21 +596,9 @@ SWMM_ENGINE_API int swmm_2d_get_dry_depth(SWMM_Engine engine, double* dry_depth)
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_dry_depth(SWMM_Engine engine, double dry_depth);
 
-/** @brief Get CVODE relative tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_rel_tolerance(SWMM_Engine engine, double* rtol);
 
-/** @brief Set CVODE relative tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_set_rel_tolerance(SWMM_Engine engine, double rtol);
 
-/** @brief Get CVODE absolute tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_abs_tolerance(SWMM_Engine engine, double* atol);
 
-/** @brief Set CVODE absolute tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol);
 
 /* =========================================================================
  * 2D Boundary Conditions

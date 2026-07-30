@@ -101,8 +101,6 @@ std::string build_junction_model(const std::string& extra_2d_options) {
         "MAX_TIMESTEP     1\n"
         "DRY_DEPTH        0.002\n"
         "COUPLING_CD      0.7\n"
-        "LINEAR_SOLVER    GMRES\n"
-        "PRECONDITIONER   JACOBI\n"
         "REPORT_2D        NO\n"
         + extra_2d_options +
         "\n"
@@ -229,39 +227,6 @@ TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
         << "1D routing continuity error too large: " << r.cont_routing;
 
     std::ofstream csv(dir_ / "junction_coupling_massbalance.csv");
-    csv << "metric,value\n"
-        << "peak_j1_depth_m," << r.peak_j1_depth << "\n"
-        << "peak_patch_depth_m," << r.peak_patch_depth << "\n"
-        << "final_patch_depth_m," << r.final_patch_depth << "\n"
-        << "continuity_2d_frac," << r.cont_2d << "\n"
-        << "continuity_routing_frac," << r.cont_routing << "\n";
-}
-
-// Same two-regime physics on the explicit marcher (INTEGRATOR EXPLICIT, live
-// in-marcher exchange, no windows): the coupled-node ponding exception, the
-// surcharge spill, and the inlet recapture must all survive the solver swap.
-TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown_Marcher) {
-    RunResult r = run_junction_model(dir_, "junction_coupling_marcher",
-                                     "INTEGRATOR       EXPLICIT\n");
-
-    ASSERT_TRUE(r.ok) << "coupled junction marcher run failed";
-    ASSERT_EQ(r.n_tri, 2);
-
-    EXPECT_GT(r.peak_j1_depth, 1.05)
-        << "junction HGL did not rise above the crown (peak depth "
-        << r.peak_j1_depth << " m) — coupled-node ponding is not engaged";
-    EXPECT_GT(r.peak_patch_depth, 0.01)
-        << "junction surcharge did not spill onto the 2D mesh (peak depth "
-        << r.peak_patch_depth << " m)";
-    EXPECT_LT(r.final_patch_depth, 0.5 * r.peak_patch_depth)
-        << "surface water was not recaptured through the inlet (final patch depth "
-        << r.final_patch_depth << " m vs peak " << r.peak_patch_depth << " m)";
-    EXPECT_LT(std::abs(r.cont_2d), 0.05)
-        << "2D surface continuity error too large: " << r.cont_2d;
-    EXPECT_LT(std::abs(r.cont_routing), 0.05)
-        << "1D routing continuity error too large: " << r.cont_routing;
-
-    std::ofstream csv(dir_ / "junction_coupling_marcher_massbalance.csv");
     csv << "metric,value\n"
         << "peak_j1_depth_m," << r.peak_j1_depth << "\n"
         << "peak_patch_depth_m," << r.peak_patch_depth << "\n"

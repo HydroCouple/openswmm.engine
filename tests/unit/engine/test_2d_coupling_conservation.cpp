@@ -83,8 +83,6 @@ std::string build_model() {
         "MAX_TIMESTEP     4\n"
         "DRY_DEPTH        0.002\n"
         "COUPLING_CD      0.7\n"
-        "LINEAR_SOLVER    GMRES\n"
-        "PRECONDITIONER   JACOBI\n"
         "REPORT_2D        NO\n"
         "\n"
         "[2D_VERTICES]\n"

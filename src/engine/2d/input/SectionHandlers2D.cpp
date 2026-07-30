@@ -68,6 +68,14 @@ int findTriangleByTag(const MeshData& mesh, const std::string& tag) {
     return -1;
 }
 
+/// Hard-error suffix for [2D_OPTIONS] keys retired with the CVODE/ARKODE
+/// stack (D2, 2026-07-29).
+const std::string RETIRED_SUFFIX =
+    " was retired with the CVODE/ARKODE 2D solvers: the explicit "
+    "local-inertial marcher is the only 2D integrator. Remove the line; "
+    "marcher settings are THETA, CFL_NUMBER, LTS_TIERS, H_MOVE, FROUDE_MAX, "
+    "MAX_TIMESTEP, COUPLING_AREA.";
+
 } // anonymous namespace
 
 
@@ -82,37 +90,9 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     if (iequals(key, "MAX_TIMESTEP")) {
         opts.max_timestep = tryParseDouble(val, ok);
         if (!ok) return "Invalid MAX_TIMESTEP value";
-    } else if (iequals(key, "MIN_TIMESTEP")) {
-        opts.min_timestep = tryParseDouble(val, ok);
-        if (!ok) return "Invalid MIN_TIMESTEP value";
-    } else if (iequals(key, "REL_TOLERANCE")) {
-        opts.rel_tolerance = tryParseDouble(val, ok);
-        if (!ok) return "Invalid REL_TOLERANCE value";
-    } else if (iequals(key, "ABS_TOLERANCE")) {
-        opts.abs_tolerance = tryParseDouble(val, ok);
-        if (!ok) return "Invalid ABS_TOLERANCE value";
     } else if (iequals(key, "DRY_DEPTH")) {
         opts.dry_depth = tryParseDouble(val, ok);
         if (!ok) return "Invalid DRY_DEPTH value";
-    } else if (iequals(key, "MAX_KRYLOV_DIM")) {
-        opts.max_krylov_dim = tryParseInt(val, ok);
-        if (!ok) return "Invalid MAX_KRYLOV_DIM value";
-    } else if (iequals(key, "COUPLING_INTERVAL")) {
-        opts.coupling_interval = tryParseInt(val, ok);
-        if (!ok) return "Invalid COUPLING_INTERVAL value";
-    } else if (iequals(key, "COUPLING_WINDOW")) {
-        opts.coupling_window = tryParseDouble(val, ok);
-        if (!ok) return "Invalid COUPLING_WINDOW value";
-    } else if (iequals(key, "ACTIVE_SET")) {
-        if (iequals(val, "YES") || val == "1")
-            opts.active_set = true;
-        else if (iequals(val, "NO") || val == "0")
-            opts.active_set = false;
-        else
-            return "Invalid ACTIVE_SET value (YES/NO)";
-    } else if (iequals(key, "ACTIVE_SET_HALO")) {
-        opts.active_set_halo = tryParseInt(val, ok);
-        if (!ok || opts.active_set_halo < 1) return "Invalid ACTIVE_SET_HALO value";
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
@@ -122,29 +102,6 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "FLUX_DH_EPS")) {
         opts.flux_dh_eps = tryParseDouble(val, ok);
         if (!ok) return "Invalid FLUX_DH_EPS value";
-    } else if (iequals(key, "MAX_CVODE_STEPS")) {
-        opts.max_cvode_steps = tryParseInt(val, ok);
-        if (!ok) return "Invalid MAX_CVODE_STEPS value";
-    } else if (iequals(key, "LINEAR_SOLVER")) {
-        if (iequals(val, "GMRES"))
-            opts.linear_solver = LinearSolverType::GMRES;
-        else if (iequals(val, "BICGSTAB"))
-            opts.linear_solver = LinearSolverType::BICGSTAB;
-        else if (iequals(val, "TFQMR"))
-            opts.linear_solver = LinearSolverType::TFQMR;
-        else
-            return "Unknown LINEAR_SOLVER: " + val;
-    } else if (iequals(key, "PRECONDITIONER")) {
-        if (iequals(val, "NONE"))
-            opts.preconditioner = PreconditionerType::NONE;
-        else if (iequals(val, "JACOBI"))
-            opts.preconditioner = PreconditionerType::JACOBI;
-        else if (iequals(val, "ILU"))
-            opts.preconditioner = PreconditionerType::ILU;
-        else if (iequals(val, "AMG"))
-            opts.preconditioner = PreconditionerType::AMG;
-        else
-            return "Unknown PRECONDITIONER: " + val;
     } else if (iequals(key, "CELL_CLOSURE")) {
         if (iequals(val, "FLAT"))
             opts.cell_closure = CellClosure2D::FLAT;
@@ -164,22 +121,6 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         if (!ok || frac <= 0.0 || frac > 0.5)
             return "Invalid VFR_MIN_WET_FRAC value (expected (0, 0.5])";
         opts.vfr_min_wet_frac = frac;
-    } else if (iequals(key, "JACOBIAN")) {
-        if (iequals(val, "FD"))
-            opts.jacobian = Jacobian2D::FD;
-        else if (iequals(val, "ANALYTIC"))
-            opts.jacobian = Jacobian2D::ANALYTIC;
-        else
-            return "Unknown JACOBIAN: " + val + " (expected FD|ANALYTIC)";
-    } else if (iequals(key, "ATOL_AREA_REF")) {
-        if (iequals(val, "AUTO")) {
-            opts.atol_area_ref = -1.0;   // median cell area at setup
-        } else {
-            opts.atol_area_ref = tryParseDouble(val, ok);
-            if (!ok || opts.atol_area_ref < 0.0)
-                return "Invalid ATOL_AREA_REF value (expected AUTO, 0, or a "
-                       "positive area in m²)";
-        }
     } else if (iequals(key, "RAINFALL_MODE")) {
         if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
@@ -201,21 +142,12 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         // SWMMEngine::open when the Default2DOutputPlugin is instantiated.
         opts.output_file = val;
     } else if (iequals(key, "INTEGRATOR")) {
-        if (iequals(val, "CVODE"))
-            opts.integrator = IntegratorType::CVODE;
-        else if (iequals(val, "ARKODE"))
-            opts.integrator = IntegratorType::ARKODE;
-        else if (iequals(val, "EXPLICIT"))
-            opts.integrator = IntegratorType::EXPLICIT_LTS;
-        else
-            return "Unknown INTEGRATOR: " + val + " (expected CVODE|ARKODE|EXPLICIT)";
-    } else if (iequals(key, "MOMENTUM")) {
-        if (iequals(val, "DW"))
-            opts.momentum = MomentumType::DW;
-        else if (iequals(val, "INERTIAL"))
-            opts.momentum = MomentumType::INERTIAL;
-        else
-            return "Unknown MOMENTUM: " + val + " (expected DW|INERTIAL)";
+        // The explicit marcher is the only integrator (D2 retirement,
+        // 2026-07-29). EXPLICIT is accepted (and the default); the retired
+        // CVODE/ARKODE selections are hard errors so a model authored for the
+        // implicit stack cannot silently run different physics.
+        if (!iequals(val, "EXPLICIT"))
+            return "INTEGRATOR " + val + RETIRED_SUFFIX;
     } else if (iequals(key, "THETA")) {
         const double th = tryParseDouble(val, ok);
         if (!ok || th <= 0.0 || th > 1.0)
@@ -248,6 +180,11 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.coupling_area_auto = false;
         else
             return "Unknown COUPLING_AREA: " + val + " (expected AUTO|DEFAULT)";
+    } else if (is2DRetiredOptionKey(key)) {
+        // Hard error (owner ruling, D2 retirement): these keys configured the
+        // deleted CVODE/ARKODE stack; silently ignoring them would run a
+        // model with settings its author never chose.
+        return key + RETIRED_SUFFIX;
     } else {
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
@@ -256,16 +193,27 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
 }
 
 
+bool is2DRetiredOptionKey(const std::string& key) {
+    static const char* kRetired[] = {
+        "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE", "MAX_CVODE_STEPS",
+        "MAX_KRYLOV_DIM", "LINEAR_SOLVER", "PRECONDITIONER", "JACOBIAN",
+        "ATOL_AREA_REF", "COUPLING_INTERVAL", "COUPLING_WINDOW",
+        "ACTIVE_SET", "ACTIVE_SET_HALO", "MOMENTUM",
+    };
+    for (const char* k : kRetired) {
+        if (iequals(key, k)) return true;
+    }
+    return false;
+}
+
+
 bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
-        "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
-        "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_WINDOW",
-        "ACTIVE_SET", "ACTIVE_SET_HALO",
-        "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
-        "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
-        "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC", "JACOBIAN",
-        "ATOL_AREA_REF", "OUTPUT_FILE",
-        "INTEGRATOR", "MOMENTUM", "THETA", "CFL_NUMBER", "H_MOVE",
+        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD",
+        "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
+        "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
+        "OUTPUT_FILE",
+        "INTEGRATOR", "THETA", "CFL_NUMBER", "H_MOVE",
         "LTS_TIERS", "FROUDE_MAX", "COUPLING_AREA",
     };
     for (const char* k : kKeys) {
@@ -284,38 +232,12 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     };
 
     if (iequals(key, "MAX_TIMESTEP"))      return fmt_g(opts.max_timestep);
-    if (iequals(key, "MIN_TIMESTEP"))      return fmt_g(opts.min_timestep);
-    if (iequals(key, "REL_TOLERANCE"))     return fmt_g(opts.rel_tolerance);
-    if (iequals(key, "ABS_TOLERANCE"))     return fmt_g(opts.abs_tolerance);
     if (iequals(key, "DRY_DEPTH"))         return fmt_g(opts.dry_depth);
     if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
     if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
-    if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
-    if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
-    if (iequals(key, "COUPLING_WINDOW"))   return fmt_g(opts.coupling_window);
-    if (iequals(key, "ACTIVE_SET"))        return opts.active_set ? "YES" : "NO";
-    if (iequals(key, "ACTIVE_SET_HALO"))   return std::to_string(opts.active_set_halo);
-    if (iequals(key, "MAX_CVODE_STEPS"))   return std::to_string(opts.max_cvode_steps);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
-    if (iequals(key, "LINEAR_SOLVER")) {
-        switch (opts.linear_solver) {
-            case LinearSolverType::GMRES:    return "GMRES";
-            case LinearSolverType::BICGSTAB: return "BICGSTAB";
-            case LinearSolverType::TFQMR:    return "TFQMR";
-        }
-        return "GMRES";
-    }
-    if (iequals(key, "PRECONDITIONER")) {
-        switch (opts.preconditioner) {
-            case PreconditionerType::NONE:   return "NONE";
-            case PreconditionerType::JACOBI: return "JACOBI";
-            case PreconditionerType::ILU:    return "ILU";
-            case PreconditionerType::AMG:    return "AMG";
-        }
-        return "JACOBI";
-    }
     if (iequals(key, "CELL_CLOSURE"))
         return (opts.cell_closure == CellClosure2D::VFR) ? "VFR" : "FLAT";
     if (iequals(key, "FACE_RECONSTRUCTION"))
@@ -330,16 +252,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         }
         return "NATURAL_NEIGHBOUR";
     }
-    if (iequals(key, "INTEGRATOR")) {
-        switch (opts.integrator) {
-            case IntegratorType::CVODE:        return "CVODE";
-            case IntegratorType::ARKODE:       return "ARKODE";
-            case IntegratorType::EXPLICIT_LTS: return "EXPLICIT";
-        }
-        return "CVODE";
-    }
-    if (iequals(key, "MOMENTUM"))
-        return (opts.momentum == MomentumType::INERTIAL) ? "INERTIAL" : "DW";
+    if (iequals(key, "INTEGRATOR"))    return "EXPLICIT";
     if (iequals(key, "THETA"))         return fmt_g(opts.theta);
     if (iequals(key, "CFL_NUMBER"))    return fmt_g(opts.cfl_number);
     if (iequals(key, "H_MOVE"))        return fmt_g(opts.h_move);

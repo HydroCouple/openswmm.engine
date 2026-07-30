@@ -83,53 +83,6 @@ double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
                                  const SolverOptions2D& opts) noexcept;
 
 
-/**
- * @brief Per-routing-step junction exchange: evaluate + book + accumulate.
- *
- * @details Decoupled-timestep coupling (2026-07 plan). Called EVERY 1D routing
- *          step (not once per 2D advance window): evaluates the same capped-pipe
- *          orifice exchange as the retired computeCouplingExchange but with the LIVE 1D node
- *          heads of this routing step against the FROZEN 2D state from the last
- *          fired window, and with dt = the routing step, so head transients are
- *          integrated at the 1D cadence instead of being sampled once at window
- *          fire and amplified into whole-window volumes.
- *
- *          Per point k it books Q·dt into nodes.coupling_volume (ft³, consumed
- *          by assembleLateralInflows at the start of the NEXT routing step) and
- *          accumulates the same signed volume (m³, SI) into accum_m3[k] for the
- *          2D-side injection when the advance window fires.
- *
- *          The 2D-side withdrawal cap draws down cell_budget_m3 (per-cell m³,
- *          seeded from max(0, volume) at the last window boundary): N steps of
- *          drain against the frozen state can never overdraw the water the 2D
- *          domain actually held. Budget is decremented across the vertex
- *          stencil by the geometric partition-of-unity weights.
- *
- * @param cps            Coupling points (outfalls skipped).
- * @param mesh           Mesh data.
- * @param state          2D surface state (FROZEN — read-only here).
- * @param ctx            Simulation context (live 1D node heads/volumes).
- * @param opts           2D solver options.
- * @param dt             Current 1D routing step (s).
- * @param accum_m3       In/out: per-coupling-point window accumulator (m³,
- *                       + = 2D→1D drain, − = 1D→2D spill); sized like cps.
- * @param cell_budget_m3 In/out: per-cell remaining withdrawal budget (m³).
- * @param sample_row     Optional (nullable): per-point NET 2D-SOURCE rate row
- *                       for the interpolated-forcing series — this step's
- *                       capped junction exchange written as −Q (drain-positive
- *                       Q is a 2D sink) into sample_row[k]. Outfall slots are
- *                       left untouched (accumulateOutfallDischargeStep owns
- *                       them); caller zeroes the row each step.
- */
-void computeCouplingExchangeStep(const std::vector<CouplingPoint>& cps,
-                                 const MeshData& mesh,
-                                 const SurfaceStateData& state,
-                                 SimulationContext& ctx,
-                                 const SolverOptions2D& opts,
-                                 double dt,
-                                 std::vector<double>& accum_m3,
-                                 std::vector<double>& cell_budget_m3,
-                                 double* sample_row);
 
 /**
  * @brief Per-routing-step outfall discharge accumulation.

@@ -27,7 +27,6 @@ namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advan
 namespace openswmm::twoD {
 
 struct CouplingPoint;  // fwd decl — 1D↔2D coupling descriptor (NodeCoupling.hpp)
-struct ActiveSetData;  // fwd decl — dry-cell wet-front mask (ActiveSetData.hpp)
 
 /**
  * @brief SoA storage for 2D surface routing state variables.
@@ -53,23 +52,12 @@ struct SurfaceStateData {
     /// per-cell state), which is fine — both copies see the same BC config.
     const BoundaryData* boundary = nullptr;
 
-    /// Live node-coupling view, set by SurfaceRouter2D ONLY when the macro-step
-    /// path is active (COUPLING_INTERVAL > 1). When non-null the CVODE RHS
-    /// evaluates the 1D↔2D orifice exchange against the CURRENT 2D head (so it
-    /// self-limits and integrates stably over a large window) instead of a held
-    /// per-window source; the ∫Q dt is carried by CVODE quadrature for
-    /// conservative booking. nullptr ⇒ the legacy held-flux path (default).
-    /// `nodes_1d` is the 1D node data, frozen for the duration of the advance.
+    /// Live node-coupling view, set by SurfaceRouter2D. The marcher evaluates
+    /// the 1D↔2D orifice exchange per substep against the CURRENT 2D head (so
+    /// it self-limits) and accumulates the exact ∫Q dt per point.
+    /// `nodes_1d` is the 1D node data, frozen for the duration of the batch.
     const NodeData*                   nodes_1d        = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
-
-    /// Non-owning view of the dry-cell active-set mask (owned by
-    /// SurfaceRouter2D; rebuilt once per advance window). nullptr or
-    /// !enabled ⇒ every pipeline stage takes its exact full-mesh loop (the
-    /// legacy behaviour, bit-identical). When active, the RHS stages iterate
-    /// the compact active-cell/vertex lists and treat active→inactive edges
-    /// as walls (locally conservative by construction).
-    const ActiveSetData* active_set = nullptr;
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
@@ -121,6 +109,13 @@ struct SurfaceStateData {
     std::vector<int8_t> coupling_forced;      ///< 0=computed, 1=override, 2=add
     std::vector<int8_t> coupling_persist;     ///< 0=reset, 1=persist
     std::vector<double> coupling_force_val;   ///< Forced coupling value
+
+    /// Set by the forcing API and by clear_reset_forcings() when any flag
+    /// changes; consumed by the co-advance to bypass its coarse (30 s)
+    /// forcing-refresh cadence, so a one-shot (RESET) prescription applies
+    /// on the very next step and expires on the step after — the per-step
+    /// semantics the swmm_2d_force_* API documents.
+    bool forcing_dirty = false;
 
     // -----------------------------------------------------------------------
     // Previous step state
@@ -206,17 +201,20 @@ struct SurfaceStateData {
     /// Clear RESET forcings after each step
     void clear_reset_forcings() noexcept {
         for (std::size_t i = 0; i < rainfall_forced.size(); ++i) {
-            if (rainfall_persist[i] == 0) {
+            if (rainfall_persist[i] == 0 && rainfall_forced[i] != 0) {
                 rainfall_forced[i] = 0;
                 rainfall_force_val[i] = 0.0;
+                forcing_dirty = true;
             }
-            if (evap_persist[i] == 0) {
+            if (evap_persist[i] == 0 && evap_forced[i] != 0) {
                 evap_forced[i] = 0;
                 evap_force_val[i] = 0.0;
+                forcing_dirty = true;
             }
-            if (coupling_persist[i] == 0) {
+            if (coupling_persist[i] == 0 && coupling_forced[i] != 0) {
                 coupling_forced[i] = 0;
                 coupling_force_val[i] = 0.0;
+                forcing_dirty = true;
             }
         }
     }

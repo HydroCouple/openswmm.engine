@@ -25,7 +25,7 @@ Usage:
       [--n-trans 8] [--slope 0.001] [--patch-depth 0.5] [--n-inlets 5]
       [--bury 1.0] [--pipe-diam 0.5] [--coupling-cd 0.65] [--coupling-area 1.0]
       [--routing-step 4] [--hours 3] [--rain-mm-hr 50] [--rain-min 60]
-      [--mannings 0.03] [--max-cvode-steps 200000]
+      [--mannings 0.03]
 
 Defaults mirror gen_multiscale_mesh.py (same 8192-triangle grid, 100x edge /
 10^4x area ratio) plus a 5-inlet chain draining the depression to one outfall.
@@ -76,7 +76,6 @@ def main():
     ap.add_argument("--rain-mm-hr", type=float, default=50.0)
     ap.add_argument("--rain-min", type=int, default=60)
     ap.add_argument("--mannings", type=float, default=0.03)
-    ap.add_argument("--max-cvode-steps", type=int, default=200000)
     a = ap.parse_args()
 
     spac = graded_spacings(a.dx_coarse, a.dx_fine, a.n_coarse_side,
@@ -200,18 +199,9 @@ def main():
     P("")
     P("[2D_OPTIONS]")
     P("MAX_TIMESTEP           30")
-    P("MIN_TIMESTEP           0.001")
-    P("REL_TOLERANCE          0.0001")
-    P("ABS_TOLERANCE          1e-06")
     P("DRY_DEPTH              0.001")
     P("LIMITER_EPSILON        1e-06")
     P(f"COUPLING_CD            {a.coupling_cd:g}")
-    P("MAX_KRYLOV_DIM         30")
-    P("COUPLING_INTERVAL      5")
-    P("COUPLING_WINDOW        -1")
-    P(f"MAX_CVODE_STEPS        {a.max_cvode_steps}")
-    P("LINEAR_SOLVER          GMRES")
-    P("PRECONDITIONER         AMG")
     P("RAINFALL_MODE          SYSTEM")
     P("REPORT_2D              YES")
     P("")

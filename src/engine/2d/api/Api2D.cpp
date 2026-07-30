@@ -797,6 +797,7 @@ int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
     s.rainfall_forced[idx]    = static_cast<int8_t>(mode);
     s.rainfall_force_val[idx] = value;
     s.rainfall_persist[idx]   = static_cast<int8_t>(persist);
+    s.forcing_dirty = true;
     return SWMM_OK;
 }
 
@@ -814,6 +815,7 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
         s.rainfall_force_val[i] = value;
         s.rainfall_persist[i]   = static_cast<int8_t>(persist);
     }
+    s.forcing_dirty = true;
     return SWMM_OK;
 }
 
@@ -829,6 +831,7 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx,
     s.evap_forced[idx]    = static_cast<int8_t>(mode);
     s.evap_force_val[idx] = value;
     s.evap_persist[idx]   = static_cast<int8_t>(persist);
+    s.forcing_dirty = true;
     return SWMM_OK;
 }
 
@@ -846,6 +849,7 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine,
         s.evap_force_val[i] = value;
         s.evap_persist[i]   = static_cast<int8_t>(persist);
     }
+    s.forcing_dirty = true;
     return SWMM_OK;
 }
 
@@ -861,6 +865,7 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
     s.coupling_forced[idx]    = static_cast<int8_t>(mode);
     s.coupling_force_val[idx] = value;
     s.coupling_persist[idx]   = static_cast<int8_t>(persist);
+    s.forcing_dirty = true;
     return SWMM_OK;
 }
 
@@ -881,6 +886,7 @@ int swmm_2d_force_clear_all(SWMM_Engine engine) {
         s.coupling_force_val[i] = 0.0;
         s.coupling_persist[i] = 0;
     }
+    s.forcing_dirty = true;
     return SWMM_OK;
 }
 
@@ -903,42 +909,6 @@ int swmm_2d_set_dry_depth(SWMM_Engine engine, double dry_depth) {
 
     const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).dry_depth
         = dry_depth;
-    return SWMM_OK;
-}
-
-int swmm_2d_get_rel_tolerance(SWMM_Engine engine, double* rtol) {
-    GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
-    if (!rtol) return SWMM_ERR_BADPARAM;
-
-    *rtol = router2d.options().rel_tolerance;
-    return SWMM_OK;
-}
-
-int swmm_2d_set_rel_tolerance(SWMM_Engine engine, double rtol) {
-    GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
-
-    const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).rel_tolerance
-        = rtol;
-    return SWMM_OK;
-}
-
-int swmm_2d_get_abs_tolerance(SWMM_Engine engine, double* atol) {
-    GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
-    if (!atol) return SWMM_ERR_BADPARAM;
-
-    *atol = router2d.options().abs_tolerance;
-    return SWMM_OK;
-}
-
-int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol) {
-    GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
-
-    const_cast<openswmm::twoD::SolverOptions2D&>(router2d.options()).abs_tolerance
-        = atol;
     return SWMM_OK;
 }
 

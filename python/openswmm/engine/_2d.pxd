@@ -97,10 +97,6 @@ cdef extern from "openswmm_2d.h":
     # Options
     int swmm_2d_get_dry_depth(void* engine, double* dry_depth)
     int swmm_2d_set_dry_depth(void* engine, double dry_depth)
-    int swmm_2d_get_rel_tolerance(void* engine, double* rtol)
-    int swmm_2d_set_rel_tolerance(void* engine, double rtol)
-    int swmm_2d_get_abs_tolerance(void* engine, double* atol)
-    int swmm_2d_set_abs_tolerance(void* engine, double atol)
 
     # Boundary edges
     int swmm_2d_boundary_edge_count(void* engine, int* count)

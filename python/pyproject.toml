@@ -285,7 +285,7 @@ if [ -d /tmp/vcpkg-downloads ]; then
 fi
 /host/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 # CPU-only base wheel: opt out of vcpkg default-features so the now-default `gpu`
-# feature (Kokkos + sundials[kokkos]) is NOT built/linked here. Mirrors the
+# feature (Kokkos) is NOT built/linked here. Mirrors the
 # CMake-side opt-out in python/CMakeLists.txt; keeps this wheel Kokkos-free and
 # portable. OpenMP acceleration ships via the openswmm-gpu-omp companion wheel.
 # `hypre` IS pulled here so PRECONDITIONER=AMG (the 2D solver default) works in
