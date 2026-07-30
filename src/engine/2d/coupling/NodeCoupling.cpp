@@ -165,7 +165,8 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
                             const SurfaceStateData& state,
                             const NodeData& nodes,
                             const SolverOptions2D& opts,
-                            const double* provisional_vol_m3) noexcept {
+                            const double* provisional_vol_m3,
+                            double h1d_offset_m) noexcept {
     const auto ni = static_cast<std::size_t>(cp.node_idx);
     const int  ci = cp.cell_idx;
 
@@ -208,8 +209,10 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
         }
         h_2d = (den > 0.0) ? num / den : mesh.vz[v];
     }
-    // 1D node head — frozen across the 2D advance window.
-    const double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
+    // 1D node head — frozen across the 2D advance window. h1d_offset_m is the
+    // experimental head-ramp extrapolation (OPENSWMM_2D_HEAD_RAMP): the batch
+    // trend slope × time-in-batch, in the 2D metre frame.
+    const double h_1d = nodes.head[ni] * opts.len_1d_to_2d + h1d_offset_m;
 
     // Live max-over-stencil source depth: the wet/dry self-limiter below uses it
     // so the drain ramps to zero as the cell dries (no overshoot / negativity).

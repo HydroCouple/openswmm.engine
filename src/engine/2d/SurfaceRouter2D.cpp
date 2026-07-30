@@ -11,6 +11,7 @@
 #include "mesh/VertexReconstruction.hpp"
 #include "mesh/VfrClosure.hpp"
 #include "solver/SurfaceFluxCalculator.hpp"
+#include "solver/ExplicitInertialSolver.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "solver/SurfaceSolverFactory.hpp"
 #endif
@@ -701,6 +702,41 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     }
     resolveBoundaryValues(ctx, t);
 
+    // OPENSWMM_2D_HEAD_RAMP=1 (experimental, decoupling-viability study):
+    // extrapolate each coupled node's 1D head linearly across the batch from
+    // its batch-over-batch trend, instead of holding the batch-start head.
+    // Serial marcher only (dynamic_cast); plugin backends run held heads.
+    static const bool head_ramp = [] {
+        const char* e = std::getenv("OPENSWMM_2D_HEAD_RAMP");
+        return e && e[0] == '1';
+    }();
+    if (head_ramp) {
+        if (auto* m = dynamic_cast<ExplicitInertialSolver*>(solver_.get())) {
+            const std::size_t np = node_coupling_points_.size();
+            if (ramp_prev_head_.size() != np) {
+                ramp_prev_head_.assign(np, 0.0);
+                ramp_prev_span_ = 0.0;
+                for (std::size_t k = 0; k < np; ++k)
+                    ramp_prev_head_[k] =
+                        ctx.nodes.head[static_cast<std::size_t>(
+                            node_coupling_points_[k].node_idx)] *
+                        options_.len_1d_to_2d;
+            }
+            std::vector<double> slopes(np, 0.0);
+            for (std::size_t k = 0; k < np; ++k) {
+                const double h_now =
+                    ctx.nodes.head[static_cast<std::size_t>(
+                        node_coupling_points_[k].node_idx)] *
+                    options_.len_1d_to_2d;
+                if (ramp_prev_span_ > 0.0)
+                    slopes[k] = (h_now - ramp_prev_head_[k]) / ramp_prev_span_;
+                ramp_prev_head_[k] = h_now;
+            }
+            ramp_prev_span_ = dt;
+            m->setExchangeHeadSlopes(std::move(slopes));
+        }
+    }
+
     {
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
@@ -817,8 +853,16 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // queue spread (uniform rate over the batch span).
     pending_dt_ += routing_dt;
     last_t_ = t;
-    const double sync = std::clamp(options_.max_timestep,
-                                   ctx.options.routing_step, 60.0);
+    // OPENSWMM_2D_SYNC_SPAN (seconds): experimental override of the sync-batch
+    // span for the decoupling-viability study — bypasses both the MAX_TIMESTEP
+    // coupling and the 60 s ceiling. Unset/0 = normal policy.
+    static const double env_span = [] {
+        const char* e = std::getenv("OPENSWMM_2D_SYNC_SPAN");
+        return e ? std::atof(e) : 0.0;
+    }();
+    const double sync = env_span > 0.0
+        ? std::max(env_span, ctx.options.routing_step)
+        : std::clamp(options_.max_timestep, ctx.options.routing_step, 60.0);
     if (pending_dt_ + 0.5 * routing_dt >= sync) {
         const double span = pending_dt_;
         pending_dt_ = 0.0;

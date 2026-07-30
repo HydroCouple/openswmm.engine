@@ -263,6 +263,12 @@ private:
     /// Routing time accumulated since the last co-advance sync batch.
     double pending_dt_       = 0.0;
 
+    /// OPENSWMM_2D_HEAD_RAMP experiment: per-coupling-point 1D head at the
+    /// previous batch (2D metre frame) + that batch's span, for the
+    /// batch-over-batch trend slope handed to the marcher.
+    std::vector<double> ramp_prev_head_;
+    double              ramp_prev_span_ = 0.0;
+
     /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
     /// per-step delta in the global mass balance.
     double prev_boundary_cum_ = 0.0;

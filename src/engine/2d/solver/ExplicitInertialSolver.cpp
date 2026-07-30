@@ -421,9 +421,12 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             const auto& cp = pts[k];
             const int   ci = cp.cell_idx;
             if (ci < 0 || !cell_active_[ci]) continue;
+            const double h_off = (k < exch_head_slope_.size())
+                                     ? exch_head_slope_[k] * exch_tau_
+                                     : 0.0;
             double Q = computeNodeCouplingQ(cp, *mesh_, *state_,
                                             *state_->nodes_1d, *opts_,
-                                            nullptr);
+                                            nullptr, h_off);
             if (Q == 0.0) continue;
             if (Q > 0.0) {   // 2D → 1D drain: availability share of the cell
                 Q = std::min(Q, opts_->exchange_beta *
@@ -447,6 +450,9 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                                    state_->head[ci], state_->depth[ci]);
         }
     }
+    // Head-ramp clock: tier-0 fires once per finest substep, so dt_c here is
+    // exactly the wall the batch has advanced since the last exchange pass.
+    if (&cells == &cells_by_tier_[0]) exch_tau_ += dt_c;
 }
 
 void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
@@ -507,6 +513,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     std::fill(bc_accum_.begin(), bc_accum_.end(), 0.0);
     std::fill(exch_.begin(), exch_.end(), 0.0);
     std::fill(node_drawn_.begin(), node_drawn_.end(), 0.0);
+    exch_tau_ = 0.0;
     last_steps_ = 0;
     // Rebuild cadence persists ACROSS advances: under windowless co-advance
     // the router calls advance() per ~1 s routing step, and a forced O(nt)

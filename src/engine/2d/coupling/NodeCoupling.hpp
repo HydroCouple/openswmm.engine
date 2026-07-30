@@ -161,7 +161,8 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
                             const SurfaceStateData& state,
                             const NodeData& nodes,
                             const SolverOptions2D& opts,
-                            const double* provisional_vol_m3 = nullptr) noexcept;
+                            const double* provisional_vol_m3 = nullptr,
+                            double h1d_offset_m = 0.0) noexcept;
 
 /**
  * @brief Scatter a signed volumetric exchange Q (m³/s) directly onto the cell
