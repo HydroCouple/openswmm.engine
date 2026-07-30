@@ -21,8 +21,10 @@ except ImportError as _exc:  # pragma: no cover - environment dependent
 
 from openswmm.engine import (  # noqa: E402
     ConcentrationUnits,
+    EngineState,
     ForcingMode,
     ForcingTarget,
+    LifecycleError,
     PatternType,
     TableType,
 )
@@ -116,6 +118,60 @@ class TestTables(EngineSolverCase):
             self.assertIsInstance(t, TableType)
             self.assertEqual(coll.get_type(coll.get_id(idx)), t)
 
+    # -- creation lifecycle (regression: add_timeseries LifecycleError) -----
+
+    def test_add_timeseries_in_opened_state(self):
+        """A time series created in OPENED state survives initialize/start.
+
+        Regression for the reported ``LifecycleError`` — table creation is
+        valid in BUILDING or OPENED, and a series added after ``open()`` (but
+        before ``initialize()``) must be resolvable by name and persist
+        through arming the run.
+        """
+        s = self.opened_solver()
+        self.assertEqual(s.state, EngineState.OPENED)
+        n0 = len(s.tables)
+
+        ts = s.tables.add_timeseries("regr_ts1")
+        self.assertIsInstance(ts, TimeSeries)
+        ts.add(datetime(2024, 6, 15, 0, 0), 0.0)
+        ts.add(datetime(2024, 6, 15, 1, 0), 0.5)
+        self.assertEqual(len(s.tables), n0 + 1)
+
+        # Reference resolution happens at initialize()/start(); the new table
+        # must be present and pickable by name after arming the simulation.
+        s.initialize()
+        s.start()
+        self.assertIsNotNone(s.tables.as_timeseries("regr_ts1"))
+        for _ in range(3):
+            s.step()
+
+    def test_add_curve_in_opened_state(self):
+        s = self.opened_solver()
+        n0 = len(s.tables)
+        c = s.tables.add_curve("regr_curve1")
+        self.assertIsInstance(c, Curve)
+        c.add_point(0.0, 0.0)
+        c.add_point(1.0, 100.0)
+        self.assertEqual(len(s.tables), n0 + 1)
+
+    def test_add_timeseries_after_start_raises_friendly(self):
+        """Creating a table after start() raises a state-aware LifecycleError."""
+        s = self.running_solver()
+        self.assertEqual(s.state, EngineState.STARTED)
+        with self.assertRaises(LifecycleError) as ctx:
+            s.tables.add_timeseries("too_late")
+        msg = str(ctx.exception)
+        self.assertIn("BUILDING or OPENED", msg)
+        self.assertIn("STARTED", msg)
+
+    def test_add_curve_after_start_raises_friendly(self):
+        s = self.running_solver()
+        with self.assertRaises(LifecycleError) as ctx:
+            s.tables.add_curve("too_late_curve")
+        msg = str(ctx.exception)
+        self.assertIn("BUILDING or OPENED", msg)
+        self.assertIn("STARTED", msg)
 
 class TestPatterns(EngineSolverCase):
     def test_collection(self):
@@ -124,6 +180,20 @@ class TestPatterns(EngineSolverCase):
         self.assertIsInstance(coll, Patterns)
         for p in coll:
             self.assertIsInstance(p, Pattern)
+
+    def test_add_in_opened_state(self):
+        s = self.opened_solver()
+        n0 = len(s.patterns)
+        p = s.patterns.add("REGR_DLY", PatternType.DAILY)
+        self.assertIsInstance(p, Pattern)
+        p.set_factors([1.0] * 7)
+        self.assertEqual(len(s.patterns), n0 + 1)
+
+    def test_add_after_start_raises_friendly(self):
+        s = self.running_solver()
+        with self.assertRaises(LifecycleError) as ctx:
+            s.patterns.add("REGR_LATE", PatternType.DAILY)
+        self.assertIn("BUILDING or OPENED", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------

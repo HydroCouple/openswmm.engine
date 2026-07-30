@@ -73,12 +73,12 @@ SWMM_ENGINE_API const char* swmm_table_id(SWMM_Engine engine, int idx);
 SWMM_ENGINE_API int swmm_table_get_type(SWMM_Engine engine, int idx, int* type);
 
 /* =========================================================================
- * Creation (BUILDING state only)
+ * Creation (BUILDING or OPENED — references resolve by name at initialize())
  * ========================================================================= */
 
 /**
  * @brief Add a new time series to the model.
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
  * @param id      Unique null-terminated identifier.
  * @returns SWMM_OK on success, or an error code.
  */
@@ -90,7 +90,7 @@ SWMM_ENGINE_API int swmm_timeseries_add(SWMM_Engine engine, const char* id);
  * @details Curve types: 0=STORAGE, 1=DIVERSION, 2=TIDAL, 3=RATING,
  *          4=CONTROL, 5=SHAPE, 6=PUMP1..PUMP4, etc.
  *
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
  * @param id      Unique null-terminated identifier.
  * @param type    Curve type code.
  * @returns SWMM_OK on success, or an error code.
@@ -170,7 +170,7 @@ SWMM_ENGINE_API int swmm_table_lookup(SWMM_Engine engine, int idx, double x, dou
  *
  * @details Pattern types: 0=MONTHLY, 1=DAILY, 2=HOURLY, 3=WEEKEND.
  *
- * @param engine  Engine handle (SWMM_STATE_BUILDING).
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
  * @param id      Unique null-terminated identifier.
  * @param type    Pattern type code.
  * @returns SWMM_OK on success, or an error code.

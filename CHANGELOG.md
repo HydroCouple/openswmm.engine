@@ -15,6 +15,20 @@ tag, so it's used here instead of a generic "Unreleased" heading.
 
 ### Fixed
 
+- **`swmm_timeseries_add` / `swmm_curve_add` / `swmm_pattern_add` rejected the
+  `OPENED` state.** Table, curve, and pattern *creation* was guarded to
+  `BUILDING` only, so adding a time series to a model loaded from an `.inp`
+  file (a `Solver` in `OPENED` state) failed with `SWMM_ERR_LIFECYCLE` — even
+  though every other topology edit (`add_node`, `add_link`, inflows) already
+  allowed `OPENED`, and table references are resolved by name at
+  `initialize()`/`start()` (not baked at open time). The three creators now use
+  the shared `CHECK_EDITABLE` guard (`BUILDING` **or** `OPENED`). The Python
+  `Tables.add_timeseries` / `Tables.add_curve` / `Patterns.add` wrappers now
+  raise a state-aware `LifecycleError` that names the current state and the
+  correct call sequence. Note: the `with Solver(...)` context manager auto-runs
+  `open() → initialize() → start()`, so table creation must use an explicit
+  `open()` — the `tables` / `inflows` guide docs were corrected accordingly.
+
 - **`swmm_control_add_rule` silently did nothing after `swmm_engine_initialize`.**
   Rules are compiled once, inside `initialize()` → `initHydraulics()`; text
   added afterwards was appended to `ctx.control_rules.rule_text` and never
