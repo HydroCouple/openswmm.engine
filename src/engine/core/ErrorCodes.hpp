@@ -237,6 +237,7 @@ enum WarnCode : int {
     WARN_TIMESERIES_DUPLICATE_X = 101, ///< Time Series %s has duplicate x values
     WARN_BOUNDARY_OVERLAP       = 102, ///< boundary regions overlap for %s
     WARN_FILES_SLOT_UNSUPPORTED = 103, ///< [FILES] %s is not supported and was ignored
+    WARN_2D_OPTION_RETIRED      = 104, ///< [2D_OPTIONS] %s retired with CVODE/ARKODE and was ignored
 };
 
 // ============================================================================

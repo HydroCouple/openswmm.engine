@@ -965,7 +965,10 @@ TEST(InputParsing, Parse2DOptionsLine) {
     err = parse2DOptionsLine({"INTEGRATOR", "EXPLICIT"}, opts);
     EXPECT_TRUE(err.empty()) << err;
 
-    // Retired CVODE-stack keys are hard errors (D2, 2026-07-29).
+    // Retired CVODE-stack keys (D2, 2026-07-29): hard error on the
+    // programmatic path (no warnings sink), warn-and-ignore on the file-load
+    // path (warnings sink provided) so legacy models still open.
+    std::vector<std::string> warns;
     for (const char* retired : {"REL_TOLERANCE", "ABS_TOLERANCE",
                                 "MAX_CVODE_STEPS", "LINEAR_SOLVER",
                                 "PRECONDITIONER", "MAX_KRYLOV_DIM",
@@ -975,11 +978,21 @@ TEST(InputParsing, Parse2DOptionsLine) {
         err = parse2DOptionsLine({retired, "1"}, opts);
         EXPECT_FALSE(err.empty()) << retired << " must be a hard error";
         EXPECT_FALSE(is2DOptionKey(retired)) << retired;
+
+        const std::size_t before = warns.size();
+        err = parse2DOptionsLine({retired, "1"}, opts, &warns);
+        EXPECT_TRUE(err.empty()) << retired << " must warn, not error: " << err;
+        ASSERT_EQ(warns.size(), before + 1) << retired;
+        EXPECT_NE(warns.back().find(retired), std::string::npos) << warns.back();
     }
     err = parse2DOptionsLine({"INTEGRATOR", "CVODE"}, opts);
     EXPECT_FALSE(err.empty()) << "INTEGRATOR CVODE must be a hard error";
     err = parse2DOptionsLine({"INTEGRATOR", "ARKODE"}, opts);
     EXPECT_FALSE(err.empty()) << "INTEGRATOR ARKODE must be a hard error";
+    err = parse2DOptionsLine({"INTEGRATOR", "CVODE"}, opts, &warns);
+    EXPECT_TRUE(err.empty()) << "INTEGRATOR CVODE must warn on file load: " << err;
+    EXPECT_NE(warns.back().find("INTEGRATOR CVODE"), std::string::npos)
+        << warns.back();
 
     // RAINFALL_MODE NONE: no rain on the mesh (subcatchments already capture
     // the storm; rain-on-mesh would double-count it).
