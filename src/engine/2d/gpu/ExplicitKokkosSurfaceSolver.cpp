@@ -624,17 +624,22 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
                 qv(e) = 0.0;
                 return;
             }
-            double qhat = qv(e);
+            double qhat  = qv(e);
+            double q_mag = std::fabs(qv(e));
             if (perot) {
-                const double qn = 0.5 * ((qcx(a) + qcx(b)) * nxv(e) +
-                                         (qcy(a) + qcy(b)) * nyv(e));
-                qhat = theta * qv(e) + (1.0 - theta) * qn;
+                const double qfx = 0.5 * (qcx(a) + qcx(b));
+                const double qfy = 0.5 * (qcy(a) + qcy(b));
+                const double qn  = qfx * nxv(e) + qfy * nyv(e);
+                qhat  = theta * qv(e) + (1.0 - theta) * qn;
+                // Vector friction magnitude, floored at |q_n| (== serial).
+                const double qm = std::sqrt(qfx * qfx + qfy * qfy);
+                if (qm > q_mag) q_mag = qm;
             }
             double deta = head(b) - head(a);
             if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
             const double slope = deta * inv_dx(e);
             double qn1 = inertial::inertialFaceUpdate(qv(e), qhat, hf, dt_f,
-                                                      slope, n2(e));
+                                                      slope, n2(e), q_mag);
             qn1 = inertial::froudeCap(qn1, hf, fr_max);
 
             const int exp_cell = (qn1 > 0.0) ? a : b;
