@@ -296,8 +296,95 @@ TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
         }
     }
     h_avg /= h_cnt;
-    EXPECT_NEAR(h_avg, h_n, 0.05 * h_n);
+    // 6 % envelope: ~2.5 % from the first-order upwind-depth staggering
+    // offset (see the dx note above) plus ~1 % from the vector-magnitude
+    // friction, which adds the diagonal-face friction the scalar |q_n| form
+    // omitted (a face at 45° to the flow under-damped by √2).
+    EXPECT_NEAR(h_avg, h_n, 0.06 * h_n);
     solver.finalize();
+}
+
+// ---------------------------------------------------------------------------
+// Steady-slope surface smoothness: the same rain-fed inclined strip as the
+// Manning gate, both closures. At steady state the free surface must be
+// spatially smooth — per-cell η deviation from the face-neighbour mean stays
+// at millimetre level. Guards the face-datum symmetry: with the face bed
+// taken from the two cells' CENTROIDS (which alternate by ±S·dx/3 on a
+// split-quad slope), the discrete face conveyance alternates and the surface
+// locks into a standing cell-to-cell stair — the depth "checkerboarding"
+// observed upstream of the road_culvert embankment (flow-dependent,
+// θ-independent). The shared-edge sill datum removes it.
+// ---------------------------------------------------------------------------
+TEST(InertialMarcher, SteadySlopeNoCheckerboard) {
+    const double S = 0.01, dx = 1.0, n_man = 0.03;
+    const int nx = 40, ny = 4;
+    for (const auto closure : {CellClosure2D::FLAT, CellClosure2D::VFR}) {
+        auto mesh = makeGridMesh(nx, ny, dx,
+                                 [&](double x, double) { return S * x; },
+                                 n_man);
+        SolverOptions2D opts;
+        opts.cell_closure = closure;
+        auto state = makeState(mesh);
+
+        BoundaryData boundary;
+        boundary.resize(mesh.n_triangles() * 3);
+        for (int i = 0; i < mesh.n_triangles(); ++i) {
+            const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
+                                 mesh.tri_nbr2[i]};
+            for (int e = 0; e < 3; ++e) {
+                const int idx = i * 3 + e;
+                if (nbrs[e] >= 0) continue;
+                if (mesh.edge_mx[idx] < 1.0e-9) {
+                    boundary.edge_bc_type[idx] =
+                        static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
+                    boundary.edge_bed_slope[idx] = S;
+                }
+            }
+        }
+        state.boundary = &boundary;
+        const double rain = 2.0e-4;
+        for (int i = 0; i < mesh.n_triangles(); ++i) state.rainfall[i] = rain;
+
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        solver.advance(0.0, 6000.0);
+
+        // Spatial roughness of η: deviation from the face-neighbour mean over
+        // the strip interior (ends excluded — the outlet drawdown and the
+        // upslope crest carry genuine one-sided curvature).
+        double ss = 0.0, mx_r = 0.0;
+        int    n  = 0;
+        for (int i = 0; i < mesh.n_triangles(); ++i) {
+            if (mesh.tri_cx[i] < 5.0 || mesh.tri_cx[i] > 35.0) continue;
+            const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
+                                 mesh.tri_nbr2[i]};
+            double hs = 0.0;
+            int    hn = 0;
+            for (int e = 0; e < 3; ++e)
+                if (nbrs[e] >= 0) { hs += state.head[nbrs[e]]; ++hn; }
+            if (hn < 3) continue;
+            const double r = state.head[i] - hs / hn;
+            ss += r * r;
+            mx_r = std::max(mx_r, std::fabs(r));
+            ++n;
+        }
+        const double rms = std::sqrt(ss / std::max(n, 1));
+        const char* tag =
+            (closure == CellClosure2D::VFR) ? "VFR" : "FLAT";
+        // Characterization gate: ~1.0 mm rms remains after the vector-
+        // friction fix (was ~1.25 mm with scalar |q_n| friction) — the
+        // residual is believed to be outlet-row alternation (NORMAL_FLOW
+        // edges exist only on alternate boundary cells) plus the upwind-
+        // depth staggering; the VFR quad-pair closure is the open work item
+        // for the (larger) closure-side alternation on real embankments.
+        // The gate trips if a change regresses toward the scalar-friction
+        // level or beyond.
+        EXPECT_LT(rms, 1.2e-3)
+            << tag << ": steady-slope surface roughness rms " << rms;
+        EXPECT_LT(mx_r, 3.5e-3)
+            << tag << ": steady-slope surface roughness max " << mx_r;
+        solver.finalize();
+    }
 }
 
 // ---------------------------------------------------------------------------

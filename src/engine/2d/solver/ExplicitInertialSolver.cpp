@@ -298,17 +298,23 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
             q_[e] = 0.0;
             continue;
         }
-        double qhat = q_[e];
+        double qhat  = q_[e];
+        double q_mag = std::fabs(q_[e]);
         if (!qcx_.empty()) {
-            const double qn = 0.5 * ((qcx_[a] + qcx_[b]) * ed.nx[e] +
-                                     (qcy_[a] + qcy_[b]) * ed.ny[e]);
-            qhat = theta * q_[e] + (1.0 - theta) * qn;
+            const double qfx = 0.5 * (qcx_[a] + qcx_[b]);
+            const double qfy = 0.5 * (qcy_[a] + qcy_[b]);
+            const double qn  = qfx * ed.nx[e] + qfy * ed.ny[e];
+            qhat  = theta * q_[e] + (1.0 - theta) * qn;
+            // Friction magnitude: the face flow VECTOR, floored at |q_n| so
+            // a face whose reconstruction lags its own discharge (front
+            // arrival, first firing after activation) never under-damps.
+            q_mag = std::max(q_mag, std::hypot(qfx, qfy));
         }
         double deta = state_->head[b] - state_->head[a];
         if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
         const double slope = deta * ed.inv_dx_normal[e];
         double qn1 = inertial::inertialFaceUpdate(q_[e], qhat, hf, dt_f, slope,
-                                                 ed.n2_face[e]);
+                                                 ed.n2_face[e], q_mag);
         qn1 = inertial::froudeCap(qn1, hf, opts_->froude_max);
 
         // Positivity at face cadence: this face may take at most a β/3 share

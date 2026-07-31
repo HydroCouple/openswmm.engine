@@ -127,14 +127,24 @@ OPENSWMM_KERNEL_FN double faceFlowDepth(double etaL, double etaR, double zface) 
 /// One local-inertial face update over Δt. @p q is the current face discharge,
 /// @p qhat the θ-averaged discharge feeding the momentum balance, @p hf the
 /// face flow depth (> 0), @p slope (η_R−η_L)·inv_dx_normal, @p n2 the squared
-/// face Manning coefficient. Friction is semi-implicit: dividing by
-/// (1 + g·Δt·n²·|q|/h^{7/3}) is unconditionally stable — h^{7/3} written as
-/// h²·cbrt(h) to avoid pow().
+/// face Manning coefficient, @p q_mag the FLOW-VECTOR magnitude at the face
+/// (from the Perot cell reconstruction; pass |q| when unavailable). Friction
+/// is semi-implicit: dividing by (1 + g·Δt·n²·q_mag/h^{7/3}) is
+/// unconditionally stable — h^{7/3} written as h²·cbrt(h) to avoid pow().
+///
+/// The friction magnitude MUST be the vector magnitude, not |q_n|: Manning
+/// friction on the normal component is n²·q_n·|q⃗|/h^{7/3}. With |q_n| the
+/// friction a face applies depends on its orientation relative to the flow
+/// (a face at 45° to a uniform sheet flow under-damps by √2), so no smooth
+/// surface can balance every face of a triangulated slope — the steady state
+/// corrugates cell-to-cell (the depth "checkerboarding" observed upstream of
+/// the road_culvert embankment under the VFR closure).
 OPENSWMM_KERNEL_FN double inertialFaceUpdate(double q, double qhat, double hf, double dt,
-                                 double slope, double n2) noexcept {
+                                 double slope, double n2,
+                                 double q_mag) noexcept {
     const double h73 = hf * hf * std::cbrt(hf);
     const double num = qhat - kGravity * hf * dt * slope;
-    const double den = 1.0 + kGravity * dt * n2 * std::fabs(q) / h73;
+    const double den = 1.0 + kGravity * dt * n2 * q_mag / h73;
     return num / den;
 }
 
