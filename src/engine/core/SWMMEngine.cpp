@@ -185,7 +185,7 @@ int SWMMEngine::open(const char* inp_path,
                 surface_router_.mesh(), surface_router_.options(),
                 surface_router_.pendingBCRows(),
                 surface_router_.pendingEdgeConveyanceRows(),
-                mf, base_dir);
+                mf, base_dir, &ctx_.warnings);
             if (!err.empty()) {
                 if (lenient_open_) {
                     // A missing/unreadable external mesh must not make the

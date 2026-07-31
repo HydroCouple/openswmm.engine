@@ -11,6 +11,7 @@
 #include "../data/BoundaryData.hpp"
 #include "../../input/InputReader.hpp"
 #include "../../input/Tokenizer.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../core/SimulationContext.hpp"
 
 #include <algorithm>
@@ -76,11 +77,25 @@ const std::string RETIRED_SUFFIX =
     "marcher settings are THETA, CFL_NUMBER, LTS_TIERS, H_MOVE, FROUDE_MAX, "
     "MAX_TIMESTEP, COUPLING_AREA.";
 
+/// Retired [2D_OPTIONS] material: warn-and-ignore when a warnings sink is
+/// available (the file-load path — legacy models must still open), hard
+/// error otherwise (the programmatic set path).
+std::string retiredOption(const std::string& what,
+                          std::vector<std::string>* warnings) {
+    if (warnings) {
+        warnings->push_back(
+            openswmm::format_warning(openswmm::WARN_2D_OPTION_RETIRED, what));
+        return {};
+    }
+    return what + RETIRED_SUFFIX;
+}
+
 } // anonymous namespace
 
 
 std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
-                                SolverOptions2D& opts) {
+                                SolverOptions2D& opts,
+                                std::vector<std::string>* warnings) {
     if (tokens.size() < 2) return "Expected PARAMETER VALUE";
 
     const auto& key = tokens[0];
@@ -148,10 +163,11 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "INTEGRATOR")) {
         // The explicit marcher is the only integrator (D2 retirement,
         // 2026-07-29). EXPLICIT is accepted (and the default); the retired
-        // CVODE/ARKODE selections are hard errors so a model authored for the
-        // implicit stack cannot silently run different physics.
+        // CVODE/ARKODE selections warn on file load (the model opens and
+        // runs the marcher — not silent, WARNING 104 names the substitution)
+        // and hard-error on the programmatic set path.
         if (!iequals(val, "EXPLICIT"))
-            return "INTEGRATOR " + val + RETIRED_SUFFIX;
+            return retiredOption("INTEGRATOR " + val, warnings);
     } else if (iequals(key, "THETA")) {
         const double th = tryParseDouble(val, ok);
         if (!ok || th <= 0.0 || th > 1.0)
@@ -185,10 +201,10 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         else
             return "Unknown COUPLING_AREA: " + val + " (expected AUTO|DEFAULT)";
     } else if (is2DRetiredOptionKey(key)) {
-        // Hard error (owner ruling, D2 retirement): these keys configured the
-        // deleted CVODE/ARKODE stack; silently ignoring them would run a
-        // model with settings its author never chose.
-        return key + RETIRED_SUFFIX;
+        // These keys configured the deleted CVODE/ARKODE stack. On file load
+        // they are ignored with a WARNING 104 (legacy models must still
+        // open); on the programmatic set path they stay hard errors.
+        return retiredOption(key, warnings);
     } else {
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
@@ -573,10 +589,24 @@ void register2DSections(MeshData& mesh,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         input::SectionRegistry& registry)
 {
+    // Full-form handler (not makeSectionHandler): parse2DOptionsLine needs
+    // ctx.warnings so retired CVODE-era keys warn-and-ignore on file load.
     registry.register_custom("2D_OPTIONS",
-        makeSectionHandler([&options](const std::vector<std::string>& tokens) {
-            return parse2DOptionsLine(tokens, options);
-        }));
+        [&options](openswmm::SimulationContext& ctx,
+                   const std::vector<std::string>& lines)
+        {
+            for (const auto& raw : lines) {
+                auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+                if (tokens.empty()) continue;
+                std::string err =
+                    parse2DOptionsLine(tokens, options, &ctx.warnings);
+                if (!err.empty()) {
+                    ctx.error_code    = 5;  // SWMM_ERR_PARSE (see makeSectionHandler)
+                    ctx.error_message = "[2D] " + err + " — line: " + raw;
+                    return;
+                }
+            }
+        });
 
     registry.register_custom("2D_VERTICES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
@@ -639,7 +669,8 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                                    const std::string& mesh_file,
-                                   const std::string& inp_base_dir)
+                                   const std::string& inp_base_dir,
+                                   std::vector<std::string>* warnings)
 {
     namespace fs = std::filesystem;
 
@@ -651,8 +682,8 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     // Build a minimal registry (no 2D_MESH_FILE — prevents recursion)
     openswmm::input::SectionRegistry mini;
     mini.register_custom("2D_OPTIONS",
-        makeSectionHandler([&opts](const std::vector<std::string>& tokens) {
-            return parse2DOptionsLine(tokens, opts);
+        makeSectionHandler([&opts, warnings](const std::vector<std::string>& tokens) {
+            return parse2DOptionsLine(tokens, opts, warnings);
         }));
     mini.register_custom("2D_VERTICES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {

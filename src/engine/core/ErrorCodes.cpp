@@ -191,6 +191,9 @@ static const std::unordered_map<int, const char*>& warning_table() {
         {101, "Time Series %s has duplicate x values."},
         {102, "boundary regions overlap for %s."},
         {103, "[FILES] %s is not supported by this engine and was ignored."},
+        {104, "[2D_OPTIONS] %s was retired with the CVODE/ARKODE 2D solvers "
+              "and was ignored; the explicit local-inertial marcher is the "
+              "only 2D integrator."},
     };
     return table;
 }

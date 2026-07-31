@@ -1217,7 +1217,8 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
 
     // Keys retired with the CVODE/ARKODE stack (D2) hard-fail here — letting
     // them fall through to the generic ext_options map would silently persist
-    // them to the next save, where the [2D_OPTIONS] parser hard-errors.
+    // them to the next save. (File load, by contrast, warns and ignores them
+    // so legacy models still open.)
     if (openswmm::twoD::is2DRetiredOptionKey(key)) return SWMM_ERR_BADPARAM;
 
     // Route [2D_OPTIONS] keys into the live SolverOptions2D so GUI/API
