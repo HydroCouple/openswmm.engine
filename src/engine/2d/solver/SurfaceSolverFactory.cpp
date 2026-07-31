@@ -204,13 +204,18 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
     const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
     if (mode == "cpu") return serial_marcher();
 
-    // Small-mesh gate: a Kokkos plugin pays a per-kernel launch overhead that
-    // dominates on small meshes, where the serial marcher is faster. Below the
-    // threshold, stay serial unless the backend was requested explicitly.
+    // Mesh-size gate: a Kokkos plugin pays a per-kernel launch overhead on
+    // EVERY marcher substep, and the built-in marcher is itself OpenMP-
+    // threaded — the plugin only pays off when per-cell work amortizes the
+    // launches. Measured on a 25k-cell coupled model (Bellinge, 48 h storm)
+    // the omp plugin ran 15–20× SLOWER than the built-in marcher (238 s vs
+    // >20× that pace), so the auto crossover sits far above the old 20k
+    // default. Below the threshold, stay serial unless the backend was
+    // requested explicitly (OPENSWMM_2D_BACKEND=omp|cuda|... bypasses it).
     // Env-tunable (OPENSWMM_2D_MIN_PARALLEL_CELLS); 0 cells = unknown ⇒ no gate.
     const bool gated = (mode.empty() || mode == "auto") && [&] {
         if (n_cells <= 0) return false;
-        long min_par = 20000;
+        long min_par = 200000;
         if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
             min_par = std::atol(s);
         return n_cells < min_par;
