@@ -40,5 +40,14 @@ __pycache__/
 *.egg
 *.egg-info
 *.manifest
-*.spec  
+*.spec
+
+# vcpkg toolchain checkout (external; bootstrapped per README, never committed)
+/vcpkg/
+
+# Stray generated hotstart binaries (tracked fixtures elsewhere are exempt by exact path)
+/tests/unit/legacy/engine/data/hotstart/site_drainage_model.out
+/tests/unit/legacy/engine/data/hotstart/site_drainage_model.rpt
+/tests/unit/legacy/engine/data/hotstart/site_drainage_model_save_hotstart.out
+/tests/unit/legacy/engine/data/hotstart/site_drainage_model_save_hotstart.rpt
 
