@@ -43,6 +43,15 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
+# PORT v2 (2026-07-31): the uncertainty sidecar is being re-homed onto the
+# explicit-marcher base incrementally (PORT_V2_PREFLIGHT.md). Its 1D sources
+# (uncertainty/*.cpp) and 2D sources (2d/uncertainty/*, 2d/solver/SpectralPrecond2D)
+# are NOT swept by these globs, so they sit inert until wired. The one exception
+# is hydraulics/SpectralCoarse.cpp (caught by hydraulics/*.cpp): it depends on the
+# DW spectral_accel scaffolding that has not been re-applied to this base (and is
+# flagged droppable), so exclude it until/unless that lands.
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "hydraulics/SpectralCoarse.*")
+
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.hpp
