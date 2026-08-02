@@ -323,6 +323,18 @@ cdef class Pollutants:
         cdef int new_idx = swmm_pollutant_index(_h(self._solver), b)
         return Pollutant(self._solver, new_idx)
 
+    def rename(self, key, str new_id) -> None:
+        """Rename the pollutant identified by *key* to *new_id*.
+
+        Name-stored references ([INFLOWS]/[DWF] constituent rows) follow the
+        new name; index-stored ones (co-pollutant, buildup/washoff columns)
+        are positional and unaffected.
+        """
+        cdef int i = _resolve_pollutant(self._solver, key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_pollutant_rename(_h(self._solver), i, b))
+        self._solver._bump_generation()
+
     # ---- Runtime quality injection (node + link) -----------------
 
     def set_node_quality(self, node, pollutant, double conc) -> None:

@@ -13,7 +13,8 @@
  *   RAINGAGES, SUBCATCHMENTS, SUBAREAS, INFILTRATION,
  *   JUNCTIONS, OUTFALLS, DIVIDERS, STORAGE, CONDUITS, PUMPS, ORIFICES,
  *   WEIRS, OUTLETS, XSECTIONS, LOSSES, TRANSECTS, STREETS, INLETS,
- *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, BUILDUP, WASHOFF, TREATMENT,
+ *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, COVERAGES, BUILDUP, WASHOFF,
+ *   LOADINGS, TREATMENT,
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES,
  *   MAP, COORDINATES, VERTICES, Polygons, SYMBOLS,
  *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
@@ -1486,6 +1487,28 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.landuses.sweep_interval[u],ctx.landuses.sweep_removal[u],ctx.landuses.last_swept[u]);
     }}
 
+    // [COVERAGES] — percent of each subcatchment covered by each land use
+    // (stored verbatim in percent, matching handle_coverages). Zero rows
+    // are skipped: absent coverage rows parse back to 0.
+    if(ctx.subcatches.coverage_n_landuses>0&&ctx.n_subcatches()>0){
+    const int nLu=ctx.subcatches.coverage_n_landuses;
+    bool any=false;
+    for(std::size_t i=0;i<ctx.subcatches.coverage.size()&&!any;++i)
+        if(ctx.subcatches.coverage[i]!=0.0)any=true;
+    if(any){sec(f,"COVERAGES");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","Subcatchment","LandUse","Percent");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","----------------","----------------","----------");
+    for(int s=0;s<ctx.n_subcatches();++s){
+    for(int lu=0;lu<nLu;++lu){
+    auto idx=static_cast<size_t>(s)*static_cast<size_t>(nLu)+static_cast<size_t>(lu);
+    if(idx>=ctx.subcatches.coverage.size())break;
+    const double pct=ctx.subcatches.coverage[idx];
+    if(pct==0.0)continue;
+    std::fprintf(f,"%-16s %-16s %10.4f\n",
+        ctx.subcatch_names.name_of(s).c_str(),
+        ctx.landuse_names.name_of(lu).c_str(),pct);
+    }}}}
+
     // [BUILDUP]
     if(ctx.buildup.n_landuses>0&&ctx.buildup.n_pollutants>0){sec(f,"BUILDUP");
     std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n","LandUse","Pollutant","FuncType","Coeff1","Coeff2","Coeff3","PerUnit");
@@ -1519,6 +1542,27 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.washoff.coeff[idx],ctx.washoff.expon[idx],
         ctx.washoff.sweep_effic[idx],ctx.washoff.bmp_effic[idx]);
     }}}
+
+    // [LOADINGS] — initial pollutant buildup per subcatchment (stored in
+    // ctx.subcatches.conc by handle_loadings; see also the object-deletion
+    // re-pack tests). Zero rows are skipped: absent rows parse back to 0.
+    if(ctx.subcatches.conc_n_pollutants>0&&ctx.n_subcatches()>0&&ctx.n_pollutants()>0){
+    const int np=ctx.subcatches.conc_n_pollutants;
+    bool any=false;
+    for(std::size_t i=0;i<ctx.subcatches.conc.size()&&!any;++i)
+        if(ctx.subcatches.conc[i]!=0.0)any=true;
+    if(any){sec(f,"LOADINGS");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","Subcatchment","Pollutant","Buildup");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","----------------","----------------","----------");
+    for(int s=0;s<ctx.n_subcatches();++s){
+    for(int p=0;p<np&&p<ctx.n_pollutants();++p){
+    auto idx=static_cast<size_t>(s)*static_cast<size_t>(np)+static_cast<size_t>(p);
+    if(idx>=ctx.subcatches.conc.size())break;
+    const double w=ctx.subcatches.conc[idx];
+    if(w==0.0)continue;
+    std::fprintf(f,"%-16s %-16s %10.4f\n",
+        ctx.subcatch_names.name_of(s).c_str(),pN(ctx,p),w);
+    }}}}
 
     // [TREATMENT]
     if(ctx.treatment.hasAny()){sec(f,"TREATMENT");

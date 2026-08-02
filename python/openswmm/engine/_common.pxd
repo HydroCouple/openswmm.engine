@@ -481,6 +481,10 @@ cdef extern from "openswmm_subcatchments.h":
     # Coverage
     cdef int swmm_subcatch_set_coverage(SWMM_Engine e, int sc_idx, int lu_idx, double fraction)
     cdef int swmm_subcatch_get_coverage(SWMM_Engine e, int sc_idx, int lu_idx, double* fraction)
+    cdef int swmm_subcatch_get_coverages(SWMM_Engine e, int sc_idx, double* out, int n)
+    # Initial pollutant loadings ([LOADINGS])
+    cdef int swmm_subcatch_set_initial_loading(SWMM_Engine e, int sc_idx, int pollut_idx, double buildup)
+    cdef int swmm_subcatch_get_initial_loading(SWMM_Engine e, int sc_idx, int pollut_idx, double* buildup)
     # Hydraulic state
     cdef int swmm_subcatch_get_runoff(SWMM_Engine e, int idx, double* runoff)
     cdef int swmm_subcatch_get_groundwater(SWMM_Engine e, int idx, double* gw)
@@ -612,6 +616,7 @@ cdef extern from "openswmm_pollutants.h":
     cdef const char* swmm_pollutant_id(SWMM_Engine e, int idx)
     # Creation
     cdef int swmm_pollutant_add(SWMM_Engine e, const char* id, int units)
+    cdef int swmm_pollutant_rename(SWMM_Engine e, int idx, const char* new_id)
     # Property setters
     cdef int swmm_pollutant_set_units(SWMM_Engine e, int idx, int units)
     cdef int swmm_pollutant_set_kdecay(SWMM_Engine e, int idx, double k)
@@ -826,6 +831,7 @@ cdef extern from "openswmm_quality.h":
     cdef int         swmm_landuse_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_landuse_id(SWMM_Engine e, int idx)
     cdef int swmm_landuse_add(SWMM_Engine e, const char* id)
+    cdef int swmm_landuse_rename(SWMM_Engine e, int idx, const char* new_id)
     cdef int swmm_landuse_set_sweep_interval(SWMM_Engine e, int idx, double days)
     cdef int swmm_landuse_get_sweep_interval(SWMM_Engine e, int idx, double* days)
     cdef int swmm_landuse_set_sweep_removal(SWMM_Engine e, int idx, double frac)
@@ -846,6 +852,8 @@ cdef extern from "openswmm_quality.h":
     cdef int swmm_treatment_set(SWMM_Engine e, int node_idx, int pollut_idx, const char* expression)
     cdef int swmm_treatment_get(SWMM_Engine e, int node_idx, int pollut_idx, char* buf, int buflen)
     cdef int swmm_treatment_clear(SWMM_Engine e, int node_idx, int pollut_idx)
+    cdef int swmm_treatment_validate_expression(SWMM_Engine e, const char* expr,
+                                                 char* errbuf, int buflen, int* col_out)
 
 cdef extern from "openswmm_statistics.h":
     # Node

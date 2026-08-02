@@ -351,6 +351,16 @@ void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lin
     const int n_pollutants = ctx.pollutant_names.size();
     if (n_pollutants <= 0) return;
 
+    // Size the quality arrays now (iteration 4): they used to be sized only
+    // by PostParseResolver AFTER the handlers ran, so the `flat < size()`
+    // guard below silently dropped every [LOADINGS] row.
+    const int n_sub = ctx.subcatch_names.size();
+    if (n_sub > 0 &&
+        (ctx.subcatches.conc_n_pollutants != n_pollutants ||
+         static_cast<int>(ctx.subcatches.conc.size()) != n_sub * n_pollutants)) {
+        ctx.subcatches.resize_quality(n_pollutants);
+    }
+
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.size() < 3) continue;

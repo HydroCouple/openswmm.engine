@@ -200,6 +200,7 @@ add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
+add_gtest_unit(test_engine_quality_roundtrip test_quality_roundtrip.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 add_gtest_unit(test_engine_tags           test_tags.cpp)
 # Engine gaps BN-LINK-01a / -01b — symmetric getters for initial-flow /
