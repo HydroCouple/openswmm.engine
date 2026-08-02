@@ -1,0 +1,111 @@
+[TITLE]
+;;Ideal-pump fixture — a pump whose [PUMPS] curve column is "*".
+;;"*" is the legacy placeholder for "no pump curve" (an IDEAL pump whose flow
+;;equals its inlet node's inflow, legacy link.c:1437 / pump_validate). The .inp
+;;writer emits "*" for an unset curve, so this file is also what a GUI save of
+;;an ideal pump produces — parsing it back must not raise ERROR 209.
+;;P_IDEAL uses "*"; P_CURVE carries a real PUMP4 curve as the control case.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             02:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         30
+RULE_STEP            00:00:00
+
+INERTIAL_DAMPING     PARTIAL
+NORMAL_FLOW_LIMITED  BOTH
+FORCE_MAIN_EQUATION  H-W
+VARIABLE_STEP        0
+LENGTHENING_STEP     0
+MIN_SURFAREA         1.0
+MAX_TRIALS           8
+HEAD_TOLERANCE       0.0015
+SYS_FLOW_TOL         5
+LAT_FLOW_TOL         5
+MINIMUM_STEP         0.5
+THREADS              1
+IGNORE_SNOWMELT      YES
+IGNORE_QUALITY       YES
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+JIDEAL  95    10        0          0         0
+JCURVE  95    10        0          0         0
+
+[OUTFALLS]
+;;Name   Elevation  Type  Stage Data  Gated
+OIDEAL   90         FREE              NO
+OCURVE   90         FREE              NO
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape        p1  p2  p3  SurDepth
+WIDEAL  80    15        2          FUNCTIONAL   0   0   400  0
+WCURVE  80    15        2          FUNCTIONAL   0   0   400  0
+
+[PUMPS]
+;;Name    FromNode  ToNode   PumpCurve  Status  Startup  Shutoff
+P_IDEAL   WIDEAL    JIDEAL   *          ON      0        0
+P_CURVE   WCURVE    JCURVE   PC4        ON      0        0
+
+[CURVES]
+;;Name  Type    Depth  Flow
+PC4     Pump4   0      0
+PC4             5      4
+PC4             15     8
+
+[CONDUITS]
+;;Name   From    To      Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
+CIDEAL   JIDEAL  OIDEAL  200     0.013      0         0          0         0
+CCURVE   JCURVE  OCURVE  200     0.013      0         0          0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+CIDEAL  CIRCULAR  2.0    0      0      0      1
+CCURVE  CIRCULAR  2.0    0      0      0      1
+
+[INFLOWS]
+;;Node   Constituent  Time Series  Type  Mfactor  Sfactor  Baseline  Pattern
+WIDEAL   FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+WCURVE   FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+
+[TIMESERIES]
+;;Name       Date  Time   Value
+INFLOW_TS          0:00   5.0
+INFLOW_TS          2:00   5.0
+
+[REPORT]
+INPUT      NO
+CONTROLS   NO
+NODES      ALL
+LINKS      ALL
+
+[MAP]
+DIMENSIONS 0 0 1000 1000
+UNITS      None
+
+[COORDINATES]
+;;Node           X-Coord            Y-Coord
+WIDEAL           0                  0
+JIDEAL           100                0
+OIDEAL           200                0
+WCURVE           0                  100
+JCURVE           100                100
+OCURVE           200                100
