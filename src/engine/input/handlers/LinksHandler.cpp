@@ -93,8 +93,13 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
         const auto upr = static_cast<std::size_t>(pr);
         ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
-        // tok[3]: pump curve name — store for deferred resolution
-        if (tok.size() > 3) {
+        // tok[3]: pump curve name — store for deferred resolution.
+        // "*" is the ideal-pump placeholder (legacy pump_readParams,
+        // link.c:1437), not a curve name: leave curve at -1 so the pump is
+        // typed IDEAL (curve_type 6) instead of raising ERR_NAME on a lookup
+        // of "*". The .inp writer emits "*" for an unset curve, so rejecting
+        // it here broke the save/re-open round-trip for ideal pumps.
+        if (tok.size() > 3 && tok[3] != "*") {
             ctx.links.pump_curve_name[idx] = tok[3];
             ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(tok[3]);
         }

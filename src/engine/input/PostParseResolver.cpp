@@ -906,7 +906,11 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (pr < 0) continue;
         const auto upr = static_cast<std::size_t>(pr);
         if (ctx.link_subtypes.pumps.curve[upr] >= 0) continue; // already resolved
-        if (ctx.links.pump_curve_name[uj].empty()) continue;
+        // Empty or "*" means no curve — an IDEAL pump (legacy link.c:1437).
+        // "*" can still arrive here from the GeoPackage reader / API, which
+        // store the raw name.
+        if (ctx.links.pump_curve_name[uj].empty() ||
+            ctx.links.pump_curve_name[uj] == "*") continue;
         ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
         if (ctx.link_subtypes.pumps.curve[upr] < 0)
             ctx.errors.push_back(format_error(ERR_NAME, ctx.links.pump_curve_name[uj]));
