@@ -268,15 +268,61 @@ protected:
             ctx.pollutants.units.resize(n);
             ctx.pollutants.c_rain.resize(n);
             ctx.pollutants.c_gw.resize(n);
+            ctx.pollutants.c_rdii.resize(n);
+            ctx.pollutants.c_dwf.resize(n);
+            ctx.pollutants.init_conc.resize(n);
             ctx.pollutants.k_decay.resize(n);
             ctx.pollutants.snow_only.resize(n);
             ctx.pollutants.co_pollut.resize(n, -1);
             ctx.pollutants.co_frac.resize(n);
 
             ctx.pollutants.units[idx] = MassUnits::MG_PER_L;
-            ctx.pollutants.c_rain[idx] = 0.0;
-            ctx.pollutants.c_gw[idx] = 0.0;
-            ctx.pollutants.k_decay[idx] = 0.0;
+            ctx.pollutants.c_rain[idx] = 12.5;
+            ctx.pollutants.c_gw[idx] = 1.25;
+            // Iteration 4 — the three previously-dropped fields.
+            ctx.pollutants.c_rdii[idx] = 2.5;
+            ctx.pollutants.c_dwf[idx] = 3.5;
+            ctx.pollutants.init_conc[idx] = 4.5;
+            ctx.pollutants.k_decay[idx] = 0.1;
+        }
+
+        // --- LAND USES + BUILDUP + WASHOFF + COVERAGES + LOADINGS ---
+        // (iteration 4 — these tables were previously .gpkg-lossy)
+        {
+            ctx.landuse_names.add("Res");
+            ctx.landuse_names.add("Com");
+            ctx.landuses.resize(2);
+            ctx.landuses.sweep_interval[0] = 7.0;
+            ctx.landuses.sweep_removal[0]  = 0.5;
+            ctx.landuses.last_swept[0]     = 2.0;
+            ctx.landuses.sweep_interval[1] = 14.0;
+
+            ctx.buildup.resize(2, 1);
+            ctx.buildup.func_type[0] = 1;    // Res/TSS POW
+            ctx.buildup.coeff1[0] = 100.0;
+            ctx.buildup.coeff2[0] = 2.0;
+            ctx.buildup.coeff3[0] = 1.5;
+            ctx.buildup.normalizer[0] = 0;   // AREA
+            ctx.buildup.func_type[1] = 3;    // Com/TSS SAT
+            ctx.buildup.coeff1[1] = 50.0;
+            ctx.buildup.normalizer[1] = 1;   // CURB
+
+            ctx.washoff.resize(2, 1);
+            ctx.washoff.func_type[0] = 1;    // Res/TSS EXP
+            ctx.washoff.coeff[0] = 0.1;
+            ctx.washoff.expon[0] = 1.2;
+            ctx.washoff.sweep_effic[0] = 30.0;
+            ctx.washoff.bmp_effic[0] = 15.0;
+
+            ctx.subcatches.resize_coverage(2, 2);
+            ctx.subcatches.coverage[0 * 2 + 0] = 60.0;   // S1/Res
+            ctx.subcatches.coverage[0 * 2 + 1] = 40.0;   // S1/Com
+            ctx.subcatches.coverage[1 * 2 + 0] = 25.0;   // S2/Res
+            ctx.subcatches.sweep_last_swept[0 * 2 + 0] = 1.0;
+
+            ctx.subcatches.resize_quality(1);
+            ctx.subcatches.conc[0 * 1 + 0] = 1.5;        // S1/TSS loading
+            ctx.subcatches.conc[1 * 1 + 0] = 2.25;       // S2/TSS loading
         }
 
         // --- PATTERNS ---
@@ -1042,6 +1088,67 @@ TEST_F(GeoPackageTest, PollutantsRoundTrip) {
     int tss = ctx_in.pollutant_names.find("TSS");
     ASSERT_GE(tss, 0);
     EXPECT_EQ(ctx_in.pollutants.units[tss], MassUnits::MG_PER_L);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_rain[tss], 12.5);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_gw[tss], 1.25);
+    // Iteration 4 — Crdii/Cdwf/Cinit no longer drop on a .gpkg round-trip.
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_rdii[tss], 2.5);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_dwf[tss], 3.5);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.init_conc[tss], 4.5);
+}
+
+TEST_F(GeoPackageTest, QualityTablesRoundTrip) {
+    // Iteration 4 — landuses / buildup / washoff / coverages / loadings.
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    ASSERT_EQ(ctx_in.landuse_names.size(), 2);
+    const int res = ctx_in.landuse_names.find("Res");
+    const int com = ctx_in.landuse_names.find("Com");
+    ASSERT_GE(res, 0);
+    ASSERT_GE(com, 0);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.sweep_interval[res], 7.0);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.sweep_removal[res], 0.5);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.last_swept[res], 2.0);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.sweep_interval[com], 14.0);
+
+    const int np = ctx_in.pollutant_names.size();
+    ASSERT_EQ(np, 1);
+    ASSERT_EQ(ctx_in.buildup.n_landuses, 2);
+    ASSERT_EQ(ctx_in.buildup.n_pollutants, 1);
+    EXPECT_EQ(ctx_in.buildup.func_type[res * np + 0], 1);      // POW
+    EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff1[res * np + 0], 100.0);
+    EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff2[res * np + 0], 2.0);
+    EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff3[res * np + 0], 1.5);
+    EXPECT_EQ(ctx_in.buildup.normalizer[res * np + 0], 0);
+    EXPECT_EQ(ctx_in.buildup.func_type[com * np + 0], 3);      // SAT
+    EXPECT_EQ(ctx_in.buildup.normalizer[com * np + 0], 1);
+
+    ASSERT_EQ(ctx_in.washoff.n_landuses, 2);
+    EXPECT_EQ(ctx_in.washoff.func_type[res * np + 0], 1);      // EXP
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.coeff[res * np + 0], 0.1);
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.expon[res * np + 0], 1.2);
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.sweep_effic[res * np + 0], 30.0);
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.bmp_effic[res * np + 0], 15.0);
+    EXPECT_EQ(ctx_in.washoff.func_type[com * np + 0], 0);      // NONE
+
+    const int s1 = ctx_in.subcatch_names.find("S1");
+    const int s2 = ctx_in.subcatch_names.find("S2");
+    ASSERT_GE(s1, 0);
+    ASSERT_GE(s2, 0);
+    const int nLu = ctx_in.subcatches.coverage_n_landuses;
+    ASSERT_EQ(nLu, 2);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s1 * nLu + res], 60.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s1 * nLu + com], 40.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s2 * nLu + res], 25.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s2 * nLu + com], 0.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.sweep_last_swept[s1 * nLu + res], 1.0);
+
+    ASSERT_EQ(ctx_in.subcatches.conc_n_pollutants, 1);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s1 * np + 0], 1.5);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s2 * np + 0], 2.25);
 }
 
 TEST_F(GeoPackageTest, PatternsRoundTrip) {

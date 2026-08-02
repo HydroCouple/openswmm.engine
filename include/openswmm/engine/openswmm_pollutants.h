@@ -62,6 +62,21 @@ SWMM_ENGINE_API const char* swmm_pollutant_id(SWMM_Engine engine, int idx);
  */
 SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int units);
 
+/**
+ * @brief Rename a pollutant in place.
+ *
+ * @details Updates the name registry and every name-stored reference:
+ *          [INFLOWS]/[DWF] rows keyed by constituent name follow the new
+ *          name. Index-stored references (co-pollutant, LID removals,
+ *          buildup/washoff columns) are positional and unaffected.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based pollutant index.
+ * @param new_id  New unique name (non-empty).
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM on empty/duplicate name.
+ */
+SWMM_ENGINE_API int swmm_pollutant_rename(SWMM_Engine engine, int idx, const char* new_id);
+
 /* =========================================================================
  * Property setters (BUILDING or OPENED)
  * ========================================================================= */

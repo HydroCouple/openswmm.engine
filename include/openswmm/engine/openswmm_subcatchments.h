@@ -399,28 +399,74 @@ SWMM_ENGINE_API int swmm_subcatch_get_stat_max_runoff(SWMM_Engine engine, int id
  * ========================================================================= */
 
 /**
- * @brief Set the land use coverage fraction for a subcatchment.
+ * @brief Set the land use coverage percent for a subcatchment.
  *
- * @details Assigns what fraction of a subcatchment's area is covered by
+ * @details Assigns what percent of a subcatchment's area is covered by
  *          a particular land use category (for buildup/washoff modeling).
+ *          Stored and reported verbatim in PERCENT (0–100), matching the
+ *          [COVERAGES] .inp convention.
  *
  * @param engine    Engine handle.
  * @param sc_idx    Zero-based subcatchment index.
  * @param lu_idx    Zero-based land use index.
- * @param fraction  Coverage fraction (0–1).
+ * @param fraction  Coverage in percent (0–100).
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_coverage(SWMM_Engine engine, int sc_idx, int lu_idx, double fraction);
 
 /**
- * @brief Get the land use coverage fraction for a subcatchment.
+ * @brief Get the land use coverage percent for a subcatchment.
  * @param engine          Engine handle.
  * @param sc_idx          Zero-based subcatchment index.
  * @param lu_idx          Zero-based land use index.
- * @param[out] fraction   Receives the coverage fraction (0–1).
+ * @param[out] fraction   Receives the coverage in percent (0–100).
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_coverage(SWMM_Engine engine, int sc_idx, int lu_idx, double* fraction);
+
+/**
+ * @brief Get all land use coverage percents for a subcatchment in one call.
+ *
+ * @details Bulk peer of swmm_subcatch_get_coverage for grid editors: fills
+ *          out[0..n-1] with the coverage percent for land uses 0..n-1.
+ *          n must not exceed the engine's land use count.
+ *
+ * @param engine   Engine handle.
+ * @param sc_idx   Zero-based subcatchment index.
+ * @param[out] out Caller-owned array receiving n percents (0–100).
+ * @param n        Number of land uses to fetch (array capacity).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_coverages(SWMM_Engine engine, int sc_idx, double* out, int n);
+
+/* =========================================================================
+ * Initial pollutant loadings ([LOADINGS])
+ * ========================================================================= */
+
+/**
+ * @brief Set the initial pollutant buildup on a subcatchment.
+ *
+ * @details The [LOADINGS] value: initial buildup mass per unit area
+ *          (normalizer units) present at the simulation start, overriding
+ *          the DRY_DAYS-derived buildup for the pollutant.
+ *
+ * @param engine      Engine handle.
+ * @param sc_idx      Zero-based subcatchment index.
+ * @param pollut_idx  Zero-based pollutant index.
+ * @param buildup     Initial buildup (mass per unit area).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double buildup);
+
+/**
+ * @brief Get the initial pollutant buildup on a subcatchment.
+ * @param engine         Engine handle.
+ * @param sc_idx         Zero-based subcatchment index.
+ * @param pollut_idx     Zero-based pollutant index.
+ * @param[out] buildup   Receives the initial buildup (mass per unit area).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double* buildup);
 
 /* =========================================================================
  * Hydraulic state getters

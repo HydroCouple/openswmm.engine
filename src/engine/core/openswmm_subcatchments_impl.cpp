@@ -459,6 +459,68 @@ SWMM_ENGINE_API int swmm_subcatch_get_coverage(SWMM_Engine engine, int sc_idx, i
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_subcatch_get_coverages(SWMM_Engine engine, int sc_idx, double* out, int n) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    CHECK_INDEX(n >= 0 && n <= ctx.n_landuses());
+    if (!out) return SWMM_ERR_BADPARAM;
+
+    const bool sized = !ctx.subcatches.coverage.empty() &&
+                       ctx.subcatches.coverage_n_landuses == ctx.n_landuses();
+    const auto base = static_cast<std::size_t>(sc_idx) *
+                      static_cast<std::size_t>(ctx.n_landuses());
+    for (int lu = 0; lu < n; ++lu)
+        out[lu] = sized ? ctx.subcatches.coverage[base + static_cast<std::size_t>(lu)]
+                        : 0.0;
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Initial pollutant loadings ([LOADINGS])
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double buildup) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
+
+    // Ensure the quality arrays are sized ([LOADINGS] parks the initial
+    // buildup in subcatches.conc — same storage handle_loadings uses).
+    if (ctx.subcatches.conc_n_pollutants != ctx.n_pollutants() ||
+        static_cast<int>(ctx.subcatches.conc.size()) !=
+            ctx.n_subcatches() * ctx.n_pollutants()) {
+        ctx.subcatches.resize_quality(ctx.n_pollutants());
+    }
+
+    auto k = static_cast<std::size_t>(sc_idx) *
+             static_cast<std::size_t>(ctx.n_pollutants()) +
+             static_cast<std::size_t>(pollut_idx);
+    ctx.subcatches.conc[k] = buildup;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double* buildup) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
+
+    if (ctx.subcatches.conc.empty() ||
+        ctx.subcatches.conc_n_pollutants != ctx.n_pollutants()) {
+        if (buildup) *buildup = 0.0;
+        return SWMM_OK;
+    }
+
+    auto k = static_cast<std::size_t>(sc_idx) *
+             static_cast<std::size_t>(ctx.n_pollutants()) +
+             static_cast<std::size_t>(pollut_idx);
+    if (buildup) *buildup = ctx.subcatches.conc[k];
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Hydraulic state getters
 // ============================================================================

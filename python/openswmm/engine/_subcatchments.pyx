@@ -269,6 +269,54 @@ class CoverageView(MutableMapping):
         return sum(1 for _ in self)
 
 
+class LoadingsView(MutableMapping):
+    """``subcatchment.loadings`` — pollutant-id → initial buildup mapping
+    (the [LOADINGS] section: mass per unit area present at simulation
+    start, overriding DRY_DAYS-derived buildup).
+
+    .. code-block:: python
+
+        s1.loadings["TSS"] = 1.5
+        s1.loadings["Lead"]          # → 0.0 when unset
+    """
+
+    def __init__(self, sub):
+        self._sub = sub
+
+    def __getitem__(self, key):
+        _check_fresh(self._sub)
+        cdef int p = _resolve_pollutant(self._sub._solver, key)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_initial_loading(
+            _h(self._sub._solver), self._sub._index, p, &v))
+        return v
+
+    def __setitem__(self, key, value):
+        _check_fresh(self._sub)
+        cdef int p = _resolve_pollutant(self._sub._solver, key)
+        _check(swmm_subcatch_set_initial_loading(
+            _h(self._sub._solver), self._sub._index, p, float(value)))
+
+    def __delitem__(self, key):
+        raise TypeError(
+            "loading entries can't be deleted; set the value to 0.0 instead")
+
+    def __iter__(self):
+        # Iterate pollutants; yield ids with a nonzero initial loading —
+        # same dense-array semantics as CoverageView.
+        n = swmm_pollutant_count(_h(self._sub._solver))
+        for i in range(n):
+            raw = swmm_pollutant_id(_h(self._sub._solver), i)
+            pid = raw.decode('utf-8') if raw != NULL else ""
+            if not pid:
+                continue
+            if self[pid] != 0.0:
+                yield pid
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
 # =============================================================================
 # Subcatchment wrapper
 # =============================================================================
@@ -283,6 +331,7 @@ cdef class Subcatchment:
     cdef object _stats
     cdef object _infiltration
     cdef object _coverage
+    cdef object _loadings
 
     def __init__(self, solver, int index):
         self._solver = solver
@@ -293,6 +342,7 @@ cdef class Subcatchment:
         self._stats = None
         self._infiltration = None
         self._coverage = None
+        self._loadings = None
 
     # ---- Identity ---------------------------------------------------
 
@@ -818,6 +868,26 @@ cdef class Subcatchment:
         if self._coverage is None:
             self._coverage = CoverageView(self)
         return self._coverage
+
+    def coverages(self) -> list:
+        """All land-use coverage percents in land-use index order (bulk
+        peer of ``coverage[...]`` — one C call instead of one per pair)."""
+        _check_fresh(self)
+        cdef int n = swmm_landuse_count(_h(self._solver))
+        if n <= 0:
+            return []
+        cdef np.ndarray[double, ndim=1] buf = np.zeros(n, dtype=np.float64)
+        _check(swmm_subcatch_get_coverages(
+            _h(self._solver), self._index, <double*>buf.data, n))
+        return buf.tolist()
+
+    @property
+    def loadings(self) -> LoadingsView:
+        """``subcatchment.loadings`` — pollutant-id → initial buildup
+        ([LOADINGS]) mapping."""
+        if self._loadings is None:
+            self._loadings = LoadingsView(self)
+        return self._loadings
 
     # ---- Equality / repr ------------------------------------------
 

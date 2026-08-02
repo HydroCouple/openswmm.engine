@@ -642,7 +642,14 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.pollutants.resize_pollutants(n_polluts);
         ctx.nodes.resize_quality(n_polluts);
         ctx.links.resize_quality(n_polluts);
-        ctx.subcatches.resize_quality(n_polluts);
+        // Guarded (iteration 4): resize_quality() zero-fills, and the
+        // subcatchment conc array already carries the [LOADINGS] initial
+        // buildup parsed by handle_loadings — an unconditional call here
+        // wiped it. Same rationale as the pollutant-definition guard above.
+        if (ctx.subcatches.conc_n_pollutants != n_polluts ||
+            static_cast<int>(ctx.subcatches.conc.size()) !=
+                n_subcatch * n_polluts)
+            ctx.subcatches.resize_quality(n_polluts);
         ctx.nodes.resize_loads(n_polluts);
         ctx.links.resize_loads(n_polluts);
     }

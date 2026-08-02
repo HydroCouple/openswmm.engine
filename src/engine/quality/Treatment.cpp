@@ -324,6 +324,189 @@ int parse(const std::string& expr_str, TreatExpr& result) {
 }
 
 // ============================================================================
+// Validation — diagnostic peer of parse() for editors
+// ============================================================================
+
+int validate(const std::string& expr_str, std::string& msg, int& col) {
+    msg.clear();
+    col = -1;
+
+    auto fail = [&](std::string m, int c) {
+        msg = std::move(m);
+        col = c;
+        return -1;
+    };
+
+    if (expr_str.empty())
+        return fail("expression is empty", 0);
+
+    const size_t eq_pos = expr_str.find('=');
+    if (eq_pos == std::string::npos)
+        return fail("missing '=' — expression must have the form "
+                    "\"R = ...\" or \"C = ...\"", 0);
+
+    // --- LHS: exactly R or C ------------------------------------------------
+    std::string lhs = expr_str.substr(0, eq_pos);
+    const size_t lhs_start = lhs.find_first_not_of(" \t\r\n");
+    if (lhs_start == std::string::npos)
+        return fail("left-hand side must be 'R' (removal) or "
+                    "'C' (concentration)", 0);
+    const size_t lhs_end = lhs.find_last_not_of(" \t\r\n");
+    lhs = lhs.substr(lhs_start, lhs_end - lhs_start + 1);
+    const char lc = static_cast<char>(
+        std::toupper(static_cast<unsigned char>(lhs[0])));
+    if (lhs.size() != 1 || (lc != 'R' && lc != 'C'))
+        return fail("left-hand side must be exactly 'R' or 'C', got '"
+                        + lhs + "'",
+                    static_cast<int>(lhs_start));
+
+    // --- RHS: strict scan with positions ------------------------------------
+    // Stricter than tokenize(): unknown characters are an error here rather
+    // than silently skipped, so the editor's verdict matches what the
+    // engine will actually evaluate.
+    const std::string rhs = expr_str.substr(eq_pos + 1);
+    const int rhs_off = static_cast<int>(eq_pos) + 1;
+
+    std::vector<Token> tokens;
+    size_t i = 0;
+    while (i < rhs.size()) {
+        const char c = rhs[i];
+        if (std::isspace(static_cast<unsigned char>(c))) { ++i; continue; }
+
+        if (std::isdigit(static_cast<unsigned char>(c)) || c == '.') {
+            const size_t start = i;
+            while (i < rhs.size() &&
+                   (std::isdigit(static_cast<unsigned char>(rhs[i])) ||
+                    rhs[i] == '.' || rhs[i] == 'e' || rhs[i] == 'E' ||
+                    ((rhs[i] == '+' || rhs[i] == '-') && i > 0 &&
+                     (rhs[i-1] == 'e' || rhs[i-1] == 'E'))))
+                ++i;
+            Token t;
+            t.type = TokenType::NUMBER;
+            try {
+                t.value = std::stod(rhs.substr(start, i - start));
+            } catch (...) {
+                return fail("malformed number '" + rhs.substr(start, i - start)
+                                + "'",
+                            rhs_off + static_cast<int>(start));
+            }
+            tokens.push_back(t);
+            continue;
+        }
+
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+            const size_t start = i;
+            while (i < rhs.size() &&
+                   (std::isalnum(static_cast<unsigned char>(rhs[i])) ||
+                    rhs[i] == '_'))
+                ++i;
+            const std::string word = rhs.substr(start, i - start);
+
+            std::string lower = word;
+            for (auto& ch : lower)
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            auto fit = func_map.find(lower);
+            if (fit != func_map.end()) {
+                Token t; t.type = fit->second; tokens.push_back(t);
+                continue;
+            }
+
+            std::string upper = word;
+            for (auto& ch : upper)
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            auto vit = var_map.find(upper);
+            if (vit != var_map.end()) {
+                Token t; t.type = TokenType::VARIABLE; t.var = vit->second;
+                tokens.push_back(t);
+                continue;
+            }
+
+            if (upper.size() > 2 && upper[1] == '_' &&
+                (upper[0] == 'R' || upper[0] == 'C'))
+                return fail("co-pollutant reference '" + word
+                                + "' is not supported here",
+                            rhs_off + static_cast<int>(start));
+
+            return fail("unknown identifier '" + word
+                            + "' (variables: C R DT HRT Q V D AREA; "
+                              "functions: exp log ln sqrt min max abs sgn step)",
+                        rhs_off + static_cast<int>(start));
+        }
+
+        Token t;
+        switch (c) {
+            case '+': t.type = TokenType::ADD; break;
+            case '-':
+                t.type = (tokens.empty() ||
+                          tokens.back().type == TokenType::LPAREN ||
+                          isOperator(tokens.back().type) ||
+                          tokens.back().type == TokenType::COMMA)
+                             ? TokenType::NEG : TokenType::SUB;
+                break;
+            case '*': t.type = TokenType::MUL; break;
+            case '/': t.type = TokenType::DIV; break;
+            case '^': t.type = TokenType::POW; break;
+            case '(': t.type = TokenType::LPAREN; break;
+            case ')': t.type = TokenType::RPAREN; break;
+            case ',': t.type = TokenType::COMMA; break;
+            default:
+                return fail(std::string("unexpected character '") + c + "'",
+                            rhs_off + static_cast<int>(i));
+        }
+        tokens.push_back(t);
+        ++i;
+    }
+
+    if (tokens.empty())
+        return fail("missing right-hand side after '='",
+                    rhs_off);
+
+    // --- Structure: parens/commas + operator/function arity -----------------
+    std::vector<Token> postfix;
+    if (shuntingYard(tokens, postfix) != 0)
+        return fail("mismatched parentheses or misplaced comma", -1);
+
+    int depth = 0;
+    for (const auto& t : postfix) {
+        switch (t.type) {
+            case TokenType::NUMBER:
+            case TokenType::VARIABLE:
+                ++depth;
+                break;
+            case TokenType::NEG:
+            case TokenType::FUNC_EXP: case TokenType::FUNC_LOG:
+            case TokenType::FUNC_SQRT: case TokenType::FUNC_ABS:
+            case TokenType::FUNC_SGN: case TokenType::FUNC_STEP:
+                if (depth < 1)
+                    return fail("function or operator is missing its operand",
+                                -1);
+                break;   // pop 1, push 1
+            case TokenType::FUNC_MIN: case TokenType::FUNC_MAX:
+            case TokenType::ADD: case TokenType::SUB:
+            case TokenType::MUL: case TokenType::DIV:
+            case TokenType::POW:
+                if (depth < 2)
+                    return fail("operator or min/max is missing an operand",
+                                -1);
+                --depth; // pop 2, push 1
+                break;
+            default:
+                return fail("internal: unexpected token in parsed expression",
+                            -1);
+        }
+    }
+    if (depth != 1)
+        return fail("incomplete expression", -1);
+
+    // --- Drift guard: the production parser must agree ----------------------
+    TreatExpr probe;
+    if (parse(expr_str, probe) != 0)
+        return fail("invalid expression", -1);
+
+    return 0;
+}
+
+// ============================================================================
 // Evaluator — postfix stack machine
 // ============================================================================
 
