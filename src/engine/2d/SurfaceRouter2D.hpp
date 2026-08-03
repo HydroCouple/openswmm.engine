@@ -297,6 +297,13 @@ private:
     /// registry indices on the first advance (ctx.table_names is populated by
     /// then), not at parse time.
     bool boundary_names_resolved_ = false;
+
+    /// Project-display-units → SI factor for SPECIFIED_STAGE boundary heads
+    /// (0.3048 for US FLOW_UNITS with a non-SI mesh file, else 1.0). Set in
+    /// initialize() alongside the mesh scaling; applied once to constant
+    /// heads after drainPendingRows() and at every TS lookup in
+    /// resolveBoundaryValues().
+    double bc_stage_scale_ = 1.0;
 #ifdef OPENSWMM_HAS_2D
     /// Time integrator, chosen at runtime: the serial ExplicitInertialSolver,
     /// or the Kokkos marcher plugin when installed/eligible (constructed in
