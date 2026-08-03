@@ -394,6 +394,43 @@ private:
     std::vector<uint8_t> csr_is_n2_;         ///< 0 = node1 end, 1 = node2 end
     std::vector<uint8_t> csr_other_outfall_; ///< other-end node is an OUTFALL
 
+    // ------------------------------------------------------------------------
+    // Virtual junctions — zero-storage, momentum-transmitting pair nodes
+    // (see plans/VIRTUAL_JUNCTION_IMPLEMENTATION_PLAN.md). vjunc_ is empty for
+    // models without [VIRTUAL_JUNCTIONS]; every hot-loop hook below is gated
+    // on that emptiness so VJ-free models compile down to the original paths.
+    // ------------------------------------------------------------------------
+    struct VJuncPair {
+        int node    = -1;             ///< virtual junction node index
+        int link_a  = -1, link_b = -1;///< the two attached conduits (any orientation)
+        int up_link = -1, dn_link = -1;///< through orientation (node2(up)==node, node1(dn)==node)
+        uint8_t through = 0;          ///< 1 when a through orientation exists (not a sag/peak pair)
+        double lambda = 0.0;          ///< (L_a + L_b) / 2 — interface control-volume span
+
+        // Per-Picard-iteration cache (filled by vjPrepareIteration):
+        double  sigma_j  = 1.0;       ///< shared junction sigma from through-flow Froude
+        double  a_up_mid = 0.0;       ///< up-link mid area (cross-junction upwind state)
+        double  r_up_mid = 0.0;       ///< up-link mid hyd. radius (upwind state)
+        double  dq4j     = 0.0;       ///< cross-junction convective correction (FULL mode)
+        uint8_t active   = 0;         ///< pair coupling live this iteration (wet through pair)
+        uint8_t forward  = 0;         ///< through-flow direction is up→dn this iteration
+
+        // Momentum-residual diagnostic accumulators (whole run):
+        double resid_max = 0.0;
+        double resid_sum = 0.0;
+        long long resid_n = 0;
+    };
+    std::vector<VJuncPair> vjunc_;
+    std::vector<int32_t>   vj_of_link_;  ///< link j → row in vjunc_ (-1 = none)
+
+    /// Build vjunc_ / vj_of_link_ from topology (called from init(), post-CSR).
+    void buildVirtualJunctionPairs(const SimulationContext& ctx);
+    /// Per-Picard-iteration pair cache: shared sigma, upwind states, dq4j.
+    /// Serial (omp single) — pair count is tiny.
+    void vjPrepareIteration(const SimulationContext& ctx, double dt);
+    /// Post-step momentum-residual accumulation into ctx.vj_diag.
+    void vjAccumulateResiduals(SimulationContext& ctx);
+
     // Node-dense tile of the per-node invariants setNodeDepth touches every
     // Picard iteration. setNodeDepth reads ~20 SoA arrays per node; the seven
     // step-invariant ones below otherwise cost seven separate cache streams
@@ -413,6 +450,7 @@ private:
         int32_t degree;
         uint8_t is_storage;
         uint8_t is_outfall;
+        uint8_t is_virtual;    ///< zero-storage virtual junction (see vjunc_)
     };
     std::vector<NodeTile> node_tile_;
     // Unit system for node volume/surf-area table dispatch, hoisted from the

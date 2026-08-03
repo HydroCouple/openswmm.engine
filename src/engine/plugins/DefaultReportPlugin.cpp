@@ -1185,6 +1185,37 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
     WRITE(f, "");
 
+    // =====================================================================
+    // Virtual Junction Summary — refactored-engine feature (momentum-
+    // residual diagnostic from DWSolver; see the virtual-junction plan §8).
+    // =====================================================================
+    if (!ctx.vj_diag.node_idx.empty()) {
+        WRITE(f, "***********************");
+        WRITE(f, "Virtual Junction Summary");
+        WRITE(f, "***********************");
+        std::fprintf(f,
+            "\n                        Upstream         Downstream         Momentum Residual (cfs·ft/s)");
+        std::fprintf(f,
+            "\n  Name                 Conduit          Conduit               Maximum          Mean");
+        std::fprintf(f,
+            "\n  ------------------------------------------------------------------------------------");
+        for (std::size_t r = 0; r < ctx.vj_diag.node_idx.size(); ++r) {
+            const int ni = ctx.vj_diag.node_idx[r];
+            const int ju = ctx.vj_diag.up_link[r];
+            const int jd = ctx.vj_diag.dn_link[r];
+            const long long n = ctx.vj_diag.resid_n[r];
+            const double mean = (n > 0)
+                ? ctx.vj_diag.resid_sum[r] / static_cast<double>(n) : 0.0;
+            std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
+                ctx.node_names.name_of(ni).c_str(),
+                (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                ctx.vj_diag.resid_max[r], mean);
+        }
+        WRITE(f, "");
+        WRITE(f, "");
+    }
+
     } // end rpt_flowstats
 
     // =====================================================================

@@ -170,6 +170,19 @@ static const char* ofName(OutfallType t) {
 static bool hasNT(const SimulationContext& c, NodeType t) {
     for(int j=0;j<c.n_nodes();++j) if(c.nodes.type[static_cast<size_t>(j)]==t) return true; return false;
 }
+// Virtual junctions are JUNCTION-typed but emit into [VIRTUAL_JUNCTIONS], not [JUNCTIONS].
+static bool isVirtualNode(const SimulationContext& c, size_t u) {
+    return u < c.nodes.is_virtual.size() && c.nodes.is_virtual[u] != 0;
+}
+static bool hasRegularJunction(const SimulationContext& c) {
+    for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
+        if(c.nodes.type[u]==NodeType::JUNCTION && !isVirtualNode(c,u)) return true;}
+    return false;
+}
+static bool hasVirtualJunction(const SimulationContext& c) {
+    for(int j=0;j<c.n_nodes();++j) if(isVirtualNode(c,static_cast<size_t>(j))) return true;
+    return false;
+}
 static bool hasLT(const SimulationContext& c, LinkType t) {
     for(int j=0;j<c.n_links();++j) if(c.links.type[static_cast<size_t>(j)]==t) return true; return false;
 }
@@ -652,6 +665,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n",  "NODE_CONTINUITY","SEMI_IMPLICIT");
     if (o.anderson_accel)
         std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
+    if (o.virtual_junction_momentum == 1)
+        std::fprintf(f,"%-20s %s\n",  "VIRTUAL_JUNCTION_MOMENTUM", "FULL");
     if (!o.crs.empty())
         std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());
     if (o.write_absolute_paths)
@@ -1097,12 +1112,22 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }
 
     // [JUNCTIONS]
-    if(hasNT(ctx,NodeType::JUNCTION)){sec(f,"JUNCTIONS");
+    if(hasRegularJunction(ctx)){sec(f,"JUNCTIONS");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","Name","Elev","MaxDepth","InitDepth","SurDepth","Aponded");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","----------------","------------","------------","------------","------------","------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::JUNCTION)continue;
+    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::JUNCTION||isVirtualNode(ctx,u))continue;
     write_obj_comment(f, ctx.nodes.comments, u);
     std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],ctx.nodes.sur_depth[u],ctx.nodes.ponded_area[u]);
+    }}
+
+    // [VIRTUAL_JUNCTIONS] — name + invert elevation; all other geometry is
+    // derived from the attached conduits at load time (refactored engine only).
+    if(hasVirtualJunction(ctx)){sec(f,"VIRTUAL_JUNCTIONS");
+    std::fprintf(f,";;%-16s %-12s\n","Name","Elev");
+    std::fprintf(f,";;%-16s %-12s\n","----------------","------------");
+    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(!isVirtualNode(ctx,u))continue;
+    write_obj_comment(f, ctx.nodes.comments, u);
+    std::fprintf(f,"%-16s %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u]);
     }}
 
     // [OUTFALLS]

@@ -318,6 +318,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;
             else if (nc == "SEMI_IMPLICIT") opt.node_continuity = NodeContinuity::SEMI_IMPLICIT;
 
+        } else if (key == "VIRTUAL_JUNCTION_MOMENTUM") {
+            const std::string vm = norm(val);
+            if      (vm == "BASIC") opt.virtual_junction_momentum = 0;
+            else if (vm == "FULL")  opt.virtual_junction_momentum = 1;
+
         } else if (key == "ANDERSON_ACCEL") {
             const std::string av = norm(val);
             opt.anderson_accel = (av == "YES" || av == "TRUE" || av == "1");

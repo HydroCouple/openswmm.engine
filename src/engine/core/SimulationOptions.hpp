@@ -233,6 +233,17 @@ struct SimulationOptions {
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
 
+    /** @brief Virtual-junction momentum treatment: 0=BASIC, 1=FULL.
+     *  @details BASIC applies zero storage, the shared junction sigma and
+     *           cross-junction upwinding; FULL adds the cross-junction
+     *           convective flux correction (dq4_j). Refactored engine only.
+     *  @code
+     *  VIRTUAL_JUNCTION_MOMENTUM  BASIC  ;; default
+     *  VIRTUAL_JUNCTION_MOMENTUM  FULL
+     *  @endcode
+     */
+    int virtual_junction_momentum = 0;
+
     /** @brief Enable Anderson acceleration for Picard iteration convergence.
      *  @details When true, uses depth-2 Anderson mixing to accelerate node
      *           depth convergence, typically reducing iteration count by 25-50%.

@@ -178,6 +178,41 @@ SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, dou
 SWMM_ENGINE_API int swmm_node_get_type(SWMM_Engine engine, int idx, int* type);
 
 /**
+ * @brief Query whether a node is a virtual junction.
+ *
+ * @details A virtual junction is a zero-storage, momentum-transmitting
+ *          JUNCTION-typed node connecting exactly two conduits of identical
+ *          cross-section (INP section [VIRTUAL_JUNCTIONS]; refactored engine
+ *          only).
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based node index.
+ * @param[out] is_virtual  Receives 1 if the node is a virtual junction, else 0.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_is_virtual(SWMM_Engine engine, int idx, int* is_virtual);
+
+/**
+ * @brief Set or clear a node's virtual-junction flag.
+ *
+ * @details Setting runs full validation of the usage rules and applies the
+ *          derived-geometry contract (full depth = pipe crown, zero surcharge
+ *          depth, zero ponded area). Clearing always succeeds for a virtual
+ *          node. BUILDING or OPENED state only.
+ *
+ * @param engine       Engine handle.
+ * @param idx          Zero-based node index (must be a JUNCTION to set).
+ * @param make_virtual 1 to set, 0 to clear.
+ * @returns SWMM_OK on success; SWMM_ERR_LIFECYCLE / SWMM_ERR_BADHANDLE /
+ *          SWMM_ERR_BADINDEX / SWMM_ERR_BADPARAM for generic failures; or a
+ *          distinct rule code on a violated usage rule so callers can render
+ *          actionable messages: 609 = not exactly two conduits, 611 =
+ *          cross-section mismatch, 613 = nonzero offset at the node, 617 =
+ *          a lateral inflow source targets the node.
+ */
+SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_virtual);
+
+/**
  * @brief Get a node's invert elevation.
  * @param engine  Engine handle.
  * @param idx     Zero-based node index.

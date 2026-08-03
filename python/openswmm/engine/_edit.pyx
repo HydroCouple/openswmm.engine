@@ -1088,6 +1088,93 @@ cdef class ModelEditor:
         return _conversion_result_to_py(&res)
 
     # =========================================================================
+    # Virtual junctions — split / fuse / flag (refactored engine only)
+    # =========================================================================
+
+    def set_node_virtual(self, id_or_idx, bint make_virtual=True) -> None:
+        """Set or clear a node's virtual-junction flag.
+
+        A virtual junction is a zero-storage, momentum-transmitting
+        JUNCTION-typed node connecting exactly two conduits of identical
+        cross-section. Setting runs full validation of the usage rules and
+        applies the derived-geometry contract (max depth = pipe crown, zero
+        surcharge depth, zero ponded area); a violated rule raises with the
+        specific rule message. Clearing always succeeds for a virtual node.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @param make_virtual: C{True} to set, C{False} to clear.
+        @type make_virtual: bool
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: On a violated usage rule or C API failure.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        _check(swmm_node_set_virtual(self._handle, idx, 1 if make_virtual else 0))
+
+    def split_conduit(self, id_or_idx, double t, str new_node_name,
+                      str new_link_name, bint make_virtual=False) -> tuple:
+        """Split a conduit at normalized position C{t}, inserting a new node.
+
+        The split point lies at fraction C{t} of the conduit's vertex-aware
+        polyline length (0 < t < 1). The original conduit keeps its name and
+        upstream end and is shortened to t·L; the new conduit carries the
+        remaining length, copies the cross-section, roughness and barrels,
+        and takes over the downstream offset. The break-point invert is
+        interpolated along the conduit gradient and interior vertices are
+        partitioned. With C{make_virtual=True} the inserted node becomes a
+        virtual junction (validation runs; on a rule failure the split still
+        stands as a regular junction and the rule error is raised).
+
+        @param id_or_idx: Conduit name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @param t: Normalized split position, exclusive (0, 1).
+        @type t: float
+        @param new_node_name: Unique name for the inserted node.
+        @type new_node_name: str
+        @param new_link_name: Unique name for the new downstream conduit.
+        @type new_link_name: str
+        @param make_virtual: Flag the inserted node as a virtual junction.
+        @type make_virtual: bool
+        @return: C{(new_node_index, new_link_index)}.
+        @rtype: tuple[int, int]
+        @raise KeyError: If C{id_or_idx} is a name and the link is not found.
+        @raise EngineError: On invalid C{t}, duplicate names, a non-conduit
+            link, or a virtual-junction rule failure.
+        """
+        cdef int idx = self._link_idx(id_or_idx)
+        cdef bytes node_b = new_node_name.encode('utf-8')
+        cdef bytes link_b = new_link_name.encode('utf-8')
+        cdef int new_node = -1
+        cdef int new_link = -1
+        _check(swmm_conduit_split(self._handle, idx, t, node_b, link_b,
+                                  1 if make_virtual else 0,
+                                  &new_node, &new_link))
+        return (new_node, new_link)
+
+    def fuse_virtual_junction(self, id_or_idx) -> int:
+        """Re-fuse the two conduits of a virtual junction into one.
+
+        Inverse of a virtual split: the upstream conduit's name survives,
+        lengths sum, the node coordinate becomes an interior vertex of the
+        merged conduit (map alignment preserved), and the downstream conduit
+        and the node are deleted. Requires a through orientation (one conduit
+        flowing in, one flowing out).
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}) of
+            the virtual junction.
+        @type id_or_idx: int or str
+        @return: Index of the surviving conduit AFTER deletions renumber.
+        @rtype: int
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: If the node is not a two-conduit through virtual
+            junction, or on C API failure.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        cdef int surviving = -1
+        _check(swmm_virtual_junction_fuse(self._handle, idx, &surviving))
+        return surviving
+
+    # =========================================================================
     # Convenience: node / link counts (useful after deletions)
     # =========================================================================
 

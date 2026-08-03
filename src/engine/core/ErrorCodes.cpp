@@ -163,6 +163,13 @@ static const std::unordered_map<int, const char*>& error_table() {
         {603, "Time Series %s contains NaN or Inf values."},
         {605, "column count mismatch in data for %s."},
         {607, "Rain Gage %s references unknown time series."},
+        {609, "Virtual Junction %s must connect exactly two conduits."},
+        {611, "Virtual Junction %s connects conduits with different cross sections."},
+        {613, "Virtual Junction %s has a conduit with a nonzero offset."},
+        {615, "Virtual Junction %s conduit inverts do not agree at the node."},
+        {617, "Virtual Junction %s cannot receive lateral inflow."},
+        {619, "Virtual Junction %s requires DYNWAVE flow routing."},
+        {621, "too many items for Virtual Junction %s."},
     };
     return table;
 }

@@ -1133,6 +1133,31 @@ struct SimulationContext {
     } routing_stats;
 
     // =========================================================================
+    // Virtual-junction diagnostics (refactored engine only)
+    // =========================================================================
+
+    /**
+     * @brief Per-virtual-junction momentum-residual accumulators.
+     *
+     * @details Populated by DWSolver after each converged routing step; the
+     *          residual is the discrete momentum-flux imbalance across the
+     *          pair interface (see VIRTUAL_JUNCTION_IMPLEMENTATION_PLAN.md
+     *          §3.2). Reported in the .rpt Virtual Junction Summary.
+     */
+    struct VJDiag {
+        std::vector<int>       node_idx;   ///< virtual junction node index
+        std::vector<int>       up_link;    ///< upstream conduit (through orientation, -1 sag/peak)
+        std::vector<int>       dn_link;    ///< downstream conduit (-1 sag/peak)
+        std::vector<double>    resid_max;  ///< max |R_j| over the run (cfs·ft/s)
+        std::vector<double>    resid_sum;  ///< Σ|R_j| for mean reporting
+        std::vector<long long> resid_n;    ///< number of accumulated steps
+        void clear() {
+            node_idx.clear(); up_link.clear(); dn_link.clear();
+            resid_max.clear(); resid_sum.clear(); resid_n.clear();
+        }
+    } vj_diag;
+
+    // =========================================================================
     // Control action log — Gap #67
     // Populated by ControlEngine::applyPendingActions() when rpt_controls is on.
     // =========================================================================
@@ -1258,6 +1283,9 @@ struct SimulationContext {
 
         // Clear inflow-related stores that aren't reset by their owning solvers
         rdii_decay = RDIIDecayData{};
+
+        // Virtual-junction diagnostics
+        vj_diag.clear();
 
         // Clear daily climate state (re-initialized by SWMMEngine on next run)
         climate_state = climate::ClimateState{};

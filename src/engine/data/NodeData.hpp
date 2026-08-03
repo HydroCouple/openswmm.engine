@@ -150,6 +150,17 @@ struct NodeData {
      */
     std::vector<double>     ponded_area;
 
+    /**
+     * @brief Virtual-junction flag (0 = regular node, 1 = virtual junction).
+     *
+     * @details A virtual junction is a zero-storage, momentum-transmitting
+     *          JUNCTION connecting exactly two conduits of identical cross
+     *          section (INP section [VIRTUAL_JUNCTIONS]). The NodeType stays
+     *          JUNCTION so the binary .out type-code space is unchanged.
+     *          Refactored engine only — the legacy engine has no support.
+     */
+    std::vector<uint8_t>    is_virtual;
+
     // -----------------------------------------------------------------------
     // Node subtype properties (storage / outfall / divider)
     // -----------------------------------------------------------------------
@@ -600,6 +611,7 @@ struct NodeData {
         init_depth.assign(un, 0.0);
         sur_depth.assign(un, 0.0);
         ponded_area.assign(un, 0.0);
+        is_virtual.assign(un, 0);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.assign(un, 0.0);
@@ -677,6 +689,7 @@ struct NodeData {
         g(type, NodeType::JUNCTION);
         g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
         g(sur_depth, 0.0); g(ponded_area, 0.0);
+        g(is_virtual, static_cast<uint8_t>(0));
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         g(depth, 0.0); g(head, 0.0); g(volume, 0.0);
         g(lat_flow, 0.0); g(user_lat_flow, 0.0);
@@ -724,6 +737,7 @@ struct NodeData {
         auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
 
         e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
+        e(is_virtual);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables;
         // its rows are erased/renumbered by NodeSubtypes::erase_node (called by the
@@ -817,6 +831,7 @@ struct NodeData {
         init_depth.shrink_to_fit();
         sur_depth.shrink_to_fit();
         ponded_area.shrink_to_fit();
+        is_virtual.shrink_to_fit();
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.shrink_to_fit();
