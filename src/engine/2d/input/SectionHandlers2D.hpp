@@ -27,6 +27,7 @@
 #include "../data/SolverOptions2D.hpp"
 #include "../SurfaceRouter2D.hpp"
 #include "../../input/SectionRegistry.hpp"
+#include "../../uncertainty/UncertaintyConfig.hpp"
 
 #include <string>
 #include <vector>
@@ -134,6 +135,53 @@ std::string parse2DEdgeConveyanceLine(
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_rows);
 
 /**
+ * @brief Parse a single line from the `[2D_ROM]` section: scalar surface
+ *        uncertainty ROM configuration.
+ *
+ * Format: `PARAMETER VALUE`, one per line. Recognised parameters:
+ *   ENABLE YES|NO, MEMBERS, MODES, MANNINGS_PERT, RAINFALL_PERT, K_EFF,
+ *   WET_RESEED_FRACTION, WET_RESEED_MIN_INTERVAL, PARAMETRIC_TAILS YES|NO,
+ *   MODE_DROP_THRESHOLD, MANNINGS_CORR_LEN, RAINFALL_CORR_LEN,
+ *   LEGACY_OPERATOR YES|NO, ALPHA_PAR, ALPHA_PERP, C_FACTOR, GROUND_SCALE.
+ *
+ * The last five configure the W3-calibrated reduced deviation operator
+ * (docs/uncertainty/VALIDATION.md "Solver-mode compatibility"); see
+ * SolverOptions2D's own field comments for what each controls and why their
+ * defaults are what they are. ENABLE YES is equivalent to setting any
+ * `[UNCERTAINTY]` 2D-layer source — both end up setting the same
+ * `opts.enable_rom` flag.
+ *
+ * @return Empty string on success, or error description.
+ */
+std::string parse2DROMLine(const std::vector<std::string>& tokens,
+                           SolverOptions2D& opts);
+
+/**
+ * @brief Parse a single line from the `[UNCERTAINTY]` section: one uncertain
+ *        parameter source (PARAMETER_REGISTRY.md §6 grammar).
+ *
+ * Format (new): `LAYER NAME PERT [DIST] [ENTRY]`
+ *   e.g. `2D MANNINGS_N 0.20`, `1D INFLOW 0.30 LOGNORMAL FORCING_VECTOR`
+ * Format (legacy, still accepted): `LAYER NAME DIST PERT`
+ *   e.g. `2D RAINFALL UNIFORM 0.15`
+ * Disambiguated by whether tokens[2] parses as a number.
+ *
+ * LAYER ∈ {2D, 1D, QUALITY}. For a 2D-layer MANNINGS_N/RAINFALL source, this
+ * also sets `opts.enable_rom = true` and the matching scalar perturbation
+ * field — `[UNCERTAINTY]` values override whatever `[2D_ROM]` set for the
+ * same field, since `[UNCERTAINTY]` is normally the later section. 1D and
+ * QUALITY specs are recorded into @p config only; nothing on this base
+ * consumes them yet (the 1D ROM lifecycle is a separate, unstarted track —
+ * recording them now costs nothing and means no re-parse is needed once it
+ * lands).
+ *
+ * @return Empty string on success, or error description.
+ */
+std::string parseUncertaintyLine(const std::vector<std::string>& tokens,
+                                 SolverOptions2D& opts,
+                                 openswmm::uncertainty::UncertaintyConfig& config);
+
+/**
  * @brief True when @p key (case-insensitive) is a [2D_OPTIONS] parameter
  *        accepted by parse2DOptionsLine.
  *
@@ -183,6 +231,7 @@ void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                        openswmm::uncertainty::UncertaintyConfig& uncertainty_config,
                         input::SectionRegistry& registry);
 
 /**

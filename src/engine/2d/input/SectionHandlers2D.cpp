@@ -580,6 +580,252 @@ std::string parse2DEdgeConveyanceLine(
 
 
 // ============================================================================
+// [2D_ROM] — scalar surface uncertainty ROM configuration
+// ============================================================================
+
+std::string parse2DROMLine(const std::vector<std::string>& tokens,
+                           SolverOptions2D& opts) {
+    if (tokens.size() < 2) return "Expected PARAMETER VALUE";
+
+    const auto& key = tokens[0];
+    const auto& val = tokens[1];
+    bool ok = false;
+
+    if (iequals(key, "ENABLE")) {
+        if (iequals(val, "YES") || val == "1")
+            opts.enable_rom = true;
+        else if (iequals(val, "NO") || val == "0")
+            opts.enable_rom = false;
+        else
+            return "Invalid ENABLE value (YES/NO)";
+    } else if (iequals(key, "MEMBERS")) {
+        int v = tryParseInt(val, ok);
+        if (!ok || v < 2) return "MEMBERS must be integer >= 2";
+        opts.rom_members = v;
+    } else if (iequals(key, "MODES")) {
+        int v = tryParseInt(val, ok);
+        if (!ok || v < 1) return "MODES must be integer >= 1";
+        opts.rom_modes = v;
+    } else if (iequals(key, "MANNINGS_PERT")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "MANNINGS_PERT must be >= 0";
+        opts.rom_mannings_pert = v;
+    } else if (iequals(key, "RAINFALL_PERT")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "RAINFALL_PERT must be >= 0";
+        opts.rom_rainfall_pert = v;
+    } else if (iequals(key, "K_EFF")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok) return "Invalid K_EFF value";
+        opts.rom_k_eff = v;   // <= 0 means AUTO
+    } else if (iequals(key, "WET_RESEED_FRACTION")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0 || v > 1.0) return "WET_RESEED_FRACTION must be in [0, 1]";
+        opts.rom_wet_reseed_fraction = v;
+    } else if (iequals(key, "WET_RESEED_MIN_INTERVAL")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "WET_RESEED_MIN_INTERVAL must be >= 0";
+        opts.rom_wet_reseed_min_interval = v;
+    } else if (iequals(key, "PARAMETRIC_TAILS")) {
+        if (iequals(val, "YES") || val == "1")
+            opts.rom_parametric_tails = true;
+        else if (iequals(val, "NO") || val == "0")
+            opts.rom_parametric_tails = false;
+        else
+            return "Invalid PARAMETRIC_TAILS value (YES/NO)";
+    } else if (iequals(key, "MODE_DROP_THRESHOLD")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "MODE_DROP_THRESHOLD must be >= 0";
+        opts.rom_mode_drop_threshold = v;
+    } else if (iequals(key, "MANNINGS_CORR_LEN")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "MANNINGS_CORR_LEN must be >= 0";
+        opts.rom_mannings_corr_len = v;
+    } else if (iequals(key, "RAINFALL_CORR_LEN")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "RAINFALL_CORR_LEN must be >= 0";
+        opts.rom_rainfall_corr_len = v;
+    } else if (iequals(key, "LEGACY_OPERATOR")) {
+        if (iequals(val, "YES") || val == "1")
+            opts.rom_legacy_operator = true;
+        else if (iequals(val, "NO") || val == "0")
+            opts.rom_legacy_operator = false;
+        else
+            return "Invalid LEGACY_OPERATOR value (YES/NO)";
+    } else if (iequals(key, "ALPHA_PAR")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "ALPHA_PAR must be >= 0";
+        opts.rom_alpha_par = v;
+    } else if (iequals(key, "ALPHA_PERP")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "ALPHA_PERP must be >= 0";
+        opts.rom_alpha_perp = v;
+    } else if (iequals(key, "C_FACTOR")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok) return "Invalid C_FACTOR value";
+        opts.rom_c_factor = v;
+    } else if (iequals(key, "GROUND_SCALE")) {
+        double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "GROUND_SCALE must be >= 0";
+        opts.rom_ground_scale = v;
+    } else {
+        return "Unknown 2D_ROM parameter: " + key;
+    }
+    return {};
+}
+
+
+// ============================================================================
+// [UNCERTAINTY] — uncertain parameter source specification
+// ============================================================================
+
+std::string parseUncertaintyLine(
+    const std::vector<std::string>& tokens,
+    SolverOptions2D& opts,
+    openswmm::uncertainty::UncertaintyConfig& config)
+{
+    // Grammar (PARAMETER_REGISTRY.md §6):
+    //   new    : LAYER NAME PERT [DIST] [ENTRY]     e.g. "1D INFLOW 0.3 LOGNORMAL FORCING_VECTOR"
+    //   legacy : LAYER NAME [DIST] PERT             e.g. "2D RAINFALL UNIFORM 0.15"
+    // Disambiguation: if tokens[2] parses as a number the new order is in
+    // effect, otherwise the legacy DIST-first order.
+    if (tokens.size() < 3)
+        return "Expected LAYER NAME PERT [DIST] [ENTRY]";
+
+    const auto& layer_str = tokens[0];
+    const auto& param_str = tokens[1];
+
+    bool ok = false;
+    std::string dist_str  = "UNIFORM";
+    std::string entry_str;                 // empty = derive from NAME
+    double      pert      = 0.0;
+
+    const double t2_num = tryParseDouble(tokens[2], ok);
+    if (ok) {
+        // New order: PERT [DIST] [ENTRY]
+        pert = t2_num;
+        // tokens[3] could be DIST or ENTRY (DIST omitted). If it's a known
+        // ENTRY keyword, treat it as ENTRY and keep the default DIST.
+        auto is_entry_kw = [](const std::string& s) {
+            return iequals(s, "RATE_MULT") || iequals(s, "FORCING_MULT")
+                || iequals(s, "FORCING_VECTOR") || iequals(s, "COUPLING_MULT")
+                || iequals(s, "QUALITY_MULT");
+        };
+        if (tokens.size() >= 4) {
+            if (is_entry_kw(tokens[3]))
+                entry_str = tokens[3];
+            else
+                dist_str  = tokens[3];
+        }
+        if (tokens.size() >= 5 && entry_str.empty()) entry_str = tokens[4];
+    } else {
+        // Legacy order: DIST PERT
+        if (tokens.size() < 4)
+            return "Expected LAYER NAME PERT [DIST] [ENTRY] (or legacy LAYER NAME DIST PERT)";
+        dist_str = tokens[2];
+        pert = tryParseDouble(tokens[3], ok);
+        if (!ok)
+            return "PERTURBATION must be a non-negative number";
+    }
+    if (pert < 0.0)
+        return "PERTURBATION must be a non-negative number";
+
+    // --- Parse LAYER ---
+    openswmm::uncertainty::LayerTarget layer;
+    if (iequals(layer_str, "2D"))
+        layer = openswmm::uncertainty::LayerTarget::TWO_D;
+    else if (iequals(layer_str, "1D"))
+        layer = openswmm::uncertainty::LayerTarget::ONE_D;
+    else if (iequals(layer_str, "QUALITY"))
+        layer = openswmm::uncertainty::LayerTarget::QUALITY;
+    else
+        return "Unsupported LAYER '" + layer_str + "' (supported: '2D', '1D', 'QUALITY')";
+
+    // --- Parse DISTRIBUTION ---
+    openswmm::uncertainty::DistType dist;
+    if (iequals(dist_str, "UNIFORM"))
+        dist = openswmm::uncertainty::DistType::UNIFORM;
+    else if (iequals(dist_str, "NORMAL"))
+        dist = openswmm::uncertainty::DistType::NORMAL;
+    else if (iequals(dist_str, "LOGNORMAL"))
+        dist = openswmm::uncertainty::DistType::LOGNORMAL;
+    else
+        return "Unknown DISTRIBUTION '" + dist_str + "' (UNIFORM / NORMAL / LOGNORMAL)";
+
+    // --- QUALITY layer validation ---
+    if (layer == openswmm::uncertainty::LayerTarget::QUALITY) {
+        if (dist != openswmm::uncertainty::DistType::UNIFORM)
+            return "QUALITY layer only supports UNIFORM distribution";
+    }
+
+    // --- Resolve NAME and ENTRY ---
+    std::string param_upper = param_str;
+    std::transform(param_upper.begin(), param_upper.end(), param_upper.begin(),
+                   [](unsigned char c){ return static_cast<char>(std::toupper(c)); });
+
+    openswmm::uncertainty::ParamEntry entry;
+    bool entry_known = true;
+    if (!entry_str.empty()) {
+        // Explicit ENTRY — accepts any NAME (the generality win).
+        if (iequals(entry_str, "RATE_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::RATE_MULT;
+        else if (iequals(entry_str, "FORCING_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::FORCING_MULT;
+        else if (iequals(entry_str, "FORCING_VECTOR"))
+            entry = openswmm::uncertainty::ParamEntry::FORCING_VECTOR;
+        else if (iequals(entry_str, "COUPLING_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::COUPLING_MULT;
+        else if (iequals(entry_str, "QUALITY_MULT"))
+            entry = openswmm::uncertainty::ParamEntry::QUALITY_MULT;
+        else
+            return "Unknown ENTRY '" + entry_str
+                   + "' (RATE_MULT / FORCING_MULT / FORCING_VECTOR / COUPLING_MULT / QUALITY_MULT)";
+    } else {
+        // Name-implied default entry; unknown NAME without ENTRY is an error.
+        if (param_upper == "MANNINGS_N")
+            entry = openswmm::uncertainty::ParamEntry::RATE_MULT;
+        else if (param_upper == "RAINFALL")
+            entry = openswmm::uncertainty::ParamEntry::FORCING_MULT;
+        else if (param_upper == "INFLOW")
+            entry = openswmm::uncertainty::ParamEntry::FORCING_VECTOR;
+        else if (layer == openswmm::uncertainty::LayerTarget::QUALITY)
+            entry = openswmm::uncertainty::ParamEntry::QUALITY_MULT;
+        else
+            entry_known = false;
+        if (!entry_known)
+            return "Unknown PARAMETER '" + param_str
+                   + "' without an explicit ENTRY (known names: MANNINGS_N, "
+                     "RAINFALL, INFLOW; or supply RATE_MULT / FORCING_MULT / "
+                     "FORCING_VECTOR / COUPLING_MULT)";
+    }
+
+    // --- Build spec and record ---
+    openswmm::uncertainty::UncertaintySourceSpec spec;
+    spec.name         = param_upper;
+    spec.layer        = layer;
+    spec.dist         = dist;
+    spec.perturbation = pert;
+    spec.entry        = entry;
+    config.sources.push_back(spec);
+
+    // For 2D specs, [UNCERTAINTY] takes precedence over [2D_ROM] values (this
+    // section is conventionally the later one in the file). 1D/QUALITY specs
+    // only update config — nothing on this base consumes them yet (the 1D ROM
+    // lifecycle is a separate track); recording them now means no re-parse is
+    // needed once that lands.
+    if (layer == openswmm::uncertainty::LayerTarget::TWO_D) {
+        opts.enable_rom = true;
+        if (param_upper == "MANNINGS_N")
+            opts.rom_mannings_pert = pert;
+        else if (param_upper == "RAINFALL")
+            opts.rom_rainfall_pert = pert;
+    }
+
+    return {};
+}
+
+
+// ============================================================================
 // register2DSections
 // ============================================================================
 
@@ -587,6 +833,7 @@ void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                        openswmm::uncertainty::UncertaintyConfig& uncertainty_config,
                         input::SectionRegistry& registry)
 {
     // Full-form handler (not makeSectionHandler): parse2DOptionsLine needs
@@ -657,6 +904,21 @@ void register2DSections(MeshData& mesh,
                 }
             }
         });
+
+    // [2D_ROM] — scalar ROM configuration (enable, size, perturbations,
+    // K_eff, and the W3-calibrated reduced-operator dials).
+    registry.register_custom("2D_ROM",
+        makeSectionHandler([&options](const std::vector<std::string>& tokens) {
+            return parse2DROMLine(tokens, options);
+        }));
+
+    // [UNCERTAINTY] — uncertain parameter source specification. Entries here
+    // OVERRIDE the corresponding scalar fields in [2D_ROM] for the 2D layer.
+    registry.register_custom("UNCERTAINTY",
+        makeSectionHandler([&options, &uncertainty_config](
+                              const std::vector<std::string>& tokens) {
+            return parseUncertaintyLine(tokens, options, uncertainty_config);
+        }));
 }
 
 

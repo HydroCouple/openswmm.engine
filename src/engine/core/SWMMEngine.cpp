@@ -157,6 +157,7 @@ int SWMMEngine::open(const char* inp_path,
                                  surface_router_.options(),
                                  surface_router_.pendingBCRows(),
                                  surface_router_.pendingEdgeConveyanceRows(),
+                                 uncertainty_config_,
                                  dip->registry());
     }
 
