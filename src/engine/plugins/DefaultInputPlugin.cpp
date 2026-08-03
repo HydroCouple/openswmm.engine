@@ -58,6 +58,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
 
     // Node sections
     registry_.register_builtin("JUNCTIONS",    input::handle_junctions);
+    registry_.register_builtin("VIRTUAL_JUNCTIONS", input::handle_virtual_junctions);
     registry_.register_builtin("OUTFALLS",     input::handle_outfalls);
     registry_.register_builtin("DIVIDERS",     input::handle_dividers);
     registry_.register_builtin("STORAGE",      input::handle_storage);

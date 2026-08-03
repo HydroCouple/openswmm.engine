@@ -63,6 +63,7 @@ class Node:
     tag: str
     index: int
     type: NodeType
+    is_virtual: bool
     solver: Solver
 
     # Geometry

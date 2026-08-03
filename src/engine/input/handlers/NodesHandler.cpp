@@ -35,6 +35,7 @@
 
 #include "../Tokenizer.hpp"
 #include "../SectionParser.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/NodeData.hpp"
 #include "../../data/StorageGeometry.hpp"
@@ -82,6 +83,38 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
         if (tok.size() > 3) ctx.nodes.init_depth[idx]  = to_double(tok[3]);     // InitDepth
         if (tok.size() > 4) ctx.nodes.sur_depth[idx]   = to_double(tok[4]);     // SurDepth
         if (tok.size() > 5) ctx.nodes.ponded_area[idx] = to_double(tok[5]);     // Aponded
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
+    }
+}
+
+// ============================================================================
+// handle_virtual_junctions()
+// ============================================================================
+
+void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
+        if (tok.size() < 2) continue;
+
+        const std::string& name = tok[0];
+
+        // Name + invert elevation only — everything else is derived from the
+        // two attached conduits, so extra tokens are an error (keeps the
+        // format extensible without ambiguity).
+        if (tok.size() > 2) {
+            ctx.errors.push_back(format_error(ERR_VJ_EXTRA_TOKENS, name));
+            continue;
+        }
+
+        int idx = ctx.node_names.find(name);
+        if (idx < 0) idx = ctx.node_names.add(name);
+
+        ensure_node_capacity(ctx, idx);
+
+        ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
+        ctx.nodes.is_virtual[static_cast<std::size_t>(idx)] = 1;
+        ctx.nodes.invert_elev[idx] = to_double(tok[1]);
         if (!pl.comment.empty())
             ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

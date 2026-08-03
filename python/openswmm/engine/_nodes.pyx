@@ -427,6 +427,33 @@ cdef class Node:
         return NodeType(v)
 
     @property
+    def is_virtual(self) -> bool:
+        """C{True} when this node is a virtual junction.
+
+        A virtual junction is a zero-storage, momentum-transmitting
+        JUNCTION-typed node connecting exactly two conduits of identical
+        cross-section (INP C{[VIRTUAL_JUNCTIONS]}; refactored engine only).
+
+        Setting to C{True} runs full validation of the usage rules (exactly
+        two conduits, identical cross-section, zero offsets, no lateral
+        inflow sources) and applies the derived-geometry contract; a violated
+        rule raises with the specific rule message. Setting to C{False}
+        always succeeds for a virtual node.
+
+        @rtype: bool
+        """
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_node_is_virtual(_h(self._solver), self._index, &v))
+        return v != 0
+
+    @is_virtual.setter
+    def is_virtual(self, value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_virtual(_h(self._solver), self._index,
+                                     1 if value else 0))
+
+    @property
     def solver(self):
         """The parent :class:`Solver`. Useful for cross-domain access."""
         return self._solver

@@ -253,6 +253,14 @@ SWMM_ENGINE_API const char* swmm_error_message(int code) {
         case SWMM_ERR_CRS:       return "Coordinate reference system error";
         case SWMM_ERR_NUMERICAL: return "Numerical instability (fatal)";
         case SWMM_ERR_INTERNAL:  return "Internal engine error";
+        // Virtual-junction rule codes (ErrorCodes.hpp ERR_VJ_*)
+        case 609: return "Virtual junction must connect exactly two conduits";
+        case 611: return "Virtual junction connects conduits with different cross sections";
+        case 613: return "Virtual junction has a conduit with a nonzero offset";
+        case 615: return "Virtual junction conduit inverts do not agree at the node";
+        case 617: return "Virtual junction cannot receive lateral inflow";
+        case 619: return "Virtual junctions require DYNWAVE flow routing";
+        case 621: return "Too many items for virtual junction";
         default:                 return "Unknown error";
     }
 }

@@ -21,6 +21,7 @@
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/Street.hpp"
 #include "../hydraulics/ForceMain.hpp"
+#include "../edit/VirtualJunctionOps.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -613,6 +614,50 @@ void convert_internal_to_display(SimulationContext& ctx) {
     // --- Subcatchments ---
     for (int s = 0; s < n_subcatch; ++s)
         ctx.subcatches.width[static_cast<std::size_t>(s)] *= len;
+}
+
+// ============================================================================
+// validate_virtual_junctions()
+// ============================================================================
+// Refactored engine only — see plans/VIRTUAL_JUNCTION_IMPLEMENTATION_PLAN.md §6.
+// Runs after conduit slope computation and adverse-slope reversal so the
+// attachment orientation observed here is final. The per-node rules live in
+// edit::vj_rule_violation (shared with the C API set-virtual/split/fuse
+// operations); each violated rule produces its own error code so callers can
+// render actionable messages.
+static void validate_virtual_junctions(SimulationContext& ctx) {
+    const int n_nodes = ctx.nodes.count();
+
+    bool any = false;
+    for (int i = 0; i < n_nodes; ++i) {
+        if (ctx.nodes.is_virtual[static_cast<std::size_t>(i)]) { any = true; break; }
+    }
+    if (!any) return;
+
+    // Rule 8 (model-level): only meaningful under dynamic-wave routing.
+    if (ctx.options.routing_model != RoutingModel::DYNWAVE) {
+        for (int i = 0; i < n_nodes; ++i) {
+            if (ctx.nodes.is_virtual[static_cast<std::size_t>(i)]) {
+                ctx.errors.push_back(format_error(ERR_VJ_ROUTING_MODEL,
+                                                  ctx.node_names.name_of(i)));
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < n_nodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (!ctx.nodes.is_virtual[ui]) continue;
+        const int code = edit::vj_rule_violation(ctx, i);
+        if (code != 0) {
+            ctx.errors.push_back(format_error(code, ctx.node_names.name_of(i)));
+            continue;
+        }
+        // Derived geometry: full depth = shared pipe crown, no surcharge
+        // depth, no ponding. The JUNCTION-only full-depth raise below is
+        // skipped for virtual nodes (exact by construction).
+        edit::vj_apply_derived_geometry(ctx, i);
+    }
 }
 
 void resolve_cross_references(SimulationContext& ctx) {
@@ -1594,6 +1639,12 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // Virtual junction validation + derived geometry (after slope computation
+    // and adverse-slope reversal so orientation is final)
+    // -------------------------------------------------------------------------
+    validate_virtual_junctions(ctx);
+
+    // -------------------------------------------------------------------------
     // Node fullDepth adjustment from connected link crowns
     // (matches legacy link_validate → node fullDepth adjustment)
     // -------------------------------------------------------------------------
@@ -1606,9 +1657,11 @@ void resolve_cross_references(SimulationContext& ctx) {
         int n1 = ctx.links.node1[uj];
         int n2 = ctx.links.node2[uj];
 
-        // Upstream node: crown = offset1 + y_full (JUNCTION only, matches legacy Warning 02)
+        // Upstream node: crown = offset1 + y_full (JUNCTION only, matches legacy Warning 02;
+        // virtual junctions skipped — their full depth is exact by construction)
         if (n1 >= 0 && n1 < n_nodes &&
-            ctx.nodes.type[static_cast<std::size_t>(n1)] == NodeType::JUNCTION) {
+            ctx.nodes.type[static_cast<std::size_t>(n1)] == NodeType::JUNCTION &&
+            !ctx.nodes.is_virtual[static_cast<std::size_t>(n1)]) {
             double crown = ctx.links.offset1[uj] + y_full;
             if (crown > ctx.nodes.full_depth[n1]) {
                 ctx.nodes.full_depth[n1] = crown;
@@ -1618,9 +1671,11 @@ void resolve_cross_references(SimulationContext& ctx) {
                 }
             }
         }
-        // Downstream node: crown = offset2 + y_full (JUNCTION only, matches legacy Warning 02)
+        // Downstream node: crown = offset2 + y_full (JUNCTION only, matches legacy Warning 02;
+        // virtual junctions skipped — their full depth is exact by construction)
         if (n2 >= 0 && n2 < n_nodes &&
-            ctx.nodes.type[static_cast<std::size_t>(n2)] == NodeType::JUNCTION) {
+            ctx.nodes.type[static_cast<std::size_t>(n2)] == NodeType::JUNCTION &&
+            !ctx.nodes.is_virtual[static_cast<std::size_t>(n2)]) {
             double crown = ctx.links.offset2[uj] + y_full;
             if (crown > ctx.nodes.full_depth[n2]) {
                 ctx.nodes.full_depth[n2] = crown;

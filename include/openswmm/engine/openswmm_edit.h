@@ -403,6 +403,65 @@ SWMM_ENGINE_API int swmm_link_convert(
     SWMM_Engine engine, int idx, int new_type,
     SWMM_ConversionResult* result_out);
 
+/* =========================================================================
+ * Conduit split / virtual-junction fusion — BUILDING or OPENED state only
+ * (refactored engine only; see openswmm_nodes.h swmm_node_set_virtual)
+ * ========================================================================= */
+
+/**
+ * @brief Split a conduit at normalized position t, inserting a new node.
+ *
+ * @details The split point lies at fraction @p t of the conduit's
+ *          vertex-aware polyline length (0 < t < 1). The original conduit
+ *          keeps its name and upstream end and is shortened to t·L; a new
+ *          conduit named @p new_link_name carries the remaining length,
+ *          copying cross-section, roughness and barrels, and taking over the
+ *          downstream offset. The break-point invert is interpolated along
+ *          the conduit gradient and interior vertices are partitioned.
+ *          With @p make_virtual != 0 the new node becomes a virtual junction
+ *          (validation runs; on a rule failure the split still stands as a
+ *          regular junction and the rule code is returned).
+ *
+ * @param engine         Engine handle.
+ * @param link_idx       Zero-based conduit index.
+ * @param t              Normalized split position along the polyline (0..1 exclusive).
+ * @param new_node_name  Unique name for the inserted node.
+ * @param new_link_name  Unique name for the new downstream conduit.
+ * @param make_virtual   1 to flag the new node as a virtual junction.
+ * @param[out] new_node_idx  Receives the new node index (may be NULL).
+ * @param[out] new_link_idx  Receives the new conduit index (may be NULL).
+ * @returns SWMM_OK on success; SWMM_ERR_LIFECYCLE, SWMM_ERR_BADHANDLE,
+ *          SWMM_ERR_BADINDEX, SWMM_ERR_BADPARAM (bad t / duplicate or empty
+ *          name / non-conduit); or an ERR_VJ_* rule code (609/611/613/617)
+ *          when make_virtual validation fails after a successful split.
+ */
+SWMM_ENGINE_API int swmm_conduit_split(
+    SWMM_Engine engine, int link_idx, double t,
+    const char* new_node_name, const char* new_link_name,
+    int make_virtual, int* new_node_idx, int* new_link_idx);
+
+/**
+ * @brief Re-fuse the two conduits of a virtual junction into one, deleting
+ *        the node (inverse of a virtual split).
+ *
+ * @details The upstream conduit's name survives; lengths sum; the node
+ *          coordinate becomes an interior vertex of the merged conduit so
+ *          map alignment is preserved; the downstream conduit's identifiers
+ *          are retired. Requires a through orientation (one conduit flowing
+ *          in, one flowing out).
+ *
+ * @param engine    Engine handle.
+ * @param node_idx  Zero-based node index of the virtual junction.
+ * @param[out] surviving_link_idx  Receives the surviving conduit's index
+ *                                 AFTER deletions renumber (may be NULL).
+ * @returns SWMM_OK on success; SWMM_ERR_LIFECYCLE, SWMM_ERR_BADHANDLE,
+ *          SWMM_ERR_BADINDEX, SWMM_ERR_BADPARAM (not a virtual junction);
+ *          or 609 (ERR_VJ_LINK_COUNT) when the node is not a two-conduit
+ *          through pair.
+ */
+SWMM_ENGINE_API int swmm_virtual_junction_fuse(
+    SWMM_Engine engine, int node_idx, int* surviving_link_idx);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

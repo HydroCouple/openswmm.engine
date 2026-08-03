@@ -171,6 +171,15 @@ enum ErrorCode : int {
     ERR_TIMESERIES_NAN          = 603,  ///< Time Series %s contains NaN or Inf values
     ERR_TABLE_COL_MISMATCH      = 605,  ///< column count mismatch in data for %s
     ERR_GAGE_TSERIES_NOTFOUND   = 607,  ///< Rain Gage %s references unknown time series
+
+    // --- Virtual junctions (609–621) — refactored engine only ---
+    ERR_VJ_LINK_COUNT           = 609,  ///< Virtual Junction %s must connect exactly two conduits
+    ERR_VJ_XSECT_MISMATCH       = 611,  ///< Virtual Junction %s connects conduits with different cross sections
+    ERR_VJ_OFFSET               = 613,  ///< Virtual Junction %s has a conduit with a nonzero offset
+    ERR_VJ_INVERT_MISMATCH      = 615,  ///< Virtual Junction %s conduit inverts do not agree at the node
+    ERR_VJ_LATERAL_INFLOW       = 617,  ///< Virtual Junction %s cannot receive lateral inflow
+    ERR_VJ_ROUTING_MODEL        = 619,  ///< Virtual Junction %s requires DYNWAVE flow routing
+    ERR_VJ_EXTRA_TOKENS         = 621,  ///< too many items for Virtual Junction %s
 };
 
 // ============================================================================

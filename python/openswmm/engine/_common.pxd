@@ -188,6 +188,9 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_set_surcharge_depth(SWMM_Engine e, int idx, double depth)
     cdef int swmm_node_set_pond_area(SWMM_Engine e, int idx, double area)
     cdef int swmm_node_set_initial_depth(SWMM_Engine e, int idx, double depth)
+    # Virtual junctions (refactored engine only)
+    cdef int swmm_node_is_virtual(SWMM_Engine e, int idx, int* is_virtual)
+    cdef int swmm_node_set_virtual(SWMM_Engine e, int idx, int make_virtual)
     # Geometry getters
     cdef int swmm_node_get_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_node_get_invert_elev(SWMM_Engine e, int idx, double* elev)
@@ -1060,6 +1063,15 @@ cdef extern from "openswmm_edit.h":
                                 SWMM_ConversionResult* out)
     cdef int swmm_link_convert(SWMM_Engine e, int idx, int new_type,
                                 SWMM_ConversionResult* out)
+
+    # Conduit split / virtual-junction fusion (refactored engine only)
+    cdef int swmm_conduit_split(SWMM_Engine e, int link_idx, double t,
+                                const char* new_node_name,
+                                const char* new_link_name,
+                                int make_virtual,
+                                int* new_node_idx, int* new_link_idx)
+    cdef int swmm_virtual_junction_fuse(SWMM_Engine e, int node_idx,
+                                        int* surviving_link_idx)
 
 
 cdef extern from "openswmm_forcing.h":
