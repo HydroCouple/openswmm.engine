@@ -35,7 +35,7 @@
 
 #include "2d/data/MeshData.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
-#include "2d/solver/SpectralPrecond2D.hpp"
+#include "2d/uncertainty/MeshEigenBasis.hpp"
 #include "2d/uncertainty/SpectralROM.hpp"
 #include "2d/uncertainty/CorrelatedFieldGenerator.hpp"
 #include "2d/uncertainty/SpatialUncertaintyField.hpp"
@@ -111,7 +111,7 @@ TEST(CorrLenProfile, ProfilingGate) {
     MeshData mesh = makeStructuredMesh(N, domain_m);
     const int n_tri = 2 * N * N;   // 20,000
 
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, k)) << "eigensolver failed on 20k mesh";
     ASSERT_GT(basis.num_kept, 0);
 

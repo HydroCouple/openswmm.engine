@@ -20,7 +20,7 @@
  *   1. The port branch must be rebased onto the marcher swmm6_rel so that
  *      `2d/solver/ExplicitInertialSolver.hpp` exists alongside the sidecar.
  *   2. W1 done: the geometric eigenbasis is standalone. Here we call the
- *      existing `SpectralPrecond2D::build()`; W1 renames it `MeshEigenBasis`
+ *      existing `MeshEigenBasis::build()`; W1 renames it `MeshEigenBasis`
  *      (drop-in — same P / eigenvalues fields).
  *   3. W2 done is NOT required: this test drives the marcher and SpectralROM
  *      DIRECTLY (operator-level validation), the same way test_2d_spectral_rom
@@ -43,7 +43,7 @@
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"   // (1) post-rebase
 #include "2d/solver/InertialKernels.hpp"
-#include "2d/solver/SpectralPrecond2D.hpp"         // (2) W1 -> MeshEigenBasis
+#include "2d/uncertainty/MeshEigenBasis.hpp"         // (2) W1 -> MeshEigenBasis
 #include "2d/uncertainty/SpectralROM.hpp"
 
 using namespace openswmm::twoD;
@@ -175,7 +175,7 @@ TEST(Rom2dMarcherCoverage, IsotropicBandsBracketMarcherMonteCarlo) {
 
     // ── ROM run: same M multipliers via setExternalSamples ──────────────────
     auto mesh0 = makeSlopedMesh(1.0);
-    SpectralPrecond2D basis;                       // W1: MeshEigenBasis
+    MeshEigenBasis basis;                       // W1: MeshEigenBasis
     ASSERT_TRUE(basis.build(mesh0, kModes)) << "eigenbasis build failed";
     const int nt = mesh0.n_triangles();
 

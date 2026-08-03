@@ -7,9 +7,9 @@
  *          positive-semi-definite CSR Laplacian, computes the k smallest
  *          nontrivial eigenpairs and stores them in column-major matrices.
  *
- *          The same Lanczos + QL implementation is used by both
- *          SpectralROM1D (1D pipe network ROM) and can be used by
- *          SpectralPrecond2D (2D mesh preconditioner) in a future refactor.
+ *          The same Lanczos + QL implementation backs both SpectralROM1D
+ *          (1D pipe network ROM) and MeshEigenBasis (2D surface mesh); each
+ *          supplies its own Laplacian assembly and shares this eigensolver.
  *
  *          Typical use:
  *          @code
