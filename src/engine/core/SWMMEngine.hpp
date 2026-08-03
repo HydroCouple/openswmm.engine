@@ -63,9 +63,14 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
 #include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/GraphEigenBasis.hpp"
+#include "../uncertainty/NetworkLaplacian1D.hpp"
+#include "../uncertainty/SpectralROM1D.hpp"
+#include "../uncertainty/UncertaintyEnsemble.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <string>
@@ -347,6 +352,13 @@ public:
     const uncertainty::UncertaintyConfig& uncertaintyConfig() const noexcept {
         return uncertainty_config_;
     }
+
+    /** @brief Access the hydraulic router (for statistics / diagnostics). */
+    Router&       router()       noexcept { return router_; }
+    const Router& router() const noexcept { return router_; }
+
+    /** @brief 1D spectral ROM (null if not built, or the network is too small). */
+    const uncertainty::SpectralROM1D* rom1d() const noexcept { return rom1d_.get(); }
 #endif
 
 
@@ -408,10 +420,35 @@ private:
 
     /// Populated from the [UNCERTAINTY] section by register2DSections's
     /// parseUncertaintyLine. 2D-layer specs also set fields directly on
-    /// surface_router_.options() (see that function); 1D/QUALITY specs are
-    /// recorded here only — nothing on this base consumes them yet, since
-    /// the 1D ROM lifecycle is a separate, unstarted track.
+    /// surface_router_.options() (see that function). 1D specs drive
+    /// buildROM1D() below; QUALITY specs are recorded here only — nothing on
+    /// this base consumes them yet (the WQ uncertainty layer, PR 13 on the
+    /// old sidecar, was not ported).
     uncertainty::UncertaintyConfig uncertainty_config_;
+
+    // ---- 1D network spectral ROM (owned) ----
+    // Deviation-form ensemble propagating uncertainty alongside the
+    // deterministic DynWave solve. Built once in initHydraulics() when
+    // uncertainty_config_.has_1d() or the 2D ROM is active; advanced every
+    // routing step in stepRouting(); its quantiles are computed and flushed
+    // to <rpt>.uncertainty.csv at report boundaries in postOutputSnapshot().
+    // Forwarded to surface_router_.setROM1D() so 2D coupling can read
+    // per-member 1D heads (SpectralROM::applyCouplingFlux).
+    std::unique_ptr<uncertainty::GraphEigenBasis> rom1d_basis_;
+    std::unique_ptr<uncertainty::SpectralROM1D>   rom1d_;
+    std::vector<int>    rom1d_active_map_; ///< active_idx -> full_node_idx (for head extraction)
+    std::vector<double> rom1d_h_buf_;      ///< per-active-node deterministic head buffer (reused each step)
+    std::vector<double> rom1d_invert_buf_; ///< per-active-node invert elevations (filled once at build)
+    std::vector<double> rom1d_sens_buf_;   ///< per-active-node depth (head - invert): Manning-sensitivity reference (PR 10)
+    std::vector<double> rom1d_dh_buf_;     ///< per-active-node dh/dt forcing buffer (reused each step; also the field
+                                            ///< for any registered FORCING_VECTOR 1D param, e.g. INFLOW)
+    std::ofstream rom1d_csv_;              ///< 1D ROM quantile CSV, written at report intervals
+
+    /** @brief Build + seed the 1D spectral ROM from conduit connectivity and node heads. */
+    void buildROM1D() noexcept;
+
+    /** @brief Compute effective 1D Manning conductance K1d (1/s) from current state. */
+    double computeK1d() noexcept;
 
     /// Non-owning pointer to the 2D HDF5 output plugin (lifetime owned by
     /// PluginFactory's output_plugins_). Set in open() when [2D_OPTIONS]

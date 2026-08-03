@@ -63,6 +63,12 @@ list(APPEND OPENSWMM_ENGINE_SOURCES uncertainty/GraphEigenBasis.cpp)
 # SpectralROM1D::reconstructHead), and the 1D ROM stands alone without 2D.
 list(APPEND OPENSWMM_ENGINE_SOURCES uncertainty/SpectralROM1D.cpp)
 
+# Shared parameter-registry ensemble (PARAMETER_REGISTRY.md §6): generic LHS
+# columns for any registered [UNCERTAINTY] source beyond the ROMs' built-in
+# Manning/rainfall pair (e.g. a 1D INFLOW FORCING_VECTOR spec). Consumed by
+# SWMMEngine::buildROM1D().
+list(APPEND OPENSWMM_ENGINE_SOURCES uncertainty/UncertaintyEnsemble.cpp)
+
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.hpp

@@ -250,6 +250,10 @@ if(OPENSWMM_BUILD_2D)
     # [2D_ROM] / [UNCERTAINTY] input-section parsing.
     add_gtest_unit(test_engine_2d_rom_input_parser test_2d_rom_input_parser.cpp)
 
+    # 1D network spectral ROM lifecycle: build/advance/quantile/CSV through
+    # the real engine, and the HSnapshot-driven weighted-Laplacian re-solve.
+    add_gtest_unit(test_engine_1d_rom_lifecycle test_engine_1d_rom_lifecycle.cpp)
+
     # Reduced k×k deviation operator: expm/φ₁ propagator, anisotropic assembly
     # structure, and the SpectralROM matrix-path ≡ diagonal-path parity pin.
     add_gtest_unit(test_engine_2d_deviation_operator test_2d_deviation_operator.cpp)

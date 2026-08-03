@@ -1029,6 +1029,24 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         updateDPSState(ctx, dt);
     }
 
+    // Capture H snapshot after the Picard loop (read dqdh_ into a ci-indexed
+    // copy). The snapshot is valid until the next execute() call. Taken here,
+    // after the persistent-team parallel region has ended and any Anderson-
+    // accepted depths are already committed through the canonical node state
+    // update (updateNodeDepthsTeam/commitNodeDepthState) — never from mixing
+    // intermediates.
+    if (n_conduits_ > 0) {
+        snap_conduit_off_.resize(static_cast<std::size_t>(n_conduits_));
+        const double half_dt = 0.5 * dt;
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            auto uci = static_cast<std::size_t>(ci);
+            auto uj  = static_cast<std::size_t>(tile_uj_[ci]);
+            snap_conduit_off_[uci] = half_dt * dqdh_[uj];
+        }
+    }
+    snap_dt_    = dt;
+    snap_valid_ = true;
+
     // Record the actual final convergence (legacy counts a step as
     // non-converging only when this is false, even if it used all MaxTrials —
     // a step that converges ON the last allowed iteration is "converged").

@@ -119,6 +119,9 @@ int SWMMEngine::open(const char* inp_path,
 
     // Reset context for a fresh run
     ctx_.reset();
+#ifdef OPENSWMM_HAS_2D
+    uncertainty_config_ = uncertainty::UncertaintyConfig{};
+#endif
 
     rpt_path_ = rpt_path ? rpt_path : "";
     out_path_ = out_path ? out_path : "";
@@ -2706,6 +2709,57 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,
     //      advance the 2D solver, transfer outfall discharges to 2D cells.
     surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
+
+    // B3++. Advance 1D spectral ROM for uncertainty propagation (deviation
+    //       form: members carry only their deviation from the deterministic
+    //       run, so no reseeding is ever needed and spread is never
+    //       collapsed).
+    if (rom1d_ && rom1d_->is_ready()) {
+        // Warm-start eigenbasis re-solve from the live DYNWAVE Jacobian.
+        if (router_.dwSolver().isHSnapshotValid()) {
+            const auto snap = router_.dwSolver().lastConvergedH();
+            rom1d_->updateBasis(snap.conduit_off, snap.conduit_n1, snap.conduit_n2,
+                                snap.n_conduits, ctx_.current_time);
+        }
+        const double K1d = computeK1d();
+
+        const int n_active = static_cast<int>(rom1d_active_map_.size());
+
+        // Deterministic head reference h_det (quantile anchor) and the DEPTH
+        // field (head - invert) as the Manning-sensitivity reference:
+        // roughness acts on conveyance, so its sensitivity must scale the
+        // depth component only — projecting absolute head lets (mm-1)*b_j
+        // scale the immovable invert relief and overestimates spread by
+        // orders of magnitude on sloped networks (PR 10 finding,
+        // VALIDATION.md).
+        for (int ai = 0; ai < n_active; ++ai) {
+            const auto uai = static_cast<std::size_t>(ai);
+            const auto ui  = static_cast<std::size_t>(rom1d_active_map_[uai]);
+            rom1d_h_buf_[uai]    = ctx_.nodes.head[ui];
+            rom1d_sens_buf_[uai] =
+                std::max(ctx_.nodes.head[ui] - rom1d_invert_buf_[uai], 0.0);
+        }
+
+        // Per-node dh/dt forcing from the just-completed DynWave step. Under
+        // the deviation form its projection enters only scaled by
+        // (runoff_mult - 1), so with the engine default runoff_pert = 0 it
+        // contributes nothing — by construction, not by hotfix. It also
+        // doubles as the field for any registered FORCING_VECTOR 1D param
+        // (e.g. INFLOW) set up in buildROM1D().
+        if (!rom1d_dh_buf_.empty()) {
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui = static_cast<std::size_t>(
+                    rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                rom1d_dh_buf_[static_cast<std::size_t>(ai)] =
+                    (ctx_.nodes.depth[ui] - ctx_.nodes.old_depth[ui]) / dt_routing;
+            }
+        }
+
+        rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
+                        rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data(),
+                        rom1d_sens_buf_.data());
+        // computeQuantiles() is called only at report boundaries (postOutputSnapshot)
+    }
 #endif
 
     // B3a. Inlet capture (street inlet HEC-22 calculations)
@@ -3370,6 +3424,24 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             iface_.writeOutfallResults(ctx_, report_date);
         }
 
+#ifdef OPENSWMM_HAS_2D
+        // Compute 1D ROM head quantiles once per report boundary. This is
+        // done up front (not inside the plugin-gated snapshot block below)
+        // so the CSV sidecar is written correctly even when no output plugin
+        // is attached. Quantiles are anchored to the current DynWave heads
+        // (deviation form: reconstruction = h_det + P*delta_a, clamped at
+        // the node invert).
+        if (rom1d_ && rom1d_->is_ready()) {
+            const int n_active = static_cast<int>(rom1d_active_map_.size());
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui = static_cast<std::size_t>(
+                    rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+            }
+            rom1d_->computeQuantiles(rom1d_h_buf_.data(), rom1d_invert_buf_.data());
+        }
+#endif
+
         if (save_results_ && !plugins_.empty()) {
             // Build a SimulationSnapshot from the current context.
             // Vector assignments are O(n) memcpy; the I/O thread consumes
@@ -3737,6 +3809,24 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             fillSurfaceSnapshot(snap);
             io_thread_.post(std::move(snap));
         }
+
+        // Flush the 1D ROM quantile CSV row for every active node. Deviation
+        // form: quantiles are natively anchored to the deterministic DynWave
+        // head (reconstruction = h_det + P*delta_a, clamped at the node
+        // invert), so q05/q50/q95 are written directly — no manual
+        // re-anchoring. Quantiles were already computed above; reuse them.
+        if (rom1d_ && rom1d_->is_ready() && rom1d_csv_.is_open()) {
+            const int n_active = static_cast<int>(rom1d_active_map_.size());
+            for (int ai = 0; ai < n_active; ++ai) {
+                const auto ui  = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                const auto uai = static_cast<std::size_t>(ai);
+                rom1d_csv_ << ctx_.current_time                              << ','
+                           << ctx_.node_names.name_of(static_cast<int>(ui))  << ','
+                           << rom1d_->q05[uai]                               << ','
+                           << rom1d_->q50[uai]                               << ','
+                           << rom1d_->q95[uai]                               << '\n';
+            }
+        }
 #endif
         hydraulics::TimestepController::reset_output_timer(ctx_);
     }
@@ -3895,6 +3985,10 @@ int SWMMEngine::end() noexcept {
     // the statistics/reports must read the post-flush state, not a snapshot
     // taken one window early.
     surface_router_.finalize(ctx_);
+
+    if (rom1d_csv_.is_open()) {
+        rom1d_csv_.close();
+    }
 #endif
 
     // Benchmark aid: attribute wall time between the 2D solve, its window
@@ -4468,6 +4562,15 @@ void SWMMEngine::initHydraulics() noexcept {
     } catch (...) {
         ctx_.errors.push_back("2D initialization failed: unknown error.");
         set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+    }
+
+    // 1a-i. Build the optional 1D spectral ROM: triggered by an explicit
+    //       [UNCERTAINTY] 1D source, or automatically when the 2D ROM is
+    //       active (a coupled 1D+2D uncertainty run needs both sides, and
+    //       SpectralROM::applyCouplingFlux already reads per-member 1D
+    //       heads whenever setROM1D() has registered one — see buildROM1D).
+    if (uncertainty_config_.has_1d() || surface_router_.options().enable_rom) {
+        buildROM1D();
     }
 #endif
 
@@ -5637,5 +5740,240 @@ void SWMMEngine::initMassBalance() noexcept {
         }
     }
 }
+
+#ifdef OPENSWMM_HAS_2D
+// ============================================================================
+// buildROM1D() — build + seed the 1D spectral ROM
+// ============================================================================
+
+void SWMMEngine::buildROM1D() noexcept {
+    const int n_full = ctx_.n_nodes();
+    if (n_full < 4) return;
+
+    // Collect conduit node pairs
+    std::vector<int> n1_vec, n2_vec;
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        n1_vec.push_back(ctx_.links.node1[uj]);
+        n2_vec.push_back(ctx_.links.node2[uj]);
+    }
+    if (n1_vec.empty()) return;
+
+    // Build outfall flag array
+    std::vector<int> is_outfall(static_cast<std::size_t>(n_full), 0);
+    for (int i = 0; i < n_full; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ctx_.nodes.type[ui] == NodeType::OUTFALL)
+            is_outfall[ui] = 1;
+    }
+
+    // Build per-conduit conductance weights from the last-converged H
+    // snapshot. conduit_off[ci] = 0.5*dt*dqdh, proportional to hydraulic
+    // conductance. At initialize() time the DW solver has not yet run, so the
+    // snapshot is empty (valid == false) and we fall back to uniform weights
+    // (the topological Laplacian). After the first DYNWAVE step the snapshot
+    // reflects actual pipe depths and roughnesses (stepRouting() re-solves
+    // the basis from it every step via updateBasis(), so this initial build
+    // only matters for the cold-start eigenbasis).
+    const int n_conduits = static_cast<int>(n1_vec.size());
+    std::vector<double> weights(static_cast<std::size_t>(n_conduits), 1.0);
+    {
+        const auto snap = router_.dwSolver().lastConvergedH();
+        if (snap.valid && snap.n_conduits == n_conduits) {
+            bool any_nonzero = false;
+            for (int ci = 0; ci < n_conduits; ++ci) {
+                double w = std::max(snap.conduit_off[ci], 1e-6);
+                weights[static_cast<std::size_t>(ci)] = w;
+                if (snap.conduit_off[ci] > 1e-6) any_nonzero = true;
+            }
+            if (!any_nonzero) {
+                // Dry-start: all dqdh == 0 — fall back to uniform weights
+                std::fill(weights.begin(), weights.end(), 1.0);
+            }
+        }
+        // If !snap.valid: keep uniform weights (cold start / first initialize())
+    }
+
+    // Normalize weights to mean 1.0: preserves the relative conductance
+    // structure (which conduit is stiffer than another) while keeping the
+    // Laplacian's eigenvalue scale matching the topological (uniform-weight)
+    // Laplacian that computeK1d()'s L^2 normalization is calibrated against.
+    // Without this, weights are absolute conductances (0.5*dt*dqdh) that scale
+    // with the routing timestep, so lambda_j*K1d jumps in magnitude the moment
+    // the first weighted rebuild replaces the cold-start uniform basis.
+    {
+        double sum_w = 0.0;
+        for (double w : weights) sum_w += w;
+        if (sum_w > 0.0) {
+            const double scale = static_cast<double>(n_conduits) / sum_w;
+            for (double& w : weights) w *= scale;
+        }
+    }
+
+    std::vector<int> active_map, full_to_active;
+    uncertainty::CsrGraph g = uncertainty::NetworkLaplacian1D::buildWeighted(
+        n_full, n_conduits,
+        n1_vec.data(), n2_vec.data(), is_outfall.data(), weights.data(),
+        active_map, full_to_active);
+
+    const int n_active = static_cast<int>(active_map.size());
+    if (n_active < 4) return;  // GraphEigenBasis::build requires >= 4 nodes
+
+    // Mode count: inherit from the active 2D ROM's setting when it's on
+    // (surface_router_.options().rom_modes), else a fixed default — either
+    // way capped by the active-node count.
+    int k_modes = std::min(20, n_active - 1);
+    if (surface_router_.options().enable_rom)
+        k_modes = std::min(surface_router_.options().rom_modes, n_active - 1);
+    k_modes = std::max(k_modes, 1);
+
+    rom1d_basis_ = std::make_unique<uncertainty::GraphEigenBasis>();
+    if (!rom1d_basis_->build(g, k_modes)) {
+        rom1d_basis_.reset();
+        return;
+    }
+
+    rom1d_ = std::make_unique<uncertainty::SpectralROM1D>();
+    rom1d_->basis          = rom1d_basis_.get();
+    rom1d_->full_to_active = std::move(full_to_active);
+    rom1d_->n_full_nodes   = n_full;
+
+    // Inherit ensemble size / Manning's perturbation from the active 2D ROM
+    // when it's on, so a coupled 1D+2D uncertainty run shares one perturbation
+    // budget by default; otherwise no Manning uncertainty unless an explicit
+    // [UNCERTAINTY] 1D MANNINGS_N spec overrides it below. The SpectralROM1D
+    // struct default (0.20) is meant for standalone unit tests — in the
+    // engine it must not silently inject roughness spread into e.g. a
+    // 1D-only run with no uncertainty configured at all.
+    if (surface_router_.options().enable_rom) {
+        rom1d_->n_ensemble    = std::max(2, surface_router_.options().rom_members);
+        rom1d_->mannings_pert = surface_router_.options().rom_mannings_pert;
+    } else {
+        rom1d_->mannings_pert = 0.0;
+    }
+    rom1d_->runoff_pert = 0.0;
+
+    // Override with explicit 1D uncertainty specs from [UNCERTAINTY] — these
+    // take precedence over whatever the 2D ROM inheritance above set.
+    for (const auto& s : uncertainty_config_.sources) {
+        if (s.layer != uncertainty::LayerTarget::ONE_D || !s.is_active()) continue;
+        if (s.name == "MANNINGS_N") rom1d_->mannings_pert = s.perturbation;
+        if (s.name == "RAINFALL")   rom1d_->runoff_pert   = s.perturbation;
+    }
+
+    rom1d_->initialize();
+
+    // Store active map + per-step buffers for head extraction in stepRouting
+    rom1d_active_map_ = active_map;
+    rom1d_dh_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_h_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_invert_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_sens_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    for (int ai = 0; ai < n_active; ++ai) {
+        auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
+        rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];
+    }
+
+    // Generic registered-parameter path (PARAMETER_REGISTRY.md §6). MANNINGS_N/
+    // RAINFALL are the built-in path handled above; every other active 1D spec
+    // (e.g. an INFLOW FORCING_VECTOR source) gets a registry-generated column.
+    // FORCING_VECTOR params use the per-node dh/dt buffer as their field — the
+    // same DynWave head-rate forcing the built-in runoff scale multiplies — so
+    // an INFLOW member with theta = 1.3 experiences the observed lateral-
+    // inflow-driven head changes 30% stronger. rom1d_dh_buf_ is allocated
+    // above and never resized, so the pointer stays valid for the ROM's
+    // lifetime.
+    {
+        uncertainty::UncertaintyEnsemble reg;
+        reg.n_members = rom1d_->n_ensemble;
+        reg.registerDefaults();  // occupy legacy seed offsets 0..3
+        bool any_extra = false;
+        for (const auto& s : uncertainty_config_.specs_for(uncertainty::LayerTarget::ONE_D)) {
+            if (s.name == "MANNINGS_N" || s.name == "RAINFALL") continue;
+            reg.registerParam(s.name, s.layer, s.entry, s.dist, s.perturbation);
+            any_extra = true;
+        }
+        if (any_extra) {
+            reg.generate();
+            for (const auto& s : uncertainty_config_.specs_for(uncertainty::LayerTarget::ONE_D)) {
+                if (s.name == "MANNINGS_N" || s.name == "RAINFALL") continue;
+                const auto* col = reg.column(s.name, uncertainty::LayerTarget::ONE_D);
+                if (!col) continue;
+                const double* field =
+                    (s.entry == uncertainty::ParamEntry::FORCING_VECTOR)
+                        ? rom1d_dh_buf_.data() : nullptr;
+                rom1d_->addRegisteredParam(s.entry, *col, field);
+            }
+        }
+    }
+
+    // Seed: zero all deviations, prime h_det_last_ from current node heads
+    std::vector<double> h0(static_cast<std::size_t>(n_active));
+    for (int ai = 0; ai < n_active; ++ai) {
+        auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
+        h0[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
+    }
+    rom1d_->seed(h0.data());
+
+    // Forward to the 2D module so per-member coupling heads can be read at
+    // shared nodes (SpectralROM::applyCouplingFlux -> reconstructHead). A
+    // no-op when the 2D module is inactive.
+    surface_router_.setROM1D(rom1d_.get());
+
+    // Open CSV for quantile output at report intervals (path = rpt with .uncertainty.csv)
+    if (!rpt_path_.empty()) {
+        std::string csv_path = rpt_path_;
+        const std::string rpt_ext = ".rpt";
+        if (csv_path.size() >= rpt_ext.size() &&
+            csv_path.compare(csv_path.size() - rpt_ext.size(), rpt_ext.size(), rpt_ext) == 0) {
+            csv_path.replace(csv_path.size() - rpt_ext.size(), rpt_ext.size(), ".uncertainty.csv");
+        } else {
+            csv_path += ".uncertainty.csv";
+        }
+        rom1d_csv_.open(csv_path);
+        if (rom1d_csv_.is_open()) {
+            rom1d_csv_ << "time_s,node_name,q05,q50,q95\n";
+        }
+    }
+}
+
+// ============================================================================
+// computeK1d() — effective Manning conductance averaged over active conduits
+// ============================================================================
+
+double SWMMEngine::computeK1d() noexcept {
+    // Diffusion-wave diffusivity D = h^(5/3) / (2n*sqrt(S))  [m^2/s].
+    // GraphEigenBasis eigenvalues are dimensionless (topological, not spatial):
+    // the weighted Laplacian built in buildROM1D()/updateBasis() is normalized
+    // to mean edge weight 1.0, so its eigenvalue scale matches the pure
+    // topological Laplacian regardless of the absolute conductance magnitude
+    // or routing dt. D must still be normalised by L^2 to give K1d in 1/s:
+    //   K1d = D / L^2 = h^(5/3) / (2n * sqrt(S) * L^2)
+    // This ensures lambda_j * K1d has units 1/s in the ROM advance equation.
+    double sum_k = 0.0;
+    int    cnt   = 0;
+    for (int j = 0; j < ctx_.n_links(); ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        // Phase 6: conduit config (roughness/length/slope/mod_length) lives
+        // in the conduits side-table, not the wide LinkData arrays.
+        const int cr = ctx_.link_subtypes.conduit_row(j);
+        if (cr < 0) continue;
+        const auto ucr = static_cast<std::size_t>(cr);
+        const double n_rough = ctx_.link_subtypes.conduits.roughness[ucr];
+        const double slope   = std::fabs(ctx_.link_subtypes.conduits.slope[ucr]);
+        const double h       = ctx_.nodes.depth[static_cast<std::size_t>(ctx_.links.node1[uj])];
+        const double L       = ctx_.link_subtypes.conduits.mod_length[ucr] > 0.0
+                                 ? ctx_.link_subtypes.conduits.mod_length[ucr]
+                                 : ctx_.link_subtypes.conduits.length[ucr];
+        if (n_rough <= 0.0 || slope <= 0.0 || h < 1e-6 || L <= 0.0) continue;
+        const double D = std::pow(h, 5.0 / 3.0) / (2.0 * n_rough * std::sqrt(slope));
+        sum_k += D / (L * L);
+        ++cnt;
+    }
+    return cnt > 0 ? sum_k / cnt : 1e-4;
+}
+#endif // OPENSWMM_HAS_2D
 
 } /* namespace openswmm */
