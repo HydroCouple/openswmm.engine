@@ -447,9 +447,10 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     writeStringAttr(ds_node_head_, "location", "node");
 
     // Node SIGNED depth [nTime, nNode] — wet-masked render reconstruction
-    // (eta_v - z_v; negative on the dry side of partially wet cells). This is
-    // the field renderers/profilers should interpolate; Mesh2_node_head is the
-    // solver field (dry-cell head = bed elevation) kept for back-compat.
+    // (eta_v - z_v; wetted-contact gated, so current engines emit > 0 or the
+    // 0 no-data sentinel; files from older engines may carry negatives). This
+    // is the field renderers/profilers should interpolate; Mesh2_node_head is
+    // the solver field (dry-cell head = bed elevation) kept for back-compat.
     ds_node_depth_ = createUnlimitedDataset("Mesh2_node_depth", 2, zero2n, node_chunk);
     writeStringAttr(ds_node_depth_, "long_name",
                     "signed vertex water depth (wet-masked render reconstruction)");

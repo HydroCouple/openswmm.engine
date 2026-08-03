@@ -130,6 +130,11 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
 /// stencil-depth scan below and (for outfalls) in updateOutfallBoundaries.
 /// Same weighting rule as reconstructVertexRenderDepths, evaluated on demand
 /// for the handful of coupling vertices inside the RHS (O(stencil) each).
+/// NB: the render path additionally gates contributors on wetted contact
+/// (η > z_v) to fix a profile-plot artifact; this coupling head deliberately
+/// does NOT — gating here would shift exchange onset at every wall-adjacent
+/// manhole and perturb the coupling regression surface for a rendering
+/// concern. Revisit only if a coupling artifact is demonstrated.
 inline double wetVertexEta(const MeshData& mesh, const SurfaceStateData& state,
                            int v, double dry_depth) noexcept {
     const int s = mesh.vert_stencil_ptr[v];

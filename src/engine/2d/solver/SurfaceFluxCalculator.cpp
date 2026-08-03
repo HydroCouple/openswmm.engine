@@ -7,6 +7,7 @@
  */
 
 #include "SurfaceFluxCalculator.hpp"
+#include "InertialKernels.hpp"
 #include "../data/BoundaryData.hpp"
 
 #include <cmath>
@@ -61,16 +62,10 @@ inline void edgeEndpointZ(const MeshData& mesh, int t, int e,
 // bands. A cell with water pooled below the whole shared edge conveys nothing
 // across it (kills the uphill-creep / slope-stranding artifacts, per the
 // paper's sloping-bed and roughened-bed tests).
-inline double faceDepthFromEta(double eta, double z_lo, double z_hi) noexcept {
-    if (eta <= z_lo) return 0.0;
-    const double dz = z_hi - z_lo;
-    if (dz < 1.0e-9) return eta - z_lo;             // level edge
-    if (eta <= z_hi) {
-        const double t = eta - z_lo;
-        return t * t / (2.0 * dz);
-    }
-    return eta - 0.5 * (z_lo + z_hi);
-}
+// The implementation now lives in InertialKernels.hpp
+// (inertial::faceDepthFromEta) — one source shared by this boundary path, the
+// GPU boundary kernels, and the VFR interior-face path.
+using inertial::faceDepthFromEta;
 
 // Head-difference regularization for the diffusive-wave flux. The collapsed
 // Manning flux carries √|Δη|, whose derivative ∂F/∂Δη ∝ 1/√|Δη| → ∞ as the

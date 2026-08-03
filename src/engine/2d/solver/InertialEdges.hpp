@@ -48,7 +48,13 @@ struct InertialEdges {
     std::vector<int>    cL, cR;       ///< incident cell indices
     std::vector<double> xi;           ///< edge length ξ (m)
     std::vector<double> inv_dx;       ///< 1 / centroid-to-centroid distance (1/m)
-    std::vector<double> zface;        ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m)
+    std::vector<double> zface;        ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m) — MEAN face mode
+    /// Shared edge's TRUE endpoint bed elevations, sorted ze_lo ≤ ze_hi (m).
+    /// Used by FACE_RECONSTRUCTION = VFR_FACE to evaluate the B&S Eq. 14
+    /// wetted-edge depth so thin crests block at their real elevation instead
+    /// of the centroid-diluted zface (same endpoint rule as the boundary
+    /// path's edgeEndpointZ — both incident cells see the identical pair).
+    std::vector<double> ze_lo, ze_hi;
     std::vector<int>    slotL, slotR; ///< flat mesh edge slots [tri*3+e] for writeback
 
     // Explicit-marcher extension (ExplicitInertialSolver). Precomputed here so

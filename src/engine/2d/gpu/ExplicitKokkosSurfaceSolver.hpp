@@ -81,7 +81,7 @@ private:
     DView d_edge_length_, d_mannings_n_;
     // InertialEdges mirror
     IView d_cL_, d_cR_, d_slotL_, d_slotR_, d_cell_ptr_, d_cell_edge_;
-    DView d_xi_, d_inv_dx_, d_zface_, d_nx_, d_ny_, d_mx_, d_my_;
+    DView d_xi_, d_inv_dx_, d_zface_, d_ze_lo_, d_ze_hi_, d_nx_, d_ny_, d_mx_, d_my_;
     DView d_n2_, d_sign_, d_lchar_;
 
     // ---- device state -----------------------------------------------------

@@ -21,6 +21,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <string>
@@ -584,26 +585,67 @@ TEST(VertexRenderReconstruction, AllDryYieldsZero) {
         EXPECT_DOUBLE_EQ(state.vert_depth_signed[v], 0.0);
 }
 
-TEST(VertexRenderReconstruction, SubCellShorelineIsSigned) {
-    // Wet cell spanning a step: its high vertex must carry a NEGATIVE signed
-    // depth (eta below the vertex), so the barycentric blend crosses zero at
-    // the sub-cell shoreline instead of snapping at a cell boundary.
+TEST(VertexRenderReconstruction, WallTopVertexIsNoDataNotNotched) {
+    // Wetted-contact gate: a wet cell spanning a step votes at a vertex only
+    // if its water surface reaches that corner (eta > z_v). T1's water pools
+    // far below its high vertex v2, so v2 must read the 0 no-data sentinel —
+    // NOT a negative signed depth that would drag interpolated surfaces near
+    // the wall down to the film level (the profile-plot "notch").
     auto mesh = makeStepMesh();
     buildVertexStencils(mesh);
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
     state.depth[0] = 0.5;    // flat T0: eta = 0.5
-    state.depth[1] = 0.2;    // tilted T1 (z 0..5): partially wet
+    state.depth[1] = 0.2;    // tilted T1 (z 0..5): partially wet, eta << 5
 
     reconstructVertexRenderDepths(mesh, state, 1.0e-3);
 
-    // v2 (z=5) is touched only by the wet T1 whose eta << 5.
-    EXPECT_LT(state.vert_depth_signed[2], 0.0);
-    // And the implied eta at v2 equals T1's cell eta (single-cell stencil).
+    // v2 (z=5): T1's eta does not reach it → no-data sentinel, exactly 0.
+    EXPECT_DOUBLE_EQ(state.vert_depth_signed[2], 0.0);
+    // Low vertices are reached by their contributors' etas and stay positive.
+    EXPECT_GT(state.vert_depth_signed[0], 0.0);
+    EXPECT_GT(state.vert_depth_signed[1], 0.0);
+    EXPECT_GT(state.vert_depth_signed[3], 0.0);
+    // The emitted field is non-negative everywhere (gate ⇒ eta_v > z_v).
+    for (int v = 0; v < mesh.n_vertices(); ++v)
+        EXPECT_GE(state.vert_depth_signed[v], 0.0);
+}
+
+TEST(VertexRenderReconstruction, WallBaseFilmDoesNotNotchPool) {
+    // The artifact the gate fixes: a deep pool (T0) and a thin flank film
+    // (T1, pooled at the wall base) share vertices v0/v3. Without the gate the
+    // film's LOW eta is depth-blended into the shared base vertices AND
+    // stamped as a negative signed depth on the wall-top vertex, notching the
+    // rendered pool surface toward the wall. With the gate: the wall-top
+    // vertex is no-data, and the base vertices' implied eta stays within the
+    // contributing cells' eta range (both of which reach those corners).
+    auto mesh = makeStepMesh();
+    buildVertexStencils(mesh);
+
+    SurfaceStateData state;
+    state.resize(mesh.n_triangles(), mesh.n_vertices());
+    state.depth[0] = 1.0;     // pool: flat T0, eta = 1.0
+    state.depth[1] = 0.01;    // thin film on the flank, pools near the base
+
+    reconstructVertexRenderDepths(mesh, state, 1.0e-3);
+
+    const double eta0 = cellFreeSurfaceElevation(
+        1.0, mesh.vz[0], mesh.vz[1], mesh.vz[3]);           // 1.0
     const double eta1 = cellFreeSurfaceElevation(
-        0.2, mesh.vz[0], mesh.vz[3], mesh.vz[2]);
-    EXPECT_NEAR(state.vert_depth_signed[2] + mesh.vz[2], eta1, 1e-12);
+        0.01, mesh.vz[0], mesh.vz[3], mesh.vz[2]);          // ≈ base level
+
+    // Wall-top vertex: film eta << z_v2 → sentinel, not a negative.
+    EXPECT_DOUBLE_EQ(state.vert_depth_signed[2], 0.0);
+    // Shared base vertices: both cells reach them; the blend stays bracketed
+    // by the contributing etas (no value below the film, none above the pool).
+    for (int v : {0, 3}) {
+        const double eta_v = state.vert_depth_signed[v] + mesh.vz[v];
+        EXPECT_GE(eta_v, std::min(eta0, eta1) - 1e-12);
+        EXPECT_LE(eta_v, std::max(eta0, eta1) + 1e-12);
+    }
+    // Pool-only vertex v1 reads the pool exactly.
+    EXPECT_NEAR(state.vert_depth_signed[1], eta0 - mesh.vz[1], 1e-12);
 }
 
 

@@ -200,6 +200,17 @@ void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state
                 h, mesh.vz[mesh.tri_v0[t]], mesh.vz[mesh.tri_v1[t]],
                 mesh.vz[mesh.tri_v2[t]]);
             if (!std::isfinite(eta)) continue;      // nodata z must not spread
+            // Wetted-contact gate: a cell votes at this vertex only if its
+            // water surface actually reaches the vertex's corner (η above the
+            // vertex bed). Without it a thin film pooled at the BASE of a
+            // steep cell stamps its low η onto the cell's HIGH vertex,
+            // dragging the reported level there down to the film level (the
+            // wall-base "notch" in profile plots). Strict >: at equality the
+            // contribution's signed depth is 0 — indistinguishable from the
+            // no-data sentinel, so excluding it is harmless. This gate is
+            // also why no no-new-minima clamp exists: a mean over gated
+            // contributors is already bounded below by min η_k > z_v.
+            if (!(eta > mesh.vz[b])) continue;
             vsum += h * eta;
             wsum += h;
             if (!wet || eta > eta_max) { eta_max = eta; wet = true; }

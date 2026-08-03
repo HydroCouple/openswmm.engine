@@ -14,6 +14,8 @@
  *          normal to the face, positive cL→cR; SI, g = 9.80665):
  *
  *            h_f  = max(η_L, η_R) − max(z_L, z_R)          flow depth at face
+ *                   (FACE_RECONSTRUCTION=MEAN; VFR_FACE uses the B&S Eq. 14
+ *                    wetted-edge depth over the edge's true endpoint beds)
  *            S_f  = (η_R − η_L) · inv_dx_normal            surface slope
  *            q̂    = θ·q + (1−θ)·½(q⃗_L + q⃗_R)·n̂            lateral θ-average
  *            q*   = (q̂ − g·h_f·Δt·S_f) / (1 + g·Δt·n_f²·|q|/h_f^{7/3})
@@ -119,9 +121,46 @@ inline double cellVolumeFromEta(const MeshData& m, const SolverOptions2D& o,
 }
 
 /// Flow depth at a face: the water surface above the higher of the two
-/// interface beds. ≤ 0 means the face is a wall this substep.
+/// interface beds. ≤ 0 means the face is a wall this substep. This is the
+/// FACE_RECONSTRUCTION = MEAN form; zface is centroid-based (max of the two
+/// cell-mean beds), so a thin crest resolved as a line of high VERTICES is
+/// diluted by ~⅓ of its height — use the VFR form below to block at the true
+/// edge crest.
 OPENSWMM_KERNEL_FN double faceFlowDepth(double etaL, double etaR, double zface) noexcept {
     return std::max(etaL, etaR) - zface;
+}
+
+/// Wetted-edge flow depth from a free surface η over an edge with endpoint
+/// beds z_lo ≤ z_hi — Begnudelli & Sanders (2007) Eq. 14, the exact mean
+/// depth over the wetted portion of the edge:
+///   η ≤ z_lo          : 0                        (wetting gate: bed above water)
+///   z_lo < η ≤ z_hi   : (η − z_lo)² / (2(z_hi − z_lo))   (partially submerged)
+///   η > z_hi          : η − (z_lo + z_hi)/2      (fully submerged: mean depth)
+/// The quadratic branch matches value AND slope at both joins (C¹), so
+/// overtopping onset is smooth. Single source for the CPU boundary path, the
+/// GPU boundary kernels, and the VFR interior-face path — byte-identical to
+/// the copies it replaced in SurfaceFluxCalculator.cpp and
+/// ExplicitKokkosSurfaceSolver.cpp.
+OPENSWMM_KERNEL_FN double faceDepthFromEta(double eta, double z_lo, double z_hi) noexcept {
+    if (eta <= z_lo) return 0.0;
+    const double dz = z_hi - z_lo;
+    if (dz < 1.0e-9) return eta - z_lo;             // level edge
+    if (eta <= z_hi) {
+        const double t = eta - z_lo;
+        return t * t / (2.0 * dz);
+    }
+    return eta - 0.5 * (z_lo + z_hi);
+}
+
+/// Flow depth at an interior face under FACE_RECONSTRUCTION = VFR_FACE: the
+/// B&S Eq. 14 wetted-edge depth of the driving surface max(η_L, η_R) over the
+/// shared edge's TRUE endpoint beds. Water is blocked until the surface
+/// exceeds the edge's low point and overtops smoothly up to full submergence
+/// — embankments/levees/road crowns hold to their real crest instead of the
+/// centroid-diluted zface. Fully submerged reduces to max(η) − mean edge bed.
+OPENSWMM_KERNEL_FN double faceFlowDepthVfr(double etaL, double etaR,
+                                           double z_lo, double z_hi) noexcept {
+    return faceDepthFromEta(std::max(etaL, etaR), z_lo, z_hi);
 }
 
 /// One local-inertial face update over Δt. @p q is the current face discharge,

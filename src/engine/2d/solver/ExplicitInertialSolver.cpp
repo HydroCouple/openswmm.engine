@@ -287,13 +287,20 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
     const int   na = static_cast<int>(faces.size());
     const double theta = opts_->theta;
     const double beta_share = opts_->exchange_beta / 3.0;
+    // VFR_FACE: block/convey at the shared edge's TRUE crest via the B&S
+    // Eq. 14 wetted-edge depth; MEAN keeps the centroid zface bit-identical.
+    const bool vfr_face =
+        (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
         const int e = faces[static_cast<std::size_t>(k)];
         const int a = ed.cL[e], b = ed.cR[e];
-        const double hf = inertial::faceFlowDepth(state_->head[a],
-                                                  state_->head[b], ed.zface[e]);
+        const double hf = vfr_face
+            ? inertial::faceFlowDepthVfr(state_->head[a], state_->head[b],
+                                         ed.ze_lo[e], ed.ze_hi[e])
+            : inertial::faceFlowDepth(state_->head[a],
+                                      state_->head[b], ed.zface[e]);
         if (hf <= opts_->dry_depth) {
             q_[e] = 0.0;
             continue;
@@ -612,10 +619,16 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     // depths). Boundary slots carry the WINDOW-MEAN applied flux so the
     // router's −flux·dt_done booking recovers the exact ∫F_applied dt.
     std::fill(state_->edge_flux.begin(), state_->edge_flux.end(), 0.0);
+    const bool vfr_face =
+        (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
     for (int e = 0; e < edges_.ne; ++e) {
-        const double hf = inertial::faceFlowDepth(state_->head[edges_.cL[e]],
-                                                  state_->head[edges_.cR[e]],
-                                                  edges_.zface[e]);
+        const double hf = vfr_face
+            ? inertial::faceFlowDepthVfr(state_->head[edges_.cL[e]],
+                                         state_->head[edges_.cR[e]],
+                                         edges_.ze_lo[e], edges_.ze_hi[e])
+            : inertial::faceFlowDepth(state_->head[edges_.cL[e]],
+                                      state_->head[edges_.cR[e]],
+                                      edges_.zface[e]);
         double qp = 0.0;
         if (hf > opts_->dry_depth)
             qp = inertial::froudeCap(q_[e], hf, opts_->froude_max);

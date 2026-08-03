@@ -74,10 +74,12 @@ struct SurfaceStateData {
 
     /// Render/output-only SIGNED vertex depth η_v − z_v (m) — wet-masked,
     /// depth-weighted reconstruction (reconstructVertexRenderDepths). Unlike
-    /// vert_head, dry-cell bed elevations never contribute, so this field is
-    /// safe to interpolate for the water surface; negative over the dry side
-    /// of partially wet cells (sub-cell shoreline), 0 where no incident cell
-    /// is wet. NOT used by the solver.
+    /// vert_head, dry-cell bed elevations never contribute, and a wet cell
+    /// votes only where its η reaches the corner (wetted-contact gate), so
+    /// this field is safe to interpolate for the water surface. Emitted
+    /// values are strictly positive or the 0 no-data sentinel (no qualifying
+    /// incident cell); negatives appear only in files from older engines —
+    /// readers stay negative-tolerant. NOT used by the solver.
     std::vector<double> vert_depth_signed;
 
     // Cell-centred velocity (RT0 reconstruction from edge fluxes) — per triangle
