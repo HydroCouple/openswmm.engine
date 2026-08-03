@@ -35,11 +35,17 @@
 #include <vector>
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
+#include "uncertainty/MeshEigenBasis.hpp"
+#include "uncertainty/SpectralROM.hpp"
 #endif
 
 namespace openswmm {
 struct SimulationContext;
 }
+
+// Forward declaration — the 2D ROM holds a non-owning pointer to the 1D ROM for
+// per-member heads at coupling points; no 1D uncertainty headers needed here.
+namespace openswmm::uncertainty { struct SpectralROM1D; }
 
 namespace openswmm::twoD {
 
@@ -222,6 +228,38 @@ public:
     double lastSolverStepSize() const { return 0.0; }
 #endif
 
+    // ------------------------------------------------------------------------
+    // Surface uncertainty ROM
+    // ------------------------------------------------------------------------
+    // The ROM lives here rather than on a solver: this class already owns the
+    // mesh, the state, and the solver, and the ROM consumes exactly those —
+    // mesh geometry for its basis, post-step depth as the deterministic anchor,
+    // and the solver's published coupling exchange. Both marcher backends get
+    // it with no backend-side code, and nothing about it is integrator-specific.
+
+#ifdef OPENSWMM_HAS_2D
+    /// The ensemble ROM, or null when [2D_ROM] is off / the mesh is too small
+    /// for an eigenbasis. Null is the normal disabled state, not an error.
+    const SpectralROM* rom() const noexcept { return rom_.get(); }
+    SpectralROM*       rom()       noexcept { return rom_.get(); }
+
+    /// The eigenbasis the ROM projects onto (null until initialize()).
+    const MeshEigenBasis* romBasis() const noexcept { return rom_basis_.get(); }
+
+    /// Register the 1D network ROM so coupling fluxes use each member's own
+    /// reconstructed 1D head instead of the shared deterministic head.
+    /// Non-owning; the 1D ROM must outlive this router. Safe to call with null.
+    void setROM1D(const openswmm::uncertainty::SpectralROM1D* r) noexcept {
+        rom1d_ = r;
+    }
+
+    /// Per-point ensemble exchange-flow bounds, or an empty (invalid) struct
+    /// when the ROM is off or has not applied a coupling flux yet.
+    const CouplingUncertaintyOutput& couplingUncertainty() const noexcept;
+#else
+    void setROM1D(const openswmm::uncertainty::SpectralROM1D*) noexcept {}
+#endif
+
 private:
     /// Drain pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
     /// BoundaryData / mesh edge slots and flip pending_rows_drained. Shared by
@@ -302,6 +340,70 @@ private:
     /// or the Kokkos marcher plugin when installed/eligible (constructed in
     /// initialize() via makeSurfaceSolver).
     std::unique_ptr<ISurfaceSolver> solver_;
+
+    // ---- Surface uncertainty ROM (see the accessors above) ----
+
+    /// Eigenbasis of the mesh geometric graph-Laplacian. Built once in
+    /// initialize() from mesh geometry alone — it does not depend on the flow
+    /// field, so it is never re-solved during the run.
+    std::unique_ptr<MeshEigenBasis> rom_basis_;
+
+    /// Deviation-form ensemble. Allocated in initialize() when
+    /// options_.enable_rom and the basis built; null otherwise.
+    std::unique_ptr<SpectralROM> rom_;
+
+    /// Non-owning 1D network ROM, registered by SWMMEngine via setROM1D().
+    const openswmm::uncertainty::SpectralROM1D* rom1d_ = nullptr;
+
+    /// False until the first co-advance seeds the ROM from the initial depth
+    /// field. Seeding is deferred to the first advance so the ROM anchors on
+    /// state the solver has actually stepped, matching h_det's definition.
+    bool rom_seeded_ = false;
+
+    /// Sim time since the last quantile computation (report-scale cadence).
+    /// Quantiles are an O(M·n log M) sort — computing them every step would
+    /// dwarf the ROM's own O(M·k) advance, and nothing reads them between
+    /// report boundaries.
+    double rom_quantile_elapsed_ = 0.0;
+
+    /// Scratch: deterministic coupling flow (m³/s) per live coupling point,
+    /// derived from the solver's published ∫Q dt. Reused across steps.
+    std::vector<double> rom_coupling_q_det_;
+
+    /// Scratch: 1D node heads converted to the 2D metre frame. Reused.
+    std::vector<double> rom_node_head_buf_;
+
+    /// Build the eigenbasis and allocate the ensemble. No-op when the ROM is
+    /// disabled or the mesh has too few cells for an eigenbasis.
+    void initROM(SimulationContext& ctx);
+
+    /// Advance the ensemble over one co-advance batch and, on the report
+    /// cadence, refresh the depth quantiles. Reads state_/mesh_ only.
+    void advanceROM(SimulationContext& ctx, double dt);
+
+    /// Deviation decay coefficient K_eff [m^(4/3)/s] from mesh Manning/slope
+    /// and the current depth field, or options_.rom_k_eff when that is pinned.
+    /// A physical quantity — independent of which backend integrated the step.
+    double computeKEff() const;
+
+    /// (Re-)seed the ensemble from the current depth field: refit the
+    /// depth-weighted eigenmodes, zero the deviations, redraw the spatial
+    /// parameter fields, and record the wet-cell count.
+    void seedROM();
+
+    /// Re-seed if the wet domain has grown or shrunk past
+    /// options_.rom_wet_reseed_fraction since the last seed. Basis coverage
+    /// only — see that option's note.
+    void maybeReseedROM(double t);
+
+    /// Wet-cell count at the last seed, and the time of that seed.
+    int    rom_wet_count_at_seed_ = 0;
+    double rom_last_seed_t_       = 0.0;
+
+    /// Apply the ensemble's per-member coupling fluxes for one batch, using the
+    /// solver's published deterministic exchange as the reference the member
+    /// deviations are taken against.
+    void applyROMCoupling(SimulationContext& ctx, double dt);
 #endif
 
     /// Update rainfall from the rain gages (natural-neighbour interpolation or

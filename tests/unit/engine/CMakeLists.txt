@@ -236,6 +236,10 @@ set_property(TEST
 # into the exe, for the ODR reason documented on test_engine_2d_surface below.
 if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_mesh_eigen_basis test_2d_mesh_eigen_basis.cpp)
+
+    # Guard on the ROM's read-only contract: the deterministic 2D run must be
+    # bit-identical with the ensemble on or off.
+    add_gtest_unit(test_engine_2d_rom_nonintrusive test_2d_rom_nonintrusive.cpp)
 endif()
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.

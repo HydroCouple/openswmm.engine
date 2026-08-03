@@ -14,6 +14,7 @@
 #include "solver/ExplicitInertialSolver.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "solver/SurfaceSolverFactory.hpp"
+#include "uncertainty/CorrelatedFieldGenerator.hpp"
 #endif
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -618,6 +619,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         solver_ = makeSurfaceSolver(options_, nullptr, mesh_.n_triangles());
     }
     solver_->initialize(mesh_, state_, options_);
+
+    // The ROM observes whichever backend was just constructed — it reads mesh
+    // and state, so both marcher backends are supported with no backend code.
+    initROM(ctx);
 #endif
 
     active_ = true;
@@ -797,6 +802,12 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // "this batch's exchange", so it MUST run before the queue move below) …
     accumulateMassBalance(ctx, dt);
 
+    // Uncertainty ensemble, after the deterministic batch is complete and its
+    // exchange published: state_.depth is now the post-step h_det the ensemble
+    // anchors on, and last_coupling_exchange() holds this batch's Q_det.
+    // Read-only — see the ROM block below.
+    advanceROM(ctx, dt);
+
     // … then hand the batch's junction volumes to the delivery QUEUE so
     // assembleLateralInflows drains them at a uniform rate over the batch
     // span instead of a single-step pulse.
@@ -857,6 +868,269 @@ void SurfaceRouter2D::computeCouplingConductances(
         if (g > 0.0) out.emplace_back(cp.node_idx, g * to_1d);
     }
 }
+
+
+#ifdef OPENSWMM_HAS_2D
+// ============================================================================
+// Surface uncertainty ROM
+// ============================================================================
+//
+// Read-only observer. Everything below reads mesh_ and state_ and writes only
+// ROM-owned buffers; with enable_rom off nothing is allocated and none of it
+// runs. That is the invariant the ROM-on-vs-off bit-identity test guards, and
+// it is what lets the ROM ride along without perturbing the float32 parity
+// ladder the deterministic engine is held to.
+
+const CouplingUncertaintyOutput& SurfaceRouter2D::couplingUncertainty() const noexcept {
+    static const CouplingUncertaintyOutput kEmpty;
+    return rom_ ? rom_->coupling_unc_output : kEmpty;
+}
+
+
+double SurfaceRouter2D::computeKEff() const {
+    // Explicit override wins: the tests and the MC-calibration harness pin
+    // K_eff so the deviation operator is held fixed across runs.
+    if (options_.rom_k_eff > 0.0) return options_.rom_k_eff;
+
+    // Mean wet depth. All-dry ⇒ 0, which leaves the ensemble on forcing alone.
+    double h_sum = 0.0;
+    int    n_wet = 0;
+    for (const double h : state_.depth)
+        if (h > options_.dry_depth) { h_sum += h; ++n_wet; }
+    if (n_wet == 0) return 0.0;
+    const double h_mean = h_sum / static_cast<double>(n_wet);
+    if (h_mean < 1.0e-9) return 0.0;
+
+    // Mean Manning's n over the mesh.
+    double n_mean = 0.035;
+    if (!mesh_.mannings_n.empty()) {
+        double n_sum = 0.0;
+        for (const double n : mesh_.mannings_n) n_sum += n;
+        n_mean = n_sum / static_cast<double>(mesh_.mannings_n.size());
+    }
+    n_mean = std::max(n_mean, 1.0e-4);
+
+    // Mean bed slope over interior faces (|Δz| / centroid distance).
+    const int nt = mesh_.n_triangles();
+    double s_sum = 0.0;
+    int    n_faces = 0;
+    for (int i = 0; i < nt; ++i) {
+        const int nbrs[3] = {mesh_.tri_nbr0[static_cast<std::size_t>(i)],
+                             mesh_.tri_nbr1[static_cast<std::size_t>(i)],
+                             mesh_.tri_nbr2[static_cast<std::size_t>(i)]};
+        for (int e = 0; e < 3; ++e) {
+            const int j = nbrs[e];
+            if (j <= i) continue;   // boundary, or this face already counted
+            const double dx = mesh_.tri_cx[static_cast<std::size_t>(j)]
+                            - mesh_.tri_cx[static_cast<std::size_t>(i)];
+            const double dy = mesh_.tri_cy[static_cast<std::size_t>(j)]
+                            - mesh_.tri_cy[static_cast<std::size_t>(i)];
+            const double dz = mesh_.tri_cz[static_cast<std::size_t>(j)]
+                            - mesh_.tri_cz[static_cast<std::size_t>(i)];
+            const double d  = std::sqrt(dx * dx + dy * dy);
+            if (d < 1.0e-14) continue;
+            s_sum += std::abs(dz) / d;
+            ++n_faces;
+        }
+    }
+    // Floor keeps a perfectly flat domain out of the 1/sqrt(0) singularity.
+    constexpr double kSlopeFloor = 1.0e-6;
+    const double s_mean = n_faces > 0
+        ? std::max(s_sum / static_cast<double>(n_faces), kSlopeFloor)
+        : kSlopeFloor;
+
+    return std::pow(h_mean, 5.0 / 3.0) / (2.0 * n_mean * std::sqrt(s_mean));
+}
+
+
+void SurfaceRouter2D::initROM(SimulationContext& ctx) {
+    (void)ctx;
+    rom_.reset();
+    rom_basis_.reset();
+    rom_seeded_ = false;
+    if (!options_.enable_rom) return;
+
+    // The eigenbasis comes from mesh geometry alone, so it is built once here
+    // and never re-solved — only its depth weighting is refitted at seed time.
+    auto basis = std::make_unique<MeshEigenBasis>();
+    const int k_req = std::max(1, options_.rom_modes);
+    if (!basis->build(mesh_, k_req)) {
+        // Too few cells for an eigenbasis (< 4 triangles) or a failed solve.
+        // The ROM simply stays off; the deterministic run is unaffected.
+        return;
+    }
+
+    auto rom = std::make_unique<SpectralROM>();
+    rom->basis               = basis.get();
+    rom->n_ensemble          = std::max(1, options_.rom_members);
+    rom->mannings_pert       = options_.rom_mannings_pert;
+    rom->rainfall_pert       = options_.rom_rainfall_pert;
+    rom->cd_pert             = options_.rom_cd_pert;
+    rom->mode_drop_threshold = options_.rom_mode_drop_threshold;
+    rom->initialize();
+    if (!rom->is_ready()) return;
+
+    rom_basis_ = std::move(basis);
+    rom_       = std::move(rom);
+    rom_quantile_elapsed_ = 0.0;
+}
+
+
+void SurfaceRouter2D::seedROM() {
+    if (!rom_ || !rom_basis_) return;
+
+    const int nt = mesh_.n_triangles();
+
+    // Refit the eigenmodes to the current depth distribution: edge conductances
+    // D_t = (h_t / h̄)^(5/3), normalised by the mean so a uniform depth field
+    // reproduces the geometric basis exactly and the global K_eff keeps
+    // multiplying the eigenvalues on the same scale. buildDepthWeighted rolls
+    // back to the existing basis if the solve fails, so this cannot degrade it.
+    double h_sum = 0.0;
+    for (int t = 0; t < nt; ++t)
+        h_sum += std::max(state_.depth[static_cast<std::size_t>(t)], 0.0);
+    const double h_mean = h_sum / static_cast<double>(nt);
+
+    if (h_mean > 1.0e-9) {
+        std::vector<double> d_cell(static_cast<std::size_t>(nt), 1.0);
+        const double inv_h53 = 1.0 / std::pow(h_mean, 5.0 / 3.0);
+        for (int t = 0; t < nt; ++t) {
+            const double h_t =
+                std::max(state_.depth[static_cast<std::size_t>(t)], 0.0);
+            d_cell[static_cast<std::size_t>(t)] =
+                std::pow(h_t, 5.0 / 3.0) * inv_h53;
+        }
+        rom_basis_->buildDepthWeighted(mesh_, rom_basis_->num_modes,
+                                       d_cell.data());
+    }
+
+    rom_->seed(state_.depth.data());
+    rom_seeded_ = true;
+
+    // Spatially-correlated parameter fields. corr_len == 0 clears them, which
+    // selects the cheaper scalar path (one multiplier per member) in advance()
+    // and applyCouplingFlux().
+    if (options_.rom_mannings_corr_len > 0.0) {
+        CorrelatedFieldGenerator::generate(
+            mesh_.tri_cx.data(), mesh_.tri_cy.data(), nt,
+            rom_->mannings_mult, options_.rom_mannings_pert,
+            options_.rom_mannings_corr_len,
+            /*seed=*/UINT64_C(0xdeadbeef01), rom_->spatial_mannings);
+    } else {
+        rom_->spatial_mannings.clear();
+    }
+
+    if (options_.rom_rainfall_corr_len > 0.0) {
+        CorrelatedFieldGenerator::generate(
+            mesh_.tri_cx.data(), mesh_.tri_cy.data(), nt,
+            rom_->rainfall_mult, options_.rom_rainfall_pert,
+            options_.rom_rainfall_corr_len,
+            /*seed=*/UINT64_C(0xcafebabe02), rom_->spatial_rainfall);
+    } else {
+        rom_->spatial_rainfall.clear();
+    }
+
+    constexpr double kWetThreshold = 1.0e-4;
+    rom_wet_count_at_seed_ = 0;
+    for (const double h : state_.depth)
+        if (h > kWetThreshold) ++rom_wet_count_at_seed_;
+}
+
+
+void SurfaceRouter2D::maybeReseedROM(double t) {
+    if (!rom_ || !rom_seeded_) return;
+    if (options_.rom_wet_reseed_fraction <= 0.0) return;
+    if (t - rom_last_seed_t_ < options_.rom_wet_reseed_min_interval) return;
+
+    constexpr double kWetThreshold = 1.0e-4;
+    int wet_now = 0;
+    for (const double h : state_.depth)
+        if (h > kWetThreshold) ++wet_now;
+
+    const int threshold = static_cast<int>(
+        options_.rom_wet_reseed_fraction *
+        static_cast<double>(mesh_.n_triangles()));
+    if (std::abs(wet_now - rom_wet_count_at_seed_) > threshold) {
+        seedROM();
+        rom_last_seed_t_ = t;
+    }
+}
+
+
+void SurfaceRouter2D::applyROMCoupling(SimulationContext& ctx, double dt) {
+    if (!rom_ || !rom_seeded_ || dt <= 0.0) return;
+    if (node_coupling_points_.empty()) return;
+
+    // Pass the LIVE point list, not coupling_points_: the ROM skips outfalls
+    // anyway, and node_coupling_points_ is exactly the ordering the marcher
+    // publishes its exchange in — so exch[k] lines up with point k with no
+    // index mapping to get wrong.
+    const std::vector<double>& exch = solver_->last_coupling_exchange();
+
+    // 1D node heads in the 2D metre frame. Used as the shared 1D head wherever
+    // the 1D ROM has no per-member reconstruction for the node.
+    const auto nn = static_cast<std::size_t>(ctx.nodes.count());
+    rom_node_head_buf_.assign(nn, 0.0);
+    for (std::size_t i = 0; i < nn; ++i)
+        rom_node_head_buf_[i] = ctx.nodes.head[i] * options_.len_1d_to_2d;
+
+    // The marcher integrated ∫Q dt (m³) per live point over the batch it just
+    // advanced; the mean rate over the batch is the deterministic reference the
+    // per-member deviations are taken against. This is the windowless per-step
+    // path: the deterministic side books every batch, so the ensemble does too.
+    // There is no macro-window to smooth over and no coupling queue involved —
+    // the queue exists to spread the 1D *delivery*, not to define the exchange.
+    const double* q_det = nullptr;
+    if (exch.size() >= node_coupling_points_.size()) {
+        rom_coupling_q_det_.assign(node_coupling_points_.size(), 0.0);
+        const double inv_dt = 1.0 / dt;
+        for (std::size_t k = 0; k < node_coupling_points_.size(); ++k)
+            rom_coupling_q_det_[k] = exch[k] * inv_dt;
+        q_det = rom_coupling_q_det_.data();
+    }
+
+    rom_->applyCouplingFlux(node_coupling_points_, rom_node_head_buf_.data(),
+                            mesh_, dt, rom1d_, q_det);
+}
+
+
+void SurfaceRouter2D::advanceROM(SimulationContext& ctx, double dt) {
+    if (!rom_ || dt <= 0.0) return;
+
+    // Seed on the first advance rather than at initialize(): the ensemble
+    // anchors on h_det, and h_det is by definition post-step state.
+    if (!rom_seeded_) {
+        seedROM();
+        rom_last_seed_t_ = sim_time_;
+    }
+
+    const double k_eff = computeKEff();
+
+    // A depth-weighted basis already carries the depth dependence in its mode
+    // shapes, so the per-cell Rayleigh weighting would double-count it.
+    const double* h_cell = rom_basis_->depth_weighted
+                               ? nullptr
+                               : state_.depth.data();
+
+    rom_->advance(dt, k_eff, state_.rainfall.data(), h_cell,
+                  state_.depth.data());
+
+    applyROMCoupling(ctx, dt);
+    maybeReseedROM(sim_time_);
+
+    // Quantiles are an O(M·n log M) sort per call and nothing reads them
+    // between report boundaries — match the output cadence, not the step rate.
+    rom_quantile_elapsed_ += dt;
+    const double report_dt = ctx.options.report_step > 0.0
+                                 ? ctx.options.report_step
+                                 : 30.0;
+    if (rom_quantile_elapsed_ >= report_dt) {
+        rom_->computeQuantiles(state_.depth.data(),
+                               options_.rom_parametric_tails);
+        rom_quantile_elapsed_ = 0.0;
+    }
+}
+#endif // OPENSWMM_HAS_2D
 
 
 void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_dt,

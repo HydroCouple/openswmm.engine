@@ -695,7 +695,8 @@ void SpectralROM::applyCouplingFlux(
     const double* node_heads,
     const MeshData& mesh,
     double dt,
-    const openswmm::uncertainty::SpectralROM1D* rom1d)
+    const openswmm::uncertainty::SpectralROM1D* rom1d,
+    const double* q_det)
 {
     if (!is_ready() || cps.empty() || dt <= 0.0) return;
 
@@ -730,12 +731,16 @@ void SpectralROM::applyCouplingFlux(
             return Q;
         };
 
-        // Deterministic reference flux: nominal Cd (=1), deterministic depth and
-        // 1D head. The deterministic exchange is already inside h_det via the
-        // coupling pipeline, so only Q_i − Q_det is applied to each member.
+        // Deterministic reference flux. The deterministic exchange is already
+        // inside h_det via the coupling pipeline, so only Q_i − Q_det is applied
+        // to each member. Prefer the caller's measured value — what the
+        // integrator actually booked — over re-deriving it from the orifice
+        // formula, which ignores the clamps the integrator applied. See the
+        // q_det note on the declaration.
         const double h_2d_det = std::max(h_det_last_[ci], 0.0);
         const double h_1d_det = node_heads[cp.node_idx];
-        const double Q_det    = orifice_Q(h_2d_det, h_1d_det, 1.0);
+        const double Q_det    = q_det ? q_det[cp_idx]
+                                      : orifice_Q(h_2d_det, h_1d_det, 1.0);
 
         // Pre-compute rom1d active index for this coupling node (if 1D ROM active).
         const bool use_rom1d = rom1d && rom1d->is_ready()
