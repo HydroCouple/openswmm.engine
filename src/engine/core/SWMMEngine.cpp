@@ -3007,6 +3007,31 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
 }
 
 // ============================================================================
+// effectiveUserLatFlow — per-step forced lateral inflow at a node
+// ============================================================================
+
+// Effective runtime-forced lateral inflow at node uj for this step: the
+// persistent runtime-API value (user_lat_flow, set via
+// swmm_node_set_lateral_inflow) with any active ForcingData lateral-inflow
+// forcing overlaid — OVERRIDE replaces it, ADD adds to it. The forcing is
+// never written back into user_lat_flow: it is re-applied each step while
+// its mode is active and vanishes when the mode clears, so a RESET forcing
+// lasts exactly one step and a PERSIST+ADD forcing contributes a steady
+// (non-compounding) rate. Issue #113.
+static double effectiveUserLatFlow(const SimulationContext& ctx,
+                                   std::size_t uj) noexcept {
+    double q = ctx.nodes.user_lat_flow[uj];
+    if (uj < ctx.forcing.node_lat_inflow_mode.size()) {
+        const auto m = ctx.forcing.node_lat_inflow_mode[uj];
+        if (m == ForcingMode::OVERRIDE)
+            q = ctx.forcing.node_lat_inflow_value[uj];
+        else if (m == ForcingMode::ADD)
+            q += ctx.forcing.node_lat_inflow_value[uj];
+    }
+    return q;
+}
+
+// ============================================================================
 // updateRoutingMassBalance() — routing mass balance totals after routing
 // ============================================================================
 
@@ -3132,8 +3157,9 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             auto uj = static_cast<std::size_t>(j);
             if (ctx_.nodes.runoff_inflow[uj] > 0.0)
                 runoff_q += ctx_.nodes.runoff_inflow[uj];
-            if (ctx_.nodes.user_lat_flow[uj] > 0.0)
-                user_q_total += ctx_.nodes.user_lat_flow[uj];
+            if (const double q_user = effectiveUserLatFlow(ctx_, uj);
+                q_user > 0.0)
+                user_q_total += q_user;
             if (ctx_.nodes.coupling_inflow[uj] < 0.0)
                 coupling_out_q += -ctx_.nodes.coupling_inflow[uj];
         }
@@ -4048,18 +4074,14 @@ double SWMMEngine::subcatchSnowDepth(int idx) const noexcept {
 void SWMMEngine::applyForcings(double dt) noexcept {
     auto& f = ctx_.forcing;
 
-    // ---- Node lateral inflow forcing → write to user_lat_flow ----
-    // Transient ForcingData lateral inflows are merged into user_lat_flow
-    // so that the existing stepRunoff application path and mass balance
-    // tracking in updateRoutingMassBalance handle them uniformly.
-    for (int i = 0; i < ctx_.n_nodes(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (f.node_lat_inflow_mode[ui] == ForcingMode::OVERRIDE) {
-            ctx_.nodes.user_lat_flow[ui] = f.node_lat_inflow_value[ui];
-        } else if (f.node_lat_inflow_mode[ui] == ForcingMode::ADD) {
-            ctx_.nodes.user_lat_flow[ui] += f.node_lat_inflow_value[ui];
-        }
-    }
+    // ---- Node lateral inflow forcing ----
+    // Applied as a per-step OVERLAY, not written into user_lat_flow (which
+    // holds the persistent swmm_node_set_lateral_inflow value): while the
+    // forcing mode is active, effectiveUserLatFlow() folds the ForcingData
+    // value into lateral-inflow assembly and mass-balance tracking each
+    // step; when clear_reset_entries() clears the mode the forcing simply
+    // stops. The previous += mutation compounded PERSIST+ADD forcings each
+    // step and left expired RESET forcings behind permanently. Issue #113.
 
     // ---- Node head boundary forcing (outfalls only) ----
     //
@@ -5524,7 +5546,22 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         auto uj = static_cast<std::size_t>(j);
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.rdii_inflow[uj];
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.iface_inflow[uj];
-        ctx_.nodes.lat_flow[uj] += ctx_.nodes.user_lat_flow[uj]
+
+        // Runtime-forced lateral inflow: persistent API value with any
+        // active ForcingData forcing overlaid (see effectiveUserLatFlow).
+        // Counts as external inflow for continuity, matching legacy
+        // addExternalInflows (routing.c: apiExtInflow →
+        // massbal_addInflowFlow(EXTERNAL_INFLOW, q), positive only).
+        // Without this the routed volume appears in total_out but never in
+        // total_in and the continuity error grows unboundedly negative. The
+        // cumulative routing_forcing_inflow diagnostic (a subset of
+        // routing_external) is accumulated in updateRoutingMassBalance.
+        // Issue #113.
+        const double q_user = effectiveUserLatFlow(ctx_, uj);
+        if (q_user > 0.0)
+            sum_ext += q_user;
+
+        ctx_.nodes.lat_flow[uj] += q_user
                                  + ctx_.nodes.coupling_inflow[uj];
     }
 
