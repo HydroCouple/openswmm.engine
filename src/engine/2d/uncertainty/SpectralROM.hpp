@@ -286,11 +286,28 @@ struct SpectralROM {
      *                   the coupling node instead of the shared deterministic head.
      *                   rom1d->full_to_active must be populated for the lookup.
      */
+    /**
+     * @param q_det  Optional per-point deterministic exchange flow (m³/s,
+     *               + = 2D→1D drain), indexed like @p cps. When supplied it
+     *               replaces the internally computed orifice estimate as the
+     *               reference each member's deviation is taken against.
+     *
+     *               Prefer supplying it. The internal estimate re-derives Q_det
+     *               from the orifice formula, but the integrator applies its own
+     *               clamps and availability limits during the step, so the two
+     *               can disagree — and any disagreement is a spurious deviation
+     *               applied identically to every member, which walks the
+     *               ensemble median off the deterministic run. Passing the
+     *               exchange the integrator actually booked keeps the nominal
+     *               member at exactly zero deviation, which is what makes the
+     *               median track the deterministic solution by construction.
+     */
     void applyCouplingFlux(const std::vector<CouplingPoint>& cps,
                            const double* node_heads,
                            const MeshData& mesh,
                            double dt,
-                           const openswmm::uncertainty::SpectralROM1D* rom1d = nullptr);
+                           const openswmm::uncertainty::SpectralROM1D* rom1d = nullptr,
+                           const double* q_det = nullptr);
 
     /**
      * @brief Supply per-member runoff rates (m/s) from RunoffEnsemble.

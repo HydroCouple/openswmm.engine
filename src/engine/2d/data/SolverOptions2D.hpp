@@ -238,6 +238,56 @@ struct SolverOptions2D {
      *  they are the live state that post-initialize API mutations edit;
      *  the retained pending rows would be stale. Never parsed/persisted. */
     bool pending_rows_drained = false;
+
+    // ------------------------------------------------------------------------
+    // Surface uncertainty ROM ([2D_ROM] / [UNCERTAINTY] LAYER 2D)
+    // ------------------------------------------------------------------------
+    // The ROM is a read-only observer: it runs an M-member deviation-form
+    // ensemble alongside the deterministic marcher and never writes mesh or
+    // state. With enable_rom = false nothing is allocated and the deterministic
+    // path is untouched — the invariant the bit-identical on/off test guards.
+
+    bool enable_rom      = false;  ///< Master switch for the 2D ROM.
+    int  rom_members     = 50;     ///< Ensemble size M.
+    int  rom_modes       = 20;     ///< Eigenmodes k retained from MeshEigenBasis.
+
+    double rom_mannings_pert = 0.20; ///< Manning's n half-range: n ∈ [1±p]·base.
+    double rom_rainfall_pert = 0.20; ///< Rainfall half-range: r ∈ [1±p]·base.
+    double rom_cd_pert       = 0.00; ///< Coupling Cd half-range; 0 = disabled.
+
+    /*! Deviation decay coefficient K_eff [m^(4/3)/s]. 0 (default) = AUTO:
+     *  SurfaceRouter2D derives it each advance from mesh Manning/slope and the
+     *  current depth field. A positive value pins it, which is what the unit
+     *  tests and the MC-calibration harness use to hold the operator fixed. */
+    double rom_k_eff = 0.0;
+
+    /*! Correlation lengths (m) for spatially-varying parameter perturbation.
+     *  0 = scalar (one multiplier per member, uniform over the mesh); > 0 draws
+     *  a correlated random field at that length scale instead. */
+    double rom_mannings_corr_len = 0.0;
+    double rom_rainfall_corr_len = 0.0;
+
+    /*! Drop mode j from the advance when its ensemble energy and rainfall
+     *  forcing are both below this — the modes that carry no spread cost
+     *  nothing to skip. */
+    double rom_mode_drop_threshold = 1.0e-10;
+
+    /*! Re-seed when the wet-cell count has moved by more than this fraction of
+     *  the mesh since the last seed, no more often than every
+     *  rom_wet_reseed_min_interval seconds. This exists for BASIS COVERAGE, not
+     *  for drift: the depth-weighted eigenmodes are fitted to the wet domain, so
+     *  a domain that has grown substantially is no longer well represented by
+     *  them. The deviation form removed any need to re-seed for drift — the
+     *  median tracks the deterministic run by construction. Re-seeding does zero
+     *  the accumulated deviations, so keep the fraction high enough that it fires
+     *  on genuine domain growth only. 0 disables. */
+    double rom_wet_reseed_fraction     = 0.25;
+    double rom_wet_reseed_min_interval = 600.0;  ///< Seconds; 0 = no throttle.
+
+    /*! Fit a log-normal upper tail to the wet sub-population for q95 instead of
+     *  taking the sort-based order statistic. Helps when M is small enough that
+     *  the empirical 95th percentile is noisy. q05/q50 stay sort-based. */
+    bool rom_parametric_tails = false;
 };
 
 } // namespace openswmm::twoD

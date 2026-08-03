@@ -58,6 +58,11 @@ list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "hydraulics/SpectralCoarse.*")
 # eigenpairs.
 list(APPEND OPENSWMM_ENGINE_SOURCES uncertainty/GraphEigenBasis.cpp)
 
+# 1D network spectral ROM. Built unconditionally: the 2D surface ROM links it
+# for per-member 1D heads at coupling points (SpectralROM::applyCouplingFlux →
+# SpectralROM1D::reconstructHead), and the 1D ROM stands alone without 2D.
+list(APPEND OPENSWMM_ENGINE_SOURCES uncertainty/SpectralROM1D.cpp)
+
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.hpp
@@ -467,10 +472,14 @@ if(OPENSWMM_BUILD_2D)
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
 
-    # Mesh geometric graph-Laplacian eigenbasis: the reduced basis the surface
-    # uncertainty ROM projects onto. Reads mesh geometry only — no solver
-    # coupling — so it is integrator-independent.
+    # Surface uncertainty ROM: the mesh eigenbasis it projects onto, the
+    # deviation-form ensemble integrator itself, and the correlated-field
+    # generator for spatial parameter perturbation. All read mesh + state only
+    # (never solver internals), so they are integrator-independent and owned by
+    # SurfaceRouter2D rather than by any backend.
     list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/MeshEigenBasis.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/SpectralROM.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/CorrelatedFieldGenerator.cpp)
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 

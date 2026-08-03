@@ -53,6 +53,26 @@ struct CouplingPoint {
 };
 
 /**
+ * @brief Per-coupling-point exchange-flux bounds across an uncertainty ensemble.
+ *
+ * Populated by the 2D surface ROM when it applies its per-member coupling
+ * fluxes: q_min[k]/q_max[k] bracket the exchange flow (m³/s, + = 2D→1D drain)
+ * that the ensemble produced at coupling point k. Reported alongside the depth
+ * quantiles so downstream consumers can see how parameter uncertainty
+ * propagates into the 1D↔2D exchange, not just into 2D depth.
+ *
+ * Outfall points are skipped by the ROM and contribute 0.0 to both bounds.
+ * Both vectors are empty until the ROM has run at least once.
+ */
+struct CouplingUncertaintyOutput {
+    std::vector<double> q_min;  ///< Per-point minimum exchange flow (m³/s).
+    std::vector<double> q_max;  ///< Per-point maximum exchange flow (m³/s).
+
+    /// True once the ROM has populated the bounds.
+    bool is_valid() const noexcept { return !q_min.empty(); }
+};
+
+/**
  * @brief Build the list of coupling points from mesh coupling maps.
  *
  * Resolves vertex/triangle → node mappings into CouplingPoint descriptors.
