@@ -7,14 +7,26 @@
  *          closed-system verification surface for runoff, routing, and quality
  *          continuity without depending on a full simulation.
  *
+ *          Also contains end-to-end forced-lateral-inflow continuity tests
+ *          (issue #113): model inputs/outputs land under ./massbalance_out/
+ *          (working dir is tests/unit/engine/data) for review — no temp
+ *          files (project convention, CLAUDE.md §4.1).
+ *
  * @see include/openswmm/engine/openswmm_massbalance.h
  * @see src/engine/core/openswmm_massbalance_impl.cpp
  */
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <string>
+
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_forcing.h>
 #include <openswmm/engine/openswmm_massbalance.h>
+#include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_nodes.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -163,4 +175,198 @@ TEST_F(MassBalanceApiTest, QualityZeroFluxStillReportsZero) {
     double error = -1.0;
     ASSERT_EQ(swmm_get_quality_continuity_error(engine_, 1, &error), SWMM_OK);
     EXPECT_NEAR(error, 0.0, 1e-12);
+}
+// ============================================================================
+// End-to-end forced lateral inflow continuity — issue #113.
+//
+// Inflow injected via swmm_node_set_lateral_inflow (or a ForcingData lateral
+// forcing) is routed and discharged, so it must be booked as external inflow
+// (legacy: apiExtInflow → EXTERNAL_INFLOW) for routing continuity to close.
+// ForcingData lateral forcings are per-step overlays on the persistent
+// runtime-API value: RESET lasts exactly one step, PERSIST+ADD contributes a
+// steady (non-compounding) rate, and neither mutates user_lat_flow.
+// ============================================================================
+
+namespace {
+
+const char* kForcedOutDir = "massbalance_out";
+
+std::string forcedOutPath(const std::string& name) {
+    std::filesystem::create_directories(kForcedOutDir);
+    return (std::filesystem::path(kForcedOutDir) / name).string();
+}
+
+// J_IN (invert 10) → 200 ft of 1-ft circular pipe → free outfall O_OUT
+// (invert 8). No DWF, runoff, or [INFLOWS]: the ONLY inflow is the runtime
+// forced lateral inflow, so SWMM_ROUTING_EXTERNAL isolates its booking.
+const char* kForcedInp =
+    "[OPTIONS]\n"
+    "FLOW_UNITS           CFS\n"
+    "FLOW_ROUTING         DYNWAVE\n"
+    "START_DATE           01/01/2026\n"
+    "START_TIME           00:00:00\n"
+    "END_DATE             01/01/2026\n"
+    "END_TIME             00:10:00\n"
+    "REPORT_STEP          00:01:00\n"
+    "ROUTING_STEP         1\n"
+    "ALLOW_PONDING        NO\n"
+    "\n"
+    "[JUNCTIONS]\n"
+    ";;Name  Elev  MaxDepth\n"
+    "J_IN    10.0  5.0\n"
+    "\n"
+    "[OUTFALLS]\n"
+    ";;Name  Elev  Type  Gated\n"
+    "O_OUT   8.0   FREE  NO\n"
+    "\n"
+    "[CONDUITS]\n"
+    ";;Name    From   To     Length  N      Z1  Z2\n"
+    "C_MAIN    J_IN   O_OUT  200.0   0.013  0   0\n"
+    "\n"
+    "[XSECTIONS]\n"
+    ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+    "C_MAIN    CIRCULAR  1.0  0   0   0   1\n"
+    "\n"
+    "[COORDINATES]\n"
+    ";;Node  X    Y\n"
+    "J_IN    0.0    0.0\n"
+    "O_OUT   200.0  0.0\n";
+
+class ForcedInflowMassBalanceTest : public ::testing::Test {
+protected:
+    void TearDown() override {
+        if (engine_ != nullptr) {
+            swmm_engine_close(engine_);
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
+    }
+
+    void openModel(const std::string& base) {
+        const std::string inp = forcedOutPath(base + ".inp");
+        std::ofstream(inp) << kForcedInp;
+        engine_ = swmm_engine_create();
+        ASSERT_NE(engine_, nullptr);
+        ASSERT_EQ(swmm_engine_open(engine_, inp.c_str(),
+                                   forcedOutPath(base + ".rpt").c_str(),
+                                   forcedOutPath(base + ".out").c_str(),
+                                   nullptr), 0)
+            << swmm_get_last_error_msg(engine_);
+        ASSERT_EQ(swmm_engine_initialize(engine_), 0)
+            << swmm_get_last_error_msg(engine_);
+        ASSERT_EQ(swmm_engine_start(engine_, 0), 0)
+            << swmm_get_last_error_msg(engine_);
+        node_ = swmm_node_index(engine_, "J_IN");
+        ASSERT_GE(node_, 0);
+    }
+
+    void step() {
+        ASSERT_EQ(swmm_engine_step(engine_, &elapsed_), 0)
+            << swmm_get_last_error_msg(engine_);
+    }
+
+    double routingTotal(int component) {
+        double v = -1.0;
+        EXPECT_EQ(swmm_get_routing_total(engine_, component, &v), SWMM_OK);
+        return v;
+    }
+
+    double lateralInflow() {
+        double q = -1.0;
+        EXPECT_EQ(swmm_node_get_lateral_inflow(engine_, node_, &q), SWMM_OK);
+        return q;
+    }
+
+    SWMM_Engine engine_ = nullptr;
+    int node_ = -1;
+    double elapsed_ = 0.0;
+};
+
+}  // namespace
+
+// Issue #113 regression: 1 cfs injected via the runtime API for the whole
+// 600 s run is fully discharged out the outfall. The injected volume must
+// appear under SWMM_ROUTING_EXTERNAL (with SWMM_ROUTING_FORCING_INFLOW as
+// its subset diagnostic) and continuity must close. Before the fix the
+// volume was only in total_out and the error grew unboundedly negative
+// (≈ -4e3 on this fixture).
+TEST_F(ForcedInflowMassBalanceTest, ApiForcedInflowBooksAsExternalAndCloses) {
+    openModel("api_forced_inflow");
+    ASSERT_EQ(swmm_node_set_lateral_inflow(engine_, node_, 1.0), SWMM_OK);
+
+    int guard = 0;
+    do {
+        step();
+    } while (elapsed_ > 0.0 && ++guard < 100000);
+    ASSERT_EQ(swmm_engine_end(engine_), 0) << swmm_get_last_error_msg(engine_);
+
+    const double forcing  = routingTotal(SWMM_ROUTING_FORCING_INFLOW);
+    const double external = routingTotal(SWMM_ROUTING_EXTERNAL);
+
+    EXPECT_NEAR(forcing, 600.0, 6.0);              // 1 cfs × 600 s, ft3
+    EXPECT_NEAR(external, forcing, 1e-9 * forcing); // subset == whole here
+
+    // Residual ≈ -0.044 is this fixture's inherent dynwave filling-transient
+    // error — a DWF-driven run of the identical model reports exactly the
+    // same value, so the forced-inflow booking adds no error of its own.
+    double error = -1.0;
+    ASSERT_EQ(swmm_get_routing_continuity_error(engine_, &error), SWMM_OK);
+    EXPECT_NEAR(error, 0.0, 0.05);
+}
+
+// A RESET (transient) ADD forcing overlays exactly one routing step and
+// never mutates the persistent runtime-API value.
+TEST_F(ForcedInflowMassBalanceTest, TransientAddForcingLastsExactlyOneStep) {
+    openModel("transient_add_forcing");
+    ASSERT_EQ(swmm_node_set_lateral_inflow(engine_, node_, 1.0), SWMM_OK);
+    step();                                   // baseline: API value only
+    EXPECT_NEAR(lateralInflow(), 1.0, 1e-9);
+
+    ASSERT_EQ(swmm_forcing_node_lat_inflow(engine_, node_, 2.0,
+              SWMM_FORCING_ADD, SWMM_FORCING_RESET), SWMM_OK);
+    step();                                   // overlay active this step
+    EXPECT_NEAR(lateralInflow(), 3.0, 1e-9);
+
+    const double forcing_after_overlay =
+        routingTotal(SWMM_ROUTING_FORCING_INFLOW);
+
+    step();                                   // transient expired
+    EXPECT_NEAR(lateralInflow(), 1.0, 1e-9);  // API value survives
+
+    // Cumulative forcing volume grows only by the API rate once the
+    // transient is gone (the pre-fix += path kept the extra 2 cfs forever).
+    const double dt_growth = routingTotal(SWMM_ROUTING_FORCING_INFLOW)
+                           - forcing_after_overlay;
+    EXPECT_NEAR(dt_growth, 1.0, 1e-6);        // 1 cfs × 1 s routing step
+
+    ASSERT_EQ(swmm_engine_end(engine_), 0);
+}
+
+// A PERSIST ADD forcing contributes a steady rate every step — it must not
+// compound (the pre-fix += path yielded 2, 4, 6, ... cfs on successive
+// steps and quadratic cumulative volume).
+TEST_F(ForcedInflowMassBalanceTest, PersistentAddForcingDoesNotCompound) {
+    openModel("persistent_add_forcing");
+    ASSERT_EQ(swmm_forcing_node_lat_inflow(engine_, node_, 2.0,
+              SWMM_FORCING_ADD, SWMM_FORCING_PERSIST), SWMM_OK);
+
+    for (int i = 0; i < 5; ++i) step();
+    EXPECT_NEAR(lateralInflow(), 2.0, 1e-9);  // steady, not 10.0
+
+    // Equal step windows must accrue equal forcing volume (the first routing
+    // step can be shorter than ROUTING_STEP, so windows start after step 5).
+    // The pre-fix += path compounded the rate: window 2 would accrue ≈ 1.6×
+    // window 1 here.
+    const double after5 = routingTotal(SWMM_ROUTING_FORCING_INFLOW);
+    for (int i = 0; i < 5; ++i) step();
+    const double after10 = routingTotal(SWMM_ROUTING_FORCING_INFLOW);
+    for (int i = 0; i < 5; ++i) step();
+    const double after15 = routingTotal(SWMM_ROUTING_FORCING_INFLOW);
+
+    const double window1 = after10 - after5;
+    const double window2 = after15 - after10;
+    EXPECT_GT(window1, 0.0);
+    EXPECT_NEAR(window2, window1, 1e-6 * window1);
+
+    ASSERT_EQ(swmm_engine_end(engine_), 0);
 }
