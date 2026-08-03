@@ -24,7 +24,8 @@ using openswmm::uncertainty::coo_to_csr;
 // Geometric Laplacian
 // ============================================================================
 
-CsrGraph MeshEigenBasis::buildGeometricLaplacian(const MeshData& mesh) const {
+CsrGraph MeshEigenBasis::buildGeometricLaplacian(
+    const MeshData& mesh, const double* ground_w) const {
     int n = mesh.n_triangles();
     std::vector<std::vector<std::pair<int,double>>> coo(
         static_cast<std::size_t>(n));
@@ -58,6 +59,12 @@ CsrGraph MeshEigenBasis::buildGeometricLaplacian(const MeshData& mesh) const {
             coo[static_cast<std::size_t>(j)].emplace_back(i, -w);
         }
     }
+    // Open-boundary grounding: diagonal-only edge to a zero-deviation ghost.
+    if (ground_w != nullptr)
+        for (int i = 0; i < n; ++i)
+            if (ground_w[static_cast<std::size_t>(i)] > 0.0)
+                coo[static_cast<std::size_t>(i)].emplace_back(
+                    i, ground_w[static_cast<std::size_t>(i)]);
     return coo_to_csr(coo, n);
 }
 
@@ -65,8 +72,9 @@ CsrGraph MeshEigenBasis::buildGeometricLaplacian(const MeshData& mesh) const {
 // Depth-weighted Laplacian
 // ============================================================================
 
-CsrGraph MeshEigenBasis::buildDepthWeightedLaplacian(const MeshData& mesh,
-                                                     const double* D_cell) const {
+CsrGraph MeshEigenBasis::buildDepthWeightedLaplacian(
+    const MeshData& mesh, const double* D_cell,
+    const double* ground_w) const {
     int n = mesh.n_triangles();
     std::vector<std::vector<std::pair<int,double>>> coo(
         static_cast<std::size_t>(n));
@@ -103,6 +111,16 @@ CsrGraph MeshEigenBasis::buildDepthWeightedLaplacian(const MeshData& mesh,
             coo[static_cast<std::size_t>(j)].emplace_back(i, -w);
         }
     }
+    // Grounding, weighted by the cell's own diffusivity (same convention as
+    // its interior edges).
+    if (ground_w != nullptr)
+        for (int i = 0; i < n; ++i)
+            if (ground_w[static_cast<std::size_t>(i)] > 0.0) {
+                const double D_i =
+                    std::max(D_cell[static_cast<std::size_t>(i)], D_floor);
+                coo[static_cast<std::size_t>(i)].emplace_back(
+                    i, D_i * ground_w[static_cast<std::size_t>(i)]);
+            }
     return coo_to_csr(coo, n);
 }
 
@@ -140,7 +158,8 @@ bool MeshEigenBasis::buildFromLaplacian(const CsrGraph& L, int num_modes_req) {
 // build()
 // ============================================================================
 
-bool MeshEigenBasis::build(const MeshData& mesh, int num_modes_req) {
+bool MeshEigenBasis::build(const MeshData& mesh, int num_modes_req,
+                           const double* ground_w) {
     last_error     = 0;
     n_triangles    = mesh.n_triangles();
     num_kept       = 0;
@@ -149,7 +168,8 @@ bool MeshEigenBasis::build(const MeshData& mesh, int num_modes_req) {
 
     if (n_triangles < 4) { last_error = 1; return false; }
 
-    return buildFromLaplacian(buildGeometricLaplacian(mesh), num_modes_req);
+    return buildFromLaplacian(buildGeometricLaplacian(mesh, ground_w),
+                              num_modes_req);
 }
 
 // ============================================================================
@@ -158,7 +178,8 @@ bool MeshEigenBasis::build(const MeshData& mesh, int num_modes_req) {
 
 bool MeshEigenBasis::buildDepthWeighted(const MeshData& mesh,
                                         int num_modes_req,
-                                        const double* D_cell) {
+                                        const double* D_cell,
+                                        const double* ground_w) {
     if (n_triangles != mesh.n_triangles() || n_triangles < 4) return false;
     if (!D_cell) return false;
 
@@ -170,8 +191,8 @@ bool MeshEigenBasis::buildDepthWeighted(const MeshData& mesh,
     int  num_modes_save = num_modes;
 
     last_error = 0;
-    bool ok = buildFromLaplacian(buildDepthWeightedLaplacian(mesh, D_cell),
-                                 num_modes_req);
+    bool ok = buildFromLaplacian(
+        buildDepthWeightedLaplacian(mesh, D_cell, ground_w), num_modes_req);
     if (ok) {
         depth_weighted = true;
     } else {

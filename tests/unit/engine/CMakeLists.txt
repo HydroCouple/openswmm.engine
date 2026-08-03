@@ -240,6 +240,10 @@ if(OPENSWMM_BUILD_2D)
     # Guard on the ROM's read-only contract: the deterministic 2D run must be
     # bit-identical with the ensemble on or off.
     add_gtest_unit(test_engine_2d_rom_nonintrusive test_2d_rom_nonintrusive.cpp)
+
+    # Reduced k×k deviation operator: expm/φ₁ propagator, anisotropic assembly
+    # structure, and the SpectralROM matrix-path ≡ diagonal-path parity pin.
+    add_gtest_unit(test_engine_2d_deviation_operator test_2d_deviation_operator.cpp)
 endif()
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.

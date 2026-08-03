@@ -81,9 +81,24 @@ struct MeshEigenBasis {
      * Lanczos to obtain the num_modes smallest non-trivial eigenpairs, and
      * stores the result in P and eigenvalues.
      *
+     * @param ground_w Optional per-cell grounding conductance (length
+     *        n_triangles, same dimensionless len/d convention as interior
+     *        edges; 0 for cells with no open boundary). Grounding adds the
+     *        weight to the cell's diagonal only — an edge to a zero-deviation
+     *        ghost across an OPEN boundary face (outlet, specified stage).
+     *        Physically: deviations flush out of the domain there, so the
+     *        operator is not pure Neumann; the constant vector stops being a
+     *        null mode and the basis gains a quasi-uniform drain mode. Without
+     *        it a domain-wide parameter shift — whose steady response is
+     *        mostly a uniform profile offset — projects to almost nothing on
+     *        the zero-mean modes and the ensemble spread collapses. This is
+     *        the mesh analogue of NetworkLaplacian1D's outfall grounding, and
+     *        it exists for the same reason. Null = pure Neumann (closed box).
+     *
      * @return true on success (num_kept > 0); false otherwise.
      */
-    bool build(const MeshData& mesh, int num_modes_req);
+    bool build(const MeshData& mesh, int num_modes_req,
+               const double* ground_w = nullptr);
 
     /**
      * @brief Rebuild eigenbasis using depth-weighted edge conductances.
@@ -103,15 +118,18 @@ struct MeshEigenBasis {
      * @return true on success; false if Lanczos fails (basis unchanged).
      */
     bool buildDepthWeighted(const MeshData& mesh, int num_modes_req,
-                            const double* D_cell);
+                            const double* D_cell,
+                            const double* ground_w = nullptr);
 
     /// true if a build succeeded and modes were retained.
     bool is_ready() const noexcept { return num_kept > 0 && !P.empty(); }
 
 private:
-    uncertainty::CsrGraph buildGeometricLaplacian(const MeshData& mesh) const;
-    uncertainty::CsrGraph buildDepthWeightedLaplacian(const MeshData& mesh,
-                                                      const double* D_cell) const;
+    uncertainty::CsrGraph buildGeometricLaplacian(
+        const MeshData& mesh, const double* ground_w) const;
+    uncertainty::CsrGraph buildDepthWeightedLaplacian(
+        const MeshData& mesh, const double* D_cell,
+        const double* ground_w) const;
 
     /// Shared eigensolve + null-mode filtering + P/eigenvalues population.
     /// On failure returns false and leaves P/eigenvalues unchanged.

@@ -427,7 +427,49 @@ struct SpectralROM {
     /// True if initialize() has been called and n_kept > 0.
     bool is_ready() const noexcept { return n_kept > 0 && !a_ensemble.empty(); }
 
+    // -------------------------------------------------------------------------
+    // Reduced k×k deviation operator (the W3 physics dial)
+    // -------------------------------------------------------------------------
+
+    /**
+     * @brief Install a reduced deviation operator M (k×k row-major, 1/s).
+     *
+     * When set, advance() integrates d(δa_i)/dt = −(M/mm_i)·δa_i + g_i with an
+     * exact matrix exponential instead of the per-mode diagonal decay
+     * λ_j·keff_j/mm_i. The Manning-sensitivity forcing generalizes to
+     * −(1/mm_i − 1)·M·b; every other forcing term (rainfall, soft, registered
+     * vectors) enters g_i unchanged. Dividing the whole operator by mm is
+     * consistent: the Manning multiplier scales n, and both the friction
+     * diffusivity and the kinematic celerity scale as 1/n, so the operator
+     * scales as a whole.
+     *
+     * The matrix is typically assembled by DeviationOperator2D — isotropic,
+     * flow-aligned anisotropic, and advective operators differ only in what
+     * was assembled — and is reassembled on the basis-update cadence, never
+     * per step.
+     *
+     * Notes:
+     * - Call after initialize(); the dimension must equal n_kept (throws).
+     * - h_cell passed to advance() is IGNORED on this path: depth weighting
+     *   belongs in the assembly, where it acts on edge conductances rather
+     *   than through the diagonal Rayleigh-quotient approximation.
+     * - The per-member spatial Manning field (spatial_mannings) cannot be
+     *   represented by one shared M; advance() falls back to the diagonal
+     *   path in that configuration.
+     */
+    void setReducedOperator(const std::vector<double>& M_in);
+
+    /// Remove the reduced operator; advance() returns to the diagonal path.
+    void clearReducedOperator() noexcept { reduced_M_.clear(); }
+
+    /// True when a reduced operator is installed.
+    bool hasReducedOperator() const noexcept { return !reduced_M_.empty(); }
+
 private:
+    std::vector<double> reduced_M_;   ///< k×k row-major (1/s); empty = diagonal path.
+    std::vector<double> reduced_Mb_;  ///< n_kept scratch: M·b_coarse per advance().
+    std::vector<double> reduced_g_;   ///< n_kept scratch: per-member forcing vector.
+
     std::vector<double> h_work_;      ///< n_tri: scratch for reconstruction.
     std::vector<double> h_det_last_;  ///< n_tri: deterministic depth from the last advance()/seed().
     std::vector<double> sort_buf_;    ///< n_ensemble: per-cell sort workspace.
