@@ -302,8 +302,15 @@ private:
     /// (0.3048 for US FLOW_UNITS with a non-SI mesh file, else 1.0). Set in
     /// initialize() alongside the mesh scaling; applied once to constant
     /// heads after drainPendingRows() and at every TS lookup in
-    /// resolveBoundaryValues().
+    /// resolveBoundaryValues(). Also converts the SI head back to display
+    /// units for rating-curve stage-axis queries.
     double bc_stage_scale_ = 1.0;
+
+    /// Display flow units → m³/s factor for SPECIFIED_FLOW / TS_FLOW /
+    /// RATING_CURVE per-metre discharges (from FLOW_UNITS; 1.0 for CMS).
+    /// Applied once to constant flows after drainPendingRows() and at every
+    /// TS / rating-curve lookup.
+    double bc_flow_scale_ = 1.0;
 #ifdef OPENSWMM_HAS_2D
     /// Time integrator, chosen at runtime: the serial ExplicitInertialSolver,
     /// or the Kokkos marcher plugin when installed/eligible (constructed in
