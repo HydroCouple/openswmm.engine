@@ -478,6 +478,7 @@ if(OPENSWMM_BUILD_2D)
     # (never solver internals), so they are integrator-independent and owned by
     # SurfaceRouter2D rather than by any backend.
     list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/MeshEigenBasis.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/DeviationOperator2D.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/SpectralROM.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/CorrelatedFieldGenerator.cpp)
 

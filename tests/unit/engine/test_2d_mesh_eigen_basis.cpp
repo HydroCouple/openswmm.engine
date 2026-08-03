@@ -42,6 +42,7 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/uncertainty/MeshEigenBasis.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <vector>
@@ -458,6 +459,67 @@ TEST(MeshEigenBasis, DepthWeightedRejectsNullDAndPreservesBasis) {
     EXPECT_FALSE(b.depth_weighted);
     EXPECT_EQ(b.eigenvalues, lambda_before);
     EXPECT_EQ(b.P, P_before);
+}
+
+TEST(MeshEigenBasis, GroundedBasisCapturesUniformShift) {
+    // Pure-Neumann Laplacian: the constant vector is the null mode, every
+    // retained eigenvector is zero-mean, and a domain-wide uniform field
+    // projects to ~nothing — so an ensemble whose dominant response is a
+    // uniform profile shift carries almost no representable spread. Grounding
+    // the open-boundary cells (an edge to a zero-deviation ghost) removes the
+    // null mode: the lowest retained mode becomes a quasi-uniform "drain"
+    // mode with a large mean, and uniform shifts become representable. This
+    // is the mesh analogue of the 1D network Laplacian's outfall grounding.
+    auto mesh = makeStructuredMesh(6);   // 72 triangles
+    const int n = mesh.n_triangles();
+
+    // Ground the cells along the x = 0 boundary at their face conductance.
+    std::vector<double> gw(static_cast<std::size_t>(n), 0.0);
+    for (int i = 0; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const int nbrs[3] = {mesh.tri_nbr0[ui], mesh.tri_nbr1[ui],
+                             mesh.tri_nbr2[ui]};
+        for (int e = 0; e < 3; ++e) {
+            const auto idx = static_cast<std::size_t>(i * 3 + e);
+            if (nbrs[e] >= 0) continue;
+            if (mesh.edge_mx[idx] >= 1e-9) continue;
+            const double dx = mesh.edge_mx[idx] - mesh.tri_cx[ui];
+            const double dy = mesh.edge_my[idx] - mesh.tri_cy[ui];
+            const double d  = 2.0 * std::sqrt(dx * dx + dy * dy);
+            if (d > 1e-12) gw[ui] += mesh.edge_length[idx] / d;
+        }
+    }
+    ASSERT_GT(*std::max_element(gw.begin(), gw.end()), 0.0);
+
+    MeshEigenBasis neumann, grounded;
+    ASSERT_TRUE(neumann.build(mesh, 6));
+    ASSERT_TRUE(grounded.build(mesh, 6, gw.data()));
+
+    // Mean component of mode j: |Σ_i P[j,i]| / √n  (1.0 for the exact
+    // constant vector, 0 for any zero-mean vector).
+    auto meanComponent = [n](const MeshEigenBasis& b, int j) {
+        double s = 0.0;
+        for (int i = 0; i < n; ++i)
+            s += b.P[static_cast<std::size_t>(j * n + i)];
+        return std::fabs(s) / std::sqrt(static_cast<double>(n));
+    };
+
+    // Neumann modes are all orthogonal to the constant, up to the Lanczos
+    // convergence residual (~1e-6 relative — same order as the eigenrelation
+    // bound asserted above). The contrast with the grounded drain mode's
+    // > 0.5 mean is four orders of magnitude, so the discrimination is sharp.
+    for (int j = 0; j < neumann.num_kept; ++j)
+        EXPECT_LT(meanComponent(neumann, j), 1e-4)
+            << "Neumann mode " << j << " is not zero-mean";
+
+    // The grounded basis's lowest mode carries the bulk of a uniform shift,
+    // and its eigenvalue is genuinely positive (drains, does not persist).
+    EXPECT_GT(meanComponent(grounded, 0), 0.5)
+        << "grounded drain mode does not capture uniform shifts";
+    EXPECT_GT(grounded.eigenvalues[0], 0.0);
+    // Grounding tightens the spectrum's bottom end relative to Neumann's
+    // first nontrivial eigenvalue (the drain mode slots in below it).
+    EXPECT_LT(grounded.eigenvalues[0], neumann.eigenvalues[0]);
 }
 
 TEST(MeshEigenBasis, DepthWeightedRejectsMeshSizeMismatch) {

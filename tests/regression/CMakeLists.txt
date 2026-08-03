@@ -70,3 +70,31 @@ add_custom_command(TARGET test_engine_regression POST_BUILD
 # helper colocates them next to the test exe so $<ORIGIN>/@loader_path
 # resolves them.
 openswmm_stage_test_runtime_deps(test_engine_regression)
+
+# ---- W3: 2D ROM bands vs brute-force marcher Monte Carlo ----
+# Drives ExplicitInertialSolver and SpectralROM directly (operator-level
+# validation, no engine lifecycle); needs the 2D module.
+if(OPENSWMM_BUILD_2D)
+    add_executable(test_2d_rom_marcher_coverage test_2d_rom_marcher_coverage.cpp)
+    target_link_libraries(test_2d_rom_marcher_coverage
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            openswmm_engine
+    )
+    target_include_directories(test_2d_rom_marcher_coverage
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_2d_rom_marcher_coverage PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    add_test(
+        NAME    regression_2d_rom_marcher_coverage
+        COMMAND $<TARGET_FILE:test_2d_rom_marcher_coverage>
+    )
+    set_tests_properties(regression_2d_rom_marcher_coverage PROPERTIES
+        LABELS "regression"
+        ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
+endif()

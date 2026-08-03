@@ -9,6 +9,7 @@
 
 #include "SpectralROM.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
+#include "DeviationOperator2D.hpp"
 #include "uncertainty/LhsShuffle.hpp"
 
 #include <algorithm>
@@ -158,6 +159,18 @@ void SpectralROM::clearRegisteredParams() {
 // ============================================================================
 // initialize
 // ============================================================================
+
+void SpectralROM::setReducedOperator(const std::vector<double>& M_in) {
+    const auto nk = static_cast<std::size_t>(n_kept);
+    if (nk == 0 || M_in.size() != nk * nk)
+        throw std::invalid_argument(
+            "SpectralROM::setReducedOperator: M must be n_kept x n_kept and "
+            "the ROM must be initialized first");
+    reduced_M_ = M_in;
+    reduced_Mb_.assign(nk, 0.0);
+    reduced_g_.assign(nk, 0.0);
+}
+
 
 void SpectralROM::initialize() {
     if (!basis || basis->num_kept <= 0 || basis->n_triangles <= 0)
@@ -541,12 +554,82 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         if (mode_active[j]) ++n_modes_active;
     }
 
+    // ---- Step 5, reduced-operator path (matrix exponential) ------------------
+    // d(δa_i)/dt = −(M/mm_i)·δa_i − (1/mm_i − 1)·M·b + (f_i − r) + soft + vector.
+    // The forcing terms are assembled exactly as on the diagonal path; only the
+    // decay operator and its Manning sensitivity generalize from diag(λ·keff)
+    // to the full projected matrix. Modes couple through M, so the per-mode
+    // active-set optimization does not apply: all modes advance.
+    const bool has_extra = !extra_params_.empty();
+
+    if (hasReducedOperator() && !use_spatial_mann) {
+        const auto& Mr = reduced_M_;
+
+        // Shared across members: Mb = M · b_coarse.
+        for (std::size_t p = 0; p < nk; ++p) {
+            double dot = 0.0;
+            for (std::size_t q = 0; q < nk; ++q)
+                dot += Mr[p * nk + q] * b_coarse[q];
+            reduced_Mb_[p] = dot;
+        }
+
+        for (std::size_t j = 0; j < nk; ++j) mode_active[j] = true;
+        n_modes_active = n_kept;
+
+        for (int i = 0; i < n_ensemble; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            double* ai = &a_ensemble[ui * nk];
+            const double rate_prod    = rate_mult_prod(ui);
+            const double forcing_prod = forcing_mult_prod(ui);
+            const double mm = mannings_mult[ui] * rate_prod;
+            const double rm = rainfall_mult[ui];
+            const double s  = (mm > 1.0e-12) ? 1.0 / mm : 1.0;
+
+            const double* W_r_i = use_spatial_rain
+                ? (spatial_rainfall.values.data() + ui * nt) : nullptr;
+
+            for (std::size_t j = 0; j < nk; ++j) {
+                // Rainfall forcing — identical to the diagonal path.
+                double fj;
+                if (has_ensemble_rain) {
+                    fj = r_coarse[j] * (ensemble_rainfall_[ui] / mean_ensemble_rain_);
+                } else if (W_r_i) {
+                    const double* Pj = &basis->P[j * nt];
+                    fj = 0.0;
+                    for (std::size_t t = 0; t < nt; ++t)
+                        fj += Pj[t] * rainfall[t] * W_r_i[t];
+                } else {
+                    fj = r_coarse[j] * rm;
+                }
+                fj *= forcing_prod;
+
+                double g = -(s - 1.0) * reduced_Mb_[j] + (fj - r_coarse[j]);
+                if (soft_spread_field_) {
+                    if (use_soft_rij)
+                        g += soft_r_spread_spatial_[ui * nk + j];
+                    else
+                        g += soft_coeff_[ui] * soft_r_spread_[j];
+                }
+                if (has_extra) {
+                    for (const auto& ep : extra_params_)
+                        if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR)
+                            g += (ep.column[ui] - 1.0) * ep.rv[j];
+                }
+                reduced_g_[j] = g;
+            }
+
+            DeviationOperator2D::propagate(Mr, n_kept, s, dt,
+                                           ai, reduced_g_.data());
+        }
+
+        h_det_last_.assign(h_det, h_det + nt);
+        return;
+    }
+
     // ---- Step 5: Advance active deviations (exact exponential step) ----------
     //   rate = λ_j · keff_ji
     //   g    = −λ_j·(keff_ji − keff_modes_[j])·b_j + (f_ij − r_coarse[j])
     const double rate_floor = 1.0e-12;
-
-    const bool has_extra = !extra_params_.empty();
 
     for (int i = 0; i < n_ensemble; ++i) {
         auto ui = static_cast<std::size_t>(i);

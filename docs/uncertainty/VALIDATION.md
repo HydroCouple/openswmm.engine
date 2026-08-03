@@ -332,3 +332,110 @@ it into both ROMs (1D gage, 2D grid) via a reduced projection
 ```
 ctest --test-dir build/darwin-tests-local -R "test_engine_spde_spatial_basis|test_soft_rain_corr_coverage"
 ```
+
+---
+
+# Solver-mode compatibility: 2D ROM vs the explicit local-inertial marcher (W3)
+
+Measured 2026-08-02. Harness: `tests/regression/test_2d_rom_marcher_coverage.cpp`
+(registered, gated). Sweep provenance: scratch calibration tool, same fixture,
+same MC; numbers below are from the registered harness itself.
+
+## 1. Experiment
+
+Steady-runoff plane — the operator's declared validity regime (sustained
+friction-dominated Manning flow, Λ = r_f/ck ≳ 3), and the same configuration as
+the marcher's own Manning-steady gate: 40×40 quad-split mesh (3 200 triangles,
+5 m pitch), bed slope 0.002 toward a NORMAL_FLOW outlet, uniform rainfall
+2·10⁻⁴ m/s, spun 3 000 s to steady state. M = 25 like-for-like members: LHS
+strata of a ±20 % uniform Manning prior drive both a real marcher run (MC) and
+ROM member i via `setExternalSamples`. Scored on per-cell depth over the last
+10 minutes of a 30-minute window (fully saturated; deviation spread spins up
+from zero by construction).
+
+Four operator rungs, one code path (`DeviationOperator2D` → reduced k×k
+`M = PᵀL_opP`, matrix-exponential advance):
+
+| rung   | operator                                                        |
+|--------|-----------------------------------------------------------------|
+| legacy | diagonal λ·K_eff, ungrounded graph-Laplacian eigenvalues (historical convention) |
+| iso    | physical FV diffusion, isotropic, grounded                      |
+| aniso  | + flow-aligned tensor α∥ = 0.62, α⊥ = 2.0                        |
+| adv    | + upwind advection c_k = (5/3)·u  ← **production rung**          |
+
+k = 40 modes; D = h̄^{5/3}/(2n̄√S) refreshed per report; velocity from a
+Green–Gauss surface-gradient estimate on readable state; operator reassembled
+once per report interval (basis-update cadence, no re-eigensolve).
+
+## 2. Results (measured, Debug build; identical to the -O2 sweep)
+
+| rung   | coverage | width-ratio median | in [0.3,3] | floors met |
+|--------|----------|--------------------|------------|------------|
+| legacy | 1.000    | 0.456              | 0.665      | no (width) |
+| iso    | 0.994    | 0.905              | 0.820      | yes        |
+| aniso  | 0.994    | 0.923              | 0.822      | yes        |
+| adv    | 1.000    | **1.430**          | **0.884**  | **yes — gated** |
+
+Floors (initial, per the HSYM P4 rule): coverage ≥ 0.90, width-ratio median ∈
+[0.5, 2], in-band ≥ 0.80. The production rung is `adv`; the harness gates it.
+
+## 3. Findings established during validation
+
+**(a) Open-boundary grounding is load-bearing — the 2D replay of the 1D
+grounded-Laplacian fix (reform PR 4 / F2).** With a pure-Neumann basis, every
+retained mode is zero-mean, and the dominant response to a domain-wide Manning
+perturbation — a quasi-uniform shift of the steady profile — is invisible to
+the basis: bands saturate at ≈ 0.39× the MC width *independently of every
+diffusivity dial* (D×2 and D/2 moved the median by < 0.05). The Manning
+fixed point δa_ss = (mm−1)·Pᵀh_det simply cannot see the mean shift.
+Grounding outlet-adjacent cells (diagonal-only edge to a zero-deviation ghost,
+in both the basis and the operator) restores it: 0.39 → 0.73 at k = 24 with
+otherwise identical dials. Ground conductance is softened (×0.25): a
+NORMAL_FLOW outlet is not absorbing — the member's own deviation persists at
+the boundary — and full-strength grounding over-drains the near-outlet cells
+(measured x-decile ratio 0.36 at the outlet vs 2.37 at the divide before
+softening/mode increase).
+
+**(b) Mode count k is a capture dial with a spatial signature.** The
+width-ratio deficit concentrates near the outlet, where the profile has its
+finest structure: per-x-decile medians ramped 0.36→2.37 (k = 24) and flattened
+to 0.54→2.20 at k = 40, taking in-band from 0.77 to 0.88. Guidance: k ≈ 1 % of
+cells on smooth steady fields; more for sharp ICs.
+
+**(c) The ~1.4× width bias of the production rung is the conveyance-sensitivity
+overshoot already documented in 1D (PR-10 median 1.25×).** The Manning
+sensitivity responds with the full n-sensitivity of the conveyance while the
+steady depth responds as n^{3/5} (≈ 0.6×), so saturated bands run wide — the
+conservative direction.
+
+**(d) The legacy diagonal convention (graph-Laplacian eigenvalues, no cell
+area) under-spreads by ≈ 2× on this mesh** (median 0.456) because the fixed
+point sits on an ungrounded basis (see (a)); its decay-rate scale error
+(O(cell-size²) hidden factor) is masked at saturation but present in
+transients. The physical FV convention replaces it on all reduced-operator
+rungs.
+
+## 4. Documented limitation: transient drain-to-pond (out of regime)
+
+A bump-drains-to-pond fixture (closed box, off-centre Gaussian over a wet
+floor, no sustained forcing) was measured with the same machinery: coverage
+0.55–0.60, width median 0.25–0.34, streamwise bands ≈ 5× narrower than MC
+(transverse ≈ 1.0 with advection — the transverse physics is right). This
+fixture leaves the operator's validity envelope mid-window: the surface ponds,
+u → 0 kills the advective Manning sensitivity, while the MC retains *frozen
+positional spread* accumulated during the live transient — memory the
+deviation-decay operator does not carry. This is the Λ ≲ 3 breakdown regime
+the local-inertial derivation itself flags (thin films, dry fronts, vanishing
+flow), and the 2D counterpart of PR-10's documented front-arrival-timing
+limitation. Bands in ponding transients should be treated as indicative only;
+the gate applies where the operator claims validity.
+
+## 5. Reproduction
+
+    ctest --test-dir build/<dir> -R regression_2d_rom_marcher_coverage
+    # or directly:
+    OPENSWMM_2D_BACKEND=cpu ./tests/regression/test_2d_rom_marcher_coverage
+
+Runtime ≈ 100 s (Debug): 26 marcher runs × 4 800 s simulated on 3 200 cells.
+All calibrated constants live at the top of the harness; the floors are the
+meter — recalibrate the dials, never the floors.
