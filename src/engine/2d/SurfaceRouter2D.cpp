@@ -236,6 +236,25 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     bc_stage_scale_ =
         (!options_.mesh_units_si && mesh_to_si != 1.0) ? mesh_to_si : 1.0;
 
+    // SPECIFIED_FLOW / TS_FLOW / RATING_CURVE discharges are authored in the
+    // project's display flow units PER METRE of edge (the GUI's contract —
+    // "Flow/m" in display units); the solver works in m³/s/m. Indexed by the
+    // FlowUnits enum order (CFS, GPM, MGD, CMS, LPS, MLD). Rating-curve
+    // STAGE (x-axis) shares the mesh vertical datum and converts with
+    // bc_stage_scale_ at lookup time.
+    {
+        static constexpr double kFlowToCms[6] = {
+            0.028316846592,     // CFS
+            6.30901964e-05,     // GPM
+            0.043812636574,     // MGD
+            1.0,                // CMS
+            0.001,              // LPS
+            0.011574074074      // MLD
+        };
+        const int fu = static_cast<int>(ctx.options.flow_units);
+        bc_flow_scale_ = (fu >= 0 && fu < 6) ? kFlowToCms[fu] : 1.0;
+    }
+
     // Convert mesh geometry from project length units (feet for US) to the SI
     // internal units the 2D solver expects. MUST run BEFORE buildMeshTopology
     // so all derived geometry (areas, edge lengths, centroids, midpoint Z) is
@@ -361,16 +380,21 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // BoundaryData / mesh edge slots (sizes boundary_, flips the drained flag).
     drainPendingRows();
 
-    // Constant stage heads just re-drained from the authored rows are in
-    // project display units — bring them onto the mesh's SI datum. TS-driven
-    // entries (tseries slot == -2, name pending) are excluded: their head is
-    // overwritten from the table each step and scaled at lookup time.
-    if (bc_stage_scale_ != 1.0) {
+    // Constant stage heads / flow discharges just re-drained from the
+    // authored rows are in project display units — bring them into SI.
+    // TS-driven entries (tseries slot == -2, name pending) are excluded:
+    // their value is overwritten from the table each step and scaled at
+    // lookup time; rating-curve discharges are likewise resolved per step.
+    if (bc_stage_scale_ != 1.0 || bc_flow_scale_ != 1.0) {
         for (int idx = 0; idx < boundary_.size(); ++idx) {
-            if (boundary_.edge_bc_type[idx]
-                    == static_cast<int8_t>(BoundaryType::SPECIFIED_STAGE)
+            const auto bt =
+                static_cast<BoundaryType>(boundary_.edge_bc_type[idx]);
+            if (bt == BoundaryType::SPECIFIED_STAGE
                 && boundary_.edge_bc_tseries[idx] == -1)
                 boundary_.edge_bc_head[idx] *= bc_stage_scale_;
+            else if (bt == BoundaryType::SPECIFIED_FLOW
+                     && boundary_.edge_bc_flow_tseries[idx] == -1)
+                boundary_.edge_bc_flow[idx] *= bc_flow_scale_;
         }
     }
 
@@ -1095,9 +1119,9 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
             case BoundaryType::SPECIFIED_FLOW: {
                 const int ts = boundary_.edge_bc_flow_tseries[idx];
                 if (ts >= 0 && ts < n_tables)
-                    // Per-metre discharge is documented SI (m³/s/m) in both
-                    // constant and TS form — no unit factor.
-                    boundary_.edge_bc_flow[idx] =
+                    // Series values are authored in display flow units per
+                    // metre (like the constant form); scale to m³/s/m.
+                    boundary_.edge_bc_flow[idx] = bc_flow_scale_ *
                         table_lookup_cursor(ctx.tables.tables[ts], abs_t);
                 break;
             }
@@ -1105,11 +1129,16 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
                 const int cv = boundary_.edge_bc_rating_curve[idx];
                 if (cv >= 0 && cv < n_tables) {
                     // Stage = boundary cell water-surface elevation (lagged to
-                    // start-of-step). Curve maps stage → outward discharge per
-                    // metre of edge (m³/s/m), consistent with SPECIFIED_FLOW.
+                    // start-of-step). The curve is authored in display units
+                    // on both axes — stage (x) shares the mesh vertical datum
+                    // (feet for US), discharge (y) is display flow units per
+                    // metre of edge — so the SI head converts back to display
+                    // for the query and the result scales to m³/s/m,
+                    // consistent with SPECIFIED_FLOW.
                     const int i = idx / 3;
-                    boundary_.edge_bc_flow[idx] =
-                        table_lookupEx(ctx.tables.tables[cv], state_.head[i]);
+                    boundary_.edge_bc_flow[idx] = bc_flow_scale_ *
+                        table_lookupEx(ctx.tables.tables[cv],
+                                       state_.head[i] / bc_stage_scale_);
                 }
                 break;
             }

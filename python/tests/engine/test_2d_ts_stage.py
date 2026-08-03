@@ -163,3 +163,75 @@ TideTS    3.0   2.0
     for d in depths:
         assert d == pytest.approx(0.6096, abs=0.08), (
             f"stage not ft->m scaled: depths={depths}")
+
+
+def _run_depths(inp_path, tmp_path, hours):
+    sv = Solver(str(inp_path), str(tmp_path / "r.rpt"), str(tmp_path / "r.out"))
+    sv.open()
+    sv.initialize()
+    sv.start()
+    td = sv.surface2d
+    assert td.is_active
+    while True:
+        dt = sv.step()
+        if not dt or dt.total_seconds() <= 0 \
+                or sv.elapsed.total_seconds() >= hours * 3600:
+            break
+    depths = [float(d) for d in td.get_depths()]
+    sv.end()
+    sv.close()
+    return depths
+
+
+def test_specified_flow_scaled_for_us_units(tmp_path):
+    """US project (CFS): a SPECIFIED_FLOW discharge authored as display flow
+    units per metre must convert CFS -> m3/s. Inflow of -0.3531 CFS/m on a
+    10 m edge = 0.1 m3/s onto a walled 100 m2 square -> depth 3.6 m after
+    1 h. The unscaled bug read it as -0.3531 m3/s/m -> ~12.7 m."""
+    inp = tmp_path / "flow_us.inp"
+    inp.write_text(
+        "[TITLE]\nUS flow units\n\n"
+        + _options("CFS", 2)
+        + _mesh_sections(32.808)  # 10 m square authored in feet
+        + """
+[2D_BOUNDARY_CONDITIONS]
+;; TRI  EDGE  TYPE            PARAM_1   PARAM_2  GROUP
+   0    0     SPECIFIED_FLOW  -0.35315  *        *
+"""
+    )
+    depths = _run_depths(inp, tmp_path, 1.0)
+    vol = sum(depths) * 50.0
+    assert vol == pytest.approx(360.0, rel=0.05), (
+        f"flow not CFS->CMS scaled: vol={vol} depths={depths}")
+
+
+def test_rating_curve_axes_scaled_for_us_units(tmp_path):
+    """US project: a rating curve is authored display-units on BOTH axes —
+    stage x in feet, discharge y in CFS per metre. With 0.1 m3/s inflow the
+    outlet balances where y(h_ft) = 0.3531 CFS/m, i.e. h = 2 ft = 0.61 m.
+    Unscaled axes drain far harder and settle much shallower."""
+    inp = tmp_path / "rc_us.inp"
+    inp.write_text(
+        "[TITLE]\nUS rating curve\n\n"
+        + _options("CFS", 2)
+        + """
+[CURVES]
+;;Name   Type     X    Y
+OutRC    RATING   0.0  0.0
+OutRC             1.0  0.17657
+OutRC             3.0  0.70629
+"""
+        + _mesh_sections(32.808)
+        + """
+[2D_BOUNDARY_CONDITIONS]
+;; TRI  EDGE  TYPE            PARAM_1   PARAM_2  GROUP
+   0    0     SPECIFIED_FLOW  -0.35315  *        *
+   1    1     RATING_CURVE    OutRC     *        *
+"""
+    )
+    depths = _run_depths(inp, tmp_path, 2.0)
+    # Outlet-cell stage settles near the 2 ft (0.61 m) balance point; the
+    # boundary-cell/outlet-cell gradient spreads the pair around it.
+    mean_depth = sum(depths) / len(depths)
+    assert mean_depth == pytest.approx(0.61, abs=0.20), (
+        f"rating-curve axes not display-unit scaled: depths={depths}")
