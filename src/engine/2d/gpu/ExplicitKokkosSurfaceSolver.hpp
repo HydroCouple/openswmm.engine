@@ -124,7 +124,8 @@ private:
     std::vector<std::pair<double, int>> telemetry_;
     std::string telemetry_path_;
 
-    // ---- internals ---------------------------------------------------------
+    // ---- internals (public for nvcc extended-lambda access) ----------------
+public:
     void reconstructAllDev();
     void settleAccumulatorsDev();
     void lazySourcesDev(double t);

@@ -113,6 +113,8 @@ elseif(OPENSWMM_GPU_BACKEND STREQUAL "cuda")
         # Separable compilation is required when device code spans multiple TUs
         # (Kokkos parallel kernels across GpuPluginCuda + ExplicitKokkosSurfaceSolver).
         set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+        # CUDA 13.x CCCL headers require the MSVC standard-conforming preprocessor.
+        string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler=/Zc:preprocessor")
     endif()
 
     add_library(openswmm_gpu_cuda SHARED
