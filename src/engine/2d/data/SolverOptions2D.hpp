@@ -56,6 +56,16 @@ enum class CellClosure2D : int8_t {
  * surface is below the whole edge (no flow — the wetting gate), the exact
  * partially-submerged mean when the waterline crosses the edge. C¹ in η.
  *
+ * Scope per solver path: BOUNDARY edges honour the mode in
+ * SurfaceFluxCalculator::boundaryEdgeFlux. Under the explicit local-inertial
+ * marcher, VFR_FACE also governs INTERIOR faces: the face flow depth becomes
+ * faceFlowDepthVfr(η_L, η_R, ze_lo, ze_hi) — the Eq. 14 wetted-edge depth of
+ * the driving surface over the shared edge's TRUE endpoint beds — so thin
+ * crests (embankments/levees/road crowns resolved as lines of high vertices)
+ * block until the water genuinely reaches the crest instead of the
+ * centroid-diluted zface (≈ ⅓-height early overtopping). MEAN keeps the
+ * legacy centroid zface bit-identical on interior faces.
+ *
  * Parsed from [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE).
  * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
  */

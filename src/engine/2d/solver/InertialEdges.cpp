@@ -25,6 +25,7 @@ void InertialEdges::build(const MeshData& mesh) {
     const int nt = mesh.n_triangles();
 
     cL.clear(); cR.clear(); xi.clear(); inv_dx.clear(); zface.clear();
+    ze_lo.clear(); ze_hi.clear();
     slotL.clear(); slotR.clear();
     nx.clear(); ny.clear(); mx.clear(); my.clear();
     inv_dx_normal.clear(); n2_face.clear(); cell_lchar.clear();
@@ -49,6 +50,18 @@ void InertialEdges::build(const MeshData& mesh) {
                                           mesh.tri_cy[t] - mesh.tri_cy[nb]);
             inv_dx.push_back(ddx > 1.0e-12 ? 1.0 / ddx : 0.0);
             zface.push_back(std::max(mesh.tri_cz[t], mesh.tri_cz[nb]));
+            {
+                // Endpoint bed elevations of the shared edge (MeshBuilder
+                // convention: edge e is opposite vertex e). Same rule as
+                // SurfaceFluxCalculator's edgeEndpointZ — both incident cells
+                // see identical (z_lo, z_hi), so the VFR face depth is
+                // antisymmetric and the FV flux mass-conservative.
+                const int v[3] = {mesh.tri_v0[t], mesh.tri_v1[t], mesh.tri_v2[t]};
+                const double za = mesh.vz[v[(e + 1) % 3]];
+                const double zb = mesh.vz[v[(e + 2) % 3]];
+                ze_lo.push_back(std::min(za, zb));
+                ze_hi.push_back(std::max(za, zb));
+            }
             slotL.push_back(t * 3 + e);
 
             // Find nb's local edge facing t (the mirror slot) and record it.

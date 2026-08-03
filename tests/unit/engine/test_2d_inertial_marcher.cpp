@@ -534,3 +534,146 @@ TEST(InertialMarcher, FroudeClampSteepFace) {
     }
     solver.finalize();
 }
+
+// ---------------------------------------------------------------------------
+// FACE_RECONSTRUCTION = VFR_FACE (interior faces): the B&S Eq. 14 wetted-edge
+// depth over the shared edge's TRUE endpoint beds. The kernel itself first.
+// ---------------------------------------------------------------------------
+TEST(InertialMarcher, FaceDepthFromEtaLimitsAndC1) {
+    const double z_lo = 1.0, z_hi = 3.0, dz = z_hi - z_lo;
+    // Wetting gate: at or below the low endpoint, nothing conveys.
+    EXPECT_EQ(inertial::faceDepthFromEta(0.5, z_lo, z_hi), 0.0);
+    EXPECT_EQ(inertial::faceDepthFromEta(z_lo, z_lo, z_hi), 0.0);
+    // Partially submerged: (η − z_lo)² / (2 dz).
+    EXPECT_NEAR(inertial::faceDepthFromEta(2.0, z_lo, z_hi),
+                1.0 * 1.0 / (2.0 * dz), 1e-15);
+    // C¹ join at z_hi: quadratic branch meets the fully-submerged branch in
+    // value (dz/2) — and the slopes match by construction.
+    EXPECT_NEAR(inertial::faceDepthFromEta(z_hi, z_lo, z_hi), dz / 2.0, 1e-15);
+    EXPECT_NEAR(inertial::faceDepthFromEta(z_hi + 1.0, z_lo, z_hi),
+                z_hi + 1.0 - 0.5 * (z_lo + z_hi), 1e-15);
+    // Level edge: plain depth above the (single) bed.
+    EXPECT_NEAR(inertial::faceDepthFromEta(2.0, 1.5, 1.5), 0.5, 1e-15);
+    // Driving-surface form.
+    EXPECT_EQ(inertial::faceFlowDepthVfr(0.9, 0.3, 1.0, 1.0), 0.0);
+    EXPECT_NEAR(inertial::faceFlowDepthVfr(0.9, 1.4, 1.0, 1.0), 0.4, 1e-15);
+}
+
+// Lake at rest stays machine-exact under VFR_FACE, both closures — the
+// well-balancing comes from the Δη slope + deadband, not the face depth.
+TEST(InertialMarcher, LakeAtRestExactVfrFace) {
+    for (const auto closure : {CellClosure2D::FLAT, CellClosure2D::VFR}) {
+        auto mesh = makeGridMesh(6, 6, 5.0, [](double x, double y) {
+            return 0.05 * x + 0.11 * y + 0.3 * std::sin(0.7 * x);
+        });
+        SolverOptions2D opts;
+        opts.cell_closure = closure;
+        opts.face_reconstruction = FaceDepth2D::VFR_FACE;
+        auto state = makeState(mesh);
+        seedSurface(mesh, opts, state, /*eta=*/6.0);
+        const std::vector<double> v0 = state.volume;
+
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        const double reached = solver.advance(0.0, 600.0);
+        EXPECT_DOUBLE_EQ(reached, 600.0);
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            EXPECT_NEAR(state.volume[i], v0[i], 1.0e-9 * (v0[i] + 1.0))
+                << "cell " << i << " moved at rest (VFR_FACE)";
+        for (double f : state.edge_flux)
+            EXPECT_LE(std::fabs(f), 1.0e-10) << "flux at rest (VFR_FACE)";
+        solver.finalize();
+    }
+}
+
+// Dry-wall C-property under VFR_FACE: the step edges' endpoints sit at the
+// plateau bed, above the puddle surface → hf = 0 walls, bit-still basin.
+TEST(InertialMarcher, DryNeighbourWallNoCreepVfrFace) {
+    auto mesh = makeGridMesh(8, 4, 2.0, [](double x, double) {
+        return (x < 8.0) ? 0.0 : 2.0;
+    });
+    SolverOptions2D opts;
+    opts.face_reconstruction = FaceDepth2D::VFR_FACE;
+    auto state = makeState(mesh);
+    seedSurface(mesh, opts, state, /*eta=*/1.0);
+    const std::vector<double> v0 = state.volume;
+    const double sum0 = totalVolume(state, mesh.n_triangles());
+
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, state, opts);
+    solver.advance(0.0, 600.0);
+
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        if (mesh.tri_cz[i] > 1.5)
+            EXPECT_EQ(state.volume[i], 0.0) << "water climbed the step";
+    EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), sum0, 1.0e-9 * sum0);
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        EXPECT_NEAR(state.volume[i], v0[i], 1.0e-9 * (v0[i] + 1.0));
+    solver.finalize();
+}
+
+// ---------------------------------------------------------------------------
+// Thin crest retention — the defect VFR_FACE fixes. A one-vertex-wide ridge
+// (z = 1 along x = 8, else 0) holds a pool at η = 0.9 on its left:
+//  - VFR_FACE: the ridge edges' endpoint beds are (1, 1) → hf = 0 → wall; the
+//    right half stays bone dry and the basin is bit-still.
+//  - Legacy MEAN: the crest is centroid-diluted (adjacent cell-mean beds are
+//    1/3 or 2/3) → the face conveys at η = 0.9 and the pool LEAKS across.
+//    Pinned so the legacy behaviour (and the reason for the option) stays
+//    documented.
+// ---------------------------------------------------------------------------
+TEST(InertialMarcher, ThinCrestRetentionVfrFace) {
+    auto ridgeZ = [](double x, double) {
+        return (std::fabs(x - 8.0) < 1.0e-9) ? 1.0 : 0.0;
+    };
+    auto seedLeftPool = [&](const MeshData& mesh, const SolverOptions2D& opts,
+                            SurfaceStateData& state) {
+        for (int i = 0; i < mesh.n_triangles(); ++i) {
+            state.volume[i] = (mesh.tri_cx[i] < 8.0)
+                ? inertial::cellVolumeFromEta(mesh, opts, i, 0.9)
+                : 0.0;
+            inertial::cellEtaDepth(mesh, opts, i, state.volume[i],
+                                   state.head[i], state.depth[i]);
+        }
+    };
+
+    // VFR_FACE holds the crest.
+    {
+        auto mesh = makeGridMesh(8, 4, 2.0, ridgeZ);
+        SolverOptions2D opts;
+        opts.face_reconstruction = FaceDepth2D::VFR_FACE;
+        auto state = makeState(mesh);
+        seedLeftPool(mesh, opts, state);
+        const std::vector<double> v0 = state.volume;
+
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        solver.advance(0.0, 600.0);
+        for (int i = 0; i < mesh.n_triangles(); ++i) {
+            if (mesh.tri_cx[i] > 8.0)
+                EXPECT_EQ(state.volume[i], 0.0)
+                    << "VFR_FACE leaked through the thin crest at cell " << i;
+            else
+                EXPECT_NEAR(state.volume[i], v0[i], 1.0e-9 * (v0[i] + 1.0));
+        }
+        solver.finalize();
+    }
+
+    // MEAN leaks through the centroid-diluted crest (the documented defect).
+    {
+        auto mesh = makeGridMesh(8, 4, 2.0, ridgeZ);
+        SolverOptions2D opts;                        // default MEAN
+        auto state = makeState(mesh);
+        seedLeftPool(mesh, opts, state);
+
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        solver.advance(0.0, 600.0);
+        double crossed = 0.0;
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            if (mesh.tri_cx[i] > 8.0) crossed += state.volume[i];
+        EXPECT_GT(crossed, 0.0)
+            << "expected the legacy centroid zface to leak across the crest";
+        solver.finalize();
+    }
+}

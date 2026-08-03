@@ -100,7 +100,14 @@ double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
  * vertex depth η_v − z_v. Dry incident cells are excluded, so bed elevations
  * of dry cells can never lift the reconstructed water surface up an adverse
  * slope / bed step (the depth-weighted mean is bounded by the incident wet-cell
- * η's — no-new-maxima). A vertex with no wet incident cell gets 0.
+ * η's — no-new-maxima). A wet cell additionally votes only where its water
+ * actually reaches the corner (wetted-contact gate, η_i > z_v), so a thin
+ * film pooled at a cell's base cannot drag the level at the cell's high
+ * vertex down to the film (no-new-minima follows from the gate — the mean is
+ * bounded below by min η_i > z_v). Consequently the emitted field is either
+ * strictly positive or the 0 no-data sentinel; readers should stay tolerant
+ * of negatives from files written by older engines. A vertex with no
+ * qualifying incident cell gets 0.
  *
  * Deliberately separate from reconstructVertexHeads(): vert_head is a SOLVER
  * field (gradients/limiters/fluxes and the active-set seed pass rely on

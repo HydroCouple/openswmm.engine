@@ -88,18 +88,6 @@ KOKKOS_INLINE_FUNCTION double devEvapSink(double rate, double depth,
     return rate * t * t * (3.0 - 2.0 * t);
 }
 
-KOKKOS_INLINE_FUNCTION double devFaceDepthFromEta(double eta, double z_lo,
-                                                  double z_hi) {
-    if (eta <= z_lo) return 0.0;
-    const double dz = z_hi - z_lo;
-    if (dz < 1.0e-9) return eta - z_lo;
-    if (eta <= z_hi) {
-        const double t = eta - z_lo;
-        return t * t / (2.0 * dz);
-    }
-    return eta - 0.5 * (z_lo + z_hi);
-}
-
 KOKKOS_INLINE_FUNCTION double devRegSqrt(double x, double eps) {
     if (eps <= 0.0 || x >= eps) return std::sqrt(x);
     const double inv = 1.0 / std::sqrt(eps);
@@ -184,6 +172,8 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_xi_    = devCopy("xi", edges_.xi);
     d_inv_dx_ = devCopy("inv_dx_normal", edges_.inv_dx_normal);
     d_zface_ = devCopy("zface", edges_.zface);
+    d_ze_lo_ = devCopy("ze_lo", edges_.ze_lo);
+    d_ze_hi_ = devCopy("ze_hi", edges_.ze_hi);
     d_nx_    = devCopy("nx", edges_.nx);
     d_ny_    = devCopy("ny", edges_.ny);
     d_mx_    = devCopy("mx", edges_.mx);
@@ -605,10 +595,14 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
     auto head = d_head_, vol = d_volume_;
     auto qv = d_q_, faccL = d_faccL_, faccR = d_faccR_;
     auto zface = d_zface_, inv_dx = d_inv_dx_, n2 = d_n2_, xi = d_xi_;
+    auto ze_lo = d_ze_lo_, ze_hi = d_ze_hi_;
     auto nxv = d_nx_, nyv = d_ny_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     auto tier = d_tier_, ftier = d_face_tier_;
     const bool perot = have_perot_;
+    // VFR_FACE: B&S Eq. 14 at the shared edge's true crest (== serial branch).
+    const bool vfr_face =
+        (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
     const double theta = opts_->theta;
     const double dry = opts_->dry_depth;
     const double fr_max = opts_->froude_max;
@@ -618,8 +612,10 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
         KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
             const int a = cLv(e), b = cRv(e);
-            const double hf =
-                inertial::faceFlowDepth(head(a), head(b), zface(e));
+            const double hf = vfr_face
+                ? inertial::faceFlowDepthVfr(head(a), head(b),
+                                             ze_lo(e), ze_hi(e))
+                : inertial::faceFlowDepth(head(a), head(b), zface(e));
             if (hf <= dry) {
                 qv(e) = 0.0;
                 return;
@@ -755,7 +751,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                             const int vv[3] = {v0(i), v1(i), v2(i)};
                             const double za = vz(vv[(e + 1) % 3]);
                             const double zb = vz(vv[(e + 2) % 3]);
-                            h_out = devFaceDepthFromEta(
+                            h_out = inertial::faceDepthFromEta(
                                 head(i), (za < zb) ? za : zb,
                                 (za < zb) ? zb : za);
                         }
@@ -780,7 +776,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                                     const int vv[3] = {v0(i), v1(i), v2(i)};
                                     const double za = vz(vv[(e + 1) % 3]);
                                     const double zb = vz(vv[(e + 2) % 3]);
-                                    h_up = devFaceDepthFromEta(
+                                    h_up = inertial::faceDepthFromEta(
                                         (dh > 0.0) ? head(i) : h_bc,
                                         (za < zb) ? za : zb,
                                         (za < zb) ? zb : za);
@@ -1009,13 +1005,19 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
         auto ef = d_edge_flux_;
         auto cLv = d_cL_, cRv = d_cR_, slotL = d_slotL_, slotR = d_slotR_;
         auto head = d_head_, zface = d_zface_, qv = d_q_, xi = d_xi_;
+        auto ze_lo = d_ze_lo_, ze_hi = d_ze_hi_;
+        const bool vfr_face =
+            (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
         const double dry = opts_->dry_depth;
         const double fr_max = opts_->froude_max;
         Kokkos::parallel_for(
             "publish_flux", Kokkos::RangePolicy<ExecSpace>(0, ne),
             KOKKOS_LAMBDA(int e) {
-                const double hf = inertial::faceFlowDepth(
-                    head(cLv(e)), head(cRv(e)), zface(e));
+                const double hf = vfr_face
+                    ? inertial::faceFlowDepthVfr(head(cLv(e)), head(cRv(e)),
+                                                 ze_lo(e), ze_hi(e))
+                    : inertial::faceFlowDepth(head(cLv(e)), head(cRv(e)),
+                                              zface(e));
                 double qp = 0.0;
                 if (hf > dry) qp = inertial::froudeCap(qv(e), hf, fr_max);
                 const double F = qp * xi(e);

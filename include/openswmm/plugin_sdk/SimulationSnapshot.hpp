@@ -236,7 +236,7 @@ struct SimulationSnapshot {
     std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
-    std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked render reconstruction; negative on the dry side of partially wet cells, 0 with no wet incident cell
+    std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)
     std::vector<double> surface_face_vx;        ///< Cell-centred velocity X (m/s), per face
     std::vector<double> surface_face_vy;        ///< Cell-centred velocity Y (m/s), per face
     std::vector<double> surface_continuity_err; ///< Per-cell continuity residual (m³/s), per face
