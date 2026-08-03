@@ -62,6 +62,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
+#include "../uncertainty/UncertaintyConfig.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 
@@ -341,6 +342,11 @@ public:
     /** @brief Access the 2D surface router (for C API delegation). */
     twoD::SurfaceRouter2D&       surfaceRouter2D()       noexcept { return surface_router_; }
     const twoD::SurfaceRouter2D& surfaceRouter2D() const noexcept { return surface_router_; }
+
+    /** @brief Read the [UNCERTAINTY]-parsed configuration (see uncertainty_config_). */
+    const uncertainty::UncertaintyConfig& uncertaintyConfig() const noexcept {
+        return uncertainty_config_;
+    }
 #endif
 
 
@@ -399,6 +405,14 @@ private:
 
 #ifdef OPENSWMM_HAS_2D
     twoD::SurfaceRouter2D        surface_router_; ///< Optional 2D surface routing solver
+
+    /// Populated from the [UNCERTAINTY] section by register2DSections's
+    /// parseUncertaintyLine. 2D-layer specs also set fields directly on
+    /// surface_router_.options() (see that function); 1D/QUALITY specs are
+    /// recorded here only — nothing on this base consumes them yet, since
+    /// the 1D ROM lifecycle is a separate, unstarted track.
+    uncertainty::UncertaintyConfig uncertainty_config_;
+
     /// Non-owning pointer to the 2D HDF5 output plugin (lifetime owned by
     /// PluginFactory's output_plugins_). Set in open() when [2D_OPTIONS]
     /// OUTPUT_FILE is configured; used in start() to call prepareMeshAndDatasets

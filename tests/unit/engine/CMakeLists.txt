@@ -247,6 +247,9 @@ if(OPENSWMM_BUILD_2D)
     # DeviationOperator2D/MeshEigenBasis unit level).
     add_gtest_unit(test_engine_2d_rom_router_operator test_2d_rom_router_operator.cpp)
 
+    # [2D_ROM] / [UNCERTAINTY] input-section parsing.
+    add_gtest_unit(test_engine_2d_rom_input_parser test_2d_rom_input_parser.cpp)
+
     # Reduced k×k deviation operator: expm/φ₁ propagator, anisotropic assembly
     # structure, and the SpectralROM matrix-path ≡ diagonal-path parity pin.
     add_gtest_unit(test_engine_2d_deviation_operator test_2d_deviation_operator.cpp)
