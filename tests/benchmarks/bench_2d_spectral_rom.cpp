@@ -43,7 +43,7 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/CvodeSurfaceSolver.hpp"
-#include "2d/solver/SpectralPrecond2D.hpp"
+#include "2d/uncertainty/MeshEigenBasis.hpp"
 #include "2d/uncertainty/SpectralROM.hpp"
 
 #include <algorithm>
@@ -148,7 +148,7 @@ struct ROMParams {
 static void BenchROM(benchmark::State& state, ROMParams p) {
     // --- one-time setup outside the timing loop ---
     MeshData mesh = makeStructuredMesh(p.grid_n);
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     basis.build(mesh, p.n_modes);
 
     int n = mesh.n_triangles();

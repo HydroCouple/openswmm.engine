@@ -349,8 +349,9 @@ their respective solvers at every routing step.
 
 The 2D mesh Laplacian is assembled from triangle connectivity (shared-face lengths, centroid
 distances, cell areas). The Lanczos+QL eigensolver extracts the k lowest non-trivial eigenvectors
-P[:,0..k−1] and eigenvalues λ₀..λ_{k-1} from this Laplacian. If `SpectralPrecond2D` is also
-active, the ROM reuses its already-computed eigenbasis rather than rerunning the solver. A
+P[:,0..k−1] and eigenvalues λ₀..λ_{k-1} from this Laplacian, and stores them in a
+`MeshEigenBasis`. The basis is a function of mesh geometry alone, so it is built once and
+reused for the whole run. A
 `SpectralROM` struct is allocated with an M×k coefficient matrix (all zeros) and an LHS
 parameter design for M members.
 
@@ -449,7 +450,7 @@ and emits three extra depth fields per cell without altering the solver's own tr
 | Diffusivity parameter | K_eff [m^(4/3)/s] — spatial scale baked into mesh Laplacian | K1d = D/L² [1/s] — must normalise by L² to give 1/s |
 | When seeded | Deferred to first CVODE advance (solver warms up first) | Immediately at `initialize()` (from initial steady-state heads) |
 | Automatic reseeding | Yes — triggered by wetting-front advance | No |
-| Basis shared with preconditioner? | Yes, if `SpectralPrecond2D` active | No — always a standalone `GraphEigenBasis` |
+| Eigenbasis type | `MeshEigenBasis` (mesh geometry) | `GraphEigenBasis` (network connectivity) |
 | Output quantiles sized | n_tri (triangles) | n_active_nodes (excluding outfalls) |
 
 ### 4.6 The ROM ODE (full definition — deviation form)

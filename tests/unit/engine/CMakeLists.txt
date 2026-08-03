@@ -231,6 +231,13 @@ set_property(TEST
     test_engine_site_drainage_builder
     APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
 
+# Mesh geometric graph-Laplacian eigenbasis (the surface uncertainty ROM's
+# reduced basis). Links the engine library rather than compiling MeshEigenBasis
+# into the exe, for the ODR reason documented on test_engine_2d_surface below.
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_2d_mesh_eigen_basis test_2d_mesh_eigen_basis.cpp)
+endif()
+
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
 # SectionHandlers2D, Default2DOutputPlugin) are NOT compiled into the test here:

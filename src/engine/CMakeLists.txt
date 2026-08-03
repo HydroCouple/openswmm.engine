@@ -45,12 +45,18 @@ list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
 # PORT v2 (2026-07-31): the uncertainty sidecar is being re-homed onto the
 # explicit-marcher base incrementally (PORT_V2_PREFLIGHT.md). Its 1D sources
-# (uncertainty/*.cpp) and 2D sources (2d/uncertainty/*, 2d/solver/SpectralPrecond2D)
-# are NOT swept by these globs, so they sit inert until wired. The one exception
-# is hydraulics/SpectralCoarse.cpp (caught by hydraulics/*.cpp): it depends on the
-# DW spectral_accel scaffolding that has not been re-applied to this base (and is
-# flagged droppable), so exclude it until/unless that lands.
+# (uncertainty/*.cpp) and 2D sources (2d/uncertainty/*) are NOT swept by these
+# globs, so they sit inert until wired — each is listed explicitly as it lands.
+# The one exception is hydraulics/SpectralCoarse.cpp (caught by hydraulics/*.cpp):
+# it depends on the DW spectral_accel scaffolding that has not been re-applied to
+# this base (and is flagged droppable), so exclude it until/unless that lands.
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "hydraulics/SpectralCoarse.*")
+
+# Shared graph-Laplacian eigensolver (reorthogonalized Lanczos + tridiagonal QL)
+# backing both the 1D network ROM basis and the 2D MeshEigenBasis. Dimension-
+# agnostic: it takes a CSR Laplacian and returns the k smallest nontrivial
+# eigenpairs.
+list(APPEND OPENSWMM_ENGINE_SOURCES uncertainty/GraphEigenBasis.cpp)
 
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -460,6 +466,11 @@ if(OPENSWMM_BUILD_2D)
     # fallback). Lives in the core — it owns the CPU↔plugin decision — but
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
+
+    # Mesh geometric graph-Laplacian eigenbasis: the reduced basis the surface
+    # uncertainty ROM projects onto. Reads mesh geometry only — no solver
+    # coupling — so it is integrator-independent.
+    list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/MeshEigenBasis.cpp)
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 

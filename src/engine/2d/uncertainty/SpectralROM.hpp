@@ -25,7 +25,7 @@
  *          After each advance, `computeQuantiles(h_det)` reconstructs per-cell depth
  *          as h_det + P·δa (clamped at 0) and produces 5/50/95 percentile fields.
  *
- * @note Requires that the SpectralPrecond2D basis was built successfully (num_kept > 0).
+ * @note Requires a MeshEigenBasis that built successfully (num_kept > 0).
  * @ingroup engine_2d
  */
 
@@ -34,7 +34,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 
-#include "../solver/SpectralPrecond2D.hpp"
+#include "MeshEigenBasis.hpp"
 #include "../coupling/NodeCoupling.hpp"
 #include "SpatialUncertaintyField.hpp"
 #include "uncertainty/UncertaintyTypes.hpp"
@@ -55,7 +55,7 @@ namespace openswmm::twoD {
  * @brief Linear spectral ROM for ensemble-based uncertainty propagation.
  *
  * Lifecycle:
- *   1. Set `basis` to a fully-built SpectralPrecond2D (num_kept > 0).
+ *   1. Set `basis` to a fully-built MeshEigenBasis (num_kept > 0).
  *   2. Optionally tune n_ensemble, mannings_pert, rainfall_pert.
  *   3. Call initialize() — allocates buffers and builds parameter design.
  *   4. Call seed(h_full) — projects initial state onto ROM; all members
@@ -69,7 +69,7 @@ struct SpectralROM {
     // Configuration (set before initialize())
     // -------------------------------------------------------------------------
 
-    const SpectralPrecond2D* basis = nullptr;  ///< Shared eigenbasis; not owned.
+    const MeshEigenBasis* basis = nullptr;  ///< Shared eigenbasis; not owned.
 
     int    n_ensemble    = 50;    ///< Number of ensemble members M.
     double mannings_pert = 0.20;  ///< Half-range: Manning's n ∈ [1-p, 1+p] × base.

@@ -540,7 +540,7 @@ in this repository's engineering checklists — not a silent trap.
 - **The underlying eigensolver and graph-Laplacian construction**: see
   `src/engine/uncertainty/GraphEigenBasis.{hpp,cpp}` and
   `NetworkLaplacian1D.hpp` for the 1D network case, or
-  `src/engine/2d/solver/SpectralPrecond2D.{hpp,cpp}` for the 2D mesh case.
+  `src/engine/2d/uncertainty/MeshEigenBasis.{hpp,cpp}` for the 2D mesh case.
 - **The ensemble ODE integrator itself**: `SpectralROM1D.{hpp,cpp}` (1D) and
   `src/engine/2d/uncertainty/SpectralROM.{hpp,cpp}` (2D) — every equation in
   §4 of this document has a direct line-for-line counterpart there.

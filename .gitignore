@@ -51,3 +51,10 @@ __pycache__/
 /tests/unit/legacy/engine/data/hotstart/site_drainage_model_save_hotstart.out
 /tests/unit/legacy/engine/data/hotstart/site_drainage_model_save_hotstart.rpt
 
+
+# Agent/session working state — never version-controlled
+.memory/
+.claude/
+CLAUDE.md
+MEMORY.md
+scratchpad/

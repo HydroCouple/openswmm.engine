@@ -19,7 +19,7 @@
  *
  * Usage:
  *   FiedlerDiagnostic fd;
- *   fd.basis = &spectral_precond;      // fully built SpectralPrecond2D
+ *   fd.basis = &mesh_basis;      // fully built MeshEigenBasis
  *   fd.compute(mesh);                  // mesh with buildMeshTopology() called
  *   // fd.rank[0] = highest-gradient cell
  *   // fd.phi2[t] = Fiedler value at cell t
@@ -34,7 +34,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 
-#include "../solver/SpectralPrecond2D.hpp"
+#include "MeshEigenBasis.hpp"
 #include "../data/MeshData.hpp"
 
 #include <algorithm>
@@ -53,7 +53,7 @@ namespace openswmm::twoD {
  * @brief Fiedler-vector gradient diagnostic for 2D mesh bottleneck detection.
  *
  * Lifecycle:
- *   1. Set `basis` to a fully-built SpectralPrecond2D (num_kept >= 2).
+ *   1. Set `basis` to a fully-built MeshEigenBasis (num_kept >= 2).
  *   2. Call compute(mesh) — mesh must have buildMeshTopology() called so
  *      tri_nbr0/1/2 and tri_cx/cy are populated.
  *   3. Read phi2[t], grad[t], rank[i].
@@ -64,7 +64,7 @@ struct FiedlerDiagnostic {
     // Input (set before compute())
     // -------------------------------------------------------------------------
 
-    const SpectralPrecond2D* basis = nullptr;  ///< Shared eigenbasis; not owned.
+    const MeshEigenBasis* basis = nullptr;  ///< Shared eigenbasis; not owned.
 
     // -------------------------------------------------------------------------
     // Output (set by compute())
@@ -105,7 +105,7 @@ struct FiedlerDiagnostic {
         const auto   unt = static_cast<std::size_t>(nt);
 
         // Extract Fiedler vector: column j=0 of P (column-major: P[j*nt + t]).
-        // SpectralPrecond2D already filters out the null (constant) mode, so
+        // MeshEigenBasis already filters out the null (constant) mode, so
         // eigenvalues[0] / P[:,0] is the Fiedler pair — not P[:,1].
         const double* Pf = basis->P.data();  // pointer to column 0
         phi2.assign(Pf, Pf + unt);

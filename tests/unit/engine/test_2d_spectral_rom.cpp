@@ -9,7 +9,7 @@
 
 #include "2d/data/MeshData.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
-#include "2d/solver/SpectralPrecond2D.hpp"
+#include "2d/uncertainty/MeshEigenBasis.hpp"
 #include "2d/uncertainty/SpectralROM.hpp"
 #include "2d/uncertainty/FiedlerDiagnostic.hpp"
 #include "2d/coupling/NodeCoupling.hpp"
@@ -66,7 +66,7 @@ static MeshData makeStructuredMesh(int N, double domain_m = 10.0) {
 // N=5 → 50 triangles, k=6 modes, M=20 members.
 struct Fixture {
     MeshData            mesh;
-    SpectralPrecond2D   basis;
+    MeshEigenBasis   basis;
     SpectralROM         rom;
 
     explicit Fixture(int N = 5, int k = 6, int M = 20,
@@ -351,7 +351,7 @@ TEST(SpectralROM, DepthsNonNegative) {
 // a_ss = r_coarse/lam steady-state check.
 TEST(SpectralROM, FrozenReferenceSaturatesAtAnalyticSteadyState) {
     MeshData mesh = makeStructuredMesh(5);
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 4));
 
     SpectralROM rom;
@@ -604,7 +604,7 @@ TEST(SpectralROM, ParametricQ95CanExceedSortBasedForSmallEnsemble) {
     MeshData mesh = makeStructuredMesh(4);
     buildMeshTopology(mesh);
 
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     basis.build(mesh, 4);
     ASSERT_GT(basis.num_kept, 0);
 
@@ -896,7 +896,7 @@ TEST(UncertaintyEnsemble, MemberCountConsistencyWithROM) {
     ens.generate();
 
     MeshData mesh = makeStructuredMesh(5);
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 6));
 
     SpectralROM rom;
@@ -1006,7 +1006,7 @@ TEST(SpectralROM, EnsembleRainfallHigherRateGivesMoreDepth) {
     // Zero Manning and rainfall perturbation so the only source of member
     // divergence is the ensemble_rainfall_ we supply.
     MeshData mesh = makeStructuredMesh(5);
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 6));
     ASSERT_GT(basis.num_kept, 0);
 
@@ -1347,7 +1347,7 @@ TEST(SpectralROM, CouplingFluxAppliesOnlyDifference) {
 TEST(SpectralROM, CouplingSpreadFromCdNotManning) {
     auto spread_for = [](double m_pert, double c_pert) {
         MeshData mesh = makeStructuredMesh(5);
-        SpectralPrecond2D basis;
+        MeshEigenBasis basis;
         EXPECT_TRUE(basis.build(mesh, 6));
         SpectralROM rom;
         rom.basis         = &basis;
@@ -1448,7 +1448,7 @@ TEST(SpectralROM, CouplingUncOutputPopulatedAfterCouplingFlux) {
 TEST(SpectralROM, CdPertDrivesFluxSpread) {
     // Build ROM with zero Manning/rainfall pert so Cd is the only source of spread.
     MeshData mesh = makeStructuredMesh(5);
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 6));
 
     SpectralROM rom;
@@ -1490,7 +1490,7 @@ TEST(SpectralROM, CdPertDrivesFluxSpread) {
 // compute identical flux → q_min == q_max.
 TEST(SpectralROM, CdPertZeroNoSpread) {
     MeshData mesh = makeStructuredMesh(5);
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 6));
 
     SpectralROM rom;
@@ -1568,7 +1568,7 @@ TEST(SpectralROM, CouplingUncOutputNoSpreadWithZeroPert) {
 
 namespace {
 // Off-centre bump reference with non-zero modal content (b_j != 0).
-std::vector<double> bumpRef(const SpectralPrecond2D& basis, int nt, double base) {
+std::vector<double> bumpRef(const MeshEigenBasis& basis, int nt, double base) {
     std::vector<double> h(static_cast<std::size_t>(nt));
     double sign0 = (basis.P[0] >= 0.0) ? 1.0 : -1.0;
     for (int t = 0; t < nt; ++t)
@@ -1691,7 +1691,7 @@ TEST(FiedlerDiagnostic, IsReadyAfterCompute) {
 }
 
 // lambda2 must equal basis.eigenvalues[0].
-// SpectralPrecond2D stores only nontrivial modes, so eigenvalues[0] = λ₂.
+// MeshEigenBasis stores only nontrivial modes, so eigenvalues[0] = λ₂.
 TEST(FiedlerDiagnostic, Lambda2MatchesBasisEigenvalue) {
     Fixture f;
     FiedlerDiagnostic fd;
@@ -1702,7 +1702,7 @@ TEST(FiedlerDiagnostic, Lambda2MatchesBasisEigenvalue) {
 }
 
 // phi2[t] must equal basis.P[0*n_tri + t] for all t.
-// SpectralPrecond2D filters the null mode before storing P, so j=0 IS the
+// MeshEigenBasis filters the null mode before storing P, so j=0 IS the
 // Fiedler vector (the smallest nontrivial eigenvector of the Laplacian).
 TEST(FiedlerDiagnostic, Phi2MatchesBasisColumn0) {
     Fixture f;

@@ -13,7 +13,7 @@
 #include "uncertainty/SpectralROM1D.hpp"
 #include "uncertainty/LhsShuffle.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
-#include "2d/solver/SpectralPrecond2D.hpp"
+#include "2d/uncertainty/MeshEigenBasis.hpp"
 #include "2d/uncertainty/SpectralROM.hpp"
 #undef private
 
@@ -142,7 +142,7 @@ TEST(SoftForcingROM1D, ZeroSpreadEquivalentToNoSoftForcing) {
 
 TEST(SoftForcingROM2D, ProjectsLocAndSpreadAndActivatesModes) {
     MeshData mesh = makeStructuredMesh();
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 6));
 
     SpectralROM rom;
@@ -172,7 +172,7 @@ TEST(SoftForcingROM2D, ProjectsLocAndSpreadAndActivatesModes) {
 
 TEST(SoftForcingROM2D, ZeroSpreadEquivalentToNoSoftForcing) {
     MeshData mesh = makeStructuredMesh();
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 6));
 
     SpectralROM a;
@@ -517,7 +517,7 @@ TEST(SoftForcingCorrelated, ZeroSpreadStillZeroBand) {
 // on the 2D SpectralROM.
 TEST(SoftForcingCorrelated2D, ComonotoneFieldMatchesScalarPath) {
     MeshData mesh = makeStructuredMesh();
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     ASSERT_TRUE(basis.build(mesh, 6));
 
     const int nt = basis.n_triangles;

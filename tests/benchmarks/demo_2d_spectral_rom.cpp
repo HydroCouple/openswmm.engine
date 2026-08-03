@@ -29,7 +29,7 @@
 
 #include "2d/data/MeshData.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
-#include "2d/solver/SpectralPrecond2D.hpp"
+#include "2d/uncertainty/MeshEigenBasis.hpp"
 #include "2d/uncertainty/SpectralROM.hpp"
 
 #include <algorithm>
@@ -132,7 +132,7 @@ int main() {
 
     // ---- Build eigenbasis ----
     std::printf("Building spectral basis (k=%d modes)...\n", k_modes);
-    SpectralPrecond2D basis;
+    MeshEigenBasis basis;
     if (!basis.build(mesh, k_modes)) {
         std::fprintf(stderr, "ERROR: basis build failed\n");
         return 1;
