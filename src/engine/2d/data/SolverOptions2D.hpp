@@ -288,6 +288,52 @@ struct SolverOptions2D {
      *  taking the sort-based order statistic. Helps when M is small enough that
      *  the empirical 95th percentile is noisy. q05/q50 stay sort-based. */
     bool rom_parametric_tails = false;
+
+    // ------------------------------------------------------------------------
+    // Reduced deviation operator (W3, docs/uncertainty/P3_2D_REHOME_SPEC.md,
+    // calibrated docs/uncertainty/VALIDATION.md "Solver-mode compatibility")
+    // ------------------------------------------------------------------------
+    // The production default: a flow-aligned anisotropic advection-diffusion
+    // operator, reduced onto the eigenbasis as M = PᵀL_opP and integrated
+    // exactly via a matrix exponential (DeviationOperator2D, SpectralROM::
+    // setReducedOperator). Reassembled from readable mesh/flow state on the
+    // report-scale cadence — never per step, never touching solver internals.
+
+    /*! true reverts to the pre-W3 behaviour: a depth-weighted eigenbasis
+     *  (refit at each seed) and the diagonal per-mode decay rate K_eff·λ_j.
+     *  That convention is NOT the one W3 validated against brute-force
+     *  marcher Monte Carlo — see VALIDATION.md's "legacy" row (coverage 1.0,
+     *  but width badly under-spread on a grounded fixture). Kept for
+     *  backward compatibility and as the reference the reduced-operator
+     *  path was pinned against (test_engine_2d_deviation_operator's
+     *  RomMatrixPathMatchesDiagonalPathForDiagonalOperator). */
+    bool rom_legacy_operator = false;
+
+    /*! Streamwise / transverse diffusivity multiples of the diffusivity scale
+     *  (K_eff, see rom_k_eff) and the advection celerity multiple of the local
+     *  Manning speed. Calibrated 2026-08-02 against the explicit marcher on a
+     *  steady-runoff plane (VALIDATION.md): coverage 1.000, width-ratio
+     *  median 1.43, in-band 0.884. alpha_par = alpha_perp = 1, c_factor = 0
+     *  is the isotropic-no-advection baseline (still grounded — see
+     *  rom_ground_scale); recalibrate these three together, never in
+     *  isolation, against that harness before changing the defaults. */
+    double rom_alpha_par  = 0.62;
+    double rom_alpha_perp = 2.00;
+    double rom_c_factor   = 5.0 / 3.0;
+
+    /*! Open-boundary grounding conductance scale (0 disables). A domain-wide
+     *  parameter shift is mostly a uniform profile response, which a pure-
+     *  Neumann eigenbasis cannot represent — every retained mode is zero-
+     *  mean by construction (see MeshEigenBasis::build's ground_w note).
+     *  Grounding faces where water can actually leave (NORMAL_FLOW,
+     *  SPECIFIED_STAGE/FLOW, RATING_CURVE — anything but WALL) restores a
+     *  quasi-uniform drain mode. Softened well below 1.0 because most open
+     *  boundaries are not absorbing: a member's own depth deviation persists
+     *  at, say, a NORMAL_FLOW outlet (normal depth depends on that member's
+     *  n), so a full-strength zero-deviation ghost over-drains the adjacent
+     *  cells. 0.25 was the calibrated value; only rom_legacy_operator skips
+     *  grounding entirely. */
+    double rom_ground_scale = 0.25;
 };
 
 } // namespace openswmm::twoD

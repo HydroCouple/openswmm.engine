@@ -241,6 +241,12 @@ if(OPENSWMM_BUILD_2D)
     # bit-identical with the ensemble on or off.
     add_gtest_unit(test_engine_2d_rom_nonintrusive test_2d_rom_nonintrusive.cpp)
 
+    # SurfaceRouter2D's wiring of the calibrated reduced operator: production
+    # default vs rom_legacy_operator fallback, and open-boundary grounding
+    # reachable through the router's own boundary_ (not just at the
+    # DeviationOperator2D/MeshEigenBasis unit level).
+    add_gtest_unit(test_engine_2d_rom_router_operator test_2d_rom_router_operator.cpp)
+
     # Reduced k×k deviation operator: expm/φ₁ propagator, anisotropic assembly
     # structure, and the SpectralROM matrix-path ≡ diagonal-path parity pin.
     add_gtest_unit(test_engine_2d_deviation_operator test_2d_deviation_operator.cpp)

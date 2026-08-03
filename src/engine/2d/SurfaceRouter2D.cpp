@@ -850,6 +850,12 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         state_.update_statistics(mesh_.tri_area, co_refresh_elapsed_,
                                  options_.num_threads);
         co_refresh_elapsed_ = 0.0;
+
+        // Reassemble the ROM's reduced operator on this same output-refresh
+        // cadence, right after computeFaceVelocity gives it a fresh flow
+        // direction — this is the "basis-update cadence" the operator is
+        // meant to move on, not per routing step.
+        refreshROMOperator();
     }
 }
 
@@ -943,18 +949,56 @@ double SurfaceRouter2D::computeKEff() const {
 }
 
 
+void SurfaceRouter2D::computeGroundWeights() {
+    const auto nt = static_cast<std::size_t>(mesh_.n_triangles());
+    rom_ground_w_.assign(nt, 0.0);
+    if (options_.rom_ground_scale <= 0.0) return;
+
+    // boundary_ is sized and drained (drainPendingRows) before initROM runs.
+    if (boundary_.edge_bc_type.size() < nt * 3) return;
+
+    for (std::size_t i = 0; i < nt; ++i) {
+        const int nbrs[3] = {mesh_.tri_nbr0[i], mesh_.tri_nbr1[i],
+                             mesh_.tri_nbr2[i]};
+        for (int e = 0; e < 3; ++e) {
+            if (nbrs[e] >= 0) continue;  // interior face
+            const auto idx = i * 3 + static_cast<std::size_t>(e);
+            // WALL faces are zero-flux: deviations don't flush there, so they
+            // are not grounded. Everything else (NORMAL_FLOW, SPECIFIED_*,
+            // RATING_CURVE) is an open face water can actually leave through.
+            if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx]) ==
+                BoundaryType::WALL)
+                continue;
+            const double dx = mesh_.edge_mx[idx] - mesh_.tri_cx[i];
+            const double dy = mesh_.edge_my[idx] - mesh_.tri_cy[i];
+            const double d  = 2.0 * std::sqrt(dx * dx + dy * dy);
+            if (d < 1.0e-12) continue;
+            rom_ground_w_[i] +=
+                options_.rom_ground_scale * mesh_.edge_length[idx] / d;
+        }
+    }
+}
+
+
 void SurfaceRouter2D::initROM(SimulationContext& ctx) {
     (void)ctx;
     rom_.reset();
     rom_basis_.reset();
     rom_seeded_ = false;
+    rom_ground_w_.clear();
     if (!options_.enable_rom) return;
 
     // The eigenbasis comes from mesh geometry alone, so it is built once here
-    // and never re-solved — only its depth weighting is refitted at seed time.
+    // and never re-solved — only its depth weighting is refitted at seed time
+    // (legacy path) or the separate reduced operator is reassembled (default
+    // path; the basis itself still never changes).
+    const bool use_reduced = !options_.rom_legacy_operator;
+    if (use_reduced) computeGroundWeights();
+    const double* ground_w_ptr = use_reduced ? rom_ground_w_.data() : nullptr;
+
     auto basis = std::make_unique<MeshEigenBasis>();
     const int k_req = std::max(1, options_.rom_modes);
-    if (!basis->build(mesh_, k_req)) {
+    if (!basis->build(mesh_, k_req, ground_w_ptr)) {
         // Too few cells for an eigenbasis (< 4 triangles) or a failed solve.
         // The ROM simply stays off; the deterministic run is unaffected.
         return;
@@ -981,27 +1025,36 @@ void SurfaceRouter2D::seedROM() {
 
     const int nt = mesh_.n_triangles();
 
-    // Refit the eigenmodes to the current depth distribution: edge conductances
-    // D_t = (h_t / h̄)^(5/3), normalised by the mean so a uniform depth field
-    // reproduces the geometric basis exactly and the global K_eff keeps
-    // multiplying the eigenvalues on the same scale. buildDepthWeighted rolls
-    // back to the existing basis if the solve fails, so this cannot degrade it.
-    double h_sum = 0.0;
-    for (int t = 0; t < nt; ++t)
-        h_sum += std::max(state_.depth[static_cast<std::size_t>(t)], 0.0);
-    const double h_mean = h_sum / static_cast<double>(nt);
+    if (options_.rom_legacy_operator) {
+        // Refit the eigenmodes to the current depth distribution: edge
+        // conductances D_t = (h_t / h̄)^(5/3), normalised by the mean so a
+        // uniform depth field reproduces the geometric basis exactly and the
+        // global K_eff keeps multiplying the eigenvalues on the same scale.
+        // buildDepthWeighted rolls back to the existing basis if the solve
+        // fails, so this cannot degrade it.
+        //
+        // Only on the legacy path: the reduced operator applies its own depth
+        // weighting at assembly time (DeviationOperator2D's h_cell), and the
+        // W3 calibration was measured against the plain grounded geometric
+        // basis — rebuilding it here would silently leave the calibrated
+        // configuration.
+        double h_sum = 0.0;
+        for (int t = 0; t < nt; ++t)
+            h_sum += std::max(state_.depth[static_cast<std::size_t>(t)], 0.0);
+        const double h_mean = h_sum / static_cast<double>(nt);
 
-    if (h_mean > 1.0e-9) {
-        std::vector<double> d_cell(static_cast<std::size_t>(nt), 1.0);
-        const double inv_h53 = 1.0 / std::pow(h_mean, 5.0 / 3.0);
-        for (int t = 0; t < nt; ++t) {
-            const double h_t =
-                std::max(state_.depth[static_cast<std::size_t>(t)], 0.0);
-            d_cell[static_cast<std::size_t>(t)] =
-                std::pow(h_t, 5.0 / 3.0) * inv_h53;
+        if (h_mean > 1.0e-9) {
+            std::vector<double> d_cell(static_cast<std::size_t>(nt), 1.0);
+            const double inv_h53 = 1.0 / std::pow(h_mean, 5.0 / 3.0);
+            for (int t = 0; t < nt; ++t) {
+                const double h_t =
+                    std::max(state_.depth[static_cast<std::size_t>(t)], 0.0);
+                d_cell[static_cast<std::size_t>(t)] =
+                    std::pow(h_t, 5.0 / 3.0) * inv_h53;
+            }
+            rom_basis_->buildDepthWeighted(mesh_, rom_basis_->num_modes,
+                                           d_cell.data());
         }
-        rom_basis_->buildDepthWeighted(mesh_, rom_basis_->num_modes,
-                                       d_cell.data());
     }
 
     rom_->seed(state_.depth.data());
@@ -1034,6 +1087,15 @@ void SurfaceRouter2D::seedROM() {
     rom_wet_count_at_seed_ = 0;
     for (const double h : state_.depth)
         if (h > kWetThreshold) ++rom_wet_count_at_seed_;
+
+    // Assemble immediately rather than waiting for the next output-refresh
+    // cadence: the very first advance should already integrate the real
+    // operator, not one report interval of the diagonal fallback. Face
+    // velocity has typically not been computed yet at this point (it is only
+    // refreshed on the report cadence) — DeviationOperator2D::assemble
+    // degrades gracefully to the isotropic mean conductance when the supplied
+    // velocity is all zero, so this is a safe, self-correcting default.
+    if (!options_.rom_legacy_operator) refreshROMOperator();
 }
 
 
@@ -1091,6 +1153,34 @@ void SurfaceRouter2D::applyROMCoupling(SimulationContext& ctx, double dt) {
 
     rom_->applyCouplingFlux(node_coupling_points_, rom_node_head_buf_.data(),
                             mesh_, dt, rom1d_, q_det);
+}
+
+
+void SurfaceRouter2D::refreshROMOperator() {
+    if (!rom_ || !rom_basis_ || options_.rom_legacy_operator) return;
+
+    rom_operator_.alpha_par  = options_.rom_alpha_par;
+    rom_operator_.alpha_perp = options_.rom_alpha_perp;
+    rom_operator_.c_factor   = options_.rom_c_factor;
+
+    // D_scale: the same Manning diffusion-wave value computeKEff() already
+    // derives for the legacy path (h̄^{5/3}/(2n̄√S), or the pinned
+    // options_.rom_k_eff override) — a physical diffusivity, meaningful
+    // regardless of which operator consumes it.
+    const double D_scale = computeKEff();
+
+    // state_.face_vx/vy are refreshed on the output-refresh cadence
+    // (report-scale), not per step — so the flow direction used here is at
+    // most one refresh interval stale. That is the point: the operator is
+    // reassembled "when the flow field has moved materially," not per step,
+    // and this reuses the router's own existing refresh cadence instead of
+    // running a second gradient estimator.
+    const bool ok = rom_operator_.assemble(
+        mesh_, *rom_basis_, D_scale, state_.depth.data(),
+        state_.face_vx.data(), state_.face_vy.data(), rom_ground_w_.data());
+    if (!ok) return;  // leave whatever operator was previously installed
+
+    rom_->setReducedOperator(rom_operator_.M);
 }
 
 

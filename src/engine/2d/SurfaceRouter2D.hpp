@@ -35,6 +35,7 @@
 #include <vector>
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
+#include "uncertainty/DeviationOperator2D.hpp"
 #include "uncertainty/MeshEigenBasis.hpp"
 #include "uncertainty/SpectralROM.hpp"
 #endif
@@ -373,9 +374,32 @@ private:
     /// Scratch: 1D node heads converted to the 2D metre frame. Reused.
     std::vector<double> rom_node_head_buf_;
 
+    /// Per-cell open-boundary grounding conductance (dimensionless len/d
+    /// convention), computed once in initROM() from boundary_'s non-WALL
+    /// faces. Zero everywhere for a fully closed domain — grounding then
+    /// contributes nothing and the basis/operator are the plain Neumann ones.
+    /// Unused when options_.rom_legacy_operator is set.
+    std::vector<double> rom_ground_w_;
+
+    /// The reduced deviation operator (calibrated production rung: flow-
+    /// aligned anisotropic diffusion + upwind advection). Reassembled from
+    /// readable state on the report-scale cadence; never touched when
+    /// options_.rom_legacy_operator is set.
+    DeviationOperator2D rom_operator_;
+
     /// Build the eigenbasis and allocate the ensemble. No-op when the ROM is
     /// disabled or the mesh has too few cells for an eigenbasis.
     void initROM(SimulationContext& ctx);
+
+    /// Fill rom_ground_w_ from boundary_'s non-WALL faces, scaled by
+    /// options_.rom_ground_scale. See MeshEigenBasis::build's ground_w note
+    /// for why deviations need a drain path at open boundaries.
+    void computeGroundWeights();
+
+    /// (Re-)assemble the reduced operator from the current mesh, basis, and
+    /// readable flow state, and install it on rom_. No-op on the legacy path.
+    /// Reads mesh_/state_ only.
+    void refreshROMOperator();
 
     /// Advance the ensemble over one co-advance batch and, on the report
     /// cadence, refresh the depth quantiles. Reads state_/mesh_ only.
