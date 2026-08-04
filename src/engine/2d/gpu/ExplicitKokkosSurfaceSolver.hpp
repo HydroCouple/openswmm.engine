@@ -132,6 +132,7 @@ public:
     void settleAccumulatorsDev();
     void lazySourcesDev(double t);
     void syncAndRebuild(double t);
+    void refreshDt0();   ///< tighten-only dt0_ between rebuilds (== serial)
     void collapseToGlobalDt();         ///< tail: everything to tier 0
     void fireFaces(int tier, double dt_f);
     void fireCells(int tier, double dt_c);

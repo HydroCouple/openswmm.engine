@@ -453,6 +453,8 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
 
     // Tier assignment (active cells only; stale tiers persist like serial).
     const int K = K_;
+    // (refreshDt0 below re-evaluates this reduction between rebuilds,
+    //  tighten-only — growth waits for the tier reassignment here.)
     auto tier = d_tier_;
     Kokkos::parallel_for(
         "tier_assign", Kokkos::RangePolicy<ExecSpace>(0, nt),
@@ -525,6 +527,37 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
     ftier_off_[K] = edge_base;
 
     telemetry_.emplace_back(t, n_active_);
+}
+
+void ExplicitKokkosSurfaceSolver::refreshDt0() {
+    // Tighten-only dt0_ refresh between rebuilds (== serial marcher): depths
+    // evolve for up to kRebuildEveryCycles macro cycles on a frozen dt0_, so
+    // the realized CFL could exceed the configured bound. Tightening is safe
+    // (every tier still satisfies dt_cell ≥ 2^k·dt0); growth waits for the
+    // syncAndRebuild tier reassignment.
+    const int nt = mesh_->n_triangles();
+    if (n_active_ == 0) return;
+    auto active = d_active_;
+    auto depth = d_depth_;
+    auto lchar = d_lchar_;
+    auto qcx = d_qcx_, qcy = d_qcy_;
+    const bool perot = have_perot_;
+    const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
+    double fresh = 1.0e30;
+    Kokkos::parallel_reduce(
+        "cfl_refresh", Kokkos::RangePolicy<ExecSpace>(0, nt),
+        KOKKOS_LAMBDA(int i, double& mn) {
+            if (!active(i)) return;
+            const double h = depth(i);
+            if (h <= dry) return;
+            double speed = 0.0;
+            if (perot && h > 1.0e-6)
+                speed = std::hypot(qcx(i), qcy(i)) / h;
+            const double dt = inertial::cellCflDt(alpha, lchar(i), h, speed);
+            if (dt < mn) mn = dt;
+        },
+        Kokkos::Min<double>(fresh));
+    if (fresh < dt0_) dt0_ = fresh;
 }
 
 void ExplicitKokkosSurfaceSolver::collapseToGlobalDt() {
@@ -1080,6 +1113,8 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
         if (cycles_since_rebuild >= kRebuildEveryCycles) {
             syncAndRebuild(t);
             cycles_since_rebuild = 0;
+        } else {
+            refreshDt0();
         }
         const int nsub_full = 1 << (K_ - 1);
         const double remaining = t_target - t;

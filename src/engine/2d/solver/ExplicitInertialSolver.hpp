@@ -69,6 +69,9 @@ private:
     // over [t_last_sync_, t], rebuild the active cell/edge lists, and assign
     // the LTS tiers (dt0_ = finest active CFL requirement).
     void syncAndRebuild(double t);
+    // Tighten-only dt0_ refresh from CURRENT depths/speeds between rebuilds
+    // (dt0_ may only grow at syncAndRebuild, which reassigns the tiers).
+    void refreshDt0();
     // Fire one tier's faces over their Δt: inertial update + Froude cap +
     // face-cadence positivity share, booking ±ΔM into both side accumulators.
     void fireFaces(const std::vector<int>& faces, double dt_f);
