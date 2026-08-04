@@ -95,6 +95,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
         }
     }
     bc_accum_.assign(bc_cell_.size(), 0.0);
+    bc_q_.assign(bc_cell_.size(), 0.0);
 
     // Live junction exchange (windowless coupling): one ∫Q dt accumulator per
     // point; spill budget tracked per 1D node. Their cells pin to tier 0 (the
@@ -405,40 +406,113 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
     }
 
     // Boundary edges owned by cells of this firing (serial: perimeter-sized).
+    const bool vfr_face_bc =
+        (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
     for (std::size_t k = 0; k < bc_cell_.size(); ++k) {
         const int i = bc_cell_[k];
         if (tier_[i] != 0 || !cell_active_[i]) continue;
         // BC cells are pinned to tier 0, so they fire with every tier-0 list;
         // guard against double-firing when called for other tiers.
         if (&cells != &cells_by_tier_[0]) continue;
-        double f = computeBoundaryEdgeFlux(*mesh_, *state_, *opts_,
-                                           opts_->flux_dh_eps, i, bc_slot_[k]);
-        if (f == 0.0) continue;
+        const int    idx = bc_slot_[k];
+        const auto   bt  = static_cast<BoundaryType>(
+            state_->boundary->edge_bc_type[idx]);
+        const double L = mesh_->edge_length[idx];
+        double f;
+        if (bt == BoundaryType::SPECIFIED_STAGE && L > 1.0e-12) {
+            // Inertial stage boundary: the SAME momentum law as an interior
+            // face, integrated against a ghost held at the prescribed stage
+            // (η = η_bc, zero-gradient q → the θ-blend collapses to the
+            // face's own bc_q_). The former collapsed-Manning flux was a
+            // diffusive-wave law alien to the inertial interior: its
+            // conductance saturated the equilibrium clamp into a Dirichlet
+            // cell and every BC-driven steady case floated one head-jump
+            // (~v²/2g scale) above the prescribed stage across the single
+            // interior edge feeding the BC cell.
+            const double eta_bc = state_->boundary->edge_bc_head[idx];
+            double hf;
+            if (vfr_face_bc) {
+                // B&S Eq. 14 depth of the driving surface over the edge's
+                // TRUE endpoint beds (same endpoint rule as the interior
+                // VFR_FACE path: edge e is opposite vertex e).
+                const int vv[3] = {mesh_->tri_v0[i], mesh_->tri_v1[i],
+                                   mesh_->tri_v2[i]};
+                const int    e_l = idx % 3;
+                const double za  = mesh_->vz[vv[(e_l + 1) % 3]];
+                const double zb  = mesh_->vz[vv[(e_l + 2) % 3]];
+                hf = inertial::faceDepthFromEta(
+                    std::max(state_->head[i], eta_bc),
+                    std::min(za, zb), std::max(za, zb));
+            } else {
+                hf = inertial::faceFlowDepth(state_->head[i], eta_bc,
+                                             mesh_->tri_cz[i]);
+            }
+            if (hf <= opts_->dry_depth) {
+                bc_q_[k] = 0.0;
+                continue;
+            }
+            double deta = state_->head[i] - eta_bc;
+            if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
+            // The ghost sits across the boundary edge at the centroid→edge
+            // distance 2A/(3L) (triangle centroid is 1/3 of the height up).
+            const double slope = deta * (3.0 * L) / (2.0 * mesh_->tri_area[i]);
+            const double n     = mesh_->mannings_n[i];
+            double qn1 = inertial::inertialFaceUpdate(
+                bc_q_[k], bc_q_[k], hf, dt_c, slope, n * n,
+                std::fabs(bc_q_[k]));
+            qn1 = inertial::froudeCap(qn1, hf, opts_->froude_max);
+            f = qn1 * L;   // inflow-positive
+        } else {
+            f = computeBoundaryEdgeFlux(*mesh_, *state_, *opts_,
+                                        opts_->flux_dh_eps, i, idx);
+        }
+        if (f == 0.0) {
+            bc_q_[k] = 0.0;
+            continue;
+        }
         // Clamp the exchange in VOLUME space and re-derive the booked flux
         // from the applied change, so booking matches application exactly
         // (no −1 ulp volume dust from the flux-space clamp).
         const double v_old = state_->volume[i];
         double v_new = v_old + dt_c * f;
-        const BoundaryData* b = state_->boundary;
-        if (static_cast<BoundaryType>(b->edge_bc_type[bc_slot_[k]])
-                == BoundaryType::SPECIFIED_STAGE) {
-            // Equilibrium clamp: one substep moves the cell AT MOST to the
-            // prescribed stage. The collapsed-Manning conductance of a
-            // boundary edge dwarfs a single cell's storage over dt_c, so an
-            // unclamped explicit exchange overshoots η = h_bc every substep
-            // and rings (bang-bang limit cycle) instead of settling.
+        if (bt == BoundaryType::SPECIFIED_STAGE) {
+            // Equilibrium clamp, kept as the tiny-cell / overshoot backstop:
+            // one substep moves the cell AT MOST to the prescribed stage. At
+            // the inertial law's gravity-scale takes it almost never binds.
             const double v_eq = inertial::cellVolumeFromEta(
-                *mesh_, *opts_, i, b->edge_bc_head[bc_slot_[k]]);
+                *mesh_, *opts_, i, state_->boundary->edge_bc_head[idx]);
             if (f < 0.0) v_new = std::max(v_new, std::min(v_old, v_eq));
             else         v_new = std::min(v_new, std::max(v_old, v_eq));
         }
         if (v_new < 0.0) v_new = 0.0;   // availability clamp (exact floor)
         f = (v_new - v_old) / dt_c;
-        if (f == 0.0) continue;
-        state_->volume[i] = v_new;
-        bc_accum_[k] += dt_c * f;
-        inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
-                               state_->head[i], state_->depth[i]);
+        // Momentum matches applied mass (mirrors the interior positivity-cap
+        // rescale of qn1) — the prescribed-flux types record theirs here too.
+        bc_q_[k] = (L > 1.0e-12) ? f / L : 0.0;
+        if (f != 0.0) {
+            state_->volume[i] = v_new;
+            bc_accum_[k] += dt_c * f;
+            inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
+                                   state_->head[i], state_->depth[i]);
+        }
+        // Perot completion: the parallel pass above rebuilt this tier-0
+        // cell's discharge vector from INTERIOR edges only, so a cell fed
+        // through its boundary carried a systematic (1−θ) drag on every
+        // face (the SPECIFIED_FLOW entrance jump). Add the boundary edge's
+        // own contribution in the interior gather's outward-flux convention.
+        if (!qcx_.empty() && bc_q_[k] != 0.0) {
+            const int vv[3] = {mesh_->tri_v0[i], mesh_->tri_v1[i],
+                               mesh_->tri_v2[i]};
+            const int    e_l = idx % 3;
+            const int    va  = vv[(e_l + 1) % 3];
+            const int    vb  = vv[(e_l + 2) % 3];
+            const double mxb = 0.5 * (mesh_->vx[va] + mesh_->vx[vb]);
+            const double myb = 0.5 * (mesh_->vy[va] + mesh_->vy[vb]);
+            const double fo    = -f;   // outward volumetric flux (m³/s)
+            const double inv_a = 1.0 / mesh_->tri_area[i];
+            qcx_[i] += fo * (mxb - mesh_->tri_cx[i]) * inv_a;
+            qcy_[i] += fo * (myb - mesh_->tri_cy[i]) * inv_a;
+        }
     }
 
     // Live junction exchange at tier-0 cadence (windowless coupling): the
@@ -649,6 +723,7 @@ void ExplicitInertialSolver::reinitialize(double /*t0*/) {
     // External state edit (hot start / breach redo): volumes are authoritative;
     // face momentum and pending transfers are stale — drop them.
     std::fill(q_.begin(), q_.end(), 0.0);
+    std::fill(bc_q_.begin(), bc_q_.end(), 0.0);
     std::fill(facc_L_.begin(), facc_L_.end(), 0.0);
     std::fill(facc_R_.begin(), facc_R_.end(), 0.0);
     reconstructAll();
@@ -677,7 +752,7 @@ void ExplicitInertialSolver::finalize() {
     cell_active_.clear(); active_cells_.clear();
     tier_.clear(); face_tier_.clear();
     cells_by_tier_.clear(); edges_by_tier_.clear();
-    bc_cell_.clear(); bc_slot_.clear(); bc_accum_.clear();
+    bc_cell_.clear(); bc_slot_.clear(); bc_accum_.clear(); bc_q_.clear();
     telemetry_.clear();
     initialized_ = false;
 }

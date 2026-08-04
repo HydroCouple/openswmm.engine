@@ -97,6 +97,8 @@ private:
     // Boundary edges (non-WALL): built host-side at initialize.
     IView d_bc_cell_, d_bc_slot_, d_bc_type_;
     DView d_bc_accum_, d_bc_slope_, d_bc_head_, d_bc_flow_;
+    DView d_bc_q_;   ///< prognostic boundary-edge discharge (m²/s, inflow-
+                     ///< positive) — mirrors ExplicitInertialSolver::bc_q_
     std::vector<int> bc_cell_host_, bc_slot_host_;
 
     // Live junction exchange (windowless coupling).

@@ -132,6 +132,12 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
             // Collapsed-Manning flux toward the prescribed stage h_bc, mirroring
             // the interior operator with the ghost at h_bc and the centroid→edge
             // distance Δx = 2A/(3L) (triangle centroid is 1/3 of the height up).
+            // NOTE: the explicit marchers (CPU + Kokkos) no longer call this
+            // branch — they integrate stage boundaries with the interior
+            // local-inertial momentum law (prognostic bc_q_ vs a ghost at
+            // η_bc), because this diffusive-wave conductance saturated the
+            // equilibrium clamp into a Dirichlet cell and left every BC-driven
+            // steady case one head-jump above its prescribed stage.
             if (n <= 0.0) return 0.0;
             const double h_bc = b->edge_bc_head[idx];
             const double dh   = state.head[i] - h_bc;
