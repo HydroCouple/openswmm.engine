@@ -753,7 +753,8 @@ void DWSolver::buildVirtualJunctionPairs(const SimulationContext& ctx) {
     const auto& CD = ctx.link_subtypes.conduits;
 
     vjunc_.clear();
-    vj_of_link_.assign(static_cast<std::size_t>(n_links_), -1);
+    vj_pair_n1_.assign(static_cast<std::size_t>(n_links_), -1);
+    vj_pair_n2_.assign(static_cast<std::size_t>(n_links_), -1);
 
     std::vector<int> row_of_node(static_cast<std::size_t>(n_nodes_), -1);
     for (int i = 0; i < n_nodes_; ++i) {
@@ -770,14 +771,21 @@ void DWSolver::buildVirtualJunctionPairs(const SimulationContext& ctx) {
     for (int j = 0; j < n_links_; ++j) {
         const auto uj = static_cast<std::size_t>(j);
         if (links.type[uj] != LinkType::CONDUIT) continue;
-        for (const int n : { links.node1[uj], links.node2[uj] }) {
+        for (const bool at_node1 : { true, false }) {
+            const int n = at_node1 ? links.node1[uj] : links.node2[uj];
             if (n < 0 || n >= n_nodes_) continue;
             const int r = row_of_node[static_cast<std::size_t>(n)];
             if (r < 0) continue;
             VJuncPair& p = vjunc_[static_cast<std::size_t>(r)];
             if      (p.link_a < 0) p.link_a = j;
             else if (p.link_b < 0) p.link_b = j;
-            vj_of_link_[uj] = r;
+            // A chain link belongs to two pairs — record each end separately
+            // (the old single vj_of_link_ map was last-write-wins, which left
+            // interior links coupled only to their downstream pair: the
+            // upwinding mechanism never fired and the convective correction
+            // was applied one-sided).
+            if (at_node1) vj_pair_n1_[uj] = r;
+            else          vj_pair_n2_[uj] = r;
         }
     }
 
@@ -824,7 +832,7 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
 
     for (VJuncPair& p : vjunc_) {
         p.active = 0;
-        p.forward = 0;
+        p.dirn = 0;
         p.dq4j = 0.0;
         if (!p.through || p.up_link < 0 || p.dn_link < 0) continue;
 
@@ -853,9 +861,14 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
         p.a_up_mid = area_mid_[uu];
         p.r_up_mid = hrad_mid_[uu];
         p.active   = 1;
-        p.forward  = (qU > 0.0 && qD >= 0.0) ? 1 : 0;
+        // Coherent signed through-flow: momentum is transmitted across the
+        // node only when both conduits carry flow the same way through it.
+        // Opposing/still flows (seiche antinode, converging fill fronts)
+        // have no momentum stream to transmit — the correction must vanish.
+        if      (qU >= 0.0 && qD >= 0.0 && qU + qD > 0.0) p.dirn = 1;
+        else if (qU <= 0.0 && qD <= 0.0 && qU + qD < 0.0) p.dirn = -1;
 
-        if (full_momentum && p.lambda > 0.0) {
+        if (full_momentum && p.lambda > 0.0 && p.dirn != 0) {
             const double aMu = std::max(area_mid_[uu], FUDGE);
             const double aMd = std::max(area_mid_[ud], FUDGE);
             const double vu = qU / aMu;
@@ -2416,25 +2429,42 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // r1_val/rMid > 0 for any wet section, so rWtd > 0 here (no div-by-zero).
     double rWtd = r1_val + (rMid - r1_val) * rho;
 
-    // ---- Virtual-junction pair coupling (plan §3.2, mechanisms 2–4) ----
-    // For the two conduits of an active through pair: the shared junction
-    // sigma replaces the per-link sigma in the inertial terms (mechanism 2;
-    // the damping overrides below still apply on top), the downstream link's
-    // junction-end upstream weighting uses the upstream link's mid-state as
-    // the upwind state when flow crosses the junction forward (mechanism 3;
-    // rho itself keeps the per-link value), and dq4j carries the cross-
-    // junction convective flux difference in FULL mode (mechanism 4).
+    // ---- Virtual-junction pair coupling (plan §3.2, mechanisms 3–4) ----
+    // Chain-aware: this link may sit on TWO pairs (its node1's and its
+    // node2's). Mechanism 3 — when coherent through-flow ENTERS this link
+    // across its upstream (node1) interface, the junction-end upstream
+    // weighting uses the neighbour link's mid-state as the upwind state
+    // (rho keeps the per-link value; reversed flow stays central, matching
+    // the per-link rho convention). Mechanism 4 (FULL mode) — each active
+    // interface contributes its convective flux correction to BOTH adjacent
+    // links; dq4j is direction-gated in vjPrepareIteration (zero when the
+    // through-flow is incoherent).
+    // Mechanism 2 (blanket σ_j override) is REMOVED: the SWASHES bump probes
+    // showed it destabilizes frictionless chains (l1 76% alone vs 0.2% off);
+    // EXTRAN's per-link Froude sigma already carries the damping policy.
+    // Diagnostic toggles (SWMM_VJ_M3/M4=0 disables; default on).
+    static const bool vj_m3 = [] {
+        const char* s = std::getenv("SWMM_VJ_M3"); return !(s && *s == '0'); }();
+    static const bool vj_m4 = [] {
+        const char* s = std::getenv("SWMM_VJ_M4"); return !(s && *s == '0'); }();
     double vj_dq4 = 0.0;
-    if (!vjunc_.empty() && vj_of_link_[uj] >= 0) {
-        const VJuncPair& p = vjunc_[static_cast<std::size_t>(vj_of_link_[uj])];
-        if (p.active) {
-            if (!is_closed_full) sig = p.sigma_j;
-            if (p.forward && static_cast<int>(uj) == p.dn_link &&
-                !is_closed_full && !isFull && qLast > 0.0) {
-                aWtd = p.a_up_mid + (aMid - p.a_up_mid) * rho;
-                rWtd = p.r_up_mid + (rMid - p.r_up_mid) * rho;
+    if (!vjunc_.empty()) {
+        const int r1 = vj_pair_n1_[uj];
+        const int r2 = vj_pair_n2_[uj];
+        if (r1 >= 0) {
+            const VJuncPair& p = vjunc_[static_cast<std::size_t>(r1)];
+            if (p.active) {
+                if (vj_m3 && p.dirn > 0 && static_cast<int>(uj) == p.dn_link &&
+                    !is_closed_full && !isFull && qLast > 0.0) {
+                    aWtd = p.a_up_mid + (aMid - p.a_up_mid) * rho;
+                    rWtd = p.r_up_mid + (rMid - p.r_up_mid) * rho;
+                }
+                if (vj_m4) vj_dq4 += p.dq4j;
             }
-            vj_dq4 = p.dq4j;
+        }
+        if (r2 >= 0) {
+            const VJuncPair& p = vjunc_[static_cast<std::size_t>(r2)];
+            if (p.active && vj_m4) vj_dq4 += p.dq4j;
         }
     }
 

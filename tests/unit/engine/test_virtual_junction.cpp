@@ -421,6 +421,15 @@ TEST(VirtualJunction, SetVirtualApi) {
     // J_IN has one conduit and a DWF inflow: rule 609 fires first.
     const int jin = swmm_node_index(e, "J_IN");
     EXPECT_EQ(swmm_node_set_virtual(e, jin, 1), 609);
+
+    // Dry-run eligibility mirrors the same rules without changing state.
+    int code = -1;
+    EXPECT_EQ(swmm_node_virtual_eligible(e, mid, &code), SWMM_OK);
+    EXPECT_EQ(code, 0);
+    EXPECT_EQ(swmm_node_virtual_eligible(e, jin, &code), SWMM_OK);
+    EXPECT_EQ(code, 609);
+    swmm_node_is_virtual(e, mid, &isv);
+    EXPECT_EQ(isv, 0);   // dry-run left the flag untouched
     destroy(e);
 }
 

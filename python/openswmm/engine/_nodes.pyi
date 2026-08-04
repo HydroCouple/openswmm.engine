@@ -64,6 +64,7 @@ class Node:
     index: int
     type: NodeType
     is_virtual: bool
+    virtual_rule_violation: int
     solver: Solver
 
     # Geometry

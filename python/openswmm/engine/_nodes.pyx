@@ -454,6 +454,24 @@ cdef class Node:
                                      1 if value else 0))
 
     @property
+    def virtual_rule_violation(self) -> int:
+        """Dry-run check of the virtual-junction usage rules for this node.
+
+        C{0} when the node satisfies every structural rule (exactly two
+        attached conduits of identical cross-section, zero offsets, no
+        lateral inflow sources, dynamic-wave routing) — i.e. setting
+        L{is_virtual} to C{True} would succeed on a JUNCTION-typed node —
+        else the distinct ERR_VJ_* rule code (609-621) identifying the
+        violated rule. Read-only; no state is changed.
+
+        @rtype: int
+        """
+        _check_fresh(self)
+        cdef int code = 0
+        _check(swmm_node_virtual_eligible(_h(self._solver), self._index, &code))
+        return code
+
+    @property
     def solver(self):
         """The parent :class:`Solver`. Useful for cross-domain access."""
         return self._solver

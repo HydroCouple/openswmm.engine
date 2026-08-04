@@ -213,6 +213,25 @@ SWMM_ENGINE_API int swmm_node_is_virtual(SWMM_Engine engine, int idx, int* is_vi
 SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_virtual);
 
 /**
+ * @brief Dry-run check of the virtual-junction usage rules for a node.
+ *
+ * @details Read-only: evaluates the same structural rules that
+ *          swmm_node_set_virtual() enforces (exactly two attached conduits of
+ *          identical cross-section, zero offsets, no lateral inflow sources,
+ *          dynamic-wave routing) without changing any state and without
+ *          requiring the node to currently be a JUNCTION — so callers can
+ *          offer "convert to virtual junction" only when it would succeed.
+ *
+ * @param engine         Engine handle.
+ * @param idx            Zero-based node index.
+ * @param[out] rule_code Receives 0 when the node satisfies every rule, else
+ *                       the distinct ERR_VJ_* rule code (see
+ *                       swmm_node_set_virtual) identifying the violated rule.
+ * @returns SWMM_OK on success, or an error code for a bad handle/index.
+ */
+SWMM_ENGINE_API int swmm_node_virtual_eligible(SWMM_Engine engine, int idx, int* rule_code);
+
+/**
  * @brief Get a node's invert elevation.
  * @param engine  Engine handle.
  * @param idx     Zero-based node index.
