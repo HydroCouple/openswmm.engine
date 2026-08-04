@@ -29,8 +29,11 @@
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
 #include "mesh/RainfallInterpolator.hpp"
+#include "../uncertainty/GridFileReader.hpp"
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #ifdef OPENSWMM_HAS_2D
@@ -44,9 +47,15 @@ namespace openswmm {
 struct SimulationContext;
 }
 
-// Forward declaration — the 2D ROM holds a non-owning pointer to the 1D ROM for
-// per-member heads at coupling points; no 1D uncertainty headers needed here.
-namespace openswmm::uncertainty { struct SpectralROM1D; }
+// Forward declarations — the 2D ROM holds a non-owning pointer to the 1D ROM
+// for per-member heads at coupling points, and SR-2c's gridded-rainfall init
+// takes a parsed grid-source spec; neither needs the full uncertainty headers
+// here.
+namespace openswmm::uncertainty {
+struct SpectralROM1D;
+struct SoftGridSourceSpec;
+enum class GridMapping : int8_t;
+}
 
 namespace openswmm::twoD {
 
@@ -178,6 +187,35 @@ public:
 
     /// Access per-edge boundary-condition data (mutable, for forcing/parsing).
     BoundaryData& boundary() noexcept { return boundary_; }
+
+    /**
+     * @brief Initialize deterministic 2D gridded rainfall forcing (SR-2c).
+     *
+     * Opens the HDF5 grid file, builds the per-triangle-centroid pixel
+     * mapping (CENTROID: nearest cell; BILINEAR: 4-pixel weighted gather,
+     * falling back to CENTROID on a degenerate < 2x2 grid), and marks the
+     * grid forcing active. Call from SWMMEngine::initHydraulics() (after
+     * initialize(), so mesh_ is built) when uncertainty_config_.grid_sources
+     * has a TWO_D-target spec with force_location.
+     *
+     * Only the /location plane is consumed — it overrides the deterministic
+     * gage rainfall path entirely for every step while active. AREA_MEAN
+     * mapping and the /spread plane (soft, uncertain gridded rainfall,
+     * consumed by the ROM) are recorded in the spec but not implemented on
+     * this path; a spec requesting either still opens deterministically
+     * under the CENTROID/BILINEAR mapping actually built.
+     *
+     * @param spec     The parsed grid source specification.
+     * @param inp_dir  Directory of the parent .inp file, for resolving a
+     *                 relative file_path (empty = spec.file_path is used as-is).
+     * @return true on success; false if the file failed to open (the grid
+     *         forcing then stays inactive and rainfall falls back to gages).
+     */
+    bool initGridRainfall(const uncertainty::SoftGridSourceSpec& spec,
+                          const std::string& inp_dir);
+
+    /// True once initGridRainfall() has succeeded.
+    bool gridRainfallActive() const noexcept { return grid_2d_active_; }
 
     /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
@@ -431,8 +469,22 @@ private:
 #endif
 
     /// Update rainfall from the rain gages (natural-neighbour interpolation or
-    /// the uniform SYSTEM mean, per options_.rainfall_mode).
+    /// the uniform SYSTEM mean, per options_.rainfall_mode) — or, when SR-2c
+    /// gridded rainfall is active, from the grid's /location plane instead
+    /// (which then skips the gage path for that step entirely).
     void updateRainfall(SimulationContext& ctx);
+
+    // --- SR-2c: deterministic gridded rainfall forcing (/location plane) ---
+    bool   grid_2d_active_     = false;  ///< True once initGridRainfall() has succeeded.
+    bool   grid_reader_opened_ = false;  ///< True after grid_reader_.open() succeeded.
+    GridFileReader grid_reader_;         ///< HDF5 grid-plane reader (one 2D source).
+    std::vector<uint32_t> grid_px_;      ///< CENTROID mapping: pixel index per triangle centroid.
+    /// BILINEAR mapping: 4-pixel weighted gather per triangle centroid.
+    /// Value-initialized to CENTROID (0); set explicitly in initGridRainfall()
+    /// only when the spec requests BILINEAR and the grid is at least 2x2.
+    uncertainty::GridMapping grid_mapping_{};
+    std::vector<uint32_t> grid_bilin_idx_;  ///< 4 pixel indices per triangle (row-major: [4*i+k]).
+    std::vector<float>    grid_bilin_w_;    ///< 4 bilinear weights per triangle (sum to 1).
 
     /// Static per-cell rainfall-interpolation weights. Built once in
     /// initialize() (gage positions are fixed for a run); applied each step in

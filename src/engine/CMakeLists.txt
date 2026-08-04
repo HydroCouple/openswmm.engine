@@ -488,6 +488,17 @@ if(OPENSWMM_BUILD_2D)
     list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/SpectralROM.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/uncertainty/CorrelatedFieldGenerator.cpp)
 
+    # SR-2c deterministic gridded rainfall: the HDF5 grid-plane reader
+    # (already required by Default2DOutputPlugin below, so no new dependency)
+    # consumed by SurfaceRouter2D::initGridRainfall(), and the [SOFT_RAINFALL_GRID]
+    # parser (registerSoftRainfallGridSection) that produces the grid-source specs
+    # it's called with. NOT registerQualityUncertaintySection from the same file
+    # (superseded by register2DSections' own general LAYER-aware [UNCERTAINTY]
+    # handler) — the file compiles as a unit regardless, only the one function
+    # is ever called.
+    list(APPEND OPENSWMM_2D_SOURCES uncertainty/GridFileReader.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES uncertainty/QualityUncertaintyHandler.cpp)
+
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
     # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.

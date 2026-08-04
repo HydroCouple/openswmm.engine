@@ -2,22 +2,38 @@
  * @file test_soft_rain_grid_2d.cpp
  * @brief Focused SR-2c tests for deterministic 2D gridded rainfall forcing.
  *
+ * @details Only the deterministic /location path is exercised — the two
+ *          cases this file originally carried for the /spread-consuming
+ *          soft-forcing extension (CL-1c correlated coherence, the SR-3c
+ *          lognormal-CV warning) are not: that machinery reads state
+ *          (SpectralROM soft-forcing, grid_soft_* fields) which is not part
+ *          of this port. See SurfaceRouter2D.hpp's initGridRainfall() note.
+ *
  * @ingroup engine_2d
  */
 
 #include <gtest/gtest.h>
 
+// updateRainfall() is private (it's an internal step of the co-advance
+// cycle, not public API); reach it directly here rather than drive the
+// whole engine lifecycle just to exercise one function.
 #define private public
 #include "2d/SurfaceRouter2D.hpp"
 #undef private
 
 #include "2d/mesh/MeshBuilder.hpp"
 #include "core/SimulationContext.hpp"
+#include "core/SWMMEngine.hpp"
 #include "uncertainty/UncertaintyConfig.hpp"
+
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_2d.h>
 
 #include <hdf5.h>
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -188,75 +204,90 @@ TEST(SoftRainGrid2D, ForceLocationGridOverridesGageFallback) {
     std::remove(grid_path.c_str());
 }
 
-TEST(SoftRainGrid2D, LognormalHighCvWarnsOnce) {
-    SimulationContext ctx;
-    ctx.options.flow_units = FlowUnits::CMS;
-    ctx.gage_names.add("RG1");
-    ctx.gages.resize(1);
-    ctx.gages.rainfall[0] = 0.0;
+// ============================================================================
+// End-to-end: [SOFT_RAINFALL_GRID] parsing -> initHydraulics() trigger ->
+// SurfaceRouter2D::initGridRainfall(), through the real engine lifecycle.
+// The two tests above call initGridRainfall() directly; this one is the
+// guard that the wiring reaching it — registerSoftRainfallGridSection and
+// the uncertainty_config_.grid_sources scan in SWMMEngine::initHydraulics()
+// — actually connects to a real .inp.
+// ============================================================================
 
-    SurfaceRouter2D router;
-    router.mesh() = makeUnitSquareMesh();
-    router.state().resize(router.mesh().n_triangles(), router.mesh().n_vertices());
+namespace {
 
-    // With loc values 20/30 mm/hr after centroid mapping, spread values of 20/30
-    // imply CV = 1.0 on both active cells, exceeding the 0.5 SR-3c guard.
-    const std::string grid_path = makeGridFile("LOGNORMAL", "CV", 0.0f, 20.0f, 30.0f, 0.0f);
-    SoftGridSourceSpec spec;
-    spec.file_path = grid_path;
-    spec.target = GridTarget::TWO_D;
-    spec.mapping = GridMapping::CENTROID;
-    spec.force_location = true;
-
-    ASSERT_TRUE(router.initGridRainfall(spec, ""));
-    router.updateRainfall(ctx);
-    ASSERT_EQ(ctx.warnings.size(), 1u);
-    EXPECT_NE(ctx.warnings[0].find("CV > 0.5"), std::string::npos);
-
-    // Second call should not emit an additional warning.
-    router.updateRainfall(ctx);
-    EXPECT_EQ(ctx.warnings.size(), 1u);
-
-    std::remove(grid_path.c_str());
+std::string buildGridModel(const std::string& grid_path) {
+    return
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CMS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:05:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         6\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      0.0   1.0       0          0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev   Type  Gated\n"
+        "O1     -0.5    FREE  NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    O1  30.0    0.013      0         0          0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  0.3    0      0      0      1\n"
+        "\n"
+        "[2D_VERTICES]\n"
+        ";;X    Y    Z\n"
+        " 0.0   0.0  0.0\n"
+        " 1.0   0.0  0.0\n"
+        " 0.0   1.0  0.0\n"
+        " 1.0   1.0  0.0\n"
+        "\n"
+        "[2D_TRIANGLES]\n"
+        ";;V1  V2  V3  MANNINGS_N\n"
+        "0     1   3   0.035\n"
+        "0     3   2   0.035\n"
+        "\n"
+        "[2D_VERTEX_NODE_MAP]\n;;Vertex  Node  Cd   Area\n0  J1  0.7  1.0\n"
+        "\n[SOFT_RAINFALL_GRID]\n"
+        ";;Target File Mapping [Options]\n"
+        "2D  \"" + grid_path + "\"  CENTROID  FORCE_LOCATION\n";
 }
 
-// CL-1c: initGridRainfall records the coherence correlation length from the
-// spec, and COHERENCE FULL / default leaves it at 0 (comonotone).
-TEST(SoftRainGrid2D, InitRecordsCoherenceCorrLen) {
-    SimulationContext ctx;
-    ctx.options.flow_units = FlowUnits::CMS;
-    ctx.gage_names.add("RG1");
-    ctx.gages.resize(1);
+}  // namespace
+
+TEST(SoftRainGrid2D, InpSectionReachesInitGridRainfallThroughTheRealEngine) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::current_path() / "soft_rain_grid_2d_out";
+    fs::create_directories(dir);
 
     const std::string grid_path = makeGridFile();
+    const fs::path inp = dir / "grid_end_to_end.inp";
+    const fs::path rpt = dir / "grid_end_to_end.rpt";
+    const fs::path out = dir / "grid_end_to_end.out";
+    { std::ofstream f(inp); f << buildGridModel(grid_path); }
 
-    // Default coherence (FULL) ⇒ corr_len stays 0.
-    {
-        SurfaceRouter2D router;
-        router.mesh() = makeUnitSquareMesh();
-        router.state().resize(router.mesh().n_triangles(), router.mesh().n_vertices());
-        SoftGridSourceSpec spec;
-        spec.file_path = grid_path;
-        spec.target = GridTarget::TWO_D;
-        spec.mapping = GridMapping::CENTROID;
-        ASSERT_TRUE(router.initGridRainfall(spec, ""));
-        EXPECT_DOUBLE_EQ(router.grid_soft_corr_len_, 0.0);
-    }
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
 
-    // COHERENCE CORR_LEN 250 ⇒ recorded on the router.
-    {
-        SurfaceRouter2D router;
-        router.mesh() = makeUnitSquareMesh();
-        router.state().resize(router.mesh().n_triangles(), router.mesh().n_vertices());
-        SoftGridSourceSpec spec;
-        spec.file_path = grid_path;
-        spec.target = GridTarget::TWO_D;
-        spec.mapping = GridMapping::CENTROID;
-        spec.coherence = openswmm::uncertainty::Coherence::CORR_LEN;
-        spec.corr_len = 250.0;
-        ASSERT_TRUE(router.initGridRainfall(spec, ""));
-        EXPECT_DOUBLE_EQ(router.grid_soft_corr_len_, 250.0);
-    }
+    int active = 0;
+    swmm_2d_is_active(eng, &active);
+    ASSERT_TRUE(active);
 
+    auto* impl = static_cast<openswmm::SWMMEngine*>(eng);
+    EXPECT_TRUE(impl->surfaceRouter2D().gridRainfallActive())
+        << "[SOFT_RAINFALL_GRID] FORCE_LOCATION did not reach initGridRainfall()";
+
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
     std::remove(grid_path.c_str());
 }
