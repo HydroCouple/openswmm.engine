@@ -282,6 +282,33 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     telemetry_.emplace_back(t, static_cast<int>(active_cells_.size()));
 }
 
+void ExplicitInertialSolver::refreshDt0() {
+    // Between rebuilds the tier lists are frozen and depths keep evolving, so
+    // a dt0_ computed up to kRebuildEveryCycles macro cycles ago can realize
+    // an effective CFL well above the configured bound (measured: the
+    // union-jack closed-lake seiche grows at CFL_NUMBER 0.7 with dt frozen
+    // for 32 base substeps). Tightening mid-flight is unconditionally safe —
+    // every tier still satisfies dt_cell ≥ 2^k·dt0 — while GROWING dt0 must
+    // wait for syncAndRebuild, which reassigns the tiers.
+    const int na = static_cast<int>(active_cells_.size());
+    if (na == 0) return;
+    double fresh = 1.0e30;
+#pragma omp parallel for schedule(static) reduction(min : fresh) \
+    num_threads(opts_->num_threads)
+    for (int k = 0; k < na; ++k) {
+        const int i = active_cells_[static_cast<std::size_t>(k)];
+        const double h = state_->depth[i];
+        if (h <= opts_->dry_depth) continue;
+        double speed = 0.0;
+        if (!qcx_.empty() && h > 1.0e-6)
+            speed = std::hypot(qcx_[i], qcy_[i]) / h;
+        const double dt = inertial::cellCflDt(opts_->cfl_number,
+                                              edges_.cell_lchar[i], h, speed);
+        if (dt < fresh) fresh = dt;
+    }
+    if (fresh < dt0_) dt0_ = fresh;
+}
+
 void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
                                        double dt_f) {
     const auto& ed = edges_;
@@ -632,6 +659,8 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         if (cycles_since_rebuild >= kRebuildEveryCycles) {
             syncAndRebuild(t);
             cycles_since_rebuild = 0;
+        } else {
+            refreshDt0();
         }
         const int K = static_cast<int>(cells_by_tier_.size());
         const int nsub_full = 1 << (K - 1);
