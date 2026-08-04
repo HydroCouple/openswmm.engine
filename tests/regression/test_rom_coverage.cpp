@@ -16,6 +16,23 @@
  *       band wherever the MC width is resolvable (> 1e-6 m).
  *
  * Runtime: 22 engine runs on a 6-node, 10-minute network — ~2 s total.
+ *
+ * @warning STATUS 2026-08-04: this file existed since 586e492b (2026-07-08)
+ *          but was never wired into CMake — registered for the first time
+ *          while starting PR P4 (HSYM_RESIDUALS_PR_CHECKLIST.md). On first
+ *          run under the current base it FAILS: coverage=1.000 but width
+ *          ratio min/med/max = 0.024/0.082/0.889 (in-band 0.303), far below
+ *          the documented 0.676/1.251/1.610. Root cause is NOT the mechanical
+ *          port (buildROM1D/computeK1d/SpectralROM1D verified byte-faithful
+ *          to the pre-port sidecar) and NOT a units bug (the internal-always-
+ *          feet architecture in PostParseResolver.cpp's convert_inputs_to_
+ *          internal/convert_internal_to_display pair is correct, deliberate,
+ *          longstanding design — ruled out after initially suspecting it).
+ *          The gap is left deliberately UNFIXED and this test deliberately
+ *          left RED, per this checklist's own hard rule 2 ("nobody tunes a
+ *          tolerance to green a spread-magnitude test") — see
+ *          history_decisions.md's "P4 baseline: PR-10 harness fails on first
+ *          run" entry and the checklist's P4 section for the escalation.
  */
 
 #include <gtest/gtest.h>
