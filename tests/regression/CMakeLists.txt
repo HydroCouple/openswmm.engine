@@ -125,4 +125,28 @@ if(OPENSWMM_BUILD_2D)
     set_tests_properties(regression_2d_rom_marcher_coverage PROPERTIES
         LABELS "regression"
         ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
+
+    # ---- PR 10 variant: Bellinge model coverage (fast saturation) ----
+    # Real 1020-node network with K1d ≈ 0.123 (540× larger than Phase-9 chain).
+    # Dominant mode τ_0 ≈ 100 s (vs 15 h), so 1-hour window reaches ~99% saturation.
+    # Rainfall file at /Users/corinnewiesner/Projects/SWMM_inp/Bellinge/7_SWMM/
+    # (absolute path injected by test).
+    add_executable(test_rom_coverage_bellinge test_rom_coverage_bellinge.cpp)
+    target_link_libraries(test_rom_coverage_bellinge
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            openswmm_engine
+    )
+    target_include_directories(test_rom_coverage_bellinge
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_rom_coverage_bellinge PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    add_test(NAME regression_rom_coverage_bellinge COMMAND $<TARGET_FILE:test_rom_coverage_bellinge>)
+    set_tests_properties(regression_rom_coverage_bellinge PROPERTIES LABELS "regression")
+    openswmm_stage_test_runtime_deps(test_rom_coverage_bellinge)
 endif()
