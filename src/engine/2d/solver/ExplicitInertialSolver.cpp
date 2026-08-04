@@ -340,18 +340,27 @@ void ExplicitInertialSolver::refreshDt0() {
     const int na = static_cast<int>(active_cells_.size());
     if (na == 0) return;
     double fresh = 1.0e30;
-#pragma omp parallel for schedule(static) reduction(min : fresh) \
-    num_threads(opts_->num_threads)
-    for (int k = 0; k < na; ++k) {
-        const int i = active_cells_[static_cast<std::size_t>(k)];
-        const double h = state_->depth[i];
-        if (h <= opts_->dry_depth) continue;
-        double speed = 0.0;
-        if (!qcx_.empty() && h > 1.0e-6)
-            speed = std::hypot(qcx_[i], qcy_[i]) / h;
-        const double dt = inertial::cellCflDt(opts_->cfl_number,
-                                              edges_.cell_lchar[i], h, speed);
-        if (dt < fresh) fresh = dt;
+#pragma omp parallel num_threads(opts_->num_threads)
+    {
+        // Manual min-reduction: MSVC's default /openmp is OpenMP 2.0, which
+        // lacks reduction(min:).
+        double local = 1.0e30;
+#pragma omp for schedule(static) nowait
+        for (int k = 0; k < na; ++k) {
+            const int i = active_cells_[static_cast<std::size_t>(k)];
+            const double h = state_->depth[i];
+            if (h <= opts_->dry_depth) continue;
+            double speed = 0.0;
+            if (!qcx_.empty() && h > 1.0e-6)
+                speed = std::hypot(qcx_[i], qcy_[i]) / h;
+            const double dt = inertial::cellCflDt(opts_->cfl_number,
+                                                  edges_.cell_lchar[i], h, speed);
+            if (dt < local) local = dt;
+        }
+#pragma omp critical
+        {
+            if (local < fresh) fresh = local;
+        }
     }
     if (fresh < dt0_) dt0_ = fresh;
 }
