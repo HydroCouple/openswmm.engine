@@ -206,14 +206,23 @@ cdef class InfiltrationView:
         _check_fresh(self._sub)
         cdef double v = 0.0
         _check(swmm_subcatch_get_infil_curve_number(
-            _h(self._sub._solver), self._sub._index, &v))
+            _h(self._sub._solver), self._sub._index, &v, NULL))
         return v
 
-    def set_curve_number(self, double cn) -> None:
-        """Set the SCS curve-number infiltration parameter."""
+    @property
+    def curve_number_drying_time(self) -> float:
+        """Days for a fully saturated soil to dry (third [INFILTRATION] column)."""
+        _check_fresh(self._sub)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_infil_curve_number(
+            _h(self._sub._solver), self._sub._index, NULL, &v))
+        return v
+
+    def set_curve_number(self, double cn, double drying_time) -> None:
+        """Set the SCS curve-number infiltration parameters (CN, drying time in days)."""
         _check_fresh(self._sub)
         _check(swmm_subcatch_set_infil_curve_number(
-            _h(self._sub._solver), self._sub._index, cn))
+            _h(self._sub._solver), self._sub._index, cn, drying_time))
 
     def __repr__(self) -> str:
         try:
@@ -470,6 +479,22 @@ cdef class Subcatchment:
     def imperv_pct(self, double value) -> None:
         _check_fresh(self)
         _check(swmm_subcatch_set_imperv_pct(_h(self._solver), self._index, value))
+
+    @property
+    def zero_imperv_pct(self) -> float:
+        """Percent of the impervious area with no depression storage.
+
+        The ``[SUBAREAS]`` ``PctZero`` column.
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_subcatch_get_zero_imperv_pct(_h(self._solver), self._index, &v))
+        return v
+
+    @zero_imperv_pct.setter
+    def zero_imperv_pct(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_subcatch_set_zero_imperv_pct(_h(self._solver), self._index, value))
 
     @property
     def n_imperv(self) -> float:

@@ -57,7 +57,7 @@ class TestSubcatchmentProperties(EngineSolverCase):
     def test_geometry_round_trips(self):
         opened_solver = self.opened_solver()
         s0 = opened_solver.subcatchments[0]
-        for attr in ("area", "width", "slope", "imperv_pct",
+        for attr in ("area", "width", "slope", "imperv_pct", "zero_imperv_pct",
                      "n_imperv", "n_perv", "ds_imperv", "ds_perv"):
             v = getattr(s0, attr)
             self.assertIsInstance(v, float)
@@ -150,9 +150,23 @@ class TestInfiltration(EngineSolverCase):
     def test_set_curve_number_changes_model(self):
         opened_solver = self.opened_solver()
         s0 = opened_solver.subcatchments[0]
-        s0.infiltration.set_curve_number(85.0)
+        s0.infiltration.set_curve_number(85.0, 7.0)
         self.assertEqual(s0.infiltration.model, InfilModel.CURVE_NUMBER)
         self.assertAlmostEqual(s0.infiltration.curve_number, 85.0, places=6)
+        self.assertAlmostEqual(s0.infiltration.curve_number_drying_time, 7.0, places=6)
+
+    def test_curve_number_drying_time_round_trips(self):
+        opened_solver = self.opened_solver()
+        s0 = opened_solver.subcatchments[0]
+        s0.infiltration.set_curve_number(70.0, 3.5)
+        self.assertAlmostEqual(s0.infiltration.curve_number, 70.0, places=6)
+        self.assertAlmostEqual(s0.infiltration.curve_number_drying_time, 3.5, places=6)
+
+    def test_zero_imperv_pct_round_trips(self):
+        opened_solver = self.opened_solver()
+        s0 = opened_solver.subcatchments[0]
+        s0.zero_imperv_pct = 42.5
+        self.assertAlmostEqual(s0.zero_imperv_pct, 42.5, places=6)
 
 
 class TestCoverage(EngineSolverCase):

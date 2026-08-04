@@ -118,6 +118,17 @@ SWMM_ENGINE_API int swmm_subcatch_set_slope(SWMM_Engine engine, int idx, double 
 SWMM_ENGINE_API int swmm_subcatch_set_imperv_pct(SWMM_Engine engine, int idx, double pct);
 
 /**
+ * @brief Set the percentage of the impervious area having no depression storage.
+ * @details The [SUBAREAS] @c PctZero column; legacy @c Subcatch[i].fracImperv2.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based subcatchment index.
+ * @param pct     Zero-depression-storage impervious area as a percentage
+ *                (0–100) of the impervious area.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine engine, int idx, double pct);
+
+/**
  * @brief Set Manning's n for the impervious area.
  * @param engine  Engine handle.
  * @param idx     Zero-based subcatchment index.
@@ -174,9 +185,19 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int i
                                                          double suction, double conductivity,
                                                          double initial_deficit);
 
-/** @brief Set Curve Number infiltration parameter. */
+/**
+ * @brief Set Curve Number infiltration parameters.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based subcatchment index.
+ * @param cn           SCS curve number (clamped to 10–99 by the runoff solver).
+ * @param drying_time  Days for a fully saturated soil to dry, matching the
+ *                     third [INFILTRATION] column and legacy
+ *                     @c curvenum_setParams p[2]. Drives the regeneration
+ *                     constant; a value <= 0 disables regeneration.
+ * @returns SWMM_OK on success, or an error code.
+ */
 SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int idx,
-                                                           double cn);
+                                                           double cn, double drying_time);
 
 /**
  * @brief Set ONLY the infiltration model code for a subcatchment.
@@ -214,6 +235,16 @@ SWMM_ENGINE_API int swmm_subcatch_get_area(SWMM_Engine engine, int idx, double* 
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_subcatch_get_imperv_pct(SWMM_Engine engine, int idx, double* pct);
+
+/**
+ * @brief Get the percentage of the impervious area having no depression storage.
+ * @param engine    Engine handle.
+ * @param idx       Zero-based subcatchment index.
+ * @param[out] pct  Receives the zero-depression-storage percentage (0–100).
+ * @returns SWMM_OK on success, or an error code.
+ * @see swmm_subcatch_set_zero_imperv_pct
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_zero_imperv_pct(SWMM_Engine engine, int idx, double* pct);
 
 /**
  * @brief Get the outlet node index for a subcatchment.
@@ -355,13 +386,16 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil_green_ampt(SWMM_Engine engine, int i
                                                           double* deficit);
 
 /**
- * @brief Get the Curve Number infiltration parameter for a subcatchment.
- * @param engine   Engine handle.
- * @param idx      Zero-based subcatchment index.
- * @param[out] cn  Receives the SCS curve number.
+ * @brief Get the Curve Number infiltration parameters for a subcatchment.
+ * @param engine            Engine handle.
+ * @param idx               Zero-based subcatchment index.
+ * @param[out] cn           Receives the SCS curve number. May be NULL.
+ * @param[out] drying_time  Receives the drying time in days. May be NULL.
  * @returns SWMM_OK on success, or an error code.
+ * @see swmm_subcatch_set_infil_curve_number
  */
-SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx, double* cn);
+SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx,
+                                                           double* cn, double* drying_time);
 
 /* =========================================================================
  * Subcatchment statistics

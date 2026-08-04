@@ -189,4 +189,134 @@ TEST_F(SubcatchEditorApiTest, LidUsageAddGetRemove) {
     EXPECT_EQ(swmm_lid_usage_count(nullptr), -1);
 }
 
+// ---------------------------------------------------------------------------
+// Zero-depression-storage impervious percentage ([SUBAREAS] PctZero). The
+// accessors speak percent while the context stores a fraction, mirroring
+// swmm_subcatch_set/get_imperv_pct.
+// ---------------------------------------------------------------------------
+TEST_F(SubcatchEditorApiTest, ZeroImpervPctReadsParsedValue) {
+    // The fixture's [SUBAREAS] rows all carry PctZero = 25.
+    double pct = -1.0;
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 0, &pct), SWMM_OK);
+    EXPECT_DOUBLE_EQ(pct, 25.0);
+}
+
+TEST_F(SubcatchEditorApiTest, ZeroImpervPctRoundTrip) {
+    EXPECT_EQ(swmm_subcatch_set_zero_imperv_pct(engine_, 0, 62.5), SWMM_OK);
+    double pct = -1.0;
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 0, &pct), SWMM_OK);
+    EXPECT_DOUBLE_EQ(pct, 62.5);
+
+    // 0 and 100 are both meaningful endpoints, not sentinels.
+    EXPECT_EQ(swmm_subcatch_set_zero_imperv_pct(engine_, 0, 0.0), SWMM_OK);
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 0, &pct), SWMM_OK);
+    EXPECT_DOUBLE_EQ(pct, 0.0);
+    EXPECT_EQ(swmm_subcatch_set_zero_imperv_pct(engine_, 0, 100.0), SWMM_OK);
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 0, &pct), SWMM_OK);
+    EXPECT_DOUBLE_EQ(pct, 100.0);
+
+    // Writing one subcatchment must not disturb its neighbour.
+    double other = -1.0;
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 1, &other), SWMM_OK);
+    EXPECT_DOUBLE_EQ(other, 25.0);
+}
+
+TEST_F(SubcatchEditorApiTest, ZeroImpervPctHandleAndIndexContracts) {
+    double pct = 0.0;
+    EXPECT_EQ(swmm_subcatch_set_zero_imperv_pct(nullptr, 0, 10.0), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(nullptr, 0, &pct), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_subcatch_set_zero_imperv_pct(engine_, n_subs_, 10.0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, n_subs_, &pct), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_subcatch_set_zero_imperv_pct(engine_, -1, 10.0), SWMM_ERR_BADINDEX);
+    // A NULL out-pointer is tolerated, not a crash.
+    EXPECT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 0, nullptr), SWMM_OK);
+}
+
+// ---------------------------------------------------------------------------
+// Curve Number: cn + drying time round-trip, and the model code is stamped.
+// ---------------------------------------------------------------------------
+TEST_F(SubcatchEditorApiTest, CurveNumberRoundTrip) {
+    EXPECT_EQ(swmm_subcatch_set_infil_curve_number(engine_, 0, 80.0, 7.0), SWMM_OK);
+
+    double cn = 0.0, dry = 0.0;
+    EXPECT_EQ(swmm_subcatch_get_infil_curve_number(engine_, 0, &cn, &dry), SWMM_OK);
+    EXPECT_DOUBLE_EQ(cn, 80.0);
+    EXPECT_DOUBLE_EQ(dry, 7.0);
+
+    // The setter stamps CURVE_NUMBER like the other family setters do.
+    int model = -1;
+    EXPECT_EQ(swmm_subcatch_get_infil_model(engine_, 0, &model), SWMM_OK);
+    EXPECT_EQ(model, 4);
+
+    // Either out-param may be NULL.
+    cn = dry = 0.0;
+    EXPECT_EQ(swmm_subcatch_get_infil_curve_number(engine_, 0, &cn, nullptr), SWMM_OK);
+    EXPECT_DOUBLE_EQ(cn, 80.0);
+    EXPECT_EQ(swmm_subcatch_get_infil_curve_number(engine_, 0, nullptr, &dry), SWMM_OK);
+    EXPECT_DOUBLE_EQ(dry, 7.0);
+    EXPECT_EQ(swmm_subcatch_get_infil_curve_number(engine_, 0, nullptr, nullptr), SWMM_OK);
+}
+
+TEST_F(SubcatchEditorApiTest, CurveNumberHandleAndIndexContracts) {
+    double cn = 0.0;
+    EXPECT_EQ(swmm_subcatch_set_infil_curve_number(nullptr, 0, 80.0, 7.0), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_subcatch_get_infil_curve_number(nullptr, 0, &cn, nullptr), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_subcatch_set_infil_curve_number(engine_, n_subs_, 80.0, 7.0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_subcatch_get_infil_curve_number(engine_, n_subs_, &cn, nullptr), SWMM_ERR_BADINDEX);
+}
+
+// ---------------------------------------------------------------------------
+// Slot agreement: the drying time the C API reads must be the one the
+// [INFILTRATION] parser wrote — i.e. the THIRD column, matching legacy
+// curvenum_setParams() p[2]. Reading a different slot silently zeroed the
+// regeneration constant for every file-loaded CN subcatchment.
+// ---------------------------------------------------------------------------
+class CurveNumberInfilTest : public ::testing::Test {
+protected:
+    SWMM_Engine engine_ = nullptr;
+
+    void SetUp() override {
+        engine_ = swmm_engine_create();
+        ASSERT_NE(engine_, nullptr);
+        ASSERT_EQ(swmm_engine_open(engine_,
+                                   "curve_number_infil.inp",
+                                   "curve_number_infil.rpt",
+                                   "curve_number_infil.out",
+                                   nullptr),
+                  SWMM_OK)
+            << "open failed: " << swmm_get_last_error_msg(engine_);
+    }
+
+    void TearDown() override {
+        if (engine_) {
+            swmm_engine_close(engine_);
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
+    }
+};
+
+TEST_F(CurveNumberInfilTest, DryingTimeParsedFromThirdColumn) {
+    int model = -1;
+    ASSERT_EQ(swmm_subcatch_get_infil_model(engine_, 0, &model), SWMM_OK);
+    EXPECT_EQ(model, 4) << "project option INFILTRATION CURVE_NUMBER";
+
+    double cn = 0.0, dry = 0.0;
+    ASSERT_EQ(swmm_subcatch_get_infil_curve_number(engine_, 0, &cn, &dry), SWMM_OK);
+    EXPECT_DOUBLE_EQ(cn, 80.0);
+    EXPECT_DOUBLE_EQ(dry, 7.0) << "third [INFILTRATION] column is the drying time";
+
+    ASSERT_EQ(swmm_subcatch_get_infil_curve_number(engine_, 1, &cn, &dry), SWMM_OK);
+    EXPECT_DOUBLE_EQ(cn, 65.0);
+    EXPECT_DOUBLE_EQ(dry, 3.0);
+}
+
+TEST_F(CurveNumberInfilTest, ZeroImpervPctParsedPerSubcatchment) {
+    double pct = -1.0;
+    ASSERT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 0, &pct), SWMM_OK);
+    EXPECT_DOUBLE_EQ(pct, 25.0);
+    ASSERT_EQ(swmm_subcatch_get_zero_imperv_pct(engine_, 1, &pct), SWMM_OK);
+    EXPECT_DOUBLE_EQ(pct, 60.0);
+}
+
 } // namespace
