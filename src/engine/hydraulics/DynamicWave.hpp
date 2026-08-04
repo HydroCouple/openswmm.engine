@@ -413,7 +413,7 @@ private:
         double  r_up_mid = 0.0;       ///< up-link mid hyd. radius (upwind state)
         double  dq4j     = 0.0;       ///< cross-junction convective correction (FULL mode)
         uint8_t active   = 0;         ///< pair coupling live this iteration (wet through pair)
-        uint8_t forward  = 0;         ///< through-flow direction is up→dn this iteration
+        int8_t  dirn     = 0;         ///< coherent through-flow: +1 up→dn, −1 dn→up, 0 opposing/still
 
         // Momentum-residual diagnostic accumulators (whole run):
         double resid_max = 0.0;
@@ -421,7 +421,11 @@ private:
         long long resid_n = 0;
     };
     std::vector<VJuncPair> vjunc_;
-    std::vector<int32_t>   vj_of_link_;  ///< link j → row in vjunc_ (-1 = none)
+    /// Link j → vjunc_ row of the pair at each end (-1 = none). A chain link
+    /// belongs to TWO pairs (dn side of its node1's pair, up side of its
+    /// node2's pair) — a single map drops one side and biases the coupling.
+    std::vector<int32_t>   vj_pair_n1_;
+    std::vector<int32_t>   vj_pair_n2_;
 
     /// Build vjunc_ / vj_of_link_ from topology (called from init(), post-CSR).
     void buildVirtualJunctionPairs(const SimulationContext& ctx);

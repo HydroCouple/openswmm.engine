@@ -191,6 +191,7 @@ cdef extern from "openswmm_nodes.h":
     # Virtual junctions (refactored engine only)
     cdef int swmm_node_is_virtual(SWMM_Engine e, int idx, int* is_virtual)
     cdef int swmm_node_set_virtual(SWMM_Engine e, int idx, int make_virtual)
+    cdef int swmm_node_virtual_eligible(SWMM_Engine e, int idx, int* rule_code)
     # Geometry getters
     cdef int swmm_node_get_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_node_get_invert_elev(SWMM_Engine e, int idx, double* elev)

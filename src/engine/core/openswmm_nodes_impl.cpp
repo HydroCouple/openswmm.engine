@@ -208,6 +208,14 @@ SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_
     return code;   // distinct ERR_VJ_* rule code (see openswmm_nodes.h)
 }
 
+SWMM_ENGINE_API int swmm_node_virtual_eligible(SWMM_Engine engine, int idx, int* rule_code) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (rule_code) *rule_code = openswmm::edit::vj_rule_violation(ctx, idx);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_node_get_invert_elev(SWMM_Engine engine, int idx, double* elev) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
