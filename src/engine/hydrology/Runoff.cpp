@@ -229,8 +229,12 @@ void RunoffSolver::init(SimulationContext& ctx) {
                 break;
             case 4:
                 infil_models_[ui] = InfilModel::CURVE_NUM;
+                // Drying time is p3 — the third [INFILTRATION] column, matching
+                // legacy curvenum_setParams(), which reads p[2]. Reading p4 here
+                // left regen at 0 for every file-loaded CN subcatchment, so the
+                // soil store never recovered between events.
                 infil::curvenum_init(curvenum_states_[ui],
-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p4[ui]);
+                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p3[ui]);
                 break;
         }
     }

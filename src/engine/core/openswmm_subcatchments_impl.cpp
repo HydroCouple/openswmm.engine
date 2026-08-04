@@ -122,6 +122,15 @@ SWMM_ENGINE_API int swmm_subcatch_set_imperv_pct(SWMM_Engine engine, int idx, do
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine engine, int idx, double pct) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] = pct / 100.0;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_subcatch_set_n_imperv(SWMM_Engine engine, int idx, double n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
@@ -203,7 +212,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int i
 }
 
 SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int idx,
-                                                           double cn) {
+                                                           double cn, double drying_time) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
@@ -211,6 +220,9 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int
     auto uidx = static_cast<std::size_t>(idx);
     ctx.subcatches.infil_model[uidx] = 4; // CURVE_NUMBER
     ctx.subcatches.infil_p1[uidx] = cn;
+    // p3 is the drying-time slot for CURVE_NUMBER: it is the third
+    // [INFILTRATION] column and legacy curvenum_setParams reads p[2].
+    ctx.subcatches.infil_p3[uidx] = drying_time;
     return SWMM_OK;
 }
 
@@ -249,6 +261,14 @@ SWMM_ENGINE_API int swmm_subcatch_get_imperv_pct(SWMM_Engine engine, int idx, do
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     if (pct) *pct = ctx.subcatches.frac_imperv[static_cast<std::size_t>(idx)] * 100.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_zero_imperv_pct(SWMM_Engine engine, int idx, double* pct) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (pct) *pct = ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] * 100.0;
     return SWMM_OK;
 }
 
@@ -376,11 +396,14 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil_green_ampt(SWMM_Engine engine, int i
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx, double* cn) {
+SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx,
+                                                           double* cn, double* drying_time) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (cn) *cn = ctx.subcatches.infil_p1[static_cast<std::size_t>(idx)];
+    auto uidx = static_cast<std::size_t>(idx);
+    if (cn)          *cn          = ctx.subcatches.infil_p1[uidx];
+    if (drying_time) *drying_time = ctx.subcatches.infil_p3[uidx];
     return SWMM_OK;
 }
 

@@ -205,9 +205,9 @@ struct SubcatchData {
 
     /** @brief Infiltration param 1: f0 (Horton), suction (GA), CN (CN). */
     std::vector<double> infil_p1;
-    /** @brief Infiltration param 2: fmin (Horton), conductivity (GA), 0 (CN). */
+    /** @brief Infiltration param 2: fmin (Horton), conductivity (GA), unused (CN). */
     std::vector<double> infil_p2;
-    /** @brief Infiltration param 3: decay (Horton), initial deficit (GA), 0 (CN). */
+    /** @brief Infiltration param 3: decay (Horton), initial deficit (GA), drying time (CN). */
     std::vector<double> infil_p3;
     /** @brief Infiltration param 4: dry time (Horton), 0 (GA/CN). */
     std::vector<double> infil_p4;

@@ -440,6 +440,7 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int swmm_subcatch_set_rain_scale_factor(SWMM_Engine e, int idx, double factor)
     cdef int swmm_subcatch_set_snow_scale_factor(SWMM_Engine e, int idx, double factor)
     cdef int swmm_subcatch_set_imperv_pct(SWMM_Engine e, int idx, double pct)
+    cdef int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine e, int idx, double pct)
     cdef int swmm_subcatch_set_n_imperv(SWMM_Engine e, int idx, double n)
     cdef int swmm_subcatch_set_n_perv(SWMM_Engine e, int idx, double n)
     cdef int swmm_subcatch_set_ds_imperv(SWMM_Engine e, int idx, double ds)
@@ -453,10 +454,12 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int swmm_subcatch_set_infil_green_ampt(SWMM_Engine e, int idx,
                                                  double suction, double conductivity,
                                                  double initial_deficit)
-    cdef int swmm_subcatch_set_infil_curve_number(SWMM_Engine e, int idx, double cn)
+    cdef int swmm_subcatch_set_infil_curve_number(SWMM_Engine e, int idx,
+                                                   double cn, double drying_time)
     # Property getters
     cdef int swmm_subcatch_get_area(SWMM_Engine e, int idx, double* area)
     cdef int swmm_subcatch_get_imperv_pct(SWMM_Engine e, int idx, double* pct)
+    cdef int swmm_subcatch_get_zero_imperv_pct(SWMM_Engine e, int idx, double* pct)
     cdef int swmm_subcatch_get_outlet(SWMM_Engine e, int idx, int* node_idx)
     cdef int swmm_subcatch_get_width(SWMM_Engine e, int idx, double* w)
     cdef int swmm_subcatch_get_slope(SWMM_Engine e, int idx, double* s)
@@ -476,7 +479,8 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int swmm_subcatch_get_infil_green_ampt(SWMM_Engine e, int idx,
                                                  double* suction, double* conductivity,
                                                  double* deficit)
-    cdef int swmm_subcatch_get_infil_curve_number(SWMM_Engine e, int idx, double* cn)
+    cdef int swmm_subcatch_get_infil_curve_number(SWMM_Engine e, int idx,
+                                                   double* cn, double* drying_time)
     # Statistics
     cdef int swmm_subcatch_get_stat_precip(SWMM_Engine e, int idx, double* vol)
     cdef int swmm_subcatch_get_stat_runoff_vol(SWMM_Engine e, int idx, double* vol)
