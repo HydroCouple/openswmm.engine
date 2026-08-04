@@ -4546,9 +4546,19 @@ void SWMMEngine::initHydraulics() noexcept {
     }
 
     // Initialize routing time-step histogram bins (log-scale from RouteStep
-    // down to MinRouteStep, matching legacy stats.c stats_open)
-    ctx_.routing_stats.init_histogram(ctx_.options.routing_step,
-                                       ctx_.options.min_routing_step);
+    // down to MinRouteStep, matching legacy stats.c stats_open). For DYNWAVE
+    // legacy runs stats_open after dynwave_validate, which clamps
+    // MinRouteStep = min(MinRouteStep, RouteStep) then >= MINTIMESTEP.
+    {
+        double hist_min_step = ctx_.options.min_routing_step;
+        if (rm == RouteModel::DYNWAVE) {
+            hist_min_step = std::max(
+                std::min(hist_min_step, ctx_.options.routing_step),
+                constants::MIN_TIMESTEP);
+        }
+        ctx_.routing_stats.init_histogram(ctx_.options.routing_step,
+                                          hist_min_step);
+    }
 
     // NOTE: Conduit conveyance (beta, rough_factor, q_full) is computed in
     // PostParseResolver and then adjusted for conduit lengthening in

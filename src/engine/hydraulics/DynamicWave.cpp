@@ -3410,11 +3410,21 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
 double DWSolver::getRoutingStep(SimulationContext& ctx,
                                  double fixed_step, double courant_factor) {
     if (courant_factor <= 0.0) return fixed_step;
+    // Legacy dynwave_getRoutingStep: fixed steps below MINTIMESTEP bypass the
+    // variable-step machinery entirely.
+    if (fixed_step < MIN_TIMESTEP) return fixed_step;
+
+    // Effective minimum step — legacy dynwave_validate (dynwave.c:178-179)
+    // clamps MinRouteStep = min(MinRouteStep, RouteStep), then >= MINTIMESTEP,
+    // so the floor can never exceed the user's fixed routing step.
+    const double min_route_step =
+        std::max(std::min(ctx.options.min_routing_step, fixed_step),
+                 MIN_TIMESTEP);
 
     // On first call (no flows yet), use minimum step (matching legacy line 201-204:
     // "if (VariableStep == 0.0) VariableStep = MinRouteStep")
     if (variable_step_ <= 0.0) {
-        variable_step_ = std::max(ctx.options.min_routing_step, MIN_TIMESTEP);
+        variable_step_ = min_route_step;
         return variable_step_;
     }
 
@@ -3489,9 +3499,9 @@ double DWSolver::getRoutingStep(SimulationContext& ctx,
         ctx.links.stat_time_courant_critical[static_cast<std::size_t>(min_link)] += 1.0;
     }
 
-    // Apply user's minimum step (from MINIMUM_STEP option, typically 0.5 sec)
-    double min_step = ctx.options.min_routing_step;
-    min_step = std::max(min_step, MIN_TIMESTEP);
+    // Apply user's minimum step (MINIMUM_STEP clamped to the fixed routing
+    // step per legacy dynwave_validate — see min_route_step above)
+    const double min_step = min_route_step;
     const bool floored = dt_min < min_step;
     dt_min = std::max(dt_min, min_step);
     // Round to milliseconds for deterministic behavior
