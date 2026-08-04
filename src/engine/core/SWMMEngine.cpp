@@ -72,6 +72,13 @@ static constexpr int SWMM_ERR_IO             = 11;  // public SWMM_ERR_IO
 
 namespace openswmm {
 
+// A3 parity tracing: routing-step serial (updated by the RSTEP trace in
+// stepRouting) so the per-link term trace in DynamicWave.cpp can be gated on
+// a step number (SWMM_TRACE_LSTEP) instead of an invocation count — bypassed
+// links make invocation counts hard to predict. Mirrors SwmmTraceRstepSn in
+// the legacy engine (dwflow.c / routing.c).
+long g_trace_rstep_sn = 0;
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -2700,6 +2707,101 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // allowed iteration is converged (dynwave.c:245). Using the real flag here
     // matches legacy's "% of Steps Not Converging".
     ctx_.routing_stats.update_iterations(iters, router_.lastStepConverged());
+
+    // A3 parity tracing (env-gated, zero cost when SWMM_TRACE_RSTEP unset):
+    // one CSV row per routing step, format-matched to the legacy trace at the
+    // end of routing_execute (routing.c) for first-divergence hunting.
+    {
+        static FILE* trace_file = nullptr;
+        static bool  trace_init = false;
+        if (!trace_init) {
+            trace_init = true;
+            const char* p = std::getenv("SWMM_TRACE_RSTEP");
+            if (p && *p) {
+                trace_file = std::fopen(p, "w");
+                if (trace_file)
+                    std::fprintf(trace_file,
+                                 "step,new_ms,dt_ms,iters,qsum,ysum,lsum,rosum,qhash,yhash\n");
+            }
+        }
+        if (trace_file) {
+            static long trace_sn = 0;
+            // Order-fixed serial sums (link/node index order, matching the
+            // legacy trace) — hex-exact fingerprints of the hydraulic state.
+            // FNV-1a 64-bit hashes over the raw bit patterns of link flow &
+            // node depth (element order) — exact first-divergence detector
+            // (the %a sums absorb small-magnitude element diffs).
+            double q_sum = 0.0, y_sum = 0.0, l_sum = 0.0, ro_sum = 0.0;
+            unsigned long long q_hash = 14695981039346656037ULL;
+            unsigned long long y_hash = 14695981039346656037ULL;
+            unsigned long long bits = 0;
+            for (int tj = 0; tj < ctx_.n_links(); ++tj) {
+                q_sum += ctx_.links.flow[static_cast<std::size_t>(tj)];
+                std::memcpy(&bits, &ctx_.links.flow[static_cast<std::size_t>(tj)],
+                            sizeof bits);
+                q_hash = (q_hash ^ bits) * 1099511628211ULL;
+            }
+            for (int tj = 0; tj < ctx_.n_nodes(); ++tj) {
+                y_sum += ctx_.nodes.depth[static_cast<std::size_t>(tj)];
+                std::memcpy(&bits, &ctx_.nodes.depth[static_cast<std::size_t>(tj)],
+                            sizeof bits);
+                y_hash = (y_hash ^ bits) * 1099511628211ULL;
+            }
+            for (int tj = 0; tj < ctx_.n_nodes(); ++tj)
+                l_sum += ctx_.nodes.lat_flow[static_cast<std::size_t>(tj)];
+            for (int tj = 0; tj < ctx_.n_subcatches(); ++tj)
+                ro_sum += ctx_.subcatches.runoff[static_cast<std::size_t>(tj)];
+            std::fprintf(trace_file, "%ld,%.6f,%.6f,%d,%a,%a,%a,%a,%016llx,%016llx\n",
+                         ++trace_sn,
+                         ctx_.elapsed_ms + 1000.0 * dt_routing,
+                         1000.0 * dt_routing, iters, q_sum, y_sum, l_sum,
+                         ro_sum, q_hash, y_hash);
+            g_trace_rstep_sn = trace_sn;  // step-gate for DynamicWave link trace
+
+            // Optional per-element dump at one step (SWMM_TRACE_DUMP_STEP=N),
+            // format-matched to the legacy dump for element-level pinpointing.
+            {
+                static long dump_step = -1;
+                static bool dump_init = false;
+                if (!dump_init) {
+                    dump_init = true;
+                    const char* d = std::getenv("SWMM_TRACE_DUMP_STEP");
+                    if (d && *d) dump_step = std::atol(d);
+                }
+                if (trace_sn == dump_step) {
+                    char fname[512];
+                    std::snprintf(fname, sizeof(fname), "%s.dump%ld",
+                                  std::getenv("SWMM_TRACE_RSTEP"), dump_step);
+                    if (FILE* df = std::fopen(fname, "w")) {
+                        for (int tj = 0; tj < ctx_.n_links(); ++tj) {
+                            auto utj = static_cast<std::size_t>(tj);
+                            std::fprintf(df, "L,%d,%a,%a\n", tj,
+                                         ctx_.links.flow[utj],
+                                         ctx_.links.dqdh[utj]);
+                        }
+                        for (int tj = 0; tj < ctx_.n_nodes(); ++tj) {
+                            auto utj = static_cast<std::size_t>(tj);
+                            std::fprintf(df, "N,%d,%a,%a,%a,%a,%a\n", tj,
+                                         ctx_.nodes.depth[utj],
+                                         ctx_.nodes.inflow[utj],
+                                         ctx_.nodes.outflow[utj],
+                                         ctx_.nodes.lat_flow[utj],
+                                         ctx_.nodes.old_lat_flow[utj]);
+                        }
+                        for (int tj = 0; tj < ctx_.n_subcatches(); ++tj) {
+                            auto utj = static_cast<std::size_t>(tj);
+                            std::fprintf(df, "S,%d,%a,%a,%a,%a\n", tj,
+                                         ctx_.subcatches.runoff[utj],
+                                         ctx_.subcatches.rainfall[utj],
+                                         ctx_.subcatches.infil_loss[utj],
+                                         ctx_.subcatches.old_runoff[utj]);
+                        }
+                        std::fclose(df);
+                    }
+                }
+            }
+        }
+    }
 
 #ifdef OPENSWMM_HAS_2D
     // B3+. Post-routing: compute 2D↔1D coupling exchange, update rainfall,

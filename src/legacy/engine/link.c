@@ -1933,6 +1933,43 @@ double orifice_getInflow(int j)
         ratio = (h2 - hcrest) / (h1 - hcrest);
         q *= pow( (1.0 - pow(ratio, 1.5)), 0.385);
     }
+
+    // --- A3 parity term tracing for one orifice (SWMM_TRACE_ORIF=<index>,
+    //     step-gated via SWMM_TRACE_LSTEP; requires SWMM_TRACE_RSTEP)
+    {
+        extern long SwmmTraceRstepSn;
+        static FILE* of = NULL;
+        static long  ofTarget = -2;
+        static long  ofStep = 0;
+        static int   ofRows = 0;
+        if ( ofTarget == -2 )
+        {
+            char* p = getenv("SWMM_TRACE_ORIF");
+            char* tr = getenv("SWMM_TRACE_RSTEP");
+            char* ls = getenv("SWMM_TRACE_LSTEP");
+            ofTarget = -1;
+            if ( ls && *ls ) ofStep = atol(ls);
+            if ( p && *p && tr && *tr )
+            {
+                char fname[512];
+                ofTarget = atol(p);
+                snprintf(fname, sizeof(fname), "%s.orif%ld", tr, ofTarget);
+                of = fopen(fname, "w");
+                if ( of ) fprintf(of,
+                    "h1,h2,hcrest,hcrown,f,head,cWeir,cOrif,hCrit,dqdh,q\n");
+            }
+        }
+        if ( of && j == ofTarget &&
+             (ofStep <= 0 || SwmmTraceRstepSn + 1 >= ofStep) && ofRows < 128 )
+        {
+            ++ofRows;
+            fprintf(of, "%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a\n",
+                    h1, h2, hcrest, hcrown, f, head,
+                    Orifice[k].cWeir, Orifice[k].cOrif, Orifice[k].hCrit,
+                    Link[j].dqdh, q);
+            if ( ofRows >= 128 ) { fclose(of); of = NULL; }
+        }
+    }
     return q;
 }
 
