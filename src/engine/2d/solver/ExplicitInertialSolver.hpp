@@ -109,6 +109,15 @@ private:
     std::vector<int>     bc_slot_;      ///< matching flat mesh edge slot
     std::vector<double>  bc_accum_;     ///< ∫F_applied dt per BC entry (m³),
                                         ///< inflow-positive, reset per advance
+    std::vector<double>  bc_q_;         ///< prognostic boundary-edge discharge
+                                        ///< (m²/s, inflow-positive). For
+                                        ///< SPECIFIED_STAGE it is integrated by
+                                        ///< the SAME inertial momentum law as an
+                                        ///< interior face (ghost at η_bc); for
+                                        ///< the prescribed-flux types it records
+                                        ///< the applied per-metre discharge so
+                                        ///< the Perot reconstruction sees the
+                                        ///< boundary momentum either way.
 
     // Live junction exchange (windowless coupling): state_->node_coupling
     // points, evaluated at tier-0 cadence against live 2D heads and the

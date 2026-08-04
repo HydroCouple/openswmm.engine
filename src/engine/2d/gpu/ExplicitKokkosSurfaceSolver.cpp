@@ -88,12 +88,6 @@ KOKKOS_INLINE_FUNCTION double devEvapSink(double rate, double depth,
     return rate * t * t * (3.0 - 2.0 * t);
 }
 
-KOKKOS_INLINE_FUNCTION double devRegSqrt(double x, double eps) {
-    if (eps <= 0.0 || x >= eps) return std::sqrt(x);
-    const double inv = 1.0 / std::sqrt(eps);
-    return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
-}
-
 constexpr double kOrificeHEps = 0.02;   // == NodeCoupling.cpp ORIFICE_H_EPS
 
 KOKKOS_INLINE_FUNCTION double devOrificePhi(double a) {
@@ -242,6 +236,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_bc_slope_ = DView("bc_slope", nbc);
     d_bc_head_  = DView("bc_head", nbc);
     d_bc_flow_  = DView("bc_flow", nbc);
+    d_bc_q_     = DView("bc_q", nbc);
 
     // Coupling points (non-outfall; owned by the router, frozen topology).
     const std::size_t np =
@@ -718,13 +713,16 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
         auto bc_cell = d_bc_cell_, bc_slot = d_bc_slot_, bc_type = d_bc_type_;
         auto bc_accum = d_bc_accum_, bc_slope = d_bc_slope_;
         auto bc_head = d_bc_head_, bc_flow = d_bc_flow_;
+        auto bc_q = d_bc_q_;
         auto active = d_active_;
         auto tier = d_tier_;
         auto edge_len = d_edge_length_;
         auto mann = d_mannings_n_;
+        auto vxv = d_vx_, vyv = d_vy_;
+        auto cxv = d_tri_cx_, cyv = d_tri_cy_;
         const bool vfr_face =
             (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
-        const double dh_eps = opts_->flux_dh_eps;
+        const double fr_max = opts_->froude_max;
         const int bt_wall = static_cast<int>(BoundaryType::WALL);
         const int bt_normal = static_cast<int>(BoundaryType::NORMAL_FLOW);
         const int bt_flow = static_cast<int>(BoundaryType::SPECIFIED_FLOW);
@@ -763,51 +761,54 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                     } else if (ty == bt_flow || ty == bt_rating) {
                         f = -bc_flow(kk) * L;
                     } else if (ty == bt_stage) {
-                        if (n > 0.0) {
-                            const double h_bc = bc_head(kk);
-                            const double dh = head(i) - h_bc;
-                            const double A = area(i);
-                            const double dx_b =
-                                (L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0;
-                            if (dx_b > 1.0e-12) {
-                                double h_up;
-                                if (vfr_face) {
-                                    const int e = idx % 3;
-                                    const int vv[3] = {v0(i), v1(i), v2(i)};
-                                    const double za = vz(vv[(e + 1) % 3]);
-                                    const double zb = vz(vv[(e + 2) % 3]);
-                                    h_up = inertial::faceDepthFromEta(
-                                        (dh > 0.0) ? head(i) : h_bc,
-                                        (za < zb) ? za : zb,
-                                        (za < zb) ? zb : za);
-                                } else {
-                                    const double hin = h_bc - cz(i);
-                                    h_up = (dh > 0.0)
-                                               ? depth(i)
-                                               : (hin > 0.0 ? hin : 0.0);
-                                }
-                                if (h_up > 0.0) {
-                                    const double h53 =
-                                        h_up * std::cbrt(h_up * h_up);
-                                    const double sgn =
-                                        (dh > 0.0) ? 1.0
-                                                   : (dh < 0.0 ? -1.0 : 0.0);
-                                    f = -h53 * sgn *
-                                        devRegSqrt(std::fabs(dh), dh_eps) * L /
-                                        (n * std::sqrt(dx_b));
-                                }
-                            }
+                        // Inertial stage boundary (mirrors the serial
+                        // marcher): the interior momentum law integrated
+                        // against a ghost held at η_bc, zero-gradient q.
+                        const double eta_bc = bc_head(kk);
+                        double hf;
+                        if (vfr_face) {
+                            const int e = idx % 3;
+                            const int vv[3] = {v0(i), v1(i), v2(i)};
+                            const double za = vz(vv[(e + 1) % 3]);
+                            const double zb = vz(vv[(e + 2) % 3]);
+                            const double eta_hi =
+                                (head(i) > eta_bc) ? head(i) : eta_bc;
+                            hf = inertial::faceDepthFromEta(
+                                eta_hi, (za < zb) ? za : zb,
+                                (za < zb) ? zb : za);
+                        } else {
+                            hf = inertial::faceFlowDepth(head(i), eta_bc,
+                                                         cz(i));
                         }
+                        if (hf <= dry || L <= 1.0e-12) {
+                            bc_q(kk) = 0.0;
+                            continue;
+                        }
+                        double deta = head(i) - eta_bc;
+                        if (std::fabs(deta) < inertial::kEtaDeadband)
+                            deta = 0.0;
+                        // Ghost across the edge at the centroid→edge
+                        // distance 2A/(3L).
+                        const double slope =
+                            deta * (3.0 * L) / (2.0 * area(i));
+                        double qn1 = inertial::inertialFaceUpdate(
+                            bc_q(kk), bc_q(kk), hf, dt_c, slope, n * n,
+                            std::fabs(bc_q(kk)));
+                        qn1 = inertial::froudeCap(qn1, hf, fr_max);
+                        f = qn1 * L;   // inflow-positive
                     }
-                    if (f == 0.0) continue;
+                    if (f == 0.0) {
+                        bc_q(kk) = 0.0;
+                        continue;
+                    }
                     // Volume-space clamp; booked flux re-derived from the
                     // applied change (mirrors ExplicitInertialSolver).
                     const double v_old = vol(i);
                     double v_new = v_old + dt_c * f;
                     if (ty == bt_stage) {
-                        // Equilibrium clamp: one substep moves the cell AT
-                        // MOST to the prescribed stage — an unclamped
-                        // explicit exchange overshoots η = h_bc and rings.
+                        // Equilibrium clamp, kept as the tiny-cell /
+                        // overshoot backstop: one substep moves the cell AT
+                        // MOST to the prescribed stage.
                         const double v_eq = inertial::volumeFromEtaScalar(
                             area(i), cz(i), vz(v0(i)), vz(v1(i)), vz(v2(i)),
                             vfr, mwf, bc_head(kk));
@@ -823,15 +824,32 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                     }
                     if (v_new < 0.0) v_new = 0.0;  // availability floor
                     f = (v_new - v_old) / dt_c;
-                    if (f == 0.0) continue;
-                    vol(i) = v_new;
-                    bc_accum(kk) += dt_c * f;
-                    double e2, d2;
-                    inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)),
-                                             vz(v1(i)), vz(v2(i)), vfr, mwf,
-                                             vol(i), e2, d2);
-                    head(i) = e2;
-                    depth(i) = d2;
+                    // Momentum matches applied mass (== serial rescale).
+                    bc_q(kk) = (L > 1.0e-12) ? f / L : 0.0;
+                    if (f != 0.0) {
+                        vol(i) = v_new;
+                        bc_accum(kk) += dt_c * f;
+                        double e2, d2;
+                        inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)),
+                                                 vz(v1(i)), vz(v2(i)), vfr,
+                                                 mwf, vol(i), e2, d2);
+                        head(i) = e2;
+                        depth(i) = d2;
+                    }
+                    // Perot completion: add the boundary edge's contribution
+                    // the interior-only rebuild missed (== serial marcher).
+                    if (perot && bc_q(kk) != 0.0) {
+                        const int e = idx % 3;
+                        const int vv[3] = {v0(i), v1(i), v2(i)};
+                        const int va = vv[(e + 1) % 3];
+                        const int vb = vv[(e + 2) % 3];
+                        const double mxb = 0.5 * (vxv(va) + vxv(vb));
+                        const double myb = 0.5 * (vyv(va) + vyv(vb));
+                        const double fo = -f;   // outward flux (m³/s)
+                        const double inv_a = 1.0 / area(i);
+                        qcx(i) += fo * (mxb - cxv(i)) * inv_a;
+                        qcy(i) += fo * (myb - cyv(i)) * inv_a;
+                    }
                 }
             });
     }
@@ -1109,6 +1127,7 @@ void ExplicitKokkosSurfaceSolver::reinitialize(double /*t0*/) {
     // External state edit: volumes authoritative; momentum + pending stale.
     devRefresh(d_volume_, state_->volume);
     Kokkos::deep_copy(d_q_, 0.0);
+    Kokkos::deep_copy(d_bc_q_, 0.0);
     Kokkos::deep_copy(d_faccL_, 0.0);
     Kokkos::deep_copy(d_faccR_, 0.0);
     reconstructAllDev();
