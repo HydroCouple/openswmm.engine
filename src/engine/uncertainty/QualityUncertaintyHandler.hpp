@@ -71,19 +71,10 @@ std::string parseSoftRainfallGridLine(const std::vector<std::string>& tokens,
 void registerSoftRainfallGridSection(UncertaintyConfig& config,
                                      input::SectionRegistry& registry);
 
-/**
- * @brief Parse a single line from [SOFT_RAINGAGES] (SR-1a, design §3.1).
- *
- * Format: Gage Family SpreadKind SpreadSource
- *         Gage Family SpreadKind TIMESERIES <name>
- */
-std::string parseSoftRaingagesLine(openswmm::SimulationContext& ctx,
-                                   const std::vector<std::string>& tokens);
-
-/**
- * @brief Register the [SOFT_RAINGAGES] input section handler (SR-1a).
- */
-void registerSoftRaingagesSection(input::SectionRegistry& registry);
+// [SOFT_RAINGAGES] (SR-1a, gage-level soft-rainfall input) is not declared
+// here: it parses into SimulationContext::soft_rain, which does not exist on
+// this base (SR-1b's engine-side state — a separate, still-unstarted
+// feature). See QualityUncertaintyHandler.cpp's note at the same spot.
 
 } // namespace openswmm::uncertainty
 

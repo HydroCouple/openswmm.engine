@@ -36,6 +36,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
+#include "../uncertainty/QualityUncertaintyHandler.hpp"
 #include "../2d/output/Default2DOutputPlugin.hpp"
 #include <filesystem>
 #endif
@@ -162,6 +163,17 @@ int SWMMEngine::open(const char* inp_path,
                                  surface_router_.pendingEdgeConveyanceRows(),
                                  uncertainty_config_,
                                  dip->registry());
+
+        // [SOFT_RAINFALL_GRID] (SR-2b): records grid source specs into
+        // uncertainty_config_.grid_sources. Only the deterministic 2D
+        // /location path (SR-2c, wired into SurfaceRouter2D below) consumes
+        // them on this base — RUNOFF/INFLOWS targets and the soft-forcing
+        // (/spread) half are recorded but not yet acted on. NOT
+        // registerQualityUncertaintySection: that handler's own
+        // "UNCERTAINTY" registration is superseded by register2DSections'
+        // general LAYER-aware one above (this file never calls it).
+        uncertainty::registerSoftRainfallGridSection(uncertainty_config_,
+                                                     dip->registry());
     }
 
     // Scan the inline .inp for `;; UNITS: SI (m)` so SurfaceRouter2D::initialize
@@ -4564,11 +4576,25 @@ void SWMMEngine::initHydraulics() noexcept {
         set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
     }
 
-    // 1a-i. Build the optional 1D spectral ROM: triggered by an explicit
-    //       [UNCERTAINTY] 1D source, or automatically when the 2D ROM is
-    //       active (a coupled 1D+2D uncertainty run needs both sides, and
-    //       SpectralROM::applyCouplingFlux already reads per-member 1D
-    //       heads whenever setROM1D() has registered one — see buildROM1D).
+    // 1a-i. SR-2c: initialize deterministic 2D gridded rainfall when a
+    //       TWO_D-target [SOFT_RAINFALL_GRID] source with FORCE_LOCATION is
+    //       configured. Opens the grid file and precomputes the per-triangle
+    //       pixel mapping once. v1: one 2D grid source.
+    for (const auto& gs : uncertainty_config_.grid_sources) {
+        if (gs.target == uncertainty::GridTarget::TWO_D && gs.force_location) {
+            std::string inp_dir;
+            if (!ctx_.inp_file_path.empty())
+                inp_dir = std::filesystem::path(ctx_.inp_file_path).parent_path().string();
+            surface_router_.initGridRainfall(gs, inp_dir);
+            break;
+        }
+    }
+
+    // 1a-ii. Build the optional 1D spectral ROM: triggered by an explicit
+    //        [UNCERTAINTY] 1D source, or automatically when the 2D ROM is
+    //        active (a coupled 1D+2D uncertainty run needs both sides, and
+    //        SpectralROM::applyCouplingFlux already reads per-member 1D
+    //        heads whenever setROM1D() has registered one — see buildROM1D).
     if (uncertainty_config_.has_1d() || surface_router_.options().enable_rom) {
         buildROM1D();
     }

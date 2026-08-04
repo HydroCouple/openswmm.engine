@@ -15,6 +15,8 @@
 #ifdef OPENSWMM_HAS_2D
 #include "solver/SurfaceSolverFactory.hpp"
 #include "uncertainty/CorrelatedFieldGenerator.hpp"
+#include "../uncertainty/UncertaintyConfig.hpp"
+#include "../uncertainty/GridMappingWeights.hpp"
 #endif
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -1356,7 +1358,136 @@ double SurfaceRouter2D::totalExchangeFlow() const {
 }
 
 
+// ============================================================================
+// initGridRainfall (SR-2c) — build the pixel mapping and open the grid file
+// ============================================================================
+
+bool SurfaceRouter2D::initGridRainfall(const uncertainty::SoftGridSourceSpec& spec,
+                                       const std::string& inp_dir) {
+    std::string path = spec.file_path;
+    if (!path.empty() && path[0] != '/' && !inp_dir.empty())
+        path = inp_dir + "/" + path;
+
+    if (!grid_reader_.open(path)) {
+        // Failed to open — the grid forcing stays inactive and updateRainfall
+        // falls back to the gage path, exactly as if it were never configured.
+        return false;
+    }
+    grid_reader_opened_ = true;
+
+    const int nx = grid_reader_.nx();
+    const int ny = grid_reader_.ny();
+    const auto& x_coords = grid_reader_.x_coords();
+    const auto& y_coords = grid_reader_.y_coords();
+
+    // CENTROID mapping: nearest pixel center to each triangle centroid. Grids
+    // are small (this is a rainfall field, not the surface mesh), so a linear
+    // nearest-index scan per axis is simpler than a binary search and not
+    // worth optimizing — this runs once, at init.
+    const int nt = mesh_.n_triangles();
+    grid_px_.resize(static_cast<std::size_t>(nt));
+    for (int i = 0; i < nt; ++i) {
+        const double cx = mesh_.tri_cx[static_cast<std::size_t>(i)];
+        const double cy = mesh_.tri_cy[static_cast<std::size_t>(i)];
+
+        int ix = 0;
+        for (int j = 1; j < nx; ++j)
+            if (std::abs(cx - x_coords[static_cast<std::size_t>(j)])
+                < std::abs(cx - x_coords[static_cast<std::size_t>(ix)]))
+                ix = j;
+
+        int iy = 0;
+        for (int j = 1; j < ny; ++j)
+            if (std::abs(cy - y_coords[static_cast<std::size_t>(j)])
+                < std::abs(cy - y_coords[static_cast<std::size_t>(iy)]))
+                iy = j;
+
+        // Row-major (ny, nx) flat index, matching the HDF5 plane layout.
+        grid_px_[static_cast<std::size_t>(i)] =
+            static_cast<uint32_t>(iy * nx + ix);
+    }
+
+    // BILINEAR mapping: 4-pixel weighted gather. Needs at least a 2x2 grid;
+    // a degenerate grid falls back to the CENTROID mapping already built above.
+    grid_mapping_ = spec.mapping;
+    if (grid_mapping_ == uncertainty::GridMapping::BILINEAR) {
+        if (nx < 2 || ny < 2) {
+            grid_mapping_ = uncertainty::GridMapping::CENTROID;
+        } else {
+            grid_bilin_idx_.assign(static_cast<std::size_t>(4 * nt), 0);
+            grid_bilin_w_.assign(static_cast<std::size_t>(4 * nt), 0.0f);
+            for (int i = 0; i < nt; ++i) {
+                const double cx = mesh_.tri_cx[static_cast<std::size_t>(i)];
+                const double cy = mesh_.tri_cy[static_cast<std::size_t>(i)];
+                uint32_t idx4[4];
+                double   w4[4];
+                uncertainty::bilinearWeights(cx, cy, x_coords, y_coords, idx4, w4);
+                const auto base = static_cast<std::size_t>(4 * i);
+                for (int k = 0; k < 4; ++k) {
+                    grid_bilin_idx_[base + static_cast<std::size_t>(k)] = idx4[k];
+                    grid_bilin_w_[base + static_cast<std::size_t>(k)] =
+                        static_cast<float>(w4[k]);
+                }
+            }
+        }
+    }
+
+    grid_2d_active_ = true;
+    return true;
+}
+
+
 void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
+    // SR-2c: the grid's /location plane, when active, overrides the gage path
+    // entirely for this step — deterministic gridded rainfall is a complete
+    // replacement for the gage forcing, not a blend with it.
+    if (grid_2d_active_ && grid_reader_opened_) {
+        const double t_now = ctx.current_time;
+        const bool grid_ready = grid_reader_.has_current() || grid_reader_.advance();
+        if (grid_ready) {
+            while (grid_reader_.has_current()
+                   && grid_reader_.time_next() < t_now) {
+                if (!grid_reader_.advance()) break;
+            }
+
+            const float* loc = grid_reader_.location_now();
+            if (loc) {
+                const double to_ms =
+                    (ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)) == 0)
+                        ? (0.0254 / 3600.0)   // US: in/hr → m/s
+                        : (0.001  / 3600.0);  // SI: mm/hr → m/s
+                const int      nx   = grid_reader_.nx();
+                const int      ny   = grid_reader_.ny();
+                const uint32_t npix = static_cast<uint32_t>(nx * ny);
+                const int      nt   = mesh_.n_triangles();
+
+                for (int i = 0; i < nt; ++i) {
+                    double v;
+                    if (grid_mapping_ == uncertainty::GridMapping::BILINEAR
+                        && !grid_bilin_idx_.empty()) {
+                        const auto base = static_cast<std::size_t>(4 * i);
+                        v = 0.0;
+                        for (int k = 0; k < 4; ++k) {
+                            const uint32_t px =
+                                grid_bilin_idx_[base + static_cast<std::size_t>(k)];
+                            if (px < npix)
+                                v += static_cast<double>(
+                                        grid_bilin_w_[base + static_cast<std::size_t>(k)])
+                                   * static_cast<double>(loc[px]);
+                        }
+                    } else {
+                        const uint32_t px = grid_px_[static_cast<std::size_t>(i)];
+                        v = (px < npix) ? static_cast<double>(loc[px]) : 0.0;
+                    }
+                    state_.rainfall[static_cast<std::size_t>(i)] = v * to_ms;
+                }
+                return;   // grid /location fully determines rainfall this step
+            }
+        }
+        // No /location plane at this time (or the file has no current plane
+        // yet) — fall through to the gage path for this step.
+    }
+
     const int n_gages = ctx.n_gages();
 
     if (n_gages <= 0 || options_.rainfall_mode == RainfallMode::NONE) {

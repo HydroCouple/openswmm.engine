@@ -254,6 +254,89 @@ if(OPENSWMM_BUILD_2D)
     # the real engine, and the HSnapshot-driven weighted-Laplacian re-solve.
     add_gtest_unit(test_engine_1d_rom_lifecycle test_engine_1d_rom_lifecycle.cpp)
 
+    # SR-2c deterministic gridded rainfall: the HDF5 grid-plane reader
+    # (GridFileReader) writes its own fixture files with the raw HDF5 C API,
+    # so it needs hdf5 include dirs + link libs directly, same as
+    # test_engine_2d_surface below (openswmm_engine links HDF5 PRIVATEly).
+    add_executable(test_engine_grid_file_reader test_grid_file_reader.cpp)
+    target_link_libraries(test_engine_grid_file_reader
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            openswmm_engine
+    )
+    # This test calls H5Fcreate/H5Dcreate2/etc directly (writing its own HDF5
+    # fixtures), unlike test_engine_2d_surface below — which only calls into
+    # openswmm_engine.dylib and so never actually needs its own hdf5 link
+    # regardless of which branch here resolves. re-run find_package (cheap,
+    # idempotent) rather than assume the imported target from src/engine's
+    # own invocation is visible in this sibling directory scope.
+    find_package(hdf5 CONFIG QUIET)
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_grid_file_reader PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_grid_file_reader PRIVATE hdf5::hdf5-static)
+    else()
+        find_package(HDF5 REQUIRED COMPONENTS C)
+        target_link_libraries(test_engine_grid_file_reader PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_grid_file_reader PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    target_include_directories(test_engine_grid_file_reader
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_grid_file_reader PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_grid_file_reader)
+    add_test(
+        NAME    test_engine_grid_file_reader
+        COMMAND $<TARGET_FILE:test_engine_grid_file_reader>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_grid_file_reader PROPERTIES LABELS "unit")
+
+    # SR-2c: SurfaceRouter2D::initGridRainfall()/gridRainfallActive() and the
+    # /location-overrides-gages path in updateRainfall(). Also writes its own
+    # HDF5 fixtures directly, so it needs the same direct hdf5 link as above.
+    add_executable(test_engine_soft_rain_grid_2d test_soft_rain_grid_2d.cpp)
+    target_link_libraries(test_engine_soft_rain_grid_2d
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            openswmm_engine
+    )
+    find_package(hdf5 CONFIG QUIET)
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE hdf5::hdf5-static)
+    else()
+        find_package(HDF5 REQUIRED COMPONENTS C)
+        target_link_libraries(test_engine_soft_rain_grid_2d PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_soft_rain_grid_2d PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    target_include_directories(test_engine_soft_rain_grid_2d
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_soft_rain_grid_2d PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_soft_rain_grid_2d)
+    add_test(
+        NAME    test_engine_soft_rain_grid_2d
+        COMMAND $<TARGET_FILE:test_engine_soft_rain_grid_2d>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_soft_rain_grid_2d PROPERTIES LABELS "unit")
+
     # Reduced k×k deviation operator: expm/φ₁ propagator, anisotropic assembly
     # structure, and the SpectralROM matrix-path ≡ diagonal-path parity pin.
     add_gtest_unit(test_engine_2d_deviation_operator test_2d_deviation_operator.cpp)
