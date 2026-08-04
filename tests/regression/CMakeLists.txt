@@ -71,6 +71,34 @@ add_custom_command(TARGET test_engine_regression POST_BUILD
 # resolves them.
 openswmm_stage_test_runtime_deps(test_engine_regression)
 
+# ---- PR 10: 1D ROM bands vs brute-force network Monte Carlo ----
+# Was written 2026-07-08 (commit 586e492b) but never registered here — found
+# 2026-08-04 while starting P4 (HSYM_RESIDUALS_PR_CHECKLIST.md). The coverage
+# and width-ratio numbers this file measures are the ones quoted throughout
+# VALIDATION.md/.memory/current.md/this checklist as PR 10's headline result;
+# until now it had never run under ctest and could have silently drifted.
+# Drives the public C API + SWMMEngine directly (engine lifecycle, not a
+# solver-internal test), so it needs the same link set as the regression
+# suite above, not the 2D-only set below.
+add_executable(test_rom_coverage test_rom_coverage.cpp)
+target_link_libraries(test_rom_coverage
+    PRIVATE
+        GTest::gtest GTest::gtest_main
+        openswmm_engine
+)
+target_include_directories(test_rom_coverage
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+set_target_properties(test_rom_coverage PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME regression_rom_coverage COMMAND $<TARGET_FILE:test_rom_coverage>)
+set_tests_properties(regression_rom_coverage PROPERTIES LABELS "regression")
+openswmm_stage_test_runtime_deps(test_rom_coverage)
+
 # ---- W3: 2D ROM bands vs brute-force marcher Monte Carlo ----
 # Drives ExplicitInertialSolver and SpectralROM directly (operator-level
 # validation, no engine lifecycle); needs the 2D module.
