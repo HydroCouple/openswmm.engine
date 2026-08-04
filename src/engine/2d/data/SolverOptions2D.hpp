@@ -170,7 +170,12 @@ struct SolverOptions2D {
     /// (no numerical diffusion), <1 blends the Perot-reconstructed neighbour
     /// discharge to damp thin-film checkerboarding on steep faces.
     double theta        = 0.8;    ///< [2D_OPTIONS] THETA, (0, 1]
-    double cfl_number   = 0.7;    ///< [2D_OPTIONS] CFL_NUMBER — α in dt = α·L/√(gh)
+    double cfl_number   = 0.7;    ///< [2D_OPTIONS] CFL_NUMBER — α in
+                                  ///< dt = α·L_char/(√(gh)+|u|). L_char is
+                                  ///< derived from the discrete wave operator
+                                  ///< (InertialEdges), so α is a TRUE Courant
+                                  ///< fraction: 1.0 = linear stability limit,
+                                  ///< 0.7 default = 30% margin on any mesh.
     /// Flux-activation depth (m): cells below it are source-only (lazy rain
     /// accumulation, no face flux). Hysteresis band ±1 mm around it.
     double h_move       = 0.003;  ///< [2D_OPTIONS] H_MOVE (m) — flux-active
