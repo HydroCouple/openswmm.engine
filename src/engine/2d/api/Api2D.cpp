@@ -164,6 +164,26 @@ int swmm_2d_set_triangle_mannings(SWMM_Engine engine, int idx, double n) {
     return SWMM_OK;
 }
 
+int swmm_2d_triangle_get_init_depth(SWMM_Engine engine, int idx, double* d) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!d) return SWMM_ERR_BADPARAM;
+
+    *d = router2d.mesh().tri_init_depth[idx];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_triangle_init_depth(SWMM_Engine engine, int idx, double d) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!(d >= 0.0)) return SWMM_ERR_BADPARAM;
+
+    router2d.mesh().tri_init_depth[idx] = d;
+    return SWMM_OK;
+}
+
 int swmm_2d_set_vertex_tag(SWMM_Engine engine, int idx, const char* tag) {
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);

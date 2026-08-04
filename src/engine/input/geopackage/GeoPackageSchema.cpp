@@ -1147,6 +1147,7 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangles (
     v1              INTEGER NOT NULL,
     v2              INTEGER NOT NULL,
     mannings_n      REAL NOT NULL DEFAULT 0.035,
+    init_depth      REAL NOT NULL DEFAULT 0,
     tag             TEXT,
     bed_elev        REAL,
     coupled_node    TEXT,

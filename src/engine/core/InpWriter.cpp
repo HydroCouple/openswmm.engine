@@ -395,12 +395,28 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     }
 
     // ---- [2D_TRIANGLES] -------------------------------------------------------
+    // Optional INIT_DEPTH (m, default 0 = dry) precedes TAG. The column is
+    // emitted for EVERY row whenever any triangle has a nonzero initial depth
+    // or a tag, so TAG's position stays unambiguous on re-read (a numeric
+    // 5th token always means INIT_DEPTH).
+    bool any_init_depth = false, any_tag = false;
+    for (int t = 0; t < nt; ++t) {
+        if (mesh.tri_init_depth[t] != 0.0) any_init_depth = true;
+        if (!mesh.tri_tag[t].empty()) any_tag = true;
+    }
+    const bool write_depth_col = any_init_depth || any_tag;
     sec(f, "2D_TRIANGLES");
-    std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
-                 "MANNINGS_N", "TAG");
+    if (write_depth_col)
+        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %-12s %s\n", "V1", "V2", "V3",
+                     "MANNINGS_N", "INIT_DEPTH", "TAG");
+    else
+        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
+                     "MANNINGS_N", "TAG");
     for (int t = 0; t < nt; ++t) {
         std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.tri_v0[t],
                      mesh.tri_v1[t], mesh.tri_v2[t], mesh.mannings_n[t]);
+        if (write_depth_col)
+            std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
         if (!mesh.tri_tag[t].empty())
             std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
         std::fprintf(f, "\n");

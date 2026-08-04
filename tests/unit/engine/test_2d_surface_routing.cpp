@@ -1095,6 +1095,34 @@ TEST(InputParsing, Parse2DTriangleLine) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(mesh.n_triangles(), 2);
     EXPECT_EQ(mesh.tri_tag[1], "road");
+    EXPECT_NEAR(mesh.tri_init_depth[1], 0.0, 1e-12);   // tag-only: dry default
+}
+
+TEST(InputParsing, Parse2DTriangleInitDepth) {
+    MeshData mesh;
+    mesh.resize_vertices(3);
+
+    // 5-token numeric column 5 = INIT_DEPTH, no tag
+    auto err = parse2DTriangleLine({"0", "1", "2", "0.035", "0.125"}, mesh);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(mesh.tri_init_depth[0], 0.125, 1e-12);
+    EXPECT_TRUE(mesh.tri_tag[0].empty());
+
+    // 6-token: INIT_DEPTH then TAG
+    err = parse2DTriangleLine({"0", "2", "1", "0.025", "0.5", "lowland"}, mesh);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(mesh.tri_init_depth[1], 0.5, 1e-12);
+    EXPECT_EQ(mesh.tri_tag[1], "lowland");
+
+    // non-numeric column 5 keeps the historical TAG meaning
+    err = parse2DTriangleLine({"1", "0", "2", "0.03", "channel"}, mesh);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(mesh.tri_init_depth[2], 0.0, 1e-12);
+    EXPECT_EQ(mesh.tri_tag[2], "channel");
+
+    // negative depth rejected
+    err = parse2DTriangleLine({"0", "1", "2", "0.035", "-0.1"}, mesh);
+    EXPECT_FALSE(err.empty());
 }
 
 TEST(InputParsing, Parse2DVertexNodeMap) {

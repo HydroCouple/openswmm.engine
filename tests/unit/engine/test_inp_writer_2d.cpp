@@ -77,8 +77,8 @@ REPORT_2D           NO
 0       10    11.5
 
 [2D_TRIANGLES]
-;;V1  V2  V3  MANNINGS_N
-0     1   2   0.03
+;;V1  V2  V3  MANNINGS_N  INIT_DEPTH  TAG
+0     1   2   0.03        0.25        wetcell
 0     2   3   0.045
 
 [2D_VERTEX_NODE_MAP]
@@ -164,6 +164,10 @@ protected:
             ASSERT_EQ(swmm_2d_triangle_get_vertices(b, t, &vb[0], &vb[1], &vb[2]), 0);
             ASSERT_EQ(swmm_2d_triangle_get_mannings(a, t, &ma), 0);
             ASSERT_EQ(swmm_2d_triangle_get_mannings(b, t, &mb), 0);
+            double da = -1.0, db = -1.0;
+            ASSERT_EQ(swmm_2d_triangle_get_init_depth(a, t, &da), 0);
+            ASSERT_EQ(swmm_2d_triangle_get_init_depth(b, t, &db), 0);
+            EXPECT_NEAR(da, db, 1e-12) << "init_depth tri " << t;
             ASSERT_EQ(swmm_2d_triangle_get_neighbours(a, t, &na[0], &na[1], &na[2]), 0);
             ASSERT_EQ(swmm_2d_triangle_get_neighbours(b, t, &nb[0], &nb[1], &nb[2]), 0);
             for (int k = 0; k < 3; ++k) {
@@ -218,6 +222,36 @@ TEST_F(InpWriter2DTest, InlineRoundTrip) {
     EXPECT_NE(text.find("[2D_BOUNDARY_CONDITIONS]"), std::string::npos);
     EXPECT_NE(text.find("NORMAL_FLOW"), std::string::npos);
     EXPECT_NE(text.find("[2D_EDGE_CONVEYANCE]"), std::string::npos);
+    // The INIT_DEPTH column is written (fixture triangle 0 has 0.25 m).
+    EXPECT_NE(text.find("INIT_DEPTH"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// INIT_DEPTH seeds the solver state: total volume = depth * area at start,
+// and the mass-balance ledger opens with it as initial storage (not error).
+// ---------------------------------------------------------------------------
+
+TEST_F(InpWriter2DTest, InitDepthSeedsVolume) {
+    const fs::path inp = dir_ / "seed.inp";
+    write_file(inp, replace(k1DBase, "{FLOW_UNITS}", "CMS") + k2DSections);
+
+    eng_a_ = open_engine(inp);
+    ASSERT_EQ(swmm_engine_initialize(eng_a_), 0);
+    int active = 0;
+    ASSERT_EQ(swmm_2d_is_active(eng_a_, &active), 0);
+    ASSERT_EQ(active, 1);
+
+    double d0 = -1.0, d1 = -1.0;
+    ASSERT_EQ(swmm_2d_triangle_get_init_depth(eng_a_, 0, &d0), 0);
+    ASSERT_EQ(swmm_2d_triangle_get_init_depth(eng_a_, 1, &d1), 0);
+    EXPECT_NEAR(d0, 0.25, 1e-12);
+    EXPECT_NEAR(d1, 0.0, 1e-12);
+
+    double a0 = 0.0, vol = -1.0;
+    ASSERT_EQ(swmm_2d_triangle_get_area(eng_a_, 0, &a0), 0);
+    ASSERT_EQ(swmm_2d_get_total_volume(eng_a_, &vol), 0);
+    EXPECT_NEAR(vol, 0.25 * a0, 1e-9)
+        << "initial volume must equal init_depth * area of the wet triangle";
 }
 
 // ---------------------------------------------------------------------------

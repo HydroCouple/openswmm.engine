@@ -1710,8 +1710,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
         auto stmt = prepare(db,
             "INSERT INTO mesh_2d_triangles "
             "(simulation_id, tri_idx, geom, v0, v1, v2, mannings_n, tag, "
-            "bed_elev, coupled_node) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)");
+            "bed_elev, coupled_node, init_depth) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
         std::vector<double> xs(3), ys(3);
         for (int t = 0; t < nt; ++t) {
             sqlite3_reset(stmt.get());
@@ -1743,6 +1743,7 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
                                                  mesh.tri_coupled_node[t]);
             if (!cn.empty()) bind_text(stmt.get(), 10, cn);
             else             bind_null(stmt.get(), 10);
+            bind_double(stmt.get(), 11, mesh.tri_init_depth[t]);
             step_or_throw(db, stmt.get(), "mesh_2d_triangles insert failed");
         }
     }

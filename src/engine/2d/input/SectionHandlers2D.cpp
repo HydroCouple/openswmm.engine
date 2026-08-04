@@ -314,7 +314,8 @@ std::string parse2DVertexLine(const std::vector<std::string>& tokens,
 
 std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
                                  MeshData& mesh) {
-    if (tokens.size() < 4) return "Expected V1 V2 V3 MANNINGS_N [TAG]";
+    if (tokens.size() < 4)
+        return "Expected V1 V2 V3 MANNINGS_N [INIT_DEPTH] [TAG]";
 
     bool ok = false;
     int v0 = tryParseInt(tokens[0], ok);
@@ -329,8 +330,24 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
     double n = tryParseDouble(tokens[3], ok);
     if (!ok) return "Invalid MANNINGS_N value";
 
+    // Optional column 5: INIT_DEPTH when numeric (m, >= 0, default 0 = dry),
+    // otherwise it is the TAG (backward compatible with the historical
+    // `V1 V2 V3 MANNINGS_N TAG` form). Column 6 is TAG when INIT_DEPTH is
+    // present. Files written by the engine/GUI always emit INIT_DEPTH when a
+    // tag exists, so round-tripped files are unambiguous.
+    double init_depth = 0.0;
     std::string tag;
-    if (tokens.size() >= 5) tag = tokens[4];
+    if (tokens.size() >= 5) {
+        bool num = false;
+        double d = tryParseDouble(tokens[4], num);
+        if (num) {
+            if (d < 0.0) return "Invalid INIT_DEPTH (must be >= 0)";
+            init_depth = d;
+            if (tokens.size() >= 6) tag = tokens[5];
+        } else {
+            tag = tokens[4];
+        }
+    }
 
     int idx = mesh.n_triangles();
     mesh.resize_triangles(idx + 1);
@@ -338,6 +355,7 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
     mesh.tri_v1[idx] = v1;
     mesh.tri_v2[idx] = v2;
     mesh.mannings_n[idx] = n;
+    mesh.tri_init_depth[idx] = init_depth;
     mesh.tri_tag[idx] = tag;
 
     return {};
