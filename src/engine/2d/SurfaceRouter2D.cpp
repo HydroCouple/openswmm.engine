@@ -418,11 +418,19 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
     }
 
-    // Set initial (dry) heads from ground elevation. FLAT: the bed centroid.
-    // VFR: the closure's dry anchor η(V=0) — chosen so the solver's
-    // head → volume seeding returns exactly V = 0 for every dry cell.
+    // Set initial heads from ground elevation plus the per-triangle
+    // [2D_TRIANGLES] INIT_DEPTH column (default 0 = dry). FLAT: the bed
+    // centroid. VFR: the closure's dry anchor η(V=0) — chosen so the
+    // solver's head → volume seeding returns exactly V = 0 for every dry
+    // cell; nonzero initial depths seed the corresponding volume and are
+    // captured as initial storage by the mass-balance ledger below.
     for (int i = 0; i < mesh_.n_triangles(); ++i) {
-        state_.head[i] = headFromMeanDepth(mesh_, options_, i, 0.0);
+        state_.head[i] = headFromMeanDepth(mesh_, options_, i,
+                                           mesh_.tri_init_depth[i]);
+        // Volume is the marcher's primary state (reconstructAll derives
+        // head/depth from it) — seed it directly; mean-depth * area holds
+        // for both FLAT and VFR closures by definition of the mean depth.
+        state_.volume[i] = mesh_.tri_init_depth[i] * mesh_.tri_area[i];
     }
     // Seed the vertex heads once from the dry cell heads: the all-vertex pass
     // now runs per accepted window (not per RHS eval), so pre-first-window

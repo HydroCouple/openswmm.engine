@@ -144,6 +144,18 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_mannings(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_set_triangle_mannings(SWMM_Engine engine, int idx,
                                                     double n);
 
+/** @brief Get triangle initial water depth (m; `[2D_TRIANGLES]` INIT_DEPTH
+ *         column, default 0 = dry). @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_triangle_get_init_depth(SWMM_Engine engine,
+                                                    int idx, double* d);
+
+/** @brief Set triangle initial water depth (m, >= 0; SWMM_ERR_BADPARAM
+ *         otherwise). Applied to the solver state when the 2D surface
+ *         initializes, and persisted in the `INIT_DEPTH` column of
+ *         `[2D_TRIANGLES]` on save (written before TAG). @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_triangle_init_depth(SWMM_Engine engine,
+                                                    int idx, double d);
+
 /** @brief Set the descriptive tag of a vertex (the `[2D_VERTICES]` TAG
  *         column). Distinct from the 1D<->2D coupling node. Empty / NULL
  *         clears it. @ingroup engine_2d */

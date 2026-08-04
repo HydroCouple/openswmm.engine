@@ -87,6 +87,7 @@ struct MeshData {
 
     // Surface properties
     std::vector<double> mannings_n;     ///< Manning's roughness coefficient
+    std::vector<double> tri_init_depth; ///< Initial water depth (m, default 0 = dry)
     std::vector<std::string> tri_tag;   ///< Optional triangle tag
 
     // -----------------------------------------------------------------------
@@ -185,6 +186,7 @@ struct MeshData {
         edge_conveyance.resize(n3, 1.0);  // §11A — default unrestricted
 
         mannings_n.resize(n, 0.035);
+        tri_init_depth.resize(n, 0.0);
         tri_tag.resize(n);
         tri_coupled_node.resize(n, -1);
         tri_coupled_node_name.resize(n);

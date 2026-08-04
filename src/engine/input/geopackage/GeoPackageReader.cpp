@@ -1768,9 +1768,14 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
                             "contiguous [0, n)");
         mesh.resize_triangles(n);
 
-        auto stmt = prepare(db,
-            "SELECT tri_idx, v0, v1, v2, mannings_n, tag FROM mesh_2d_triangles "
-            "WHERE simulation_id = ? ORDER BY tri_idx");
+        // init_depth was added 2026-08 (default 0 = dry); older files lack it.
+        const bool has_init_depth =
+            column_exists(db, "mesh_2d_triangles", "init_depth");
+        auto stmt = prepare(db, has_init_depth
+            ? "SELECT tri_idx, v0, v1, v2, mannings_n, tag, init_depth "
+              "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx"
+            : "SELECT tri_idx, v0, v1, v2, mannings_n, tag "
+              "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int t = column_int(stmt.get(), 0);
@@ -1780,6 +1785,8 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
             mesh.tri_v2[t]      = column_int(stmt.get(), 3);
             mesh.mannings_n[t]  = column_double(stmt.get(), 4);
             mesh.tri_tag[t]     = column_text(stmt.get(), 5);
+            if (has_init_depth)
+                mesh.tri_init_depth[t] = column_double(stmt.get(), 6);
         }
     }
 

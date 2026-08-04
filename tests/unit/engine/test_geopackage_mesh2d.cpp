@@ -137,6 +137,7 @@ protected:
         mesh_.tri_v1 = {1, 2};
         mesh_.tri_v2 = {2, 3};
         mesh_.mannings_n = {0.03, 0.045};
+        mesh_.tri_init_depth = {0.25, 0.0};
         mesh_.tri_tag[1] = "T1";
     }
 
@@ -179,6 +180,7 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
         EXPECT_EQ(mesh_in_.tri_v1[t], mesh_.tri_v1[t]);
         EXPECT_EQ(mesh_in_.tri_v2[t], mesh_.tri_v2[t]);
         EXPECT_DOUBLE_EQ(mesh_in_.mannings_n[t], mesh_.mannings_n[t]);
+        EXPECT_DOUBLE_EQ(mesh_in_.tri_init_depth[t], mesh_.tri_init_depth[t]);
         EXPECT_EQ(mesh_in_.tri_tag[t], mesh_.tri_tag[t]);
     }
     // Derived topology is NOT persisted — it stays at the resize defaults
