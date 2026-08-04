@@ -276,6 +276,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for (auto& a : mesh_.vert_coupling_area) a *= f2;
         for (auto& a : mesh_.tri_coupling_area)  a *= f2;
         for (auto& r : mesh_.tri_couplings)      r.area *= f2;
+        // INIT_DEPTH shares the mesh's vertical datum (it is a depth above the
+        // bed), so it converts with the same factor and under the same guards
+        // as vz — otherwise a US-unit deck's authored depth is read as metres.
+        for (auto& d : mesh_.tri_init_depth) d *= f;
         options_.mesh_scaled_to_si = true;
     }
 

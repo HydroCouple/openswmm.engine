@@ -362,6 +362,10 @@ if(OPENSWMM_BUILD_2D)
     # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
     # always-feet⇄metres coupling factors (the 1D side is always feet-internal).
     add_gtest_unit(test_engine_2d_coupling_units test_2d_coupling_units.cpp)
+    # [2D_TRIANGLES] INIT_DEPTH unit-system regression — the column shares the
+    # mesh's vertical datum (project display units), so initialize() must scale
+    # it by mesh_to_si like vz. It was consumed raw as metres before the fix.
+    add_gtest_unit(test_engine_2d_init_depth_units test_2d_init_depth_units.cpp)
     # Two-way 1D↔2D OUTFALL coupling regression — a coupled outfall's pipe
     # discharge must reach the 2D mesh (it read nodes.outflow≈0 before the fix)
     # and both the 2D and 1D continuity ledgers must close.

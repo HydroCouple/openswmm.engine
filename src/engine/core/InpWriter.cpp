@@ -395,7 +395,8 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     }
 
     // ---- [2D_TRIANGLES] -------------------------------------------------------
-    // Optional INIT_DEPTH (m, default 0 = dry) precedes TAG. The column is
+    // Optional INIT_DEPTH (mesh length units — see the UNITS header above;
+    // default 0 = dry) precedes TAG. The column is
     // emitted for EVERY row whenever any triangle has a nonzero initial depth
     // or a tag, so TAG's position stays unambiguous on re-read (a numeric
     // 5th token always means INIT_DEPTH).
