@@ -22,18 +22,26 @@ Community members wishing to influence priorities should participate in the [Git
 
 ## 1. Flow Routing
 
-### 1.1 Implicit 1D Flow Routing — Full Saint-Venant Equations 📋
+### 1.1 Explicit Finite Volume 1D Flow Routing — Full Saint-Venant Equations 📋
 
-**Motivation:** The current explicit solver for 1D flow routing imposes Courant-number-dependent time step constraints that can be prohibitively small for steep or rapidly varying flows. An implicit (or semi-implicit) formulation of the full Saint-Venant equations will remove this restriction, enabling stable simulation of subcritical, supercritical, and mixed-regime flows with significantly larger time steps.
+**Motivation:** The current solver for 1D flow routing imposes global, Courant-number-dependent time step constraints that can be prohibitively small when a handful of short or fast-flowing elements govern the whole network. An explicit finite volume formulation of the full Saint-Venant equations with local time stepping will confine small time steps to the elements that require them, enabling stable and efficient simulation of subcritical, supercritical, and mixed-regime flows.
 
 **Planned scope:**
-- Implicit or Crank-Nicolson discretization of the continuity and momentum equations for pipe and channel flow.
-- Handling of hydraulic jumps and transitions between flow regimes.
-- Newton-Raphson or Picard iteration with convergence diagnostics.
+- Explicit finite volume discretization of the continuity and momentum equations for pipe and channel flow.
+- Local time stepping, advancing each element or region at its own stable time step rather than a single global step.
+- Shock-capturing treatment of hydraulic jumps and transitions between flow regimes.
 - Backward compatibility with existing input formats; solver selection via a configuration flag.
-- Regression testing against the explicit solver on standard benchmark cases and against analytical solutions for steady gradually-varied flow profiles.
+- Regression testing against the existing solver on standard benchmark cases and against analytical solutions for steady gradually-varied flow profiles.
 
 **Validation approach:** Comparison to known analytical solutions (e.g., steady uniform flow, backwater curves) and to published benchmark results from the hydraulic literature.
+
+### 1.2 2D Overland Flow — Local Inertial Finite Volume Model 🔧
+
+**Status:** A dynamically coupled 1D/2D overland flow solver using an explicit finite volume, local inertial formulation is available in the 6.0.0 alpha releases, with mass-conservative 1D–2D exchange, mesh generation from digital terrain data, and GUI support for mesh visualization and 1D↔2D coupling.
+
+**Remaining scope:**
+- Continued validation against published inundation benchmarks and field-validated case studies.
+- Performance and robustness hardening on large regional meshes based on beta testing feedback.
 
 ---
 
@@ -111,20 +119,33 @@ Community members wishing to influence priorities should participate in the [Git
 
 ---
 
-## 5. Deferred Items
+## 5. Groundwater — Two-Zone Model 📋
+
+**Motivation:** Groundwater interaction is central to infiltration-based stormwater controls, baseflow generation, and subsurface drainage. A two-zone (unsaturated/saturated) groundwater model will provide subsurface flow representation in the new engine and serve as the flow foundation for the groundwater advection-dispersion transport module (Section 2.3).
+
+**Planned scope:**
+- Two-zone conceptualization with an upper unsaturated zone and a lower saturated zone, with moisture accounting, percolation, and evapotranspiration losses.
+- Lateral groundwater flow to drainage system nodes and channels.
+- Coupling to the surface hydrology (infiltration) and conveyance modules at shared boundaries.
+- Backward compatibility with SWMM 5.x aquifer and groundwater input sections.
+- Coupling interface for the groundwater ADE transport module (Section 2.3).
+
+---
+
+## 6. Deferred Items
 
 The following items have been raised in community discussions but are not currently scheduled. They may be reconsidered in future release cycles as resources permit or as community interest grows.
 
 | Item                                           | Reason for Deferral                                                        |
 |------------------------------------------------|----------------------------------------------------------------------------|
-| 2D overland flow (full shallow water equations) | High implementation complexity; currently scoped to 1D/quasi-2D approaches |
+| 2D overland flow (full shallow water equations) | Local inertial finite volume model implemented (Section 1.2); full dynamic-wave SWE not currently scheduled |
 | Real-time data assimilation & sensor fusion     | Requires external telemetry infrastructure not yet in scope                |
 | GPU-accelerated solvers                         | Dependency and portability considerations; deferred pending solver maturity |
 | Machine learning surrogate models               | Research area; may be introduced as an optional experimental module        |
 
 ---
 
-## 6. Completed Items
+## 7. Completed Items
 
 | Item                                          | Version |
 |-----------------------------------------------|---------|
