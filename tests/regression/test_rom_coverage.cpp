@@ -17,22 +17,44 @@
  *
  * Runtime: 22 engine runs on a 6-node, 10-minute network — ~2 s total.
  *
- * @warning STATUS 2026-08-04: this file existed since 586e492b (2026-07-08)
- *          but was never wired into CMake — registered for the first time
- *          while starting PR P4 (HSYM_RESIDUALS_PR_CHECKLIST.md). On first
- *          run under the current base it FAILS: coverage=1.000 but width
- *          ratio min/med/max = 0.024/0.082/0.889 (in-band 0.303), far below
- *          the documented 0.676/1.251/1.610. Root cause is NOT the mechanical
- *          port (buildROM1D/computeK1d/SpectralROM1D verified byte-faithful
- *          to the pre-port sidecar) and NOT a units bug (the internal-always-
- *          feet architecture in PostParseResolver.cpp's convert_inputs_to_
- *          internal/convert_internal_to_display pair is correct, deliberate,
- *          longstanding design — ruled out after initially suspecting it).
- *          The gap is left deliberately UNFIXED and this test deliberately
- *          left RED, per this checklist's own hard rule 2 ("nobody tunes a
- *          tolerance to green a spread-magnitude test") — see
- *          history_decisions.md's "P4 baseline: PR-10 harness fails on first
- *          run" entry and the checklist's P4 section for the escalation.
+ * @warning STATUS 2026-08-04 — THIS TEST IS DELIBERATELY RED. It existed since
+ *          586e492b (2026-07-08) but was never wired into CMake; registered for
+ *          the first time while starting PR P4. It FAILS: coverage=1.000 but
+ *          width ratio min/med/max = 0.024/0.082/0.889 (in-band 0.303) vs the
+ *          documented 0.676/1.251/1.610.
+ *
+ *          ROOT CAUSE (measured, not inferred): **the "saturated regime"
+ *          premise below is false for this fixture.** The ROM's modal
+ *          deviations relax at rate lambda_j * K1d, and on this network the
+ *          dominant mode carries b_0 = 0.652 of the sensitivity signal (~76%)
+ *          but has tau_0 = 1/(lambda_0*K1d) = 1/(0.0807 * 2.276e-4) ~= 54,500 s
+ *          ~= 15 HOURS. At the 1-hour sampling window it is 6.4% saturated, so
+ *          the band is ~15x too narrow. The ROM itself is exact: driven to
+ *          t = 100,000 s every mode converges to its analytic fixed point
+ *          (mode 0 -> 84.05% vs 84.05% predicted; modes 1-3 -> 100.0%). The
+ *          spatial signature confirms it — J1, farthest from the grounded
+ *          outfall and most mode-0-dominated, is worst (0.027); J5, adjacent to
+ *          it and dominated by fast high modes, is nearly right (0.894).
+ *
+ *          SECONDARY DEFECT (real, but only 1.49x of the ~5x needed):
+ *          computeK1d() computes the SI diffusion-wave diffusivity
+ *          D = h^(5/3)/(2*n*sqrt(S)) but now receives h and L in internal FEET
+ *          while Manning's n stays SI. `convert_inputs_to_internal`
+ *          (PostParseResolver.cpp) does NOT exist on the sidecar base where the
+ *          reference numbers were measured — it arrived upstream with
+ *          a1319721 (2026-07-05, Bellinge bit-parity ladder). Net effect:
+ *          K1d = 0.673x the correct SI value, tau 1.49x too long. Worth fixing
+ *          on its own merits; it does NOT green this test.
+ *
+ *          Correcting that still leaves only ~9.4% saturation at 1 h, so the
+ *          documented 0.676/1.251/1.610 is NOT reproducible from this fixture
+ *          at this window on either base. Note also that at FULL saturation the
+ *          ratio is ~2.36, which would still trip the ratio_med <= 2.0 assert —
+ *          so the acceptance bounds need revisiting alongside the fixture.
+ *
+ *          Left UNFIXED per hard rule 2 ("nobody tunes a tolerance to green a
+ *          spread-magnitude test"). See history_decisions.md and the P4 section
+ *          of HSYM_RESIDUALS_PR_CHECKLIST.md.
  */
 
 #include <gtest/gtest.h>
