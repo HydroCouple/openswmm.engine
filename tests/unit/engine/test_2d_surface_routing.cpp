@@ -1125,6 +1125,23 @@ TEST(InputParsing, Parse2DTriangleInitDepth) {
     EXPECT_FALSE(err.empty());
 }
 
+TEST(InputParsing, Parse2DInitialVelocity) {
+    MeshData mesh;
+    mesh.resize_vertices(4);
+    ASSERT_TRUE(parse2DTriangleLine({"0", "1", "2", "0.03"}, mesh).empty());
+    ASSERT_TRUE(parse2DTriangleLine({"0", "2", "3", "0.03"}, mesh).empty());
+
+    auto err = parse2DInitialVelocityLine({"1", "0.5", "-1.25"}, mesh);
+    EXPECT_TRUE(err.empty()) << err;
+    EXPECT_NEAR(mesh.tri_init_u[1], 0.5, 1e-12);
+    EXPECT_NEAR(mesh.tri_init_v[1], -1.25, 1e-12);
+    EXPECT_NEAR(mesh.tri_init_u[0], 0.0, 1e-12);   // unlisted rows stay 0
+
+    // Out-of-range triangle and short rows rejected
+    EXPECT_FALSE(parse2DInitialVelocityLine({"2", "1", "1"}, mesh).empty());
+    EXPECT_FALSE(parse2DInitialVelocityLine({"0", "1"}, mesh).empty());
+}
+
 TEST(InputParsing, Parse2DVertexNodeMap) {
     MeshData mesh;
     mesh.resize_vertices(3);

@@ -15,6 +15,7 @@
 #include "../../core/SWMMEngine.hpp"
 #include "../mesh/MeshBuilder.hpp"
 
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
@@ -181,6 +182,30 @@ int swmm_2d_set_triangle_init_depth(SWMM_Engine engine, int idx, double d) {
     if (!(d >= 0.0)) return SWMM_ERR_BADPARAM;
 
     router2d.mesh().tri_init_depth[idx] = d;
+    return SWMM_OK;
+}
+
+int swmm_2d_triangle_get_init_velocity(SWMM_Engine engine, int idx,
+                                       double* u, double* v) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!u || !v) return SWMM_ERR_BADPARAM;
+
+    *u = router2d.mesh().tri_init_u[idx];
+    *v = router2d.mesh().tri_init_v[idx];
+    return SWMM_OK;
+}
+
+int swmm_2d_set_triangle_init_velocity(SWMM_Engine engine, int idx,
+                                       double u, double v) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!std::isfinite(u) || !std::isfinite(v)) return SWMM_ERR_BADPARAM;
+
+    router2d.mesh().tri_init_u[idx] = u;
+    router2d.mesh().tri_init_v[idx] = v;
     return SWMM_OK;
 }
 

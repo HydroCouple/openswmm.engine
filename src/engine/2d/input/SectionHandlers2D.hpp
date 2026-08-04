@@ -74,6 +74,18 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
                                  MeshData& mesh);
 
 /**
+ * @brief Parse a single line from the [2D_INITIAL_VELOCITY] section.
+ *
+ * Format: TRI U V   (m/s; default 0,0 — rows may cover any subset)
+ *
+ * @param tokens Whitespace-split tokens from the line.
+ * @param mesh   Mesh data to update (tri_init_u / tri_init_v).
+ * @return Empty string on success, or error description.
+ */
+std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens,
+                                       MeshData& mesh);
+
+/**
  * @brief Parse a single line from the [2D_VERTEX_NODE_MAP] section.
  *
  * Format: VERTEX_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]

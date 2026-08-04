@@ -110,6 +110,47 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
                 pin_t0_[static_cast<std::size_t>(cp.cell_idx)] = 1;
 
     reconstructAll();
+
+    // Seed face momentum from the optional [2D_INITIAL_VELOCITY] rows: per
+    // interior face, q_e = mean of the two incident cells' (h·u, h·v)
+    // projected onto the face normal (depth from the volume-primary IC the
+    // router seeded before this call). t = 0 only — reinitialize() (hotstart
+    // / external state edits) still zeroes face momentum. Without this a
+    // depth-only IC cannot represent solutions with v(t=0) ≠ 0 (e.g. the
+    // SWASHES Thacker planar oscillation).
+    {
+        bool any_uv = false;
+        for (int i = 0; i < nt && !any_uv; ++i)
+            any_uv = mesh.tri_init_u[i] != 0.0 || mesh.tri_init_v[i] != 0.0;
+        if (any_uv) {
+            for (int e = 0; e < edges_.ne; ++e) {
+                const int a = edges_.cL[e], b = edges_.cR[e];
+                const double qax = state.depth[a] * mesh.tri_init_u[a];
+                const double qay = state.depth[a] * mesh.tri_init_v[a];
+                const double qbx = state.depth[b] * mesh.tri_init_u[b];
+                const double qby = state.depth[b] * mesh.tri_init_v[b];
+                q_[e] = 0.5 * ((qax + qbx) * edges_.nx[e] +
+                               (qay + qby) * edges_.ny[e]);
+            }
+            // Perot gather so the θ-blend and CFL speed see the seeded
+            // momentum from the very first firing (same stencil as fireCells).
+            if (!qcx_.empty()) {
+                const auto& ed = edges_;
+                for (int i = 0; i < nt; ++i) {
+                    double sx = 0.0, sy = 0.0;
+                    for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+                        const int    e = ed.cell_edge[p];
+                        const double fq = ed.cell_sign[p] * q_[e] * ed.xi[e];
+                        sx += fq * (ed.mx[e] - mesh.tri_cx[i]);
+                        sy += fq * (ed.my[e] - mesh.tri_cy[i]);
+                    }
+                    const double inv_a = 1.0 / mesh.tri_area[i];
+                    qcx_[i] = sx * inv_a;
+                    qcy_[i] = sy * inv_a;
+                }
+            }
+        }
+    }
     t_last_sync_ = 0.0;
     substeps_run_ = face_passes_ = last_steps_ = 0;
     last_dt_ = 0.0;
