@@ -12,6 +12,8 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <cstdio>   // env-gated A3 transect-table parity dump
+#include <cstdlib>
 
 namespace openswmm {
 namespace transect {
@@ -175,6 +177,22 @@ void buildTables(TransectData& td) {
     }
     // width at zero depth = width at first increment (legacy createTables:309)
     td.width_tbl[0] = td.width_tbl[1];
+
+    // --- A3 transect-table parity dump (env-gated), mirrors legacy transect.c
+    if (const char* p = std::getenv("SWMM_TRACE_TRANSECT")) {
+        if (*p) {
+            char fn[512];
+            std::snprintf(fn, sizeof(fn), "%s.ref.%s", p, td.name.c_str());
+            if (FILE* tf = std::fopen(fn, "w")) {
+                std::fprintf(tf, "yFull=%a aFull=%a rFull=%a wMax=%a\n",
+                             td.y_full, td.a_full, td.r_full, td.w_max);
+                for (int q = 0; q < N_TRANSECT_TBL; ++q)
+                    std::fprintf(tf, "%d,%a,%a,%a\n", q, td.area_tbl[q],
+                                 td.hrad_tbl[q], td.width_tbl[q]);
+                std::fclose(tf);
+            }
+        }
+    }
 }
 
 // ============================================================================
