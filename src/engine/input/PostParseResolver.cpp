@@ -219,7 +219,21 @@ static void load_external_rain_files(SimulationContext& ctx) {
         FILE* fp = std::fopen(path.c_str(), "r");
         if (!fp) {
             fp = std::fopen(ctx.gages.file_path[ug].c_str(), "r");
-            if (!fp) continue; // legacy reports ERROR 361; mirror the TS loader
+            if (!fp) {
+                // A gage that declares FILE but whose file cannot be opened is
+                // FATAL, exactly as in legacy (ERROR 317). Skipping it silently
+                // leaves the series empty, which reads as 0.0 at every lookup —
+                // indistinguishable from "it wasn't raining". The run then
+                // completes, continuity closes, and the .rpt even prints a
+                // Rainfall File Summary, so a model whose rain file was moved,
+                // renamed, or left behind by a save-to-another-folder produces a
+                // clean-looking result with no precipitation anywhere. Collect
+                // and continue so every unopenable gage is named, then let the
+                // open-time gate in SWMMEngine fail the load.
+                ctx.errors.push_back(
+                    format_error(openswmm::ERR_RAIN_FILE_OPEN, path));
+                continue;
+            }
         }
 
         // PARITY: legacy pipes external rain files through a binary "rain
