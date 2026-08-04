@@ -422,6 +422,25 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, "\n");
     }
 
+    // ---- [2D_INITIAL_VELOCITY] ------------------------------------------------
+    // Sparse: only triangles with a nonzero initial velocity get a row.
+    // Emitted after [2D_TRIANGLES] — rows validate against loaded triangles.
+    {
+        bool any_uv = false;
+        for (int t = 0; t < nt && !any_uv; ++t)
+            any_uv = mesh.tri_init_u[t] != 0.0 || mesh.tri_init_v[t] != 0.0;
+        if (any_uv) {
+            sec(f, "2D_INITIAL_VELOCITY");
+            std::fprintf(f, ";;%-6s %-12s %s\n", "TRI", "U", "V");
+            for (int t = 0; t < nt; ++t) {
+                if (mesh.tri_init_u[t] == 0.0 && mesh.tri_init_v[t] == 0.0)
+                    continue;
+                std::fprintf(f, "%-8d %-12.6g %.6g\n", t, mesh.tri_init_u[t],
+                             mesh.tri_init_v[t]);
+            }
+        }
+    }
+
     // Coupled-node name: prefer the authored name, fall back to the
     // resolved index (API-built models; rename-safe).
     auto node_name_for = [&ctx](const std::string& name, int idx) -> std::string {

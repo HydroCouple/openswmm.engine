@@ -156,6 +156,22 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_init_depth(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_set_triangle_init_depth(SWMM_Engine engine,
                                                     int idx, double d);
 
+/** @brief Get triangle initial velocity (u, v in m/s; `[2D_INITIAL_VELOCITY]`
+ *         rows, default 0,0). @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_triangle_get_init_velocity(SWMM_Engine engine,
+                                                       int idx, double* u,
+                                                       double* v);
+
+/** @brief Set triangle initial velocity (u, v in m/s; finite values;
+ *         SWMM_ERR_BADPARAM otherwise). Projected onto the explicit
+ *         marcher's face normals as (h*u, h*v) when the 2D surface
+ *         initializes (t = 0 only — hotstart/reinitialize still zeroes face
+ *         momentum), and persisted as sparse `[2D_INITIAL_VELOCITY]` rows on
+ *         save. @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_triangle_init_velocity(SWMM_Engine engine,
+                                                       int idx, double u,
+                                                       double v);
+
 /** @brief Set the descriptive tag of a vertex (the `[2D_VERTICES]` TAG
  *         column). Distinct from the 1D<->2D coupling node. Empty / NULL
  *         clears it. @ingroup engine_2d */

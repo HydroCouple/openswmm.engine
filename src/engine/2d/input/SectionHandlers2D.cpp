@@ -362,6 +362,32 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
 }
 
 
+// [2D_INITIAL_VELOCITY] — optional per-triangle initial velocity (m/s):
+//   TRI  U  V
+// Default is (0, 0); rows may cover any subset of triangles. The explicit
+// marcher projects (h·u, h·v) onto its face normals at initialize to seed the
+// prognostic face discharges (a depth-only IC cannot represent solutions with
+// v(t=0) ≠ 0, e.g. the SWASHES Thacker planar oscillation).
+std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens,
+                                       MeshData& mesh) {
+    if (tokens.size() < 3) return "Expected TRI U V";
+
+    bool ok = false;
+    int tri = tryParseInt(tokens[0], ok);
+    if (!ok || tri < 0 || tri >= mesh.n_triangles())
+        return "Invalid triangle index: " + tokens[0];
+
+    double u = tryParseDouble(tokens[1], ok);
+    if (!ok) return "Invalid U value";
+    double v = tryParseDouble(tokens[2], ok);
+    if (!ok) return "Invalid V value";
+
+    mesh.tri_init_u[tri] = u;
+    mesh.tri_init_v[tri] = v;
+    return {};
+}
+
+
 std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens,
                                       MeshData& mesh) {
     if (tokens.size() < 2) return "Expected VERTEX_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]";
@@ -636,6 +662,11 @@ void register2DSections(MeshData& mesh,
             return parse2DTriangleLine(tokens, mesh);
         }));
 
+    registry.register_custom("2D_INITIAL_VELOCITY",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialVelocityLine(tokens, mesh);
+        }));
+
     registry.register_custom("2D_VERTEX_NODE_MAP",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DVertexNodeMapLine(tokens, mesh);
@@ -710,6 +741,10 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     mini.register_custom("2D_TRIANGLES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_INITIAL_VELOCITY",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialVelocityLine(tokens, mesh);
         }));
     mini.register_custom("2D_VERTEX_NODE_MAP",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {

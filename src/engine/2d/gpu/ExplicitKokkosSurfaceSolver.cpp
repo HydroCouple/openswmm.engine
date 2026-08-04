@@ -291,6 +291,53 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     }
 
     reconstructAllDev();
+
+    // Seed face momentum from the optional [2D_INITIAL_VELOCITY] rows
+    // (== serial marcher; host-side build, one refresh). Mean depth is
+    // V/A under both closures, so it is derived directly from the seeded
+    // volumes. t = 0 only — reinitialize() still zeroes face momentum.
+    {
+        bool any_uv = false;
+        for (int i = 0; i < nt && !any_uv; ++i)
+            any_uv = mesh.tri_init_u[i] != 0.0 || mesh.tri_init_v[i] != 0.0;
+        if (any_uv) {
+            auto hdep = [&](int i) {
+                const double v = std::max(state.volume[i], 0.0);
+                return (mesh.tri_area[i] > 1.0e-30) ? v / mesh.tri_area[i]
+                                                    : 0.0;
+            };
+            std::vector<double> qh(static_cast<std::size_t>(ne), 0.0);
+            for (int e = 0; e < ne; ++e) {
+                const int a = edges_.cL[e], b = edges_.cR[e];
+                const double qax = hdep(a) * mesh.tri_init_u[a];
+                const double qay = hdep(a) * mesh.tri_init_v[a];
+                const double qbx = hdep(b) * mesh.tri_init_u[b];
+                const double qby = hdep(b) * mesh.tri_init_v[b];
+                qh[e] = 0.5 * ((qax + qbx) * edges_.nx[e] +
+                               (qay + qby) * edges_.ny[e]);
+            }
+            devRefresh(d_q_, qh);
+            if (have_perot_) {
+                const auto& ed = edges_;
+                std::vector<double> cxh(static_cast<std::size_t>(nt), 0.0);
+                std::vector<double> cyh(static_cast<std::size_t>(nt), 0.0);
+                for (int i = 0; i < nt; ++i) {
+                    double sx = 0.0, sy = 0.0;
+                    for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+                        const int    e = ed.cell_edge[p];
+                        const double fq = ed.cell_sign[p] * qh[e] * ed.xi[e];
+                        sx += fq * (ed.mx[e] - mesh.tri_cx[i]);
+                        sy += fq * (ed.my[e] - mesh.tri_cy[i]);
+                    }
+                    const double inv_a = 1.0 / mesh.tri_area[i];
+                    cxh[i] = sx * inv_a;
+                    cyh[i] = sy * inv_a;
+                }
+                devRefresh(d_qcx_, cxh);
+                devRefresh(d_qcy_, cyh);
+            }
+        }
+    }
     t_last_sync_ = 0.0;
     cycles_since_rebuild_ = 1000;
     substeps_run_ = face_passes_ = last_steps_ = 0;
