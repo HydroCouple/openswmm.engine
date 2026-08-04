@@ -173,7 +173,11 @@ struct SolverOptions2D {
     double cfl_number   = 0.7;    ///< [2D_OPTIONS] CFL_NUMBER — α in dt = α·L/√(gh)
     /// Flux-activation depth (m): cells below it are source-only (lazy rain
     /// accumulation, no face flux). Hysteresis band ±1 mm around it.
-    double h_move       = 0.003;  ///< [2D_OPTIONS] H_MOVE (m)
+    double h_move       = 0.003;  ///< [2D_OPTIONS] H_MOVE (m) — flux-active
+                                  ///< cell threshold; the marcher's on/off
+                                  ///< hysteresis band is min(1 mm, h_move/2),
+                                  ///< so thin-depth models (H_MOVE ≪ 1 mm)
+                                  ///< activate near h_move as requested.
     int    lts_tiers    = 4;      ///< [2D_OPTIONS] LTS_TIERS, 1..8 (1 = global dt)
     double froude_max   = 1.5;    ///< [2D_OPTIONS] FROUDE_MAX face |u| clamp
     /// Positivity/exchange availability fraction β: max share of a cell's
