@@ -200,8 +200,14 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     //    cells stay until h_off), plus concentrated sources (held coupling)
     //    and non-wall boundary cells. Rain alone does NOT activate — that is
     //    the point of the lazy tier.
-    const double h_on  = opts_->h_move + 0.001;
-    const double h_off = std::max(0.0, opts_->h_move - 0.001);
+    //    The hysteresis band scales with H_MOVE (capped at the historical
+    //    ±1 mm): a fixed ±1 mm band made H_MOVE 1e-4 require 1.1 mm to
+    //    activate — 10× the requested threshold — freezing wetting/drying
+    //    fronts on shallow benchmarks (Thacker). Bit-identical at the
+    //    default h_move = 0.003 (band = 1 mm either way).
+    const double band  = std::min(0.001, 0.5 * opts_->h_move);
+    const double h_on  = opts_->h_move + band;
+    const double h_off = std::max(0.0, opts_->h_move - band);
     std::vector<uint8_t> next(static_cast<std::size_t>(nt), 0);
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {

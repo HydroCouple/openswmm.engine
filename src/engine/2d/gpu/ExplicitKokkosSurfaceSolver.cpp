@@ -399,8 +399,10 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
 
     const int nt = mesh_->n_triangles();
     const int ne = edges_.ne;
-    const double h_on  = opts_->h_move + 0.001;
-    const double h_off = std::max(0.0, opts_->h_move - 0.001);
+    // Band scales with H_MOVE, capped at the historical ±1 mm (== serial).
+    const double band  = std::min(0.001, 0.5 * opts_->h_move);
+    const double h_on  = opts_->h_move + band;
+    const double h_off = std::max(0.0, opts_->h_move - band);
 
     auto active = d_active_, seed = d_scratch_, pin = d_pin_t0_;
     auto depth = d_depth_, coup = d_coup_;
