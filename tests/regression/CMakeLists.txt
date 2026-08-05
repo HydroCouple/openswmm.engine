@@ -99,6 +99,30 @@ add_test(NAME regression_rom_coverage COMMAND $<TARGET_FILE:test_rom_coverage>)
 set_tests_properties(regression_rom_coverage PROPERTIES LABELS "regression")
 openswmm_stage_test_runtime_deps(test_rom_coverage)
 
+# ---- PR P4: 1D ROM compatibility matrix (NODE_CONTINUITY x Anderson) ----
+# Structural invariants (non-intrusiveness, deviation-form exactness,
+# monotonicity, cross-cell band consistency) across the four solver-mode
+# cells {EXPLICIT,SEMI_IMPLICIT} x {Anderson off,on}. Does not assert band
+# *magnitude* against MC (see test_rom_coverage_bellinge.cpp for that).
+add_executable(test_rom_solver_mode_compat test_rom_solver_mode_compat.cpp)
+target_link_libraries(test_rom_solver_mode_compat
+    PRIVATE
+        GTest::gtest GTest::gtest_main
+        openswmm_engine
+)
+target_include_directories(test_rom_solver_mode_compat
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+)
+set_target_properties(test_rom_solver_mode_compat PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+add_test(NAME regression_rom_solver_mode_compat COMMAND $<TARGET_FILE:test_rom_solver_mode_compat>)
+set_tests_properties(regression_rom_solver_mode_compat PROPERTIES LABELS "regression")
+openswmm_stage_test_runtime_deps(test_rom_solver_mode_compat)
+
 # ---- W3: 2D ROM bands vs brute-force marcher Monte Carlo ----
 # Drives ExplicitInertialSolver and SpectralROM directly (operator-level
 # validation, no engine lifecycle); needs the 2D module.
