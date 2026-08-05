@@ -82,6 +82,8 @@ private:
     void   rebuildActiveLists();
     double censusDt() const;
     void   reconstructScalars(double dt);
+    void   limitSpeciesFluxes(int species, double dt);
+    kernels::FaceFlux adjustedFlux(int face) const;
     void   computeFluxes();
     void   limitPositivity(double dt);
     void   updateCells(double dt, const FvStepForcing& forcing);
@@ -89,6 +91,10 @@ private:
     void   dispersionSolve(double dt);
 
     double nodeDepthFromVolume(int node, double volume) const;
+
+    /// Snapshot / roll back the full prognostic state for step rejection.
+    void   saveState();
+    void   restoreState();
 
     /// Build one side of a face. @p cell < 0 selects the node ghost state,
     /// whose depth comes from the node head and whose velocity is extrapolated
@@ -114,6 +120,20 @@ private:
     /// WHAT value that side presents (plan §3.2).
     std::vector<double> f_phi_l_, f_phi_r_;
 
+    /// Final, Zalesak-limited species flux per face, species-major.
+    std::vector<double> f_phi_flux_;
+
+    /// Zalesak scratch: low-order and antidiffusive face fluxes, the
+    /// transported-diffused cell state, and the per-cell blend limits.
+    std::vector<double> lo_flux_, anti_flux_, td_, anew_, rplus_, rminus_;
+
+    /// Reconstructed face states and the raw flux result, kept so the species
+    /// flux can be evaluated with the SAME wave speeds the water used. Under
+    /// HLL the scalar needs sl/sr and both states, not just the mass flux.
+    std::vector<kernels::FaceState> f_state_l_, f_state_r_;
+    std::vector<kernels::FaceFlux>  f_flux_;
+    bool hllc_ = true;
+
     /// Limited scalar slope per cell in the cell's OWN axis (dφ/dx).
     std::vector<double> cell_slope_;
 
@@ -126,11 +146,28 @@ private:
     std::vector<double> node_exch_;    ///< ∫(net inflow) dt over the routing step
     std::vector<double> flood_vol_;
 
+    // Step-rejection snapshot. A cell can cross the crown INSIDE a substep,
+    // taking its celerity from the free-surface value to the slot value — a
+    // factor of ~20 on a 3 ft pipe — so a step sized on the pre-step state can
+    // violate CFL by more than an order of magnitude exactly when the model is
+    // doing something interesting. Re-censusing the POST-step state and rolling
+    // back when it disagrees is the principled fix; a heuristic fill-rate cap
+    // is not, because the stiffness ratio depends on FV_SLOT_CELERITY.
+    std::vector<double> save_cell_a_, save_cell_q_, save_cell_phi_;
+    std::vector<double> save_node_vol_, save_node_head_;
+    std::vector<double> save_exch_, save_flood_, save_qint_;
+
+    /// Accept a substep when the post-step stable step is at least this
+    /// fraction of the step actually taken.
+    static constexpr double kStepAcceptRatio = 0.5;
+    static constexpr int    kMaxStepRetries  = 8;
+
     // Work lists (plan §5.2.1). `halo_` is the compaction safety margin: a wet
     // front advances at most CFL cells per substep, so a halo of `rebuild_
     // interval_` cells keeps a stale list conservative between rebuilds.
     std::vector<int>  active_faces_;
     std::vector<char> cell_active_;
+    std::vector<char> halo_prev_;   ///< previous halo level (double buffer)
     bool              lists_valid_  = false;
     int               since_rebuild_ = 0;
     static constexpr int kRebuildInterval = 8;

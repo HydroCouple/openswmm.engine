@@ -72,6 +72,11 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     f_scale_.assign(nf, 1.0);
     f_phi_l_.assign(ns * nf, 0.0);
     f_phi_r_.assign(ns * nf, 0.0);
+    f_phi_flux_.assign(ns * nf, 0.0);
+    f_state_l_.assign(nf, k::FaceState{});
+    f_state_r_.assign(nf, k::FaceState{});
+    f_flux_.assign(nf, k::FaceFlux{});
+    hllc_ = (opts.riemann == RiemannSolver::HLLC);
     cell_slope_.assign(nc, 0.0);
 
     cell_eta_.assign(nc, 0.0);
@@ -302,10 +307,16 @@ void ExplicitFvSolver::rebuildActiveLists() {
     // riemannFlux returns exactly 0.0 for those — which is what makes
     // compaction results-TRANSPARENT rather than merely close (§6.10).
     //
-    // The first pass also guarantees both sides of every active face are
+    // The first level also guarantees both sides of every active face are
     // active, so no active face can dump flux into a cell that is never
     // updated (which would lose mass).
-    for (int pass = 0; pass < kRebuildInterval; ++pass) {
+    //
+    // Double-buffered on purpose. Growing the set IN PLACE lets a single sweep
+    // carry the flag along the whole face array in index order, so the "halo"
+    // silently becomes the entire downstream reach and compaction stops
+    // compacting anything. Each level must expand by exactly one cell.
+    halo_prev_.assign(cell_active_.begin(), cell_active_.end());
+    for (int level = 0; level < kRebuildInterval; ++level) {
         bool grew = false;
         for (int f = 0; f < nf; ++f) {
             const auto uf = static_cast<std::size_t>(f);
@@ -314,10 +325,11 @@ void ExplicitFvSolver::rebuildActiveLists() {
             if (cl < 0 || cr < 0) continue;
             const auto ul = static_cast<std::size_t>(cl);
             const auto ur = static_cast<std::size_t>(cr);
-            if (cell_active_[ul] && !cell_active_[ur]) { cell_active_[ur] = 1; grew = true; }
-            else if (cell_active_[ur] && !cell_active_[ul]) { cell_active_[ul] = 1; grew = true; }
+            if (halo_prev_[ul] && !cell_active_[ur]) { cell_active_[ur] = 1; grew = true; }
+            if (halo_prev_[ur] && !cell_active_[ul]) { cell_active_[ul] = 1; grew = true; }
         }
         if (!grew) break;
+        halo_prev_.assign(cell_active_.begin(), cell_active_.end());
     }
 
     active_faces_.clear();
@@ -348,16 +360,56 @@ void ExplicitFvSolver::rebuildActiveLists() {
 double ExplicitFvSolver::censusDt() const {
     double dt = std::numeric_limits<double>::max();
 
-    const int nc = mesh_->n_cells();
-    for (int c = 0; c < nc; ++c) {
-        const auto uc = static_cast<std::size_t>(c);
-        if (!cell_active_[uc]) continue;
-        const double h = state_->cell_h[uc];
-        if (h <= k::kDryDepth) continue;
-        const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-        const double c_wave = k::celerity(state_->cell_a[uc], k::widthOfDepth(g, h));
-        dt = std::min(dt, k::faceCflDt(opts_.cfl, mesh_->cell_dx[uc],
-                                       cell_u_[uc], c_wave));
+    // FACE-based, not cell-based. A cell-only census misses the wave speed a
+    // BOUNDARY GHOST carries: a surcharged manhole standing above the crown
+    // presents a pressurized ghost whose celerity is the slot celerity (~100
+    // ft/s) to a part-full pipe whose own cells report ~5 ft/s. That is the
+    // single most common configuration in a real sewer, and stepping on the
+    // cell speed over-runs the true CFL limit by more than an order of
+    // magnitude — the pipe empties instead of filling.
+    for (const int f : active_faces_) {
+        const auto uf = static_cast<std::size_t>(f);
+        const int cl = mesh_->face_cl[uf];
+        const int cr = mesh_->face_cr[uf];
+        const int nd = mesh_->face_node[uf];
+
+        double speed = 0.0;
+        double dx_ref = 1.0e30;
+
+        auto consider_cell = [&](int cell) {
+            const auto uc = static_cast<std::size_t>(cell);
+            dx_ref = std::min(dx_ref, mesh_->cell_dx[uc]);
+            const double h = state_->cell_h[uc];
+            if (h <= k::kDryDepth) return;
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            speed = std::max(speed,
+                             std::fabs(cell_u_[uc]) +
+                                 k::celerity(state_->cell_a[uc],
+                                             k::widthOfDepth(g, h)));
+        };
+        if (cl >= 0) consider_cell(cl);
+        if (cr >= 0) consider_cell(cr);
+
+        if (nd >= 0) {
+            const int other = (cl >= 0) ? cl : cr;
+            if (other >= 0) {
+                const auto uo = static_cast<std::size_t>(other);
+                const FvGeometry& g =
+                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uo])];
+                const double hg = state_->node_head[static_cast<std::size_t>(nd)] -
+                                  mesh_->face_zb[uf];
+                if (hg > k::kDryDepth) {
+                    const double ag = k::areaOfDepth(g, hg);
+                    speed = std::max(speed,
+                                     std::fabs(cell_u_[uo]) +
+                                         k::celerity(ag, k::widthOfDepth(g, hg)));
+                }
+            }
+        }
+
+        if (speed > 1.0e-12 && dx_ref < 1.0e29)
+            dt = std::min(dt, opts_.cfl * dx_ref / speed);
     }
 
     // Node constraint. A coupled node behaves like an extra control volume of
@@ -521,10 +573,167 @@ void ExplicitFvSolver::reconstructScalars(double dt) {
                 }
             }
 
+            // Local-extremum clamp — the last line of defence for the "no new
+            // extrema, no negative concentrations" contract (§6.11b). Both
+            // higher-order reconstructions are TVD for PURE advection on a
+            // fixed grid; here the cell areas are evolving underneath them
+            // (reflections, wetting, drying), and QUICKEST's normalized-variable
+            // limiter measurably loses monotonicity in that regime. Clamping the
+            // face value into the bracket its own two cells span costs nothing
+            // where the scheme is already monotone and restores the guarantee
+            // where it is not.
+            if (opts_.scalar_scheme != ScalarScheme::UPWIND) {
+                const double a = state_->cell_phi[sbase + ul];
+                const double b = state_->cell_phi[sbase + ur];
+                const double lo = std::min(a, b);
+                const double hi = std::max(a, b);
+                phil = std::clamp(phil, lo, hi);
+                phir = std::clamp(phir, lo, hi);
+            }
+
             f_phi_l_[fbase + uf] = phil;
             f_phi_r_[fbase + uf] = phir;
         }
+
+        // ---- flux assembly + Zalesak limiting ------------------------------
+        limitSpeciesFluxes(s, dt);
     }
+}
+
+/**
+ * @brief Assemble the face species fluxes and limit them (Zalesak FCT).
+ *
+ * @details Bracketing the reconstructed FACE value between its two cells is
+ *          necessary but NOT sufficient for the discrete maximum principle:
+ *          under reversing, unsteady flow with the cell areas evolving
+ *          underneath the scalar, a face value legitimately inside its bracket
+ *          can still drain more solute than its donor cell holds. Measured:
+ *          QUICKEST-ULTIMATE produced −1.3e-3 on a step-function advection case
+ *          with wall reflections, which is not acceptable in a water-quality
+ *          model.
+ *
+ *          The fix has to limit the FLUX, not the result. Clipping the updated
+ *          concentration would enforce the bound but destroy exact solute
+ *          conservation (§6.11c) — the two properties trade off, and Zalesak
+ *          (1979) is the construction that keeps both: blend each face's
+ *          high-order flux back toward first-order upwind by the largest factor
+ *          that no incident cell's bound rejects. The SAME limited flux updates
+ *          both incident cells, so conservation is untouched.
+ */
+void ExplicitFvSolver::limitSpeciesFluxes(int species, double dt) {
+    const int nc = mesh_->n_cells();
+    const int nf = mesh_->n_faces();
+    const auto cbase = static_cast<std::size_t>(species) *
+                       static_cast<std::size_t>(nc);
+    const auto fbase = static_cast<std::size_t>(species) *
+                       static_cast<std::size_t>(nf);
+
+    lo_flux_.assign(static_cast<std::size_t>(nf), 0.0);
+    anti_flux_.assign(static_cast<std::size_t>(nf), 0.0);
+
+    // Low-order (first-order upwind on the sign of the mass flux) and the
+    // antidiffusive remainder.
+    for (const int f : active_faces_) {
+        const auto uf = static_cast<std::size_t>(f);
+        const int cl = mesh_->face_cl[uf];
+        const int cr = mesh_->face_cr[uf];
+        const auto ul = static_cast<std::size_t>((cl >= 0) ? cl : cr);
+        const auto ur = static_cast<std::size_t>((cr >= 0) ? cr : cl);
+        const double fm = f_mass_[uf];
+        const double lo = fm * ((fm >= 0.0) ? state_->cell_phi[cbase + ul]
+                                            : state_->cell_phi[cbase + ur]);
+        const double hi = k::speciesFlux(f_state_l_[uf], f_state_r_[uf],
+                                         adjustedFlux(f), f_phi_l_[fbase + uf],
+                                         f_phi_r_[fbase + uf], hllc_);
+        lo_flux_[uf]   = lo;
+        anti_flux_[uf] = hi - lo;
+    }
+
+    // Transported-diffused state under the low-order flux alone, plus the
+    // local bounds it and its neighbours span.
+    td_.assign(static_cast<std::size_t>(nc), 0.0);
+    anew_.assign(static_cast<std::size_t>(nc), 0.0);
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (!cell_active_[uc]) { td_[uc] = state_->cell_phi[cbase + uc];
+                                 anew_[uc] = state_->cell_a[uc]; continue; }
+        const int faces[2]    = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        const int8_t sides[2] = {mesh_->cell_side0[uc], mesh_->cell_side1[uc]};
+        double dA = 0.0, dm = 0.0;
+        for (int e = 0; e < 2; ++e) {
+            const auto uf = static_cast<std::size_t>(faces[e]);
+            const double sg = (sides[e] == 0) ? -1.0 : 1.0;
+            dA += sg * f_mass_[uf];
+            dm += sg * lo_flux_[uf];
+        }
+        const double inv_dx = 1.0 / mesh_->cell_dx[uc];
+        const double a_new = std::max(0.0, state_->cell_a[uc] + dt * dA * inv_dx);
+        anew_[uc] = a_new;
+        const double m = state_->cell_a[uc] * state_->cell_phi[cbase + uc] +
+                         dt * dm * inv_dx;
+        td_[uc] = (a_new > k::kDryArea) ? m / a_new : state_->cell_phi[cbase + uc];
+    }
+
+    rplus_.assign(static_cast<std::size_t>(nc), 1.0);
+    rminus_.assign(static_cast<std::size_t>(nc), 1.0);
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (!cell_active_[uc]) continue;
+        const int faces[2]    = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        const int8_t sides[2] = {mesh_->cell_side0[uc], mesh_->cell_side1[uc]};
+
+        double pmax = std::max(state_->cell_phi[cbase + uc], td_[uc]);
+        double pmin = std::min(state_->cell_phi[cbase + uc], td_[uc]);
+        double pplus = 0.0, pminus = 0.0;
+        for (int e = 0; e < 2; ++e) {
+            const auto uf = static_cast<std::size_t>(faces[e]);
+            const int cl = mesh_->face_cl[uf];
+            const int cr = mesh_->face_cr[uf];
+            const int nb = (cl == c) ? cr : cl;
+            if (nb >= 0) {
+                const auto un = static_cast<std::size_t>(nb);
+                pmax = std::max({pmax, state_->cell_phi[cbase + un], td_[un]});
+                pmin = std::min({pmin, state_->cell_phi[cbase + un], td_[un]});
+            }
+            const double sg = (sides[e] == 0) ? -1.0 : 1.0;
+            const double a = sg * anti_flux_[uf];
+            if (a > 0.0) pplus += a; else pminus -= a;
+        }
+        const double cap = anew_[uc] * mesh_->cell_dx[uc] / dt;
+        if (pplus  > 0.0) rplus_[uc]  = std::min(1.0, (pmax - td_[uc]) * cap / pplus);
+        if (pminus > 0.0) rminus_[uc] = std::min(1.0, (td_[uc] - pmin) * cap / pminus);
+        rplus_[uc]  = std::max(0.0, rplus_[uc]);
+        rminus_[uc] = std::max(0.0, rminus_[uc]);
+    }
+
+    for (const int f : active_faces_) {
+        const auto uf = static_cast<std::size_t>(f);
+        const double a = anti_flux_[uf];
+        double coef = 1.0;
+        if (a != 0.0) {
+            const int cl = mesh_->face_cl[uf];
+            const int cr = mesh_->face_cr[uf];
+            // The face contributes −a to its LEFT cell and +a to its RIGHT one.
+            const double from_r = (cr >= 0)
+                ? ((a > 0.0) ? rplus_[static_cast<std::size_t>(cr)]
+                             : rminus_[static_cast<std::size_t>(cr)])
+                : 1.0;
+            const double from_l = (cl >= 0)
+                ? ((a > 0.0) ? rminus_[static_cast<std::size_t>(cl)]
+                             : rplus_[static_cast<std::size_t>(cl)])
+                : 1.0;
+            coef = std::min(from_r, from_l);
+        }
+        f_phi_flux_[fbase + uf] = lo_flux_[uf] + coef * a;
+    }
+}
+
+/// The flux record with the positivity-scaled mass flux substituted in, so the
+/// species rides on exactly the water the hydrodynamic update moved.
+kernels::FaceFlux ExplicitFvSolver::adjustedFlux(int face) const {
+    kernels::FaceFlux f = f_flux_[static_cast<std::size_t>(face)];
+    f.mass = f_mass_[static_cast<std::size_t>(face)];
+    return f;
 }
 
 // ===========================================================================
@@ -585,7 +794,6 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
 }
 
 void ExplicitFvSolver::computeFluxes() {
-    const bool hllc = (opts_.riemann == RiemannSolver::HLLC);
     const int n_act = static_cast<int>(active_faces_.size());
 
 #ifdef SWMM_USE_OPENMP
@@ -619,10 +827,13 @@ void ExplicitFvSolver::computeFluxes() {
         faceSide(f, cl, nd, zstar, mesh_->face_dir_l[uf], u_int, L, i1l);
         faceSide(f, cr, nd, zstar, mesh_->face_dir_r[uf], u_int, R, i1r);
 
-        const k::FaceFlux fl = k::riemannFlux(L, R, hllc);
+        const k::FaceFlux fl = k::riemannFlux(L, R);
         f_mass_[uf]  = fl.mass;
         f_mom_[uf]   = fl.mom;
         f_sstar_[uf] = fl.sstar;
+        f_state_l_[uf] = L;
+        f_state_r_[uf] = R;
+        f_flux_[uf]    = fl;
         // Audusse well-balanced correction — a CELL source, so it exists only
         // on sides that are cells.
         f_corr_l_[uf] = (cl >= 0) ? k::kGravity * (i1l - L.i1) : 0.0;
@@ -760,9 +971,7 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
                 double dm = 0.0;
                 for (int e = 0; e < 2; ++e) {
                     const auto uf = static_cast<std::size_t>(faces[e]);
-                    const double fphi = k::speciesFlux(f_mass_[uf], f_sstar_[uf],
-                                                       f_phi_l_[fbase + uf],
-                                                       f_phi_r_[fbase + uf]);
+                    const double fphi = f_phi_flux_[fbase + uf];
                     if (sides[e] == 0) dm -= fphi;
                     else               dm += fphi;
                 }
@@ -949,6 +1158,33 @@ void ExplicitFvSolver::dispersionSolve(double dt) {
 }
 
 // ===========================================================================
+// Step-rejection snapshot
+// ===========================================================================
+
+void ExplicitFvSolver::saveState() {
+    save_cell_a_    = state_->cell_a;
+    save_cell_q_    = state_->cell_q;
+    save_cell_phi_  = state_->cell_phi;
+    save_node_vol_  = state_->node_volume;
+    save_node_head_ = state_->node_head;
+    save_exch_      = node_exch_;
+    save_flood_     = flood_vol_;
+    save_qint_      = cell_q_int_;
+}
+
+void ExplicitFvSolver::restoreState() {
+    state_->cell_a      = save_cell_a_;
+    state_->cell_q      = save_cell_q_;
+    state_->cell_phi    = save_cell_phi_;
+    state_->node_volume = save_node_vol_;
+    state_->node_head   = save_node_head_;
+    node_exch_          = save_exch_;
+    flood_vol_          = save_flood_;
+    cell_q_int_         = save_qint_;
+    refreshDepths();               // cell_h / eta / u are derived
+}
+
+// ===========================================================================
 // Advance
 // ===========================================================================
 
@@ -995,12 +1231,31 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         if (dt < constants::MIN_TIMESTEP)
             dt = std::min(constants::MIN_TIMESTEP, remaining);
 
-        computeFluxes();
-        reconstructScalars(dt);
-        limitPositivity(dt);
-        updateCells(dt, forcing);
-        updateNodes(dt, forcing);
-        dispersionSolve(dt);
+        // Take the substep, then re-census the state it produced. If a cell
+        // crossed the crown (or wetted, or pressurized a node) the stable step
+        // collapses, and the step just taken was not admissible — roll back and
+        // retry. Every input to the decision is the solver state, so the retry
+        // sequence is deterministic and identical on every backend, which is
+        // what keeps compaction transparency (§6.10) intact.
+        for (int attempt = 0;; ++attempt) {
+            saveState();
+            computeFluxes();
+            limitPositivity(dt);
+            reconstructScalars(dt);   // AFTER limiting: the species must ride on
+                                      // the same water the hydrodynamics moved
+            updateCells(dt, forcing);
+            updateNodes(dt, forcing);
+            dispersionSolve(dt);
+
+            if (attempt >= kMaxStepRetries || dt <= constants::MIN_TIMESTEP) break;
+            const double dt_post = censusDt();
+            if (dt_post >= kStepAcceptRatio * dt) break;          // admissible
+            restoreState();
+            dt = std::max(0.9 * dt_post, constants::MIN_TIMESTEP);
+            if (dt > remaining) dt = remaining;
+        }
+        dt_cache_ = dt;                 // next step starts from what worked
+        census_count_ = 0;
 
         t += dt;
         ++steps;

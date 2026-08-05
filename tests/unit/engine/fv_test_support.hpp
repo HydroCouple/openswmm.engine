@@ -135,6 +135,41 @@ inline Channel makeWalledChannel(const XSectParams& xs, int n, double dx,
     return ch;
 }
 
+/// Build a channel with a NODE at each end instead of a wall: node 0 upstream,
+/// node 1 downstream. Both are junctions with a large full depth (no flooding);
+/// the caller drives them through FvStepForcing (lateral inflow at node 0, a
+/// fixed stage at node 1, or both).
+template <class BedFn>
+inline Channel makeNodedChannel(const XSectParams& xs, int n, double dx,
+                                BedFn bedfn, double manning,
+                                double slot_celerity = 100.0) {
+    Channel ch = makeWalledChannel(xs, n, dx, bedfn, manning, slot_celerity);
+
+    // Convert the two wall faces into node-coupling faces.
+    const int f_up = 0;
+    const int f_dn = ch.mesh.n_faces() - 1;
+    ch.mesh.face_node[static_cast<std::size_t>(f_up)] = 0;
+    ch.mesh.face_node[static_cast<std::size_t>(f_dn)] = 1;
+
+    ch.mesh.node_invert     = {bedfn(0.0), bedfn(static_cast<double>(n) * dx)};
+    ch.mesh.node_full_depth = {1.0e6, 1.0e6};
+    ch.mesh.node_ponded_area = {0.0, 0.0};
+    ch.mesh.node_kind       = {kNodeJunction, kNodeOutfall};
+    ch.mesh.node_vol_off    = {-1, -1};
+    ch.mesh.node_vol_dmax   = {0.0, 0.0};
+    ch.mesh.node_vol_atop   = {0.0, 0.0};
+
+    ch.mesh.node_face_ptr  = {0, 1, 2};
+    ch.mesh.node_face_idx  = {f_up, f_dn};
+    ch.mesh.node_face_sign = {-1.0, 1.0};   // +1 = flux ENTERS the node
+    ch.mesh.node_face_zb   = {bedfn(0.0), bedfn(static_cast<double>(n) * dx)};
+
+    ch.state.resize(n, 2, 0);
+    ch.state.node_head[0] = ch.mesh.node_invert[0];
+    ch.state.node_head[1] = ch.mesh.node_invert[1];
+    return ch;
+}
+
 /// Seed every cell to a common free surface η (the lake-at-rest initial state).
 inline void seedLevel(Channel& ch, double eta) {
     const FvGeometry& g = ch.mesh.geom[0];
