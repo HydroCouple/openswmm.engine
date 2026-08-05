@@ -1,0 +1,156 @@
+/**
+ * @file ExplicitFvSolver.hpp
+ * @brief Serial/OpenMP CPU reference implementation of the explicit FV 1D solver.
+ *
+ * @details Godunov-type explicit finite volume on the conduit cell mesh:
+ *          hydrostatic (Audusse) reconstruction → HLLC face flux → positivity
+ *          limiting → flux divergence with the bed-slope correction →
+ *          semi-implicit friction → explicit zero-D node continuity. Substeps
+ *          at the CFL limit to fill each routing step.
+ *
+ *          This is the REFERENCE implementation in the plan's sense: the Kokkos
+ *          plugin compiles the same FvKernels.hpp bodies, and the §6.8 parity
+ *          harness diffs the two element-wise.
+ *
+ * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §3, §5
+ * @ingroup engine_fv
+ *
+ * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license  MIT License
+ */
+
+#ifndef OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
+#define OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
+
+#include <vector>
+
+#include "FvKernels.hpp"
+#include "FvOptions.hpp"
+#include "INetworkSolver.hpp"
+#include "NetworkMeshData.hpp"
+
+namespace openswmm::fv {
+
+class ExplicitFvSolver : public INetworkSolver {
+public:
+    ExplicitFvSolver() = default;
+    ~ExplicitFvSolver() override = default;
+
+    ExplicitFvSolver(const ExplicitFvSolver&) = delete;
+    ExplicitFvSolver& operator=(const ExplicitFvSolver&) = delete;
+
+    void   initialize(NetworkMeshData& mesh, NetworkStateData& state,
+                      const FvOptions& opts) override;
+    double advance(double t_current, double t_target,
+                   const FvStepForcing& forcing) override;
+    void   reinitialize(double t0) override;
+    void   finalize() override;
+
+    long   last_num_steps() const noexcept override { return last_nsteps_; }
+    double last_step_size() const noexcept override { return last_h_; }
+    double suggested_step() const noexcept override { return suggested_h_; }
+    RunStats run_stats() const noexcept override;
+    bool   is_initialized() const noexcept override { return mesh_ != nullptr; }
+
+    /// Per-node net exchange VOLUME (ft³) accumulated over the last advance().
+    /// Signed positive INTO the node. The Router glue turns this into the node
+    /// inflow/outflow rates the reporting and mass-balance paths expect.
+    const std::vector<double>& node_exchange() const noexcept { return node_exch_; }
+
+    /// Per-node flooding VOLUME (ft³) over the last advance().
+    const std::vector<double>& node_flood_volume() const noexcept {
+        return flood_vol_;
+    }
+
+    /// Time-integrated cell discharge (ft³) over the last advance(), used to
+    /// publish a routing-step MEAN link flow rather than an end-of-step
+    /// snapshot — the snapshot aliases badly when a routing step spans many
+    /// substeps.
+    const std::vector<double>& cell_flow_integral() const noexcept {
+        return cell_q_int_;
+    }
+
+    /// Depth → volume through the node's own storage relation. Exposed for the
+    /// Router glue's seeding path and for the conservation tests.
+    double nodeVolumeFromDepth(int node, double depth) const;
+
+private:
+    // -- substep pipeline ---------------------------------------------------
+    void   refreshDepths();
+    void   refreshNodeAreas();
+    void   rebuildActiveLists();
+    double censusDt() const;
+    void   reconstructScalars(double dt);
+    void   computeFluxes();
+    void   limitPositivity(double dt);
+    void   updateCells(double dt, const FvStepForcing& forcing);
+    void   updateNodes(double dt, const FvStepForcing& forcing);
+    void   dispersionSolve(double dt);
+
+    double nodeDepthFromVolume(int node, double volume) const;
+
+    /// Build one side of a face. @p cell < 0 selects the node ghost state,
+    /// whose depth comes from the node head and whose velocity is extrapolated
+    /// from the interior cell (transmissive momentum).
+    void   faceSide(int face, int cell, int node, double zstar, int dir,
+                    double u_interior, kernels::FaceState& out,
+                    double& i1_unreconstructed) const;
+
+    NetworkMeshData*  mesh_  = nullptr;
+    NetworkStateData* state_ = nullptr;
+    FvOptions         opts_{};
+
+    // Face scratch. corr_l/corr_r are the Audusse well-balanced corrections
+    // g·(I₁(h_K) − I₁(h*_K)) — per-cell, not per-face, which is why they are
+    // stored separately from the shared flux.
+    std::vector<double> f_mass_, f_mom_, f_sstar_, f_corr_l_, f_corr_r_;
+    std::vector<double> f_scale_;
+
+    /// Reconstructed species values on each side of each face, species-major
+    /// [s * n_faces + f]. Filled by reconstructScalars() — this is the
+    /// anti-diffusion layer, kept strictly separate from the Riemann solver:
+    /// HLLC decides WHICH side is upwind (sign of S*), reconstruction decides
+    /// WHAT value that side presents (plan §3.2).
+    std::vector<double> f_phi_l_, f_phi_r_;
+
+    /// Limited scalar slope per cell in the cell's OWN axis (dφ/dx).
+    std::vector<double> cell_slope_;
+
+    // Cell scratch.
+    std::vector<double> cell_eta_;     ///< z_b + h
+    std::vector<double> cell_u_;       ///< Q/A, dry-guarded
+    std::vector<double> cell_q_int_;   ///< ∫Q dt over the routing step
+
+    // Node scratch.
+    std::vector<double> node_exch_;    ///< ∫(net inflow) dt over the routing step
+    std::vector<double> flood_vol_;
+
+    // Work lists (plan §5.2.1). `halo_` is the compaction safety margin: a wet
+    // front advances at most CFL cells per substep, so a halo of `rebuild_
+    // interval_` cells keeps a stale list conservative between rebuilds.
+    std::vector<int>  active_faces_;
+    std::vector<char> cell_active_;
+    bool              lists_valid_  = false;
+    int               since_rebuild_ = 0;
+    static constexpr int kRebuildInterval = 8;
+
+    // Statistics.
+    long   last_nsteps_  = 0;
+    double last_h_       = 0.0;
+    double suggested_h_  = 0.0;
+    long   total_steps_  = 0;
+    long   total_flux_   = 0;
+    double min_h_        = 0.0;
+    double sim_time_     = 0.0;
+    double active_sum_   = 0.0;
+    double active_min_   = -1.0;
+    double active_max_   = -1.0;
+    long   active_n_     = 0;
+    double dt_cache_     = 0.0;
+    int    census_count_ = 0;
+};
+
+} // namespace openswmm::fv
+
+#endif // OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
