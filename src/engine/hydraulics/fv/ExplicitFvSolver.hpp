@@ -90,6 +90,7 @@ private:
     void   refreshNodeAreas();
     void   rebuildActiveLists();
     double censusDt() const;
+    void   reconstructState();
     void   reconstructScalars(double dt);
     void   limitSpeciesFluxes(int species, double dt);
     kernels::FaceFlux adjustedFlux(int face) const;
@@ -108,9 +109,13 @@ private:
     /// Build one side of a face. @p cell < 0 selects the node ghost state,
     /// whose depth comes from the node head and whose velocity is extrapolated
     /// from the interior cell (transmissive momentum).
+    /// @param measure_only  fill only @p i1_unreconstructed and @p z_side —
+    ///                       used by the first pass, which needs the
+    ///                       reconstructed bed before z* can be formed.
     void   faceSide(int face, int cell, int node, double zstar, int dir,
                     double u_interior, kernels::FaceState& out,
-                    double& i1_unreconstructed) const;
+                    double& i1_unreconstructed, double& z_side,
+                    bool measure_only) const;
 
     NetworkMeshData*  mesh_  = nullptr;
     NetworkStateData* state_ = nullptr;
@@ -145,6 +150,22 @@ private:
 
     /// Limited scalar slope per cell in the cell's OWN axis (dφ/dx).
     std::vector<double> cell_slope_;
+
+    /// Second-order (FV_ORDER 2) reconstruction slopes in each cell's OWN axis.
+    /// The FREE SURFACE is reconstructed, not the depth: with η limited and the
+    /// bed taken from its exact per-cell gradient, a lake at rest has zero
+    /// slopes by construction and the scheme stays well balanced at second
+    /// order. Reconstructing h instead would put a spurious slope in every cell
+    /// sitting on a sloping bed.
+    std::vector<double> cell_eta_slope_, cell_u_slope_;
+
+    /// Per-cell "second order is admissible here" flag. Linear reconstruction
+    /// assumes the cell is small enough that its state varies little across it;
+    /// a cell spanning a bed FALL comparable to its own depth violates that
+    /// outright (COARSE mode on a long conduit), and reconstructing the bed to
+    /// the faces then produces a negative depth at the upstream end.
+    std::vector<char> cell_ho2_;
+
 
     // Cell scratch.
     std::vector<double> cell_eta_;     ///< z_b + h

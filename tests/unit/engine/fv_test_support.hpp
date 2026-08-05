@@ -83,7 +83,10 @@ inline Channel makeWalledChannel(const XSectParams& xs, int n, double dx,
         ch.mesh.cell_geom.push_back(0);
         ch.mesh.cell_conduit.push_back(0);
         ch.mesh.cell_dx.push_back(dx);
-        ch.mesh.cell_zb.push_back(bedfn((static_cast<double>(i) + 0.5) * dx));
+        const double xc = (static_cast<double>(i) + 0.5) * dx;
+        ch.mesh.cell_zb.push_back(bedfn(xc));
+        ch.mesh.cell_dzdx.push_back(
+            (bedfn(xc + 0.5 * dx) - bedfn(xc - 0.5 * dx)) / dx);
     }
 
     auto add_face = [&](int cl, int cr, int node, double zb, double fdx) {

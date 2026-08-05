@@ -249,6 +249,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             mesh.cell_conduit.push_back(r);
             mesh.cell_dx.push_back(dx);
             mesh.cell_zb.push_back(z1 + (z2 - z1) * t);
+            mesh.cell_dzdx.push_back((z2 - z1) / L);
         }
     }
     if (!rep.errors.empty()) return rep;
