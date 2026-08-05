@@ -5969,14 +5969,25 @@ void SWMMEngine::buildROM1D() noexcept {
 // ============================================================================
 
 double SWMMEngine::computeK1d() noexcept {
-    // Diffusion-wave diffusivity D = h^(5/3) / (2n*sqrt(S))  [m^2/s].
+    // Diffusion-wave diffusivity D = PHI * h^(5/3) / (2n*sqrt(S))  [ft^2/s].
     // GraphEigenBasis eigenvalues are dimensionless (topological, not spatial):
     // the weighted Laplacian built in buildROM1D()/updateBasis() is normalized
     // to mean edge weight 1.0, so its eigenvalue scale matches the pure
     // topological Laplacian regardless of the absolute conductance magnitude
     // or routing dt. D must still be normalised by L^2 to give K1d in 1/s:
-    //   K1d = D / L^2 = h^(5/3) / (2n * sqrt(S) * L^2)
+    //   K1d = D / L^2 = PHI * h^(5/3) / (2n * sqrt(S) * L^2)
     // This ensures lambda_j * K1d has units 1/s in the ROM advance equation.
+    //
+    // PHI (constants::PHI = 1.486) is the US-customary Manning's-equation unit
+    // factor (Q = (PHI/n)*A*R^(2/3)*S^(1/2)) — REQUIRED here because h and L
+    // are read from ctx_.nodes.depth / conduits.length, which PostParseResolver's
+    // convert_inputs_to_internal() always stores in feet regardless of the
+    // project's declared FLOW_UNITS (legacy-SWMM5 internal-units architecture;
+    // see Link.cpp's own `beta = PHI * sqrt(slope) / n` for the same factor
+    // applied to the same feet-valued state). Omitting PHI here silently used
+    // the SI form of the diffusivity on feet-valued state, understating K1d by
+    // exactly 1/PHI = 0.6729 — found 2026-08-04 while root-causing PR-10's MC
+    // coverage test (measured discrepancy 0.673x matched 1/1.486 to 3 digits).
     double sum_k = 0.0;
     int    cnt   = 0;
     for (int j = 0; j < ctx_.n_links(); ++j) {
@@ -5994,7 +6005,8 @@ double SWMMEngine::computeK1d() noexcept {
                                  ? ctx_.link_subtypes.conduits.mod_length[ucr]
                                  : ctx_.link_subtypes.conduits.length[ucr];
         if (n_rough <= 0.0 || slope <= 0.0 || h < 1e-6 || L <= 0.0) continue;
-        const double D = std::pow(h, 5.0 / 3.0) / (2.0 * n_rough * std::sqrt(slope));
+        const double D = constants::PHI * std::pow(h, 5.0 / 3.0)
+                          / (2.0 * n_rough * std::sqrt(slope));
         sum_k += D / (L * L);
         ++cnt;
     }
