@@ -408,6 +408,25 @@ if(OPENSWMM_BUILD_2D)
                    test_2d_windowless_coupling.cpp)
 endif()
 
+# ---------------------------------------------------------------------------
+# Explicit finite-volume 1D network solver (FLOW_ROUTING FV).
+# See plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §6.
+# ---------------------------------------------------------------------------
+# Cross-section closure: A(h) monotone and C⁰ through the crown, dA/dh == T
+# (the tapered slot mouth), A↔h round-trip incl. the taper band and deep slot,
+# I₁ as the antiderivative of A with an analytic above-crown extension, and the
+# FV_SLOT_CELERITY design value actually delivered.
+add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
+# Analytic scheme gates: exact lake-at-rest over a slope break AND while
+# pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
+# solutions incl. shock SPEED, and mass conservation to machine precision over
+# 10⁵ substeps.
+add_gtest_unit(test_engine_fv_analytic test_fv_solver_analytic.cpp)
+# Network gates: virtual-junction equivalence (single conduit vs. split), node
+# coupling and continuity, mixed-flow filling bore vs. Rankine–Hugoniot,
+# compaction results-transparency, and the scalar-transport contracts.
+add_gtest_unit(test_engine_fv_network test_fv_solver_network.cpp)
+
 # Golden cross-section parity harness — diffs the new xsect:: implementation
 # against the legacy xsect.c. The legacy dylib hides its internal xsect_*
 # symbols, so we compile xsect.c (+ findroot.c + stub globals) directly into the
