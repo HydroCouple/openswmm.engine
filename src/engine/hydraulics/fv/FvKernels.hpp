@@ -280,9 +280,11 @@ struct FaceState {
 
 /// Result of a face flux evaluation.
 struct FaceFlux {
-    double mass = 0.0;   ///< F[0] — volumetric flux (cfs)
-    double mom  = 0.0;   ///< F[1] — momentum flux (ft⁴/s²)
+    double mass  = 0.0;  ///< F[0] — volumetric flux (cfs)
+    double mom   = 0.0;  ///< F[1] — momentum flux (ft⁴/s²)
     double sstar = 0.0;  ///< contact-wave speed; sign selects the species upwind
+    double sl    = 0.0;  ///< left  signal speed (kept for the species flux)
+    double sr    = 0.0;  ///< right signal speed
 };
 
 /// Davis/Einfeldt wave-speed estimates with dry-state handling. A dry side has
@@ -315,22 +317,34 @@ OPENSWMM_KERNEL_FN void physicalFlux(const FaceState& S,
 }
 
 /**
- * @brief HLLC (or HLL) flux for the conservative St. Venant system.
+ * @brief Flux for the conservative St. Venant system, plus the contact speed.
  *
- * HLLC is the default because this mesh is intended to carry advected scalars:
- * for U = [A, Q, Aφ] the eigenvalues are u−c, u, u+c and λ = u IS the contact
- * discontinuity that carries the species. HLL averages that wave into the
- * single intermediate state, smearing concentration fronts at a rate set by the
- * scheme rather than by physical dispersion. The contact speed costs one extra
- * algebraic expression, so there is no performance argument for HLL.
+ * @details **The hydrodynamic flux is HLL, and that is not a shortcut — it is
+ *          what HLLC reduces to here.** The system U = [A, Q] is 2x2 with two
+ *          genuinely nonlinear fields and NO middle wave: the contact appears
+ *          only once a third component is carried, U = [A, Q, A(phi)], whose
+ *          eigenvalues are u-c, **u**, u+c. Applying the Euler-style HLLC
+ *          star-state construction to the 2x2 subsystem is inconsistent — the
+ *          resulting momentum flux violates the HLL consistency condition, and
+ *          on a pressurized/part-full interface (a surcharged manhole feeding a
+ *          half-full pipe — the case this solver exists for) it disagrees with
+ *          HLL by more than an order of magnitude and drives the flow backwards.
+ *
+ *          So S* is computed here for its actual job: selecting the upwind side
+ *          for the ADVECTED SCALAR (see speciesFlux). That is exactly the role
+ *          plan §3.2 assigns it — "λ = v IS the contact discontinuity that
+ *          carries the species" — and it is why FV_RIEMANN changes the transport
+ *          answer while leaving the hydraulics identical.
  */
-OPENSWMM_KERNEL_FN FaceFlux riemannFlux(const FaceState& L, const FaceState& R,
-                                        bool hllc) noexcept {
+OPENSWMM_KERNEL_FN FaceFlux riemannFlux(const FaceState& L,
+                                        const FaceState& R) noexcept {
     FaceFlux out;
     if (L.a <= kDryArea && R.a <= kDryArea) return out;
 
     double sl = 0.0, sr = 0.0;
     waveSpeeds(L, R, sl, sr);
+    out.sl = sl;
+    out.sr = sr;
 
     double fal = 0.0, fql = 0.0, far = 0.0, fqr = 0.0;
     physicalFlux(L, fal, fql);
@@ -340,51 +354,54 @@ OPENSWMM_KERNEL_FN FaceFlux riemannFlux(const FaceState& L, const FaceState& R,
     if (sr <= 0.0) { out.mass = far; out.mom = fqr; out.sstar = sr; return out; }
 
     const double dsr = sr - sl;
-    // HLL intermediate state — also the fallback when the contact speed is
-    // indeterminate (both sides vanishing).
-    const double a_hll = (sr * R.a - sl * L.a - (far - fal)) / dsr;
-    const double f_hll_a = (sr * fal - sl * far + sl * sr * (R.a - L.a)) / dsr;
-    const double f_hll_q = (sr * fql - sl * fqr + sl * sr * (R.q - L.q)) / dsr;
+    out.mass = (sr * fal - sl * far + sl * sr * (R.a - L.a)) / dsr;
+    out.mom  = (sr * fql - sl * fqr + sl * sr * (R.q - L.q)) / dsr;
 
+    // Contact speed (plan §3.2). Falls back to the HLL-averaged velocity when
+    // the denominator degenerates, which happens only when both sides are
+    // vanishing — where the species flux is zero anyway.
     const double den = R.a * (R.u - sr) - L.a * (L.u - sl);
-    double sstar;
     if (std::fabs(den) > 1.0e-14) {
-        sstar = (sl * R.a * (R.u - sr) - sr * L.a * (L.u - sl)) / den;
+        out.sstar = (sl * R.a * (R.u - sr) - sr * L.a * (L.u - sl)) / den;
     } else {
-        sstar = (a_hll > kDryArea) ? f_hll_a / a_hll : 0.0;
-    }
-    out.sstar = sstar;
-
-    if (!hllc) { out.mass = f_hll_a; out.mom = f_hll_q; return out; }
-
-    // HLLC: restore the contact wave. The star states carry the same mass flux
-    // as HLL by construction, so the species flux built on out.mass is
-    // automatically consistent with the water it rides on.
-    if (sstar >= 0.0) {
-        const double fac = L.a * (sl - L.u) / (sl - sstar);
-        out.mass = fal + sl * (fac - L.a);
-        out.mom  = fql + sl * (fac * sstar - L.q);
-    } else {
-        const double fac = R.a * (sr - R.u) / (sr - sstar);
-        out.mass = far + sr * (fac - R.a);
-        out.mom  = fqr + sr * (fac * sstar - R.q);
+        const double a_hll = (sr * R.a - sl * L.a - (far - fal)) / dsr;
+        out.sstar = (a_hll > kDryArea) ? out.mass / a_hll : 0.0;
     }
     return out;
 }
 
 /**
- * @brief Species flux — the SAME mass flux the hydrodynamic update used,
- *        upwinded on the sign of the contact speed.
+ * @brief Species flux for the A(phi) component.
  *
- * Flux consistency is a hard requirement, not a detail: computing this from a
- * separately-evaluated velocity decouples solute mass from water mass and
- * produces spurious extrema and non-conservation. Reusing @p mass_flux
- * guarantees exact solute conservation, a discrete maximum principle, and that
- * a uniform concentration field stays uniform under any flow (plan §3.2).
+ * @details HLLC upwinds on the sign of the contact speed and multiplies by the
+ *          SAME mass flux the water used. Flux consistency is a hard
+ *          requirement, not a detail: computing this from a separately-evaluated
+ *          velocity — the usual trap when transport is bolted onto a hydraulic
+ *          solver — decouples solute mass from water mass and produces spurious
+ *          extrema and non-conservation. Reusing the mass flux guarantees exact
+ *          solute conservation, a discrete maximum principle, and that a uniform
+ *          field stays uniform under any flow (plan §3.2).
+ *
+ *          HLL instead averages the whole fan into one intermediate state,
+ *          smearing precisely the wave that carries the species. It still
+ *          preserves a uniform field (the average is linear in phi when phi is
+ *          constant), so it is a legitimate baseline — just a diffusive one.
+ *          The §6.11(d) front-width comparison separates this layer's
+ *          contribution from the reconstruction's.
  */
-OPENSWMM_KERNEL_FN double speciesFlux(double mass_flux, double sstar,
-                                      double phi_l, double phi_r) noexcept {
-    return mass_flux * ((sstar >= 0.0) ? phi_l : phi_r);
+OPENSWMM_KERNEL_FN double speciesFlux(const FaceState& L, const FaceState& R,
+                                      const FaceFlux& f, double phi_l,
+                                      double phi_r, bool hllc) noexcept {
+    if (hllc) return f.mass * ((f.sstar >= 0.0) ? phi_l : phi_r);
+
+    // HLL on the A(phi) component, with the same supersonic branches as the
+    // hydrodynamic flux so the two can never disagree about which side is
+    // upstream of the whole fan.
+    if (f.sl >= 0.0) return L.q * phi_l;
+    if (f.sr <= 0.0) return R.q * phi_r;
+    const double dsr = f.sr - f.sl;
+    return (f.sr * L.q * phi_l - f.sl * R.q * phi_r +
+            f.sl * f.sr * (R.a * phi_r - L.a * phi_l)) / dsr;
 }
 
 // ===========================================================================
