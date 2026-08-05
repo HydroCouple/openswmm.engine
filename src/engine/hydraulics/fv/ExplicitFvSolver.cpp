@@ -84,6 +84,8 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     cell_q_int_.assign(nc, 0.0);
 
     node_exch_.assign(nn, 0.0);
+    node_in_.assign(nn, 0.0);
+    node_out_.assign(nn, 0.0);
     flood_vol_.assign(nn, 0.0);
 
     cell_active_.assign(nc, 1);
@@ -232,27 +234,22 @@ void ExplicitFvSolver::refreshNodeAreas() {
             continue;
         }
 
-        // Junction: SWMM's own convention — half the length of every connected
-        // conduit times its current top width — held CONSTANT across the
-        // substeps of one routing step. Holding it fixed is what makes the
-        // node's volume ledger exactly conservative within the step; letting it
-        // drift substep-to-substep would inject head noise for no accuracy gain.
-        double area = 0.0;
-        const int b = mesh_->node_face_ptr[un];
-        const int e = mesh_->node_face_ptr[un + 1];
-        for (int p = b; p < e; ++p) {
-            const int f = mesh_->node_face_idx[static_cast<std::size_t>(p)];
-            const auto uf = static_cast<std::size_t>(f);
-            const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                       : mesh_->face_cr[uf];
-            if (cell < 0) continue;
-            const auto uc = static_cast<std::size_t>(cell);
-            const FvGeometry& g =
-                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-            const double w = k::widthOfDepth(g, state_->cell_h[uc]);
-            area += 0.5 * mesh_->cell_dx[uc] * w * static_cast<double>(g.barrels);
-        }
-        state_->node_surf_area[un] = std::max(area, constants::MIN_SURFAREA);
+        // Junction / outfall / divider: the ENGINE's own storage convention,
+        // fixed for the run (NetworkMeshData::node_area). Two properties fall
+        // out, and both are load-bearing:
+        //
+        //   * V = A_s*depth is a genuine state relation because A_s is
+        //     constant, so re-seeding the ledger from the head between routing
+        //     steps is exact instead of creating (A_s_new - A_s_old)*depth of
+        //     water out of nothing;
+        //   * the volume the solver holds is the SAME function of depth the
+        //     mass balance reports, so no water is stored where continuity
+        //     cannot see it.
+        //
+        // Tracking the live conduit top width instead — DW's convention, and
+        // the obvious first guess — violates both, and cost ~0.3 % of routing
+        // continuity on Example1.
+        state_->node_surf_area[un] = mesh_->node_area[un];
     }
 }
 
@@ -1051,6 +1048,13 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
                          f_mass_[static_cast<std::size_t>(mesh_->node_face_idx[up])];
         }
         node_exch_[un] += sum_faces * dt;
+        for (int p2 = b; p2 < e; ++p2) {
+            const auto up2 = static_cast<std::size_t>(p2);
+            const double q = mesh_->node_face_sign[up2] *
+                f_mass_[static_cast<std::size_t>(mesh_->node_face_idx[up2])];
+            if (q > 0.0) node_in_[un]  += q * dt;
+            else         node_out_[un] -= q * dt;
+        }
 
         if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un])) {
             // Stage boundary (outfalls, tide/time-series). The head is imposed;
@@ -1168,6 +1172,8 @@ void ExplicitFvSolver::saveState() {
     save_node_vol_  = state_->node_volume;
     save_node_head_ = state_->node_head;
     save_exch_      = node_exch_;
+    save_in_        = node_in_;
+    save_out_       = node_out_;
     save_flood_     = flood_vol_;
     save_qint_      = cell_q_int_;
 }
@@ -1179,6 +1185,8 @@ void ExplicitFvSolver::restoreState() {
     state_->node_volume = save_node_vol_;
     state_->node_head   = save_node_head_;
     node_exch_          = save_exch_;
+    node_in_            = save_in_;
+    node_out_           = save_out_;
     flood_vol_          = save_flood_;
     cell_q_int_         = save_qint_;
     refreshDepths();               // cell_h / eta / u are derived
@@ -1194,15 +1202,16 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
 
     // Per-routing-step bookkeeping.
     std::fill(node_exch_.begin(), node_exch_.end(), 0.0);
+    std::fill(node_in_.begin(), node_in_.end(), 0.0);
+    std::fill(node_out_.begin(), node_out_.end(), 0.0);
     std::fill(flood_vol_.begin(), flood_vol_.end(), 0.0);
     std::fill(cell_q_int_.begin(), cell_q_int_.end(), 0.0);
 
     refreshDepths();
-    refreshNodeAreas();
-    // Re-seed the node volume ledger from the head the engine currently holds.
-    // Between routing steps the junction surface area moves (and a storage node
-    // may have been edited through the API), and the ledger must follow the
-    // head, not the reverse.
+    // Re-seed the node volume ledger from the head the engine currently holds,
+    // so external edits (API writes, hot start, an outfall stage) take effect.
+    // With the junction area fixed at init this is EXACT — it reproduces the
+    // volume the previous step ended with rather than perturbing it.
     for (int n = 0; n < mesh_->n_nodes(); ++n) {
         const auto un = static_cast<std::size_t>(n);
         if (mesh_->node_kind[un] == kNodeVirtual) continue;

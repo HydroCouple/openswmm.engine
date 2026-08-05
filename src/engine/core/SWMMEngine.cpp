@@ -3008,7 +3008,8 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             // DW: capacityLimited = (a1 >= aFull) && (HGL slope > bed slope)
             if (up_full) {
                 bool cap_ltd = true;
-                if (ctx_.options.routing_model == RoutingModel::DYNWAVE &&
+                if ((ctx_.options.routing_model == RoutingModel::DYNWAVE ||
+                     ctx_.options.routing_model == RoutingModel::FV) &&
                     n1 >= 0 && n2 >= 0) {
                     double h1h = ctx_.nodes.head[static_cast<std::size_t>(n1)];
                     double h2h = ctx_.nodes.head[static_cast<std::size_t>(n2)];
@@ -3174,7 +3175,10 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     // Critical: under DYNWAVE, degree==0 non-STORAGE nodes are NOT terminal —
     // they fall into the "interior" branch and only contribute system flow
     // when overflow is positive AND newVolume <= fullVolume.
-    const bool is_dw = (ctx_.options.routing_model == RoutingModel::DYNWAVE);
+    // ==DYNWAVE audit: FV also gives every node a head and a volume, so
+    // degree==0 non-STORAGE nodes are interior under FV exactly as under DW.
+    const bool is_dw = (ctx_.options.routing_model == RoutingModel::DYNWAVE ||
+                        ctx_.options.routing_model == RoutingModel::FV);
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         const NodeType nt = ctx_.nodes.type[uj];
@@ -4506,6 +4510,7 @@ void SWMMEngine::initHydraulics() noexcept {
     RouteModel rm = RouteModel::DYNWAVE;
     if (ctx_.options.routing_model == RoutingModel::KINWAVE) rm = RouteModel::KINWAVE;
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
+    else if (ctx_.options.routing_model == RoutingModel::FV) rm = RouteModel::FV;
     router_.init(ctx_, rm);
 
     // Relational node refactor — Phase 4 (authoritative): the storage/outfall/
@@ -4551,8 +4556,9 @@ void SWMMEngine::initHydraulics() noexcept {
             ctx_.errors.push_back(format_error(ERR_NO_OUTLETS, ""));
             set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
         }
-        // Gap #84a: adverse slope only errors for non-DW routing
-        if (rm != RouteModel::DYNWAVE) {
+        // Gap #84a: adverse slope only errors for non-DW routing. FV joins DW
+        // here — a conservative scheme resolves an adverse slope natively.
+        if (rm != RouteModel::DYNWAVE && rm != RouteModel::FV) {
             for (int j = 0; j < n_ll; ++j) {
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
@@ -4653,7 +4659,7 @@ void SWMMEngine::initHydraulics() noexcept {
     // MinRouteStep = min(MinRouteStep, RouteStep) then >= MINTIMESTEP.
     {
         double hist_min_step = ctx_.options.min_routing_step;
-        if (rm == RouteModel::DYNWAVE) {
+        if (rm == RouteModel::DYNWAVE || rm == RouteModel::FV) {
             hist_min_step = std::max(
                 std::min(hist_min_step, ctx_.options.routing_step),
                 constants::MIN_TIMESTEP);

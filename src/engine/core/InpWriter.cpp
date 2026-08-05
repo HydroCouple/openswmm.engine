@@ -605,7 +605,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     static const char* sFlowUnits[]  = {"CFS","GPM","MGD","CMS","LPS","MLD"};
     static const char* sInfilt[]     = {"HORTON","MODIFIED_HORTON","GREEN_AMPT","MODIFIED_GREEN_AMPT","CURVE_NUMBER"};
-    static const char* sRouting[]    = {"STEADY","KINWAVE","DYNWAVE"};
+    static const char* sRouting[]    = {"STEADY","KINWAVE","DYNWAVE","FV"};
     static const char* sInertial[]   = {"NONE","PARTIAL","FULL"};
     static const char* sNormFlow[]   = {"SLOPE","FROUDE","BOTH","NEITHER"};
     static const char* sSurcharge[]  = {"EXTRAN","SLOT","DYNAMIC_SLOT"};
@@ -621,7 +621,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // --- Group 1: Core process options (FLOW_UNITS .. SKIP_STEADY_STATE) ---
     std::fprintf(f,"%-20s %s\n",  "FLOW_UNITS",       (fu>=0&&fu<=5)?sFlowUnits[fu]:"CFS");
     std::fprintf(f,"%-20s %s\n",  "INFILTRATION",     (inf>=0&&inf<=4)?sInfilt[inf]:"HORTON");
-    std::fprintf(f,"%-20s %s\n",  "FLOW_ROUTING",     (rm>=0&&rm<=2)?sRouting[rm]:"DYNWAVE");
+    std::fprintf(f,"%-20s %s\n",  "FLOW_ROUTING",     (rm>=0&&rm<=3)?sRouting[rm]:"DYNWAVE");
     std::fprintf(f,"%-20s %s\n",  "LINK_OFFSETS",     o.link_offsets==1?"ELEVATION":"DEPTH");
     std::fprintf(f,"%-20s %g\n",  "MIN_SLOPE",        o.min_slope);
     std::fprintf(f,"%-20s %s\n",  "ALLOW_PONDING",    o.allow_ponding?"YES":"NO");
@@ -703,6 +703,38 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
     if (o.virtual_junction_momentum == 1)
         std::fprintf(f,"%-20s %s\n",  "VIRTUAL_JUNCTION_MOMENTUM", "FULL");
+
+    // Explicit finite-volume solver knobs. Emitted only under FLOW_ROUTING FV
+    // so a DW model's [OPTIONS] block stays legacy-clean; the keys are inert
+    // under other routing models, so a round-trip that changes FLOW_ROUTING
+    // does not lose a user's FV configuration mid-session — it is simply not
+    // written until FV is selected again.
+    if (o.routing_model == RoutingModel::FV) {
+        static const char* sRiemann[] = {"HLL","HLLC"};
+        static const char* sLimiter[] = {"MINMOD","VANLEER","SUPERBEE"};
+        static const char* sScalar[]  = {"UPWIND","MUSCL","QUICKEST_ULTIMATE"};
+        static const char* sTime[]    = {"EULER","RK2"};
+        static const char* sBackend[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
+        const auto& fvo = o.fv;
+        std::fprintf(f,"%-20s %g\n", "FV_CELL_LENGTH",  fvo.cell_length);
+        std::fprintf(f,"%-20s %d\n", "FV_MIN_CELLS",    fvo.min_cells);
+        std::fprintf(f,"%-20s %g\n", "FV_CFL",          fvo.cfl);
+        std::fprintf(f,"%-20s %s\n", "FV_RIEMANN",      sRiemann[static_cast<int>(fvo.riemann)]);
+        std::fprintf(f,"%-20s %d\n", "FV_ORDER",        fvo.order);
+        std::fprintf(f,"%-20s %s\n", "FV_LIMITER",      sLimiter[static_cast<int>(fvo.limiter)]);
+        std::fprintf(f,"%-20s %s\n", "FV_SCALAR_SCHEME",sScalar[static_cast<int>(fvo.scalar_scheme)]);
+        std::fprintf(f,"%-20s %s\n", "FV_TIME_INTEGRATION",
+                     sTime[static_cast<int>(fvo.time_integration)]);
+        std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
+        if (fvo.dispersion > 0.0)
+            std::fprintf(f,"%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
+        if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
+            std::fprintf(f,"%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
+        if (!fvo.compaction)
+            std::fprintf(f,"%-20s %s\n", "FV_COMPACTION", "NO");
+        std::fprintf(f,"%-20s %s\n", "FV_BACKEND",      sBackend[static_cast<int>(fvo.backend)]);
+        std::fprintf(f,"%-20s %ld\n","FV_MIN_PARALLEL_CELLS", fvo.min_parallel_cells);
+    }
     if (!o.crs.empty())
         std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());
     if (o.write_absolute_paths)

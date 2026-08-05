@@ -125,6 +125,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     mesh.node_full_depth.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_ponded_area.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_kind.resize(static_cast<std::size_t>(n_nodes));
+    mesh.node_area.assign(static_cast<std::size_t>(n_nodes),
+                          constants::MIN_SURFAREA);
     for (int i = 0; i < n_nodes; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         mesh.node_invert[ui]      = ctx.nodes.invert_elev[ui];
@@ -136,6 +138,14 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         else if (ctx.nodes.type[ui] == NodeType::STORAGE) kind = kNodeStorage;
         else if (ctx.nodes.type[ui] == NodeType::OUTFALL) kind = kNodeOutfall;
         mesh.node_kind[ui] = kind;
+
+        // Match node::getVolume's JUNCTION branch exactly: V = full_volume *
+        // depth / full_depth, with full_volume defaulting to MIN_SURFAREA *
+        // full_depth. Storage nodes use their real curve instead (below).
+        const double fd = ctx.nodes.full_depth[ui];
+        const double fvol = ctx.nodes.full_volume[ui];
+        mesh.node_area[ui] =
+            (fd > 0.0 && fvol > 0.0) ? fvol / fd : constants::MIN_SURFAREA;
     }
 
     // Flatten STORAGE geometry into a monotone depth→volume table so the solver

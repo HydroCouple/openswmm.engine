@@ -230,6 +230,15 @@ struct NetworkMeshData {
     /// spliced into interior faces and it owns none), 2 storage, 3 outfall.
     std::vector<uint8_t> node_kind;
 
+    /// Storage area of a NON-storage node (junction / outfall / divider), fixed
+    /// for the run. This is deliberately the ENGINE's own convention —
+    /// full_volume/full_depth, i.e. MIN_SURFAREA unless a pump wet well
+    /// overrode it (node::getVolume's JUNCTION branch) — so the solver's volume
+    /// ledger and the volume the engine reports for the same depth are the SAME
+    /// function. Any other choice makes the solver hold water the mass balance
+    /// cannot see, which shows up directly as routing continuity error.
+    std::vector<double> node_area;
+
     // -- Tabulated storage relation (STORAGE nodes only) ---------------------
     //
     // The solver must invert volume → depth every substep, and it must do so
@@ -278,6 +287,7 @@ struct NetworkMeshData {
         node_face_sign.clear(); node_face_zb.clear();
         node_invert.clear(); node_full_depth.clear(); node_ponded_area.clear();
         node_kind.clear();
+        node_area.clear();
         node_vol_off.clear(); node_vol_dmax.clear();
         node_vol_atop.clear(); node_vol_tbl.clear();
         geom.clear();

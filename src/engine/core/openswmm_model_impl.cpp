@@ -664,6 +664,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
             case openswmm::RoutingModel::STEADY:  val = "STEADY";  break;
             case openswmm::RoutingModel::KINWAVE: val = "KINWAVE"; break;
             case openswmm::RoutingModel::DYNWAVE: val = "DYNWAVE"; break;
+            case openswmm::RoutingModel::FV:      val = "FV"; break;
         }
     }
     else if (k == "LINK_OFFSETS")  val = (opt.link_offsets == 1) ? "ELEVATION" : "DEPTH";
@@ -895,6 +896,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         std::string vu(v);
         for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
         if      (vu == "DYNWAVE")  opt.routing_model = openswmm::RoutingModel::DYNWAVE;
+        else if (vu == "FV")       opt.routing_model = openswmm::RoutingModel::FV;
         else if (vu == "KINWAVE")  opt.routing_model = openswmm::RoutingModel::KINWAVE;
         else if (vu == "STEADY")   opt.routing_model = openswmm::RoutingModel::STEADY;
         else return SWMM_ERR_BADPARAM;
