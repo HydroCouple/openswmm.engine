@@ -78,6 +78,9 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     f_flux_.assign(nf, k::FaceFlux{});
     hllc_ = (opts.riemann == RiemannSolver::HLLC);
     cell_slope_.assign(nc, 0.0);
+    cell_eta_slope_.assign(nc, 0.0);
+    cell_u_slope_.assign(nc, 0.0);
+    cell_ho2_.assign(nc, 0);
 
     cell_eta_.assign(nc, 0.0);
     cell_u_.assign(nc, 0.0);
@@ -734,22 +737,156 @@ kernels::FaceFlux ExplicitFvSolver::adjustedFlux(int face) const {
 }
 
 // ===========================================================================
+// Second-order state reconstruction (FV_ORDER 2)
+// ===========================================================================
+
+/**
+ * @brief Limited linear slopes of the free surface and velocity per cell.
+ *
+ * @details MUSCL on (η, u) rather than on (A, Q). Two reasons, both structural:
+ *
+ *   * **Well-balancedness survives.** A lake at rest has η constant, so every
+ *     slope is exactly zero and the second-order scheme degenerates to the
+ *     first-order one — which §6.1 already proves is exact. Reconstructing A or
+ *     h instead would give every cell on a sloping bed a non-zero slope at
+ *     rest, and lake-at-rest would hold only to truncation error.
+ *   * **The bed is not limited.** It is linear within a conduit, so its
+ *     gradient is exact (`cell_dzdx`); depth at a face is then the difference
+ *     of two separately reconstructed quantities, η and z, which is what keeps
+ *     the two consistent.
+ *
+ * The companion piece is the centred bed source added in updateCells: at second
+ * order the two faces of a cell see DIFFERENT reconstructed depths, so the
+ * hydrostatic flux difference no longer vanishes at rest on its own.
+ */
+void ExplicitFvSolver::reconstructState() {
+    const int nc = mesh_->n_cells();
+    if (opts_.order < 2) {
+        std::fill(cell_eta_slope_.begin(), cell_eta_slope_.end(), 0.0);
+        std::fill(cell_u_slope_.begin(), cell_u_slope_.end(), 0.0);
+        std::fill(cell_ho2_.begin(), cell_ho2_.end(), char{0});
+        return;
+    }
+
+    // Admissibility. Linear reconstruction is only meaningful where the cell is
+    // small compared with the scales it is reconstructing. The binding one here
+    // is the BED: a cell whose ends differ in elevation by an appreciable
+    // fraction of the water depth cannot carry a linear free surface across
+    // itself, and extrapolating the bed to its faces gives a negative depth
+    // upstream. Measured on a 6000 ft conduit meshed as ONE cell (COARSE mode,
+    // 12 ft fall, ~2 ft deep): unguarded second order drove the steady
+    // discharge from 300 cfs to 0. Cells that fail the test fall back to the
+    // first-order path, which is exactly what the flag gates.
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        const double h = state_->cell_h[uc];
+        const double fall = std::fabs(mesh_->cell_dzdx[uc]) * mesh_->cell_dx[uc];
+        cell_ho2_[uc] = (h > k::kDryDepth && fall < 0.5 * h) ? char{1} : char{0};
+    }
+
+    for (int ch = 0; ch < mesh_->n_chains(); ++ch) {
+        const int b = mesh_->chain_ptr[static_cast<std::size_t>(ch)];
+        const int e = mesh_->chain_ptr[static_cast<std::size_t>(ch) + 1];
+        for (int i = b; i < e; ++i) {
+            const int c = mesh_->chain_cells[static_cast<std::size_t>(i)];
+            const auto uc = static_cast<std::size_t>(c);
+            if (i == b || i == e - 1 || !cell_active_[uc] || !cell_ho2_[uc]) {
+                cell_eta_slope_[uc] = 0.0;
+                cell_u_slope_[uc]   = 0.0;
+                continue;
+            }
+            const int cm = mesh_->chain_cells[static_cast<std::size_t>(i - 1)];
+            const int cp = mesh_->chain_cells[static_cast<std::size_t>(i + 1)];
+            const auto um = static_cast<std::size_t>(cm);
+            const auto up = static_cast<std::size_t>(cp);
+            // A dry neighbour carries no usable state; falling back to first
+            // order at the wet/dry front is what keeps the front positive.
+            if (state_->cell_h[um] <= k::kDryDepth ||
+                state_->cell_h[up] <= k::kDryDepth ||
+                state_->cell_h[uc] <= k::kDryDepth) {
+                cell_eta_slope_[uc] = 0.0;
+                cell_u_slope_[uc]   = 0.0;
+                continue;
+            }
+            const double dm = 0.5 * (mesh_->cell_dx[um] + mesh_->cell_dx[uc]);
+            const double dp = 0.5 * (mesh_->cell_dx[uc] + mesh_->cell_dx[up]);
+            const double dirc =
+                static_cast<double>(mesh_->chain_dir[static_cast<std::size_t>(i)]);
+            const double dirm =
+                static_cast<double>(mesh_->chain_dir[static_cast<std::size_t>(i - 1)]);
+            const double dirp =
+                static_cast<double>(mesh_->chain_dir[static_cast<std::size_t>(i + 1)]);
+
+            // Deadband on the free-surface difference. eta is reconstructed
+            // from the stored area, so a lake at rest carries ulp-level noise
+            // in eta; without this the limiter turns that noise into a real
+            // slope (superbee doubles it), the momentum equation integrates the
+            // resulting face imbalance, and machine-precision lake-at-rest
+            // decays over a long run. Same reasoning — and the same 1e-12 ft
+            // threshold — as the 2D marcher's kEtaDeadband.
+            const double d_eta_m = cell_eta_[uc] - cell_eta_[um];
+            const double d_eta_p = cell_eta_[up] - cell_eta_[uc];
+            if (std::fabs(d_eta_m) < k::kEtaDeadband &&
+                std::fabs(d_eta_p) < k::kEtaDeadband) {
+                cell_eta_slope_[uc] = 0.0;
+            } else {
+                cell_eta_slope_[uc] =
+                    limitSlope(d_eta_m / dm, d_eta_p / dp, opts_.limiter) * dirc;
+            }
+
+            // u is ODD under an axis flip, so neighbours are brought into this
+            // cell's frame before differencing.
+            const double um_axis = cell_u_[um] * dirm * dirc;
+            const double up_axis = cell_u_[up] * dirp * dirc;
+            const double gm_u = (cell_u_[uc] - um_axis) / dm;
+            const double gp_u = (up_axis - cell_u_[uc]) / dp;
+            cell_u_slope_[uc] = limitSlope(gm_u, gp_u, opts_.limiter);
+        }
+    }
+}
+
+// ===========================================================================
 // Face reconstruction + flux
 // ===========================================================================
 
 void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
                                 int dir, double u_interior,
-                                k::FaceState& out, double& i1_raw) const {
+                                k::FaceState& out, double& i1_raw,
+                                double& z_side, bool measure_only) const {
     const auto uf = static_cast<std::size_t>(face);
     const FvGeometry* g = nullptr;
     double eta = 0.0, h_raw = 0.0, u = 0.0;
+    z_side = 0.0;
 
     if (cell >= 0) {
         const auto uc = static_cast<std::size_t>(cell);
         g     = &mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-        eta   = cell_eta_[uc];
-        h_raw = state_->cell_h[uc];
-        u     = static_cast<double>(dir) * cell_u_[uc];
+        if (opts_.order < 2 || !cell_ho2_[uc]) {
+            // First order: the cell-centred state, taken from the stored depth
+            // rather than recomputed as eta - z_b. Those differ by an ulp, and
+            // lake-at-rest is asserted at machine precision — recomputing it
+            // here is enough to break §6.1.
+            eta    = cell_eta_[uc];
+            h_raw  = state_->cell_h[uc];
+            u      = static_cast<double>(dir) * cell_u_[uc];
+            z_side = mesh_->cell_zb[uc];
+        } else {
+            // Extrapolate to the face along the cell's own axis. `half` is
+            // signed: positive toward the cell's downstream end. The BED is
+            // extrapolated with its exact gradient and the free surface with
+            // its limited one, and the depth is their difference — which is
+            // what keeps a lake at rest exactly balanced (zero eta slope leaves
+            // h varying with the bed alone, as it must).
+            const bool is_left = (mesh_->face_cl[uf] == cell);
+            const double sgn = is_left ? static_cast<double>(mesh_->face_dir_l[uf])
+                                       : -static_cast<double>(mesh_->face_dir_r[uf]);
+            const double half = sgn * 0.5 * mesh_->cell_dx[uc];
+            z_side = mesh_->cell_zb[uc] + mesh_->cell_dzdx[uc] * half;
+            eta    = cell_eta_[uc] + cell_eta_slope_[uc] * half;
+            h_raw  = std::max(0.0, eta - z_side);
+            u      = static_cast<double>(dir) *
+                     (cell_u_[uc] + cell_u_slope_[uc] * half);
+        }
     } else {
         const int other = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
                                                     : mesh_->face_cr[uf];
@@ -773,10 +910,12 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
             h_raw = state_->cell_h[uo];
             u     = -u_interior;
         }
+        z_side = mesh_->face_zb[uf];
     }
 
     i1_raw = (h_raw > k::kDryDepth)
                  ? k::i1OfDepth(*g, h_raw, k::areaOfDepth(*g, h_raw)) : 0.0;
+    if (measure_only) { out = k::FaceState{}; return; }
 
     const double h_star = std::max(0.0, eta - zstar);
     if (h_star <= k::kDryDepth) {
@@ -803,10 +942,15 @@ void ExplicitFvSolver::computeFluxes() {
         const int cr = mesh_->face_cr[uf];
         const int nd = mesh_->face_node[uf];
 
-        const double zl = (cl >= 0) ? mesh_->cell_zb[static_cast<std::size_t>(cl)]
-                                    : mesh_->face_zb[uf];
-        const double zr = (cr >= 0) ? mesh_->cell_zb[static_cast<std::size_t>(cr)]
-                                    : mesh_->face_zb[uf];
+        // Pass 1: resolve each side's reconstructed bed, so the hydrostatic
+        // z* = max(z_L, z_R) is built from the values the flux will actually
+        // use. At first order these are the cell-centred beds and this is a
+        // no-op; at second order taking z* from the cell CENTRES instead would
+        // reintroduce the very imbalance the reconstruction removes.
+        k::FaceState probe;
+        double zl = 0.0, zr = 0.0, i1probe = 0.0;
+        faceSide(f, cl, nd, 0.0, mesh_->face_dir_l[uf], 0.0, probe, i1probe, zl, true);
+        faceSide(f, cr, nd, 0.0, mesh_->face_dir_r[uf], 0.0, probe, i1probe, zr, true);
         const double zstar = std::max(zl, zr);
 
         // The ghost inherits the interior cell's velocity, expressed in the
@@ -820,9 +964,9 @@ void ExplicitFvSolver::computeFluxes() {
                 : 0.0;
 
         k::FaceState L, R;
-        double i1l = 0.0, i1r = 0.0;
-        faceSide(f, cl, nd, zstar, mesh_->face_dir_l[uf], u_int, L, i1l);
-        faceSide(f, cr, nd, zstar, mesh_->face_dir_r[uf], u_int, R, i1r);
+        double i1l = 0.0, i1r = 0.0, zdummy = 0.0;
+        faceSide(f, cl, nd, zstar, mesh_->face_dir_l[uf], u_int, L, i1l, zdummy, false);
+        faceSide(f, cr, nd, zstar, mesh_->face_dir_r[uf], u_int, R, i1r, zdummy, false);
 
         const k::FaceFlux fl = k::riemannFlux(L, R);
         f_mass_[uf]  = fl.mass;
@@ -946,6 +1090,39 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
             // conduit's upstream end, hence the entrance loss.
             if (mesh_->face_node[uf] >= 0)
                 k_loss += (mesh_->face_cl[uf] < 0) ? g.loss_inlet : g.loss_outlet;
+        }
+
+        // Second-order centred bed source. At first order the two faces of a
+        // cell see the same reconstructed depth and this is exactly zero; at
+        // second order they do not, so the hydrostatic flux difference no
+        // longer cancels at rest on its own and this term is what restores the
+        // C-property (Audusse & Bristeau 2005). Assembled from I₁ at each
+        // face's own-cell reconstructed depth, picking the face at the cell's
+        // DOWNSTREAM end as the "+" side.
+        if (opts_.order >= 2 && cell_ho2_[uc]) {
+            // Centred bed source. At second order the two ends of a cell see
+            // different reconstructed depths, so the hydrostatic flux
+            // difference no longer cancels at rest by itself.
+            //
+            // The term is the BED's contribution alone: I₁ evaluated at the two
+            // end beds holding the cell's OWN free surface fixed. That is what
+            // makes it satisfy both requirements simultaneously —
+            //   * flat bed  ⇒ z⁺ = z⁻ ⇒ exactly zero, so it cannot pollute a
+            //     dam break (using the reconstructed depths instead adds a
+            //     spurious source wherever the SURFACE has a slope, which
+            //     measurably wrecked the Ritter profile: L1 0.030 → 0.401);
+            //   * lake at rest ⇒ the reconstructed depths ARE η − z^±, so it
+            //     cancels the flux difference exactly rather than to O(Δx³) as
+            //     the conventional −g·Ā·Δz form does.
+            const double half = 0.5 * mesh_->cell_dx[uc];
+            const double zp = mesh_->cell_zb[uc] + mesh_->cell_dzdx[uc] * half;
+            const double zm = mesh_->cell_zb[uc] - mesh_->cell_dzdx[uc] * half;
+            const double eta_c = cell_eta_[uc];
+            const double hp = std::max(0.0, eta_c - zp);
+            const double hm = std::max(0.0, eta_c - zm);
+            const double i1p = (hp > 0.0) ? k::i1OfDepth(g, hp, k::areaOfDepth(g, hp)) : 0.0;
+            const double i1m = (hm > 0.0) ? k::i1OfDepth(g, hm, k::areaOfDepth(g, hm)) : 0.0;
+            dQ += k::kGravity * (i1p - i1m);
         }
 
         const double a_old = state_->cell_a[uc];
@@ -1248,6 +1425,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // what keeps compaction transparency (§6.10) intact.
         for (int attempt = 0;; ++attempt) {
             saveState();
+            reconstructState();
             computeFluxes();
             limitPositivity(dt);
             reconstructScalars(dt);   // AFTER limiting: the species must ride on

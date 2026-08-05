@@ -119,6 +119,14 @@ struct NetworkMeshData {
     std::vector<double> cell_dx;      ///< cell length (ft)
     std::vector<double> cell_zb;      ///< bed elevation at cell centre (ft)
 
+    /// dz/dx along the cell's OWN axis. The bed is linear within a conduit, so
+    /// this is exact rather than reconstructed — which matters, because the
+    /// second-order scheme reconstructs the free surface and the bed
+    /// SEPARATELY and their difference is the depth it hands the Riemann
+    /// solver. A limited bed slope would make lake-at-rest only approximately
+    /// well balanced.
+    std::vector<double> cell_dzdx;
+
     /// The two faces bounding each cell, with the side the cell occupies on
     /// each (0 = left, 1 = right). A 1D cell has exactly two, so this replaces
     /// a CSR: the cell update becomes a fixed-width GATHER with no atomics and
@@ -274,6 +282,7 @@ struct NetworkMeshData {
 
     void clear() {
         cell_geom.clear(); cell_conduit.clear(); cell_dx.clear(); cell_zb.clear();
+        cell_dzdx.clear();
         cell_face0.clear(); cell_face1.clear();
         cell_side0.clear(); cell_side1.clear();
         face_cl.clear(); face_cr.clear(); face_node.clear();

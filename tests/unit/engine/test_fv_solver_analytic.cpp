@@ -175,6 +175,80 @@ TEST(FvAnalytic, LakeAtRestWhilePressurized) {
     }
 }
 
+TEST(FvAnalytic, SecondOrderStaysWellBalanced) {
+    // The gate that decides whether FV_ORDER 2 is usable at all. A MUSCL scheme
+    // that reconstructs depth instead of the free surface — the obvious first
+    // implementation — gives every cell on a sloping bed a non-zero slope at
+    // rest, and lake-at-rest degrades from machine precision to truncation
+    // error. Reconstructing eta with the bed taken from its exact per-cell
+    // gradient, plus the centred bed source, is what keeps it exact.
+    auto bed = [](double x) {
+        if (x < 200.0) return 10.0 - 0.02 * x;
+        if (x < 400.0) return 6.0 + 0.03 * (x - 200.0) +
+                              1.5 * std::exp(-std::pow((x - 300.0) / 30.0, 2));
+        return 12.0 - 0.01 * (x - 400.0);
+    };
+    for (Limiter lim : {Limiter::MINMOD, Limiter::VANLEER, Limiter::SUPERBEE}) {
+        Channel ch = makeWalledChannel(rectOpen(20.0, 30.0), 200, 3.0, bed, 0.015);
+        const double eta = 14.0;
+        seedLevel(ch, eta);
+        FvOptions o = defaultOptions();
+        o.order = 2;
+        o.limiter = lim;
+        run(ch, o, 600.0, 60.0);
+        for (int i = 0; i < ch.n; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            if (ch.state.cell_h[ui] <= k::kDryDepth) continue;
+            ASSERT_NEAR(ch.mesh.cell_zb[ui] + ch.state.cell_h[ui], eta, 1.0e-9)
+                << "second order broke lake-at-rest at cell " << i
+                << ", limiter " << static_cast<int>(lim);
+            ASSERT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9)
+                << "second order produced spurious flow at cell " << i;
+        }
+    }
+}
+
+TEST(FvAnalytic, SecondOrderSharpensTheDamBreakFront) {
+    // Consistency check on the accuracy the second-order path is there to buy:
+    // the same Ritter problem must come out closer to the analytic solution.
+    const double h0 = 10.0, L = 2000.0, x0 = 1000.0;
+    const int n = 200;                                  // deliberately coarse
+    const double dx = L / n;
+    const double t_end = 20.0;
+
+    auto errorAtOrder = [&](int order) {
+        Channel ch = makeWalledChannel(rectOpen(50.0, 40.0), n, dx,
+                                       [](double) { return 0.0; }, 0.0);
+        for (int i = 0; i < n; ++i) {
+            const double x = (static_cast<double>(i) + 0.5) * dx;
+            ch.state.cell_a[static_cast<std::size_t>(i)] = 50.0 * ((x < x0) ? h0 : 0.0);
+        }
+        FvOptions o = defaultOptions();
+        o.order = order;
+        run(ch, o, t_end, 1.0);
+        double l1 = 0.0, ref = 0.0;
+        const double c0 = std::sqrt(kG * h0);
+        for (int i = 0; i < n; ++i) {
+            const double x = (static_cast<double>(i) + 0.5) * dx;
+            if (x < x0 - c0 * t_end + 3 * dx) continue;
+            if (x > x0 + 2.0 * c0 * t_end - 3 * dx) continue;
+            const double want = ritterDepth(x, t_end, h0, x0);
+            l1 += std::fabs(ch.state.cell_h[static_cast<std::size_t>(i)] - want);
+            ref += want;
+        }
+        return l1 / ref;
+    };
+
+    const double e1 = errorAtOrder(1);
+    const double e2 = errorAtOrder(2);
+    std::error_code ec;
+    std::filesystem::create_directories(outputDir(), ec);
+    std::ofstream os(outputDir() + "/order_convergence.csv");
+    os << "order,ritter_relative_l1\n1," << e1 << "\n2," << e2 << "\n";
+    EXPECT_LT(e2, e1) << "FV_ORDER 2 did not improve on first order ("
+                      << e1 << " -> " << e2 << ")";
+}
+
 // ===========================================================================
 // §6.2 — Dam break
 // ===========================================================================
