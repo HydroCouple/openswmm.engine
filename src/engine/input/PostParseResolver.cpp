@@ -372,7 +372,10 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
     //   if (RouteModel == DW && xsect.type == FORCE_MAIN)
     //       roughness = forcemain_getEquivN(j, k);
     bool is_force_main = (ctx.links.xsect_shape[uj] == XsectShape::FORCE_MAIN);
-    bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE);
+    // ==DYNWAVE audit (plan §4.1): FV solves the same momentum equation, so
+    // the force-main equivalent-n substitution applies to it identically.
+    bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE ||
+                  ctx.options.routing_model == RoutingModel::FV);
     if (is_dw && is_force_main) {
         auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
         double r_bot  = ctx.links.xsect_r_bot[uj];
@@ -649,7 +652,10 @@ static void validate_virtual_junctions(SimulationContext& ctx) {
     if (!any) return;
 
     // Rule 8 (model-level): only meaningful under dynamic-wave routing.
-    if (ctx.options.routing_model != RoutingModel::DYNWAVE) {
+    // ==DYNWAVE audit: virtual junctions are meaningful under DW and are
+    // EXACT under FV (they become plain interior faces), so FV joins DW here.
+    if (ctx.options.routing_model != RoutingModel::DYNWAVE &&
+        ctx.options.routing_model != RoutingModel::FV) {
         for (int i = 0; i < n_nodes; ++i) {
             if (ctx.nodes.is_virtual[static_cast<std::size_t>(i)]) {
                 ctx.errors.push_back(format_error(ERR_VJ_ROUTING_MODEL,
@@ -1231,7 +1237,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         double inv1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
         double inv2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
         if (inv1 + *off < inv2) {
-            if (ctx.options.routing_model == RoutingModel::DYNWAVE) {
+            if (ctx.options.routing_model == RoutingModel::DYNWAVE ||
+                ctx.options.routing_model == RoutingModel::FV) {
                 *off = inv2 - inv1;   // legacy link.c:434-435 (bit-exact form)
             }
             ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
@@ -1629,7 +1636,12 @@ void resolve_cross_references(SimulationContext& ctx) {
         // positive slope at the original parse, so this never fires for a gpkg
         // load; the reversed `direction` is restored from the persisted column
         // in read_links instead (it is not derivable from the now-positive slope).
-        if (ctx.options.routing_model == RoutingModel::DYNWAVE &&
+        // ==DYNWAVE audit: FV handles adverse slopes natively and does NOT
+        // need this reversal — but it is kept so the same .inp preprocesses
+        // identically under both models and the virtual-junction pair tables
+        // stay orientation-consistent between them.
+        if ((ctx.options.routing_model == RoutingModel::DYNWAVE ||
+             ctx.options.routing_model == RoutingModel::FV) &&
             slope < 0.0 &&
             ctx.links.xsect_shape[uj] != XsectShape::DUMMY) {
 

@@ -58,6 +58,15 @@ public:
     /// inflow/outflow rates the reporting and mass-balance paths expect.
     const std::vector<double>& node_exchange() const noexcept { return node_exch_; }
 
+    /// Per-node conduit-face exchange VOLUME split into arriving and departing
+    /// magnitudes (ft³) over the last advance(). SWMM's node ledger is not a
+    /// net figure — `inflow` and `outflow` are separate magnitudes, and the
+    /// mass balance books an outfall's system discharge from `inflow` alone —
+    /// so the split has to be accumulated here, per substep, rather than
+    /// reconstructed from the net afterwards.
+    const std::vector<double>& node_inflow_volume() const noexcept { return node_in_; }
+    const std::vector<double>& node_outflow_volume() const noexcept { return node_out_; }
+
     /// Per-node flooding VOLUME (ft³) over the last advance().
     const std::vector<double>& node_flood_volume() const noexcept {
         return flood_vol_;
@@ -144,6 +153,7 @@ private:
 
     // Node scratch.
     std::vector<double> node_exch_;    ///< ∫(net inflow) dt over the routing step
+    std::vector<double> node_in_, node_out_;
     std::vector<double> flood_vol_;
 
     // Step-rejection snapshot. A cell can cross the crown INSIDE a substep,
@@ -155,7 +165,7 @@ private:
     // is not, because the stiffness ratio depends on FV_SLOT_CELERITY.
     std::vector<double> save_cell_a_, save_cell_q_, save_cell_phi_;
     std::vector<double> save_node_vol_, save_node_head_;
-    std::vector<double> save_exch_, save_flood_, save_qint_;
+    std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_;
 
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.

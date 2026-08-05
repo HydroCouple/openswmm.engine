@@ -10,6 +10,9 @@
  */
 
 #include "Routing.hpp"
+#include "fv/ExplicitFvSolver.hpp"
+#include "fv/NetworkMeshBuilder.hpp"
+#include "fv/NetworkSolverFactory.hpp"
 #include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "Outfall.hpp"
@@ -275,6 +278,10 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
         }
+        case RouteModel::FV: {
+            initFv(ctx);
+            break;
+        }
         case RouteModel::STEADY: {
             // Build topological link order (same as KW — upstream → downstream)
             int n_sorted = toposort::sortLinks(ctx.links.node1.data(),
@@ -387,6 +394,10 @@ int Router::step(SimulationContext& ctx, double dt,
             iters = dw_solver_.execute(ctx, dt, non_conduit_fn);
             break;
 
+        case RouteModel::FV:
+            iters = stepFv(ctx, dt, non_conduit_fn);
+            break;
+
         case RouteModel::STEADY:
             iters = executeSteadyFlow(ctx, dt);
             break;
@@ -409,6 +420,19 @@ double Router::getAdaptiveStep(SimulationContext& ctx,
                                 double fixed_step, double courant) {
     if (model_ == RouteModel::DYNWAVE) {
         return dw_solver_.getRoutingStep(ctx, fixed_step, courant);
+    }
+    if (model_ == RouteModel::FV && fv_solver_) {
+        // The FV solver substeps internally at its own CFL limit, so the
+        // ROUTING step is only the reporting/forcing cadence — there is no
+        // stability reason to shrink it. Publishing the substep census as the
+        // suggestion anyway lets VARIABLE_STEP models see the same signal DW
+        // gives them, and keeps a routing step from spanning so many substeps
+        // that structure flows (held constant across them, D-FV3) go stale.
+        const double sug = fv_solver_->suggested_step();
+        if (courant > 0.0 && sug > 0.0) {
+            const double cap = std::max(fixed_step * courant, sug);
+            return std::min(fixed_step, cap);
+        }
     }
     return fixed_step;
 }
@@ -753,6 +777,274 @@ void Router::updateLinkStates(SimulationContext& ctx) {
                        ctx.nodes.depth.data(),
                        ctx.nodes.head.data(),
                        ctx.n_nodes());
+}
+
+// ============================================================================
+// Explicit finite-volume routing (FLOW_ROUTING FV)
+// ============================================================================
+
+/**
+ * @brief Build the FV mesh, pick a backend and seed the solver state.
+ *
+ * Called from Router::init AFTER the Courant-lengthening block has written
+ * mod_length/rough_factor: the mesh reuses that lengthening as its Δx floor and
+ * the friction closure as its rough_factor, so the two must already agree.
+ */
+void Router::initFv(SimulationContext& ctx) {
+    fv_warnings_.clear();
+    fv_errors_.clear();
+
+    // FV_* keys are entered in project display units; convert to internal feet
+    // here, the same treatment HEAD_TOLERANCE gets in the DYNWAVE arm above.
+    const double ucf_len = ucf::Ucf[ucf::LENGTH][
+        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+    fv_opts_ = ctx.options.fv;
+    fv_opts_.cell_length   = ctx.options.fv.cell_length   / ucf_len;
+    fv_opts_.slot_celerity = ctx.options.fv.slot_celerity / ucf_len;
+    fv_opts_.dispersion    = ctx.options.fv.dispersion    / (ucf_len * ucf_len);
+
+    const fv::MeshBuildReport rep =
+        fv::buildNetworkMesh(ctx, fv_opts_, fv_mesh_);
+    fv_warnings_ = rep.warnings;
+    fv_errors_   = rep.errors;
+    if (!rep.errors.empty()) return;
+
+    const int nc = fv_mesh_.n_cells();
+    const int nn = fv_mesh_.n_nodes();
+    fv_state_.resize(nc, nn, 0);
+
+    // Seed cell state from the model's initial link flows and depths. LinkData
+    // carries ONE depth/flow per conduit, so every cell of a conduit starts
+    // uniform — the correct projection of a DW-shaped initial condition onto
+    // the finer mesh.
+    const auto& CD = ctx.link_subtypes.conduits;
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const int begin = fv_mesh_.conduit_cell_begin[ur];
+        const int count = fv_mesh_.conduit_cell_count[ur];
+        if (begin < 0) continue;
+        const int j = fv_mesh_.conduit_link[ur];
+        const auto uj = static_cast<std::size_t>(j);
+        const fv::FvGeometry& g = fv_mesh_.geom[ur];
+        const int barrels = std::max(1, CD.barrels[ur]);
+        const double depth = ctx.links.depth[uj];
+        const double area  = fv::kernels::areaOfDepth(g, depth);
+        const double qper  = ctx.links.flow[uj] / static_cast<double>(barrels);
+        for (int c = begin; c < begin + count; ++c) {
+            fv_state_.cell_a[static_cast<std::size_t>(c)] = area;
+            fv_state_.cell_q[static_cast<std::size_t>(c)] = qper;
+        }
+    }
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        fv_state_.node_head[un] = ctx.nodes.invert_elev[un] + ctx.nodes.depth[un];
+    }
+
+    fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc);
+    fv_solver_->initialize(fv_mesh_, fv_state_, fv_opts_);
+
+    fv_lateral_.assign(static_cast<std::size_t>(nn), 0.0);
+    fv_fixed_head_.assign(static_cast<std::size_t>(nn),
+                          std::numeric_limits<double>::quiet_NaN());
+    fv_struct_flow_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
+    fv_cond_loss_.assign(static_cast<std::size_t>(fv_mesh_.n_conduits()), 0.0);
+}
+
+/**
+ * @brief One FV routing step: assemble forcing, advance, publish.
+ *
+ * Structure equations are evaluated ONCE here rather than per substep (D-FV3).
+ * Re-evaluating them inside the substep loop would need the engine's
+ * HydStructures code, which the plugin boundary deliberately excludes, and
+ * would chatter controls tuned for DW-scale steps — the risk plan §8 flags.
+ */
+int Router::stepFv(SimulationContext& ctx, double dt,
+                   dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
+    if (!fv_solver_) return 0;
+
+    const int nn = ctx.n_nodes();
+    const int nl = ctx.n_links();
+
+    // Lateral inflows exactly as assembled by SWMMEngine::assembleLateralInflows.
+    // Virtual junctions cannot carry them (rule 5), so they never appear here.
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        fv_lateral_[un] = ctx.nodes.lat_flow[un];
+        // Outfalls (and anything else the engine pins) are stage boundaries:
+        // setAllOutfallDepths has already written the head for this step.
+        fv_fixed_head_[un] =
+            (ctx.nodes.type[un] == NodeType::OUTFALL)
+                ? ctx.nodes.invert_elev[un] + ctx.nodes.depth[un]
+                : std::numeric_limits<double>::quiet_NaN();
+    }
+
+    // Non-conduit structures, evaluated against the CURRENT node heads.
+    if (non_conduit_fn) non_conduit_fn(ctx, dt, 0);
+    for (int j = 0; j < nl; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        fv_struct_flow_[uj] = (ctx.links.type[uj] == LinkType::CONDUIT)
+                                  ? 0.0 : ctx.links.flow[uj];
+    }
+
+    // Distributed conduit losses as a rate per unit length (ft²/s): the solver
+    // subtracts them from the cell AREA, so the per-barrel volumetric rate has
+    // to be divided by the conduit's meshed length.
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const auto& CD = ctx.link_subtypes.conduits;
+        const int begin = fv_mesh_.conduit_cell_begin[ur];
+        if (begin < 0) { fv_cond_loss_[ur] = 0.0; continue; }
+        const double rate = CD.evap_loss_rate[ur] + CD.seep_loss_rate[ur];
+        const double len  = fv_mesh_.cell_dx[static_cast<std::size_t>(begin)] *
+                            static_cast<double>(fv_mesh_.conduit_cell_count[ur]);
+        const int barrels = std::max(1, CD.barrels[ur]);
+        fv_cond_loss_[ur] =
+            (len > 0.0) ? rate / (len * static_cast<double>(barrels)) : 0.0;
+    }
+
+    fv::FvStepForcing forcing;
+    forcing.node_lateral    = fv_lateral_.data();
+    forcing.node_fixed_head = fv_fixed_head_.data();
+    forcing.structure_flow  = fv_struct_flow_.data();
+    forcing.conduit_loss    = fv_cond_loss_.data();
+    forcing.n_nodes = nn;
+    forcing.n_links = nl;
+
+    fv_solver_->advance(0.0, dt, forcing);
+    publishFv(ctx, dt);
+    return static_cast<int>(fv_solver_->last_num_steps());
+}
+
+/**
+ * @brief Map cell/node state back onto the per-link and per-node reporting
+ *        contracts (plan §4.3).
+ *
+ * Link flow is the length-weighted MEAN over the routing step, not an
+ * end-of-step snapshot: a routing step can span hundreds of substeps and the
+ * snapshot aliases badly against them. Depth and volume are instantaneous,
+ * matching what DW reports.
+ */
+void Router::publishFv(SimulationContext& ctx, double dt) {
+    auto* impl = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    const auto& CD = ctx.link_subtypes.conduits;
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+
+    // ---- links ------------------------------------------------------------
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const int begin = fv_mesh_.conduit_cell_begin[ur];
+        const int count = fv_mesh_.conduit_cell_count[ur];
+        if (begin < 0 || count <= 0) continue;
+        const int j = fv_mesh_.conduit_link[ur];
+        const auto uj = static_cast<std::size_t>(j);
+        const fv::FvGeometry& g = fv_mesh_.geom[ur];
+        const double barrels = static_cast<double>(std::max(1, CD.barrels[ur]));
+
+        double sum_len = 0.0, q_len = 0.0, a_len = 0.0, vol = 0.0;
+        for (int c = begin; c < begin + count; ++c) {
+            const auto uc = static_cast<std::size_t>(c);
+            const double dx = fv_mesh_.cell_dx[uc];
+            const double q = (impl && dt > 0.0)
+                                 ? impl->cell_flow_integral()[uc] / dt
+                                 : fv_state_.cell_q[uc];
+            sum_len += dx;
+            q_len   += q * dx;
+            a_len   += fv_state_.cell_a[uc] * dx;
+            vol     += fv_state_.cell_a[uc] * dx * barrels;
+        }
+        const double q_mean = (sum_len > 0.0) ? q_len / sum_len : 0.0;
+        const double a_mean = (sum_len > 0.0) ? a_len / sum_len : 0.0;
+
+        ctx.links.flow[uj]   = q_mean * barrels;
+        ctx.links.depth[uj]  = fv::kernels::depthOfArea(g, a_mean);
+        ctx.links.volume[uj] = vol;
+        const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;
+        const double hyd_depth =
+            (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)
+                ? a_mean / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
+                : 0.0;
+        ctx.links.froude[uj] =
+            (hyd_depth > 0.0)
+                ? std::fabs(v) * constants::INV_SQRT_GRAVITY / std::sqrt(hyd_depth)
+                : 0.0;
+    }
+
+    // ---- nodes ------------------------------------------------------------
+    for (int n = 0; n < ctx.n_nodes(); ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (fv_mesh_.node_kind[un] == fv::kNodeVirtual) {
+            // A virtual junction has no volume of its own — its faces became
+            // interior faces. Report the shared face state so the node still
+            // has a sensible head in the .out file.
+            continue;
+        }
+        const double depth = fv_state_.node_head[un] - fv_mesh_.node_invert[un];
+        ctx.nodes.depth[un] = std::max(0.0, depth);
+        ctx.nodes.head[un]  = fv_state_.node_head[un];
+        // Volume through the ENGINE's own storage relation, not the solver's
+        // flattened table, so the reported mass balance stays on one authority.
+        ctx.nodes.volume[un] = node::getVolume(ctx.nodes, n, ctx.nodes.depth[un],
+                                               &ctx.tables, us, &ctx.node_subtypes);
+        if (impl && dt > 0.0)
+            ctx.nodes.overflow[un] = impl->node_flood_volume()[un] / dt;
+
+        // SWMM's node ledger keeps inflow and outflow as separate MAGNITUDES,
+        // not a net figure — the mass balance books an outfall's system
+        // discharge from `inflow` alone (SWMMEngine's node_getSystemOutflow
+        // port), so publishing only the net would make every outfall discharge
+        // vanish and drive routing continuity to ~100 %.
+        //
+        // The magnitudes come from the solver's accumulated BOUNDARY FLUXES,
+        // not from the published mean link flow: the face flux at the node is
+        // the water that actually crossed into it, which is what continuity
+        // has to balance.
+        if (impl && dt > 0.0) {
+            const double lat = ctx.nodes.lat_flow[un];
+            ctx.nodes.inflow[un]  = impl->node_inflow_volume()[un] / dt +
+                                    ((lat > 0.0) ? lat : 0.0);
+            ctx.nodes.outflow[un] = impl->node_outflow_volume()[un] / dt +
+                                    ((lat < 0.0) ? -lat : 0.0) +
+                                    ctx.nodes.losses[un];
+        }
+    }
+
+    // Non-conduit structures move water between node ledgers exactly as they do
+    // under DW (DynamicWave.cpp:2723-2727): positive flow leaves node1 and
+    // arrives at node2.
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        const int n1 = ctx.links.node1[uj];
+        const int n2 = ctx.links.node2[uj];
+        if (n1 < 0 || n2 < 0) continue;
+        const double q = ctx.links.flow[uj];
+        const auto u1 = static_cast<std::size_t>(n1);
+        const auto u2 = static_cast<std::size_t>(n2);
+        if (q > 0.0) { ctx.nodes.outflow[u1] += q;  ctx.nodes.inflow[u2]  += q; }
+        else         { ctx.nodes.inflow[u1]  -= q;  ctx.nodes.outflow[u2] -= q; }
+    }
+
+    // Virtual junctions take the head of the cell on either side of their
+    // spliced face, which is what "the shared face state" means for reporting.
+    for (int f = 0; f < fv_mesh_.n_faces(); ++f) {
+        const auto uf = static_cast<std::size_t>(f);
+        if (!fv_mesh_.face_virtual[uf]) continue;
+        const int cl = fv_mesh_.face_cl[uf];
+        if (cl < 0) continue;
+        const auto ucl = static_cast<std::size_t>(cl);
+        // Find the virtual node this face replaced by matching its invert.
+        for (int n = 0; n < ctx.n_nodes(); ++n) {
+            const auto un = static_cast<std::size_t>(n);
+            if (fv_mesh_.node_kind[un] != fv::kNodeVirtual) continue;
+            if (std::fabs(fv_mesh_.node_invert[un] - fv_mesh_.face_zb[uf]) > 1.0e-9)
+                continue;
+            const double eta = fv_mesh_.cell_zb[ucl] + fv_state_.cell_h[ucl];
+            ctx.nodes.head[un]  = eta;
+            ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
+            ctx.nodes.volume[un] = 0.0;   // zero-storage by construction
+            break;
+        }
+    }
 }
 
 } // namespace openswmm

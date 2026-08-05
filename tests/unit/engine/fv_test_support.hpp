@@ -22,6 +22,7 @@
 #include "hydraulics/fv/ExplicitFvSolver.hpp"
 #include "hydraulics/fv/NetworkMeshBuilder.hpp"
 #include "hydraulics/XSectBatch.hpp"
+#include "core/Constants.hpp"
 
 namespace fvtest {
 
@@ -155,6 +156,11 @@ inline Channel makeNodedChannel(const XSectParams& xs, int n, double dx,
     ch.mesh.node_full_depth = {1.0e6, 1.0e6};
     ch.mesh.node_ponded_area = {0.0, 0.0};
     ch.mesh.node_kind       = {kNodeJunction, kNodeOutfall};
+    // Storage area of a non-storage node — the engine's own convention, fixed
+    // for the run (see NetworkMeshData::node_area). Every array indexed by node
+    // has to be sized here; the solver reads node_area every substep.
+    ch.mesh.node_area       = {openswmm::constants::MIN_SURFAREA,
+                               openswmm::constants::MIN_SURFAREA};
     ch.mesh.node_vol_off    = {-1, -1};
     ch.mesh.node_vol_dmax   = {0.0, 0.0};
     ch.mesh.node_vol_atop   = {0.0, 0.0};

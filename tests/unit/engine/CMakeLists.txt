@@ -426,6 +426,14 @@ add_gtest_unit(test_engine_fv_analytic test_fv_solver_analytic.cpp)
 # coupling and continuity, mixed-flow filling bore vs. Rankine–Hugoniot,
 # compaction results-transparency, and the scalar-transport contracts.
 add_gtest_unit(test_engine_fv_network test_fv_solver_network.cpp)
+# Engine-level gates (§6.7): FLOW_ROUTING FV end-to-end on the reference
+# drainage model — routing continuity vs DYNWAVE, routed-volume agreement,
+# mesh-refinement CONVERGENCE toward the DW hydrograph (the consistency gate),
+# conservation independent of resolution, and the FV_* .inp round-trip.
+add_gtest_unit(test_engine_fv_integration test_fv_engine_integration.cpp)
+target_compile_definitions(test_engine_fv_integration PRIVATE
+    OPENSWMM_FV_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
+    OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation
 # against the legacy xsect.c. The legacy dylib hides its internal xsect_*

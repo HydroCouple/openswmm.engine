@@ -28,6 +28,8 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+
+#include "../hydraulics/fv/FvOptions.hpp"
 #include <cstdint>
 #include <cmath>
 
@@ -57,7 +59,8 @@ enum class FlowUnits : int {
 enum class RoutingModel : int {
     STEADY   = 0,  ///< Steady-state (no routing)
     KINWAVE  = 1,  ///< Kinematic wave approximation
-    DYNWAVE  = 2   ///< Dynamic wave (full Saint-Venant)
+    DYNWAVE  = 2,  ///< Dynamic wave (full Saint-Venant, implicit Picard)
+    FV       = 3   ///< Explicit conservative finite volume (Godunov, HLL/HLLC)
 };
 
 /**
@@ -191,6 +194,18 @@ struct SimulationOptions {
 
     /** @brief Routing method. Legacy default: DYNWAVE. */
     RoutingModel routing_model = RoutingModel::DYNWAVE;
+
+    /**
+     * @brief Knobs for FLOW_ROUTING FV, grouped rather than spread across this
+     *        struct (plan §4.2 — first-class [OPTIONS] keys, no new section).
+     *
+     * @details Length-dimensioned members are stored here in the PROJECT's
+     *          display units exactly as parsed; Router::init converts them to
+     *          internal feet, the same treatment HEAD_TOLERANCE gets. FV_* keys
+     *          are accepted and inert under any other routing model, so
+     *          switching FLOW_ROUTING never invalidates a file.
+     */
+    fv::FvOptions fv;
 
     /** @brief Infiltration method for subcatchments. */
     InfiltrationModel infiltration = InfiltrationModel::HORTON;

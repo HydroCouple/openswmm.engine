@@ -24,6 +24,12 @@
 #include "KinematicWave.hpp"
 #include "DynamicWave.hpp"
 #include "Divider.hpp"
+#include "fv/FvOptions.hpp"
+#include "fv/INetworkSolver.hpp"
+#include "fv/NetworkMeshData.hpp"
+
+#include <memory>
+#include <string>
 #include <vector>
 
 namespace openswmm {
@@ -37,7 +43,8 @@ struct SimulationContext;
 enum class RouteModel : int {
     STEADY    = 0,   ///< Steady-state (pass-through)
     KINWAVE   = 1,   ///< Kinematic wave
-    DYNWAVE   = 2    ///< Dynamic wave (St. Venant)
+    DYNWAVE   = 2,   ///< Dynamic wave (St. Venant, implicit Picard)
+    FV        = 3    ///< Explicit conservative finite volume (Godunov)
 };
 
 // ============================================================================
@@ -102,14 +109,50 @@ public:
 
     /// Whether the most recent step() converged. DYNWAVE returns the solver's
     /// real final Picard flag; other models always converge (legacy only tracks
-    /// dynwave non-convergence). Feeds the "% of Steps Not Converging" stat.
+    /// dynwave non-convergence). FV has no convergence loop at all — that is a
+    /// property of the scheme, not an omission. Feeds the "% of Steps Not
+    /// Converging" stat.
     bool lastStepConverged() const {
         return (model_ == RouteModel::DYNWAVE) ? dw_solver_.lastConverged() : true;
     }
 
+    /// Access the FV solver (null unless FLOW_ROUTING FV). Used by the report
+    /// plugin for the "FV Solver Statistics" block and by the tests.
+    const fv::INetworkSolver* fvSolver() const { return fv_solver_.get(); }
+
+    /// The FV mesh built at init (empty unless FLOW_ROUTING FV).
+    const fv::NetworkMeshData& fvMesh() const { return fv_mesh_; }
+
+    /// Backend label chosen by the FV factory ("cpu (...)", "omp (...)", ...).
+    const std::string& fvBackend() const { return fv_backend_; }
+
+    /// Diagnostics accumulated while building the FV mesh; the caller surfaces
+    /// them through ctx.warnings / ctx.errors.
+    const std::vector<std::string>& fvWarnings() const { return fv_warnings_; }
+    const std::vector<std::string>& fvErrors()   const { return fv_errors_; }
+
 private:
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
+
+    // --- Explicit finite-volume solver (FLOW_ROUTING FV) -------------------
+    // The mesh and state are owned here, not by the solver, exactly as
+    // SurfaceRouter2D owns MeshData/SurfaceStateData: the solver is swappable
+    // (CPU or Kokkos plugin) and must not own what survives a backend change.
+    fv::NetworkMeshData                  fv_mesh_;
+    fv::NetworkStateData                 fv_state_;
+    fv::FvOptions                        fv_opts_;      ///< internal units
+    std::unique_ptr<fv::INetworkSolver>  fv_solver_;
+    std::string                          fv_backend_;
+    std::vector<std::string>             fv_warnings_, fv_errors_;
+
+    // Per-step forcing buffers, allocated once at init.
+    std::vector<double> fv_lateral_, fv_fixed_head_, fv_struct_flow_, fv_cond_loss_;
+
+    void initFv(SimulationContext& ctx);
+    int  stepFv(SimulationContext& ctx, double dt,
+                dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn);
+    void publishFv(SimulationContext& ctx, double dt);
     kinwave::KWSolver kw_solver_;
     dynwave::DWSolver dw_solver_;
     // Divider data moved to ctx.node_subtypes.dividers (relational side-table).
