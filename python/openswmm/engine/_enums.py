@@ -187,12 +187,17 @@ class RouteModel(IntEnum):
 
     @cvar STEADY: Steady-state routing.
     @cvar KINWAVE: Kinematic wave routing.
-    @cvar DYNWAVE: Dynamic wave (full Saint-Venant) routing.
+    @cvar DYNWAVE: Dynamic wave (full Saint-Venant), implicit. The default.
+    @cvar FV: Explicit conservative finite volume (Godunov). Conserves volume
+        exactly and captures pressurization fronts and transcritical flow, at
+        the cost of needing a resolved mesh — set ``FV_CELL_LENGTH``. See the
+        Hydraulics Reference Manual, Chapter 8.
     """
 
     STEADY = 0
     KINWAVE = 1
     DYNWAVE = 2
+    FV = 3
 
 
 class NodeType(IntEnum):

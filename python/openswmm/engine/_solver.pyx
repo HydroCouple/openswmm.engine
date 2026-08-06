@@ -1167,6 +1167,13 @@ class SimulationOptions(MutableMapping):
         "INERTIAL_DAMPING", "NORMAL_FLOW_LIMITED", "MIN_SURFAREA",
         "MIN_SLOPE", "MAX_TRIALS", "HEAD_TOLERANCE", "THREADS",
         "TEMPDIR",
+        # Explicit finite-volume solver (FLOW_ROUTING FV). Readable and
+        # writable under any routing model, so a script can configure the
+        # solver before selecting it.
+        "FV_CELL_LENGTH", "FV_MIN_CELLS", "FV_CFL", "FV_RIEMANN", "FV_ORDER",
+        "FV_LIMITER", "FV_SCALAR_SCHEME", "FV_TIME_INTEGRATION",
+        "FV_SLOT_CELERITY", "FV_DISPERSION", "FV_STRUCTURE_COUPLING",
+        "FV_COMPACTION", "FV_BACKEND", "FV_MIN_PARALLEL_CELLS",
     )
 
     def __getitem__(self, key: str) -> str:
