@@ -23,6 +23,11 @@
 
 namespace openswmm::fv {
 
+/// Hard ceiling on LTS tiers. Tier k advances at 2^k·dt₀, so 8 tiers already
+/// span a 128× stiffness ratio — beyond that the coarse tier's lag behind a
+/// moving front stops being a bounded integration-path difference.
+inline constexpr int kMaxLtsTiers = 8;
+
 /// Face flux function. HLLC is the default and HLL exists only as a
 /// debugging/comparison baseline — see plan §3.2: the contact wave HLL averages
 /// away is exactly the wave that carries an advected scalar, so HLL is not a
@@ -123,11 +128,13 @@ struct FvOptions {
     bool compaction = true;
 
     /// Local time stepping — stiff cells (short Δx, pressurized) substep at
-    /// their own dt while the rest advance at the macro step.
-    bool lts = false;
+    /// their own dt while the rest advance at the macro step. When tiering
+    /// finds nothing to separate the solver falls through to the global-dt
+    /// path bit-for-bit, so this is on by default (plan §3.3).
+    bool lts = true;
 
-    /// Maximum LTS tier count (tier k advances at dt_macro/2^k).
-    int lts_max_tiers = 4;
+    /// Maximum LTS tier count (tier k advances at 2^k·dt₀). 6 ⇒ 64× spread.
+    int lts_max_tiers = 6;
 
     /// Recompute the global CFL min-reduction every k substeps instead of every
     /// substep, with a safety margin. 1 = every substep (exact).

@@ -734,6 +734,11 @@ int writeInpFile(const SimulationContext& ctx_internal,
             std::fprintf(f,"%-20s %s\n", "FV_COMPACTION", "NO");
         std::fprintf(f,"%-20s %s\n", "FV_BACKEND",      sBackend[static_cast<int>(fvo.backend)]);
         std::fprintf(f,"%-20s %ld\n","FV_MIN_PARALLEL_CELLS", fvo.min_parallel_cells);
+        if (!fvo.lts)
+            std::fprintf(f,"%-20s %s\n", "FV_LTS", "NO");
+        std::fprintf(f,"%-20s %d\n", "FV_LTS_MAX_TIERS", fvo.lts_max_tiers);
+        if (fvo.cfl_census_interval != 1)
+            std::fprintf(f,"%-20s %d\n","FV_CFL_CENSUS_INTERVAL", fvo.cfl_census_interval);
     }
     if (!o.crs.empty())
         std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());

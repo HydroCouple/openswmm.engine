@@ -23,6 +23,8 @@
 #ifndef OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
 #define OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
 
+#include <array>
+#include <cstdint>
 #include <vector>
 
 #include "FvKernels.hpp"
@@ -84,6 +86,16 @@ public:
     /// Router glue's seeding path and for the conservation tests.
     double nodeVolumeFromDepth(int node, double depth) const;
 
+    /// Number of LTS tiers the last macro cycle ran with. 1 means tiering
+    /// found nothing to separate and the solver took the global-dt path.
+    int lts_tiers() const noexcept { return lts_tiers_; }
+
+    /// Cells per tier over the run — the §6.12 histogram that proves tiering
+    /// is genuinely active on a case rather than degenerating to K = 1.
+    const std::array<long, kMaxLtsTiers>& tier_occupancy() const noexcept {
+        return tier_occupancy_;
+    }
+
 private:
     // -- substep pipeline ---------------------------------------------------
     void   refreshDepths();
@@ -91,6 +103,7 @@ private:
     void   rebuildActiveLists();
     double censusDt() const;
     void   reconstructState();
+    void   computeFaceFlux(int face);
     void   reconstructScalars(double dt);
     void   limitSpeciesFluxes(int species, double dt);
     kernels::FaceFlux adjustedFlux(int face) const;
@@ -101,6 +114,42 @@ private:
     void   dispersionSolve(double dt);
 
     double nodeDepthFromVolume(int node, double volume) const;
+
+    // -- local time stepping (plan §3.3) ------------------------------------
+    /// Per-control-volume stable step, the same quantities censusDt() reduces
+    /// over but kept unreduced so each cell can be tiered on its own stiffness.
+    double cellStableDt(int cell) const;
+    double nodeStableDt(int node) const;
+
+    /// Partition the active mesh into power-of-two tiers. Returns the tier
+    /// count K and writes the finest requirement to @p dt0. K == 1 means the
+    /// mesh is uniformly stiff and the caller should take the global path.
+    int    assignTiers(double& dt0);
+
+    /// Fire every entity due at one base substep. Faces compute their flux and
+    /// BOOK `±F·Δt` into both incident control volumes' accumulators; cells and
+    /// nodes drain what has accumulated since they last fired. What leaves a
+    /// fine cell is therefore exactly what arrives in its coarse neighbour —
+    /// the tier-interface conservation contract, exact by construction rather
+    /// than by tolerance.
+    ///
+    /// @p dt0 is the BASE step; each entity scales it by its own `2^tier`. The
+    /// due sets are nested (tiers 0..j fire together), so one pass with the
+    /// per-entity Δt is also what keeps positivity limiting correct: a cell
+    /// whose two faces fire at different cadences must be limited against both
+    /// draws at once, not once per tier.
+    void   fireFaces(const std::vector<int>& faces, double dt0);
+    void   fireCells(const std::vector<int>& cells, double dt0,
+                     const FvStepForcing& forcing);
+    void   fireNodes(const std::vector<int>& nodes, double dt0,
+                     const FvStepForcing& forcing);
+    void   runMacroCycle(double dt0, int nsub, const FvStepForcing& forcing);
+
+    /// Move every pending accumulator into the state as a pure transfer — no
+    /// time advance, no friction, no source. The only safe way to empty the
+    /// ledger, and required before re-tiering: a flux booked at one tier's Δt
+    /// cannot be drained at another's.
+    void   settleAccumulators();
 
     /// Snapshot / roll back the full prognostic state for step rejection.
     void   saveState();
@@ -202,6 +251,24 @@ private:
     bool              lists_valid_  = false;
     int               since_rebuild_ = 0;
     static constexpr int kRebuildInterval = 8;
+
+    // Local time stepping (plan §3.3). Tiers are assigned only at a
+    // synchronisation point — never mid-cycle — because a cell re-tiered
+    // between firings would either skip a flux it owes or drain one twice.
+    std::vector<std::uint8_t>     cell_tier_, face_tier_, node_tier_;
+    std::vector<std::vector<int>> cells_by_tier_, faces_by_tier_, nodes_by_tier_;
+
+    /// Pending ∫F dt per control volume, in the cell's OWN axis for momentum.
+    /// These are the tier-interface flux accumulators: a face books into them
+    /// at ITS cadence and the owning volume drains them at its own.
+    std::vector<double> acc_a_, acc_q_, acc_nvol_;
+
+    /// Face flux already committed to an accumulator but not yet drained. The
+    /// total invariant Σ(volume) + Σ(pending) is what the conservation gate
+    /// checks mid-cycle; without it a snapshot taken between firings looks
+    /// like a leak.
+    int  lts_tiers_ = 1;
+    std::array<long, kMaxLtsTiers> tier_occupancy_{};
 
     // Statistics.
     long   last_nsteps_  = 0;

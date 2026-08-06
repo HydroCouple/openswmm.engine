@@ -40,14 +40,15 @@ retroactive.
   ordinary interior faces, so a conduit split by one reproduces the unsplit
   conduit cell for cell, including the reversed A→VJ←B orientation.
 
-  Thirteen `FV_*` `[OPTIONS]` keys, all readable and writable through
+  Seventeen `FV_*` `[OPTIONS]` keys, all readable and writable through
   `swmm_options_get`/`set` (and therefore through the Python bindings and the
   MCP server), and all **inert rather than rejected** under the other routing
   models so switching `FLOW_ROUTING` never invalidates a file:
   `FV_CELL_LENGTH`, `FV_MIN_CELLS`, `FV_CFL`, `FV_RIEMANN`, `FV_ORDER`,
   `FV_LIMITER`, `FV_SCALAR_SCHEME`, `FV_TIME_INTEGRATION`, `FV_SLOT_CELERITY`,
   `FV_DISPERSION`, `FV_STRUCTURE_COUPLING`, `FV_COMPACTION`, `FV_BACKEND`,
-  `FV_MIN_PARALLEL_CELLS`.
+  `FV_MIN_PARALLEL_CELLS`, `FV_LTS`, `FV_LTS_MAX_TIERS`,
+  `FV_CFL_CENSUS_INTERVAL`.
 
   > **Set `FV_CELL_LENGTH` if peak flows matter.** At the one-cell-per-conduit
   > default the solver attenuates this model's peaks by 37 % on average; at
@@ -64,6 +65,22 @@ retroactive.
   property is preserved to machine precision at second order for all three
   limiters. Cells whose ends differ in elevation by an appreciable fraction of
   the water depth fall back to first order, so the option is safe to leave on.
+
+- **Local time stepping for the finite-volume solver (`FV_LTS`, on by
+  default).** Each control volume is assigned a power-of-two tier from its own
+  Courant limit and advances at its own rate, so one 5 ft pipe or one
+  surcharged manhole no longer sets the substep size for the whole network. On
+  a reach with a 40x length ratio this cuts face evaluations by 2.5x at the
+  same base step. Conservation across a tier interface is exact by
+  construction — a face books its flux into both incident volumes'
+  accumulators, so what leaves a fine cell is bit-for-bit what arrives in its
+  coarse neighbour. Tiers are graded so no face spans more than one level, and
+  volumes fire at the END of their windows so the flux they drain and the
+  sources they integrate cover the same span. Where tiering finds nothing to
+  separate the solver falls through to global stepping bit-for-bit, and it is
+  disabled outright when species are being transported, because the
+  flux-corrected transport limiter needs one synchronous sweep.
+  `FV_LTS_MAX_TIERS` caps the spread.
 
 - **Cell-resolved Eulerian scalar transport on the finite-volume mesh.** The
   species flux is the same mass flux the water used, upwinded on the contact

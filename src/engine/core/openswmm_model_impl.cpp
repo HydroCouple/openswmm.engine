@@ -909,6 +909,10 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     }
     else if (k == "FV_MIN_PARALLEL_CELLS")
         val = std::to_string(opt.fv.min_parallel_cells);
+    else if (k == "FV_LTS")            val = opt.fv.lts ? "YES" : "NO";
+    else if (k == "FV_LTS_MAX_TIERS")  val = std::to_string(opt.fv.lts_max_tiers);
+    else if (k == "FV_CFL_CENSUS_INTERVAL")
+        val = std::to_string(opt.fv.cfl_census_interval);
 
     // System / Performance
     else if (k == "THREADS")           val = std::to_string(opt.num_threads);
@@ -1215,6 +1219,14 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         const std::string vu = upper_copy(v);
         opt.fv.compaction = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
     }
+    else if (k == "FV_LTS") {
+        const std::string vu = upper_copy(v);
+        opt.fv.lts = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
+    }
+    else if (k == "FV_LTS_MAX_TIERS")
+        opt.fv.lts_max_tiers = std::max(1, std::stoi(v));
+    else if (k == "FV_CFL_CENSUS_INTERVAL")
+        opt.fv.cfl_census_interval = std::max(1, std::stoi(v));
     else if (k == "FV_RIEMANN") {
         const std::string vu = upper_copy(v);
         if      (vu == "HLL")  opt.fv.riemann = openswmm::fv::RiemannSolver::HLL;
