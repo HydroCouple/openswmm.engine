@@ -3493,6 +3493,45 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                               << surcharge_frac     << ','
                               << 0.0 << ',' << 0 << ',' << 0 << ',' << 0 << '\n';
             }
+
+            // PR H10: threshold-crossing probability + bimodality flag.
+            // Reads the member values computeQuantiles() just reconstructed
+            // AND SORTED (sortedMemberValues(), node-major) — no second
+            // reconstruction, no second sort. Nodes with no resolvable
+            // threshold emit no row at all.
+            if (rom_threshold_csv_.is_open() &&
+                rom1d_thresholds_.size() == rom1d_active_map_.size()) {
+                const auto& mv = rom1d_->sortedMemberValues();
+                const int M = rom1d_->n_ensemble;
+                const int n_act = static_cast<int>(rom1d_active_map_.size());
+                if (static_cast<int>(mv.size()) >= n_act * M) {
+                    for (int ai = 0; ai < n_act; ++ai) {
+                        const auto& th = rom1d_thresholds_[static_cast<std::size_t>(ai)];
+                        if (th.kind == uncertainty::ThresholdKind::NONE) continue;
+
+                        const double* row = &mv[static_cast<std::size_t>(ai) *
+                                                static_cast<std::size_t>(M)];
+                        const double p_exceed =
+                            uncertainty::exceedanceFraction(row, M, th.head);
+                        const double p_ctrl = th.has_ctrl
+                            ? uncertainty::exceedanceFraction(row, M, th.ctrl_head)
+                            : 0.0;
+                        const auto mod = uncertainty::gapModality(
+                            row, M, rom1d_modality_gap_ratio_, rom1d_modality_min_side_);
+
+                        const auto ui = static_cast<std::size_t>(
+                            rom1d_active_map_[static_cast<std::size_t>(ai)]);
+                        rom_threshold_csv_
+                            << ctx_.current_time                                 << ','
+                            << ctx_.node_names.name_of(static_cast<int>(ui))     << ','
+                            << uncertainty::thresholdKindName(th.kind)           << ','
+                            << th.head                                           << ','
+                            << p_exceed                                          << ','
+                            << p_ctrl                                            << ','
+                            << (mod.flagged ? 1 : 0)                             << '\n';
+                    }
+                }
+            }
         }
 #endif
 
@@ -4046,6 +4085,9 @@ int SWMMEngine::end() noexcept {
     if (rom_diag_csv_.is_open()) {
         rom_diag_csv_.close();
     }
+    if (rom_threshold_csv_.is_open()) {
+        rom_threshold_csv_.close();
+    }
 #endif
 
     // Benchmark aid: attribute wall time between the 2D solve, its window
@@ -4508,6 +4550,15 @@ void SWMMEngine::init_modules() noexcept {
     initQuality();
     initGeometry();
     initMassBalance();
+
+    // PR H10 — resolve the 1D ROM's per-node exceedance thresholds. Must run
+    // AFTER initGeometry(): the crown/surcharge threshold reads
+    // nodes.crown_elev, which initGeometry() is what fills in, while
+    // buildROM1D() itself runs earlier inside initHydraulics(). Resolving at
+    // ROM-build time silently degraded every node to the MaxDepth branch.
+#ifdef OPENSWMM_HAS_2D
+    if (rom1d_ && rom1d_->is_ready()) buildRom1dThresholds();
+#endif
 
     // Allocate forcing arrays to match object counts
     ctx_.forcing.resize(ctx_.n_nodes(), ctx_.n_links(),
@@ -6022,6 +6073,110 @@ void SWMMEngine::buildROM1D() noexcept {
         if (rom_diag_csv_.is_open()) {
             rom_diag_csv_ << "time_s,fr_trust,surcharge_frac,basis_age_s,"
                              "basis_rebuilds,cold_restarts,cache_hits\n";
+        }
+
+        // PR H10: companion threshold-crossing file. Deliberately its own file
+        // rather than extra columns on .uncertainty.csv — that schema is
+        // scalar-per-(node,time) and adding threshold metadata would break it
+        // and every downstream script (same reasoning as the PR 13a decision).
+        std::string thr_path = rpt_path_;
+        if (thr_path.size() >= rpt_ext.size() &&
+            thr_path.compare(thr_path.size() - rpt_ext.size(), rpt_ext.size(), rpt_ext) == 0) {
+            thr_path.replace(thr_path.size() - rpt_ext.size(), rpt_ext.size(), ".rom_threshold.csv");
+        } else {
+            thr_path += ".rom_threshold.csv";
+        }
+        rom_threshold_csv_.open(thr_path);
+        if (rom_threshold_csv_.is_open()) {
+            rom_threshold_csv_ << "time_s,node_name,threshold_kind,threshold_value,"
+                                  "p_exceed,p_ctrl,modality_flag\n";
+        }
+    }
+
+    // NOTE: thresholds are NOT resolved here. buildROM1D() runs inside
+    // initHydraulics(), which init_modules() calls BEFORE initGeometry() —
+    // and initGeometry() is what populates nodes.crown_elev. Resolving here
+    // would see crown_elev == 0 on every node, silently fall through to the
+    // MaxDepth branch, and lose the crown/surcharge threshold that the spec
+    // ranks first — while still producing a perfectly well-formed CSV.
+    // buildRom1dThresholds() is therefore called from init_modules() after
+    // initGeometry(); see there.
+}
+
+// ============================================================================
+// buildRom1dThresholds() — PR H10 per-node threshold + control setpoint
+// ============================================================================
+
+void SWMMEngine::buildRom1dThresholds() noexcept {
+    const int n_active = static_cast<int>(rom1d_active_map_.size());
+    rom1d_thresholds_.assign(static_cast<std::size_t>(n_active), Rom1dThreshold{});
+    if (n_active == 0) return;
+
+    // Exceedance threshold, in priority order:
+    //   1. conduit crown at the node  → surcharge onset
+    //   2. node MaxDepth              → flooding
+    //   3. neither resolvable         → node skipped (no row emitted)
+    // Stored as an ABSOLUTE head so the per-boundary comparison against the
+    // reconstructed member values (also absolute heads) needs no arithmetic.
+    for (int ai = 0; ai < n_active; ++ai) {
+        const auto ui = static_cast<std::size_t>(
+            rom1d_active_map_[static_cast<std::size_t>(ai)]);
+        auto& th = rom1d_thresholds_[static_cast<std::size_t>(ai)];
+
+        const double invert = ctx_.nodes.invert_elev[ui];
+        const double crown  = ctx_.nodes.crown_elev[ui];
+        const double full   = ctx_.nodes.full_depth[ui];
+
+        if (crown > invert) {
+            th.kind = uncertainty::ThresholdKind::CROWN;
+            th.head = crown;                 // crown_elev IS an absolute head
+        } else if (full > 0.0) {
+            th.kind = uncertainty::ThresholdKind::MAX_DEPTH;
+            th.head = invert + full;
+        } else {
+            th.kind = uncertainty::ThresholdKind::NONE;
+        }
+    }
+
+    // Control setpoints. REPORTING ONLY — this does not evaluate, re-time or
+    // otherwise touch control actions (that is H2's forward note, §7.1); it
+    // reports how close the ensemble is to disagreeing about a rule.
+    //
+    // UNITS: rule thresholds are compared by ControlEngine in DISPLAY units
+    // (it converts internal state via `* ucf_len` before comparing — see
+    // Controls.cpp::getVariableValue). The reconstructed member values here
+    // are INTERNAL, so setpoints are divided back by the same factor. Getting
+    // this backwards would silently mis-scale every p_ctrl in non-US models.
+    const int fu = static_cast<int>(ctx_.options.flow_units);
+    const int us = ucf::getUnitSystem(fu);
+    const double ucf_len = ucf::Ucf[3][us];      // internal → display
+    if (!(ucf_len > 0.0)) return;
+
+    // full node index → active index, for premise lookup.
+    std::vector<int> full_to_active(static_cast<std::size_t>(ctx_.n_nodes()), -1);
+    for (int ai = 0; ai < n_active; ++ai)
+        full_to_active[static_cast<std::size_t>(
+            rom1d_active_map_[static_cast<std::size_t>(ai)])] = ai;
+
+    for (const auto& rule : controls_.rules()) {
+        for (const auto& p : rule.premises) {
+            if (p.rhs_is_variable) continue;          // sensor-vs-sensor: no fixed setpoint
+            if (p.lhs_idx < 0 || p.lhs_idx >= ctx_.n_nodes()) continue;
+            const bool is_depth = (p.lhs_var == controls::ConditionVar::NODE_DEPTH);
+            const bool is_head  = (p.lhs_var == controls::ConditionVar::NODE_HEAD);
+            if (!is_depth && !is_head) continue;
+
+            const int ai = full_to_active[static_cast<std::size_t>(p.lhs_idx)];
+            if (ai < 0) continue;                     // outfall / not in the ROM
+            auto& th = rom1d_thresholds_[static_cast<std::size_t>(ai)];
+            if (th.has_ctrl) continue;                // keep the FIRST setpoint
+
+            const auto uli = static_cast<std::size_t>(p.lhs_idx);
+            const double setpoint_internal = p.rhs_value / ucf_len;
+            th.ctrl_head = is_depth
+                         ? ctx_.nodes.invert_elev[uli] + setpoint_internal
+                         : setpoint_internal;
+            th.has_ctrl  = true;
         }
     }
 }
