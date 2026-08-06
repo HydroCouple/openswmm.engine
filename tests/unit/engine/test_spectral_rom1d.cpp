@@ -1542,6 +1542,179 @@ TEST(UpdateBasis, FailedRebuildConsumesInterval) {
 }
 
 // ============================================================================
+// PR H1 — surcharge-onset cold-restart guard
+// ============================================================================
+
+TEST(ColdRestartGuard, SurchargeFlipForcesCold) {
+    // Primary trigger: >5% of active nodes flip their surcharge flag between
+    // rebuilds -> cold restart, even with IDENTICAL conduit_off (isolates the
+    // trigger from any dqdh-based effect -- the surcharge classification
+    // alone must be sufficient).
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w(static_cast<std::size_t>(NC), 0.01);
+
+    // First call establishes the surcharge baseline (all clear).
+    std::vector<uint8_t> surch0(static_cast<std::size_t>(N), 0);
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0, surch0.data());
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "first-ever call has no previous surcharge state to compare against";
+
+    // Second call: 2 of 6 active nodes now surcharged (33% > 5% threshold),
+    // conduit_off UNCHANGED.
+    std::vector<uint8_t> surch1 = surch0;
+    surch1[1] = 1;
+    surch1[4] = 1;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0, surch1.data());
+
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "surcharge flip on 33% of active nodes must force a cold restart";
+    EXPECT_EQ(rom.basis_updates_attempted_, 2)
+        << "the surcharge trigger must bypass the skip criterion even though "
+           "conduit_off did not change";
+}
+
+TEST(ColdRestartGuard, LargeEdgeDriftForcesCold) {
+    // Secondary trigger: conduit_off jumps by 10x (r_e = 9.0, above the 1.0
+    // ratio threshold) on 2 of 5 conduits (40% > 5% edge-fraction threshold)
+    // -> cold restart, with no surcharge information at all (nullptr).
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0);
+
+    std::vector<double> w1 = w0;
+    w1[0] *= 10.0;
+    w1[1] *= 10.0;
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "a 10x jump on 40% of edges must force a cold restart via the "
+           "secondary (dqdh-drift) trigger alone";
+}
+
+TEST(ColdRestartGuard, ModerateSingleEdgeChangeStaysWarm) {
+    // The existing FiresWhenOperatorChangesSignificantly scenario (one
+    // conduit doubles, 50% change on 1 of 5 edges) is well above the skip
+    // tolerance (rebuild fires) but below BOTH cold thresholds (r_e=1.0 is
+    // not > 1.0; 20% of edges is above the 5% edge-FRACTION threshold, but
+    // that fraction only counts edges that individually exceed the ratio
+    // threshold -- here none do) -- confirms ordinary operator drift takes
+    // the warm path, matching the pre-H1 baseline behavior exactly.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+
+    std::vector<double> w1 = w0;
+    w1[NC / 2] *= 2.0;  // 100% change on exactly 1 of 5 edges
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 2) << "the rebuild must still fire";
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "1 of 5 edges changing (20% > the 5% edge-fraction threshold) "
+           "must still stay warm, because that edge's own r_e (1.0, a 2x "
+           "change) does not exceed the per-edge ratio threshold -- the "
+           "fraction only counts edges that individually cross it";
+}
+
+TEST(ColdRestartGuard, EigenpairResidualSmallAfterWarmAndColdRebuild) {
+    // Basis correctness invariant: regardless of warm or cold start, the
+    // rebuilt eigenpairs must satisfy the Ritz residual bound.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    auto check_residual = [&](const std::vector<double>& weights) {
+        // Mirror updateBasis()'s own normalization (mean weight 1.0) so the
+        // reference Laplacian matches what was actually built internally.
+        std::vector<double> w_norm = weights;
+        double sum_w = 0.0;
+        for (double w : w_norm) sum_w += std::max(w, 1.0e-6);
+        const double scale = static_cast<double>(NC) / sum_w;
+        for (double& w : w_norm) w = std::max(w, 1.0e-6) * scale;
+
+        std::vector<int> is_outfall(static_cast<std::size_t>(N), 0);
+        std::vector<int> active_map, full_to_active;
+        CsrGraph L = NetworkLaplacian1D::buildWeighted(
+            N, NC, n1.data(), n2.data(), is_outfall.data(), w_norm.data(),
+            active_map, full_to_active);
+
+        const int n = rom.basis->n_nodes;
+        std::vector<double> y(static_cast<std::size_t>(n), 0.0);
+        for (int j = 0; j < rom.basis->num_kept; ++j) {
+            const double* vj = &rom.basis->P[static_cast<std::size_t>(j * n)];
+            std::fill(y.begin(), y.end(), 0.0);
+            csr_matvec(L, vj, y.data());
+            const double lam = rom.basis->eigenvalues[static_cast<std::size_t>(j)];
+            double resid = 0.0;
+            for (int i = 0; i < n; ++i) {
+                const double d = y[static_cast<std::size_t>(i)]
+                               - lam * vj[static_cast<std::size_t>(i)];
+                resid += d * d;
+            }
+            EXPECT_LE(std::sqrt(resid), 1.0e-8) << "mode " << j;
+        }
+    };
+
+    // First rebuild: cold by construction (no previous state).
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    check_residual(w0);
+
+    // Second rebuild: warm (small single-edge change).
+    std::vector<double> w1 = w0;
+    w1[NC / 2] *= 2.0;
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0) << "sanity: this rebuild is warm";
+    check_residual(w1);
+
+    // Third rebuild: forced cold (large drift on many edges).
+    std::vector<double> w2 = w1;
+    w2[0] *= 10.0;
+    w2[1] *= 10.0;
+    rom.updateBasis(w2.data(), n1.data(), n2.data(), NC, /*sim_time=*/200.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 1) << "sanity: this rebuild is cold";
+    check_residual(w2);
+}
+
+// ============================================================================
 // PR 5 — weighted-Laplacian normalization (updateBasis)
 // ============================================================================
 

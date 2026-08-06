@@ -2731,7 +2731,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         if (router_.dwSolver().isHSnapshotValid()) {
             const auto snap = router_.dwSolver().lastConvergedH();
             rom1d_->updateBasis(snap.conduit_off, snap.conduit_n1, snap.conduit_n2,
-                                snap.n_conduits, ctx_.current_time);
+                                snap.n_conduits, ctx_.current_time,
+                                snap.node_surcharged);
         }
         const double K1d = computeK1d();
 
