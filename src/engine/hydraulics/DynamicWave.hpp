@@ -67,13 +67,22 @@ using constants::MIN_SURFAREA;
 // ============================================================================
 
 /**
- * @brief Read-only snapshot of H = surfArea/dt − dQ/dH components after
- *        the last converged DYNWAVE Picard iteration.
+ * @brief Read-only snapshot of H = surfArea/dt − dQ/dH components, AND the
+ *        current surcharge/Froude regime classification, after the last
+ *        converged DYNWAVE Picard iteration.
  *
- * Used by the 1D network uncertainty ROM to build a Jacobian-informed
- * weighted Laplacian basis (H_sym = (H+H^T)/2) without touching any solver
- * state — DWSolver owns dqdh_ and the tile arrays; this is a read-only copy
- * plus non-owning pointers into DWSolver's own storage.
+ * Originally the conductance view only (H_sym = (H+H^T)/2) used by the 1D
+ * network uncertainty ROM to build a Jacobian-informed weighted Laplacian
+ * basis. Widened (PR P5, 2026-08-04) to also be the sanctioned *regime* view
+ * for H1/H3/H5 — those PRs were written against the public
+ * `SWMM_OperatorSnapshot`, but PR P3 was resolved by substitution (owner's
+ * 2026-07-31 decision made that type reference-only), so `HSnapshot` is now
+ * the actual input surface for surcharge-transition triggers and Froude-based
+ * trust diagnostics, not just conductance.
+ *
+ * DWSolver owns dqdh_, xnode_.is_surcharged, froude_, and the tile arrays;
+ * every pointer here is a non-owning view into that storage (no copies) —
+ * valid until the next execute() call, exactly like the conductance fields.
  */
 struct HSnapshot {
     /// 0.5*dt*dqdh per conduit (ci-indexed, length n_conduits).
@@ -85,6 +94,20 @@ struct HSnapshot {
     const int*    conduit_n2   = nullptr;
     int    n_conduits = 0;
     double dt         = 0.0;
+
+    /// Per-node surcharge flag (full node space, length n_nodes):
+    /// TRUE when node depth > crown elevation. Points directly into
+    /// DWSolver::xnode_.is_surcharged — live state, not a per-step copy.
+    const uint8_t* node_surcharged = nullptr;
+    /// Per-link Froude number (full link space, length n_links). Points
+    /// directly into DWSolver::froude_ — live state, not a per-step copy.
+    /// Non-conduit links (weirs/orifices/pumps/outlets) hold whatever value
+    /// was last written there (0.0 if never touched); Froude is a conduit
+    /// momentum-solve quantity.
+    const double*  link_froude     = nullptr;
+    int n_nodes = 0;
+    int n_links = 0;
+
     bool   valid      = false;  ///< false until first execute() completes
 };
 
@@ -585,6 +608,11 @@ public:
         s.conduit_n2  = tile_n2_.empty()  ? nullptr : tile_n2_.data();
         s.n_conduits  = n_conduits_;
         s.dt          = snap_dt_;
+        s.node_surcharged = xnode_.is_surcharged.empty()
+                            ? nullptr : xnode_.is_surcharged.data();
+        s.link_froude     = froude_.empty() ? nullptr : froude_.data();
+        s.n_nodes         = n_nodes_;
+        s.n_links         = n_links_;
         s.valid       = snap_valid_;
         return s;
     }

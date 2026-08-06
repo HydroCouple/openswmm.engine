@@ -269,3 +269,175 @@ TEST(SwmmEngine1DRomLifecycle, HSnapshotBecomesValidAfterFirstRoutingStep) {
     swmm_engine_close(r.eng);
     swmm_engine_destroy(r.eng);
 }
+
+// ============================================================================
+// PR P5 — HSnapshot widened with the regime fields (node_surcharged,
+// link_froude). H1/H3/H5 read these from HSnapshot rather than the
+// reference-only SWMM_OperatorSnapshot.
+// ============================================================================
+
+TEST(SwmmEngine1DRomLifecycle, HSnapshotExposesSurchargeAndFroudeArraysAfterFirstStep) {
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    auto r = driveRun(dir, "hsnapshot_regime", "\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n");
+    ASSERT_NE(r.eng, nullptr);
+    auto* impl = static_cast<openswmm::SWMMEngine*>(r.eng);
+    const auto& solver = impl->router().dwSolver();
+
+    ASSERT_TRUE(solver.isHSnapshotValid());
+    const auto snap = solver.lastConvergedH();
+    EXPECT_TRUE(snap.valid);
+
+    EXPECT_NE(snap.node_surcharged, nullptr)
+        << "HSnapshot must expose the live is_surcharged array (PR P5)";
+    EXPECT_NE(snap.link_froude, nullptr)
+        << "HSnapshot must expose the live froude_ array (PR P5)";
+    EXPECT_EQ(snap.n_nodes, 6)   // J1..J5 + O1
+        << "n_nodes must match the full node space, not just active/routed nodes";
+    EXPECT_EQ(snap.n_links, 5)  // C1..C5
+        << "n_links must match the full link space (conduits here)";
+
+    swmm_engine_close(r.eng);
+    swmm_engine_destroy(r.eng);
+}
+
+TEST(SwmmEngine1DRomLifecycle, HSnapshotInvalidBeforeFirstExecuteDoesNotClaimReadyRegimeData) {
+    // Before the first execute() call, valid==false; callers must not read
+    // node_surcharged/link_froude in that state. This mirrors the existing
+    // contract for conduit_off/conduit_n1/conduit_n2 and confirms the P5
+    // widening didn't relax it.
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+    const fs::path inp = dir / "hsnapshot_prestep.inp";
+    const fs::path rpt = dir / "hsnapshot_prestep.rpt";
+    { std::ofstream f(inp); f << buildChainModel("\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n"); }
+
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    // Deliberately no swmm_engine_start()/step() — check the pre-first-execute state.
+    auto* impl = static_cast<openswmm::SWMMEngine*>(eng);
+    const auto& solver = impl->router().dwSolver();
+
+    EXPECT_FALSE(solver.isHSnapshotValid());
+    const auto snap = solver.lastConvergedH();
+    EXPECT_FALSE(snap.valid);
+
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+}
+
+TEST(SwmmEngine1DRomLifecycle, HSnapshotForcedSurchargeFlagIsVisibleThroughSnapshot) {
+    // node_surcharged is a non-owning pointer into DWSolver::xnode_.is_surcharged
+    // (no per-step copy) — forcing the underlying flag via the existing
+    // nodeSurchargedFlag() test/scatter accessor must be immediately visible
+    // through the snapshot without requiring another execute() call. This
+    // is a plumbing/aliasing test, not a claim that this small fixture
+    // naturally surcharges.
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    auto r = driveRun(dir, "hsnapshot_forced_surcharge",
+                      "\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n");
+    ASSERT_NE(r.eng, nullptr);
+    auto* impl = static_cast<openswmm::SWMMEngine*>(r.eng);
+    auto& solver = impl->router().dwSolver();
+    ASSERT_TRUE(solver.isHSnapshotValid());
+
+    // Force node 0's flag on, then read it straight back through the snapshot.
+    solver.nodeSurchargedFlag(0) = 1;
+    auto snap = solver.lastConvergedH();
+    ASSERT_NE(snap.node_surcharged, nullptr);
+    EXPECT_EQ(snap.node_surcharged[0], 1)
+        << "forced is_surcharged[0] must be visible through the live pointer";
+
+    // And clearing it must also be immediately visible (true aliasing, not a
+    // one-shot copy taken at some earlier point).
+    solver.nodeSurchargedFlag(0) = 0;
+    snap = solver.lastConvergedH();
+    EXPECT_EQ(snap.node_surcharged[0], 0);
+
+    swmm_engine_close(r.eng);
+    swmm_engine_destroy(r.eng);
+}
+
+TEST(SwmmEngine1DRomLifecycle, HSnapshotFroudeIsZeroInStillWater) {
+    // A perfectly flat network (equal inverts everywhere, equal initial
+    // depths, no inflow) has zero head gradient anywhere -> zero flow ->
+    // zero Froude on every conduit. (A sloping-invert version, even with
+    // InitFlow=0, is NOT still water: gravity alone drives real flow from
+    // the very first step, which is exactly what the first attempt at this
+    // fixture got wrong -- measured Froude up to 0.32, not "still".)
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+    const std::string still_model =
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:20:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         5\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      0.0   8.0       1.0        0         0\n"
+        "J2       0.0  8.0       1.0        0         0\n"
+        "J3       0.0  8.0       1.0        0         0\n"
+        "J4       0.0  8.0       1.0        0         0\n"
+        "J5       0.0  8.0       1.0        0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Stage  Gated\n"
+        "O1      0.0   FIXED 1.0   NO\n"   // matches J5 invert+depth -> no head gradient
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    J2  200.0   0.013      0         0          0.0\n"
+        "C2      J2    J3  200.0   0.013      0         0          0.0\n"
+        "C3      J3    J4  200.0   0.013      0         0          0.0\n"
+        "C4      J4    J5  200.0   0.013      0         0          0.0\n"
+        "C5      J5    O1  200.0   0.013      0         0          0.0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  3.0    0      0      0      1\n"
+        "C2      CIRCULAR  3.0    0      0      0      1\n"
+        "C3      CIRCULAR  3.0    0      0      0      1\n"
+        "C4      CIRCULAR  3.0    0      0      0      1\n"
+        "C5      CIRCULAR  3.0    0      0      0      1\n";
+
+    const fs::path inp = dir / "hsnapshot_still.inp";
+    const fs::path rpt = dir / "hsnapshot_still.rpt";
+    { std::ofstream f(inp); f << still_model; }
+
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
+
+    double elapsed = 0.0;
+    int n_steps = 0;
+    while (swmm_engine_step(eng, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        if (++n_steps > 500) break;
+    }
+    swmm_engine_end(eng);
+
+    auto* impl = static_cast<openswmm::SWMMEngine*>(eng);
+    const auto& solver = impl->router().dwSolver();
+    ASSERT_TRUE(solver.isHSnapshotValid());
+    const auto snap = solver.lastConvergedH();
+    ASSERT_NE(snap.link_froude, nullptr);
+    for (int j = 0; j < snap.n_links; ++j) {
+        EXPECT_NEAR(snap.link_froude[j], 0.0, 1e-6)
+            << "conduit " << j << " should show zero Froude in still water";
+    }
+
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+}
