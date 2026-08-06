@@ -81,16 +81,16 @@ inline constexpr double kEtaDeadband = 1.0e-12;
 // Section evaluation — the ONE place the cross-section machinery is called
 // ===========================================================================
 //
-// These four forward to the existing per-element accessors, which are the same
-// single-source bodies XSectBatch's kernels use. The Kokkos backend replaces
-// the bodies with the flattened device table lookups from DeviceXsectTables.hpp
-// (plan §5.1) behind these exact signatures, and the §6.8 parity harness
-// asserts host and device agree within the recorded ULP envelope.
+// These three go through the geometry's own evaluator (XSectKernels.hpp) — the
+// SAME bodies XSection.cpp's public accessors and XSectBatch's kernels run.
+// Only where the evaluator's tables live differs between the host solver and
+// the device backend, so the §6.8 parity harness compares two instantiations of
+// one implementation rather than two implementations.
 
 /// Section area at depth h, EXCLUDING the slot (h clamped to the crown).
 OPENSWMM_KERNEL_FN double sectionArea(const FvGeometry& g, double h) noexcept {
     if (h <= 0.0) return 0.0;
-    return xsect::getAofY(g.xs, (h < g.y_full) ? h : g.y_full);
+    return g.eval->getAofY(g.xs, (h < g.y_full) ? h : g.y_full);
 }
 
 /// Section top width at depth h, EXCLUDING the slot. RECT_CLOSED returns 0 at
@@ -98,7 +98,7 @@ OPENSWMM_KERNEL_FN double sectionArea(const FvGeometry& g, double h) noexcept {
 /// is what keeps the total width — and hence the celerity — finite there.
 OPENSWMM_KERNEL_FN double sectionWidth(const FvGeometry& g, double h) noexcept {
     if (h <= 0.0) return 0.0;
-    return xsect::getWofY(g.xs, (h < g.y_full) ? h : g.y_full);
+    return g.eval->getWofY(g.xs, (h < g.y_full) ? h : g.y_full);
 }
 
 /// Section hydraulic radius at depth h. Frozen at r_full above the crown —
@@ -107,7 +107,7 @@ OPENSWMM_KERNEL_FN double sectionWidth(const FvGeometry& g, double h) noexcept {
 OPENSWMM_KERNEL_FN double sectionHydRad(const FvGeometry& g, double h) noexcept {
     if (h <= 0.0) return 0.0;
     if (h >= g.y_full) return g.r_full;
-    return xsect::getRofY(g.xs, h);
+    return g.eval->getRofY(g.xs, h);
 }
 
 // ===========================================================================

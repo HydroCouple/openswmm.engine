@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "../XSectBatch.hpp"
+#include "../XSectKernels.hpp"
 
 namespace openswmm::fv {
 
@@ -58,6 +59,14 @@ inline constexpr int kNodeVolSamples = 129;
  */
 struct FvGeometry {
     XSectParams xs{};              ///< section parameters (owns transect table ptrs)
+
+    /// Where the section's own geometry is evaluated. A pointer, not a copy:
+    /// the evaluator carries the shared geometry tables, and which memory space
+    /// those live in is exactly what differs between the host solver and the
+    /// device backend. The mesh builder binds this to xsect::hostEval(); a
+    /// device backend rebinds it to its own device-resident pair, and the same
+    /// kernel bodies then run unchanged on both (plan §5.1).
+    const xsect::XsectEval* eval = nullptr;
 
     double y_full = 0.0;           ///< full depth (ft)
     double a_full = 0.0;           ///< area when full (ft²)
@@ -102,7 +111,12 @@ struct FvGeometry {
     /// evaluates. Quadrature error does not threaten well-balancedness — that
     /// needs only a single-valued I₁(h) — but it does set the accuracy of the
     /// pressure term, hence the fine sub-sampling in buildI1Table.
-    std::vector<double> i1_tbl;
+    ///
+    /// A fixed inline array rather than a vector: the whole struct is copied
+    /// into device memory by the accelerated backend, and an owning container
+    /// cannot cross that boundary. At 129 samples this is 2 kB per DISTINCT
+    /// cross-section — a few hundred at most in a real model.
+    double i1_tbl[2 * kI1Samples] = {};
 };
 
 /**
