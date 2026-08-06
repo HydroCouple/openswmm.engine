@@ -1,0 +1,231 @@
+/**
+ * @file test_xsect_kernels_parity.cpp
+ * @brief Plan §5.1 gate 1/3 — the portable cross-section kernels agree with the
+ *        public accessors, and agree with themselves when their tables are
+ *        rebound to different memory.
+ *
+ * @details The geometry layer moved out of XSection.cpp into XSectKernels.hpp so
+ *          the identical bodies can compile for a device backend. Two things
+ *          have to hold for that move to be safe, and they are different claims:
+ *
+ *          1. **The public accessors still route through the moved bodies.**
+ *             `xsect::getAofY` and friends are now one-line forwarders, so this
+ *             is structural rather than numerical — but it is what the whole
+ *             regression suite's byte-identical result rests on, and asserting
+ *             it here localizes a break to this file instead of to a .rpt diff.
+ *
+ *          2. **Rebinding the tables changes nothing.** This is the claim that
+ *             matters for the device path: an evaluator built over a COPY of
+ *             the geometry tables, at different addresses, must reproduce the
+ *             host evaluator exactly. A device backend does precisely this,
+ *             with the copies in device memory. If indexing, table sizes or
+ *             pointer wiring were wrong anywhere, this is where it shows —
+ *             on the host, in milliseconds, instead of on a GPU.
+ *
+ *          Both are swept over the full shape catalog and the full depth range,
+ *          and asserted at ULP zero. Sampling error is not in play: the same
+ *          arithmetic reads the same numbers from a different address.
+ *
+ * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §5.1, §6.8
+ * @ingroup new_engine
+ *
+ * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license  MIT License
+ */
+
+#include <gtest/gtest.h>
+
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include "hydraulics/XSectBatch.hpp"
+#include "hydraulics/XSectKernels.hpp"
+#include "hydraulics/xsect_tables.hpp"
+
+using namespace openswmm;
+using openswmm::xsect::XsectEval;
+using openswmm::xsect::XsectTables;
+
+namespace {
+
+/// Every shape `setParams` can build from raw geometry, with parameters that
+/// produce a valid section. Transect-backed shapes (IRREGULAR, CUSTOM,
+/// STREET_XSECT) are excluded: their tables hang off XSectParams rather than
+/// off the shared table set, so they exercise a different pointer path (one a
+/// device backend rebinds separately).
+struct ShapeCase {
+    const char*   name;
+    XSectShape    shape;
+    double        p[4];
+};
+
+const std::vector<ShapeCase>& shapeCatalog() {
+    static const std::vector<ShapeCase> cases = {
+        {"CIRCULAR",        XSectShape::CIRCULAR,        {3.0, 0, 0, 0}},
+        {"FORCE_MAIN",      XSectShape::FORCE_MAIN,      {3.0, 120.0, 0, 0}},
+        {"FILLED_CIRCULAR", XSectShape::FILLED_CIRCULAR, {3.0, 0.5, 0, 0}},
+        {"EGGSHAPED",       XSectShape::EGGSHAPED,       {3.0, 0, 0, 0}},
+        {"HORSESHOE",       XSectShape::HORSESHOE,       {3.0, 0, 0, 0}},
+        {"GOTHIC",          XSectShape::GOTHIC,          {3.0, 0, 0, 0}},
+        {"CATENARY",        XSectShape::CATENARY,        {3.0, 0, 0, 0}},
+        {"SEMIELLIPTICAL",  XSectShape::SEMIELLIPTICAL,  {3.0, 0, 0, 0}},
+        {"BASKETHANDLE",    XSectShape::BASKETHANDLE,    {3.0, 0, 0, 0}},
+        {"SEMICIRCULAR",    XSectShape::SEMICIRCULAR,    {3.0, 0, 0, 0}},
+        {"HORIZ_ELLIPSE",   XSectShape::HORIZ_ELLIPSE,   {3.0, 4.0, 0, 0}},
+        {"VERT_ELLIPSE",    XSectShape::VERT_ELLIPSE,    {4.0, 3.0, 0, 0}},
+        {"ARCH",            XSectShape::ARCH,            {3.0, 4.0, 0, 0}},
+        {"RECT_CLOSED",     XSectShape::RECT_CLOSED,     {3.0, 4.0, 0, 0}},
+        {"RECT_OPEN",       XSectShape::RECT_OPEN,       {3.0, 4.0, 0, 0}},
+        {"RECT_TRIANG",     XSectShape::RECT_TRIANG,     {3.0, 4.0, 1.0, 0}},
+        {"RECT_ROUND",      XSectShape::RECT_ROUND,      {3.0, 4.0, 2.0, 0}},
+        {"MOD_BASKET",      XSectShape::MOD_BASKET,      {3.0, 4.0, 2.0, 0}},
+        {"TRAPEZOIDAL",     XSectShape::TRAPEZOIDAL,     {3.0, 4.0, 1.0, 1.5}},
+        {"TRIANGULAR",      XSectShape::TRIANGULAR,      {3.0, 4.0, 0, 0}},
+        {"PARABOLIC",       XSectShape::PARABOLIC,       {3.0, 4.0, 0, 0}},
+        {"POWERFUNC",       XSectShape::POWERFUNC,       {3.0, 4.0, 2.0, 0}},
+    };
+    return cases;
+}
+
+/// A table set whose pointers address INDEPENDENT copies of the geometry data.
+/// The copies are owned by a function-local static so they outlive every use,
+/// and they are deliberately allocated (not aliased) so a stale pointer or a
+/// wrong length cannot pass by accident.
+const XsectTables& rebound() {
+    static std::vector<std::vector<double>> owned;
+    static const XsectTables t = [] {
+        const XsectTables& h = xsect::hostTables();
+        XsectTables r = h;
+        auto clone = [&](const double* src, int n) -> const double* {
+            if (!src || n <= 0) return src;
+            owned.emplace_back(src, src + n);
+            return owned.back().data();
+        };
+        // Every shared table, cloned through its own recorded length. Amax is
+        // indexed by shape id (26 entries), not by a paired N_ count.
+        r.A_Circ          = clone(h.A_Circ,          h.N_A_Circ);
+        r.A_Egg           = clone(h.A_Egg,           h.N_A_Egg);
+        r.A_Horseshoe     = clone(h.A_Horseshoe,     h.N_A_Horseshoe);
+        r.A_Baskethandle  = clone(h.A_Baskethandle,  h.N_A_Baskethandle);
+        r.A_HorizEllipse  = clone(h.A_HorizEllipse,  h.N_A_HorizEllipse);
+        r.A_VertEllipse   = clone(h.A_VertEllipse,   h.N_A_VertEllipse);
+        r.A_Arch          = clone(h.A_Arch,          h.N_A_Arch);
+
+        r.R_Circ          = clone(h.R_Circ,          h.N_R_Circ);
+        r.R_Egg           = clone(h.R_Egg,           h.N_R_Egg);
+        r.R_Horseshoe     = clone(h.R_Horseshoe,     h.N_R_Horseshoe);
+        r.R_Baskethandle  = clone(h.R_Baskethandle,  h.N_R_Baskethandle);
+        r.R_HorizEllipse  = clone(h.R_HorizEllipse,  h.N_R_HorizEllipse);
+        r.R_VertEllipse   = clone(h.R_VertEllipse,   h.N_R_VertEllipse);
+        r.R_Arch          = clone(h.R_Arch,          h.N_R_Arch);
+
+        r.W_Circ          = clone(h.W_Circ,          h.N_W_Circ);
+        r.W_Egg           = clone(h.W_Egg,           h.N_W_Egg);
+        r.W_Horseshoe     = clone(h.W_Horseshoe,     h.N_W_Horseshoe);
+        r.W_BasketHandle  = clone(h.W_BasketHandle,  h.N_W_BasketHandle);
+        r.W_Gothic        = clone(h.W_Gothic,        h.N_W_Gothic);
+        r.W_Catenary      = clone(h.W_Catenary,      h.N_W_Catenary);
+        r.W_SemiEllip     = clone(h.W_SemiEllip,     h.N_W_SemiEllip);
+        r.W_SemiCirc      = clone(h.W_SemiCirc,      h.N_W_SemiCirc);
+        r.W_HorizEllipse  = clone(h.W_HorizEllipse,  h.N_W_HorizEllipse);
+        r.W_VertEllipse   = clone(h.W_VertEllipse,   h.N_W_VertEllipse);
+        r.W_Arch          = clone(h.W_Arch,          h.N_W_Arch);
+
+        r.Y_Circ          = clone(h.Y_Circ,          h.N_Y_Circ);
+        r.Y_Egg           = clone(h.Y_Egg,           h.N_Y_Egg);
+        r.Y_Horseshoe     = clone(h.Y_Horseshoe,     h.N_Y_Horseshoe);
+        r.Y_BasketHandle  = clone(h.Y_BasketHandle,  h.N_Y_BasketHandle);
+        r.Y_Gothic        = clone(h.Y_Gothic,        h.N_Y_Gothic);
+        r.Y_Catenary      = clone(h.Y_Catenary,      h.N_Y_Catenary);
+        r.Y_SemiEllip     = clone(h.Y_SemiEllip,     h.N_Y_SemiEllip);
+        r.Y_SemiCirc      = clone(h.Y_SemiCirc,      h.N_Y_SemiCirc);
+
+        r.S_Circ          = clone(h.S_Circ,          h.N_S_Circ);
+        r.S_Egg           = clone(h.S_Egg,           h.N_S_Egg);
+        r.S_Horseshoe     = clone(h.S_Horseshoe,     h.N_S_Horseshoe);
+        r.S_BasketHandle  = clone(h.S_BasketHandle,  h.N_S_BasketHandle);
+        r.S_Gothic        = clone(h.S_Gothic,        h.N_S_Gothic);
+        r.S_Catenary      = clone(h.S_Catenary,      h.N_S_Catenary);
+        r.S_SemiEllip     = clone(h.S_SemiEllip,     h.N_S_SemiEllip);
+        r.S_SemiCirc      = clone(h.S_SemiCirc,      h.N_S_SemiCirc);
+
+        r.Amax            = clone(h.Amax, 26);
+        return r;
+    }();
+    return t;
+}
+
+/// 0 → just past full, so the depth sweep covers the dry end, the interior and
+/// the crown. 401 stations resolves the low-x quadratic-refinement branch of
+/// lookup_exact, which is the part most sensitive to indexing.
+std::vector<double> depthStations(double y_full) {
+    std::vector<double> ys;
+    ys.reserve(401);
+    for (int i = 0; i <= 400; ++i)
+        ys.push_back(y_full * static_cast<double>(i) / 400.0);
+    return ys;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// The public accessors are the moved bodies.
+// ---------------------------------------------------------------------------
+TEST(XsectKernels, PublicAccessorsRouteThroughTheSharedBodies) {
+    const XsectEval& ev = xsect::hostEval();
+    for (const ShapeCase& c : shapeCatalog()) {
+        XSectParams xs{};
+        double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
+            << c.name;
+        for (double y : depthStations(xs.y_full)) {
+            EXPECT_EQ(ev.getAofY(xs, y), xsect::getAofY(xs, y)) << c.name << " y=" << y;
+            EXPECT_EQ(ev.getWofY(xs, y), xsect::getWofY(xs, y)) << c.name << " y=" << y;
+            EXPECT_EQ(ev.getRofY(xs, y), xsect::getRofY(xs, y)) << c.name << " y=" << y;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The device path's central claim, checked on the host.
+// ---------------------------------------------------------------------------
+TEST(XsectKernels, ReboundTablesReproduceTheHostEvaluatorExactly) {
+    const XsectEval& host = xsect::hostEval();
+    const XsectEval  dev{rebound()};
+
+    for (const ShapeCase& c : shapeCatalog()) {
+        XSectParams xs{};
+        double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
+            << c.name;
+
+        for (double y : depthStations(xs.y_full)) {
+            EXPECT_EQ(dev.getAofY(xs, y), host.getAofY(xs, y)) << c.name << " A y=" << y;
+            EXPECT_EQ(dev.getWofY(xs, y), host.getWofY(xs, y)) << c.name << " W y=" << y;
+            EXPECT_EQ(dev.getRofY(xs, y), host.getRofY(xs, y)) << c.name << " R y=" << y;
+        }
+        // The area-argument family too: getYofA and getSofA reach different
+        // tables (Y_*, S_*) than the depth family, and a device backend has to
+        // rebind those as well.
+        const double a_full = xs.a_full;
+        for (int i = 0; i <= 400; ++i) {
+            const double a = a_full * static_cast<double>(i) / 400.0;
+            EXPECT_EQ(dev.getYofA(xs, a), host.getYofA(xs, a)) << c.name << " Y a=" << a;
+            EXPECT_EQ(dev.getSofA(xs, a), host.getSofA(xs, a)) << c.name << " S a=" << a;
+            EXPECT_EQ(dev.getRofA(xs, a), host.getRofA(xs, a)) << c.name << " R a=" << a;
+        }
+        EXPECT_EQ(dev.getAmax(xs), host.getAmax(xs)) << c.name << " Amax";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The evaluator is trivially copyable — the property that lets it be captured
+// by value into a kernel. Asserted rather than assumed, because adding an
+// owning member to XsectTables would break the device path silently.
+// ---------------------------------------------------------------------------
+TEST(XsectKernels, EvaluatorIsTriviallyCopyableForKernelCapture) {
+    EXPECT_TRUE(std::is_trivially_copyable_v<XsectTables>);
+    EXPECT_TRUE(std::is_trivially_copyable_v<XsectEval>);
+}

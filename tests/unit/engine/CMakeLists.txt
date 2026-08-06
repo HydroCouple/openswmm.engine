@@ -105,6 +105,7 @@ add_gtest_unit(test_engine_section_order_parity   test_section_order_parity.cpp)
 add_gtest_unit(test_engine_capi_file_paths        test_capi_file_paths.cpp)
 add_gtest_unit(test_engine_events_section         test_events_section.cpp)
 add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
+add_gtest_unit(test_engine_options_api_units      test_options_api_units.cpp)
 add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
@@ -124,6 +125,11 @@ add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
 add_gtest_unit(test_engine_xsect_api         test_xsect_api.cpp)
+# Portable cross-section kernels (plan §5.1): the public accessors route through
+# the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
+# tables reproduces the host one at ULP zero — the device-rebinding claim,
+# checked on the host across the full shape catalog and depth range.
+add_gtest_unit(test_engine_xsect_kernels_parity test_xsect_kernels_parity.cpp)
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)

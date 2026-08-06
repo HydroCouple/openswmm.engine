@@ -35,7 +35,7 @@ struct Attachment {
 void buildI1Table(FvGeometry& g) {
     constexpr int kSub = 8;                      // Simpson panels per interval
     const int n = kI1Samples;
-    g.i1_tbl.assign(static_cast<std::size_t>(2 * n), 0.0);
+    for (int q = 0; q < 2 * n; ++q) g.i1_tbl[q] = 0.0;
     if (g.y_full <= 0.0) return;
 
     const double dh = g.y_full / static_cast<double>(n - 1);
@@ -70,6 +70,10 @@ void buildI1Table(FvGeometry& g) {
 void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
                    FvGeometry& g) {
     g.xs      = xs;
+    // Host binding by default. A device backend rebinds this to its own
+    // evaluator over device copies of the same tables (plan §5.1); nothing else
+    // about the geometry changes.
+    g.eval    = &xsect::hostEval();
     g.y_full  = xs.y_full;
     g.a_full  = xs.a_full;
     g.w_max   = xs.w_max;
