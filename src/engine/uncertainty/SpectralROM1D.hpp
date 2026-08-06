@@ -83,6 +83,26 @@ struct SpectralROM1D {
     double basis_update_interval = 60.0;   ///< Min sim time (s) between Lanczos rebuilds.
 
     // -------------------------------------------------------------------------
+    // PR H1 — surcharge-onset cold-restart guard (config; defaults per spec)
+    // -------------------------------------------------------------------------
+
+    /// Primary trigger: force a COLD (v0_block=nullptr) basis rebuild instead
+    /// of the warm-start when the fraction of active nodes whose
+    /// node_surcharged flag flipped since the last rebuild attempt exceeds
+    /// this threshold. Surcharge onset changes dqdh discontinuously on the
+    /// affected conduits, rotating the invariant subspace by O(1) -- P_old
+    /// becomes a bad starting guess with no detection otherwise.
+    double surcharge_flip_frac_threshold = 0.05;
+    /// Secondary trigger: an edge counts as "jumped" when its relative
+    /// conduit_off (proportional to dqdh) change exceeds this ratio.
+    double edge_drift_ratio_threshold = 1.0;
+    /// Secondary trigger: force cold when the fraction of edges that jumped
+    /// (per edge_drift_ratio_threshold) exceeds this fraction. Catches
+    /// non-surcharge regime shifts (pump switching, gate operations) that the
+    /// surcharge flag alone would miss.
+    double edge_drift_frac_threshold = 0.05;
+
+    // -------------------------------------------------------------------------
     // State (set by initialize() and seed())
     // -------------------------------------------------------------------------
 
@@ -97,6 +117,7 @@ struct SpectralROM1D {
     double last_basis_update_time_ = -1.0e9;  ///< Sim time (s) of last Lanczos rebuild (-1e9 → always fire on first call).
     int basis_updates_attempted_ = 0;  ///< Count of updateBasis() calls that passed the interval/tolerance guards and attempted a rebuild.
     int basis_updates_failed_    = 0;  ///< Count of attempted rebuilds that did not complete successfully.
+    int basis_rebuilds_cold_forced_ = 0;  ///< PR H1: count of rebuilds forced cold by the surcharge-flip or edge-drift trigger.
 
     /// Ensemble DEVIATION coefficient matrix: a_ensemble[i * n_kept + j] = δa_{i,j}
     /// = P[:,j]^T (h_i − h_det).  Zero for the nominal member at all times.
@@ -279,10 +300,22 @@ struct SpectralROM1D {
      * @param conduit_n1   Upstream node index per conduit (length n_conduits).
      * @param conduit_n2   Downstream node index per conduit (length n_conduits).
      * @param n_conduits   Number of conduits.
+     * @param node_surcharged  PR H1: per-full-node surcharge flags (length
+     *                         n_full_nodes), from DWSolver::HSnapshot. When
+     *                         the fraction of ACTIVE nodes whose flag flipped
+     *                         since the last rebuild attempt exceeds
+     *                         surcharge_flip_frac_threshold, the rebuild uses
+     *                         a cold Lanczos start (v0_block=nullptr) instead
+     *                         of the usual warm start from P_old -- surcharge
+     *                         onset rotates the invariant subspace by O(1),
+     *                         making the warm guess actively harmful. Null
+     *                         disables the primary trigger (the secondary
+     *                         per-edge dqdh-drift trigger still applies).
      */
     void updateBasis(const double* conduit_off, const int* conduit_n1,
                      const int* conduit_n2, int n_conduits,
-                     double sim_time = 0.0);
+                     double sim_time = 0.0,
+                     const uint8_t* node_surcharged = nullptr);
 
     /**
      * @brief Allocate buffers and build the LHS parameter design.
@@ -424,6 +457,18 @@ private:
     std::unique_ptr<GraphEigenBasis> basis_owned_;   ///< Basis owned by ROM after first update.
     std::vector<double> conduit_off_prev_;            ///< Previous weights for skip criterion.
     std::vector<double> work_R_;                      ///< k×k re-projection scratch.
+
+    // PR H1 — surcharge-onset cold-restart guard
+    /// Previous per-ACTIVE-node surcharge flags (length n_nodes), derived from
+    /// the last node_surcharged snapshot via full_to_active. Compared against
+    /// the current snapshot at the top of the next updateBasis() call.
+    std::vector<uint8_t> node_surcharged_prev_;
+    /// Commit this call's conduit_off/node_surcharged/sim_time as the baseline
+    /// for the next call's triggers -- called at EVERY updateBasis() exit
+    /// (success or failure) so a persistently-failing rebuild still advances
+    /// its drift baseline instead of comparing against stale state forever.
+    void commitBasisUpdateAttempt_(const double* conduit_off, int n_conduits,
+                                   const uint8_t* node_surcharged, double sim_time);
 
     // PR 5 — vectorized computeQuantiles scratch buffer (node-major: nn × M)
     std::vector<double> recon_buf_;

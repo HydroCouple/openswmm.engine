@@ -93,6 +93,7 @@ add_gtest_unit(test_engine_outfall_stage_data test_outfall_stage_data.cpp)
 add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
+add_gtest_unit(test_engine_spectral_rom1d    test_spectral_rom1d.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
 add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
 # Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
