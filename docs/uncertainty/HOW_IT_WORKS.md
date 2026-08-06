@@ -495,6 +495,27 @@ much uncertainty is "really" there.
 This is a documented, understood limitation with active reform work tracked
 in this repository's engineering checklists — not a silent trap.
 
+**Band widths degrade near peak flow, and now there's a signal for when.**
+The linearized weighted-Laplacian operator the ROM builds is *symmetric* by
+construction — the underlying Picard solve applies one dQ/dH value per
+conduit antisymmetrically to its two endpoints, so there is no directional
+asymmetry for the ROM's basis to represent. The real Saint-Venant Jacobian,
+by contrast, picks up genuine asymmetry from advective (inertial) terms as
+flow speeds up — terms the linearized surrogate drops entirely. That gap
+scales with the square of the Froude number, so bands quoted at or near
+critical flow (Fr approaching 1) should be read with some skepticism; bands
+in slow, subcritical reaches are unaffected. The engine now computes and
+reports this directly (PR H3): `fr_trust` in `<rpt>.rom_diag.csv` is a
+flow-weighted mean squared Froude number over the network at each report
+time, clamped so a single fast trickle can't dominate the reading.
+Interpretation: `fr_trust ≲ 0.05` means bands are trustworthy as reported;
+`0.05–0.15` suggests inflating widths mentally by roughly 10%; `≳ 0.25`
+means you're in the degraded peak-flow regime, where band widths can be off
+by 10–25%. The same file's `surcharge_frac` column is the complementary
+signal: once a reach surcharges, velocities collapse toward zero (Fr → 0)
+and the symmetric surrogate becomes *more* accurate again, not less — so a
+high surcharge fraction is not itself a trust concern.
+
 > **Historical note**: an earlier version of this section also warned that
 > the band reflected uncertainty "since the last recalibration" — the ROM
 > periodically re-anchored its ensemble to the deterministic solution,
