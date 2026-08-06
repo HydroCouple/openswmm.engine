@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <string>
 #include <vector>
 
 using namespace openswmm::uncertainty;
@@ -1119,31 +1120,93 @@ TEST(GraphEigenBasisWarmStart, ColdStartFallbackWhenV0Null) {
             << "eigenvalue " << j;
 }
 
-TEST(GraphEigenBasisWarmStart, WarmStartMatchesColdStart) {
-    // Warm-start (v0_block = cold.P) must produce the 5 smallest nontrivial
-    // eigenvalues of the 20-node path graph, matching the analytic values
-    // λ_k = 2*(1-cos(k*π/20)), k=1..5.
+TEST(GraphEigenBasisWarmStart, ColdAndWarmBothFindTheKSmallestEigenvalues) {
+    // CONTRACT: the Krylov starting vector is an implementation detail. Cold
+    // or warm, build(L, k) must return the k SMALLEST nontrivial eigenvalues
+    // of L — so both paths must agree with the analytic spectrum AND with
+    // each other. Asserted across several chain lengths so the result cannot
+    // depend on one lucky (n, k) configuration.
     //
-    // Note: the cold-start linear ramp is anti-symmetric → it can only excite
-    // odd-k eigenmodes (k=1,3,5,7,9) and misses even modes.  The warm-start
-    // sum-of-columns starting vector is not purely anti-symmetric and correctly
-    // finds all k=1..5 modes.
-    CsrGraph L = make_chain_laplacian(20);
-    GraphEigenBasis cold;
-    ASSERT_TRUE(cold.build(L, 5));
+    // HISTORY — this test previously asserted only the warm path, on n = 20
+    // alone, above a comment claiming the cold-start ramp "can only excite
+    // odd-k eigenmodes (k=1,3,5,7,9) and misses even modes" while "the
+    // warm-start sum-of-columns starting vector is not purely anti-symmetric
+    // and correctly finds all k=1..5 modes". BOTH halves of that premise were
+    // false:
+    //   * the ramp's blind spot was a genuine DEFECT, not an acceptable
+    //     quirk — it returned λ_1,λ_3,λ_5,λ_7,λ_9 while reporting them as the
+    //     five smallest, and λ_2 < λ_3;
+    //   * the warm start did NOT escape it. Summing columns that are every
+    //     one of them antisymmetric yields another antisymmetric vector,
+    //     landing back in the identical invariant subspace.
+    // The test only ever passed because it was never wired into CMake and so
+    // had never run. Fixed at the source (GraphEigenBasis::lanczos(): the
+    // cold start is now a zero-mean deterministic pseudo-random vector, which
+    // has generic components on every eigenvector), which also fixes the warm
+    // path transitively.
+    for (int n : {6, 10, 15, 20, 30}) {
+        SCOPED_TRACE("chain length n=" + std::to_string(n));
+        const int k = 5;
+        CsrGraph L = make_chain_laplacian(n);
 
-    GraphEigenBasis warm;
-    ASSERT_TRUE(warm.build(L, 5, cold.P.data()));
+        GraphEigenBasis cold;
+        ASSERT_TRUE(cold.build(L, k));
+        ASSERT_EQ(cold.num_kept, k);
 
-    ASSERT_EQ(warm.num_kept, 5);
+        GraphEigenBasis warm;
+        ASSERT_TRUE(warm.build(L, k, cold.P.data()));
+        ASSERT_EQ(warm.num_kept, k);
 
-    // Analytic eigenvalues of the 20-node path-graph Laplacian
-    for (int j = 0; j < warm.num_kept; ++j) {
-        double expected = 2.0 * (1.0 - std::cos((j + 1) * M_PI / 20.0));
-        EXPECT_NEAR(warm.eigenvalues[static_cast<std::size_t>(j)],
-                    expected, 1e-6)
-            << "warm eigenvalue " << j;
+        // Analytic path-graph Laplacian spectrum: λ_j = 2(1 − cos(jπ/n)),
+        // ascending in j — so the k smallest nontrivial are j = 1..k with NO
+        // parity gaps.
+        for (int j = 0; j < k; ++j) {
+            const double expected = 2.0 * (1.0 - std::cos((j + 1) * M_PI / n));
+            EXPECT_NEAR(cold.eigenvalues[static_cast<std::size_t>(j)],
+                        expected, 1e-6)
+                << "COLD eigenvalue " << j << " is not the " << (j + 1)
+                << "-th smallest (parity blind spot regression?)";
+            EXPECT_NEAR(warm.eigenvalues[static_cast<std::size_t>(j)],
+                        expected, 1e-6)
+                << "WARM eigenvalue " << j << " is not the " << (j + 1)
+                << "-th smallest";
+        }
     }
+}
+
+TEST(GraphEigenBasisWarmStart, ColdStartReachesSymmetricEigenvectors) {
+    // Direct regression guard on the defect itself, independent of the
+    // eigenvalue bookkeeping above: on a left-right symmetric chain, the
+    // even-k eigenvectors are SYMMETRIC under i → n−1−i. An antisymmetric
+    // start vector (the old linear ramp) can never represent them, at any
+    // Krylov dimension. Assert the retained basis actually contains a
+    // symmetric eigenvector — i.e. the start vector is not confined to the
+    // antisymmetric invariant subspace.
+    const int n = 20;
+    CsrGraph L = make_chain_laplacian(n);
+    GraphEigenBasis b;
+    ASSERT_TRUE(b.build(L, 5));
+
+    int n_symmetric = 0, n_antisymmetric = 0;
+    for (int j = 0; j < b.num_kept; ++j) {
+        const double* v = &b.P[static_cast<std::size_t>(j * n)];
+        // Compare v against its own index-reversal.
+        double d_sym = 0.0, d_anti = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double vi = v[static_cast<std::size_t>(i)];
+            const double vr = v[static_cast<std::size_t>(n - 1 - i)];
+            d_sym  += (vi - vr) * (vi - vr);
+            d_anti += (vi + vr) * (vi + vr);
+        }
+        if (std::sqrt(d_sym)  < 1e-8) ++n_symmetric;
+        if (std::sqrt(d_anti) < 1e-8) ++n_antisymmetric;
+    }
+    EXPECT_GT(n_symmetric, 0)
+        << "no symmetric eigenvector in the retained basis — the Krylov start "
+           "is trapped in the antisymmetric invariant subspace (the pre-fix "
+           "linear-ramp defect)";
+    EXPECT_GT(n_antisymmetric, 0)
+        << "no antisymmetric eigenvector either — unexpected for a path graph";
 }
 
 TEST(GraphEigenBasisWarmStart, WarmStartSignsAligned) {
@@ -1504,10 +1567,9 @@ TEST(UpdateBasis, CountersTrackSuccessfulRebuild) {
 }
 
 TEST(UpdateBasis, FailedRebuildConsumesInterval) {
-    // A rebuild that fails (topology-mismatch guard) must still stamp
-    // last_basis_update_time_ so a persistently-failing rebuild backs off
-    // for basis_update_interval instead of retrying full Lanczos on every
-    // routing step.
+    // A rebuild that fails (topology-mismatch guard) must still consume the
+    // retry interval so a persistently-failing rebuild backs off instead of
+    // retrying full Lanczos on every routing step.
     const int N = 6;
     const int NC = N - 1;
     SpectralROM1D rom;
@@ -1538,7 +1600,293 @@ TEST(UpdateBasis, FailedRebuildConsumesInterval) {
     rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/250.0);
 
     EXPECT_EQ(rom.basis_updates_attempted_, 1)
-        << "failed rebuild must stamp last_basis_update_time_ so retries back off";
+        << "failed rebuild must consume the retry interval so retries back off";
+}
+
+// ============================================================================
+// PR H1 — surcharge-onset cold-restart guard
+// ============================================================================
+
+TEST(ColdRestartGuard, SurchargeFlipForcesCold) {
+    // Primary trigger: >5% of active nodes flip their surcharge flag between
+    // rebuilds -> cold restart, even with IDENTICAL conduit_off (isolates the
+    // trigger from any dqdh-based effect -- the surcharge classification
+    // alone must be sufficient).
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w(static_cast<std::size_t>(NC), 0.01);
+
+    // First call establishes the surcharge baseline (all clear).
+    std::vector<uint8_t> surch0(static_cast<std::size_t>(N), 0);
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0, surch0.data());
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "first-ever call has no previous surcharge state to compare against";
+
+    // Second call: 2 of 6 active nodes now surcharged (33% > 5% threshold),
+    // conduit_off UNCHANGED.
+    std::vector<uint8_t> surch1 = surch0;
+    surch1[1] = 1;
+    surch1[4] = 1;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0, surch1.data());
+
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "surcharge flip on 33% of active nodes must force a cold restart";
+    EXPECT_EQ(rom.basis_updates_attempted_, 2)
+        << "the surcharge trigger must bypass the skip criterion even though "
+           "conduit_off did not change";
+}
+
+TEST(ColdRestartGuard, FailedColdAttemptKeepsSuccessfulBaseline) {
+    // A failed forced-cold rebuild must not advance the warm/cold baseline.
+    // If the last SUCCESSFUL basis is still pre-surcharge, a later retry with
+    // the same surcharged state must still go cold.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w(static_cast<std::size_t>(NC), 0.01);
+
+    std::vector<uint8_t> surch0(static_cast<std::size_t>(N), 0);
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0, surch0.data());
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0);
+
+    // Force the next attempt down the cold path, but also force it to fail by
+    // making the active set size differ from rom.n_nodes.
+    std::vector<uint8_t> surch1 = surch0;
+    surch1[1] = 1;
+    surch1[4] = 1;
+    rom.full_to_active[0] = -1;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0, surch1.data());
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 2);
+    EXPECT_EQ(rom.basis_updates_failed_, 1);
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "failed attempts must not be counted as completed cold rebuilds";
+
+    // Restore topology and retry with the SAME surcharged state. This must
+    // still go cold, because the last successful baseline is still surch0.
+    rom.full_to_active[0] = 0;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/200.0, surch1.data());
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 3);
+    EXPECT_EQ(rom.basis_updates_failed_, 1);
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "retry must remain cold until a successful rebuild commits the new baseline";
+}
+
+TEST(ColdRestartGuard, LargeEdgeDriftForcesCold) {
+    // Secondary trigger: conduit_off jumps by 10x (r_e = 9.0, above the 1.0
+    // ratio threshold) on 2 of 5 conduits (40% > 5% edge-fraction threshold)
+    // -> cold restart, with no surcharge information at all (nullptr).
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0);
+
+    std::vector<double> w1 = w0;
+    w1[0] *= 10.0;
+    w1[1] *= 10.0;
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "a 10x jump on 40% of edges must force a cold restart via the "
+           "secondary (dqdh-drift) trigger alone";
+}
+
+TEST(ColdRestartGuard, ModerateSingleEdgeChangeStaysWarm) {
+    // The existing FiresWhenOperatorChangesSignificantly scenario (one
+    // conduit doubles, 50% change on 1 of 5 edges) is well above the skip
+    // tolerance (rebuild fires) but below BOTH cold thresholds (r_e=1.0 is
+    // not > 1.0; 20% of edges is above the 5% edge-FRACTION threshold, but
+    // that fraction only counts edges that individually exceed the ratio
+    // threshold -- here none do) -- confirms ordinary operator drift takes
+    // the warm path, matching the pre-H1 baseline behavior exactly.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+
+    std::vector<double> w1 = w0;
+    w1[NC / 2] *= 2.0;  // 100% change on exactly 1 of 5 edges
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 2) << "the rebuild must still fire";
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "1 of 5 edges changing (20% > the 5% edge-fraction threshold) "
+           "must still stay warm, because that edge's own r_e (1.0, a 2x "
+           "change) does not exceed the per-edge ratio threshold -- the "
+           "fraction only counts edges that individually cross it";
+}
+
+TEST(ColdRestartGuard, TenXOnTenPercentOfEdgesForcesCold) {
+    // The checklist's literal secondary-trigger case: 10× on 10% of edges.
+    // A 5-conduit chain cannot express 10% (one edge is already 20%), so use
+    // a 21-node chain = 20 conduits, and jump exactly 2 of them.
+    const int N = 21;
+    const int NC = N - 1;               // 20 conduits → 2 edges == 10%
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0);
+
+    std::vector<double> w1 = w0;
+    w1[3] *= 10.0;
+    w1[11] *= 10.0;                     // exactly 2/20 = 10% of edges
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "10x on 10% of edges must cross the 5% edge-fraction threshold";
+}
+
+TEST(ColdRestartGuard, SlowDriftOnEveryEdgeStaysWarm) {
+    // The counterpart the checklist asks for: a slow drift must NOT force cold.
+    //
+    // This is the case that distinguishes the two halves of the secondary
+    // trigger. Here EVERY edge changes (100% of edges — far above the 5%
+    // edge-FRACTION threshold) but each one only by 50%, so its per-edge
+    // r_e = 0.5 never crosses the 1.0 ratio threshold. The fraction counts
+    // only edges that individually exceed the ratio, so the count is 0 and
+    // the rebuild must stay warm. A regression that compared "fraction of
+    // edges CHANGED" instead of "fraction of edges that JUMPED" would force
+    // cold here and silently discard the warm start on ordinary drift.
+    //
+    // The 50% drift is also deliberately above basis_update_tol (5%), so a
+    // rebuild genuinely fires — this asserts "warm rebuild", not "skipped".
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    const int attempted_after_first = rom.basis_updates_attempted_;
+
+    std::vector<double> w1 = w0;
+    for (double& w : w1) w *= 1.5;      // every edge drifts 50%: r_e = 0.5
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_updates_attempted_, attempted_after_first + 1)
+        << "a 50% drift is above basis_update_tol — a rebuild must actually fire";
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "every edge changed, but none JUMPED past the per-edge ratio "
+           "threshold — ordinary drift must keep the warm start";
+}
+
+TEST(ColdRestartGuard, EigenpairResidualSmallAfterWarmAndColdRebuild) {
+    // Basis correctness invariant: regardless of warm or cold start, the
+    // rebuilt eigenpairs must satisfy the Ritz residual bound.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    auto check_residual = [&](const std::vector<double>& weights) {
+        // Mirror updateBasis()'s own normalization (mean weight 1.0) so the
+        // reference Laplacian matches what was actually built internally.
+        std::vector<double> w_norm = weights;
+        double sum_w = 0.0;
+        for (double w : w_norm) sum_w += std::max(w, 1.0e-6);
+        const double scale = static_cast<double>(NC) / sum_w;
+        for (double& w : w_norm) w = std::max(w, 1.0e-6) * scale;
+
+        std::vector<int> is_outfall(static_cast<std::size_t>(N), 0);
+        std::vector<int> active_map, full_to_active;
+        CsrGraph L = NetworkLaplacian1D::buildWeighted(
+            N, NC, n1.data(), n2.data(), is_outfall.data(), w_norm.data(),
+            active_map, full_to_active);
+
+        const int n = rom.basis->n_nodes;
+        std::vector<double> y(static_cast<std::size_t>(n), 0.0);
+        for (int j = 0; j < rom.basis->num_kept; ++j) {
+            const double* vj = &rom.basis->P[static_cast<std::size_t>(j * n)];
+            std::fill(y.begin(), y.end(), 0.0);
+            csr_matvec(L, vj, y.data());
+            const double lam = rom.basis->eigenvalues[static_cast<std::size_t>(j)];
+            double resid = 0.0;
+            for (int i = 0; i < n; ++i) {
+                const double d = y[static_cast<std::size_t>(i)]
+                               - lam * vj[static_cast<std::size_t>(i)];
+                resid += d * d;
+            }
+            EXPECT_LE(std::sqrt(resid), 1.0e-8) << "mode " << j;
+        }
+    };
+
+    // First rebuild: cold by construction (no previous state).
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    check_residual(w0);
+
+    // Second rebuild: warm (small single-edge change).
+    std::vector<double> w1 = w0;
+    w1[NC / 2] *= 2.0;
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0) << "sanity: this rebuild is warm";
+    check_residual(w1);
+
+    // Third rebuild: forced cold (large drift on many edges).
+    std::vector<double> w2 = w1;
+    w2[0] *= 10.0;
+    w2[1] *= 10.0;
+    rom.updateBasis(w2.data(), n1.data(), n2.data(), NC, /*sim_time=*/200.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 1) << "sanity: this rebuild is cold";
+    check_residual(w2);
 }
 
 // ============================================================================
@@ -1831,6 +2179,66 @@ TEST(DeviationForm, UpdateBasisPreservesDeviation) {
     const double spread_after = max_spread(rom);
     EXPECT_NEAR(spread_after, spread_before, spread_before * 0.10)
         << "spread must be continuous across a basis rebuild";
+}
+
+TEST(DeviationForm, ForcedColdRebuildPreservesDeviation) {
+    // PR H1's forced-cold path calls GraphEigenBasis::build() with
+    // v0_block = nullptr, which ALSO skips the sign-alignment pass (that pass
+    // is gated on v0_block being non-null). The ensemble must survive anyway:
+    // the R = P_newᵀ·P_old re-projection carries whatever sign each rebuilt
+    // eigenvector came back with, so δa is mapped correctly even when modes
+    // flip. If it did not, a forced-cold restart would silently scramble the
+    // ensemble — a far worse bug than the stale-warm-start one H1 fixes.
+    //
+    // Isolated deliberately: the cold restart is triggered by a SURCHARGE FLIP
+    // with conduit_off held IDENTICAL, so the operator itself does not change.
+    // The rebuilt basis therefore spans the same space, and any spread change
+    // is purely a re-projection/sign artifact rather than real physics.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom, 0.20);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i)
+        h_det[static_cast<std::size_t>(i)] = (i + 1) * 0.1;
+    for (int step = 0; step < 10; ++step)
+        rom.advance(10.0, 0.1, h_det.data(), nullptr);
+
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const double spread_before = max_spread(rom);
+    ASSERT_GT(spread_before, 0.0);
+
+    // Establish the surcharge baseline (all clear) with a successful rebuild.
+    std::vector<double> w(static_cast<std::size_t>(NC), 1.0);
+    std::vector<uint8_t> surch_clear(static_cast<std::size_t>(N), 0);
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0,
+                    surch_clear.data());
+
+    // Same weights; only the surcharge flags flip → forced COLD rebuild on an
+    // unchanged operator.
+    std::vector<uint8_t> surch_on = surch_clear;
+    surch_on[1] = 1;
+    surch_on[4] = 1;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0,
+                    surch_on.data());
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "sanity: this rebuild must actually have taken the cold path";
+
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const double spread_after = max_spread(rom);
+    EXPECT_NEAR(spread_after, spread_before, spread_before * 0.10)
+        << "a forced-COLD rebuild must preserve the ensemble deviations — "
+           "sign alignment is skipped on this path, so the R re-projection is "
+           "solely responsible for keeping δa consistent";
 }
 
 // ============================================================================

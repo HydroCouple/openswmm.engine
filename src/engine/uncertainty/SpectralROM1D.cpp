@@ -565,16 +565,80 @@ void SpectralROM1D::computeQuantiles(const double* h_det_active,
 // updateBasis
 // ============================================================================
 
+void SpectralROM1D::commitBasisUpdateSuccess_(const double* conduit_off, int n_conduits,
+                                              const uint8_t* node_surcharged,
+                                              double sim_time) {
+    conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
+    if (node_surcharged != nullptr) {
+        node_surcharged_prev_.assign(static_cast<std::size_t>(n_nodes), 0);
+        for (int i = 0; i < n_full_nodes && i < static_cast<int>(full_to_active.size()); ++i) {
+            const int ai = full_to_active[static_cast<std::size_t>(i)];
+            if (ai >= 0) {
+                node_surcharged_prev_[static_cast<std::size_t>(ai)] =
+                    node_surcharged[i] ? 1 : 0;
+            }
+        }
+    }
+    last_basis_update_time_ = sim_time;
+}
+
 void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1,
                                  const int* conduit_n2, int n_conduits,
-                                 double sim_time) {
+                                 double sim_time,
+                                 const uint8_t* node_surcharged) {
     if (!is_ready() || n_full_nodes < 4 || n_conduits <= 0) return;
 
     // --- Time-interval guard --------------------------------------------
-    if (sim_time - last_basis_update_time_ < basis_update_interval) return;
+    if (sim_time - last_basis_update_attempt_time_ < basis_update_interval) return;
 
-    // --- Skip criterion -------------------------------------------------
-    if (!conduit_off_prev_.empty() &&
+    // --- PR H1: cold-restart triggers, evaluated against the PREVIOUS
+    // SUCCESSFUL rebuild's baseline. A failed rebuild must still back off
+    // via last_basis_update_attempt_time_, but it must NOT erase the last
+    // known-good baseline: if the basis is still pre-transition, the next
+    // successful retry must remain eligible for a forced-cold restart.
+    bool force_cold = false;
+
+    // Primary trigger: surcharge-state transitions on active nodes.
+    if (node_surcharged != nullptr &&
+        static_cast<int>(node_surcharged_prev_.size()) == n_nodes) {
+        int n_active_checked = 0, n_flipped = 0;
+        for (int i = 0; i < n_full_nodes && i < static_cast<int>(full_to_active.size()); ++i) {
+            const int ai = full_to_active[static_cast<std::size_t>(i)];
+            if (ai < 0) continue;  // outfall, not part of the active set
+            const uint8_t cur  = node_surcharged[i] ? 1 : 0;
+            const uint8_t prev = node_surcharged_prev_[static_cast<std::size_t>(ai)];
+            ++n_active_checked;
+            if (cur != prev) ++n_flipped;
+        }
+        if (n_active_checked > 0 &&
+            static_cast<double>(n_flipped) / static_cast<double>(n_active_checked)
+                > surcharge_flip_frac_threshold) {
+            force_cold = true;
+        }
+    }
+
+    // Secondary trigger: per-edge dqdh drift (conduit_off is proportional to
+    // dqdh, same convention already used by the skip criterion below).
+    if (!force_cold && !conduit_off_prev_.empty() &&
+        static_cast<int>(conduit_off_prev_.size()) == n_conduits) {
+        int n_jumped = 0;
+        for (int ci = 0; ci < n_conduits; ++ci) {
+            auto uci = static_cast<std::size_t>(ci);
+            const double prev = conduit_off_prev_[uci];
+            const double r_e = std::abs(conduit_off[ci] - prev) / (std::abs(prev) + 1.0e-12);
+            if (r_e > edge_drift_ratio_threshold) ++n_jumped;
+        }
+        if (static_cast<double>(n_jumped) / static_cast<double>(n_conduits)
+                > edge_drift_frac_threshold) {
+            force_cold = true;
+        }
+    }
+
+    // --- Skip criterion ---------------------------------------------------
+    // A forced-cold condition must never be silently skipped here: surcharge
+    // onset / large dqdh jumps are exactly the events this tolerance guard
+    // would otherwise misclassify as "nothing changed enough to bother".
+    if (!force_cold && !conduit_off_prev_.empty() &&
         static_cast<int>(conduit_off_prev_.size()) == n_conduits) {
         double max_prev  = 0.0;
         double max_delta = 0.0;
@@ -587,10 +651,13 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     }
 
     // Past this point we are committed to attempting a rebuild this call.
-    // Every exit below — success or failure — must stamp last_basis_update_time_
-    // so a persistently failing rebuild backs off for basis_update_interval
-    // instead of retrying full Lanczos on every routing step.
+    // Every exit below — success or failure — must stamp
+    // last_basis_update_attempt_time_ so a persistently failing rebuild
+    // backs off for basis_update_interval instead of retrying full Lanczos
+    // on every routing step. Only a SUCCESSFUL rebuild may advance the
+    // warm/cold comparison baseline.
     ++basis_updates_attempted_;
+    last_basis_update_attempt_time_ = sim_time;
 
     // --- Build new weighted Laplacian ------------------------------------
     // Dry-start guard: if all weights are zero/floor, skip this update.
@@ -602,8 +669,6 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
         if (conduit_off[ci] > 1.0e-6) any_wet = true;
     }
     if (!any_wet) {
-        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
-        last_basis_update_time_ = sim_time;
         ++basis_updates_failed_;
         return;
     }
@@ -636,22 +701,18 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     // Guard: active node count must match (topology must be stable).
     if (static_cast<int>(active_map_new.size()) != n_nodes ||
         static_cast<int>(active_map_new.size()) < 4) {
-        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
-        last_basis_update_time_ = sim_time;
         ++basis_updates_failed_;
         return;
     }
 
-    // --- Warm-start re-solve --------------------------------------------
+    // --- Warm-start re-solve (or cold, if PR H1's triggers fired) --------
     std::vector<double> P_old = basis->P;  // column-major n_nodes × n_kept copy
 
     if (!basis_owned_) {
         basis_owned_ = std::make_unique<GraphEigenBasis>();
         basis_owned_->null_tol = basis->null_tol;
     }
-    if (!basis_owned_->build(L_new, n_kept, P_old.data())) {
-        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
-        last_basis_update_time_ = sim_time;
+    if (!basis_owned_->build(L_new, n_kept, force_cold ? nullptr : P_old.data())) {
         ++basis_updates_failed_;
         return;
     }
@@ -659,11 +720,11 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     // broken down prematurely — the combo v0 starting vector prevents this for
     // normal networks, but guard against degenerate geometry).
     if (basis_owned_->num_kept != n_kept) {
-        conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
-        last_basis_update_time_ = sim_time;
         ++basis_updates_failed_;
         return;
     }
+
+    if (force_cold) ++basis_rebuilds_cold_forced_;
 
     basis = basis_owned_.get();  // switch raw pointer to new owned basis
 
@@ -698,8 +759,7 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
             ai[j] = a_tmp[j];
     }
 
-    conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
-    last_basis_update_time_ = sim_time;
+    commitBasisUpdateSuccess_(conduit_off, n_conduits, node_surcharged, sim_time);
 }
 
 // ============================================================================
