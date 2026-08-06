@@ -349,6 +349,24 @@ struct SpectralROM1D {
                           const double* invert_active);
 
     /**
+     * @brief PR H10 — the per-node member values the last computeQuantiles()
+     *        call sorted, as a read-only view. Node-major: row `t` is
+     *        `[t*n_ensemble, (t+1)*n_ensemble)` and is sorted ASCENDING.
+     *
+     * computeQuantiles() already reconstructs every member value and sorts
+     * each node's row in place to pick q05/q50/q95. Threshold-exceedance
+     * fractions and the gap-statistic modality flag need exactly that sorted
+     * row, so they read it here rather than reconstructing a second time —
+     * the entire cost of H10 is a scan of a buffer that already exists.
+     *
+     * Valid only after a computeQuantiles() call, and invalidated by the next
+     * one. Empty before the first call.
+     */
+    const std::vector<double>& sortedMemberValues() const noexcept {
+        return recon_buf_;
+    }
+
+    /**
      * @brief Reconstruct absolute head for one ensemble member at one active node.
      *
      * Returns h_det_last_[active_node] + Σ_j δa_{i,j} · P[j, active_node],

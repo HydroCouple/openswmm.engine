@@ -475,7 +475,24 @@ run," and it's the threshold that actually changes engineering practice.
 
 An accurate picture of any tool includes its edges.
 
-**A perfectly uniform perturbation currently produces no visible spread.**
+**A band is the wrong summary when the ensemble splits in two.** If some
+members surcharge a pipe and others don't, the ensemble isn't a fuzzy blob
+around one answer — it's two distinct groups. Reporting that as
+`q05/q50/q95` is actively misleading: the median lands between the clusters
+and gets read as "the central estimate" while a large share of the members
+are nowhere near it. The sidecar now detects this (a cheap gap statistic on
+the sorted member values, plus a requirement that at least a fifth of members
+sit on each side so one stray member doesn't count as a second group) and
+raises `modality_flag` in `<rpt>.rom_threshold.csv`. When it is set, read
+`p_exceed` — the *fraction of members that cross the threshold* — instead of
+the band. This is the honest response to the objection that a linear model
+can't represent branching behaviour: it can't, so it reports the probability
+of the branch rather than pretending to a single smooth interval.
+
+**A perfectly uniform perturbation produces no visible spread — but only on a
+network with no outlet at all.** *(This limitation used to be much broader;
+it has since been largely fixed, and the paragraph below is kept because the
+reasoning is still worth understanding.)*
 This sounds paradoxical, so it's worth explaining precisely why. Recall from
 §3.2 that the "everything moves together" mode (mode 0, the constant shape)
 is deliberately excluded — every mode the ROM actually tracks is a shape
@@ -492,8 +509,19 @@ never perfectly uniform, so this rarely bites in practice, but a
 perfectly-uniform synthetic test case can be genuinely misleading about how
 much uncertainty is "really" there.
 
-This is a documented, understood limitation with active reform work tracked
-in this repository's engineering checklists — not a silent trap.
+**What changed.** The escape hatch is the outlet. If the network drains
+somewhere — any outfall, any open boundary — that exit can be treated as a
+fixed reference the water is measured against ("grounding"), and once there
+is a fixed reference, "everything rises together" stops being invisible: it
+becomes "everything rises together *relative to the outlet*", which is a
+perfectly ordinary shape the retained modes can represent. Both the 1D
+network and the 2D surface do this by default now, and each has a test
+asserting that a uniform field really does project non-trivially. So the
+limitation as originally written no longer applies to normal models — a
+uniform storm on a network with an outfall produces spread just fine. What
+survives is the genuinely closed case: a model with no outlet anywhere, where
+there is nothing to ground against. If you see suspiciously zero spread, the
+first thing to check is whether the model actually drains somewhere.
 
 > **Historical note**: an earlier version of this section also warned that
 > the band reflected uncertainty "since the last recalibration" — the ROM
