@@ -114,7 +114,8 @@ struct SpectralROM1D {
     std::vector<bool> mode_active;
 
     // Basis-update bookkeeping
-    double last_basis_update_time_ = -1.0e9;  ///< Sim time (s) of last Lanczos rebuild (-1e9 → always fire on first call).
+    double last_basis_update_time_ = -1.0e9;  ///< Sim time (s) of last SUCCESSFUL Lanczos rebuild / trigger baseline commit.
+    double last_basis_update_attempt_time_ = -1.0e9;  ///< Sim time (s) of last attempted rebuild, successful or not; drives retry backoff.
     int basis_updates_attempted_ = 0;  ///< Count of updateBasis() calls that passed the interval/tolerance guards and attempted a rebuild.
     int basis_updates_failed_    = 0;  ///< Count of attempted rebuilds that did not complete successfully.
     int basis_rebuilds_cold_forced_ = 0;  ///< PR H1: count of rebuilds forced cold by the surcharge-flip or edge-drift trigger.
@@ -460,14 +461,13 @@ private:
 
     // PR H1 — surcharge-onset cold-restart guard
     /// Previous per-ACTIVE-node surcharge flags (length n_nodes), derived from
-    /// the last node_surcharged snapshot via full_to_active. Compared against
-    /// the current snapshot at the top of the next updateBasis() call.
+    /// the last SUCCESSFUL node_surcharged snapshot via full_to_active.
+    /// Compared against the current snapshot at the top of the next
+    /// updateBasis() call.
     std::vector<uint8_t> node_surcharged_prev_;
-    /// Commit this call's conduit_off/node_surcharged/sim_time as the baseline
-    /// for the next call's triggers -- called at EVERY updateBasis() exit
-    /// (success or failure) so a persistently-failing rebuild still advances
-    /// its drift baseline instead of comparing against stale state forever.
-    void commitBasisUpdateAttempt_(const double* conduit_off, int n_conduits,
+    /// Commit a SUCCESSFUL rebuild's conduit_off/node_surcharged/sim_time as
+    /// the baseline for the next call's warm-vs-cold decision.
+    void commitBasisUpdateSuccess_(const double* conduit_off, int n_conduits,
                                    const uint8_t* node_surcharged, double sim_time);
 
     // PR 5 — vectorized computeQuantiles scratch buffer (node-major: nn × M)

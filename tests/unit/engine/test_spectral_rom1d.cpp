@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <string>
 #include <vector>
 
 using namespace openswmm::uncertainty;
@@ -1119,31 +1120,93 @@ TEST(GraphEigenBasisWarmStart, ColdStartFallbackWhenV0Null) {
             << "eigenvalue " << j;
 }
 
-TEST(GraphEigenBasisWarmStart, WarmStartMatchesColdStart) {
-    // Warm-start (v0_block = cold.P) must produce the 5 smallest nontrivial
-    // eigenvalues of the 20-node path graph, matching the analytic values
-    // λ_k = 2*(1-cos(k*π/20)), k=1..5.
+TEST(GraphEigenBasisWarmStart, ColdAndWarmBothFindTheKSmallestEigenvalues) {
+    // CONTRACT: the Krylov starting vector is an implementation detail. Cold
+    // or warm, build(L, k) must return the k SMALLEST nontrivial eigenvalues
+    // of L — so both paths must agree with the analytic spectrum AND with
+    // each other. Asserted across several chain lengths so the result cannot
+    // depend on one lucky (n, k) configuration.
     //
-    // Note: the cold-start linear ramp is anti-symmetric → it can only excite
-    // odd-k eigenmodes (k=1,3,5,7,9) and misses even modes.  The warm-start
-    // sum-of-columns starting vector is not purely anti-symmetric and correctly
-    // finds all k=1..5 modes.
-    CsrGraph L = make_chain_laplacian(20);
-    GraphEigenBasis cold;
-    ASSERT_TRUE(cold.build(L, 5));
+    // HISTORY — this test previously asserted only the warm path, on n = 20
+    // alone, above a comment claiming the cold-start ramp "can only excite
+    // odd-k eigenmodes (k=1,3,5,7,9) and misses even modes" while "the
+    // warm-start sum-of-columns starting vector is not purely anti-symmetric
+    // and correctly finds all k=1..5 modes". BOTH halves of that premise were
+    // false:
+    //   * the ramp's blind spot was a genuine DEFECT, not an acceptable
+    //     quirk — it returned λ_1,λ_3,λ_5,λ_7,λ_9 while reporting them as the
+    //     five smallest, and λ_2 < λ_3;
+    //   * the warm start did NOT escape it. Summing columns that are every
+    //     one of them antisymmetric yields another antisymmetric vector,
+    //     landing back in the identical invariant subspace.
+    // The test only ever passed because it was never wired into CMake and so
+    // had never run. Fixed at the source (GraphEigenBasis::lanczos(): the
+    // cold start is now a zero-mean deterministic pseudo-random vector, which
+    // has generic components on every eigenvector), which also fixes the warm
+    // path transitively.
+    for (int n : {6, 10, 15, 20, 30}) {
+        SCOPED_TRACE("chain length n=" + std::to_string(n));
+        const int k = 5;
+        CsrGraph L = make_chain_laplacian(n);
 
-    GraphEigenBasis warm;
-    ASSERT_TRUE(warm.build(L, 5, cold.P.data()));
+        GraphEigenBasis cold;
+        ASSERT_TRUE(cold.build(L, k));
+        ASSERT_EQ(cold.num_kept, k);
 
-    ASSERT_EQ(warm.num_kept, 5);
+        GraphEigenBasis warm;
+        ASSERT_TRUE(warm.build(L, k, cold.P.data()));
+        ASSERT_EQ(warm.num_kept, k);
 
-    // Analytic eigenvalues of the 20-node path-graph Laplacian
-    for (int j = 0; j < warm.num_kept; ++j) {
-        double expected = 2.0 * (1.0 - std::cos((j + 1) * M_PI / 20.0));
-        EXPECT_NEAR(warm.eigenvalues[static_cast<std::size_t>(j)],
-                    expected, 1e-6)
-            << "warm eigenvalue " << j;
+        // Analytic path-graph Laplacian spectrum: λ_j = 2(1 − cos(jπ/n)),
+        // ascending in j — so the k smallest nontrivial are j = 1..k with NO
+        // parity gaps.
+        for (int j = 0; j < k; ++j) {
+            const double expected = 2.0 * (1.0 - std::cos((j + 1) * M_PI / n));
+            EXPECT_NEAR(cold.eigenvalues[static_cast<std::size_t>(j)],
+                        expected, 1e-6)
+                << "COLD eigenvalue " << j << " is not the " << (j + 1)
+                << "-th smallest (parity blind spot regression?)";
+            EXPECT_NEAR(warm.eigenvalues[static_cast<std::size_t>(j)],
+                        expected, 1e-6)
+                << "WARM eigenvalue " << j << " is not the " << (j + 1)
+                << "-th smallest";
+        }
     }
+}
+
+TEST(GraphEigenBasisWarmStart, ColdStartReachesSymmetricEigenvectors) {
+    // Direct regression guard on the defect itself, independent of the
+    // eigenvalue bookkeeping above: on a left-right symmetric chain, the
+    // even-k eigenvectors are SYMMETRIC under i → n−1−i. An antisymmetric
+    // start vector (the old linear ramp) can never represent them, at any
+    // Krylov dimension. Assert the retained basis actually contains a
+    // symmetric eigenvector — i.e. the start vector is not confined to the
+    // antisymmetric invariant subspace.
+    const int n = 20;
+    CsrGraph L = make_chain_laplacian(n);
+    GraphEigenBasis b;
+    ASSERT_TRUE(b.build(L, 5));
+
+    int n_symmetric = 0, n_antisymmetric = 0;
+    for (int j = 0; j < b.num_kept; ++j) {
+        const double* v = &b.P[static_cast<std::size_t>(j * n)];
+        // Compare v against its own index-reversal.
+        double d_sym = 0.0, d_anti = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double vi = v[static_cast<std::size_t>(i)];
+            const double vr = v[static_cast<std::size_t>(n - 1 - i)];
+            d_sym  += (vi - vr) * (vi - vr);
+            d_anti += (vi + vr) * (vi + vr);
+        }
+        if (std::sqrt(d_sym)  < 1e-8) ++n_symmetric;
+        if (std::sqrt(d_anti) < 1e-8) ++n_antisymmetric;
+    }
+    EXPECT_GT(n_symmetric, 0)
+        << "no symmetric eigenvector in the retained basis — the Krylov start "
+           "is trapped in the antisymmetric invariant subspace (the pre-fix "
+           "linear-ramp defect)";
+    EXPECT_GT(n_antisymmetric, 0)
+        << "no antisymmetric eigenvector either — unexpected for a path graph";
 }
 
 TEST(GraphEigenBasisWarmStart, WarmStartSignsAligned) {
@@ -1504,10 +1567,9 @@ TEST(UpdateBasis, CountersTrackSuccessfulRebuild) {
 }
 
 TEST(UpdateBasis, FailedRebuildConsumesInterval) {
-    // A rebuild that fails (topology-mismatch guard) must still stamp
-    // last_basis_update_time_ so a persistently-failing rebuild backs off
-    // for basis_update_interval instead of retrying full Lanczos on every
-    // routing step.
+    // A rebuild that fails (topology-mismatch guard) must still consume the
+    // retry interval so a persistently-failing rebuild backs off instead of
+    // retrying full Lanczos on every routing step.
     const int N = 6;
     const int NC = N - 1;
     SpectralROM1D rom;
@@ -1538,7 +1600,7 @@ TEST(UpdateBasis, FailedRebuildConsumesInterval) {
     rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/250.0);
 
     EXPECT_EQ(rom.basis_updates_attempted_, 1)
-        << "failed rebuild must stamp last_basis_update_time_ so retries back off";
+        << "failed rebuild must consume the retry interval so retries back off";
 }
 
 // ============================================================================
@@ -1581,6 +1643,51 @@ TEST(ColdRestartGuard, SurchargeFlipForcesCold) {
     EXPECT_EQ(rom.basis_updates_attempted_, 2)
         << "the surcharge trigger must bypass the skip criterion even though "
            "conduit_off did not change";
+}
+
+TEST(ColdRestartGuard, FailedColdAttemptKeepsSuccessfulBaseline) {
+    // A failed forced-cold rebuild must not advance the warm/cold baseline.
+    // If the last SUCCESSFUL basis is still pre-surcharge, a later retry with
+    // the same surcharged state must still go cold.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w(static_cast<std::size_t>(NC), 0.01);
+
+    std::vector<uint8_t> surch0(static_cast<std::size_t>(N), 0);
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0, surch0.data());
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0);
+
+    // Force the next attempt down the cold path, but also force it to fail by
+    // making the active set size differ from rom.n_nodes.
+    std::vector<uint8_t> surch1 = surch0;
+    surch1[1] = 1;
+    surch1[4] = 1;
+    rom.full_to_active[0] = -1;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0, surch1.data());
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 2);
+    EXPECT_EQ(rom.basis_updates_failed_, 1);
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "failed attempts must not be counted as completed cold rebuilds";
+
+    // Restore topology and retry with the SAME surcharged state. This must
+    // still go cold, because the last successful baseline is still surch0.
+    rom.full_to_active[0] = 0;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/200.0, surch1.data());
+
+    EXPECT_EQ(rom.basis_updates_attempted_, 3);
+    EXPECT_EQ(rom.basis_updates_failed_, 1);
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "retry must remain cold until a successful rebuild commits the new baseline";
 }
 
 TEST(ColdRestartGuard, LargeEdgeDriftForcesCold) {

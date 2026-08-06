@@ -155,14 +155,33 @@ static std::vector<double> projectProbe(const MeshEigenBasis& b) {
     return out;
 }
 
+// REFERENCE PROVENANCE — re-baselined 2026-08-05 with the Lanczos cold-start
+// fix (GraphEigenBasis::lanczos(): the bare antisymmetric linear ramp could not
+// reach symmetric eigenvectors on symmetric graphs; it is now ramp + symmetric
+// quadratic + a tiny deterministic symmetry-breaking term). Values below that
+// moved did so because they were START-VECTOR DEPENDENT, for two distinct
+// reasons called out per-block. Eigen-relation, orthonormality and ascending
+// -order tests are independent of these pins and pass unchanged.
+
 // 4-triangle sloped mesh, k = 2.
+//
+// This mesh is 4 congruent triangles radiating from a centre vertex, so its
+// cell adjacency is a 4-cycle whose Laplacian spectrum is {0, λ, λ, 2λ} —
+// λ = 3 is DOUBLY DEGENERATE. Single-vector Lanczos returns exactly one
+// representative of that 2-D eigenspace, and WHICH one is decided entirely by
+// the start vector. The eigenvalues are therefore stable (and unchanged), but
+// REFERENCE_SMALL_PROBE[0] legitimately moved: it pins an arbitrary basis
+// choice inside a degenerate eigenspace, not a physical property. Kept as a
+// change-detector only — a shift here means "the start vector changed", NOT
+// "the basis is wrong". (`EigenrelationSatisfied` independently confirms the
+// new vector still satisfies L·v = λ·v.)
 static const std::vector<double> REFERENCE_SMALL_LAMBDA = {
     2.9999999999999996,
     5.9999999999999991
 };
 static const std::vector<double> REFERENCE_SMALL_PROBE = {
-    0.24706432349276553,
-    0.10589982216123944
+    0.036637844995388691,
+    0.10589982216123994
 };
 
 // 4×4 structured mesh (32 triangles), k = 6.
@@ -184,29 +203,46 @@ static const std::vector<double> REFERENCE_S4_PROBE = {
 };
 
 // 50×50 structured mesh (5000 triangles) on a 100 m domain, k = 10.
+//
+// ⚠ THESE ARE NOT THE TRUE EIGENVALUES OF THIS MESH. At the production Krylov
+// budget (m = min(n, max(k+1, 3k+15)) = 45 steps for k = 10) Lanczos is far
+// from converged on 5000 cells: rebuilding the same mesh at k = 60 (m = 195)
+// gives λ₀ = 1.476e-3, λ₂ = 4.75e-3 against the 1.922e-3 / 3.07e-2 pinned
+// here — λ₂ is ~6.5× too high. Ritz values bound the true spectrum from
+// ABOVE, so the k = 60 numbers are strictly closer to truth. The pre-fix
+// pins (λ₀ = 1.886e-3, λ₂ = 2.33e-2) were equally unconverged — this is a
+// PRE-EXISTING Krylov-budget limitation, not something the cold-start change
+// introduced, and it is why these particular values are start-vector
+// sensitive at all: an unconverged Ritz value still depends on where the
+// Krylov space was launched from.
+//
+// Escalated separately (see .memory/current.md, "Krylov budget"): the fixed
+// m ≈ 3k+15 heuristic is inadequate at this mesh size, and the ROM's modal
+// decay rates λ_j·K_eff inherit the error. Left as a change-detector pin
+// here; do NOT read these as physical eigenvalues.
 static const std::vector<double> REFERENCE_S50_LAMBDA = {
-    0.0018862346111019784,
-    0.007069240046803581,
-    0.023301354861882274,
-    0.06016295234239509,
-    0.11563291717190224,
-    0.18928853653745967,
-    0.28077408034401463,
-    0.38966850895242244,
-    0.51546380274121673,
-    0.65755311440878939
+    0.001922006722617993,
+    0.0083345859604932199,
+    0.030727045136007776,
+    0.070465876085929913,
+    0.12841217922570428,
+    0.20483539628320788,
+    0.29958006500388207,
+    0.41211132447996168,
+    0.54258906612696312,
+    0.6897487367797317
 };
 static const std::vector<double> REFERENCE_S50_PROBE = {
-    0.052595413454903706,
-    0.12985136978816542,
-    0.2246878092239421,
-    0.0048303336510380282,
-    0.20645754815688966,
-    0.011083586886099993,
-    0.7719650484670556,
-    0.81040920222925905,
-    0.18784936333067498,
-    0.02342735091749714
+    0.050103714238723271,
+    0.07558983624123633,
+    0.093646868859211807,
+    0.022552605782717051,
+    0.080603267035309928,
+    0.074077391015603983,
+    0.27801683229882385,
+    0.50084909924047805,
+    0.11171973482140102,
+    0.024973319571514153
 };
 
 // buildDepthWeighted() on the 4×4 structured mesh with makeDiffusivity().
