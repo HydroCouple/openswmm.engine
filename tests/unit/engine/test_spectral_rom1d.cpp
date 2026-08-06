@@ -1753,6 +1753,74 @@ TEST(ColdRestartGuard, ModerateSingleEdgeChangeStaysWarm) {
            "fraction only counts edges that individually cross it";
 }
 
+TEST(ColdRestartGuard, TenXOnTenPercentOfEdgesForcesCold) {
+    // The checklist's literal secondary-trigger case: 10× on 10% of edges.
+    // A 5-conduit chain cannot express 10% (one edge is already 20%), so use
+    // a 21-node chain = 20 conduits, and jump exactly 2 of them.
+    const int N = 21;
+    const int NC = N - 1;               // 20 conduits → 2 edges == 10%
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 0);
+
+    std::vector<double> w1 = w0;
+    w1[3] *= 10.0;
+    w1[11] *= 10.0;                     // exactly 2/20 = 10% of edges
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "10x on 10% of edges must cross the 5% edge-fraction threshold";
+}
+
+TEST(ColdRestartGuard, SlowDriftOnEveryEdgeStaysWarm) {
+    // The counterpart the checklist asks for: a slow drift must NOT force cold.
+    //
+    // This is the case that distinguishes the two halves of the secondary
+    // trigger. Here EVERY edge changes (100% of edges — far above the 5%
+    // edge-FRACTION threshold) but each one only by 50%, so its per-edge
+    // r_e = 0.5 never crosses the 1.0 ratio threshold. The fraction counts
+    // only edges that individually exceed the ratio, so the count is 0 and
+    // the rebuild must stay warm. A regression that compared "fraction of
+    // edges CHANGED" instead of "fraction of edges that JUMPED" would force
+    // cold here and silently discard the warm start on ordinary drift.
+    //
+    // The 50% drift is also deliberately above basis_update_tol (5%), so a
+    // rebuild genuinely fires — this asserts "warm rebuild", not "skipped".
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC)), n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+    std::vector<double> w0(static_cast<std::size_t>(NC), 0.01);
+    rom.updateBasis(w0.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0);
+    const int attempted_after_first = rom.basis_updates_attempted_;
+
+    std::vector<double> w1 = w0;
+    for (double& w : w1) w *= 1.5;      // every edge drifts 50%: r_e = 0.5
+    rom.updateBasis(w1.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0);
+
+    EXPECT_EQ(rom.basis_updates_attempted_, attempted_after_first + 1)
+        << "a 50% drift is above basis_update_tol — a rebuild must actually fire";
+    EXPECT_EQ(rom.basis_rebuilds_cold_forced_, 0)
+        << "every edge changed, but none JUMPED past the per-edge ratio "
+           "threshold — ordinary drift must keep the warm start";
+}
+
 TEST(ColdRestartGuard, EigenpairResidualSmallAfterWarmAndColdRebuild) {
     // Basis correctness invariant: regardless of warm or cold start, the
     // rebuilt eigenpairs must satisfy the Ritz residual bound.
@@ -2111,6 +2179,66 @@ TEST(DeviationForm, UpdateBasisPreservesDeviation) {
     const double spread_after = max_spread(rom);
     EXPECT_NEAR(spread_after, spread_before, spread_before * 0.10)
         << "spread must be continuous across a basis rebuild";
+}
+
+TEST(DeviationForm, ForcedColdRebuildPreservesDeviation) {
+    // PR H1's forced-cold path calls GraphEigenBasis::build() with
+    // v0_block = nullptr, which ALSO skips the sign-alignment pass (that pass
+    // is gated on v0_block being non-null). The ensemble must survive anyway:
+    // the R = P_newᵀ·P_old re-projection carries whatever sign each rebuilt
+    // eigenvector came back with, so δa is mapped correctly even when modes
+    // flip. If it did not, a forced-cold restart would silently scramble the
+    // ensemble — a far worse bug than the stale-warm-start one H1 fixes.
+    //
+    // Isolated deliberately: the cold restart is triggered by a SURCHARGE FLIP
+    // with conduit_off held IDENTICAL, so the operator itself does not change.
+    // The rebuilt basis therefore spans the same space, and any spread change
+    // is purely a re-projection/sign artifact rather than real physics.
+    const int N = 6;
+    const int NC = N - 1;
+    SpectralROM1D rom;
+    auto basis_owned = make_rom1d_chain(N, rom, 0.20);
+    rom.basis_update_interval = 0.0;
+
+    std::vector<int> n1(static_cast<std::size_t>(NC));
+    std::vector<int> n2(static_cast<std::size_t>(NC));
+    for (int ci = 0; ci < NC; ++ci) {
+        n1[static_cast<std::size_t>(ci)] = ci;
+        n2[static_cast<std::size_t>(ci)] = ci + 1;
+    }
+
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i)
+        h_det[static_cast<std::size_t>(i)] = (i + 1) * 0.1;
+    for (int step = 0; step < 10; ++step)
+        rom.advance(10.0, 0.1, h_det.data(), nullptr);
+
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const double spread_before = max_spread(rom);
+    ASSERT_GT(spread_before, 0.0);
+
+    // Establish the surcharge baseline (all clear) with a successful rebuild.
+    std::vector<double> w(static_cast<std::size_t>(NC), 1.0);
+    std::vector<uint8_t> surch_clear(static_cast<std::size_t>(N), 0);
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/0.0,
+                    surch_clear.data());
+
+    // Same weights; only the surcharge flags flip → forced COLD rebuild on an
+    // unchanged operator.
+    std::vector<uint8_t> surch_on = surch_clear;
+    surch_on[1] = 1;
+    surch_on[4] = 1;
+    rom.updateBasis(w.data(), n1.data(), n2.data(), NC, /*sim_time=*/100.0,
+                    surch_on.data());
+    ASSERT_EQ(rom.basis_rebuilds_cold_forced_, 1)
+        << "sanity: this rebuild must actually have taken the cold path";
+
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const double spread_after = max_spread(rom);
+    EXPECT_NEAR(spread_after, spread_before, spread_before * 0.10)
+        << "a forced-COLD rebuild must preserve the ensemble deviations — "
+           "sign alignment is skipped on this path, so the R re-projection is "
+           "solely responsible for keeping δa consistent";
 }
 
 // ============================================================================
