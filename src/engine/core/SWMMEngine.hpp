@@ -443,6 +443,7 @@ private:
     std::vector<double> rom1d_dh_buf_;     ///< per-active-node dh/dt forcing buffer (reused each step; also the field
                                             ///< for any registered FORCING_VECTOR 1D param, e.g. INFLOW)
     std::ofstream rom1d_csv_;              ///< 1D ROM quantile CSV, written at report intervals
+    std::ofstream rom_diag_csv_;           ///< PR H3: <rpt>.rom_diag.csv (fr_trust/surcharge_frac/...)
 
     /** @brief Build + seed the 1D spectral ROM from conduit connectivity and node heads. */
     void buildROM1D() noexcept;
