@@ -19,6 +19,70 @@ retroactive.
 > scale factors and the cross-section legacy-parity port — is not yet itemized
 > here. See `git log v6.0.0-alpha.1..` for the interim record.
 
+## [Unreleased]
+
+### Added
+
+- **`FLOW_ROUTING FV` — an explicit conservative finite-volume solver.** A
+  Godunov-type scheme on a cell mesh cut from the conduits, alongside (not
+  replacing) dynamic wave analysis. Conservation form with hydrostatic
+  (Audusse) reconstruction, HLL interface flux, semi-implicit Manning friction
+  and explicit zero-D node continuity, substepping internally at the Courant
+  limit so the routing step is a reporting cadence rather than a stability
+  constraint. Documented as Chapter 8 of the Hydraulics Reference Manual.
+
+  What it delivers on the EPA reference drainage model: **routing continuity
+  error 0.000 %, at every mesh resolution**, against 0.026 % for the implicit
+  solver on the same file. Mixed free-surface/pressurized flow needs no
+  regime-switching logic — the Preissmann slot is folded into the cross-section
+  closure with a tapered mouth, so a filling bore is captured rather than
+  tracked and its speed is an output of the scheme. Virtual junctions become
+  ordinary interior faces, so a conduit split by one reproduces the unsplit
+  conduit cell for cell, including the reversed A→VJ←B orientation.
+
+  Thirteen `FV_*` `[OPTIONS]` keys, all readable and writable through
+  `swmm_options_get`/`set` (and therefore through the Python bindings and the
+  MCP server), and all **inert rather than rejected** under the other routing
+  models so switching `FLOW_ROUTING` never invalidates a file:
+  `FV_CELL_LENGTH`, `FV_MIN_CELLS`, `FV_CFL`, `FV_RIEMANN`, `FV_ORDER`,
+  `FV_LIMITER`, `FV_SCALAR_SCHEME`, `FV_TIME_INTEGRATION`, `FV_SLOT_CELERITY`,
+  `FV_DISPERSION`, `FV_STRUCTURE_COUPLING`, `FV_COMPACTION`, `FV_BACKEND`,
+  `FV_MIN_PARALLEL_CELLS`.
+
+  > **Set `FV_CELL_LENGTH` if peak flows matter.** At the one-cell-per-conduit
+  > default the solver attenuates this model's peaks by 37 % on average; at
+  > Δx = 20 ft that falls to 7 %. The cause is geometric, not diffusive — a
+  > cell-centred scheme puts a single cell's bed at the conduit's *mid-point*
+  > elevation, presenting an artificial bed step of half the conduit's fall at
+  > every manhole — so higher-order reconstruction does not rescue it. Dynamic
+  > wave analysis remains the default and the right choice for routine design
+  > storms, continuous simulation and planning work.
+
+- **`FV_ORDER 2` — second-order MUSCL reconstruction.** MUSCL on the free
+  surface and velocity (not depth and discharge) with the bed taken from its
+  exact per-cell gradient, plus a centred bed source, so the still-water
+  property is preserved to machine precision at second order for all three
+  limiters. Cells whose ends differ in elevation by an appreciable fraction of
+  the water depth fall back to first order, so the option is safe to leave on.
+
+- **Cell-resolved Eulerian scalar transport on the finite-volume mesh.** The
+  species flux is the same mass flux the water used, upwinded on the contact
+  speed, which makes solute mass conservation exact and keeps a uniform
+  concentration field uniform under any flow including reversal and drying.
+  First-order upwind, MUSCL and QUICKEST-ULTIMATE reconstructions, limited by
+  flux-corrected transport so the discrete maximum principle holds without
+  sacrificing conservation, and optional implicit longitudinal dispersion.
+
+- **`RouteModel.FV` in the Python bindings**, and `FV` in the MCP server's
+  routing-model reporting.
+
+### Notes
+
+- Finite-volume routing is **not** under the legacy bit-parity contract — it is
+  a different discretization, and is gated on analytic and engineering
+  tolerances instead. No dynamic-wave, kinematic-wave or steady-state result
+  moves.
+
 ## [6.0.0-alpha.3] — 2026-07-29
 
 ### Added

@@ -301,6 +301,66 @@ TEST(FvEngine, FvOptionsSurviveAnInpRoundTrip) {
     EXPECT_EQ(got["FV_MIN_PARALLEL_CELLS"], "12345");
 }
 
+TEST(FvEngine, FvOptionsAreReadableAndWritableThroughTheCApi) {
+    // The C API is what the Python bindings, the MCP server and the GUI all
+    // go through, and it rejects unrecognized option keys outright — so an
+    // FV_* key that only the [OPTIONS] parser knows about would be invisible
+    // to every one of them.
+    const std::string inp = writeVariant("example1_capi", "DYNWAVE", {});
+    const std::string rpt = outDir() + "/example1_capi.rpt";
+    const std::string out = outDir() + "/example1_capi.out";
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+
+    char buf[128];
+    // Defaults are readable even though this model is DYNWAVE — the keys are
+    // inert, not rejected.
+    ASSERT_EQ(swmm_options_get(e, "FV_RIEMANN", buf, sizeof buf), 0);
+    EXPECT_STREQ(buf, "HLLC");
+    ASSERT_EQ(swmm_options_get(e, "FV_LIMITER", buf, sizeof buf), 0);
+    EXPECT_STREQ(buf, "MINMOD");
+
+    struct { const char* k; const char* v; } sets[] = {
+        {"FLOW_ROUTING", "FV"},
+        {"FV_CELL_LENGTH", "12.5"},
+        {"FV_MIN_CELLS", "3"},
+        {"FV_CFL", "0.35"},
+        {"FV_RIEMANN", "HLL"},
+        {"FV_ORDER", "2"},
+        {"FV_LIMITER", "SUPERBEE"},
+        {"FV_SCALAR_SCHEME", "QUICKEST_ULTIMATE"},
+        {"FV_TIME_INTEGRATION", "RK2"},
+        {"FV_SLOT_CELERITY", "250"},
+        {"FV_DISPERSION", "4"},
+        {"FV_STRUCTURE_COUPLING", "ROUTING_STEP"},
+        {"FV_COMPACTION", "NO"},
+        {"FV_BACKEND", "CPU"},
+        {"FV_MIN_PARALLEL_CELLS", "12345"},
+    };
+    for (const auto& kv : sets)
+        ASSERT_EQ(swmm_options_set(e, kv.k, kv.v), 0) << "set " << kv.k;
+
+    // Every value must read back as written.
+    for (const auto& kv : sets) {
+        ASSERT_EQ(swmm_options_get(e, kv.k, buf, sizeof buf), 0) << "get " << kv.k;
+        const std::string got(buf);
+        if (std::string(kv.k) == "FV_CELL_LENGTH" || std::string(kv.k) == "FV_CFL" ||
+            std::string(kv.k) == "FV_SLOT_CELERITY" || std::string(kv.k) == "FV_DISPERSION")
+            EXPECT_NEAR(std::stod(got), std::stod(kv.v), 1e-9) << kv.k;
+        else
+            EXPECT_EQ(got, std::string(kv.v)) << kv.k;
+    }
+
+    // A bad enum value is rejected rather than silently ignored.
+    EXPECT_NE(swmm_options_set(e, "FV_RIEMANN", "ROE"), 0);
+    EXPECT_NE(swmm_options_set(e, "FV_LIMITER", "NONESUCH"), 0);
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+
 TEST(FvEngine, FvKeysAreInertUnderOtherRoutingModels) {
     // Plan §4.2: an FV_* key under FLOW_ROUTING DYNWAVE must be accepted and
     // ignored, so switching routing models never invalidates a file.
