@@ -88,7 +88,7 @@ struct SpectralROM1D {
 
     /// Primary trigger: force a COLD (v0_block=nullptr) basis rebuild instead
     /// of the warm-start when the fraction of active nodes whose
-    /// node_surcharged flag flipped since the last rebuild attempt exceeds
+    /// node_surcharged flag flipped since the last successful rebuild exceeds
     /// this threshold. Surcharge onset changes dqdh discontinuously on the
     /// affected conduits, rotating the invariant subspace by O(1) -- P_old
     /// becomes a bad starting guess with no detection otherwise.
@@ -304,7 +304,7 @@ struct SpectralROM1D {
      * @param node_surcharged  PR H1: per-full-node surcharge flags (length
      *                         n_full_nodes), from DWSolver::HSnapshot. When
      *                         the fraction of ACTIVE nodes whose flag flipped
-     *                         since the last rebuild attempt exceeds
+     *                         since the last successful rebuild exceeds
      *                         surcharge_flip_frac_threshold, the rebuild uses
      *                         a cold Lanczos start (v0_block=nullptr) instead
      *                         of the usual warm start from P_old -- surcharge
