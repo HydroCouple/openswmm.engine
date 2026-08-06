@@ -91,6 +91,18 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     node_out_.assign(nn, 0.0);
     flood_vol_.assign(nn, 0.0);
 
+    cell_tier_.assign(nc, 0);
+    node_tier_.assign(nn, 0);
+    face_tier_.assign(nf, 0);
+    acc_a_.clear();
+    acc_q_.clear();
+    acc_nvol_.clear();
+    cells_by_tier_.clear();
+    faces_by_tier_.clear();
+    nodes_by_tier_.clear();
+    lts_tiers_ = 1;
+    tier_occupancy_.fill(0);
+
     cell_active_.assign(nc, 1);
     active_faces_.clear();
     lists_valid_  = false;
@@ -935,8 +947,13 @@ void ExplicitFvSolver::computeFluxes() {
 #ifdef SWMM_USE_OPENMP
 #pragma omp parallel for schedule(static) if (n_act >= kOmpMinFaces)
 #endif
-    for (int a = 0; a < n_act; ++a) {
-        const int f = active_faces_[static_cast<std::size_t>(a)];
+    for (int a = 0; a < n_act; ++a)
+        computeFaceFlux(active_faces_[static_cast<std::size_t>(a)]);
+    total_flux_ += n_act;
+}
+
+void ExplicitFvSolver::computeFaceFlux(int f) {
+    {
         const auto uf = static_cast<std::size_t>(f);
         const int cl = mesh_->face_cl[uf];
         const int cr = mesh_->face_cr[uf];
@@ -981,7 +998,6 @@ void ExplicitFvSolver::computeFluxes() {
         f_corr_r_[uf] = (cr >= 0) ? k::kGravity * (i1r - R.i1) : 0.0;
         f_scale_[uf]  = 1.0;
     }
-    total_flux_ += n_act;
 }
 
 // ===========================================================================
@@ -1370,6 +1386,532 @@ void ExplicitFvSolver::restoreState() {
 }
 
 // ===========================================================================
+// Local time stepping (plan §3.3)
+// ===========================================================================
+
+double ExplicitFvSolver::cellStableDt(int c) const {
+    const auto uc = static_cast<std::size_t>(c);
+    const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+    const double dx = mesh_->cell_dx[uc];
+
+    double speed = 0.0;
+    const double h = state_->cell_h[uc];
+    if (h > k::kDryDepth)
+        speed = std::fabs(cell_u_[uc]) +
+                k::celerity(state_->cell_a[uc], k::widthOfDepth(g, h));
+
+    // The ghost a boundary face presents counts against THIS cell's step, for
+    // the same reason the global census is face-based: a surcharged manhole
+    // hands a part-full pipe a pressurized ghost running at the slot celerity,
+    // and tiering the cell on its own free-surface speed would place it in a
+    // coarse tier that cannot resolve what its own boundary is doing.
+    const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+    for (const int f : faces) {
+        const auto uf = static_cast<std::size_t>(f);
+        const int nd = mesh_->face_node[uf];
+        if (nd < 0) continue;
+        const double hg = state_->node_head[static_cast<std::size_t>(nd)] -
+                          mesh_->face_zb[uf];
+        if (hg <= k::kDryDepth) continue;
+        speed = std::max(speed, std::fabs(cell_u_[uc]) +
+                                    k::celerity(k::areaOfDepth(g, hg),
+                                                k::widthOfDepth(g, hg)));
+    }
+
+    return (speed > 1.0e-12) ? opts_.cfl * dx / speed : 1.0e30;
+}
+
+double ExplicitFvSolver::nodeStableDt(int n) const {
+    const auto un = static_cast<std::size_t>(n);
+    if (mesh_->node_kind[un] == kNodeVirtual) return 1.0e30;
+    const double as = state_->node_surf_area[un];
+    if (!(as > 0.0)) return 1.0e30;
+
+    double dt = 1.0e30;
+    const int b = mesh_->node_face_ptr[un];
+    const int e = mesh_->node_face_ptr[un + 1];
+    for (int p = b; p < e; ++p) {
+        const int f = mesh_->node_face_idx[static_cast<std::size_t>(p)];
+        const auto uf = static_cast<std::size_t>(f);
+        const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                   : mesh_->face_cr[uf];
+        if (cell < 0) continue;
+        const auto uc = static_cast<std::size_t>(cell);
+        // Deliberately NOT gated on cell_active_: the tier schedule has to be
+        // the same whether or not compaction is on (§6.10), and a dry cell is
+        // excluded by its own depth test in either case.
+        const double h = state_->cell_h[uc];
+        if (h <= k::kDryDepth) continue;
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double t = k::widthOfDepth(g, h);
+        if (t <= 0.0) continue;
+        dt = std::min(dt, k::faceCflDt(opts_.cfl, as / t, cell_u_[uc],
+                                       k::celerity(state_->cell_a[uc], t)));
+    }
+    return dt;
+}
+
+int ExplicitFvSolver::assignTiers(double& dt0) {
+    const int nc = mesh_->n_cells();
+    const int nf = mesh_->n_faces();
+    const int nn = mesh_->n_nodes();
+
+    // Transport stays on the global path. The Zalesak limiter (§6.11b) bounds
+    // a cell's update against the extrema of its whole neighbourhood in one
+    // synchronous sweep; under tiering the neighbours are at different times
+    // and the antidiffusive correction has no single state to be bounded
+    // against, so a tiered FCT would be a new scheme, not a scheduling change.
+    if (state_->n_species > 0) return 1;
+
+    static thread_local std::vector<double> dt_cell, dt_node;
+    dt_cell.assign(static_cast<std::size_t>(nc), 1.0e30);
+    dt_node.assign(static_cast<std::size_t>(nn), 1.0e30);
+
+    // Every cell is tiered, active or not. Restricting this to the active set
+    // would make the macro-cycle length depend on which cells compaction chose
+    // to skip, and the schedule is what every volume's Δt is derived from —
+    // the compacted run would then not merely skip work but integrate on a
+    // different clock, breaking the §6.10 transparency contract outright.
+    double dt_min = 1.0e30;
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        dt_cell[uc] = cellStableDt(c);
+        dt_min = std::min(dt_min, dt_cell[uc]);
+    }
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        dt_node[un] = nodeStableDt(n);
+        dt_min = std::min(dt_min, dt_node[un]);
+    }
+    if (!(dt_min > 0.0) || dt_min >= 1.0e29) return 1;
+    dt0 = dt_min;
+
+    const int k_cap = std::min(std::max(opts_.lts_max_tiers, 1), kMaxLtsTiers);
+    auto tier_of = [&](double dt) -> int {
+        if (dt >= 1.0e29) return k_cap - 1;
+        const int k = static_cast<int>(std::floor(std::log2(dt / dt_min)));
+        return std::min(std::max(k, 0), k_cap - 1);
+    };
+
+    cell_tier_.assign(static_cast<std::size_t>(nc), 0);
+    node_tier_.assign(static_cast<std::size_t>(nn), 0);
+    face_tier_.assign(static_cast<std::size_t>(nf), 0);
+
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        cell_tier_[uc] = static_cast<std::uint8_t>(tier_of(dt_cell[uc]));
+    }
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        node_tier_[un] = static_cast<std::uint8_t>(tier_of(dt_node[un]));
+    }
+
+    // A structure link is a single flow applied as a source at one node and a
+    // sink at the other. Let the two ends sit in different tiers and the same
+    // discharge is integrated over different durations at each — the link
+    // would create or destroy water in proportion to the tier gap. Pinning
+    // both ends to tier 0 costs nothing (structures are a handful of links)
+    // and keeps the pair exact.
+    const int nstruct = static_cast<int>(mesh_->struct_link.size());
+    for (int s = 0; s < nstruct; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        node_tier_[static_cast<std::size_t>(mesh_->struct_n1[us])] = 0;
+        node_tier_[static_cast<std::size_t>(mesh_->struct_n2[us])] = 0;
+    }
+
+    // Grade the tiers: no face may span more than one level. Without this the
+    // assignment is stable cell-by-cell but not as a scheme — a coarse cell
+    // sitting directly against a much finer one holds a frozen state for its
+    // whole window while the neighbour resolves a front trying to cross into
+    // it, and the flux booked against that frozen state over 2^k substeps
+    // overshoots. Measured on the pressurize/depressurize cycling gate: a 3 ft
+    // pipe filling from both ends settled cleanly at a 2×, 4× and 8× spread
+    // and not at all at 32×, because the open-channel cells ahead of the
+    // filling bore sat five tiers above the pressurized cells behind it.
+    // One-level grading is the standard admissibility condition for LTS on an
+    // unstructured mesh, and it is cheap: the sweep converges in at most K
+    // passes because every pass either lowers a tier or terminates.
+    for (int pass = 0; pass < k_cap; ++pass) {
+        bool changed = false;
+        for (int f = 0; f < nf; ++f) {
+            const auto uf = static_cast<std::size_t>(f);
+            const int cl = mesh_->face_cl[uf];
+            const int cr = mesh_->face_cr[uf];
+            const int nd = mesh_->face_node[uf];
+            std::uint8_t* a = (cl >= 0) ? &cell_tier_[static_cast<std::size_t>(cl)]
+                                        : nullptr;
+            std::uint8_t* b = (cr >= 0) ? &cell_tier_[static_cast<std::size_t>(cr)]
+                                        : nullptr;
+            if (!a && nd >= 0) a = &node_tier_[static_cast<std::size_t>(nd)];
+            if (!b && nd >= 0) b = &node_tier_[static_cast<std::size_t>(nd)];
+            if (!a || !b) continue;
+            if (*a > *b + 1) { *a = static_cast<std::uint8_t>(*b + 1); changed = true; }
+            if (*b > *a + 1) { *b = static_cast<std::uint8_t>(*a + 1); changed = true; }
+        }
+        if (!changed) break;
+    }
+
+    // A volume with no wave speed at all — dry and still — carries the cap
+    // tier so grading cannot use it to drag a wet neighbour down, but it must
+    // not SET the cycle length either: one dry pipe in a 10,000-pipe model
+    // would otherwise pin every run to the maximum tier count.
+    int k_max = 0;
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (dt_cell[uc] < 1.0e29)
+            k_max = std::max<int>(k_max, cell_tier_[uc]);
+    }
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (dt_node[un] < 1.0e29)
+            k_max = std::max<int>(k_max, node_tier_[un]);
+    }
+    const int K = k_max + 1;
+    if (K <= 1) return 1;
+
+    // Dry volumes sit above k_max by construction; bring them into range so
+    // the per-tier lists are addressable. They carry no flux either way.
+    for (auto& t : cell_tier_) t = std::min<std::uint8_t>(t, static_cast<std::uint8_t>(K - 1));
+    for (auto& t : node_tier_) t = std::min<std::uint8_t>(t, static_cast<std::uint8_t>(K - 1));
+
+    // A face fires at the FINER of its two sides. That is what makes the
+    // interface well defined: the coarse side never advances past a flux it
+    // has not been handed, and the fine side never waits on one.
+    for (int f = 0; f < nf; ++f) {
+        const auto uf = static_cast<std::size_t>(f);
+        int k = k_cap - 1;
+        const int cl = mesh_->face_cl[uf];
+        const int cr = mesh_->face_cr[uf];
+        const int nd = mesh_->face_node[uf];
+        if (cl >= 0) k = std::min<int>(k, cell_tier_[static_cast<std::size_t>(cl)]);
+        if (cr >= 0) k = std::min<int>(k, cell_tier_[static_cast<std::size_t>(cr)]);
+        if (nd >= 0) k = std::min<int>(k, node_tier_[static_cast<std::size_t>(nd)]);
+        face_tier_[uf] = static_cast<std::uint8_t>(k);
+    }
+
+    cells_by_tier_.assign(static_cast<std::size_t>(K), {});
+    faces_by_tier_.assign(static_cast<std::size_t>(K), {});
+    nodes_by_tier_.assign(static_cast<std::size_t>(K), {});
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (!cell_active_[uc]) continue;
+        cells_by_tier_[cell_tier_[uc]].push_back(c);
+        ++tier_occupancy_[cell_tier_[uc]];
+    }
+    for (const int f : active_faces_)
+        faces_by_tier_[face_tier_[static_cast<std::size_t>(f)]].push_back(f);
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (mesh_->node_kind[un] == kNodeVirtual) continue;
+        nodes_by_tier_[node_tier_[un]].push_back(n);
+    }
+
+    acc_a_.assign(static_cast<std::size_t>(nc), 0.0);
+    acc_q_.assign(static_cast<std::size_t>(nc), 0.0);
+    acc_nvol_.assign(static_cast<std::size_t>(nn), 0.0);
+    return K;
+}
+
+void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
+    const int n = static_cast<int>(faces.size());
+    if (n == 0) return;
+
+#ifdef SWMM_USE_OPENMP
+#pragma omp parallel for schedule(static) if (n >= kOmpMinFaces)
+#endif
+    for (int i = 0; i < n; ++i)
+        computeFaceFlux(faces[static_cast<std::size_t>(i)]);
+    total_flux_ += n;
+
+    // Positivity, in VOLUME rather than rate: the faces in this set fire with
+    // different Δt, so the draws are only commensurable once each is
+    // multiplied by its own step. The volume a control volume can supply is
+    // what it has published PLUS what has already accumulated for it — the
+    // published value alone is stale by up to one coarse step.
+    static thread_local std::vector<double> out_cell, out_node;
+    out_cell.assign(acc_a_.size(), 0.0);
+    out_node.assign(acc_nvol_.size(), 0.0);
+
+    for (const int f : faces) {
+        const auto uf = static_cast<std::size_t>(f);
+        const double fa = f_mass_[uf];
+        if (fa == 0.0) continue;
+        const double vol = fa * (static_cast<double>(1 << face_tier_[uf]) * dt0);
+        if (vol > 0.0) {                       // exporting side is L
+            if (mesh_->face_cl[uf] >= 0)
+                out_cell[static_cast<std::size_t>(mesh_->face_cl[uf])] += vol;
+            else if (mesh_->face_node[uf] >= 0)
+                out_node[static_cast<std::size_t>(mesh_->face_node[uf])] += vol;
+        } else {                               // exporting side is R
+            if (mesh_->face_cr[uf] >= 0)
+                out_cell[static_cast<std::size_t>(mesh_->face_cr[uf])] -= vol;
+            else if (mesh_->face_node[uf] >= 0)
+                out_node[static_cast<std::size_t>(mesh_->face_node[uf])] -= vol;
+        }
+    }
+    for (std::size_t c = 0; c < out_cell.size(); ++c) {
+        if (out_cell[c] <= 0.0) { out_cell[c] = 1.0; continue; }
+        out_cell[c] = k::positivityScale(
+            state_->cell_a[c] * mesh_->cell_dx[c] + acc_a_[c], out_cell[c], 1.0);
+    }
+    for (std::size_t nn = 0; nn < out_node.size(); ++nn) {
+        if (out_node[nn] <= 0.0) { out_node[nn] = 1.0; continue; }
+        out_node[nn] = k::positivityScale(
+            state_->node_volume[nn] + acc_nvol_[nn], out_node[nn], 1.0);
+    }
+
+    // Book. The IDENTICAL scaled flux enters both incident accumulators, which
+    // is what makes the tier interface conserve exactly.
+    for (const int f : faces) {
+        const auto uf = static_cast<std::size_t>(f);
+        const int cl = mesh_->face_cl[uf];
+        const int cr = mesh_->face_cr[uf];
+        const int nd = mesh_->face_node[uf];
+        const double dt = static_cast<double>(1 << face_tier_[uf]) * dt0;
+
+        double fa = f_mass_[uf];
+        if (fa != 0.0) {
+            const double s =
+                (fa > 0.0)
+                    ? ((cl >= 0) ? out_cell[static_cast<std::size_t>(cl)]
+                                 : ((nd >= 0) ? out_node[static_cast<std::size_t>(nd)]
+                                              : 1.0))
+                    : ((cr >= 0) ? out_cell[static_cast<std::size_t>(cr)]
+                                 : ((nd >= 0) ? out_node[static_cast<std::size_t>(nd)]
+                                              : 1.0));
+            if (s < 1.0) {
+                f_mass_[uf] *= s;
+                f_mom_[uf]  *= s;
+                f_scale_[uf] = s;
+                fa = f_mass_[uf];
+            }
+        }
+        const double fq = f_mom_[uf];
+
+        if (cl >= 0) {
+            const auto ul = static_cast<std::size_t>(cl);
+            acc_a_[ul] -= fa * dt;
+            acc_q_[ul] -= static_cast<double>(mesh_->face_dir_l[uf]) *
+                          (fq + f_corr_l_[uf]) * dt;
+        }
+        if (cr >= 0) {
+            const auto ur = static_cast<std::size_t>(cr);
+            acc_a_[ur] += fa * dt;
+            acc_q_[ur] += static_cast<double>(mesh_->face_dir_r[uf]) *
+                          (fq + f_corr_r_[uf]) * dt;
+        }
+        if (nd >= 0) {
+            // Sign convention from the mesh builder: the node on a face's LEFT
+            // exports on a positive flux, the node on its RIGHT imports.
+            const double sign = (cl < 0) ? -1.0 : 1.0;
+            const auto un = static_cast<std::size_t>(nd);
+            const double v = sign * fa * dt;
+            acc_nvol_[un] += v;
+            node_exch_[un] += v;
+            if (v > 0.0) node_in_[un]  += v;
+            else         node_out_[un] -= v;
+        }
+    }
+}
+
+void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
+                                 const FvStepForcing& forcing) {
+    for (const int c : cells) {
+        const auto uc = static_cast<std::size_t>(c);
+        const double dt = static_cast<double>(1 << cell_tier_[uc]) * dt0;
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double dx = mesh_->cell_dx[uc];
+        const double inv_dx = 1.0 / dx;
+
+        double dQ_src = 0.0;
+        if (opts_.order >= 2 && cell_ho2_[uc]) {
+            // Same centred bed source as the global path — a CELL term, so it
+            // is applied at the cell's own cadence, not the faces'.
+            const double half = 0.5 * dx;
+            const double zp = mesh_->cell_zb[uc] + mesh_->cell_dzdx[uc] * half;
+            const double zm = mesh_->cell_zb[uc] - mesh_->cell_dzdx[uc] * half;
+            const double eta_c = cell_eta_[uc];
+            const double hp = std::max(0.0, eta_c - zp);
+            const double hm = std::max(0.0, eta_c - zm);
+            const double i1p = (hp > 0.0) ? k::i1OfDepth(g, hp, k::areaOfDepth(g, hp)) : 0.0;
+            const double i1m = (hm > 0.0) ? k::i1OfDepth(g, hm, k::areaOfDepth(g, hm)) : 0.0;
+            dQ_src = k::kGravity * (i1p - i1m) * dt;
+        }
+
+        double k_loss = 0.0;
+        const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        for (const int f : faces) {
+            const auto uf = static_cast<std::size_t>(f);
+            if (mesh_->face_node[uf] >= 0)
+                k_loss += (mesh_->face_cl[uf] < 0) ? g.loss_inlet : g.loss_outlet;
+        }
+
+        // Drain. Zeroing here — not at the top of the cycle — is what makes the
+        // accumulator a ledger rather than a buffer: every flux booked since
+        // this cell last fired is applied exactly once.
+        double a_new = state_->cell_a[uc] + acc_a_[uc] * inv_dx;
+        double q_new = state_->cell_q[uc] + (acc_q_[uc] + dQ_src) * inv_dx;
+        acc_a_[uc] = 0.0;
+        acc_q_[uc] = 0.0;
+
+        if (forcing.conduit_loss) {
+            const int cr = mesh_->cell_conduit[uc];
+            if (cr >= 0) a_new -= dt * forcing.conduit_loss[cr];
+        }
+        if (a_new < 0.0) a_new = 0.0;
+
+        const double h_new = k::depthOfArea(g, a_new);
+        state_->cell_a[uc] = a_new;
+        state_->cell_h[uc] = h_new;
+        cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
+        if (h_new <= k::kDryDepth) {
+            state_->cell_q[uc] = 0.0;
+            cell_u_[uc]        = 0.0;
+            continue;
+        }
+        const double u = q_new / a_new;
+        q_new = k::frictionUpdate(q_new, u, k::hydRadOfDepth(g, h_new), dt,
+                                  g.rough_factor);
+        if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
+
+        state_->cell_q[uc] = q_new;
+        cell_u_[uc] = q_new / a_new;
+        cell_q_int_[uc] += q_new * dt;
+    }
+}
+
+void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
+                                 const FvStepForcing& forcing) {
+    static thread_local std::vector<double> q_struct;
+    if (q_struct.size() != acc_nvol_.size())
+        q_struct.assign(acc_nvol_.size(), 0.0);
+    std::fill(q_struct.begin(), q_struct.end(), 0.0);
+    if (forcing.structure_flow) {
+        const int nstruct = static_cast<int>(mesh_->struct_link.size());
+        for (int s = 0; s < nstruct; ++s) {
+            const auto us = static_cast<std::size_t>(s);
+            const double q = forcing.structure_flow[mesh_->struct_link[us]];
+            if (q == 0.0) continue;
+            q_struct[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
+            q_struct[static_cast<std::size_t>(mesh_->struct_n2[us])] += q;
+        }
+    }
+
+    for (const int n : nodes) {
+        const auto un = static_cast<std::size_t>(n);
+        const double dt = static_cast<double>(1 << node_tier_[un]) * dt0;
+
+        const double drained = acc_nvol_[un];
+        acc_nvol_[un] = 0.0;
+
+        if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un])) {
+            state_->node_head[un] = forcing.node_fixed_head[un];
+            continue;
+        }
+
+        const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
+                             q_struct[un];
+        double vol = state_->node_volume[un] + drained + dt * q_lat;
+        if (vol < 0.0) vol = 0.0;
+
+        double depth = nodeDepthFromVolume(n, vol);
+        const double full = mesh_->node_full_depth[un];
+        if (full > 0.0 && depth > full) {
+            const double v_full = nodeVolumeFromDepth(n, full);
+            const double excess = vol - v_full;
+            const double ponded = mesh_->node_ponded_area[un];
+            if (ponded > 0.0) {
+                depth = full + excess / ponded;
+            } else {
+                flood_vol_[un] += excess;
+                vol   = v_full;
+                depth = full;
+            }
+        }
+        state_->node_volume[un] = vol;
+        state_->node_head[un]   = mesh_->node_invert[un] + depth;
+    }
+}
+
+void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
+                                     const FvStepForcing& forcing) {
+    const int K = static_cast<int>(cells_by_tier_.size());
+    static thread_local std::vector<int> due_f, due_c, due_n;
+
+    // A tier-k FACE opens its window at s ≡ 0 (mod 2^k); a tier-k VOLUME closes
+    // its window at s ≡ 2^k−1. The offset is the whole point: by the time a
+    // volume fires, every face bounding it has booked exactly 2^k·dt₀ worth of
+    // flux, so the flux it drains and the sources it integrates cover the SAME
+    // span. Firing volumes at the window's start instead — the obvious first
+    // guess — hands a tier-3 node eight base-steps of lateral inflow against
+    // one base-step of drained outflow, and the resulting sawtooth in a small
+    // manhole volume drove the boundary ghost hard enough to vary energy head
+    // by 3.5 ft across a 2 ft deep channel.
+    auto trailing_zeros = [](int v) { int j = 0; while (((v >> j) & 1) == 0) ++j; return j; };
+
+    for (int s = 0; s < nsub; ++s) {
+        const int jf = std::min((s == 0) ? K - 1 : trailing_zeros(s), K - 1);
+        const int jv = std::min(trailing_zeros(s + 1), K - 1);
+
+        due_f.clear(); due_c.clear(); due_n.clear();
+        for (int k = 0; k <= jf; ++k)
+            due_f.insert(due_f.end(), faces_by_tier_[static_cast<std::size_t>(k)].begin(),
+                         faces_by_tier_[static_cast<std::size_t>(k)].end());
+        for (int k = 0; k <= jv; ++k) {
+            due_c.insert(due_c.end(), cells_by_tier_[static_cast<std::size_t>(k)].begin(),
+                         cells_by_tier_[static_cast<std::size_t>(k)].end());
+            due_n.insert(due_n.end(), nodes_by_tier_[static_cast<std::size_t>(k)].begin(),
+                         nodes_by_tier_[static_cast<std::size_t>(k)].end());
+        }
+
+        if (opts_.order >= 2) reconstructState();
+        fireFaces(due_f, dt0);
+        fireCells(due_c, dt0, forcing);
+        fireNodes(due_n, dt0, forcing);
+    }
+
+    // Nothing is left pending: the final substep closes EVERY tier's window
+    // (nsub = 2^(K−1) is divisible by every 2^k in play), so each accumulator
+    // is drained by the volume that owns it. settleAccumulators() at the cycle
+    // boundary is therefore a no-op in the normal case, and exists for the one
+    // that is not — a rejected cycle, or a tail that lands mid-window.
+}
+
+void ExplicitFvSolver::settleAccumulators() {
+    if (acc_a_.empty()) return;
+    const int nc = mesh_->n_cells();
+    const int nn = mesh_->n_nodes();
+
+    // A pure transfer: volume and momentum already booked are moved into the
+    // state with NO time advance — no friction, no source, no contribution to
+    // the flow integral. Re-tiering after this is safe because nothing is owed.
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (acc_a_[uc] == 0.0 && acc_q_[uc] == 0.0) continue;
+        const double inv_dx = 1.0 / mesh_->cell_dx[uc];
+        double a = state_->cell_a[uc] + acc_a_[uc] * inv_dx;
+        if (a < 0.0) a = 0.0;
+        state_->cell_a[uc] = a;
+        state_->cell_q[uc] += acc_q_[uc] * inv_dx;
+        acc_a_[uc] = 0.0;
+        acc_q_[uc] = 0.0;
+    }
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (acc_nvol_[un] == 0.0) continue;
+        double vol = state_->node_volume[un] + acc_nvol_[un];
+        if (vol < 0.0) vol = 0.0;
+        acc_nvol_[un] = 0.0;
+        state_->node_volume[un] = vol;
+        state_->node_head[un] =
+            mesh_->node_invert[un] + nodeDepthFromVolume(n, vol);
+    }
+    refreshDepths();
+}
+
+// ===========================================================================
 // Advance
 // ===========================================================================
 
@@ -1404,6 +1946,49 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
     while (t < t_target) {
         if (!lists_valid_ || since_rebuild_ >= kRebuildInterval)
             rebuildActiveLists();
+
+        // ---- local time stepping (plan §3.3) -------------------------------
+        // Tiers are reassigned only HERE, at a macro-cycle boundary with the
+        // ledger settled — never mid-cycle, where a re-tiered volume would
+        // either skip a flux it is owed or drain one at the wrong Δt.
+        if (opts_.lts) {
+            settleAccumulators();
+            double dt0 = 0.0;
+            const int K = assignTiers(dt0);
+            lts_tiers_ = K;
+            const int nsub = 1 << (K - 1);
+            const double span = static_cast<double>(nsub) * dt0;
+            if (K > 1 && span <= t_target - t) {
+                if (opts_.order < 2) reconstructState();
+                saveState();
+                runMacroCycle(dt0, nsub, forcing);
+
+                // A cell can cross the crown inside a cycle exactly as it can
+                // inside a global substep (D-FV6), and the cycle is longer, so
+                // the same post-step rejection applies — with the accumulators
+                // cleared on rollback, since the fluxes that produced them are
+                // being discarded with the state that produced them.
+                if (censusDt() < kStepAcceptRatio * dt0) {
+                    restoreState();
+                    std::fill(acc_a_.begin(), acc_a_.end(), 0.0);
+                    std::fill(acc_q_.begin(), acc_q_.end(), 0.0);
+                    std::fill(acc_nvol_.begin(), acc_nvol_.end(), 0.0);
+                    dt_cache_ = censusDt();
+                    census_count_ = 0;
+                    // Fall through to the global path, which carries the
+                    // shrink-and-retry loop.
+                } else {
+                    t += span;
+                    steps += nsub;
+                    since_rebuild_ += nsub;
+                    last_h_ = dt0;
+                    min_h_ = (min_h_ <= 0.0) ? dt0 : std::min(min_h_, dt0);
+                    dt_cache_ = dt0;
+                    census_count_ = 0;
+                    continue;
+                }
+            }
+        }
 
         if (census_count_ <= 0) {
             dt_cache_ = censusDt();
@@ -1455,6 +2040,10 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // time and can shrink the routing step.
         if (steps > 2000000L) break;
     }
+
+    // Publish a complete state: any flux still booked but not yet drained is
+    // water the engine would otherwise never see.
+    settleAccumulators();
 
     last_nsteps_ = steps;
     total_steps_ += steps;

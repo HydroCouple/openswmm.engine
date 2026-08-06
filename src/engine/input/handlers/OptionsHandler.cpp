@@ -389,6 +389,16 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "FV_MIN_PARALLEL_CELLS") {
             opt.fv.min_parallel_cells = static_cast<long>(to_double(val));
 
+        } else if (key == "FV_LTS") {
+            const std::string bv = norm(val);
+            opt.fv.lts = !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
+
+        } else if (key == "FV_LTS_MAX_TIERS") {
+            opt.fv.lts_max_tiers = std::max(1, static_cast<int>(to_double(val)));
+
+        } else if (key == "FV_CFL_CENSUS_INTERVAL") {
+            opt.fv.cfl_census_interval = std::max(1, static_cast<int>(to_double(val)));
+
         } else if (key == "NODE_CONTINUITY") {
             const std::string nc = norm(val);
             if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;

@@ -302,7 +302,72 @@ overall accuracy is capped by the spatial reconstruction and by the
 friction splitting, a higher-order integrator paired with these fluxes
 buys no measurable accuracy.
 
-### 8.5.6 Second-order reconstruction
+### 8.5.6 Local time stepping
+
+Condition (8-14) is *local*, but a single global substep applies the
+smallest value found anywhere to every cell in the model. In a sewer
+network that is expensive in a specific and avoidable way: pipe lengths
+span two orders of magnitude, and a pressurized cell runs at the slot
+celerity while its open-channel neighbour runs at $\sqrt{gA/T}$. One
+5 m pipe, or one surcharged manhole, otherwise sets the step for ten
+thousand others.
+
+Local time stepping (`FV_LTS`, on by default) removes that coupling.
+Each control volume is assigned a power-of-two **tier** from its own
+stable step,
+
+| | | | |
+|---|---|---|---|
+| $$k_{i} = \left\lfloor \log_{2}\left( \Delta t_{i}/\Delta t_{0} \right) \right\rfloor$$ | | (8-15) | |
+
+where $\Delta t_{0}$ is the finest requirement in the model, and
+advances at $2^{k}\Delta t_{0}$. A face fires at the finer of its two
+sides. One **macro cycle** is $2^{K-1}$ base substeps, where $K$ is the
+tier count; a tier-$k$ volume fires every $2^{k}$ of them, so every
+volume advances the same total span.
+
+Three properties make this a scheduling change rather than a different
+scheme:
+
+**Conservation across a tier interface is exact.** A face books
+$\pm F\,\Delta t$ into *both* incident volumes' accumulators when it
+fires; a volume drains what has accumulated when it fires. What leaves
+a fine cell is therefore bit-for-bit what arrives in its coarse
+neighbour. The naive alternative — letting the coarse side integrate
+its own flux estimate — loses mass at every interface.
+
+**Windows are aligned.** A tier-$k$ face opens its window at the start
+of its interval and the volume it feeds closes its window at the end of
+its own, so by the time a volume fires, every face bounding it has
+booked exactly the span the volume is about to integrate its sources
+over. Firing volumes at the *start* of their windows instead hands a
+coarse manhole several base steps of lateral inflow against one base
+step of drained outflow, and the resulting sawtooth in a small volume
+is large enough to be visible in the water surface far from it.
+
+**Tiers are graded.** No face may span more than one tier level. A
+coarse cell placed directly against a much finer one holds a frozen
+state through its whole window while its neighbour resolves a front
+trying to cross into it, and the flux booked against that frozen state
+overshoots. Grading is the standard admissibility condition for local
+time stepping on an unstructured mesh, and it is what makes a filling
+bore cross a length transition correctly.
+
+Tiers are reassigned only at a macro-cycle boundary, never inside one:
+a volume re-tiered mid-cycle would either skip a flux it is owed or
+drain one at the wrong $\Delta t$.
+
+Two cases fall through to global stepping, both deliberately. When
+tiering finds nothing to separate — a uniform mesh carrying a uniform
+state — the solver takes the untiered path and reproduces `FV_LTS NO`
+to the last bit. And when the solver carries advected species, tiering
+is disabled outright: the flux limiter of §8.8 bounds a cell's update
+against the extrema of its whole neighbourhood in one synchronous
+sweep, and under tiering those neighbours are at different times.
+
+`FV_LTS_MAX_TIERS` caps the spread, at 6 by default (a 64× ratio).
+
+### 8.5.7 Second-order reconstruction
 
 `FV_ORDER 2` enables MUSCL reconstruction with the limiter chosen by
 `FV_LIMITER`. Two choices in its construction are load-bearing:
@@ -323,7 +388,7 @@ centred bed source restores it:
 
 | | | | |
 |---|---|---|---|
-| $$S_{c} = \frac{g}{\Delta x}\left\lbrack I_{1}\left( \eta_{i} - z_{i}^{+} \right) - I_{1}\left( \eta_{i} - z_{i}^{-} \right) \right\rbrack$$ | | (8-15) | |
+| $$S_{c} = \frac{g}{\Delta x}\left\lbrack I_{1}\left( \eta_{i} - z_{i}^{+} \right) - I_{1}\left( \eta_{i} - z_{i}^{-} \right) \right\rbrack$$ | | (8-16) | |
 
 evaluated at the cell's own free surface. Evaluated this way the term
 vanishes identically on a flat bed and cancels the flux difference
@@ -421,7 +486,7 @@ When the solver carries advected species, the species flux is the
 
 | | | | |
 |---|---|---|---|
-| $$F_{\varphi} = F_{mass}\varphi_{L} \ \text{ if } S^{*} \geq 0, \qquad F_{\varphi} = F_{mass}\varphi_{R} \ \text{ if } S^{*} < 0$$ | | (8-16) | |
+| $$F_{\varphi} = F_{mass}\varphi_{L} \ \text{ if } S^{*} \geq 0, \qquad F_{\varphi} = F_{mass}\varphi_{R} \ \text{ if } S^{*} < 0$$ | | (8-17) | |
 
 Flux consistency here is a requirement, not a detail. Computing the
 species flux from a separately evaluated velocity — the usual result of
@@ -467,6 +532,9 @@ file.
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows are refreshed. |
 | `FV_COMPACTION` | `YES` | Skip dry, inactive parts of the network. Results-transparent. |
+| `FV_LTS` | `YES` | Local time stepping (§8.5.6). `NO` forces one global substep size. |
+| `FV_LTS_MAX_TIERS` | 6 | Cap on the tier spread; 6 allows 64×. |
+| `FV_CFL_CENSUS_INTERVAL` | 1 | Substeps between full Courant censuses. 1 recomputes every substep. |
 | `FV_BACKEND` | `AUTO` | `CPU`, `AUTO`, `OMP`, `CUDA`, `HIP` or `SYCL`. |
 | `FV_MIN_PARALLEL_CELLS` | 20000 | Mesh size below which `AUTO` stays on the CPU. |
 

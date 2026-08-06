@@ -426,6 +426,11 @@ add_gtest_unit(test_engine_fv_analytic test_fv_solver_analytic.cpp)
 # coupling and continuity, mixed-flow filling bore vs. Rankine–Hugoniot,
 # compaction results-transparency, and the scalar-transport contracts.
 add_gtest_unit(test_engine_fv_network test_fv_solver_network.cpp)
+# Local time stepping (§6.12): fall-through to global stepping bit-for-bit on an
+# untiered mesh, tier-interface conservation exact at every tier count, a
+# wetting front crossing tier boundaries without loss, and the substep-count
+# relief a 100x graded reach actually delivers.
+add_gtest_unit(test_engine_fv_lts test_fv_lts.cpp)
 # Engine-level gates (§6.7): FLOW_ROUTING FV end-to-end on the reference
 # drainage model — routing continuity vs DYNWAVE, routed-volume agreement,
 # mesh-refinement CONVERGENCE toward the DW hydrograph (the consistency gate),
