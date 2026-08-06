@@ -37,6 +37,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
 #include "../uncertainty/QualityUncertaintyHandler.hpp"
+#include "../uncertainty/RomDiagTrust.hpp"
 #include "../2d/output/Default2DOutputPlugin.hpp"
 #include <filesystem>
 #endif
@@ -3451,6 +3452,46 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 rom1d_h_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.head[ui];
             }
             rom1d_->computeQuantiles(rom1d_h_buf_.data(), rom1d_invert_buf_.data());
+
+            // PR H3: H_skew trust diagnostic. The Picard operator carries one
+            // dqdh per link applied antisymmetrically, so the assembled H is
+            // symmetric by construction — an entrywise skew ratio is always
+            // zero (upstream audit finding, §0.5.4). The honest computable
+            // signal for band-trust degradation is Froude-based instead: the
+            // O(Fr^2) gap between the Picard surrogate and the true
+            // Saint-Venant Jacobian grows with the advective terms the
+            // surrogate drops.
+            if (rom_diag_csv_.is_open()) {
+                const auto snap = router_.dwSolver().lastConvergedH();
+                double fr_trust = 0.0;
+                if (snap.valid && snap.link_froude != nullptr) {
+                    const int n_links = std::min(ctx_.n_links(), snap.n_links);
+                    std::vector<uint8_t> eligible(static_cast<std::size_t>(n_links));
+                    for (int j = 0; j < n_links; ++j) {
+                        const auto uj = static_cast<std::size_t>(j);
+                        eligible[uj] = (ctx_.links.type[uj] == LinkType::CONDUIT &&
+                                        !router_.dwSolver().isBypassed(j)) ? 1 : 0;
+                    }
+                    fr_trust = uncertainty::computeFrTrust(
+                        ctx_.links.flow.data(), snap.link_froude,
+                        eligible.data(), n_links);
+                }
+
+                double surcharge_frac = 0.0;
+                if (snap.valid && snap.node_surcharged != nullptr) {
+                    surcharge_frac = uncertainty::computeSurchargeFrac(
+                        snap.node_surcharged, snap.n_nodes,
+                        rom1d_active_map_.data(), n_active);
+                }
+
+                // basis_age_s/basis_rebuilds/cold_restarts/cache_hits: 0 until
+                // H1 (cold-restart tracking) and H2 (basis cache) land — see
+                // this PR's spec.
+                rom_diag_csv_ << ctx_.current_time << ','
+                              << fr_trust           << ','
+                              << surcharge_frac     << ','
+                              << 0.0 << ',' << 0 << ',' << 0 << ',' << 0 << '\n';
+            }
         }
 #endif
 
@@ -4000,6 +4041,9 @@ int SWMMEngine::end() noexcept {
 
     if (rom1d_csv_.is_open()) {
         rom1d_csv_.close();
+    }
+    if (rom_diag_csv_.is_open()) {
+        rom_diag_csv_.close();
     }
 #endif
 
@@ -5960,6 +6004,23 @@ void SWMMEngine::buildROM1D() noexcept {
         rom1d_csv_.open(csv_path);
         if (rom1d_csv_.is_open()) {
             rom1d_csv_ << "time_s,node_name,q05,q50,q95\n";
+        }
+
+        // PR H3: <rpt>.rom_diag.csv — Fr-based band-trust diagnostic. Deliberately
+        // a SEPARATE sidecar from .uncertainty.csv (schema is scalar-per-timestep,
+        // not per-node; widening the node-indexed file would break its schema and
+        // downstream scripts, same reasoning as the PR 13a WQ-uncertainty decision).
+        std::string diag_csv_path = rpt_path_;
+        if (diag_csv_path.size() >= rpt_ext.size() &&
+            diag_csv_path.compare(diag_csv_path.size() - rpt_ext.size(), rpt_ext.size(), rpt_ext) == 0) {
+            diag_csv_path.replace(diag_csv_path.size() - rpt_ext.size(), rpt_ext.size(), ".rom_diag.csv");
+        } else {
+            diag_csv_path += ".rom_diag.csv";
+        }
+        rom_diag_csv_.open(diag_csv_path);
+        if (rom_diag_csv_.is_open()) {
+            rom_diag_csv_ << "time_s,fr_trust,surcharge_frac,basis_age_s,"
+                             "basis_rebuilds,cold_restarts,cache_hits\n";
         }
     }
 }

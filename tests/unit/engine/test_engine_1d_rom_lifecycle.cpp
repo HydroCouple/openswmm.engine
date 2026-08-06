@@ -162,6 +162,37 @@ CsvSummary summarizeCsv(const fs::path& csv_path) {
     return s;
 }
 
+/// Summarize <rpt>.rom_diag.csv (PR H3): row count, and whether fr_trust /
+/// surcharge_frac ever leave [0, 1] (a defensive sanity bound; fr_trust is a
+/// weighted mean of a clamped [0,1.5]^2 quantity so it cannot exceed 2.25,
+/// but genuinely never should for the small fixtures these tests use).
+struct RomDiagCsvSummary {
+    int    n_rows = 0;
+    double max_fr_trust = 0.0;
+    double max_surcharge_frac = 0.0;
+    bool   parsed_ok = true;
+};
+
+RomDiagCsvSummary summarizeRomDiagCsv(const fs::path& csv_path) {
+    RomDiagCsvSummary s;
+    std::ifstream f(csv_path);
+    if (!f) { s.parsed_ok = false; return s; }
+    std::string line;
+    std::getline(f, line);  // header
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string time_s, fr_s, surch_s, rest;
+        std::getline(ss, time_s, ',');
+        std::getline(ss, fr_s, ',');
+        std::getline(ss, surch_s, ',');
+        s.max_fr_trust = std::max(s.max_fr_trust, std::stod(fr_s));
+        s.max_surcharge_frac = std::max(s.max_surcharge_frac, std::stod(surch_s));
+        ++s.n_rows;
+    }
+    return s;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -440,4 +471,133 @@ TEST(SwmmEngine1DRomLifecycle, HSnapshotFroudeIsZeroInStillWater) {
 
     swmm_engine_close(eng);
     swmm_engine_destroy(eng);
+}
+
+// ============================================================================
+// PR H3 — H_skew trust diagnostic (<rpt>.rom_diag.csv), engine-level coverage.
+// The pure fr_trust/surcharge_frac functions have exact closed-form and
+// clamp unit tests in test_rom_diag_trust.cpp; these two confirm the CSV
+// sidecar is actually wired through the real 1D ROM lifecycle.
+// ============================================================================
+
+TEST(SwmmEngine1DRomLifecycle, RomDiagCsvFrTrustIsZeroInStillWaterWithRomActive) {
+    // Same flat/no-forcing fixture as HSnapshotFroudeIsZeroInStillWater, but
+    // with [UNCERTAINTY] enabled so the ROM builds and rom_diag_csv_ opens.
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+    const std::string still_model_with_rom =
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:20:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         5\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      0.0   8.0       1.0        0         0\n"
+        "J2       0.0  8.0       1.0        0         0\n"
+        "J3       0.0  8.0       1.0        0         0\n"
+        "J4       0.0  8.0       1.0        0         0\n"
+        "J5       0.0  8.0       1.0        0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Stage  Gated\n"
+        "O1      0.0   FIXED 1.0   NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    J2  200.0   0.013      0         0          0.0\n"
+        "C2      J2    J3  200.0   0.013      0         0          0.0\n"
+        "C3      J3    J4  200.0   0.013      0         0          0.0\n"
+        "C4      J4    J5  200.0   0.013      0         0          0.0\n"
+        "C5      J5    O1  200.0   0.013      0         0          0.0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  3.0    0      0      0      1\n"
+        "C2      CIRCULAR  3.0    0      0      0      1\n"
+        "C3      CIRCULAR  3.0    0      0      0      1\n"
+        "C4      CIRCULAR  3.0    0      0      0      1\n"
+        "C5      CIRCULAR  3.0    0      0      0      1\n"
+        "\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n";
+
+    const fs::path inp = dir / "rom_diag_still.inp";
+    const fs::path rpt = dir / "rom_diag_still.rpt";
+    { std::ofstream f(inp); f << still_model_with_rom; }
+
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int n_steps = 0;
+    while (swmm_engine_step(eng, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        if (++n_steps > 500) break;
+    }
+    swmm_engine_end(eng);
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+
+    const fs::path diag_csv = dir / "rom_diag_still.rom_diag.csv";
+    ASSERT_TRUE(fs::exists(diag_csv)) << "expected " << diag_csv;
+    const RomDiagCsvSummary sum = summarizeRomDiagCsv(diag_csv);
+    ASSERT_TRUE(sum.parsed_ok);
+    EXPECT_GT(sum.n_rows, 0);
+    EXPECT_NEAR(sum.max_fr_trust, 0.0, 1e-6)
+        << "fr_trust must be ~0 in a network with zero head gradient anywhere";
+    EXPECT_NEAR(sum.max_surcharge_frac, 0.0, 1e-9)
+        << "no node should surcharge in this flat, unforced fixture";
+}
+
+TEST(SwmmEngine1DRomLifecycle, RomDiagCsvRowCadenceMatchesReportBoundaries) {
+    // The 1D ROM lifecycle's usual 5-junction sloping chain: a live network
+    // with real flow, checking rom_diag.csv's row cadence matches
+    // .uncertainty.csv's (same report-boundary trigger, same run).
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    auto r = driveRun(dir, "rom_diag_cadence", "\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n");
+    ASSERT_NE(r.eng, nullptr);
+    swmm_engine_close(r.eng);
+    swmm_engine_destroy(r.eng);
+
+    const fs::path unc_csv  = dir / "rom_diag_cadence.uncertainty.csv";
+    const fs::path diag_csv = dir / "rom_diag_cadence.rom_diag.csv";
+    ASSERT_TRUE(fs::exists(unc_csv));
+    ASSERT_TRUE(fs::exists(diag_csv));
+
+    // .uncertainty.csv has one row per (report boundary, active node); count
+    // distinct report boundaries by re-reading its time column.
+    std::ifstream uf(unc_csv);
+    std::string line;
+    std::getline(uf, line);  // header
+    int n_active_nodes = 0;
+    double first_time = -1.0;
+    while (std::getline(uf, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string time_s;
+        std::getline(ss, time_s, ',');
+        const double t = std::stod(time_s);
+        if (first_time < 0.0) first_time = t;
+        if (t == first_time) ++n_active_nodes;
+        else break;  // rows are grouped by report boundary in write order
+    }
+    ASSERT_GT(n_active_nodes, 0);
+    std::ifstream uf2(unc_csv);
+    std::getline(uf2, line);
+    int unc_rows = 0;
+    while (std::getline(uf2, line)) if (!line.empty()) ++unc_rows;
+    const int unc_report_boundaries = unc_rows / n_active_nodes;
+
+    const RomDiagCsvSummary diag_sum = summarizeRomDiagCsv(diag_csv);
+    ASSERT_TRUE(diag_sum.parsed_ok);
+    EXPECT_EQ(diag_sum.n_rows, unc_report_boundaries)
+        << "rom_diag.csv should have exactly one row per report boundary, "
+           "matching .uncertainty.csv's report-boundary count";
 }
