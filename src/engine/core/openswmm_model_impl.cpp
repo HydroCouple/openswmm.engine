@@ -852,14 +852,14 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "DPS_DECAY_TIME")    val = std::to_string(opt.dps_decay_time);
     else if (k == "LENGTHENING_STEP")  val = std::to_string(opt.lengthening_step);
     else if (k == "VARIABLE_STEP")     val = std::to_string(opt.variable_step);
+    else if (k == "MINIMUM_STEP")      val = std::to_string(opt.min_routing_step);
     else if (k == "MAX_TRIALS")        val = std::to_string(opt.max_trials);
     else if (k == "HEAD_TOLERANCE")    val = std::to_string(opt.head_tol);
-    // LAT_FLOW_TOL / SYS_FLOW_TOL are stored as fractions; the GUI uses
-    // fractions on both read and write (see readFromEngine fallback +
-    // writeToEngine). The percent⇄fraction conversion happens only at
-    // the [OPTIONS] parser / InpWriter boundary, never through this API.
-    else if (k == "LAT_FLOW_TOL")      val = std::to_string(opt.lat_flow_tol);
-    else if (k == "SYS_FLOW_TOL")      val = std::to_string(opt.sys_flow_tol);
+    // LAT_FLOW_TOL / SYS_FLOW_TOL speak percent through this API on both
+    // get and set, mirroring the [OPTIONS] surface; the stored fraction
+    // (value / 100) is internal to the routing solver.
+    else if (k == "LAT_FLOW_TOL")      val = std::to_string(opt.lat_flow_tol * 100.0);
+    else if (k == "SYS_FLOW_TOL")      val = std::to_string(opt.sys_flow_tol * 100.0);
     else if (k == "MIN_SURFAREA")      val = std::to_string(opt.min_surf_area);
     else if (k == "MIN_SLOPE")         val = std::to_string(opt.min_slope);
 
@@ -1190,11 +1190,12 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     else if (k == "DPS_DECAY_TIME")    opt.dps_decay_time      = std::stod(v);
     else if (k == "LENGTHENING_STEP")  opt.lengthening_step    = std::stod(v);
     else if (k == "VARIABLE_STEP")     opt.variable_step       = std::stod(v);
+    // MINIMUM_STEP takes seconds or HH:MM:SS, same grammar as the [OPTIONS]
+    // parser (OptionsHandler) and ROUTING_STEP above.
+    else if (k == "MINIMUM_STEP")
+        opt.min_routing_step = openswmm::input::parse_time_seconds(v);
     else if (k == "MAX_TRIALS")        opt.max_trials          = std::stoi(v);
     else if (k == "HEAD_TOLERANCE")    opt.head_tol            = std::stod(v);
-    // LAT_FLOW_TOL / SYS_FLOW_TOL: fraction in / fraction out via this API
-    // (see read comment above). The percent⇄fraction conversion stays at
-    // the [OPTIONS] parser / InpWriter boundary.
     // Flow tolerances are percentages per the INP/[OPTIONS] contract; the
     // OptionsHandler parser and the routing solver store them as fractions
     // (value / 100), so convert here to match — a raw std::stod stored 500%
