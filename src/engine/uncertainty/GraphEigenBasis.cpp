@@ -6,6 +6,7 @@
  */
 
 #include "GraphEigenBasis.hpp"
+#include "LhsShuffle.hpp"   // splitmix64 — deterministic cold-start vector
 
 #include <algorithm>
 #include <cassert>
@@ -15,6 +16,22 @@
 #include <limits>
 
 namespace openswmm::uncertainty {
+
+namespace {
+
+/// Fixed seed for the Lanczos cold-start vector (see lanczos()). Fixed, not
+/// derived from time/address/config, so every run of every build produces a
+/// bit-identical basis — the engine's determinism guarantees (and the
+/// `TwoRunsAreIdentical` regression) depend on it.
+constexpr uint64_t kColdStartSeed = UINT64_C(0x5eed10a5ec0d57a7);
+
+/// Relative magnitude of the pseudo-random symmetry-breaking term in the
+/// cold-start vector (see lanczos()). Small enough that the smooth ramp +
+/// quadratic dominate — preserving fast convergence to the low eigenmodes —
+/// but nonzero so no exact graph symmetry can confine the Krylov space.
+constexpr double kSymmetryBreakEps = 1.0e-3;
+
+}  // namespace
 
 // ============================================================================
 // CSR helpers
@@ -177,8 +194,7 @@ bool GraphEigenBasis::lanczos(const CsrGraph& L, int k_want,
 
     // Starting vector.
     // Warm-start: use v0 (first column of v0_block) when provided.
-    // Cold-start: zero-mean linear ramp, orthogonal to the Laplacian null
-    // space (constant vector 1/sqrt(n) would cause immediate breakdown).
+    // Cold-start: zero-mean deterministic pseudo-random vector (see below).
     if (v0 != nullptr) {
         // Copy v0 and normalize, with fallback to cold-start on zero norm.
         double sq = 0.0;
@@ -194,12 +210,90 @@ bool GraphEigenBasis::lanczos(const CsrGraph& L, int k_want,
         }
     }
     if (v0 == nullptr) {
-        double mean = (n - 1) * 0.5;
+        // Cold start: zero-mean SMOOTH ramp + SYMMETRIC quadratic companion,
+        // plus a tiny deterministic pseudo-random perturbation.
+        //
+        // Why not the bare ramp (the original): `r[i] = i − (n−1)/2` is
+        // ANTISYMMETRIC under the index reversal `i → n−1−i`. Whenever L
+        // commutes with that reversal — ANY left-right symmetric graph, a
+        // plain chain/path being the canonical case — every Krylov vector
+        // L^j·v0 inherits that antisymmetry, so the whole Krylov space is
+        // trapped in the antisymmetric invariant subspace and the SYMMETRIC
+        // eigenvectors are unreachable at any Krylov dimension, with any
+        // amount of reorthogonalization. On an unweighted path graph the
+        // eigenvector of λ_k is antisymmetric for odd k and symmetric for
+        // even k, so the bare ramp silently returned λ_1,λ_3,λ_5,λ_7,λ_9
+        // while *reporting them as the five smallest* — wrong, since
+        // λ_2 < λ_3. (Measured pre-fix on n = 10/15/20; n = 6/30 differed
+        // only because round-off leaked symmetric components back in, which
+        // is luck, not a mechanism.)
+        //
+        // Why not a pure random vector: it is generic (reaches every
+        // eigenvector) but spectrally ROUGH, so at the fixed Krylov budget
+        // used here (m ≈ 3k+15, e.g. 45 steps on a 5000-cell mesh) it
+        // converges markedly worse to the SMALLEST eigenvalues, which are
+        // exactly the ones this basis retains. Measured on the 50×50
+        // structured mesh: a pure-random start returned λ_0 = 6.64e-3 where
+        // the smooth ramp reached 1.89e-3 — and since Ritz values bound the
+        // true eigenvalues from ABOVE, lower is strictly better converged.
+        // Smoothness of the start is load-bearing for convergence here, not
+        // incidental.
+        //
+        // So: keep a smooth base, but make it span both parities.
+        //   r[i] = i − (n−1)/2                 antisymmetric, smooth
+        //   q[i] = r[i]² − mean(r²)            SYMMETRIC, smooth, zero-mean
+        // Both are low-frequency, so convergence to the low modes is
+        // preserved; their sum lies in neither invariant subspace, so the
+        // symmetric eigenvectors are reachable.
+        //
+        // The small random term (kSymmetryBreakEps, ~1e-3 relative) is
+        // insurance against symmetry groups OTHER than index reversal — a
+        // star, a symmetric tree, repeated identical branches — where a
+        // purely index-constructed vector could still land in an invariant
+        // subspace. It is deliberately tiny so it perturbs convergence
+        // negligibly while still giving a generically nonzero component on
+        // every eigenvector. splitmix64 with a FIXED seed keeps this
+        // bit-exactly reproducible run to run and platform to platform (pure
+        // uint64 arithmetic — no libm, no std::random distribution whose
+        // implementation varies), which the engine's determinism guarantees
+        // and the `TwoRunsAreIdentical` regression require.
+        //
+        // The mean is removed at the end so the start stays orthogonal to the
+        // constant vector — the null eigenvector of an ungrounded (Neumann)
+        // Laplacian, which would otherwise cause immediate Lanczos breakdown.
+        // That is the property the original ramp was chosen for, preserved.
+        const double mid = (n - 1) * 0.5;
+
+        // Mean of r² over i, needed to zero-mean the quadratic companion.
+        double mean_r2 = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double r = static_cast<double>(i) - mid;
+            mean_r2 += r * r;
+        }
+        mean_r2 /= static_cast<double>(n);
+
+        // Scale the companion so ramp and quadratic contribute comparably
+        // (both are O(n) and O(n²) raw, so normalize the quadratic by mid).
+        const double q_scale = (mid > 0.0) ? (1.0 / std::max(mid, 1.0)) : 1.0;
+
+        uint64_t rng = kColdStartSeed;
+        double sum = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double r = static_cast<double>(i) - mid;
+            const double q = (r * r - mean_r2) * q_scale;
+            const uint64_t rb = splitmix64(rng);
+            const double u = static_cast<double>(rb >> 11) *
+                             (1.0 / 9007199254740992.0);   // [0,1), 2^-53
+            const double eps = kSymmetryBreakEps * (2.0 * u - 1.0) * std::max(mid, 1.0);
+            const double v = r + q + eps;
+            V[static_cast<std::size_t>(i)] = v;
+            sum += v;
+        }
+        const double mean = sum / static_cast<double>(n);
         double sq = 0.0;
         for (int i = 0; i < n; ++i) {
-            double v = static_cast<double>(i) - mean;
-            V[static_cast<std::size_t>(i)] = v;
-            sq += v * v;
+            V[static_cast<std::size_t>(i)] -= mean;
+            sq += V[static_cast<std::size_t>(i)] * V[static_cast<std::size_t>(i)];
         }
         if (sq < 1e-30) return false;
         double inv = 1.0 / std::sqrt(sq);
