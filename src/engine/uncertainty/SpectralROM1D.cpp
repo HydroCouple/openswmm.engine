@@ -565,7 +565,7 @@ void SpectralROM1D::computeQuantiles(const double* h_det_active,
 // updateBasis
 // ============================================================================
 
-void SpectralROM1D::commitBasisUpdateAttempt_(const double* conduit_off, int n_conduits,
+void SpectralROM1D::commitBasisUpdateSuccess_(const double* conduit_off, int n_conduits,
                                               const uint8_t* node_surcharged,
                                               double sim_time) {
     conduit_off_prev_.assign(conduit_off, conduit_off + n_conduits);
@@ -589,15 +589,13 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     if (!is_ready() || n_full_nodes < 4 || n_conduits <= 0) return;
 
     // --- Time-interval guard --------------------------------------------
-    if (sim_time - last_basis_update_time_ < basis_update_interval) return;
+    if (sim_time - last_basis_update_attempt_time_ < basis_update_interval) return;
 
     // --- PR H1: cold-restart triggers, evaluated against the PREVIOUS
-    // attempt's baseline (committed by commitBasisUpdateAttempt_ at every
-    // exit of the last call). These decide WARM vs COLD for a rebuild that
-    // is about to happen; they do not by themselves force a rebuild to
-    // happen (the interval guard above still applies) -- but a surcharge
-    // onset or a large dqdh jump will normally already fail the skip
-    // criterion below on its own, since both are real conductance changes.
+    // SUCCESSFUL rebuild's baseline. A failed rebuild must still back off
+    // via last_basis_update_attempt_time_, but it must NOT erase the last
+    // known-good baseline: if the basis is still pre-transition, the next
+    // successful retry must remain eligible for a forced-cold restart.
     bool force_cold = false;
 
     // Primary trigger: surcharge-state transitions on active nodes.
@@ -653,13 +651,13 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     }
 
     // Past this point we are committed to attempting a rebuild this call.
-    // Every exit below — success or failure — must commit the new baseline
-    // (commitBasisUpdateAttempt_) so a persistently failing rebuild backs
-    // off for basis_update_interval instead of retrying full Lanczos on
-    // every routing step, and so H1's triggers compare against fresh state
-    // rather than stale state from many calls ago.
+    // Every exit below — success or failure — must stamp
+    // last_basis_update_attempt_time_ so a persistently failing rebuild
+    // backs off for basis_update_interval instead of retrying full Lanczos
+    // on every routing step. Only a SUCCESSFUL rebuild may advance the
+    // warm/cold comparison baseline.
     ++basis_updates_attempted_;
-    if (force_cold) ++basis_rebuilds_cold_forced_;
+    last_basis_update_attempt_time_ = sim_time;
 
     // --- Build new weighted Laplacian ------------------------------------
     // Dry-start guard: if all weights are zero/floor, skip this update.
@@ -671,7 +669,6 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
         if (conduit_off[ci] > 1.0e-6) any_wet = true;
     }
     if (!any_wet) {
-        commitBasisUpdateAttempt_(conduit_off, n_conduits, node_surcharged, sim_time);
         ++basis_updates_failed_;
         return;
     }
@@ -704,7 +701,6 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     // Guard: active node count must match (topology must be stable).
     if (static_cast<int>(active_map_new.size()) != n_nodes ||
         static_cast<int>(active_map_new.size()) < 4) {
-        commitBasisUpdateAttempt_(conduit_off, n_conduits, node_surcharged, sim_time);
         ++basis_updates_failed_;
         return;
     }
@@ -717,7 +713,6 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
         basis_owned_->null_tol = basis->null_tol;
     }
     if (!basis_owned_->build(L_new, n_kept, force_cold ? nullptr : P_old.data())) {
-        commitBasisUpdateAttempt_(conduit_off, n_conduits, node_surcharged, sim_time);
         ++basis_updates_failed_;
         return;
     }
@@ -725,10 +720,11 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
     // broken down prematurely — the combo v0 starting vector prevents this for
     // normal networks, but guard against degenerate geometry).
     if (basis_owned_->num_kept != n_kept) {
-        commitBasisUpdateAttempt_(conduit_off, n_conduits, node_surcharged, sim_time);
         ++basis_updates_failed_;
         return;
     }
+
+    if (force_cold) ++basis_rebuilds_cold_forced_;
 
     basis = basis_owned_.get();  // switch raw pointer to new owned basis
 
@@ -763,7 +759,7 @@ void SpectralROM1D::updateBasis(const double* conduit_off, const int* conduit_n1
             ai[j] = a_tmp[j];
     }
 
-    commitBasisUpdateAttempt_(conduit_off, n_conduits, node_surcharged, sim_time);
+    commitBasisUpdateSuccess_(conduit_off, n_conduits, node_surcharged, sim_time);
 }
 
 // ============================================================================
