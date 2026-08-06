@@ -899,6 +899,56 @@ multipliers spanning `[1−p, 1+p]`, and `dt` is the report step in days.
 > pollutant injection. Quality routing does not carry parcel age, so a fully
 > cumulative band is not yet available. See §8, limitation 8.
 
+### 5.8 Band-trust diagnostic (`fr_trust` / `surcharge_frac`)
+
+Whenever the 1D ROM is active, the engine writes a second sidecar alongside
+the report file:
+
+```
+<report_path>.rom_diag.csv
+```
+
+The file is created the same way as `.uncertainty.csv` (replacing the `.rpt`
+suffix, or appending if there isn't one). Schema:
+
+```
+time_s,fr_trust,surcharge_frac,basis_age_s,basis_rebuilds,cold_restarts,cache_hits
+```
+
+**What the columns mean:**
+
+| Column | Description |
+|---|---|
+| `time_s` | Simulation time in seconds at the report boundary |
+| `fr_trust` | Flow-weighted mean squared Froude number over the network |
+| `surcharge_frac` | Fraction of active nodes currently surcharged |
+| `basis_age_s`, `basis_rebuilds`, `cold_restarts`, `cache_hits` | Reserved; always `0` until the H1 (cold-restart) and H2 (basis cache) features land |
+
+**Why this file exists, separately from `.uncertainty.csv`:** the ROM's
+weighted-Laplacian operator is built from the Picard solver's own dQ/dH
+values, applied symmetrically to each conduit's two endpoints — so the
+operator itself is exactly symmetric, with no directional bias to detect
+from the operator alone. The real Saint-Venant Jacobian isn't symmetric once
+advective (inertial) terms matter, and that gap grows with the square of the
+Froude number. `fr_trust` is the honest, computable stand-in for "how much
+does that gap matter right now" — it isn't (and can't be) zero/one certainty,
+just a flow-weighted summary of how fast the network is moving.
+
+**How to read `fr_trust`:**
+
+| Range | Interpretation |
+|---|---|
+| `≲ 0.05` | Bands are trustworthy as reported |
+| `0.05 – 0.15` | Mentally inflate reported widths by roughly 10% |
+| `≳ 0.25` | Peak-flow regime; band widths may be off by 10–25% (the roadmap's known limitation, now with a number attached) |
+
+`surcharge_frac` is the complementary signal, not a second trust concern in
+the same direction: once a reach surcharges, velocities collapse toward zero
+and `fr_trust` naturally falls with them — a high `surcharge_frac` alongside
+a low `fr_trust` is the ROM's linear approximation becoming *more* valid, not
+less (Fr → 0 makes the symmetric surrogate nearly exact). See §8 for the
+underlying limitation this diagnostic reports on.
+
 ---
 
 ## 6. Advanced configuration
@@ -1249,7 +1299,11 @@ xarray as a supplementary group.
    reaches; pump stations and sluice gates. In those regimes the ROM identifies the right
    *spatial pattern* of sensitivity but may mis-estimate band width by 30–50%.
    The 2D CVODE solver uses the diffusion-wave equation by design, so this limitation applies
-   only to the 1D ROM. See §4.6 for the full discussion.
+   only to the 1D ROM. See §4.6 for the full discussion. **A live signal for when you're in
+   the degraded part of this regime is now available**: `fr_trust` in `<rpt>.rom_diag.csv`
+   (§5.8) is a flow-weighted mean squared Froude number, computable at every report boundary
+   without re-solving anything — `fr_trust ≳ 0.25` flags the peak-flow condition where this
+   limitation's 10–25% band-width error applies.
 
 3. **Mean K_eff (not per-cell).** The scalar K_eff path uses a single effective conductance
    for the full domain. Per-mode Rayleigh-quotient K_eff (§4.8 Option A) partially corrects
