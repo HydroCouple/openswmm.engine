@@ -66,6 +66,7 @@
 #include "../uncertainty/GraphEigenBasis.hpp"
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
+#include "../uncertainty/RomThreshold.hpp"
 #include "../uncertainty/UncertaintyEnsemble.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
@@ -444,6 +445,31 @@ private:
                                             ///< for any registered FORCING_VECTOR 1D param, e.g. INFLOW)
     std::ofstream rom1d_csv_;              ///< 1D ROM quantile CSV, written at report intervals
     std::ofstream rom_diag_csv_;           ///< PR H3: <rpt>.rom_diag.csv (fr_trust/surcharge_frac/...)
+
+    // ---- PR H10: threshold-crossing probability + modality flag ----------
+    /// Per-active-node exceedance threshold, resolved ONCE at build time.
+    /// `head` is an ABSOLUTE head in internal units, directly comparable to
+    /// the reconstructed member values (which are absolute heads), so the
+    /// per-boundary hot path is a plain comparison with no unit arithmetic.
+    struct Rom1dThreshold {
+        uncertainty::ThresholdKind kind = uncertainty::ThresholdKind::NONE;
+        double head = 0.0;      ///< Absolute head at which the node crosses
+        bool   has_ctrl = false;///< Node is a sensor in a [CONTROLS] premise
+        double ctrl_head = 0.0; ///< That rule's setpoint as an absolute head
+    };
+    std::vector<Rom1dThreshold> rom1d_thresholds_;
+    std::ofstream rom_threshold_csv_;      ///< PR H10 <rpt>.rom_threshold.csv
+
+    /// PR H10 modality criteria (spec defaults). Config fields rather than
+    /// literals so H5's and H11's fixtures can exercise the boundaries, and
+    /// so the G54 statistical review has one place to retune.
+    double rom1d_modality_gap_ratio_ = 0.5;  ///< g_max/IQR must exceed this
+    double rom1d_modality_min_side_  = 0.20; ///< min share on EACH side of the gap
+
+    /// Resolve each active node's exceedance threshold and control setpoint.
+    /// Called once from buildROM1D(); see the definition for the priority
+    /// order and the display-vs-internal unit handling of setpoints.
+    void buildRom1dThresholds() noexcept;
 
     /** @brief Build + seed the 1D spectral ROM from conduit connectivity and node heads. */
     void buildROM1D() noexcept;

@@ -797,8 +797,8 @@ The per-coupling-point bounds `[q_min, q_max]` across all M members are accumula
 |---|---|
 | Spread peaks at inlet/outlet junctions | These are hydraulic bottlenecks where Manning's n most strongly controls conveyance. The Fiedler gradient (§7.4) confirms this. |
 | Spread grows downstream along a pipe | Manning's n uncertainty compounds over flow path length — each cell passes its uncertainty to the next. |
-| Spread is near zero early in the event, grows later | The ROM seeds from a uniform depth field (zero spread). Non-uniform patterns develop as the solver advances, giving the ensemble room to diverge. |
-| Spread is near zero everywhere despite non-zero perturbation | Initial depth is spatially uniform (projects to null Laplacian eigenvector). Use a non-uniform IC or wait for rainfall to build non-uniform depth gradients. |
+| Spread is near zero early in the event, grows later | Deviation-form spread starts at exactly zero by construction and grows toward its parametric steady state with per-mode time constants `1/(λ_j·K1d)`. This is spin-up, not an error — see §8 limitation 1. |
+| Spread is near zero everywhere despite non-zero perturbation | On a network with **no grounded boundary at all** (no outfall / open edge), the constant mode is unrepresentable and a spatially uniform field projects to nothing. With a normal outfall this no longer applies — the basis is grounded there and uniform inputs do produce spread. Check the model actually has an outfall; otherwise use a non-uniform IC. |
 | High relative spread in dry cells | Relative spread = (q95−q05)/q50 blows up as q50 → 0. Use **absolute** spread (q95−q05 in metres) for dry-cell analysis. |
 
 ### 5.3 Choosing perturbation levels
@@ -948,6 +948,65 @@ and `fr_trust` naturally falls with them — a high `surcharge_frac` alongside
 a low `fr_trust` is the ROM's linear approximation becoming *more* valid, not
 less (Fr → 0 makes the symmetric surrogate nearly exact). See §8 for the
 underlying limitation this diagnostic reports on.
+
+### 5.9 Threshold-crossing probability and the bimodality flag
+
+Whenever the 1D ROM is active the engine writes a companion file alongside the
+report:
+
+```
+<report_path>.rom_threshold.csv
+```
+
+Schema:
+
+```
+time_s,node_name,threshold_kind,threshold_value,p_exceed,p_ctrl,modality_flag
+```
+
+| Column | Description |
+|---|---|
+| `time_s` | Simulation time in seconds at the report boundary |
+| `node_name` | SWMM node name |
+| `threshold_kind` | `CROWN` (surcharge onset) or `MAX_DEPTH` (flooding) — which threshold this row measured against |
+| `threshold_value` | The crossing level, as an absolute head in internal units |
+| `p_exceed` | Fraction of ensemble members strictly above `threshold_value` |
+| `p_ctrl` | Fraction of members above this node's `[CONTROLS]` setpoint, if it is named as a sensor; `0` otherwise |
+| `modality_flag` | `1` when the ensemble looks bimodal at this node (see below), else `0` |
+
+**Why this file exists.** The decision-relevant question at a crown or a control
+setpoint is almost never "what is the 95th-percentile depth" — it is *what
+fraction of the ensemble crosses this line*. That number was always available
+from the member values the quantile sort already reconstructs; it simply was
+never reported. Reading `p_exceed = 0.30` at a crown is a direct statement that
+roughly 30% of the plausible parameter space surcharges this node.
+
+**Threshold priority.** The crown is used when the node has one (it is the
+earlier, more actionable event); `MaxDepth` is the fallback for nodes with no
+connecting conduit crown. Nodes with neither emit no row at all rather than a
+misleading zero.
+
+**`p_ctrl` is reporting only.** It tells you how close the ensemble is to
+disagreeing about a control rule — it does **not** re-evaluate or re-time
+control actions per member. The deterministic run's control decisions are
+unchanged. A `p_ctrl` near 0.5 means the members genuinely straddle the
+setpoint, and the single deterministic answer is a coin flip in disguise.
+
+**`modality_flag` — why a band can be the wrong summary.** When members split
+across a threshold the ensemble becomes bimodal, and describing it with three
+order statistics is actively misleading: the median sits between the two
+clusters and is reported as "the central estimate" while a large share of the
+ensemble is nowhere near it. The flag is a cheap gap statistic (largest gap
+between consecutive sorted members ÷ interquartile range, plus a requirement
+that at least 20% of members fall on each side, so a lone outlier does not
+count as a second mode) — not a mixture fit, which would be overkill at
+M ≈ 50. **When this flag is set, stop reading `q05/q50/q95` as a band** and
+read `p_exceed` instead: the honest answer is a branch probability, not an
+interval.
+
+This is the sidecar's answer to the objection that a linear ROM cannot
+represent branching behaviour. It cannot — so it reports the probability of
+the branch rather than pretending to a single smooth band.
 
 ---
 
@@ -1310,11 +1369,23 @@ xarray as a supplementary group.
    for this, but for highly non-uniform Manning's n distributions the spread may be
    systematically underestimated in rougher zones.
 
-4. **Uniform IC → zero ROM spread at t=0.** A spatially uniform initial depth projects entirely
-   onto the null Laplacian eigenvector (constant vector). Spread builds only as the solver
-   creates non-uniform depth patterns (rainfall, coupling, wetting front). This is expected
-   behaviour, not a bug. For zero-spread diagnostics, seed with a non-uniform field or wait
-   at least one SWMM routing step with active rainfall.
+4. **Uniform inputs on an UNGROUNDED network → zero ROM spread.** *(Substantially narrowed —
+   this limitation used to apply to every model.)* A pure-Neumann graph Laplacian has the
+   constant vector as a null mode, so every retained eigenmode is zero-mean and a spatially
+   uniform field — the dominant response to a domain-wide parameter perturbation — projects to
+   nothing. Reform PR 4 fixed this in 1D by **grounding** outfall-adjacent rows (Dirichlet), and
+   W3 fixed the 2D counterpart by grounding outlet-adjacent cells; both are the default, and
+   both are covered by tests asserting that a uniform field now projects non-trivially
+   (`GroundedLaplacian.UniformVectorProjectsNonzero`,
+   `MeshEigenBasis.GroundedBasisCapturesUniformShift`). What remains is the genuinely
+   ungrounded case: a network or domain with **no outfall and no open boundary anywhere**, where
+   there is nothing to ground against and the constant mode really is unrepresentable. Any
+   documentation or intuition that still says "a uniform storm produces zero spread" predates
+   these fixes.
+
+   Separately, and unchanged: deviation-form spread starts at exactly zero at seed time by
+   construction and grows toward its parametric steady state. That is spin-up (limitation 1),
+   not a null-mode problem.
 
 5. **Fixed spatial field seeds.** Spatial Manning and rainfall fields use fixed internal seeds
    (`0xdeadbeef01`, `0xcafebabe02`). Full seed control from the shared ensemble seed is not

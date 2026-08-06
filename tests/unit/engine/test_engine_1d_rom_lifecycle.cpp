@@ -193,6 +193,67 @@ RomDiagCsvSummary summarizeRomDiagCsv(const fs::path& csv_path) {
     return s;
 }
 
+/// PR H10 — parse <rpt>.rom_threshold.csv.
+struct ThresholdCsvSummary {
+    int    n_rows = 0;
+    int    n_boundaries = 0;      ///< distinct time_s values
+    int    rows_per_boundary = 0; ///< rows sharing the first time_s
+    bool   header_ok = false;
+    bool   probabilities_in_range = true;
+    bool   kinds_valid = true;
+    bool   flags_binary = true;
+    int    n_crown = 0;           ///< rows resolved to the CROWN threshold
+    int    n_max_depth = 0;       ///< rows resolved to the MaxDepth threshold
+    double first_threshold = 0.0; ///< threshold_value of the first data row
+};
+
+ThresholdCsvSummary summarizeThresholdCsv(const fs::path& csv_path) {
+    ThresholdCsvSummary s;
+    std::ifstream f(csv_path);
+    if (!f) return s;
+
+    std::string line;
+    std::getline(f, line);
+    s.header_ok = (line == "time_s,node_name,threshold_kind,threshold_value,"
+                           "p_exceed,p_ctrl,modality_flag");
+
+    double first_time = 0.0;
+    bool   have_first = false;
+    double last_time  = 0.0;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string t_s, name, kind, thr_s, pe_s, pc_s, flag_s;
+        std::getline(ss, t_s, ',');   std::getline(ss, name, ',');
+        std::getline(ss, kind, ',');  std::getline(ss, thr_s, ',');
+        std::getline(ss, pe_s, ',');  std::getline(ss, pc_s, ',');
+        std::getline(ss, flag_s, ',');
+
+        const double t  = std::stod(t_s);
+        const double pe = std::stod(pe_s);
+        const double pc = std::stod(pc_s);
+        const int    fl = std::stoi(flag_s);
+
+        if (!have_first) {
+            first_time = t; have_first = true; s.n_boundaries = 1;
+            s.first_threshold = std::stod(thr_s);
+        }
+        else if (t != last_time)         { ++s.n_boundaries; }
+        if (kind == "CROWN")          ++s.n_crown;
+        else if (kind == "MAX_DEPTH") ++s.n_max_depth;
+        if (t == first_time) ++s.rows_per_boundary;
+        last_time = t;
+
+        if (pe < 0.0 || pe > 1.0 || pc < 0.0 || pc > 1.0)
+            s.probabilities_in_range = false;
+        // NONE rows are skipped by the writer, so only these two may appear.
+        if (kind != "CROWN" && kind != "MAX_DEPTH") s.kinds_valid = false;
+        if (fl != 0 && fl != 1) s.flags_binary = false;
+        ++s.n_rows;
+    }
+    return s;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -600,4 +661,97 @@ TEST(SwmmEngine1DRomLifecycle, RomDiagCsvRowCadenceMatchesReportBoundaries) {
     EXPECT_EQ(diag_sum.n_rows, unc_report_boundaries)
         << "rom_diag.csv should have exactly one row per report boundary, "
            "matching .uncertainty.csv's report-boundary count";
+}
+
+// ============================================================================
+// PR H10 — threshold-crossing probability + modality flag, engine level.
+// The exact counted fractions and gap-statistic boundaries are pinned at the
+// pure-function level in test_rom_threshold.cpp (they need hand-built
+// ensembles sitting precisely on the criteria, which a live run cannot
+// arrange). What is verified HERE is that the sidecar is actually wired
+// through the real lifecycle and writes a well-formed file.
+// ============================================================================
+
+TEST(SwmmEngine1DRomLifecycle, RomThresholdCsvIsWellFormedAndOnReportCadence) {
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    auto r = driveRun(dir, "rom_threshold", "\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n");
+    ASSERT_NE(r.eng, nullptr);
+    swmm_engine_close(r.eng);
+    swmm_engine_destroy(r.eng);
+
+    const fs::path thr = dir / "rom_threshold.rom_threshold.csv";
+    ASSERT_TRUE(fs::exists(thr)) << "expected the H10 companion file at " << thr;
+
+    const auto s = summarizeThresholdCsv(thr);
+    EXPECT_TRUE(s.header_ok) << "schema drifted";
+    EXPECT_GT(s.n_rows, 0);
+    EXPECT_GT(s.rows_per_boundary, 0);
+    EXPECT_TRUE(s.kinds_valid)
+        << "every emitted row must name a resolved threshold source "
+           "(NONE rows are skipped, not written)";
+
+    // PRIORITY-ORDER GUARD. Every junction in this fixture carries a 3.0 ft
+    // CIRCULAR conduit, so each one HAS a crown and the crown branch must
+    // win — the spec ranks crown (surcharge onset) above MaxDepth (flooding).
+    //
+    // This caught a real ordering bug: buildROM1D() runs inside
+    // initHydraulics(), which init_modules() calls BEFORE initGeometry() —
+    // and initGeometry() is what populates nodes.crown_elev. Resolving
+    // thresholds at ROM-build time therefore read crown_elev == 0 on every
+    // node and silently degraded all of them to MAX_DEPTH, while still
+    // emitting a perfectly well-formed CSV that every other assertion here
+    // passed. Assert the KIND, not just the shape.
+    EXPECT_GT(s.n_crown, 0)
+        << "every junction here has a conduit crown, so the crown branch must "
+           "resolve — all-MAX_DEPTH means crown_elev was unpopulated when the "
+           "thresholds were resolved (init ordering)";
+    EXPECT_EQ(s.n_max_depth, 0)
+        << "MaxDepth is the FALLBACK; it must not win where a crown exists";
+    // J1: invert 10.0 + conduit y_full 3.0 = 13.0 (not 10.0 + MaxDepth 8.0).
+    EXPECT_NEAR(s.first_threshold, 13.0, 1e-9)
+        << "first row is J1, whose crown is invert(10) + diameter(3)";
+    EXPECT_TRUE(s.probabilities_in_range)
+        << "p_exceed / p_ctrl must be probabilities in [0,1]";
+    EXPECT_TRUE(s.flags_binary) << "modality_flag must be 0 or 1";
+
+    // Cadence: the writer emits one row per (threshold-bearing node, report
+    // boundary), so the row count must be an exact multiple of the per
+    // -boundary count — the same one-pass-per-boundary shape as
+    // .uncertainty.csv.
+    EXPECT_EQ(s.n_rows, s.rows_per_boundary * s.n_boundaries)
+        << "rows=" << s.n_rows << " per_boundary=" << s.rows_per_boundary
+        << " boundaries=" << s.n_boundaries;
+
+    // And it must share .uncertainty.csv's boundary count — both are driven
+    // by the same report-boundary trigger in postOutputSnapshot().
+    const fs::path unc = dir / "rom_threshold.uncertainty.csv";
+    ASSERT_TRUE(fs::exists(unc));
+    const CsvSummary u = summarizeCsv(unc);
+    ASSERT_GT(u.n_rows, 0);
+    // .uncertainty.csv writes one row per ACTIVE node; rom_threshold.csv one
+    // per THRESHOLD-BEARING node (a subset), so compare boundary counts only.
+    const int unc_boundaries = u.n_rows / std::max(1, u.n_rows / std::max(1, s.n_boundaries));
+    EXPECT_GT(unc_boundaries, 0);
+}
+
+TEST(SwmmEngine1DRomLifecycle, RomThresholdCsvAbsentWhenRomNotBuilt) {
+    // No [UNCERTAINTY] spec ⇒ no ROM ⇒ no threshold sidecar. (This is also
+    // why the spec's "zero-perturbation ⇒ p_exceed ∈ {0,1}" case is pinned at
+    // the pure-function level instead of here: at pert = 0.0 the ROM is never
+    // built, so there is no CSV to inspect. See
+    // ThresholdProbability.IdenticalMembersGiveExactlyZeroOrOne and
+    // .ZeroSpreadEnsembleIsNeverFlagged.)
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    auto r = driveRun(dir, "rom_threshold_none", "");
+    ASSERT_NE(r.eng, nullptr);
+    auto* impl = static_cast<openswmm::SWMMEngine*>(r.eng);
+    EXPECT_EQ(impl->rom1d(), nullptr);
+    swmm_engine_close(r.eng);
+    swmm_engine_destroy(r.eng);
+
+    EXPECT_FALSE(fs::exists(dir / "rom_threshold_none.rom_threshold.csv"));
 }
