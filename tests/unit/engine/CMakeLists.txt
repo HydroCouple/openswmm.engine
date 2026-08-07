@@ -98,6 +98,8 @@ add_gtest_unit(test_engine_rom_diag_trust    test_rom_diag_trust.cpp)
 add_gtest_unit(test_engine_spectral_rom1d    test_spectral_rom1d.cpp)
 # PR H10 — threshold-crossing probability + gap-statistic bimodality flag.
 add_gtest_unit(test_engine_rom_threshold     test_rom_threshold.cpp)
+# PR H5 — surcharged-regime sensitivity attenuation (alpha ramp).
+add_gtest_unit(test_engine_rom_surcharge_attenuation test_rom_surcharge_attenuation.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
 add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
 # Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.

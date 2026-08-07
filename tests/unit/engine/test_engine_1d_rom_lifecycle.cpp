@@ -755,3 +755,133 @@ TEST(SwmmEngine1DRomLifecycle, RomThresholdCsvAbsentWhenRomNotBuilt) {
 
     EXPECT_FALSE(fs::exists(dir / "rom_threshold_none.rom_threshold.csv"));
 }
+
+// ============================================================================
+// PR H5 — surcharged-regime sensitivity attenuation, engine-level plumbing.
+// This is a WIRING check (does crown_elev/invert_elev/head reach
+// computeSurchargeAlpha() correctly through the real engine, in the right
+// order relative to initGeometry() -- the same ordering hazard H10's
+// RomThresholdCsvIsWellFormedAndOnReportCadence test documents above), not a
+// restatement of the pure-function ramp math (test_rom_surcharge_attenuation.
+// cpp) or a numerical validation of band widths (the MC coverage fixture in
+// tests/regression/test_rom_coverage.cpp is the real gate for that).
+// ============================================================================
+
+namespace {
+
+/// Deliberately undersized pipes (0.5 ft, vs. the 3.0 ft used elsewhere in
+/// this file) on the same 5-junction chain shape, so a modest 5 CFS inflow
+/// at J1 vastly exceeds conduit capacity and J1 surcharges hard within the
+/// run -- unlike the rest of this file's fixtures, which stay free-surface.
+/// InitDepth is dropped to 0.1 ft (crown is only invert+0.5 ft above invert)
+/// so every node starts well BELOW its own crown, giving the alpha ramp a
+/// real 1 -> 0 transition to cross, not a fixture that's already surcharged
+/// at t=0.
+std::string buildSmallCapacityChainModel(const std::string& extra_sections) {
+    return
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:20:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         5\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      10.0  8.0       0.1        0         0\n"
+        "J2       8.0  8.0       0.1        0         0\n"
+        "J3       6.0  8.0       0.1        0         0\n"
+        "J4       4.0  8.0       0.1        0         0\n"
+        "J5       2.0  8.0       0.1        0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O1      0.0   FREE  NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    J2  200.0   0.013      0         0          0.0\n"
+        "C2      J2    J3  200.0   0.013      0         0          0.0\n"
+        "C3      J3    J4  200.0   0.013      0         0          0.0\n"
+        "C4      J4    J5  200.0   0.013      0         0          0.0\n"
+        "C5      J5    O1  200.0   0.013      0         0          0.0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  0.5    0      0      0      1\n"
+        "C2      CIRCULAR  0.5    0      0      0      1\n"
+        "C3      CIRCULAR  0.5    0      0      0      1\n"
+        "C4      CIRCULAR  0.5    0      0      0      1\n"
+        "C5      CIRCULAR  0.5    0      0      0      1\n"
+        "\n"
+        "[INFLOWS]\n"
+        ";;Node  Constituent  TimeSeries  Type   Mfactor  Sfactor  Baseline  Pattern\n"
+        "J1      FLOW         \"\"          FLOW   1.0      1.0      5.0\n"
+        + extra_sections;
+}
+
+}  // namespace
+
+TEST(SwmmEngine1DRomLifecycle, SurchargeAlphaDropsAsNodeSurcharges) {
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    const fs::path inp = dir / "surcharge_alpha.inp";
+    const fs::path rpt = dir / "surcharge_alpha.rpt";
+    {
+        std::ofstream f(inp);
+        f << buildSmallCapacityChainModel("\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n");
+    }
+
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
+
+    auto* impl = static_cast<openswmm::SWMMEngine*>(eng);
+    ASSERT_NE(impl->rom1d(), nullptr)
+        << "5 active junctions (>=4) must be enough for the ROM to build";
+
+    // Track the minimum alpha across all active nodes at each step -- J1
+    // (the inflow point, furthest from the undersized outfall chain) should
+    // dominate the minimum once surcharge develops, without this test having
+    // to assume which active index J1 landed at.
+    bool   have_first = false;
+    double first_min_alpha = -1.0;
+    double last_min_alpha  = -1.0;
+
+    double elapsed = 0.0;
+    int n_steps = 0;
+    while (swmm_engine_step(eng, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        if (++n_steps > 2000) break;   // safety valve
+
+        const auto& alpha = impl->rom1dAlphaBuffer();
+        if (alpha.empty()) continue;
+        double min_alpha = 1.0;
+        for (double a : alpha) min_alpha = std::min(min_alpha, a);
+
+        if (!have_first) { first_min_alpha = min_alpha; have_first = true; }
+        last_min_alpha = min_alpha;
+    }
+    swmm_engine_end(eng);
+
+    ASSERT_TRUE(have_first) << "rom1dAlphaBuffer() must be populated by the "
+                                "first step once the ROM is built and ready";
+    EXPECT_GT(first_min_alpha, 0.9)
+        << "every node starts at InitDepth=0.1 ft, well below its own crown "
+           "(invert+0.5 ft) -- alpha must start effectively unattenuated";
+    EXPECT_LT(last_min_alpha, 0.1)
+        << "J1's 5 CFS inflow vastly exceeds the undersized 0.5 ft conduits' "
+           "capacity, so by the end of a 20-minute run at least one node "
+           "must be clearly surcharged (alpha near 0)";
+    EXPECT_LT(last_min_alpha, first_min_alpha)
+        << "alpha must have actually moved, not stayed pinned at its "
+           "starting value";
+
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+}

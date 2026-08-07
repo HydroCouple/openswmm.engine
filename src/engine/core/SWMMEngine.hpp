@@ -67,6 +67,7 @@
 #include "../uncertainty/NetworkLaplacian1D.hpp"
 #include "../uncertainty/SpectralROM1D.hpp"
 #include "../uncertainty/RomThreshold.hpp"
+#include "../uncertainty/RomSurchargeAttenuation.hpp"
 #include "../uncertainty/UncertaintyEnsemble.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
@@ -360,6 +361,14 @@ public:
 
     /** @brief 1D spectral ROM (null if not built, or the network is too small). */
     const uncertainty::SpectralROM1D* rom1d() const noexcept { return rom1d_.get(); }
+
+    /**
+     * @brief PR H5: per-active-node surcharge-attenuation factor from the
+     * most recent stepRouting() call (active-node space, same indexing as
+     * rom1d_active_map_/rom1d()'s buffers). Empty before the first step or
+     * when the 1D ROM isn't built. Test/diagnostic accessor.
+     */
+    const std::vector<double>& rom1dAlphaBuffer() const noexcept { return rom1d_alpha_buf_; }
 #endif
 
 
@@ -443,6 +452,9 @@ private:
     std::vector<double> rom1d_sens_buf_;   ///< per-active-node depth (head - invert): Manning-sensitivity reference (PR 10)
     std::vector<double> rom1d_dh_buf_;     ///< per-active-node dh/dt forcing buffer (reused each step; also the field
                                             ///< for any registered FORCING_VECTOR 1D param, e.g. INFLOW)
+    std::vector<double> rom1d_alpha_buf_;  ///< per-active-node PR H5 surcharge-attenuation factor (reused each step)
+    uncertainty::SurchargeAttenuationConfig rom1d_surcharge_cfg_; ///< PR H5 ramp band (defaults [0.9,1.1]); not
+                                            ///< parser-exposed in this PR, internal knob only
     std::ofstream rom1d_csv_;              ///< 1D ROM quantile CSV, written at report intervals
     std::ofstream rom_diag_csv_;           ///< PR H3: <rpt>.rom_diag.csv (fr_trust/surcharge_frac/...)
 

@@ -238,7 +238,8 @@ void SpectralROM1D::seed(const double* h_nodes) {
 void SpectralROM1D::advance(double dt, double K1d,
                              const double* h_det_active,
                              const double* runoff_per_node,
-                             const double* sens_ref) {
+                             const double* sens_ref,
+                             const double* alpha) {
     assert(is_ready());
     assert(h_det_active != nullptr);
 
@@ -262,11 +263,19 @@ void SpectralROM1D::advance(double dt, double K1d,
     }
 
     // ---- Step 2: Project sensitivity reference and runoff into coarse space -
+    // PR H5: alpha (per-active-node, [0,1]) folds elementwise into bref
+    // BEFORE projection, damping only the Manning-sensitivity channel in
+    // surcharged regime. alpha==nullptr is bit-identical to alpha[i]==1 for
+    // every i (no attenuation) -- the pre-H5 code path exactly. Do NOT apply
+    // alpha to the r_coarse/soft_r_spread_ projections below: those are the
+    // forcing-sensitivity channel and must stay untouched (H5 spec).
     for (std::size_t j = 0; j < nk; ++j) {
         const double* Pj = &basis->P[j * nn];
         double dot_b = 0.0;
-        for (std::size_t i = 0; i < nn; ++i)
-            dot_b += Pj[i] * bref[i];
+        for (std::size_t i = 0; i < nn; ++i) {
+            const double a = alpha ? alpha[i] : 1.0;
+            dot_b += Pj[i] * (a * bref[i]);
+        }
         b_coarse[j] = dot_b;
     }
     const double* loc_field = soft_loc_field_ ? soft_loc_field_ : runoff_per_node;

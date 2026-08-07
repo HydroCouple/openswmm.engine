@@ -363,10 +363,26 @@ struct SpectralROM1D {
      *                        median in the PR-10 MC validation; see
      *                        docs/uncertainty/VALIDATION.md). Null preserves
      *                        the h_det projection (standalone/unit-test use).
+     * @param alpha           Optional per-active-node Manning-sensitivity
+     *                        attenuation factor in [0,1] (length n_nodes),
+     *                        folded elementwise into the sensitivity reference
+     *                        BEFORE projection: b_j = P[:,j]^T·(alpha ⊙ bref).
+     *                        PR H5: in surcharged regime the free-surface
+     *                        conveyance sensitivity the ROM assumes no longer
+     *                        holds (heads are set by mass balance/backwater,
+     *                        not friction), which over-predicted band widths
+     *                        50-190x (VALIDATION.md). alpha=1 at a node
+     *                        reproduces the pre-H5 projection exactly; alpha=0
+     *                        zeroes ONLY the Manning-sensitivity contribution
+     *                        at that node — the forcing-sensitivity term
+     *                        (r_coarse, from runoff_per_node) is projected
+     *                        separately and is never attenuated. Null (default)
+     *                        is bit-identical to alpha≡1 (no attenuation).
      */
     void advance(double dt, double K1d, const double* h_det_active,
                  const double* runoff_per_node,
-                 const double* sens_ref = nullptr);
+                 const double* sens_ref = nullptr,
+                 const double* alpha = nullptr);
 
     /**
      * @brief Reconstruct per-node head distribution and extract quantiles.
