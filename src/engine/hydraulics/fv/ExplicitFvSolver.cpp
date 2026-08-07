@@ -388,6 +388,12 @@ void ExplicitFvSolver::rebuildActiveLists() {
 
 double ExplicitFvSolver::censusDt() const {
     double dt = std::numeric_limits<double>::max();
+    static const bool kDtTrace = [] {
+        const char* e = std::getenv("OPENSWMM_FV_DT_TRACE");
+        return e && e[0] == '1';
+    }();
+    int    trace_face = -1;
+    double trace_dx = 0.0, trace_speed = 0.0;
 
     // FACE-based, not cell-based. A cell-only census misses the wave speed a
     // BOUNDARY GHOST carries: a surcharged manhole standing above the crown
@@ -437,8 +443,33 @@ double ExplicitFvSolver::censusDt() const {
             }
         }
 
-        if (speed > 1.0e-12 && dx_ref < 1.0e29)
-            dt = std::min(dt, opts_.cfl * dx_ref / speed);
+        if (speed > 1.0e-12 && dx_ref < 1.0e29) {
+            const double dt_f = opts_.cfl * dx_ref / speed;
+            if (dt_f < dt) { dt = dt_f; trace_face = f; trace_dx = dx_ref;
+                             trace_speed = speed; }
+        }
+    }
+
+    // Diagnostic: report which face is setting the step, and what its dx and
+    // wave speed are. Explaining a substep count needs the argmin, not the min.
+    if (kDtTrace) {
+        static long calls = 0;
+        if ((calls++ % 2000) == 0 && trace_face >= 0) {
+            const auto uf = static_cast<std::size_t>(trace_face);
+            const int cl = mesh_->face_cl[uf], cr = mesh_->face_cr[uf];
+            const int cc = (cl >= 0) ? cl : cr;
+            const auto uc = static_cast<std::size_t>(cc);
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            const double h = state_->cell_h[uc];
+            std::fprintf(stderr,
+                "[fv-dt] dt=%.4f face=%d node=%d dx=%.2f speed=%.2f "
+                "(cell %d conduit %d h=%.3f y_full=%.2f u=%.2f c=%.2f T=%.4f)\n",
+                dt, trace_face, mesh_->face_node[uf], trace_dx, trace_speed,
+                cc, mesh_->cell_conduit[uc], h, g.y_full, cell_u_[uc],
+                k::celerity(state_->cell_a[uc], k::widthOfDepth(g, h)),
+                k::widthOfDepth(g, h));
+        }
     }
 
     // Node constraint. A coupled node behaves like an extra control volume of

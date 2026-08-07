@@ -5750,9 +5750,24 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
     if (ctx_.nodes.type[ui] == NodeType::STORAGE)
         return volume;                         // storage curve volume (= legacy)
     double fd = ctx_.nodes.full_depth[ui];
-    return (fd > 0.0)
-               ? report_full_volume_[ui] * (depth / fd)
-               : 0.0;                            // plain junction → 0 (= legacy)
+    if (!(fd > 0.0)) return 0.0;
+
+    // Legacy convention: a plain junction contributes ZERO to reported storage,
+    // because report_full_volume_ is 0 for it. That is a reporting choice the
+    // dynamic wave solver can afford — it never has to hold water in a junction
+    // to remain stable.
+    //
+    // The finite-volume solver does. Its node is an explicit control volume of
+    // area MIN_SURFAREA (D-FV5), and the water standing in it is as real as the
+    // water in a conduit. Excluding it turns genuine storage into an apparent
+    // continuity error PROPORTIONAL TO JUNCTION COUNT — measured 0.00082
+    // acre-feet per junction, invisible on a twelve-node model and 0.9 % on a
+    // five-hundred-node one. So under FV the junction is reported with the same
+    // relation the solver integrates.
+    if (ctx_.options.routing_model == RoutingModel::FV)
+        return constants::MIN_SURFAREA * depth;
+
+    return report_full_volume_[ui] * (depth / fd);
 }
 
 void SWMMEngine::initMassBalance() noexcept {

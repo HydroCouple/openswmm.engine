@@ -374,3 +374,60 @@ TEST(FvEngine, FvKeysAreInertUnderOtherRoutingModels) {
     EXPECT_DOUBLE_EQ(withfv.continuity_pct, plain.continuity_pct);
     EXPECT_DOUBLE_EQ(withfv.outflow_volume, plain.outflow_volume);
 }
+
+// ===========================================================================
+// §6.7 — junction storage must appear in the routing balance
+// ===========================================================================
+
+// The reference model has twelve nodes, and that is why this defect shipped:
+// the routing mass balance excludes plain-junction storage by legacy
+// convention (report_full_volume_ is zero for a junction), which the dynamic
+// wave solver can afford because it never has to hold water in a junction to
+// stay stable. The finite-volume solver's node IS an explicit control volume,
+// so the water standing in it is real — and excluding it turns genuine storage
+// into an apparent continuity error PROPORTIONAL TO JUNCTION COUNT.
+//
+// Measured before the fix: 0.00082 acre-feet per junction. On twelve nodes
+// that rounds to 0.000 %; on five hundred it was 0.887 %. The gate therefore
+// has to be a many-junction model, not a bigger tolerance on a small one.
+TEST(FvEngine, JunctionStorageIsCountedInTheRoutingBalance) {
+    constexpr int kJunctions = 120;
+    const std::string dir = outDir();
+    const std::string inp = dir + "/junction_storage_chain.inp";
+
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             04:00:00\n"
+              "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+              "ALLOW_PONDING        NO\n\n[JUNCTIONS]\n";
+        double z = 40.0;
+        for (int i = 0; i < kJunctions; ++i) {
+            os << "J" << i << "  " << z << "  12.0  0  0  0\n";
+            z -= 0.002 * 200.0;
+        }
+        os << "\n[OUTFALLS]\nO1  " << z << "  FREE  NO\n\n[CONDUITS]\n";
+        for (int i = 0; i < kJunctions; ++i)
+            os << "C" << i << "  J" << i << "  "
+               << (i + 1 < kJunctions ? "J" + std::to_string(i + 1) : "O1")
+               << "  200.0  0.013  0  0  0\n";
+        os << "\n[XSECTIONS]\n";
+        for (int i = 0; i < kJunctions; ++i)
+            os << "C" << i << "  CIRCULAR  4.0  0  0  0  1\n";
+        os << "\n[INFLOWS]\nJ0  FLOW  \"\"  FLOW  1.0  1.0  40.0\n"
+              "\n[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    }
+
+    const std::string rpt = dir + "/junction_storage_chain.rpt";
+    const std::string out = dir + "/junction_storage_chain.out";
+    ASSERT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0)
+        << "the chain model failed to run";
+
+    const RunResult r = parseReport(rpt);
+    ASSERT_TRUE(r.parsed) << "could not parse " << rpt;
+    EXPECT_LT(std::fabs(r.continuity_pct), 0.01)
+        << "routing continuity " << r.continuity_pct << " % on " << kJunctions
+        << " junctions — junction storage is missing from the balance";
+}
+
