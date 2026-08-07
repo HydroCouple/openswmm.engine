@@ -61,6 +61,22 @@ void buildI1Table(FvGeometry& g) {
     g.i1_crown = acc;
 }
 
+/// The area-uniform inverse table, built from the bracketed inverse so the
+/// fast path and the slow one converge to the same root by construction. Must
+/// run AFTER buildI1Table and after a_crown is set — it inverts what they
+/// produced.
+void buildDepthTable(FvGeometry& g) {
+    const int n = kI1Samples;
+    for (int j = 0; j < n; ++j) g.h_tbl[j] = 0.0;
+    if (!(g.a_crown > 0.0) || g.y_full <= 0.0) return;
+
+    const double da = g.a_crown / static_cast<double>(n - 1);
+    g.h_tbl[0] = 0.0;
+    for (int j = 1; j < n - 1; ++j)
+        g.h_tbl[j] = kernels::depthOfAreaBracketed(g, static_cast<double>(j) * da);
+    g.h_tbl[n - 1] = g.y_full;              // A(y_full) == a_crown by definition
+}
+
 } // namespace
 
 // ===========================================================================
@@ -105,6 +121,7 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
     g.a_crown = g.a_full + g.t_slot * band * 0.5;   // ∫₀¹ ramp = ½
 
     buildI1Table(g);
+    buildDepthTable(g);
 }
 
 // ===========================================================================

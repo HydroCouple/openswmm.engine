@@ -225,7 +225,8 @@ OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
  *
  *          Above the crown A is exactly linear, so that branch is closed-form.
  */
-OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
+OPENSWMM_KERNEL_FN double depthOfAreaBracketed(const FvGeometry& g,
+                                               double a) noexcept {
     if (a <= 0.0) return 0.0;
     if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
 
@@ -256,6 +257,105 @@ OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
         if (xb - xa <= 1.0e-15 * g.y_full) break;
     }
     return 0.5 * (xa + xb);
+}
+
+/**
+ * @brief Invert A → h. Same root as depthOfAreaBracketed, found far faster.
+ *
+ * @details This is the solver's hottest kernel by a wide margin — profiling a
+ *          Δx = 20 ft run put it and the closure evaluations it drives at 87 %
+ *          of total time — so how it converges matters more than anywhere else
+ *          in the scheme.
+ *
+ *          **Why the obvious approach is slow.** Illinois regula-falsi on the
+ *          depth-uniform bracket does not converge superlinearly here: measured
+ *          16 closure evaluations per call on a circular pipe and 35 on a
+ *          trapezoid, with the iteration count falling only linearly as the
+ *          tolerance is relaxed — the signature of bisection. Seeding it better
+ *          changes nothing, because the exit test is the BRACKET collapsing and
+ *          Illinois replaces only one end per step.
+ *
+ *          **Why not Newton.** The width is dA/dh analytically, and Newton with
+ *          it needs 3–5 evaluations. But for tabulated shapes W and A are
+ *          INDEPENDENT legacy tabulations rather than an exact derivative pair
+ *          (§7A.2), and the error that introduces is not small: measured
+ *          round-trip error 4.7e-4 ft on a 3 ft circular pipe, five orders
+ *          worse than the scheme needs and enough to break lake-at-rest.
+ *
+ *          **Brent.** Inverse quadratic interpolation with a secant fallback
+ *          and a bisection safeguard — superlinear using function values ONLY,
+ *          so the width inconsistency cannot mislead it. 5.9 / 3.1 / 6.3
+ *          evaluations on circular / rectangular / trapezoidal at full
+ *          round-trip accuracy (≤ 2.7e-15 ft).
+ *
+ *          The bracket comes from the area-uniform inverse table widened by one
+ *          panel each side and is then VERIFIED by evaluating both ends. The
+ *          two evaluations that costs are why a rectangular pipe — which the
+ *          old path nailed in 1.5 — now takes 3.1; that trade is worth it, and
+ *          the guard falls back to the bracketed inverse if the table's bracket
+ *          somehow fails to contain the root.
+ */
+OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
+    if (a <= 0.0) return 0.0;
+    if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
+
+    const int n = static_cast<int>(kI1Samples);
+    const double da = g.a_crown / static_cast<double>(n - 1);
+    if (!(da > 0.0)) return depthOfAreaBracketed(g, a);
+
+    int j = static_cast<int>(a / da);
+    if (j < 1) j = 1;
+    if (j > n - 3) j = n - 3;
+
+    double xa = g.h_tbl[static_cast<std::size_t>(j - 1)];
+    double xb = g.h_tbl[static_cast<std::size_t>(j + 2)];
+    if (!(xb > xa)) return depthOfAreaBracketed(g, a);
+
+    double fa = areaOfDepth(g, xa) - a;
+    double fb = areaOfDepth(g, xb) - a;
+    if (fa > 0.0 || fb < 0.0) return depthOfAreaBracketed(g, a);
+    if (fa == 0.0) return xa;
+    if (fb == 0.0) return xb;
+
+    const double tol = 1.0e-15 * g.y_full;
+    double c = xa, fc = fa, d = xb - xa, e = d;
+    for (int it = 0; it < 60; ++it) {
+        if (fb * fc > 0.0) { c = xa; fc = fa; d = xb - xa; e = d; }
+        if (std::fabs(fc) < std::fabs(fb)) {
+            xa = xb; xb = c; c = xa;
+            fa = fb; fb = fc; fc = fa;
+        }
+        const double m = 0.5 * (c - xb);
+        if (std::fabs(m) <= tol || fb == 0.0) return xb;
+
+        if (std::fabs(e) < tol || std::fabs(fa) <= std::fabs(fb)) {
+            d = m; e = m;                                   // bisect
+        } else {
+            const double sfb = fb / fa;
+            double p, q;
+            if (xa == c) {                                  // secant
+                p = 2.0 * m * sfb;
+                q = 1.0 - sfb;
+            } else {                                        // inverse quadratic
+                const double qq = fa / fc;
+                const double r  = fb / fc;
+                p = sfb * (2.0 * m * qq * (qq - r) - (xb - xa) * (r - 1.0));
+                q = (qq - 1.0) * (r - 1.0) * (sfb - 1.0);
+            }
+            if (p > 0.0) q = -q; else p = -p;
+            if (2.0 * p < ((3.0 * m * q - std::fabs(tol * q) < std::fabs(e * q))
+                               ? 3.0 * m * q - std::fabs(tol * q)
+                               : std::fabs(e * q))) {
+                e = d; d = p / q;
+            } else {
+                d = m; e = m;
+            }
+        }
+        xa = xb; fa = fb;
+        xb += (std::fabs(d) > tol) ? d : ((m > 0.0) ? tol : -tol);
+        fb = areaOfDepth(g, xb) - a;
+    }
+    return xb;
 }
 
 /// Gravity-wave celerity √(g·A/T). Guarded so a vanishing top width (dry, or a

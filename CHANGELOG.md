@@ -60,8 +60,8 @@ retroactive.
   > storms, continuous simulation and planning work.
 
   > **It is also slower.** On the same model the finite-volume solver runs
-  > ~15× the dynamic wave solver's wall-clock at one cell per conduit, and
-  > ~200× at Δx = 20 ft. The binding constraint is the node rather than the
+  > ~8× the dynamic wave solver's wall-clock at one cell per conduit, and
+  > ~100× at Δx = 20 ft. The binding constraint is the node rather than the
   > pipe: a junction's `MIN_SURFAREA` storage floor is a few feet of effective
   > length against a conduit Δx of several hundred, so the manhole sets the
   > explicit step. Choose the solver for conservation, shock capture and
@@ -89,6 +89,18 @@ retroactive.
   disabled outright when species are being transported, because the
   flux-corrected transport limiter needs one synchronous sweep.
   `FV_LTS_MAX_TIERS` caps the spread.
+
+- **The finite-volume depth inversion is 3.2× faster, at bit-identical
+  results.** `depthOfArea` — inverting A(h) for the depth the solver reports and
+  reconstructs from — was 87 % of solver time. The Illinois regula-falsi it used
+  does not converge superlinearly on this closure: measured 16 closure
+  evaluations per call on a circular pipe and 35 on a trapezoid. Newton with the
+  top width as derivative is fast but wrong, because for tabulated shapes width
+  and area are independent legacy tabulations rather than an exact derivative
+  pair — round-trip error 4.7e-4 ft on a 3 ft pipe, enough to break the
+  still-water property. Brent's method is superlinear on function values alone
+  and lands at 5.9 evaluations with full accuracy. Every peak-flow figure in the
+  benchmark is unchanged to three significant figures.
 
 - **`FV_TIME_INTEGRATION RK2` now integrates.** The key parsed, validated and
   reported correctly but was never wired to the step — every run was forward
