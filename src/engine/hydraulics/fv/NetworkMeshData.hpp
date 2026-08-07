@@ -117,6 +117,23 @@ struct FvGeometry {
     /// cannot cross that boundary. At 129 samples this is 2 kB per DISTINCT
     /// cross-section — a few hundred at most in a real model.
     double i1_tbl[2 * kI1Samples] = {};
+
+    /// The INVERSE of the area column: depth sampled uniformly in AREA over
+    /// [0, a_crown], `h_tbl[j]` being the exact root of A(h) = j·a_crown/(n−1).
+    ///
+    /// The forward table is uniform in depth, which is the wrong grid to invert
+    /// on. Bracketing a query area in it costs a binary search — seven
+    /// dependent loads with unpredictable branches — and near the crown, where
+    /// A is nearly flat in h, one depth panel spans a wide range of areas, so
+    /// the bracket it yields is loose and the root-find needs several
+    /// evaluations of the closure. Profiling put `depthOfArea` and the area
+    /// lookups it drives at 87 % of solver time on a Δx = 20 ft run.
+    ///
+    /// Sampling uniformly in area instead makes the panel a single divide, and
+    /// makes the residuals at its two ends known WITHOUT evaluating the
+    /// closure — they are the sample areas themselves. Built at init from the
+    /// bracketed inverse, so it costs nothing at run time.
+    double h_tbl[kI1Samples] = {};
 };
 
 /**

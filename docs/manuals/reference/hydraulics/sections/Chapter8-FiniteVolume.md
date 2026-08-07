@@ -562,7 +562,7 @@ configuration against the dynamic wave run of the same file.
 |---|---|---|---|---|
 | Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % |
 | Mean absolute peak-flow deviation | — | 37.1 % | 13.8 % | 7.1 % |
-| Wall-clock, relative | 1× | ~15× | ~86× | ~215× |
+| Wall-clock, relative | 1× | ~8× | ~41× | ~98× |
 
 Three readings follow, and all three are honest.
 
@@ -579,7 +579,7 @@ second-order reconstruction does not rescue it.
 
 **It costs an order of magnitude, and the reason is the manhole.** Even
 at one cell per conduit — the same element count the dynamic wave solver
-carries — the explicit method runs about fifteen times its wall-clock on
+carries — the explicit method runs about eight times its wall-clock on
 this model. The binding stability constraint is not the conduit mesh but
 the node: a junction's storage area is the `MIN_SURFAREA` floor, which
 as an effective length $A_{s}/T$ is a few feet against a conduit
