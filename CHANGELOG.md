@@ -60,8 +60,11 @@ retroactive.
   > storms, continuous simulation and planning work.
 
   > **It is also slower.** On the same model the finite-volume solver runs
-  > ~8× the dynamic wave solver's wall-clock at one cell per conduit, and
-  > ~100× at Δx = 20 ft. The binding constraint is the node rather than the
+  > ~7× the dynamic wave solver's wall-clock at one cell per conduit, and
+  > ~34× at Δx = 20 ft. The peak-deviation figures above are a consistency
+  > check against dynamic wave routing, not a measure of error — accuracy is
+  > established against closed-form solutions, not against another numerical
+  > method. The binding constraint is the node rather than the
   > pipe: a junction's `MIN_SURFAREA` storage floor is a few feet of effective
   > length against a conduit Δx of several hundred, so the manhole sets the
   > explicit step. Choose the solver for conservation, shock capture and
@@ -89,6 +92,18 @@ retroactive.
   disabled outright when species are being transported, because the
   flux-corrected transport limiter needs one synchronous sweep.
   `FV_LTS_MAX_TIERS` caps the spread.
+
+- **Semi-implicit node coupling (`FV_NODE_COUPLING`, default
+  `SEMI_IMPLICIT`) — 2.9×.** A junction's `MIN_SURFAREA` storage floor is a few
+  feet of effective length against a conduit Δx of several hundred, so under
+  explicit coupling the manhole, not the pipe, set the stable substep for the
+  whole model. Each coupling face's mass flux is now linearized in the node head
+  through the characteristic relation |dQ/dH| = √(gAT). Conservation survives by
+  construction rather than by care: the correction is applied to the face flux,
+  which is the one quantity both the cell update and the node update read —
+  damping the node *head* instead would imply a volume change the incident cells
+  never saw. At equilibrium the correction is identically zero, so the two
+  couplings agree on the steady state they reach.
 
 - **The finite-volume depth inversion is 3.2× faster, at bit-identical
   results.** `depthOfArea` — inverting A(h) for the depth the solver reports and

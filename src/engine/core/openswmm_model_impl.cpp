@@ -897,6 +897,9 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         val = (opt.fv.structure_coupling == openswmm::fv::StructureCoupling::ROUTING_STEP)
                   ? "ROUTING_STEP" : "SUBSTEP";
     else if (k == "FV_COMPACTION")     val = opt.fv.compaction ? "YES" : "NO";
+    else if (k == "FV_NODE_COUPLING")
+        val = (opt.fv.node_coupling == openswmm::fv::NodeCoupling::EXPLICIT)
+                  ? "EXPLICIT" : "SEMI_IMPLICIT";
     else if (k == "FV_BACKEND") {
         switch (opt.fv.backend) {
             case openswmm::fv::Backend::CPU:  val = "CPU";  break;
@@ -1219,6 +1222,14 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     else if (k == "FV_COMPACTION") {
         const std::string vu = upper_copy(v);
         opt.fv.compaction = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
+    }
+    else if (k == "FV_NODE_COUPLING") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "EXPLICIT")
+            opt.fv.node_coupling = openswmm::fv::NodeCoupling::EXPLICIT;
+        else if (vu == "SEMI_IMPLICIT")
+            opt.fv.node_coupling = openswmm::fv::NodeCoupling::SEMI_IMPLICIT;
+        else return SWMM_ERR_BADPARAM;
     }
     else if (k == "FV_LTS") {
         const std::string vu = upper_copy(v);

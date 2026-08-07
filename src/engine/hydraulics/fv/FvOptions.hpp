@@ -57,6 +57,12 @@ enum class TimeIntegration : int {
     RK2   = 1   ///< SSP-RK2 (Heun) — strong-stability-preserving
 };
 
+/// How a node's continuity equation is coupled to the faces that feed it.
+enum class NodeCoupling : int {
+    EXPLICIT      = 0,  ///< face fluxes frozen across the node update
+    SEMI_IMPLICIT = 1   ///< default: fluxes linearized in the node head
+};
+
 /// When pump/orifice/weir/outlet structure equations are re-evaluated.
 enum class StructureCoupling : int {
     SUBSTEP      = 0,  ///< every explicit substep (default; physically exact)
@@ -110,6 +116,15 @@ struct FvOptions {
     // -- Coupling -----------------------------------------------------------
 
     StructureCoupling structure_coupling = StructureCoupling::SUBSTEP;
+
+    /// A junction's storage area is the MIN_SURFAREA floor, which as an
+    /// effective length A_s/T is a few feet against a conduit Δx of several
+    /// hundred — so under explicit coupling the MANHOLE, not the pipe, sets the
+    /// substep for the whole model. Linearizing each coupling face's flux in
+    /// the node head removes the node from the explicit stability limit.
+    /// Conservation is unaffected: the corrected flux is what BOTH the node and
+    /// the cell see.
+    NodeCoupling node_coupling = NodeCoupling::SEMI_IMPLICIT;
 
     // -- Execution ----------------------------------------------------------
 

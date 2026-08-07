@@ -109,6 +109,24 @@ private:
     kernels::FaceFlux adjustedFlux(int face) const;
     void   computeFluxes();
     void   limitPositivity(double dt);
+
+    /// Linearize each node-coupling face's mass flux in the node head and apply
+    /// the correction, so the node's response to its own inflow is damped
+    /// rather than free-running (plan §7B.1).
+    ///
+    /// Conservation is preserved by CONSTRUCTION rather than by care: the
+    /// correction is written into `f_mass_`, which is the single array both the
+    /// cell update and the node update read. Damping the node head directly
+    /// instead — the obvious approach — would imply a volume change different
+    /// from the flux booked into the incident cells, and would trade exact mass
+    /// conservation for stability, which is the one trade this solver cannot
+    /// make.
+    void   relaxNodeFluxes(double dt, const FvStepForcing& forcing);
+
+    /// One node's worth of the above. Split out because the tiered path applies
+    /// it per node at that node's own Δt, while the global path applies it to
+    /// every node at the shared one.
+    void   relaxOneNode(int node, double dt, const FvStepForcing& forcing);
     void   updateCells(double dt, const FvStepForcing& forcing);
     void   updateNodes(double dt, const FvStepForcing& forcing);
     void   dispersionSolve(double dt);
@@ -179,6 +197,11 @@ private:
 
     NetworkMeshData*  mesh_  = nullptr;
     NetworkStateData* state_ = nullptr;
+
+    /// The forcing for the advance() currently in flight. Held so the tiered
+    /// path's face pass can apply the semi-implicit node coupling without
+    /// threading it through fireFaces, which is otherwise forcing-free.
+    const FvStepForcing* forcing_ = nullptr;
     FvOptions         opts_{};
 
     // Face scratch. corr_l/corr_r are the Audusse well-balanced corrections

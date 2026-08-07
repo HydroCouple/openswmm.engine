@@ -6725,6 +6725,41 @@ solver uses, and like it, it is not an energy balance either — equating
 piezometric head discards the incoming velocity head, a dissipative
 closure appropriate to a chamber.
 
+**The node's coupling to its faces is semi-implicit.** A junction's
+storage area is the `MIN_SURFAREA` floor, which as an effective length
+$A_{s}/T$ is a few feet against a conduit $\Delta x$ of several
+hundred. Under explicit coupling the manhole, not the pipe, therefore
+sets the stable substep for the whole model. `FV_NODE_COUPLING
+SEMI_IMPLICIT` (the default) removes that by linearizing each coupling
+face's mass flux in the node head, using the characteristic relation
+$\left| \partial Q/\partial H \right| = gA/c = \sqrt{g\,A\,T}$ at the
+ghost state:
+
+| | | | |
+|---|---|---|---|
+| $$\Delta H = \frac{\Delta t\left( \sum F + q_{lat} \right)}{A_{s} + \Delta t\sum\sqrt{g\,A\,T}}$$ | | (8-18) | |
+
+The resistance term is always positive — raising the head drives more
+out and lets less in, on either side of a face — so the denominator can
+only grow and the correction can only damp.
+
+**Conservation survives this by construction, not by care.** The
+correction is applied to the face flux itself, which is the single
+quantity both the cell update and the node update read, so whatever it
+does, the two sides of every face see the same number. Damping the node
+*head* directly instead — the obvious approach — would imply a volume
+change the incident cells never saw, trading exact mass conservation for
+stability. At equilibrium the correction is identically zero, since it
+is proportional to the node's net imbalance, so the two couplings agree
+on the steady state they reach.
+
+What this removes is the node's *stability* limit, not its *accuracy*
+requirement: an under-resolved manhole is still under-resolved however
+stable it is. Local time stepping supplies the resolution cheaply, by
+giving the node its own fine tier while the conduit cells stay coarse.
+With `FV_LTS NO` there is nowhere to put the requirement but the global
+step, so the node's Courant limit is honoured there.
+
 #### 8.6.2 Virtual junctions
 
 Where a connection really is two collinear pipes of identical section —
@@ -6821,6 +6856,7 @@ file.
 | `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows are refreshed. |
+| `FV_NODE_COUPLING` | `SEMI_IMPLICIT` | `EXPLICIT` freezes face fluxes across the node update; `SEMI_IMPLICIT` linearizes them in the node head (§8.6.1). |
 | `FV_COMPACTION` | `YES` | Skip dry, inactive parts of the network. Results-transparent. |
 | `FV_LTS` | `YES` | Local time stepping (§8.5.6). `NO` forces one global substep size. |
 | `FV_LTS_MAX_TIERS` | 6 | Cap on the tier spread; 6 allows 64×. |
@@ -6837,8 +6873,8 @@ configuration against the dynamic wave run of the same file.
 | | Dynamic wave | FV, COARSE | FV, $\Delta x$ = 50 ft | FV, $\Delta x$ = 20 ft |
 |---|---|---|---|---|
 | Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % |
-| Mean absolute peak-flow deviation | — | 37.1 % | 13.8 % | 7.1 % |
-| Wall-clock, relative | 1× | ~8× | ~41× | ~98× |
+| Mean absolute peak-flow deviation | — | 37.1 % | 12.8 % | 7.2 % |
+| Wall-clock, relative | 1× | ~7× | ~12× | ~34× |
 
 Three readings follow, and all three are honest.
 
@@ -6853,15 +6889,17 @@ COARSE mode is not a drop-in substitute for dynamic wave analysis. The
 mechanism is §8.3's artificial bed step, not numerical diffusion, so
 second-order reconstruction does not rescue it.
 
-**It costs an order of magnitude, and the reason is the manhole.** Even
-at one cell per conduit — the same element count the dynamic wave solver
-carries — the explicit method runs about eight times its wall-clock on
-this model. The binding stability constraint is not the conduit mesh but
-the node: a junction's storage area is the `MIN_SURFAREA` floor, which
-as an effective length $A_{s}/T$ is a few feet against a conduit
-$\Delta x$ of several hundred. The manhole, not the pipe, sets the
-step. Local time stepping (§8.5.6) confines the *work* that constraint
-implies but not the step size itself.
+**It still costs several times more.** Even at one cell per conduit —
+the same element count the dynamic wave solver carries — the explicit
+method runs about seven times its wall-clock on this model. Choose it
+for what it does, not for speed.
+
+Note also that the deviation column is a *consistency* check against the
+dynamic wave solver, not a measure of error. Dynamic wave routing is not
+the reference truth here, and part of the 37 % at COARSE is its own
+departure from the correct answer. Accuracy is established against
+closed-form solutions — Ritter, Stoker, and the still-water property —
+not against another numerical method.
 
 Practical guidance:
 
