@@ -59,6 +59,14 @@ retroactive.
   > wave analysis remains the default and the right choice for routine design
   > storms, continuous simulation and planning work.
 
+  > **It is also slower.** On the same model the finite-volume solver runs
+  > ~15× the dynamic wave solver's wall-clock at one cell per conduit, and
+  > ~200× at Δx = 20 ft. The binding constraint is the node rather than the
+  > pipe: a junction's `MIN_SURFAREA` storage floor is a few feet of effective
+  > length against a conduit Δx of several hundred, so the manhole sets the
+  > explicit step. Choose the solver for conservation, shock capture and
+  > transcritical flow — not for speed.
+
 - **`FV_ORDER 2` — second-order MUSCL reconstruction.** MUSCL on the free
   surface and velocity (not depth and discharge) with the bed taken from its
   exact per-cell gradient, plus a centred bed source, so the still-water
@@ -81,6 +89,14 @@ retroactive.
   disabled outright when species are being transported, because the
   flux-corrected transport limiter needs one synchronous sweep.
   `FV_LTS_MAX_TIERS` caps the spread.
+
+- **`FV_TIME_INTEGRATION RK2` now integrates.** The key parsed, validated and
+  reported correctly but was never wired to the step — every run was forward
+  Euler. It is now Heun/SSP-RK2 applied to the whole operator, friction and
+  positivity limiting included in each stage, with the node update averaged
+  through VOLUME rather than head and the flux ledgers averaged rather than
+  summed. Mutually exclusive with local time stepping, which gives different
+  volumes different steps for the two stages to average over.
 
 - **Cell-resolved Eulerian scalar transport on the finite-volume mesh.** The
   species flux is the same mass flux the water used, upwinded on the contact

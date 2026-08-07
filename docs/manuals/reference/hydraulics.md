@@ -6573,10 +6573,16 @@ two disagree by more than a factor of two, rolls the step back and
 retries with the smaller value. Every input to that decision is solver
 state, so the retry sequence is deterministic.
 
-Time integration is forward Euler (`FV_TIME_INTEGRATION EULER`). Since
-overall accuracy is capped by the spatial reconstruction and by the
-friction splitting, a higher-order integrator paired with these fluxes
-buys no measurable accuracy.
+Time integration defaults to forward Euler
+(`FV_TIME_INTEGRATION EULER`), because overall accuracy is capped by the
+spatial reconstruction and by the friction splitting. `RK2` selects
+Heun's strong-stability-preserving two-stage method, applied to the
+*whole* operator: two forward steps at the same $\Delta t$, averaged.
+Averaging the operator rather than splitting it keeps the semi-implicit
+friction and the positivity limiter inside each stage, where their
+stability arguments hold. `RK2` and local time stepping are mutually
+exclusive — tiering gives different volumes different steps, so the two
+stages would be averaging states that never shared one.
 
 #### 8.5.6 Local time stepping
 
@@ -6642,6 +6648,14 @@ against the extrema of its whole neighbourhood in one synchronous
 sweep, and under tiering those neighbours are at different times.
 
 `FV_LTS_MAX_TIERS` caps the spread, at 6 by default (a 64× ratio).
+
+What tiering reduces is *work*, not the substep count: $\Delta t_{0}$ is
+still the finest volume's requirement and the macro cycle still walks it.
+On a reach with a 40× length ratio the solver evaluates 2.5× fewer faces
+at the same base step. On a nearly uniform mesh there is little to
+separate and the bookkeeping is a small net cost, which is why the tier
+assignment is cached across cycles and refreshed only when the census
+shows the model's stiffness has moved.
 
 #### 8.5.7 Second-order reconstruction
 
@@ -6803,7 +6817,7 @@ file.
 | `FV_ORDER` | 1 | 1 or 2. Second order is MUSCL on $(\eta, v)$ with the guard of §8.5.6. |
 | `FV_LIMITER` | `MINMOD` | `MINMOD`, `VANLEER` or `SUPERBEE`, with `FV_ORDER 2`. |
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
-| `FV_TIME_INTEGRATION` | `EULER` | Time integrator. |
+| `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
 | `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows are refreshed. |
@@ -6824,8 +6838,9 @@ configuration against the dynamic wave run of the same file.
 |---|---|---|---|---|
 | Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % |
 | Mean absolute peak-flow deviation | — | 37.1 % | 13.8 % | 7.1 % |
+| Wall-clock, relative | 1× | ~15× | ~86× | ~215× |
 
-Two readings follow, and both are honest.
+Three readings follow, and all three are honest.
 
 **Conservation is delivered, and is independent of resolution.** The
 finite-volume solver closes continuity exactly on this model where the
@@ -6837,6 +6852,16 @@ and monotone, which is what a consistent discretization must show — but
 COARSE mode is not a drop-in substitute for dynamic wave analysis. The
 mechanism is §8.3's artificial bed step, not numerical diffusion, so
 second-order reconstruction does not rescue it.
+
+**It costs an order of magnitude, and the reason is the manhole.** Even
+at one cell per conduit — the same element count the dynamic wave solver
+carries — the explicit method runs about fifteen times its wall-clock on
+this model. The binding stability constraint is not the conduit mesh but
+the node: a junction's storage area is the `MIN_SURFAREA` floor, which
+as an effective length $A_{s}/T$ is a few feet against a conduit
+$\Delta x$ of several hundred. The manhole, not the pipe, sets the
+step. Local time stepping (§8.5.6) confines the *work* that constraint
+implies but not the step size itself.
 
 Practical guidance:
 

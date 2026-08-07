@@ -109,6 +109,9 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     since_rebuild_ = 0;
     census_count_ = 0;
     dt_cache_     = 0.0;
+    lts_valid_    = false;
+    lts_countdown_ = 0;
+    lts_dt0_      = 0.0;
 
     total_steps_ = 0;
     total_flux_  = 0;
@@ -125,6 +128,7 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
 
 void ExplicitFvSolver::reinitialize(double /*t0*/) {
     if (!mesh_) return;
+    lts_valid_    = false;
     lists_valid_  = false;
     census_count_ = 0;
     dt_cache_     = 0.0;
@@ -149,6 +153,13 @@ INetworkSolver::RunStats ExplicitFvSolver::run_stats() const noexcept {
         s.active_frac_min  = active_min_;
         s.active_frac_max  = active_max_;
     }
+    // LTS tier histogram (§6.12): cells counted once per re-tier, so the
+    // distribution is what the report needs to show tiering was active — a run
+    // that quietly collapsed to one tier reads as n_tiers == 1 here rather than
+    // as a silently ordinary run.
+    s.n_tiers = std::min(lts_tiers_, static_cast<int>(kMaxLtsTiers));
+    for (int k = 0; k < s.n_tiers; ++k)
+        s.tier_cells[k] = tier_occupancy_[static_cast<std::size_t>(k)];
     return s;
 }
 
@@ -275,6 +286,12 @@ void ExplicitFvSolver::refreshNodeAreas() {
 void ExplicitFvSolver::rebuildActiveLists() {
     const int nc = mesh_->n_cells();
     const int nf = mesh_->n_faces();
+
+    // Both exits invalidate the tier cache. Doing it only on the compacted
+    // path would make the re-tier CADENCE depend on whether compaction is on,
+    // and the cadence is part of the integration schedule — §6.10 would fail
+    // for a reason that has nothing to do with which faces were skipped.
+    lts_valid_ = false;
 
     // Faces left out of the list keep whatever they last held, and the node
     // update reads every one of its faces — so clear the flux arrays here, at
@@ -1386,6 +1403,75 @@ void ExplicitFvSolver::restoreState() {
 }
 
 // ===========================================================================
+// Substep and time integration
+// ===========================================================================
+
+void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
+    reconstructState();
+    computeFluxes();
+    limitPositivity(dt);
+    reconstructScalars(dt);   // AFTER limiting: the species must ride on the
+                              // same water the hydrodynamics moved
+    updateCells(dt, forcing);
+    updateNodes(dt, forcing);
+    dispersionSolve(dt);
+}
+
+void ExplicitFvSolver::rkSave() {
+    rk_cell_a_    = state_->cell_a;
+    rk_cell_q_    = state_->cell_q;
+    rk_cell_phi_  = state_->cell_phi;
+    rk_node_vol_  = state_->node_volume;
+    rk_node_head_ = state_->node_head;
+    rk_exch_      = node_exch_;
+    rk_in_        = node_in_;
+    rk_out_       = node_out_;
+    rk_flood_     = flood_vol_;
+    rk_qint_      = cell_q_int_;
+}
+
+void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
+    auto avg = [](std::vector<double>& cur, const std::vector<double>& old) {
+        for (std::size_t i = 0; i < cur.size(); ++i)
+            cur[i] = 0.5 * (old[i] + cur[i]);
+    };
+    avg(state_->cell_a,   rk_cell_a_);
+    avg(state_->cell_q,   rk_cell_q_);
+    avg(state_->cell_phi, rk_cell_phi_);
+
+    // Node depth is averaged through the VOLUME, not the head: volume is the
+    // conserved variable, and averaging head instead would move water in and
+    // out of a storage node's non-linear curve. Fixed-head nodes are unaffected
+    // — both stages imposed the same head.
+    for (int n = 0; n < mesh_->n_nodes(); ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (mesh_->node_kind[un] == kNodeVirtual) continue;
+        if (forcing.node_fixed_head &&
+            std::isfinite(forcing.node_fixed_head[un])) {
+            state_->node_head[un] = 0.5 * (rk_node_head_[un] + state_->node_head[un]);
+            continue;
+        }
+        const double vol = 0.5 * (rk_node_vol_[un] + state_->node_volume[un]);
+        state_->node_volume[un] = vol;
+        state_->node_head[un]   = mesh_->node_invert[un] + nodeDepthFromVolume(n, vol);
+    }
+
+    // Ledger DELTAS, not totals: the two stages each booked a full Δt of flux,
+    // and the step transported the average of the two.
+    auto avg_delta = [](std::vector<double>& cur, const std::vector<double>& base) {
+        for (std::size_t i = 0; i < cur.size(); ++i)
+            cur[i] = base[i] + 0.5 * (cur[i] - base[i]);
+    };
+    avg_delta(node_exch_,  rk_exch_);
+    avg_delta(node_in_,    rk_in_);
+    avg_delta(node_out_,   rk_out_);
+    avg_delta(flood_vol_,  rk_flood_);
+    avg_delta(cell_q_int_, rk_qint_);
+
+    refreshDepths();
+}
+
+// ===========================================================================
 // Local time stepping (plan §3.3)
 // ===========================================================================
 
@@ -1605,6 +1691,25 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
         const auto un = static_cast<std::size_t>(n);
         if (mesh_->node_kind[un] == kNodeVirtual) continue;
         nodes_by_tier_[node_tier_[un]].push_back(n);
+    }
+
+    // Nested due-sets, built once here rather than per substep.
+    due_f_upto_.assign(static_cast<std::size_t>(K), {});
+    due_c_upto_.assign(static_cast<std::size_t>(K), {});
+    due_n_upto_.assign(static_cast<std::size_t>(K), {});
+    for (int j = 0; j < K; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (j > 0) {
+            due_f_upto_[uj] = due_f_upto_[uj - 1];
+            due_c_upto_[uj] = due_c_upto_[uj - 1];
+            due_n_upto_[uj] = due_n_upto_[uj - 1];
+        }
+        due_f_upto_[uj].insert(due_f_upto_[uj].end(), faces_by_tier_[uj].begin(),
+                               faces_by_tier_[uj].end());
+        due_c_upto_[uj].insert(due_c_upto_[uj].end(), cells_by_tier_[uj].begin(),
+                               cells_by_tier_[uj].end());
+        due_n_upto_[uj].insert(due_n_upto_[uj].end(), nodes_by_tier_[uj].begin(),
+                               nodes_by_tier_[uj].end());
     }
 
     acc_a_.assign(static_cast<std::size_t>(nc), 0.0);
@@ -1838,7 +1943,6 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
 void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
                                      const FvStepForcing& forcing) {
     const int K = static_cast<int>(cells_by_tier_.size());
-    static thread_local std::vector<int> due_f, due_c, due_n;
 
     // A tier-k FACE opens its window at s ≡ 0 (mod 2^k); a tier-k VOLUME closes
     // its window at s ≡ 2^k−1. The offset is the whole point: by the time a
@@ -1852,24 +1956,15 @@ void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
     auto trailing_zeros = [](int v) { int j = 0; while (((v >> j) & 1) == 0) ++j; return j; };
 
     for (int s = 0; s < nsub; ++s) {
-        const int jf = std::min((s == 0) ? K - 1 : trailing_zeros(s), K - 1);
-        const int jv = std::min(trailing_zeros(s + 1), K - 1);
-
-        due_f.clear(); due_c.clear(); due_n.clear();
-        for (int k = 0; k <= jf; ++k)
-            due_f.insert(due_f.end(), faces_by_tier_[static_cast<std::size_t>(k)].begin(),
-                         faces_by_tier_[static_cast<std::size_t>(k)].end());
-        for (int k = 0; k <= jv; ++k) {
-            due_c.insert(due_c.end(), cells_by_tier_[static_cast<std::size_t>(k)].begin(),
-                         cells_by_tier_[static_cast<std::size_t>(k)].end());
-            due_n.insert(due_n.end(), nodes_by_tier_[static_cast<std::size_t>(k)].begin(),
-                         nodes_by_tier_[static_cast<std::size_t>(k)].end());
-        }
+        const auto jf = static_cast<std::size_t>(
+            std::min((s == 0) ? K - 1 : trailing_zeros(s), K - 1));
+        const auto jv = static_cast<std::size_t>(
+            std::min(trailing_zeros(s + 1), K - 1));
 
         if (opts_.order >= 2) reconstructState();
-        fireFaces(due_f, dt0);
-        fireCells(due_c, dt0, forcing);
-        fireNodes(due_n, dt0, forcing);
+        fireFaces(due_f_upto_[jf], dt0);
+        fireCells(due_c_upto_[jv], dt0, forcing);
+        fireNodes(due_n_upto_[jv], dt0, forcing);
     }
 
     // Nothing is left pending: the final substep closes EVERY tier's window
@@ -1951,11 +2046,41 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // Tiers are reassigned only HERE, at a macro-cycle boundary with the
         // ledger settled — never mid-cycle, where a re-tiered volume would
         // either skip a flux it is owed or drain one at the wrong Δt.
-        if (opts_.lts) {
-            settleAccumulators();
-            double dt0 = 0.0;
-            const int K = assignTiers(dt0);
-            lts_tiers_ = K;
+        // RK2 is a property of the STEP; tiering means different volumes take
+        // different steps, so the two stages would be averaging states that
+        // never shared a Δt. They are mutually exclusive, and the integrator
+        // wins because it is the more specific request.
+        if (opts_.lts && opts_.time_integration != TimeIntegration::RK2) {
+            // Re-tiering costs a pass over every cell, face and node plus the
+            // grading sweep. Doing it every cycle is what made tiering SLOWER
+            // than global stepping on the reference model — the assignment is
+            // stable over many cycles, so it is cached and refreshed on a
+            // countdown, on a rejected cycle, or when the active list changes.
+            //
+            // Between re-tiers dt₀ may only SHRINK. A cached tier k promises
+            // that 2^k·dt₀ is admissible for its volume; letting dt₀ grow under
+            // it would silently break that promise, which is exactly why the
+            // plan puts re-tiering at synchronisation points only.
+            // The countdown is the floor, not the whole rule. A cycle also
+            // re-tiers when the model's stiffness has MOVED: a pipe crossing
+            // the crown takes its celerity up twenty-fold, and a cached tier
+            // that was admissible before is not after. Letting dt₀ recover
+            // matters just as much — pinning it at an old small value for the
+            // whole countdown was measurably slower than not tiering at all.
+            // The census is already needed to bound dt₀, so the test is free.
+            const double now = (lts_valid_ && lts_tiers_ > 1) ? censusDt() : 0.0;
+            const bool stiffness_moved =
+                lts_valid_ && lts_tiers_ > 1 &&
+                (now < 0.9 * lts_dt0_ || now > 2.0 * lts_dt0_);
+            if (!lts_valid_ || lts_countdown_ <= 0 || stiffness_moved) {
+                settleAccumulators();
+                lts_tiers_ = assignTiers(lts_dt0_);
+                lts_valid_ = true;
+                lts_countdown_ = kRetierEveryCycles;
+            }
+            const int K = lts_tiers_;
+            double dt0 = lts_dt0_;
+            --lts_countdown_;
             const int nsub = 1 << (K - 1);
             const double span = static_cast<double>(nsub) * dt0;
             if (K > 1 && span <= t_target - t) {
@@ -1970,6 +2095,8 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                 // being discarded with the state that produced them.
                 if (censusDt() < kStepAcceptRatio * dt0) {
                     restoreState();
+                    lts_valid_ = false;      // the state that produced these
+                                             // tiers is being discarded
                     std::fill(acc_a_.begin(), acc_a_.end(), 0.0);
                     std::fill(acc_q_.begin(), acc_q_.end(), 0.0);
                     std::fill(acc_nvol_.begin(), acc_nvol_.end(), 0.0);
@@ -2010,14 +2137,21 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // what keeps compaction transparency (§6.10) intact.
         for (int attempt = 0;; ++attempt) {
             saveState();
-            reconstructState();
-            computeFluxes();
-            limitPositivity(dt);
-            reconstructScalars(dt);   // AFTER limiting: the species must ride on
-                                      // the same water the hydrodynamics moved
-            updateCells(dt, forcing);
-            updateNodes(dt, forcing);
-            dispersionSolve(dt);
+            if (opts_.time_integration == TimeIntegration::RK2) {
+                // Heun / SSP-RK2 applied to the WHOLE operator, friction
+                // included. Two forward steps at the same Δt, averaged:
+                //   U⁽¹⁾ = S(Uⁿ),  U⁽²⁾ = S(U⁽¹⁾),  Uⁿ⁺¹ = ½(Uⁿ + U⁽²⁾).
+                // Averaging the operator rather than splitting it keeps the
+                // semi-implicit friction and the positivity limiter inside each
+                // stage, where their stability arguments hold; a classical
+                // two-stage form that applied them once would be neither.
+                rkSave();
+                takeSubstep(dt, forcing);
+                takeSubstep(dt, forcing);
+                rkAverage(forcing);
+            } else {
+                takeSubstep(dt, forcing);
+            }
 
             if (attempt >= kMaxStepRetries || dt <= constants::MIN_TIMESTEP) break;
             const double dt_post = censusDt();
