@@ -373,6 +373,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else if (cv == "ROUTING_STEP")
                 opt.fv.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
 
+        } else if (key == "FV_NODE_COUPLING") {
+            const std::string nv = norm(val);
+            if      (nv == "EXPLICIT")
+                opt.fv.node_coupling = fv::NodeCoupling::EXPLICIT;
+            else if (nv == "SEMI_IMPLICIT")
+                opt.fv.node_coupling = fv::NodeCoupling::SEMI_IMPLICIT;
+
         } else if (key == "FV_COMPACTION") {
             const std::string bv = norm(val);
             opt.fv.compaction = !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");

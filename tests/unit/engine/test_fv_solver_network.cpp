@@ -693,3 +693,123 @@ TEST(FvNetwork, ImplicitDispersionRemovesTheDeltaXSquaredStepRestriction) {
     // And it actually spread — otherwise the gate is vacuous.
     EXPECT_LT(ch.state.cell_phi[static_cast<std::size_t>(n / 2)], 50.0);
 }
+
+// ===========================================================================
+// §7B.1 — semi-implicit node coupling
+// ===========================================================================
+
+// The property that makes the damping legitimate rather than a fudge: at
+// EQUILIBRIUM the correction is identically zero. It is proportional to the
+// node's net imbalance, and a settled node has none — so the two couplings
+// must agree on the steady state they reach, however differently they get
+// there. If they did not, the damping would be changing the answer rather than
+// the path to it.
+TEST(FvNetwork, NodeCouplingsAgreeOnTheSteadyState) {
+    auto settle = [](NodeCoupling nc) {
+        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                      [](double x) { return 0.002 * (1000.0 - x); },
+                                      0.013);
+        for (int i = 0; i < ch.n; ++i)
+            ch.state.cell_a[static_cast<std::size_t>(i)] =
+                k::areaOfDepth(ch.mesh.geom[0], 0.8);
+        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
+        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
+
+        FvOptions o = defaultOptions();
+        o.node_coupling = nc;
+        runNoded(ch, o, 3000.0, 5.0, /*q_in=*/12.0,
+                 /*stage_dn=*/ch.mesh.node_invert[1] + 0.8);
+        return ch.state.cell_q;
+    };
+
+    const std::vector<double> expl = settle(NodeCoupling::EXPLICIT);
+    const std::vector<double> semi = settle(NodeCoupling::SEMI_IMPLICIT);
+    ASSERT_EQ(expl.size(), semi.size());
+    for (std::size_t i = 5; i + 5 < expl.size(); ++i)
+        EXPECT_NEAR(semi[i], expl[i], 0.02 * 12.0)
+            << "steady discharge differs at cell " << i;
+}
+
+// Conservation is the property that must survive, and the mechanism is
+// specific: the correction is written into the SHARED face-flux array, so the
+// node and the cell see the same number. Damping the node head directly would
+// imply a volume change the incident cells never saw — stability bought with
+// the one property this solver exists to provide.
+TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                  [](double) { return 0.0; }, 0.013);
+    for (int i = 0; i < ch.n; ++i)
+        ch.state.cell_a[static_cast<std::size_t>(i)] =
+            k::areaOfDepth(ch.mesh.geom[0], 1.2);
+    ch.state.node_head[0] = 1.2;
+    ch.state.node_head[1] = 1.2;
+
+    FvOptions o = defaultOptions();
+    o.node_coupling = NodeCoupling::SEMI_IMPLICIT;
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+
+    // Closed system: no lateral inflow, no prescribed stage. Everything the
+    // conduits and the two nodes hold must still be there at the end.
+    std::vector<double> lateral(2, 0.0);
+    std::vector<double> fixed(2, std::numeric_limits<double>::quiet_NaN());
+    FvStepForcing f;
+    f.node_lateral    = lateral.data();
+    f.node_fixed_head = fixed.data();
+    f.n_nodes = 2;
+
+    auto total = [&] {
+        double v = totalVolume(ch);
+        for (int n = 0; n < 2; ++n)
+            v += ch.state.node_volume[static_cast<std::size_t>(n)];
+        return v;
+    };
+    s.advance(0.0, 5.0, f);            // seeds the node ledger from the heads
+    const double v0 = total();
+    for (double t = 5.0; t < 600.0; t += 5.0) s.advance(t, t + 5.0, f);
+    EXPECT_NEAR(total(), v0, 1.0e-10 * v0)
+        << "the semi-implicit correction moved water";
+    s.finalize();
+}
+
+// The point of the exercise: the manhole no longer sets the substep. A
+// measurement with a loose gate — it exists so a regression that silently
+// reinstates the node limit is visible.
+TEST(FvNetwork, SemiImplicitCouplingRemovesTheNodeStepLimit) {
+    auto substeps = [](NodeCoupling nc) {
+        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                      [](double x) { return 0.002 * (1000.0 - x); },
+                                      0.013);
+        for (int i = 0; i < ch.n; ++i)
+            ch.state.cell_a[static_cast<std::size_t>(i)] =
+                k::areaOfDepth(ch.mesh.geom[0], 0.8);
+        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
+        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
+
+        FvOptions o = defaultOptions();
+        o.node_coupling = nc;
+        ExplicitFvSolver s;
+        s.initialize(ch.mesh, ch.state, o);
+        std::vector<double> lateral = {12.0, 0.0};
+        std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(),
+                                     ch.mesh.node_invert[1] + 0.8};
+        FvStepForcing f;
+        f.node_lateral = lateral.data();
+        f.node_fixed_head = fixed.data();
+        f.n_nodes = 2;
+        long n = 0;
+        for (double t = 0.0; t < 600.0; t += 5.0) {
+            s.advance(t, t + 5.0, f);
+            n += s.last_num_steps();
+        }
+        s.finalize();
+        return n;
+    };
+
+    const long ex = substeps(NodeCoupling::EXPLICIT);
+    const long si = substeps(NodeCoupling::SEMI_IMPLICIT);
+    std::printf("[fv-node] substeps explicit %ld vs semi-implicit %ld (%.2fx)\n",
+                ex, si, static_cast<double>(ex) / static_cast<double>(std::max(1L, si)));
+    EXPECT_LT(si, ex) << "the node still sets the substep";
+}
+
