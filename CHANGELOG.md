@@ -93,6 +93,17 @@ retroactive.
   flux-corrected transport limiter needs one synchronous sweep.
   `FV_LTS_MAX_TIERS` caps the spread.
 
+- **Fixed: `FLOW_ROUTING FV` lost junction storage from the routing mass
+  balance.** A plain junction reports zero contribution to routing storage by
+  legacy convention, which dynamic wave routing can afford because it never has
+  to hold water in a junction to stay stable. The finite-volume node *is* an
+  explicit control volume, so the water standing in it is real — and excluding
+  it produced a continuity error proportional to junction count: 0.00082
+  acre-feet per junction, which rounds to 0.000 % on a twelve-node model and
+  read 0.887 % on a five-hundred-node one. Junctions are now reported under FV
+  with the same relation the solver integrates. Dynamic wave routing is
+  untouched.
+
 - **Semi-implicit node coupling (`FV_NODE_COUPLING`, default
   `SEMI_IMPLICIT`) — 2.9×.** A junction's `MIN_SURFAREA` storage floor is a few
   feet of effective length against a conduit Δx of several hundred, so under
