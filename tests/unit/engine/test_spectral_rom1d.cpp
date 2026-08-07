@@ -2338,3 +2338,185 @@ TEST(RegisteredParams, InvalidRegistrationThrows) {
     EXPECT_THROW(f.rom.addRegisteredParam(ParamEntry::FORCING_VECTOR, ok, nullptr),
                  std::invalid_argument);
 }
+
+// ============================================================================
+// PR H5 — surcharged-regime sensitivity attenuation (advance()'s alpha param)
+// ============================================================================
+//
+// These test advance()'s alpha CHANNEL SELECTIVITY: alpha folds into bref
+// before projection (b_coarse), so it only ever affects the Manning-
+// sensitivity term `-lam*K1d*inv_mm_1*b_coarse[j]`. It does NOT touch the
+// per-member decay RATE `lam*K1d/mm_i` (mm_i still varies the relaxation
+// timescale even when alpha=0 everywhere — H5's spec attenuates the source,
+// not the rate) and does NOT touch the forcing-sensitivity term
+// `scale_1*r_coarse[j]` (projected from runoff_per_node, a separate loop).
+// computeSurchargeAlpha() itself (the ramp formula) is covered by
+// test_rom_surcharge_attenuation.cpp; these tests cover only what advance()
+// does with whatever alpha array it's given.
+
+TEST(SurchargeAttenuation, NullAlphaMatchesAllOnesArray) {
+    // Default (nullptr) must be bit-identical to an explicit all-1.0 array --
+    // proves the new parameter is a true no-op at its default, i.e. the
+    // pre-H5 code path is preserved exactly.
+    const int N = 20, M = 20, K = 4;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    std::vector<double> runoff(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h_det[static_cast<std::size_t>(i)] =
+            0.10 * std::exp(-0.5 * dx * dx / (N / 8.0 * N / 8.0));
+        runoff[static_cast<std::size_t>(i)] = 1.0e-5 * (1.0 + std::sin(0.4 * i));
+    }
+    const std::vector<double> ones(static_cast<std::size_t>(N), 1.0);
+
+    SpectralROM1D romA;
+    romA.basis = &basis; romA.n_ensemble = M;
+    romA.mannings_pert = 0.20; romA.runoff_pert = 0.20;
+    romA.initialize();
+    romA.seed(h_det.data());
+
+    SpectralROM1D romB;
+    romB.basis = &basis; romB.n_ensemble = M;
+    romB.mannings_pert = 0.20; romB.runoff_pert = 0.20;
+    romB.initialize();
+    romB.seed(h_det.data());
+
+    for (int step = 0; step < 20; ++step) {
+        romA.advance(30.0, 0.1, h_det.data(), runoff.data());                       // alpha = nullptr
+        romB.advance(30.0, 0.1, h_det.data(), runoff.data(), nullptr, ones.data()); // alpha = all-1.0
+    }
+    ASSERT_EQ(romA.a_ensemble.size(), romB.a_ensemble.size());
+    for (std::size_t k = 0; k < romA.a_ensemble.size(); ++k)
+        EXPECT_DOUBLE_EQ(romA.a_ensemble[k], romB.a_ensemble[k]) << "k=" << k;
+}
+
+TEST(SurchargeAttenuation, FullAttenuationWithNoForcingGivesExactZeroDeviation) {
+    // mannings_pert > 0 (so mm_i varies per member -- the decay RATE still
+    // differs member to member) but runoff_pert = 0 (forcing term
+    // structurally zero) and alpha = all-0.0 (Manning SOURCE term zeroed via
+    // b_coarse). With g == 0 for every member/mode regardless of rate,
+    // relaxing from an initial deviation of exactly 0 stays exactly 0 --
+    // proof that alpha=0 fully suppresses Manning-driven spread even though
+    // the per-member rate itself is untouched.
+    ROM1DFixture f;   // mannings_pert = 0.20 (fixture default)
+    f.rom.mannings_pert = 0.30;
+    f.rom.runoff_pert   = 0.0;
+    f.rom.initialize();
+
+    auto h_det = f.bump_head();
+    f.rom.seed(h_det.data());
+
+    const std::vector<double> zero_alpha(static_cast<std::size_t>(f.N), 0.0);
+    for (int step = 0; step < 40; ++step)
+        f.rom.advance(30.0, 0.1, h_det.data(), nullptr, nullptr, zero_alpha.data());
+
+    for (double a : f.rom.a_ensemble)
+        EXPECT_NEAR(a, 0.0, 1e-12);
+}
+
+TEST(SurchargeAttenuation, FullAttenuationStillRespondsToForcing) {
+    // Same full attenuation (alpha = all-0.0), but now runoff_pert > 0 with a
+    // non-uniform runoff field -- the forcing-sensitivity channel
+    // (r_coarse, projected separately from bref) must still drive nonzero
+    // spread. alpha=0 silences ONLY the Manning channel, not the ROM.
+    ROM1DFixture f;
+    f.rom.mannings_pert = 0.30;
+    f.rom.runoff_pert   = 0.30;
+    f.rom.initialize();
+
+    auto h_det = f.bump_head();
+    f.rom.seed(h_det.data());
+
+    std::vector<double> runoff(static_cast<std::size_t>(f.N));
+    for (int i = 0; i < f.N; ++i)
+        runoff[static_cast<std::size_t>(i)] = 1.0e-5 * (1.0 + std::cos(0.5 * i));
+
+    const std::vector<double> zero_alpha(static_cast<std::size_t>(f.N), 0.0);
+    for (int step = 0; step < 40; ++step)
+        f.rom.advance(30.0, 0.1, h_det.data(), runoff.data(), nullptr,
+                      zero_alpha.data());
+    f.rom.computeQuantiles(h_det.data(), nullptr);
+
+    EXPECT_GT(max_spread(f.rom), 0.0)
+        << "forcing-sensitivity channel must remain active under full "
+           "Manning attenuation";
+}
+
+TEST(SurchargeAttenuation, PartialAttenuationReducesButDoesNotEliminateSpread) {
+    // With BOTH channels active (mannings_pert and runoff_pert > 0, plus a
+    // non-uniform runoff field), full attenuation must strictly reduce total
+    // spread relative to no attenuation, but not to exactly zero -- the
+    // channel-selective damping the H5 design decision describes, observed
+    // end-to-end through computeQuantiles() rather than asserted on raw
+    // a_ensemble values.
+    auto run_with_alpha = [](const double* alpha) {
+        ROM1DFixture f;
+        f.rom.mannings_pert = 0.30;
+        f.rom.runoff_pert   = 0.30;
+        f.rom.initialize();
+        auto h_det = f.bump_head();
+        f.rom.seed(h_det.data());
+        std::vector<double> runoff(static_cast<std::size_t>(f.N));
+        for (int i = 0; i < f.N; ++i)
+            runoff[static_cast<std::size_t>(i)] = 1.0e-5 * (1.0 + std::cos(0.5 * i));
+        for (int step = 0; step < 40; ++step)
+            f.rom.advance(30.0, 0.1, h_det.data(), runoff.data(), nullptr, alpha);
+        f.rom.computeQuantiles(h_det.data(), nullptr);
+        return max_spread(f.rom);
+    };
+
+    const double spread_unattenuated = run_with_alpha(nullptr);
+    const std::vector<double> zero_alpha(20, 0.0);  // ROM1DFixture::N
+    const double spread_attenuated = run_with_alpha(zero_alpha.data());
+
+    EXPECT_GT(spread_unattenuated, 0.0);
+    EXPECT_GT(spread_attenuated, 0.0);
+    EXPECT_LT(spread_attenuated, spread_unattenuated)
+        << "attenuating the Manning channel must narrow the band";
+}
+
+TEST(SurchargeAttenuation, ZeroPerturbationExactWithMixedAlpha) {
+    // ZeroPerturbationIsExact's invariant (mm = rm = 1 for every member ->
+    // q05 == q50 == q95 == h_det to machine precision) must survive even a
+    // non-trivial, per-node-varying alpha array -- inv_mm_1 == 0 exactly
+    // regardless of alpha, so the Manning term is zero either way.
+    ROM1DFixture f;
+    f.rom.mannings_pert = 0.0;
+    f.rom.runoff_pert   = 0.0;
+    f.rom.initialize();
+
+    auto h0 = f.bump_head();
+    f.rom.seed(h0.data());
+
+    // Mixed ramp: alternating 0.0 / 1.0 / 0.5 across the N=20 active nodes.
+    std::vector<double> alpha(static_cast<std::size_t>(f.N));
+    for (int i = 0; i < f.N; ++i) {
+        const double vals[3] = {0.0, 1.0, 0.5};
+        alpha[static_cast<std::size_t>(i)] = vals[i % 3];
+    }
+
+    std::vector<double> h_det(static_cast<std::size_t>(f.N));
+    std::vector<double> runoff(static_cast<std::size_t>(f.N));
+    for (int step = 0; step < 100; ++step) {
+        const double phase = 0.05 * step;
+        for (int i = 0; i < f.N; ++i) {
+            h_det[static_cast<std::size_t>(i)] =
+                h0[static_cast<std::size_t>(i)] * (1.0 + 0.5 * std::sin(phase + 0.3 * i));
+            runoff[static_cast<std::size_t>(i)] =
+                1.0e-5 * (1.0 + std::cos(phase + 0.7 * i));
+        }
+        f.rom.advance(15.0, 0.1, h_det.data(), runoff.data(), nullptr, alpha.data());
+    }
+    f.rom.computeQuantiles(h_det.data(), nullptr);
+
+    for (int i = 0; i < f.rom.n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(f.rom.q05[ui], h_det[ui], 1.0e-12) << "node " << i;
+        EXPECT_NEAR(f.rom.q50[ui], h_det[ui], 1.0e-12) << "node " << i;
+        EXPECT_NEAR(f.rom.q95[ui], h_det[ui], 1.0e-12) << "node " << i;
+    }
+}

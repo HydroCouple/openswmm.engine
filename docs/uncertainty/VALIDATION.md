@@ -556,3 +556,152 @@ ever suspected there.
     # Bellinge per-solver-mode rerun (validation-only, not a ctest target,
     # ~400 s for all 4 cells): scratch harness pattern, compile against the
     # engine dylib per the W3 calibration convention in .memory/current.md.
+
+---
+
+# Surcharged-regime sensitivity attenuation (PR H5)
+
+Measured 2026-08-06. `tests/regression/test_rom_coverage.cpp`, new
+`RomCoverageSurcharged` suite (2 tests, one per `NODE_CONTINUITY` mode),
+alongside the pre-existing `RomCoverage` (free-surface, still deliberately
+red per its own header, unrelated to and unaffected by H5).
+
+## 1. Experiment
+
+**Problem**: in surcharged regime the pre-H5 ROM over-predicted band widths
+50–190× (PR-10's documented limit). Mechanism: the modal Manning-sensitivity
+source term `-λ·K1d·(1/mm-1)·b_j` encodes free-surface conveyance sensitivity
+(`K ~ h^(5/3)/n`), which no longer governs once a pipe runs full and heads are
+set by mass balance/backwater instead.
+
+**Fix** (`src/engine/uncertainty/RomSurchargeAttenuation.hpp`, PR H5's F
+design decision): a per-active-node factor `alpha_n` folds into the
+sensitivity reference *before* projection (`b_j = Pᵀ(alpha ⊙ bref)`),
+damping only the Manning-sensitivity channel — the forcing-sensitivity
+channel (runoff/soft-rain, projected separately) is untouched. `alpha_n` is a
+smooth ramp of `ratio_n = (head-invert)/(crown_elev-invert)` over
+`[ramp_lo, ramp_hi] = [0.9, 1.1]`, floored at `alpha_floor` rather than
+ramping to a hard 0 — see §2 for why the floor exists and how it was
+calibrated. One amendment to the checklist's literal candidate ("fraction of
+incident conduits free-surface, per-conduit ramp"): the engine exposes crown
+data as a per-*node* scalar (the same quantity `HSnapshot::node_surcharged`
+already uses), not per-conduit, so `alpha_n` ramps that same node-level
+quantity rather than inventing new per-conduit geometry plumbing for a value
+that would immediately re-aggregate to a node scalar anyway.
+
+**Fixture** (`fixtureInpSurcharged()`): same 5-junction chain as the
+free-surface test, but C1–C4 stay at a generous 1.0 m diameter and C5 (into
+the outfall) is undersized to 0.3 m — a single, localized bottleneck rather
+than a uniformly undersized chain. DWF at J1 raised to 0.40 CMS. This
+specific design **replaced an earlier, abandoned attempt** — see §3(a) for
+why the obvious "just raise inflow past chain-wide capacity" approach isn't a
+validatable fixture at all. Same 21-member brute-force MC design as PR-10
+(LHS strata of the checklist's ±20% Manning prior), run once per
+`NODE_CONTINUITY` mode, MC members and the ROM in the same mode per cell (the
+P4 compat-matrix pattern).
+
+## 2. Results (measured)
+
+| NODE_CONTINUITY | Coverage | Width ratio min/med/max | Surcharged frac | Verdict |
+|---|---|---|---|---|
+| EXPLICIT | 0.997 | 0.016 / **0.034** / 1.866 | 1.000 | **FAILS** ratio_med ≥ 0.3 |
+| SEMI_IMPLICIT | 0.990 | 0.021 / **1.031** / 2.799 | 1.000 | **passes** |
+
+Both cells clear coverage ≥ 0.90 and surcharged_frac ≥ 0.50 comfortably. The
+alpha floor (see below) was calibrated against this exact fixture, so
+SEMI_IMPLICIT's ratio_med landing almost exactly at 1.0 is a genuine
+calibration result, not a coincidence — but the same floor leaves EXPLICIT's
+median an order of magnitude below the checklist's own 0.3 floor. Both
+findings are explained in §3, not adjusted away.
+
+**Calibration record** (`RomSurchargeAttenuation.hpp`,
+`SurchargeAttenuationConfig::alpha_floor`): the checklist's literal candidate
+ramps `alpha_n` to a hard 0 deep in surcharge. Validated against this
+fixture, that collapsed the SEMI_IMPLICIT band to ratio_med ≈ 0 (measured,
+not estimated) — an over-correction from "50–190× too wide" to "collapsed to
+near-nothing," because a pressurized pipe still loses head to friction, and
+that loss still depends on n (just not through the free-surface `h^(5/3)/n`
+law the un-attenuated ROM assumes). `alpha_floor = 0.05` was chosen as the
+value that lands SEMI_IMPLICIT's median closest to the ideal 1.0 while
+keeping its max under the checklist's 3.0 ceiling; `alpha_floor = 0.15` was
+also measured (SEMI_IMPLICIT ratio_med 1.031 → 0.565, non-monotonic — see
+§3(c) — while EXPLICIT's median moved only 0.034 → 0.061, nowhere near 0.3)
+and rejected as strictly worse on both counts.
+
+## 3. Findings and scope
+
+**(a) A fixture-design trap specific to this PR, found and fixed by
+redesign, not by threshold tuning.** The first fixture attempt uniformly
+undersized *every* conduit and pushed DWF well past the whole chain's
+capacity (mirroring PR-10's/P4's own topology-reuse habit). Scratch-harness
+measurement (2026-08-06) found this was not a validatable regime at all: at a
+fixed DWF, the ±20% Manning prior alone flipped the network between "stays
+below crown" (rough_mult 0.83, never surcharges) and ">36 m over crown"
+(rough_mult 1.17) — a near-bifurcation in capacity-vs-demand, not a graded
+response. MC members landing on opposite sides of that split don't have a
+comparable band to measure a ROM against. Separately, pushing DWF far enough
+past capacity to guarantee *every* member surcharges was found to hit an
+apparent flooding ceiling (identical settled head regardless of DWF or
+roughness once deep enough over capacity — confirmed via a MaxDepth sweep
+that the *node* values, not a diagnostic bug, genuinely saturate). Localizing
+the bottleneck to a single conduit (C5) turned the chain-wide compounding
+into a single-stage, continuously-graded response (§1's measured 90–95%
+surcharged fraction across the same roughness range, monotonic, no jump) —
+this *is* a working fixture. Recorded in full in `history_decisions.md`.
+
+**(b) EXPLICIT's discrete surcharge branch shows steeper Manning sensitivity
+at a chokepoint than SEMI_IMPLICIT's unified formula — root-caused, not
+assumed.** Per-node breakdown (scratch diagnostic, 2026-08-06) of the
+EXPLICIT cell's failure: J1 (never attenuated, alpha≈1) has ratio ≈ 1.87,
+comfortably in-band — the ROM's ordinary free-surface behavior is intact.
+J4/J5 (downstream of the C5 bottleneck, alpha at the floor) have ratio ≈
+0.02, and the brute-force MC's *own* q05–q95 width there is ≈28 m: the same
+±20% Manning prior that gave EXPLICIT's settled backwater depths of ~19 m
+(rough_mult 0.83) to ~47 m (rough_mult 1.17) at nominal DWF (§1's design
+measurement) reproduces almost exactly as the MC width at the nearest-rank
+5th/95th-percentile members. This is a real, steep, physical sensitivity of
+single-conduit pressurized backwater to conveyance near a chokepoint under
+EXPLICIT's discrete branch — bridging it would need `alpha_floor` in the
+range of 0.7–0.8 (measured by direct trial), which would erase most of the
+attenuation this PR exists to add, and is not compatible with keeping
+SEMI_IMPLICIT's max under the checklist's 3.0 ceiling (see (c)). **Left RED**
+rather than loosening the checklist's [0.3, 3.0]/≥0.90 acceptance bounds
+(hard rule 2) — see `tests/regression/test_rom_coverage.cpp`'s own
+`@warning` block on `RomCoverageSurcharged.ExplicitContinuity` for the same
+finding recorded next to the failing assertion.
+
+**(c) `alpha_floor` response is not monotonic across both cells
+simultaneously — a genuine model-parameter finding, not noise.** Raising the
+floor 0.05 → 0.15 (3×) moved EXPLICIT's median only 0.034 → 0.061 (≈1.8×,
+not 3×) and *decreased* SEMI_IMPLICIT's median (1.031 → 0.565) while also
+decreasing its max (2.799 → 1.853). A larger `alpha_floor` raises
+`b_coarse[j]` for every attenuated node, which can cross `mode_drop_
+threshold` and activate previously-inactive modes (`by_manning` in
+`SpectralROM1D::advance()`'s Step 3) whose own sign/contribution isn't
+predictable from the floor's magnitude alone — a single global scalar
+does not respond linearly once mode activation is in play. This rules out
+further blind grid-search over `alpha_floor` as a productive path to close
+(b): the mechanism that would need to change is not "the floor is too
+small," it is something structurally different between how EXPLICIT and
+SEMI_IMPLICIT drive `b_coarse[j]` near a chokepoint.
+
+**Open, for the owner/acceptance review**: whether EXPLICIT's chokepoint
+sensitivity needs a genuinely different mechanism (e.g. a second, steeper
+floor keyed to *how far* into surcharge a node is, rather than one flat
+floor per the checklist's literal ramp-to-a-single-floor candidate), a
+different validation fixture, or should be accepted and documented as a
+limitation of the source-side-attenuation formulation specifically under
+`NODE_CONTINUITY EXPLICIT`. Per the checklist's own escalation rule ("any
+coverage failure returns to F, not to threshold tuning"), this is recorded
+here rather than resolved by further parameter search.
+
+## 4. Reproduction
+
+    # Both NODE_CONTINUITY cells (SEMI_IMPLICIT passes, EXPLICIT deliberately red):
+    ctest --test-dir build/<dir> -R regression_rom_coverage
+
+    # Isolate one cell:
+    build/<dir>/tests/regression/test_rom_coverage --gtest_filter='RomCoverageSurcharged.*'
+
+    # Pure-function ramp/floor unit tests (independent of the MC fixture):
+    ctest --test-dir build/<dir> -R test_engine_rom_surcharge_attenuation

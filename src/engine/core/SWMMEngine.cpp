@@ -2754,6 +2754,17 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 std::max(ctx_.nodes.head[ui] - rom1d_invert_buf_[uai], 0.0);
         }
 
+        // PR H5: per-node surcharge attenuation for the Manning-sensitivity
+        // channel only (VALIDATION.md: 50-190x band-width over-prediction in
+        // surcharged regime). Recomputed every step -- head moves, crown_elev/
+        // invert_elev don't; both are guaranteed populated by now (initGeometry()
+        // ran during initialize(), long before stepRouting() executes).
+        uncertainty::computeSurchargeAlpha(
+            n_active, rom1d_active_map_.data(),
+            ctx_.nodes.crown_elev.data(), ctx_.nodes.invert_elev.data(),
+            ctx_.nodes.head.data(), ctx_.n_nodes(), rom1d_surcharge_cfg_,
+            rom1d_alpha_buf_.data());
+
         // Per-node dh/dt forcing from the just-completed DynWave step. Under
         // the deviation form its projection enters only scaled by
         // (runoff_mult - 1), so with the engine default runoff_pert = 0 it
@@ -2771,7 +2782,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
         rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
                         rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data(),
-                        rom1d_sens_buf_.data());
+                        rom1d_sens_buf_.data(), rom1d_alpha_buf_.data());
         // computeQuantiles() is called only at report boundaries (postOutputSnapshot)
     }
 #endif
@@ -5992,6 +6003,12 @@ void SWMMEngine::buildROM1D() noexcept {
     rom1d_h_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     rom1d_invert_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     rom1d_sens_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    // PR H5: alpha defaults to 1.0 (unattenuated) until the first per-step
+    // fill below; ctx_.nodes.crown_elev isn't populated yet at this point
+    // (buildROM1D() runs inside initHydraulics(), before initGeometry() —
+    // same ordering hazard buildRom1dThresholds() documents above), so this
+    // buffer must only ever be filled per-step, never here at build time.
+    rom1d_alpha_buf_.assign(static_cast<std::size_t>(n_active), 1.0);
     for (int ai = 0; ai < n_active; ++ai) {
         auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
         rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];
