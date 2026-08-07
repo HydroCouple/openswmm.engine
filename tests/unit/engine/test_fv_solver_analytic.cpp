@@ -397,3 +397,97 @@ TEST(FvAnalytic, MomentumIsConservedOnAFlatFrictionlessClosedReach) {
     for (int i = 0; i < ch.n; ++i)
         EXPECT_NEAR(ch.state.cell_q[static_cast<std::size_t>(i)], 0.0, 1.0e-10);
 }
+
+// ===========================================================================
+// §5.2 — SSP-RK2 time integration (FV_TIME_INTEGRATION RK2)
+// ===========================================================================
+
+// The option is a real integrator, not a parsed no-op. Three claims, and the
+// first is the one that catches a silent regression: RK2 must CHANGE the
+// answer. A key that is read, validated, reported through the C API and then
+// ignored is worse than an unsupported one.
+TEST(FvAnalytic, Rk2IsAnIntegratorNotANoOp) {
+    auto run = [](TimeIntegration ti) {
+        Channel ch = makeWalledChannel(rectOpen(10.0, 20.0), 80, 5.0,
+                                       [](double) { return 0.0; }, 0.0);
+        for (int i = 0; i < ch.n; ++i)
+            ch.state.cell_a[static_cast<std::size_t>(i)] =
+                10.0 * ((i < 40) ? 4.0 : 1.0);
+        FvOptions o = defaultOptions();
+        o.time_integration = ti;
+        ExplicitFvSolver s;
+        s.initialize(ch.mesh, ch.state, o);
+        FvStepForcing f;
+        f.n_nodes = 0;
+        for (double t = 0.0; t < 20.0; t += 1.0) s.advance(t, t + 1.0, f);
+        s.finalize();
+        return ch.state.cell_a;
+    };
+
+    const std::vector<double> euler = run(TimeIntegration::EULER);
+    const std::vector<double> rk2   = run(TimeIntegration::RK2);
+    ASSERT_EQ(euler.size(), rk2.size());
+
+    double worst = 0.0;
+    for (std::size_t i = 0; i < euler.size(); ++i)
+        worst = std::max(worst, std::fabs(rk2[i] - euler[i]));
+    EXPECT_GT(worst, 1.0e-9) << "RK2 produced the forward-Euler answer exactly — "
+                                "the option is not wired to the step";
+
+    // And it must remain a SMALL change: a second-order correction to a
+    // first-order step, not a different solution.
+    EXPECT_LT(worst, 0.5 * 10.0) << "RK2 diverged from Euler by more than the "
+                                    "dam height — that is not a time-integration "
+                                    "difference";
+}
+
+// Averaging two stages must not move water. The ledger deltas are halved
+// alongside the state, which is the part easy to get wrong: leaving the two
+// stages' flux integrals summed would double the reported transport while the
+// state showed the average.
+TEST(FvAnalytic, Rk2ConservesMassExactly) {
+    Channel ch = makeWalledChannel(rectOpen(10.0, 20.0), 60, 5.0,
+                                   [](double x) { return 0.002 * (300.0 - x); },
+                                   0.013);
+    for (int i = 0; i < ch.n; ++i)
+        ch.state.cell_a[static_cast<std::size_t>(i)] =
+            10.0 * ((i < 30) ? 5.0 : 1.5);
+
+    FvOptions o = defaultOptions();
+    o.time_integration = TimeIntegration::RK2;
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+    const double v0 = totalVolume(ch);
+
+    FvStepForcing f;
+    f.n_nodes = 0;
+    for (double t = 0.0; t < 300.0; t += 5.0) s.advance(t, t + 5.0, f);
+    EXPECT_NEAR(totalVolume(ch), v0, 1.0e-12 * v0)
+        << "RK2 stage averaging leaked mass in a closed reach";
+    s.finalize();
+}
+
+// Well-balancedness survives the averaging: a lake at rest is a fixed point of
+// each stage, so it must be a fixed point of their average.
+TEST(FvAnalytic, Rk2StaysWellBalanced) {
+    Channel ch = makeWalledChannel(rectOpen(10.0, 20.0), 60, 5.0,
+                                   [](double x) { return (x < 150.0) ? 1.0 : 2.0; },
+                                   0.013);
+    seedLevel(ch, 6.0);
+    FvOptions o = defaultOptions();
+    o.time_integration = TimeIntegration::RK2;
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+    FvStepForcing f;
+    f.n_nodes = 0;
+    for (double t = 0.0; t < 200.0; t += 5.0) s.advance(t, t + 5.0, f);
+    for (int i = 0; i < ch.n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(ch.mesh.cell_zb[ui] + ch.state.cell_h[ui], 6.0, 1.0e-9)
+            << "free surface moved at cell " << i;
+        EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9)
+            << "spurious discharge at cell " << i;
+    }
+    s.finalize();
+}
+

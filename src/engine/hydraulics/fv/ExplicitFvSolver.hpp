@@ -155,6 +155,17 @@ private:
     void   saveState();
     void   restoreState();
 
+    /// One forward-Euler substep of the whole operator: reconstruct, flux,
+    /// positivity-limit, transport, then the cell and node updates.
+    void   takeSubstep(double dt, const FvStepForcing& forcing);
+
+    /// Snapshot / average for SSP-RK2. `rkSave` records Uⁿ and the ledger
+    /// totals; `rkAverage` forms ½(Uⁿ + U⁽²⁾) and halves the ledger deltas the
+    /// two stages accumulated, which is what makes the reported flow integral
+    /// the average of the two stage fluxes rather than their sum.
+    void   rkSave();
+    void   rkAverage(const FvStepForcing& forcing);
+
     /// Build one side of a face. @p cell < 0 selects the node ghost state,
     /// whose depth comes from the node head and whose velocity is extrapolated
     /// from the interior cell (transmissive momentum).
@@ -237,6 +248,13 @@ private:
     std::vector<double> save_node_vol_, save_node_head_;
     std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_;
 
+    // SSP-RK2 stage-1 snapshot. Separate from the rejection snapshot above:
+    // a rejected RK2 step has to roll back to Uⁿ, and Uⁿ must survive the
+    // stage-1 save that the rejection machinery performs.
+    std::vector<double> rk_cell_a_, rk_cell_q_, rk_cell_phi_;
+    std::vector<double> rk_node_vol_, rk_node_head_;
+    std::vector<double> rk_exch_, rk_in_, rk_out_, rk_flood_, rk_qint_;
+
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.
     static constexpr double kStepAcceptRatio = 0.5;
@@ -257,6 +275,22 @@ private:
     // between firings would either skip a flux it owes or drain one twice.
     std::vector<std::uint8_t>     cell_tier_, face_tier_, node_tier_;
     std::vector<std::vector<int>> cells_by_tier_, faces_by_tier_, nodes_by_tier_;
+
+    /// The K NESTED due-sets, `[j]` holding tiers 0..j concatenated. Built once
+    /// per re-tier rather than per substep: the sets are a function of the tier
+    /// assignment alone, and rebuilding them inside the macro cycle cost more
+    /// than tiering saved — measured 64 % slower than global stepping on the
+    /// reference model at Δx = 20 ft before this was hoisted.
+    std::vector<std::vector<int>> due_f_upto_, due_c_upto_, due_n_upto_;
+
+    /// Tier assignment is valid until this many macro cycles have elapsed.
+    /// Re-tiering is O(cells + faces) with a grading sweep on top, so doing it
+    /// every cycle dominates a small model; between re-tiers dt₀ may only
+    /// SHRINK, which is what keeps a cached assignment admissible.
+    bool   lts_valid_    = false;
+    int    lts_countdown_ = 0;
+    double lts_dt0_      = 0.0;
+    static constexpr int kRetierEveryCycles = 8;
 
     /// Pending ∫F dt per control volume, in the cell's OWN axis for momentum.
     /// These are the tier-interface flux accumulators: a face books into them
