@@ -30,6 +30,7 @@
 
 #include <memory>
 #include <string>
+#include <functional>
 #include <vector>
 
 namespace openswmm {
@@ -165,6 +166,12 @@ private:
 
     /// Compute conduit evaporation and seepage loss rates (per barrel).
     void computeConduitLosses(SimulationContext& ctx, double dt, double evap_rate);
+
+    /// Re-evaluate the head-dependent FV forcing (outfall stages, structure
+    /// discharges) against the solver's current state. Called from the
+    /// solver's substep loop under FV_STRUCTURE_COUPLING SUBSTEP.
+    void refreshFvBoundaryFlows(SimulationContext& ctx,
+                                const std::function<void()>& eval_structures);
 
     /// Update final link states (depth, volume) after routing.
     void updateLinkStates(SimulationContext& ctx);

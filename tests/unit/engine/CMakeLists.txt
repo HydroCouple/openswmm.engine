@@ -444,6 +444,7 @@ add_gtest_unit(test_engine_fv_lts test_fv_lts.cpp)
 add_gtest_unit(test_engine_fv_integration test_fv_engine_integration.cpp)
 target_compile_definitions(test_engine_fv_integration PRIVATE
     OPENSWMM_FV_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
+    OPENSWMM_FV_UNIT_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation

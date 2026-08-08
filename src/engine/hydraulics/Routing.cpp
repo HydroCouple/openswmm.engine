@@ -14,6 +14,7 @@
 #include "fv/NetworkMeshBuilder.hpp"
 #include "fv/NetworkSolverFactory.hpp"
 #include "../core/Constants.hpp"
+#include "../core/ErrorCodes.hpp"
 #include "../core/UnitConversion.hpp"
 #include "Outfall.hpp"
 #include "Divider.hpp"
@@ -808,9 +809,33 @@ void Router::initFv(SimulationContext& ctx) {
     fv_opts_.slot_celerity = ctx.options.fv.slot_celerity / ucf_len;
     fv_opts_.dispersion    = ctx.options.fv.dispersion    / (ucf_len * ucf_len);
 
+    // Options that are parsed and stored but reach nothing. Saying so at open
+    // is the whole point: a model calibrated with FV_DISPERSION set would
+    // otherwise run as if the value had been honoured.
+    if (ctx.options.fv.dispersion != 0.0)
+        fv_warnings_.push_back(format_warning(WARN_FV_OPTION_INERT,
+                                              "FV_DISPERSION"));
+    if (ctx.options.fv.scalar_scheme != fv::ScalarScheme::MUSCL)
+        fv_warnings_.push_back(format_warning(WARN_FV_OPTION_INERT,
+                                              "FV_SCALAR_SCHEME"));
+
+    // Dynamic wave options that carry no meaning for an explicit solver. FV
+    // takes one step rather than iterating, resolves transcritical flow
+    // natively, and picks its own substep from the Courant limit.
+    if (ctx.options.inertial_damping != 1)
+        fv_warnings_.push_back(format_warning(WARN_DW_OPTION_UNDER_FV,
+                                              "INERTIAL_DAMPING"));
+    if (ctx.options.surcharge_method != 0)
+        fv_warnings_.push_back(format_warning(WARN_DW_OPTION_UNDER_FV,
+                                              "SURCHARGE_METHOD"));
+    if (ctx.options.normal_flow_ltd != 2)
+        fv_warnings_.push_back(format_warning(WARN_DW_OPTION_UNDER_FV,
+                                              "NORMAL_FLOW_LIMITED"));
+
     const fv::MeshBuildReport rep =
         fv::buildNetworkMesh(ctx, fv_opts_, fv_mesh_);
-    fv_warnings_ = rep.warnings;
+    fv_warnings_.insert(fv_warnings_.end(), rep.warnings.begin(),
+                        rep.warnings.end());
     fv_errors_   = rep.errors;
     if (!rep.errors.empty()) return;
 
@@ -845,6 +870,18 @@ void Router::initFv(SimulationContext& ctx) {
     }
 
     fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc);
+
+    // The per-substep refresh is a callback into HydStructures, which a device
+    // backend cannot reach. Say so rather than letting the option go quiet.
+    if (fv_opts_.structure_coupling == fv::StructureCoupling::SUBSTEP &&
+        !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
+        fv_opts_.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
+        fv_warnings_.push_back(format_warning(
+            WARN_FV_OPTION_INERT,
+            "FV_STRUCTURE_COUPLING SUBSTEP on the '" + fv_backend_ +
+                "' backend, which cannot call the structure equations; "
+                "clamped to ROUTING_STEP"));
+    }
     fv_solver_->initialize(fv_mesh_, fv_state_, fv_opts_);
 
     fv_lateral_.assign(static_cast<std::size_t>(nn), 0.0);
@@ -857,10 +894,15 @@ void Router::initFv(SimulationContext& ctx) {
 /**
  * @brief One FV routing step: assemble forcing, advance, publish.
  *
- * Structure equations are evaluated ONCE here rather than per substep (D-FV3).
- * Re-evaluating them inside the substep loop would need the engine's
- * HydStructures code, which the plugin boundary deliberately excludes, and
- * would chatter controls tuned for DW-scale steps — the risk plan §8 flags.
+ * Structure equations are evaluated here, against the current node heads, and
+ * under FV_STRUCTURE_COUPLING SUBSTEP (the default) re-evaluated at the top of
+ * every substep through the forcing's refresh hook. That hook is a callback
+ * into the engine, so it exists only on the CPU path: a device backend cannot
+ * reach HydStructures and clamps to ROUTING_STEP.
+ *
+ * Control RULES are not re-evaluated — they run on the engine's own rule step
+ * and are tuned for DW-scale cadence; only the head-dependent discharge of the
+ * structures they set is refreshed.
  */
 int Router::stepFv(SimulationContext& ctx, double dt,
                    dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
@@ -890,12 +932,15 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     }
 
     // Non-conduit structures, evaluated against the CURRENT node heads.
-    if (non_conduit_fn) non_conduit_fn(ctx, dt, 0);
-    for (int j = 0; j < nl; ++j) {
-        const auto uj = static_cast<std::size_t>(j);
-        fv_struct_flow_[uj] = (ctx.links.type[uj] == LinkType::CONDUIT)
-                                  ? 0.0 : ctx.links.flow[uj];
-    }
+    auto evaluate_structures = [&]() {
+        if (non_conduit_fn) non_conduit_fn(ctx, dt, 0);
+        for (int j = 0; j < nl; ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            fv_struct_flow_[uj] = (ctx.links.type[uj] == LinkType::CONDUIT)
+                                      ? 0.0 : ctx.links.flow[uj];
+        }
+    };
+    evaluate_structures();
 
     // Distributed conduit losses as a rate per unit length (ft²/s): the solver
     // subtracts them from the cell AREA, so the per-barrel volumetric rate has
@@ -925,9 +970,65 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     forcing.n_nodes = nn;
     forcing.n_links = nl;
 
+    // Per-substep refresh (FV_STRUCTURE_COUPLING SUBSTEP). The structures read
+    // ctx.nodes.head, which the solver has not published mid-advance, so the
+    // hook publishes the heads it is holding, re-runs the SAME shared code the
+    // dynamic wave solver calls — setAllOutfallDepths for the stage boundaries
+    // and the non-conduit callback for the structures — and refills the two
+    // forcing arrays in place.
+    struct RefreshCtx {
+        Router*            self;
+        SimulationContext* ctx;
+        const std::function<void()>* eval;
+    };
+    std::function<void()> eval_fn = evaluate_structures;
+    RefreshCtx rctx{this, &ctx, &eval_fn};
+    if (fv_opts_.structure_coupling == fv::StructureCoupling::SUBSTEP) {
+        forcing.refresh_user = &rctx;
+        forcing.refresh = [](void* user, double) {
+            auto* r = static_cast<RefreshCtx*>(user);
+            r->self->refreshFvBoundaryFlows(*r->ctx, *r->eval);
+        };
+    }
+
     fv_solver_->advance(0.0, dt, forcing);
     publishFv(ctx, dt);
     return static_cast<int>(fv_solver_->last_num_steps());
+}
+
+// ============================================================================
+// refreshFvBoundaryFlows — mid-advance re-evaluation of head-dependent forcing
+// ============================================================================
+
+void Router::refreshFvBoundaryFlows(SimulationContext& ctx,
+                                    const std::function<void()>& eval_structures) {
+    auto* impl = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    if (!impl) return;
+
+    // Publish the heads the solver is holding so the structure equations and
+    // the outfall stage relations see the state they are being asked about.
+    // Depth and head only — this is not publishFv: flows, volumes and the node
+    // ledger belong to the end of the step.
+    const int nn = ctx.n_nodes();
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (fv_mesh_.node_kind[un] == fv::kNodeVirtual) continue;
+        const double depth = fv_state_.node_head[un] - fv_mesh_.node_invert[un];
+        ctx.nodes.depth[un] = std::max(0.0, depth);
+        ctx.nodes.head[un]  = fv_state_.node_head[un];
+    }
+
+    // Stage boundaries first — a FREE or NORMAL outfall's depth is a function
+    // of the conduit that feeds it, so it moves within the step exactly as the
+    // structures do.
+    outfall::setAllOutfallDepths(ctx, ctx.current_date);
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (ctx.nodes.type[un] != NodeType::OUTFALL) continue;
+        fv_fixed_head_[un] = ctx.nodes.invert_elev[un] + ctx.nodes.depth[un];
+    }
+
+    eval_structures();
 }
 
 /**

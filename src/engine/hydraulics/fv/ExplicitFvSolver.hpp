@@ -139,6 +139,12 @@ private:
 
     double nodeDepthFromVolume(int node, double volume) const;
 
+    /// Semi-implicit friction for one cell: Manning, or — for a FORCE_MAIN
+    /// running full — the Hazen-Williams / Darcy-Weisbach law the section
+    /// actually obeys, through the engine's own forcemain functions.
+    double frictionFor(const FvGeometry& g, double q, double u, double h,
+                       double dt) const;
+
     /// Apply the node's capacity rule to a freshly-integrated volume: ponding,
     /// surcharge depth, and the flooding that removes water once neither can
     /// take it. Mirrors DW's getFloodedDepth so a model floods and ponds the

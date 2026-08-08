@@ -14,6 +14,7 @@
 
 #include "FvKernels.hpp"
 #include "../Culvert.hpp"
+#include "../ForceMain.hpp"
 #include "../../core/Constants.hpp"
 
 #ifdef SWMM_USE_OPENMP
@@ -1429,8 +1430,7 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
             continue;
         }
         const double u = q_new / a_new;
-        q_new = k::frictionUpdate(q_new, u, k::hydRadOfDepth(g, h_new), dt,
-                                  g.rough_factor);
+        q_new = frictionFor(g, q_new, u, h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
 
         state_->cell_q[uc] = q_new;
@@ -1504,6 +1504,41 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
         state_->node_volume[un] = vol;
         state_->node_head[un]   = mesh_->node_invert[un] + depth;
     }
+}
+
+// ===========================================================================
+// frictionFor — Manning, or the force main's own pressurized law
+// ===========================================================================
+
+// A FORCE_MAIN carries a Hazen-Williams C or a Darcy-Weisbach roughness height,
+// not a Manning n. PostParseResolver substitutes an equivalent n so the free-
+// surface reaches of the same model still march (and it applies that
+// substitution to FV already), but once the main is FULL the equivalent n is
+// the wrong law: DW switches to forcemain::getFricSlope_HW/_DW there, and
+// without this FV kept using Manning at all depths and got the surcharge head
+// loss wrong.
+//
+// Both forms are the same semi-implicit update — Manning's
+// 1 + Δt·g·(n/φ)²·|u|/R^(4/3) IS 1 + Δt·g·S_f/|u| — so only S_f differs.
+// HW vs DW is chosen exactly as DW chooses it (DynamicWave.cpp:2134): a
+// Darcy-Weisbach roughness height is a small length, a Hazen-Williams C is
+// order 100.
+//
+// Host-side, not in FvKernels.hpp: it calls the engine's own forcemain
+// functions rather than reimplementing them, which the device backend will
+// have to port along with culvert::getInflow (plan §5.1).
+double ExplicitFvSolver::frictionFor(const FvGeometry& g, double q, double u,
+                                     double h, double dt) const {
+    const double r = k::hydRadOfDepth(g, h);
+    if (g.xs.type == static_cast<int>(XSectShape::FORCE_MAIN) && h >= g.y_full) {
+        const double absu = std::fabs(u);
+        if (absu <= 0.0) return q;
+        const double sf = (g.roughness < 1.0)
+                              ? forcemain::getFricSlope_DW(u, r, g.roughness)
+                              : forcemain::getFricSlope_HW(u, r, g.roughness);
+        return q / (1.0 + dt * k::kGravity * sf / absu);
+    }
+    return k::frictionUpdate(q, u, r, dt, g.rough_factor);
 }
 
 // ===========================================================================
@@ -2141,8 +2176,7 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
             continue;
         }
         const double u = q_new / a_new;
-        q_new = k::frictionUpdate(q_new, u, k::hydRadOfDepth(g, h_new), dt,
-                                  g.rough_factor);
+        q_new = frictionFor(g, q_new, u, h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
 
         state_->cell_q[uc] = q_new;
@@ -2294,6 +2328,20 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
     census_count_ = 0;
 
     while (t < t_target) {
+        // FV_STRUCTURE_COUPLING SUBSTEP: let the caller re-evaluate the
+        // head-dependent boundary flows against where the solver has actually
+        // got to. A routing step spans many substeps, across which a pump's
+        // wet-well depth and a weir's head difference move while a frozen
+        // discharge does not — the same reason the outfall stage is refreshed.
+        //
+        // At the TOP of a cycle, never inside one: the accumulators are
+        // settled here and a mid-cycle change would leave a face's booked flux
+        // and the volume that drains it describing different forcing. The
+        // first pass is skipped because the caller has just computed them.
+        if (steps > 0 && forcing.refresh &&
+            opts_.structure_coupling == StructureCoupling::SUBSTEP)
+            forcing.refresh(forcing.refresh_user, t - t_current);
+
         if (!lists_valid_ || since_rebuild_ >= kRebuildInterval)
             rebuildActiveLists();
 
