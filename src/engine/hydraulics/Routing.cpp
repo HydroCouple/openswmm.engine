@@ -889,6 +889,7 @@ void Router::initFv(SimulationContext& ctx) {
                           std::numeric_limits<double>::quiet_NaN());
     fv_struct_flow_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
     fv_cond_loss_.assign(static_cast<std::size_t>(fv_mesh_.n_conduits()), 0.0);
+    fv_struct_int_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
 }
 
 /**
@@ -940,6 +941,8 @@ int Router::stepFv(SimulationContext& ctx, double dt,
                                       ? 0.0 : ctx.links.flow[uj];
         }
     };
+    std::fill(fv_struct_int_.begin(), fv_struct_int_.end(), 0.0);
+    fv_struct_t_prev_ = 0.0;
     evaluate_structures();
 
     // Distributed conduit losses as a rate per unit length (ft²/s): the solver
@@ -985,9 +988,9 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     RefreshCtx rctx{this, &ctx, &eval_fn};
     if (fv_opts_.structure_coupling == fv::StructureCoupling::SUBSTEP) {
         forcing.refresh_user = &rctx;
-        forcing.refresh = [](void* user, double) {
+        forcing.refresh = [](void* user, double t_elapsed) {
             auto* r = static_cast<RefreshCtx*>(user);
-            r->self->refreshFvBoundaryFlows(*r->ctx, *r->eval);
+            r->self->refreshFvBoundaryFlows(*r->ctx, t_elapsed, *r->eval);
         };
     }
 
@@ -997,13 +1000,32 @@ int Router::stepFv(SimulationContext& ctx, double dt,
 }
 
 // ============================================================================
+// accumulateStructureFlows — time-weighted structure discharge
+// ============================================================================
+
+void Router::accumulateStructureFlows(const SimulationContext& ctx, double t_now) {
+    const double span = t_now - fv_struct_t_prev_;
+    if (span <= 0.0) return;
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        fv_struct_int_[uj] += fv_struct_flow_[uj] * span;
+    }
+    fv_struct_t_prev_ = t_now;
+}
+
+// ============================================================================
 // refreshFvBoundaryFlows — mid-advance re-evaluation of head-dependent forcing
 // ============================================================================
 
-void Router::refreshFvBoundaryFlows(SimulationContext& ctx,
+void Router::refreshFvBoundaryFlows(SimulationContext& ctx, double t_elapsed,
                                     const std::function<void()>& eval_structures) {
     auto* impl = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
     if (!impl) return;
+
+    // Bank the discharge that has been in force since the last refresh, before
+    // replacing it. The solver applied exactly this over exactly this span.
+    accumulateStructureFlows(ctx, t_elapsed);
 
     // Publish the heads the solver is holding so the structure equations and
     // the outfall stage relations see the state they are being asked about.
@@ -1179,6 +1201,21 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             ctx.nodes.outflow[un] = impl->node_outflow_volume()[un] / dt +
                                     ((lat < 0.0) ? -lat : 0.0) +
                                     ctx.nodes.losses[un];
+        }
+    }
+
+    // Structure discharge is the routing-step MEAN, for the same reason link
+    // flow is: under per-substep coupling the discharge moves within the step,
+    // and the solver applied that whole trajectory. Publishing the last
+    // substep's sample instead reported a number the mass balance never saw —
+    // and it aliased badly, a weir peaking at 12.1 / 14.3 / 7.4 cfs as the mesh
+    // refined while the pump and orifice converged smoothly.
+    if (dt > 0.0) {
+        const_cast<Router*>(this)->accumulateStructureFlows(ctx, dt);
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+            ctx.links.flow[uj] = fv_struct_int_[uj] / dt;
         }
     }
 
