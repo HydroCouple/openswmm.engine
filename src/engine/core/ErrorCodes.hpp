@@ -247,6 +247,8 @@ enum WarnCode : int {
     WARN_BOUNDARY_OVERLAP       = 102, ///< boundary regions overlap for %s
     WARN_FILES_SLOT_UNSUPPORTED = 103, ///< [FILES] %s is not supported and was ignored
     WARN_2D_OPTION_RETIRED      = 104, ///< [2D_OPTIONS] %s retired with CVODE/ARKODE and was ignored
+    WARN_FV_OPTION_INERT        = 105, ///< %s has no effect under FLOW_ROUTING FV
+    WARN_DW_OPTION_UNDER_FV     = 106, ///< %s is a dynamic wave option and does not apply under FLOW_ROUTING FV
 };
 
 // ============================================================================

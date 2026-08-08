@@ -45,6 +45,10 @@ namespace {
 
 const char* kDataDir = OPENSWMM_FV_TEST_DATA_DIR;
 
+/// The unit-test data tree, which is where the purpose-built process-coverage
+/// models live (kDataDir is the shared regression corpus).
+const char* kUnitDataDir = OPENSWMM_FV_UNIT_DATA_DIR;
+
 std::string outDir() {
     // Absolute: CTest runs this from tests/unit/engine/data, and artefacts must
     // land somewhere a reviewer looks (CLAUDE.md §4.1), not nested under the
@@ -894,6 +898,93 @@ TEST(FvEngine, FlapGatesMatchDynamicWave) {
             << tag << ": FV " << fv.peak_flow.at("C1")
             << " cfs vs DW " << dw.peak_flow.at("C1") << " cfs";
     }
+}
+
+// ===========================================================================
+// Stage 2 — force-main friction, structure coupling, inert-option warnings
+// ===========================================================================
+
+namespace {
+
+/// A FORCE_MAIN running full between two fixed heads. Geom4 carries the
+/// Hazen-Williams C (FORCE_MAIN_EQUATION H-W), so a solver that keeps using
+/// Manning's equivalent n once the main pressurizes gets the head loss wrong.
+std::string writeForceMainModel(const std::string& name, const char* routing) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nFORCE_MAIN_EQUATION  H-W\n"
+          "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "ALLOW_PONDING        NO\n\n"
+          "[JUNCTIONS]\nJA  100.0  30.0  20.0  0  0\n\n"
+          "[OUTFALLS]\nOF   90.0  FIXED  95.0  NO\n\n"
+          "[CONDUITS]\nFM  JA  OF  1000  0.01  0  0  0  0\n\n"
+          "[XSECTIONS]\nFM  FORCE_MAIN  2.0  120  0  0  1\n\n"
+          "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  25.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+} // namespace
+
+// A pressurized force main obeys Hazen-Williams, not the equivalent Manning n
+// the parser substitutes so its free-surface reaches still march. DW switches
+// laws once the main is full; FV used Manning at all depths, so the surcharge
+// head loss — the whole point of a force main — was wrong.
+TEST(FvEngine, ForceMainUsesItsPressurizedFrictionLaw) {
+    const RunResult fv = runModel(writeForceMainModel("fmain_fv", "FV"));
+    const RunResult dw = runModel(writeForceMainModel("fmain_dw", "DYNWAVE"));
+    ASSERT_TRUE(fv.parsed && dw.parsed);
+    ASSERT_GT(dw.peak_flow.at("FM"), 1.0) << "fixture never pressurized";
+
+    EXPECT_NEAR(fv.peak_flow.at("FM"), dw.peak_flow.at("FM"),
+                0.20 * dw.peak_flow.at("FM"))
+        << "FV " << fv.peak_flow.at("FM") << " cfs vs DW "
+        << dw.peak_flow.at("FM") << " cfs — Manning is still being used full";
+    EXPECT_LT(std::fabs(fv.continuity_pct), 0.5)
+        << "routing continuity " << fv.continuity_pct << " %";
+}
+
+// FV_STRUCTURE_COUPLING was parsed, written, C-API exposed and read nowhere.
+// A routing step spans many substeps, across which a weir's head difference
+// moves while a frozen discharge does not.
+TEST(FvEngine, StructureCouplingSubstepTracksTheMovingHead) {
+    auto run_coupling = [](const char* tag, const char* mode) {
+        std::ifstream in(std::string(kUnitDataDir) + "/fv_structures.inp");
+        EXPECT_TRUE(in.good()) << "cannot open fv_structures.inp";
+        const std::string path = outDir() + "/coupling_" + tag + ".inp";
+        {
+            std::ofstream os(path);
+            std::string line;
+            while (std::getline(in, line)) {
+                if (line.rfind("FLOW_ROUTING", 0) == 0) {
+                    os << "FLOW_ROUTING         FV\n";
+                    if (mode) os << "FV_STRUCTURE_COUPLING " << mode << "\n";
+                } else {
+                    os << line << "\n";
+                }
+            }
+        }
+        const std::string rpt = outDir() + "/coupling_" + tag + ".rpt";
+        const std::string out = outDir() + "/coupling_" + tag + ".out";
+        EXPECT_EQ(swmm_engine_run(path.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+        return parseReport(rpt);
+    };
+
+    const RunResult frozen = run_coupling("frozen", "ROUTING_STEP");
+    const RunResult substep = run_coupling("substep", "SUBSTEP");
+    ASSERT_TRUE(frozen.parsed && substep.parsed);
+
+    // The weir is the sensitive one: held at the head difference the step
+    // opened with, it passed 23.0 cfs where re-evaluating gives 12.1.
+    ASSERT_TRUE(frozen.peak_flow.count("W1") && substep.peak_flow.count("W1"));
+    EXPECT_LT(substep.peak_flow.at("W1"), 0.8 * frozen.peak_flow.at("W1"))
+        << "weir peak " << substep.peak_flow.at("W1") << " cfs under SUBSTEP vs "
+        << frozen.peak_flow.at("W1") << " frozen — the option is still inert";
+    EXPECT_LT(std::fabs(substep.continuity_pct), 0.5)
+        << "routing continuity " << substep.continuity_pct << " %";
 }
 
 // ===========================================================================

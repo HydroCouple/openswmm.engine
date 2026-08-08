@@ -52,6 +52,22 @@ struct FvStepForcing {
     /// from evaporation and seepage. Indexed by conduit row.
     const double* conduit_loss = nullptr;
 
+    /// Optional hook the solver calls at the start of each substep so
+    /// head-dependent boundary flows can be re-evaluated against the state it
+    /// has actually reached, rather than held at the value they had when the
+    /// routing step began (FV_STRUCTURE_COUPLING SUBSTEP).
+    ///
+    /// The callee is expected to refresh `structure_flow` and
+    /// `node_fixed_head` in place. A raw function pointer, not a std::function:
+    /// FvStepForcing has to stay trivially copyable so a device backend can
+    /// take it by value.
+    ///
+    /// It does NOT cross the plugin ABI — a device backend leaves it null and
+    /// clamps to ROUTING_STEP, since the structure equations live in the
+    /// engine, not the kernels.
+    void (*refresh)(void* user, double t_elapsed) = nullptr;
+    void*  refresh_user = nullptr;
+
     int n_nodes = 0;
     int n_links = 0;
 };

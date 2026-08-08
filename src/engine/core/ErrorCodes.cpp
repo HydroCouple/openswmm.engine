@@ -201,6 +201,9 @@ static const std::unordered_map<int, const char*>& warning_table() {
         {104, "[2D_OPTIONS] %s was retired with the CVODE/ARKODE 2D solvers "
               "and was ignored; the explicit local-inertial marcher is the "
               "only 2D integrator."},
+        {105, "%s is accepted but has no effect yet under FLOW_ROUTING FV."},
+        {106, "%s is a dynamic wave option and does not apply under "
+              "FLOW_ROUTING FV."},
     };
     return table;
 }
