@@ -2832,7 +2832,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
     // B3b. Culvert inlet control (FHWA HEC-5 equations)
     //      Uses pre-built culvert_links_ (populated in initHydraulics)
-    if (!culvert_links_.empty()) {
+    //
+    //      NOT for FV: it applies the same closure as a cap on the flux
+    //      crossing the culvert's upstream face, inside the solver. Rewriting
+    //      links.flow here afterwards would contradict the node ledger
+    //      publishFv already booked from those fluxes.
+    if (!culvert_links_.empty() &&
+        ctx_.options.routing_model != RoutingModel::FV) {
         culvert::batchComputeInletControl(
             culvert_links_.data(),
             static_cast<int>(culvert_links_.size()),

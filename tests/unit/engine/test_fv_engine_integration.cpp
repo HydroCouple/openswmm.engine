@@ -738,6 +738,87 @@ TEST(FvEngine, TwoBarrelSeepageScalesWithTheBarrelCount) {
         << " acre-ft against DW's " << dw.second.outflow_volume;
 }
 
+// ---------------------------------------------------------------------------
+// Culvert inlet control (FHWA HEC-5).
+//
+// batchComputeInletControl overwrote links.flow AFTER publishFv had booked the
+// node ledger from the face fluxes, so the reported flow and the continuity
+// balance described different runs. FV now applies the same closure as a cap on
+// the flux crossing the culvert's upstream face.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A steep culvert fed far beyond what its inlet can admit. @p code is the
+/// [XSECTIONS] culvert code (0 = plain conduit).
+///
+/// FV_CELL_LENGTH is set deliberately: on this 5 % slope the default COARSE
+/// mesh (one cell for the whole conduit) conveys 54 cfs where the converged
+/// answer is 100, so leaving it out would have this test measuring the
+/// discretization rather than the inlet control. See the note in
+/// EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN §7B on COARSE mode.
+std::string writeCulvertModel(const std::string& name, const char* routing, int code) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "FV_CELL_LENGTH       5\n"
+          "ALLOW_PONDING        NO\n\n"
+          "[JUNCTIONS]\nJA  100.0  12.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF   90.0  FREE  NO\n\n"
+          "[CONDUITS]\nCV  JA  OF  200  0.013  0  0  0  0\n\n"
+          "[XSECTIONS]\nCV  CIRCULAR  3.0  0  0  0  1  " << code << "\n\n"
+          "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  120.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+} // namespace
+
+TEST(FvEngine, CulvertInletControlCapsTheFlowAndStillBalances) {
+    const std::string plain_inp = writeCulvertModel("culv_none", "FV", 0);
+    const std::string culv_inp  = writeCulvertModel("culv_code1", "FV", 1);
+    const RunResult plain = runModel(plain_inp);
+    const RunResult culv  = runModel(culv_inp);
+    ASSERT_TRUE(plain.parsed && culv.parsed);
+    ASSERT_GT(plain.peak_flow.at("CV"), 0.0) << "fixture routed nothing";
+
+    // The barrel can pass the whole 120 cfs; the INLET cannot. So the signature
+    // of inlet control here is the junction backing up and flooding, which the
+    // same model without a culvert code does not do. Peak flow is the wrong
+    // observable — both runs spike on the same startup transient.
+    const double f_plain = routingRow(outDir() + "/culv_none.rpt",  "Flooding Loss");
+    const double f_culv  = routingRow(outDir() + "/culv_code1.rpt", "Flooding Loss");
+    EXPECT_LT(f_plain, 0.01) << "the uncontrolled conduit should pass the inflow";
+    EXPECT_GT(f_culv, 0.5)
+        << "culvert flooded " << f_culv << " acre-ft — the code is inert";
+
+    // ~8 cfs of the 120 exceeds what the inlet admits at the 12 ft rim head,
+    // which over two hours is 1.32 acre-ft. Within 25 % of that is the check
+    // that the CAP itself, not just some throttling, is what floods the node.
+    EXPECT_NEAR(f_culv, 1.32, 0.33)
+        << "flooded volume " << f_culv << " acre-ft does not match the excess "
+        << "over the HEC-5 inlet capacity";
+
+    // The point of moving the cap in-solver: the reported flow and the mass
+    // balance now come from the same fluxes.
+    EXPECT_LT(std::fabs(culv.continuity_pct), 0.5)
+        << "routing continuity " << culv.continuity_pct << " %";
+
+    // Peak discharge stays within engineering distance of DW, which has always
+    // applied HEC-5. (DW does NOT back the junction up — it rewrites the
+    // reported flow after the node ledger is booked, so its flooding stays near
+    // zero. That difference is the defect this change exists to remove.)
+    const RunResult dw = runModel(writeCulvertModel("culv_code1_dw", "DYNWAVE", 1));
+    ASSERT_TRUE(dw.parsed);
+    EXPECT_NEAR(culv.peak_flow.at("CV"), dw.peak_flow.at("CV"),
+                0.25 * dw.peak_flow.at("CV"))
+        << "FV " << culv.peak_flow.at("CV") << " cfs vs DW "
+        << dw.peak_flow.at("CV") << " cfs";
+}
+
 // ===========================================================================
 // Flap gates on conduits and outfalls
 // ===========================================================================

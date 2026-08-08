@@ -69,6 +69,12 @@ public:
     const std::vector<double>& node_inflow_volume() const noexcept { return node_in_; }
     const std::vector<double>& node_outflow_volume() const noexcept { return node_out_; }
 
+    /// Per-conduit flag: did HEC-5 inlet control cap this culvert's inflow at
+    /// any point in the last advance()? Reported as the "Inlet Ctrl" column.
+    const std::vector<uint8_t>& inlet_control() const noexcept {
+        return inlet_control_;
+    }
+
     /// Per-node flooding VOLUME (ft³) over the last advance().
     const std::vector<double>& node_flood_volume() const noexcept {
         return flood_vol_;
@@ -270,6 +276,7 @@ private:
     std::vector<double> node_exch_;    ///< ∫(net inflow) dt over the routing step
     std::vector<double> node_in_, node_out_;
     std::vector<double> flood_vol_;
+    std::vector<uint8_t> inlet_control_;
 
     // Step-rejection snapshot. A cell can cross the crown INSIDE a substep,
     // taking its celerity from the free-surface value to the slot value — a

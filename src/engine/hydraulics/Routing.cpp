@@ -971,6 +971,14 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
 
         ctx.links.flow[uj]   = q_mean;
         ctx.links.depth[uj]  = fv::kernels::depthOfArea(g, a_mean);
+        // Inlet control was applied inside the solver, at the culvert's
+        // upstream face; only the report flag comes back out here.
+        if (impl) {
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            if (cr >= 0)
+                ctx.link_subtypes.conduits.inlet_control[
+                    static_cast<std::size_t>(cr)] = impl->inlet_control()[ur];
+        }
         ctx.links.volume[uj] = vol;
         const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;
         const double hyd_depth =

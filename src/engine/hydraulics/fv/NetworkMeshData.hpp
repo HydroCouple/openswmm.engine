@@ -105,6 +105,12 @@ struct FvGeometry {
 
     int    barrels = 1;            ///< parallel identical barrels
 
+    /// [XSECTIONS] culvert code (0 = not a culvert), and the conduit slope the
+    /// HEC-5 inlet-control equations need. Cold: read only at the conduit's
+    /// upstream boundary face, and only when the code is set.
+    int    culvert_code = 0;
+    double slope        = 0.0;
+
     /// First moment I₁(h) = ∫₀ʰ A(η)dη sampled uniformly on h ∈ [0, y_full],
     /// followed by the companion A(h) samples on the same grid — 2·kI1Samples
     /// entries, `[0, kI1Samples)` = I₁ and `[kI1Samples, 2·kI1Samples)` = A.
@@ -192,6 +198,11 @@ struct NetworkMeshData {
     /// out of a gated outfall is sealed in both directions, exactly as DW's two
     /// independent checks leave it.
     std::vector<uint8_t> face_gate;
+
+    /// Conduit row whose CULVERT inlet this face is, or -1. Set only on the
+    /// upstream boundary face of a conduit carrying a culvert code, which is
+    /// where HEC-5 inlet control physically acts.
+    std::vector<int> face_culvert;
     std::vector<double> face_zb;      ///< bed elevation at the interface (ft)
     std::vector<double> face_dx;      ///< centre-to-centre distance (ft)
 
@@ -335,6 +346,7 @@ struct NetworkMeshData {
         cell_face0.clear(); cell_face1.clear();
         cell_side0.clear(); cell_side1.clear();
         face_cl.clear(); face_cr.clear(); face_node.clear(); face_gate.clear();
+        face_culvert.clear();
         face_zb.clear(); face_dx.clear(); face_virtual.clear();
         face_dir_l.clear(); face_dir_r.clear();
         conduit_cell_begin.clear(); conduit_cell_count.clear(); conduit_link.clear();
