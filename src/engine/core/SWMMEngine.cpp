@@ -2667,13 +2667,23 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
             // Scatter dqdh — legacy dynwave.c lines 565-575:
             // TYPE4_PUMP adds dqdh to node1 (inlet) only; skip node2.
-            double dqdh = links.dqdh[uj];
-            const int pr_t4 = ctx_.link_subtypes.pump_row(j);
-            const bool is_type4_pump = (links.type[uj] == LinkType::PUMP &&
-                                        pr_t4 >= 0 &&
-                                        ctx_.link_subtypes.pumps.curve_type[static_cast<std::size_t>(pr_t4)] == 4);
-            dw.nodeSumDqdh(n1) += dqdh;
-            if (!is_type4_pump) dw.nodeSumDqdh(n2) += dqdh;
+            //
+            // Only when the dynamic-wave solver owns this step. This callback is
+            // SHARED with the finite-volume router, which never calls
+            // DWSolver::init, so the accumulator below is an empty vector there
+            // — writing to it corrupted the heap for any FV model carrying a
+            // pump, orifice, weir or outlet. Skipping is not merely safe, it is
+            // correct: ∂Q/∂h is the head sensitivity the implicit node
+            // continuity solve needs, and an explicit solver has no such solve.
+            if (dw.isInitialized()) {
+                double dqdh = links.dqdh[uj];
+                const int pr_t4 = ctx_.link_subtypes.pump_row(j);
+                const bool is_type4_pump = (links.type[uj] == LinkType::PUMP &&
+                                            pr_t4 >= 0 &&
+                                            ctx_.link_subtypes.pumps.curve_type[static_cast<std::size_t>(pr_t4)] == 4);
+                dw.nodeSumDqdh(n1) += dqdh;
+                if (!is_type4_pump) dw.nodeSumDqdh(n2) += dqdh;
+            }
         }
 
 #ifdef OPENSWMM_HAS_2D
@@ -2683,7 +2693,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         // zero-sensitivity explicit source produced. Gated to the default
         // EXPLICIT node continuity until the SEMI_IMPLICIT denominator sign
         // convention is ruled on (DynamicWave.cpp:2932, pre-existing).
-        if (surface_router_.isActive() &&
+        if (dw.isInitialized() && surface_router_.isActive() &&
             ctx_.options.node_continuity == NodeContinuity::EXPLICIT) {
             std::vector<std::pair<int, double>> gs;
             surface_router_.computeCouplingConductances(ctx_, gs);

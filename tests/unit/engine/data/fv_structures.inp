@@ -1,0 +1,129 @@
+[TITLE]
+;; FV process-coverage model.
+;;
+;; Every process the finite-volume solver reaches through the SHARED engine
+;; code lives here, because none of it was covered anywhere: a pump, an
+;; orifice, a weir, an outlet, a storage node, control rules, ponding, a
+;; surcharge depth, an outfall flap gate, a conduit flap gate and a two-barrel
+;; conduit with seepage. FLOW_ROUTING is rewritten by the test so the identical
+;; network runs under DYNWAVE and FV.
+;;
+;; Deliberately small and steady-forced: the point is that each process is
+;; REACHED and conserves, not that the hydrology is interesting.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             04:00:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         5
+ALLOW_PONDING        YES
+MIN_SLOPE            0
+SKIP_STEADY_STATE    NO
+
+[EVAPORATION]
+CONSTANT             0.0
+DRY_ONLY             NO
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth  InitDepth  SurDepth  Aponded
+J1      100.0  8.0       0          4.0       0
+J2       98.0  8.0       0          0         200
+J3       96.0  8.0       0          0         0
+J4       94.0  8.0       0          0         0
+J5       92.0  8.0       0          0         0
+J6       90.0  8.0       0          0         0
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       A1    A2  A0  Apond  Fevap
+ST1     95.0  12.0      2.0        FUNCTIONAL  1000  0   0   0      0
+
+[OUTFALLS]
+;;Name  Elev   Type   Stage  Gated
+OUT1     88.0  FREE          NO
+OUT2     88.0  FREE          YES
+
+[CONDUITS]
+;;Name  From   To     Length  N       InOff  OutOff  InitFlow  MaxFlow
+C1      J1     J2     400     0.013   0      0       0         0
+C2      J2     J3     400     0.013   0      0       0         0
+C3      J4     J5     400     0.013   0      0       0         0
+C4      J5     J6     400     0.013   0      0       0         0
+C5      J6     OUT1   400     0.013   0      0       0         0
+CB      J3     ST1    300     0.013   0      0       0         0
+CG      J5     OUT2   300     0.013   0      0       0         0
+
+[XSECTIONS]
+;;Link  Shape      Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR   3.0    0      0      0      1
+C2      CIRCULAR   3.0    0      0      0      1
+C3      CIRCULAR   3.0    0      0      0      1
+C4      CIRCULAR   3.0    0      0      0      1
+C5      CIRCULAR   4.0    0      0      0      1
+CB      CIRCULAR   2.5    0      0      0      2
+CG      CIRCULAR   2.0    0      0      0      1
+
+[LOSSES]
+;;Link  Kentry  Kexit  Kavg  FlapGate  Seepage
+CB      0       0      0     NO        0.20
+CG      0       0      0     YES       0
+
+[PUMPS]
+;;Name  From  To   Curve   Status  Startup  Shutoff
+P1      ST1   J4   PC1     ON      0        0
+
+[ORIFICES]
+;;Name  From  To   Type    Offset  Cd     Gated  CloseTime
+OR1     J3    J4   SIDE    0       0.65   NO     0
+
+[WEIRS]
+;;Name  From  To   Type        CrestHt  Cd    Gated  EC  Cs   Sur
+W1      J2    J4   TRANSVERSE  1.0      3.33  NO     0   0    YES
+
+[XSECTIONS]
+;; NOTE: a SECOND [XSECTIONS] block, deliberately placed after [ORIFICES] and
+;; [WEIRS]. Rows naming a link that the parser has not seen yet are dropped
+;; SILENTLY — no warning — so geometry given in the block above would leave the
+;; orifice and weir with zero area and zero flow, which is exactly the kind of
+;; quiet nothing this model exists to detect.
+OR1     CIRCULAR   1.0    0      0      0      1
+W1      RECT_OPEN  2.0    5.0    0      0      1
+
+[OUTLETS]
+;;Name  From  To    Offset  Type              Qcoeff  Qexpon  Gated
+OL1     ST1   J5    0       FUNCTIONAL/DEPTH  2.5     0.5     NO
+
+[CURVES]
+;;Name  Type   X-Value  Y-Value
+PC1     PUMP4  0        0
+PC1              2.0    3.0
+PC1              6.0    9.0
+PC1             12.0   14.0
+
+[CONTROLS]
+;; Exercises the rule engine end to end: the orifice closes on a high wet-well
+;; level and reopens on a low one. Under FV the premise reads the FV-published
+;; storage depth and the action must reach HydStructures through links.setting.
+RULE R1
+IF NODE ST1 DEPTH > 8.0
+THEN ORIFICE OR1 SETTING = 0.5
+
+RULE R2
+IF NODE ST1 DEPTH < 4.0
+THEN ORIFICE OR1 SETTING = 1.0
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries  Type   Mfactor  Sfactor  Baseline
+J1      FLOW         ""          FLOW   1.0      1.0      22.0
+J4      FLOW         ""          FLOW   1.0      1.0       6.0
+
+[TIMESERIES]
+
+[REPORT]
+INPUT      NO
+CONTROLS   NO
+NODES ALL
+LINKS ALL
