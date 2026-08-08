@@ -93,6 +93,16 @@ retroactive.
   flux-corrected transport limiter needs one synchronous sweep.
   `FV_LTS_MAX_TIERS` caps the spread.
 
+- **Fixed: conduit seepage was 43 200× too large under US units.** `[LOSSES]`
+  seepage arrives in in/hr in *both* unit systems while the solver consumes
+  ft/s, but the input-conversion pass short-circuits for US units on the
+  grounds that the input is already internal — true for lengths, areas and
+  flows, false for a rainfall-dimensioned rate. The loss then saturated at the
+  availability cap: a model whose only seepage was one conduit at 0.20 in/hr
+  showed −67 % routing continuity. Affects `KINWAVE`, `STEADY` and `FV`;
+  dynamic wave routing computes its losses on a separate path and is
+  unaffected.
+
 - **Fixed: `FLOW_ROUTING FV` lost junction storage from the routing mass
   balance.** A plain junction reports zero contribution to routing storage by
   legacy convention, which dynamic wave routing can afford because it never has
