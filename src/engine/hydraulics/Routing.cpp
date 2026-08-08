@@ -1090,6 +1090,39 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             (hyd_depth > 0.0)
                 ? std::fabs(v) * constants::INV_SQRT_GRAVITY / std::sqrt(hyd_depth)
                 : 0.0;
+
+        // Flow class and the end-full flags. Neither was ever written under FV,
+        // so the Flow Classification Summary read 100 % dry on every model and
+        // the Conduit Surcharge Summary was permanently empty — both plausible
+        // and both wrong.
+        //
+        // The classes FV can honestly report are the dry ones and the
+        // sub/supercritical split, read from the cells themselves. UP_CRITICAL
+        // and DN_CRITICAL are DW's END-CONDITION patches: FV imposes no
+        // critical-depth boundary because the Riemann solver resolves the
+        // transition natively, so those columns stay zero — that is the scheme
+        // reporting what it does, not a gap.
+        const auto uc_first = static_cast<std::size_t>(begin);
+        const auto uc_last  = static_cast<std::size_t>(begin + count - 1);
+        const bool up_dry = fv_state_.cell_h[uc_first] <= fv::kernels::kDryDepth;
+        const bool dn_dry = fv_state_.cell_h[uc_last]  <= fv::kernels::kDryDepth;
+        FlowClass fc;
+        if (up_dry && dn_dry)   fc = FlowClass::DRY;
+        else if (up_dry)        fc = FlowClass::UP_DRY;
+        else if (dn_dry)        fc = FlowClass::DN_DRY;
+        else fc = (ctx.links.froude[uj] > 1.0) ? FlowClass::SUPERCRITICAL
+                                               : FlowClass::SUBCRITICAL;
+        ctx.links.flow_class[uj] = fc;
+
+        const int cr_fs = ctx.link_subtypes.conduit_row(j);
+        if (cr_fs >= 0) {
+            const double yf = g.y_full;
+            const int8_t fs = static_cast<int8_t>(
+                ((fv_state_.cell_h[uc_first] >= yf) ? 1 : 0) |
+                ((fv_state_.cell_h[uc_last]  >= yf) ? 2 : 0));
+            ctx.link_subtypes.conduits.full_state[
+                static_cast<std::size_t>(cr_fs)] = fs;
+        }
     }
 
     // ---- nodes ------------------------------------------------------------

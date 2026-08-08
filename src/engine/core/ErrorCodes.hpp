@@ -178,7 +178,7 @@ enum ErrorCode : int {
     ERR_VJ_OFFSET               = 613,  ///< Virtual Junction %s has a conduit with a nonzero offset
     ERR_VJ_INVERT_MISMATCH      = 615,  ///< Virtual Junction %s conduit inverts do not agree at the node
     ERR_VJ_LATERAL_INFLOW       = 617,  ///< Virtual Junction %s cannot receive lateral inflow
-    ERR_VJ_ROUTING_MODEL        = 619,  ///< Virtual Junction %s requires DYNWAVE flow routing
+    ERR_VJ_ROUTING_MODEL        = 619,  ///< Virtual Junction %s requires DYNWAVE or FV flow routing
     ERR_VJ_EXTRA_TOKENS         = 621,  ///< too many items for Virtual Junction %s
 };
 
