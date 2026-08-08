@@ -5781,6 +5781,19 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
     double fd = ctx_.nodes.full_depth[ui];
     if (!(fd > 0.0)) return 0.0;
 
+    // A PONDING node holds real water above its rim, and both solvers write
+    // that volume directly rather than deriving it from depth (DW
+    // getFloodedDepth, FV applyNodeCapacity). Reporting the rim relation
+    // instead dropped the entire pond out of Final Stored Volume, and the
+    // ponded inflow then read as a continuity error — 27 % under FV and 83 %
+    // under DW on a two-hour single-junction pond. Reporting the volume is also
+    // what keeps the flooding term out of the mass balance for these nodes:
+    // updateRoutingMassBalance books overflow as a loss only while the volume
+    // is at or below full, which is exactly the ponded/not-ponded distinction.
+    if (ctx_.options.allow_ponding && ctx_.nodes.ponded_area[ui] > 0.0 &&
+        depth > fd)
+        return volume;
+
     // Legacy convention: a plain junction contributes ZERO to reported storage,
     // because report_full_volume_ is 0 for it. That is a reporting choice the
     // dynamic wave solver can afford — it never has to hold water in a junction

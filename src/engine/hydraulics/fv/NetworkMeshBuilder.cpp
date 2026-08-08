@@ -145,6 +145,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     mesh.node_invert.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_full_depth.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_ponded_area.resize(static_cast<std::size_t>(n_nodes));
+    mesh.node_sur_depth.resize(static_cast<std::size_t>(n_nodes));
+    mesh.node_can_pond.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_kind.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_area.assign(static_cast<std::size_t>(n_nodes),
                           constants::MIN_SURFAREA);
@@ -153,6 +155,16 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         mesh.node_invert[ui]      = ctx.nodes.invert_elev[ui];
         mesh.node_full_depth[ui]  = ctx.nodes.full_depth[ui];
         mesh.node_ponded_area[ui] = ctx.nodes.ponded_area[ui];
+        mesh.node_sur_depth[ui]   = ctx.nodes.sur_depth[ui];
+        // Same eligibility rule as DW (DynamicWave.cpp getFloodedDepth): the
+        // project option gates ponding, and a 2D-coupled node ponds regardless
+        // because its rim is the surface exchange.
+        const bool is_coupled =
+            (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+        mesh.node_can_pond[ui] = static_cast<uint8_t>(
+            (ctx.options.allow_ponding || is_coupled) &&
+            ctx.nodes.ponded_area[ui] > 0.0 &&
+            ctx.nodes.type[ui] != NodeType::OUTFALL);
         uint8_t kind = kNodeJunction;
         if (ui < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[ui])
             kind = kNodeVirtual;
