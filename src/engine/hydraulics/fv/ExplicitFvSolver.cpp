@@ -13,6 +13,7 @@
 #include <limits>
 
 #include "FvKernels.hpp"
+#include "../Culvert.hpp"
 #include "../../core/Constants.hpp"
 
 #ifdef SWMM_USE_OPENMP
@@ -70,6 +71,7 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     if (mesh.node_sur_depth.size() < nn) mesh.node_sur_depth.resize(nn, 0.0);
     if (mesh.node_can_pond.size() < nn)  mesh.node_can_pond.resize(nn, 0);
     if (mesh.face_gate.size() < nf)      mesh.face_gate.resize(nf, 0);
+    if (mesh.face_culvert.size() < nf)   mesh.face_culvert.resize(nf, -1);
 
     f_mass_.assign(nf, 0.0);
     f_mom_.assign(nf, 0.0);
@@ -97,6 +99,7 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     node_in_.assign(nn, 0.0);
     node_out_.assign(nn, 0.0);
     flood_vol_.assign(nn, 0.0);
+    inlet_control_.assign(static_cast<std::size_t>(mesh.n_conduits()), 0);
 
     cell_tier_.assign(nc, 0);
     node_tier_.assign(nn, 0);
@@ -1098,6 +1101,41 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
             else        { R = L; R.u = -L.u; R.q = -L.q; }
             fl = k::riemannFlux(L, R);
             fl.mass = 0.0;   // exact, not merely symmetric to rounding
+        }
+
+        // Culvert inlet control (FHWA HEC-5). Applied HERE, as a cap on the
+        // inflow crossing the culvert's upstream face, rather than by
+        // overwriting links.flow after the fact: publishFv books the node
+        // ledger from these very fluxes, so a post-hoc rewrite left the
+        // reported flow and the continuity balance describing different runs.
+        //
+        // a_full is the PER-BARREL area while the flux is the aggregate
+        // section, which reproduces legacy culvert.c exactly — it likewise
+        // compares Link.newFlow against a per-barrel capacity.
+        const int cvr = mesh_->face_culvert[uf];
+        if (cvr >= 0 && fl.mass > 0.0 && nd >= 0) {
+            const FvGeometry& gc = mesh_->geom[static_cast<std::size_t>(cvr)];
+            const double head =
+                state_->node_head[static_cast<std::size_t>(nd)] - mesh_->face_zb[uf];
+            double dqdh = 0.0;
+            const double q_cap =
+                culvert::getInflow(fl.mass, head, gc.y_full, gc.xs.a_full,
+                                   gc.slope, gc.culvert_code, dqdh);
+            if (q_cap < fl.mass) {
+                // Inlet control means the INLET is the control section, so the
+                // face becomes a prescribed-discharge boundary and its flux is
+                // the physical flux at that discharge, F = [Q, Q²/A + g·I₁],
+                // evaluated on the upwind (node-side) state. Scaling the
+                // Riemann flux instead is not self-consistent: scaling
+                // momentum with mass strips the pressure that resists the
+                // flow (a 58 ft/s startup spike), and leaving momentum alone
+                // strips nothing and gives 151 ft/s.
+                const k::FaceState& up = (cl < 0) ? L : R;
+                const double a_up = (up.a > k::kDryArea) ? up.a : k::kDryArea;
+                fl.mass = q_cap;
+                fl.mom  = q_cap * q_cap / a_up + k::kGravity * up.i1;
+                inlet_control_[static_cast<std::size_t>(cvr)] = 1;
+            }
         }
 
         f_mass_[uf]  = fl.mass;
@@ -2235,6 +2273,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
     std::fill(node_in_.begin(), node_in_.end(), 0.0);
     std::fill(node_out_.begin(), node_out_.end(), 0.0);
     std::fill(flood_vol_.begin(), flood_vol_.end(), 0.0);
+    std::fill(inlet_control_.begin(), inlet_control_.end(), uint8_t{0});
     std::fill(cell_q_int_.begin(), cell_q_int_.end(), 0.0);
 
     refreshDepths();

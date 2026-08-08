@@ -251,6 +251,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         g.rough_factor = CD.rough_factor[ur];
         g.loss_inlet   = CD.loss_inlet[ur];
         g.loss_outlet  = CD.loss_outlet[ur];
+        g.culvert_code = CD.culvert_code[ur];
+        g.slope        = CD.slope[ur];
 
         // Mesh length: the Courant-lengthened mod_length is reused as the Δx
         // floor in BOTH modes (plan §3.2). Router::init has already adjusted
@@ -306,6 +308,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         mesh.face_dir_r.push_back(dr);
         mesh.face_virtual.push_back(is_vj ? uint8_t{1} : uint8_t{0});
         mesh.face_gate.push_back(0);
+        mesh.face_culvert.push_back(-1);
     };
 
     for (int r = 0; r < n_cond; ++r) {
@@ -450,6 +453,11 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             nf_zb[ui].push_back(zb);
             mesh.face_gate[static_cast<std::size_t>(fidx)] =
                 conduit_gate[static_cast<std::size_t>(a.conduit)];
+
+            // HEC-5 inlet control acts at the culvert's UPSTREAM face only.
+            if (a.end == 0 &&
+                mesh.geom[static_cast<std::size_t>(a.conduit)].culvert_code > 0)
+                mesh.face_culvert[static_cast<std::size_t>(fidx)] = a.conduit;
         }
     }
     if (!rep.errors.empty()) return rep;
