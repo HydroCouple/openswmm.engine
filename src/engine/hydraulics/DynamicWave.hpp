@@ -559,20 +559,38 @@ private:
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:
+    /// True once init() has sized the per-node and per-link work arrays.
+    ///
+    /// The non-conduit structure callback is SHARED with the finite-volume
+    /// router, which never calls init() — Router::init only constructs the DW
+    /// solver in its DYNWAVE arm. Everything below indexes arrays that init()
+    /// allocates, so a caller outside the dynamic-wave loop must test this
+    /// first. Without it, an FV model containing any pump, orifice, weir or
+    /// outlet indexes empty vectors.
+    bool isInitialized() const noexcept { return !xnode_.sumdqdh.empty(); }
+
     /// Direct write access to the per-node is_surcharged flag (for tests/non-conduit scatter).
     uint8_t& nodeSurchargedFlag(int idx) { return xnode_.is_surcharged[static_cast<std::size_t>(idx)]; }
 
-    /// Mutable pointer to the per-node new_surf_area array (for HydStructures scatter).
+    /// Mutable pointer to the per-node new_surf_area array (for HydStructures
+    /// scatter). Null when uninitialized; the two consumers already guard.
     double* nodeNewSurfAreaDataMut() { return xnode_.new_surf_area.data(); }
 
     /// Per-link bypass flag (1 = both end nodes converged → flow held this
     /// iteration). Read by the non_conduit_fn callback to hold bypassed
     /// weir/orifice/pump/outlet flows, matching legacy findLinkFlows.
+    ///
+    /// Reports "not bypassed" when uninitialized, which is the right answer for
+    /// a caller with no Picard loop: bypassing means "hold the previous
+    /// iteration's flow", and there is no previous iteration to hold.
     bool isBypassed(int j) const {
-        return bypassed_[static_cast<std::size_t>(j)] != 0;
+        const auto uj = static_cast<std::size_t>(j);
+        return uj < bypassed_.size() && bypassed_[uj] != 0;
     }
 
     /// Mutable reference to the per-node sumdqdh accumulator at index n.
+    /// PRECONDITION: isInitialized(). The head-sensitivity accumulator only
+    /// means anything inside the implicit node-continuity solve.
     double& nodeSumDqdh(int n) { return xnode_.sumdqdh[static_cast<std::size_t>(n)]; }
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
