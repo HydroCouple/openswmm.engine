@@ -525,7 +525,10 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
     if (ctx.n_links() > 0) {
         int rm = static_cast<int>(opt.routing_model);
-        const char* rm_name = (rm == 2) ? "DYNWAVE" : (rm == 1 ? "KINWAVE" : "STEADY");
+        const char* rm_name = (rm == 3) ? "FV"
+                            : (rm == 2) ? "DYNWAVE"
+                            : (rm == 1) ? "KINWAVE"
+                                        : "STEADY";
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
 
         if (rm == 2) { // DYNWAVE
@@ -1156,10 +1159,24 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                          rs.max_step);
             std::fprintf(f, "\n  %% of Time in Steady State   :  %7.2f",
                          rs.steady_pct);
-            std::fprintf(f, "\n  Average Iterations per Step :  %7.2f",
-                         rs.computed_avg_iterations());
-            std::fprintf(f, "\n  %% of Steps Not Converging   :  %7.2f",
-                         rs.pct_non_converged());
+            // FV has no Picard loop, so what the counter holds is the number
+            // of explicit SUBSTEPS the step was filled with. Printing that
+            // under the iteration label reads as catastrophic non-convergence
+            // when the value runs to the hundreds — it is the opposite, a
+            // scheme that never iterates. Both lines are relabelled rather
+            // than dropped: the substep count is the useful number here.
+            const bool is_fv =
+                (opt.routing_model == RoutingModel::FV);
+            if (is_fv) {
+                std::fprintf(f, "\n  Average Substeps per Step   :  %7.2f",
+                             rs.computed_avg_iterations());
+                std::fprintf(f, "\n  %% of Steps Not Converging   :      n/a");
+            } else {
+                std::fprintf(f, "\n  Average Iterations per Step :  %7.2f",
+                             rs.computed_avg_iterations());
+                std::fprintf(f, "\n  %% of Steps Not Converging   :  %7.2f",
+                             rs.pct_non_converged());
+            }
 
             // Time step frequency table
             // Build histogram if not already built

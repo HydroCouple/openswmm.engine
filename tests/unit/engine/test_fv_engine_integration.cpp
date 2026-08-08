@@ -988,6 +988,93 @@ TEST(FvEngine, StructureCouplingSubstepTracksTheMovingHead) {
 }
 
 // ===========================================================================
+// Stage 3 — the report has to describe the run that actually happened
+// ===========================================================================
+
+namespace {
+
+bool reportHas(const std::string& rpt, const std::string& needle) {
+    std::ifstream in(rpt);
+    EXPECT_TRUE(in.good()) << rpt;
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find(needle) != std::string::npos) return true;
+    return false;
+}
+
+/// The data row for one conduit in a named summary table, or "".
+std::string tableRow(const std::string& rpt, const std::string& table,
+                     const std::string& name) {
+    std::ifstream in(rpt);
+    EXPECT_TRUE(in.good()) << rpt;
+    std::string line;
+    bool ins = false;
+    int rules = 0;
+    while (std::getline(in, line)) {
+        if (line.find(table) != std::string::npos) { ins = true; rules = 0; continue; }
+        if (!ins) continue;
+        if (line.find("---") != std::string::npos) { ++rules; continue; }
+        if (rules < 2) continue;
+        std::istringstream ss(line);
+        std::string first;
+        if (!(ss >> first)) break;
+        if (first == name) return line;
+    }
+    return {};
+}
+
+} // namespace
+
+// Under FV the report said "STEADY", classified every conduit as 100 % dry,
+// left the Conduit Surcharge Summary permanently empty, and printed the
+// explicit substep count under "Average Iterations per Step" — where values in
+// the hundreds read as catastrophic non-convergence of a loop FV does not have.
+TEST(FvEngine, ReportDescribesTheRunItActuallyMade) {
+    std::ifstream in(std::string(kUnitDataDir) + "/fv_structures.inp");
+    ASSERT_TRUE(in.good());
+    const std::string inp = outDir() + "/report_fv.inp";
+    {
+        std::ofstream os(inp);
+        std::string line;
+        while (std::getline(in, line))
+            os << (line.rfind("FLOW_ROUTING", 0) == 0 ? "FLOW_ROUTING         FV"
+                                                      : line) << "\n";
+    }
+    const std::string rpt = outDir() + "/report_fv.rpt";
+    const std::string out = outDir() + "/report_fv.out";
+    ASSERT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+
+    EXPECT_TRUE(reportHas(rpt, "Flow Routing Method ...... FV"))
+        << "the routing method is misreported";
+
+    // The substep count is relabelled, and the convergence percentage of a
+    // scheme that never iterates is n/a rather than a plausible 0.00.
+    EXPECT_TRUE(reportHas(rpt, "Average Substeps per Step"));
+    EXPECT_FALSE(reportHas(rpt, "Average Iterations per Step"));
+    EXPECT_TRUE(reportHas(rpt, "% of Steps Not Converging   :      n/a"));
+
+    // Flow classification: at least one conduit must be classified as flowing.
+    // C2 runs full-length subcritical on this model.
+    const std::string cls = tableRow(rpt, "Flow Classification Summary", "C2");
+    ASSERT_FALSE(cls.empty()) << "C2 missing from the classification table";
+    {
+        const auto v = trailingNumbers(cls);
+        ASSERT_GE(v.size(), 10u) << cls;
+        // v[0] is the length ratio; v[1..3] are Dry / Up Dry / Down Dry.
+        EXPECT_LT(v[1] + v[2] + v[3], 0.5)
+            << "C2 reported as mostly dry: " << cls;
+        EXPECT_GT(v[4] + v[5], 0.5) << "C2 never classified as flowing: " << cls;
+    }
+
+    // Conduit Surcharge Summary: CB runs full on this model, so the table must
+    // list it rather than saying nothing surcharged.
+    EXPECT_FALSE(reportHas(rpt, "No conduits were surcharged"))
+        << "CB surcharges on this model";
+    EXPECT_FALSE(tableRow(rpt, "Conduit Surcharge Summary", "CB").empty())
+        << "CB missing from the surcharge table";
+}
+
+// ===========================================================================
 // A mesh the FV solver cannot build must FAIL, not run unrouted
 // ===========================================================================
 
