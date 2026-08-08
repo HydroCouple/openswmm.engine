@@ -12,6 +12,7 @@
 #include <cmath>
 
 #include "FvKernels.hpp"
+#include "../Culvert.hpp"
 #include "../Link.hpp"
 #include "../Node.hpp"
 #include "../../core/Constants.hpp"
@@ -253,6 +254,13 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         g.loss_outlet  = CD.loss_outlet[ur];
         g.culvert_code = CD.culvert_code[ur];
         g.slope        = CD.slope[ur];
+        if (g.culvert_code > 0) {
+            const culvert::CulvertCoeffs cc = culvert::getCoeffs(g.culvert_code);
+            g.culvert_curve = {cc.K, cc.M, cc.C, cc.Y};
+            g.culvert_mitered = static_cast<uint8_t>(
+                g.culvert_code == 5 || g.culvert_code == 37 ||
+                g.culvert_code == 46);
+        }
 
         // Mesh length: the Courant-lengthened mod_length is reused as the Δx
         // floor in BOTH modes (plan §3.2). Router::init has already adjusted

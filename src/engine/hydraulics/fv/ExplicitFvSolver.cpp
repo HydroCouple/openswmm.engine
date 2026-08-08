@@ -13,8 +13,7 @@
 #include <limits>
 
 #include "FvKernels.hpp"
-#include "../Culvert.hpp"
-#include "../ForceMain.hpp"
+#include "../HydClosureKernels.hpp"
 #include "../../core/Constants.hpp"
 
 #ifdef SWMM_USE_OPENMP
@@ -1119,9 +1118,9 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
             const double head =
                 state_->node_head[static_cast<std::size_t>(nd)] - mesh_->face_zb[uf];
             double dqdh = 0.0;
-            const double q_cap =
-                culvert::getInflow(fl.mass, head, gc.y_full, gc.xs.a_full,
-                                   gc.slope, gc.culvert_code, dqdh);
+            const double q_cap = hydkernels::culvertInflow(
+                fl.mass, head, gc.y_full, gc.xs.a_full, gc.slope,
+                gc.culvert_curve, gc.culvert_mitered != 0, dqdh);
             if (q_cap < fl.mass) {
                 // Inlet control means the INLET is the control section, so the
                 // face becomes a prescribed-discharge boundary and its flux is
@@ -1524,9 +1523,9 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
 // Darcy-Weisbach roughness height is a small length, a Hazen-Williams C is
 // order 100.
 //
-// Host-side, not in FvKernels.hpp: it calls the engine's own forcemain
-// functions rather than reimplementing them, which the device backend will
-// have to port along with culvert::getInflow (plan §5.1).
+// The friction laws come from HydClosureKernels.hpp — the same bodies
+// ForceMain.cpp's public entry points forward to — so this compiles unchanged
+// for the device backend (plan §5.1).
 double ExplicitFvSolver::frictionFor(const FvGeometry& g, double q, double u,
                                      double h, double dt) const {
     const double r = k::hydRadOfDepth(g, h);
@@ -1534,8 +1533,8 @@ double ExplicitFvSolver::frictionFor(const FvGeometry& g, double q, double u,
         const double absu = std::fabs(u);
         if (absu <= 0.0) return q;
         const double sf = (g.roughness < 1.0)
-                              ? forcemain::getFricSlope_DW(u, r, g.roughness)
-                              : forcemain::getFricSlope_HW(u, r, g.roughness);
+                              ? hydkernels::fricSlopeDW(u, r, g.roughness)
+                              : hydkernels::fricSlopeHW(u, r, g.roughness);
         return q / (1.0 + dt * k::kGravity * sf / absu);
     }
     return k::frictionUpdate(q, u, r, dt, g.rough_factor);
