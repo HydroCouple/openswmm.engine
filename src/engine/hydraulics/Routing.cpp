@@ -990,8 +990,26 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         ctx.nodes.head[un]  = fv_state_.node_head[un];
         // Volume through the ENGINE's own storage relation, not the solver's
         // flattened table, so the reported mass balance stays on one authority.
-        ctx.nodes.volume[un] = node::getVolume(ctx.nodes, n, ctx.nodes.depth[un],
-                                               &ctx.tables, us, &ctx.node_subtypes);
+        //
+        // ABOVE THE RIM that relation stops describing the node, and DW writes
+        // the volume directly there rather than deriving it from depth
+        // (getFloodedDepth). FV must do the same or the mass balance misreads
+        // the node: the flooding term is only booked while volume <=
+        // full_volume, so a surcharged junction whose linear getVolume kept
+        // climbing had its flooding silently dropped, and a ponded junction
+        // whose retained water was reported as MIN_SURFAREA x depth lost the
+        // pond from Final Stored Volume. Both showed up as tens of percent of
+        // routing continuity error.
+        const double full_d = fv_mesh_.node_full_depth[un];
+        if (full_d > 0.0 && ctx.nodes.depth[un] > full_d) {
+            ctx.nodes.volume[un] =
+                fv_mesh_.node_can_pond[un]
+                    ? std::max(fv_state_.node_volume[un], ctx.nodes.full_volume[un])
+                    : ctx.nodes.full_volume[un];
+        } else {
+            ctx.nodes.volume[un] = node::getVolume(ctx.nodes, n, ctx.nodes.depth[un],
+                                                   &ctx.tables, us, &ctx.node_subtypes);
+        }
         if (impl && dt > 0.0)
             ctx.nodes.overflow[un] = impl->node_flood_volume()[un] / dt;
 

@@ -64,6 +64,12 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     const auto nn = static_cast<std::size_t>(mesh.n_nodes());
     const auto ns = static_cast<std::size_t>(std::max(0, state.n_species));
 
+    // Node capacity attributes are optional on a hand-built mesh (the solver
+    // unit tests construct NetworkMeshData directly). Default them rather than
+    // indexing short vectors: no ponding, no surcharge depth.
+    if (mesh.node_sur_depth.size() < nn) mesh.node_sur_depth.resize(nn, 0.0);
+    if (mesh.node_can_pond.size() < nn)  mesh.node_can_pond.resize(nn, 0);
+
     f_mass_.assign(nf, 0.0);
     f_mom_.assign(nf, 0.0);
     f_sstar_.assign(nf, 0.0);
@@ -167,9 +173,19 @@ INetworkSolver::RunStats ExplicitFvSolver::run_stats() const noexcept {
 // Node storage relation
 // ===========================================================================
 
+// Above the rim a ponding node's storage IS its ponded area, and BOTH
+// conversions have to say so. The solver re-seeds each node's volume from the
+// head it is holding at the top of every routing step; with the ponding tail
+// missing from these two functions that re-seed re-derived a 4 ft-deep pond as
+// MIN_SURFAREA x 4 ft and threw the pond away every step — the surface never
+// climbed past the rim and the water left the mass balance entirely.
 double ExplicitFvSolver::nodeVolumeFromDepth(int node, double depth) const {
     const auto un = static_cast<std::size_t>(node);
     if (depth <= 0.0) return 0.0;
+    const double full = mesh_->node_full_depth[un];
+    if (mesh_->node_can_pond[un] && full > 0.0 && depth > full)
+        return nodeVolumeFromDepth(node, full) +
+               (depth - full) * mesh_->node_ponded_area[un];
     const int off = mesh_->node_vol_off[un];
     if (off < 0)                                   // junction: linear in depth
         return state_->node_surf_area[un] * depth;
@@ -192,6 +208,12 @@ double ExplicitFvSolver::nodeVolumeFromDepth(int node, double depth) const {
 double ExplicitFvSolver::nodeDepthFromVolume(int node, double volume) const {
     const auto un = static_cast<std::size_t>(node);
     if (volume <= 0.0) return 0.0;
+    const double full = mesh_->node_full_depth[un];
+    if (mesh_->node_can_pond[un] && full > 0.0) {
+        const double v_full = nodeVolumeFromDepth(node, full);
+        if (volume > v_full)
+            return full + (volume - v_full) / mesh_->node_ponded_area[un];
+    }
     const int off = mesh_->node_vol_off[un];
     if (off < 0) {
         const double a = state_->node_surf_area[un];
@@ -1416,26 +1438,51 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
 
         const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
                              q_struct[un];
-        double vol = state_->node_volume[un] + dt * (sum_faces + q_lat);
+        const double v_prev = state_->node_volume[un];
+        double vol = v_prev + dt * (sum_faces + q_lat);
         if (vol < 0.0) vol = 0.0;
 
         double depth = nodeDepthFromVolume(n, vol);
-        const double full = mesh_->node_full_depth[un];
-        if (full > 0.0 && depth > full) {
-            const double v_full = nodeVolumeFromDepth(n, full);
-            const double excess = vol - v_full;
-            const double ponded = mesh_->node_ponded_area[un];
-            if (ponded > 0.0) {
-                depth = full + excess / ponded;      // ALLOW_PONDING
-            } else {
-                flood_vol_[un] += excess;
-                vol   = v_full;
-                depth = full;
-            }
-        }
+        applyNodeCapacity(n, v_prev, vol, depth);
         state_->node_volume[un] = vol;
         state_->node_head[un]   = mesh_->node_invert[un] + depth;
     }
+}
+
+// ===========================================================================
+// applyNodeCapacity — ponding, surcharge depth, flooding (DW parity)
+// ===========================================================================
+
+void ExplicitFvSolver::applyNodeCapacity(int node, double v_prev,
+                                         double& vol, double& depth) {
+    const auto un = static_cast<std::size_t>(node);
+    const double full = mesh_->node_full_depth[un];
+    if (full <= 0.0 || depth <= full) return;
+
+    const double v_full = nodeVolumeFromDepth(node, full);
+
+    if (mesh_->node_can_pond[un]) {
+        // Ponded: the water is not lost — the depth already carries the ponded
+        // tail, because the volume/depth conversions know about it. What is
+        // missing is the REPORT: the rate crossing the rim is still a flooding
+        // rate under DW, and the routing mass balance leaves it out on its own
+        // (it books flooding only while volume <= full_volume). Skipping it
+        // here left the Node Flooding Summary empty however deep the pond got.
+        flood_vol_[un] += std::max(vol - std::max(v_prev, v_full), 0.0);
+        return;
+    }
+
+    // Sealed: the head may rise SURCHARGE_DEPTH above the rim before the node
+    // spills, exactly as a bolted cover holds pressure under DW. Capping at the
+    // rim instead made every surcharged junction flood early — and left the
+    // Node Surcharge Summary permanently empty.
+    const double y_max = full + mesh_->node_sur_depth[un];
+    if (depth <= y_max) return;
+
+    const double v_max = nodeVolumeFromDepth(node, y_max);
+    flood_vol_[un] += vol - v_max;
+    vol   = v_max;
+    depth = y_max;
 }
 
 // ===========================================================================
@@ -2078,23 +2125,12 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
 
         const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
                              q_struct[un];
-        double vol = state_->node_volume[un] + drained + dt * q_lat;
+        const double v_prev = state_->node_volume[un];
+        double vol = v_prev + drained + dt * q_lat;
         if (vol < 0.0) vol = 0.0;
 
         double depth = nodeDepthFromVolume(n, vol);
-        const double full = mesh_->node_full_depth[un];
-        if (full > 0.0 && depth > full) {
-            const double v_full = nodeVolumeFromDepth(n, full);
-            const double excess = vol - v_full;
-            const double ponded = mesh_->node_ponded_area[un];
-            if (ponded > 0.0) {
-                depth = full + excess / ponded;
-            } else {
-                flood_vol_[un] += excess;
-                vol   = v_full;
-                depth = full;
-            }
-        }
+        applyNodeCapacity(n, v_prev, vol, depth);
         state_->node_volume[un] = vol;
         state_->node_head[un]   = mesh_->node_invert[un] + depth;
     }

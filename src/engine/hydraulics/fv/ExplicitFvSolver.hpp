@@ -133,6 +133,17 @@ private:
 
     double nodeDepthFromVolume(int node, double volume) const;
 
+    /// Apply the node's capacity rule to a freshly-integrated volume: ponding,
+    /// surcharge depth, and the flooding that removes water once neither can
+    /// take it. Mirrors DW's getFloodedDepth so a model floods and ponds the
+    /// same way under both solvers; shared by the global and tiered node
+    /// updates, which differ only in the Δt each node integrates over.
+    ///
+    /// @param v_prev  the node's volume before this update — the ponded
+    ///                flooding RATE is the water crossing the rim, which needs
+    ///                where the surface started.
+    void applyNodeCapacity(int node, double v_prev, double& vol, double& depth);
+
     // -- local time stepping (plan §3.3) ------------------------------------
     /// Per-control-volume stable step, the same quantities censusDt() reduces
     /// over but kept unreduced so each cell can be tiered on its own stiffness.

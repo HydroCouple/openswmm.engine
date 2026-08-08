@@ -548,6 +548,134 @@ TEST(FvEngine, ConduitSeepageAppliesUnderDynamicWaveToo) {
 }
 
 // ===========================================================================
+// Node capacity: ALLOW_PONDING, SURCHARGE_DEPTH, ponded flooding rate
+// ===========================================================================
+
+namespace {
+
+/// One junction that cannot pass its inflow through an undersized outlet, so it
+/// surcharges within minutes. @p sur and @p pond are the junction's
+/// SURCHARGE_DEPTH and PONDED_AREA columns.
+std::string writeCapacityModel(const std::string& name, const char* routing,
+                               const char* allow_ponding, double sur, double pond) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "ALLOW_PONDING        " << allow_ponding << "\n\n"
+          "[JUNCTIONS]\nJA  100.0  4.0  0  " << sur << "  " << pond << "\n\n"
+          "[OUTFALLS]\nOF   90.0  FREE  NO\n\n"
+          "[CONDUITS]\nC1  JA  OF  200  0.013  0  0  0  0\n\n"
+          "[XSECTIONS]\nC1  CIRCULAR  0.5  0  0  0  1\n\n"
+          "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  10.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+/// The acre-feet column of a labelled Flow Routing Continuity row.
+double routingRow(const std::string& rpt, const std::string& label) {
+    std::ifstream in(rpt);
+    EXPECT_TRUE(in.good()) << rpt;
+    std::string line;
+    bool in_routing = false;
+    while (std::getline(in, line)) {
+        if (line.find("Flow Routing Continuity") != std::string::npos) in_routing = true;
+        if (!in_routing) continue;
+        if (line.find(label) != std::string::npos) {
+            const auto v = trailingNumbers(line);
+            if (!v.empty()) return v.front();
+        }
+    }
+    return -1.0;
+}
+
+/// Does the Node Flooding Summary list this node at all?
+bool nodeIsListedAsFlooded(const std::string& rpt, const std::string& node) {
+    std::ifstream in(rpt);
+    EXPECT_TRUE(in.good()) << rpt;
+    std::string line;
+    bool in_summary = false;
+    int rules = 0;   // the table opens after its second dashed rule
+    while (std::getline(in, line)) {
+        if (line.find("Node Flooding Summary") != std::string::npos) { in_summary = true; continue; }
+        if (!in_summary) continue;
+        if (line.find("---") != std::string::npos) { ++rules; continue; }
+        if (rules < 2) continue;
+        std::istringstream ss(line);
+        std::string first;
+        if (!(ss >> first)) break;              // blank line ends the table
+        if (first == node) return true;
+    }
+    return false;
+}
+
+RunResult runModel(const std::string& path) {
+    const std::string rpt = path.substr(0, path.size() - 4) + ".rpt";
+    const std::string out = path.substr(0, path.size() - 4) + ".out";
+    EXPECT_EQ(swmm_engine_run(path.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+    return parseReport(rpt);
+}
+
+} // namespace
+
+// ALLOW_PONDING NO with a PONDED_AREA still set: the area must be ignored and
+// the node must flood. FV ponded on PONDED_AREA alone and never read the
+// option, so this model silently retained every drop it should have lost.
+TEST(FvEngine, PondingIsGatedOnTheAllowPondingOption) {
+    const std::string path = writeCapacityModel("pond_off", "FV", "NO", 0.0, 5000.0);
+    const RunResult r = runModel(path);
+    ASSERT_TRUE(r.parsed);
+    const std::string rpt = outDir() + "/pond_off.rpt";
+
+    EXPECT_GT(routingRow(rpt, "Flooding Loss"), 0.05)
+        << "ALLOW_PONDING NO must flood, not pond";
+    EXPECT_LT(routingRow(rpt, "Final Stored Volume"), 0.02)
+        << "water was retained above the rim despite ALLOW_PONDING NO";
+    EXPECT_LT(std::fabs(r.continuity_pct), 0.5)
+        << "routing continuity " << r.continuity_pct << " %";
+}
+
+// The same model with ponding ON: the water stays (it is storage, not a loss),
+// but the rate crossing the rim is still a flooding rate and the node must
+// appear in the Node Flooding Summary. The ponding branch never touched
+// flood_vol_, so that table came out empty however deep the pond got.
+TEST(FvEngine, PondedNodeStillReportsItsFloodingRate) {
+    const std::string path = writeCapacityModel("pond_on", "FV", "YES", 0.0, 5000.0);
+    const RunResult r = runModel(path);
+    ASSERT_TRUE(r.parsed);
+    const std::string rpt = outDir() + "/pond_on.rpt";
+
+    EXPECT_GT(routingRow(rpt, "Final Stored Volume"), 0.05)
+        << "ponded water should be held as storage";
+    EXPECT_TRUE(nodeIsListedAsFlooded(rpt, "JA"))
+        << "a ponding node reported no flooding at all";
+    EXPECT_LT(std::fabs(r.continuity_pct), 0.5)
+        << "routing continuity " << r.continuity_pct << " %";
+}
+
+// SURCHARGE_DEPTH raises the level a sealed node reaches before it spills.
+// FV flooded at the rim regardless, so a bolted manhole lost water it should
+// have held.
+TEST(FvEngine, SurchargeDepthDelaysFlooding) {
+    const RunResult flush = runModel(
+        writeCapacityModel("sur_none", "FV", "NO", 0.0, 0.0));
+    const RunResult sealed = runModel(
+        writeCapacityModel("sur_deep", "FV", "NO", 6.0, 0.0));
+    ASSERT_TRUE(flush.parsed);
+    ASSERT_TRUE(sealed.parsed);
+
+    const double f0 = routingRow(outDir() + "/sur_none.rpt", "Flooding Loss");
+    const double f6 = routingRow(outDir() + "/sur_deep.rpt", "Flooding Loss");
+    ASSERT_GT(f0, 0.0) << "fixture never flooded";
+    EXPECT_LT(f6, f0) << "SURCHARGE_DEPTH 6 ft flooded as much as 0 ft — the "
+                         "column is being ignored";
+    EXPECT_LT(std::fabs(sealed.continuity_pct), 0.5)
+        << "routing continuity " << sealed.continuity_pct << " %";
+}
+
+// ===========================================================================
 // A mesh the FV solver cannot build must FAIL, not run unrouted
 // ===========================================================================
 

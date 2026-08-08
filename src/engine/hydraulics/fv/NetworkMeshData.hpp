@@ -264,6 +264,12 @@ struct NetworkMeshData {
     std::vector<double>  node_invert;      ///< invert elevation (ft)
     std::vector<double>  node_full_depth;  ///< crown / rim depth (ft)
     std::vector<double>  node_ponded_area; ///< ponding area above the rim (ft²)
+    std::vector<double>  node_sur_depth;   ///< SURCHARGE_DEPTH above the rim (ft)
+
+    /// Ponding eligibility, resolved at build time from the same rule DW uses
+    /// (`(ALLOW_PONDING || 2D-coupled) && ponded_area > 0`). Without it the
+    /// solver ponded on PONDED_AREA alone and ignored the project option.
+    std::vector<uint8_t> node_can_pond;
 
     /// 0 regular junction, 1 virtual junction (no volume — its faces were
     /// spliced into interior faces and it owns none), 2 storage, 3 outfall.
@@ -326,6 +332,7 @@ struct NetworkMeshData {
         node_face_ptr.clear(); node_face_idx.clear();
         node_face_sign.clear(); node_face_zb.clear();
         node_invert.clear(); node_full_depth.clear(); node_ponded_area.clear();
+        node_sur_depth.clear(); node_can_pond.clear();
         node_kind.clear();
         node_area.clear();
         node_vol_off.clear(); node_vol_dmax.clear();
