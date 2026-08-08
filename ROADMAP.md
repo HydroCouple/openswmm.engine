@@ -1,6 +1,6 @@
-# OpenSWMMCore Roadmap
+# OpenSWMM Engine Roadmap
 
-This document describes the planned development direction for OpenSWMMCore. It is maintained by the Technical Manager, [Caleb Buahin](https://github.com/cbuahin), and updated at each release and after significant community discussions.
+This document describes the planned development direction for the OpenSWMM Engine (formerly OpenSWMMCore). It is maintained by the Technical Manager, [Caleb Buahin](https://github.com/cbuahin), and updated at each release and after significant community discussions.
 
 Items are organized by theme rather than strict release targeting, as scientific software timelines depend heavily on validation rigor and community bandwidth. Release assignments will be updated as work matures through experimental branches.
 
@@ -12,58 +12,88 @@ Community members wishing to influence priorities should participate in the [Git
 
 | Symbol | Meaning                                                  |
 |--------|----------------------------------------------------------|
-| 🔬     | Under exploration in an experimental branch              |
+| 🔬     | Under exploration — prototype or recorded design study    |
 | 🔧     | Actively in development                                  |
 | 📋     | Planned — accepted for future development                |
 | ⏸      | Deferred — not currently scheduled                       |
-| ✅     | Completed — available in a stable release                |
+| ✅     | Completed — implemented and shipping (see §7 for version) |
+
+The 6.0.0 line is in alpha. Items marked ✅ are implemented and exercised by the
+test suites, but ship in pre-release builds until 6.0.0 is final.
 
 ---
 
 ## 1. Flow Routing
 
-### 1.1 Explicit Finite Volume 1D Flow Routing — Full Saint-Venant Equations 📋
+### 1.1 Explicit Finite Volume 1D Flow Routing — Full Saint-Venant Equations 🔧
 
-**Motivation:** The current solver for 1D flow routing imposes global, Courant-number-dependent time step constraints that can be prohibitively small when a handful of short or fast-flowing elements govern the whole network. An explicit finite volume formulation of the full Saint-Venant equations with local time stepping will confine small time steps to the elements that require them, enabling stable and efficient simulation of subcritical, supercritical, and mixed-regime flows.
+**Motivation:** The node-link dynamic wave formulation writes momentum in non-conservative form, carries one discharge per conduit, and handles transcritical flow by suppressing it. An explicit finite volume formulation in conservation form conserves volume identically, resolves the flow field *inside* a reach, and reproduces the propagation speed of hydraulic jumps and pressurization fronts from the Rankine-Hugoniot conditions rather than tracking them heuristically.
 
-**Planned scope:**
-- Explicit finite volume discretization of the continuity and momentum equations for pipe and channel flow.
-- Local time stepping, advancing each element or region at its own stable time step rather than a single global step.
-- Shock-capturing treatment of hydraulic jumps and transitions between flow regimes.
-- Backward compatibility with existing input formats; solver selection via a configuration flag.
-- Regression testing against the existing solver on standard benchmark cases and against analytical solutions for steady gradually-varied flow profiles.
+**Status:** Implemented and selectable with `FLOW_ROUTING FV` in the 6.0.0 development line — an addition alongside dynamic wave analysis, which remains the default. Documented as Chapter 8 of the Hydraulics Reference Manual.
 
-**Validation approach:** Comparison to known analytical solutions (e.g., steady uniform flow, backwater curves) and to published benchmark results from the hydraulic literature.
+**Delivered:**
+- Godunov-type explicit finite volume discretization of the conservation-form continuity and momentum equations on a cell mesh cut from the conduits, with hydrostatic (Audusse) reconstruction, HLL interface flux and semi-implicit Manning friction. Mesh resolution is set by `FV_CELL_LENGTH`; the default is one cell per conduit, matching the dynamic wave element count.
+- Mixed free-surface/pressurized flow with no regime-switching logic: the Preissmann slot is folded into the cross-section closure with a tapered mouth, so a filling bore is captured and its speed is an output of the scheme.
+- Second-order MUSCL reconstruction (`FV_ORDER 2`) and SSP-RK2 time integration (`FV_TIME_INTEGRATION RK2`), both preserving the still-water property to machine precision.
+- Local time stepping (`FV_LTS`, on by default): each control volume takes a power-of-two tier from its own Courant limit, tiers are graded so no face spans more than one level, and conservation across a tier interface is exact by construction. Where tiering finds nothing to separate, the solver falls through to global stepping bit-for-bit.
+- Semi-implicit node coupling (`FV_NODE_COUPLING`, default `SEMI_IMPLICIT`), which linearizes each coupling face's flux in the node head and so removes the junction storage floor — not the pipe — from the explicit stability limit.
+- Backward compatible: seventeen `FV_*` `[OPTIONS]` keys, readable and writable through `swmm_options_get`/`set`, the Python bindings (`RouteModel.FV`) and the MCP server, and inert rather than rejected under the other routing models, so switching `FLOW_ROUTING` never invalidates a file. Virtual junctions become ordinary interior faces and reproduce the unsplit conduit cell for cell.
+
+**Validation to date:** 29 analytic gates (closure, scheme, network) plus 7 local-time-stepping gates and 5 engine-level gates. Ritter and Stoker match the closed-form solutions including shock speed; lake at rest holds to 1e-9 ft across a slope break and while pressurized; mass is conserved to 1e-12 over 10⁵ substeps. On the EPA reference drainage model the routing continuity error is **0.000 % at every mesh resolution**, against 0.026 % for dynamic wave routing on the same file. Finite-volume routing is deliberately outside the legacy bit-parity contract — it is a different discretization, gated on analytic and engineering tolerances instead.
+
+**Remaining scope:**
+- **Performance.** The solver runs ~7× dynamic wave wall-clock at one cell per conduit and ~34× at Δx = 20 ft on the reference model. The original expectation of parity at equal element counts is recorded as refuted; the two largest costs found so far (the depth inversion, 3.2×, and the node stability constraint, 2.9×) are already addressed. Remaining levers are kernel fusion and CFL-census interval tuning.
+- **Parallel and GPU backends.** `FV_BACKEND` and the plugin loader are in place, but no plugin yet exports the 1D network-solver entry point, so execution is CPU-serial today.
+- **Peak attenuation at the default mesh.** One cell per conduit attenuates the reference model's peaks by 37 % on average (7 % at Δx = 20 ft). The cause is geometric rather than diffusive — a cell-centred scheme places a single cell's bed at the conduit mid-point, presenting an artificial bed step at every manhole — so higher-order reconstruction does not rescue it. Setting `FV_CELL_LENGTH` is the present workaround; a bed-step treatment at junction faces is the fix.
+- **Desktop application exposure.** `FLOW_ROUTING FV` and the `FV_*` keys are not yet offered in the OpenSWMM GUI's routing options.
+- **Broader regression** against published benchmark cases beyond the analytic suite, and quantification of the short-steep-pipe cell-length floor.
+- **Sub-atmospheric transients** are outside the slot closure; the two-component pressure approach is the documented extension path if rapid-downsurge fidelity is later required.
 
 ### 1.2 2D Overland Flow — Local Inertial Finite Volume Model 🔧
 
 **Status:** A dynamically coupled 1D/2D overland flow solver using an explicit finite volume, local inertial formulation is available in the 6.0.0 alpha releases, with mass-conservative 1D–2D exchange, mesh generation from digital terrain data, and GUI support for mesh visualization and 1D↔2D coupling.
 
+**Since the last roadmap update:**
+- The implicit CVODE/ARKODE integrators carried through development have been **retired**. The explicit local-inertial marcher is the only 2D integrator; the retired `[2D_OPTIONS]` keys warn and are ignored on file load, and the SUNDIALS and hypre dependencies are gone.
+- Kokkos-based plugin backends (OpenMP, CUDA, HIP, SYCL) execute the 2D kernels, selected at runtime above a cell-count gate.
+- Per-cell parameter surfaces (roughness, initial depth, initial velocity), the full set of 2D boundary condition types, and 1D↔2D exchange booked per routing step by default.
+- Standing analytic validation against the SWASHES benchmark set — lake at rest (emerged and immersed), Ritter and Stoker dam breaks, Thacker planar and radial oscillations, MacDonald gradually-varied profiles, and subcritical, transcritical and shocked bump flows.
+- Mesh generation reworked to stream arbitrarily large DEMs, with a mesh cache sidecar and tiled level-of-detail rendering in the GUI.
+
 **Remaining scope:**
-- Continued validation against published inundation benchmarks and field-validated case studies.
+- Continued validation against published inundation benchmarks (e.g. the UK Environment Agency test cases) and field-validated case studies; the analytic suite above is green but is not a substitute for these.
 - Performance and robustness hardening on large regional meshes based on beta testing feedback.
+- 2D water quality transport (Section 2.2) on the same mesh.
 
 ---
 
 ## 2. Water Quality Transport
 
-### 2.1 Advection-Dispersion Model — Pipe Flow 🔬
+### 2.1 Advection-Dispersion Model — Pipe Flow 🔧
 
-**Motivation:** OpenSWMMCore currently supports simplified first-order water quality routing in pipes. A full advection-dispersion equation (ADE) solver will enable physically accurate simulation of constituent mixing and longitudinal dispersion in pressurized and open-channel conduits.
+**Motivation:** The OpenSWMM Engine currently supports simplified first-order water quality routing in pipes. A full advection-dispersion equation (ADE) solver will enable physically accurate simulation of constituent mixing and longitudinal dispersion in pressurized and open-channel conduits.
 
-**Numerical approach — Lagrangian formulation:** The ADE will be solved using a **Lagrangian (particle-tracking) method**. Parcels of water (and their constituent loads) are advected along the flow field using the velocity provided by the flow routing solver. Dispersion is applied as a superimposed Fickian random-walk step on the parcel positions at each time step. This approach is inherently free of numerical diffusion, eliminates the Courant-number stability constraint on the advection step, and conserves mass exactly at the parcel level — all of which are significant advantages over fixed-grid Eulerian schemes for transport in pipe networks with highly variable velocities and geometries.
+Two routes are being developed, and they are complementary rather than competing — one rides the finite-volume hydraulic mesh, the other is a stand-alone quality engine usable under any flow routing model.
 
-**Planned scope:**
-- Lagrangian parcel-tracking advection for 1D pipe and conduit flow, driven by velocity fields from the flow routing solver.
-- Fickian random-walk dispersion superimposed on parcel trajectories using user-specified or empirically estimated longitudinal dispersion coefficients.
+**Route A — Eulerian transport on the finite-volume mesh (implemented at scheme level).** The cell mesh of Section 1.1 already carries advected species. The species flux is the same mass flux the water used, upwinded on the contact speed, which makes solute mass conservation exact and keeps a uniform concentration field uniform under any flow, including reversal and drying. First-order upwind, MUSCL and QUICKEST-ULTIMATE reconstructions are available, limited by flux-corrected transport so the discrete maximum principle holds without sacrificing conservation, and longitudinal dispersion is treated implicitly (`FV_DISPERSION`) so the Δx²/2D_L step restriction never binds. Verified against analytic transport gates.
+
+*Remaining for Route A:* the transport layer is not yet connected to the project's `[POLLUTANTS]`, land-use buildup/washoff, inflows or treatment — it is exercised through the solver's own gates. Wiring it up, deciding how `QUALITY_SOLVER` selects between the legacy Eulerian solver, Route B and finite-volume transport, and reporting cell-resolved concentrations are the open items. Note that local time stepping is disabled while species are transported, because the flux-corrected transport limiter needs one synchronous sweep.
+
+**Route B — Lagrangian parcel tracking (design study recorded, not implemented).** Parcels of water and their constituent loads are advected along the flow field, with dispersion applied as a superimposed Fickian random-walk step. The approach is free of numerical diffusion, carries no Courant constraint on advection, conserves mass at the parcel level, and — unlike Route A — is independent of the hydraulic discretization, so it works under dynamic wave and kinematic wave routing as well. It is the natural host for the multispecies reaction system of Section 2.4, since reactions are evaluated along parcel trajectories.
+
+*Planned scope for Route B:*
+- Lagrangian parcel-tracking advection for 1D pipe and conduit flow across all SWMM link and node types, driven by velocity fields from the flow routing solver.
+- Random-walk dispersion on parcel trajectories using user-specified or empirically estimated longitudinal dispersion coefficients.
 - Parcel injection, merging, and splitting logic to maintain solution resolution while controlling computational cost.
 - Mass-conservative interpolation of parcel concentrations onto the fixed computational grid for output and coupling.
-- Coupling to the multispecies reaction module (Section 2.4) for reaction evaluation carried along parcel trajectories.
-- Verification of mass conservation and comparison to analytical solutions for simple pipe transport problems.
+- Water age as a built-in reserved species.
+- Numerical alignment with the legacy Eulerian solver in the degenerate case (single bulk species, first-order decay, no dispersion, complete-mixing storage) as a parity gate, plus comparison to analytical solutions for simple pipe transport problems.
 
-### 2.2 Advection-Dispersion Model — Overland Flow 🔬
+### 2.2 Advection-Dispersion Model — Overland Flow 📋
 
 **Motivation:** Surface runoff carries dissolved and particulate constituents across the land surface. A 2D or quasi-2D ADE formulation for overland flow will extend water quality modeling to the catchment scale.
+
+**Status:** No implementation yet. The 2D marcher solves water only; this work is sequenced behind Route A of Section 2.1, whose contact-upwinded, flux-corrected species update is the same construction applied to an unstructured 2D mesh.
 
 **Planned scope:**
 - 2D depth-averaged ADE for overland flow domains.
@@ -82,6 +112,8 @@ Community members wishing to influence priorities should participate in the [Git
 ### 2.4 Multispecies Reaction Support — All Flow Domains 🔬
 
 **Motivation:** Real-world water quality problems involve interacting chemical and biological species (e.g., nitrogen cycling, dissolved oxygen–BOD interactions, pathogen decay). A general multispecies reaction framework will allow users to define arbitrary reaction networks without modifying source code.
+
+**Status:** Design recorded — an EPANET-MSX-equivalent reaction system (user-defined rate ODEs and equilibrium DAEs, bulk and wall species, selectable integrators with adaptive error control) specified as part of the Route B strategy in Section 2.1. No implementation yet. Whichever transport route ships first, the reaction system is intended to be written once and shared, not duplicated per transport scheme.
 
 **Planned scope:**
 - A general reaction network specification (user-defined stoichiometry, rate laws, and kinetic parameters) applicable to pipe, overland, and groundwater transport.
@@ -119,38 +151,57 @@ Community members wishing to influence priorities should participate in the [Git
 
 ---
 
-## 5. Groundwater — Two-Zone Model 📋
+## 5. Groundwater — Two-Zone Model ✅
 
-**Motivation:** Groundwater interaction is central to infiltration-based stormwater controls, baseflow generation, and subsurface drainage. A two-zone (unsaturated/saturated) groundwater model will provide subsurface flow representation in the new engine and serve as the flow foundation for the groundwater advection-dispersion transport module (Section 2.3).
+**Motivation:** Groundwater interaction is central to infiltration-based stormwater controls, baseflow generation, and subsurface drainage. A two-zone (unsaturated/saturated) groundwater model provides subsurface flow representation in the new engine and serves as the flow foundation for the groundwater advection-dispersion transport module (Section 2.3).
 
-**Planned scope:**
-- Two-zone conceptualization with an upper unsaturated zone and a lower saturated zone, with moisture accounting, percolation, and evapotranspiration losses.
-- Lateral groundwater flow to drainage system nodes and channels.
-- Coupling to the surface hydrology (infiltration) and conveyance modules at shared boundaries.
-- Backward compatibility with SWMM 5.x aquifer and groundwater input sections.
-- Coupling interface for the groundwater ADE transport module (Section 2.3).
+**Status:** Implemented in the 6.0.0 line. Each subcatchment carries an independent aquifer with an upper unsaturated and a lower saturated zone, integrated as a batch of independent ODE systems (moisture accounting, percolation, deep percolation and evapotranspiration from both zones), with the user-definable lateral flow equation to drainage nodes and channels. `[AQUIFERS]`, `[GROUNDWATER]` and `[GWF]` parse with SWMM 5.x semantics, and aquifer parameters are readable and writable at runtime through the C API and the Python bindings.
+
+**Remaining scope:**
+- The coupling interface for the groundwater ADE transport module (Section 2.3).
+- Continued legacy-parity verification alongside the rest of the hydrology suite.
 
 ---
 
 ## 6. Deferred Items
 
-The following items have been raised in community discussions but are not currently scheduled. They may be reconsidered in future release cycles as resources permit or as community interest grows.
+The following items have been raised in community discussions, or explored and set aside, and are not currently scheduled. They may be reconsidered in future release cycles as resources permit or as community interest grows.
 
 | Item                                           | Reason for Deferral                                                        |
 |------------------------------------------------|----------------------------------------------------------------------------|
 | 2D overland flow (full shallow water equations) | Local inertial finite volume model implemented (Section 1.2); full dynamic-wave SWE not currently scheduled |
+| Implicit 2D time integration (CVODE/ARKODE)     | Explored and retired — the explicit marcher outperformed it on the benchmark models and removed two heavy dependencies |
 | Real-time data assimilation & sensor fusion     | Requires external telemetry infrastructure not yet in scope                |
-| GPU-accelerated solvers                         | Dependency and portability considerations; deferred pending solver maturity |
 | Machine learning surrogate models               | Research area; may be introduced as an optional experimental module        |
+
+**No longer deferred.** *GPU-accelerated solvers* have moved into development: the
+2D marcher's kernels run through Kokkos-based plugin backends (OpenMP, CUDA, HIP,
+SYCL) selected at runtime above a cell-count gate, shipped as optional plugin
+binaries so the base build carries no GPU dependency. The 1D finite volume solver
+(Section 1.1) has the same loader hooks and option surface but no plugin
+implementation yet.
 
 ---
 
 ## 7. Completed Items
 
-| Item                                          | Version |
-|-----------------------------------------------|---------|
-| *(To be populated as stable releases ship)*   |         |
+The 6.0.0 line is still in pre-release, so the version column records the
+pre-release the work first shipped in rather than a stable release. "Unreleased"
+means merged and gated but not yet carried by a tag.
+
+| Item                                                                                  | Version         |
+|---------------------------------------------------------------------------------------|-----------------|
+| Data-oriented, reentrant engine core (SoA state, opaque handle, plugin I/O, lifecycle state machine) | 6.0.0-alpha.1   |
+| Public C API, Python bindings and MCP server over the model, options, results and runtime state | 6.0.0-alpha.1 → ongoing |
+| Two-zone groundwater model (Section 5)                                                | 6.0.0-alpha.1   |
+| 1D/2D coupled overland flow — explicit local inertial finite volume marcher (Section 1.2) | 6.0.0-alpha.1 (hardened through alpha.3) |
+| Kokkos GPU/threaded plugin backends for the 2D solver (OpenMP, CUDA, HIP, SYCL)        | 6.0.0-alpha.2   |
+| Decoupled 1D/2D timesteps with conservative per-window exchange booking                | 6.0.0-alpha.3   |
+| Retirement of the implicit 2D integrators and their SUNDIALS/hypre dependencies        | unreleased      |
+| Per-cell 2D parameter surfaces and 2D initial conditions                               | unreleased      |
+| Explicit finite volume 1D routing, `FLOW_ROUTING FV` (Section 1.1)                     | unreleased      |
+| Cell-resolved Eulerian scalar transport on the finite volume mesh (Section 2.1, Route A) | unreleased      |
 
 ---
 
-*Last updated: April 2026 — Caleb Buahin, Technical Manager*
+*Last updated: August 2026 — Caleb Buahin, Technical Manager*
