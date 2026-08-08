@@ -180,6 +180,14 @@ struct NetworkMeshData {
     std::vector<int>    face_cl;      ///< left cell  (-1 ⇒ node on the left)
     std::vector<int>    face_cr;      ///< right cell (-1 ⇒ node on the right)
     std::vector<int>    face_node;    ///< coupled node (-1 for interior faces)
+
+    /// Flap-gate mask on a boundary face: bit 0 blocks a POSITIVE mass flux,
+    /// bit 1 blocks a NEGATIVE one, 0 leaves the face open. A gate is a check
+    /// valve, so a blocked face behaves as a wall only while the flux would run
+    /// the wrong way. Both bits can be set at once — a gated conduit pointing
+    /// out of a gated outfall is sealed in both directions, exactly as DW's two
+    /// independent checks leave it.
+    std::vector<uint8_t> face_gate;
     std::vector<double> face_zb;      ///< bed elevation at the interface (ft)
     std::vector<double> face_dx;      ///< centre-to-centre distance (ft)
 
@@ -322,7 +330,7 @@ struct NetworkMeshData {
         cell_dzdx.clear();
         cell_face0.clear(); cell_face1.clear();
         cell_side0.clear(); cell_side1.clear();
-        face_cl.clear(); face_cr.clear(); face_node.clear();
+        face_cl.clear(); face_cr.clear(); face_node.clear(); face_gate.clear();
         face_zb.clear(); face_dx.clear(); face_virtual.clear();
         face_dir_l.clear(); face_dir_r.clear();
         conduit_cell_begin.clear(); conduit_cell_count.clear(); conduit_link.clear();
