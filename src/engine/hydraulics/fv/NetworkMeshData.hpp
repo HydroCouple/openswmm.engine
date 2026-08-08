@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "../XSectBatch.hpp"
+#include "../HydClosureKernels.hpp"
 #include "../XSectKernels.hpp"
 
 namespace openswmm::fv {
@@ -110,6 +111,13 @@ struct FvGeometry {
     /// upstream boundary face, and only when the code is set.
     int    culvert_code = 0;
     double slope        = 0.0;
+
+    /// The type code's inlet-control curve, RESOLVED at mesh build. Keeping the
+    /// resolved coefficients rather than the code is what lets the solver
+    /// evaluate the closure with no engine dependency — the table lookup is
+    /// host work, the curve is all the kernel needs.
+    hydkernels::CulvertCurve culvert_curve{};
+    uint8_t culvert_mitered = 0;
 
     /// First moment I₁(h) = ∫₀ʰ A(η)dη sampled uniformly on h ∈ [0, y_full],
     /// followed by the companion A(h) samples on the same grid — 2·kI1Samples
