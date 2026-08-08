@@ -93,6 +93,20 @@ retroactive.
   flux-corrected transport limiter needs one synchronous sweep.
   `FV_LTS_MAX_TIERS` caps the spread.
 
+- **Fixed: a model the finite-volume solver could not mesh ran with no routing
+  at all.** `initFv` bails on a mesh-build error leaving no solver, and every
+  subsequent step returned immediately — so the run completed, exited clean, and
+  reported a network through which no water had ever moved. The diagnostics were
+  collected and never read by anything. They now reach `ctx.errors`, and
+  `initialize()` fails. A `DUMMY`-shape conduit is enough to trigger it, and
+  those are common in real models.
+
+- **Fixed: storage-node evaporation and exfiltration were charged to the mass
+  balance but never removed from the water under `FLOW_ROUTING FV`.** The loss
+  is reported as node outflow and booked as a routing loss, while the solver
+  kept the volume — a continuity error scaling with the number of storage units
+  that lose.
+
 - **Fixed: conduit seepage was 43 200× too large under US units.** `[LOSSES]`
   seepage arrives in in/hr in *both* unit systems while the solver consumes
   ft/s, but the input-conversion pass short-circuits for US units on the

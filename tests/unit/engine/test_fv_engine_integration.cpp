@@ -495,3 +495,77 @@ TEST(FvEngine, ConduitSeepageIsUnitConvertedUnderUsUnits) {
         << "routing continuity " << r.continuity_pct << " %";
 }
 
+// ===========================================================================
+// A mesh the FV solver cannot build must FAIL, not run unrouted
+// ===========================================================================
+
+// initFv bails on a mesh-build error leaving fv_solver_ == nullptr, and stepFv
+// then returns 0 for every step. Before the diagnostics were surfaced, a model
+// with a DUMMY conduit therefore ran to completion, exited clean, and reported
+// a network through which no water had ever moved. Silence is the failure mode
+// this guards.
+TEST(FvEngine, AnUnmeshableModelFailsInsteadOfRunningUnrouted) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/unmeshable.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+              "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+              "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\nJB   99.0  10.0  0  0  0\n\n"
+              "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+              "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
+              "C2  JB  OF  400  0.013  0  0  0  0\n\n"
+              "[XSECTIONS]\nC1  DUMMY\nC2  CIRCULAR  3.0  0  0  0  1\n\n"
+              "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  15.0\n\n"
+              "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
+    }
+    const std::string rpt = dir + "/unmeshable.rpt";
+    const std::string out = dir + "/unmeshable.out";
+    EXPECT_NE(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0)
+        << "a DUMMY conduit under FV ran without error — the solver was never "
+           "constructed, so nothing was routed";
+}
+
+// ===========================================================================
+// Storage-node losses must leave the water, not just the ledger
+// ===========================================================================
+
+// nodes.losses (storage evaporation + Green-Ampt exfiltration) is computed by
+// the shared Router::initNodeFlows and reported as node outflow, but was never
+// subtracted from the FV node's volume — the mass balance was charged for water
+// the solver still held.
+TEST(FvEngine, StorageNodeLossesLeaveTheWater) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/storage_evap.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             04:00:00\n"
+              "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+              "[EVAPORATION]\nCONSTANT             2.0\nDRY_ONLY             NO\n\n"
+              "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\n\n"
+              "[STORAGE]\nST1  95.0  12.0  4.0  FUNCTIONAL  20000  0  0  0  1.0\n\n"
+              "[OUTFALLS]\nOF   90.0  FREE  NO\n\n"
+              "[CONDUITS]\nC1  JA   ST1  400  0.013  0  0  0  0\n"
+              "C2  ST1  OF   400  0.013  0  0  0  0\n\n"
+              "[XSECTIONS]\nC1  CIRCULAR  3.0  0  0  0  1\n"
+              "C2  CIRCULAR  1.5  0  0  0  1\n\n"
+              "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  8.0\n\n"
+              "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    }
+    const std::string rpt = dir + "/storage_evap.rpt";
+    const std::string out = dir + "/storage_evap.out";
+    ASSERT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+
+    const RunResult r = parseReport(rpt);
+    ASSERT_TRUE(r.parsed);
+    // The evaporated volume is ~0.5 % of the routed volume here, so an
+    // undrained loss shows up plainly rather than in the rounding.
+    EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
+        << "routing continuity " << r.continuity_pct
+        << " % — storage losses charged but not removed";
+}
+
