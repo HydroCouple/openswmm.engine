@@ -1,16 +1,18 @@
 /**
  * @file test_section_order_parity.cpp
- * @brief .inp section-order independence for node-referencing sections
- *        ([RDII], [DWF], [INFLOWS]) — legacy two-pass parsing parity.
+ * @brief .inp section-order independence for sections that reference objects
+ *        declared elsewhere — legacy two-pass parsing parity.
  *
  * @details The legacy engine parses the .inp in two passes, so a section
- *          may reference a node defined in a later section. The refactored
- *          single-pass parser used to resolve node names at parse time and
- *          silently drop rows naming not-yet-parsed nodes (zero RDII/DWF/
- *          external inflow with no warning). Handlers now store the raw
- *          node name and PostParseResolver re-resolves; a name that never
- *          resolves is a fatal ERR_NAME, matching legacy
- *          error_setInpError(ERR_NAME, ...) in inflow.c / rdii.c.
+ *          may reference an object defined in a later section. The refactored
+ *          single-pass parser used to resolve names at parse time and
+ *          silently drop rows naming not-yet-parsed objects (zero RDII/DWF/
+ *          external inflow with no warning). Node-referencing handlers now
+ *          store the raw node name and PostParseResolver re-resolves;
+ *          link-referencing handlers ([XSECTIONS], [LOSSES]) stash the
+ *          unresolved row and InputReader replays it after the last section.
+ *          A name that never resolves is a fatal ERR_NAME, matching legacy
+ *          error_setInpError(ERR_NAME, ...) in inflow.c / rdii.c / link.c.
  *
  *          Each parity test runs the same model twice — sections in
  *          conventional (network-first) order and reversed — and requires
@@ -103,6 +105,52 @@ J1  FLOW  TS_IN  FLOW  1.0  1.0
 [TIMESERIES]
 TS_IN  0:00  2.0
 TS_IN  2:00  2.0
+)";
+
+// ---------------------------------------------------------------------------
+// Link-referencing property sections. [XSECTIONS] and [LOSSES] carry no link of
+// their own — every row names a link declared elsewhere — so both are subject
+// to the same ordering hazard as the node sections above.
+// ---------------------------------------------------------------------------
+
+// The nodes and the steady forcing, shared by the link-order fixtures.
+const char* kLinkNodes = R"(
+[JUNCTIONS]
+J1  100.0  10.0  0.0  0.0  0.0
+
+[OUTFALLS]
+O1  95.0  FREE
+
+[INFLOWS]
+J1  FLOW  ""  FLOW  1.0  1.0  2.0
+)";
+
+const char* kConduitOnly = R"(
+[CONDUITS]
+C1  J1  O1  400.0  0.013  0  0
+)";
+
+const char* kConduitXsect = R"(
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0  1
+)";
+
+const char* kConduitLosses = R"(
+[LOSSES]
+C1  0  0  0  NO  0.50
+)";
+
+// The reported case: [XSECTIONS] sits in its conventional slot right after
+// [CONDUITS], so geometry for an orifice declared in the later [ORIFICES]
+// section could not resolve. Zero area meant zero flow under 5 ft of head.
+const char* kOrificeOnly = R"(
+[ORIFICES]
+OR1  J1  O1  SIDE  0  0.65  NO  0
+)";
+
+const char* kOrificeXsect = R"(
+[XSECTIONS]
+OR1  CIRCULAR  1.0  0  0  0  1
 )";
 
 class SectionOrderParityTest : public ::testing::Test {
@@ -220,6 +268,94 @@ TEST_F(SectionOrderParityTest, InflowsBeforeNetwork_MatchesNetworkFirst) {
 
     EXPECT_DOUBLE_EQ(reversed, conventional)
         << "[INFLOWS] before [JUNCTIONS] must parse identically (legacy parity)";
+}
+
+// ---------------------------------------------------------------------------
+// [XSECTIONS] before [CONDUITS] must match conduits-first.
+// ---------------------------------------------------------------------------
+
+TEST_F(SectionOrderParityTest, XsectionsBeforeConduits_MatchesConduitsFirst) {
+    const double conventional = run_total(
+        "xsect_conv", std::string(kOptions) + kLinkNodes + kConduitOnly + kConduitXsect,
+        SWMM_ROUTING_OUTFLOW);
+    ASSERT_GT(conventional, 0.0) << "fixture routed nothing";
+
+    const double reversed = run_total(
+        "xsect_rev", std::string(kOptions) + kLinkNodes + kConduitXsect + kConduitOnly,
+        SWMM_ROUTING_OUTFLOW);
+
+    EXPECT_DOUBLE_EQ(reversed, conventional)
+        << "[XSECTIONS] before [CONDUITS] must parse identically (legacy parity)";
+}
+
+// ---------------------------------------------------------------------------
+// [XSECTIONS] in its conventional slot, ahead of [ORIFICES]. This is the case
+// that shipped broken: the row resolved against no link and was dropped, so the
+// orifice ran at zero area and passed no flow at all.
+// ---------------------------------------------------------------------------
+
+TEST_F(SectionOrderParityTest, XsectionsBeforeOrifices_MatchesOrificesFirst) {
+    const double conventional = run_total(
+        "orif_conv", std::string(kOptions) + kLinkNodes + kOrificeOnly + kOrificeXsect,
+        SWMM_ROUTING_OUTFLOW);
+    ASSERT_GT(conventional, 0.0) << "fixture routed nothing through the orifice";
+
+    const double reversed = run_total(
+        "orif_rev", std::string(kOptions) + kLinkNodes + kOrificeXsect + kOrificeOnly,
+        SWMM_ROUTING_OUTFLOW);
+
+    EXPECT_DOUBLE_EQ(reversed, conventional)
+        << "[XSECTIONS] before [ORIFICES] must parse identically (legacy parity)";
+}
+
+// ---------------------------------------------------------------------------
+// [LOSSES] before [CONDUITS] must match conduits-first. Gated on seepage, the
+// one loss term a dropped row would silence outright.
+// ---------------------------------------------------------------------------
+
+TEST_F(SectionOrderParityTest, LossesBeforeConduits_MatchesConduitsFirst) {
+    const double conventional = run_total(
+        "loss_conv",
+        std::string(kOptions) + kLinkNodes + kConduitOnly + kConduitXsect + kConduitLosses,
+        SWMM_ROUTING_SEEP_LOSS);
+    ASSERT_GT(conventional, 0.0) << "fixture produced no seepage";
+
+    const double reversed = run_total(
+        "loss_rev",
+        std::string(kOptions) + kLinkNodes + kConduitLosses + kConduitOnly + kConduitXsect,
+        SWMM_ROUTING_SEEP_LOSS);
+
+    EXPECT_DOUBLE_EQ(reversed, conventional)
+        << "[LOSSES] before [CONDUITS] must parse identically (legacy parity)";
+}
+
+// ---------------------------------------------------------------------------
+// A genuinely unknown link is fatal too — a row that survives the deferred
+// replay names an object that does not exist.
+// ---------------------------------------------------------------------------
+
+TEST_F(SectionOrderParityTest, UnknownLinkFailsOpen) {
+    const struct { const char* tag; const char* section; } cases[] = {
+        {"bad_xsect",  "\n[XSECTIONS]\nNO_SUCH_LINK  CIRCULAR  1.5  0  0  0  1\n"},
+        {"bad_losses", "\n[LOSSES]\nNO_SUCH_LINK  0  0  0  NO  0.50\n"},
+    };
+
+    for (const auto& c : cases) {
+        const auto inp = scratch(std::string("secorder_") + c.tag + ".inp");
+        const auto rpt = scratch(std::string("secorder_") + c.tag + ".rpt");
+        const auto out = scratch(std::string("secorder_") + c.tag + ".out");
+        {
+            std::ofstream f(inp);
+            ASSERT_TRUE(f.is_open());
+            f << kOptions << kLinkNodes << kConduitOnly << kConduitXsect << c.section;
+        }
+        engine_ = swmm_engine_create();
+        ASSERT_NE(engine_, nullptr);
+        EXPECT_NE(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(),
+                                   out.c_str(), nullptr), SWMM_OK)
+            << c.tag << ": unknown link must fail open (legacy ERR_NAME)";
+        destroy_engine();
+    }
 }
 
 // ---------------------------------------------------------------------------

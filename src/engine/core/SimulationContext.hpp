@@ -86,6 +86,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace openswmm {
@@ -717,6 +718,23 @@ struct SimulationContext {
         std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
     } twod_io;
 
+    /**
+     * @brief Section rows whose target object had not been parsed yet.
+     *
+     * @details Sections are dispatched in the order they appear in the file,
+     *          so a property section that names an object defined further down
+     *          (e.g. an [XSECTIONS] row for a link declared in a later
+     *          [ORIFICES]) cannot resolve its name on the first pass. Legacy
+     *          SWMM avoids this with an ID pre-pass; here a handler stashes the
+     *          unresolved row as (section tag, raw line) and InputReader
+     *          re-dispatches it once every section has been read. Rows still
+     *          unresolved after that replay name an object that does not exist
+     *          and raise ERROR 209, as legacy does.
+     *
+     *          Parse-time scratch only — empty once reading finishes.
+     */
+    std::vector<std::pair<std::string, std::string>> deferred_section_rows;
+
     // =========================================================================
     // Error / warning tracking
     // =========================================================================
@@ -1264,6 +1282,7 @@ struct SimulationContext {
         warnings.clear();
         errors.clear();
         title_notes.clear();
+        deferred_section_rows.clear();
 
         // Clear SoA stores
         nodes      = NodeData{};
