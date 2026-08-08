@@ -495,6 +495,58 @@ TEST(FvEngine, ConduitSeepageIsUnitConvertedUnderUsUnits) {
         << "routing continuity " << r.continuity_pct << " %";
 }
 
+// ---------------------------------------------------------------------------
+// The same conduit under DYNWAVE must lose the same water.
+//
+// DW recomputes the loss per Picard iteration through its own buildXSP, which
+// never populated yw_max. The seepage clamp then read `if (d >= ywMax) d = ywMax`
+// against 0 and drove the wetted width to 0, so DYNWAVE conduit seepage was
+// identically zero for every cross-section shape — the loss silently existed
+// only under KINWAVE/STEADY/FV, which build their params elsewhere.
+// ---------------------------------------------------------------------------
+
+TEST(FvEngine, ConduitSeepageAppliesUnderDynamicWaveToo) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/conduit_seepage_dw.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+              "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+              "ALLOW_PONDING        NO\n\n"
+              "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\n\n"
+              "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+              "[CONDUITS]\nC1  JA  OF  1000  0.013  0  0  0  0\n\n"
+              "[XSECTIONS]\nC1  RECT_OPEN  6.0  4.0  0  0  1\n\n"
+              "[LOSSES]\nC1  0  0  0  NO  1.0\n\n"
+              "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  20.0\n\n"
+              "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    }
+    const std::string rpt = dir + "/conduit_seepage_dw.rpt";
+    const std::string out = dir + "/conduit_seepage_dw.out";
+    ASSERT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+
+    std::ifstream in(rpt);
+    ASSERT_TRUE(in.good());
+    std::string line;
+    double exfil = -1.0;
+    bool in_routing = false;
+    while (std::getline(in, line)) {
+        if (line.find("Flow Routing Continuity") != std::string::npos) in_routing = true;
+        if (!in_routing) continue;
+        if (line.find("Exfiltration Loss") != std::string::npos) {
+            const auto v = trailingNumbers(line);
+            if (!v.empty()) { exfil = v.front(); break; }
+        }
+    }
+    ASSERT_GE(exfil, 0.0) << "no Exfiltration Loss line in " << rpt;
+
+    // Same 4 ft wetted width over 1000 ft at 1 in/hr as the FV case above.
+    EXPECT_NEAR(exfil, 0.0153, 0.002)
+        << "DYNWAVE seepage " << exfil << " acre-ft; zero means yw_max is unset again";
+}
+
 // ===========================================================================
 // A mesh the FV solver cannot build must FAIL, not run unrouted
 // ===========================================================================
