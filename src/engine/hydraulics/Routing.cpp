@@ -599,10 +599,15 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                 seep_loss = CD.seep_rate[ucr] * width * length;
             }
 
-            // Limit total to available volume (DW) or flow (other models)
+            // Limit the total to what is actually there. A volume-tracking
+            // solver caps on the water it holds; KINWAVE/STEADY have no conduit
+            // volume state of their own and cap on the flow instead. FV holds
+            // volume, so capping it on |flow| meant standing water in a conduit
+            // with no flow never evaporated at all.
             double total = evap_loss + seep_loss;
             if (total > 0.0) {
-                double q_avail = (model_ == RouteModel::DYNWAVE)
+                double q_avail = (model_ == RouteModel::DYNWAVE ||
+                                  model_ == RouteModel::FV)
                     ? links.volume[uj] / dt
                     : std::fabs(links.flow[uj]);
                 if (total > q_avail && q_avail >= 0.0) {
@@ -817,7 +822,6 @@ void Router::initFv(SimulationContext& ctx) {
     // carries ONE depth/flow per conduit, so every cell of a conduit starts
     // uniform — the correct projection of a DW-shaped initial condition onto
     // the finer mesh.
-    const auto& CD = ctx.link_subtypes.conduits;
     for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int begin = fv_mesh_.conduit_cell_begin[ur];
@@ -826,13 +830,13 @@ void Router::initFv(SimulationContext& ctx) {
         const int j = fv_mesh_.conduit_link[ur];
         const auto uj = static_cast<std::size_t>(j);
         const fv::FvGeometry& g = fv_mesh_.geom[ur];
-        const int barrels = std::max(1, CD.barrels[ur]);
-        const double depth = ctx.links.depth[uj];
-        const double area  = fv::kernels::areaOfDepth(g, depth);
-        const double qper  = ctx.links.flow[uj] / static_cast<double>(barrels);
+        // areaOfDepth already returns the AGGREGATE section of all barrels, and
+        // links.flow is the aggregate discharge, so neither is divided here.
+        const double area = fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
+        const double q    = ctx.links.flow[uj];
         for (int c = begin; c < begin + count; ++c) {
             fv_state_.cell_a[static_cast<std::size_t>(c)] = area;
-            fv_state_.cell_q[static_cast<std::size_t>(c)] = qper;
+            fv_state_.cell_q[static_cast<std::size_t>(c)] = q;
         }
     }
     for (int n = 0; n < nn; ++n) {
@@ -901,12 +905,16 @@ int Router::stepFv(SimulationContext& ctx, double dt,
         const auto& CD = ctx.link_subtypes.conduits;
         const int begin = fv_mesh_.conduit_cell_begin[ur];
         if (begin < 0) { fv_cond_loss_[ur] = 0.0; continue; }
-        const double rate = CD.evap_loss_rate[ur] + CD.seep_loss_rate[ur];
+        // computeConduitLosses returns the rate for ONE barrel while the cell
+        // carries the aggregate section, so the loss is charged for all of
+        // them — which is also what the mass balance books
+        // (SWMMEngine.cpp:3270, rate x barrels). Dividing by the count instead
+        // made a two-barrel conduit shed a quarter of its seepage.
+        const double rate = (CD.evap_loss_rate[ur] + CD.seep_loss_rate[ur]) *
+                            static_cast<double>(std::max(1, CD.barrels[ur]));
         const double len  = fv_mesh_.cell_dx[static_cast<std::size_t>(begin)] *
                             static_cast<double>(fv_mesh_.conduit_cell_count[ur]);
-        const int barrels = std::max(1, CD.barrels[ur]);
-        fv_cond_loss_[ur] =
-            (len > 0.0) ? rate / (len * static_cast<double>(barrels)) : 0.0;
+        fv_cond_loss_[ur] = (len > 0.0) ? rate / len : 0.0;
     }
 
     fv::FvStepForcing forcing;
@@ -933,7 +941,6 @@ int Router::stepFv(SimulationContext& ctx, double dt,
  */
 void Router::publishFv(SimulationContext& ctx, double dt) {
     auto* impl = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
-    const auto& CD = ctx.link_subtypes.conduits;
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
 
     // ---- links ------------------------------------------------------------
@@ -945,8 +952,8 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         const int j = fv_mesh_.conduit_link[ur];
         const auto uj = static_cast<std::size_t>(j);
         const fv::FvGeometry& g = fv_mesh_.geom[ur];
-        const double barrels = static_cast<double>(std::max(1, CD.barrels[ur]));
-
+        // Cell area and discharge are ALREADY the aggregate of all barrels
+        // (FvGeometry::barrel_scale), so nothing here is scaled by the count.
         double sum_len = 0.0, q_len = 0.0, a_len = 0.0, vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {
             const auto uc = static_cast<std::size_t>(c);
@@ -957,12 +964,12 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             sum_len += dx;
             q_len   += q * dx;
             a_len   += fv_state_.cell_a[uc] * dx;
-            vol     += fv_state_.cell_a[uc] * dx * barrels;
+            vol     += fv_state_.cell_a[uc] * dx;
         }
         const double q_mean = (sum_len > 0.0) ? q_len / sum_len : 0.0;
         const double a_mean = (sum_len > 0.0) ? a_len / sum_len : 0.0;
 
-        ctx.links.flow[uj]   = q_mean * barrels;
+        ctx.links.flow[uj]   = q_mean;
         ctx.links.depth[uj]  = fv::kernels::depthOfArea(g, a_mean);
         ctx.links.volume[uj] = vol;
         const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;

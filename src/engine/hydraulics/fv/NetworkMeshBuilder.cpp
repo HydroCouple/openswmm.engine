@@ -84,15 +84,19 @@ void buildDepthTable(FvGeometry& g) {
 // ===========================================================================
 
 void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
-                   FvGeometry& g) {
+                   FvGeometry& g, int barrels) {
     g.xs      = xs;
+    g.barrels = std::max(1, barrels);
+    g.barrel_scale = static_cast<double>(g.barrels);
     // Host binding by default. A device backend rebinds this to its own
     // evaluator over device copies of the same tables (plan §5.1); nothing else
     // about the geometry changes.
     g.eval    = &xsect::hostEval();
+    // Area and width are aggregate over the barrels; depth and hydraulic radius
+    // are per barrel and unscaled.
     g.y_full  = xs.y_full;
-    g.a_full  = xs.a_full;
-    g.w_max   = xs.w_max;
+    g.a_full  = g.barrel_scale * xs.a_full;
+    g.w_max   = g.barrel_scale * xs.w_max;
     g.r_full  = xs.r_full;
     g.is_open = is_open ? uint8_t{1} : uint8_t{0};
 
@@ -101,7 +105,7 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
         // y_full. One code path with the closed case — the "slot" width is just
         // the section's own top width there, so celerity stays physical.
         g.y_crown = xs.y_full;
-        g.t_slot  = (xs.w_max > 0.0) ? xs.w_max : 1.0;
+        g.t_slot  = (g.w_max > 0.0) ? g.w_max : 1.0;
     } else {
         // T_slot from the DESIGN celerity: c = √(g·A_full/T_slot). Making the
         // celerity the user-facing knob (FV_SLOT_CELERITY) rather than the
@@ -109,10 +113,10 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
         // speeds (~1000+ ft/s) would crush the global CFL step.
         g.y_crown = constants::SLOT_CROWN_CUTOFF * xs.y_full;
         const double c = (slot_celerity > 1.0) ? slot_celerity : 1.0;
-        g.t_slot = kernels::kGravity * xs.a_full / (c * c);
+        g.t_slot = kernels::kGravity * g.a_full / (c * c);
         // Never let the slot be wider than the section it pressurizes — that
         // would make the "slot" the dominant storage and understate surge.
-        const double cap = 0.05 * ((xs.w_max > 0.0) ? xs.w_max : 1.0);
+        const double cap = 0.05 * ((g.w_max > 0.0) ? g.w_max : 1.0);
         if (g.t_slot > cap) g.t_slot = cap;
         if (g.t_slot <= 0.0) g.t_slot = 1.0e-6;
     }
@@ -241,12 +245,12 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         }
 
         auto& g = mesh.geom[ur];
-        buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g);
+        buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
+                      CD.barrels[ur]);
         g.roughness    = CD.roughness[ur];
         g.rough_factor = CD.rough_factor[ur];
         g.loss_inlet   = CD.loss_inlet[ur];
         g.loss_outlet  = CD.loss_outlet[ur];
-        g.barrels      = std::max(1, CD.barrels[ur]);
 
         // Mesh length: the Courant-lengthened mod_length is reused as the Δx
         // floor in BOTH modes (plan §3.2). Router::init has already adjusted

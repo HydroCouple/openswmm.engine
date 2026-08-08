@@ -88,9 +88,11 @@ inline constexpr double kEtaDeadband = 1.0e-12;
 // one implementation rather than two implementations.
 
 /// Section area at depth h, EXCLUDING the slot (h clamped to the crown).
+/// Scaled by the barrel count: a cell is the aggregate of the parallel barrels
+/// at a shared depth (see FvGeometry::barrel_scale).
 OPENSWMM_KERNEL_FN double sectionArea(const FvGeometry& g, double h) noexcept {
     if (h <= 0.0) return 0.0;
-    return g.eval->getAofY(g.xs, (h < g.y_full) ? h : g.y_full);
+    return g.barrel_scale * g.eval->getAofY(g.xs, (h < g.y_full) ? h : g.y_full);
 }
 
 /// Section top width at depth h, EXCLUDING the slot. RECT_CLOSED returns 0 at
@@ -98,7 +100,7 @@ OPENSWMM_KERNEL_FN double sectionArea(const FvGeometry& g, double h) noexcept {
 /// is what keeps the total width — and hence the celerity — finite there.
 OPENSWMM_KERNEL_FN double sectionWidth(const FvGeometry& g, double h) noexcept {
     if (h <= 0.0) return 0.0;
-    return g.eval->getWofY(g.xs, (h < g.y_full) ? h : g.y_full);
+    return g.barrel_scale * g.eval->getWofY(g.xs, (h < g.y_full) ? h : g.y_full);
 }
 
 /// Section hydraulic radius at depth h. Frozen at r_full above the crown —
