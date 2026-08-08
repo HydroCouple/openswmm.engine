@@ -1379,6 +1379,13 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];
+    // Depth of maximum width. Read by the seepage clamp in
+    // recomputeConduitLossOne (legacy link.c:1381 `if (d >= ywMax) d = ywMax`)
+    // and by nothing else in xsect — leaving it 0 collapsed d_seep to 0, so the
+    // wetted width was 0 and DYNWAVE conduit seepage was identically zero for
+    // every shape. Router::computeConduitLosses (KINWAVE/STEADY/FV) always
+    // passed it, which is why the loss appeared under those models only.
+    xs.yw_max = links.xsect_yw_max[uk];
     xs.r_full = links.xsect_r_full[uk];
     xs.s_full = links.xsect_s_full[uk];
     xs.s_max  = links.xsect_s_max[uk];
