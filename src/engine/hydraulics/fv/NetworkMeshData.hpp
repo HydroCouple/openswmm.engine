@@ -73,6 +73,10 @@ struct FvGeometry {
     double w_max  = 0.0;           ///< width at widest point (ft)
     double r_full = 0.0;           ///< hydraulic radius when full (ft)
 
+    /// `barrels` as a factor on AREA and TOP WIDTH (see `barrels` below). Kept
+    /// beside the fields every area evaluation already loads.
+    double barrel_scale = 1.0;
+
     /// Depth at which the slot begins to open. Closed shapes: SLOT_CROWN_CUTOFF
     /// · y_full (Sjöberg-style, engages just below the crown). Open shapes:
     /// y_full, with no taper — the section simply continues with vertical walls.
@@ -99,8 +103,7 @@ struct FvGeometry {
     double loss_inlet   = 0.0;     ///< entrance loss coefficient K
     double loss_outlet  = 0.0;     ///< exit loss coefficient K
 
-    int    barrels = 1;            ///< parallel identical barrels; the solver
-                                   ///< marches ONE and scales at reporting
+    int    barrels = 1;            ///< parallel identical barrels
 
     /// First moment I₁(h) = ∫₀ʰ A(η)dη sampled uniformly on h ∈ [0, y_full],
     /// followed by the companion A(h) samples on the same grid — 2·kI1Samples
@@ -134,6 +137,7 @@ struct FvGeometry {
     /// closure — they are the sample areas themselves. Built at init from the
     /// bracketed inverse, so it costs nothing at run time.
     double h_tbl[kI1Samples] = {};
+
 };
 
 /**

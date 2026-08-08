@@ -67,8 +67,11 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
  * Exposed for the unit tests, which exercise the closure directly (continuity
  * of dA/dh through the crown, A↔h round-trip, the analytic I₁ extension).
  */
+/// @param barrels  parallel identical barrels; area and top width are scaled
+///                 by it so a cell is their aggregate section (hydraulic
+///                 radius is per barrel and stays unscaled).
 void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
-                   FvGeometry& g);
+                   FvGeometry& g, int barrels = 1);
 
 } // namespace openswmm::fv
 

@@ -675,6 +675,69 @@ TEST(FvEngine, SurchargeDepthDelaysFlooding) {
         << "routing continuity " << sealed.continuity_pct << " %";
 }
 
+// ---------------------------------------------------------------------------
+// Multi-barrel conduits.
+//
+// Two defects met here. The per-length conduit loss was divided by the barrel
+// count while the mass balance charged rate x barrels, so the solver shed a
+// fraction of what it was billed for. Underneath that, the mesh marched ONE
+// barrel and publishFv multiplied its flow and volume by the count — but the
+// node exchanges through a single boundary face, so the modelled barrel took
+// the node's whole lateral inflow and the run reported water it never conveyed
+// (a two-barrel conduit created 3.4 % of the routed volume out of nothing).
+// A cell is now the aggregate section of all the barrels, so every face flux
+// stays conservative and nothing is scaled at reporting.
+// ---------------------------------------------------------------------------
+
+TEST(FvEngine, TwoBarrelSeepageScalesWithTheBarrelCount) {
+    auto run_barrels = [](const char* tag, int barrels, const char* routing = "FV") {
+        const std::string dir = outDir();
+        const std::string inp = dir + "/seep_barrels_" + tag + ".inp";
+        {
+            std::ofstream os(inp);
+            os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing << "\n"
+                  "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+                  "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+                  "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+                  "ALLOW_PONDING        NO\n\n"
+                  "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\n\n"
+                  "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+                  "[CONDUITS]\nC1  JA  OF  1000  0.013  0  0  0  0\n\n"
+                  "[XSECTIONS]\nC1  RECT_OPEN  6.0  4.0  0  0  " << barrels << "\n\n"
+                  "[LOSSES]\nC1  0  0  0  NO  1.0\n\n"
+                  "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  20.0\n\n"
+                  "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+        }
+        const std::string rpt = dir + "/seep_barrels_" + tag + ".rpt";
+        const std::string out = dir + "/seep_barrels_" + tag + ".out";
+        EXPECT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+        return std::make_pair(routingRow(rpt, "Exfiltration Loss"), parseReport(rpt));
+    };
+
+    const auto one = run_barrels("1", 1);
+    const auto two = run_barrels("2", 2);
+    ASSERT_GT(one.first, 0.0) << "fixture produced no seepage";
+
+    EXPECT_NEAR(two.first, 2.0 * one.first, 0.1 * one.first)
+        << "two barrels shed " << two.first << " acre-ft against one barrel's "
+        << one.first << " — the barrel count is being divided out";
+
+    // Continuity is the test that catches the aggregation bug: reporting
+    // barrels x a single marched barrel balanced at -3.4 %.
+    EXPECT_LT(std::fabs(two.second.continuity_pct), 0.5)
+        << "routing continuity " << two.second.continuity_pct << " %";
+
+    // And the conveyance itself has to match the solver that has always
+    // modelled all the barrels.
+    const auto dw = run_barrels("2_dw", 2, "DYNWAVE");
+    EXPECT_NEAR(two.first, dw.first, 0.1 * dw.first)
+        << "FV shed " << two.first << " acre-ft against DW's " << dw.first;
+    EXPECT_NEAR(two.second.outflow_volume, dw.second.outflow_volume,
+                0.05 * dw.second.outflow_volume)
+        << "FV discharged " << two.second.outflow_volume
+        << " acre-ft against DW's " << dw.second.outflow_volume;
+}
+
 // ===========================================================================
 // Flap gates on conduits and outfalls
 // ===========================================================================
