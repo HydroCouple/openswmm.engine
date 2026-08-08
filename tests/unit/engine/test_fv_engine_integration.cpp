@@ -1075,6 +1075,88 @@ TEST(FvEngine, ReportDescribesTheRunItActuallyMade) {
 }
 
 // ===========================================================================
+// Stage 4 — the corpus that would have caught all of it
+// ===========================================================================
+
+namespace {
+
+/// The process-coverage model under one routing method.
+RunResult runStructures(const std::string& tag, const char* routing) {
+    std::ifstream in(std::string(kUnitDataDir) + "/fv_structures.inp");
+    EXPECT_TRUE(in.good()) << "cannot open fv_structures.inp";
+    const std::string inp = outDir() + "/structures_" + tag + ".inp";
+    {
+        std::ofstream os(inp);
+        std::string line;
+        while (std::getline(in, line))
+            os << (line.rfind("FLOW_ROUTING", 0) == 0
+                       ? std::string("FLOW_ROUTING         ") + routing
+                       : line)
+               << "\n";
+    }
+    const std::string rpt = outDir() + "/structures_" + tag + ".rpt";
+    const std::string out = outDir() + "/structures_" + tag + ".out";
+    EXPECT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+    return parseReport(rpt);
+}
+
+} // namespace
+
+// The gate that fails if forcing.structure_flow is dropped. Before this model
+// existed, deleting that field entirely would have passed all 57 FV tests — it
+// was nullptr in every one of them. A pump, an orifice, a weir and an outlet
+// must each carry water.
+TEST(FvEngine, EveryStructureTypeCarriesFlowUnderFv) {
+    const RunResult fv = runStructures("fv", "FV");
+    ASSERT_TRUE(fv.parsed);
+
+    for (const char* link : {"P1", "OR1", "W1", "OL1"}) {
+        ASSERT_TRUE(fv.peak_flow.count(link)) << link << " missing from the report";
+        EXPECT_GT(fv.peak_flow.at(link), 0.1)
+            << link << " carried " << fv.peak_flow.at(link)
+            << " cfs — the structure callback is not reaching the solver";
+    }
+    EXPECT_LT(std::fabs(fv.continuity_pct), 0.5)
+        << "routing continuity " << fv.continuity_pct << " %";
+}
+
+// The same network under both solvers. Routed volume is a property of the
+// network and the forcing rather than the scheme, so it must agree closely;
+// the structures agree to engineering tolerance, the weir excepted — see below.
+TEST(FvEngine, StructuresModelAgreesWithDynamicWave) {
+    const RunResult fv = runStructures("fv", "FV");
+    const RunResult dw = runStructures("dw", "DYNWAVE");
+    ASSERT_TRUE(fv.parsed && dw.parsed);
+
+    EXPECT_LT(std::fabs(fv.continuity_pct), 0.5) << "FV continuity";
+    EXPECT_LT(std::fabs(dw.continuity_pct), 1.0) << "DW continuity";
+
+    EXPECT_NEAR(fv.outflow_volume, dw.outflow_volume, 0.15 * dw.outflow_volume)
+        << "FV routed " << fv.outflow_volume << " acre-ft against DW's "
+        << dw.outflow_volume;
+
+    // Pump, orifice and outlet converge smoothly toward DW as the mesh refines
+    // (P1 5.50→5.60 against 6.26 over min_cells 4→16), so a 30 % band holds at
+    // the default resolution.
+    for (const char* link : {"P1", "OR1", "OL1"}) {
+        EXPECT_NEAR(fv.peak_flow.at(link), dw.peak_flow.at(link),
+                    0.30 * dw.peak_flow.at(link))
+            << link << ": FV " << fv.peak_flow.at(link) << " vs DW "
+            << dw.peak_flow.at(link);
+    }
+
+    // The WEIR is deliberately held to a looser bound and called out rather
+    // than tuned away. Q ∝ h^1.5 makes it the most head-sensitive structure in
+    // the model, and its peak does not settle with refinement the way the
+    // others do (5.71 / 7.32 / 6.38 cfs at min_cells 4 / 8 / 16, against DW's
+    // 3.89). Publishing the step-mean discharge rather than the last substep's
+    // sample brought it down from 12.1 / 14.3 / 7.4; what is left is a real
+    // open question about the weir's head, not an aliasing artefact.
+    EXPECT_LT(fv.peak_flow.at("W1"), 3.0 * dw.peak_flow.at("W1"))
+        << "weir " << fv.peak_flow.at("W1") << " vs DW " << dw.peak_flow.at("W1");
+}
+
+// ===========================================================================
 // A mesh the FV solver cannot build must FAIL, not run unrouted
 // ===========================================================================
 
