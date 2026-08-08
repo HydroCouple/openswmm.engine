@@ -57,7 +57,13 @@ CB      J3     ST1    300     0.013   0      0       0         0
 CG      J5     OUT2   300     0.013   0      0       0         0
 
 [XSECTIONS]
+;; Deliberately placed BEFORE [ORIFICES] and [WEIRS]: geometry given here for a
+;; link declared further down the file must still be applied. Rows that could
+;; not resolve on the first pass used to be dropped silently, leaving OR1 and W1
+;; with zero area and zero flow under 8 ft of head.
 ;;Link  Shape      Geom1  Geom2  Geom3  Geom4  Barrels
+OR1     CIRCULAR   1.0    0      0      0      1
+W1      RECT_OPEN  2.0    5.0    0      0      1
 C1      CIRCULAR   3.0    0      0      0      1
 C2      CIRCULAR   3.0    0      0      0      1
 C3      CIRCULAR   3.0    0      0      0      1
@@ -82,15 +88,6 @@ OR1     J3    J4   SIDE    0       0.65   NO     0
 [WEIRS]
 ;;Name  From  To   Type        CrestHt  Cd    Gated  EC  Cs   Sur
 W1      J2    J4   TRANSVERSE  1.0      3.33  NO     0   0    YES
-
-[XSECTIONS]
-;; NOTE: a SECOND [XSECTIONS] block, deliberately placed after [ORIFICES] and
-;; [WEIRS]. Rows naming a link that the parser has not seen yet are dropped
-;; SILENTLY — no warning — so geometry given in the block above would leave the
-;; orifice and weir with zero area and zero flow, which is exactly the kind of
-;; quiet nothing this model exists to detect.
-OR1     CIRCULAR   1.0    0      0      0      1
-W1      RECT_OPEN  2.0    5.0    0      0      1
 
 [OUTLETS]
 ;;Name  From  To    Offset  Type              Qcoeff  Qexpon  Gated

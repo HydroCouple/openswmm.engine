@@ -12,6 +12,7 @@
 
 #include "InputReader.hpp"
 #include "Tokenizer.hpp"
+#include "../core/ErrorCodes.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -119,7 +120,48 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
     // Flush the last section
     flush_section();
 
+    // Sections are dispatched in file order, so a property row naming an object
+    // declared further down could not resolve. Give those rows one more pass now
+    // that every section has been read.
+    replay_deferred_rows(ctx);
+
     return ctx.error_code == 0;
+}
+
+// ============================================================================
+// replay_deferred_rows()
+// ============================================================================
+
+void InputReader::replay_deferred_rows(SimulationContext& ctx) {
+    if (ctx.deferred_section_rows.empty()) return;
+
+    const auto pending = std::move(ctx.deferred_section_rows);
+    ctx.deferred_section_rows.clear();
+
+    // Group by tag, preserving file order within each tag. A handler that still
+    // cannot resolve a row re-stashes it, which is how the unresolvable ones are
+    // detected below — no per-handler "am I replaying?" flag is needed.
+    std::vector<std::string> tags;
+    for (const auto& row : pending) {
+        if (std::find(tags.begin(), tags.end(), row.first) == tags.end())
+            tags.push_back(row.first);
+    }
+
+    for (const auto& tag : tags) {
+        std::vector<std::string> lines;
+        for (const auto& row : pending) {
+            if (row.first == tag) lines.push_back(row.second);
+        }
+        dispatch_section(tag, lines, ctx);
+    }
+
+    // Anything re-stashed on the replay names an object that does not exist.
+    // Legacy SWMM treats that as fatal (ERROR 209), so it must not be silent.
+    for (const auto& row : ctx.deferred_section_rows) {
+        auto tok = Tokenizer::tokenize(row.second);
+        ctx.errors.push_back(format_error(ERR_NAME, tok.empty() ? row.second : tok[0]));
+    }
+    ctx.deferred_section_rows.clear();
 }
 
 // ============================================================================
