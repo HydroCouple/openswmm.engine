@@ -262,11 +262,14 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         const double mlen = CD.mod_length[ur];
         const double L    = std::max({len, mlen, constants::FUDGE});
 
+        // FV_MIN_CELLS is a FLOOR on the discretization, so it applies whether
+        // or not FV_CELL_LENGTH asked for a target Δx. Applying it only inside
+        // the FINE branch made it inert on its own — another parsed knob that
+        // did nothing unless a second one was also set.
         int ncell = 1;                                   // COARSE default
-        if (opts.cell_length > 0.0) {                    // FINE
+        if (opts.cell_length > 0.0)                      // FINE
             ncell = static_cast<int>(std::ceil(L / opts.cell_length));
-            ncell = std::max({ncell, opts.min_cells, 1});
-        }
+        ncell = std::max({ncell, opts.min_cells, 1});
         mesh.conduit_cell_begin[ur] = mesh.n_cells();
         mesh.conduit_cell_count[ur] = ncell;
 

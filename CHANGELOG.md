@@ -50,18 +50,19 @@ retroactive.
   `FV_MIN_PARALLEL_CELLS`, `FV_LTS`, `FV_LTS_MAX_TIERS`,
   `FV_CFL_CENSUS_INTERVAL`.
 
-  > **Set `FV_CELL_LENGTH` if peak flows matter.** At the one-cell-per-conduit
-  > default the solver attenuates this model's peaks by 37 % on average; at
-  > Δx = 20 ft that falls to 7 %. The cause is geometric, not diffusive — a
-  > cell-centred scheme puts a single cell's bed at the conduit's *mid-point*
-  > elevation, presenting an artificial bed step of half the conduit's fall at
-  > every manhole — so higher-order reconstruction does not rescue it. Dynamic
-  > wave analysis remains the default and the right choice for routine design
+  > **Refine further if peak flows matter.** The default is
+  > `FV_MIN_CELLS 4`; at that mesh the solver attenuates this model's peaks by
+  > 15.3 % on average, against 37.1 % at one cell per conduit and 7.6 % at
+  > eight. The cause is geometric, not diffusive — a cell-centred scheme puts a
+  > single cell's bed at the conduit's *mid-point* elevation, presenting an
+  > artificial bed step of half the conduit's fall at every manhole — so
+  > higher-order reconstruction does not rescue it. Dynamic wave analysis
+  > remains the default routing model and the right choice for routine design
   > storms, continuous simulation and planning work.
 
   > **It is also slower.** On the same model the finite-volume solver runs
-  > ~7× the dynamic wave solver's wall-clock at one cell per conduit, and
-  > ~34× at Δx = 20 ft. The peak-deviation figures above are a consistency
+  > ~7× the dynamic wave solver's wall-clock at one cell per conduit, ~15× at
+  > the default four, and ~34× at Δx = 20 ft. The peak-deviation figures above are a consistency
   > check against dynamic wave routing, not a measure of error — accuracy is
   > established against closed-form solutions, not against another numerical
   > method. The binding constraint is the node rather than the
@@ -354,6 +355,21 @@ retroactive.
   factors in the Property Browser and the Attribute Table.
 
 ### Changed
+
+- **`FV_MIN_CELLS` now defaults to 4, and is a real floor.** It previously
+  defaulted to 1 and was applied only when `FV_CELL_LENGTH` was also set, so on
+  its own it did nothing — a parsed knob that needed a second knob to have any
+  effect. It now applies with or without a length target.
+
+  One cell per conduit was the default and should not have been. A conduit
+  meshed as a single cell has no interior gradient of its own and presents an
+  artificial bed step of half its fall at every manhole, so it under-conveys.
+  Measured on Example1, mean absolute peak-flow deviation from dynamic wave
+  against cells per conduit — 1: **37.1 %**, 2: 25.7 %, 4: **15.3 %**,
+  8: 7.6 %; worst link −75.8 % → −43.2 % → −22.6 %; wall-clock 1.0× → 2.2× →
+  5.4×. Four is the knee, not the answer: it more than halves the one-cell
+  error for about twice the cost. Raise it, or set `FV_CELL_LENGTH`, where peak
+  flows or in-conduit profiles matter.
 
 - **The validated 2D solver regime is now the default**, being the configuration measured fastest
   *and* hydrologically complete on the 13k-cell, 48-hour Bellinge multiscale benchmark:
