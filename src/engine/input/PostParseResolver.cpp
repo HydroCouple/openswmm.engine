@@ -442,6 +442,32 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
                                        int n_nodes, int n_links, int n_subcatch) {
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const auto usz = static_cast<std::size_t>(us);
+
+    // Rainfall-dimensioned inputs convert in BOTH unit systems, so they must be
+    // handled before the US early-out below.
+    //
+    // That early-out is keyed on the LENGTH factor being 1, which is the right
+    // test for lengths, areas and flows: US input arrives in feet and cfs, which
+    // are already the internal units. It is the WRONG test for [LOSSES] seepage,
+    // which arrives in in/hr in both systems while the solver consumes ft/s —
+    // UCF(RAINFALL) is 43200 for US, not 1. Skipping it left the rate 43200×
+    // too large, and the loss then saturated at the availability cap: measured
+    // −67 % routing continuity on a model whose only seepage was one conduit at
+    // 0.20 in/hr. Legacy converts it unconditionally (link.c conduit_validate,
+    // `seepRate /= UCF(RAINFALL)`), which is what this restores.
+    {
+        const double rain0 = ucf::Ucf[ucf::RAINFALL][usz];
+        if (rain0 != 1.0) {
+            auto& CD = ctx.link_subtypes.conduits;
+            for (int j = 0; j < n_links; ++j) {
+                if (ctx.links.type[static_cast<std::size_t>(j)] != LinkType::CONDUIT)
+                    continue;
+                const int cr = ctx.link_subtypes.conduit_row(j);
+                if (cr >= 0) CD.seep_rate[static_cast<std::size_t>(cr)] /= rain0;
+            }
+        }
+    }
+
     const double inv_len = ucf::Ucf_inv[ucf::LENGTH][usz];
     if (inv_len == 1.0) return;  // US units: input already in internal units.
 
@@ -516,7 +542,6 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
                 ctx.link_subtypes.conduits.length[ucr] /= len;
             ctx.links.q0[uj]        /= qcf;
             ctx.links.q_limit[uj]   /= qcf;
-            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] /= rain;  // legacy /UCF(RAINFALL)
         }
         // Offsets are length-dimension; crest lives on the weir/outlet row.
         ctx.links.offset1[uj]      /= len;
@@ -549,6 +574,22 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
 void convert_internal_to_display(SimulationContext& ctx) {
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const auto usz = static_cast<std::size_t>(us);
+
+    // Mirror of the hoist in convert_inputs_to_internal: seepage is in/hr in
+    // both unit systems, so it converts even when lengths do not.
+    {
+        const double rain0 = ucf::Ucf[ucf::RAINFALL][usz];
+        if (rain0 != 1.0) {
+            auto& CD = ctx.link_subtypes.conduits;
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                if (ctx.links.type[static_cast<std::size_t>(j)] != LinkType::CONDUIT)
+                    continue;
+                const int cr = ctx.link_subtypes.conduit_row(j);
+                if (cr >= 0) CD.seep_rate[static_cast<std::size_t>(cr)] *= rain0;
+            }
+        }
+    }
+
     const double len = ucf::Ucf[ucf::LENGTH][usz];
     if (len == 1.0) return;  // US units: internal already equals display.
 
@@ -604,7 +645,6 @@ void convert_internal_to_display(SimulationContext& ctx) {
                 ctx.link_subtypes.conduits.length[ucr] *= len;
             ctx.links.q0[uj]        *= flow;
             ctx.links.q_limit[uj]   *= flow;
-            if (cr >= 0) ctx.link_subtypes.conduits.seep_rate[ucr] *= rain;
         }
         ctx.links.offset1[uj]      *= len;
         ctx.links.offset2[uj]      *= len;

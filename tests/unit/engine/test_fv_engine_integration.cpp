@@ -431,3 +431,67 @@ TEST(FvEngine, JunctionStorageIsCountedInTheRoutingBalance) {
         << " junctions — junction storage is missing from the balance";
 }
 
+// ===========================================================================
+// Conduit seepage must be unit-converted in US units too
+// ===========================================================================
+
+// [LOSSES] seepage arrives in in/hr in BOTH unit systems while the solver
+// consumes ft/s, so UCF(RAINFALL) is 43200 for US, not 1. The input conversion
+// pass short-circuits for US on the grounds that "input is already internal" —
+// true for lengths, areas and flows, false for this. The rate was therefore
+// used 43200x too large and the loss saturated at the availability cap.
+//
+// A rectangular OPEN section makes the answer exact rather than approximate:
+// its top width is w_max at every depth, so the seepage rate is
+//   (r / 43200) * w * L  cfs
+// independent of how the flow settles. At 1 in/hr over 4 ft x 1000 ft that is
+// 0.0926 cfs, or 0.0153 acre-feet over two hours. Unconverted it would be
+// 4000 cfs, capped at the 20 cfs inflow — two orders of magnitude apart, so
+// this gate cannot be satisfied by a near miss.
+TEST(FvEngine, ConduitSeepageIsUnitConvertedUnderUsUnits) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/conduit_seepage.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+              "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+              "ALLOW_PONDING        NO\n\n"
+              "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\n\n"
+              "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+              "[CONDUITS]\nC1  JA  OF  1000  0.013  0  0  0  0\n\n"
+              "[XSECTIONS]\nC1  RECT_OPEN  6.0  4.0  0  0  1\n\n"
+              "[LOSSES]\nC1  0  0  0  NO  1.0\n\n"
+              "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  20.0\n\n"
+              "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    }
+    const std::string rpt = dir + "/conduit_seepage.rpt";
+    const std::string out = dir + "/conduit_seepage.out";
+    ASSERT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+
+    std::ifstream in(rpt);
+    ASSERT_TRUE(in.good());
+    std::string line, block;
+    double exfil = -1.0;
+    bool in_routing = false;
+    while (std::getline(in, line)) {
+        if (line.find("Flow Routing Continuity") != std::string::npos) in_routing = true;
+        if (!in_routing) continue;
+        if (line.find("Exfiltration Loss") != std::string::npos) {
+            const auto v = trailingNumbers(line);
+            if (!v.empty()) { exfil = v.front(); break; }
+        }
+    }
+    ASSERT_GE(exfil, 0.0) << "no Exfiltration Loss line in " << rpt;
+
+    // (1 in/hr / 43200) * 4 ft * 1000 ft * 7200 s = 666.7 ft^3 = 0.0153 acre-ft.
+    EXPECT_NEAR(exfil, 0.0153, 0.002)
+        << "seepage " << exfil << " acre-ft; unconverted would saturate near 3.3";
+
+    const RunResult r = parseReport(rpt);
+    ASSERT_TRUE(r.parsed);
+    EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
+        << "routing continuity " << r.continuity_pct << " %";
+}
+
