@@ -69,6 +69,7 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     // indexing short vectors: no ponding, no surcharge depth.
     if (mesh.node_sur_depth.size() < nn) mesh.node_sur_depth.resize(nn, 0.0);
     if (mesh.node_can_pond.size() < nn)  mesh.node_can_pond.resize(nn, 0);
+    if (mesh.face_gate.size() < nf)      mesh.face_gate.resize(nf, 0);
 
     f_mass_.assign(nf, 0.0);
     f_mom_.assign(nf, 0.0);
@@ -1080,7 +1081,25 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
         faceSide(f, cl, nd, zstar, mesh_->face_dir_l[uf], u_int, L, i1l, zdummy, false);
         faceSide(f, cr, nd, zstar, mesh_->face_dir_r[uf], u_int, R, i1r, zdummy, false);
 
-        const k::FaceFlux fl = k::riemannFlux(L, R);
+        k::FaceFlux fl = k::riemannFlux(L, R);
+
+        // Flap gate. A check valve, not a wall: the face stays open while the
+        // flux runs the permitted way and closes the instant it would reverse.
+        // Closing it means MIRRORING the interior state across the face — equal
+        // depth, reversed velocity — which is the standard reflective boundary:
+        // it returns exactly zero mass flux and leaves the interior side its
+        // own hydrostatic pressure, so the gate holds water back without
+        // inventing momentum. Zeroing f_mass alone would leave a momentum flux
+        // the closed gate never transmits.
+        const uint8_t gate = mesh_->face_gate[uf];
+        if (gate != 0 && ((fl.mass > 0.0 && (gate & 1u)) ||
+                          (fl.mass < 0.0 && (gate & 2u)))) {
+            if (cl < 0) { L = R; L.u = -R.u; L.q = -R.q; }
+            else        { R = L; R.u = -L.u; R.q = -L.q; }
+            fl = k::riemannFlux(L, R);
+            fl.mass = 0.0;   // exact, not merely symmetric to rounding
+        }
+
         f_mass_[uf]  = fl.mass;
         f_mom_[uf]   = fl.mom;
         f_sstar_[uf] = fl.sstar;

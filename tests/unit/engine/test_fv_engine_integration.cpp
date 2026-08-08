@@ -676,6 +676,83 @@ TEST(FvEngine, SurchargeDepthDelaysFlooding) {
 }
 
 // ===========================================================================
+// Flap gates on conduits and outfalls
+// ===========================================================================
+
+namespace {
+
+/// A dry junction below a FIXED outfall stage 8 ft above it: without a gate the
+/// sea runs backwards up the pipe. @p conduit_gate is the [LOSSES] FlapGate
+/// column, @p outfall_gate the [OUTFALLS] Gated column.
+std::string writeBackflowModel(const std::string& name, const char* routing,
+                               const char* conduit_gate, const char* outfall_gate) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "ALLOW_PONDING        NO\n\n"
+          "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF  100.0  FIXED  108.0  " << outfall_gate << "\n\n"
+          "[CONDUITS]\nC1  JA  OF  200  0.013  0  0  0  0\n\n"
+          "[XSECTIONS]\nC1  CIRCULAR  2.0  0  0  0  1\n\n"
+          "[LOSSES]\nC1  0  0  0  " << conduit_gate << "  0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+} // namespace
+
+// A gate on the conduit and a gate on the outfall must each stop the backflow
+// that an ungated model admits. Neither flag existed anywhere under fv/, so FV
+// filled the network from the sea whatever the .inp said.
+TEST(FvEngine, FlapGatesBlockBackflow) {
+    const struct { const char* tag; const char* cond; const char* outf; bool open; }
+    cases[] = {
+        {"open",      "NO",  "NO",  true},
+        {"cond_gate", "YES", "NO",  false},
+        {"outf_gate", "NO",  "YES", false},
+    };
+
+    double open_flow = 0.0;
+    for (const auto& c : cases) {
+        const RunResult r = runModel(
+            writeBackflowModel(std::string("flap_") + c.tag, "FV", c.cond, c.outf));
+        ASSERT_TRUE(r.parsed) << c.tag;
+        const auto it = r.peak_flow.find("C1");
+        ASSERT_NE(it, r.peak_flow.end()) << c.tag << ": no C1 row in the flow summary";
+
+        if (c.open) {
+            open_flow = it->second;
+            EXPECT_GT(open_flow, 1.0)
+                << "fixture admitted no backflow, so the gate cases prove nothing";
+        } else {
+            EXPECT_LT(it->second, 0.01 * open_flow)
+                << c.tag << ": peak flow " << it->second
+                << " cfs against " << open_flow << " cfs ungated — the gate is open";
+        }
+    }
+}
+
+// The same three cases under DYNWAVE, which has always honoured both gates.
+// FV has to agree with it, not merely with itself.
+TEST(FvEngine, FlapGatesMatchDynamicWave) {
+    for (const char* tag : {"cond_gate", "outf_gate"}) {
+        const char* cond = (std::string(tag) == "cond_gate") ? "YES" : "NO";
+        const char* outf = (std::string(tag) == "cond_gate") ? "NO"  : "YES";
+        const RunResult dw = runModel(
+            writeBackflowModel(std::string("flap_dw_") + tag, "DYNWAVE", cond, outf));
+        const RunResult fv = runModel(
+            writeBackflowModel(std::string("flap_fv_") + tag, "FV", cond, outf));
+        ASSERT_TRUE(dw.parsed && fv.parsed) << tag;
+        EXPECT_NEAR(fv.peak_flow.at("C1"), dw.peak_flow.at("C1"), 0.05)
+            << tag << ": FV " << fv.peak_flow.at("C1")
+            << " cfs vs DW " << dw.peak_flow.at("C1") << " cfs";
+    }
+}
+
+// ===========================================================================
 // A mesh the FV solver cannot build must FAIL, not run unrouted
 // ===========================================================================
 

@@ -301,6 +301,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         mesh.face_dir_l.push_back(dl);
         mesh.face_dir_r.push_back(dr);
         mesh.face_virtual.push_back(is_vj ? uint8_t{1} : uint8_t{0});
+        mesh.face_gate.push_back(0);
     };
 
     for (int r = 0; r < n_cond; ++r) {
@@ -353,6 +354,45 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         return ctx.nodes.invert_elev[static_cast<std::size_t>(n)] + off;
     };
 
+    // -----------------------------------------------------------------------
+    // Flap gates, per conduit
+    // -----------------------------------------------------------------------
+    // DW applies two checks to a conduit's flow (DynamicWave.cpp
+    // getConduitFlow): the link's own [LOSSES] gate zeroes q whenever it
+    // opposes links.direction, and a gated OUTFALL at either end zeroes any q
+    // that would leave that outfall. Both act on the SINGLE link flow, so each
+    // seals the whole conduit, not one end of it — an outfall gate blocking
+    // only its own face let the pipe drain backwards out its other end.
+    //
+    // Both reduce to a blocked sign along the chain, and a chain-positive flow
+    // is a positive face flux at BOTH boundary faces (upstream the node is on
+    // the face's left, downstream it is on the right), so one mask per conduit
+    // applies unchanged to both. Bit 0 blocks positive, bit 1 blocks negative.
+    std::vector<uint8_t> conduit_gate(static_cast<std::size_t>(n_cond), 0);
+    for (int r = 0; r < n_cond; ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        if (mesh.conduit_cell_begin[ur] < 0) continue;
+        const auto uj = static_cast<std::size_t>(mesh.conduit_link[ur]);
+        uint8_t gate = 0;
+        auto block = [&](int s) { gate |= (s > 0) ? uint8_t{1} : uint8_t{2}; };
+
+        if (ctx.links.has_flap_gate[uj]) block(-ctx.links.direction[uj]);
+
+        // A gated outfall upstream blocks chain-POSITIVE flow (out of node1
+        // into the pipe); downstream it blocks chain-negative.
+        const int ends[2] = {ctx.links.node1[uj], ctx.links.node2[uj]};
+        for (int e = 0; e < 2; ++e) {
+            const int nd = ends[e];
+            if (nd < 0 || ctx.nodes.type[static_cast<std::size_t>(nd)] != NodeType::OUTFALL)
+                continue;
+            const int ofr = ctx.node_subtypes.outfall_row(nd);
+            if (ofr >= 0 &&
+                ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(ofr)])
+                block((e == 0) ? 1 : -1);
+        }
+        conduit_gate[ur] = gate;
+    }
+
     // Per-node face lists, gathered before flattening to CSR so the ordering is
     // deterministic (node-major, then attachment order) on every backend.
     std::vector<std::vector<int>>    nf_idx(static_cast<std::size_t>(n_nodes));
@@ -404,6 +444,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             }
             nf_idx[ui].push_back(fidx);
             nf_zb[ui].push_back(zb);
+            mesh.face_gate[static_cast<std::size_t>(fidx)] =
+                conduit_gate[static_cast<std::size_t>(a.conduit)];
         }
     }
     if (!rep.errors.empty()) return rep;
