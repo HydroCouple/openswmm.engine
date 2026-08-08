@@ -89,7 +89,7 @@ class FvRoutingOptions(unittest.TestCase):
             self.assertEqual(s.options["FV_BACKEND"], "AUTO")
             self.assertEqual(s.options["FV_COMPACTION"], "YES")
             self.assertEqual(int(s.options["FV_ORDER"]), 1)
-            self.assertEqual(int(s.options["FV_MIN_CELLS"]), 1)
+            self.assertEqual(int(s.options["FV_MIN_CELLS"]), 4)
             self.assertAlmostEqual(float(s.options["FV_CELL_LENGTH"]), 0.0)
             self.assertAlmostEqual(float(s.options["FV_CFL"]), 0.5)
             self.assertAlmostEqual(float(s.options["FV_SLOT_CELERITY"]), 100.0)

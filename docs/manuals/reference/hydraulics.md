@@ -6362,27 +6362,34 @@ topology. Each conduit is divided into
 | $$n = \max\left( n_{min},\ \left\lceil L/\Delta x_{target} \right\rceil \right)$$ | | (8-4) | |
 
 cells of equal length, where $\Delta x_{target}$ is `FV_CELL_LENGTH`
-and $n_{min}$ is `FV_MIN_CELLS`. Two named operating points follow:
+and $n_{min}$ is `FV_MIN_CELLS`. `FV_MIN_CELLS` is a floor and applies
+whether or not a $\Delta x$ target is set.
 
-- **COARSE** (`FV_CELL_LENGTH 0`, the default) — one cell per conduit.
-  The element count equals the dynamic wave solver's.
-- **FINE** (`FV_CELL_LENGTH > 0`) — in-conduit resolution purchased
-  explicitly.
+The default is `FV_MIN_CELLS 4`, `FV_CELL_LENGTH 0` — four cells per
+conduit with no length target. **One cell per conduit is available but
+is not a supported operating point.** A cell-centred scheme places the
+cell's bed at its mid-point elevation, so a conduit meshed as a single
+cell presents an artificial bed step of half the conduit's fall at every
+manhole. On the EPA reference drainage model, mean absolute peak-flow
+deviation from the dynamic wave solver against cells per conduit:
+
+| cells per conduit | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| mean absolute peak-flow deviation | 37.1 % | 25.7 % | 15.3 % | 7.6 % |
+| worst link | −75.8 % | −58.1 % | −43.2 % | −22.6 % |
+| wall-clock, relative to one cell | 1.0× | 1.4× | 2.2× | 5.4× |
+
+Four is the knee, not the answer: it more than halves the one-cell error
+for about twice the cost, and convergence past it is slower than its
+price. §8.10 gives the same comparison against $\Delta x$ targets. Set
+`FV_CELL_LENGTH`, or raise `FV_MIN_CELLS`, whenever peak flows or
+in-conduit profiles matter.
 
 The conduit length used is the Courant-lengthened `mod_length`
 (Chapter 3), so `LENGTHENING_STEP` acts as a $\Delta x$ floor for short
 pipes exactly as it acts as a length floor for the dynamic wave solver,
 and the bed slope and roughness the finite-volume solver uses are the
 same adjusted values.
-
-**COARSE mode is not equivalent to dynamic wave analysis, and should
-not be chosen expecting that.** A cell-centred scheme places the cell's
-bed at its mid-point elevation, so a conduit meshed as a single cell
-presents an artificial bed step of half the conduit's fall at every
-manhole. On the EPA reference drainage model this attenuates peak flows
-by 37 % on average; resolving the conduits at $\Delta x$ = 20 ft brings
-that to 7 %. §8.10 gives the measured table. Set `FV_CELL_LENGTH`
-whenever peak flows matter.
 
 The mesh is fixed after initialization. There is no adaptive mesh
 refinement; adaptivity is in time (§8.5.5), not space.
@@ -6690,8 +6697,8 @@ reconstructing, and the binding scale is the bed. A cell whose ends
 differ in elevation by an appreciable fraction of the water depth
 cannot carry a linear free surface across itself. Cells failing
 $\left| dz \right| < 0.5\,h$ therefore fall back to the first-order
-path — which is what makes `FV_ORDER 2` safe to leave on: in COARSE
-mode on a long conduit it reproduces the first-order answer rather than
+path — which is what makes `FV_ORDER 2` safe to leave on: on an
+unresolved long conduit it reproduces the first-order answer rather than
 producing a wrong one.
 
 ### 8.6 Network coupling
@@ -6845,8 +6852,8 @@ file.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `FV_CELL_LENGTH` | 0 | Target $\Delta x$ in project length units. 0 selects COARSE mode (one cell per conduit). |
-| `FV_MIN_CELLS` | 1 | Floor on cells per conduit in FINE mode. |
+| `FV_CELL_LENGTH` | 0 | Target $\Delta x$ in project length units. 0 means no length target; each conduit gets `FV_MIN_CELLS` cells. |
+| `FV_MIN_CELLS` | 4 | Floor on cells per conduit. Applies with or without a `FV_CELL_LENGTH` target. |
 | `FV_CFL` | 0.5 | Courant number $\alpha$ in (8-14). |
 | `FV_RIEMANN` | `HLLC` | Species flux: `HLLC` resolves the contact wave, `HLL` averages it. No effect on hydraulics. |
 | `FV_ORDER` | 1 | 1 or 2. Second order is MUSCL on $(\eta, v)$ with the guard of §8.5.6. |
@@ -6870,11 +6877,11 @@ The following are measured on the EPA reference site drainage model
 (`Example1.inp`, 30 h, 5 s routing step), comparing each finite-volume
 configuration against the dynamic wave run of the same file.
 
-| | Dynamic wave | FV, COARSE | FV, $\Delta x$ = 50 ft | FV, $\Delta x$ = 20 ft |
-|---|---|---|---|---|
-| Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % |
-| Mean absolute peak-flow deviation | — | 37.1 % | 12.8 % | 7.2 % |
-| Wall-clock, relative | 1× | ~7× | ~12× | ~34× |
+| | Dynamic wave | FV, 1 cell | FV, default (4 cells) | FV, $\Delta x$ = 50 ft | FV, $\Delta x$ = 20 ft |
+|---|---|---|---|---|---|
+| Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % | 0.000 % |
+| Mean absolute peak-flow deviation | — | 37.1 % | 15.3 % | 12.8 % | 7.2 % |
+| Wall-clock, relative | 1× | ~7× | ~15× | ~12× | ~34× |
 
 Three readings follow, and all three are honest.
 
@@ -6885,18 +6892,19 @@ guarantees.
 
 **Accuracy requires a resolved mesh.** The convergence above is clean
 and monotone, which is what a consistent discretization must show — but
-COARSE mode is not a drop-in substitute for dynamic wave analysis. The
-mechanism is §8.3's artificial bed step, not numerical diffusion, so
-second-order reconstruction does not rescue it.
+an unresolved mesh is not a drop-in substitute for dynamic wave
+analysis. The mechanism is §8.3's artificial bed step, not numerical
+diffusion, so second-order reconstruction does not rescue it.
 
 **It still costs several times more.** Even at one cell per conduit —
 the same element count the dynamic wave solver carries — the explicit
-method runs about seven times its wall-clock on this model. Choose it
-for what it does, not for speed.
+method runs about seven times its wall-clock on this model, and the
+default mesh roughly doubles that again. Choose it for what it does, not
+for speed.
 
 Note also that the deviation column is a *consistency* check against the
 dynamic wave solver, not a measure of error. Dynamic wave routing is not
-the reference truth here, and part of the 37 % at COARSE is its own
+the reference truth here, and part of the 37 % at one cell is its own
 departure from the correct answer. Accuracy is established against
 closed-form solutions — Ritter, Stoker, and the still-water property —
 not against another numerical method.

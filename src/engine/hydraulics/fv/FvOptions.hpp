@@ -89,14 +89,31 @@ enum class Backend : int {
 struct FvOptions {
     // -- Mesh (plan §3.2) ---------------------------------------------------
 
-    /// Target Δx. 0 ⇒ COARSE mode: one cell per conduit, element count equal
-    /// to DW's. > 0 ⇒ FINE mode: each conduit is cut into
-    /// max(min_cells, ceil(L/cell_length)) cells. Internal units (ft).
+    /// Target Δx. 0 ⇒ no length target, and each conduit gets `min_cells`.
+    /// > 0 ⇒ each conduit is cut into max(min_cells, ceil(L/cell_length))
+    /// cells. Internal units (ft).
     double cell_length = 0.0;
 
-    /// Floor on cells per conduit in FINE mode. Guards a short pipe against
-    /// degenerating to a single cell wedged between two boundary faces.
-    int min_cells = 1;
+    /// Floor on cells per conduit. A FLOOR, not a FINE-mode detail: it applies
+    /// with or without a `cell_length` target.
+    ///
+    /// Four, not one. A conduit meshed as a single cell has no interior
+    /// gradient of its own and presents an artificial bed step of half its fall
+    /// at every manhole (§8.3), so it under-conveys and backs water up.
+    /// Measured on Example1 — mean absolute peak-flow deviation from DYNWAVE,
+    /// and wall-clock relative to one cell:
+    ///
+    ///     cells      1       2       4       8
+    ///     deviation  37.1 %  25.7 %  15.3 %   7.6 %
+    ///     worst     -75.8 % -58.1 % -43.2 % -22.6 %
+    ///     time       1.0x    1.4x    2.2x    5.4x
+    ///
+    /// Four is the knee: it more than halves the one-cell error for about twice
+    /// the cost, and convergence past it is slower than its price. One cell was
+    /// the default and should not have been — it is a known-wrong setting, not
+    /// a cheap-but-approximate one. Raise this (or set cell_length) where peak
+    /// flows or in-conduit profiles matter.
+    int min_cells = 4;
 
     // -- Scheme -------------------------------------------------------------
 
