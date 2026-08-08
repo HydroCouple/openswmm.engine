@@ -670,6 +670,14 @@ int SWMMEngine::initialize() noexcept {
     // Initialize all computational modules (batch SoA setup)
     init_modules();
 
+    // A mesh the finite-volume solver cannot build is a fatal model error, not
+    // a warning: there is no fallback routing, so continuing would produce a
+    // plausible-looking report describing a network that never moved water.
+    if (!ctx_.errors.empty()) {
+        set_error(SWMM_ERR_PARSE, ctx_.errors.front().c_str());
+        return SWMM_ERR_PARSE;
+    }
+
     // Seed node inflow/outflow from the initial link flows so the FIRST
     // routing step's trapezoidal node-continuity term reads the correct
     // old_net_inflow. The per-step save_state() (called before the first
@@ -4522,6 +4530,17 @@ void SWMMEngine::initHydraulics() noexcept {
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
     else if (ctx_.options.routing_model == RoutingModel::FV) rm = RouteModel::FV;
     router_.init(ctx_, rm);
+
+    // Surface what the FV mesh builder found. Without this the diagnostics were
+    // collected into Router::fv_errors_ and never read by anyone: initFv bails
+    // leaving fv_solver_ == nullptr, stepFv then returns 0 for every step, and
+    // the model RUNS TO COMPLETION WITH NO HYDRAULIC ROUTING AT ALL — clean
+    // exit, empty report, no message. A DUMMY-shape conduit is enough to
+    // trigger it, and DUMMY conduits are common in real models.
+    for (const std::string& w : router_.fvWarnings())
+        ctx_.warnings.push_back(w);
+    for (const std::string& e : router_.fvErrors())
+        ctx_.errors.push_back(e);
 
     // Relational node refactor — Phase 4 (authoritative): the storage/outfall/
     // divider side-tables are the single source of truth, populated by the

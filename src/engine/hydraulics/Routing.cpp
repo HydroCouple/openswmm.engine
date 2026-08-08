@@ -869,7 +869,14 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     // Virtual junctions cannot carry them (rule 5), so they never appear here.
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
-        fv_lateral_[un] = ctx.nodes.lat_flow[un];
+        // Net of the node's own losses. `nodes.losses` carries storage
+        // evaporation and Green-Ampt exfiltration, computed by the SHARED
+        // Router::initNodeFlows — the dynamic-wave solver drains it by seeding
+        // nodes.outflow with it, and publishFv reports it as outflow, but
+        // nothing ever removed it from the FV node's water. The mass balance
+        // was charged for water the solver still held, a continuity error
+        // scaling with the number of storage units that lose.
+        fv_lateral_[un] = ctx.nodes.lat_flow[un] - ctx.nodes.losses[un];
         // Outfalls (and anything else the engine pins) are stage boundaries:
         // setAllOutfallDepths has already written the head for this step.
         fv_fixed_head_[un] =
