@@ -172,12 +172,48 @@ retroactive.
 - **`RouteModel.FV` in the Python bindings**, and `FV` in the MCP server's
   routing-model reporting.
 
+### Changed
+
+- **One definition of every analytic cross-section formula.** The shape
+  geometry existed twice: once per element in the portable kernels
+  (`XSectKernels.hpp`, which the finite-volume solver and a future device
+  backend compile) and once as SoA loops in `XSectBatch.cpp`, which is what the
+  dynamic wave's `computeLinkGeometry` STEP B (widths) and STEP D (areas and
+  hydraulic radii) run. Both now call the same `xsect::shape` leaves, so the
+  two solvers' geometry cannot drift. Dynamic-wave output is byte-identical
+  across 105 decks — the 20 EPA QA parity models plus every DYNWAVE deck in the
+  unit corpus — in **both** the shipped fast-lookup configuration and the
+  bit-exact one, and the batch path is asserted equal to the shared kernels
+  element-wise at ULP zero over the full shape catalog × 401 depth stations.
+  That sweep also turns the fused circular area/hyd-radius kernel's
+  bit-identity claim, until now only a comment, into a gate.
+
+### Fixed
+
+- **Triangular conduit area disagreed with legacy in the last bit.** The batch
+  path spelled it `s_bot*y*y`; legacy spells it `y*y*sBot`. IEEE multiplication
+  is not associative, so those are different computations — for a plain
+  3 ft × 4 ft triangular channel they disagree at 130 of 401 depth stations.
+  It survived every parity run because **neither test corpus contains a single
+  TRIANGULAR conduit**: no deck could exercise it, and no deck can show the
+  fix. Adopting the shared formula puts DYNWAVE on legacy's spelling, and the
+  new element-wise gate covers the shape by name.
+
 ### Notes
 
 - Finite-volume routing is **not** under the legacy bit-parity contract — it is
   a different discretization, and is gated on analytic and engineering
   tolerances instead. No dynamic-wave, kinematic-wave or steady-state result
   moves.
+
+- The dynamic wave's STEP B/D geometry and the finite-volume solver's still
+  differ at the ULP level in the **shipped default** build, and sharing the
+  shape formulas does not change that. `SWMM_XSECT_FAST_LOOKUP` (on by default,
+  ~10 % faster routing) makes `xsect_batch` normalize by a precomputed
+  reciprocal and interpolate with `* inv_delta`, while `XsectEval` always
+  divides — the divergence lives in the normalize/lookup layer, below the shape
+  formulas. Build with `-DOPENSWMM_FAST_XSECT_LOOKUP=OFF` for the bit-exact
+  path the legacy parity contract governs.
 
 ## [6.0.0-alpha.3] — 2026-07-29
 

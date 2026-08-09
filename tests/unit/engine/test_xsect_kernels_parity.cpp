@@ -229,3 +229,147 @@ TEST(XsectKernels, EvaluatorIsTriviallyCopyableForKernelCapture) {
     EXPECT_TRUE(std::is_trivially_copyable_v<XsectTables>);
     EXPECT_TRUE(std::is_trivially_copyable_v<XsectEval>);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4b: the batch path DW runs on IS the shared bodies.
+//
+// `XSectGroups` is what DWSolver's computeLinkGeometry STEP B (widths) and
+// STEP D (areas + hydraulic radii) call, through the same triple kernels used
+// here. Every analytic shape formula now has exactly one definition — the
+// `xsect::shape` leaves — so this asserts the property that makes the two
+// solvers' geometry structurally identical rather than coincidentally equal.
+//
+// In the bit-exact configuration the gate is ULP zero, not a tolerance. Two
+// things it catches that a tolerance would not:
+//   - operand order. IEEE multiplication is not associative, so the old batch
+//     spelling of the triangular area, `s_bot*y*y`, is a different computation
+//     from legacy's `y*y*s_bot`. No deck in either corpus has a TRIANGULAR
+//     conduit, so the regression suite could never have seen it.
+//   - the fused circular kernel, which computes the A_Circ and R_Circ
+//     interpolations from one shared segment index. It carries a comment
+//     claiming bit-identity with two separate lookup_exact calls; this turns
+//     that claim into a gate.
+//
+// The DEFAULT build enables SWMM_XSECT_FAST_LOOKUP (§6), where the batch path
+// deliberately normalizes by a precomputed reciprocal and interpolates with
+// `* inv_delta`, while XsectEval always divides. There the two paths are
+// SUPPOSED to differ, and the contract is the §6 tolerance rather than the
+// last bit — so that is what is asserted. The strict form runs in the
+// bit-exact configuration (`-DOPENSWMM_FAST_XSECT_LOOKUP=OFF`), which is the
+// one under the legacy parity contract.
+// ---------------------------------------------------------------------------
+namespace {
+#ifdef SWMM_XSECT_FAST_LOOKUP
+// §6's published envelope for the fast lookup, same figures as the tolerance
+// gate in test_xsect_parity.cpp.
+::testing::AssertionResult Agrees(double batch, double shared) {
+    const double tol = 1e-8 + 1e-7 * std::fabs(shared);
+    if (std::fabs(batch - shared) <= tol) return ::testing::AssertionSuccess();
+    return ::testing::AssertionFailure()
+        << "batch=" << batch << " shared=" << shared
+        << " |diff|=" << std::fabs(batch - shared) << " tol=" << tol;
+}
+#else
+::testing::AssertionResult Agrees(double batch, double shared) {
+    if (batch == shared) return ::testing::AssertionSuccess();
+    return ::testing::AssertionFailure()
+        << "batch=" << batch << " shared=" << shared << " (ULP != 0)";
+}
+#endif
+}  // namespace
+
+TEST(XSectSharedFormulas, BatchPathMatchesTheSharedKernels) {
+    const XsectEval& ev = xsect::hostEval();
+
+    for (const ShapeCase& c : shapeCatalog()) {
+        XSectParams xs{};
+        double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
+            << c.name;
+
+        XSectGroups groups;
+        groups.build(&xs, 1);
+
+        for (double y : depthStations(xs.y_full)) {
+            const double d[1] = {y};
+            double a1 = 0, a2 = 0, am = 0, h1 = 0, hm = 0;
+            double w1 = 0, w2 = 0, wm = 0;
+            groups.computeAreaHydRadTriple(d, d, d, &a1, &a2, &am, &h1, &hm, 1);
+            groups.computeWidthsTriple(d, d, d, &w1, &w2, &wm, 1);
+
+            EXPECT_TRUE(Agrees(a1, ev.getAofY(xs, y))) << c.name << " A y=" << y;
+            EXPECT_TRUE(Agrees(h1, ev.getRofY(xs, y))) << c.name << " R y=" << y;
+            EXPECT_TRUE(Agrees(w1, ev.getWofY(xs, y))) << c.name << " W y=" << y;
+
+            // The triple's slots must agree with each other. a2 comes from
+            // computeAreas and a1/am from computeAreaAndHydRad — for CIRCULAR
+            // those are two different kernels (the fused one reuses a single
+            // segment index), so this is a real check, not a tautology.
+            EXPECT_TRUE(Agrees(a2, a1)) << c.name << " a2 y=" << y;
+            EXPECT_EQ(am, a1) << c.name << " am y=" << y;
+            EXPECT_EQ(hm, h1) << c.name << " hm y=" << y;
+            EXPECT_EQ(w2, w1) << c.name << " w2 y=" << y;
+            EXPECT_EQ(wm, w1) << c.name << " wm y=" << y;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The analytic shapes, held to ULP zero in EVERY build mode.
+//
+// SWMM_XSECT_FAST_LOOKUP changes the normalize/interpolate layer, which these
+// shapes never touch — their whole geometry is the closed-form leaf. So the
+// unification Phase 4b performed is asserted here without a mode branch, and
+// TRIANGULAR (which no deck in either corpus contains) is covered by name.
+// ---------------------------------------------------------------------------
+TEST(XSectSharedFormulas, AnalyticShapeLeavesAreBitExactInEveryMode) {
+    struct Case { const char* name; XSectShape shape; double p[4]; };
+    const std::vector<Case> analytic = {
+        {"TRAPEZOIDAL", XSectShape::TRAPEZOIDAL, {3.0, 4.0, 1.0, 1.5}},
+        {"TRIANGULAR",  XSectShape::TRIANGULAR,  {3.0, 4.0, 0, 0}},
+    };
+
+    const XsectEval& ev = xsect::hostEval();
+    for (const Case& c : analytic) {
+        XSectParams xs{};
+        double p[4] = {c.p[0], c.p[1], c.p[2], c.p[3]};
+        ASSERT_EQ(xsect::setParams(xs, static_cast<int>(c.shape), p, 1.0), 0)
+            << c.name;
+
+        XSectGroups groups;
+        groups.build(&xs, 1);
+
+        for (double y : depthStations(xs.y_full)) {
+            const double d[1] = {y};
+            double a1 = 0, a2 = 0, am = 0, h1 = 0, hm = 0;
+            double w1 = 0, w2 = 0, wm = 0;
+            groups.computeAreaHydRadTriple(d, d, d, &a1, &a2, &am, &h1, &hm, 1);
+            groups.computeWidthsTriple(d, d, d, &w1, &w2, &wm, 1);
+
+            EXPECT_EQ(a1, ev.getAofY(xs, y)) << c.name << " A y=" << y;
+            EXPECT_EQ(h1, ev.getRofY(xs, y)) << c.name << " R y=" << y;
+            EXPECT_EQ(w1, ev.getWofY(xs, y)) << c.name << " W y=" << y;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The one formula the batch path does NOT route through a shared leaf: the
+// rectangular area, which stays on an explicit SIMD multiply for the vector
+// width. `_mm256_mul_pd` / `vmulq_f64` are element-wise IEEE multiplies, so it
+// is bit-identical to shape::rectAofY — pinned here so the claim in
+// XSectBatch.cpp is checked rather than trusted.
+// ---------------------------------------------------------------------------
+TEST(XSectSharedFormulas, RectAreaMatchesSimdPath) {
+    constexpr int kN = 257;   // not a multiple of any vector width
+    std::vector<double> depth(kN), w_max(kN), simd_a(kN);
+    for (int k = 0; k < kN; ++k) {
+        depth[k] = 0.01 * static_cast<double>(k) + 1e-7;
+        w_max[k] = 0.75 + 0.013 * static_cast<double>(k);
+    }
+    xsect_batch::area_rect(depth.data(), w_max.data(), simd_a.data(), kN);
+
+    for (int k = 0; k < kN; ++k)
+        EXPECT_EQ(simd_a[k], xsect::shape::rectAofY(depth[k], w_max[k]))
+            << "k=" << k;
+}
