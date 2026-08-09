@@ -406,6 +406,9 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "FV_CFL_CENSUS_INTERVAL") {
             opt.fv.cfl_census_interval = std::max(1, static_cast<int>(to_double(val)));
 
+        } else if (key == "FV_NODE_PICARD") {
+            opt.fv.node_picard_sweeps = std::max(1, static_cast<int>(to_double(val)));
+
         } else if (key == "NODE_CONTINUITY") {
             const std::string nc = norm(val);
             if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;

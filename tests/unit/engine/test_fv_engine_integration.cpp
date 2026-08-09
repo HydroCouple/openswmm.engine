@@ -1240,3 +1240,72 @@ TEST(FvEngine, StorageNodeLossesLeaveTheWater) {
         << " % — storage losses charged but not removed";
 }
 
+
+// ---------------------------------------------------------------------------
+// FV_NODE_PICARD — the semi-implicit node correction, iterated.
+//
+// The correction freezes the characteristic resistance sqrt(g*A*T), the node's
+// storage response and the incident faces' fluxes at the head the substep
+// started from. That is exact for the LINEARIZED problem, so one sweep leaves
+// zero residual and more sweeps only matter because the real problem is not
+// linear. Sweeping re-evaluates all three at the head each pass lands on.
+//
+// Two properties are asserted, and the second is the one this repo keeps
+// getting wrong: FV_STRUCTURE_COUPLING and RK2 both shipped parsed, exposed
+// and READ NOWHERE. An option that cannot be shown to change a result is a
+// dead option, so the test requires a visible difference rather than trusting
+// the plumbing.
+// ---------------------------------------------------------------------------
+namespace {
+std::string writeNodePicardModel(const std::string& name, int sweeps) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/" + name + ".inp";
+    std::ofstream os(inp);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+          "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n";
+    // Sweeping only matters when the node is taking a step that is LARGE
+    // relative to its own stiffness. Under default tiering the node is handed
+    // a fine tier precisely so the frozen tangent stays accurate, and the
+    // first sweep's correction already falls under the tolerance — the option
+    // is inert, which is a property of the schedule, not of the option. One
+    // tier puts the node on the macro step, which is the regime it exists for.
+    os << "FV_LTS_MAX_TIERS     1\n";
+    if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
+    // A wide, shallow channel on small junctions: the node's storage is tiny
+    // against the conduit's conveyance, which is the configuration where the
+    // frozen tangent is furthest from the true flux response.
+    os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\nJ2   99.0  8.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+          "[CONDUITS]\nC1  J1  J2  300  0.02  0  0  0  0\n"
+          "C2  J2  OF  300  0.02  0  0  0  0\n\n"
+          "[XSECTIONS]\nC1  RECT_OPEN  6.0  40.0  0  0  1\n"
+          "C2  RECT_OPEN  6.0  40.0  0  0  1\n\n"
+          "[INFLOWS]\nJ1  FLOW  \"\"  FLOW  1.0  1.0  120.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    return inp;
+}
+}  // namespace
+
+TEST(FvEngine, NodePicardSweepsPreserveConservation) {
+    for (int sweeps : {1, 2, 4}) {
+        const RunResult r = runModel(
+            writeNodePicardModel("picard_" + std::to_string(sweeps), sweeps));
+        ASSERT_TRUE(r.parsed) << "sweeps=" << sweeps;
+        // Every sweep leaves its answer in the one shared face-flux array, so
+        // exactness is structural and must not depend on the sweep count.
+        EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
+            << "sweeps=" << sweeps << " continuity " << r.continuity_pct << " %";
+    }
+}
+
+TEST(FvEngine, NodePicardIsNotADeadOption) {
+    const RunResult one = runModel(writeNodePicardModel("picard_one", 1));
+    const RunResult many = runModel(writeNodePicardModel("picard_many", 6));
+    ASSERT_TRUE(one.parsed && many.parsed);
+    ASSERT_GT(one.peak_flow.at("C2"), 0.0) << "fixture never routed";
+    EXPECT_NE(one.peak_flow.at("C2"), many.peak_flow.at("C2"))
+        << "FV_NODE_PICARD changed nothing — the option is being parsed and "
+           "ignored, exactly as FV_STRUCTURE_COUPLING and RK2 once were";
+}

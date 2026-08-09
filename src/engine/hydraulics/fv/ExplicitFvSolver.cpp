@@ -1230,6 +1230,25 @@ void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) 
     for (int n = 0; n < nn; ++n) relaxOneNode(n, dt, forcing);
 }
 
+// dV/dH at a given depth — the storage response the correction is damped
+// against. Mirrors refreshNodeAreas' three cases, but evaluated at an
+// ARBITRARY depth rather than at the node's current one, because that is the
+// whole point of iterating: past the first sweep the head has moved.
+double ExplicitFvSolver::nodeStorageSlope(int node, double depth) const {
+    const auto un = static_cast<std::size_t>(node);
+    const double full = mesh_->node_full_depth[un];
+    if (mesh_->node_can_pond[un] && full > 0.0 && depth > full)
+        return mesh_->node_ponded_area[un];
+    if (mesh_->node_vol_off[un] < 0)          // junction: V = A_s·depth, A_s fixed
+        return state_->node_surf_area[un];
+    const double dd = mesh_->node_vol_dmax[un] /
+                      static_cast<double>(kNodeVolSamples - 1);
+    const double d = std::max(0.0, depth);
+    return std::max((nodeVolumeFromDepth(node, d + dd) -
+                     nodeVolumeFromDepth(node, d)) / dd,
+                    constants::MIN_SURFAREA);
+}
+
 void ExplicitFvSolver::relaxOneNode(int n, double dt,
                                     const FvStepForcing& forcing) {
     {
@@ -1239,68 +1258,124 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
         // imposed and the exchange is whatever the Riemann solver produced.
         if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un]))
             return;
-        const double as = state_->node_surf_area[un];
-        if (!(as > 0.0)) return;
+        if (!(state_->node_surf_area[un] > 0.0)) return;
 
         const int b = mesh_->node_face_ptr[un];
         const int e = mesh_->node_face_ptr[un + 1];
 
-        // Σ ∂F/∂H over the incident faces, from the characteristic relation for
-        // a simple wave: |dQ/dH| = gA/c = √(g·A·T) at the ghost state. Always a
-        // RESISTANCE — raising the head drives more out and lets less in, on
-        // either side of the face — so the denominator below can only grow, and
-        // the correction can only damp.
-        double sum_f = 0.0, resist = 0.0;
-        for (int p = b; p < e; ++p) {
-            const auto up = static_cast<std::size_t>(p);
-            const int f = mesh_->node_face_idx[up];
-            const auto uf = static_cast<std::size_t>(f);
-            sum_f += mesh_->node_face_sign[up] * f_mass_[uf];
-
-            const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                       : mesh_->face_cr[uf];
-            if (cell < 0) continue;
-            const FvGeometry& g =
-                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[
-                    static_cast<std::size_t>(cell)])];
-            const double hg = state_->node_head[un] - mesh_->face_zb[uf];
-            if (hg <= k::kDryDepth) continue;
-            const double ag = k::areaOfDepth(g, hg);
-            const double tg = k::widthOfDepth(g, hg);
-            if (ag <= k::kDryArea || tg <= 0.0) continue;
-            resist += std::sqrt(k::kGravity * ag * tg);
-        }
-        if (resist <= 0.0) return;
-
         const double q_lat = forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
-        const double dh = dt * (sum_f + q_lat) / (as + dt * resist);
-        if (dh == 0.0) return;
+        const double invert  = mesh_->node_invert[un];
+        const double h_start = state_->node_head[un];
+        const double v_start =
+            nodeVolumeFromDepth(n, std::max(0.0, h_start - invert));
 
-        // Write the correction into f_mass_ — the ONE array both the cell
-        // update and the node update read. That is what keeps mass conservation
-        // exact: whatever the correction does, the two sides of every face see
-        // the same number.
-        for (int p = b; p < e; ++p) {
-            const auto up = static_cast<std::size_t>(p);
-            const int f = mesh_->node_face_idx[up];
-            const auto uf = static_cast<std::size_t>(f);
-            const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                       : mesh_->face_cr[uf];
-            if (cell < 0) continue;
-            const FvGeometry& g =
-                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[
-                    static_cast<std::size_t>(cell)])];
-            const double hg = state_->node_head[un] - mesh_->face_zb[uf];
-            if (hg <= k::kDryDepth) continue;
-            const double ag = k::areaOfDepth(g, hg);
-            const double tg = k::widthOfDepth(g, hg);
-            if (ag <= k::kDryArea || tg <= 0.0) continue;
-            // β = −sign·√(gAT): the node on a face's LEFT exports on a positive
-            // flux, the node on its RIGHT imports, and raising the head opposes
-            // the import in both cases.
-            f_mass_[uf] += -mesh_->node_face_sign[up] *
-                           std::sqrt(k::kGravity * ag * tg) * dh;
+        // One sweep is the original scheme, and stays bit-identical to it: the
+        // residual is the raw face sum, and the resistance, the storage area
+        // and the fluxes are all the ones the substep started with. Additional
+        // sweeps re-evaluate all three at the head the previous sweep landed
+        // on, so the node converges on its own continuity equation rather than
+        // on a tangent taken at the start of the step (plan §7B.8).
+        const int sweeps = std::max(1, opts_.node_picard_sweeps);
+        double h_k = h_start;
+
+        for (int it = 0; it < sweeps; ++it) {
+            // Σ ∂F/∂H over the incident faces, from the characteristic relation
+            // for a simple wave: |dQ/dH| = gA/c = √(g·A·T) at the ghost state.
+            // Always a RESISTANCE — raising the head drives more out and lets
+            // less in, on either side of the face — so the denominator below
+            // can only grow, and the correction can only damp.
+            double sum_f = 0.0, resist = 0.0;
+            for (int p = b; p < e; ++p) {
+                const auto up = static_cast<std::size_t>(p);
+                const int f = mesh_->node_face_idx[up];
+                const auto uf = static_cast<std::size_t>(f);
+                sum_f += mesh_->node_face_sign[up] * f_mass_[uf];
+
+                const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                           : mesh_->face_cr[uf];
+                if (cell < 0) continue;
+                const FvGeometry& g =
+                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[
+                        static_cast<std::size_t>(cell)])];
+                const double hg = h_k - mesh_->face_zb[uf];
+                if (hg <= k::kDryDepth) continue;
+                const double ag = k::areaOfDepth(g, hg);
+                const double tg = k::widthOfDepth(g, hg);
+                if (ag <= k::kDryArea || tg <= 0.0) continue;
+                resist += std::sqrt(k::kGravity * ag * tg);
+            }
+            if (resist <= 0.0) break;
+
+            // Residual of the node's own continuity equation at h_k. On the
+            // first sweep h_k == h_start, so the storage term is identically
+            // zero and this is the original expression.
+            const double as = (it == 0)
+                                  ? state_->node_surf_area[un]
+                                  : nodeStorageSlope(n, h_k - invert);
+            const double dv =
+                (it == 0) ? 0.0
+                          : nodeVolumeFromDepth(n, std::max(0.0, h_k - invert)) -
+                                v_start;
+            const double dh = dt * (sum_f + q_lat - dv / dt) / (as + dt * resist);
+            if (dh == 0.0) break;
+
+            const bool last = (it + 1 >= sweeps) ||
+                              (std::fabs(dh) <= opts_.node_picard_tol);
+            if (!last) {
+                // Re-solve the incident faces against the corrected head. This
+                // REPLACES the linear extrapolation with the flux the Riemann
+                // solver actually returns there, which is the part a single
+                // tangent gets wrong at a large Δt. Only faces the flux pass
+                // itself would have computed are touched, so work-list
+                // compaction stays results-transparent (§6.10).
+                h_k += dh;
+                state_->node_head[un] = h_k;
+                for (int p = b; p < e; ++p) {
+                    const auto up = static_cast<std::size_t>(p);
+                    const int f = mesh_->node_face_idx[up];
+                    const auto uf = static_cast<std::size_t>(f);
+                    const int cl = mesh_->face_cl[uf];
+                    const int cr = mesh_->face_cr[uf];
+                    const bool la = (cl >= 0) &&
+                                    cell_active_[static_cast<std::size_t>(cl)];
+                    const bool ra = (cr >= 0) &&
+                                    cell_active_[static_cast<std::size_t>(cr)];
+                    if (la || ra) computeFaceFlux(f);
+                }
+                continue;
+            }
+
+            // Write the correction into f_mass_ — the ONE array both the cell
+            // update and the node update read. That is what keeps mass
+            // conservation exact: whatever the correction does, the two sides
+            // of every face see the same number.
+            for (int p = b; p < e; ++p) {
+                const auto up = static_cast<std::size_t>(p);
+                const int f = mesh_->node_face_idx[up];
+                const auto uf = static_cast<std::size_t>(f);
+                const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                           : mesh_->face_cr[uf];
+                if (cell < 0) continue;
+                const FvGeometry& g =
+                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[
+                        static_cast<std::size_t>(cell)])];
+                const double hg = h_k - mesh_->face_zb[uf];
+                if (hg <= k::kDryDepth) continue;
+                const double ag = k::areaOfDepth(g, hg);
+                const double tg = k::widthOfDepth(g, hg);
+                if (ag <= k::kDryArea || tg <= 0.0) continue;
+                // β = −sign·√(gAT): the node on a face's LEFT exports on a
+                // positive flux, the node on its RIGHT imports, and raising the
+                // head opposes the import in both cases.
+                f_mass_[uf] += -mesh_->node_face_sign[up] *
+                               std::sqrt(k::kGravity * ag * tg) * dh;
+            }
+            break;
         }
+
+        // The head is the node update's to set, from the volume ledger. Any
+        // provisional value above was scaffolding for the flux re-solve.
+        state_->node_head[un] = h_start;
     }
 }
 
