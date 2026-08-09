@@ -69,6 +69,110 @@ inline constexpr double RECT_TRIANG_ALFMAX = 0.98;
 inline constexpr double RECT_ROUND_ALFMAX  = 0.98;
 
 /**
+ * @brief The analytic shape formulas — the single definition of each.
+ *
+ * These are the shapes whose geometry is a closed-form expression rather than a
+ * table lookup. They live outside XsectEval because they need no tables at all,
+ * which lets the two consumers that are shaped differently share them:
+ *
+ *   - `XsectEval`'s per-element methods (host DW scalar fallbacks, FV, device),
+ *     which unpack an XSectParams; and
+ *   - `xsect_batch`'s SoA loops (XSectBatch.cpp), which DWSolver's
+ *     computeLinkGeometry STEP B/D runs on and which read parallel arrays.
+ *
+ * Both call the same function on the same operands, so the two paths cannot
+ * drift — which is the point (plan §5.1, Phase 4b). Each body is legacy
+ * `xsect.c` verbatim, including operand order and the guards: multiplication is
+ * not associative in IEEE-754, so `y*y*sBot` and `sBot*y*y` are different
+ * computations and only the first is legacy's.
+ *
+ * The `y`/`a` guards are legacy's own (`xsect_getRofA`'s `a <= 0` early return
+ * for the rect family, `trapez_getRofY`'s `y == 0`). STEP A floors every conduit
+ * depth at FUDGE before STEP B/D sees it, so on the DW path they are unreachable
+ * either way; they are here so the shared body is complete rather than
+ * context-dependent.
+ */
+namespace shape {
+
+// ---- Area from depth ----
+
+OPENSWMM_KERNEL_FN double rectAofY(double y, double w_max) {
+    return y * w_max;
+}
+
+OPENSWMM_KERNEL_FN double trapezAofY(double y, double y_bot, double s_bot) {
+    return (y_bot + s_bot * y) * y;
+}
+
+OPENSWMM_KERNEL_FN double triangAofY(double y, double s_bot) {
+    return y * y * s_bot;
+}
+
+OPENSWMM_KERNEL_FN double parabAofY(double y, double r_bot) {
+    return (4.0 / 3.0) * r_bot * y * std::sqrt(y);
+}
+
+OPENSWMM_KERNEL_FN double powerfuncAofY(double y, double s_bot, double r_bot) {
+    return r_bot * std::pow(y, s_bot + 1.0);
+}
+
+// ---- Hydraulic radius ----
+
+/// Legacy rect_closed_getRofA — including the near-full correction that grows
+/// the wetted perimeter by the crown width past RECT_ALFMAX.
+OPENSWMM_KERNEL_FN double rectClosedRofA(double a, double w_max, double a_full) {
+    if (a <= 0.0) return 0.0;
+    double p = w_max + 2.0 * a / w_max;
+    if (a / a_full > RECT_ALFMAX)
+        p += (a / a_full - RECT_ALFMAX) / (1.0 - RECT_ALFMAX) * w_max;
+    return a / p;
+}
+
+/// Legacy xsect_getRofA's RECT_OPEN arm; s_bot is the count of banks excluded
+/// from the perimeter (0, 1 or 2).
+OPENSWMM_KERNEL_FN double rectOpenRofA(double a, double w_max, double s_bot) {
+    if (a <= 0.0) return 0.0;
+    return a / (w_max + (2.0 - s_bot) * a / w_max);
+}
+
+OPENSWMM_KERNEL_FN double trapezRofY(double y, double y_bot, double s_bot,
+                                     double r_bot) {
+    if (y == 0.0) return 0.0;
+    return trapezAofY(y, y_bot, s_bot) / (y_bot + y * r_bot);
+}
+
+OPENSWMM_KERNEL_FN double triangRofY(double y, double s_bot, double r_bot) {
+    return (y * s_bot) / (2.0 * r_bot);
+}
+
+// ---- Top width ----
+
+/// Legacy getWofY RECT_CLOSED: the tabulated crown width is 0 exactly at
+/// y == y_full, so the caller passes the normalized depth, not the depth.
+OPENSWMM_KERNEL_FN double rectClosedWofY(double y_norm, double w_max) {
+    if (y_norm == 1.0) return 0.0;
+    return w_max;
+}
+
+OPENSWMM_KERNEL_FN double trapezWofY(double y, double y_bot, double s_bot) {
+    return y_bot + 2.0 * y * s_bot;
+}
+
+OPENSWMM_KERNEL_FN double triangWofY(double y, double s_bot) {
+    return 2.0 * s_bot * y;
+}
+
+OPENSWMM_KERNEL_FN double parabWofY(double y, double r_bot) {
+    return 2.0 * r_bot * std::sqrt(y);
+}
+
+OPENSWMM_KERNEL_FN double powerfuncWofY(double y, double s_bot, double r_bot) {
+    return (s_bot + 1.0) * r_bot * std::pow(y, s_bot);
+}
+
+} // namespace shape
+
+/**
  * @brief Pointers to the shared geometry tables, in whichever memory space the
  *        consumer runs in.
  *
@@ -501,11 +605,7 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double rect_closed_getRofA(const XSectParams& xs, double a) const {
-        if (a <= 0.0) return 0.0;
-        double p = xs.w_max + 2.0 * a / xs.w_max;
-        if (a / xs.a_full > RECT_ALFMAX)
-            p += (a / xs.a_full - RECT_ALFMAX) / (1.0 - RECT_ALFMAX) * xs.w_max;
-        return a / p;
+        return shape::rectClosedRofA(a, xs.w_max, xs.a_full);
     }
 
     OPENSWMM_KERNEL_FN double rect_closed_getSofA(const XSectParams& xs, double a) const {
@@ -722,11 +822,11 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double trapez_getAofY(const XSectParams& xs, double y) const {
-        return (xs.y_bot + xs.s_bot * y) * y;
+        return shape::trapezAofY(y, xs.y_bot, xs.s_bot);
     }
 
     OPENSWMM_KERNEL_FN double trapez_getWofY(const XSectParams& xs, double y) const {
-        return xs.y_bot + 2.0 * y * xs.s_bot;
+        return shape::trapezWofY(y, xs.y_bot, xs.s_bot);
     }
 
     OPENSWMM_KERNEL_FN double trapez_getYofA(const XSectParams& xs, double a) const {
@@ -740,8 +840,7 @@ struct XsectEval {
     }
 
     OPENSWMM_KERNEL_FN double trapez_getRofY(const XSectParams& xs, double y) const {
-        if (y == 0.0) return 0.0;
-        return trapez_getAofY(xs, y) / (xs.y_bot + y * xs.r_bot);
+        return shape::trapezRofY(y, xs.y_bot, xs.s_bot, xs.r_bot);
     }
 
     OPENSWMM_KERNEL_FN double trapez_getdSdA(const XSectParams& xs, double a) const {
@@ -756,11 +855,11 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double triang_getAofY(const XSectParams& xs, double y) const {
-        return y * y * xs.s_bot;
+        return shape::triangAofY(y, xs.s_bot);
     }
 
     OPENSWMM_KERNEL_FN double triang_getWofY(const XSectParams& xs, double y) const {
-        return 2.0 * xs.s_bot * y;
+        return shape::triangWofY(y, xs.s_bot);
     }
 
     OPENSWMM_KERNEL_FN double triang_getYofA(const XSectParams& xs, double a) const {
@@ -772,7 +871,7 @@ struct XsectEval {
     }
 
     OPENSWMM_KERNEL_FN double triang_getRofY(const XSectParams& xs, double y) const {
-        return (y * xs.s_bot) / (2.0 * xs.r_bot);
+        return shape::triangRofY(y, xs.s_bot, xs.r_bot);
     }
 
     OPENSWMM_KERNEL_FN double triang_getdSdA(const XSectParams& xs, double a) const {
@@ -787,11 +886,11 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double parab_getAofY(const XSectParams& xs, double y) const {
-        return (4.0 / 3.0) * xs.r_bot * y * std::sqrt(y);
+        return shape::parabAofY(y, xs.r_bot);
     }
 
     OPENSWMM_KERNEL_FN double parab_getWofY(const XSectParams& xs, double y) const {
-        return 2.0 * xs.r_bot * std::sqrt(y);
+        return shape::parabWofY(y, xs.r_bot);
     }
 
     OPENSWMM_KERNEL_FN double parab_getYofA(const XSectParams& xs, double a) const {
@@ -820,11 +919,11 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double powerfunc_getAofY(const XSectParams& xs, double y) const {
-        return xs.r_bot * std::pow(y, xs.s_bot + 1.0);
+        return shape::powerfuncAofY(y, xs.s_bot, xs.r_bot);
     }
 
     OPENSWMM_KERNEL_FN double powerfunc_getWofY(const XSectParams& xs, double y) const {
-        return (xs.s_bot + 1.0) * xs.r_bot * std::pow(y, xs.s_bot);
+        return shape::powerfuncWofY(y, xs.s_bot, xs.r_bot);
     }
 
     OPENSWMM_KERNEL_FN double powerfunc_getYofA(const XSectParams& xs, double a) const {
@@ -899,7 +998,7 @@ struct XsectEval {
             case XSectShape::ARCH:
                 return xs.a_full * lookup(y_norm, tbl.A_Arch, tbl.N_A_Arch);
             case XSectShape::RECT_CLOSED:
-            case XSectShape::RECT_OPEN:    return y * xs.w_max;
+            case XSectShape::RECT_OPEN:    return shape::rectAofY(y, xs.w_max);
             case XSectShape::RECT_TRIANG:  return rect_triang_getAofY(xs, y);
             case XSectShape::RECT_ROUND:   return rect_round_getAofY(xs, y);
             case XSectShape::MOD_BASKET:   return mod_basket_getAofY(xs, y);
@@ -954,8 +1053,7 @@ struct XsectEval {
             case XSectShape::ARCH:
                 return xs.w_max * lookup(y_norm, tbl.W_Arch, tbl.N_W_Arch);
             case XSectShape::RECT_CLOSED:
-                if (y_norm == 1.0) return 0.0;
-                return xs.w_max;
+                return shape::rectClosedWofY(y_norm, xs.w_max);
             case XSectShape::RECT_OPEN:    return xs.w_max;
             case XSectShape::RECT_TRIANG:  return rect_triang_getWofY(xs, y);
             case XSectShape::RECT_ROUND:   return rect_round_getWofY(xs, y);
@@ -1128,7 +1226,7 @@ struct XsectEval {
                 return getRofY(xs, getYofA(xs, a));
             case XSectShape::RECT_CLOSED:  return rect_closed_getRofA(xs, a);
             case XSectShape::RECT_OPEN:
-                return a / (xs.w_max + (2.0 - xs.s_bot) * a / xs.w_max);
+                return shape::rectOpenRofA(a, xs.w_max, xs.s_bot);
             case XSectShape::RECT_TRIANG:  return rect_triang_getRofA(xs, a);
             case XSectShape::RECT_ROUND:   return rect_round_getRofA(xs, a);
             case XSectShape::MOD_BASKET:   return mod_basket_getRofA(xs, a);

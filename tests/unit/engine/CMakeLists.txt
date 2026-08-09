@@ -130,6 +130,14 @@ add_gtest_unit(test_engine_xsect_api         test_xsect_api.cpp)
 # tables reproduces the host one at ULP zero — the device-rebinding claim,
 # checked on the host across the full shape catalog and depth range.
 add_gtest_unit(test_engine_xsect_kernels_parity test_xsect_kernels_parity.cpp)
+# Same reason as test_engine_xsect_parity below: XSectLookup.hpp switches its
+# normalization and interpolation arithmetic on SWMM_XSECT_FAST_LOOKUP, so a
+# test TU built without the engine's setting would compare the header compiled
+# in one numerical mode against the library compiled in the other.
+if(OPENSWMM_FAST_XSECT_LOOKUP)
+    target_compile_definitions(test_engine_xsect_kernels_parity
+                               PRIVATE SWMM_XSECT_FAST_LOOKUP)
+endif()
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
