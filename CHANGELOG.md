@@ -399,6 +399,57 @@ retroactive.
 
 ### Fixed
 
+- **`FLOW_ROUTING FV` process coverage — a family of silent divergences.** The
+  finite-volume solver reduced the engine coupling to a four-field forcing
+  struct, so anything not expressible in those four arrays was unreachable from
+  the marching loop, and nothing checked for it. No FV test contained a pump,
+  orifice, weir, outlet, control rule, storage node or ponding, so deleting the
+  structure-flow field entirely would have passed all 57 of them. Each item
+  below produced a plausible-looking report of something that did not happen:
+
+  - Out-of-bounds write into dynamic-wave arrays that `Router::init` never
+    allocates under FV, whenever a model contained any non-conduit link.
+  - Mesh-build errors were discarded: a model the solver could not mesh ran to
+    completion with **zero routing** and exited clean.
+  - Storage-node losses were charged to the mass balance but never removed from
+    the water; conduit seepage under US units was **43 200× too large**
+    (`UCF(RAINFALL)`, skipped by the US early-out) and saturated at the
+    availability cap.
+  - `ALLOW_PONDING` and `SURCHARGE_DEPTH` were never read; a ponding node
+    reported no flooding at all; ponded storage never reached the mass balance
+    — the last of these a **DYNWAVE fix as much as an FV one**, worth 82.5 % of
+    routing continuity error on a single-junction pond.
+  - Flap gates on conduits and outfalls were ignored: a dry junction under an
+    8 ft outfall stage filled at 16.4 cfs with both gates set.
+  - Multi-barrel conduits reported `barrels ×` the flow of the single barrel
+    actually marched, **creating 3.4 % of the routed volume out of nothing**. A
+    cell is now the aggregate section of all barrels.
+  - Culvert inlet control was applied by overwriting `links.flow` after the node
+    ledger had been booked, so the cap existed only in the report — under
+    DYNWAVE it still does not hold the water back. FV now applies it as a
+    prescribed-discharge boundary at the culvert's upstream face.
+  - Force mains used Manning's equivalent *n* at all depths instead of switching
+    to Hazen-Williams / Darcy-Weisbach once pressurized.
+  - `FV_STRUCTURE_COUPLING` was parsed, written, C-API exposed and read
+    nowhere. Structure discharge was published as the last substep's sample
+    rather than the mean actually applied.
+  - `SAVE OUTFLOWS` wrote the interface file for the kinematic-wave node set.
+  - The report said "STEADY", classified every conduit 100 % dry, left the
+    Conduit Surcharge Summary permanently empty, and printed the explicit
+    substep count under "Average Iterations per Step".
+
+- **DYNWAVE conduit seepage was identically zero for every cross-section
+  shape.** `buildXSP` never populated `yw_max`, so the seepage clamp compared
+  the flow depth against 0 and drove the wetted width to 0. `[LOSSES]` seepage
+  applied only under KINWAVE/STEADY/FV, which build their parameters elsewhere.
+
+- **`[XSECTIONS]` and `[LOSSES]` rows were dropped for links declared later in
+  the file.** In the conventional layout `[XSECTIONS]` precedes
+  `[ORIFICES]`/`[WEIRS]`, so geometry for a regulator was routinely discarded
+  and the link ran at zero area and passed no flow under any head. Unresolved
+  rows are now replayed after the last section; one that still does not resolve
+  raises ERROR 209, as legacy does.
+
 - **Node convergence was tested on the mixed iterate, not the fixed-point residual (#97).**
   `updateNodeDepthsTeam()` tested `|nodes.depth - y_last| <= head_tol`, where `nodes.depth` is the
   possibly Anderson-mixed value. That measures how far the *accepted* iterate moved, not the
