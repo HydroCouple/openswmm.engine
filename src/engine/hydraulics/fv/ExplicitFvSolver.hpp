@@ -139,6 +139,11 @@ private:
 
     double nodeDepthFromVolume(int node, double volume) const;
 
+    /// dV/dH at an arbitrary depth — what the semi-implicit node correction is
+    /// damped against once Picard sweeping has moved the head off the one
+    /// `node_surf_area` was refreshed at.
+    double nodeStorageSlope(int node, double depth) const;
+
     /// Semi-implicit friction for one cell: Manning, or — for a FORCE_MAIN
     /// running full — the Hazen-Williams / Darcy-Weisbach law the section
     /// actually obeys, through the engine's own forcemain functions.

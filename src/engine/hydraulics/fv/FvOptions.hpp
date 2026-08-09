@@ -172,6 +172,30 @@ struct FvOptions {
     /// substep, with a safety margin. 1 = every substep (exact).
     int cfl_census_interval = 1;
 
+    /// Picard sweeps on the node head inside the semi-implicit coupling.
+    ///
+    /// 1 (default) is the original behaviour: ONE correction, with the
+    /// characteristic resistance √(g·A·T), the node surface area and the face
+    /// fluxes all frozen at the head the substep started from. That is exact
+    /// for the linearized problem — the residual after one sweep is
+    /// identically zero — so more sweeps only help because the real problem is
+    /// not linear: A, T and the storage area all move with the head, and the
+    /// Riemann flux is not the straight line the correction extrapolates
+    /// along. Freezing them is why the node is stable at a large Δt but not
+    /// ACCURATE at one, which is what forces it into a fine LTS tier and sets
+    /// the substep count (plan §7B.8).
+    ///
+    /// > 1 re-evaluates all three at the provisional head each sweep and
+    /// re-solves the incident faces' Riemann problems, so the node converges
+    /// on its own continuity equation instead of a tangent to it.
+    /// Conservation is untouched either way: every sweep leaves the answer in
+    /// `f_mass_`, the single array both the cell update and the node update
+    /// read.
+    int node_picard_sweeps = 1;
+
+    /// Stop sweeping when the head correction falls below this (ft).
+    double node_picard_tol = 1.0e-6;
+
     // -- Transport (plan §3.2 / §6.11) --------------------------------------
 
     /// Longitudinal dispersion coefficient (ft²/s). 0 disables the parabolic
