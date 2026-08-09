@@ -381,6 +381,38 @@ int SWMMEngine::initialize() noexcept {
     // separate computation using node geometry tables.
     ctx_.reset_state();
 
+    // MIN_SURFAREA is a project OPTION, and the junction storage convention was
+    // not reading it. Legacy keeps no junction storage at all (node_getVolume
+    // returns fullVolume*(d/fd), and fullVolume is 0 for a plain junction);
+    // this engine books it deliberately (plan §7B.6) at MIN_SURFAREA*fullDepth,
+    // but took the 12.566 ft² COMPILE-TIME constant rather than the option. So
+    // a deck asking for a smaller manhole got it honoured in the dynamic wave's
+    // surface-area floor (DynamicWave.cpp:391) and nowhere else — and the FV
+    // solver, whose node area IS this volume divided by full depth, could not
+    // see the option at all: MIN_SURFAREA 0.01 and 12.566 produced byte-
+    // identical FV output. On the SWASHES 1D chains, where the nodes are an
+    // artifact of discretizing a continuous channel and the decks ask for 0.01,
+    // that is 1257x the intended storage at every node.
+    //
+    // Setting full_volume here means node::getVolume takes its fullVolume > 0
+    // branch everywhere, so the mass balance, the dynamic wave and the FV mesh
+    // all read ONE number. Default is unchanged: min_surf_area defaults to 0,
+    // meaning "use the constant".
+    {
+        const double ucf_len = ucf::Ucf[ucf::LENGTH][
+            ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units))];
+        const double min_sa = (ctx_.options.min_surf_area > 0.0)
+            ? ctx_.options.min_surf_area / (ucf_len * ucf_len)
+            : constants::MIN_SURFAREA;
+        for (int i = 0; i < ctx_.n_nodes(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            if (ctx_.nodes.type[ui] == NodeType::STORAGE) continue;
+            const double fd = ctx_.nodes.full_depth[ui];
+            if (fd > 0.0 && !(ctx_.nodes.full_volume[ui] > 0.0))
+                ctx_.nodes.full_volume[ui] = min_sa * fd;
+        }
+    }
+
     // Compute initial volumes from init_depth (matching legacy node_initState)
     for (int i = 0; i < ctx_.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);

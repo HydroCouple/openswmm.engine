@@ -1309,3 +1309,72 @@ TEST(FvEngine, NodePicardIsNotADeadOption) {
         << "FV_NODE_PICARD changed nothing — the option is being parsed and "
            "ignored, exactly as FV_STRUCTURE_COUPLING and RK2 once were";
 }
+
+// ---------------------------------------------------------------------------
+// MIN_SURFAREA is a project option, and FV could not see it.
+//
+// Legacy keeps no junction storage at all; this engine books it (plan §7B.6)
+// at MIN_SURFAREA * fullDepth, but read the 12.566 ft² COMPILE-TIME constant
+// instead of the option. The dynamic wave honoured the option in its
+// surface-area floor, so the asymmetry hid: DW output moved with the setting
+// and FV output was byte-identical across 0.0001, 0.01 and 12.566.
+//
+// It matters most where nodes are an artifact of discretizing a channel rather
+// than real manholes — on the SWASHES 1D chains, which ask for 0.01, every
+// node carried 1257x the intended storage, and the Ritter dam-break front
+// lagged the analytic solution by 47 cells.
+// ---------------------------------------------------------------------------
+namespace {
+std::string writeMinSurfAreaModel(const std::string& name, const char* msa,
+                                  const char* routing) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/" + name + ".inp";
+    std::ofstream os(inp);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+          "REPORT_STEP          00:01:00\nROUTING_STEP         5\n"
+          "MIN_SURFAREA         " << msa << "\n\n"
+          "[JUNCTIONS]\nJ1  100.0  10.0  0  0  0\nJ2   99.0  10.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+          "[CONDUITS]\nC1  J1  J2  200  0.014  0  0  0  0\n"
+          "C2  J2  OF  200  0.014  0  0  0  0\n\n"
+          "[XSECTIONS]\nC1  CIRCULAR  3.0  0  0  0  1\n"
+          "C2  CIRCULAR  3.0  0  0  0  1\n\n"
+          "[INFLOWS]\nJ1  FLOW  \"\"  FLOW  1.0  1.0  15.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    return inp;
+}
+}  // namespace
+
+TEST(FvEngine, MinSurfAreaIsHonouredByFv) {
+    const RunResult small = runModel(
+        writeMinSurfAreaModel("msa_small_fv", "0.01", "FV"));
+    const RunResult big = runModel(
+        writeMinSurfAreaModel("msa_big_fv", "12.566", "FV"));
+    ASSERT_TRUE(small.parsed && big.parsed);
+    ASSERT_GT(small.peak_flow.at("C2"), 0.0) << "fixture never routed";
+
+    EXPECT_NE(small.peak_flow.at("C2"), big.peak_flow.at("C2"))
+        << "FV output is identical across a 1257x change in MIN_SURFAREA — "
+           "the junction storage convention is back on the compile-time "
+           "constant and the option is being ignored";
+
+    // What the option SHOULD move is small. Shrinking a node's storage by
+    // 1257x is a large change to the network's buffering, and a scheme that is
+    // conserving properly barely notices: measured, FV's peak moves 0.1 %
+    // (14.74 -> 14.76) where the dynamic wave's moves 44 % (15.95 -> 22.93) on
+    // the same deck, and DW's routing continuity degrades to -2.24 %. Asserting
+    // the STABILITY rather than a threshold keeps this about the property that
+    // matters instead of a number that will drift.
+    const double dpk = std::fabs(small.peak_flow.at("C2") -
+                                 big.peak_flow.at("C2"));
+    EXPECT_LT(dpk, 0.05 * big.peak_flow.at("C2"))
+        << "FV peak moved " << dpk << " cfs across the storage change";
+
+    // Continuity: clean at a realistic manhole, and merely degraded — not
+    // broken — at a near-zero-storage node, which is a regime the node update
+    // genuinely finds hard (DW is 7x worse there).
+    EXPECT_LT(std::fabs(big.continuity_pct), 0.05) << big.continuity_pct;
+    EXPECT_LT(std::fabs(small.continuity_pct), 0.5) << small.continuity_pct;
+}

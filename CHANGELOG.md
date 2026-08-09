@@ -190,6 +190,35 @@ retroactive.
 
 ### Fixed
 
+- **`MIN_SURFAREA` was a project option the junction storage convention never
+  read.** Legacy keeps no junction storage at all (`node_getVolume` returns
+  `fullVolume*(d/fd)`, and `fullVolume` is 0 for a plain junction); this engine
+  books it deliberately at `MIN_SURFAREA * fullDepth` — but took the 12.566 ft²
+  **compile-time constant** rather than the option. The dynamic wave honoured
+  the option in its surface-area floor, so the asymmetry hid: DW output moved
+  with the setting while **FV output was byte-identical across 0.0001, 0.01 and
+  12.566**, because the FV node area *is* that volume divided by full depth.
+  A metric deck asking for `MIN_SURFAREA 12.566` (m²) got 12.566 ft² — the same
+  10.8× unit slip the dynamic wave's own floor was fixed for.
+
+  It matters most where nodes are an artifact of discretizing a channel rather
+  than real manholes. On the SWASHES 1D analytic chains, which ask for 0.01,
+  every node carried 1257× the intended storage. Fixing it improves FV's L1
+  depth error against the analytic solution by **2.75× on Ritter** (0.144 →
+  0.052), **2.81× on Stoker** (0.120 → 0.043) and **3.78× on Thacker planar**
+  (1.467 → 0.388) — FV is now the most accurate solver in the suite on all
+  three, ahead of both dynamic-wave columns and the 2D marcher. `lake-at-rest-
+  emerged` moves the other way (0.0051 → 0.0119): less node storage means less
+  damping at an emerged shoreline.
+
+  `full_volume` is now set once from the effective area, so `node::getVolume`
+  takes its `fullVolume > 0` branch and the mass balance, the dynamic wave and
+  the FV mesh all read one number. **Default behaviour is unchanged** —
+  `min_surf_area` defaults to 0, meaning "use the constant" — and 102 of 105
+  regression decks are byte-identical. The three that move are exactly the
+  three that set the option; all three have byte-identical `.out`, differing
+  only in one node's reported continuity (0.22 % → 0.23 %).
+
 - **Triangular conduit area disagreed with legacy in the last bit.** The batch
   path spelled it `s_bot*y*y`; legacy spells it `y*y*sBot`. IEEE multiplication
   is not associative, so those are different computations — for a plain
