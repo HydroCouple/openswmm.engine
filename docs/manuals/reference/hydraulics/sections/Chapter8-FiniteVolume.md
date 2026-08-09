@@ -513,10 +513,30 @@ cell is built from it.
 
 Pumps, orifices, weirs and outlets are evaluated by their existing
 structure equations and applied as source/sink pairs on the two node
-volumes. They are evaluated once per routing step and held across the
-substeps of that step. Re-evaluating them per substep would chatter
-control rules tuned for routing-step cadence, and would require the
-structure equations inside the solver's inner loop.
+volumes. Under `FV_STRUCTURE_COUPLING SUBSTEP` (the default) they are
+re-evaluated at the top of every substep, together with the outfall
+stage, against the state the solver has actually reached — a routing
+step spans many substeps, across which a pump's wet-well depth and a
+weir's head difference move while a frozen discharge does not.
+`ROUTING_STEP` holds them at their start-of-step values instead.
+
+Control *rules* are not re-evaluated at substep cadence; they run on the
+engine's own rule step, which is tuned for routing-step cadence. Only
+the head-dependent discharge of the structures those rules set is
+refreshed. A device backend cannot call the structure equations across
+the plugin boundary and clamps to `ROUTING_STEP`, saying so at open.
+
+Culvert inlet control (§8.6.4) is applied inside the solver, as a cap on
+the flux crossing the culvert's upstream face, rather than by rewriting
+the link flow afterwards — the node ledger is booked from those fluxes,
+so a post-hoc rewrite would leave the reported flow and the continuity
+balance describing different runs.
+
+A conduit or outfall flap gate masks the reverse flux at the conduit's
+boundary faces. The gate is a check valve, so a masked face behaves as a
+wall only while the flux would run the wrong way; closing it mirrors the
+interior state across the face, which returns exactly zero mass flux and
+leaves the interior its own hydrostatic pressure.
 
 Lateral inflows enter at regular nodes exactly as assembled for any
 other routing method. Distributed conduit losses — evaporation and
@@ -585,8 +605,8 @@ file.
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
 | `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). |
-| `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. |
-| `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows are refreshed. |
+| `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |
+| `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows and outfall stages are refreshed: every substep, or once per routing step. A device backend clamps to `ROUTING_STEP`. |
 | `FV_NODE_COUPLING` | `SEMI_IMPLICIT` | `EXPLICIT` freezes face fluxes across the node update; `SEMI_IMPLICIT` linearizes them in the node head (§8.6.1). |
 | `FV_COMPACTION` | `YES` | Skip dry, inactive parts of the network. Results-transparent. |
 | `FV_LTS` | `YES` | Local time stepping (§8.5.6). `NO` forces one global substep size. |
@@ -606,6 +626,25 @@ configuration against the dynamic wave run of the same file.
 | Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % | 0.000 % |
 | Mean absolute peak-flow deviation | — | 37.1 % | 15.3 % | 12.8 % | 7.2 % |
 | Wall-clock, relative | 1× | ~7× | ~15× | ~12× | ~34× |
+
+The same comparison across network size, on uniform and graded reaches
+of 50 / 500 / 2000 conduits, at the default mesh:
+
+| | 50 | 500 | 2000 |
+|---|---|---|---|
+| uniform reach, × dynamic wave | 117 | 252 | 189 |
+| graded reach, × dynamic wave | 39 | 69 | 49 |
+| routing continuity, finite volume | −0.000 % | −0.000 % | −0.000 % |
+| routing continuity, dynamic wave | −0.16 … −0.50 % | 0.09 / −0.19 % | 0.09 / −0.19 % |
+
+Two readings. **The ratio does not improve with network size** — it is
+flat to erratic, so no argument that the cost amortizes on larger models
+survives this table. And **the finite-volume solver closes on the
+dynamic wave solver exactly where the latter struggles**: the graded
+ratios are three to four times better, not because the explicit solver
+got faster (its times are unchanged between the two) but because the
+implicit solver's own step collapses there, from 5.00 s to 1.14 s. Steep,
+graded, stiff networks are where the trade is most favourable.
 
 Three readings follow, and all three are honest.
 
