@@ -279,6 +279,68 @@ cdef class Surface2D:
         """
         _check(swmm_2d_set_triangle_mannings(self._engine, idx, n))
 
+    def get_triangle_init_depth(self, int idx) -> float:
+        """Return the initial water depth of a triangle.
+
+        The value is in B{mesh length units} — feet on a US-C{FLOW_UNITS}
+        project, metres on SI or on a mesh file that declared
+        C{;; UNITS: SI (m)} — the same convention as the vertex Z column.
+
+        @param idx: Triangle index (0-based).
+        @type idx: int
+        @return: Initial depth; C{0.0} means the triangle starts dry.
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double d
+        _check(swmm_2d_triangle_get_init_depth(self._engine, idx, &d))
+        return d
+
+    def set_triangle_init_depth(self, int idx, double depth) -> None:
+        """Set the initial water depth of a triangle.
+
+        Applied to the solver state when the 2D surface initializes, and
+        persisted in the C{INIT_DEPTH} column of C{[2D_TRIANGLES]} on save.
+
+        @param idx: Triangle index (0-based).
+        @type idx: int
+        @param depth: Initial depth in mesh length units; must be M{>= 0}.
+        @type depth: float
+        @raise RuntimeError: If the C API rejects the value (e.g. negative).
+        """
+        _check(swmm_2d_set_triangle_init_depth(self._engine, idx, depth))
+
+    def get_triangle_init_velocity(self, int idx):
+        """Return the C{(u, v)} initial velocity of a triangle.
+
+        @param idx: Triangle index (0-based).
+        @type idx: int
+        @return: Tuple C{(u, v)} in m/s; C{(0.0, 0.0)} when at rest.
+        @rtype: tuple
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef double u, v
+        _check(swmm_2d_triangle_get_init_velocity(self._engine, idx, &u, &v))
+        return u, v
+
+    def set_triangle_init_velocity(self, int idx, double u, double v) -> None:
+        """Set the C{(u, v)} initial velocity of a triangle.
+
+        Projected onto the explicit marcher's face normals as M{(h*u, h*v)}
+        when the 2D surface initializes — at M{t = 0} only; hotstart and
+        reinitialize still zero the face momentum. Persisted as sparse
+        C{[2D_INITIAL_VELOCITY]} rows on save.
+
+        @param idx: Triangle index (0-based).
+        @type idx: int
+        @param u: X-component of velocity in m/s; must be finite.
+        @type u: float
+        @param v: Y-component of velocity in m/s; must be finite.
+        @type v: float
+        @raise RuntimeError: If the C API rejects a non-finite value.
+        """
+        _check(swmm_2d_set_triangle_init_velocity(self._engine, idx, u, v))
+
     def get_triangle_tag(self, int idx) -> str:
         """Return the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG).
 
