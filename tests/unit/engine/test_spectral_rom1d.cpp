@@ -2520,3 +2520,349 @@ TEST(SurchargeAttenuation, ZeroPerturbationExactWithMixedAlpha) {
         EXPECT_NEAR(f.rom.q95[ui], h_det[ui], 1.0e-12) << "node " << i;
     }
 }
+
+// ============================================================================
+// PR H11 — per-member phase coordinate (computeQuantiles()'s h_ref, driven
+// by setTravelTime()/RomPhaseCoordinate.hpp)
+// ============================================================================
+//
+// These test computeQuantiles()'s USE of a travel-time field: the h_ref
+// selection per §2.3 of the design (τ=0 short-circuit, τ>0 forward sample,
+// τ<0 reflection) and its interaction with the pre-H11 amplitude channel.
+// computeTravelTime()/DetHistoryRing themselves (the closed forms) are
+// covered by test_rom_phase_coordinate.cpp; engine-level velocity->T̄
+// plumbing lives in test_engine_1d_rom_lifecycle.cpp.
+
+TEST(PhaseCoordinate, NoTravelTimeIsBitIdentical) {
+    // Never calling setTravelTime() must be bit-identical to calling it with
+    // an explicit all-zero field -- both are "no phase effect", the same
+    // invariant SurchargeAttenuation.NullAlphaMatchesAllOnesArray proves for
+    // H5's alpha parameter (default no-op == explicit no-op array). This
+    // exercises the phase-active code path (ring gets primed and pushed)
+    // while proving it changes nothing when T̄ ≡ 0.
+    const int N = 20, M = 20, K = 4;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    std::vector<double> runoff(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h_det[static_cast<std::size_t>(i)] =
+            0.10 * std::exp(-0.5 * dx * dx / (N / 8.0 * N / 8.0));
+        runoff[static_cast<std::size_t>(i)] = 1.0e-5 * (1.0 + std::sin(0.4 * i));
+    }
+
+    SpectralROM1D romA;
+    romA.basis = &basis; romA.n_ensemble = M;
+    romA.mannings_pert = 0.20; romA.runoff_pert = 0.20;
+    romA.initialize();
+    romA.seed(h_det.data());
+
+    SpectralROM1D romB;
+    romB.basis = &basis; romB.n_ensemble = M;
+    romB.mannings_pert = 0.20; romB.runoff_pert = 0.20;
+    romB.initialize();
+    romB.seed(h_det.data());
+    const std::vector<double> zero_tbar(static_cast<std::size_t>(N), 0.0);
+    romB.setTravelTime(zero_tbar.data());
+
+    for (int step = 0; step < 20; ++step) {
+        romA.advance(30.0, 0.1, h_det.data(), runoff.data());
+        romB.advance(30.0, 0.1, h_det.data(), runoff.data());
+    }
+    romA.computeQuantiles(h_det.data(), nullptr);
+    romB.computeQuantiles(h_det.data(), nullptr);
+
+    for (int i = 0; i < N; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_DOUBLE_EQ(romA.q05[ui], romB.q05[ui]) << "node " << i;
+        EXPECT_DOUBLE_EQ(romA.q50[ui], romB.q50[ui]) << "node " << i;
+        EXPECT_DOUBLE_EQ(romA.q95[ui], romB.q95[ui]) << "node " << i;
+    }
+}
+
+TEST(PhaseCoordinate, ZeroPerturbationExactWithPhase) {
+    // mm_i == 1 for every member (pert = 0) forces tau_i == 0 everywhere
+    // regardless of a nonzero T̄ field (phaseOffset(1.0, ·) == 0.0 exactly).
+    // Quantiles must still track h_det exactly -- the checklist's
+    // non-negotiable invariant, now exercised through H11's phase term.
+    ROM1DFixture f;
+    f.rom.mannings_pert = 0.0;
+    f.rom.runoff_pert   = 0.0;
+    f.rom.initialize();
+
+    auto h0 = f.bump_head();
+    f.rom.seed(h0.data());
+
+    std::vector<double> tbar(static_cast<std::size_t>(f.N));
+    for (int i = 0; i < f.N; ++i)
+        tbar[static_cast<std::size_t>(i)] = 30.0 * i;  // nonzero, increasing downstream
+    f.rom.setTravelTime(tbar.data());
+
+    std::vector<double> h_det(static_cast<std::size_t>(f.N));
+    std::vector<double> runoff(static_cast<std::size_t>(f.N));
+    for (int step = 0; step < 100; ++step) {
+        const double phase = 0.05 * step;
+        for (int i = 0; i < f.N; ++i) {
+            h_det[static_cast<std::size_t>(i)]  =
+                h0[static_cast<std::size_t>(i)] * (1.0 + 0.5 * std::sin(phase + 0.3 * i));
+            runoff[static_cast<std::size_t>(i)] =
+                1.0e-5 * (1.0 + std::cos(phase + 0.7 * i));
+        }
+        f.rom.advance(15.0, 0.1, h_det.data(), runoff.data());
+    }
+    f.rom.computeQuantiles(h_det.data(), nullptr);
+
+    for (int i = 0; i < f.rom.n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_NEAR(f.rom.q05[ui], h_det[ui], 1.0e-12) << "node " << i;
+        EXPECT_NEAR(f.rom.q50[ui], h_det[ui], 1.0e-12) << "node " << i;
+        EXPECT_NEAR(f.rom.q95[ui], h_det[ui], 1.0e-12) << "node " << i;
+    }
+}
+
+TEST(PhaseCoordinate, SteadyDetTrajectoryPhaseAddsNothing) {
+    // A CONSTANT h_det trajectory: once the ring holds several identical
+    // planes, every member's phase-shifted reference (both the forward-
+    // sample and reflection branches) collapses to exactly h_det. A
+    // nonzero, non-trivial T̄ must therefore leave the output unchanged --
+    // the saturated-regime invariant the existing coverage gates rely on
+    // (RomCoverage.BandsBracketBruteForceMonteCarlo,
+    // RomCoverageSurcharged.SemiImplicitContinuity both measure only in the
+    // second half of their sampling window, per DEVIATION_FORM.md's own
+    // spin-up rationale).
+    const int N = 20, M = 20, K = 4;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    std::vector<double> runoff(static_cast<std::size_t>(N), 0.0);
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h_det[static_cast<std::size_t>(i)] =
+            0.10 * std::exp(-0.5 * dx * dx / (N / 8.0 * N / 8.0));
+    }
+
+    SpectralROM1D romA;  // no phase
+    romA.basis = &basis; romA.n_ensemble = M;
+    romA.mannings_pert = 0.20; romA.runoff_pert = 0.0;
+    romA.initialize();
+    romA.seed(h_det.data());
+
+    SpectralROM1D romB;  // phase active, but on a steady trajectory
+    romB.basis = &basis; romB.n_ensemble = M;
+    romB.mannings_pert = 0.20; romB.runoff_pert = 0.0;
+    romB.initialize();
+    romB.seed(h_det.data());
+    std::vector<double> tbar(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) tbar[static_cast<std::size_t>(i)] = 20.0 * i;
+    romB.setTravelTime(tbar.data());
+
+    for (int step = 0; step < 60; ++step) {
+        romA.advance(15.0, 0.1, h_det.data(), runoff.data());
+        romB.advance(15.0, 0.1, h_det.data(), runoff.data());
+    }
+    romA.computeQuantiles(h_det.data(), nullptr);
+    romB.computeQuantiles(h_det.data(), nullptr);
+
+    for (int i = 0; i < N; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        EXPECT_DOUBLE_EQ(romA.q05[ui], romB.q05[ui]) << "node " << i;
+        EXPECT_DOUBLE_EQ(romA.q50[ui], romB.q50[ui]) << "node " << i;
+        EXPECT_DOUBLE_EQ(romA.q95[ui], romB.q95[ui]) << "node " << i;
+    }
+}
+
+TEST(PhaseCoordinate, RisingFrontPhaseWidensBand) {
+    // A spatially-UNIFORM, linearly-rising h_det: on this ungrounded chain
+    // basis every retained eigenvector is zero-mean (orthogonal to the
+    // discarded constant null mode -- USER_GUIDE limitation #4), so the
+    // amplitude channel (b_coarse, hence a_ensemble) stays ~0 throughout,
+    // isolating the phase channel's contribution to band width cleanly.
+    const int N = 20, M = 40, K = 6;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    const double h0 = 1.0, slope = 0.01, pert = 0.20;
+    std::vector<double> tbar(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) tbar[static_cast<std::size_t>(i)] = 40.0 * i;
+
+    SpectralROM1D romA;  // no phase
+    romA.basis = &basis; romA.n_ensemble = M;
+    romA.mannings_pert = pert; romA.runoff_pert = 0.0;
+    romA.initialize();
+    std::vector<double> h_seed(static_cast<std::size_t>(N), h0);
+    romA.seed(h_seed.data());
+
+    SpectralROM1D romB;  // with phase
+    romB.basis = &basis; romB.n_ensemble = M;
+    romB.mannings_pert = pert; romB.runoff_pert = 0.0;
+    romB.initialize();
+    romB.seed(h_seed.data());
+    romB.setTravelTime(tbar.data());
+
+    std::vector<double> runoff(static_cast<std::size_t>(N), 0.0);
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    const double dt = 10.0;
+    const int n_steps = 60;
+    for (int step = 1; step <= n_steps; ++step) {
+        const double t = step * dt;
+        std::fill(h_det.begin(), h_det.end(), h0 + slope * t);
+        romA.advance(dt, 0.1, h_det.data(), runoff.data());
+        romB.advance(dt, 0.1, h_det.data(), runoff.data());
+    }
+    romA.computeQuantiles(h_det.data(), nullptr);
+    romB.computeQuantiles(h_det.data(), nullptr);
+
+    const int probe = N - 1;  // farthest downstream: largest T̄
+    const auto pu = static_cast<std::size_t>(probe);
+    const double widthA = romA.q95[pu] - romA.q05[pu];
+    const double widthB = romB.q95[pu] - romB.q05[pu];
+    EXPECT_GT(widthB, widthA + 1e-6)
+        << "phase-shifted band must be strictly wider than the unphased "
+        << "band on a rising front (widthA=" << widthA << ", widthB=" << widthB << ")";
+
+    // Expected magnitude: member multipliers span roughly [1-pert, 1+pert],
+    // so tau spans roughly [-pert*T̄, +pert*T̄] and width ≈ 2*pert*T̄*slope.
+    // Loose bound (3x either way) -- this checks order of magnitude, not
+    // the exact LHS-design-dependent constant.
+    const double tbar_probe = tbar[pu];
+    const double expected = 2.0 * pert * tbar_probe * slope;
+    EXPECT_GT(widthB, 0.3 * expected);
+    EXPECT_LT(widthB, 3.0 * expected);
+}
+
+TEST(PhaseCoordinate, NegativeTauUsesReflection) {
+    // A faster member (mm < 1, tau < 0) has no future history to sample; it
+    // must use the past-anchored reflection h_ref = 2*H(t) - H(t-|tau|), NOT
+    // a clamp-to-now (which would silently zero out that member's phase
+    // contribution and lose half the band's width -- exactly the
+    // regression this test guards against, per the design's §2.3).
+    const int N = 20, M = 40, K = 6;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    const double h0 = 1.0, slope = 0.02, pert = 0.20;
+
+    SpectralROM1D rom;
+    rom.basis = &basis; rom.n_ensemble = M;
+    rom.mannings_pert = pert; rom.runoff_pert = 0.0;
+    rom.initialize();
+    // Ascending internal LHS design (no external samples, cell-centered
+    // strata t=(i+0.5)/M): member 0 has the smallest multiplier -- the
+    // fastest member, the most negative tau.
+    const double t0_expected = 0.5 / static_cast<double>(M);
+    const double mm0_expected = (1.0 - pert) + t0_expected * (2.0 * pert);
+    ASSERT_NEAR(rom.mannings_mult[0], mm0_expected, 1e-9);
+    ASSERT_LT(rom.mannings_mult[0], rom.mannings_mult[static_cast<std::size_t>(M - 1)]);
+
+    std::vector<double> h_seed(static_cast<std::size_t>(N), h0);
+    rom.seed(h_seed.data());
+
+    std::vector<double> tbar(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) tbar[static_cast<std::size_t>(i)] = 30.0 * i;
+    rom.setTravelTime(tbar.data());
+
+    std::vector<double> runoff(static_cast<std::size_t>(N), 0.0);
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    const double dt = 10.0;
+    const int n_steps = 50;
+    double t_now = 0.0;
+    for (int step = 1; step <= n_steps; ++step) {
+        t_now = step * dt;
+        std::fill(h_det.begin(), h_det.end(), h0 + slope * t_now);
+        rom.advance(dt, 0.1, h_det.data(), runoff.data());
+    }
+    rom.computeQuantiles(h_det.data(), nullptr);
+
+    const int probe = N - 1;
+    const auto& sorted = rom.sortedMemberValues();
+    ASSERT_EQ(static_cast<int>(sorted.size()), rom.n_nodes * M);
+    const double* row = &sorted[static_cast<std::size_t>(probe) * static_cast<std::size_t>(M)];
+    // Fastest member (smallest mm, most negative tau) gives the HIGHEST
+    // reflected value on a rising ramp -- the last (largest) sorted entry.
+    const double max_val = row[static_cast<std::size_t>(M - 1)];
+
+    const double tau0 = (rom.mannings_mult[0] - 1.0) * tbar[static_cast<std::size_t>(probe)];
+    ASSERT_LT(tau0, 0.0);
+    // h_det is linear in time and spatially uniform, so the reflection
+    // reduces to an exact closed form regardless of sign:
+    //   h_ref = h_det(t_now) - slope*tau
+    const double expected = (h0 + slope * t_now) - slope * tau0;
+    EXPECT_NEAR(max_val, expected, 1e-6);
+
+    // Guard against a clamp-to-now regression: that would give exactly
+    // h_det(t_now), strictly LESS than the correctly-reflected value for a
+    // fast (negative-tau) member on a rising ramp.
+    EXPECT_GT(max_val, h0 + slope * t_now + 1e-6);
+}
+
+TEST(PhaseCoordinate, HistoryShorterThanTauDegradesGracefully) {
+    // Early in a run, the required lookback can exceed accumulated history.
+    // The clamp-to-oldest fallback must degrade gracefully: finite values,
+    // correctly ordered quantiles, and a NARROWER band than once history has
+    // caught up -- not NaN and not an exploding width.
+    const int N = 20, M = 40, K = 6;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    const double h0 = 1.0, slope = 0.02, pert = 0.20;
+
+    SpectralROM1D rom;
+    rom.basis = &basis; rom.n_ensemble = M;
+    rom.mannings_pert = pert; rom.runoff_pert = 0.0;
+    rom.initialize();
+    std::vector<double> h_seed(static_cast<std::size_t>(N), h0);
+    rom.seed(h_seed.data());
+    std::vector<double> tbar(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) tbar[static_cast<std::size_t>(i)] = 30.0 * i;
+    rom.setTravelTime(tbar.data());
+
+    std::vector<double> runoff(static_cast<std::size_t>(N), 0.0);
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    double t_accum = 0.0;
+
+    auto step_and_measure = [&](int n_steps, double dt) {
+        for (int s = 0; s < n_steps; ++s) {
+            t_accum += dt;
+            std::fill(h_det.begin(), h_det.end(), h0 + slope * t_accum);
+            rom.advance(dt, 0.1, h_det.data(), runoff.data());
+        }
+        rom.computeQuantiles(h_det.data(), nullptr);
+    };
+
+    auto check_finite_and_ordered = [&]() {
+        for (int i = 0; i < N; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            EXPECT_TRUE(std::isfinite(rom.q05[ui])) << "node " << i;
+            EXPECT_TRUE(std::isfinite(rom.q50[ui])) << "node " << i;
+            EXPECT_TRUE(std::isfinite(rom.q95[ui])) << "node " << i;
+            EXPECT_LE(rom.q05[ui], rom.q50[ui]) << "node " << i;
+            EXPECT_LE(rom.q50[ui], rom.q95[ui]) << "node " << i;
+        }
+    };
+
+    // Early: only 2 steps -- far less history than the far-downstream node
+    // needs (tau up to 0.2*30*19 = 114s, only 20s of history exists).
+    step_and_measure(2, 10.0);
+    check_finite_and_ordered();
+    const int probe = N - 1;
+    const auto pu = static_cast<std::size_t>(probe);
+    const double width_early = rom.q95[pu] - rom.q05[pu];
+
+    // Continue the SAME run until history comfortably covers the lookback.
+    step_and_measure(200, 10.0);
+    check_finite_and_ordered();
+    const double width_mature = rom.q95[pu] - rom.q05[pu];
+
+    EXPECT_LT(width_early, width_mature)
+        << "history-starved band (width=" << width_early << ") should be "
+        << "narrower than the mature band (width=" << width_mature << "), "
+        << "not exploding from the lookback clamp";
+}

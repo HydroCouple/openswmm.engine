@@ -68,6 +68,7 @@
 #include "../uncertainty/SpectralROM1D.hpp"
 #include "../uncertainty/RomThreshold.hpp"
 #include "../uncertainty/RomSurchargeAttenuation.hpp"
+#include "../uncertainty/RomPhaseCoordinate.hpp"
 #include "../uncertainty/UncertaintyEnsemble.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
@@ -369,6 +370,24 @@ public:
      * when the 1D ROM isn't built. Test/diagnostic accessor.
      */
     const std::vector<double>& rom1dAlphaBuffer() const noexcept { return rom1d_alpha_buf_; }
+
+    /**
+     * @brief PR H11: mutable access to the phase-coordinate config. Intended
+     * for the open()->initialize() window (same pattern as
+     * surfaceRouter2D().options()) so tests/callers can flip
+     * PhaseConfig::enabled off, or retune the physical dials, before the
+     * first stepRouting() call. No .inp parser key exists for this (matches
+     * H5's SurchargeAttenuationConfig, an internal knob only).
+     */
+    uncertainty::PhaseConfig& rom1dPhaseConfig() noexcept { return rom1d_phase_cfg_; }
+
+    /**
+     * @brief PR H11: per-active-node travel-time field T̄(x) from the most
+     * recent refreshRom1dTravelTime() call (active-node space, same indexing
+     * as rom1d_active_map_/rom1d()'s buffers). Empty before the first
+     * refresh or when the 1D ROM isn't built. Test/diagnostic accessor.
+     */
+    const std::vector<double>& rom1dTravelTimeBuffer() const noexcept { return rom1d_tbar_buf_; }
 #endif
 
 
@@ -455,6 +474,16 @@ private:
     std::vector<double> rom1d_alpha_buf_;  ///< per-active-node PR H5 surcharge-attenuation factor (reused each step)
     uncertainty::SurchargeAttenuationConfig rom1d_surcharge_cfg_; ///< PR H5 ramp band (defaults [0.9,1.1]); not
                                             ///< parser-exposed in this PR, internal knob only
+    // ---- PR H11: per-member phase coordinate ------------------------------
+    std::vector<double> rom1d_tbar_buf_;   ///< per-active-node travel time T̄(x) (s); refreshed on its own cadence
+    uncertainty::PhaseConfig rom1d_phase_cfg_; ///< dials (enabled/celerity_factor/u_min/caps); not parser-exposed,
+                                            ///< internal knob only -- matches H5's SurchargeAttenuationConfig
+    double rom1d_tbar_last_refresh_ = -1.0e9;    ///< sim time (s) of the last refreshRom1dTravelTime() call
+    double rom1d_tbar_refresh_interval_ = 60.0;  ///< min sim time (s) between T̄ refreshes
+    /// Recompute rom1d_tbar_buf_ from the current conduit flow/velocity
+    /// state (see the definition for the full-node scratch construction and
+    /// why this must never be called from buildROM1D()).
+    void refreshRom1dTravelTime() noexcept;
     std::ofstream rom1d_csv_;              ///< 1D ROM quantile CSV, written at report intervals
     std::ofstream rom_diag_csv_;           ///< PR H3: <rpt>.rom_diag.csv (fr_trust/surcharge_frac/...)
 
