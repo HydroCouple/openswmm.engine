@@ -70,17 +70,39 @@ enum class NodeCoupling : int {
 /// volume of surface area A_s. But the node is not updated explicitly: the
 /// semi-implicit correction carries the step in its denominator,
 /// `dh = dt*R / (A_s + dt*resist)`, which is unconditionally stable. So the
-/// term is not buying stability; it is acting as an accuracy limiter nobody
-/// designed as one, and a manhole's plan area is one to two orders of
-/// magnitude below a conduit cell's, so it sets `dt0` for the whole network.
+/// term is not buying STABILITY, whatever its form says; and a manhole's plan
+/// area is one to two orders of magnitude below a conduit cell's, so it sets
+/// `dt0` for the whole network.
 ///
-/// Measured on bump-subcritical: STABILITY gives 3428 substeps/step and an L1
-/// depth error of 0.1045; NONE with three node sweeps gives 50 substeps and
-/// 0.00159 — 9x faster and 66x more accurate, because marching a first-order
-/// tangent 3428 times accumulates more bias than 50 steps of a nearly
-/// converged solve. It is NOT a universal win: bump-shock and thacker-planar
-/// are ~1.2-1.4x worse without the term, which is why STABILITY remains the
-/// default and this exists to make the comparison runnable across the suite.
+/// It is, however, buying ACCURACY, and far more of it than the shape of the
+/// expression suggests. Scored against the SWASHES analytic solutions, L1 depth
+/// error, STABILITY vs NONE with three node sweeps:
+///
+///     bump-subcritical      0.1045  ->  1.132     10.8x worse
+///     bump-transcritical    0.2979  ->  0.9067     3.0x worse
+///     bump-shock            0.0596  ->  2.897     48.6x worse
+///     thacker-planar-1d     0.7559  ->  0.8636     1.1x worse
+///     macdonald-long-sub         -  -> 10.23      unusable
+///     macdonald-long-sup         -  -> 51.84      unusable
+///     ritter / stoker / lake-at-rest    unchanged (PASS either way)
+///
+/// NONE is 24-134x faster (bump-transcritical 120 s -> 5 s, bump-subcritical
+/// 134 s -> 1 s, both continuity-clean) and wrong wherever the node coupling
+/// carries the solution: steady frictional channels and anything transcritical.
+/// Three Picard sweeps do not stand in for the term at large dt — the sweeps
+/// converge the node's own continuity equation at the step it is handed, which
+/// is a different thing from that step being small enough to resolve the
+/// coupling. Only the cases the nodes barely participate in (dam breaks on a
+/// flat bed, a lake at rest) are indifferent.
+///
+/// So this is not a performance lever to reach for; it is the instrument that
+/// showed the node term is load-bearing, which is why STABILITY is the default
+/// and why the way out has to bound the node's step by what accuracy needs
+/// rather than by deleting the bound.
+///
+/// (An earlier note here claimed NONE scored 0.00159 on bump-subcritical, 66x
+/// BETTER. That does not reproduce: STABILITY's half of it, 0.1045, reproduces
+/// exactly, and NONE's is 1.132. Recorded so the number is not trusted again.)
 enum class NodeDtLimit : int {
     STABILITY = 0,  ///< default: the explicit A_s/(sum T*c) bound (today)
     NONE      = 1   ///< nodes do not constrain dt0; accuracy rests on sweeps
