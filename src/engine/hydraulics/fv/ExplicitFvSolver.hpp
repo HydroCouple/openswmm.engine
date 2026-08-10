@@ -144,6 +144,36 @@ private:
     /// `node_surf_area` was refreshed at.
     double nodeStorageSlope(int node, double depth) const;
 
+    /// Is this face's flux the one being computed and booked RIGHT NOW?
+    ///
+    /// Under LTS a node's incident faces can sit in different tiers, so only
+    /// some of them are firing on any given base step. A face that is not
+    /// firing holds the flux it will book at its NEXT firing, over its own
+    /// 2^k*dt0 window — recomputing it there would silently re-time a flux
+    /// that belongs to a different window, which is the one property the
+    /// macro cycle's face-open/volume-close offset exists to guarantee.
+    ///
+    /// Picard's flux re-solve is therefore restricted to live faces. The
+    /// residual still sums over ALL incident faces (a held flux is the best
+    /// estimate of what that face is carrying), and the linear correction is
+    /// still written to all of them, exactly as the single-sweep scheme did —
+    /// only the re-solve is gated. On the global path every face is live.
+    bool faceIsLive(int f) const noexcept {
+        return all_faces_live_ ||
+               (!live_stamp_.empty() &&
+                live_stamp_[static_cast<std::size_t>(f)] == live_gen_);
+    }
+
+    /// Faces whose flux is being computed on this base step. Stamped rather
+    /// than cleared so marking a due set is O(due), not O(faces).
+    std::vector<std::uint32_t> live_stamp_;
+    std::uint32_t              live_gen_ = 0;
+    /// The global (non-LTS) path recomputes every face each step, so there is
+    /// no window to violate and the re-solve is unrestricted there. A run can
+    /// use BOTH paths — a rejected macro cycle falls through to the global one
+    /// — so this is set per step rather than once.
+    bool all_faces_live_ = true;
+
     /// Semi-implicit friction for one cell: Manning, or — for a FORCE_MAIN
     /// running full — the Hazen-Williams / Darcy-Weisbach law the section
     /// actually obeys, through the engine's own forcemain functions.
