@@ -186,6 +186,22 @@ class Surface2D:
         """Set Manning's M{n} for a triangle (must be strictly positive)."""
         ...
 
+    def get_triangle_init_depth(self, idx: int) -> float:
+        """Return the initial water depth of a triangle, in mesh length units."""
+        ...
+
+    def set_triangle_init_depth(self, idx: int, depth: float) -> None:
+        """Set the initial water depth of a triangle (mesh length units, M{>= 0})."""
+        ...
+
+    def get_triangle_init_velocity(self, idx: int) -> tuple[float, float]:
+        """Return the C{(u, v)} initial velocity of a triangle, in m/s."""
+        ...
+
+    def set_triangle_init_velocity(self, idx: int, u: float, v: float) -> None:
+        """Set the C{(u, v)} initial velocity of a triangle (m/s, finite)."""
+        ...
+
     def get_triangle_tag(self, idx: int) -> str:
         """Return the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG)."""
         ...

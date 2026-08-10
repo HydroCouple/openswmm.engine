@@ -23,6 +23,12 @@ cdef extern from "openswmm_2d.h":
                                        double* cx, double* cy, double* cz)
     int swmm_2d_triangle_get_mannings(void* engine, int idx, double* n)
     int swmm_2d_set_triangle_mannings(void* engine, int idx, double n)
+    int swmm_2d_triangle_get_init_depth(void* engine, int idx, double* d)
+    int swmm_2d_set_triangle_init_depth(void* engine, int idx, double d)
+    int swmm_2d_triangle_get_init_velocity(void* engine, int idx,
+                                            double* u, double* v)
+    int swmm_2d_set_triangle_init_velocity(void* engine, int idx,
+                                            double u, double v)
     int swmm_2d_set_triangle_tag(void* engine, int idx, const char* tag)
     int swmm_2d_set_vertex_tag(void* engine, int idx, const char* tag)
     int swmm_2d_get_triangle_tag(void* engine, int idx, char* buf, int buflen)

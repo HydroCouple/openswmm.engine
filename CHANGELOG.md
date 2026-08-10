@@ -23,6 +23,25 @@ retroactive.
 
 ### Added
 
+- **Per-triangle 2D initial conditions in the Python bindings.**
+  `Surface2D.get_triangle_init_depth` / `set_triangle_init_depth` and
+  `get_triangle_init_velocity` / `set_triangle_init_velocity`, wrapping
+  `swmm_2d_triangle_get_init_depth`, `swmm_2d_set_triangle_init_depth`,
+  `swmm_2d_triangle_get_init_velocity` and `swmm_2d_set_triangle_init_velocity`.
+  These were the last four exported C functions with no Python wrapper; the
+  binding surface is now complete (0 `py-gap` in
+  `plans/parity/provenance_matrix.md`). Initial depth is in **mesh length
+  units** — the vertex-Z convention, not the SI metres the runtime state
+  accessors use.
+
+- **Gymnasium coverage column in the parity tooling.**
+  `plans/parity/tools/build_matrix_provenance.py` gained `--gym-root` and a
+  third `Gym` column derived from the `openswmm.gymnasium` adapter surface
+  (`_engine/solver_adapter.py`, plus any module that imports `openswmm`
+  directly, so a bypass of the choke point shows up). Advisory and never
+  gated — gymnasium is an RL surface, not an API mirror. 281 of 903 C symbols
+  are currently reachable through it.
+
 - **`FLOW_ROUTING FV` — an explicit conservative finite-volume solver.** A
   Godunov-type scheme on a cell mesh cut from the conduits, alongside (not
   replacing) dynamic wave analysis. Conservation form with hydrostatic
