@@ -152,12 +152,12 @@ class TestRouteModel(unittest.TestCase):
     """Verify RouteModel values."""
 
     def test_known_values(self):
-        expected = {"STEADY": 0, "KINWAVE": 1, "DYNWAVE": 2}
+        expected = {"STEADY": 0, "KINWAVE": 1, "DYNWAVE": 2, "FV": 3}
         for name, val in expected.items():
             self.assertEqual(RouteModel[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(RouteModel), 3)
+        self.assertEqual(len(RouteModel), 4)
 
 
 # ---------------------------------------------------------------------------
