@@ -1430,3 +1430,82 @@ TEST(FvEngine, MinSurfAreaIsHonouredByFv) {
     EXPECT_LT(std::fabs(big.continuity_pct), 0.05) << big.continuity_pct;
     EXPECT_LT(std::fabs(small.continuity_pct), 0.5) << small.continuity_pct;
 }
+
+// ---------------------------------------------------------------------------
+// A lake at rest astride an EMERGED bank must not start moving.
+//
+// FvState is seeded one depth per conduit from LinkData, and LinkData's initial
+// depth is the average of the two end-node DEPTHS. Across a bed step those two
+// depths are measured from different inverts, so their average is a free
+// surface that stands above the wet bank: water perched on dry ground. It then
+// slumps, and in a pool with no outlet the excess never leaves — the lake
+// simply sits high for the rest of the run.
+//
+// Measured on the SWASHES emerged lake-at-rest (a 0.1 m lake split by a bank at
+// 0.15-0.20 m): the ramp conduit was seeded 25 mm above the lake and the closed
+// pool settled at 0.102747 m against an analytic 0.1, which is (0.8 + 0.009 +
+// 0.05 + 0.075)/9.09 to six figures — the whole error, accounted for.
+//
+// This is an initial-condition defect, not a scheme one: the pool it produces
+// is perfectly flat and perfectly well balanced, just at the wrong elevation.
+// So the gate is the C-property in its plainest form — start a lake at rest and
+// require that nothing moves.
+// ---------------------------------------------------------------------------
+namespace {
+std::string writeEmergedLakeModel(const std::string& name, const char* routing) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/" + name + ".inp";
+    std::ofstream os(inp);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             00:10:00\n"
+          "REPORT_STEP          00:01:00\nROUTING_STEP         5\n\n"
+          // Two pools at elevation 1.0, separated by a bank whose crest stands
+          // at 3.0 — two full feet clear of the water, so the pools are
+          // hydraulically disconnected and each one's volume is fixed forever.
+          // J1/J2 are the closed pool; J4/J5 drain to a stage held at the same
+          // 1.0, so that side is at rest too.
+          "[JUNCTIONS]\nJ1  0.0  5.0  1.0  0  0\nJ2  0.0  5.0  1.0  0  0\n"
+          "J3  3.0  5.0  0.0  0  0\nJ4  0.0  5.0  1.0  0  0\n"
+          "J5  0.0  5.0  1.0  0  0\n\n"
+          "[OUTFALLS]\nOF  0.0  FIXED  1.0  NO\n\n"
+          // C2 and C3 are the shoreline ramps: each spans a 3 ft bed step, so
+          // each is where the averaged depth manufactures a perched surface.
+          "[CONDUITS]\nC1  J1  J2  100  0.014  0  0  0  0\n"
+          "C2  J2  J3  100  0.014  0  0  0  0\n"
+          "C3  J3  J4  100  0.014  0  0  0  0\n"
+          "C4  J4  J5  100  0.014  0  0  0  0\n"
+          "C5  J5  OF  100  0.014  0  0  0  0\n\n"
+          "[XSECTIONS]\nC1  RECT_OPEN  5.0  10.0  0  0  1\n"
+          "C2  RECT_OPEN  5.0  10.0  0  0  1\n"
+          "C3  RECT_OPEN  5.0  10.0  0  0  1\n"
+          "C4  RECT_OPEN  5.0  10.0  0  0  1\n"
+          "C5  RECT_OPEN  5.0  10.0  0  0  1\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    return inp;
+}
+}  // namespace
+
+TEST(FvEngine, ALakeAtRestOverAnEmergedBankStaysAtRest) {
+    const RunResult fv = runModel(writeEmergedLakeModel("emerged_lake_fv", "FV"));
+    const RunResult dw = runModel(
+        writeEmergedLakeModel("emerged_lake_dw", "DYNWAVE"));
+    ASSERT_TRUE(fv.parsed && dw.parsed);
+
+    // The dynamic wave holds this deck still, which is what makes the fixture
+    // evidence about FV's seeding rather than about the deck.
+    for (const char* c : {"C1", "C4"})
+        EXPECT_LT(dw.peak_flow.at(c), 0.05)
+            << "fixture is not at rest under DYNWAVE either: " << c;
+
+    // C1 sits inside the CLOSED pool. Nothing forces it, nothing drains it, and
+    // no water can cross the bank, so any flow at all is water that was seeded
+    // where it did not belong.
+    EXPECT_LT(fv.peak_flow.at("C1"), 0.05)
+        << "closed pool started moving: peak " << fv.peak_flow.at("C1")
+        << " cfs in C1 — the shoreline ramp was seeded above the lake";
+    EXPECT_LT(fv.peak_flow.at("C4"), 0.05)
+        << "peak " << fv.peak_flow.at("C4") << " cfs in C4";
+
+    EXPECT_LT(std::fabs(fv.continuity_pct), 0.05) << fv.continuity_pct;
+}
