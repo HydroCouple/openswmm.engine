@@ -1008,6 +1008,49 @@ This is the sidecar's answer to the objection that a linear ROM cannot
 represent branching behaviour. It cannot — so it reports the probability of
 the branch rather than pretending to a single smooth band.
 
+### 5.10 Front-passage timing (per-member phase coordinate)
+
+Everything described in §4 is an *amplitude* method: each ensemble member
+carries a deviation from the deterministic run's trajectory, evolved by a
+decaying operator. That representation cannot capture a **timing** error — a
+filling front arriving a few minutes earlier or later depending on Manning's
+n is a phase shift, not an amplitude one, and prior validation runs measured
+a real, unrepresented 2–4 m transient width right at front passage as a
+result (see `docs/uncertainty/VALIDATION.md`, "Per-member phase coordinate
+(PR H11)").
+
+**What changed, and what you'll notice.** The 1D ROM now automatically
+computes each member's own conveyance-driven timing offset
+(`τ_i = (mm_i − 1)·T̄(x)`, where `T̄(x)` is the deterministic travel time from
+the source and `mm_i` is that member's Manning multiplier — a slower member
+sees the same shape it always would, just a bit later) and reconstructs its
+band accordingly. This is **on by default and requires no new `.inp` keys** —
+q05/q50/q95 simply become noticeably wider during a genuine wetting front and
+identical to before everywhere else:
+
+- **Steady-state / saturated regions**: no visible change. The mechanism adds
+  exactly zero width once `h_det` stops moving — the median still tracks the
+  deterministic run exactly (`mm_i = 1` always gives zero timing offset,
+  regardless of how large the travel-time field is).
+- **A node whose flow is essentially stagnant** (very low velocity — e.g. a
+  ponded or backwater-controlled reach): also unaffected. A conveyance-driven
+  timing offset only makes sense where there is a travelling signal to be
+  early or late about; a stagnant reach's uncertainty is governed entirely by
+  the amplitude channel (and, if surcharged, §4's attenuation), same as
+  before.
+- **A genuine filling front** (dry-to-wet transition, storm onset on a long
+  reach): the band widens noticeably right around the transition and narrows
+  again once the network settles — this is the mechanism working as intended,
+  not noise.
+
+**Nothing to configure.** Like §4's surcharge attenuation, the underlying
+physical dials (conveyance-velocity floor, per-edge/whole-path travel-time
+caps) are internal defaults, not `.inp`-exposed — this is deliberately the
+same "ship a sane default, no new parser surface" choice §4 made.
+
+**Scope**: 1D only. The 2D counterpart (the same timing gap shows up as the
+drain-to-pond limitation in item 4 below) is not yet addressed.
+
 ---
 
 ## 6. Advanced configuration
@@ -1354,8 +1397,10 @@ xarray as a supplementary group.
    diffusion-wave (Laplacian) approximation, which drops the momentum term. For subcritical,
    gradually-varying flow in partially-full pipes — the standard urban drainage design case —
    this is a good approximation. It breaks down for: surcharging or fully-pressurized mains
-   (**partially addressed — see limitation 10**); rapidly rising events where `∂Q/∂t` dominates;
-   tidal or strongly backwater-controlled reaches; pump stations and sluice gates. In those
+   (**partially addressed — see limitation 10**); rapidly rising events where `∂Q/∂t` dominates
+   and, specifically, a filling front's *arrival timing* (**substantially addressed in 1D — see
+   §5.10 and limitation 11**); tidal or strongly backwater-controlled reaches; pump stations and
+   sluice gates. In those
    regimes the ROM identifies the right *spatial pattern* of sensitivity but may mis-estimate
    band width. This limitation applies to the 1D ROM specifically; the 2D ROM's own fidelity
    tradeoffs (it operates on the explicit local-inertial marcher's linearized advection-diffusion
@@ -1438,6 +1483,15 @@ xarray as a supplementary group.
     you expect sustained surcharge and want validated band widths, run with `NODE_CONTINUITY
     SEMI_IMPLICIT`.** See `docs/uncertainty/VALIDATION.md`, "Surcharged-regime sensitivity
     attenuation (PR H5)," for the full measurement and root-cause writeup.
+
+11. **Front-passage timing is now 1D-only.** §5.10's per-member phase coordinate closes most of
+    the front-arrival-timing gap (measured: median width ratio during front passage went from
+    0.009 — effectively unrepresented — to 1.354, comfortably within the acceptance band) but is
+    **1D only**. The 2D counterpart (the same mechanism showing up as the drain-to-pond
+    limitation — coverage 0.55–0.60 in VALIDATION.md's 2D solver-mode-compatibility section) is
+    not addressed by this fix; a travel-time *field* rather than a path integral would be needed
+    there, and remains open work. See `docs/uncertainty/VALIDATION.md`, "Per-member phase
+    coordinate (PR H11)," for the full measurement.
 
 ---
 

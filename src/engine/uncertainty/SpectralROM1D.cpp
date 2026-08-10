@@ -229,6 +229,14 @@ void SpectralROM1D::seed(const double* h_nodes) {
     // until the first advance() supplies a fresh deterministic reference.
     std::fill(a_ensemble.begin(), a_ensemble.end(), 0.0);
     h_det_last_.assign(h_nodes, h_nodes + static_cast<std::size_t>(n_nodes));
+
+    // PR H11: reset the ROM's own clock and phase-coordinate history so a
+    // re-seed (dry-start reinit, or a fresh simulation) starts the ring
+    // clean rather than mixing in stale planes from a prior run.
+    phase_time_ = 0.0;
+    hist_.reset();
+    if (!tbar_.empty())
+        hist_.push(phase_time_, h_nodes);
 }
 
 // ============================================================================
@@ -514,6 +522,53 @@ void SpectralROM1D::advance(double dt, double K1d,
             }
         }
     }
+
+    // ---- PR H11: advance the ROM's own clock and push h_det into the
+    // phase-coordinate history ring (a no-op when no travel-time field has
+    // been supplied -- tbar_ stays empty until setTravelTime() is called).
+    phase_time_ += dt;
+    if (!tbar_.empty())
+        hist_.push(phase_time_, h_det_active);
+}
+
+// ============================================================================
+// setTravelTime / clearTravelTime
+// ============================================================================
+
+void SpectralROM1D::setTravelTime(const double* tbar_active) {
+    auto nn = static_cast<std::size_t>(n_nodes);
+    tbar_.assign(tbar_active, tbar_active + nn);
+
+    if (hist_configured_) return;  // periodic refresh: field only, ring untouched
+
+    // First call since construction/clearTravelTime(): size the ring from
+    // this measurement. Horizon = max_i|mm_i − 1| * max_t T̄(t): the largest
+    // phase offset any member can ever need to look back (or reflect
+    // forward) by, given the current LHS design. Sizes the ring's push
+    // spacing so that horizon stays coverable within phase_cfg.max_planes
+    // regardless of the caller's (possibly adaptive) step size.
+    double max_tbar = 0.0;
+    for (double t : tbar_) max_tbar = std::max(max_tbar, t);
+    double max_dev = 0.0;
+    for (double mm : mannings_mult) max_dev = std::max(max_dev, std::fabs(mm - 1.0));
+    const double horizon = max_dev * max_tbar;
+
+    const int denom = std::max(1, phase_cfg.max_planes - 2);
+    const double min_spacing = horizon / static_cast<double>(denom);
+
+    hist_.configure(n_nodes, phase_cfg.max_planes, min_spacing);
+    // Prime the ring with the most recent deterministic reference so a
+    // computeQuantiles() call issued before the next advance() still has at
+    // least one plane to sample from, rather than an empty ring.
+    if (!h_det_last_.empty())
+        hist_.push(phase_time_, h_det_last_.data());
+    hist_configured_ = true;
+}
+
+void SpectralROM1D::clearTravelTime() noexcept {
+    tbar_.clear();
+    hist_.reset();
+    hist_configured_ = false;
 }
 
 // ============================================================================
@@ -550,18 +605,55 @@ void SpectralROM1D::computeQuantiles(const double* h_det_active,
         }
     }
 
-    // Add the deterministic reference, clamp to the physical floor (node
-    // invert) when supplied, sort each node's row, extract quantiles.
+    // PR H11: per-member phase coordinate. Active only when a travel-time
+    // field has been supplied AND phase_cfg.enabled AND the history ring
+    // actually holds at least one plane (guards a configured-but-unprimed
+    // ring, which should not happen via the public API but is a cheap
+    // defensive check). When inactive every member's reference is
+    // h_det_active[t] -- the loop below is then bit-identical to the
+    // pre-H11 code path.
+    const bool phase_active = phase_cfg.enabled && !tbar_.empty() && !hist_.empty();
+
+    // Add the deterministic (or, under H11, per-member phase-shifted)
+    // reference, clamp to the physical floor (node invert) when supplied,
+    // sort each node's row, extract quantiles.
     for (std::size_t t = 0; t < nn; ++t) {
         double* row = &recon_buf_[t * M];
         const double h_det = h_det_active[t];
-        if (invert_active) {
-            const double floor_t = invert_active[t];
-            for (std::size_t i = 0; i < M; ++i)
-                row[i] = std::max(h_det + row[i], floor_t);
+        const double floor_t = invert_active ? invert_active[t] : 0.0;
+        const int node_i = static_cast<int>(t);
+
+        if (!phase_active || tbar_[t] == 0.0) {
+            // No phase field, disabled, or this node's own T̄ is zero (e.g.
+            // the source of the deterministic flow) -- every member's
+            // reference is h_det, exactly the pre-H11 behavior.
+            if (invert_active) {
+                for (std::size_t i = 0; i < M; ++i)
+                    row[i] = std::max(h_det + row[i], floor_t);
+            } else {
+                for (std::size_t i = 0; i < M; ++i)
+                    row[i] = h_det + row[i];
+            }
         } else {
-            for (std::size_t i = 0; i < M; ++i)
-                row[i] = h_det + row[i];
+            const double tbar_t = tbar_[t];
+            for (std::size_t i = 0; i < M; ++i) {
+                const double tau = phaseOffset(mannings_mult[i], tbar_t);
+                double h_ref;
+                if (tau == 0.0) {
+                    h_ref = h_det;  // exact short-circuit (DEVIATION_FORM invariant)
+                } else if (tau > 0.0) {
+                    h_ref = hist_.sample(phase_time_ - tau, node_i);
+                } else {
+                    // Reflection: no future history exists for a faster
+                    // member (τ < 0). First-order forward extrapolation
+                    // over the same interval using only past history.
+                    const double h_now  = hist_.sample(phase_time_, node_i);
+                    const double h_past = hist_.sample(phase_time_ + tau, node_i);  // tau<0
+                    h_ref = 2.0 * h_now - h_past;
+                }
+                row[i] = invert_active ? std::max(h_ref + row[i], floor_t)
+                                        : (h_ref + row[i]);
+            }
         }
         std::sort(row, row + M);
         q05[t] = row[static_cast<std::size_t>(idx05)];

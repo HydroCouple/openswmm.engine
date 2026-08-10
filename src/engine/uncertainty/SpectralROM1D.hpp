@@ -38,6 +38,7 @@
 #include "NetworkLaplacian1D.hpp"
 #include "UncertaintyTypes.hpp"
 #include "SoftSpatialField.hpp"
+#include "RomPhaseCoordinate.hpp"
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -101,6 +102,14 @@ struct SpectralROM1D {
     /// non-surcharge regime shifts (pump switching, gate operations) that the
     /// surcharge flag alone would miss.
     double edge_drift_frac_threshold = 0.05;
+
+    // -------------------------------------------------------------------------
+    // PR H11 — per-member phase coordinate (config; defaults per
+    // RomPhaseCoordinate.hpp). No effect unless setTravelTime() is called --
+    // an unset (empty) T̄ leaves computeQuantiles() on the pre-H11 code path,
+    // bit-identical to before this PR.
+    // -------------------------------------------------------------------------
+    PhaseConfig phase_cfg;
 
     // -------------------------------------------------------------------------
     // State (set by initialize() and seed())
@@ -385,11 +394,62 @@ struct SpectralROM1D {
                  const double* alpha = nullptr);
 
     /**
+     * @brief PR H11 — supply the per-active-node travel-time field T̄(x)
+     *        used by computeQuantiles() to phase-shift each member's
+     *        reconstruction (RomPhaseCoordinate.hpp).
+     *
+     * Always copies @p tbar_active (length n_nodes) into the current field.
+     * The internal DetHistoryRing's storage (plane count / push spacing) is
+     * sized ONLY on the FIRST call after construction or clearTravelTime(),
+     * from a horizon derived at that moment: `max_i|mannings_mult_i − 1| ·
+     * max_t tbar_active[t]`. Subsequent calls (the engine's periodic T̄
+     * refresh) update the field values only and leave the ring's existing
+     * configuration and accumulated history untouched -- reconfiguring
+     * (which resets the ring) on every refresh would discard exactly the
+     * lookback history the phase channel needs, since the engine's default
+     * refresh cadence matches typical REPORT_STEP values. A member whose
+     * required lookback exceeds the ring's sized capacity degrades
+     * gracefully (DetHistoryRing clamps to the oldest retained plane) rather
+     * than losing accumulated history outright.
+     *
+     * Does NOT itself push a history plane on refresh calls -- pushing
+     * happens inside advance() (every step) and once here on the first call
+     * (priming the ring with the current h_det_last_). Passing an all-zero
+     * field is equivalent to clearTravelTime() in effect (τ_i ≡ 0
+     * everywhere) but still counts as "the first call" for ring sizing.
+     *
+     * @param tbar_active  Travel time per active node (s), length n_nodes.
+     */
+    void setTravelTime(const double* tbar_active);
+
+    /// Revert to the pre-H11 unphased computeQuantiles() path.
+    void clearTravelTime() noexcept;
+
+    /// Current travel-time field (empty when unset). For diagnostics/tests.
+    const std::vector<double>& travelTime() const noexcept { return tbar_; }
+
+    /**
      * @brief Reconstruct per-node head distribution and extract quantiles.
      *
-     * Per node t, member i:  h = h_det_active[t] + Σ_j P[j,t]·δa_{i,j},
+     * Per node t, member i:  h = h_ref(t,i) + Σ_j P[j,t]·δa_{i,j},
      * clamped to invert_active[t] when invert_active is non-null.
      * Writes q05, q50, q95 (length n_nodes).
+     *
+     * Without a travel-time field (setTravelTime() never called, or
+     * phase_cfg.enabled == false), `h_ref(t,i) == h_det_active[t]` for every
+     * member -- bit-identical to the pre-H11 behavior.
+     *
+     * With a travel-time field, PR H11's per-member phase coordinate applies:
+     * `τ_i(t) = (mannings_mult_i − 1) · tbar_[t]`, and
+     *   τ_i > 0 :  h_ref = H(t_now − τ_i)          (sampled from the history ring)
+     *   τ_i < 0 :  h_ref = 2·H(t_now) − H(t_now − |τ_i|)   (reflection -- no
+     *                                                        future history exists)
+     *   τ_i = 0 :  h_ref = h_det_active[t]          (exact short-circuit)
+     * where H(·) is DetHistoryRing::sample() and t_now is the ROM's own
+     * internal clock (advanced by advance(), reset by seed()). On a STEADY
+     * h_det this makes every member's h_ref equal h_det_active[t] exactly,
+     * so the phase channel adds no width once the network has settled
+     * (DEVIATION_FORM.md's saturated-regime invariant, extended by H11).
      *
      * @param h_det_active   Deterministic head per active node (non-null).
      * @param invert_active  Node invert elevation per active node (physical
@@ -506,6 +566,22 @@ private:
 
     // PR 5 — vectorized computeQuantiles scratch buffer (node-major: nn × M)
     std::vector<double> recon_buf_;
+
+    // PR H11 — per-member phase coordinate
+    /// Per-active-node travel time T̄(x) (s), length n_nodes; empty when
+    /// unset (setTravelTime() never called, or clearTravelTime()'d).
+    std::vector<double> tbar_;
+    /// Bounded h_det history, populated by advance()/seed(); consulted by
+    /// computeQuantiles() when tbar_ is non-empty and phase_cfg.enabled.
+    DetHistoryRing hist_;
+    /// ROM's own internal clock (s since seed()), advanced by dt in
+    /// advance(); NOT the same as the caller's simulation time -- only
+    /// relative offsets (τ_i) are ever used, so no synchronization is needed.
+    double phase_time_ = 0.0;
+    /// True once hist_ has been sized by a first setTravelTime() call since
+    /// construction or clearTravelTime(). See setTravelTime()'s doc comment
+    /// for why the ring is sized once, not on every refresh.
+    bool hist_configured_ = false;
 
 };
 

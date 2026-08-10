@@ -67,12 +67,16 @@ fix, the width-ratio median moved 14.7 → 1.25.
    conveyance-based sensitivity still scales with (large) depth. This is the
    quantitative face of USER_GUIDE §8 limitation 2 (diffusion-wave ROM vs
    full Saint-Venant): treat 1D bands in surcharged reaches as qualitative.
-3. **Front-arrival timing spread is not captured.** In the same surcharged
-   variant, a filling front's arrival time varied ~minutes across MC members,
-   producing transient 2–4 m empirical widths at front passage that the ROM
-   (an amplitude-sensitivity method anchored to the deterministic trajectory)
-   does not represent. Phase/timing uncertainty is out of scope for the
-   current formulation.
+3. **Front-arrival timing spread is not captured by the amplitude channel
+   alone.** In the same surcharged variant, a filling front's arrival time
+   varied ~minutes across MC members, producing transient 2–4 m empirical
+   widths at front passage that a pure amplitude-sensitivity method (anchored
+   to the deterministic trajectory) does not represent. **PR H11's per-member
+   phase coordinate closes most of this gap** — see the "Per-member phase
+   coordinate (PR H11)" section below for the measured recovery on a
+   dedicated front-passage fixture (median width ratio 0.009 → 1.354).
+   H11 is 1D only; the 2D counterpart (drain-to-pond, `H11b`) is unaffected
+   and remains open — see §4 of the 2D marcher-compatibility section above.
 4. **Engine note**: with adaptive routing active, `swmm_engine_step` can
    stall making sub-nanosecond time progress at the very final report
    boundary (same family as the fixed OADate rounding bug in `stepRunoff`).
@@ -726,3 +730,156 @@ option above.
 
     # Pure-function ramp/floor unit tests (independent of the MC fixture):
     ctest --test-dir build/<dir> -R test_engine_rom_surcharge_attenuation
+
+---
+
+# Per-member phase coordinate (PR H11)
+
+Measured 2026-08-10. `tests/regression/test_rom_coverage.cpp`, new
+`RomCoverageFront` suite (2 tests: the gated `PhaseCoordinate` case and the
+ungated `AmplitudeOnlyBaseline` "before" measurement), alongside the
+pre-existing `RomCoverage`/`RomCoverageSurcharged` suites (unaffected —
+numbers reproduced bit-identically before and after this PR, see §3).
+
+## 1. Experiment
+
+**Problem**: the 1D sidecar is an *amplitude* method — member `i` carries
+`δa_i = Pᵀ(h_i − h_det)`, a deviation on a fixed spatial basis evolved by a
+dissipative operator. A filling front's *arrival time* is a phase error, not
+an amplitude one: it neither decays nor is expressible as a deviation on a
+fixed basis. PR-10's original validation (§4 item 3 above) measured a 2–4 m
+transient width at front passage the amplitude channel does not represent at
+all.
+
+**Fix** (`src/engine/uncertainty/RomPhaseCoordinate.hpp`): a per-member phase
+offset `τ_i(x) = (mm_i − 1)·T̄(x)`, the same `(mm−1)` structure as the
+already-validated amplitude fixed point `δa_ss = (mm−1)·b_j` — both are the
+first-order response of a `1/n` conveyance law. `T̄(x)` is a **path integral**
+over the deterministic flow graph (`t_e = L_e/((5/3)|u_e|)` per edge, oriented
+by flow sign, accumulated downstream by a bounded max-relaxation), refreshed
+every 60 s from the engine's own conduit velocity state
+(`SWMMEngine::refreshRom1dTravelTime()`) — **not** a solved travel-time field.
+Reconstruction in `computeQuantiles()` becomes
+`h_i(x,t) = H(t − τ_i) + P·δa_i`, where `H(·)` samples a bounded ring buffer
+of `h_det` planes (`DetHistoryRing`), with a past-anchored reflection
+`h_ref = 2H(t) − H(t−|τ|)` for faster members (`τ<0`, a query into the future
+no history buffer holds). A stagnant edge (`|u_e| < u_min`) contributes
+**exactly zero** travel time, not a large/undefined value — the deliberate
+answer to the `u→0` regime that broke the 2D W3 drain-to-pond fixture (H11b,
+still open, out of scope here). Full design rationale, including the two
+non-obvious calls (stagnation → zero not infinity; negative τ → reflection not
+clamp-to-now) is in the H11 design plan
+(`~/.claude/plans/please-plan-h11-implementation-woolly-pearl.md`, kept as the
+O48 design record per the checklist's own routing — no separate normative doc
+was written since the plan already fixes every formulation decision).
+
+**Invariant preserved**: `τ_i = 0` exactly at `mm_i = 1` for any `T̄`
+(`phaseOffset(1.0, ·) ≡ 0.0`), so every pre-H11 `DeviationForm.*`/
+`SurchargeAttenuation.*` test in `test_spectral_rom1d.cpp` passes **unchanged**
+— `SpectralROM1D` defaults to unphased (`setTravelTime()` never called) and
+`computeQuantiles()`'s phase branch is bit-identical to the pre-H11 code path
+in that state (`PhaseCoordinate.NoTravelTimeIsBitIdentical`,
+`PhaseCoordinate.ZeroPerturbationExactWithPhase`). On a *steady* `h_det`
+(`dh_det/dt ≈ 0`, the regime the existing saturated-window gates measure in)
+the phase channel adds **exactly zero** extra width by construction
+(`PhaseCoordinate.SteadyDetTrajectoryPhaseAddsNothing`) — the reason §3 below
+confirms the pre-existing fixtures' numbers did not move.
+
+**Fixture** (`fixtureInpFront()`): same 5-junction chain topology as the
+free-surface fixture, but **800 m conduits** (vs. 100 m) so a filling front's
+arrival time is spread over multiple minutes — resolvable at
+`REPORT_STEP=60s` — instead of arriving within a single routing step;
+`InitDepth=0` (a genuine dry start, not the free-surface fixture's 0.10 m) so
+there is an actual front to pass; a single generous 1.0 m CIRCULAR conduit
+everywhere keeps the whole run free-surface (H5's `alpha≈1` throughout),
+isolating the phase channel from the attenuation channel H5 already validates
+separately. **Verified by scratch probe before trusting it** (this project's
+standing practice after several abandoned fixture designs elsewhere in this
+file): at DWF=0.15 CMS, measured front-arrival time (`t_half`, the first
+report time crossing the midpoint of a node's own `[min,max]` range) at
+`rough_mult ∈ {0.8, 1.0, 1.2}`:
+
+| node | t_half (s) at 0.8 / 1.0 / 1.2 | spread | report steps (60 s) |
+|---|---|---|---|
+| J4 | 1350.5 / 1590.5 / 1800.5 | 450 s | 7.5 |
+| J5 | 1830.5 / 2160.5 / 2430.5 | 600 s | 10.0 |
+
+comfortably clearing the design's own "≥2 report steps" bar. Head stayed
+2.5–2.7 ft below crown at every node throughout the 2-hour window at every
+`rough_mult` tried — never surcharges, confirming the fixture isolates the
+phase channel from H5's attenuation channel as intended. Same 21-member
+brute-force MC design as PR-10 (LHS strata of the ±20% Manning prior).
+
+**Sample selection**: per node, from the ROM run's own deterministic
+trajectory, `t_50` = first report time crossing the midpoint of that node's
+`[min,max]` head range over the window; compared samples are every report
+time within `±3·REPORT_STEP` of `t_50` (`frontWindowIndices()`). This targets
+the actual transient instead of the whole 2-hour window, most of which is
+either pre-front (flat) or fully settled (also flat, and already covered by
+the saturated-regime gates above).
+
+## 2. Results (measured)
+
+| Cell | Coverage | Width ratio min/med/max | Samples | Verdict |
+|---|---|---|---|---|
+| `AmplitudeOnlyBaseline` (phase disabled) | 1.000 | 0.000 / **0.009** / 0.025 | 34 | *not gated — "before" measurement* |
+| `PhaseCoordinate` (phase enabled) | 1.000 | 0.000 / **1.354** / 2.554 | 34 | **passes** (coverage ≥ 0.90, ratio_med ∈ [0.5, 2.0]) |
+
+**H11 recovers essentially the whole front-passage width gap**: median width
+ratio goes from **0.009** (≈150× too narrow — the amplitude channel alone
+barely registers the transient at all) to **1.354** (comfortably inside the
+checklist's `[0.5, 2.0]` acceptance band), on the **first run of the fixture,
+with no calibration of the acceptance bounds** — the physical dials
+(`celerity_factor=5/3`, `u_min`, `tau_edge_max`, `tau_total_max`) were left at
+their design-time defaults (`RomPhaseCoordinate.hpp`) and never tuned against
+this MC result. Both cells' `min` ratio is 0.000 at the same (J1, upstream)
+sample: J1 sits at the DWF source with `T̄=0` by construction (zero cumulative
+travel time), so the phase channel contributes nothing there in either cell —
+expected, not a defect (see the invariant note in §1: `tbar_t=0` ⇒ every
+member's reference is `h_det` regardless of `mm_i`).
+
+## 3. Findings and scope
+
+- **Zero drift on the pre-existing fixtures.** `RomCoverage.BandsBracket
+  BruteForceMonteCarlo` (coverage 0.993, ratio_med 0.102) and
+  `RomCoverageSurcharged.{Explicit,SemiImplicit}Continuity` (ratio_med 0.033 /
+  1.031) reproduce **bit-identically** before and after this PR — confirming
+  the §1 saturated-regime invariant empirically, not just analytically.
+- **No escalation needed.** Per the checklist's hard rule 2 ("any coverage
+  failure returns to design, not to threshold tuning") and this PR's own §5
+  escalation note: the front-passage gate passed on the design's first
+  implementation, at the design's own default physical dials, against the
+  checklist's own unmodified bounds. There was no tolerance tuning, fixture
+  reshaping to force green, or bound loosening at any point.
+- **`AmplitudeOnlyBaseline` is deliberately ungated** (asserts only that the
+  run completed) — it exists purely to state, honestly, how much of the gap
+  H11 recovers, matching PR-10's own "before/after" reporting style for the
+  `computeK1d` PHI fix.
+- **Scope boundary**: 1D only. The 2D counterpart (`H11b`, a travel-time
+  *field* rather than a path integral) remains open, with the W3
+  drain-to-pond fixture (coverage 0.55–0.60, §4 of the 2D marcher-
+  compatibility section above) as its ready-made failing gate — not attempted
+  in this PR.
+- **Coupling path untouched.** `reconstructHead()` (the 2D↔1D coupling read
+  path) stays unphased by design — coupling is an instantaneous per-step
+  exchange anchored on the deterministic booked flux (the W2 median-drift
+  fix), and a time shift there was judged to desynchronize it for no measured
+  benefit. Not measured against MC in this PR; a candidate follow-up if 2D
+  coupling ever needs front-passage timing fidelity.
+
+## 4. Reproduction
+
+    # Front-passage gate + baseline, alongside the unaffected pre-existing suites:
+    ctest --test-dir build/<dir> -R regression_rom_coverage
+
+    # Isolate the H11 cells:
+    build/<dir>/tests/regression/test_rom_coverage --gtest_filter='RomCoverageFront.*'
+
+    # Pure-function travel-time/history-ring unit tests (independent of the MC fixture):
+    ctest --test-dir build/<dir> -R test_engine_rom_phase_coordinate
+
+    # SpectralROM1D-level h_ref selection + bit-identity invariants:
+    build/<dir>/bin/Debug/test_engine_spectral_rom1d --gtest_filter='PhaseCoordinate.*'
+
+    # Engine-level T̄ plumbing (real conduit velocity -> travel time):
+    build/<dir>/bin/Debug/test_engine_1d_rom_lifecycle --gtest_filter='*TravelTime*'
