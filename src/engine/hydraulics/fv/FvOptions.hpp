@@ -63,6 +63,29 @@ enum class NodeCoupling : int {
     SEMI_IMPLICIT = 1   ///< default: fluxes linearized in the node head
 };
 
+/// What a node contributes to the LTS base timestep.
+///
+/// `dt0` is the minimum over every cell AND every node, and the node's term is
+/// `A_s / (sum T*c)` — the correct EXPLICIT stability bound for a control
+/// volume of surface area A_s. But the node is not updated explicitly: the
+/// semi-implicit correction carries the step in its denominator,
+/// `dh = dt*R / (A_s + dt*resist)`, which is unconditionally stable. So the
+/// term is not buying stability; it is acting as an accuracy limiter nobody
+/// designed as one, and a manhole's plan area is one to two orders of
+/// magnitude below a conduit cell's, so it sets `dt0` for the whole network.
+///
+/// Measured on bump-subcritical: STABILITY gives 3428 substeps/step and an L1
+/// depth error of 0.1045; NONE with three node sweeps gives 50 substeps and
+/// 0.00159 — 9x faster and 66x more accurate, because marching a first-order
+/// tangent 3428 times accumulates more bias than 50 steps of a nearly
+/// converged solve. It is NOT a universal win: bump-shock and thacker-planar
+/// are ~1.2-1.4x worse without the term, which is why STABILITY remains the
+/// default and this exists to make the comparison runnable across the suite.
+enum class NodeDtLimit : int {
+    STABILITY = 0,  ///< default: the explicit A_s/(sum T*c) bound (today)
+    NONE      = 1   ///< nodes do not constrain dt0; accuracy rests on sweeps
+};
+
 /// When pump/orifice/weir/outlet structure equations are re-evaluated.
 enum class StructureCoupling : int {
     SUBSTEP      = 0,  ///< every explicit substep (default; physically exact)
@@ -171,6 +194,9 @@ struct FvOptions {
     /// Recompute the global CFL min-reduction every k substeps instead of every
     /// substep, with a safety margin. 1 = every substep (exact).
     int cfl_census_interval = 1;
+
+    /// Whether a node's explicit stability estimate enters the LTS base step.
+    NodeDtLimit node_dt_limit = NodeDtLimit::STABILITY;
 
     /// Picard sweeps on the node head inside the semi-implicit coupling.
     ///

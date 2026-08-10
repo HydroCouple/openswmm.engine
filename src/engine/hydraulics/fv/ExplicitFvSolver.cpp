@@ -1932,10 +1932,17 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
         dt_cell[uc] = cellStableDt(c);
         dt_min = std::min(dt_min, dt_cell[uc]);
     }
+    // FV_NODE_DT NONE: the node's term is an EXPLICIT stability bound on an
+    // unconditionally-stable semi-implicit update (see NodeDtLimit). Dropping
+    // it from dt0 lets the CELL Courant limit set the base step — which is what
+    // the non-LTS path has always used — while tiering stays intact. Nodes are
+    // still TIERED (dt_node feeds tier_of below), just not allowed to drag the
+    // global base step down with them.
+    const bool node_sets_dt0 = (opts_.node_dt_limit == NodeDtLimit::STABILITY);
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         dt_node[un] = nodeStableDt(n);
-        dt_min = std::min(dt_min, dt_node[un]);
+        if (node_sets_dt0) dt_min = std::min(dt_min, dt_node[un]);
     }
     if (!(dt_min > 0.0) || dt_min >= 1.0e29) return 1;
     dt0 = dt_min;
