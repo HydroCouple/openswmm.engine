@@ -1300,6 +1300,58 @@ TEST(FvEngine, NodePicardSweepsPreserveConservation) {
     }
 }
 
+// Sweeping UNDER LOCAL TIME STEPPING, which is the harder case and the one the
+// fixture above deliberately opts out of.
+//
+// A node's incident faces can sit in different tiers, so on any base step only
+// some are firing; the rest are holding the flux they will book over their own
+// 2^k*dt0 window. The sweep's flux re-solve must therefore touch only the live
+// faces — recomputing a held one re-times a flux against the wrong dt and
+// breaks the macro cycle's face-open/volume-close contract, which is what makes
+// a tiered step conservative in TIME as well as in mass. Mass alone would not
+// catch it (both sides of a face still see one number), so this asserts the
+// ledger through continuity across sweep counts WITH tiering active.
+TEST(FvEngine, NodePicardIsTierWindowSafeUnderLts) {
+    double base = 0.0;
+    for (int sweeps : {1, 3, 6}) {
+        const std::string name = "picard_lts_" + std::to_string(sweeps);
+        const std::string dir = outDir();
+        const std::string inp = dir + "/" + name + ".inp";
+        {
+            // Same network as above but with tiering LEFT ON, and a graded
+            // reach so the tiers genuinely separate rather than collapsing to
+            // K = 1 (which would make this a duplicate of the global-path test).
+            std::ofstream os(inp);
+            os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+                  "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+                  "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+                  "REPORT_STEP          00:05:00\nROUTING_STEP         5\n";
+            if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
+            os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\nJ2   99.4  8.0  0  0  0\n"
+                  "J3   99.0  8.0  0  0  0\n\n"
+                  "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+                  // 40:1 length ratio — the tier spread the grading sweep exists for
+                  "[CONDUITS]\nC1  J1  J2  800  0.02  0  0  0  0\n"
+                  "C2  J2  J3   20  0.02  0  0  0  0\n"
+                  "C3  J3  OF  800  0.02  0  0  0  0\n\n"
+                  "[XSECTIONS]\nC1  RECT_OPEN  6.0  20.0  0  0  1\n"
+                  "C2  RECT_OPEN  6.0  20.0  0  0  1\n"
+                  "C3  RECT_OPEN  6.0  20.0  0  0  1\n\n"
+                  "[INFLOWS]\nJ1  FLOW  \"\"  FLOW  1.0  1.0  60.0\n\n"
+                  "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+        }
+        const RunResult r = runModel(inp);
+        ASSERT_TRUE(r.parsed) << "sweeps=" << sweeps;
+        EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
+            << "sweeps=" << sweeps << " continuity " << r.continuity_pct
+            << " % under LTS — a sweep re-solved a face outside its tier window";
+        if (sweeps == 1) base = r.peak_flow.at("C3");
+        else
+            EXPECT_NEAR(r.peak_flow.at("C3"), base, 0.25 * base)
+                << "sweeps=" << sweeps << " diverged from the single-sweep result";
+    }
+}
+
 TEST(FvEngine, NodePicardIsNotADeadOption) {
     const RunResult one = runModel(writeNodePicardModel("picard_one", 1));
     const RunResult many = runModel(writeNodePicardModel("picard_many", 6));

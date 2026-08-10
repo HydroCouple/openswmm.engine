@@ -1226,6 +1226,7 @@ void ExplicitFvSolver::limitPositivity(double dt) {
 
 void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) {
     if (opts_.node_coupling != NodeCoupling::SEMI_IMPLICIT) return;
+    all_faces_live_ = true;      // global path: every face was just computed
     const int nn = mesh_->n_nodes();
     for (int n = 0; n < nn; ++n) relaxOneNode(n, dt, forcing);
 }
@@ -1325,15 +1326,26 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
                 // Re-solve the incident faces against the corrected head. This
                 // REPLACES the linear extrapolation with the flux the Riemann
                 // solver actually returns there, which is the part a single
-                // tangent gets wrong at a large Δt. Only faces the flux pass
-                // itself would have computed are touched, so work-list
-                // compaction stays results-transparent (§6.10).
+                // tangent gets wrong at a large Δt.
+                //
+                // Two gates, and they are different claims. cell_active_ keeps
+                // work-list compaction results-transparent (§6.10): only faces
+                // the flux pass itself would have computed are touched.
+                // faceIsLive keeps LOCAL TIME STEPPING correct: under LTS a
+                // node's incident faces can sit in different tiers, and a face
+                // that is not firing on this base step is holding the flux it
+                // will book over its own 2^k·dt₀ window. Re-solving it here
+                // would re-time that flux against the wrong Δt and break the
+                // macro cycle's face-open/volume-close contract — the very
+                // property that makes a tiered step conservative in TIME as
+                // well as in mass.
                 h_k += dh;
                 state_->node_head[un] = h_k;
                 for (int p = b; p < e; ++p) {
                     const auto up = static_cast<std::size_t>(p);
                     const int f = mesh_->node_face_idx[up];
                     const auto uf = static_cast<std::size_t>(f);
+                    if (!faceIsLive(f)) continue;
                     const int cl = mesh_->face_cl[uf];
                     const int cr = mesh_->face_cr[uf];
                     const bool la = (cl >= 0) &&
@@ -2076,6 +2088,21 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
 void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
     const int n = static_cast<int>(faces.size());
     if (n == 0) return;
+
+    // Mark this base step's due set live, so the node relaxation below knows
+    // which incident fluxes it may re-solve and which belong to another tier's
+    // window (see faceIsLive).
+    if (live_stamp_.size() != static_cast<std::size_t>(mesh_->n_faces()))
+        live_stamp_.assign(static_cast<std::size_t>(mesh_->n_faces()), 0);
+    all_faces_live_ = false;                    // only the due set is live
+    ++live_gen_;
+    if (live_gen_ == 0) {                       // wrapped: no stale match
+        std::fill(live_stamp_.begin(), live_stamp_.end(), 0);
+        live_gen_ = 1;
+    }
+    for (int i = 0; i < n; ++i)
+        live_stamp_[static_cast<std::size_t>(faces[static_cast<std::size_t>(i)])] =
+            live_gen_;
 
 #ifdef SWMM_USE_OPENMP
 #pragma omp parallel for schedule(static) if (n >= kOmpMinFaces)
