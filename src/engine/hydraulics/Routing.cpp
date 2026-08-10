@@ -843,10 +843,34 @@ void Router::initFv(SimulationContext& ctx) {
     const int nn = fv_mesh_.n_nodes();
     fv_state_.resize(nc, nn, 0);
 
-    // Seed cell state from the model's initial link flows and depths. LinkData
-    // carries ONE depth/flow per conduit, so every cell of a conduit starts
-    // uniform — the correct projection of a DW-shaped initial condition onto
-    // the finer mesh.
+    // Seed cell state from the model's initial condition. LinkData carries ONE
+    // depth per conduit, and that depth is the average of the two end-node
+    // DEPTHS — which are measured from different inverts. Laying it down as a
+    // uniform depth is therefore only the right projection on a level bed; over
+    // a sloping one a uniform depth IS a sloping free surface, which is not at
+    // rest, and over a shoreline it is worse than that.
+    //
+    // On the SWASHES emerged lake-at-rest (a 0.1 m lake split by a bank rising
+    // to 0.15 m) the ramp conduit averages the wet bank's 0.1 with the dry
+    // crest's 0 and lays 0.05 over a mid-bed of 0.075: a surface at 0.125, i.e.
+    // 25 mm of water perched on dry ground. It slumps, and because that pool has
+    // no outlet the excess never leaves — the lake settles at 0.102747 m against
+    // an analytic 0.1, which is (0.8 + 0.009 + 0.05 + 0.075)/9.09 to six
+    // figures. The whole error, and it is an initial condition, not a scheme:
+    // the pool it produces is flat and well balanced, just at the wrong height.
+    //
+    // So where one bank is DRY, project the free SURFACE instead: a dry node
+    // reports depth 0 and therefore defines no surface at all, so there is
+    // nothing to average — the wet end carries its surface across and each cell
+    // takes the depth that leaves over its own bed.
+    //
+    // Only where one bank is dry. With both ends wet the link's depth is an
+    // average of two real surfaces, and which projection is right depends on a
+    // regime the deck does not state: an at-rest pool wants a level surface, a
+    // channel at normal depth wants a uniform depth parallel to the bed, and a
+    // pressurized main wants a linear HGL. Overriding that case is not a fix but
+    // a different guess — measured, it starts a 30.09 cfs transient in a force
+    // main whose steady flow is the 25 cfs being pumped in. So it is left alone.
     for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int begin = fv_mesh_.conduit_cell_begin[ur];
@@ -857,11 +881,66 @@ void Router::initFv(SimulationContext& ctx) {
         const fv::FvGeometry& g = fv_mesh_.geom[ur];
         // areaOfDepth already returns the AGGREGATE section of all barrels, and
         // links.flow is the aggregate discharge, so neither is divided here.
-        const double area = fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
-        const double q    = ctx.links.flow[uj];
+        const double q = ctx.links.flow[uj];
+
+        // Surface at each end, where that end has water to define one.
+        auto bank_eta = [&](int nd, double& eta) {
+            if (nd < 0) return false;
+            const auto und = static_cast<std::size_t>(nd);
+            if (ctx.nodes.depth[und] <= 0.0) return false;
+            eta = ctx.nodes.invert_elev[und] + ctx.nodes.depth[und];
+            return true;
+        };
+        double eta1 = 0.0, eta2 = 0.0;
+        const bool wet1 = bank_eta(ctx.links.node1[uj], eta1);
+        const bool wet2 = bank_eta(ctx.links.node2[uj], eta2);
+        // ...and only across a BED STEP. Two depths measured from the same
+        // invert average to something meaningful; two measured from different
+        // inverts do not, and only the latter can perch water on a dry bank. On
+        // a level conduit the average is not merely harmless but right: it is
+        // the cell mean of a discontinuity, which is what a dam break puts
+        // there. Overriding it moves Ritter's dam half a cell downstream and
+        // costs 4 % of the L1 depth error (0.0522 -> 0.0544).
+        const bool step = (fv_mesh_.cell_dzdx[static_cast<std::size_t>(begin)]
+                           != 0.0);
+        const bool shoreline = (wet1 != wet2) && step;
+        const double eta_wet = wet1 ? eta1 : eta2;
+
+        const double uniform =
+            fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
+
+        double vol = 0.0, a_len = 0.0, sum_len = 0.0;
         for (int c = begin; c < begin + count; ++c) {
-            fv_state_.cell_a[static_cast<std::size_t>(c)] = area;
-            fv_state_.cell_q[static_cast<std::size_t>(c)] = q;
+            const auto uc = static_cast<std::size_t>(c);
+            double a_c = uniform;
+            if (shoreline) {
+                a_c = fv::kernels::areaOfDepth(
+                    g, std::max(0.0, eta_wet - fv_mesh_.cell_zb[uc]));
+            }
+            fv_state_.cell_a[uc] = a_c;
+            // A cell the projection leaves dry carries no discharge either:
+            // keeping q on it would divide by the area floor on the first
+            // refresh and launch a velocity that was never in the model.
+            fv_state_.cell_q[uc] = (a_c > fv::kernels::kDryArea) ? q : 0.0;
+
+            const double dx = fv_mesh_.cell_dx[uc];
+            sum_len += dx;
+            a_len   += a_c * dx;
+            vol     += a_c * dx;
+        }
+
+        // Publish what was actually seeded, by the same reduction publishFv
+        // uses. initMassBalance books the run's initial storage from
+        // links.volume AFTER this returns, so without it the ledger opens on the
+        // DW-shaped volume while the solver integrates the projected one, and
+        // the difference is reported as water lost during the run: on the
+        // emerged lake-at-rest that is the dry ramp cells, 688 ft^3 = 0.016
+        // acre-feet, reported as a 17 % continuity error on a model where
+        // nothing moves and nothing leaves.
+        if (sum_len > 0.0) {
+            ctx.links.volume[uj] = vol;
+            ctx.links.depth[uj]  =
+                fv::kernels::depthOfArea(g, a_len / sum_len);
         }
     }
     for (int n = 0; n < nn; ++n) {
