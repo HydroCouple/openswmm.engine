@@ -1353,16 +1353,19 @@ xarray as a supplementary group.
    Saint-Venant equations (continuity + momentum). The 1D ROM propagates uncertainty using a
    diffusion-wave (Laplacian) approximation, which drops the momentum term. For subcritical,
    gradually-varying flow in partially-full pipes — the standard urban drainage design case —
-   this is a good approximation. It breaks down for: surcharging or fully-pressurized mains;
-   rapidly rising events where `∂Q/∂t` dominates; tidal or strongly backwater-controlled
-   reaches; pump stations and sluice gates. In those regimes the ROM identifies the right
-   *spatial pattern* of sensitivity but may mis-estimate band width by 30–50%.
-   The 2D CVODE solver uses the diffusion-wave equation by design, so this limitation applies
-   only to the 1D ROM. See §4.6 for the full discussion. **A live signal for when you're in
-   the degraded part of this regime is now available**: `fr_trust` in `<rpt>.rom_diag.csv`
-   (§5.8) is a flow-weighted mean squared Froude number, computable at every report boundary
-   without re-solving anything — `fr_trust ≳ 0.25` flags the peak-flow condition where this
-   limitation's 10–25% band-width error applies.
+   this is a good approximation. It breaks down for: surcharging or fully-pressurized mains
+   (**partially addressed — see limitation 10**); rapidly rising events where `∂Q/∂t` dominates;
+   tidal or strongly backwater-controlled reaches; pump stations and sluice gates. In those
+   regimes the ROM identifies the right *spatial pattern* of sensitivity but may mis-estimate
+   band width. This limitation applies to the 1D ROM specifically; the 2D ROM's own fidelity
+   tradeoffs (it operates on the explicit local-inertial marcher's linearized advection-diffusion
+   operator — CVODE/diffusion-wave were retired from the 2D solver, see
+   `docs/uncertainty/P3_2D_REHOME_SPEC.md`) are tracked separately in VALIDATION.md's 2D
+   solver-mode-compatibility section. See §4.6 for the full 1D discussion. **A live signal for
+   when you're in the degraded part of this regime is now available**: `fr_trust` in
+   `<rpt>.rom_diag.csv` (§5.8) is a flow-weighted mean squared Froude number, computable at
+   every report boundary without re-solving anything — `fr_trust ≳ 0.25` flags the peak-flow
+   condition where this limitation's 10–25% band-width error applies.
 
 3. **Mean K_eff (not per-cell).** The scalar K_eff path uses a single effective conductance
    for the full domain. Per-mode Rayleigh-quotient K_eff (§4.8 Option A) partially corrects
@@ -1421,6 +1424,20 @@ xarray as a supplementary group.
    distributions on the `QUALITY` layer are rejected with an error message. A future version
    (Option B in the design doc) will accept a precomputed multiplier column from
    `UncertaintyEnsemble` to support arbitrary distributions and cross-parameter decorrelation.
+
+10. **Surcharged-band attenuation is validated for `NODE_CONTINUITY SEMI_IMPLICIT` only.**
+    Once a pipe runs full, the free-surface conveyance law the 1D ROM's Manning-sensitivity term
+    assumes no longer holds, and left uncorrected this used to over-predict surcharged band
+    widths 50–190×. The sidecar now smoothly damps that source term as a node crosses its crown
+    (never to exactly zero — a pressurized pipe still loses head to friction depending on n).
+    Validated against brute-force Monte Carlo separately per `NODE_CONTINUITY` mode: it lands
+    cleanly under `SEMI_IMPLICIT`. Under `EXPLICIT`, near a single-conduit chokepoint the
+    discrete surcharge branch produces a genuinely steeper backwater-vs-roughness response than
+    the attenuated ROM tracks — confirmed to be a property of the regime, not a fixable
+    calibration constant (the gap does not narrow at gentler surcharge severities either). **If
+    you expect sustained surcharge and want validated band widths, run with `NODE_CONTINUITY
+    SEMI_IMPLICIT`.** See `docs/uncertainty/VALIDATION.md`, "Surcharged-regime sensitivity
+    attenuation (PR H5)," for the full measurement and root-cause writeup.
 
 ---
 

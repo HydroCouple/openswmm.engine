@@ -685,15 +685,36 @@ further blind grid-search over `alpha_floor` as a productive path to close
 small," it is something structurally different between how EXPLICIT and
 SEMI_IMPLICIT drive `b_coarse[j]` near a chokepoint.
 
-**Open, for the owner/acceptance review**: whether EXPLICIT's chokepoint
-sensitivity needs a genuinely different mechanism (e.g. a second, steeper
-floor keyed to *how far* into surcharge a node is, rather than one flat
-floor per the checklist's literal ramp-to-a-single-floor candidate), a
-different validation fixture, or should be accepted and documented as a
-limitation of the source-side-attenuation formulation specifically under
-`NODE_CONTINUITY EXPLICIT`. Per the checklist's own escalation rule ("any
-coverage failure returns to F, not to threshold tuning"), this is recorded
-here rather than resolved by further parameter search.
+**(d) Resolved 2026-08-09: the gap is not fixture-severity-dependent, so it
+is accepted and documented rather than chased further.** Before deciding
+between "try a different mechanism" and "document as a limitation," checked
+the cheap alternative first: does a *milder* surcharge (smaller excess
+inflow over the C5 bottleneck's capacity) narrow EXPLICIT's dynamic range
+enough to pass without changing `alpha_floor`? Swept DWF from 0.25–0.40 CMS
+(vs. the fixture's own 0.40) and measured settled head-crown across the same
+rough_mult ∈ {0.83, 1.0, 1.17}. Result: it does not help, and can make the
+*ratio* of extremes worse — near the threshold the low-roughness member's
+settled depth over crown shrinks toward zero (e.g. DWF=0.30 gives
+3.0/12.9/23.0 m across the three strata, a **7.5×** spread vs. the fixture's
+own 2.4× at DWF=0.40), because the ratio's denominator is what's shrinking,
+not the physical spread narrowing. DWF=0.40 (the shipped fixture) is in fact
+the best-behaved point measured in this sweep, not an unlucky choice.
+**Conclusion**: EXPLICIT's chokepoint sensitivity is a property of the
+regime (discrete surcharge branch near a single restrictive conduit), not an
+artifact of how severely this particular fixture forces surcharge — a
+different mechanism (e.g. a flow/Froude-keyed attenuation signal instead of
+a pure depth-ratio one, reusing PR H3's existing `link_froude` machinery)
+remains a real option but is its own formulation R&D effort, not a quick
+follow-up, and the floor-response was already shown non-monotonic (finding
+(c) above) so further constant-tuning is not it either. **Decision: accepted
+as a documented limitation of the source-side-attenuation formulation
+specifically under `NODE_CONTINUITY EXPLICIT`.** Recorded in
+`docs/uncertainty/HOW_IT_WORKS.md` §8 and `USER_GUIDE.md` limitation 10,
+both recommending `SEMI_IMPLICIT` when validated surcharged bands are
+needed. `RomCoverageSurcharged.ExplicitContinuity` stays registered and
+deliberately red — a live regression guard against this getting *worse*,
+and a ready-made gate if a future session takes on the flow-keyed-signal
+option above.
 
 ## 4. Reproduction
 
