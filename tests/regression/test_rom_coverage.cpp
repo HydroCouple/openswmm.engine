@@ -680,14 +680,24 @@ void assertSurchargedCell(const char* label, const SurchargeCellResult& r) {
 //
 // Left RED rather than loosening the checklist's own [0.3,3.0]/>=0.90 bounds
 // (hard rule 2) or picking a floor that only passes one cell by accident.
-// This is the checklist's own "any coverage failure returns to F, not to
-// threshold tuning" escalation path (PR H5's Checklist entry) -- recorded
-// here for the owner/acceptance-review decision: whether EXPLICIT's
-// chokepoint sensitivity needs a genuinely different mechanism (e.g. a
-// second, steeper floor keyed to how FAR into surcharge a node is, rather
-// than one flat floor), a different fixture, or is an accepted, documented
-// limitation of the source-side-attenuation formulation under EXPLICIT
-// specifically. See VALIDATION.md and history_decisions.md.
+//
+// RESOLVED 2026-08-09: checked whether the gap is fixture-severity-dependent
+// before accepting it as a limitation -- swept DWF 0.25-0.40 CMS and found a
+// MILDER surcharge does NOT narrow EXPLICIT's dynamic range; near threshold
+// the ratio of extremes gets WORSE (7.5x at DWF=0.30 vs 2.4x at the shipped
+// DWF=0.40) because the low-roughness member's settled depth shrinks toward
+// zero, not because the physical spread narrows. DWF=0.40 is the
+// best-behaved point measured, not an unlucky pick. **Decision: accepted as
+// a documented limitation of source-side attenuation under
+// NODE_CONTINUITY EXPLICIT specifically** (not a bug, not fixable by
+// re-tuning this fixture or alpha_floor) -- see
+// docs/uncertainty/HOW_IT_WORKS.md §8 and USER_GUIDE.md limitation 10, both
+// of which now recommend NODE_CONTINUITY SEMI_IMPLICIT when validated
+// surcharged bands are needed. This test stays registered and red as a live
+// regression guard, and as the ready-made gate if a future session pursues
+// the flow/Froude-keyed attenuation signal option (reusing H3's
+// link_froude) noted as the remaining real alternative in VALIDATION.md.
+// See VALIDATION.md §3(d) and history_decisions.md for the full record.
 TEST(RomCoverageSurcharged, ExplicitContinuity) {
     assertSurchargedCell("EXPLICIT", runSurchargedCell(/*node_continuity_semi=*/false));
 }

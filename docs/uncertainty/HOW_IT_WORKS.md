@@ -544,6 +544,27 @@ signal: once a reach surcharges, velocities collapse toward zero (Fr → 0)
 and the symmetric surrogate becomes *more* accurate again, not less — so a
 high surcharge fraction is not itself a trust concern.
 
+**Surcharged bands are attenuated, and that attenuation is validated for
+`NODE_CONTINUITY SEMI_IMPLICIT` only.** Once a pipe runs full, the
+free-surface conveyance law (`K ~ h^(5/3)/n`) the ROM's Manning-sensitivity
+term assumes no longer holds — heads are set by mass balance and backwater
+instead, and left uncorrected this used to over-predict band widths by
+50–190× (PR H5). The sidecar now damps that source term smoothly as a node
+crosses its crown (never to exactly zero — a pressurized pipe still loses
+head to friction depending on n, just not via the free-surface law). This
+was validated against brute-force Monte Carlo separately under each
+`NODE_CONTINUITY` mode: it lands cleanly under `SEMI_IMPLICIT`. Under
+`EXPLICIT`, near a single-conduit chokepoint the discrete surcharge branch
+was measured to produce a genuinely steeper backwater-vs-roughness response
+than the attenuated ROM can track, and this was root-caused to be a real
+property of the regime rather than a fixable calibration constant (confirmed
+across a range of surcharge severities — the gap doesn't narrow with a
+gentler fixture). **If you expect appreciable, sustained surcharge and want
+validated band widths, run with `NODE_CONTINUITY SEMI_IMPLICIT`.** Under
+`EXPLICIT`, surcharged-regime bands may still be too narrow near a severe
+local restriction; `surcharge_frac` (above) tells you when you're in that
+regime at all, but not which continuity mode you're running.
+
 > **Historical note**: an earlier version of this section also warned that
 > the band reflected uncertainty "since the last recalibration" — the ROM
 > periodically re-anchored its ensemble to the deterministic solution,
