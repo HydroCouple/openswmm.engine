@@ -1,4 +1,6 @@
-# Chapter 5: Cross-Section Geometry
+@page hydraulics_ref_ch5_cross_section Chapter 5: Cross-Section Geometry
+
+@tableofcontents
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
@@ -64,40 +66,40 @@ derivative of the section factor as described below.
 
 | Shape | *A(Y)* | *W(Y)* | *R(Y)* |
 |---|---|---|---|
-| Rectangular | $$bY$$ | $$b$$ | $$\frac{bY}{b + 2Y}$$ |
-| Trapezoidal | $$(b + sY)Y$$ | $$b + 2sY$$ | $$\frac{(b + zY)Y}{b + 2Y\sqrt{1 + s^{2}}}$$ |
-| Triangular | $$sY^{2}$$ | $$2sY$$ | $$\frac{sY}{2\sqrt{1 + s^{2}}}$$ |
-| Parabolic | $$\frac{4}{3}Y\sqrt{cY}$$ | $$2\sqrt{cY}$$ | $$\frac{2A(Y)}{c\left( xt + ln(x + t) \right)}$$ |
-| | $$c = \frac{b^{2}}{\left( 4Y_{full} \right)}$$ | | $$x = 2\sqrt{\frac{Y}{c}}$$ |
-| | | | $$t = \sqrt{1 + x^{2}}$$ |
+| Rectangular | \f[bY\f] | \f[b\f] | \f[\frac{bY}{b + 2Y}\f] |
+| Trapezoidal | \f[(b + sY)Y\f] | \f[b + 2sY\f] | \f[\frac{(b + zY)Y}{b + 2Y\sqrt{1 + s^{2}}}\f] |
+| Triangular | \f[sY^{2}\f] | \f[2sY\f] | \f[\frac{sY}{2\sqrt{1 + s^{2}}}\f] |
+| Parabolic | \f[\frac{4}{3}Y\sqrt{cY}\f] | \f[2\sqrt{cY}\f] | \f[\frac{2A(Y)}{c\left( xt + ln(x + t) \right)}\f] |
+| | \f[c = \frac{b^{2}}{\left( 4Y_{full} \right)}\f] | | \f[x = 2\sqrt{\frac{Y}{c}}\f] |
+| | | | \f[t = \sqrt{1 + x^{2}}\f] |
 
 **Table 5-2 Geometric properties for open channel shapes as functions of flow area**
 
 | Shape | *Y(A)* | *R(A)* | *P'(A)* |
 |---|---|---|---|
-| Rectangular | $$\frac{A}{b}$$ | $$\frac{A}{b + 2\frac{A}{b}}$$ | $$\frac{2}{b}$$ |
-| Trapezoidal | $$\frac{\sqrt{b^{2} + 4sA}}{2s}$$ | $$\frac{A\sqrt{1 + s^{2}}}{b + Y(A)}$$ | $$\frac{2\sqrt{1 + s^{2}}}{b^{2} + 4sA}$$ |
-| Triangular | $$\sqrt{\frac{A}{s}}$$ | $$\frac{A}{2Y(A)\sqrt{1 + s^{2}}}$$ | $$\frac{\sqrt{1 + s^{2}}}{sA}$$ |
-| Parabolic | $$\left( \frac{3A}{4\sqrt{c}} \right)^{2/3}$$ | $$2c\left( xt + ln(x + t) \right)$$ | not used |
-| | $$c = \frac{b^{2}}{\left( 4Y_{full} \right)}$$ | $$x = 2\sqrt{\frac{Y(A)}{c}}$$ | |
-| | | $$t = \sqrt{1 + x^{2}}$$ | |
+| Rectangular | \f[\frac{A}{b}\f] | \f[\frac{A}{b + 2\frac{A}{b}}\f] | \f[\frac{2}{b}\f] |
+| Trapezoidal | \f[\frac{\sqrt{b^{2} + 4sA}}{2s}\f] | \f[\frac{A\sqrt{1 + s^{2}}}{b + Y(A)}\f] | \f[\frac{2\sqrt{1 + s^{2}}}{b^{2} + 4sA}\f] |
+| Triangular | \f[\sqrt{\frac{A}{s}}\f] | \f[\frac{A}{2Y(A)\sqrt{1 + s^{2}}}\f] | \f[\frac{\sqrt{1 + s^{2}}}{sA}\f] |
+| Parabolic | \f[\left( \frac{3A}{4\sqrt{c}} \right)^{2/3}\f] | \f[2c\left( xt + ln(x + t) \right)\f] | not used |
+| | \f[c = \frac{b^{2}}{\left( 4Y_{full} \right)}\f] | \f[x = 2\sqrt{\frac{Y(A)}{c}}\f] | |
+| | | \f[t = \sqrt{1 + x^{2}}\f] | |
 
 The section factor *Ψ* for each of these shapes is given by:
 
-$$\Psi(A) = A{R(A)}^{2/3}$$                                 
+\f[\Psi(A) = A{R(A)}^{2/3}\f]                                 
 (5-1)
 
 With the exception of the parabolic shape, its derivative with respect
 to area *A* is:
 
-$$\Psi'(A) = (\frac{5}{3} - \frac{2}{3}P'R)R^{2/3}$$        
+\f[\Psi'(A) = (\frac{5}{3} - \frac{2}{3}P'R)R^{2/3}\f]        
 (5-2)
 
 where *P'* and *R* are evaluated at the desired value of *A*. For
 parabolic channels the section factor derivative is computed using the
 difference formula:
 
-$$\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A}$$   
+\f[\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A}\f]   
 (5-3)
 
 where *∆A* is 0.1% of the full cross section area.
@@ -106,7 +108,7 @@ In addition to the four open sections just described SWMM can also
 analyze a cross section whose side wall shape is described by the power
 law function:
 
-$$y = \alpha x^{\frac{1}{\gamma}}$$                         
+\f[y = \alpha x^{\frac{1}{\gamma}}\f]                         
 (5-4)
 
 where *x* is horizontal distance from the centerline, *y* is vertical
@@ -115,10 +117,7 @@ user supplies values for 1/γ, the full depth *Y*<sub>full</sub> and the top wid
 when full *b* (see Figure 5-1). Note that the parabolic shape is a
 special case of this power function shape where 1/γ equals 2.
 
-<figure>
-<img src="VolumeII/media/media/image22.png"
-style="width:3.46565in;height:2.49014in" alt="PowerFunc.png" />
-</figure>
+![](hydraulics/media/media/image22.png "image22")
 
 **Figure 5-1 Power law cross section shape**
 
@@ -126,12 +125,12 @@ With this shape it is more convenient to work with water surface width
 *W* as a function of water depth *Y*, which can be done by re-expressing
 Equation 5-4 as:
 
-$$W = cY^{\gamma}$$                                         
+\f[W = cY^{\gamma}\f]                                         
 (5-5)
 
 where *c* is another constant. Since *W* = *b* at *Y* = *Y*<sub>full</sub>, the
-constant *c* equals $\frac{b}{Y_{full}^{\gamma}}$. The full area
-*A*<sub>full</sub> is $\frac{bY_{full}}{(\gamma + 1)}$. Table 5-3 lists the
+constant *c* equals \f$\frac{b}{Y_{full}^{\gamma}}\f$. The full area
+*A*<sub>full</sub> is \f$\frac{bY_{full}}{(\gamma + 1)}\f$. Table 5-3 lists the
 expressions used to compute the geometric properties for partially full
 power law shapes. The wetted perimeter *P* table entry is evaluated by
 approximating each of the curved sides of the shape by a series of 50
@@ -151,46 +150,46 @@ by:
 
 **Table 5-3 Geometric properties for the power law shape**
 
-$$2\sum_{i = 1}^{N}\sqrt{{\Delta x}_{i}^{2} + \Delta y^{2}} \quad \text{where} \quad \Delta y = 0.02Y_{full}, \quad N = \frac{Y}{\Delta y}, \quad \text{and} \quad {\Delta x}_{i} = \left( \frac{c}{2} \right)\left\{ (i\Delta y)^{\gamma} - \left( (i - 1)\Delta y \right)^{\gamma} \right\}$$
+\f[2\sum_{i = 1}^{N}\sqrt{{\Delta x}_{i}^{2} + \Delta y^{2}} \quad \text{where} \quad \Delta y = 0.02Y_{full}, \quad N = \frac{Y}{\Delta y}, \quad \text{and} \quad {\Delta x}_{i} = \left( \frac{c}{2} \right)\left\{ (i\Delta y)^{\gamma} - \left( (i - 1)\Delta y \right)^{\gamma} \right\}\f]
 
 | Property | Expression |
 |---|---|
-| *c* | $$\frac{b}{Y_{full}^{\gamma}}$$ |
-| *A(Y)* | $$c\frac{Y^{\gamma + 1}}{(\gamma + 1)}$$ |
-| *W(Y)* | $$cY^{\gamma}$$ |
-| *P(Y)* | $$2\sum_{i = 1}^{N}\sqrt{{\Delta x}_{i}^{2} + \Delta y^{2}} \quad \text{where} \quad \Delta y = 0.02Y_{full}, \quad N = \frac{Y}{\Delta y}, \quad \text{and} \quad {\Delta x}_{i} = \left( \frac{c}{2} \right)\left\{ (i\Delta y)^{\gamma} - \left( (i - 1)\Delta y \right)^{\gamma} \right\}$$ |
-| *R(Y)* | $$\frac{A(Y)}{P(Y)}$$ |
-| *Y(A)* | $$\left\lbrack \frac{(\gamma + 1)A}{c} \right\rbrack^{\frac{1}{(\gamma + 1)}}$$ |
-| *R(A)* | $$\frac{A}{P(Y(A))}$$ |
-| *Ψ(A)* | $$A{R(A)}^{\frac{2}{3}}$$ |
-| *Ψ'(A)* | $$\frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A} \quad \text{where} \quad \Delta A = 0.001A_{full}$$ |
+| *c* | \f[\frac{b}{Y_{full}^{\gamma}}\f] |
+| *A(Y)* | \f[c\frac{Y^{\gamma + 1}}{(\gamma + 1)}\f] |
+| *W(Y)* | \f[cY^{\gamma}\f] |
+| *P(Y)* | \f[2\sum_{i = 1}^{N}\sqrt{{\Delta x}_{i}^{2} + \Delta y^{2}} \quad \text{where} \quad \Delta y = 0.02Y_{full}, \quad N = \frac{Y}{\Delta y}, \quad \text{and} \quad {\Delta x}_{i} = \left( \frac{c}{2} \right)\left\{ (i\Delta y)^{\gamma} - \left( (i - 1)\Delta y \right)^{\gamma} \right\}\f] |
+| *R(Y)* | \f[\frac{A(Y)}{P(Y)}\f] |
+| *Y(A)* | \f[\left\lbrack \frac{(\gamma + 1)A}{c} \right\rbrack^{\frac{1}{(\gamma + 1)}}\f] |
+| *R(A)* | \f[\frac{A}{P(Y(A))}\f] |
+| *Ψ(A)* | \f[A{R(A)}^{\frac{2}{3}}\f] |
+| *Ψ'(A)* | \f[\frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A} \quad \text{where} \quad \Delta A = 0.001A_{full}\f] |
 
-$$\Psi_{full} = A_{full}\left( \frac{A_{full}}{P_{full}} \right)^{2/3}$$                 
+\f[\Psi_{full} = A_{full}\left( \frac{A_{full}}{P_{full}} \right)^{2/3}\f]                 
 (5-6)
-$$\Psi_{\max} = 0.97A_{full}\left( \frac{0.97A_{full}}{P_{\max}} \right)^{2/3}$$     
+\f[\Psi_{\max} = 0.97A_{full}\left( \frac{0.97A_{full}}{P_{\max}} \right)^{2/3}\f]     
 (5-7)
 
-where $A_{full} = bY_{full}$, $P_{full} = 2(b + Y_{full})$,
-and $P_{\max} = b + 2(0.97Y_{full})$.
+where \f$A_{full} = bY_{full}\f$, \f$P_{full} = 2(b + Y_{full})\f$,
+and \f$P_{\max} = b + 2(0.97Y_{full})\f$.
 
 When either *Y* or *A* do not exceed 97% of their full values, the
 closed rectangular hydraulic radius and section factor are computed in
 the same fashion as for the open rectangular shape described in section
 5.2.1. Above this point the hydraulic radius at a given depth *Y* is:
 
-$$R(Y) = \frac{A(Y)}{P(Y)}$$                                
+\f[R(Y) = \frac{A(Y)}{P(Y)}\f]                                
 (5-8)
 
 where
 
-$$P(Y) = 2Y + b + b\frac{\left( \frac{Y}{Y_{full} - 0.97} \right)}{0.03}$$   
+\f[P(Y) = 2Y + b + b\frac{\left( \frac{Y}{Y_{full} - 0.97} \right)}{0.03}\f]   
 (5-9)
 
 and the section factor and its derivative at a given flow area *A* are:
 
-$$\Psi(A) = \Psi_{\max} - \frac{\left( \Psi_{\max} - \Psi_{full} \right)\left( \frac{A}{A_{full} - 0.97} \right)}{0.03}$$     
+\f[\Psi(A) = \Psi_{\max} - \frac{\left( \Psi_{\max} - \Psi_{full} \right)\left( \frac{A}{A_{full} - 0.97} \right)}{0.03}\f]     
 (5-10)
-$$\Psi'(A) = \frac{\left( \Psi_{full} - \Psi_{\max} \right)}{\left( 0.03A_{full} \right)}$$                                   
+\f[\Psi'(A) = \frac{\left( \Psi_{full} - \Psi_{\max} \right)}{\left( 0.03A_{full} \right)}\f]                                   
 (5-11)
 
 ### 5.1.3 Circular Shape
@@ -212,35 +211,29 @@ those published by Chow (1959). The tables consist of the following:
 Each table consists of 51 equally spaced values of *Y/Y*<sub>full</sub> or
 *A/A*<sub>full</sub> between 0 and 1. They are graphed in Figures 5-2 and 5-3 and
 are listed in Appendix C. The normalizing factors used in the tables are
-for full flow conditions $\left( Y = Y_{full} \right)$ whose formulas
+for full flow conditions \f$\left( Y = Y_{full} \right)\f$ whose formulas
 are listed in Table 5-4.
 
 **Table 5-4 Geometric properties of a full circular cross section**
 
 | Property | Value |
 |---|---|
-| Depth | $$Y_{full}$$ |
-| Area | $$A_{full} = 0.7854Y_{full}^{2}$$ |
-| Maximum Width | $$W_{\max} = Y_{full}$$ |
-| Hydraulic Radius | $$R_{full} = 0.25Y_{full}$$ |
-| Section Factor | $$\Psi_{full} = A_{full}R_{full}^{2/3}$$ |
+| Depth | \f[Y_{full}\f] |
+| Area | \f[A_{full} = 0.7854Y_{full}^{2}\f] |
+| Maximum Width | \f[W_{\max} = Y_{full}\f] |
+| Hydraulic Radius | \f[R_{full} = 0.25Y_{full}\f] |
+| Section Factor | \f[\Psi_{full} = A_{full}R_{full}^{2/3}\f] |
 
-<figure>
-<img src="VolumeII/media/media/image23.png"
-style="width:4.52388in;height:3.94197in" alt="Circular1.png" />
-</figure>
+![](hydraulics/media/media/image23.png "image23")
 
 **Figure 5-2 Geometric properties of a partly filled circular shape based on depth**
 
-<figure>
-<img src="VolumeII/media/media/image24.png"
-style="width:4.60361in;height:4.01145in" alt="Circular2.png" />
-</figure>
+![](hydraulics/media/media/image24.png "image24")
 
 **Figure 5-3 Geometric properties of a partly filled circular shape based on area**
 
 To find *A*, *W*, or *R* for a given *Y* one first evaluates
-$i = \left( \frac{Y}{Y_{full}} \right)(N - 1)$ rounded down to the
+\f$i = \left( \frac{Y}{Y_{full}} \right)(N - 1)\f$ rounded down to the
 nearest integer value where *N* = 51, linearly interpolates the
 appropriate table between the entries at index *i* and *i+1*, and then
 multiplies by the appropriate normalizing factor (either *A*<sub>full</sub>,
@@ -248,58 +241,53 @@ multiplies by the appropriate normalizing factor (either *A*<sub>full</sub>,
 *Ψ* as a function of *A* normalized by *A*<sub>full</sub>. The section factor
 derivative is determined directly from the *Ψ*<sub>tbl</sub> as follows:
 
-$$\Psi'(A) = \left( \Psi_{tbl}\lbrack i + 1\rbrack - \Psi_{tbl}\lbrack i\rbrack \right)(N - 1)\left( \frac{\Psi_{full}}{A_{full}} \right)$$   
+\f[\Psi'(A) = \left( \Psi_{tbl}\lbrack i + 1\rbrack - \Psi_{tbl}\lbrack i\rbrack \right)(N - 1)\left( \frac{\Psi_{full}}{A_{full}} \right)\f]   
 (5-12)
 
 where *i* is the integer value of
-$\left( \frac{A}{A_{full}} \right)(N - 1)$ for *N* = 51. For added
+\f$\left( \frac{A}{A_{full}} \right)(N - 1)\f$ for *N* = 51. For added
 accuracy, analytical functions are used to compute *Y,* *Ψ,* and *Ψ'*
 for areas below 4% of *A*<sub>full</sub>. They are described in the side bar
 entitled "*Analytical Functions for Circular Cross Sections*".
 
-<figure>
-<img src="VolumeII/media/media/figure-theta.png"/>
-<figure>
+![](hydraulics/media/media/figure-theta.png "figure-theta")
 
 > **Analytical Functions for Circular Cross Sections**
 > 
 > The following relation holds between the central angle θ (in radians) subtended by the water surface in the conduit's cross section (see figure above) and flow area A (French, 1985):
 > 
-> $$A = \frac{A_{full}(\theta - \sin\theta)}{2\pi}$$
+> \f[A = \frac{A_{full}(\theta - \sin\theta)}{2\pi}\f]
 > 
 > Given a value for A, this expression is solved for θ using the following Newton-Raphson routine:
 > 
-> 1. Let $\theta = 0.031715 - 12.79384\alpha + 8.28479\sqrt{\alpha}$ where $\alpha = \frac{A}{A_{full}}$.
+> 1. Let \f$\theta = 0.031715 - 12.79384\alpha + 8.28479\sqrt{\alpha}\f$ where \f$\alpha = \frac{A}{A_{full}}\f$.
 > 
-> 2. Compute $\Delta\theta = \frac{2\pi\alpha - (\theta - \sin\theta)}{(1 - \cos\theta)}$.
+> 2. Compute \f$\Delta\theta = \frac{2\pi\alpha - (\theta - \sin\theta)}{(1 - \cos\theta)}\f$.
 > 
-> 3. Let $\theta = \theta + \Delta\theta$.
+> 3. Let \f$\theta = \theta + \Delta\theta\f$.
 > 
-> 4. If $|\Delta\theta| \leq 0.0001$ then stop. Otherwise return to step 2.
+> 4. If \f$|\Delta\theta| \leq 0.0001\f$ then stop. Otherwise return to step 2.
 > 
 > Once θ is known the remaining cross section variables can be found as follows:
 > 
-> **Flow Depth:** $Y = Y_{full}\frac{(1 - \cos(\theta/2))}{2}$
+> **Flow Depth:** \f$Y = Y_{full}\frac{(1 - \cos(\theta/2))}{2}\f$
 > 
-> **Section Factor:** $\Psi = \frac{\Psi_{full}(\theta - \sin\theta)^{5/3}}{(2\pi\theta^{2/3})}$
+> **Section Factor:** \f$\Psi = \frac{\Psi_{full}(\theta - \sin\theta)^{5/3}}{(2\pi\theta^{2/3})}\f$
 > 
-> **Wetted Perimeter:** $P = \frac{\theta Y_{full}}{2}$
+> **Wetted Perimeter:** \f$P = \frac{\theta Y_{full}}{2}\f$
 > 
-> **Wetted Perimeter Derivative:** $P' = \frac{4}{Y_{full}(1 - \cos\theta)}$
+> **Wetted Perimeter Derivative:** \f$P' = \frac{4}{Y_{full}(1 - \cos\theta)}\f$
 > 
-> **Hydraulic Radius:** $R = \frac{A}{P}$
+> **Hydraulic Radius:** \f$R = \frac{A}{P}\f$
 > 
-> **Section Factor Derivative:** $\Psi' = \left[\frac{5}{3} - \frac{2}{3}P'R\right]R^{2/3}$
+> **Section Factor Derivative:** \f$\Psi' = \left[\frac{5}{3} - \frac{2}{3}P'R\right]R^{2/3}\f$
 
 
 
 
 ### 5.1.4 Ellipsoid and Arch Shapes
 
-<figure>
-<img src="VolumeII/media/media/image25.png"
-style="width:6.5in;height:2.27014in" alt="EllipseArch.png" />
-</figure>
+![](hydraulics/media/media/image25.png "image25")
 
 **Figure 5-4 Ellipsoid and arch pipe cross sectional shapes**
 
@@ -329,8 +317,8 @@ latter case the corresponding full area *A*<sub>full</sub> and hydraulic radius
 
 | Property | Ellipsoid Shape | Arch Shape |
 |---|---|---|
-| Full Area $A_{full}$ | $$1.2692Y_{full}^{2}$$ | $$0.7879Y_{full}W_{\max}$$ |
-| Full Hydraulic Radius $R_{full}$ | $$0.3061Y_{full}$$ | $$0.2991Y_{full}$$ |
+| Full Area \f$A_{full}\f$ | \f[1.2692Y_{full}^{2}\f] | \f[0.7879Y_{full}W_{\max}\f] |
+| Full Hydraulic Radius \f$R_{full}\f$ | \f[0.3061Y_{full}\f] | \f[0.2991Y_{full}\f] |
 
 Information in the aforementioned design manuals was used to construct
 the following tables for both the ellipsoid and arch shapes (only a
@@ -347,7 +335,7 @@ Each table contains entries for *N =* 26 equally spaced values of
 *Y/Y*<sub>full</sub> between 0 and 1. The tables for ellipsoid pipes are in
 Appendix D and those for arch pipes are in Appendix E. To find *A*, *W*,
 or *R* for a given *Y* one first determines the integer portion of
-$(N - 1)\left( \frac{Y}{Y_{full}} \right)$, linearly interpolates the
+\f$(N - 1)\left( \frac{Y}{Y_{full}} \right)\f$, linearly interpolates the
 appropriate table between the entries at this and the next higher index,
 and then multiplies by the appropriate normalizing factor (either
 *A*<sub>full</sub>, *W*<sub>max</sub>, or *R*<sub>full</sub>).
@@ -355,16 +343,16 @@ and then multiplies by the appropriate normalizing factor (either
 To find the depth associated with a given area *Y(A)*, a bisection (or
 interval halving) procedure is first used on the appropriate (either
 ellipsoid or arch) area table *A*<sub>tbl</sub> to find the position *i* so that
-$A_{tbl}\lbrack i\rbrack \leq \frac{A}{A_{full} \leq A_{tbl}\lbrack i + 1\rbrack}$.
+\f$A_{tbl}\lbrack i\rbrack \leq \frac{A}{A_{full} \leq A_{tbl}\lbrack i + 1\rbrack}\f$.
 Then the desired depth *Y* is interpolated from this position in the
 table using the following expression with *N* = 26:
 
-$$\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A} \quad \text{where} \quad \Delta A = 0.001A_{full}$$   
+\f[\Psi'(A) = \frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A} \quad \text{where} \quad \Delta A = 0.001A_{full}\f]   
 (5-15)
 
 ### 5.1.5 Older Masonry Sewer Shapes
 
-![OldShapes.png](VolumeII/media/media/image27.png)
+![OldShapes.png](hydraulics/media/media/image27.png)
 
 **Figure 5-5 Masonry sewer shapes**
 
@@ -379,7 +367,7 @@ in Table 5-6. The full tables are provided in Appendix F. The values of
 *A*<sub>full</sub>, *R*<sub>full</sub>, and *W*<sub>max</sub> used to normalize the entries in the
 tables for each shape are listed in Table 5-7. The full section factor
 *Ψ*<sub>full</sub> used to normalize the section factor table is computed as
-$A_{full}R_{full}^{2/3}$ .
+\f$A_{full}R_{full}^{2/3}\f$ .
 
 **Table 5-6 Number of entries in geometric property tables for masonry sewer shapes**
 
@@ -397,13 +385,13 @@ $A_{full}R_{full}^{2/3}$ .
 
 | Shape | *A*<sub>full</sub> | *R*<sub>full</sub> | *W*<sub>max</sub> | *Ψ*<sub>max</sub> |
 |-------|-------------------|-------------------|-------------------|-------------------|
-| Basket Handle | $$0.7862Y_{full}^{2}$$ | $$0.2464Y_{full}$$ | $$0.944Y_{full}$$ | $$1.06078\Psi_{full}$$ |
-| Egg | $$0.5105Y_{full}^{2}$$ | $$0.1931Y_{full}$$ | $$0.667Y_{full}$$ | $$1.065\Psi_{full}$$ |
-| Horseshoe | $$0.8293Y_{full}^{2}$$ | $$0.2538Y_{full}$$ | $$Y_{full}$$ | $$1.077\Psi_{full}$$ |
-| Catenary | $$0.70277Y_{full}^{2}$$ | $$0.23172Y_{full}$$ | $$0.9Y_{full}$$ | $$1.05\Psi_{full}$$ |
-| Gothic | $$0.6554Y_{full}^{2}$$ | $$0.2269Y_{full}$$ | $$0.84Y_{full}$$ | $$1.065\Psi_{full}$$ |
-| Semi-Circular | $$1.2697Y_{full}^{2}$$ | $$0.2946Y_{full}$$ | $$1.64Y_{full}$$ | $$1.06637\Psi_{full}$$ |
-| Semi-Elliptical | $$0.785Y_{full}^{2}$$ | $$0.242Y_{full}$$ | $$Y_{full}$$ | $$1.045\Psi_{full}$$ |
+| Basket Handle | \f[0.7862Y_{full}^{2}\f] | \f[0.2464Y_{full}\f] | \f[0.944Y_{full}\f] | \f[1.06078\Psi_{full}\f] |
+| Egg | \f[0.5105Y_{full}^{2}\f] | \f[0.1931Y_{full}\f] | \f[0.667Y_{full}\f] | \f[1.065\Psi_{full}\f] |
+| Horseshoe | \f[0.8293Y_{full}^{2}\f] | \f[0.2538Y_{full}\f] | \f[Y_{full}\f] | \f[1.077\Psi_{full}\f] |
+| Catenary | \f[0.70277Y_{full}^{2}\f] | \f[0.23172Y_{full}\f] | \f[0.9Y_{full}\f] | \f[1.05\Psi_{full}\f] |
+| Gothic | \f[0.6554Y_{full}^{2}\f] | \f[0.2269Y_{full}\f] | \f[0.84Y_{full}\f] | \f[1.065\Psi_{full}\f] |
+| Semi-Circular | \f[1.2697Y_{full}^{2}\f] | \f[0.2946Y_{full}\f] | \f[1.64Y_{full}\f] | \f[1.06637\Psi_{full}\f] |
+| Semi-Elliptical | \f[0.785Y_{full}^{2}\f] | \f[0.242Y_{full}\f] | \f[Y_{full}\f] | \f[1.045\Psi_{full}\f] |
 
 The tables are used in the same manner as the ones for a circular shape
 to directly evaluate *A(Y), W(Y), R(Y), Y(A), Ψ(A),* and *Ψ'(A).* For
@@ -412,7 +400,7 @@ inverse lookup method on the *Y*<sub>tbl</sub> described in section 5.2.4 for
 ellipsoids and arches. For shapes without an *R*<sub>tbl</sub>, *R(Y)* is found
 by first finding *A(Y)* as just described, then finding *Ψ(A)* for the
 resulting area *A*, and finally
-evaluating $\left( \frac{\Psi}{A} \right)^{3/2}$. Equation 5-15 is used
+evaluating \f$\left( \frac{\Psi}{A} \right)^{3/2}\f$. Equation 5-15 is used
 to compute *Ψ'(A).*
 
 ### 5.1.6 Composite Shapes
@@ -422,10 +410,7 @@ circular, rectangular, and triangular sections. The formulas for
 computing their geometrical properties are presented in the following
 paragraphs.
 
-<figure>
-<img src="VolumeII/media/media/image28.png"
-style="width:5.33549in;height:4.27256in" alt="CompositeShapes.png" />
-</figure>
+![](hydraulics/media/media/image28.png "image28")
 
 Figure 5-6 shows four cross section shapes that are combinations of
 circular, rectangular, and triangular sections. The formulas for
@@ -438,11 +423,11 @@ This is a circular cross section that is partially filled with immobile
 sediment to a specified depth *Y*<sub>btm</sub>. (This filled depth remains
 constant -- SWMM does not model how it might change over time due to
 sediment transport processes.) The depth available for flow is
-$Y_{full} - Y_{btm}$. To compute the geometric properties of this shape
+\f$Y_{full} - Y_{btm}\f$. To compute the geometric properties of this shape
 one first uses the circular shape functions to compute the area
 *A*<sub>btm</sub>, top width *W*<sub>btm</sub>, and hydraulic radius R*<sub>btm</sub>* at a depth
 of *Y*<sub>btm</sub> for the full circular shape with diameter *Y*<sub>full</sub>. The
-wetted perimeter at this depth, *P*<sub>btm</sub>, is $\frac{A_{btm}}{R_{btm}}$ .
+wetted perimeter at this depth, *P*<sub>btm</sub>, is \f$\frac{A_{btm}}{R_{btm}}\f$ .
 Then the expressions listed in Table 5-8 can be used to find the section
 properties for a specific flow depth *Y* above *Y*<sub>btm</sub> or area *A*
 above *A*<sub>btm</sub> .
@@ -451,20 +436,20 @@ above *A*<sub>btm</sub> .
 
 | Property | Value Based on Full Circular Shape Functions |
 |---|---|
-| *A(Y)* | $$A\left( Y + Y_{btm} \right) - A_{btm}$$ |
-| *W(Y)* | $$W(Y + Y_{btm})$$ |
-| *R(Y)* | $$\frac{A\left( Y + Y_{btm} \right) - A_{btm}}{\left( \frac{A(Y + Y_{btm})}{R(Y + Y_{btm}}) \right) - P_{btm} + W_{btm}}$$ |
-| *Y(A)* | $$Y\left( A + A_{btm} \right) - Y_{btm}$$ |
-| *Ψ(A)* | $$A{R(\Delta Y)}^{2/3} \quad \text{where} \quad \Delta Y = Y\left( A + A_{btm} \right) - Y_{btm}$$ |
-| *Ψ'(A)* | $$\frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A} \quad \text{where} \quad \Delta A = 0.001(A_{full} - A_{btm})$$ |
+| *A(Y)* | \f[A\left( Y + Y_{btm} \right) - A_{btm}\f] |
+| *W(Y)* | \f[W(Y + Y_{btm})\f] |
+| *R(Y)* | \f[\frac{A\left( Y + Y_{btm} \right) - A_{btm}}{\left( \frac{A(Y + Y_{btm})}{R(Y + Y_{btm}}) \right) - P_{btm} + W_{btm}}\f] |
+| *Y(A)* | \f[Y\left( A + A_{btm} \right) - Y_{btm}\f] |
+| *Ψ(A)* | \f[A{R(\Delta Y)}^{2/3} \quad \text{where} \quad \Delta Y = Y\left( A + A_{btm} \right) - Y_{btm}\f] |
+| *Ψ'(A)* | \f[\frac{\Psi(A + \Delta A) - \Psi(A - \Delta A)}{2\Delta A} \quad \text{where} \quad \Delta A = 0.001(A_{full} - A_{btm})\f] |
 
 <u>Rectangular-Triangular Shape</u>
 
 This shape consists of a triangular bottom section of height *Y*<sub>btm</sub>
 connected to a closed rectangular top section of width *b* and height
 *Y*<sub>full</sub> -- *Y*<sub>btm</sub>. The slope of the triangular section's sidewalls
-*s* is $\frac{b}{2Y_{btm}}$ . For depths below *Y*<sub>btm</sub> (or areas below
-$Y_{btm}\frac{b}{2}$) the geometric properties are computed in the same
+*s* is \f$\frac{b}{2Y_{btm}}\f$ . For depths below *Y*<sub>btm</sub> (or areas below
+\f$Y_{btm}\frac{b}{2}\f$) the geometric properties are computed in the same
 manner as for the open triangular shape of section 5.2.1. At higher
 depths (or areas) the methods used for the closed rectangular shape of
 section 5.2.2 are applied with some adjustments made to accommodate the
@@ -475,20 +460,20 @@ filled triangular section. The applicable formulas are listed in Table
 
 | Property | Expression |
 |---|---|
-| *s* | $$\frac{b}{\left( 2Y_{btm} \right)}$$ |
-| $$A_{btm}$$ | $$bY_{btm}/2$$ |
-| $$A_{full}$$ | $$b\left( Y_{full} - \frac{Y_{btm}}{2} \right)$$ |
-| $$R_{full}$$ | $$\frac{A_{full}}{\left( 2Y_{btm}\sqrt{1 + s^{2}} + 2\left( Y_{full} - Y_{btm} \right) + b \right)}$$ |
-| $$\Psi_{full}$$ | $$A_{full}R_{full}^{2/3}$$ |
-| *A(Y)* | $$A_{btm} + \left( Y - Y_{btm} \right)b$$ |
-| *Y(A)* | $$Y_{btm} + \frac{\left( A - A_{btm} \right)}{b}$$ |
-| *W(Y)* | $$b$$ |
-| *P(Y)* | $$2Y_{btm}\sqrt{\left( 1 + s^{2} \right)} + 2\left( Y - Y_{btm} \right)$$<br>$$if\ \ A(Y) > 0.98A_{full}\ add\ on\ \left( \frac{A(Y)}{A_{full}} - 0.98 \right)\frac{b}{0.02}\ \ $$ |
-| *R(Y)* | $$\frac{A(Y)}{P(Y)}$$ |
-| *R(A)* | $$\frac{A}{P(Y(A))}$$ |
-| $$\Psi_{\max}$$ | $$0.98A_{full}{R(0.98A_{full})}^{2/3}$$ |
-| $$\Psi(A)$$ | $$A{R(A)}^{2/3}\ \ for\ A \leq 0.98A_{full}$$<br>$$\Psi_{\max} + \left( \Psi_{full} - \Psi_{\max} \right)\frac{\left( \frac{A}{A_{full} - 0.98} \right)}{0.02\ \ for\ A > 0.98A_{full}}$$ |
-| $$\Psi'(A)$$ | $$\left( \frac{5}{3} - \left( \frac{2}{3} \right)\left( \frac{2}{b} \right)R(A) \right){R(A)}^{2/3}\ \ for\ A \leq 0.98A_{full}$$<br>$$\frac{\left( \Psi_{full} - \Psi_{\max} \right)}{0.02A_{full}\ for\ A > 0.98A_{full}\ }$$ |
+| *s* | \f[\frac{b}{\left( 2Y_{btm} \right)}\f] |
+| \f[A_{btm}\f] | \f[bY_{btm}/2\f] |
+| \f[A_{full}\f] | \f[b\left( Y_{full} - \frac{Y_{btm}}{2} \right)\f] |
+| \f[R_{full}\f] | \f[\frac{A_{full}}{\left( 2Y_{btm}\sqrt{1 + s^{2}} + 2\left( Y_{full} - Y_{btm} \right) + b \right)}\f] |
+| \f[\Psi_{full}\f] | \f[A_{full}R_{full}^{2/3}\f] |
+| *A(Y)* | \f[A_{btm} + \left( Y - Y_{btm} \right)b\f] |
+| *Y(A)* | \f[Y_{btm} + \frac{\left( A - A_{btm} \right)}{b}\f] |
+| *W(Y)* | \f[b\f] |
+| *P(Y)* | \f[2Y_{btm}\sqrt{\left( 1 + s^{2} \right)} + 2\left( Y - Y_{btm} \right)\f]<br>\f[if\ \ A(Y) > 0.98A_{full}\ add\ on\ \left( \frac{A(Y)}{A_{full}} - 0.98 \right)\frac{b}{0.02}\ \ \f] |
+| *R(Y)* | \f[\frac{A(Y)}{P(Y)}\f] |
+| *R(A)* | \f[\frac{A}{P(Y(A))}\f] |
+| \f[\Psi_{\max}\f] | \f[0.98A_{full}{R(0.98A_{full})}^{2/3}\f] |
+| \f[\Psi(A)\f] | \f[A{R(A)}^{2/3}\ \ for\ A \leq 0.98A_{full}\f]<br>\f[\Psi_{\max} + \left( \Psi_{full} - \Psi_{\max} \right)\frac{\left( \frac{A}{A_{full} - 0.98} \right)}{0.02\ \ for\ A > 0.98A_{full}}\f] |
+| \f[\Psi'(A)\f] | \f[\left( \frac{5}{3} - \left( \frac{2}{3} \right)\left( \frac{2}{b} \right)R(A) \right){R(A)}^{2/3}\ \ for\ A \leq 0.98A_{full}\f]<br>\f[\frac{\left( \Psi_{full} - \Psi_{\max} \right)}{0.02A_{full}\ for\ A > 0.98A_{full}\ }\f] |
 
 <u>Rectangular-Round Shape</u>
 
@@ -502,37 +487,37 @@ given in Table 5-11.
 
 | Parameter | Value |
 |---|---|
-| Central Angle *θ* | $$2\sin^{- 1}\left( \frac{b}{2r} \right)$$ |
-| Bottom Section Height *Y*<sub>btm</sub> | $$r\left( 1 - cos\left( \frac{\theta}{2} \right) \right)$$ |
-| Bottom Section Area *A*<sub>btm</sub> | $$\left( \frac{r^{2}}{2} \right)\left( \theta - sin(\theta) \right)$$ |
-| Full Area *A*<sub>full</sub> | $$b\left( Y_{full} - Y_{btm} \right) + A_{btm}$$ |
-| Full Hydraulic Radius *R*<sub>full</sub> | $$\frac{A_{full}}{\left\{ r\theta + 2\left( Y_{full} - Y_{btm} \right) + b \right\}}$$ |
-| Full Section Factor *Ψ*<sub>full</sub> | $$A_{full}R_{full}^{2/3}$$ |
-| Maximum Hydraulic Radius *R*<sub>max</sub> | $$\frac{0.98A_{full}}{\left\{ r\theta + \frac{2\left( 0.98A_{full} - A_{btm} \right)}{b} \right\}}$$ |
-| Maximum Section Factor *Ψ*<sub>max</sub> | $$0.98A_{full}R_{\max}^{2/3}$$ |
+| Central Angle *θ* | \f[2\sin^{- 1}\left( \frac{b}{2r} \right)\f] |
+| Bottom Section Height *Y*<sub>btm</sub> | \f[r\left( 1 - cos\left( \frac{\theta}{2} \right) \right)\f] |
+| Bottom Section Area *A*<sub>btm</sub> | \f[\left( \frac{r^{2}}{2} \right)\left( \theta - sin(\theta) \right)\f] |
+| Full Area *A*<sub>full</sub> | \f[b\left( Y_{full} - Y_{btm} \right) + A_{btm}\f] |
+| Full Hydraulic Radius *R*<sub>full</sub> | \f[\frac{A_{full}}{\left\{ r\theta + 2\left( Y_{full} - Y_{btm} \right) + b \right\}}\f] |
+| Full Section Factor *Ψ*<sub>full</sub> | \f[A_{full}R_{full}^{2/3}\f] |
+| Maximum Hydraulic Radius *R*<sub>max</sub> | \f[\frac{0.98A_{full}}{\left\{ r\theta + \frac{2\left( 0.98A_{full} - A_{btm} \right)}{b} \right\}}\f] |
+| Maximum Section Factor *Ψ*<sub>max</sub> | \f[0.98A_{full}R_{\max}^{2/3}\f] |
 
 **Table 5-11 Geometric properties for rectangular--round shapes**
 
 | Property | Formula | Applicable Region |
 |---|---|---|
-| *A(Y)* | $$0.5r^{2}\left( \phi - \sin(\phi) \right) \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{Y}{r} \right)$$ | $$Y \leq Y_{btm}$$ |
-| | $$A_{btm} + \left( Y - Y_{btm} \right)b$$ | $$Y > Y_{btm}$$ |
-| *W(Y)* | $$2\sqrt{Y(2r - Y)}$$ | $$Y \leq Y_{btm}$$ |
-| | *b* | $$Y > Y_{btm}$$ |
-| *R(Y)* | $$0.5r\frac{\left( 1 - \sin(\phi) \right)}{\phi} \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{Y}{r} \right)$$ | $$Y \leq Y_{btm}$$ |
-| | $$R\left( A(Y) \right) \quad \text{(see } R(A) \text{ function below)}$$ | $$Y > Y_{btm}$$ |
-| *Y(A)* | $$Y(A) \text{ for circular shape with } Y_{full} = 2r$$ | $$A \leq A_{btm}$$ |
-| | $$Y_{btm} + \frac{\left( A - A_{btm} \right)}{b}$$ | $$A > A_{btm}$$ |
-| *P(A)* | $$2r\cos^{-1}\left( 1 - \frac{Y(A)}{r} \right)$$ | $$A \leq A_{btm}$$ |
-| | $$2r\sin^{-1}\left( \frac{b}{2r} \right) + 2\frac{\left( A - A_{btm} \right)}{b}$$ | $$A_{btm} < A \leq 0.98A_{full}$$ |
-| | $$2r\sin^{-1}\left( \frac{b}{2r} \right) + 2\frac{\left( A - A_{btm} \right)}{b}$$<br>$$+ \left( \frac{A}{A_{full} - 0.98} \right)\frac{b}{0.02}$$ | $$A > 0.98A_{full}$$ |
-| *R(A)* | $$\frac{A}{P(A)}$$ | |
-| *Ψ(A)* | $$\Psi(A) \text{ for circular shape with } Y_{full} = 2r$$ | $$A \leq A_{btm}$$ |
-| | $$A{R(A)}^{2/3}$$ | $$A_{btm} < A \leq 0.98A_{full}$$ |
-| | $$\Psi_{\max} + \left( \Psi_{full} - \Psi_{\max} \right)\frac{\left( \frac{A}{A_{full} - 0.98} \right)}{0.02}$$ | $$A > 0.98A_{full}$$ |
-| *Ψ'(A)* | $$\frac{\left\{ \Psi(A + \Delta A) - \Psi(A - \Delta A) \right\}}{2\Delta A}$$ | $$A \leq A_{btm}$$ |
-| | $$\left( \frac{5}{3} - \left( \frac{2}{3} \right)\left( \frac{2}{b} \right)R(A) \right){R(A)}^{2/3}$$ | $$A_{btm} < A \leq 0.98A_{full}$$ |
-| | $$\frac{\left( \Psi_{full} - \Psi_{\max} \right)}{\left( 0.02A_{full} \right)}$$ | $$A > 0.98A_{full}$$ |
+| *A(Y)* | \f[0.5r^{2}\left( \phi - \sin(\phi) \right) \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{Y}{r} \right)\f] | \f[Y \leq Y_{btm}\f] |
+| | \f[A_{btm} + \left( Y - Y_{btm} \right)b\f] | \f[Y > Y_{btm}\f] |
+| *W(Y)* | \f[2\sqrt{Y(2r - Y)}\f] | \f[Y \leq Y_{btm}\f] |
+| | *b* | \f[Y > Y_{btm}\f] |
+| *R(Y)* | \f[0.5r\frac{\left( 1 - \sin(\phi) \right)}{\phi} \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{Y}{r} \right)\f] | \f[Y \leq Y_{btm}\f] |
+| | \f[R\left( A(Y) \right) \quad \text{(see } R(A) \text{ function below)}\f] | \f[Y > Y_{btm}\f] |
+| *Y(A)* | \f[Y(A) \text{ for circular shape with } Y_{full} = 2r\f] | \f[A \leq A_{btm}\f] |
+| | \f[Y_{btm} + \frac{\left( A - A_{btm} \right)}{b}\f] | \f[A > A_{btm}\f] |
+| *P(A)* | \f[2r\cos^{-1}\left( 1 - \frac{Y(A)}{r} \right)\f] | \f[A \leq A_{btm}\f] |
+| | \f[2r\sin^{-1}\left( \frac{b}{2r} \right) + 2\frac{\left( A - A_{btm} \right)}{b}\f] | \f[A_{btm} < A \leq 0.98A_{full}\f] |
+| | \f[2r\sin^{-1}\left( \frac{b}{2r} \right) + 2\frac{\left( A - A_{btm} \right)}{b}\f]<br>\f[+ \left( \frac{A}{A_{full} - 0.98} \right)\frac{b}{0.02}\f] | \f[A > 0.98A_{full}\f] |
+| *R(A)* | \f[\frac{A}{P(A)}\f] | |
+| *Ψ(A)* | \f[\Psi(A) \text{ for circular shape with } Y_{full} = 2r\f] | \f[A \leq A_{btm}\f] |
+| | \f[A{R(A)}^{2/3}\f] | \f[A_{btm} < A \leq 0.98A_{full}\f] |
+| | \f[\Psi_{\max} + \left( \Psi_{full} - \Psi_{\max} \right)\frac{\left( \frac{A}{A_{full} - 0.98} \right)}{0.02}\f] | \f[A > 0.98A_{full}\f] |
+| *Ψ'(A)* | \f[\frac{\left\{ \Psi(A + \Delta A) - \Psi(A - \Delta A) \right\}}{2\Delta A}\f] | \f[A \leq A_{btm}\f] |
+| | \f[\left( \frac{5}{3} - \left( \frac{2}{3} \right)\left( \frac{2}{b} \right)R(A) \right){R(A)}^{2/3}\f] | \f[A_{btm} < A \leq 0.98A_{full}\f] |
+| | \f[\frac{\left( \Psi_{full} - \Psi_{\max} \right)}{\left( 0.02A_{full} \right)}\f] | \f[A > 0.98A_{full}\f] |
 
 <u>Modified Basket Handle Shape</u>
 
@@ -542,17 +527,17 @@ has full height *Y*<sub>full</sub>, bottom width *b*, and top section radius of
 curvature *r* (see Figure 5-6). The central angle *θ* formed by the
 rounded top section is:
 
-$$\theta = 2\sin^{- 1}\left( \frac{b}{2r} \right)$$         
+\f[\theta = 2\sin^{- 1}\left( \frac{b}{2r} \right)\f]         
 (5-14)
 
 The depth *Y*<sub>btm</sub> of the bottom rectangular section is:
 
-$$Y_{btm} = Y_{full} - r\left( 1 - cos\left( \frac{\theta}{2} \right) \right)$$   
+\f[Y_{btm} = Y_{full} - r\left( 1 - cos\left( \frac{\theta}{2} \right) \right)\f]   
 (5-15)
 
 and its area *A*<sub>btm</sub> is *bY*<sub>btm</sub> . The shape's full area *A*<sub>full</sub> is:
 
-$$A_{full} = A_{btm} + \frac{r^{2}}{\left\{ 2(\theta - sin\theta) \right\}}$$   
+\f[A_{full} = A_{btm} + \frac{r^{2}}{\left\{ 2(\theta - sin\theta) \right\}}\f]   
 (5-16)
 
 For depths up to *Y*<sub>btm</sub> and areas up to *A*<sub>btm</sub> the open rectangular
@@ -564,14 +549,14 @@ above this the functions listed in Table 5-12 are used.
 
 | Property | Expression |
 |---|---|
-| *A(Y)* | $$A_{full} - \left( \frac{r^{2}}{2} \right)(\phi - \sin\phi) \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{\left( Y_{full} - Y \right)}{r} \right)$$ |
-| *W(Y)* | $$2\sqrt{\left( Y_{full} - Y \right)\left( 2r - \left( Y_{full} - Y \right) \right)}$$ |
-| *R(Y)* | $$R\left( A(Y) \right) \quad \text{using } R(A) \text{ function below}$$ |
-| *Y(A)* | $$Y_{full} - Y\left( A_{full} - A \right) \quad \text{using } Y(A) \text{ for circular shape with } Y_{full} = 2r$$ |
-| *P(A)* | $$(\theta - \phi)r + 2\left( Y_{full} - Y(A) \right) + b \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{\left( Y_{full} - Y(A) \right)}{r} \right)$$ |
-| *R(A)* | $$\frac{A}{P(A)}$$ |
-| $$\Psi(A)$$ | $$A{R(A)}^{2/3}$$ |
-| $$\Psi'(A)$$ | $$\frac{\left\{ \Psi(A + \Delta A) - \Psi(A - \Delta A) \right\}}{(2\Delta A)} \quad \text{where} \quad \Delta A = 0.001A_{full}$$ |
+| *A(Y)* | \f[A_{full} - \left( \frac{r^{2}}{2} \right)(\phi - \sin\phi) \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{\left( Y_{full} - Y \right)}{r} \right)\f] |
+| *W(Y)* | \f[2\sqrt{\left( Y_{full} - Y \right)\left( 2r - \left( Y_{full} - Y \right) \right)}\f] |
+| *R(Y)* | \f[R\left( A(Y) \right) \quad \text{using } R(A) \text{ function below}\f] |
+| *Y(A)* | \f[Y_{full} - Y\left( A_{full} - A \right) \quad \text{using } Y(A) \text{ for circular shape with } Y_{full} = 2r\f] |
+| *P(A)* | \f[(\theta - \phi)r + 2\left( Y_{full} - Y(A) \right) + b \quad \text{where} \quad \phi = 2\cos^{-1}\left( 1 - \frac{\left( Y_{full} - Y(A) \right)}{r} \right)\f] |
+| *R(A)* | \f[\frac{A}{P(A)}\f] |
+| \f[\Psi(A)\f] | \f[A{R(A)}^{2/3}\f] |
+| \f[\Psi'(A)\f] | \f[\frac{\left\{ \Psi(A + \Delta A) - \Psi(A - \Delta A) \right\}}{(2\Delta A)} \quad \text{where} \quad \Delta A = 0.001A_{full}\f] |
 
 ### 5.1.7 Area at Maximum Flow
 
@@ -587,7 +572,7 @@ standard closed conduit shapes recognized by SWMM. For open shapes
 
 **Table 5-13 Area at maximum flow to full area for standard closed conduits shapes**
 
-| Shape | $$\frac{\mathbf{A}_{\mathbf{\max}}}{\mathbf{A}_{\mathbf{full}}}$$ | Shape | $$\frac{\mathbf{A}_{\mathbf{\max}}}{\mathbf{A}_{\mathbf{full}}}$$ |
+| Shape | \f[\frac{\mathbf{A}_{\mathbf{\max}}}{\mathbf{A}_{\mathbf{full}}}\f] | Shape | \f[\frac{\mathbf{A}_{\mathbf{\max}}}{\mathbf{A}_{\mathbf{full}}}\f] |
 |---|---|---|---|
 | Rectangular | 0.97 | Circular | 0.9756 |
 | Elliptical | 0.96 | Arch | 0.92 |
@@ -601,31 +586,31 @@ standard closed conduit shapes recognized by SWMM. For open shapes
 
 Kinematic wave analysis also needs to know the area *A* corresponding to
 a given normal flow rate *Q* from its associated section factor *Ψ*,
-where $\Psi = \frac{Q\sqrt{S_{0}}}{\eta}$. For circular shapes and the
+where \f$\Psi = \frac{Q\sqrt{S_{0}}}{\eta}\f$. For circular shapes and the
 seven masonry sewer shapes discussed in section 5.2.5 the following
 "reverse" lookup method is used with the shape's *Ψ* versus *A* table
 (*Ψ*<sub>tbl</sub>) to determine *A* given *Ψ*.
 
 Let *Ψ\** be the section factor value whose area is sought and let *N*
 be the number of entries in *Ψ*<sub>tbl</sub>. First the interval in the table
-that brackets $\frac{\Psi^{*}}{\Psi_{full}}$ is located. Since these are
+that brackets \f$\frac{\Psi^{*}}{\Psi_{full}}\f$ is located. Since these are
 all closed shapes, there will be a table entry index *i*<sub>max</sub> after
-which the $\frac{\Psi}{\Psi_{full}}$ values begin to decrease. If
-$\frac{\Psi^{*}}{\Psi_{full}}$ is between *Ψ*<sub>tbl</sub>\[*i*<sub>max</sub>\] and
+which the \f$\frac{\Psi}{\Psi_{full}}\f$ values begin to decrease. If
+\f$\frac{\Psi^{*}}{\Psi_{full}}\f$ is between *Ψ*<sub>tbl</sub>\[*i*<sub>max</sub>\] and
 *Ψ*<sub>tbl</sub>\[*N*\] then this portion of the table is examined to find the
-index *i\** so that $\frac{\Psi^{*}}{\Psi_{full}}$ is between
+index *i\** so that \f$\frac{\Psi^{*}}{\Psi_{full}}\f$ is between
 *Ψ*<sub>tbl</sub>\[*i\**\] and *Ψ*<sub>tbl</sub>\[*i\*+1*\]. Otherwise a bisection search
 is used between index 0 and *i*<sub>max</sub> to find the interval starting at
-*i\** that brackets $\frac{\Psi^{*}}{\Psi_{full}}$. Then the area *A\**
+*i\** that brackets \f$\frac{\Psi^{*}}{\Psi_{full}}\f$. Then the area *A\**
 corresponding to *Ψ\** is computed as:
 
-$$A^{*} = \frac{A_{full}}{(N - 1)}\left( i^{*} + \frac{\left( \Psi^{*} - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)}{\left( \Psi_{tbl}\left\lbrack i^{*} + 1 \right\rbrack - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)} \right)$$   
+\f[A^{*} = \frac{A_{full}}{(N - 1)}\left( i^{*} + \frac{\left( \Psi^{*} - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)}{\left( \Psi_{tbl}\left\lbrack i^{*} + 1 \right\rbrack - \Psi_{tbl}\left\lbrack i^{*} \right\rbrack \right)} \right)\f]   
 (5-17)
 
 For all other shapes the Newton-Raphson-Bisection method (see Appendix
 A) is used to find the solution of
 
-$f(A) = \Psi(A) - \Psi^{*} = 0$                             
+\f$f(A) = \Psi(A) - \Psi^{*} = 0\f$                             
 (5-18)
 
 where *Ψ\** is the section factor value whose corresponding area is
@@ -647,7 +632,7 @@ table of width versus height is shown in Figure 5-7.
 
 | | |
 |---|---|
-| ![ShapeCurve2.png](VolumeII/media/media/image29.png) | <table><tr><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td></tr><tr><td>0.00</td><td>0.000</td><td>0.56</td><td>0.928</td></tr><tr><td>0.08</td><td>0.667</td><td>0.64</td><td>0.874</td></tr><tr><td>0.16</td><td>0.930</td><td>0.72</td><td>0.798</td></tr><tr><td>0.24</td><td>1.000</td><td>0.80</td><td>0.697</td></tr><tr><td>0.32</td><td>0.997</td><td>0.88</td><td>0.567</td></tr><tr><td>0.40</td><td>0.988</td><td>0.96</td><td>0.342</td></tr><tr><td>0.48</td><td>0.967</td><td>1.00</td><td>0.000</td></tr></table> |
+| ![ShapeCurve2.png](hydraulics/media/media/image29.png) | <table><tr><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td></tr><tr><td>0.00</td><td>0.000</td><td>0.56</td><td>0.928</td></tr><tr><td>0.08</td><td>0.667</td><td>0.64</td><td>0.874</td></tr><tr><td>0.16</td><td>0.930</td><td>0.72</td><td>0.798</td></tr><tr><td>0.24</td><td>1.000</td><td>0.80</td><td>0.697</td></tr><tr><td>0.32</td><td>0.997</td><td>0.88</td><td>0.567</td></tr><tr><td>0.40</td><td>0.988</td><td>0.96</td><td>0.342</td></tr><tr><td>0.48</td><td>0.967</td><td>1.00</td><td>0.000</td></tr></table> |
 
 **Figure 5-7 A Shape Curve with a depth segment shown**
 
@@ -663,7 +648,7 @@ wetted perimeter *P*<sub>sum</sub>. If the depth segment straddles more than one
 shape curve segment, then additional trapezoids are formed at the shape
 curve's vertices, each of which contributes to *A*<sub>sum</sub> and *P*<sub>sum</sub>.
 The *A*<sub>tbl</sub> entry for the segment is set to *A*<sub>sum</sub>, the *R*<sub>tbl</sub>
-entry to $\frac{A_{sum}}{P_{sum}}$, and the *W*<sub>tbl</sub> entry to the
+entry to \f$\frac{A_{sum}}{P_{sum}}\f$, and the *W*<sub>tbl</sub> entry to the
 segment's top width.
 
 When a conduit with full depth *Y*<sub>full</sub> is assigned a shape curve for
@@ -673,17 +658,17 @@ manner as the tables for ellipsoid and arch shapes described in section
 The values of *A*<sub>full</sub>, *R*<sub>full</sub>, and *W*<sub>max</sub> used to convert the
 normalized values in the tables to actual dimensions are as follows:
 
-$$A_{full} = A_{tbl}\lbrack 50\rbrack Y_{full}^{2}$$                                          
+\f[A_{full} = A_{tbl}\lbrack 50\rbrack Y_{full}^{2}\f]                                          
 (5-19)
-$$R_{full} = R_{tbl}\lbrack 50\rbrack Y_{full}$$                                              
+\f[R_{full} = R_{tbl}\lbrack 50\rbrack Y_{full}\f]                                              
 (5-20)
-$$W_{\max} = \left\{ \max_{0 \leq i \leq 50}{W_{tbl}\lbrack i\rbrack} \right\} Y_{full}$$     
+\f[W_{\max} = \left\{ \max_{0 \leq i \leq 50}{W_{tbl}\lbrack i\rbrack} \right\} Y_{full}\f]     
 (5-21)
 
 The value of *A*<sub>max</sub>, the area of the flow depth where the section
 factor is a maximum, is given by:
 
-$$A_{\max} = \left\{ \max_{0 \leq i \leq 50}\left( A_{tbl}\lbrack i\rbrack{R_{tbl}\lbrack i\rbrack}^{2/3} \right) \right\} Y_{full}^{2}$$   
+\f[A_{\max} = \left\{ \max_{0 \leq i \leq 50}\left( A_{tbl}\lbrack i\rbrack{R_{tbl}\lbrack i\rbrack}^{2/3} \right) \right\} Y_{full}^{2}\f]   
 (5-22)
 
 The Newton-Raphson-Bisection method described in section 5.1.8 is used
@@ -691,10 +676,7 @@ to evaluate *A(Ψ).*
 
 ## 5.3 Irregular Natural Channels
 
-<figure>
-<img src="VolumeII/media/media/image30.png"
-style="width:6.5in;height:2.60208in" alt="Transect2.png" />
-</figure>
+![](hydraulics/media/media/image30.png "image30")
 
 **Figure 5-8 A natural channel transect**
 
@@ -717,7 +699,7 @@ measurement stations.
 
 The flow area *A*, top width *W* and hydraulic radius *R* of a transect
 are pre-computed at 51 equally spaced values of flow depth relative to
-full depth $\left( \frac{Y}{Y_{full}} \right)$ and stored in tables
+full depth \f$\left( \frac{Y}{Y_{full}} \right)\f$ and stored in tables
 *A*<sub>tbl</sub>, *W*<sub>tbl</sub>, and *R*<sub>tbl</sub>, respectively. The table values are
 normalized with respect to the full section area A*<sub>full</sub>*, the maximum
 width *W*<sub>max</sub>, and the full section hydraulic radius *R*<sub>full</sub>,
@@ -749,18 +731,14 @@ After the end of the transect is reached the sum of the compound
 conductances is used along with the main channel roughness to find the
 hydraulic radius for the current depth increment.
 
-<figure>
-<img src="VolumeII/media/media/image31.png"
-style="width:6.5in;height:1.84028in"
-alt="TransectCompoundSegments.png" />
-</figure>
+![](hydraulics/media/media/image31.png "image31")
 
 **Figure 5-9 A transect depth increment with three compound segments**
 
 Once table entries for all depth increments have been generated, the
 following quantities are assigned and used to normalize the entries in
 their respective tables:
-$A_{full} = A_{tbl}[50]$, $W_{\max} = W_{tbl}[50]$, $R_{full} = R_{tbl}[50]$.
+\f$A_{full} = A_{tbl}[50]\f$, \f$W_{\max} = W_{tbl}[50]\f$, \f$R_{full} = R_{tbl}[50]\f$.
 Another adjustment is to set
 *W*<sub>tbl</sub>\[0\] = *W*<sub>tbl</sub>\[1\] since the above
 procedure does not calculate a width at zero depth.
@@ -769,48 +747,48 @@ procedure does not calculate a width at zero depth.
 > 
 > To find the k-th entry in an irregular cross section's geometry tables first initialize the following:
 > 
-> **Flow depth:** $Y = k\frac{Y_{full}}{50}$
+> **Flow depth:** \f$Y = k\frac{Y_{full}}{50}\f$
 > 
-> **Table entries for index k:** $A_{tbl}[k] = 0$, $W_{tbl}[k] = 0$, $R_{tbl}[k] = 0$
+> **Table entries for index k:** \f$A_{tbl}[k] = 0\f$, \f$W_{tbl}[k] = 0\f$, \f$R_{tbl}[k] = 0\f$
 > 
-> **Compound segment area:** $A_{sum} = 0$
+> **Compound segment area:** \f$A_{sum} = 0\f$
 > 
-> **Compound wetted perimeter:** $P_{sum} = 0$
+> **Compound wetted perimeter:** \f$P_{sum} = 0\f$
 > 
-> **Total flow conductance:** $K = 0$
+> **Total flow conductance:** \f$K = 0\f$
 > 
-> **Transect station index:** $i = 1$
+> **Transect station index:** \f$i = 1\f$
 > 
-> 1. Select the cross section segment between transect stations at $x_{i-1}$ and $x_i$.
+> 1. Select the cross section segment between transect stations at \f$x_{i-1}\f$ and \f$x_i\f$.
 > 
-> 2. If the flow depth is below the channel bottom ($Y < \min(y_{i-1}, y_i)$) go to step 10.
+> 2. If the flow depth is below the channel bottom (\f$Y < \min(y_{i-1}, y_i)\f$) go to step 10.
 > 
-> 3. Compute the width $w$ and wetted perimeter $p$ of the full segment:
->    $$w = x_i - x_{i-1}$$
->    $$p = \sqrt{w^2 + \Delta y^2} \quad \text{where} \quad \Delta y = |y_i - y_{i-1}|$$
+> 3. Compute the width \f$w\f$ and wetted perimeter \f$p\f$ of the full segment:
+>    \f[w = x_i - x_{i-1}\f]
+>    \f[p = \sqrt{w^2 + \Delta y^2} \quad \text{where} \quad \Delta y = |y_i - y_{i-1}|\f]
 > 
-> 4. If the segment is completely submerged ($Y > \max(y_{i-1}, y_i)$) compute its area $a$ as:
->    $$a = w\left(Y - \frac{(y_{i-1} + y_i)}{2}\right)$$
->    Otherwise let $\alpha = \frac{(Y - \min(y_{i-1}, y_i))}{\Delta y}$ and set $a = \frac{\alpha^2 w\Delta y}{2}$.
+> 4. If the segment is completely submerged (\f$Y > \max(y_{i-1}, y_i)\f$) compute its area \f$a\f$ as:
+>    \f[a = w\left(Y - \frac{(y_{i-1} + y_i)}{2}\right)\f]
+>    Otherwise let \f$\alpha = \frac{(Y - \min(y_{i-1}, y_i))}{\Delta y}\f$ and set \f$a = \frac{\alpha^2 w\Delta y}{2}\f$.
 > 
 > 5. Adjust the width and wetted perimeter for partial submergence:
->    $$w = \alpha w; \quad p = \alpha p$$
+>    \f[w = \alpha w; \quad p = \alpha p\f]
 > 
 > 6. Update the table entries for area and top width:
->    $$A_{tbl}[k] = A_{tbl}[k] + a; \quad W_{tbl}[k] = W_{tbl}[k] + w$$
+>    \f[A_{tbl}[k] = A_{tbl}[k] + a; \quad W_{tbl}[k] = W_{tbl}[k] + w\f]
 > 
 > 7. Update the area and wetted perimeter of the current compound segment:
->    $$A_{sum} = A_{sum} + a; \quad P_{sum} = P_{sum} + p$$
+>    \f[A_{sum} = A_{sum} + a; \quad P_{sum} = P_{sum} + p\f]
 > 
-> 8. Let $n_i$ be the roughness coefficient between stations $i-1$ and $i$. If station $i$ marks the end of a compound segment ($y_i > Y$ or $n_i \neq n_{i+1}$) then update the total conductance:
->    $$K = K + \frac{1.486}{n_i}A_{sum}\left(\frac{A_{sum}}{P_{sum}}\right)^{2/3}$$
->    and begin a new compound segment by setting $A_{sum}$ and $P_{sum}$ to 0.
+> 8. Let \f$n_i\f$ be the roughness coefficient between stations \f$i-1\f$ and \f$i\f$. If station \f$i\f$ marks the end of a compound segment (\f$y_i > Y\f$ or \f$n_i \neq n_{i+1}\f$) then update the total conductance:
+>    \f[K = K + \frac{1.486}{n_i}A_{sum}\left(\frac{A_{sum}}{P_{sum}}\right)^{2/3}\f]
+>    and begin a new compound segment by setting \f$A_{sum}\f$ and \f$P_{sum}\f$ to 0.
 > 
-> 9. If more transect stations remain, increment the station index, $i = i + 1$ and go to Step 2.
+> 9. If more transect stations remain, increment the station index, \f$i = i + 1\f$ and go to Step 2.
 > 
 > 10. Compute the hydraulic radius table entry:
->     $$R_{tbl}[k] = \left(\frac{n_C K}{1.486A_{tbl}[k]}\right)^{3/2}$$
->     where $n_C$ is the main channel roughness.
+>     \f[R_{tbl}[k] = \left(\frac{n_C K}{1.486A_{tbl}[k]}\right)^{3/2}\f]
+>     where \f$n_C\f$ is the main channel roughness.
 
 
 An irregular natural channel can also be assigned a meander modifier.
@@ -841,7 +819,7 @@ A two sided street cross-section adds a mirror image of the one-sided
 street to the right of the street crown with the same roadway, gutter,
 curb, and backing dimensions.
 
-![Street.png](VolumeII/media/media/image32.png)
+![Street.png](hydraulics/media/media/image32.png)
 
 **Figure 5-10 A one-sided street cross-section (not to scale)**
 
@@ -859,7 +837,7 @@ SWMM's hydraulic modeling procedures require knowledge of how a storage
 unit's surface area *A* and volume *V* vary with surface depth *Y* above
 the bottom of the unit. It is sufficient to specify either an area or
 volume relationship with respect to depth since one can be derived from
-the other $\left( A = \frac{dV}{dY} \text{ and } V = \int AdY \right)$.
+the other \f$\left( A = \frac{dV}{dY} \text{ and } V = \int AdY \right)\f$.
 SWMM uses surface area to describe a storage unit's shape. One can
 select either from several standard shapes where *A* is a quadratic
 function of *Y*, from a general power law relation between *A* and *Y*
@@ -871,7 +849,7 @@ SWMM supports several common storage unit shapes, listed in Table 5-14,
 whose top surface area A can be expressed as a quadratic function of
 height Y:
 
-$$A = a_{0} + a_{1}Y + a_{2}Y^{2}$$                         
+\f[A = a_{0} + a_{1}Y + a_{2}Y^{2}\f]                         
 (5-23)
 
 The constants *a*<sub>0</sub>, *a*<sub>1</sub>, and *a*<sub>2</sub> depend on the shape's dimensions
@@ -881,31 +859,53 @@ as shown in Table 5-14.
 
 | Shape | | Coefficients | Dimensions |
 |---|---|---|---|
-| Elliptical Cylinder | ![cylindrical.png](VolumeII/media/media/image33.png) | $$a_{0} = \left( \frac{\pi}{4} \right)LW$$<br>$$a_{1} = a_{2} = 0$$ | *L* = major axis length<br>*W* = minor axis width |
-| Elliptical Paraboloid | ![paraboloid.png](VolumeII/media/media/image34.png) | $$a_{0} = a_{2} = 0$$<br>$$a_{1} = (\frac{\pi}{4})\frac{LW}{H}$$ | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
-| Elliptical Cone | ![ConicStorageShape.bmp](VolumeII/media/media/image35.png) | $$a_{0} = \left( \frac{\pi}{4} \right)LW$$<br>$$a_{1} = \pi WZ$$<br>$$a_{2} = \pi(\frac{W}{L})Z^{2}$$ | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
-| Rectangular Pyramid | ![PrismaticStorageShape.bmp](VolumeII/media/media/image36.png) | $$a_{0} = LW$$<br>$$a_{1} = 2(L + W)Z$$<br>$$a_{2} = 4Z^{2}$$ | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
+| Elliptical Cylinder | ![cylindrical.png](hydraulics/media/media/image33.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = a_{2} = 0\f] | *L* = major axis length<br>*W* = minor axis width |
+| Elliptical Paraboloid | ![paraboloid.png](hydraulics/media/media/image34.png) | \f[a_{0} = a_{2} = 0\f]<br>\f[a_{1} = (\frac{\pi}{4})\frac{LW}{H}\f] | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
+| Elliptical Cone | ![ConicStorageShape.bmp](hydraulics/media/media/image35.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = \pi WZ\f]<br>\f[a_{2} = \pi(\frac{W}{L})Z^{2}\f] | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
+| Rectangular Pyramid | ![PrismaticStorageShape.bmp](hydraulics/media/media/image36.png) | \f[a_{0} = LW\f]<br>\f[a_{1} = 2(L + W)Z\f]<br>\f[a_{2} = 4Z^{2}\f] | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
 
 Dynamic wave analysis needs to know how volume *V* varies with depth
 *Y*. Integrating Equation 5-23 over depth yields:
 
-$$V = a_{0}Y + \frac{a_{1}}{2}Y^{2} + \frac{a_{2}}{3}Y^{3}$$          
+\f[V = a_{0}Y + \frac{a_{1}}{2}Y^{2} + \frac{a_{2}}{3}Y^{3}\f]          
 (5-24)
 
 Kinematic wave analysis needs to know the depth associated with a given
-volume. For a cylindrical shape: $Y = V/a_{0}$, while for paraboloid
-shape: $Y = \sqrt{2V/a_{1}}$ . For the other shapes the cubic equation
+volume. For a cylindrical shape: \f$Y = V/a_{0}\f$, while for paraboloid
+shape: \f$Y = \sqrt{2V/a_{1}}\f$ . For the other shapes the cubic equation
 5-24 is solved numerically for *Y* given *V* using the
 Newton-Raphson-Bisection method described in Appendix A over the
-interval \[0, *Y*<sub>full</sub>\] with initial estimate $Y = \frac{V}{a_{0}},$
+interval \[0, *Y*<sub>full</sub>\] with initial estimate \f$Y = \frac{V}{a_{0}},\f$
 convergence tolerance of 0.001 ft and derivative given by Equation 5-23.
+
+The four standard shapes are declared in the `[STORAGE]` input section
+with the keywords `CYLINDRICAL`, `CONICAL`, `PARABOLIC` (the alias
+`PARABOLOID` is also accepted on input) and `PYRAMIDAL`, each followed
+by the three dimensions listed in Table 5-14 in the order shown (the
+elliptical cylinder's third dimension is unused). The dimensions must
+satisfy *L* > 0 and *W* > 0, with *Z* ≥ 0 for the cone and pyramid and
+*H* > 0 for the paraboloid; the quadratic coefficients *a*<sub>0</sub>, *a*<sub>1</sub>
+and *a*<sub>2</sub> are derived from them internally. The raw dimensions are
+retained alongside the derived coefficients so that a model written
+back to file reproduces the shape and its dimensions exactly rather
+than a functional equivalent. If a node is assigned both a storage
+curve (Section 5.5.3) and a shape, the curve takes precedence.
+
+**Implementation.** The dimension validation and the coefficient
+formulas of Table 5-14 are defined in one place,
+`src/engine/data/StorageGeometry.hpp`
+(@ref openswmm::storage_shape_coeffs "storage_shape_coeffs"), shared by
+the `[STORAGE]` parser (`src/engine/input/handlers/NodesHandler.cpp`),
+the input writer and the editing API. The quadratic area relation 5-23,
+its cubic volume integral 5-24 and the closed-form and Newton depth
+inversions are evaluated in `src/engine/hydraulics/Node.cpp`.
 
 ### 5.5.2 Functional Storage Shapes
 
 SWMM's functional storage shape option uses a power law to relate
 surface area to depth:
 
-$$A = c_{0} + c_{1}Y^{c_{2}}$$                              
+\f[A = c_{0} + c_{1}Y^{c_{2}}\f]                              
 (5-25)
 
 where *c*<sub>0</sub>, *c*<sub>1</sub>, and *c*<sub>2</sub> are user-supplied constants.
@@ -914,19 +914,19 @@ The surface area at a given depth is found directly from this equation.
 The relation between volume *V* and depth *Y* (required for dynamic wave
 analysis) is:
 
-$$V = c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1}$$   
+\f[V = c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1}\f]   
 (5-26)
 
 To find the depth associated with a given volume (required for kinematic
 wave analysis) one solves the following nonlinear equation for *Y* :
 
-$$f(Y) = V - \left( c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1} \right) = 0$$   
+\f[f(Y) = V - \left( c_{0}Y + \left( \frac{c_{1}}{c_{2} + 1} \right)Y^{c_{2} + 1} \right) = 0\f]   
 (5-27)
 
 It is solved using the Newton-Raphson-Bisection method described in
 Appendix A over the interval \[0, *Y*<sub>full</sub>\] with initial estimate
-$Y = \frac{V}{\left( c_{0} + c_{1} \right)},$ convergence tolerance of
-0.001 ft and derivative $f'(Y)$ given by Equation 5-25.
+\f$Y = \frac{V}{\left( c_{0} + c_{1} \right)},\f$ convergence tolerance of
+0.001 ft and derivative \f$f'(Y)\f$ given by Equation 5-25.
 
 Some shapes and their coefficients that can be represented with this
 functional option include:
@@ -940,32 +940,32 @@ functional option include:
 
 - An open channel with a trapezoidal cross section and vertical ends:
 
-$$c_{0} = WL$$
+\f[c_{0} = WL\f]
 
-$$c_{1} = 2ZL$$
+\f[c_{1} = 2ZL\f]
 
-$$c_{2} = 1$$
+\f[c_{2} = 1\f]
 
 > where *W* = bottom width of cross section, *L* = channel length, and
 > *Z* = side slope.
 
 - An open channel with a parabolic cross section and vertical ends:
 
-$$c_{0} = 0$$
+\f[c_{0} = 0\f]
 
-$$c_{1} = WLH^{0.5}$$
+\f[c_{1} = WLH^{0.5}\f]
 
-$$c_{2} = 1$$
+\f[c_{2} = 1\f]
 
 > where *W* = top width, *L* = channel length and *H* = full height.
 
 - An elliptical paraboloid:
 
-$$c_{0} = 0$$
+\f[c_{0} = 0\f]
 
-$$c_{1} = A/H$$
+\f[c_{1} = A/H\f]
 
-$$c_{2} = 1$$
+\f[c_{2} = 1\f]
 
 where *A* is the surface area at height *H*.
 
@@ -983,12 +983,9 @@ be assumed that the unit has zero surface area at its base. The curve
 will be extrapolated outwards to meet the unit\'s maximum depth if need
 be.
 
-![StorageCurve2.png](VolumeII/media/media/image37.png)
+![StorageCurve2.png](hydraulics/media/media/image37.png)
 
-<figure>
-<img src="VolumeII/media/media/image38.png"
-style="width:4.3131in;height:3.03167in" alt="StorageCurve1.png" />
-</figure>
+![](hydraulics/media/media/image38.png "image38")
 
 **Figure 5-11 Example of a storage curve and its section view**
 
@@ -999,10 +996,10 @@ equivalent to finding the area under the storage curve from depth 0 to
 *Y*. This can be done by using the Trapezoidal Rule (Atkinson, 1989)
 which results in:
 
-$$V = \frac{1}{2}\left\{ \sum_{i = 1}^{n}{\left( Y_{i} - Y_{i - 1} \right)\left( A_{i} + A_{i - 1} \right)} \right\} + \frac{1}{2}\left( Y - Y_{n} \right)\left( A + A_{n} \right)$$   
+\f[V = \frac{1}{2}\left\{ \sum_{i = 1}^{n}{\left( Y_{i} - Y_{i - 1} \right)\left( A_{i} + A_{i - 1} \right)} \right\} + \frac{1}{2}\left( Y - Y_{n} \right)\left( A + A_{n} \right)\f]   
 (5-28)
 
-where *n* is the largest data point index with $Y_{n} \leq Y$ and *A* is
+where *n* is the largest data point index with \f$Y_{n} \leq Y\f$ and *A* is
 the surface area associated with depth *Y* as found from the storage
 curve itself. The shaded rectangles in Figure 5-12 illustrate how the
 trapezoidal rule is applied to a storage curve to find the stored volume
@@ -1012,10 +1009,7 @@ first interpolated from the storage curve rather than converting the
 original area curve to a volume curve and interpolating directly from
 it.
 
-<figure>
-<img src="VolumeII/media/media/image39.png"
-style="width:4.21934in;height:3.17753in" alt="StorageCurve3.png" />
-</figure>
+![](hydraulics/media/media/image39.png "image39")
 
 **Figure 5-12 Finding the volume at a given depth for a storage curve**
 
@@ -1026,10 +1020,10 @@ volume *V*<sub>sum</sub> exceeds the target volume *V*. Let the data point index
 at the start of this segment be denoted by *i*. Then the depth *Y* that
 results in volume *V* is:
 
-$$Y = Y_{i} + \frac{\left\lbrack \sqrt{A_{i}^{2} + 2\alpha\left( V - V_{sum} \right)} - A_{i} \right\rbrack}{\alpha}$$   
+\f[Y = Y_{i} + \frac{\left\lbrack \sqrt{A_{i}^{2} + 2\alpha\left( V - V_{sum} \right)} - A_{i} \right\rbrack}{\alpha}\f]   
 
 where
-$\alpha = \frac{\left( A_{i + 1} - A_{i} \right)}{\left( Y_{i + 1} - Y_{i} \right)}$.
+\f$\alpha = \frac{\left( A_{i + 1} - A_{i} \right)}{\left( Y_{i + 1} - Y_{i} \right)}\f$.
 (5-29)
 
 ## 5.6 Critical and Normal Depths
@@ -1052,14 +1046,14 @@ Critical depth is defined as the depth *Y* where the specific energy at
 a given flow rate *Q* is a minimum and the Froude number *Fr* equals 1
 (Chow, 1959). From the latter condition
 
-$$Fr = \frac{U}{\sqrt{g\frac{A}{W}}} = 1$$       
+\f[Fr = \frac{U}{\sqrt{g\frac{A}{W}}} = 1\f]       
 (5-30)           
 
 where *U* is flow velocity and *g* is the acceleration of gravity. Since
-$U = \frac{Q}{A}$ and both area and width are functions of flow depth,
+\f$U = \frac{Q}{A}\f$ and both area and width are functions of flow depth,
 at the critical flow depth *Y*<sub>C</sub> the following relation holds:
 
-$$\frac{{A\left( Y_{C} \right)}^{3}}{W\left( Y_{C} \right)} = \frac{Q^{2}}{g}$$   
+\f[\frac{{A\left( Y_{C} \right)}^{3}}{W\left( Y_{C} \right)} = \frac{Q^{2}}{g}\f]   
 (5-31)
 
 *Y*<sub>C</sub> can be computed explicitly for several simple conduit shapes. The
@@ -1067,7 +1061,7 @@ formulas are listed in Table 5-14. Other shapes require that an
 iterative root finding procedure be applied to the following re-arranged
 form of Equation 5-29:
 
-$$f(Y) = \frac{{A(Y)}^{3}}{W(Y)} - \frac{Q^{2}}{g} = 0$$    
+\f[f(Y) = \frac{{A(Y)}^{3}}{W(Y)} - \frac{Q^{2}}{g} = 0\f]    
 (5-32)
 
 Because analytical derivatives of *f(Y)* are not available for most
@@ -1082,10 +1076,10 @@ is described in Appendix B.
 
 | Shape | Formula | Remarks |
 |---|---|---|
-| Rectangular<sup>1</sup> | $$Y_{C} = \left( \frac{Q^{2}}{gb^{2}} \right)^{1/3}$$ | *b* = width |
-| Triangular<sup>1</sup> | $$Y_{C} = \left( \frac{2Q^{2}}{gs^{2}} \right)^{1/5}$$ | *s* = side slope |
-| Parabolic<sup>2</sup> | $$Y_{C} = \left( \frac{27\alpha Q^{2}}{32g} \right)^{1/4}$$ | Perimeter Equation: $y = \alpha x^{2}$ |
-| Power Law<sup>2</sup> | $$Y_{C} = \left( \frac{(1 + \gamma)^{3}\alpha^{2\gamma}Q^{2}}{4g} \right)^{\frac{1}{(3 + 2\gamma)}}$$ | Perimeter Equation: $y = \alpha x^{\frac{1}{\gamma}}$ |
+| Rectangular<sup>1</sup> | \f[Y_{C} = \left( \frac{Q^{2}}{gb^{2}} \right)^{1/3}\f] | *b* = width |
+| Triangular<sup>1</sup> | \f[Y_{C} = \left( \frac{2Q^{2}}{gs^{2}} \right)^{1/5}\f] | *s* = side slope |
+| Parabolic<sup>2</sup> | \f[Y_{C} = \left( \frac{27\alpha Q^{2}}{32g} \right)^{1/4}\f] | Perimeter Equation: \f$y = \alpha x^{2}\f$ |
+| Power Law<sup>2</sup> | \f[Y_{C} = \left( \frac{(1 + \gamma)^{3}\alpha^{2\gamma}Q^{2}}{4g} \right)^{\frac{1}{(3 + 2\gamma)}}\f] | Perimeter Equation: \f$y = \alpha x^{\frac{1}{\gamma}}\f$ |
 
 <sup>1</sup>French (1985).
 
@@ -1096,30 +1090,30 @@ into *N* equal intervals (SWMM 5 currently uses *N* = 25). Given a flow
 *Q* and an initial estimate of its critical depth *Y*<sub>C</sub>, the following
 steps are used to calculate its actual value:
 
-1.  Let *i* be the integer part of $N\frac{Y_{C}}{Y_{full}}$ and set
-    $Y = i\frac{Y_{full}}{N}$.
+1.  Let *i* be the integer part of \f$N\frac{Y_{C}}{Y_{full}}\f$ and set
+    \f$Y = i\frac{Y_{full}}{N}\f$.
 
-2.  Find $Q_{0} = \sqrt{g\frac{{A(Y)}^{3}}{W(Y)}}$.
+2.  Find \f$Q_{0} = \sqrt{g\frac{{A(Y)}^{3}}{W(Y)}}\f$.
 
-3.  If $Q_{0} < Q$:
+3.  If \f$Q_{0} < Q\f$:
 
-    a.  Set $i = i + 1$, $Y = i\frac{Y_{full}}{N}$, and
-        $Q_{C} = \sqrt{g\frac{{A(Y)}^{3}}{W(Y)}}$.
+    a.  Set \f$i = i + 1\f$, \f$Y = i\frac{Y_{full}}{N}\f$, and
+        \f$Q_{C} = \sqrt{g\frac{{A(Y)}^{3}}{W(Y)}}\f$.
 
-    b.  If $Q_{C} \geq Q$ then stop with
-        $Y_{C} = \left\lbrack \frac{\left( Q - Q_{0} \right)}{\left( Q_{C} - Q_{0} \right) + (i - 1)} \right\rbrack\left( \frac{Y_{full}}{N} \right)$.
+    b.  If \f$Q_{C} \geq Q\f$ then stop with
+        \f$Y_{C} = \left\lbrack \frac{\left( Q - Q_{0} \right)}{\left( Q_{C} - Q_{0} \right) + (i - 1)} \right\rbrack\left( \frac{Y_{full}}{N} \right)\f$.
 
-    c.  Set $Q_{0} = Q_{C}$ and go to step a.
+    c.  Set \f$Q_{0} = Q_{C}\f$ and go to step a.
 
 4.  Otherwise:
 
-    a.  Set $i = i - 1$, $Y = i\frac{Y_{full}}{N}$, and
-        $Q_{C} = \sqrt{g\frac{{A(Y)}^{3}}{W(Y)}}$.
+    a.  Set \f$i = i - 1\f$, \f$Y = i\frac{Y_{full}}{N}\f$, and
+        \f$Q_{C} = \sqrt{g\frac{{A(Y)}^{3}}{W(Y)}}\f$.
 
-    b.  If $Q_{C} < Q$ then stop with
-        $Y_{C} = \left\lbrack \frac{\left( Q - Q_{C} \right)}{\left( Q_{0} - Q_{C} \right) + i} \right\rbrack\left( \frac{Y_{full}}{N} \right)$.
+    b.  If \f$Q_{C} < Q\f$ then stop with
+        \f$Y_{C} = \left\lbrack \frac{\left( Q - Q_{C} \right)}{\left( Q_{0} - Q_{C} \right) + i} \right\rbrack\left( \frac{Y_{full}}{N} \right)\f$.
 
-    c.  Set $Q_{0} = Q_{C}$ and go to step a.
+    c.  Set \f$Q_{0} = Q_{C}\f$ and go to step a.
 
 Empirical testing has shown that the interval enumeration method tends
 to use less iterations than Ridder's method when:
@@ -1130,7 +1124,7 @@ to use less iterations than Ridder's method when:
 2.  The initial estimate of *Y*<sub>C</sub> is computed from the following
     approximation for circular sections (French 1985):
 
-$$Y_{C} = 1.01\frac{\left( \frac{Q^{2}}{g} \right)^{0.25}}{Y_{full}^{0.26}}$$   
+\f[Y_{C} = 1.01\frac{\left( \frac{Q^{2}}{g} \right)^{0.25}}{Y_{full}^{0.26}}\f]   
 (5-33)
 
 Therefore interval enumeration is used when the first condition listed
@@ -1140,25 +1134,25 @@ function whose root *Y*<sub>C</sub> is to be found with a convergence tolerance
 of 0.001 feet. The initial bracket \[*Y*<sub>1</sub> , *Y*<sub>2</sub>\] on *Y*<sub>C</sub> is
 determined as follows:
 
-1.  Let $Y_{1/2} = 0.5Y_{full}$ and *Y*<sub>0</sub> be the value computed by
+1.  Let \f$Y_{1/2} = 0.5Y_{full}\f$ and *Y*<sub>0</sub> be the value computed by
     Equation 5-31 above.
 
-2.  Compute $Q_{0} = \sqrt{g\frac{{A(Y_{0})}^{3}}{W(Y_{0})}}$ and
-    $Q_{1/2} = \sqrt{g\frac{{A(Y_{1/2})}^{3}}{W(Y_{1/2})}}$ .
+2.  Compute \f$Q_{0} = \sqrt{g\frac{{A(Y_{0})}^{3}}{W(Y_{0})}}\f$ and
+    \f$Q_{1/2} = \sqrt{g\frac{{A(Y_{1/2})}^{3}}{W(Y_{1/2})}}\f$ .
 
-3.  If $Q_{0} > Q$ then:
+3.  If \f$Q_{0} > Q\f$ then:
 
-    a.  Set $Y_{2} = Y_{0}$.
+    a.  Set \f$Y_{2} = Y_{0}\f$.
 
-    b.  If $Q_{1/2} < Q$ then set $Y_{1} = Y_{1/2}$, otherwise set
-        $Y_{1} = 0$.
+    b.  If \f$Q_{1/2} < Q\f$ then set \f$Y_{1} = Y_{1/2}\f$, otherwise set
+        \f$Y_{1} = 0\f$.
 
 4.  Otherwise:
 
-    a.  Set $Y_{1} = Y_{0}$.
+    a.  Set \f$Y_{1} = Y_{0}\f$.
 
-    b.  If $Q_{1/2} > Q$ then set $Y_{2} = Y_{1/2}$, otherwise set
-        $Y_{2} = 0.99Y_{full}$.
+    b.  If \f$Q_{1/2} > Q\f$ then set \f$Y_{2} = Y_{1/2}\f$, otherwise set
+        \f$Y_{2} = 0.99Y_{full}\f$.
 
 ### 5.6.2 Normal Depth
 
@@ -1167,14 +1161,14 @@ uniform flow rate along a conduit. When the Manning equation is used to
 describe uniform flow, the relation between flow rate *Q* and normal
 depth *Y*<sub>N</sub> is:
 
-$$A(Y_{N}){R(Y_{N})}^{2/3} = \frac{Q\eta}{\sqrt{S_{0}}}$$                 
+\f[A(Y_{N}){R(Y_{N})}^{2/3} = \frac{Q\eta}{\sqrt{S_{0}}}\f]                 
 (5-34)
 
 where *η is* the Manning roughness expressed in US units and *S*<sub>0</sub> is
 the conduit's slope. From the definition of the section factor *Ψ*
-introduced in Chapter 4, Equation 5-34 can be written as:
+introduced in @ref hydraulics_ref_ch4_kinematic_wave "Chapter 4", Equation 5-34 can be written as:
 
-$$\Psi = \frac{Q\eta}{\sqrt{S_{0}}}$$                       
+\f[\Psi = \frac{Q\eta}{\sqrt{S_{0}}}\f]                       
 (5-35)
 
 To find *Y*<sub>N</sub> for flow rate *Q* one first computes *Ψ* from Equation
@@ -1183,8 +1177,11 @@ the methods described in section 5.1.8 and finally evaluates the depth
 that produces this area using the *Y(A)* function for the particular
 shape being analyzed. In equation terms:
 
-$$Y_{N} = Y\left( A\left( \Psi = \frac{Q\eta}{\sqrt{S_{0}}} \right) \right)$$                 
+\f[Y_{N} = Y\left( A\left( \Psi = \frac{Q\eta}{\sqrt{S_{0}}} \right) \right)\f]                 
 (5-36)
+
+
+
 
 
 

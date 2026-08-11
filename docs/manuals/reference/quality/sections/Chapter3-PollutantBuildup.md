@@ -1,4 +1,6 @@
-#  Chapter 3 - Surface Buildup
+@page quality_ref_ch3_pollutant_buildup Chapter 3 - Surface Buildup
+
+@tableofcontents
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
@@ -7,7 +9,7 @@
 Simulation of pollutant buildup on the subcatchment surface is only
 required if SWMM's Exponential option is used to describe wash off,
 since that function depends on the amount of buildup present (see
-Chapter 4). However, even when washoff quality is estimated using an
+@ref quality_ref_ch4_surface_washoff "Chapter 4"). However, even when washoff quality is estimated using an
 Event Mean Concentration (EMC) or Rating Curve option, buildup
 simulation could still be useful to establish a maximum mass of
 pollutant that could be removed during any given storm event.
@@ -89,13 +91,10 @@ figures.) Even in data collected as carefully as in the San Jose study,
 the scatter (not shown in the report) is considerable. Thus, the choice
 of the best functional form is not obvious.
 
-<figure>
-<img src="./VolumeIII/media/media/image8.png" style="width:6.5in;height:4.0625in"
-alt="Sartor&amp;Boyd.bmp" />
-<figcaption><p><span id="_Toc454288765"
+![](quality/media/media/image8.png "Sartor&amp;Boyd.bmp")
+<p><span id="_Toc454288765"
 class="anchor"></span><strong>Figure 3‑1 Accumulation of solids on urban
-streets versus time (Sartor and Boyd, 1972)</strong></p></figcaption>
-</figure>
+streets versus time (Sartor and Boyd, 1972)</strong></p>
 
 Because buildup data clearly show that different rates apply to
 different land uses, SWMM allows one to define a different buildup
@@ -105,7 +104,7 @@ previously in section 2.3. SWMM's Land Use object is used to identify a
 particular type of land use and to store the buildup (and washoff)
 functions for each SWMM Pollutant.
 
-![](./VolumeIII/media/media/image9.png)
+![](quality/media/media/image9.png)
 
 **Figure 3‑2 Buildup of street solids in San Jose (from Pitt, 1979)**
 
@@ -130,7 +129,7 @@ These are:
 Power function buildup accumulates proportional to time raised to some
 power, until a maximum limit is achieved,
 
-$$b = Min(B_{\max},\ K_{B}t^{N_{B}})$$                     
+\f[b = Min(B_{\max},\ K_{B}t^{N_{B}})\f]                     
 (3-1a)
 
 where
@@ -152,7 +151,7 @@ linear buildup function is obtained.
 Exponential buildup follows an exponential growth curve that approaches
 a maximum limit asymptotically,
 
-$$b = B_{\max}\left( 1 - e^{- K_{B}t} \right)$$           
+\f[b = B_{\max}\left( 1 - e^{- K_{B}t} \right)\f]           
 (3-1b)
 
 where the rate constant *K<sub>B</sub>* now has units of days<sup>-1</sup>.
@@ -160,7 +159,7 @@ where the rate constant *K<sub>B</sub>* now has units of days<sup>-1</sup>.
 Saturation buildup begins at a linear rate which proceeds to decline
 constantly over time until a saturation value is reached,
 
-$$b = \frac{B_{\max}t}{\left( K_{B} + t \right)}$$        
+\f[b = \frac{B_{\max}t}{\left( K_{B} + t \right)}\f]        
 (3-1c)
 
 where now *K<sub>B</sub>* is a half saturation constant (days to reach half of
@@ -171,7 +170,7 @@ each of the buildup functions. The following expression will convert
 from mass of buildup per unit of area or curb length for a specific land
 use to total mass
 
-> $$m_{B} = bNf_{LU}$$
+> \f[m_{B} = bNf_{LU}\f]
 
 where *m<sub>B</sub>* = mass of buildup, *b* = mass per unit of either area or
 curb length, *N* = total area or curb length for the subcatchment in
@@ -197,13 +196,10 @@ available at the beginning of any storm event.
 | *N<sub>B</sub>* | time exponent | | |
 
 
-<figure>
-<img src="./VolumeIII/media/media/image10.png"
-style="width:6.39673in;height:3.78178in" alt="BuildupFuncs.png" />
-<figcaption><p><span id="_Toc454288767"
+![](quality/media/media/image10.png "image10")
+<p><span id="_Toc454288767"
 class="anchor"></span><strong>Figure 3‑3 Comparison of buildup equations
-for a hypothetical pollutant</strong></p></figcaption>
-</figure>
+for a hypothetical pollutant</strong></p>
 
 It is apparent from Figure 3-3 that different options may be used to accomplish the same objective
 (e.g., nonlinear buildup); the choice may well be made on the basis of
@@ -238,15 +234,15 @@ washoff function in wet periods it is useful to know the number of days
 *t* it takes to reach a given amount of buildup *b*. This can be found
 by re-arranging Equation 3-1 as follows:
 
-$t = \left( \frac{b}{K_{B}} \right)^{\frac{1}{N_{B}}}$ 
+\f$t = \left( \frac{b}{K_{B}} \right)^{\frac{1}{N_{B}}}\f$ 
 for power buildup 
 (3-2a)                                                  
 
-$t = \frac{- ln\left( 1 - \frac{b}{B_{\max}} \right)}{K_{B}}$     
+\f$t = \frac{- ln\left( 1 - \frac{b}{B_{\max}} \right)}{K_{B}}\f$     
 for exponential buildup     
 (3-2b)                                    
 
-$t = \frac{bK_{B}}{\left( B_{\max} - b \right)}$ 
+\f$t = \frac{bK_{B}}{\left( B_{\max} - b \right)}\f$ 
 for saturation buildup
 (3-2c)
 
@@ -260,13 +256,10 @@ If a dry period of length *∆t* occurs before the start of the next
 storm, then the amount of buildup available, *b2*, is found by
 evaluating the buildup function at time *t2* = *t1* + *∆t*.
 
-<figure>
-<img src="./VolumeIII/media/media/image11.png"
-style="width:4.38603in;height:2.99in" alt="Evolution of Buildup.png" />
-<figcaption><p><span id="_Toc454288768"
+![](quality/media/media/image11.png "image11")
+<p><span id="_Toc454288768"
 class="anchor"></span><strong>Figure 3‑4 Evolution of buildup after a
-storm event</strong></p></figcaption>
-</figure>
+storm event</strong></p>
 
 ## 3.3 Computational Steps
 
@@ -312,15 +305,15 @@ time step are:
 1.  If the runoff rate is greater than 0.001 in/hr then the time step is
     assumed to belong to a wet weather event and no buildup addition
     occurs (buildup will actually be reduced according to the amount of
-    washoff produced as described later in Chapter 4).
+    washoff produced as described later in @ref quality_ref_ch4_surface_washoff "Chapter 4").
 
 2.  If buildup for the pollutant has been designated to occur only when
     snow is present and the current snow depth is less than 0.001 inches
     then no buildup addition occurs.
 
 3.  Convert the total mass of buildup *m<sub>B</sub>* to a normalized mass *b* by
-    dividing it by $f_{LU}A$ if buildup is normalized with respect to
-    area or $f_{LU}L$ if normalized with respect to curb length.
+    dividing it by \f$f_{LU}A\f$ if buildup is normalized with respect to
+    area or \f$f_{LU}L\f$ if normalized with respect to curb length.
 
 4.  Use Equation 3-2 to find the time *t* corresponding to normalized
     buildup *b*.
@@ -329,8 +322,8 @@ time step are:
     value in Equation 3-1 to find an updated value for *b*.
 
 6.  Convert the new normalized buildup *b* back to total mass *m<sub>B</sub>* by
-    multiplying it by the normalizing factor (either $f_{LU}A$ or
-    $f_{LU}L$).
+    multiplying it by the normalizing factor (either \f$f_{LU}A\f$ or
+    \f$f_{LU}L\f$).
 
 This process will produce a new set of pollutant mass buildups *m<sub>B</sub>* at
 the end of the runoff time step for each land use within each
@@ -456,7 +449,7 @@ then the buildup *m<sub>B</sub>* found from the previous steps of Section 3.3
 2.  If the time between the current date and the date when the land use
     was last swept is less than *SSI* then no sweeping occurs.
 
-3.  Otherwise set$\ m_{B} = m_{B}(1 - SSA \bullet SSE)$ for each of the
+3.  Otherwise set\f$\ m_{B} = m_{B}(1 - SSA \bullet SSE)\f$ for each of the
     land uses's pollutants and set the date when the land use was last
     swept to the current date.
 
@@ -658,3 +651,6 @@ concentrations and loads.
 | Total Coliform (No./gram) | Geo. Mean | 891,000 | 1,900,000 | 1,000,000 | 419,000 | 1,070,000 |
 | | Range | 25,000-3,000,000 | 80,000-5,600,000 | 18,000-3,500,000 | 27,000-2,600,000 | 18,000-5,600,000 |
 | | N | 65 | 97 | 85 | 43 | 290 |
+
+
+

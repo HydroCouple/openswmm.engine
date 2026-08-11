@@ -1105,10 +1105,7 @@ RECURSIVE              = YES
 # Note that relative paths are relative to the directory from which Doxygen is
 # run.
 
-EXCLUDE                = ./manuals/reference/hydrology/sections \
-                         ./manuals/reference/hydraulics/sections \
-                         ./manuals/reference/quality/sections \
-                         ./manuals/user/manual
+EXCLUDE                =
 
 # The EXCLUDE_SYMLINKS tag can be used to select whether or not files or
 # directories that are symbolic links (a Unix file system feature) are excluded
@@ -1124,9 +1121,7 @@ EXCLUDE_SYMLINKS       = NO
 # Note that the wildcards are matched against the file with absolute path, so to
 # exclude all test directories for example use the pattern */test/*
 
-EXCLUDE_PATTERNS       = manuals/user/manual/* \
-                         */sections/* \
-                         */SWMM* \
+EXCLUDE_PATTERNS       = */SWMM* \
                          manuals/user/figures/* \
                          manuals/reference/*/media/* \
                          manuals/reference/*/figures/* \

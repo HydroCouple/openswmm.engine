@@ -1,4 +1,6 @@
-# References
+@page quality_ref_references References
+
+@tableofcontents
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
@@ -534,3 +536,5 @@ Zhang, G., Hamlett, J.M., and Saravanapavan, T., "Representation of Low
 Impact Development (LID) Scenarios in SWMM", *Intelligent Modeling of
 Urban Water Systems - Monograph 14*, W. James (editor), CHI, Guelph, ON,
 Canada, 2006.
+
+

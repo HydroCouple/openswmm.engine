@@ -1,5 +1,6 @@
-# Chapter 6: Low Impact Development Controls
+@page quality_ref_ch6_lid_controls Chapter 6: Low Impact Development Controls
 
+@tableofcontents
 
 ## 6.1 Introduction
 
@@ -24,15 +25,15 @@ SWMM 5 can explicitly model the following types of LID practices:
 
 | LID Control Type | Description | Image |
 |---|---|---|
-| **Bio-retention Cells** | Depressions that contain vegetation grown in an engineered soil mixture placed above a gravel storage bed. They provide storage, infiltration and evaporation of both direct rainfall and runoff captured from surrounding areas. Street planters and bio-swales are common examples of bio-retention cells. | ![StreetPlanter](./VolumeIII/media/media/image22.png) |
-| **Rain Gardens** | A type of bio-retention cell consisting of just the engineered soil layer with no gravel bed below it. | ![RainGarden](./VolumeIII/media/media/image23.png) |
-| **Green Roofs** | Another variation of a bio-retention cell that have a soil layer above a thin layer of synthetic drainage mat material or coarse aggregate that conveys excess water draining through the soil layer off of the roof. | ![GreenRoof](./VolumeIII/media/media/image24.png) |
-| **Infiltration Trenches** | Narrow ditches filled with gravel that intercept runoff from upslope impervious areas. They provide storage volume and additional time for captured runoff to infiltrate into the native soil below. | ![InfilTrench](./VolumeIII/media/media/image25.png) |
-| **Continuous Permeable Pavement** | Street or parking areas paved with a porous concrete or asphalt mix that sits above a gravel storage layer. Rainfall passes through the pavement into the storage layer where it can infiltrate into the site's native soil. | ![PermPavement2.png](./VolumeIII/media/media/image26.png)|
-| **Block Paver** | Systems consist of impervious paver blocks placed on a sand or pea gravel bed with a gravel storage layer below. Rainfall is captured in the open spaces between the blocks and conveyed to the storage zone where it can infiltrate into the site's native soil. | ![BlockPavers.png](./VolumeIII/media/media/image27.png) |
-| **Rain Barrels** (or **Cisterns**) | Containers that collect roof runoff during storm events and can either release or re-use the rainwater during dry periods. | ![cistern](./VolumeIII/media/media/image28.png) |
-| **Rooftop Disconnection** | Has roof downspouts discharge to pervious landscaped areas and lawns instead of directly into storm drains. It can also model roofs with directly connected drains that overflow onto pervious areas. | ![](./VolumeIII/media/media/image29.png) |
-| **Vegetative Swales** | Channels or depressed areas with sloping sides covered with grass and other vegetation. They slow down the conveyance of collected runoff and allow it more time to infiltrate into the native soil. | ![VegSwale](./VolumeIII/media/media/image30.png)|
+| **Bio-retention Cells** | Depressions that contain vegetation grown in an engineered soil mixture placed above a gravel storage bed. They provide storage, infiltration and evaporation of both direct rainfall and runoff captured from surrounding areas. Street planters and bio-swales are common examples of bio-retention cells. | ![StreetPlanter](quality/media/media/image22.png) |
+| **Rain Gardens** | A type of bio-retention cell consisting of just the engineered soil layer with no gravel bed below it. | ![RainGarden](quality/media/media/image23.png) |
+| **Green Roofs** | Another variation of a bio-retention cell that have a soil layer above a thin layer of synthetic drainage mat material or coarse aggregate that conveys excess water draining through the soil layer off of the roof. | ![GreenRoof](quality/media/media/image24.png) |
+| **Infiltration Trenches** | Narrow ditches filled with gravel that intercept runoff from upslope impervious areas. They provide storage volume and additional time for captured runoff to infiltrate into the native soil below. | ![InfilTrench](quality/media/media/image25.png) |
+| **Continuous Permeable Pavement** | Street or parking areas paved with a porous concrete or asphalt mix that sits above a gravel storage layer. Rainfall passes through the pavement into the storage layer where it can infiltrate into the site's native soil. | ![PermPavement2.png](quality/media/media/image26.png)|
+| **Block Paver** | Systems consist of impervious paver blocks placed on a sand or pea gravel bed with a gravel storage layer below. Rainfall is captured in the open spaces between the blocks and conveyed to the storage zone where it can infiltrate into the site's native soil. | ![BlockPavers.png](quality/media/media/image27.png) |
+| **Rain Barrels** (or **Cisterns**) | Containers that collect roof runoff during storm events and can either release or re-use the rainwater during dry periods. | ![cistern](quality/media/media/image28.png) |
+| **Rooftop Disconnection** | Has roof downspouts discharge to pervious landscaped areas and lawns instead of directly into storm drains. It can also model roofs with directly connected drains that overflow onto pervious areas. | ![](quality/media/media/image29.png) |
+| **Vegetative Swales** | Channels or depressed areas with sloping sides covered with grass and other vegetation. They slow down the conveyance of collected runoff and allow it more time to infiltrate into the native soil. | ![VegSwale](quality/media/media/image30.png)|
                              
 
 Bio-retention cells, infiltration trenches, and permeable pavement
@@ -86,7 +87,7 @@ behavior (Rossman, 2010) that provides a reasonable level of accuracy
 for simulating dynamic rainfall events in a computationally efficient
 manner.
 
-##  6.2 Governing Equations
+## 6.2 Governing Equations
 
 ### 6.2.1 Bio-Retention Cells
 
@@ -109,7 +110,7 @@ the soil zone above it and loses water by infiltration into the
 underlying natural soil and by outflow through a perforated pipe
 underdrain system if present.
 
-   ![planter.bmp](./VolumeIII/media/media/image31.png)    ![](./VolumeIII/media/media/image32.png)
+   ![planter.bmp](quality/media/media/image31.png)    ![](quality/media/media/image32.png)
                                          
                   **(A)**                                              **(B)**
 
@@ -139,15 +140,15 @@ expressed as volume per unit area per unit time. These equations can be
 written as follows:
 
 Surface Layer
-$$\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$                  
+\f[\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}\f]                  
 (6-1)
 
 Soil Layer
-$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}$$                                
+\f[D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}\f]                                
 (6-2)
 
 Storage Layer
-$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3}$$                    
+\f[\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3}\f]                    
 (6-3)
 
 where:
@@ -180,11 +181,11 @@ where:
 
                      
 
-  $\phi_{1}$    =  void fraction of any surface volume (i.e., the fraction of freeboard above the surface not filled with vegetation)
+  \f$\phi_{1}\f$    =  void fraction of any surface volume (i.e., the fraction of freeboard above the surface not filled with vegetation)
 
-  $\phi_{2}$    =  porosity (void volume / total volume) of the soil layer (used later on),
+  \f$\phi_{2}\f$    =  porosity (void volume / total volume) of the soil layer (used later on),
 
-  $\phi_{3}$    =  void fraction of the storage layer (void volume / total volume),
+  \f$\phi_{3}\f$    =  void fraction of the storage layer (void volume / total volume),
 
   *D<sub>1</sub>*          =  freeboard height for surface ponding (ft) (used later on),
 
@@ -220,7 +221,7 @@ manual.
 The infiltration of surface water into the soil layer, *f<sub>1</sub>*, can be
 modeled with the Green-Ampt equation:
 
-$$f_{1} = K_{2S}\left( 1 + \frac{\left( \phi_{2} - \theta_{20} \right)(d_{1} + \psi_{2})}{F} \right)$$   
+\f[f_{1} = K_{2S}\left( 1 + \frac{\left( \phi_{2} - \theta_{20} \right)(d_{1} + \psi_{2})}{F} \right)\f]   
 (6-4)
 
 
@@ -257,17 +258,17 @@ The calculation proceeds from the surface layer downwards, where any
 un-used potential ET is made available to the next lower layer. So at
 any time *t*:
 
-$$e_{1} = min\left\lbrack E_{0}(t),\ \frac{d_{1}}{\Delta t} \right\rbrack$$                                                                  (6-5)
-$$e_{2} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\left( \theta_{2} - \theta_{WP} \right)D_{2}}{\mathrm{\Delta}t} \right\rbrack$$           (6-6)
+\f[e_{1} = min\left\lbrack E_{0}(t),\ \frac{d_{1}}{\Delta t} \right\rbrack\f]                                                                  (6-5)
+\f[e_{2} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\left( \theta_{2} - \theta_{WP} \right)D_{2}}{\mathrm{\Delta}t} \right\rbrack\f]           (6-6)
 
-$$e_{3} = \left\{ \begin{aligned}                                                                                                            (6-7)
+\f[e_{3} = \left\{ \begin{aligned}                                                                                                            (6-7)
          \min\left\lbrack E_{0}(t) - e_{1} - e_{2}\ ,\ \frac{\phi_{3}d_{3}}{\mathrm{\Delta}t} \right\rbrack,\ \ \  & \theta_{2} < \phi_{2} \\   
          0,\ \  & \theta_{2} \geq \phi_{2}                                                                                                      
-\end{aligned} \right.\ $$                                                                                                              
+\end{aligned} \right.\ \f]                                                                                                              
 
-where $E_{0}(t)$ is the potential ET rate that applies for time *t*,
+where \f$E_{0}(t)\f$ is the potential ET rate that applies for time *t*,
 *∆t* is the time step used to numerically evaluate the governing flow
-balance equations 6-1 to 6-3, and $\theta_{WP}$ is the user-supplied
+balance equations 6-1 to 6-3, and \f$\theta_{WP}\f$ is the user-supplied
 wilting point soil moisture content. A soil's wilting point is the
 moisture content below which plants can no longer extract water from the
 soil. Thus when the soil moisture *θ<sub>2</sub>* reaches the wilting point there
@@ -279,20 +280,20 @@ remaining and the amount of water stored in the layer. In addition:
 - *e<sub>3</sub>* is zero when the soil zone becomes saturated.
 
 - *e<sub>2</sub>* and *e<sub>3</sub>* are zero during periods with surface infiltration
-  ($f_{1} > 0$) since it is assumed that the resulting vapor pressure
+  (\f$f_{1} > 0\f$) since it is assumed that the resulting vapor pressure
   will be high enough to prevent any ET from occurring.
 
 <u>Soil Percolation (*f<sub>2</sub>*)</u>
 
 The rate of percolation of water through the soil layer into the storage
 layer below it (*f<sub>2</sub>)* can be modeled using Darcy's Law in the same
-manner used in SWMM's existing groundwater module (see Chapter 5 of
+manner used in SWMM's existing groundwater module (see @ref quality_ref_ch5_transport_treatment "Chapter 5" of
 Volume I). The resulting equation for this flux is:
 
-$$f_{2} = \left\{ \begin{aligned}                                                                         (6-8)
+\f[f_{2} = \left\{ \begin{aligned}                                                                         (6-8)
          K_{2S}\exp\left( - HCO\left( \phi_{2} - \theta_{2} \right) \right),\ \ \  & \theta_{2} > \theta_{FC} \\   
          0,\ \  & \theta_{2} \leq \theta_{FC}                                                                      
-\end{aligned} \right.\ $$                                                                                 
+\end{aligned} \right.\ \f]                                                                                 
 
 where *K<sub>2S</sub>* is the soil's saturated hydraulic conductivity (ft/sec),
 *HCO* is a decay constant derived from moisture retention curve data
@@ -310,7 +311,7 @@ the drainable soil water that cannot be removed by gravity alone
 The exfiltration rate from the bottom of the storage zone into native
 soil would normally depend on the depth of stored water and the moisture
 profile of the soil beneath the LID unit. Since the latter is not known,
-SWMM assumes that the exfiltration rate $f_{3}$ is simply the
+SWMM assumes that the exfiltration rate \f$f_{3}\f$ is simply the
 user-supplied saturated hydraulic conductivity of the native soil
 beneath the LID unit, *K<sub>3S</sub>*. Setting *K~3S\ ~*to zero indicates that
 the bio-retention cell has an impermeable bottom.
@@ -321,31 +322,31 @@ Because the hydraulics of perforated pipe underdrains can be complicated
 (see van Schilfgaarde 1974) SWMM uses a simple empirical power law to
 model underdrain outflow *q<sub>3</sub>*:
 
-$$q_{3} = C_{3D}\left( h_{3} \right)^{\eta_{3D}}$$        
+\f[q_{3} = C_{3D}\left( h_{3} \right)^{\eta_{3D}}\f]        
 (6-9)
 
 where
 
   *h<sub>3</sub>*     =  hydraulic head seen by underdrain, (ft)
     *C<sub>3D</sub>*    =  underdrain discharge coefficient
-                ($\frac{{ft}^{- (\eta_{3D} - 1)}}{\sec}$)
+                (\f$\frac{{ft}^{- (\eta_{3D} - 1)}}{\sec}\f$)
 
   *η<sub>3D</sub>*    =  underdrain discharge exponent
 
 The hydraulic head *h<sub>3</sub>* seen by the underdrain varies with the height
 of water above it in the following fashion:
 
-$$h_{3} = 0$$ for $d_{3} \leq D_{3D}$
+\f[h_{3} = 0\f] for \f$d_{3} \leq D_{3D}\f$
 
-$$h_{3} = d_{3} - D_{3D}$$ for $D_{3D} < d_{3} < D_{3}$
+\f[h_{3} = d_{3} - D_{3D}\f] for \f$D_{3D} < d_{3} < D_{3}\f$
 
-$$h_{3} = \left( D_{3} - D_{3D} \right) + \frac{\left( \theta_{2} - \theta_{FC} \right)}{\left( \phi_{2} - \theta_{FC} \right)D_{2}}$$ for $d_{3} = D_{3}$ and $\theta_{FC} < \theta_{2} < \phi_{2}$
+\f[h_{3} = \left( D_{3} - D_{3D} \right) + \frac{\left( \theta_{2} - \theta_{FC} \right)}{\left( \phi_{2} - \theta_{FC} \right)D_{2}}\f] for \f$d_{3} = D_{3}\f$ and \f$\theta_{FC} < \theta_{2} < \phi_{2}\f$
 
-$$h_{3} = \left( D_{3} - D_{3D} \right) + D_{2} + d_{1}$$ for $d_{3} = D_{3}$ and $\theta_{2} = \phi_{2}$
+\f[h_{3} = \left( D_{3} - D_{3D} \right) + D_{2} + d_{1}\f] for \f$d_{3} = D_{3}\f$ and \f$\theta_{2} = \phi_{2}\f$
 
 
 where *D<sub>3D</sub>* is the height of drain opening above bottom of storage
-layer (ft) and $\theta_{FC}$ is the soil layer's field capacity moisture
+layer (ft) and \f$\theta_{FC}\f$ is the soil layer's field capacity moisture
 content below which water does not drain freely from the soil.
 
 Underdrains introduce three additional parameters *C<sub>3D</sub>, η<sub>3D</sub>,* and
@@ -366,7 +367,7 @@ It is assumed that any ponded surface water in excess of the maximum
 freeboard (or depression storage) height *D<sub>1</sub>* becomes immediate
 overflow. Therefore:
 
-$$q_{1} = max\left\lbrack \frac{\left( d_{1} - D_{1} \right)}{\mathrm{\Delta}t},\ 0 \right\rbrack$$   
+\f[q_{1} = max\left\lbrack \frac{\left( d_{1} - D_{1} \right)}{\mathrm{\Delta}t},\ 0 \right\rbrack\f]   
 (6-10)
 
 <u>Flux Limits</u>
@@ -380,14 +381,14 @@ limits are evaluated in the order listed below.
     drainable water currently in the soil layer plus the net amount of
     water added to it over the time step:
 
-$$f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{1} - e_{2} \right\rbrack$$   
+\f[f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{1} - e_{2} \right\rbrack\f]   
 (6-11)
 
 2.  The storage exfiltration rate *f<sub>3</sub>* is limited by the amount of
     water currently in the storage layer plus the net amount of water
     added to it over the time step:
 
-$$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack$$   
+\f[f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack\f]   
 (6-12)
 
 3.  When an underdrain is used, the drain flow *q<sub>3</sub>* is limited by the
@@ -395,32 +396,32 @@ $$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2}
     from the soil layer that remains after storage exfiltration is
     accounted for:
 
-$$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack$$   
+\f[q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack\f]   
 (6-13)
 
 4.  The soil percolation rate is also limited by the amount of unused
     volume in the storage layer plus the net amount of water removed
     from storage over the time step.
 
-$$f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack$$   
+\f[f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack\f]   
 (6-14)
 
 5.  The rate *f<sub>1</sub>* at which water can infiltrate into the soil layer is
     limited by the amount of empty pore space available plus the volume
     removed by drainage and evaporation over the time step.
 
-$$f_{1} = min\left\lbrack \frac{f_{1}\ ,{\left( \phi_{2} - \theta_{2} \right)D}_{2}}{\mathrm{\Delta}t} + f_{2} + e_{2} \right\rbrack$$   
+\f[f_{1} = min\left\lbrack \frac{f_{1}\ ,{\left( \phi_{2} - \theta_{2} \right)D}_{2}}{\mathrm{\Delta}t} + f_{2} + e_{2} \right\rbrack\f]   
 (6-15)
 
 When the unit becomes completely saturated (i.e., *θ<sub>2</sub> = φ<sub>2</sub>* and
 *d<sub>3</sub> = D<sub>3</sub>*) then the vertical flux of water through both the soil and
 storage layers has to be the same since there is a common fully wetted
 interface between them. For this special case, if
-$f_{2} > f_{3} + q_{3}$ then $f_{2} = f_{3} + q_{3}$. Otherwise
-$f_{3} = min\left\lbrack f_{3}\ ,f_{2} \right\rbrack$ and
-$q_{3} = max\left\lbrack f_{3} - f_{2}\ ,0 \right\rbrack.$ In addition
+\f$f_{2} > f_{3} + q_{3}\f$ then \f$f_{2} = f_{3} + q_{3}\f$. Otherwise
+\f$f_{3} = min\left\lbrack f_{3}\ ,f_{2} \right\rbrack\f$ and
+\f$q_{3} = max\left\lbrack f_{3} - f_{2}\ ,0 \right\rbrack.\f$ In addition
 the surface infiltration rate *f<sub>1</sub>* cannot exceed the adjusted soil
-percolation rate: $f_{1} = min\left\lbrack f_{1},f_{2} \right\rbrack$.
+percolation rate: \f$f_{1} = min\left\lbrack f_{1},f_{2} \right\rbrack\f$.
 (Note that because the unit is saturated no sub-surface ET occurs and
 therefore does not influence these limits.)
 
@@ -431,8 +432,8 @@ surface layer parameters (*φ<sub>1</sub>, D<sub>1</sub>*) seven soil layer para
 parameters *(φ<sub>3</sub>, K<sub>3S</sub>*, *D<sub>3</sub>)* and three underdrain parameters
 (*C<sub>3D</sub>, η<sub>3D</sub>*, *D<sub>3D</sub>*). The six constants that define the soil
 layer's moisture limits
-($\phi_{2},\ {\psi_{2},\ \theta}_{FC},\ \theta_{WP}$) and hydraulic
-conductivity ($K_{2S},\ HCO$) are the same parameters used for
+(\f$\phi_{2},\ {\psi_{2},\ \theta}_{FC},\ \theta_{WP}\f$) and hydraulic
+conductivity (\f$K_{2S},\ HCO\f$) are the same parameters used for
 infiltration and groundwater flow in SWMM's hydrology module (see
 Chapters 4 and 5 of Volume I). Because the soil used in a bio-retention
 cell is an engineered mix chosen to provide good drainage and support
@@ -453,11 +454,11 @@ SWMM defines a rain garden as a bio-retention cell without a storage
 layer. Its governing equations are therefore:
 
 Surface Layer  
-$$\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$                
+\f[\phi_{1}\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}\f]                
 (6-16)
 
 Soil Layer
-$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}$$                                
+\f[D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}\f]                                
 (6-17)
 
 
@@ -476,21 +477,21 @@ that convey water. They have somewhat limited water storage and drainage
 capacity and are therefore mostly used on sloped roofs. Another type of
 roof drainage system also suitable for flatter roofs uses slotted pipes
 placed in a gravel bed and is therefore functionally equivalent to a
-bio-retention cell with an impermeable bottom ($K_{3S} = 0$) and an
+bio-retention cell with an impermeable bottom (\f$K_{3S} = 0\f$) and an
 underdrain.
 
 The governing equations for a green roof with a drainage mat would be:
 
 Surface Layer 
-$$\phi_{1}\frac{\partial d_{1}}{\partial t} = i - e_{1} - f_{1} - q_{1}$$                 
+\f[\phi_{1}\frac{\partial d_{1}}{\partial t} = i - e_{1} - f_{1} - q_{1}\f]                 
 (6-18)
 
 Soil Layer
-$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}$$                        
+\f[D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{1} - e_{2} - f_{2}\f]                        
 (6-19)
 
 Drainage Mat Layer
-$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - e_{3} - q_{3}$$                 
+\f[\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - e_{3} - q_{3}\f]                 
 (6-20)
 
 
@@ -504,7 +505,7 @@ the Manning equation for uniform overland flow. Under the assumption
 that the width of the flow area is much greater than the depth of flow
 the Manning equation becomes:
 
-$$q_{1} = \frac{1.49}{n_{1}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1})\phi_{1}\left( d_{1} - D_{1} \right)^{\frac{5}{3}}}$$   
+\f[q_{1} = \frac{1.49}{n_{1}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1})\phi_{1}\left( d_{1} - D_{1} \right)^{\frac{5}{3}}}\f]   
 (6-21)
 
 
@@ -522,13 +523,13 @@ where
 
 All of these surface parameters are supplied by the user as part of the
 green roof's design. The "surface" that these parameters describe is the
-surface of the soil layer. The $\frac{W_{1}}{A_{1}}$ term represents the
+surface of the soil layer. The \f$\frac{W_{1}}{A_{1}}\f$ term represents the
 length of the flow path that excess water takes before it enters the
 roof's drain system (see Figure 6-2). When the depth of ponded water
 *d<sub>1</sub>* is at or below the depression storage depth *D<sub>1</sub>* then no
 surface outflow occurs.
 
-![](./VolumeIII/media/media/image33.png)
+![](quality/media/media/image33.png)
 
 **Figure 6‑2 Flow path across the surface of a green roof**
 
@@ -542,7 +543,7 @@ The drainage mat flow rate *q<sub>3</sub>*in Equation 6-20 is assumed to obey
 uniform open channel flow within the channels of the mat. Thus it can be
 expressed as:
 
-$$q_{3} = \frac{1.49}{n_{3}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1}){\phi_{3}\left( d_{3} \right)}^{\frac{5}{3}}}$$   
+\f[q_{3} = \frac{1.49}{n_{3}}\sqrt{S_{1}}(\frac{W_{1}}{A_{1}){\phi_{3}\left( d_{3} \right)}^{\frac{5}{3}}}\f]   
 (6-22)
 
 where *n<sub>3</sub>* is a roughness coefficient for the mat and *S<sub>1</sub>*, *W<sub>1</sub>*,
@@ -563,18 +564,18 @@ bio-retention cell but having just a surface and a storage layer. The
 governing equations are:
 
 Surface Layer 
-$$\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$                       
+\f[\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}\f]                       
 (6-23)
 
 Storage Layer   
-$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{1} - {e_{3} - f}_{3} - q_{3}$$               
+\f[\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{1} - {e_{3} - f}_{3} - q_{3}\f]               
 (6-24)
 
 
 where now *f<sub>1</sub>* is the trench's external inflow plus any ponded surface
 water that drains into the storage layer over the time step:
 
-$$f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t}$$   
+\f[f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t}\f]   
 (6-25)
 
 
@@ -589,7 +590,7 @@ These nominal rates are subject to the following constraints:
     water currently in the storage layer plus the net amount of water
     added to it over the time step:
 
-$$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{1} - e_{3} \right\rbrack$$   
+\f[f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{1} - e_{3} \right\rbrack\f]   
 (6-26)
 
 
@@ -598,7 +599,7 @@ $$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{1}
     from the surface that remains after storage exfiltration is
     accounted for:
 
-$$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{1} - f_{3} - e_{3} \right\rbrack$$   
+\f[q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{1} - f_{3} - e_{3} \right\rbrack\f]   
 (6-27)
 
 
@@ -606,7 +607,7 @@ $$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}
     storage layer space available plus the volume removed by
     exfiltration, underdrain flow, and evaporation over the time step:
 
-$$f_{1} = min\left\lbrack \frac{f_{1}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack$$   
+\f[f_{1} = min\left\lbrack \frac{f_{1}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack\f]   
 (6-28)
 
 
@@ -624,38 +625,35 @@ surface area taken up by the impermeable paver blocks and where the
 porosity and permeability refer to the fine gravel used to fill the
 seams between blocks. For continuous systems *F<sub>4</sub>* would be 0.
 
-<figure>
-<img src="./VolumeIII/media/media/image34.png"
-style="width:2.79132in;height:1.47898in" alt="PermPavement.png" />
-<figcaption><p><span id="_Toc454288779"
+![](quality/media/media/image34.png "image34")
+<p><span id="_Toc454288779"
 class="anchor"></span><strong>Figure 6‑3 Representation of a permeable
-pavement system</strong></p></figcaption>
-</figure>
+pavement system</strong></p>
 
 The governing equations for permeable pavement with a sand layer
 included are:
 
 Surface Layer 
-$$\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}$$                                      
+\f[\frac{\partial d_{1}}{\partial t} = i + q_{0} - e_{1} - f_{1} - q_{1}\f]                                      
 (6-29)
 
 Pavement Layer
-$$D_{4}\left( 1 - F_{4} \right)\frac{\partial\theta_{4}}{\partial t} = f_{1} - e_{4} - f_{4}$$                 
+\f[D_{4}\left( 1 - F_{4} \right)\frac{\partial\theta_{4}}{\partial t} = f_{1} - e_{4} - f_{4}\f]                 
 (6-30)
 
 Sand Layer
-$$D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{4} - e_{2} - f_{2}$$
+\f[D_{2}\frac{\partial\theta_{2}}{\partial t} = f_{4} - e_{2} - f_{2}\f]
 (6-31)                                             
 
 Storage Layer 
-$$\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3}$$                                
+\f[\phi_{3}\frac{\partial d_{3}}{\partial t} = f_{2} - {e_{3} - f}_{3} - q_{3}\f]                                
 (6-32)
 
-where $\theta_{4}$ is the moisture content of the permeable pavement
-layer, $f_{4}$ is the rate at which water drains out of the pavement
+where \f$\theta_{4}\f$ is the moisture content of the permeable pavement
+layer, \f$f_{4}\f$ is the rate at which water drains out of the pavement
 layer, and all other terms have been defined previously. Note that when
-no sand layer is present, Equation 6-31 is removed and $f_{4}$ replaces
-$f_{2}$ in the storage layer Equation 6-32. Also, the surface void
+no sand layer is present, Equation 6-31 is removed and \f$f_{4}\f$ replaces
+\f$f_{2}\f$ in the storage layer Equation 6-32. Also, the surface void
 fraction *φ<sub>1</sub>* does not appear in the surface layer equation since a
 paved surface would have no vegetative growth above it.
 
@@ -666,7 +664,7 @@ for the bio-retention cell with the following exceptions:
     proceed at the rate:
 
 
-$$e_{4} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\theta_{4}D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} \right\rbrack$$   
+\f[e_{4} = min\left\lbrack E_{0}(t) - e_{1}\ ,\frac{\theta_{4}D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} \right\rbrack\f]   
 (6-33)
 
 
@@ -676,7 +674,7 @@ below it is evaluated.
 2.  The nominal flux rate from the surface layer into the pavement layer
     (*f<sub>1</sub>*) is the same as for an infiltration trench:
 
-$$f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t}$$   
+\f[f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t}\f]   
 (6-34)
 
 
@@ -687,7 +685,7 @@ $$f_{1} = i + \ q_{0} + \frac{d_{1}}{\mathrm{\Delta}t}$$
     layer and sand layer (if present) become saturated, the head on the
     underdrain becomes:
 
-$$h_{3} = \left( D_{3} - D_{3D} \right) + D_{2} + \frac{\theta_{4}D_{4}}{\phi_{4}}$$   
+\f[h_{3} = \left( D_{3} - D_{3D} \right) + D_{2} + \frac{\theta_{4}D_{4}}{\phi_{4}}\f]   
 (6-35)
 
 
@@ -699,18 +697,18 @@ order listed so that feasible moisture levels are maintained:
 
 1.  Pavement flux rate *f<sub>4</sub>* :
 
-$$f_{4} = min\left\lbrack \frac{f_{4}\ ,\theta_{4}D_{4}}{\mathrm{\Delta}t} + f_{1} - e_{4} \right\rbrack$$   
+\f[f_{4} = min\left\lbrack \frac{f_{4}\ ,\theta_{4}D_{4}}{\mathrm{\Delta}t} + f_{1} - e_{4} \right\rbrack\f]   
 (6-36)
 
 
 2.  Soil percolation rate *f<sub>2</sub>* :
 
-$$f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{4} - e_{4} \right\rbrack$$   
+\f[f_{2} = min\left\lbrack \frac{f_{2}\ ,\left( \theta_{2} - \theta_{FC} \right)D_{2}}{\mathrm{\Delta}t} + f_{4} - e_{4} \right\rbrack\f]   
 (6-37)
 
 3.  Storage exfiltration rate *f<sub>3</sub>* :
 
-$$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack$$   
+\f[f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2} - e_{3} \right\rbrack\f]   
 (6-38)
 
 
@@ -718,7 +716,7 @@ $$f_{3} = min\left\lbrack \frac{f_{3}\ ,d_{3}\phi_{3}}{\mathrm{\Delta}t} + f_{2}
 
 4.  Underdrain flow *q<sub>3</sub>* (when present):
 
-$$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack$$   
+\f[q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{2} - f_{3} - e_{3} \right\rbrack\f]   
 (6-39)
 
 
@@ -727,23 +725,23 @@ $$q_{3} = min\left\lbrack \frac{q_{3}\ ,{\left( d_{3} - D_{3D} \right)\phi}_{3}}
 5.  Pavement flux rate *f<sub>4</sub>* :
 
 with soil layer
-$$\frac{f_{4} = min\lbrack f_{4}\ ,\left( \phi_{2} - \theta_{2} \right)D_{2}}{\mathrm{\Delta}t + f_{2} + e_{2}\rbrack}$$                
+\f[\frac{f_{4} = min\lbrack f_{4}\ ,\left( \phi_{2} - \theta_{2} \right)D_{2}}{\mathrm{\Delta}t + f_{2} + e_{2}\rbrack}\f]                
 (6-40)
                                                                                                                                       
 without soil layer
-$$\frac{f_{4} = min\lbrack f_{4}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t + e_{3} + f_{3} + q_{3}\rbrack}$$        
+\f[\frac{f_{4} = min\lbrack f_{4}\ ,\left( D_{3} - d_{3} \right)\phi_{3}}{\mathrm{\Delta}t + e_{3} + f_{3} + q_{3}\rbrack}\f]        
 (6-41)
 
 
 6.  Soil percolation rate *f<sub>2</sub>* :
 
-$$f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack$$   
+\f[f_{2} = min\left\lbrack \frac{f_{2}\ ,{\left( D_{3} - d_{3} \right)\phi}_{3}}{\mathrm{\Delta}t} + f_{3} + q_{3} + e_{3} \right\rbrack\f]   
 (6-42)
 
 
 7.  Pavement inflow rate *f<sub>1</sub>* :
 
-$$f_{1} = min\left\lbrack f_{1}\ ,\ \frac{\left( \phi_{4} - \theta_{4} \right)D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} + f_{4} + e_{4} \right\rbrack$$   
+\f[f_{1} = min\left\lbrack f_{1}\ ,\ \frac{\left( \phi_{4} - \theta_{4} \right)D_{4}\left( 1 - F_{4} \right)}{\mathrm{\Delta}t} + f_{4} + e_{4} \right\rbrack\f]   
 (6-43)
 
 
@@ -755,8 +753,8 @@ equal to the limiting rate. The latter is the smaller of *f<sub>1</sub>, f<sub>4
 f<sub>2</sub>* (if a sand layer is present), and *f<sub>3</sub> + q<sub>3</sub>*. If the storage
 layer does not contain the limiting flux f\*, then its outflow streams
 are adjusted as follows:
-$q_{3} = min\left\lbrack q_{3}\ ,f^{*} \right\rbrack$ and
-$f_{3} = f^{*} - q_{3}$.
+\f$q_{3} = min\left\lbrack q_{3}\ ,f^{*} \right\rbrack\f$ and
+\f$f_{3} = f^{*} - q_{3}\f$.
 
 ### 6.2.6 Rain Barrels
 
@@ -765,7 +763,7 @@ space with a drain valve placed above an impermeable bottom. Only a
 single continuity equation is required:
 
 Storage Layer 
-$$\frac{\partial d_{3}}{\partial t} = f_{1} - q_{1} - q_{3}$$               
+\f[\frac{\partial d_{3}}{\partial t} = f_{1} - q_{1} - q_{3}\f]               
 (6-44)
 
 where *f<sub>1</sub>* now represents the amount of surface inflow captured by the
@@ -775,7 +773,7 @@ equation 6-7 would still be used to compute the barrel's drain flow
 *q<sub>3</sub>*. If the standard orifice equation is used to compute the drain
 outflow, then *η<sub>3D</sub>* in Equation 6-7 would be 0.5 and *C<sub>3D</sub>* would be:
 
-$$C_{3D} = 0.6\left( \frac{A_{3}}{A_{1}} \right)\sqrt{2g}$$   
+\f[C_{3D} = 0.6\left( \frac{A_{3}}{A_{1}} \right)\sqrt{2g}\f]   
 (6-45)
 
 
@@ -784,7 +782,7 @@ the drain valve opening (ft<sup>2</sup>) and *g* is the acceleration of gravity
 (i.e., 32.2 ft/sec<sup>2</sup>). The outflow over a time step *∆t* would be
 limited by the volume of water stored in the barrel:
 
-$$q_{3} = min\left\lbrack q_{3}\ ,\frac{d_{3}}{\mathrm{\Delta}t} \right\rbrack$$   
+\f[q_{3} = min\left\lbrack q_{3}\ ,\frac{d_{3}}{\mathrm{\Delta}t} \right\rbrack\f]   
 (6-46)
 
 
@@ -796,7 +794,7 @@ The inflow to the barrel is the smaller of the external runoff *q<sub>0</sub>*
 applied to the barrel and the amount of empty storage available over the
 time step:
 
-$$f_{1} = min\left\lbrack q_{0}\ ,\frac{\left( D_{3} - d_{3} \right)}{\mathrm{\Delta}t + q_{3}} \right\rbrack$$   
+\f[f_{1} = min\left\lbrack q_{0}\ ,\frac{\left( D_{3} - d_{3} \right)}{\mathrm{\Delta}t + q_{3}} \right\rbrack\f]   
 (6-47)
 
 
@@ -804,7 +802,7 @@ And finally the barrel overflows at a rate *q<sub>1</sub>* when the runoff
 applied to the barrel exceeds its capacity to accept that amount of
 inflow:
 
-$$q_{1} = max\left\lbrack 0\ ,q_{0} - f_{1} \right\rbrack$$   
+\f[q_{1} = max\left\lbrack 0\ ,q_{0} - f_{1} \right\rbrack\f]   
 (6-48)
 
 
@@ -831,19 +829,16 @@ dual drainage systems (both street flow and sewer flow), is to allow the
 overflow to contribute to the major (street) system and the roof drain
 flow to the minor (sewer) system.
 
-<figure>
-<img src="./VolumeIII/media/media/image35.png"
-style="width:2.59411in;height:1.50021in" alt="RoofDiscon.png" />
-<figcaption><p><span id="_Toc454288780"
+![](quality/media/media/image35.png "image35")
+<p><span id="_Toc454288780"
 class="anchor"></span><strong>Figure 6‑4 Representation of rooftop
-disconnection</strong></p></figcaption>
-</figure>
+disconnection</strong></p>
 
 To model a rooftop in the same fashion as the other LID controls
 requires a single flow continuity equation for the roof surface:
 
 Surface Layer
-$$\frac{\partial d_{1}}{\partial t} = i - e_{1} - q_{1} - q_{3}$$                
+\f[\frac{\partial d_{1}}{\partial t} = i - e_{1} - q_{1} - q_{3}\f]                
 (6-49)
 
 
@@ -863,7 +858,7 @@ depression storage (*D<sub>1</sub>*) into immediate runoff. The amount of flow
 through the roof drain, *q<sub>3</sub>*, is the smaller of the nominal *q<sub>1</sub>* and
 the flow capacity of the roof drain system (*q<sub>3max</sub>*):
 
-$$q_{3} = min\left\lbrack q_{1}\ ,q_{3max} \right\rbrack$$   
+\f[q_{3} = min\left\lbrack q_{1}\ ,q_{3max} \right\rbrack\f]   
 (6-50)
 
 
@@ -880,7 +875,7 @@ it. It can be modeled with a single surface layer whose continuity
 equation is:
 
 Surface Layer
-$$A_{1}\frac{\partial d_{1}}{\partial t} = \left( i + q_{0} \right)A - (e_{1} + f_{1})A_{1} - q_{1}A$$            
+\f[A_{1}\frac{\partial d_{1}}{\partial t} = \left( i + q_{0} \right)A - (e_{1} + f_{1})A_{1} - q_{1}A\f]            
 (6-51)
 
 
@@ -890,45 +885,42 @@ user-supplied surface area occupied by the swale across its full height
 constant surface area throughout all layers, this equation accounts for
 a varying surface area as the depth of water in the swale changes.
 
-<figure>
-<img src="./VolumeIII/media/media/image36.png"
-style="width:2.59411in;height:1.50021in" alt="VegSwale.png" />
-<figcaption><p><span id="_Toc454288781"
+![](quality/media/media/image36.png "image36")
+<p><span id="_Toc454288781"
 class="anchor"></span><strong>Figure 6‑5 Representation of a vegetative
-swale</strong></p></figcaption>
-</figure>
+swale</strong></p>
 
 From simple geometry, the relation between surface area *A<sub>1</sub>* and depth
 of flow *d<sub>1</sub>* is:
 
-$$A_{1} = \frac{A}{W_{1}}\left\lbrack W_{1} - 2S_{X}\left( D_{1} - d_{1} \right) \right\rbrack$$                             
+\f[A_{1} = \frac{A}{W_{1}}\left\lbrack W_{1} - 2S_{X}\left( D_{1} - d_{1} \right) \right\rbrack\f]                             
 (6-52)
 
 
 where *W<sub>1</sub>* is the width of the swale at its full height *D<sub>1</sub>* and
 *S<sub>X</sub>* is the slope (run over rise) of its trapezoidal side walls. The
 volume of water contained in the swale, *V<sub>1</sub>*, is the longitudinal
-length of the swale, $\frac{A}{W_{1}}$, multiplied by the area of the
+length of the swale, \f$\frac{A}{W_{1}}\f$, multiplied by the area of the
 wetted cross-section, *A<sub>X</sub>*:
 
-$$V_{1} = \left( \frac{A}{W_{1}} \right)A_{X}$$           
+\f[V_{1} = \left( \frac{A}{W_{1}} \right)A_{X}\f]           
 (6-53)
 
 
 The wetted cross-sectional area is:
 
-$$A_{X} = d_{1}\left( W_{X} + d_{1}S_{X} \right)\phi_{1}$$   
+\f[A_{X} = d_{1}\left( W_{X} + d_{1}S_{X} \right)\phi_{1}\f]   
 (6-54)
 
 
 where *W<sub>X</sub>* is the width across the bottom of the swale's cross section
-(equal to $W_{1} - 2S_{X}D_{1}$) and *φ<sub>1</sub>* is the fraction of the
+(equal to \f$W_{1} - 2S_{X}D_{1}\f$) and *φ<sub>1</sub>* is the fraction of the
 volume above the surface not occupied by vegetation.
 
 The volumetric rate of evaporation of surface water in the swale,
-$e_{1}A_{1}$, is the smaller of the external potential ET rate,
-$E_{0}(t)A_{1}$ and the available volume of surface water over the time
-step, $\frac{V_{1}}{\mathrm{\Delta}t}$. Because the swale is assumed to
+\f$e_{1}A_{1}\f$, is the smaller of the external potential ET rate,
+\f$E_{0}(t)A_{1}\f$ and the available volume of surface water over the time
+step, \f$\frac{V_{1}}{\mathrm{\Delta}t}\f$. Because the swale is assumed to
 sit on top of the subcatchment's native soil, the infiltration rate
 *f<sub>1</sub>* is the same value computed for the pervious area of the
 subcatchment by SWMM's runoff module (see Chapter 4 of Volume I for
@@ -937,7 +929,7 @@ details).
 The swale's volumetric outflow rate, *q<sub>1</sub>A*, is computed using the
 Manning equation:
 
-$$q_{1}A = \frac{1.49}{n_{1}}\sqrt{S_{1}}\ A_{X}\ R_{X}^{\frac{2}{3}}$$                             
+\f[q_{1}A = \frac{1.49}{n_{1}}\sqrt{S_{1}}\ A_{X}\ R_{X}^{\frac{2}{3}}\f]                             
 (6-55)
 
 
@@ -945,7 +937,7 @@ where *n<sub>1</sub>* is the roughness of the swale's surface, *S<sub>1</sub>* i
 slope in the direction of flow, and *R<sub>X</sub>* is its hydraulic radius (ft).
 The latter quantity is given by:
 
-$$R_{X} = \frac{A_{X}}{\left( W_{X} + 2d_{1}\sqrt{1 + S_{X}^{2}} \right)}$$   
+\f[R_{X} = \frac{A_{X}}{\left( W_{X} + 2d_{1}\sqrt{1 + S_{X}^{2}} \right)}\f]   
 (6-56)
 
 
@@ -983,7 +975,7 @@ volumes treated to completely clog the layer and assumes a linear loss
 of conductivity with number of void volumes treated, then the
 conductivity *K* at some time *t* can be estimated as:
 
-$$K(t) = K(0)\left( 1 - \frac{Q(t)V_{void}}{CF} \right)$$   
+\f[K(t) = K(0)\left( 1 - \frac{Q(t)V_{void}}{CF} \right)\f]   
 (6-57)
 
 where *K(0)* is the initial conductivity, *V~void~* is the volume of
@@ -991,10 +983,10 @@ void space per unit area in the LID layer, and *Q(t)* is the cumulative
 inflow volume (per unit area) to the LID unit up through time *t*. The
 latter quantity can be evaluated as:
 
-$$Q(t) = \int_{0}^{t}{\left( i(\tau) + q_{0}(\tau) \right)d\tau}$$   
+\f[Q(t) = \int_{0}^{t}{\left( i(\tau) + q_{0}(\tau) \right)d\tau}\f]   
 (6-58)
 
-where $i(\tau) + q_{0}(\tau)$ is the rainfall plus captured runoff
+where \f$i(\tau) + q_{0}(\tau)\f$ is the rainfall plus captured runoff
 inflow seen by the LID unit at time *τ*.
 
 Applying Equation 6-57 to the storage layer of an infiltration trench
@@ -1002,7 +994,7 @@ results in using the following value of *K<sub>3S</sub>* to evaluate the
 exfiltration rate from the bottom of the unit at time *t* (via Equation
 6-9):
 
-$$K_{3S}(t) = K_{3S}(0)\left( 1 - \frac{Q(t)D_{3}\phi_{3}}{{CF}_{3}} \right)$$   
+\f[K_{3S}(t) = K_{3S}(0)\left( 1 - \frac{Q(t)D_{3}\phi_{3}}{{CF}_{3}} \right)\f]   
 (6-59)
 
 where *K<sub>3S</sub>(0)* is the initial saturated hydraulic conductivity of the
@@ -1012,7 +1004,7 @@ for the trench.
 Doing the same for the pavement layer of a permeable pavement unit, the
 pavement's permeability *K<sub>4</sub>* at time *t* would be:
 
-$$K_{4}(t) = K_{4}(0)\left( 1 - \frac{Q(t)D_{4}\phi_{4}\left( 1 - F_{4} \right)}{{CF}_{4}} \right)$$   
+\f[K_{4}(t) = K_{4}(0)\left( 1 - \frac{Q(t)D_{4}\phi_{4}\left( 1 - F_{4} \right)}{{CF}_{4}} \right)\f]   
 (6-60)
 
 
@@ -1023,6 +1015,78 @@ This simple clogging model requires only a single user-supplied
 parameter for each LID control that is subject to clogging, namely its
 clogging factor CF. If no value is provided (or its value is set to 0)
 then clogging is ignored.
+
+### 6.2.10 Underdrain Valve Controls
+
+The modern OpenSWMM engine extends the underdrain model of Equation 6-9
+with an optional two-threshold valve that allows an underdrain to open
+and close automatically in response to the head *h<sub>3</sub>* acting on it.
+Two additional parameters, an opening head *h<sub>open</sub>* and a closing head
+*h<sub>close</sub>*, control the valve state, and the underdrain flow becomes:
+
+\f[q_{3} = \omega_{v}\ C_{3D}\left( h_{3} \right)^{\eta_{3D}}\f]   
+(6-77)
+
+where *ω<sub>v</sub>* is a valve state indicator equal to 1 when the valve is
+open and 0 when it is closed. A closed valve opens when
+\f$h_{3} \geq h_{open}\f$ and an open valve closes when \f$h_{3} < h_{close}\f$.
+Because the two thresholds can differ, the valve exhibits hysteresis —
+for example, a cistern drain that opens only after a substantial depth
+of water has accumulated and then remains open until the vessel is
+nearly empty. When both thresholds are zero the valve is considered
+permanently open and Equation 6-9 applies unchanged.
+
+The valve logic acts together with the rain barrel drain delay
+described in Sections 6.2.6 and 6.5.5: for rain barrels the drain also
+remains closed until the stipulated number of dry hours has elapsed
+since rainfall last occurred, with a delay of zero leaving the drain
+line continuously open.
+
+*Implementation notes:* The valve state machine is implemented in
+`getDrainRate()` in `src/engine/hydrology/LID.cpp` and applies to every
+LID type with an underdrain. The per-unit parameters `drain_hopen`,
+`drain_hclose`, and the valve state `drain_open` are defined in
+`src/engine/hydrology/LID.hpp`.
+
+### 6.2.11 Rain Barrel Rainfall Capture and Exfiltration
+
+Two optional extensions in the modern engine relax the classical rain
+barrel assumptions of Section 6.2.6. First, a barrel may be flagged as
+either covered or uncovered. A covered barrel behaves as described by
+Equation 6-44 and receives no direct rainfall, while an uncovered
+barrel admits direct precipitation onto its surface in addition to any
+captured runoff. Second, a barrel may be assigned a storage layer
+hydraulic conductivity *K<sub>3S</sub>*, in which case it exfiltrates water
+through its floor in the same manner as the other storage-based LID
+controls and its continuity equation gains an exfiltration term:
+
+\f[\frac{\partial d_{3}}{\partial t} = f_{1} - f_{3} - q_{1} - q_{3}\f]   
+(6-78)
+
+where the exfiltration rate *f<sub>3</sub>* equals the (possibly
+clogging-reduced) conductivity *K<sub>3S</sub>(t)* as for a bio-retention cell,
+limited by the water available in the barrel over the time step.
+Leaving *K<sub>3S</sub>* at zero preserves the impermeable-bottom behavior of
+Equation 6-44.
+
+In the modern engine the linear clogging reduction of Section 6.2.9 is
+applied uniformly to the storage layer exfiltration of every
+storage-based LID type — bio-retention cells, infiltration trenches,
+permeable pavement systems, and rain barrels — whenever a non-zero
+clogging factor is supplied. The reduction grows with the cumulative
+inflow volume the unit has treated, reaching complete clogging (zero
+exfiltration) when the cumulative inflow equals the clogging limit.
+
+*Implementation notes:* Rain barrel fluxes, including the
+covered-barrel flag, the drain delay, and the exfiltration step, are
+computed in `LIDSolver::batchBarrelFlux()` in
+`src/engine/hydrology/LID.cpp`; the shared clogging-adjusted
+exfiltration helper used by all storage-based types is
+`getStorageExfil()` in the same file. A pavement permeability
+regeneration mechanism (periodic restoration of a clogged pavement
+layer at a user-specified interval) is also present in
+`LIDSolver::batchPavementFlux()`, but its regeneration degree is
+currently only settable programmatically and defaults to zero.
 
 ## 6.3 LID Deployment
 
@@ -1086,7 +1150,7 @@ occupies its entire subcatchment. The inflow to LID1 comes from an
 upstream subcatchment and its surface overflow is routed to LID2. Its
 underdrain flow is sent to the same outlet location used by LID2.
 
-![LidOptions.png](./VolumeIII/media/media/image37.png)
+![LidOptions.png](quality/media/media/image37.png)
 
 **Figure 6‑6 Different options for placing LID controls**
 
@@ -1100,7 +1164,7 @@ before any groundwater calculations are made (see Section 3.4 of Volume
 I). The computations for an individual LID unit include the following
 four steps:
 
-1.  Determine the amount of inflow ($i + q_{0}$) treated by the LID
+1.  Determine the amount of inflow (\f$i + q_{0}\f$) treated by the LID
     unit.
 
 2.  Evaluate the various flux terms (*e, f* and *q*) on the right-hand
@@ -1117,7 +1181,7 @@ on whether the unit comprises only a portion of its subcatchment's area
 or if it occupies the entire subcatchment. In the former case the runoff
 rate *q<sub>0</sub>* treated by the unit can be computed as:
 
-$$q_{0} = q_{imp}F_{out}R_{LID}$$                         
+\f[q_{0} = q_{imp}F_{out}R_{LID}\f]                         
 (6-61)
 
 where
@@ -1164,7 +1228,7 @@ layer *i* does not apply to a given LID unit, such as the soil layer for
 a rain barrel, then both *x<sub>i</sub>* and *Γ<sub>i</sub>*would be zero. Now the flow
 continuity equations can be written more compactly as:
 
-$$\frac{\partial\mathbf{x}}{\partial t} = \mathbf{\Gamma}(\mathbf{x(}t\mathbf{)})$$   
+\f[\frac{\partial\mathbf{x}}{\partial t} = \mathbf{\Gamma}(\mathbf{x(}t\mathbf{)})\f]   
 (6-62)
 
 
@@ -1174,7 +1238,7 @@ This system of equations can be solved numerically by using the
 trapezoidal method (Ascher and Petzold, 1998) to discretize them in time
 as follows:
 
-$$\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t$$   
+\f[\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t\f]   
 (6-63)
 
 where *Ω =* 0.5 and ∆t is the wet hydrologic time step used for
@@ -1193,7 +1257,7 @@ estimate of ***x**(t+∆t)* at iteration *ν*, where initially
 ***x**(t+∆t)<sup>0</sup> = **x**(t)*. (Note that *ν* is an iteration counter, not
 a power.) Then for iteration *ν+1* the new estimate of ***x**(t+∆t)* is:
 
-$$\mathbf{x}{(t + \mathrm{\Delta}t)}^{\nu + 1}\mathbf{= x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)^{\nu}\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t$$   
+\f[\mathbf{x}{(t + \mathrm{\Delta}t)}^{\nu + 1}\mathbf{= x}(t)\mathbf{+}\left\lbrack \Omega\mathbf{\Gamma}(\mathbf{x}(t + \mathrm{\Delta}t)^{\nu}\mathbf{+ (}1 - \Omega\mathbf{)\Gamma}(\mathbf{x}(t)\mathbf{)} \right\rbrack\mathbf{\mathrm{\Delta}}t\f]   
 (6-64)
 
 with the iterations stopping when the change in ***x**(t+∆t)* is
@@ -1203,7 +1267,7 @@ millimeter) as a stopping tolerance.
 If *Ω* is chosen as 0, then Equation 6-64 becomes equivalent to the
 Euler method and thus:
 
-$$\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+ \Gamma}(\mathbf{x}(t))\mathbf{\mathrm{\Delta}}t$$   
+\f[\mathbf{x}(t + \mathrm{\Delta}t) = \mathbf{x}(t)\mathbf{+ \Gamma}(\mathbf{x}(t))\mathbf{\mathrm{\Delta}}t\f]   
 (6-65)
 
 which can be solved directly without resorting to any iterative scheme.
@@ -1216,13 +1280,13 @@ When using either Equation 6-64 or 6-65 to update the LID unit's
 moisture state at each time step, the following lower and upper physical
 limits on moisture levels must be enforced:
 
-$$0 \leq d_{1} \leq D_{1}$$                                
+\f[0 \leq d_{1} \leq D_{1}\f]                                
 
-$$\theta_{WP} \leq \theta_{2} \leq \phi_{2}$$              
+\f[\theta_{WP} \leq \theta_{2} \leq \phi_{2}\f]              
 
-$$0 \leq d_{3} \leq D_{3}$$                                
+\f[0 \leq d_{3} \leq D_{3}\f]                                
 
-$$0 \leq \theta_{4} \leq \phi_{4}$$                        
+\f[0 \leq \theta_{4} \leq \phi_{4}\f]                        
 
 Finally, Step 4 merges the outflows from the LID unit with those of the
 subcatchment as a whole. Any infiltration into the native soil produced
@@ -1232,7 +1296,7 @@ Any underdrain flow from the LID unit is kept track of separately, so
 that it can be routed to its designated destination (either another
 subcatchment or some location in the conveyance system). It is not
 included as part of the subcatchment's reported surface runoff. Any
-surface runoff or overflow from the unit $\left( q_{1}A \right)$ is
+surface runoff or overflow from the unit \f$\left( q_{1}A \right)\f$ is
 added to the subcatchment's total runoff flow rate, except if the unit's
 outflow has been designated for return to the subcatchment's pervious
 area. In the latter case a separate account is kept of the total return
@@ -1252,7 +1316,7 @@ washoff load from the non-LID portion of the subcatchment (which already
 accounts for any wet deposition) is combined with the direct rainfall
 load from the LID areas to arrive at a modified outflow concentration:
 
-$$C_{out} = \frac{\left\lbrack \left( C_{out}Q_{out} \right)_{non - LID} + C_{ppt}iA_{LID} \right\rbrack}{Q_{out,non - LID} + iA_{LID}}$$   
+\f[C_{out} = \frac{\left\lbrack \left( C_{out}Q_{out} \right)_{non - LID} + C_{ppt}iA_{LID} \right\rbrack}{Q_{out,non - LID} + iA_{LID}}\f]   
 (6-66)
 
 
@@ -1276,7 +1340,7 @@ any non-LID surfaces and the pollutant concentration in the unit's
 outflow streams would equal that of its inflow stream. Thus for any
 particular pollutant,
 
-$$C_{out} = \frac{\left( \left( \frac{W_{runon}}{28.3} \right) + C_{ppt}iA_{LID} \right)}{Q_{runon} + iA_{LID}}$$   
+\f[C_{out} = \frac{\left( \left( \frac{W_{runon}}{28.3} \right) + C_{ppt}iA_{LID} \right)}{Q_{runon} + iA_{LID}}\f]   
 (6-67)
 
 
@@ -1326,7 +1390,7 @@ Using the SPAW calculator for this soil produces the characteristics
 listed in Table 6-3. The percolation decay constant *HCO* was estimated
 by using the calculator to compute hydraulic conductivity *K<sub>2</sub>* for a
 range of moisture contents *θ* and then regressing
-$- ln\left( \frac{K_{2}}{K_{2S}} \right)$ against $\phi_{2} - \theta$ to
+\f$- ln\left( \frac{K_{2}}{K_{2S}} \right)\f$ against \f$\phi_{2} - \theta\f$ to
 find a best-fit value for *HCO*. The equation used to estimate suction
 head was introduced in Section 4.4 of Volume I.
 
@@ -1538,11 +1602,11 @@ capacity of the roof's gutters in ft/sec can be estimated from the
 following equations (Beij, 1934):
 
 for semicircular gutters 
-$$q_{3max} = 0.52\frac{w_{g}^{2.5}}{A_{r}}$$                                                    
+\f[q_{3max} = 0.52\frac{w_{g}^{2.5}}{A_{r}}\f]                                                    
 (6-68)
 
 for rectangular gutters                                                                                                                           
-$$q_{3max} = 7.75\left( \frac{d_{g}}{w_{g}} \right)^{1.6}\left( \frac{w_{g}}{L_{g}} \right)^{0.3}w_{g}^{2.5}/A_{r}$$     
+\f[q_{3max} = 7.75\left( \frac{d_{g}}{w_{g}} \right)^{1.6}\left( \frac{w_{g}}{L_{g}} \right)^{0.3}w_{g}^{2.5}/A_{r}\f]     
 (6-69)                                                                                              
 
 where *w<sub>g</sub>* is the gutter width in feet, *d~g~* is the gutter depth in
@@ -1555,7 +1619,7 @@ multiply by 43,200 or 1,097,280, respectively.
 
 Typical values for the parameters associated with vegetative swales are
 listed in table 6-7. The top width of the swale at full depth (*W<sub>1</sub>*)
-equals $W_{X} + 2D_{1}S_{X}$. The maximum surface area covered by the
+equals \f$W_{X} + 2D_{1}S_{X}\f$. The maximum surface area covered by the
 swale (*A~LID~*) can be found by multiplying *W<sub>1</sub>* by the length of the
 swale.
 
@@ -1594,7 +1658,7 @@ approaches that can be used for this:
 To use option 1, the full flow capacity of the drain pipe can be
 computed from the Manning equation as follows:
 
-$$Q_{full} = \left( \frac{0.464}{n_{pipe}} \right)S_{pipe}^{0.5}D_{pipe}^{2.67}$$   
+\f[Q_{full} = \left( \frac{0.464}{n_{pipe}} \right)S_{pipe}^{0.5}D_{pipe}^{2.67}\f]   
 (6-70)
 
 
@@ -1604,7 +1668,7 @@ pipe is laid (ft/ft), and *D<sub>pipe</sub>* is the pipe's diameter (ft). To
 convert this value into a set of underdrain discharge parameters, set
 the drain exponent *η<sub>3D</sub>* to zero and the drain coefficient *C<sub>3D</sub>* to
 
-$$C_{3D} = \frac{N_{pipe}Q_{full}}{A_{LID}}$$             
+\f[C_{3D} = \frac{N_{pipe}Q_{full}}{A_{LID}}\f]             
 (6-71)
 
 
@@ -1618,7 +1682,7 @@ for two 4-inch diameter plastic drain lines with roughness of 0.01
 placed at a 0.5% slope in a 1,000 sq. ft. bio-retention cell would
 produce a drain coefficient equal to
 
-$$C_{3D} = \frac{2\left( \frac{0.464}{0.01} \right){(0.005)}^{0.5}{(\frac{4}{12)}}^{2.67}}{1000} = 0.00035\ \frac{ft}{\sec} = 15\ \frac{in}{hr}$$
+\f[C_{3D} = \frac{2\left( \frac{0.464}{0.01} \right){(0.005)}^{0.5}{(\frac{4}{12)}}^{2.67}}{1000} = 0.00035\ \frac{ft}{\sec} = 15\ \frac{in}{hr}\f]
 
 Once the water height in the storage layer reaches the drain's offset
 height, any inflow from percolation out of the soil layer will
@@ -1629,13 +1693,13 @@ height will never be used.
 For option 2, one can assume that the standard orifice equation can
 replace the underdrain flow expression Equation 6-7 so that:
 
-$$q_{3} = C_{3D}\left( h_{3} \right)^{0.5}$$              
+\f[q_{3} = C_{3D}\left( h_{3} \right)^{0.5}\f]              
 (6-72)
 
 where the discharge exponent *η<sub>3D</sub>* has been set to 0.5 and the
 discharge coefficient now becomes:
 
-$$C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{slot}}{A_{LID}} \right)$$   
+\f[C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{slot}}{A_{LID}} \right)\f]   
 (6-73)
 
 
@@ -1651,7 +1715,7 @@ The ratio of the total slot area to LID area can be determined from the
 dimensions of a slot, the spacing between slots along the drain pipe,
 and the spacing between individual drain pipes:
 
-$$\frac{A_{slot}}{A_{LID} =}\frac{N_{pipe}{N_{slot}A}_{slot}}{\left( N_{pipe} + 1 \right)\Delta_{pipe}}$$   
+\f[\frac{A_{slot}}{A_{LID} =}\frac{N_{pipe}{N_{slot}A}_{slot}}{\left( N_{pipe} + 1 \right)\Delta_{pipe}}\f]   
 (6-74)
 
 
@@ -1669,19 +1733,19 @@ As an example, consider an underdrain system consisting of two slotted
 pipes with inlet area of 1 in<sup>2</sup> per foot of pipe spaced 50 ft apart.
 The area ratio used to compute *C<sub>3D</sub>* would be:
 
-$$\frac{A_{slot}}{A_{LID} = \frac{2 \times \left( \frac{1}{144} \right)}{(3 \times 50) = 0.0000926}}$$   
+\f[\frac{A_{slot}}{A_{LID} = \frac{2 \times \left( \frac{1}{144} \right)}{(3 \times 50) = 0.0000926}}\f]   
 
 
 Using this value in Equation 6-64 to compute *C<sub>3D</sub>* produces:
 
-$$C_{3D} = 0.6 \times \sqrt{64.4} \times 0.0000926 = 0.00045\ \frac{{ft}^{0.5}}{\sec} = 5.5\ \frac{{in}^{0.5}}{hr}$$   
+\f[C_{3D} = 0.6 \times \sqrt{64.4} \times 0.0000926 = 0.00045\ \frac{{ft}^{0.5}}{\sec} = 5.5\ \frac{{in}^{0.5}}{hr}\f]   
 
 Regarding the third option for underdrain parameters, the underdrain
 flow expression can again be replaced by the standard orifice equation,
 this time applied to the discharge point of the underdrain system (such
 as the outlet of a pipe manifold fitted with a cap orifice):
 
-$$C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{out}}{A_{LID}} \right)$$   
+\f[C_{3D} = 0.6\sqrt{2g}\left( \frac{A_{out}}{A_{LID}} \right)\f]   
 (6-75)
 
 where A<sub>out</sub> is the cross-sectional area (ft<sup>2</sup>) of the outlet fitting.
@@ -1710,7 +1774,7 @@ computed from the number of years *T<sub>clog</sub>* it takes to fractionally
 reduce an infiltration rate to a degree *F<sub>clog</sub>*. For example, a CF for
 permeable pavement can be estimated from:
 
-$${CF}_{4} = \frac{I_{a}\left( 1 + R_{LID} \right)T_{clog}}{\phi_{4}D_{4}\left( 1 - F_{4} \right)F_{clog}}$$   
+\f[{CF}_{4} = \frac{I_{a}\left( 1 + R_{LID} \right)T_{clog}}{\phi_{4}D_{4}\left( 1 - F_{4} \right)F_{clog}}\f]   
 (6-76)
 
 
@@ -1784,15 +1848,15 @@ surface inflow, soil layer percolation, and storage layer exfiltration.
 Figure 6-9 shows how the moisture level within each layer, as a
 percentage of its full storage capacity, varies with time.
 
-![](./VolumeIII/media/media/image38.png)
+![](quality/media/media/image38.png)
 
 **Figure 6‑7 Storm event used for the LID example**
 
-![](./VolumeIII/media/media/image39.png)
+![](quality/media/media/image39.png)
 
 **Figure 6‑8 Flux rates through the bio-retention cell with no underdrain**
 
-![](./VolumeIII/media/media/image40.png)
+![](quality/media/media/image40.png)
 
 **Figure 6‑9 Moisture levels in the bio-retention cell with no underdrain**
 
@@ -1868,10 +1932,13 @@ the total storm volume. If this flow is sent to a storm sewer which is
 typically the case, then the bio-retention cell can no longer be said to
 have fully captured and eliminated runoff from this 1-inch storm.
 
-![](./VolumeIII/media/media/image41.png)
+![](quality/media/media/image41.png)
 
 **Figure 6‑10 Moisture levels in the bio-retention cell with underdrain**
 
-![](./VolumeIII/media/media/image42.png)
+![](quality/media/media/image42.png)
 
 **Figure 6‑11 Flux rates through the bio-retention cell with underdrain**
+
+
+
