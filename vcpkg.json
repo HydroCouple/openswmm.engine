@@ -14,9 +14,6 @@
             "host": true
         },
         {
-            "name": "gtest"
-        },
-        {
             "name": "sqlite3",
             "features": [
                 "rtree"
