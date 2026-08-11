@@ -323,6 +323,8 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     std::fprintf(f, "%-22s %.12g\n", "H_MOVE",            o.h_move);
     std::fprintf(f, "%-22s %d\n",    "LTS_TIERS",         o.lts_tiers);
     std::fprintf(f, "%-22s %.12g\n", "FROUDE_MAX",        o.froude_max);
+    std::fprintf(f, "%-22s %s\n",    "ADVECTION",
+                 o.advection ? "YES" : "NO");
     std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
                  o.coupling_area_auto ? "AUTO" : "DEFAULT");
     if (!o.output_file.empty())

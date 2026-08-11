@@ -185,7 +185,8 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_q_      = DView("q", ne);
     d_faccL_  = DView("faccL", ne);
     d_faccR_  = DView("faccR", ne);
-    have_perot_ = (opts.theta < 1.0);
+    // Perot vectors serve the θ-blend AND the convective term (== serial).
+    have_perot_ = (opts.theta < 1.0 || opts.advection);
     d_qcx_ = DView("qcx", have_perot_ ? nt : 0);
     d_qcy_ = DView("qcy", have_perot_ ? nt : 0);
     d_rain_ = DView("rain", nt);
@@ -675,6 +676,7 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
     auto ze_lo = d_ze_lo_, ze_hi = d_ze_hi_;
     auto nxv = d_nx_, nyv = d_ny_;
     auto qcx = d_qcx_, qcy = d_qcy_;
+    auto depthv = d_depth_;
     auto tier = d_tier_, ftier = d_face_tier_;
     const bool perot = have_perot_;
     // VFR_FACE: B&S Eq. 14 at the shared edge's true crest (== serial branch).
@@ -684,6 +686,7 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
     const double dry = opts_->dry_depth;
     const double fr_max = opts_->froude_max;
     const double beta_share = opts_->exchange_beta / 3.0;
+    const bool advect = opts_->advection;
     Kokkos::parallel_for(
         "fireFaces", Kokkos::RangePolicy<ExecSpace>(lo, hi),
         KOKKOS_LAMBDA(int idx) {
@@ -711,8 +714,20 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
             double deta = head(b) - head(a);
             if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
             const double slope = deta * inv_dx(e);
+            // Convective momentum flux (ADVECTION, opt-in) — == serial branch:
+            // both cells wet, else the pure local-inertial law holds the front.
+            double adv = 0.0;
+            if (advect && perot) {
+                const double hL = depthv(a), hR = depthv(b);
+                if (hL > dry && hR > dry) {
+                    const double unL = (qcx(a) * nxv(e) + qcy(a) * nyv(e)) / hL;
+                    const double unR = (qcx(b) * nxv(e) + qcy(b) * nyv(e)) / hR;
+                    adv = inertial::inertialAdvection(qv(e), unL, hL, unR, hR,
+                                                      inv_dx(e));
+                }
+            }
             double qn1 = inertial::inertialFaceUpdate(qv(e), qhat, hf, dt_f,
-                                                      slope, n2(e), q_mag);
+                                                      slope, n2(e), q_mag, adv);
             qn1 = inertial::froudeCap(qn1, hf, fr_max);
 
             const int exp_cell = (qn1 > 0.0) ? a : b;

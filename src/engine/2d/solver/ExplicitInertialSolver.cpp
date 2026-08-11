@@ -64,7 +64,9 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     facc_L_.assign(ne, 0.0);
     facc_R_.assign(ne, 0.0);
     face_tier_.assign(ne, 0);
-    if (opts.theta < 1.0) {
+    // The Perot cell vectors serve the θ-blend AND the convective term, so
+    // ADVECTION forces them on even at θ = 1.
+    if (opts.theta < 1.0 || opts.advection) {
         qcx_.assign(static_cast<std::size_t>(nt), 0.0);
         qcy_.assign(static_cast<std::size_t>(nt), 0.0);
     }
@@ -404,8 +406,21 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
         double deta = state_->head[b] - state_->head[a];
         if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
         const double slope = deta * ed.inv_dx_normal[e];
+        // Convective momentum flux (ADVECTION, opt-in): both cells must be
+        // wet — a wet/dry front keeps the pure local-inertial law, whose
+        // robustness there is the reason this scheme exists.
+        double adv = 0.0;
+        if (opts_->advection && !qcx_.empty()) {
+            const double hL = state_->depth[a], hR = state_->depth[b];
+            if (hL > opts_->dry_depth && hR > opts_->dry_depth) {
+                const double unL = (qcx_[a] * ed.nx[e] + qcy_[a] * ed.ny[e]) / hL;
+                const double unR = (qcx_[b] * ed.nx[e] + qcy_[b] * ed.ny[e]) / hR;
+                adv = inertial::inertialAdvection(q_[e], unL, hL, unR, hR,
+                                                  ed.inv_dx_normal[e]);
+            }
+        }
         double qn1 = inertial::inertialFaceUpdate(q_[e], qhat, hf, dt_f, slope,
-                                                 ed.n2_face[e], q_mag);
+                                                 ed.n2_face[e], q_mag, adv);
         qn1 = inertial::froudeCap(qn1, hf, opts_->froude_max);
 
         // Positivity at face cadence: this face may take at most a β/3 share
