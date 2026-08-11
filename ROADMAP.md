@@ -16,7 +16,7 @@ Community members wishing to influence priorities should participate in the [Git
 | 🔧     | Actively in development                                  |
 | 📋     | Planned — accepted for future development                |
 | ⏸      | Deferred — not currently scheduled                       |
-| ✅     | Completed — implemented and shipping (see §7 for version) |
+| ✅     | Completed — implemented and shipping (see §8 for version) |
 
 The 6.0.0 line is in alpha. Items marked ✅ are implemented and exercised by the
 test suites, but ship in pre-release builds until 6.0.0 is final.
@@ -64,6 +64,17 @@ test suites, but ship in pre-release builds until 6.0.0 is final.
 - Continued validation against published inundation benchmarks (e.g. the UK Environment Agency test cases) and field-validated case studies; the analytic suite above is green but is not a substitute for these.
 - Performance and robustness hardening on large regional meshes based on beta testing feedback.
 - 2D water quality transport (Section 2.2) on the same mesh.
+
+### 1.3 Spatially Explicit Inlets — Mode-Switching Junction Nodes 🔬
+
+**Motivation:** Since SWMM 5.2, inlets are attributes of street and channel conduits (`[INLET_USAGE]`): capture flow is computed from approach hydraulics and applied as a flow modification inside the link, with ponding tracked at a separate reference node. The inlet has no independent hydraulic presence, so inlet-controlled surface/sewer exchange cannot respond to the hydraulic state of the node it drains to.
+
+**Status:** Design recorded. No implementation yet.
+
+**Planned scope:**
+- Promote inlets to first-class junction nodes that switch mode based on approach hydraulics: capturing street flow when gutter spread exceeds a threshold, and reverting to passive junctions otherwise.
+- HEC-22 grate and curb-opening capture retained as the capture closure, evaluated at the node rather than as a link post-processing step.
+- Ponding, bypass, and re-entry resolved at the inlet node itself, enabling two-way street ↔ sewer exchange under surcharge.
 
 ---
 
@@ -163,7 +174,21 @@ Two routes are being developed, and they are complementary rather than competing
 
 ---
 
-## 6. Deferred Items
+## 6. LID Hydraulic Integration — LID as Storage Nodes 🔬
+
+**Motivation:** LID units are currently subcatchment attributes connected through the runon mechanism — a one-way hydrological cascade that passes volume fluxes with no hydraulic mediation. Real green-infrastructure trains are hydraulically connected devices: flow between units is head-dependent, a saturated downstream unit exerts backpressure on the upstream one, and control structures between units regulate flow based on hydraulic state.
+
+**Status:** Design recorded. No implementation yet.
+
+**Planned scope:**
+- Map LID layers (surface, media, gravel) onto extended storage nodes using a reduced-physics kinematic Richards ODE for the media layer.
+- Head-dependent flow between LID units and to/from the conveyance network, with two-way feedback so network surcharge propagates upstream through the LID train.
+- Orifice, weir, and underdrain control structures at LID connections, participating in the standard link hydraulics and control-rule machinery.
+- Backward compatibility with the existing subcatchment-attribute LID representation, which remains the default.
+
+---
+
+## 7. Deferred Items
 
 The following items have been raised in community discussions, or explored and set aside, and are not currently scheduled. They may be reconsidered in future release cycles as resources permit or as community interest grows.
 
@@ -183,7 +208,7 @@ implementation yet.
 
 ---
 
-## 7. Completed Items
+## 8. Completed Items
 
 The 6.0.0 line is still in pre-release, so the version column records the
 pre-release the work first shipped in rather than a stable release. "Unreleased"
