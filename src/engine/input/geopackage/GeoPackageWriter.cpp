@@ -1621,6 +1621,7 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_H_MOVE",            fmt_g17(o.h_move));
     insert("2D_LTS_TIERS",         std::to_string(o.lts_tiers));
     insert("2D_FROUDE_MAX",        fmt_g17(o.froude_max));
+    insert("2D_ADVECTION",         o.advection ? "YES" : "NO");
     insert("2D_COUPLING_AREA",     o.coupling_area_auto ? "AUTO" : "DEFAULT");
     insert("2D_REPORT_2D",         o.report_2d ? "YES" : "NO");
     // HDF5 results path — 2D outputs always go to HDF5, never gpkg tables.

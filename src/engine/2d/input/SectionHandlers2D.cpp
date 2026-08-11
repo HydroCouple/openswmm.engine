@@ -242,7 +242,7 @@ bool is2DOptionKey(const std::string& key) {
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
         "INTEGRATOR", "THETA", "CFL_NUMBER", "H_MOVE",
-        "LTS_TIERS", "FROUDE_MAX", "COUPLING_AREA",
+        "LTS_TIERS", "FROUDE_MAX", "ADVECTION", "COUPLING_AREA",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -287,6 +287,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "H_MOVE"))        return fmt_g(opts.h_move);
     if (iequals(key, "LTS_TIERS"))     return std::to_string(opts.lts_tiers);
     if (iequals(key, "FROUDE_MAX"))    return fmt_g(opts.froude_max);
+    if (iequals(key, "ADVECTION"))     return opts.advection ? "YES" : "NO";
     if (iequals(key, "COUPLING_AREA")) return opts.coupling_area_auto ? "AUTO" : "DEFAULT";
     return {};
 }

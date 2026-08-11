@@ -118,6 +118,12 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_COMPACTION": "NO",
                 "FV_BACKEND": "CPU",
                 "FV_MIN_PARALLEL_CELLS": "12345",
+                "FV_NODE_COUPLING": "EXPLICIT",
+                "FV_NODE_DT": "NONE",
+                "FV_NODE_PICARD": "3",
+                "FV_LTS": "NO",
+                "FV_LTS_MAX_TIERS": "5",
+                "FV_CFL_CENSUS_INTERVAL": "10",
             }
             for k, v in numeric.items():
                 s.options[k] = str(v)
@@ -147,6 +153,8 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_TIME_INTEGRATION", "FV_SLOT_CELERITY", "FV_DISPERSION",
                 "FV_STRUCTURE_COUPLING", "FV_COMPACTION", "FV_BACKEND",
                 "FV_MIN_PARALLEL_CELLS",
+                "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
+                "FV_NODE_COUPLING", "FV_NODE_DT", "FV_NODE_PICARD",
             },
         )
 
