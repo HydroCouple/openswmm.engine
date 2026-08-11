@@ -200,7 +200,7 @@ TEST(GageFileRoundTrip, EmptyStationWritesPlaceholderAndWarns) {
 
 TEST(GageFileRoundTrip, TimeseriesScaleFactorRoundTrip) {
     SimulationContext ctx;
-    ctx.table_names.add("TS1");
+    ctx.tables.add("TS1", openswmm::TableType::TIMESERIES);
     parseGages(ctx, "G5 INTENSITY 0:05 1.00 TIMESERIES TS1 3.5");
     ASSERT_EQ(ctx.gages.ts_index[0], 0);
 
@@ -211,7 +211,7 @@ TEST(GageFileRoundTrip, TimeseriesScaleFactorRoundTrip) {
         << "written line: " << line;
 
     SimulationContext ctx2;
-    ctx2.table_names.add("TS1");
+    ctx2.tables.add("TS1", openswmm::TableType::TIMESERIES);
     parseGages(ctx2, line);
     ASSERT_EQ(ctx2.n_gages(), 1);
     EXPECT_DOUBLE_EQ(ctx2.gages.scale_factor[0], 3.5);

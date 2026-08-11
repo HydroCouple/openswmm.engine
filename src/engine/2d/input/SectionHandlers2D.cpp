@@ -75,7 +75,7 @@ const std::string RETIRED_SUFFIX =
     " was retired with the CVODE/ARKODE 2D solvers: the explicit "
     "local-inertial marcher is the only 2D integrator. Remove the line; "
     "marcher settings are THETA, CFL_NUMBER, LTS_TIERS, H_MOVE, FROUDE_MAX, "
-    "MAX_TIMESTEP, COUPLING_AREA.";
+    "ADVECTION, MAX_TIMESTEP, COUPLING_AREA.";
 
 /// Retired [2D_OPTIONS] material: warn-and-ignore when a warnings sink is
 /// available (the file-load path — legacy models must still open), hard
@@ -193,6 +193,14 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         if (!ok || f <= 0.0)
             return "Invalid FROUDE_MAX value (expected > 0)";
         opts.froude_max = f;
+    } else if (iequals(key, "ADVECTION")) {
+        if (iequals(val, "YES") || iequals(val, "ON") || iequals(val, "TRUE"))
+            opts.advection = true;
+        else if (iequals(val, "NO") || iequals(val, "OFF") ||
+                 iequals(val, "FALSE"))
+            opts.advection = false;
+        else
+            return "Unknown ADVECTION: " + val + " (expected YES|NO)";
     } else if (iequals(key, "COUPLING_AREA")) {
         if (iequals(val, "AUTO"))
             opts.coupling_area_auto = true;

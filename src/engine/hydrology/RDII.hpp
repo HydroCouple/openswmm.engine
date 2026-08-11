@@ -25,6 +25,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "../core/StringCase.hpp"
+
 namespace openswmm {
 
 struct SimulationContext;
@@ -141,8 +143,11 @@ public:
      */
     int findUnitHyd(const std::string& name) const;
 
+    /// UH name → index map type; case-insensitive (legacy hash.c parity).
+    using UhNameMap = std::unordered_map<std::string, int, CiHash, CiEqual>;
+
     /// Read-only access to the UH name → index map (for validation).
-    const std::unordered_map<std::string, int>& uhNameIndex() const { return uh_name_to_idx_; }
+    const UhNameMap& uhNameIndex() const { return uh_name_to_idx_; }
 
     /**
      * @brief Compute RDII inflows for all groups (buffered, not added to lat_flow).
@@ -185,7 +190,7 @@ public:
 
 private:
     RDIIGroupSoA groups_;
-    std::unordered_map<std::string, int> uh_name_to_idx_;
+    UhNameMap uh_name_to_idx_;  ///< UH group name → index (case-insensitive)
     std::vector<double> node_rdii_flow_;  ///< Buffered per-node RDII flow (CFS)
 
     /// Compute UH ordinate at time t for response k, month m.

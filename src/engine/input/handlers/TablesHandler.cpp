@@ -73,11 +73,11 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
         bool is_new_table = false;
         if (!maybe_name.empty()) {
             current_name = maybe_name;
-            // Ensure table exists
-            current_idx = ctx.table_names.find(current_name);
+            // Ensure table exists (kind-scoped: a curve with the same name
+            // is a DIFFERENT object, matching legacy's separate hash tables)
+            current_idx = ctx.find_timeseries(current_name);
             if (current_idx < 0) {
-                current_idx = ctx.table_names.add(current_name);
-                ctx.tables.add(current_name, TableType::TIMESERIES);
+                current_idx = ctx.tables.add(current_name, TableType::TIMESERIES);
                 is_new_table = true;
             }
         }
@@ -216,9 +216,10 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
         bool is_new_table = false;
         if (!maybe_name.empty()) {
             current_name = maybe_name;
-            current_idx = ctx.table_names.find(current_name);
+            // Kind-scoped: a timeseries with the same name is a DIFFERENT
+            // object, matching legacy's separate hash tables.
+            current_idx = ctx.find_curve(current_name);
             if (current_idx < 0) {
-                current_idx = ctx.table_names.add(current_name);
                 // Type may appear in tok[1] (first row only)
                 if (tok.size() > 1) {
                     auto it = CURVE_TYPE_MAP.find(Tokenizer::to_upper(tok[1]));
@@ -226,7 +227,7 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
                         current_type = it->second;
                     }
                 }
-                ctx.tables.add(current_name, current_type);
+                current_idx = ctx.tables.add(current_name, current_type);
                 is_new_table = true;
             }
         }

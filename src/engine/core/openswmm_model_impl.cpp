@@ -433,7 +433,7 @@ openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
         }
         case SWMM_FILE_TIMESERIES_DATA: {
             if (!owner) return nullptr;
-            int idx = ctx.table_names.find(owner);
+            int idx = ctx.find_timeseries(owner);
             if (idx < 0 || idx >= static_cast<int>(ctx.tables.tables.size()))
                 return nullptr;
             return &ctx.tables.tables[static_cast<std::size_t>(idx)].file_path;
@@ -906,7 +906,9 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "FV_NODE_PICARD")
         val = std::to_string(opt.fv.node_picard_sweeps);
     else if (k == "FV_NODE_CELL_COUPLING")
-        val = opt.fv.node_cell_coupling ? "YES" : "NO";
+        val = "NO";                       // retired option; kept readable
+    else if (k == "FV_JUNCTION_MODEL")
+        val = "ALGEBRAIC";                // retired option; junctions always are
     else if (k == "FV_BACKEND") {
         switch (opt.fv.backend) {
             case openswmm::fv::Backend::CPU:  val = "CPU";  break;
@@ -1246,10 +1248,9 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     }
     else if (k == "FV_NODE_PICARD")
         opt.fv.node_picard_sweeps = std::max(1, std::stoi(v));
-    else if (k == "FV_NODE_CELL_COUPLING") {
-        const std::string vu = upper_copy(v);
-        opt.fv.node_cell_coupling =
-            (vu == "YES" || vu == "TRUE" || vu == "1" || vu == "ON");
+    else if (k == "FV_NODE_CELL_COUPLING" || k == "FV_JUNCTION_MODEL") {
+        // Retired options, accepted and ignored: junctions are always
+        // algebraic interfaces now.
     }
     else if (k == "FV_LTS") {
         const std::string vu = upper_copy(v);

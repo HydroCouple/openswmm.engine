@@ -1005,11 +1005,9 @@ SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    const auto& names = to_engine(engine)->context().aquifers.names;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
-    }
-    return -1;
+    // Route through the registry (case-insensitive, legacy hash.c parity)
+    // instead of scanning aquifers.names, which could disagree with it.
+    return to_engine(engine)->context().aquifer_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx) {
@@ -1024,6 +1022,9 @@ SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
+    // Reject duplicates (case-insensitive) BEFORE touching the backing store;
+    // an unguarded NameIndex::add would throw across the C ABI.
+    if (ctx.aquifer_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
 
     auto& aq = ctx.aquifers;
     aq.names.push_back(id);
@@ -1168,11 +1169,9 @@ SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    const auto& names = to_engine(engine)->context().snowpacks.names;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
-    }
-    return -1;
+    // Route through the registry (case-insensitive, legacy hash.c parity)
+    // instead of scanning snowpacks.names, which could disagree with it.
+    return to_engine(engine)->context().snowpack_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx) {
@@ -1187,6 +1186,9 @@ SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
+    // Reject duplicates (case-insensitive) BEFORE touching the backing store;
+    // an unguarded NameIndex::add would throw across the C ABI.
+    if (ctx.snowpack_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
 
     auto& sp = ctx.snowpacks;
     sp.names.push_back(id);

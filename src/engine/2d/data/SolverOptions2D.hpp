@@ -185,6 +185,17 @@ struct SolverOptions2D {
                                   ///< activate near h_move as requested.
     int    lts_tiers    = 4;      ///< [2D_OPTIONS] LTS_TIERS, 1..8 (1 = global dt)
     double froude_max   = 1.5;    ///< [2D_OPTIONS] FROUDE_MAX face |u| clamp
+    /// Convective momentum flux ∂(u·q)/∂n at interior faces, in
+    /// Stelling–Duinmeijer staggered upwind form on the Perot cell vectors.
+    /// This is the term the pure local-inertial formulation drops, and
+    /// without it the scheme has no velocity head: a transcritical reach
+    /// holds a FLAT free surface upstream of a control (measured on the
+    /// SWASHES bump: η = 0.59 m against an analytic backwater of 1.02 m) and
+    /// bores land on the wrong Rankine–Hugoniot states. Vanishes identically
+    /// at rest and in uniform flow, so lake-at-rest exactness is untouched.
+    /// OPT-IN while the 2D validation ladder is re-graded against it: the
+    /// default reproduces the established local-inertial results exactly.
+    bool advection      = false;  ///< [2D_OPTIONS] ADVECTION YES|NO
     /// Positivity/exchange availability fraction β: max share of a cell's
     /// volume that outgoing fluxes (or a coupling drain) may take per own-step.
     double exchange_beta  = 0.8;

@@ -133,6 +133,58 @@ private:
     /// it per node at that node's own Δt, while the global path applies it to
     /// every node at the shared one.
     void   relaxOneNode(int node, double dt, const FvStepForcing& forcing);
+
+    /// Algebraic junction: solve the junction's head from the instantaneous
+    /// flux balance Σ sign·F(h) + q_lat + q_struct + carry/dt = 0 over its
+    /// incident faces (monotone in h), re-solving the faces' Riemann problems
+    /// at each trial head, and leave f_mass_ AND f_mom_ as computed at the
+    /// root — mass and momentum stay jointly consistent, unlike a Δf_mass
+    /// correction. Writes node_head permanently (the solve owns it); the
+    /// bucket-path volume integration is skipped for these nodes and the small
+    /// residual is carried in node_carry_ (see updateNodes) so conservation is
+    /// exact without reintroducing a storage timescale. A PASS-THROUGH node
+    /// (node_pass_) skips the solve entirely: its faces present the two
+    /// neighbouring cells to each other directly, so there is no balance left
+    /// to satisfy and the head is set to the mean adjacent stage, purely as a
+    /// diagnostic.
+    void   solveAlgebraicNode(int node, double dt, const FvStepForcing& forcing);
+
+    /// Dispose of an algebraic junction's window residual: flooding at the
+    /// sealed ceiling, real ponded storage at a pondable rim (demotes the node
+    /// to the bucket path), or the carry ledger. Head is never recomputed
+    /// here — the solve owns it; volume is derived.
+    void   settleAlgebraicNode(int node, double carry);
+
+    /// Static eligibility for the algebraic junction treatment: plain
+    /// junction (no storage table), at least one incident conduit face.
+    std::vector<std::uint8_t> node_alg_;
+    /// Static half of the pass-through test: algebraic, exactly two incident
+    /// faces, neither face carrying a culvert inlet or flap gate.
+    std::vector<std::uint8_t> node_pass_static_;
+    /// Full pass-through test, refreshed with the forcing (refreshStructFlows):
+    /// static half AND no lateral, no structure flow, no unbled carry this
+    /// routing step. When set, the node's faces present the far cells to each
+    /// other directly (faceSide/computeFaceFlux) — the direct spliced face —
+    /// which transmits both momentum and depth across the interface exactly.
+    std::vector<std::uint8_t> node_pass_;
+    /// Residual-volume carry (ft³) for algebraic junctions: root-solve
+    /// tolerance and any cell-side positivity scaling land here and are bled
+    /// back into the next solve's forcing. ≈0 in a converged steady state.
+    std::vector<double> node_carry_;
+    /// Cached V(full_depth) per node, for the ponding demote test.
+    std::vector<double> node_vfull_;
+
+    /// Is node n running the algebraic treatment RIGHT NOW? A ponding
+    /// junction above its rim holds real water on its ponded area and reverts
+    /// to the bucket/ODE path until it drains back below v_full; sealed
+    /// junctions never demote.
+    bool algebraicActive(int n) const noexcept {
+        const auto un = static_cast<std::size_t>(n);
+        if (!node_alg_[un]) return false;
+        if (mesh_->node_can_pond[un] &&
+            state_->node_volume[un] > node_vfull_[un]) return false;
+        return true;
+    }
     void   updateCells(double dt, const FvStepForcing& forcing);
     void   updateNodes(double dt, const FvStepForcing& forcing);
     void   dispersionSolve(double dt);
@@ -333,7 +385,10 @@ private:
     // Cell scratch.
     std::vector<double> cell_eta_;     ///< z_b + h
     std::vector<double> cell_u_;       ///< Q/A, dry-guarded
-    std::vector<double> cell_q_int_;   ///< ∫Q dt over the routing step
+    std::vector<double> cell_q_int_;   ///< ∫(mean face mass flux) dt over the
+                                       ///< routing step — the DISCHARGE the
+                                       ///< report publishes; equals ∫Q dt in
+                                       ///< open channels but not in the slot
 
     // Node scratch.
     std::vector<double> node_exch_;    ///< ∫(net inflow) dt over the routing step
@@ -350,14 +405,16 @@ private:
     // is not, because the stiffness ratio depends on FV_SLOT_CELERITY.
     std::vector<double> save_cell_a_, save_cell_q_, save_cell_phi_;
     std::vector<double> save_node_vol_, save_node_head_;
-    std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_;
+    std::vector<double> save_exch_, save_in_, save_out_, save_flood_, save_qint_,
+                        save_carry_;
 
     // SSP-RK2 stage-1 snapshot. Separate from the rejection snapshot above:
     // a rejected RK2 step has to roll back to Uⁿ, and Uⁿ must survive the
     // stage-1 save that the rejection machinery performs.
     std::vector<double> rk_cell_a_, rk_cell_q_, rk_cell_phi_;
     std::vector<double> rk_node_vol_, rk_node_head_;
-    std::vector<double> rk_exch_, rk_in_, rk_out_, rk_flood_, rk_qint_;
+    std::vector<double> rk_exch_, rk_in_, rk_out_, rk_flood_, rk_qint_,
+                        rk_carry_;
 
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.

@@ -105,9 +105,8 @@ namespace {
 double setUpOneGageOneTimeseries(SimulationContext& ctx,
                                  double scale_factor,
                                  double ts_value = 1.0) {
-    // Register names so n_gages() / table_names.size() report correctly.
+    // Register names so n_gages() / n_tables() report correctly.
     ctx.gage_names.add("RG1");
-    ctx.table_names.add("TS1");
     ctx.gages.resize(1);
 
     // Timeseries: one entry at OADate = 0.0 (start of epoch), value = ts_value.
@@ -170,7 +169,6 @@ TEST(GageUpdateAllGages, CoGageRainfallRescaledByRatio) {
     // Two gages, both pointing at TS1.  Gage 1 is a co-gage of gage 0.
     ctx.gage_names.add("RG1");
     ctx.gage_names.add("RG2");
-    ctx.table_names.add("TS1");
     ctx.gages.resize(2);
 
     int tidx = ctx.tables.add("TS1", TableType::TIMESERIES);
@@ -208,7 +206,6 @@ TEST(GageUpdateAllGages, CoGageWithEqualScaleFactorsCopiesPrimary) {
 
     ctx.gage_names.add("RG1");
     ctx.gage_names.add("RG2");
-    ctx.table_names.add("TS1");
     ctx.gages.resize(2);
 
     int tidx = ctx.tables.add("TS1", TableType::TIMESERIES);

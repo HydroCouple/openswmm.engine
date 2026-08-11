@@ -13,6 +13,7 @@
 #include "openswmm_api_common.hpp"
 #include "../edit/ObjectDeleter.hpp"
 #include "../../../include/openswmm/engine/openswmm_tables.h"
+#include "StringCase.hpp"
 
 namespace {
 
@@ -45,14 +46,16 @@ SWMM_ENGINE_API int swmm_table_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_table_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    return to_engine(engine)->context().table_names.find(id);
+    // No kind context here: timeseries searched first, then curves (a curve
+    // and a timeseries may share a name, matching legacy's separate tables).
+    return to_engine(engine)->context().find_table_any(id);
 }
 
 SWMM_ENGINE_API const char* swmm_table_id(SWMM_Engine engine, int idx) {
     if (!engine) return nullptr;
     const auto& ctx = to_engine(engine)->context();
     if (idx < 0 || idx >= ctx.n_tables()) return nullptr;
-    return ctx.table_names.name_of(idx).c_str();
+    return ctx.tables[idx].id.c_str();
 }
 
 SWMM_ENGINE_API int swmm_table_get_type(SWMM_Engine engine, int idx, int* type) {
@@ -75,12 +78,11 @@ SWMM_ENGINE_API int swmm_timeseries_add(SWMM_Engine engine, const char* id) {
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
 
-    // Check for duplicate ID
-    if (ctx.table_names.find(id) >= 0)
+    // Duplicate check is kind-scoped: a curve may share the name (legacy
+    // keeps TSERIES and CURVE in separate hash tables).
+    if (ctx.find_timeseries(id) >= 0)
         return SWMM_ERR_BADPARAM;
 
-    // Add to name index and table data
-    ctx.table_names.add(id);
     ctx.tables.add(id, openswmm::TableType::TIMESERIES);
 
     return SWMM_OK;
@@ -93,12 +95,11 @@ SWMM_ENGINE_API int swmm_curve_add(SWMM_Engine engine, const char* id, int type)
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
 
-    // Check for duplicate ID
-    if (ctx.table_names.find(id) >= 0)
+    // Duplicate check is kind-scoped: a timeseries may share the name
+    // (legacy keeps TSERIES and CURVE in separate hash tables).
+    if (ctx.find_curve(id) >= 0)
         return SWMM_ERR_BADPARAM;
 
-    // Add to name index and table data
-    ctx.table_names.add(id);
     ctx.tables.add(id, static_cast<openswmm::TableType>(type));
 
     return SWMM_OK;
@@ -197,11 +198,8 @@ SWMM_ENGINE_API int swmm_pattern_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_pattern_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    const auto& names = to_engine(engine)->context().patterns.names;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
-    }
-    return -1;
+    // Case-insensitive (legacy hash.c parity)
+    return to_engine(engine)->context().patterns.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_pattern_id(SWMM_Engine engine, int idx) {
@@ -266,7 +264,10 @@ SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char*
     if (ctx.patterns.names[u] == next) return SWMM_OK;
 
     for (std::size_t j = 0; j < ctx.patterns.names.size(); ++j) {
-        if (j != u && ctx.patterns.names[j] == next) return SWMM_ERR_BADPARAM;
+        // Case-insensitive collision check (a case-respelling of this same
+        // pattern is allowed; any-case match with another pattern is not).
+        if (j != u && openswmm::ieq(ctx.patterns.names[j], next))
+            return SWMM_ERR_BADPARAM;
     }
 
     const std::string prev = ctx.patterns.names[u];

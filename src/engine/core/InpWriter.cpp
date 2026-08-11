@@ -142,7 +142,7 @@ static const char* gN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_gages()) ? c.gage_names.name_of(i).c_str() : "*";
 }
 static const char* tN(const SimulationContext& c, int i) {
-    return (i>=0 && i<static_cast<int>(c.table_names.size())) ? c.table_names.name_of(i).c_str() : "*";
+    return (i>=0 && i<c.n_tables()) ? c.tables[i].id.c_str() : "*";
 }
 static const char* spN(const SimulationContext& c, int i) {
     return (i>=0 && i<static_cast<int>(c.snowpack_names.size())) ? c.snowpack_names.name_of(i).c_str() : "*";
@@ -323,6 +323,8 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     std::fprintf(f, "%-22s %.12g\n", "H_MOVE",            o.h_move);
     std::fprintf(f, "%-22s %d\n",    "LTS_TIERS",         o.lts_tiers);
     std::fprintf(f, "%-22s %.12g\n", "FROUDE_MAX",        o.froude_max);
+    std::fprintf(f, "%-22s %s\n",    "ADVECTION",
+                 o.advection ? "YES" : "NO");
     std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
                  o.coupling_area_auto ? "AUTO" : "DEFAULT");
     if (!o.output_file.empty())
@@ -736,8 +738,6 @@ int writeInpFile(const SimulationContext& ctx_internal,
             std::fprintf(f,"%-20s %s\n", "FV_NODE_DT", "NONE");
         if (fvo.node_picard_sweeps != 1)
             std::fprintf(f,"%-20s %d\n", "FV_NODE_PICARD", fvo.node_picard_sweeps);
-        if (fvo.node_cell_coupling)
-            std::fprintf(f,"%-20s %s\n", "FV_NODE_CELL_COUPLING", "YES");
         if (!fvo.compaction)
             std::fprintf(f,"%-20s %s\n", "FV_COMPACTION", "NO");
         std::fprintf(f,"%-20s %s\n", "FV_BACKEND",      sBackend[static_cast<int>(fvo.backend)]);
@@ -1235,7 +1235,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     } else if(otype==OutfallType::TIDAL||otype==OutfallType::TIMESERIES){
         const int t = static_cast<int>(oparam);
         if(t>=0 && t<static_cast<int>(ctx.tables.tables.size()))
-            std::snprintf(stage,sizeof(stage),"%s",ctx.table_names.name_of(t).c_str());
+            std::snprintf(stage,sizeof(stage),"%s",ctx.tables[t].id.c_str());
     }
 
     std::fprintf(f,"%-16s %12.4f %-12s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype));
@@ -1284,8 +1284,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::string cnStr;
         int ci = (drow>=0) ? D.curve[static_cast<size_t>(drow)]
                            : -1;
-        if(ci >= 0 && ci < ctx.table_names.size()) {
-            cnStr = ctx.table_names.name_of(ci); curveName = cnStr.c_str();
+        if(ci >= 0 && ci < ctx.n_tables()) {
+            cnStr = ctx.tables[ci].id; curveName = cnStr.c_str();
         } else if(drow>=0 && !D.curve_name[static_cast<size_t>(drow)].empty()) {
             curveName = D.curve_name[static_cast<size_t>(drow)].c_str();
         }

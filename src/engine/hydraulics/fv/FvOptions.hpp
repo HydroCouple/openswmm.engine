@@ -26,6 +26,10 @@ namespace openswmm::fv {
 /// Hard ceiling on LTS tiers. Tier k advances at 2^k·dt₀, so 8 tiers already
 /// span a 128× stiffness ratio — beyond that the coarse tier's lag behind a
 /// moving front stops being a bounded integration-path difference.
+/// (A 14-tier cap was trialled for the MIN_SURFAREA-junction stiffness on
+/// macdonald-long-sub and did not help: the stiff set there is every
+/// junction, and the scheduler's base-step count is the cost floor. The
+/// remedy is the algebraic junction interface, which removes the bound.)
 inline constexpr int kMaxLtsTiers = 8;
 
 /// Face flux function. HLLC is the default and HLL exists only as a
@@ -107,6 +111,17 @@ enum class NodeDtLimit : int {
     STABILITY = 0,  ///< default: the explicit A_s/(sum T*c) bound (today)
     NONE      = 1   ///< nodes do not constrain dt0; accuracy rests on sweeps
 };
+
+// Junctions are always ALGEBRAIC interfaces, not states (matching legacy
+// DYNWAVE, where a junction's own surface area is exactly zero and all
+// working area belongs to the conduits — here, the cells): degree-2 nodes
+// with no local injection pass fluxes straight through as a direct face, and
+// every other junction solves its head from the instantaneous flux balance
+// per substep. The earlier BUCKET model (MIN_SURFAREA control volume
+// integrated in time, FV_JUNCTION_MODEL option) manufactured a millisecond
+// dt bound and a transshipment cap dt ≤ V_node/Q that jammed junction-dense
+// channels at the crown; it was removed after the algebraic interface passed
+// the open-channel validation suite. See ExplicitFvSolver::solveAlgebraicNode.
 
 /// When pump/orifice/weir/outlet structure equations are re-evaluated.
 enum class StructureCoupling : int {
@@ -243,25 +258,6 @@ struct FvOptions {
 
     /// Stop sweeping when the head correction falls below this (ft).
     double node_picard_tol = 1.0e-6;
-
-    /// Couple the node correction to its adjacent end cells (plan §7B.9).
-    ///
-    /// The standard correction linearizes each coupling face's flux in the
-    /// node head with the NEIGHBOURING CELLS FROZEN — the tangent is taken
-    /// against infinite reservoirs, which is why converging on it harder finds
-    /// the wrong equilibrium at a large Δt (the Challenge-2 fixed point). But
-    /// each end cell is a finite volume of plan area C = Δx·T that couples to
-    /// nothing but this node, so the joint backward-Euler system over the
-    /// node-and-end-cells star is closed-form: eliminating each cell softens
-    /// that face's resistance by C/(C + Δt·√(gAT)) and feeds the cell's own
-    /// filling back into the residual. As Δt grows the correction tends to
-    /// the lumped node+cells volume — the correct large-step limit — instead
-    /// of flux balance against stale state. Conservation is untouched: the
-    /// result still lands in `f_mass_` exactly as before.
-    ///
-    /// This is the accuracy-at-large-Δt half of the plan; pair it with
-    /// `FV_NODE_DT NONE` to actually take the large steps it makes safe.
-    bool node_cell_coupling = false;
 
     // -- Transport (plan §3.2 / §6.11) --------------------------------------
 
