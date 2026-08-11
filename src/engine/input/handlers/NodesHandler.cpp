@@ -71,9 +71,9 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 
         const std::string& name = tok[0];
 
-        // Register name (skip if already registered — handles duplicate lines)
-        int idx = ctx.node_names.find(name);
-        if (idx < 0) idx = ctx.node_names.add(name);
+        // Register name; a second definition (any case spelling) is ERR 207
+        int idx = add_unique(ctx.node_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_node_capacity(ctx, idx);
 
@@ -107,8 +107,8 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
             continue;
         }
 
-        int idx = ctx.node_names.find(name);
-        if (idx < 0) idx = ctx.node_names.add(name);
+        int idx = add_unique(ctx.node_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_node_capacity(ctx, idx);
 
@@ -130,8 +130,8 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
-        int idx = ctx.node_names.find(name);
-        if (idx < 0) idx = ctx.node_names.add(name);
+        int idx = add_unique(ctx.node_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_node_capacity(ctx, idx);
 
@@ -205,8 +205,8 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() < 4) continue;
 
         const std::string& name = tok[0];
-        int idx = ctx.node_names.find(name);
-        if (idx < 0) idx = ctx.node_names.add(name);
+        int idx = add_unique(ctx.node_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_node_capacity(ctx, idx);
         auto ui = static_cast<std::size_t>(idx);
@@ -267,8 +267,8 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         if (tok.size() < 4) continue;
 
         const std::string& name = tok[0];
-        int idx = ctx.node_names.find(name);
-        if (idx < 0) idx = ctx.node_names.add(name);
+        int idx = add_unique(ctx.node_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_node_capacity(ctx, idx);
 

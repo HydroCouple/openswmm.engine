@@ -32,6 +32,8 @@
 #include <stdexcept>
 #include <optional>
 
+#include "../core/StringCase.hpp"
+
 namespace openswmm {
 
 /**
@@ -39,6 +41,14 @@ namespace openswmm {
  *
  * @details Maintains both a hash map (name→index) and a vector (index→name)
  *          so that either direction of lookup is O(1).
+ *
+ *          Lookups are CASE-INSENSITIVE (ASCII fold), matching the legacy
+ *          engine's hash table (src/legacy/engine/hash.c UCHAR). Names are
+ *          stored with their original spelling — name_of()/names() feed the
+ *          .out ID tables, interface files, and the .inp/GeoPackage writers,
+ *          which must round-trip the user's spelling byte-identically. Two
+ *          names differing only in case are therefore the SAME entry; add()
+ *          treats them as duplicates, exactly as legacy does.
  *
  * @ingroup engine_data
  */
@@ -53,17 +63,31 @@ public:
     /**
      * @brief Add a new name and assign the next sequential index.
      *
-     * @param name  Object name (stored as-is; case sensitivity is caller's
-     *              responsibility).
+     * @param name  Object name (stored as-is; matched case-insensitively).
      * @returns     Assigned index (== size() before this call).
      *
-     * @throws std::invalid_argument if `name` is already registered.
+     * @throws std::invalid_argument if `name` is already registered (any
+     *         case spelling). Callers on user-input paths should prefer
+     *         try_add() and report the duplicate themselves.
      */
     int add(const std::string& name) {
-        auto [it, inserted] = map_.emplace(name, static_cast<int>(names_.size()));
-        if (!inserted) {
+        const int idx = try_add(name);
+        if (idx < 0) {
             throw std::invalid_argument("NameIndex: duplicate name '" + name + "'");
         }
+        return idx;
+    }
+
+    /**
+     * @brief Non-throwing add.
+     *
+     * @param name  Object name (stored as-is; matched case-insensitively).
+     * @returns     Assigned index, or -1 if `name` (in any case spelling) is
+     *              already registered.
+     */
+    int try_add(const std::string& name) {
+        auto [it, inserted] = map_.emplace(name, static_cast<int>(names_.size()));
+        if (!inserted) return -1;
         names_.push_back(name);
         return it->second;
     }
@@ -73,24 +97,38 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Look up the index for a name.
+     * @brief Look up the index for a name (case-insensitive).
      *
      * @param name  Object name.
      * @returns     Index, or -1 if not found.
      */
     int find(std::string_view name) const noexcept {
-        auto it = map_.find(std::string(name));
+        auto it = map_.find(name);
         if (it == map_.end()) return -1;
         return it->second;
     }
 
     /**
-     * @brief Look up the index, returning std::optional.
+     * @brief Look up the index (case-insensitive), returning std::optional.
      */
     std::optional<int> try_find(std::string_view name) const noexcept {
-        auto it = map_.find(std::string(name));
+        auto it = map_.find(name);
         if (it == map_.end()) return std::nullopt;
         return it->second;
+    }
+
+    /**
+     * @brief Stored (original) spelling for a case-insensitive match.
+     *
+     * @param name  Object name in any case spelling.
+     * @returns     Pointer to the registered spelling, or nullptr if the name
+     *              is not registered. Used by duplicate-ID diagnostics to
+     *              report both spellings.
+     */
+    const std::string* canonical(std::string_view name) const noexcept {
+        auto it = map_.find(name);
+        if (it == map_.end()) return nullptr;
+        return &names_[static_cast<std::size_t>(it->second)];
     }
 
     /**
@@ -143,13 +181,16 @@ public:
      * @brief Rename the entry at `idx` to `newName`.
      *
      * @param idx     Index of the entry to rename.
-     * @param newName New name (must not already be registered).
+     * @param newName New name (must not collide, case-insensitively, with a
+     *                DIFFERENT entry; a pure case-respelling of the same
+     *                entry is allowed).
      * @returns       true on success; false if idx is out of range or newName
-     *                is already in use.
+     *                is already in use by another entry.
      */
     bool rename(int idx, const std::string& newName) noexcept {
         if (idx < 0 || idx >= static_cast<int>(names_.size())) return false;
-        if (map_.count(newName)) return false; // would create a duplicate
+        auto it = map_.find(newName);
+        if (it != map_.end() && it->second != idx) return false; // duplicate
         map_.erase(names_[static_cast<std::size_t>(idx)]);
         names_[static_cast<std::size_t>(idx)] = newName;
         map_[newName] = idx;
@@ -181,8 +222,9 @@ public:
     const std::vector<std::string>& names() const noexcept { return names_; }
 
 private:
-    std::unordered_map<std::string, int> map_;   ///< name → index
-    std::vector<std::string>             names_;  ///< index → name
+    /// name → index; case-insensitive (legacy hash.c parity), original-case keys
+    std::unordered_map<std::string, int, CiHash, CiEqual> map_;
+    std::vector<std::string> names_;  ///< index → name (original spelling)
 };
 
 } /* namespace openswmm */

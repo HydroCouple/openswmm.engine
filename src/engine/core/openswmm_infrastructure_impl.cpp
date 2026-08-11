@@ -505,6 +505,9 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
     if (ctx.state != openswmm::EngineState::BUILDING &&
         ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
+    // Reject duplicates (case-insensitive) BEFORE touching the backing store;
+    // an unguarded NameIndex::add would throw across the C ABI.
+    if (ctx.lid_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
 
     auto& lid = ctx.lid_controls;
     lid.names.push_back(id);

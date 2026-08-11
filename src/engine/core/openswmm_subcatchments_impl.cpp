@@ -1024,6 +1024,9 @@ SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
+    // Reject duplicates (case-insensitive) BEFORE touching the backing store;
+    // an unguarded NameIndex::add would throw across the C ABI.
+    if (ctx.aquifer_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
 
     auto& aq = ctx.aquifers;
     aq.names.push_back(id);
@@ -1187,6 +1190,9 @@ SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id) {
     if (!id) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
+    // Reject duplicates (case-insensitive) BEFORE touching the backing store;
+    // an unguarded NameIndex::add would throw across the C ABI.
+    if (ctx.snowpack_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
 
     auto& sp = ctx.snowpacks;
     sp.names.push_back(id);
