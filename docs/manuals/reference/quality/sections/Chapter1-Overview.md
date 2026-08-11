@@ -1,4 +1,6 @@
-# Chapter 1: Overview
+@page quality_ref_ch1_overview Chapter 1: Overview
+
+@tableofcontents
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
@@ -68,14 +70,10 @@ system. SWMM conceptualizes this system as a series of water and
 material flows between several major environmental compartments. These
 compartments include:
 
-<figure>
-<img src="./VolumeIII/media/media/image1.jpeg"
-style="width:6.5in;height:4.20726in"
-alt="http://www.epa.ohio.gov/portals/35/cso/wet_weather_flow_graphic.jpg" />
-<figcaption><p><span id="_Toc401645527"
+![](quality/media/media/image1.jpeg "image1")
+<p><span id="_Toc401645527"
 class="anchor"></span><strong>Figure 1‑1 Elements of a typical urban
-drainage system</strong></p></figcaption>
-</figure>
+drainage system</strong></p>
 
 - The Atmosphere compartment, which generates precipitation and deposits
   pollutants onto the Land Surface compartment.
@@ -121,13 +119,10 @@ SWMM model. Table 1-2 provides a summary of the various objects used in
 SWMM. Their properties and functions will be described in more detail
 throughout the course of this manual.
 
-<figure>
-<img src="./VolumeIII/media/media/image2.png"
-style="width:4.22447in;height:3.2121in" alt="Objects2" />
-<figcaption><p><span id="_Toc401645528"
+![](quality/media/media/image2.png "Objects2")
+<p><span id="_Toc401645528"
 class="anchor"></span><strong>Figure 1‑2 SWMM's conceptual model of a
-stormwater drainage system</strong></p></figcaption>
-</figure>
+stormwater drainage system</strong></p>
 
 **Table 1‑2 SWMM's modeling objects**
 
@@ -165,13 +160,10 @@ Figure 1-3 depicts the processes that SWMM models using the objects
 described previously and how they are tied to one another. The
 hydrological processes depicted in this diagram include:
 
-<figure>
-<img src="./VolumeIII/media/media/image3.png"
-style="width:6.15711in;height:5.47993in" alt="ProcessModels.png" />
-<figcaption><p><span id="_Toc401645529"
+![](quality/media/media/image3.png "image3")
+<p><span id="_Toc401645529"
 class="anchor"></span><strong>Figure 1‑3 Processes modeled by
-SWMM</strong></p></figcaption>
-</figure>
+SWMM</strong></p>
 
 - time-varying precipitation
 
@@ -245,9 +237,9 @@ are computed and reported. This process is represented mathematically
 with the following general set of equations that are solved at each time
 step as the simulation unfolds:
 
-$$X_{t} = f(X_{t - 1},I_{t},P)$$                             
+\f[X_{t} = f(X_{t - 1},I_{t},P)\f]                             
 (1-1)
-$$Y_{t} = g(X_{t},P)$$                                       
+\f[Y_{t} = g(X_{t},P)\f]                                       
 (1-2)
 
 
@@ -266,13 +258,10 @@ where
 
 Figure 1-4 depicts the simulation process in block diagram fashion.
 
-<figure>
-<img src="./VolumeIII/media/media/image4.png" style="width:6.5in;height:2.48611in"
-alt="StateTransition.png" />
-<figcaption><p><span id="_Toc401645530"
+![](quality/media/media/image4.png "image4")
+<p><span id="_Toc401645530"
 class="anchor"></span><strong>Figure 1‑4 Block diagram of SWMM's state
-transition process</strong></p></figcaption>
-</figure>
+transition process</strong></p>
 
 The variables that make up the state vector *X<sub>t</sub>* are listed in Table
 1-3. This is a surprisingly small number given the comprehensive nature
@@ -369,13 +358,10 @@ Users' Manual (US EPA, 2010). Next the values of all state variables are
 initialized, as is the current simulation time (T), runoff time
 (T<sub>roff</sub>), and reporting time (T<sub>rpt</sub>).
 
-<figure>
-<img src="./VolumeIII/media/media/image5.png" style="width:6.5in;height:8.14097in"
-alt="SimulationProcedure.png" />
-<figcaption><p><span id="_Toc401645531"
+![](quality/media/media/image5.png "image5")
+<p><span id="_Toc401645531"
 class="anchor"></span><strong>Figure 1‑5 Flow chart of SWMM's simulation
-procedure</strong></p></figcaption>
-</figure>
+procedure</strong></p>
 
 The program then enters a loop that first determines the time T1 at the
 end of the current routing time step (∆T<sub>rout</sub>). If the current runoff
@@ -417,7 +403,7 @@ reporting purposes. In other words, if a reporting time falls within a
 runoff time step the reported rainfall intensity is the value associated
 with the start of the runoff time step.
 
-![](./media/media/figure1-6.png)
+![](quality/media/media/figure1-6.png)
 
 **Figure 1‑6 Interpolation of reported values from computed values**
 
@@ -455,3 +441,6 @@ the unit of length and seconds as the unit of time.
 | Velocity | feet/second | meters/second |
 | Width | feet | meters |
 | Wind Speed | miles/hour | kilometers/hour |
+
+
+

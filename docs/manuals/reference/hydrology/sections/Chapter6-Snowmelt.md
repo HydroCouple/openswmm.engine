@@ -1,4 +1,6 @@
-﻿#  Chapter 6: Snowmelt
+@page hydrology_ref_ch6_snowmelt Chapter 6: Snowmelt
+
+@tableofcontents
 
 ## 6.1 Introduction
 
@@ -139,13 +141,10 @@ changes with time during the simulation. Melt, after routing through the
 remaining snow pack, is combined with rainfall to form the spatially
 weighted "effective rainfall" for overland flow routing.
 
-<figure>
-<img src="VolumeI/media/media/image37.png"
-style="width:6.5in;height:4.82431in" alt="snow-scf.png" />
-<figcaption><p><span id="_Toc426447698"
+![](hydrology/media/media/image37.png "image37")
+<p><span id="_Toc426447698"
 class="anchor"></span><strong>Figure 6-1 Typical gage catch deficiency
-correction (Anderson, 2006, p. 8).</strong></p></figcaption>
-</figure>
+correction (Anderson, 2006, p. 8).</strong></p>
 
 ### 6.2.3 Subcatchment Partitioning
 
@@ -165,13 +164,10 @@ almost normally bare of snow. Rooftops would better fit the second.
 Figure 6-2 illustrates the subcatchment partitioning used for snowmelt
 and compares it with the one used for runoff.
 
-<figure>
-<img src="VolumeI/media/media/Figure6-2.png"
-style="width:6.5in;height:4.5in" alt="Subcatchment partitionings used for snowmelt and runoff" />
-<figcaption><p><span id="_Toc426447699"
+![](hydrology/media/media/Figure6-2.png "Subcatchment partitionings used for snowmelt and runoff")
+<p><span id="_Toc426447699"
 class="anchor"></span><strong>Figure 6-2 Subcatchment partitionings used
-for snowmelt and runoff.</strong></p></figcaption>
-</figure>
+for snowmelt and runoff.</strong></p>
 
 A separate accounting is kept for snow accumulation and melting from
 each of these fractions (pervious, plowable impervious, and remaining
@@ -390,13 +386,11 @@ temperatures equal the ambient air temperature. Anderson combines the
 appropriate terms for each heat budget component into one equation for
 the melt rate *SMELT*:
 
-$$SMELT = \left( 0.001167 + 7.5\gamma U_{A} + 0.007i \right)\left( T_{a} - 32 \right) + 8.5U_{A}(e_{a} - 0.18)$$  (6-1) 
+\f[SMELT = \left( 0.001167 + 7.5\gamma U_{A} + 0.007i \right)\left( T_{a} - 32 \right) + 8.5U_{A}(e_{a} - 0.18)\f]  (6-1) 
 
 where
 
-  -------------------------------------------------------------------------
   *SMELT*   =   melt rate (in/hr)
-  --------- --- -----------------------------------------------------------
   *T<sub>a</sub>*    =   air temperature (° F)
 
   *γ*       =   psychrometric constant (in Hg/° F)
@@ -407,25 +401,24 @@ where
 
   *e<sub>a</sub>*    =   saturation vapor pressure at air temperature (in Hg).
 
-  -------------------------------------------------------------------------
 
 The origin of the numerical constants found in Equation 6-1 is given by
 Anderson (1973), and reflect units conversions as well as U.S. customary
 units for physical properties. The psychrometric constant, γ, is
 calculated as:
 
-$$\gamma = 0.000359P_{a}$$  (6-2)
+\f[\gamma = 0.000359P_{a}\f]  (6-2)
 
 where *P<sub>a</sub>* is the atmospheric pressure (in Hg). The latter, in turn,
 is calculated as a function of elevation, z:
 
-$$P_{a} = 29.9 - 1.02(\frac{z}{1000) + 0.0032{(\frac{z}{1000)}}^{2.4}}$$  (6-3)
+\f[P_{a} = 29.9 - 1.02(\frac{z}{1000) + 0.0032{(\frac{z}{1000)}}^{2.4}}\f]  (6-3)
 
 where z is the average catchment elevation (ft). The wind adjustment
 factor, *U<sub>A</sub>*, accounts for turbulent transport of sensible heat and
 water vapor. Anderson (1973) gives:
 
-$$U_{A} = 0.006U$$  (6-4)
+\f[U_{A} = 0.006U\f]  (6-4)
 
 where *U* is the average wind speed 1.64 ft (0.5 m) above the snow
 surface (mi/hr). In practice, available wind data are used and are
@@ -435,26 +428,23 @@ SWMM. If no such data are available on a particular date then *U<sub>A</sub>* is
 set equal to *0*. Finally, the saturation vapor pressure, *e<sub>a</sub>*, is
 given accurately by the convenient exponential approximation:
 
-$$e_{a} = 8.1175 \times 10^{6}\exp\left( \frac{- 7701.544}{T_{a} + 405.0265} \right)$$  (6-5)
+\f[e_{a} = 8.1175 \times 10^{6}\exp\left( \frac{- 7701.544}{T_{a} + 405.0265} \right)\f]  (6-5)
 
 During non-rain periods, melt is calculated as a linear function of the
 difference between the air temperature, *T<sub>a</sub>*, and a base temperature,
 *Tbase*, using a degree-day or temperature-index type equation:
 
-$$SMELT = DHM\left( T_{a} - Tbase \right)$$  (6-6)
+\f[SMELT = DHM\left( T_{a} - Tbase \right)\f]  (6-6)
 
 where:
 
-  --------------------------------------------------------------------------
   *SMELT*   =   melt rate (in/hr),
-  --------- --- ------------------------------------------------------------
   *T<sub>a</sub>*    =   air temperature (° F)
 
   *Tbase*   =   base melt temperature (° F)
 
   *DHM*     =   melt coefficient (in/hr-° F)
 
-  --------------------------------------------------------------------------
 
 Different values of *Tbase* and *DHM* may be used for each of the three
 types of snow surfaces within a subcatchment. For instance, these
@@ -472,23 +462,20 @@ as input for the three snowpack areas of each subcatchment, and
 sinusoidal interpolation is used to produce a value of *DHM* that is
 constant over each day of the year:
 
-$$DHM = \left( \frac{DHMAX + DHMIN}{2} \right) + \left( \frac{DHMAX - DHMIN}{2} \right)\sin\left( \frac{\pi}{182}(day - 81) \right)$$  (6-7)
+\f[DHM = \left( \frac{DHMAX + DHMIN}{2} \right) + \left( \frac{DHMAX - DHMIN}{2} \right)\sin\left( \frac{\pi}{182}(day - 81) \right)\f]  (6-7)
 
 where
 
-  ------------------------------------------------------------------------
   *DHMIN*    =   minimum melt coefficient, occurring Dec. 21 (in/hr-°F)
-  ---------- --- ---------------------------------------------------------
   *DHMAX*    =   maximum melt coefficient, occurring June 21 (in/hr-°F)
 
   *day*      =   number of the day of the year.
   
-  ------------------------------------------------------------------------
 
 No special allowance is made for leap year. However, the correct date
 (and day number) is maintained.
 
-![Cmelt](VolumeI/media/media/image38.png){width="5.427083333333333in"
+![Cmelt](hydrology/media/media/image38.png){width="5.427083333333333in"
 height="2.8125in"}
 
 **Figure 6-3 Seasonal variation of melt coefficients.**
@@ -513,7 +500,7 @@ ATI ← ATI + TIPM<sub>t</sub> (T<sub>a</sub> - ATI)    (6-8)
 
 where *TIPM<sub>t</sub>* is given by (Anderson, 2006):
 
-$${TIPM}_{t} = 1 - {(1 - TIPM)}^{\mathrm{\Delta}t/6}$$  (6-9)
+\f[{TIPM}_{t} = 1 - {(1 - TIPM)}^{\mathrm{\Delta}t/6}\f]  (6-9)
 
 for a time step *Δt* in hours. *TIPM* is a 6-hour weighting factor whose
 value lies between *0* and *1.0*. The value of *ATI* is not allowed to
@@ -535,13 +522,11 @@ been attempted on urban watersheds.
 After the antecedent temperature index is calculated, the cold content
 *COLDC* is changed by an amount
 
-$$\mathrm{\Delta}CC = RNM \times DHM \times \left( ATI - T_{a} \right) \times \mathrm{\Delta}t$$  (6-10)
+\f[\mathrm{\Delta}CC = RNM \times DHM \times \left( ATI - T_{a} \right) \times \mathrm{\Delta}t\f]  (6-10)
 
 where
 
-  -------------------------------------------------------------------------
   *ΔCC*   =   change in cold content (inches water equivalent)
-  ------- --- -------------------------------------------------------------
   *RNM*   =   ratio of negative melt coefficient to melt coefficient,
 
   *DHM*   =   melt coefficient (in/hr-° F)
@@ -550,7 +535,6 @@ where
 
   *Δt*    =   time step (hr).
 
-  -------------------------------------------------------------------------
 
 Note that the cold content is increased, (*ΔCC* is positive) when the
 air temperature is less (colder) than the antecedent temperature index.
@@ -558,14 +542,14 @@ Since heat transfer during non-melt periods is less than during melt
 periods, Anderson uses a "negative melt coefficient" in the heat
 exchange computation. SWMM computes this simply as a fraction, *RNM*, of
 the melt coefficient, *DHM*. Hence, the negative melt coefficient, i.e.,
-the product ![](VolumeI/media/media/image39.wmf)also varies seasonally. As
+the product *[Figure image not available in this format]*also varies seasonally. As
 with *TIPM*, a single user-supplied value of *RNM* is used throughout
 the study area. A typical value is 0.6.
 
 During melting periods, cold content of the pack is reduced by an
 amount:
 
-$$\mathrm{\Delta}CC = - SMELT \times RNM \times \mathrm{\Delta}t$$  (6-11)
+\f[\mathrm{\Delta}CC = - SMELT \times RNM \times \mathrm{\Delta}t\f]  (6-11)
 
 with an equal reduction made in *SMELT*. Thus no liquid melt actually
 occurs until the snow pack cold content is reduced to *0*. Even then,
@@ -606,46 +590,40 @@ is shown in Figure 6-4. For values of the ratio *AWESI = WSNOW / SI*
 greater than *1.0*, *ASC = 1.0*, that is, the area is *100* percent snow
 covered.
 
-<figure>
-<img src="VolumeI/media/media/image40.png" style="width:6in;height:4.91667in"
-alt="ii_06" />
-<figcaption><p><span id="_Toc426447701"
+![](hydrology/media/media/image40.png "ii_06")
+<p><span id="_Toc426447701"
 class="anchor"></span><strong>Figure 6-4 Typical areal depletion curve
 for natural area (Anderson, 1973, p. 3-15) and temporary curve for new
-snow.</strong></p></figcaption>
-</figure>
+snow.</strong></p>
 
 Some of the implications of different functional forms of the ADC may be
 seen in Figure 6-5. Since the program maintains snow quantities,
 *WSNOW*, as the depth over the total area, *A<sub>T</sub>*, the actual snow
 depth, *WS*, and actual area covered, *AS*, are related by continuity:
 
-$$WSNOW \times A_{T} = WS \times AS$$  (6-12)
+\f[WSNOW \times A_{T} = WS \times AS\f]  (6-12)
 
 where:
 
-  -------------------------------------------------------------------------
   *WSNOW*   =   depth of snow over total area (inches water equivalent)
-  --------- --- -----------------------------------------------------------
   *A<sub>T</sub>*    =   total area (ft²),
 
   *WS*      =   actual snow depth (inches water equivalent), and
 
   *AS*      =   snow covered area (ft²).
 
-  -------------------------------------------------------------------------
 
 In terms of parameters shown on the ADC, this equation may be rearranged
 to read:
 
-$$AWESI = \frac{WSNOW}{SI = \left( \frac{WS}{SI} \right)\left( \frac{AS}{A_{T}} \right) = \left( \frac{WS}{SI} \right)ASC}$$  (6-13)
+\f[AWESI = \frac{WSNOW}{SI = \left( \frac{WS}{SI} \right)\left( \frac{AS}{A_{T}} \right) = \left( \frac{WS}{SI} \right)ASC}\f]  (6-13)
 
 This equation can be used to compute the actual snow depth, *WS*, from
 known ADC parameters, if desired. It is unnecessary to do this in the
 program, but it is helpful in understanding the curves of Figure 6-5.
 Thus:
 
-$$WS = \left( \frac{AWESI}{ASC} \right)\ SI$$  (6-14)
+\f[WS = \left( \frac{AWESI}{ASC} \right)\ SI\f]  (6-14)
 
 Consider the three ADC curves B, C and D of Figure 6-5. For curve B,
 *AWESI* is always less than *ASC*; hence *WS* is always less than *SI*
@@ -656,7 +634,7 @@ than *ASC*; hence, *WS* is always greater than *SI*, as shown in Figure
 cover are illustrated in Figure 6-5c, curve A, and Figure 6-5g, curve E,
 respectively. At a given time (e.g., *t1* in Figure 6-5), the area of
 each snow depth versus area curve is the same and equal to
-$AWESI \times SI$, (e.g., *0.8 SI* for time *t1*).
+\f$AWESI \times SI\f$, (e.g., *0.8 SI* for time *t1*).
 
 Curve B on Figure 6-5a is the most common type of ADC occurring in
 nature, as shown in Figure 6-4. The convex curve D requires some
@@ -684,13 +662,10 @@ situation when there is new snow needs to be discussed, starting from
 both zero and non-zero initial cover. The SWMM procedure again follows
 Anderson's NWS method (1973).
 
-<figure>
-<img src="VolumeI/media/media/image41.png"
-style="width:5.98958in;height:6.64583in" alt="ii_07" />
-<figcaption><p><span id="_Toc426447702"
+![](hydrology/media/media/image41.png "ii_07")
+<p><span id="_Toc426447702"
 class="anchor"></span><strong>Figure 6-5 Effect of snow cover on areal
-depletion curves.</strong></p></figcaption>
-</figure>
+depletion curves.</strong></p>
 
 When there is new snow and *WSNOW* is already greater than or equal to
 *SI*, *ASC* remains unchanged at *1.0*. However, when there is new snow
@@ -702,13 +677,13 @@ same point on the ADC as the snow melts. Let the depth of new snow be
 will be changed from an initial value of *AWE* to a new value of *SNEW*
 by:
 
-$$SNEW = AWE + \frac{SNO}{SI}$$  (6-15)
+\f[SNEW = AWE + \frac{SNO}{SI}\f]  (6-15)
 
 It is assumed that the areal snow cover remains at *100* percent until
 *25* percent of the new snow melts. This defines the value of *SBWS* of
 Figure 6-4 as:
 
-$$SBWS = AWE + 0.75\left( \frac{SNO}{SI} \right)$$  (6-16)
+\f[SBWS = AWE + 0.75\left( \frac{SNO}{SI} \right)\f]  (6-16)
 
 Anderson (1973) reports low sensitivity of model results to the
 arbitrary *25* percent assumption. When melt produces a value of *AWESI*
@@ -729,7 +704,7 @@ covered area. The melt rate is computed from either of the two equations
 for *SMELT*. The snow depth is then reduced by an amount *ΔWSNOW* which
 equals:
 
-$$\mathrm{\Delta}WSNOW = SMELT \times ASC \times \mathrm{\Delta}t$$  (6-17)
+\f[\mathrm{\Delta}WSNOW = SMELT \times ASC \times \mathrm{\Delta}t\f]  (6-17)
 
 and includes appropriate continuity checks to avoid melting more snow
 than is there, etc.
@@ -738,7 +713,7 @@ Cold content changes are also adjusted by the value of *ASC*. Thus,
 using Equation 6-10, cold content, *COLDC*, is changed by an amount
 *ΔCC* given by:
 
-$$\mathrm{\Delta}CC = RNM \times DHM \times \left( ATI - T_{a} \right) \times \mathrm{\Delta}t \times ASC$$  (6-18)
+\f[\mathrm{\Delta}CC = RNM \times DHM \times \left( ATI - T_{a} \right) \times \mathrm{\Delta}t \times ASC\f]  (6-18)
 
 where variables are as previously defined. Again there are program
 checks for negative values of *COLDC*, etc.
@@ -755,16 +730,13 @@ fraction, *FWFRAC*, of the variable snow depth, *WSNOW*, at each time
 step. This volume (depth) must be filled before runoff from the snow
 pack occurs. The program maintains the depth of free water, *FW*, inches
 of water, for use in these computations. When
-![](VolumeI/media/media/image42.wmf), the snow pack is fully ripe. The
+*[Figure image not available in this format]*, the snow pack is fully ripe. The
 procedure is sketched in Figure 6-6.
 
-<figure>
-<img src="VolumeI/media/media/image43.png"
-style="width:4.75917in;height:4.62697in" alt="ii_08" />
-<figcaption><p><span id="_Toc426447703"
+![](hydrology/media/media/image43.png "ii_08")
+<p><span id="_Toc426447703"
 class="anchor"></span><strong>Figure 6-6 Schematic of liquid water
-routing through snow pack.</strong></p></figcaption>
-</figure>
+routing through snow pack.</strong></p>
 
 The inclusion of the free water holding capacity via this simple
 reservoir-type routing delays and somewhat attenuates the appearance of
@@ -777,7 +749,7 @@ cold content or melt computations.
 Melt from snow covered areas and rainfall on bare surfaces is area
 weighted and combined to produce net runoff onto the surface as follows:
 
-$$RI = ASC \times SMELT + (1.0 - ASC) \times i$$  (6-19)
+\f[RI = ASC \times SMELT + (1.0 - ASC) \times i\f]  (6-19)
 
 where *RI* is the net equivalent precipitation input onto the
 subcatchment surface (in/hr) and *i* is the liquid rainfall intensity
@@ -844,13 +816,13 @@ snow accumulation and snowmelt are listed in the sidebar below.
 > 1. **Compute the melt coefficient** *DHM* for each snow pack surface (SA1, SA2, and SA3) for the current day of the year using Equation 6-7 and set the immediate melt *IMELT* on each surface to 0.
 > 
 > 2. **If** *T<sub>a</sub>* ≤ *SNOTMP* then precipitation is in the form of snow so update the snow pack depth on each snow surface:
->    $$WSNOW \gets WSNOW + i \times SCF \times \Delta t$$
+>    \f[WSNOW \gets WSNOW + i \times SCF \times \Delta t\f]
 > 
 > 3. **For the plowable impervious snow surface (SA2)**, if *WSNOW* > *WEPLOW* then *WSNOW* is reduced to reflect the redistributions produced by the fractions *F<sub>imp</sub>*, *F<sub>perv</sub>*, *F<sub>sub</sub>*, *F<sub>out</sub>*, and *F<sub>imelt</sub>*. If *F<sub>imelt</sub>* > 0 then the immediate melt for surface SA2 is set to:
->    $$IMELT = \frac{F_{imelt} \times WSNOW}{\Delta t}$$
+>    \f[IMELT = \frac{F_{imelt} \times WSNOW}{\Delta t}\f]
 > 
 > 4. **If the snow pack depth** over a snow surface is below 0.001 inches then convert the entire pack for that surface into immediate melt:
->    $$IMELT \gets IMELT + \frac{WSNOW + FW}{\Delta t}$$
+>    \f[IMELT \gets IMELT + \frac{WSNOW + FW}{\Delta t}\f]
 >    and reset the pack's state variables to 0.
 > 
 > 5. **Use the Areal Depletion Curves** supplied for the pervious (SA1) and non-plowable impervious (SA3) snow surfaces to compute a new areal snow coverage ratio *ASC* for these surfaces (*ASC* for the plowable impervious surface is always 1.0). The details are supplied below.
@@ -868,24 +840,24 @@ snow accumulation and snowmelt are listed in the sidebar below.
 >    - Limit *COLDC* to be no greater than 0.007 *WSNOW*(*T<sub>base</sub>* - *ATI*) which assumes a specific heat of snow of 0.007 inches water equivalent per °F.
 > 
 > 9. **For each snow pack surface** under melting conditions (*SMELT* > 0) reduce both the cold content *COLDC* and the melt rate *SMELT* for each snow surface as follows:
->    $$\Delta CC = SMELT \times RNM \times \Delta t$$
->    $$COLDC \gets COLDC - \Delta CC$$
->    $$SMELT \gets SMELT - \Delta CC$$
+>    \f[\Delta CC = SMELT \times RNM \times \Delta t\f]
+>    \f[COLDC \gets COLDC - \Delta CC\f]
+>    \f[SMELT \gets SMELT - \Delta CC\f]
 >    limiting both *COLDC* and *SMELT* to be ≥ 0.
 > 
 > 10. **Update the snow depth and free water content** of the snow pack on each snow surface:
->     $$WSNOW \gets WSNOW - SMELT \times \Delta t$$
->     $$FW \gets FW + (SMELT + i_{RAIN}) \Delta t$$
+>     \f[WSNOW \gets WSNOW - SMELT \times \Delta t\f]
+>     \f[FW \gets FW + (SMELT + i_{RAIN}) \Delta t\f]
 >     where *i<sub>RAIN</sub>* = *i* if precipitation falls as rain or 0 otherwise.
 > 
 > 11. **Check each snow surface** to see if the free water content is high enough to produce liquid runoff, i.e., if *FW* ≥ *FWFRAC* × *WSNOW* then set:
->     $$\Delta FF = FW - FWFRAC \times WSNOW$$
->     $$FW \gets FW - \Delta FF$$
->     $$SMELT = \Delta FF$$
+>     \f[\Delta FF = FW - FWFRAC \times WSNOW\f]
+>     \f[FW \gets FW - \Delta FF\f]
+>     \f[SMELT = \Delta FF\f]
 >     Otherwise set *SMELT* = 0.
 > 
 > 12. **Compute the overall equivalent precipitation input** *RI* (in/h) for each snow surface as:
->     $$RI = SMELT + IMELT + i_{RAIN} \times (1 - ASC)$$
+>     \f[RI = SMELT + IMELT + i_{RAIN} \times (1 - ASC)\f]
 >     Use these values to return an adjusted precipitation rate *i* (in/h) to each of the sub-areas used to compute runoff:
 >     - *i* = *RI*[SA1] for the pervious area A1 and
 >     - *i* = (*RI*[SA2] × *A<sub>S2</sub>* + *RI*[SA3] × *A<sub>S3</sub>*) / *A<sub>imperv</sub>* for both impervious areas A2 and A3,
@@ -912,11 +884,11 @@ the sidebar below.
 > **Case 3: Snowfall during the time step**
 > - There was snowfall during the time step (*T<sub>a</sub>* ≤ *SNOTMP* and *i* > 0). *ASC* is set to 1.0 and the parameters of a temporary linear ADC are computed as follows:
 >   1. Find the *AWE* value for the accumulated depth at the start of the time step:
->      $$AWE = \frac{WSNOW_1}{SI}$$
+>      \f[AWE = \frac{WSNOW_1}{SI}\f]
 >      where *WSNOW<sub>1</sub>* is the accumulated depth before the new snowfall was added on.
 >   2. Use the ADC to look up the areal coverage *SBA* for this prior *AWE* value.
 >   3. Compute the relative depth *SBWS* at which 75% of the new snow still remains (i.e., 25% has melted):
->      $$SBWS = AWE + 0.75 \frac{WSNOW - WSNOW_1}{SI}$$
+>      \f[SBWS = AWE + 0.75 \frac{WSNOW - WSNOW_1}{SI}\f]
 >      and save *AWE*, *SBA*, and *SBWS* for use with the fourth case described next.
 > 
 > **Case 4: Snow depth below threshold with no snowfall**
@@ -924,7 +896,7 @@ the sidebar below.
 >   1. If *AWESI* < *AWE* the original ADC applies so set *ASC* to the curve value for *AWESI* and set *AWE* to 1.0.
 >   2. If *AWESI* ≥ *SBWS* the limit of the temporary ADC for new snowfall has been reached so set *ASC* to 1.0.
 >   3. Otherwise compute *ASC* from the temporary ADC as follows:
->      $$ASC = SBA + (1 - SBA) \frac{AWESI - AWE}{SBWS - AWE}$$
+>      \f[ASC = SBA + (1 - SBA) \frac{AWESI - AWE}{SBWS - AWE}\f]
 
 ## 6.7 Parameter Estimates
 
@@ -1116,35 +1088,26 @@ pack takes another 6 days to melt during which time the runoff is
 sporadic as the temperature fluctuates above and below the base melt
 level.
 
-<figure>
-<img src="VolumeI/media/media/Figure6-7.png"
-style="width:6.5in;height:3.34375in" alt="Continuous air temperature for illustrative snowmelt example" />
-<figcaption><p><span id="_Toc426447704"
+![](hydrology/media/media/Figure6-7.png "Continuous air temperature for illustrative snowmelt example")
+<p><span id="_Toc426447704"
 class="anchor"></span><strong>Figure 6-7 Continuous air temperature for
-illustrative snowmelt example.</strong></p></figcaption>
-</figure>
+illustrative snowmelt example.</strong></p>
 
-<figure>
-<img src="VolumeI/media/media/Figure6-8.png"
-style="width:6.5in;height:3.34375in" alt="Precipitation amounts for illustrative snowmelt example" />
-<figcaption><p><span id="_Toc426447705"
+![](hydrology/media/media/Figure6-8.png "Precipitation amounts for illustrative snowmelt example")
+<p><span id="_Toc426447705"
 class="anchor"></span><strong>Figure 6-8 Precipitation amounts for
-illustrative snowmelt example.</strong></p></figcaption>
-</figure>
+illustrative snowmelt example.</strong></p>
 
-<figure>
-<img src="VolumeI/media/media/Figure6-9.png"
-style="width:6.5in;height:3.34375in" alt="Snow pack depth for illustrative snowmelt example" />
-<figcaption><p><span id="_Toc426447706"
+![](hydrology/media/media/Figure6-9.png "Snow pack depth for illustrative snowmelt example")
+<p><span id="_Toc426447706"
 class="anchor"></span><strong>Figure 6-9 Snow pack depth for
-illustrative snowmelt example.</strong></p></figcaption>
-</figure>
+illustrative snowmelt example.</strong></p>
 
-<figure>
-<img src="VolumeI/media/media/Figure6-10.png"
-style="width:6.489583333333333in;height:3.71875in" alt="Runoff time series for illustrative snowmelt example" />
-<figcaption><p><span id="_Toc426447707"
+![](hydrology/media/media/Figure6-10.png "Runoff time series for illustrative snowmelt example")
+<p><span id="_Toc426447707"
 class="anchor"></span><strong>Figure 6-10 Runoff time series for
-illustrative snowmelt example.</strong></p></figcaption>
-</figure>
+illustrative snowmelt example.</strong></p>
+
+
+
 

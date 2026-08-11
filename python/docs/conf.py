@@ -108,6 +108,9 @@ extensions = [
     # sphinx-design: tab-set / grid / grid-item-card directives used in
     # the User Guide and Migration pages.
     'sphinx_design',
+    # sphinxcontrib-mermaid: workflow / state diagrams (.. mermaid::)
+    # rendered client-side, matching the Doxygen manuals.
+    'sphinxcontrib.mermaid',
 ]
 
 # MyST (Markdown) settings

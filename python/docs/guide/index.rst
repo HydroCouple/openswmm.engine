@@ -62,6 +62,7 @@ control actions.
 
    inflows
    forcing
+   climate
    controls
    tables
 

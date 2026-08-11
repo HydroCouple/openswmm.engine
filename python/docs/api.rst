@@ -158,6 +158,14 @@ Advanced forcing  (mode + persistence)
    :undoc-members:
    :show-inheritance:
 
+Climate  (temperature, evaporation, wind, snowmelt, adjustments)
+----------------------------------------------------------------
+
+.. automodule:: openswmm.engine._climate
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Control rules
 -------------
 

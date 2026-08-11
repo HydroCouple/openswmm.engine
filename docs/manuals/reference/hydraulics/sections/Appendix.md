@@ -1,77 +1,78 @@
-# Appendix
+@page hydraulics_ref_appendix Appendix
+
+@tableofcontents
 
 ____________________________________________________________________________________________
 
 #### Newton-Raphson-Bisection Root Finding Method
 
 The following Newton-Raphson procedure adapted from Press et al. (1992)
-is used to solve the equation $f(x) = 0$ over the interval
-$\left\lbrack x_{LOW},x_{HIGH} \right\rbrack$ that is known to bracket
+is used to solve the equation \f$f(x) = 0\f$ over the interval
+\f$\left\lbrack x_{LOW},x_{HIGH} \right\rbrack\f$ that is known to bracket
 the solution with initial estimate *x* and convergence tolerance *ε* :
 
 > **Newton-Raphson-Bisection Algorithm:**
 > 
 > **Step 1:** Perform the following initial steps:
-> - If $f(x_{LOW}) > f(x_{HIGH})$ then switch $x_{LOW}$ with $x_{HIGH}$.
-> - If $x$ is outside $[x_{LOW},x_{HIGH}]$ then set $x = \frac{x_{LOW} + x_{HIGH}}{2}$.
-> - Set $\Delta x = |x_{HIGH} - x_{LOW}|$.
-> - Evaluate $f(x)$ and its derivative $f'(x)$.
+> - If \f$f(x_{LOW}) > f(x_{HIGH})\f$ then switch \f$x_{LOW}\f$ with \f$x_{HIGH}\f$.
+> - If \f$x\f$ is outside \f$[x_{LOW},x_{HIGH}]\f$ then set \f$x = \frac{x_{LOW} + x_{HIGH}}{2}\f$.
+> - Set \f$\Delta x = |x_{HIGH} - x_{LOW}|\f$.
+> - Evaluate \f$f(x)\f$ and its derivative \f$f'(x)\f$.
 > 
-> **Step 2:** If $[(x-x_{HIGH})f'(x)-f(x)][(x-x_{LOW})f'(x)-f(x)] \geq 0$ or $|2f(x)| > |\Delta x f'(x)|$ then update $x$ as follows:
-> - $\Delta x = 0.5(x_{HIGH} - x_{LOW})$
-> - $x = x_{LOW} + \Delta x$
+> **Step 2:** If \f$[(x-x_{HIGH})f'(x)-f(x)][(x-x_{LOW})f'(x)-f(x)] \geq 0\f$ or \f$|2f(x)| > |\Delta x f'(x)|\f$ then update \f$x\f$ as follows:
+> - \f$\Delta x = 0.5(x_{HIGH} - x_{LOW})\f$
+> - \f$x = x_{LOW} + \Delta x\f$
 > 
 > Otherwise take the Newton step:
-> - $\Delta x = \frac{f(x)}{f'(x)}$
-> - $x = x - \Delta x$
+> - \f$\Delta x = \frac{f(x)}{f'(x)}\f$
+> - \f$x = x - \Delta x\f$
 > 
-> **Step 3:** If $|\Delta x|$ is below the tolerance $\varepsilon$ then stop with the current value of $x$ as the solution.
+> **Step 3:** If \f$|\Delta x|\f$ is below the tolerance \f$\varepsilon\f$ then stop with the current value of \f$x\f$ as the solution.
 > 
-> **Step 4:** Evaluate $f(x)$ and $f'(x)$. If $f(x) < 0$ then set $x_{LOW} = x$. Otherwise set $x_{HIGH} = x$.
+> **Step 4:** Evaluate \f$f(x)\f$ and \f$f'(x)\f$. If \f$f(x) < 0\f$ then set \f$x_{LOW} = x\f$. Otherwise set \f$x_{HIGH} = x\f$.
 > 
 > **Step 5:** Return to Step 2.
 
-# 
 
 #### Ridder's Root Finding Method
 
 Ridder's method uses the following iterative procedure adapted from
-Press et al. (1992) to solve the equation $f(x) = 0$ over the interval
-$\left\lbrack x_{1},x_{2} \right\rbrack$ that is known to bracket the
+Press et al. (1992) to solve the equation \f$f(x) = 0\f$ over the interval
+\f$\left\lbrack x_{1},x_{2} \right\rbrack\f$ that is known to bracket the
 solution with a convergence tolerance of *ε*:
 
 > **Ridder's Root Finding Algorithm:**
 > 
 > **Step 1:** Let
-> - $f_1 = f(x_1)$
-> - $f_2 = f(x_2)$
-> - $x_3 = \frac{x_1 + x_2}{2}$
+> - \f$f_1 = f(x_1)\f$
+> - \f$f_2 = f(x_2)\f$
+> - \f$x_3 = \frac{x_1 + x_2}{2}\f$
 > 
 > **Step 2:** Set
-> - $f_3 = f(x_3)$
-> - $x_4 = x_3 + \frac{(x_3 - x_1)\text{sgn}(f_1 - f_2)f_3}{\sqrt{f_3^2 - f_1 f_2}}$
+> - \f$f_3 = f(x_3)\f$
+> - \f$x_4 = x_3 + \frac{(x_3 - x_1)\text{sgn}(f_1 - f_2)f_3}{\sqrt{f_3^2 - f_1 f_2}}\f$
 > 
-> **Step 3:** If $|x_4 - x_3| < \varepsilon$ then stop with solution $x_3$.
+> **Step 3:** If \f$|x_4 - x_3| < \varepsilon\f$ then stop with solution \f$x_3\f$.
 > 
-> **Step 4:** Set $f_4 = f(x_4)$.
+> **Step 4:** Set \f$f_4 = f(x_4)\f$.
 > 
-> **Step 5:** If $\text{sgn}(f_3) \neq \text{sgn}(f_4)$ then set
-> - $x_1 = x_3$
-> - $f_1 = f_3$
-> - $x_2 = x_4$
-> - $f_2 = f_4$
+> **Step 5:** If \f$\text{sgn}(f_3) \neq \text{sgn}(f_4)\f$ then set
+> - \f$x_1 = x_3\f$
+> - \f$f_1 = f_3\f$
+> - \f$x_2 = x_4\f$
+> - \f$f_2 = f_4\f$
 > 
-> Otherwise if $\text{sgn}(f_1) \neq \text{sgn}(f_4)$ then set
-> - $x_2 = x_4$
-> - $f_2 = f_4$
+> Otherwise if \f$\text{sgn}(f_1) \neq \text{sgn}(f_4)\f$ then set
+> - \f$x_2 = x_4\f$
+> - \f$f_2 = f_4\f$
 > 
-> Otherwise if $\text{sgn}(f_2) \neq \text{sgn}(f_4)$ then set
-> - $x_1 = x_4$
-> - $f_1 = f_4$
+> Otherwise if \f$\text{sgn}(f_2) \neq \text{sgn}(f_4)\f$ then set
+> - \f$x_1 = x_4\f$
+> - \f$f_1 = f_4\f$
 > 
-> **Step 6:** Set $x_3 = \frac{x_1 + x_2}{2}$.
+> **Step 6:** Set \f$x_3 = \frac{x_1 + x_2}{2}\f$.
 > 
-> **Step 7:** If $|x_2 - x_1| \leq \varepsilon$ then stop with solution $x_3$.
+> **Step 7:** If \f$|x_2 - x_1| \leq \varepsilon\f$ then stop with solution \f$x_3\f$.
 > 
 > **Step 8:** Return to Step 2.
 
@@ -631,7 +632,8 @@ Source: American Iron and Steel Institute (1999).
 | 0.96 | 1.06078 | 1.06517 | 1.07694 |
 | 0.98 | 1.05500 | 1.05380 | 1.07562 |
 | 1.00 | 1.00000 | 1.00000 | 1.00000 |
-**Table F‑7 Section factor for masonry sewers as function of area - I**
+
+**Table F‑8 Section factor for masonry sewers as function of area - II**
 
 | **A/A<sub>full</sub>** | **Ψ/Ψ<sub>full</sub> (Catenary)** | **Ψ/Ψ<sub>full</sub> (Gothic)** | **Ψ/Ψ<sub>full</sub> (Semi-Circular)** | **Ψ/Ψ<sub>full</sub> (Semi-Elliptical)** |
 | :--- | :--- | :--- | :--- | :--- |
@@ -687,60 +689,6 @@ Source: American Iron and Steel Institute (1999).
 | 0.98 | 1.05000 | 1.05500 | 1.06000 | 1.05000 |
 | 1.00 | 1.00000 | 1.00000 | 1.00000 | 1.00000 |
 
-**Table F‑8 Section factor for masonry sewers as function of area - II**
-| **A/A<sub>full</sub>** | **Ψ/Ψ<sub>full</sub> (Catenary)** | **Ψ/Ψ<sub>full</sub> (Gothic)** | **Ψ/Ψ<sub>full</sub> (Semi-Circular)** | **Ψ/Ψ<sub>full</sub> (Semi-Elliptical)** |
-| :--- | :--- | :--- | :--- | :--- |
-| 0.00 | 0.00000 | 0.00000 | 0.00000 | 0.00000 |
-| 0.02 | 0.00758 | 0.00295 | 0.00467 | 0.00295 |
-| 0.04 | 0.01812 | 0.01331 | 0.01237 | 0.00812 |
-| 0.06 | 0.03000 | 0.02629 | 0.02268 | 0.01629 |
-| 0.08 | 0.03966 | 0.04000 | 0.03515 | 0.02400 |
-| 0.10 | 0.04957 | 0.05657 | 0.04943 | 0.03157 |
-| 0.12 | 0.06230 | 0.07500 | 0.06525 | 0.03900 |
-| 0.14 | 0.07849 | 0.09432 | 0.08212 | 0.04632 |
-| 0.16 | 0.09618 | 0.11473 | 0.10005 | 0.05368 |
-| 0.18 | 0.11416 | 0.13657 | 0.11891 | 0.06104 |
-| 0.20 | 0.13094 | 0.15894 | 0.13856 | 0.06841 |
-| 0.22 | 0.14808 | 0.18030 | 0.15896 | 0.07577 |
-| 0.24 | 0.16583 | 0.20036 | 0.18004 | 0.08314 |
-| 0.26 | 0.18381 | 0.22000 | 0.20172 | 0.09050 |
-| 0.28 | 0.20294 | 0.23919 | 0.22397 | 0.09787 |
-| 0.30 | 0.22500 | 0.25896 | 0.24677 | 0.10523 |
-| 0.32 | 0.25470 | 0.28000 | 0.27006 | 0.11260 |
-| 0.34 | 0.28532 | 0.30504 | 0.29380 | 0.11997 |
-| 0.36 | 0.31006 | 0.33082 | 0.31790 | 0.12733 |
-| 0.38 | 0.32804 | 0.35551 | 0.34237 | 0.13470 |
-| 0.40 | 0.34555 | 0.37692 | 0.36720 | 0.14207 |
-| 0.42 | 0.36944 | 0.39809 | 0.39239 | 0.14943 |
-| 0.44 | 0.40032 | 0.42000 | 0.41792 | 0.15680 |
-| 0.46 | 0.43203 | 0.44625 | 0.44374 | 0.16417 |
-| 0.48 | 0.46004 | 0.47321 | 0.46984 | 0.17153 |
-| 0.50 | 0.47849 | 0.50000 | 0.49619 | 0.17890 |
-| 0.52 | 0.49591 | 0.52255 | 0.52276 | 0.18627 |
-| 0.54 | 0.51454 | 0.54481 | 0.54950 | 0.19363 |
-| 0.56 | 0.53810 | 0.56785 | 0.57640 | 0.20100 |
-| 0.58 | 0.56711 | 0.59466 | 0.60345 | 0.20837 |
-| 0.60 | 0.60000 | 0.62485 | 0.63065 | 0.21573 |
-| 0.62 | 0.64092 | 0.65518 | 0.65795 | 0.22310 |
-| 0.64 | 0.68136 | 0.68181 | 0.68531 | 0.23047 |
-| 0.66 | 0.71259 | 0.70415 | 0.71271 | 0.23783 |
-| 0.68 | 0.73438 | 0.72585 | 0.74009 | 0.24520 |
-| 0.70 | 0.75500 | 0.74819 | 0.76738 | 0.25257 |
-| 0.72 | 0.78625 | 0.77482 | 0.79451 | 0.25993 |
-| 0.74 | 0.81880 | 0.80515 | 0.82144 | 0.26730 |
-| 0.76 | 0.85000 | 0.83534 | 0.84814 | 0.27467 |
-| 0.78 | 0.86790 | 0.86193 | 0.87450 | 0.28203 |
-| 0.80 | 0.88483 | 0.88465 | 0.90057 | 0.28940 |
-| 0.82 | 0.90431 | 0.90690 | 0.92652 | 0.29677 |
-| 0.84 | 0.93690 | 0.93000 | 0.95244 | 0.30413 |
-| 0.86 | 0.97388 | 0.95866 | 0.97724 | 0.31150 |
-| 0.88 | 1.00747 | 0.98673 | 0.99988 | 0.31887 |
-| 0.90 | 1.03300 | 1.01238 | 1.02048 | 0.32623 |
-| 0.92 | 1.05000 | 1.03396 | 1.03989 | 0.33360 |
-| 0.94 | 1.05464 | 1.05000 | 1.05698 | 0.34097 |
-| 0.96 | 1.06078 | 1.06517 | 1.07694 | 0.34833 |
-| 0.98 | 1.05500 | 1.05380 | 1.07562 | 0.35570 |
-| 1.00 | 1.00000 | 1.00000 | 1.00000 | 1.00000 | 1.00000 | 1.00000 | 1.00000 |
 
 #### Manning's Roughness Coefficients
 
@@ -1043,4 +991,6 @@ Source: American Iron and Steel Institute, 1999.
 | 55 | 2 | 0.560 | 0.667 | 0.0378 | 0.87 |
 | 56 | 2 | 0.500 | 0.667 | 0.0446 | 0.65 |
 | 57 | 2 | 0.500 | 0.667 | 0.0378 | 0.71 |
+
+
 

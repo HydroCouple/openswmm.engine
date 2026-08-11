@@ -1,4 +1,6 @@
-# Chapter 3: Dynamic Wave Analysis
+@page hydraulics_ref_ch3_dynamic_wave Chapter 3: Dynamic Wave Analysis
+
+@tableofcontents
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
@@ -35,8 +37,8 @@ be expressed as:
 
 | | | | |
 |---|---|---|---|
-| $$\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} = 0$$ | Continuity | (3-1) | |
-| $$\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} = 0$$ | Momentum | (3-2) | |
+| \f[\frac{\partial A}{\partial t} + \frac{\partial Q}{\partial x} = 0\f] | Continuity | (3-1) | |
+| \f[\frac{\partial Q}{\partial t} + \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} + gA\frac{\partial H}{\partial x} + gAS_{f} = 0\f] | Momentum | (3-2) | |
 
 where
 
@@ -68,7 +70,7 @@ on which they are based are:
 The friction slope *S*<sub>f</sub> can be expressed in terms of the Manning
 equation used to model steady uniform flow:
 
-$$S_{f} = \left( \frac{n}{1.486} \right)^{2}\frac{Q|U|}{AR^{4/3}}$$   (3-3)
+\f[S_{f} = \left( \frac{n}{1.486} \right)^{2}\frac{Q|U|}{AR^{4/3}}\f]   (3-3)
 
 where
 
@@ -76,7 +78,7 @@ where
 |---|---|---|
 | *n* | = | the Manning roughness coefficient (sec/m<sup>1/3</sup>) |
 | *R* | = | the hydraulic radius of the flow cross-section (ft) |
-| *U* | = | flow velocity, equal to $\frac{Q}{A}$ (ft/sec). |
+| *U* | = | flow velocity, equal to \f$\frac{Q}{A}\f$ (ft/sec). |
 
 and 1.486 converts from m<sup>1/3</sup> to ft<sup>1/3</sup>. Use of the absolute value
 sign on the velocity term makes *S*<sub>f</sub> a directional quantity (since *Q*
@@ -96,29 +98,29 @@ The continuity equation 3-1 can be combined with the momentum equation
 3-2 to produce the following form of the momentum equation for a conduit
 (see sidebar below for details):
 
-$$\frac{\partial Q}{\partial t} = 2U\frac{\partial A}{\partial t} + U^{2}\frac{\partial A}{\partial x} - gA\frac{\partial H}{\partial x} - gAS_{f}$$                 (3-4)
+\f[\frac{\partial Q}{\partial t} = 2U\frac{\partial A}{\partial t} + U^{2}\frac{\partial A}{\partial x} - gA\frac{\partial H}{\partial x} - gAS_{f}\f]                 (3-4)
 
 > **Combining the Continuity and Momentum Equations**
 > 
-> The $\frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x}$ term in the momentum equation 3-2 can be re-expressed as:
+> The \f$\frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x}\f$ term in the momentum equation 3-2 can be re-expressed as:
 > 
-> $$\frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} = \frac{\partial\left( U^{2}A \right)}{\partial x} = 2AU\frac{\partial U}{\partial x} + U^{2}\frac{\partial A}{\partial x}$$ (a)
+> \f[\frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} = \frac{\partial\left( U^{2}A \right)}{\partial x} = 2AU\frac{\partial U}{\partial x} + U^{2}\frac{\partial A}{\partial x}\f] (a)
 > 
-> Using $Q = UA$, the continuity equation 3-1 can be written as:
+> Using \f$Q = UA\f$, the continuity equation 3-1 can be written as:
 > 
-> $$\frac{\partial A}{\partial t} + A\frac{\partial U}{\partial x} + U\frac{\partial A}{\partial x} = 0$$ (b)
+> \f[\frac{\partial A}{\partial t} + A\frac{\partial U}{\partial x} + U\frac{\partial A}{\partial x} = 0\f] (b)
 > 
-> Multiplying both sides of (b) by $U$ and re-arranging terms leads to:
+> Multiplying both sides of (b) by \f$U\f$ and re-arranging terms leads to:
 > 
-> $$AU\frac{\partial U}{\partial x} = - U\frac{\partial A}{\partial t} - U^{2}\frac{\partial A}{\partial x}$$ (c)
+> \f[AU\frac{\partial U}{\partial x} = - U\frac{\partial A}{\partial t} - U^{2}\frac{\partial A}{\partial x}\f] (c)
 > 
 > Substituting this into the first term on the right hand side of (a) produces:
 > 
-> $$\frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} = - 2U\frac{\partial A}{\partial t} - U^{2}\frac{\partial A}{\partial x}$$ (d)
+> \f[\frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} = - 2U\frac{\partial A}{\partial t} - U^{2}\frac{\partial A}{\partial x}\f] (d)
 > 
 > Substituting (d) into 3-2 and re-arranging terms gives the final result:
 > 
-> $$\frac{\partial Q}{\partial t} = 2U\frac{\partial A}{\partial t} + U^{2}\frac{\partial A}{\partial x} - gA\frac{\partial H}{\partial x} - gAS_{f}$$ (e)
+> \f[\frac{\partial Q}{\partial t} = 2U\frac{\partial A}{\partial t} + U^{2}\frac{\partial A}{\partial x} - gA\frac{\partial H}{\partial x} - gAS_{f}\f] (e)
 
 While this equation can be used to compute the time trajectory of flow
 in a conduit, another relationship is needed to do likewise for heads.
@@ -132,7 +134,7 @@ Non-storage junction nodes are assumed to be points with zero volume and
 surface area while storage nodes (such as ponds and tanks) contain both
 volume and surface area.
 
-![Node-Link.bmp](VolumeII/media/media/image11.png)
+![Node-Link.bmp](hydraulics/media/media/image11.png)
 
 **Figure 3-1 Node-link representation of a conveyance network in SWMM (from Roesner et al, 1992).**
 
@@ -141,7 +143,7 @@ each link connected to it. Conservation of flow for the assembly
 requires that the change in volume with respect to time equal the
 difference between inflow and outflow. In equation terms:
 
-$$\frac{\partial V}{\partial t} = \frac{\partial V}{\partial H}\frac{\partial H}{\partial t} = A_{S}\frac{\partial H}{\partial t} = \sum_{}^{}Q$$   (3-5)
+\f[\frac{\partial V}{\partial t} = \frac{\partial V}{\partial H}\frac{\partial H}{\partial t} = A_{S}\frac{\partial H}{\partial t} = \sum_{}^{}Q\f]   (3-5)
 
 where:
 
@@ -151,17 +153,17 @@ where:
 | *A*<sub>S</sub> | = | node assembly surface area (ft²) |
 | *ΣQ* | = | net flow into the node assembly (inflow -- outflow) (cfs) |
 
-The $\sum_{}^{}Q$ term includes the flow in the conduits connected to
+The \f$\sum_{}^{}Q\f$ term includes the flow in the conduits connected to
 the node as well as any externally imposed inflows such as wet weather
 runoff or dry weather sanitary flow.
 
 Each node assembly's surface area consists of the node's storage surface
 area *A*<sub>SN</sub> (if it's a storage node) plus the surface area contributed
-by the links connected to it, $\sum_{}^{}A_{SL}$, where *A*<sub>SL</sub> is the
+by the links connected to it, \f$\sum_{}^{}A_{SL}\f$, where *A*<sub>SL</sub> is the
 surface area contributed by a connecting link. Thus the node continuity
 equation can be written as:
 
-$$\frac{\partial H}{\partial t} = \frac{\sum_{}^{}Q}{A_{SN} + \sum_{}^{}A_{SL}}$$   (3-6)
+\f[\frac{\partial H}{\partial t} = \frac{\sum_{}^{}Q}{A_{SN} + \sum_{}^{}A_{SL}}\f]   (3-6)
 
 The flow depth at the end of a conduit connected to a node can be
 computed as the difference between the head at the node and the invert
@@ -183,15 +185,15 @@ subsequent chapters of this manual.
 The spatial and temporal derivatives in equations 3-4 and 3-6 can be
 replaced with the following finite difference approximations:
 
-$$\frac{\partial A}{\partial x} = \frac{\left( A_{2} - A_{1} \right)}{L}$$                 (3-7)
+\f[\frac{\partial A}{\partial x} = \frac{\left( A_{2} - A_{1} \right)}{L}\f]                 (3-7)
 
-$$\frac{\partial H}{\partial x} = \frac{\left( H_{2} - H_{1} \right)}{L}$$                 (3-8)
+\f[\frac{\partial H}{\partial x} = \frac{\left( H_{2} - H_{1} \right)}{L}\f]                 (3-8)
 
-$$\frac{\partial A}{\partial t} = \frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t}$$                 (3-9)
+\f[\frac{\partial A}{\partial t} = \frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t}\f]                 (3-9)
 
-$$\frac{\partial Q}{\partial t} = \frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t}$$                 (3-10)
+\f[\frac{\partial Q}{\partial t} = \frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t}\f]                 (3-10)
 
-$$\frac{\partial H}{\partial t} = \frac{\mathrm{\Delta}H}{\mathrm{\Delta}t}$$                 (3-11)
+\f[\frac{\partial H}{\partial t} = \frac{\mathrm{\Delta}H}{\mathrm{\Delta}t}\f]                 (3-11)
 
 where
 
@@ -203,9 +205,9 @@ where
 | *H*<sub>2</sub> | = | hydraulic head at the downstream end of the conduit (ft) |
 | *L* | = | conduit length (ft) |
 | *∆t* | = | time step (sec) |
-| *∆*$\ \overline{A}$ | = | change in average flow area, $\left( {\overline{A}}^{t + \mathrm{\Delta}t} - {\overline{A}}^{\ t} \right)$, over time step *∆t* (ft²) |
-| *∆Q* | = | change in conduit flow, $\left( Q^{t + \mathrm{\Delta}t} - Q^{t} \right)$, over time step *∆t* (cfs) |
-| *∆H* | = | change in nodal head, $\left( H^{t + \mathrm{\Delta}t} - H^{t} \right)$, over time step *∆t* (ft). |
+| *∆*\f$\ \overline{A}\f$ | = | change in average flow area, \f$\left( {\overline{A}}^{t + \mathrm{\Delta}t} - {\overline{A}}^{\ t} \right)\f$, over time step *∆t* (ft²) |
+| *∆Q* | = | change in conduit flow, \f$\left( Q^{t + \mathrm{\Delta}t} - Q^{t} \right)\f$, over time step *∆t* (cfs) |
+| *∆H* | = | change in nodal head, \f$\left( H^{t + \mathrm{\Delta}t} - H^{t} \right)\f$, over time step *∆t* (ft). |
 
 with the superscripts referring to time periods.
 
@@ -215,20 +217,20 @@ momentum Equation 3-4, replacing *S*<sub>f</sub> with Equation 3-3, and replacin
 indicated by over scores) allows the finite difference form of the link
 momentum equation to be written as:
 
-$$\frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t} = 2\overline{U}\frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t} + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L} - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L} - g\eta^{2}\frac{Q\left| \overline{U} \right|}{{\overline{R}}^{4/3}}$$   (3-12)
+\f[\frac{\mathrm{\Delta}Q}{\mathrm{\Delta}t} = 2\overline{U}\frac{\mathrm{\Delta}\overline{A}}{\mathrm{\Delta}t} + {\overline{U}}^{2}\frac{\left( A_{2} - A_{1} \right)}{L} - g\overline{A}\frac{\left( H_{2} - H_{1} \right)}{L} - g\eta^{2}\frac{Q\left| \overline{U} \right|}{{\overline{R}}^{4/3}}\f]   (3-12)
 
-where $\eta = \frac{n}{1.486}$. Average values for *A, U*, and *R* can
+where \f$\eta = \frac{n}{1.486}\f$. Average values for *A, U*, and *R* can
 be approximated using the heads *H*<sub>1</sub> and *H*<sub>2</sub> as described later on
 in section 3.3.1.
 
 The finite difference form of the nodal continuity equation 3-6 is:
 
-$$\frac{\Delta H}{\Delta t} = \frac{\sum Q}{A_{SN} + \sum A_{SL}}$$   (3-13)
+\f[\frac{\Delta H}{\Delta t} = \frac{\sum Q}{A_{SN} + \sum A_{SL}}\f]   (3-13)
 
 Previous versions of SWMM used an explicit forward Euler method (or more
 precisely the two-step Modified Euler method) to solve Equation 3-12,
-where known values of *Q, H, A*, $\overline{A}$, $\overline{U}$, and
-$\overline{R}$ at time *t* were used to solve for *Q* at time *t + ∆t*.
+where known values of *Q, H, A*, \f$\overline{A}\f$, \f$\overline{U}\f$, and
+\f$\overline{R}\f$ at time *t* were used to solve for *Q* at time *t + ∆t*.
 Then Equation 3-13 was solved with the new conduit flows to find new
 head values *H* at time *t + ∆t*.
 
@@ -236,34 +238,34 @@ SWMM 5 uses an implicit backwards Euler method instead to provide
 improved stability (Ascher and Petzold, 1998). Under this scheme
 Equation 3-12 is re-written as:
 
-$$Q^{t + \Delta t} = \frac{Q^{t} + \Delta Q_{inertia} + \Delta Q_{pressure}}{1 + \Delta Q_{friction}}$$ (3-14)
+\f[Q^{t + \Delta t} = \frac{Q^{t} + \Delta Q_{inertia} + \Delta Q_{pressure}}{1 + \Delta Q_{friction}}\f] (3-14)
 
 where the terms are defined as:
 
 *   **Inertial Term (3-14a):**
-    $$\Delta Q_{inertia} = 2\overline{U}( \overline{A}^{t + \Delta t} - \overline{A}^{t} ) + \overline{U}^{2}\frac{( A_{2} - A_{1} )}{L}\Delta t$$
+    \f[\Delta Q_{inertia} = 2\overline{U}( \overline{A}^{t + \Delta t} - \overline{A}^{t} ) + \overline{U}^{2}\frac{( A_{2} - A_{1} )}{L}\Delta t\f]
 
 *   **Pressure Term (3-14b):**
-    $$\Delta Q_{pressure} = - g\overline{A}\frac{( H_{2} - H_{1} )}{L}\Delta t$$
+    \f[\Delta Q_{pressure} = - g\overline{A}\frac{( H_{2} - H_{1} )}{L}\Delta t\f]
 
 *   **Friction Term (3-14c):**
-    $$\Delta Q_{friction} = g\eta^{2}\frac{\lvert \overline{U} \rvert\Delta t}{\overline{R}^{4/3}}$$
+    \f[\Delta Q_{friction} = g\eta^{2}\frac{\lvert \overline{U} \rvert\Delta t}{\overline{R}^{4/3}}\f]
 
-and now *H* and the quantities *A*, $\overline{A}$, $\overline{U}$, and
-$\overline{R}$ derived from it are all evaluated at the new time *t+∆t*.
+and now *H* and the quantities *A*, \f$\overline{A}\f$, \f$\overline{U}\f$, and
+\f$\overline{R}\f$ derived from it are all evaluated at the new time *t+∆t*.
 The finite difference form of the nodal continuity equation 3-12 can be
 expressed as:
 
-$$H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\Delta t}{2}\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right)}{\left( A_{SN} + \sum_{}^{}A_{SL} \right)^{t + \mathrm{\Delta}t}}$$   for non-outfall       (3-15a)
+\f[H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\Delta t}{2}\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right)}{\left( A_{SN} + \sum_{}^{}A_{SL} \right)^{t + \mathrm{\Delta}t}}\f]   for non-outfall       (3-15a)
 
-$$H^{t + \mathrm{\Delta}t} = H_{Outfall}$$   for outfall nodes     (3-15b)
+\f[H^{t + \mathrm{\Delta}t} = H_{Outfall}\f]   for outfall nodes     (3-15b)
 
 *H*<sub>Outfall</sub> is a user-supplied value that sets the head at a terminal
 outfall node. It can be a constant value, a value extracted from a
 user-supplied time series, or the elevation of the critical or normal
 flow depth in the connecting conduit. For the latter option, critical or
 normal depth is computed internally as a function of the conduit's flow
-rate and geometry as described in Chapter 5.
+rate and geometry as described in @ref hydraulics_ref_ch5_cross_section "Chapter 5".
 
 Equations 3-14 and 3-15 can be solved implicitly over a given time step
 *∆t* using functional iteration (also known as successive approximations
@@ -281,15 +283,15 @@ computation time.
 ### 3.3.1 Average Cross-Section Properties
 
 Evaluation of the flow updating formula 3-14 requires values for the
-average area ($\overline{A}$), hydraulic radius ($\overline{R}$), and
-velocity ($\overline{U}$) for the conduit in question. These values are
+average area (\f$\overline{A}\f$), hydraulic radius (\f$\overline{R}\f$), and
+velocity (\f$\overline{U}\f$) for the conduit in question. These values are
 computed using heads *H*<sub>1</sub> and *H*<sub>2</sub> belonging to the most recently
 computed head estimates *H<sup>last</sup>* at either end of the conduit. The flow
 depth *Y*<sub>1</sub> at the upstream end of the conduit is computed as:
 
-$$0 \text{ for } H_{1} \leq Z_{1}$$
-$$H_{1} - Z_{1} \text{ for } Z_{1} < H_{1} \leq Z_{1} + Y_{full}$$
-$$Y_{full} \text{ for } H_{1} > Z_{1} + Y_{full}$$
+\f[0 \text{ for } H_{1} \leq Z_{1}\f]
+\f[H_{1} - Z_{1} \text{ for } Z_{1} < H_{1} \leq Z_{1} + Y_{full}\f]
+\f[Y_{full} \text{ for } H_{1} > Z_{1} + Y_{full}\f]
 (3-16)
 
 where Z*<sub>1</sub>* is the elevation of the invert of the upstream end of the
@@ -303,15 +305,15 @@ end of the conduit.
 > 
 > 1. Initially let *Q<sup>last</sup>* and *H<sup>last</sup>* be the flow in each link and the head at each node, respectively, computed at time *t*. At time 0 these values are provided by the user-supplied initial conditions.
 > 
-> 2. Solve Equation 3-14 for each link producing a new flow estimate *Q<sup>new</sup>* for time *t + ∆t*, basing the values of *A*, $\overline{A}$, $\overline{U}$, and $\overline{R}$ on *H<sup>last</sup>*.
+> 2. Solve Equation 3-14 for each link producing a new flow estimate *Q<sup>new</sup>* for time *t + ∆t*, basing the values of *A*, \f$\overline{A}\f$, \f$\overline{U}\f$, and \f$\overline{R}\f$ on *H<sup>last</sup>*.
 > 
 > 3. Combine *Q<sup>new</sup>* and *Q<sup>last</sup>* together using a relaxation factor *θ* to produce a weighted value of *Q<sup>new</sup>*:
->    $$Q^{new} = (1 - \theta)Q^{last} + \theta Q^{new}$$
+>    \f[Q^{new} = (1 - \theta)Q^{last} + \theta Q^{new}\f]
 > 
-> 4. Compute a value for *H<sup>new</sup>* at each node from Equation 3-15 using the flows *Q<sup>new</sup>* for *Q^t+∆t^* and the heads *H<sup>last</sup>* to evaluate $A_{S}^{t + \Delta t}$.
+> 4. Compute a value for *H<sup>new</sup>* at each node from Equation 3-15 using the flows *Q<sup>new</sup>* for *Q^t+∆t^* and the heads *H<sup>last</sup>* to evaluate \f$A_{S}^{t + \Delta t}\f$.
 > 
 > 5. As with flows, apply a relaxation factor to combine *H<sup>last</sup>* and *H<sup>new</sup>*:
->    $$H^{new} = (1 - \theta)H^{last} + \theta H^{new}$$
+>    \f[H^{new} = (1 - \theta)H^{last} + \theta H^{new}\f]
 > 
 > 6. If *H<sup>new</sup>* is close enough to *H<sup>last</sup>* for each node then the process stops with *Q<sup>new</sup>* and *H<sup>new</sup>* as the solution for time *t+∆t*. Otherwise, *H<sup>last</sup>* and *Q<sup>last</sup>* are set equal to *H<sup>new</sup>* and *Q<sup>new</sup>*, respectively, and the process returns to step 2.
 > 
@@ -320,12 +322,12 @@ end of the conduit.
 > - The convergence tolerance and maximum number of trials can be set by the user. Their default values are 0.005 feet and 8, respectively.
 > - For links whose end node heads have already converged, steps 2 and 3 can be skipped and *Q<sup>new</sup>* can be set equal to *Q<sup>last</sup>*.
 
-Values of $\overline{A}$ and $\overline{R}$ are computed from the
+Values of \f$\overline{A}\f$ and \f$\overline{R}\f$ are computed from the
 conduit's cross section geometry at the average flow depth
-$\frac{\overline{Y} = \left( Y_{1} + Y_{2} \right)}{2}$. Formulas for
+\f$\frac{\overline{Y} = \left( Y_{1} + Y_{2} \right)}{2}\f$. Formulas for
 doing so are described in Chapter 5 of this manual. The average velocity
-$\overline{U}$ is found by dividing the most current flow value
-*Q<sup>last</sup>* by the average area $\overline{A}$.
+\f$\overline{U}\f$ is found by dividing the most current flow value
+*Q<sup>last</sup>* by the average area \f$\overline{A}\f$.
 
 In addition, the average area and hydraulic radius used in the pressure
 and friction terms of equation 3-14 are upstream weighted to reflect how
@@ -334,23 +336,23 @@ influenced only by upstream conditions (i.e., wave disturbances
 propagate only in the downstream direction). The weight is derived from
 the Froude number *Fr* for *Q<sup>last</sup>*:
 
-$$Fr = \frac{\left| \overline{U} \right|}{\sqrt{g\frac{\overline{A}}{\overline{W}}}}$$   (3-17)
+\f[Fr = \frac{\left| \overline{U} \right|}{\sqrt{g\frac{\overline{A}}{\overline{W}}}}\f]   (3-17)
 
-where $\overline{W}$ is the top water surface width at the average depth
-$\overline{Y}$. (*Fr* is set to 0 for closed conduits flowing full). A
+where \f$\overline{W}\f$ is the top water surface width at the average depth
+\f$\overline{Y}\f$. (*Fr* is set to 0 for closed conduits flowing full). A
 factor *σ* is then computed as:
 
-$$1 \text{ for } Fr \leq 0.5$$
-$$2(1 - Fr) \text{ for } 0.5 < Fr < 1$$
-$$0 \text{ for } Fr \geq 1$$
+\f[1 \text{ for } Fr \leq 0.5\f]
+\f[2(1 - Fr) \text{ for } 0.5 < Fr < 1\f]
+\f[0 \text{ for } Fr \geq 1\f]
 (3-18)
 
 It is used to modify the average area in Equation 3-14b and the average
 hydraulic radius in Equation 3-14c as follows:
 
-$${\overline{A}}' = A_{1} + \ \sigma\left( \overline{A} - A_{1} \right)$$      (3-19)
+\f[{\overline{A}}' = A_{1} + \ \sigma\left( \overline{A} - A_{1} \right)\f]      (3-19)
 
-$${\overline{R}}' = R_{1} + \ \sigma\left( \overline{R} - R_{1} \right)$$      (3-20)
+\f[{\overline{R}}' = R_{1} + \ \sigma\left( \overline{R} - R_{1} \right)\f]      (3-20)
 
 where *A*<sub>1</sub> and *R*<sub>1</sub> are the flow area and hydraulic radius,
 respectively, based on the upstream flow depth *Y*<sub>1</sub>.
@@ -362,13 +364,13 @@ its upstream node (*A*<sub>SL1</sub>) is the average top width of the water
 surface over the upstream half of the conduit times half of the
 conduit's length. In equation form:
 
-$$A_{SL1} = \left( \frac{W\left( Y_{1} \right) + \ W(\overline{Y})}{2} \right)\frac{L}{2}$$   (3-21)
+\f[A_{SL1} = \left( \frac{W\left( Y_{1} \right) + \ W(\overline{Y})}{2} \right)\frac{L}{2}\f]   (3-21)
 
 where *W(Y)* is the flow cross-section top width at a given flow depth
-*Y* and $\overline{Y} = \frac{\left( Y_{1} + Y_{2} \right)}{2}$. A
+*Y* and \f$\overline{Y} = \frac{\left( Y_{1} + Y_{2} \right)}{2}\f$. A
 similar expression applies to the downstream surface area *A*<sub>SL2</sub>.
 *W(Y)* is computed from the conduit's cross-section geometry as
-described in Chapter 5.
+described in @ref hydraulics_ref_ch5_cross_section "Chapter 5".
 
 Because sewer systems are frequently built with pipe invert
 discontinuities at manholes they can encounter free-fall conditions
@@ -412,16 +414,16 @@ Finally, to guard against the nodal head change formula 3-15 from
 becoming unbounded as surface area becomes vanishingly small, a global
 minimum surface area *A*<sub>Smin</sub> is imposed as follows:
 
-$$A_{S} = max\left( A_{Smin},\ A_{SN} + \sum_{}^{}A_{SL} \right)$$   (3-22)
+\f[A_{S} = max\left( A_{Smin},\ A_{SN} + \sum_{}^{}A_{SL} \right)\f]   (3-22)
 
 Its default value is 12.56 sq ft (i.e., the area of a 4-ft diameter
 manhole) which can be overridden by the user. This is strictly a
 computational device and does not add volume to a junction node (where
-*A~SN~ = 0*) nor change it into a storage node.
+*A<sub>SN</sub> = 0*) nor change it into a storage node.
 
-![Pipe.bmp](VolumeII/media/media/image12.png)
+![Pipe.bmp](hydraulics/media/media/image12.png)
 
-![SurfaceArea2.bmp](VolumeII/media/media/image13.png)
+![SurfaceArea2.bmp](hydraulics/media/media/image13.png)
 
 **Figure 3‑2 Special flow conditions for dynamic wave analysis**
 
@@ -429,10 +431,10 @@ computational device and does not add volume to a junction node (where
 
 | Condition | Criteria | Adjustments |
 |---|---|---|
-| Upstream Dry | *Y*<sub>1</sub> = 0<br>*Z*<sub>1</sub> > *E*<sub>1</sub> | *A*<sub>SL1</sub> = 0* if $H_{2} \leq Z_{1}$<br>otherwise use Upstream Critical adjustment |
-| Downstream Dry | *Y*<sub>2</sub> = 0<br>*Z*<sub>2</sub> > *E*<sub>2</sub> | *A*<sub>SL2</sub> = 0* if $H_{1} \leq Z_{2}$<br>otherwise use Downstream Critical adjustment |
-| Upstream Critical | *Q* < 0<br>*Z*<sub>1</sub> > *E*<sub>1</sub><br>*H*<sub>1</sub> -- *Z*<sub>1</sub> < *Y*\* | *Y*<sub>1</sub> = *Y*\*<br>*H*<sub>1</sub> = *Y*\* + *Z*<sub>1</sub><br>*A*<sub>SL1</sub> = 0<br>$$A_{SL2} = L\frac{\left( \overline{W} + W_{2} \right)}{2}$$ |
-| Downstream Critical | *Q* > 0<br>*Z*<sub>2</sub> > *E*<sub>2</sub><br>*H*<sub>2</sub> -- *Z*<sub>2</sub> < *Y*\* | *Y*<sub>2</sub> = *Y*\*<br>*H*<sub>2</sub> = *Y*\* + *Z*<sub>2</sub><br>*A*<sub>SL2</sub> = 0<br>$$A_{SL1} = L\frac{\left( \overline{W} + W_{1} \right)}{2}$$ |
+| Upstream Dry | *Y*<sub>1</sub> = 0<br>*Z*<sub>1</sub> > *E*<sub>1</sub> | *A*<sub>SL1</sub> = 0* if \f$H_{2} \leq Z_{1}\f$<br>otherwise use Upstream Critical adjustment |
+| Downstream Dry | *Y*<sub>2</sub> = 0<br>*Z*<sub>2</sub> > *E*<sub>2</sub> | *A*<sub>SL2</sub> = 0* if \f$H_{1} \leq Z_{2}\f$<br>otherwise use Downstream Critical adjustment |
+| Upstream Critical | *Q* < 0<br>*Z*<sub>1</sub> > *E*<sub>1</sub><br>*H*<sub>1</sub> -- *Z*<sub>1</sub> < *Y*\* | *Y*<sub>1</sub> = *Y*\*<br>*H*<sub>1</sub> = *Y*\* + *Z*<sub>1</sub><br>*A*<sub>SL1</sub> = 0<br>\f[A_{SL2} = L\frac{\left( \overline{W} + W_{2} \right)}{2}\f] |
+| Downstream Critical | *Q* > 0<br>*Z*<sub>2</sub> > *E*<sub>2</sub><br>*H*<sub>2</sub> -- *Z*<sub>2</sub> < *Y*\* | *Y*<sub>2</sub> = *Y*\*<br>*H*<sub>2</sub> = *Y*\* + *Z*<sub>2</sub><br>*A*<sub>SL2</sub> = 0<br>\f[A_{SL1} = L\frac{\left( \overline{W} + W_{1} \right)}{2}\f] |
 | Notes: | | |
 | 1. *E*<sub>1</sub> = upstream node invert elevation, *E*<sub>2</sub> = downstream node invert elevation. | | |
 | 2. *Z*<sub>1</sub> = upstream conduit invert elevation, *Z*<sub>2</sub> = downstream conduit invert elevation. | | |
@@ -446,7 +448,7 @@ in the Saint Venant equation as the flow shifts between sub-critical and
 supercritical states improves the solution's stability (see Fread et al.
 (1996) where it is referred to as the Local Partial Inertia technique).
 SWMM 5 offers the option to use the aforementioned σ factor to dampen
-the inertial term ${\mathrm{\Delta}Q}_{inertia}$ in the flow updating
+the inertial term \f${\mathrm{\Delta}Q}_{inertia}\f$ in the flow updating
 formula 3-14. As seen by equation 3-18, the factor is 1 for Froude
 numbers up to 0.5, 0 for Froude numbers at 1 or higher, and varies
 linearly in between. The damping factor σ is computed and applied on a
@@ -456,11 +458,11 @@ Another option offered by SWMM 5 is to ignore the inertial term
 completely. This corresponds to the so-called local inertial formulation
 of the St. Venant equation (de Almeida and Bates, 2013). It drops the
 convective acceleration term
-$\left( \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} \right)$
+\f$\left( \frac{\partial\left( \frac{Q^{2}}{A} \right)}{\partial x} \right)\f$
 of the momentum equation 3-2 altogether resulting in
-${\mathrm{\Delta}Q}_{inertia}$ being 0 in all conduits. (This is not the
+\f${\mathrm{\Delta}Q}_{inertia}\f$ being 0 in all conduits. (This is not the
 same as the diffusion wave formulation which also drops the local
-acceleration term $\left( \frac{\partial Q}{\partial t} \right)$ of the
+acceleration term \f$\left( \frac{\partial Q}{\partial t} \right)\f$ of the
 momentum equation as well.) This option can also result in improved
 stability particularly during periods of rapid flow change.
 
@@ -487,7 +489,7 @@ either slope or Froude number as a program option. When all of these
 criteria are satisfied the flow is limited to be no greater than that
 found by the Manning equation (*Q*<sub>norm</sub>) using upstream conditions:
 
-$$Q_{norm} = \frac{1.49}{n}A_{1}R_{1}^{2/3}\sqrt{S_{0}}$$   (3-23)
+\f[Q_{norm} = \frac{1.49}{n}A_{1}R_{1}^{2/3}\sqrt{S_{0}}\f]   (3-23)
 
 where *S*<sub>0</sub> is the conduit slope. Two other flow limiting conditions
 are also checked. If the conduit was assigned an upper flow limit then
@@ -508,15 +510,15 @@ itself would no longer be surcharged.
 
 **Figure 3-3 Illustration of a surcharged node**
 
-![Surcharge4.bmp](VolumeII/media/media/image14.png)
+![Surcharge4.bmp](hydraulics/media/media/image14.png)
 
 When a node becomes surcharged there is no more volume available in the
 conduits forming the node's assembly to absorb the difference between
-inflow and outflow at the node. Thus $\frac{\partial V}{\partial t}$ in
+inflow and outflow at the node. Thus \f$\frac{\partial V}{\partial t}\f$ in
 the flow continuity Equation 3-5 is 0 and the surcharged nodal
 continuity condition becomes:
 
-$$\sum_{}^{}Q = 0$$                                        (3-24)
+\f[\sum_{}^{}Q = 0\f]                                        (3-24)
 
 By itself, this equation is insufficient to update nodal heads at the
 new time step since it only contains flows. In addition, because the
@@ -527,12 +529,12 @@ the surcharged nodes after a flow solution has been reached.
 To enforce the surcharge flow continuity condition, it can be expressed
 in the form of a perturbation equation:
 
-$$\sum_{}^{}\left\lbrack Q + \frac{\partial Q}{\partial H}\mathrm{\Delta}H \right\rbrack = 0$$   (3-25)
+\f[\sum_{}^{}\left\lbrack Q + \frac{\partial Q}{\partial H}\mathrm{\Delta}H \right\rbrack = 0\f]   (3-25)
 
 where *∆H* is the adjustment to the node's head that must be made to
 achieve a flow balance. Solving for *∆H* yields:
 
-$$\mathrm{\Delta}H = \frac{- \sum_{}^{}Q}{\sum_{}^{}\frac{\partial Q}{\partial H}}$$   (3-26)
+\f[\mathrm{\Delta}H = \frac{- \sum_{}^{}Q}{\sum_{}^{}\frac{\partial Q}{\partial H}}\f]   (3-26)
 
 where the summations are made over all conduits that are connected to
 the node in question.
@@ -541,9 +543,9 @@ The gradient of flow in a conduit with respect to the head at either end
 node can be evaluated by differentiating the flow updating equation 3-14
 resulting in:
 
-$$\frac{\partial Q}{\partial H} = \frac{\frac{- g\overline{A}\mathrm{\Delta}t}{L}}{1 + \mathrm{\Delta}Q_{friction}}$$   (3-27)
+\f[\frac{\partial Q}{\partial H} = \frac{\frac{- g\overline{A}\mathrm{\Delta}t}{L}}{1 + \mathrm{\Delta}Q_{friction}}\f]   (3-27)
 
-The numerator of $\frac{\partial Q}{\partial H}$ has a negative sign in
+The numerator of \f$\frac{\partial Q}{\partial H}\f$ has a negative sign in
 front of it because when evaluating ΣQ flow directed out of a node is
 considered negative while flow into the node is positive. It is computed
 for each link at the same time that the link's flow is updated at Step 2
@@ -561,18 +563,18 @@ connecting conduit *H*<sub>crown</sub>. If it is not surcharged then Equation
 modified form of Equation 3-26 is used to estimate the new head *H*<sup>new</sup>
 for time *t + ∆t*:
 
-$$H^{new} = H^{last} + \frac{\alpha\sum_{}^{}Q^{new}}{(1 - \beta)\sum_{}^{}\left( \frac{\partial Q}{\partial H} \right)^{last} + \frac{\beta A_{S}^{last}}{\mathrm{\Delta}t}}$$   (3-28)
+\f[H^{new} = H^{last} + \frac{\alpha\sum_{}^{}Q^{new}}{(1 - \beta)\sum_{}^{}\left( \frac{\partial Q}{\partial H} \right)^{last} + \frac{\beta A_{S}^{last}}{\mathrm{\Delta}t}}\f]   (3-28)
 
 where
 
 | | | |
 |---|---|---|
 | *α* | = | 0.6 for upstream terminal nodes with only outflow links and 1.0 otherwise |
-| *β* | = | $exp( - 15.0f_{H})$ |
-| *f*<sub>H</sub> | = | $$\frac{\left( H^{last} - E \right)}{\left( H_{crown} - E \right) - \ 1}$$ |
+| *β* | = | \f$exp( - 15.0f_{H})\f$ |
+| *f*<sub>H</sub> | = | \f[\frac{\left( H^{last} - E \right)}{\left( H_{crown} - E \right) - \ 1}\f] |
 | *H*<sub>crown</sub> | = | elevation of the crown of the node's highest connecting flowing conduit (ft) |
 | *E* | = | elevation of the node's invert (ft) |
-| $$A_{S}^{last}$$ | = | surface area of the node the last time it was not surcharged (ft²) |
+| \f[A_{S}^{last}\f] | = | surface area of the node the last time it was not surcharged (ft²) |
 
 The *α* factor is used to reduce oscillations in head at upstream
 terminal nodes that have only outflow links (Roesner et al., 1992). The
@@ -583,9 +585,9 @@ combination of the pure surcharge formula 3-26 and the surface area
 formula 3-15. By the time that the water level rises 25% above the
 highest conduit, the equation is 98% pure surcharge.
 
-The flow values used for $\sum_{}^{}Q$ are the new flow estimates found
+The flow values used for \f$\sum_{}^{}Q\f$ are the new flow estimates found
 from Step 3 of the solution procedure. The
-$\frac{\partial Q}{\partial H}$ values are those that were last
+\f$\frac{\partial Q}{\partial H}\f$ values are those that were last
 evaluated at Step 2. And finally, empirical testing has shown that more
 robust performance is obtained when under-relaxation is not applied to
 *H*<sup>new</sup> at Step 5 of the solution procedure when surcharging occurs.
@@ -609,7 +611,7 @@ celerity of an open channel gravity wave equal the speed of a pressure
 wave affected by the compressibility of the elastic pipe wall. This
 would result in a slot width *w*<sub>slot</sub> equal to:
 
-> $w_{slot} = gA/c^{2}$ (3-29)
+> \f$w_{slot} = gA/c^{2}\f$ (3-29)
 
 where *g* is the acceleration of gravity, *A* is the conduit's
 cross-sectional area when full and *c* is the speed of the pressure
@@ -624,12 +626,12 @@ transition between almost full flow and slot flow. The choice used by
 SWMM is a modified version of a formula proposed by Sjőberg (1982) and
 is given by:
 
-> $\frac{w_{slot}}{W_{\max}} = 0.5423\exp\left( - \left( \frac{Y}{Y_{full}} \right)^{2.4} \right)$
+> \f$\frac{w_{slot}}{W_{\max}} = 0.5423\exp\left( - \left( \frac{Y}{Y_{full}} \right)^{2.4} \right)\f$
 > (3-30)
 
 where *W*<sub>max</sub> is the conduit's maximum width, *Y*<sub>full</sub> is its full
 depth, and Y is depth of flow. This equation applies to
-$\frac{Y}{Y_{full}}$ values between 0.985257 and 1.7. Below this range
+\f$\frac{Y}{Y_{full}}\f$ values between 0.985257 and 1.7. Below this range
 the slot is not used while above it the slot width relative to *W*<sub>max</sub>
 is clamped at 0.01. The range's lower limit was chosen so that the width
 computed from equation 3-30 is the same as the width across a circular
@@ -666,7 +668,7 @@ Normally when the new head estimate *H*<sup>new</sup> at a node computed at Step
 associated with this condition is the average net flow rate (inflow --
 outflow) seen by the node over the current time step:
 
-$$Q_{ovfl} = 0.5\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right)$$   (3-31)
+\f[Q_{ovfl} = 0.5\left( \sum_{}^{}{Q^{t} + \sum_{}^{}Q^{t + \mathrm{\Delta}t}} \right)\f]   (3-31)
 
 This flow is then lost from the system, the same as the flow entering a
 terminal outfall node.
@@ -685,7 +687,7 @@ updated head is restricted to be just a small value above *H*<sub>max</sub> (or
 below it in the opposite case) to avoid wide swings in head during the
 transition.
 
-![Surcharge5.bmp](VolumeII/media/media/image15.png)
+![Surcharge5.bmp](hydraulics/media/media/image15.png)
 
 **Figure 3-4 Ponding of excess water above a junction**
 
@@ -735,6 +737,351 @@ earlier in Section 3.2:
     head cannot exceed its maximum value and any excess inflow it
     receives is lost from the system (see Section 3.3.7).
 
+### 3.3.9 Dynamic Preissmann Slot
+
+The slot method of Section 3.3.6 makes the slot width a fixed function
+of flow depth, so the pressure-wave celerity it implies is a property of
+the cross-section rather than a quantity the modeler controls. OpenSWMM
+provides a third surcharge treatment, the dynamic Preissmann slot,
+based on the generalized, dynamic and transient-storage form of the
+slot developed by Sharior, Hodges, and Vasconcelos (2023). It is
+selected by setting the `SURCHARGE_METHOD` option to `DYNAMIC_SLOT`
+(the other recognized values being `EXTRAN`, the default, for the
+surcharge algorithm of Section 3.3.5 and `SLOT` for the static slot of
+Section 3.3.6). Under this method the slot's cross-sectional area
+evolves in time as an element of transient storage, and the modeler
+specifies the maximum pressure-wave celerity directly.
+
+The method is organized around the Preissmann number *P*, defined as
+the ratio of a target pressure celerity *c*<sub>pT</sub> supplied by the user to
+the local pressure celerity *c*<sub>p</sub> that the slot currently produces:
+
+| | | | |
+|---|---|---|---|
+| \f[P = \frac{c_{pT}}{c_{p}}\f] | | (3-36) | |
+
+*P* equals 1 when a conduit has been pressurized long enough for its
+pressure waves to travel at the full target celerity, and exceeds 1
+during the transition through the mixed-flow interface, where an
+artificially reduced celerity (a wider slot) moderates the shock that
+accompanies pressurization.
+
+Because the node-link solution method treats nodal head as the
+prognostic variable, the formulation is applied in head-first form.
+At each iteration of the solution procedure the surcharge head of a
+closed conduit is read directly from the current depth solution as
+\f$h_{s} = \max\left( \overline{Y} - Y_{full},\ 0 \right)\f$, where
+\f$\overline{Y}\f$ is the average flow depth of Section 3.3.1. The slot
+top width associated with the current Preissmann number is
+
+| | | | |
+|---|---|---|---|
+| \f[T_{s} = \frac{gA_{full}}{c_{pT}^{2}}P^{2}\f] | | (3-37) | |
+
+which reduces to the classical celerity-based slot width (compare
+Equation 3-29) when *P* = 1. The slot's stored area is then accumulated
+incrementally from the change in surcharge head between successive
+iterates:
+
+| | | | |
+|---|---|---|---|
+| \f[A_{s} \leftarrow \max\left( A_{s} + T_{s}\,\Delta h_{s},\ 0 \right)\f] | | (3-38) | |
+
+where \f$\Delta h_{s}\f$ is the change in *h*<sub>s</sub> since the previous iterate.
+Each increment of slot storage is created at the slot width in force at
+the time it accumulates; previously stored contributions to *A*<sub>s</sub> are
+never rewritten as *P* subsequently decays. This path-dependent
+accumulation is what prevents the energy amplification ("slot
+squeezing") that occurs when a dynamic rectangular slot narrows around
+storage it has already accepted. If the head falls back below the crown
+while slot area remains, the surcharge head is held at zero and the
+remaining area drains through subsequent negative increments, providing
+the depressurization hysteresis of the original formulation.
+
+While a conduit's slot is active, its effective geometry is overridden
+as follows: the flow area becomes *A*<sub>full</sub> + *A*<sub>s</sub> (at the midpoint,
+and at whichever ends stand above the crown), the top width becomes
+*T*<sub>s</sub>, and the surface area the conduit contributes to a surcharged end
+node is \f$T_{s}L/4\f$ — the value Equation 3-21 produces for a uniform
+width *T*<sub>s</sub>. The hydraulic radius remains at its full-conduit value so
+that, as with the static slot, the slot contributes storage but not
+friction. Because the slot supplies a genuine surface area at every
+depth, nodal heads continue to be updated with the ordinary
+free-surface formula 3-15 at all times; the surcharge branch of
+Equation 3-28 is never invoked, and the piezometric head above the
+crown emerges naturally as invert + *Y*<sub>full</sub> + *h*<sub>s</sub>. As with the
+static slot, flow depths are not limited to *Y*<sub>full</sub> and the crown
+cutoff of Equation 3-30 applies. Open cross-sections, which have no
+crown, are excluded from the method entirely.
+
+The Preissmann number itself evolves between routing steps. When a
+closed conduit first pressurizes, *P* starts from an initial value tied
+to the gravity-wave celerity of its cross-section:
+
+| | | | |
+|---|---|---|---|
+| \f[\widehat{P}_{0} = \max\left( \frac{c_{pT}}{\alpha_{s}c_{g}},\ 1 \right), \qquad c_{g} = \sqrt{g\frac{A_{full}}{W_{max}}}\f] | | (3-39) | |
+
+where *α*<sub>s</sub> is a user-supplied surcharge shock parameter. Larger
+values of *α*<sub>s</sub> start the slot celerity closer to the gravity-wave
+celerity, easing the transition at the mixed-flow interface. While the
+conduit remains surcharged, a provisional Preissmann number decays
+exponentially toward 1:
+
+| | | | |
+|---|---|---|---|
+| \f[\widehat{P}\left( t \right) = 1 + \left( \widehat{P}_{0} - 1 \right)\exp\left( \frac{- 10\left( t - t_{s} \right)}{r} \right)\f] | | (3-40) | |
+
+where *t*<sub>s</sub> is the time at which the conduit last became surcharged
+and *r* is a decay time scale; the factor of 10 places \f$\widehat{P}\f$
+within about 3 percent of 1 when *t* − *t*<sub>s</sub> = *r*. When a conduit
+fully depressurizes, its provisional Preissmann number is reset to
+\f$\widehat{P}_{0}\f$ and its accumulated slot state is cleared, so the
+next surcharge episode starts from a clean baseline.
+
+To avoid sharp celerity gradients where conduits of different size or
+pressurization history meet, the provisional values are spatially
+smoothed once per routing step. The \f$\widehat{P}\f$ values of the closed
+conduits incident to each node are averaged, and each conduit's working
+Preissmann number is taken as the mean of the averages at its two end
+nodes:
+
+| | | | |
+|---|---|---|---|
+| \f[P = \max\left( \frac{\left\langle \widehat{P} \right\rangle_{1} + \left\langle \widehat{P} \right\rangle_{2}}{2},\ 1 \right)\f] | | (3-41) | |
+
+where \f$\left\langle \widehat{P} \right\rangle_{1}\f$ and
+\f$\left\langle \widehat{P} \right\rangle_{2}\f$ denote the nodal averages
+at the conduit's upstream and downstream ends. This adapts the
+element-to-face-to-element interpolation of the original finite-volume
+formulation to SWMM's link-node topology.
+
+Since the dominant signal speed in a pressurized conduit is the
+pressure celerity rather than the gravity-wave celerity, the variable
+time step option of Section 3.4 evaluates the Courant condition for a
+surcharged conduit against *c*<sub>p</sub> = *c*<sub>pT</sub> / *P*:
+
+| | | | |
+|---|---|---|---|
+| \f[\mathrm{\Delta}t \leq \frac{L}{\left\lvert \overline{U} \right\rvert + c_{pT}/P}\f] | | (3-42) | |
+
+High target celerities therefore purchase transient fidelity at the
+cost of proportionally smaller time steps.
+
+The method is controlled by three `[OPTIONS]` keywords in addition to
+`SURCHARGE_METHOD`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `DPS_CELERITY` | 25.0 | Target pressure celerity *c*<sub>pT</sub>, in meters per second regardless of the project's unit system (converted internally). |
+| `DPS_ALPHA` | 3.0 | Surcharge shock parameter *α*<sub>s</sub> in Equation 3-39; values below 2 are raised to 2. |
+| `DPS_DECAY_TIME` | 0.5 | Decay time scale *r* in Equation 3-40, in seconds. |
+
+In summary, the dynamic slot differs from the surcharge algorithm of
+Section 3.3.5 in that heads are always updated through the
+free-surface continuity formula rather than a separate flow-balance
+branch, and from the static slot of Section 3.3.6 in that the slot
+width reflects the conduit's pressurization state and history rather
+than its instantaneous depth, with the pressure-wave celerity as an
+explicit, user-controlled quantity.
+
+<!-- PLACEHOLDER IMAGE (replace with final drawing): cross-section of a closed conduit surcharged under the dynamic Preissmann slot, showing the full conduit area A_full, the accumulated slot area A_s above the crown with top width T_s, the surcharge head h_s, and an inset timeline of the Preissmann number decaying from P_hat_0 toward 1 after pressurization at t_s. Regenerate or replace docs/manuals/reference/hydraulics/media/media/figure3-8-placeholder.png (source: scripts/generate_placeholder_figures.py). -->
+![Figure 3-8](figure3-8-placeholder.png)
+
+*Figure 3-8 Conceptual representation of the dynamic Preissmann slot*
+
+The pressurization life cycle of a conduit end under the dynamic slot
+is summarized in Figure 3-9.
+
+<pre class="mermaid">
+stateDiagram-v2
+    direction LR
+    FS : Free surface
+    FS : slot closed, geometry from section tables
+    PR : Pressurizing
+    PR : depth crosses crown, state seeded P = P_hat_0
+    SA : Slot active
+    SA : width T_s from P, incremental A_s accumulation
+    DP : Depressurizing
+    DP : head falls below crown with hysteresis band
+    FS --> PR : h rises past y_full
+    PR --> SA : first pressurized iteration
+    SA --> SA : P decays toward 1 over DPS_DECAY_TIME
+    SA --> DP : h_s drops below hysteresis threshold
+    DP --> FS : state reset, slot area released
+    DP --> SA : head recovers before reset
+</pre>
+
+*Figure 3-9 State transitions of the dynamic Preissmann slot at a
+conduit end (rendered diagram; states and transitions as implemented in
+`updateDPSState`)*
+
+**Implementation.** The dynamic slot is implemented in the dynamic wave
+solver (@ref openswmm::dynwave::DWSolver "DWSolver" in
+`src/engine/hydraulics/DynamicWave.cpp`): the per-iteration geometry
+override in `applyDPSGeometry`, the post-iteration Preissmann-number
+update in `updateDPSState`, the nodal smoothing in `spatialSmoothP`,
+and the celerity-based time step limit in `getLinkStep`. The option
+values are held in @ref openswmm::SimulationOptions "SimulationOptions"
+(`src/engine/core/SimulationOptions.hpp`) and parsed in
+`src/engine/input/handlers/OptionsHandler.cpp`.
+
+*Reference: Sharior, S., Hodges, B.R., and Vasconcelos, J.G. (2023).
+"Generalized, Dynamic, and Transient-Storage Form of the Preissmann
+Slot." Journal of Hydraulic Engineering, 149(11), 04023046.*
+
+### 3.3.10 Virtual Junctions
+
+A change in a pipe's grade with no change in its cross-section must be
+represented in the node-link scheme by splitting the conduit at a
+junction. That junction introduces two artifacts. First, its surface
+area is floored at the minimum value *A*<sub>Smin</sub> of Equation 3-22, so the
+split reach carries artificial storage that smears transients — a
+recognized limitation of the practice of artificially discretizing
+conduits with intermediate junctions (Pachaly et al., 2020). Second,
+each conduit solves its own momentum equation against the shared node
+head, so the momentum flux arriving from the upstream conduit is not
+transmitted; the node acts as a small stagnation volume. A virtual
+junction removes both artifacts for the specific case the practice is
+meant to serve: two collinear conduits of identical cross-section
+meeting at a grade break.
+
+Virtual junctions are declared in a dedicated `[VIRTUAL_JUNCTIONS]`
+input section whose entries carry only a name and an invert elevation:
+
+    [VIRTUAL_JUNCTIONS]
+    ;;Name           Elev
+    VJ1              101.25
+
+All remaining geometry is derived: the maximum depth equals the shared
+pipe's full depth, and the surcharge depth and ponded area are zero.
+In reports and output files a virtual junction appears as an ordinary
+junction whose stored volume is identically zero.
+
+A node is eligible to be a virtual junction only if it satisfies all of
+the following, which are enforced when the input file is processed:
+
+1.  Exactly two links are attached, and both are conduits. Pumps,
+    orifices, weirs and outlets require a regular junction.
+
+2.  The two conduits have identical cross-sections — the same shape,
+    dimensions, shape curve reference and number of barrels. Their
+    Manning roughness values may differ, since a grade break often
+    coincides with a change of pipe material.
+
+3.  Both conduit offsets at the node are zero; the node's invert is
+    continuous with both conduit inverts.
+
+4.  No lateral inflow of any kind targets the node — external or dry
+    weather inflows, RDII, subcatchment outlets, LID drains, or
+    two-dimensional surface coupling. All inflow must arrive through
+    the upstream conduit.
+
+5.  The routing method is dynamic wave (or the finite-volume method of
+    @ref hydraulics_ref_ch8_finite_volume "Chapter 8", under which a
+    virtual junction is consumed at mesh construction and becomes an
+    ordinary interior face).
+
+Violating any rule produces an input error naming the offending node.
+
+**Continuity treatment.** A virtual junction is a sealed, zero-storage
+node. Its head is updated with the free-surface formula 3-15 using the
+natural half-link surface area contributed by its two conduits, without
+the minimum surface-area floor of Equation 3-22 — the
+floor is precisely the artificial storage the feature removes, while
+the natural link area is the correct linearization of the adjacent
+conduits' own storage response. When that natural area vanishes — a dry
+pair, or a fully surcharged pair whose slot width is small — the update
+falls back to a pure flow-balance (zero-storage) form of the surcharge
+update, Equation 3-28 with *α* = 1 and no surface-area floor, including
+the *β* crown-proximity blending so that entry into and exit from
+surcharge remains smooth. At convergence the flow balance
+\f$\sum Q = 0\f$ holds at the node with no storage term. The node is
+sealed: its head may rise above the pipe crown without bound (like a
+manhole with a bolted cover), it can never flood or pond, and its
+committed volume and overflow are identically zero, so it contributes
+nothing to the system's storage or flooding totals.
+
+**Momentum treatment.** When the pair has a through orientation — one
+conduit entering the node and one leaving — the solver couples the two
+momentum equations across the break. When flow runs in the pair's
+forward direction, the downstream conduit's upstream-weighted area and
+hydraulic radius (Equations 3-19 and 3-20) take the upstream conduit's
+mid-reach values as their upwind state, carrying the advected momentum
+state across the node instead of restarting it. When the
+`VIRTUAL_JUNCTION_MOMENTUM` option is set to `FULL` (the default is
+`BASIC`), an additional cross-junction convective correction is added
+to the \f$\Delta Q_{inertia}\f$ term of both conduits:
+
+| | | | |
+|---|---|---|---|
+| \f[\Delta Q_{j} = \mathrm{\Delta}t\,\sigma_{j}\frac{\left( \overline{U}^{2}\overline{A} \right)_{dn} - \left( \overline{U}^{2}\overline{A} \right)_{up}}{\Lambda}, \qquad \Lambda = \frac{L_{up} + L_{dn}}{2}\f] | | (3-43) | |
+
+which represents the convective flux difference across a control volume
+spanning the two half-conduits. Here *σ*<sub>j</sub> is a damping factor of the
+form of Equation 3-18 evaluated from the through-flow Froude number at
+the junction, so the correction is silenced near critical flow just as
+the per-conduit inertial terms are, and the correction vanishes
+whenever the two conduits do not carry flow the same way through the
+node. Pairs in a sag or peak orientation (both conduits pointing into,
+or out of, the node) receive the zero-storage continuity treatment but
+not the directional momentum coupling. The two conduits of a pair are
+also always solved together: neither is frozen by the converged-node
+bypass of the solution procedure unless both are, and the variable
+time step includes a pair-level Courant check
+\f$\Lambda/\left( \left\lvert \overline{U} \right\rvert + c \right)\f$ in
+addition to the per-conduit checks of Section 3.4.
+
+As a measure of how well the interface conserves momentum, the solver
+accumulates a discrete momentum residual for each through pair at the
+end of every routing step,
+
+| | | | |
+|---|---|---|---|
+| \f[R_{j} = \left( \frac{Q^{2}}{A} \right)_{up} - \left( \frac{Q^{2}}{A} \right)_{dn} + g\overline{A}\left( Y_{up} - Y_{dn} \right)\f] | | (3-44) | |
+
+evaluated per barrel at the two conduit ends meeting the node, and
+reports its maximum and mean in a Virtual Junction Summary in the
+status report. With identical cross-sections and a shared node head the
+hydrostatic terms cancel, so *R*<sub>j</sub> measures the discrete momentum-flux
+mismatch directly.
+
+**Modeling implications.** A virtual junction transmits streamwise
+momentum and is intended for grade breaks between near-collinear
+pipes, where the deflection angle is small and axial momentum
+conservation is exact to within discretization error. A plan-view bend
+imposes a wall reaction force that a one-dimensional interface cannot
+represent; bends should remain regular junctions with entrance and
+exit loss coefficients. Because a virtual junction stores no water, a
+long conduit may be subdivided with virtual junctions to increase
+spatial resolution without accumulating the artificial nodal storage
+that the same subdivision with regular junctions would introduce.
+Control rules may reference a virtual junction's depth, which is well
+defined; its volume is identically zero.
+
+<!-- PLACEHOLDER IMAGE (replace with final drawing): profile view of a grade break modeled two ways: left, a regular junction with its MIN_SURFAREA storage and stagnation volume annotated; right, a virtual junction shown as an interior point of the fused reach with continuous invert, zero storage, and momentum flux carried across the break. Regenerate or replace docs/manuals/reference/hydraulics/media/media/figure3-10-placeholder.png (source: scripts/generate_placeholder_figures.py). -->
+![Figure 3-10](figure3-10-placeholder.png)
+
+*Figure 3-10 Virtual junction representation of a conduit grade break*
+
+**Implementation.** The solver-side pair table, per-iteration coupling
+cache, sealed node-depth update and momentum-residual diagnostic live
+in @ref openswmm::dynwave::DWSolver "DWSolver"
+(`src/engine/hydraulics/DynamicWave.cpp`: `buildVirtualJunctionPairs`,
+`vjPrepareIteration`, `setNodeDepth`, `vjAccumulateResiduals`).
+Eligibility validation and the split/fuse editing operations are shared
+between the input processor and the editing API in
+`src/engine/edit/VirtualJunctionOps.cpp`
+(@ref openswmm::edit::vj_rule_violation "vj_rule_violation"), invoked
+from `src/engine/input/PostParseResolver.cpp`; the
+`[VIRTUAL_JUNCTIONS]` section is parsed in
+`src/engine/input/handlers/NodesHandler.cpp`.
+
+*Reference: Pachaly, R.L., Vasconcelos, J.G., Allasia, D.G., Tassi, R.,
+and Bocchi, J.P.P. (2020). "Comparing SWMM 5.1 Calculation Alternatives
+to Represent Unsteady Stormwater Sewer Flows." Journal of Hydraulic
+Engineering, 146(7), 04020046.*
+
 ## 3.4 Numerical Stability
 
 The numerical stability of SWMM's dynamic wave results can be affected
@@ -768,15 +1115,15 @@ time step be no longer than the time it takes for a dynamic wave to
 travel the length of the conduit (Cunge et al., 1980). This is known as
 the Courant-Friedrichs-Lewy (CFL) condition and can be expressed as:
 
-$$\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} + c \right|}$$   (3-30)
+\f[\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} + c \right|}\f]   (3-30)
 
 where *c* is the wave celerity given by:
 
-$$c = \sqrt{g\frac{\overline{A}}{\overline{W}}}$$          (3-31)
+\f[c = \sqrt{g\frac{\overline{A}}{\overline{W}}}\f]          (3-31)
 
 An equivalent form of this condition can be written as:
 
-$$\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} \right|}\left( \frac{Fr}{1 + Fr} \right)Cr$$   (3-32)
+\f[\mathrm{\Delta}t \leq \frac{L}{\left| \overline{U} \right|}\left( \frac{Fr}{1 + Fr} \right)Cr\f]   (3-32)
 
 where *Fr* is the flow's Froude number (see Equation 3-17) and *Cr* is
 the Courant number. The latter serves as an adjustment parameter that
@@ -791,10 +1138,10 @@ Thus the CFL condition would still apply but perhaps not as strictly (by
 allowing one to use a *Cr* value greater than 1).
 
 One can estimate a *∆t* for each conduit by using the conduit's full
-depth *Y*<sub>full</sub> in place of $\frac{\overline{A}}{\overline{W}}$ in
+depth *Y*<sub>full</sub> in place of \f$\frac{\overline{A}}{\overline{W}}\f$ in
 Equation 3-31 and ignoring the velocity in Equation 3-30. The solution
 time step would then be determined by the conduit with the smallest
-value of $\frac{L}{\sqrt{gY_{full}}}$ . Short conduits lead to small
+value of \f$\frac{L}{\sqrt{gY_{full}}}\f$ . Short conduits lead to small
 time steps and longer computational times. Time steps of 10 to 30
 seconds should suffice for conduit lengths of 200 to 400 feet (the
 typical spacing between sewer manholes) and full depths from 1 to 4
@@ -802,9 +1149,9 @@ feet.
 
 An option is available to artificially lengthen short conduits so that
 the CFL condition for a given user-supplied time step *∆t* is met. The
-modified length $L'$ is given by
+modified length \f$L'\f$ is given by
 
-$$ L' = \max\{ L, \Delta t ( \sqrt{gY_{full}} + \frac{Q_{full}}{A_{full}} ) \} $$ (3-33)
+\f[ L' = \max\{ L, \Delta t ( \sqrt{gY_{full}} + \frac{Q_{full}}{A_{full}} ) \} \f] (3-33)
 
 where *Q*<sub>full</sub> is the Manning's normal flow value (Equation 3-23)
 evaluated at full depth *Y*<sub>full</sub> and *A*<sub>full</sub> is the flow area at
@@ -814,13 +1161,13 @@ lengthened conduit have a flow resistance equivalent to the original
 length, its slope *S*<sub>0</sub> and roughness coefficient *n* are adjusted so
 that the Manning equation produces an equal head loss across both the
 original and lengthened conduit for any given flow. The modified slope
-$S_{0}'$ for the lengthened conduit is:
+\f$S_{0}'\f$ for the lengthened conduit is:
 
-$$S_{0}' = S_{0}\sqrt{\frac{L}{L'}}$$                      (3-34)
+\f[S_{0}' = S_{0}\sqrt{\frac{L}{L'}}\f]                      (3-34)
 
-while its modified roughness $n'$ is:
+while its modified roughness \f$n'\f$ is:
 
-$$n' = n\sqrt{\frac{L}{L'}}$$                              (3-35)
+\f[n' = n\sqrt{\frac{L}{L'}}\f]                              (3-35)
 
 The conduit lengthening option is applied to all conduits whenever the
 user supplies a non-zero value for the "lengthening" time step to be
@@ -836,19 +1183,19 @@ the smaller of:
 
 1.  The smallest value of
 
-$$\frac{L}{\left| \overline{U} \right|}\left( \frac{Fr}{1 + Fr} \right)Cr$$   
+\f[\frac{L}{\left| \overline{U} \right|}\left( \frac{Fr}{1 + Fr} \right)Cr\f]   
 
 for all conduits with non-negligible Fr.
 
 2.  The smallest value of
 
-$$\frac{0.25\left( H_{crown} - E \right)}{{\mathrm{\Delta}H}^{t}}$$   
+\f[\frac{0.25\left( H_{crown} - E \right)}{{\mathrm{\Delta}H}^{t}}\f]   
 
 for all non-outfall nodes that are not surcharged.
 
 The second condition guards against an excessive change in node head
 over a single time step. Both conditions are evaluated using the flow
-and head solutions found at time *t* (${\mathrm{\Delta}H}^{t}$ is the
+and head solutions found at time *t* (\f${\mathrm{\Delta}H}^{t}\f$ is the
 change in head found from the prior time step). The resulting time step
 is not allowed to be less than *∆t*<sub>min</sub> nor greater than *∆t*<sub>max</sub>. The
 initial time step used at time 0 is *∆t*<sub>min</sub>.
@@ -857,10 +1204,10 @@ To illustrate these concepts consider a 2 ft x 2 ft rectangular conduit
 that is 2,000 ft long with a 0.05% slope and has a Manning's roughness
 of 0.015 (see Figure 3-5). When divided into 10 equal length sections of
 200 ft each the estimated stable time step is
-$\frac{200}{\sqrt{32.2 \times 2} = 25}$ seconds. When analyzed as just a
+\f$\frac{200}{\sqrt{32.2 \times 2} = 25}\f$ seconds. When analyzed as just a
 single 2,000 ft long section it increases to 250 seconds.
 
-![Example1a.png](VolumeII/media/media/image16.png)
+![Example1a.png](hydraulics/media/media/image16.png)
 
 **Figure 3-5 Profile view of example rectangular conduit (not to scale)**
 
@@ -870,10 +1217,7 @@ dotted curve in the figure). Both results are completely stable. The
 option with the higher spatial resolution produces a more skewed
 hydrograph with a slightly lower peak.
 
-<figure>
-<img src="VolumeII/media/media/image17.png"
-style="width:5.30407in;height:3.95493in" alt="Example1b.png" />
-</figure>
+![](hydraulics/media/media/image17.png "image17")
 
 **Figure 3-6 Outflow hydrographs for example conduit -I**
 
@@ -885,9 +1229,186 @@ variable time step a stable result is produced. In this case SWMM's
 Status Report shows that the variable time step ranged from 24 to 120
 seconds with the average being 42.
 
-<figure>
-<img src="VolumeII/media/media/image18.png"
-style="width:5.30407in;height:3.95493in" alt="Example1c.png" />
-</figure>
+![](hydraulics/media/media/image18.png "image18")
 
 **Figure 3-7 Outflow hydrographs for example conduit – II**
+
+## 3.5 Semi-Implicit Node Continuity
+
+The head updating scheme described in Sections 3.2 and 3.3.5 is a
+two-branch formulation: below the crown a node's head advances with the
+free-surface continuity formula 3-15, and above it the surcharge
+formula 3-28 takes over. The switch between the two occurs exactly at
+the crown elevation, so the head-update operator is discontinuous
+there. OpenSWMM offers an alternative single-branch formulation,
+selected with the `NODE_CONTINUITY` option:
+
+| Key | Values | Meaning |
+|---|---|---|
+| `NODE_CONTINUITY` | `EXPLICIT` (default) | The classic two-branch formulation of Sections 3.2 and 3.3.5. |
+| | `SEMI_IMPLICIT` | The unified formulation of Equation 3-45. |
+
+The semi-implicit formulation recognizes that the flows entering the
+head update of Equation 3-15 themselves depend on the head being
+solved for. Linearizing the net nodal flow about the current head
+estimate using the flow gradients of Equation 3-27,
+\f$\sum Q^{t + \mathrm{\Delta}t} \approx \sum Q + \sum\frac{\partial Q}{\partial H}\mathrm{\Delta}H\f$,
+and carrying the correction into the trapezoidal head update yields a
+single equation used at every non-outfall node regardless of its
+surcharge state:
+
+| | | | |
+|---|---|---|---|
+| \f[H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q^{t + \mathrm{\Delta}t} \right)}{\max\left( A_{S} + \frac{\mathrm{\Delta}t}{2}\sum\frac{\partial Q}{\partial H},\ A_{Smin} \right)}\f] | | (3-45) | |
+
+where \f$A_{S}\f$ is the node assembly surface area of Equation 3-22 and
+the flow derivatives are those computed during the flow update, exactly
+as in Section 3.3.5. When the surface area dominates the denominator
+the update reduces to the ordinary free-surface formula 3-15; as a node
+approaches and passes through surcharge the flow-derivative term takes
+on the role that the surcharge formula 3-28 plays in the explicit
+scheme, with the minimum surface area *A*<sub>Smin</sub> bounding the
+denominator from below. The under-relaxation of Step 5 of the solution
+procedure and the ponding rules of Section 3.3.7 apply unchanged.
+
+The practical consequence is that the head-update operator has no
+branch at the crown: a node passes into and out of surcharge through
+one smooth expression. This matters most in combination with the
+convergence acceleration of Section 3.6, whose validity depends on the
+smoothness of the iteration operator, and it is the recommended node
+continuity setting for models containing virtual junctions
+(Section 3.3.10).
+
+**Implementation.** The unified branch is implemented in
+`setNodeDepth` of @ref openswmm::dynwave::DWSolver "DWSolver"
+(`src/engine/hydraulics/DynamicWave.cpp`); the option is declared in
+@ref openswmm::SimulationOptions "SimulationOptions"
+(`src/engine/core/SimulationOptions.hpp`) and parsed in
+`src/engine/input/handlers/OptionsHandler.cpp`.
+
+## 3.6 Anderson Acceleration of the Iterative Solution
+
+The successive-approximation procedure of Section 3.2 is a fixed-point
+(Picard) iteration: each pass applies the same head-update operator to
+the latest head estimates until no head changes by more than the
+convergence tolerance. Fixed-point iteration converges linearly, and
+the relaxation factor *θ* = 0.5 that damps each update stabilizes the
+iteration without improving its rate. In networks with many tightly
+coupled nodes the solver can consume its full trial allotment on
+nearly every routing step even under mild conditions. OpenSWMM offers
+an optional acceleration of this iteration, enabled with:
+
+    [OPTIONS]
+    ANDERSON_ACCEL   YES        ;; default is NO
+
+Let \f$G\f$ denote the complete head-update operator for a node — the
+continuity solve of Equation 3-15, 3-28 or 3-45 together with the
+under-relaxation of Step 5 — and let \f$H_{k}\f$ be the node's head
+estimate entering iteration *k*. The iteration residual is
+
+| | | | |
+|---|---|---|---|
+| \f[r_{k} = G\left( H_{k} \right) - H_{k}\f] | | (3-46) | |
+
+and convergence is declared when its magnitude falls within the head
+tolerance. Rather than simply accepting \f$G\left( H_{k} \right)\f$ as the
+next iterate, Anderson acceleration of depth two (equivalently,
+Aitken's secant update) blends the two most recent operator outputs so
+as to cancel the residual predicted by a linear model of the
+iteration. The mixing coefficient is
+
+| | | | |
+|---|---|---|---|
+| \f[\alpha_{k} = \min\left( 1,\ \max\left( 0,\ \frac{r_{k}\left( r_{k} - r_{k - 1} \right)}{\left( r_{k} - r_{k - 1} \right)^{2}} \right) \right)\f] | | (3-47) | |
+
+and the accepted iterate is the convex blend
+
+| | | | |
+|---|---|---|---|
+| \f[H_{k + 1} = \left( 1 - \alpha_{k} \right)G\left( H_{k} \right) + \alpha_{k}\,G\left( H_{k - 1} \right)\f] | | (3-48) | |
+
+Clamping *α*<sub>k</sub> to the interval [0, 1] restricts the update to
+interpolation between two already-computed, already-bounded operator
+outputs: when successive residuals shrink with the same sign the blend
+degenerates to the plain iterate \f$G\left( H_{k} \right)\f$, and no
+extrapolated head can be produced. The blend is applied per node,
+beginning with the second trial of each routing step (the first trial
+has no history to mix). When a mixed head is accepted it is committed
+through the same routine as an ordinary update, so the node's volume,
+overflow and rate of depth change — quantities that feed flooding
+totals, the mass balance and the variable time step — always describe
+the head actually accepted. In practice the acceleration reduces trial
+counts by roughly 25 to 50 percent per routing step on networks that
+otherwise iterate to the trial limit.
+
+The acceleration is justified only where the operator \f$G\f$ is smooth —
+where small head changes produce proportionally small changes in the
+update. Two per-iteration safeguards enforce this. A residual-magnitude
+gate applies the blend only when
+\f$\left\lvert r_{k} \right\rvert \leq 20\varepsilon\f$, where *ε* is the
+head convergence tolerance, since far from convergence the
+linear-iteration model underlying Equation 3-47 does not hold. And a
+mixed head that would be negative (below the node invert) is discarded
+in favor of the plain iterate. In addition, nodes at which the operator
+is known to be non-smooth are excluded from mixing for the current
+trial and simply take the plain iterate; Table 3-2 lists the
+exclusions. Note that surcharged junctions are excluded only under the
+`EXPLICIT` node continuity formulation, whose update switches branches
+at the crown; under `SEMI_IMPLICIT` (Section 3.5) the unified update of
+Equation 3-45 is smooth through the surcharge transition and surcharged
+junctions remain eligible for acceleration — one reason the two options
+pair well.
+
+**Table 3-2 Conditions under which Anderson acceleration reverts to standard iteration**
+
+| Condition | Applies when | Reason |
+|---|---|---|
+| Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT` | The head update switches from Equation 3-15 to Equation 3-28 at the crown. |
+| Active dynamic slot | `SURCHARGE_METHOD DYNAMIC_SLOT`; node touches a conduit with *A*<sub>s</sub> > 0 | The slot geometry of Section 3.3.9 is rewritten each iteration, so the operator differs between iterates. |
+| Near the static slot cutoff | `SURCHARGE_METHOD SLOT`; node touches a closed conduit with \f$0.98 \leq \overline{Y}/Y_{full} \leq 1.02\f$ | The slot width of Equation 3-30 engages abruptly at the crown cutoff. |
+| Weir or orifice at its crown | Upstream hydraulic grade line at or above the structure crown; both end nodes | The flow equation switches discontinuously (weir to orifice; partial to full submergence). |
+| Pump end nodes | Always; both end nodes of every pump | Pump on/off status is discrete. |
+
+Finally, a node is counted as converged only when both the plain
+residual \f$\left\lvert G\left( H_{k} \right) - H_{k} \right\rvert\f$ and
+the accepted movement
+\f$\left\lvert H_{k + 1} - H_{k} \right\rvert\f$ are within the head
+tolerance. Testing accepted movement alone would let a blend that
+happens to land near the previous iterate declare convergence while
+the underlying flow balance is still unsatisfied; with acceleration
+disabled the two tests coincide and the criterion reduces exactly to
+that of Section 3.2.
+
+Figure 3-11 summarizes one accelerated iteration.
+
+<pre class="mermaid">
+flowchart TD
+    A[Start iteration k] --> B[Compute plain iterate G of H_k for every node]
+    B --> C[Evaluate residual r_k = G of H_k minus H_k]
+    C --> D{Residual above 20 eps gate and node eligible per Table 3-2}
+    D -- no --> E[Accept plain iterate H_k+1 = G of H_k]
+    D -- yes --> F[Clamped mixing coefficient theta_k]
+    F --> G[Two-point blend of current and previous iterate]
+    G --> H{Blended depth negative}
+    H -- yes --> E
+    H -- no --> I[Accept blended iterate and re-commit canonical state]
+    E --> J{Plain residual and accepted movement both within tolerance}
+    I --> J
+    J -- no --> B
+    J -- yes --> K[Node converged]
+</pre>
+
+*Figure 3-11 Workflow of one Anderson-accelerated iteration of the
+successive-approximation loop (rendered diagram)*
+
+**Implementation.** The mixing update, the residual gate and the
+two-condition convergence test are implemented in
+`updateNodeDepthsTeam` of @ref openswmm::dynwave::DWSolver "DWSolver"
+(`src/engine/hydraulics/DynamicWave.cpp`), with the exclusion flags of
+Table 3-2 computed once per iteration in `computeAASkipFlags` and the
+canonical state commit in `commitNodeDepthState`. The option is
+declared in @ref openswmm::SimulationOptions "SimulationOptions"
+(`src/engine/core/SimulationOptions.hpp`).
+
+
+
