@@ -115,11 +115,27 @@ TEST(NameCaseParity, MultiLineContinuationSpellingsMergeWithout207) {
     EXPECT_EQ(rc, SWMM_OK);
     // StormTS's three case-variant lines must have merged into one table.
     EXPECT_EQ(swmm_table_count(e), 1);
+    // DWFpat's case-variant [PATTERNS] lines must have merged into one
+    // pattern, and pattern lookup itself is case-insensitive.
+    EXPECT_EQ(swmm_pattern_count(e), 1);
+    EXPECT_EQ(swmm_pattern_index(e, "dwfPAT"), 0);
     init_rc = swmm_engine_initialize(e);
     EXPECT_EQ(init_rc, SWMM_OK);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
     (void)rpt_text;
+}
+
+// Linear-scan-backed C API lookups (transects here as the representative)
+// are case-insensitive too, and their adders reject case-variant duplicates.
+TEST(NameCaseParity, TransectLookupIsCaseInsensitive) {
+    SWMM_Engine e = swmm_engine_new();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_transect_add(e, "TR1"), SWMM_OK);
+    EXPECT_EQ(swmm_transect_index(e, "tr1"), 0);
+    EXPECT_EQ(swmm_transect_add(e, "tr1"), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_transect_count(e), 1);
+    swmm_engine_destroy(e);
 }
 
 // The C API adders that used to call NameIndex::add unguarded must reject a

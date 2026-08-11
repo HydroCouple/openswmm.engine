@@ -119,11 +119,7 @@ static void erase_inlet_usage(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 static bool iequals(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) return false;
-    for (std::size_t i = 0; i < a.size(); ++i)
-        if (std::toupper(static_cast<unsigned char>(a[i])) !=
-            std::toupper(static_cast<unsigned char>(b[i]))) return false;
-    return true;
+    return ieq(a, b);  // shared ASCII fold (StringCase.hpp, legacy parity)
 }
 
 std::vector<int> find_control_rule_refs(const SimulationContext& ctx,

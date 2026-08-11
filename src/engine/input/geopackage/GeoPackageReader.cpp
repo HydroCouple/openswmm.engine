@@ -1105,11 +1105,8 @@ static void read_patterns(sqlite3* db, SimulationContext& ctx, const std::string
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string name = column_text(stmt.get(), 0);
         if (name != prev_name) {
-            // Search for existing pattern by name
-            idx = -1;
-            for (int k = 0; k < static_cast<int>(ctx.patterns.names.size()); ++k) {
-                if (ctx.patterns.names[k] == name) { idx = k; break; }
-            }
+            // Search for existing pattern by name (case-insensitive)
+            idx = ctx.patterns.find(name);
             if (idx < 0) {
                 idx = static_cast<int>(ctx.patterns.names.size());
                 ctx.patterns.names.push_back(name);

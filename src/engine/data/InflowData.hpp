@@ -17,6 +17,9 @@
 
 #include <vector>
 #include <string>
+#include <string_view>
+
+#include "../core/StringCase.hpp"
 
 namespace openswmm {
 
@@ -223,6 +226,14 @@ struct PatternData {
     void add(const std::string& name, int type, const std::vector<double>& facs) {
         names.push_back(name); types.push_back(type);
         factors.push_back(facs);
+    }
+
+    /// Find a pattern index by name (case-insensitive, legacy hash.c parity);
+    /// -1 if not found. The single lookup path for every pattern reference.
+    int find(std::string_view name) const noexcept {
+        for (int i = 0; i < count(); ++i)
+            if (ieq(names[static_cast<std::size_t>(i)], name)) return i;
+        return -1;
     }
 };
 

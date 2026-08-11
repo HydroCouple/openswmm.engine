@@ -25,6 +25,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include "../core/StringCase.hpp"
 #include "../math/MathExpr.hpp"
 
 namespace openswmm {
@@ -282,7 +283,8 @@ private:
     std::vector<PIDState>    pid_states_;
     std::vector<NamedVariable> named_vars_;
     std::vector<mathexpr::Expression> expressions_;
-    std::unordered_map<std::string, int> expr_index_;
+    /// EXPRESSION name → index; case-insensitive (legacy-parity name match)
+    std::unordered_map<std::string, int, CiHash, CiEqual> expr_index_;
     ParseError               last_parse_error_;  ///< Set on parseRuleText() reject
 
     // SoA premise groups (one per variable type that has premises)

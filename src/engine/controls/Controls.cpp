@@ -632,7 +632,7 @@ double ControlEngine::getNamedVariableValue(const std::string& name,
                                              const SimulationContext& ctx,
                                              double current_time) const {
     for (const auto& nv : named_vars_)
-        if (nv.name == name)
+        if (ieq(nv.name, name))
             return getVariableValue(ctx, nv.var, nv.idx, current_time);
     return 0.0;
 }
@@ -1020,13 +1020,14 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         state = ParseState::IDLE;
     };
 
-    // Helper: resolve a token to a named variable (case-sensitive match
-    // against names registered via VARIABLE / addNamedVariable).
+    // Helper: resolve a token to a named variable. Case-insensitive full
+    // match: legacy resolves these through case-blind lookups too (its
+    // match() even accepts a prefix — a quirk we deliberately do not copy).
     auto resolveNamedVariable = [&](const std::string& tok,
                                     ConditionVar& out_var,
                                     int& out_idx) -> bool {
         for (const auto& nv : named_vars_) {
-            if (nv.name == tok) {
+            if (ieq(nv.name, tok)) {
                 out_var = nv.var;
                 out_idx = nv.idx;
                 return true;
