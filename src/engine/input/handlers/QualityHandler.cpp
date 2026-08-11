@@ -82,9 +82,9 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         if (tok.size() < 2) continue;
 
         const std::string& name = tok[0];
-        if (ctx.pollutant_names.find(name) < 0) {
-            ctx.pollutant_names.add(name);
-        }
+        add_unique(ctx.pollutant_names, name, ctx.errors);
+        // duplicate ID (any case spelling) pushes ERR 207 and is skipped;
+        // the second pass keys by find(), so it repopulates the original.
     }
 
     // Resize pollutant arrays to accommodate all pollutants
@@ -154,8 +154,8 @@ void handle_landuses(SimulationContext& ctx, const std::vector<std::string>& lin
         // Name  [SweepInterval]  [SweepRemoval]  [SweepDays0]
 
         const std::string& name = tok[0];
-        int idx = ctx.landuse_names.find(name);
-        if (idx < 0) idx = ctx.landuse_names.add(name);
+        int idx = add_unique(ctx.landuse_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         // Ensure capacity
         const auto n = static_cast<std::size_t>(idx + 1);

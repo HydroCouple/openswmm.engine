@@ -290,9 +290,10 @@ TEST_F(UserFlagsCapiTest, CaseHandling) {
     int found = -1;
     EXPECT_EQ(getValue("NODE", "J1", "INSPECTED", &found), "YES");
     EXPECT_EQ(found, 1);
-    // Object name is case-preserved (case-sensitive).
-    getValue("NODE", "j1", "INSPECTED", &found);
-    EXPECT_EQ(found, 0);
+    // Object name matches case-insensitively too (engine-wide legacy-parity
+    // name semantics), while the stored spelling is preserved for round-trip.
+    EXPECT_EQ(getValue("NODE", "j1", "INSPECTED", &found), "YES");
+    EXPECT_EQ(found, 1);
 }
 
 } // namespace

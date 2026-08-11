@@ -52,8 +52,8 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() < 7) continue;  // Name Node1 Node2 Length Roughness In Out required
 
         const std::string& name = tok[0];
-        int idx = ctx.link_names.find(name);
-        if (idx < 0) idx = ctx.link_names.add(name);
+        int idx = add_unique(ctx.link_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_link_capacity(ctx, idx);
 
@@ -84,8 +84,8 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
-        int idx = ctx.link_names.find(name);
-        if (idx < 0) idx = ctx.link_names.add(name);
+        int idx = add_unique(ctx.link_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_link_capacity(ctx, idx);
 
@@ -131,8 +131,8 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
-        int idx = ctx.link_names.find(name);
-        if (idx < 0) idx = ctx.link_names.add(name);
+        int idx = add_unique(ctx.link_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_link_capacity(ctx, idx);
 
@@ -167,8 +167,8 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
-        int idx = ctx.link_names.find(name);
-        if (idx < 0) idx = ctx.link_names.add(name);
+        int idx = add_unique(ctx.link_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_link_capacity(ctx, idx);
 
@@ -215,8 +215,8 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         if (tok.size() < 3) continue;
 
         const std::string& name = tok[0];
-        int idx = ctx.link_names.find(name);
-        if (idx < 0) idx = ctx.link_names.add(name);
+        int idx = add_unique(ctx.link_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_link_capacity(ctx, idx);
 

@@ -318,11 +318,11 @@ void handle_aquifers(SimulationContext& ctx, const std::vector<std::string>& lin
         // Name Por WP FC Ksat Kslope Tslope ETu ETs Seep Ebot Egw Umc [ETupat]
 
         const std::string& name = tok[0];
-        int idx = ctx.aquifer_names.find(name);
-        if (idx < 0) {
-            idx = ctx.aquifer_names.add(name);
-            ctx.aquifers.names.push_back(name);
-        }
+        // Legacy does NOT exempt [AQUIFERS] from duplicate-ID rejection
+        // (one definition line per aquifer, input.c s_AQUIFER).
+        int idx = add_unique(ctx.aquifer_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207)
+        ctx.aquifers.names.push_back(name);
 
         ensure_aquifer_capacity(ctx.aquifers, idx);
 

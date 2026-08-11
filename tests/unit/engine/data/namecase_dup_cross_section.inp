@@ -1,0 +1,33 @@
+[TITLE]
+Duplicate node ID across sections in variant case ([JUNCTIONS] J1 vs
+[STORAGE] j1) — legacy rejects with ERROR 207; refactored engine must too.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             01:00:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         5
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth
+J1      100   10
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       CurveCoeff  Exponent  Constant
+j1      90    10        0          FUNCTIONAL  0           0         1000
+
+[OUTFALLS]
+;;Name  Elev  Type  Gated
+OUT1    80    FREE  NO
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset  InitFlow
+C1      J1        OUT1    400     0.013      0         0          0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  2      0      0      0      1

@@ -734,48 +734,88 @@ static int simAttribute(const std::string& attr) {
 /// Parse a premise variable from tokens starting at position k.
 /// On success, returns true and advances k past the consumed tokens.
 /// Fills out cv (condition variable type) and obj_idx (object index).
+/// On failure, fills `err` with the failing token and reason so callers can
+/// report the actual problem instead of the leading object keyword.
 static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
                                  const SimulationContext& ctx,
                                  ConditionVar& cv, int& obj_idx,
-                                 int& extra_param) {
+                                 int& extra_param, std::string& err) {
     extra_param = 0;
-    if (k >= static_cast<int>(toks.size())) return false;
+    if (k >= static_cast<int>(toks.size())) {
+        err = "condition clause is empty";
+        return false;
+    }
     std::string obj_type = to_upper(toks[static_cast<size_t>(k)]);
 
     if (obj_type == "NODE") {
-        if (k + 2 >= static_cast<int>(toks.size())) return false;
+        if (k + 2 >= static_cast<int>(toks.size())) {
+            err = "condition clause is incomplete after '" + toks.back() + "'";
+            return false;
+        }
         obj_idx = ctx.node_names.find(toks[static_cast<size_t>(k + 1)]);
-        if (obj_idx < 0) return false;
+        if (obj_idx < 0) {
+            err = "'" + toks[static_cast<size_t>(k + 1)] +
+                  "' is not the name of a defined NODE";
+            return false;
+        }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
         int a = nodeAttribute(attr);
-        if (a < 0) return false;
+        if (a < 0) {
+            err = "'" + toks[static_cast<size_t>(k + 2)] +
+                  "' is not a valid NODE attribute (expected DEPTH, MAXDEPTH, "
+                  "HEAD, VOLUME or INFLOW)";
+            return false;
+        }
         cv = static_cast<ConditionVar>(a);
         k += 3;
         return true;
     }
     if (obj_type == "LINK" || obj_type == "CONDUIT" || obj_type == "PUMP" ||
         obj_type == "ORIFICE" || obj_type == "WEIR" || obj_type == "OUTLET") {
-        if (k + 2 >= static_cast<int>(toks.size())) return false;
+        if (k + 2 >= static_cast<int>(toks.size())) {
+            err = "condition clause is incomplete after '" + toks.back() + "'";
+            return false;
+        }
         obj_idx = ctx.link_names.find(toks[static_cast<size_t>(k + 1)]);
-        if (obj_idx < 0) return false;
+        if (obj_idx < 0) {
+            err = "'" + toks[static_cast<size_t>(k + 1)] +
+                  "' is not the name of a defined " + obj_type;
+            return false;
+        }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
         int a = linkAttribute(attr);
-        if (a < 0) return false;
+        if (a < 0) {
+            err = "'" + toks[static_cast<size_t>(k + 2)] +
+                  "' is not a valid " + obj_type + " attribute";
+            return false;
+        }
         cv = static_cast<ConditionVar>(a);
         k += 3;
         return true;
     }
     if (obj_type == "GAGE") {
-        if (k + 2 >= static_cast<int>(toks.size())) return false;
+        if (k + 2 >= static_cast<int>(toks.size())) {
+            err = "condition clause is incomplete after '" + toks.back() + "'";
+            return false;
+        }
         obj_idx = ctx.gage_names.find(toks[static_cast<size_t>(k + 1)]);
-        if (obj_idx < 0) return false;
+        if (obj_idx < 0) {
+            err = "'" + toks[static_cast<size_t>(k + 1)] +
+                  "' is not the name of a defined GAGE";
+            return false;
+        }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
         if (attr == "INTENSITY") {
             cv = ConditionVar::GAGE_RAIN;
         } else {
             // n-hour past rain: attribute is a number
             double nh = 0.0;
-            if (!tryParseDouble(attr, nh) || nh < 1.0) return false;
+            if (!tryParseDouble(attr, nh) || nh < 1.0) {
+                err = "'" + toks[static_cast<size_t>(k + 2)] +
+                      "' is not a valid GAGE attribute (expected INTENSITY "
+                      "or an hour count >= 1)";
+                return false;
+            }
             cv = ConditionVar::GAGE_RAIN_PAST;
             extra_param = static_cast<int>(nh);
         }
@@ -783,15 +823,25 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         return true;
     }
     if (obj_type == "SIMULATION") {
-        if (k + 1 >= static_cast<int>(toks.size())) return false;
+        if (k + 1 >= static_cast<int>(toks.size())) {
+            err = "condition clause is incomplete after '" + toks.back() + "'";
+            return false;
+        }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 1)]);
         int a = simAttribute(attr);
-        if (a < 0) return false;
+        if (a < 0) {
+            err = "'" + toks[static_cast<size_t>(k + 1)] +
+                  "' is not a valid SIMULATION attribute (expected TIME, "
+                  "DATE, CLOCKTIME, DAY, MONTH or DAYOFYEAR)";
+            return false;
+        }
         cv = static_cast<ConditionVar>(a);
         obj_idx = -1;
         k += 2;
         return true;
     }
+    err = "'" + toks[static_cast<size_t>(k)] +
+          "' is not a known object, variable or expression in this condition";
     return false;
 }
 
@@ -1007,9 +1057,10 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 return fail("expected: VARIABLE <name> = <object> <id> <attribute>");
             int k = 3;
             ConditionVar var; int obj_idx = -1; int extra = 0;
-            if (!parsePremiseVariable(toks, k, ctx, var, obj_idx, extra))
-                return fail("VARIABLE '" + toks[1] +
-                            "' does not name a known object and attribute");
+            std::string var_err;
+            if (!parsePremiseVariable(toks, k, ctx, var, obj_idx, extra,
+                                      var_err))
+                return fail("in VARIABLE '" + toks[1] + "': " + var_err);
             addNamedVariable(toks[1], var, obj_idx);
             continue;
         }
@@ -1080,6 +1131,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 ConditionVar lhs_cv = ConditionVar::NODE_DEPTH;
                 int lhs_idx = -1;
                 int lhs_param = 0;
+                std::string lhs_err;
                 if (k < static_cast<int>(toks.size())) {
                     int ei = resolveExpression(toks[static_cast<size_t>(k)]);
                     if (ei >= 0) {
@@ -1092,10 +1144,9 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                         prem.lhs_idx = lhs_idx;
                         k += 1;
                     } else if (!parsePremiseVariable(toks, k, ctx,
-                                                     lhs_cv, lhs_idx, lhs_param)) {
-                        return fail("'" + toks[static_cast<size_t>(k)] +
-                                    "' is not a known object, variable or "
-                                    "expression in this condition");
+                                                     lhs_cv, lhs_idx, lhs_param,
+                                                     lhs_err)) {
+                        return fail(lhs_err);
                     } else {
                         prem.lhs_var = lhs_cv;
                         prem.lhs_idx = lhs_idx;
@@ -1126,6 +1177,8 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 ConditionVar rhs_cv = ConditionVar::NODE_DEPTH;
                 int rhs_idx = -1;
                 int rhs_param = 0;
+                std::string rhs_err;  // discarded: failure falls back to a
+                                      // constant-value parse below
                 if (resolveNamedVariable(toks[static_cast<size_t>(k)],
                                           rhs_cv, rhs_idx)) {
                     prem.rhs_is_variable = true;
@@ -1133,7 +1186,8 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                     prem.rhs_idx = rhs_idx;
                     k += 1;
                 } else if (parsePremiseVariable(toks, k, ctx,
-                                                 rhs_cv, rhs_idx, rhs_param)) {
+                                                 rhs_cv, rhs_idx, rhs_param,
+                                                 rhs_err)) {
                     prem.rhs_is_variable = true;
                     prem.rhs_var = rhs_cv;
                     prem.rhs_idx = rhs_idx;

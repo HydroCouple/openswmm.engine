@@ -213,9 +213,12 @@ TEST(UserFlagsTest, ObjectTypeStoredUppercase) {
     SimulationContext ctx;
     parse_defs(ctx, {"INSPECTED  BOOLEAN"});
     parse_vals(ctx, {"node  J1  INSPECTED  YES"});
-    // Stored with uppercase object type
+    // Stored with uppercase object type; the value map matches keys
+    // case-insensitively (engine-wide legacy-parity name semantics), so any
+    // case spelling of the triple finds the value.
     EXPECT_TRUE(ctx.user_flags.has_value("NODE", "J1", "INSPECTED"));
-    EXPECT_FALSE(ctx.user_flags.has_value("node", "J1", "INSPECTED"));
+    EXPECT_TRUE(ctx.user_flags.has_value("node", "J1", "INSPECTED"));
+    EXPECT_TRUE(ctx.user_flags.has_value("NODE", "j1", "inspected"));
 }
 
 TEST(UserFlagsTest, UndefinedFlagValueStoredWithWarning) {
