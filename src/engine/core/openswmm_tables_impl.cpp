@@ -13,6 +13,7 @@
 #include "openswmm_api_common.hpp"
 #include "../edit/ObjectDeleter.hpp"
 #include "../../../include/openswmm/engine/openswmm_tables.h"
+#include "StringCase.hpp"
 
 namespace {
 
@@ -197,11 +198,8 @@ SWMM_ENGINE_API int swmm_pattern_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_pattern_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    const auto& names = to_engine(engine)->context().patterns.names;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
-    }
-    return -1;
+    // Case-insensitive (legacy hash.c parity)
+    return to_engine(engine)->context().patterns.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_pattern_id(SWMM_Engine engine, int idx) {
@@ -266,7 +264,10 @@ SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char*
     if (ctx.patterns.names[u] == next) return SWMM_OK;
 
     for (std::size_t j = 0; j < ctx.patterns.names.size(); ++j) {
-        if (j != u && ctx.patterns.names[j] == next) return SWMM_ERR_BADPARAM;
+        // Case-insensitive collision check (a case-respelling of this same
+        // pattern is allowed; any-case match with another pattern is not).
+        if (j != u && openswmm::ieq(ctx.patterns.names[j], next))
+            return SWMM_ERR_BADPARAM;
     }
 
     const std::string prev = ctx.patterns.names[u];

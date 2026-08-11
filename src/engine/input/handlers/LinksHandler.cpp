@@ -451,6 +451,17 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
 
             const std::string& name = tok[1];
 
+            // A second X1 with the same name (any case spelling) is a
+            // duplicate ID in legacy (ERR 207). Record the error but keep
+            // parsing so the GR/NC lines that follow stay attached to a
+            // consistent transect slot; the open fails on ctx.errors anyway.
+            for (const auto& existing : ctx.transects.names) {
+                if (ieq(existing, name)) {
+                    ctx.errors.push_back(format_error(ERR_DUP_NAME, name));
+                    break;
+                }
+            }
+
             ctx.transects.names.push_back(name);
             // All parallel arrays in TransectStore must be kept in lock-step
             // with `names` — count() reports names.size() and downstream

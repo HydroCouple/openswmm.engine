@@ -1005,11 +1005,9 @@ SWMM_ENGINE_API int swmm_aquifer_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_aquifer_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    const auto& names = to_engine(engine)->context().aquifers.names;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
-    }
-    return -1;
+    // Route through the registry (case-insensitive, legacy hash.c parity)
+    // instead of scanning aquifers.names, which could disagree with it.
+    return to_engine(engine)->context().aquifer_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_aquifer_id(SWMM_Engine engine, int idx) {
@@ -1171,11 +1169,9 @@ SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_snowpack_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    const auto& names = to_engine(engine)->context().snowpacks.names;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
-    }
-    return -1;
+    // Route through the registry (case-insensitive, legacy hash.c parity)
+    // instead of scanning snowpacks.names, which could disagree with it.
+    return to_engine(engine)->context().snowpack_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_snowpack_id(SWMM_Engine engine, int idx) {
