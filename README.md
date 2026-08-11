@@ -54,6 +54,7 @@ OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm
 
 - **Runtime Climate Forcing & Per-Subcatchment PET** — Air temperature, wind speed, evaporation, and rainfall can be prescribed while a simulation is running, and potential evapotranspiration can be prescribed per subcatchment, overriding climate-derived rates for surface, LID, and groundwater losses.
 - **Consistent Snow / Rain Partitioning** — A single precipitation-split path applies the gage snow catch factor everywhere, correcting legacy inconsistencies in snow-season models.
+- *Work plan:* **Spatially Explicit Groundwater** — a fully coupled two-layer subsurface kernel on the 2D finite-volume mesh (unsaturated and saturated depths joined at a moving water table, selectable soil characteristics, lateral Darcy exchange between cells), enabling saturation-excess overland flow, return flow, head-driven pipe ↔ aquifer exchange, and capillary rise — processes the per-subcatchment aquifer cannot represent ([Roadmap §5.2](ROADMAP.md)).
 
 #### Hydraulics
 
