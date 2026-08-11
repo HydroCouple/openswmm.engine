@@ -244,6 +244,25 @@ struct FvOptions {
     /// Stop sweeping when the head correction falls below this (ft).
     double node_picard_tol = 1.0e-6;
 
+    /// Couple the node correction to its adjacent end cells (plan §7B.9).
+    ///
+    /// The standard correction linearizes each coupling face's flux in the
+    /// node head with the NEIGHBOURING CELLS FROZEN — the tangent is taken
+    /// against infinite reservoirs, which is why converging on it harder finds
+    /// the wrong equilibrium at a large Δt (the Challenge-2 fixed point). But
+    /// each end cell is a finite volume of plan area C = Δx·T that couples to
+    /// nothing but this node, so the joint backward-Euler system over the
+    /// node-and-end-cells star is closed-form: eliminating each cell softens
+    /// that face's resistance by C/(C + Δt·√(gAT)) and feeds the cell's own
+    /// filling back into the residual. As Δt grows the correction tends to
+    /// the lumped node+cells volume — the correct large-step limit — instead
+    /// of flux balance against stale state. Conservation is untouched: the
+    /// result still lands in `f_mass_` exactly as before.
+    ///
+    /// This is the accuracy-at-large-Δt half of the plan; pair it with
+    /// `FV_NODE_DT NONE` to actually take the large steps it makes safe.
+    bool node_cell_coupling = false;
+
     // -- Transport (plan §3.2 / §6.11) --------------------------------------
 
     /// Longitudinal dispersion coefficient (ft²/s). 0 disables the parabolic

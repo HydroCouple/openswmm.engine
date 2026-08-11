@@ -505,11 +505,6 @@ double ExplicitFvSolver::censusDt() const {
     // classic way an explicit 1D network solver appears stable on a single
     // reach and rings on a real network.
     //
-    // Under SEMI_IMPLICIT coupling the term is no longer binding: the face
-    // fluxes are linearized in the node head, so the node's response is damped
-    // rather than free-running and its volume is not a stability limit. This is
-    // where the cost of that treatment is repaid — it is the whole reason the
-    // manhole stopped setting the substep for the model.
     const int nn = mesh_->n_nodes();
     // Semi-implicit coupling removes the node's STABILITY limit — the damped
     // response cannot ring — but not its ACCURACY requirement: a manhole whose
@@ -523,10 +518,25 @@ double ExplicitFvSolver::censusDt() const {
     // Δx = 20 ft, dropping it without tiering moved mean peak-flow agreement
     // from 7.2 % to 18.8 % and the worst conduit from 18.7 % to 128 %.
     //
+    // The skip is gated on tiering being ELIGIBLE TO RUN, not on the FV_LTS
+    // option alone. An earlier gate tested `opts_.lts` — but the option being
+    // on does not mean tiering runs: RK2 disables the LTS path outright, and
+    // a water-quality run (species FCT needs a synchronous sweep) degenerates
+    // assignTiers() to K = 1. Both fall through to the global path, and
+    // skipping the node term there silently reproduced FV_NODE_DT NONE —
+    // with its measured 10-50× accuracy loss — while the option still read
+    // STABILITY.
+    //
+    // FV_NODE_DT NONE is honoured here as well, so the option means the same
+    // thing on both paths — and only under SEMI_IMPLICIT coupling, because
+    // for explicitly coupled nodes the bound buys stability, not accuracy,
+    // and there is no opting out of it.
+    //
     // The relaxation was swept rather than assumed: with tiering on, 1×, 4×,
     // 16×, 64× and unbounded gave 14.7 / 7.3 / 5.1 / 5.1 / 5.0 s at 7.2 / 7.2 /
     // 7.1 / 7.2 / 7.2 % mean agreement.
-    if (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT && opts_.lts) {
+    if (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT &&
+        (ltsEligible() || opts_.node_dt_limit == NodeDtLimit::NONE)) {
         if (dt >= std::numeric_limits<double>::max() * 0.5) dt = 1.0e30;
         return dt;
     }
@@ -1264,7 +1274,9 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
         const int b = mesh_->node_face_ptr[un];
         const int e = mesh_->node_face_ptr[un + 1];
 
-        const double q_lat = forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
+        const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un]
+                                                   : 0.0) +
+                             node_qstruct_[un];
         const double invert  = mesh_->node_invert[un];
         const double h_start = state_->node_head[un];
         const double v_start =
@@ -1285,7 +1297,19 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
             // Always a RESISTANCE — raising the head drives more out and lets
             // less in, on either side of the face — so the denominator below
             // can only grow, and the correction can only damp.
-            double sum_f = 0.0, resist = 0.0;
+            // FV_NODE_CELL_COUPLING (plan §7B.9, the "coupled star"): the
+            // frozen-neighbour tangent is why Picard converges to the wrong
+            // fixed point at large Δt (Challenge 2) — the node equilibrates
+            // against cells treated as infinite reservoirs. Each end cell is
+            // actually a finite volume of plan area C = Δx·T that couples to
+            // nothing but this node, so the joint backward-Euler system over
+            // the star is closed-form: eliminating each cell unknown softens
+            // that face's resistance by w = C/(C + Δt·a) and adds the cell's
+            // own filling, feed = a·Δt·G⁰/(C + Δt·a), to the residual. As
+            // Δt → ∞ this tends to the lumped node+cells volume — the correct
+            // large-step limit — instead of flux balance against stale state.
+            const bool coupled = opts_.node_cell_coupling;
+            double sum_f = 0.0, resist = 0.0, feed = 0.0;
             for (int p = b; p < e; ++p) {
                 const auto up = static_cast<std::size_t>(p);
                 const int f = mesh_->node_face_idx[up];
@@ -1295,15 +1319,27 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
                 const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
                                                            : mesh_->face_cr[uf];
                 if (cell < 0) continue;
+                const auto uc = static_cast<std::size_t>(cell);
                 const FvGeometry& g =
-                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[
-                        static_cast<std::size_t>(cell)])];
+                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
                 const double hg = h_k - mesh_->face_zb[uf];
                 if (hg <= k::kDryDepth) continue;
                 const double ag = k::areaOfDepth(g, hg);
                 const double tg = k::widthOfDepth(g, hg);
                 if (ag <= k::kDryArea || tg <= 0.0) continue;
-                resist += std::sqrt(k::kGravity * ag * tg);
+                const double a = std::sqrt(k::kGravity * ag * tg);
+                if (!coupled) { resist += a; continue; }
+                // Plan area at the depth the cell will hold once the incoming
+                // water arrives — max(cell, ghost) keeps a dry or shallow
+                // receiving cell from reading as zero-capacity (infinitely
+                // stiff), which would shut the face instead of filling it.
+                const double tc = k::widthOfDepth(
+                    g, std::max(state_->cell_h[uc], hg));
+                const double cap = mesh_->cell_dx[uc] * std::max(tc, tg);
+                const double denom_j = cap + dt * a;
+                resist += a * (cap / denom_j);
+                const double g0 = -mesh_->node_face_sign[up] * f_mass_[uf];
+                feed += a * dt * g0 / denom_j;
             }
             if (resist <= 0.0) break;
 
@@ -1317,7 +1353,8 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
                 (it == 0) ? 0.0
                           : nodeVolumeFromDepth(n, std::max(0.0, h_k - invert)) -
                                 v_start;
-            const double dh = dt * (sum_f + q_lat - dv / dt) / (as + dt * resist);
+            const double dh =
+                dt * (sum_f + q_lat - dv / dt + feed) / (as + dt * resist);
             if (dh == 0.0) break;
 
             const bool last = (it + 1 >= sweeps) ||
@@ -1368,9 +1405,9 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
                 const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
                                                            : mesh_->face_cr[uf];
                 if (cell < 0) continue;
+                const auto uc = static_cast<std::size_t>(cell);
                 const FvGeometry& g =
-                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[
-                        static_cast<std::size_t>(cell)])];
+                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
                 const double hg = h_k - mesh_->face_zb[uf];
                 if (hg <= k::kDryDepth) continue;
                 const double ag = k::areaOfDepth(g, hg);
@@ -1379,8 +1416,20 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
                 // β = −sign·√(gAT): the node on a face's LEFT exports on a
                 // positive flux, the node on its RIGHT imports, and raising the
                 // head opposes the import in both cases.
-                f_mass_[uf] += -mesh_->node_face_sign[up] *
-                               std::sqrt(k::kGravity * ag * tg) * dh;
+                const double a = std::sqrt(k::kGravity * ag * tg);
+                double dh_face = dh;
+                if (coupled) {
+                    // The eliminated cell stage moved too; the flux responds
+                    // to the head DIFFERENCE, Δη_n − Δη_j, not to Δη_n alone.
+                    const double tc = k::widthOfDepth(
+                        g, std::max(state_->cell_h[uc], hg));
+                    const double cap = mesh_->cell_dx[uc] * std::max(tc, tg);
+                    const double g0 = -mesh_->node_face_sign[up] * f_mass_[uf];
+                    const double dhj =
+                        dt * (g0 + a * dh) / (cap + dt * a);
+                    dh_face = dh - dhj;
+                }
+                f_mass_[uf] += -mesh_->node_face_sign[up] * a * dh_face;
             }
             break;
         }
@@ -1529,26 +1578,26 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
 // Node update
 // ===========================================================================
 
+// Structure links contribute a source/sink pair. They are held constant
+// across the substeps of one routing step (D-FV3): re-evaluating the
+// structure equations per substep would need the engine's HydStructures code,
+// which the plugin boundary deliberately excludes, and would chatter
+// controls tuned for DW-scale steps. Scattered once per forcing refresh.
+void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
+    node_qstruct_.assign(static_cast<std::size_t>(mesh_->n_nodes()), 0.0);
+    if (!forcing.structure_flow) return;
+    const int nstruct = static_cast<int>(mesh_->struct_link.size());
+    for (int s = 0; s < nstruct; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        const double q = forcing.structure_flow[mesh_->struct_link[us]];
+        if (q == 0.0) continue;
+        node_qstruct_[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
+        node_qstruct_[static_cast<std::size_t>(mesh_->struct_n2[us])] += q;
+    }
+}
+
 void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
     const int nn = mesh_->n_nodes();
-
-    // Structure links contribute a source/sink pair. They are held constant
-    // across the substeps of one routing step (D-FV3): re-evaluating the
-    // structure equations here would need the engine's HydStructures code,
-    // which the plugin boundary deliberately excludes, and would chatter
-    // controls tuned for DW-scale steps.
-    static thread_local std::vector<double> q_struct;
-    q_struct.assign(static_cast<std::size_t>(nn), 0.0);
-    if (forcing.structure_flow) {
-        const int nstruct = static_cast<int>(mesh_->struct_link.size());
-        for (int s = 0; s < nstruct; ++s) {
-            const auto us = static_cast<std::size_t>(s);
-            const double q = forcing.structure_flow[mesh_->struct_link[us]];
-            if (q == 0.0) continue;
-            q_struct[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
-            q_struct[static_cast<std::size_t>(mesh_->struct_n2[us])] += q;
-        }
-    }
 
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
@@ -1580,7 +1629,7 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
         }
 
         const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
-                             q_struct[un];
+                             node_qstruct_[un];
         const double v_prev = state_->node_volume[un];
         double vol = v_prev + dt * (sum_faces + q_lat);
         if (vol < 0.0) vol = 0.0;
@@ -1938,7 +1987,11 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
     // the non-LTS path has always used — while tiering stays intact. Nodes are
     // still TIERED (dt_node feeds tier_of below), just not allowed to drag the
     // global base step down with them.
-    const bool node_sets_dt0 = (opts_.node_dt_limit == NodeDtLimit::STABILITY);
+    // As in censusDt(): NONE is a semi-implicit privilege — an explicitly
+    // coupled node's bound is a genuine stability limit and always applies.
+    const bool node_sets_dt0 =
+        (opts_.node_dt_limit == NodeDtLimit::STABILITY) ||
+        (opts_.node_coupling != NodeCoupling::SEMI_IMPLICIT);
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         dt_node[un] = nodeStableDt(n);
@@ -2295,21 +2348,6 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
 
 void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
                                  const FvStepForcing& forcing) {
-    static thread_local std::vector<double> q_struct;
-    if (q_struct.size() != acc_nvol_.size())
-        q_struct.assign(acc_nvol_.size(), 0.0);
-    std::fill(q_struct.begin(), q_struct.end(), 0.0);
-    if (forcing.structure_flow) {
-        const int nstruct = static_cast<int>(mesh_->struct_link.size());
-        for (int s = 0; s < nstruct; ++s) {
-            const auto us = static_cast<std::size_t>(s);
-            const double q = forcing.structure_flow[mesh_->struct_link[us]];
-            if (q == 0.0) continue;
-            q_struct[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
-            q_struct[static_cast<std::size_t>(mesh_->struct_n2[us])] += q;
-        }
-    }
-
     for (const int n : nodes) {
         const auto un = static_cast<std::size_t>(n);
         const double dt = static_cast<double>(1 << node_tier_[un]) * dt0;
@@ -2323,7 +2361,7 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
         }
 
         const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
-                             q_struct[un];
+                             node_qstruct_[un];
         const double v_prev = state_->node_volume[un];
         double vol = v_prev + drained + dt * q_lat;
         if (vol < 0.0) vol = 0.0;
@@ -2429,6 +2467,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         state_->node_volume[un] = nodeVolumeFromDepth(
             n, std::max(0.0, state_->node_head[un] - mesh_->node_invert[un]));
     }
+    refreshStructFlows(forcing);
 
     double t = t_current;
     long steps = 0;
@@ -2447,8 +2486,10 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // and the volume that drains it describing different forcing. The
         // first pass is skipped because the caller has just computed them.
         if (steps > 0 && forcing.refresh &&
-            opts_.structure_coupling == StructureCoupling::SUBSTEP)
+            opts_.structure_coupling == StructureCoupling::SUBSTEP) {
             forcing.refresh(forcing.refresh_user, t - t_current);
+            refreshStructFlows(forcing);
+        }
 
         if (!lists_valid_ || since_rebuild_ >= kRebuildInterval)
             rebuildActiveLists();
@@ -2461,7 +2502,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // different steps, so the two stages would be averaging states that
         // never shared a Δt. They are mutually exclusive, and the integrator
         // wins because it is the more specific request.
-        if (opts_.lts && opts_.time_integration != TimeIntegration::RK2) {
+        if (ltsEligible()) {
             // Re-tiering costs a pass over every cell, face and node plus the
             // grading sweep. Doing it every cycle is what made tiering SLOWER
             // than global stepping on the reference model — the assignment is
@@ -2575,7 +2616,9 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         census_count_ = 0;
 
         t += dt;
-        ++steps;
+        // RK2 is two full operator evaluations per accepted step; count both,
+        // or the reported substeps-per-step halves the actual work done.
+        steps += (opts_.time_integration == TimeIntegration::RK2) ? 2 : 1;
         ++since_rebuild_;
         last_h_ = dt;
         min_h_ = (min_h_ <= 0.0) ? dt : std::min(min_h_, dt);
