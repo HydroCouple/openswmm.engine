@@ -86,6 +86,7 @@ _MARCHER_KEYS_DEFAULTS = {
     "LTS_TIERS": 4,
     "H_MOVE": 0.003,
     "FROUDE_MAX": 1.5,
+    "ADVECTION": "NO",
     "COUPLING_AREA": "DEFAULT",
 }
 
@@ -124,6 +125,7 @@ class TwoDMarcherOptionsTest(unittest.TestCase):
             "LTS_TIERS        6\n"
             "H_MOVE           0.005\n"
             "FROUDE_MAX       2.0\n"
+            "ADVECTION        YES\n"
             "COUPLING_AREA    AUTO\n",
         )
         s = Solver(inp, rpt, out)
@@ -136,6 +138,7 @@ class TwoDMarcherOptionsTest(unittest.TestCase):
             self.assertEqual(int(ext["LTS_TIERS"]), 6)
             self.assertAlmostEqual(float(ext["H_MOVE"]), 0.005)
             self.assertAlmostEqual(float(ext["FROUDE_MAX"]), 2.0)
+            self.assertEqual(ext["ADVECTION"].upper(), "YES")
             self.assertEqual(ext["COUPLING_AREA"].upper(), "AUTO")
         finally:
             s.close()
@@ -152,6 +155,7 @@ class TwoDMarcherOptionsTest(unittest.TestCase):
             ext["LTS_TIERS"] = 5
             ext["H_MOVE"] = 0.004
             ext["FROUDE_MAX"] = 1.2
+            ext["ADVECTION"] = "YES"
             ext["COUPLING_AREA"] = "AUTO"
             self.assertEqual(ext["INTEGRATOR"].upper(), "EXPLICIT")
             self.assertAlmostEqual(float(ext["THETA"]), 0.85)
@@ -159,6 +163,7 @@ class TwoDMarcherOptionsTest(unittest.TestCase):
             self.assertEqual(int(ext["LTS_TIERS"]), 5)
             self.assertAlmostEqual(float(ext["H_MOVE"]), 0.004)
             self.assertAlmostEqual(float(ext["FROUDE_MAX"]), 1.2)
+            self.assertEqual(ext["ADVECTION"].upper(), "YES")
             self.assertEqual(ext["COUPLING_AREA"].upper(), "AUTO")
         finally:
             s.close()
@@ -181,6 +186,7 @@ class TwoDMarcherOptionsTest(unittest.TestCase):
                 ("CFL_NUMBER", "0"),
                 ("LTS_TIERS", "9"),
                 ("FROUDE_MAX", "-1"),
+                ("ADVECTION", "MAYBE"),
                 ("COUPLING_AREA", "MAYBE"),
             ):
                 with self.assertRaises(EngineError, msg=f"{key}={bad}"):

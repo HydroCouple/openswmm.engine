@@ -197,6 +197,7 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     else if (key == "2D_H_MOVE")        o->h_move       = std::stod(val);
     else if (key == "2D_LTS_TIERS")     o->lts_tiers    = std::stoi(val);
     else if (key == "2D_FROUDE_MAX")    o->froude_max   = std::stod(val);
+    else if (key == "2D_ADVECTION")     o->advection = (val == "YES");
     else if (key == "2D_COUPLING_AREA") o->coupling_area_auto = (val == "AUTO");
     else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
