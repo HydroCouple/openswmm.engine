@@ -5128,17 +5128,18 @@ void SWMMEngine::initHydrology() noexcept {
 
         // Resolve timeseries names to table indices
         if (ctx_.options.temp_source == 1 && !ctx_.options.temp_ts_name.empty()) {
-            ctx_.climate_state.temp_ts_index = ctx_.table_names.find(ctx_.options.temp_ts_name);
+            ctx_.climate_state.temp_ts_index = ctx_.find_timeseries(ctx_.options.temp_ts_name);
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
-            ctx_.climate_state.evap_ts_index = ctx_.table_names.find(ctx_.options.evap_ts_name);
+            ctx_.climate_state.evap_ts_index = ctx_.find_timeseries(ctx_.options.evap_ts_name);
         }
 
-        // Resolve recovery pattern name to pattern index
+        // Resolve recovery pattern name to pattern index (case-insensitive)
         if (!ctx_.options.evap_recovery_pat.empty()) {
             int np = ctx_.patterns.count();
             for (int i = 0; i < np; ++i) {
-                if (ctx_.patterns.names[static_cast<std::size_t>(i)] == ctx_.options.evap_recovery_pat) {
+                if (ieq(ctx_.patterns.names[static_cast<std::size_t>(i)],
+                        ctx_.options.evap_recovery_pat)) {
                     ctx_.climate_state.recovery_pat_index = i;
                     break;
                 }
@@ -5177,17 +5178,11 @@ void SWMMEngine::initHydrology() noexcept {
             gw.tension_slope[ui]    = ctx_.aquifers.tension_slope[uaq]
                                       / ucf::Ucf[ucf::LENGTH][unit_sys];
             gw.upper_evap_frac[ui]  = ctx_.aquifers.upper_evap[uaq];
-            // Resolve upper evaporation pattern name to index
+            // Resolve upper evaporation pattern name to index (case-insensitive)
             gw.upper_evap_pat[ui] = -1;
             const auto& pat_name = ctx_.aquifers.upper_evap_pat[uaq];
-            if (!pat_name.empty()) {
-                for (int p = 0; p < ctx_.patterns.count(); ++p) {
-                    if (ctx_.patterns.names[static_cast<std::size_t>(p)] == pat_name) {
-                        gw.upper_evap_pat[ui] = p;
-                        break;
-                    }
-                }
-            }
+            if (!pat_name.empty())
+                gw.upper_evap_pat[ui] = ctx_.patterns.find(pat_name);
             gw.lower_evap_depth[ui] = ctx_.aquifers.lower_evap[uaq]
                                       / ucf::Ucf[ucf::LENGTH][unit_sys];
             gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq]
@@ -5904,20 +5899,16 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
         depth > fd)
         return volume;
 
-    // Legacy convention: a plain junction contributes ZERO to reported storage,
-    // because report_full_volume_ is 0 for it. That is a reporting choice the
-    // dynamic wave solver can afford — it never has to hold water in a junction
-    // to remain stable.
-    //
-    // The finite-volume solver does. Its node is an explicit control volume of
-    // area MIN_SURFAREA (D-FV5), and the water standing in it is as real as the
-    // water in a conduit. Excluding it turns genuine storage into an apparent
-    // continuity error PROPORTIONAL TO JUNCTION COUNT — measured 0.00082
-    // acre-feet per junction, invisible on a twelve-node model and 0.9 % on a
-    // five-hundred-node one. So under FV the junction is reported with the same
-    // relation the solver integrates.
-    if (ctx_.options.routing_model == RoutingModel::FV)
-        return constants::MIN_SURFAREA * depth;
+    // Legacy convention: a plain junction contributes ZERO to reported
+    // storage, because report_full_volume_ is 0 for it. FV junctions are now
+    // algebraic INTERFACES that hold no water of their own — the water at a
+    // junction's head stands in the incident cells, already counted through
+    // link volumes — so FV shares the convention. (The earlier bucket model
+    // DID hold MIN_SURFAREA·depth of real water per junction and reported it
+    // here; keeping that relation after the buckets were removed re-counted
+    // the cells' water and read as a continuity error proportional to
+    // junction count — measured −0.005 % per junction on a 120-junction
+    // chain, one MIN_SURFAREA·depth per node.)
 
     return report_full_volume_[ui] * (depth / fd);
 }

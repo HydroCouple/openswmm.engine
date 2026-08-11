@@ -1,0 +1,39 @@
+[TITLE]
+Control rule referencing a genuinely unknown node — the parse error must
+name the failing ID token ('NoSuchNode'), not the leading NODE keyword.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             01:00:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         5
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth
+J1      100   10
+
+[OUTFALLS]
+;;Name  Elev  Type  Gated
+OUT1    80    FREE  NO
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset  InitFlow
+C1      J1        OUT1    400     0.013      0         0          0
+
+[ORIFICES]
+;;Name  FromNode  ToNode  Type  Offset  Cd    Gated  CloseTime
+OR1     J1        OUT1    SIDE  0       0.65  NO     0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  2      0      0      0      1
+OR1     CIRCULAR  1      0      0      0
+
+[CONTROLS]
+RULE BadRef
+IF NODE NoSuchNode DEPTH > 5
+THEN ORIFICE OR1 SETTING = 0

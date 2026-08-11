@@ -15,6 +15,7 @@
 #include "../input/PostParseResolver.hpp"
 #include "../hydraulics/Street.hpp"
 #include "TypeHelpers.hpp"
+#include "StringCase.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -706,7 +707,11 @@ SWMM_ENGINE_API int swmm_link_get_xsect(SWMM_Engine engine, int idx,
         const auto& nm = ctx.links.pump_curve_name[uidx];
         if (!nm.empty()) {
             for (int s = 0; s < ctx.streets.count(); ++s) {
-                if (ctx.streets.names[static_cast<std::size_t>(s)] == nm) { si = s; break; }
+                if (openswmm::ieq(ctx.streets.names[static_cast<std::size_t>(s)],
+                                  nm)) {
+                    si = s;
+                    break;
+                }
             }
         }
         if (geom1) *geom1 = static_cast<double>(si);

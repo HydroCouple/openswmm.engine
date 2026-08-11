@@ -112,8 +112,8 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         // RainScale (tok 9) and SnowScale (tok 10) default to 1.0.
 
         const std::string& name = tok[0];
-        int idx = ctx.subcatch_names.find(name);
-        if (idx < 0) idx = ctx.subcatch_names.add(name);
+        int idx = add_unique(ctx.subcatch_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_subcatch_capacity(ctx, idx);
 
@@ -246,8 +246,8 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         // Name  Format  Interval  SCF  Source  [SourceName]
 
         const std::string& name = tok[0];
-        int idx = ctx.gage_names.find(name);
-        if (idx < 0) idx = ctx.gage_names.add(name);
+        int idx = add_unique(ctx.gage_names, name, ctx.errors);
+        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_gage_capacity(ctx, idx);
 
@@ -281,7 +281,7 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         if (src == "TIMESERIES" && tok.size() > 5) {
             ctx.gages.source[idx]   = RainSource::TIMESERIES;
             ctx.gages.ts_name[idx]  = tok[5]; // Store name for deferred resolution
-            ctx.gages.ts_index[idx] = ctx.table_names.find(tok[5]);
+            ctx.gages.ts_index[idx] = ctx.find_timeseries(tok[5]);
             // ts_index may be -1 if TIMESERIES section appears after RAINGAGES
 
             // Optional trailing rainfall scaling factor (legacy gage.c readGageSeriesFormat tok[6])

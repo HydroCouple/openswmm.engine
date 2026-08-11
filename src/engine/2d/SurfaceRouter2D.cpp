@@ -1089,21 +1089,21 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
     const int ne = boundary_.size();
     if (ne == 0) return;
 
-    // One-shot: resolve deferred timeseries / curve names to registry indices.
-    // ctx.table_names is only populated post-parse, so this can't happen at
-    // parse time; -2 = "name pending", -1 = not found (then treated as constant).
+    // One-shot: resolve deferred timeseries / curve names to table indices.
+    // ctx.tables is only populated post-parse, so this can't happen at parse
+    // time; -2 = "name pending", -1 = not found (then treated as constant).
     if (!boundary_names_resolved_) {
         boundary_names_resolved_ = true;
         for (int idx = 0; idx < ne; ++idx) {
             if (boundary_.edge_bc_tseries[idx] == -2)
                 boundary_.edge_bc_tseries[idx] =
-                    ctx.table_names.find(boundary_.edge_bc_tseries_name[idx]);
+                    ctx.find_timeseries(boundary_.edge_bc_tseries_name[idx]);
             if (boundary_.edge_bc_flow_tseries[idx] == -2)
                 boundary_.edge_bc_flow_tseries[idx] =
-                    ctx.table_names.find(boundary_.edge_bc_flow_tseries_name[idx]);
+                    ctx.find_timeseries(boundary_.edge_bc_flow_tseries_name[idx]);
             if (boundary_.edge_bc_rating_curve[idx] == -2)
                 boundary_.edge_bc_rating_curve[idx] =
-                    ctx.table_names.find(boundary_.edge_bc_rating_curve_name[idx]);
+                    ctx.find_curve(boundary_.edge_bc_rating_curve_name[idx]);
         }
     }
 

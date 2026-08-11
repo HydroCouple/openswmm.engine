@@ -180,11 +180,34 @@ OPENSWMM_KERNEL_FN double faceFlowDepthVfr(double etaL, double etaR,
 /// the road_culvert embankment under the VFR closure).
 OPENSWMM_KERNEL_FN double inertialFaceUpdate(double q, double qhat, double hf, double dt,
                                  double slope, double n2,
-                                 double q_mag) noexcept {
+                                 double q_mag, double adv = 0.0) noexcept {
     const double h73 = hf * hf * std::cbrt(hf);
-    const double num = qhat - kGravity * hf * dt * slope;
+    const double num = qhat - dt * (kGravity * hf * slope + adv);
     const double den = 1.0 + kGravity * dt * n2 * q_mag / h73;
     return num / den;
+}
+
+/// Convective momentum flux difference ∂(u·q)/∂n at an interior face —
+/// [2D_OPTIONS] ADVECTION, the term the pure local-inertial scheme drops.
+/// Stelling & Duinmeijer's staggered momentum-conservative upwinding, mapped
+/// onto the unstructured layout with the Perot cell vectors standing in for
+/// the along-normal neighbour faces a structured grid would have:
+///
+///   adv = (u_R·q̂_R − u_L·q̂_L) / Δn
+///   u_c  = (q⃗_c·n̂)/h_c            (cell velocity along the face normal)
+///   q̂_L = u_L > 0 ? h_L·u_L : q_f  (upwind: the cell's own momentum carries
+///   q̂_R = u_R > 0 ? q_f : h_R·u_R   in; the face's discharge carries out)
+///
+/// Exactly zero at rest (u = 0) and in uniform flow (u_L = u_R = u,
+/// h_L = h_R, q_f = h·u ⇒ both fluxes equal h·u²), so the C-property and
+/// steady sheet flow are untouched; upwinding supplies shock dissipation.
+/// Units: (m/s)·(m²/s)/m = m²/s², the same as the g·h·∂η/∂n term.
+OPENSWMM_KERNEL_FN double inertialAdvection(double q_f, double unL, double hL,
+                                            double unR, double hR,
+                                            double inv_dx_normal) noexcept {
+    const double FL = unL * ((unL > 0.0) ? hL * unL : q_f);
+    const double FR = unR * ((unR > 0.0) ? q_f : hR * unR);
+    return (FR - FL) * inv_dx_normal;
 }
 
 /// Froude-number clamp: |q| ≤ Fr_max · h_f · √(g·h_f). The steep-face guard —

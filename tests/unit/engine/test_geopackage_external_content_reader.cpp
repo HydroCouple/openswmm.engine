@@ -119,8 +119,7 @@ TEST(GpkgExternalContentReader, TimeseriesRoundTripMaterialisesScratchFile) {
     // Write phase.
     {
         SimulationContext wctx;
-        int t = wctx.table_names.add("RAIN_X");
-        wctx.tables.add("RAIN_X", TableType::TIMESERIES);
+        int t = wctx.tables.add("RAIN_X", TableType::TIMESERIES);
         wctx.tables[t].file_path = src.string();
         ASSERT_NO_THROW(write_external_content(db.get(), wctx, sim));
     }
@@ -131,8 +130,8 @@ TEST(GpkgExternalContentReader, TimeseriesRoundTripMaterialisesScratchFile) {
     const std::string scratch = scratchDirFor(dbPathFor(stem));
     ASSERT_NO_THROW(read_external_content(db.get(), rctx, sim, scratch));
 
-    int t = rctx.table_names.find("RAIN_X");
-    ASSERT_GE(t, 0) << "reader did not register RAIN_X in table_names";
+    int t = rctx.find_timeseries("RAIN_X");
+    ASSERT_GE(t, 0) << "reader did not register RAIN_X as a timeseries";
     const auto& slot = rctx.tables[t].file_path;
     EXPECT_FALSE(slot.absolute.empty());
     EXPECT_NE(slot.original.find("<gpkg:input_timeseries:RAIN_X>"),

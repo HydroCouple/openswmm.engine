@@ -241,7 +241,9 @@ void RDIISolver::init(SimulationContext& ctx) {
 
     // Build UH name → gage index mapping from parsed [HYDROGRAPHS] gage lines.
     // Legacy: each UnitHyd[j] has a rainGage field set during parsing.
-    std::unordered_map<std::string, int> uh_gage_map;
+    // Case-insensitive so gage-assignment lines match UH groups spelled in a
+    // different case (legacy hash.c parity).
+    std::unordered_map<std::string, int, CiHash, CiEqual> uh_gage_map;
     for (size_t gi = 0; gi < ctx.unit_hyds.gage_assignments.size(); ++gi) {
         const auto& uh_name = ctx.unit_hyds.gage_assignments[gi];
         const auto& gage_name = ctx.unit_hyds.gage_names[gi];

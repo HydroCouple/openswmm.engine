@@ -61,12 +61,9 @@ static int parse_pattern_type(std::string_view sv) noexcept {
     return -1; // not a type keyword
 }
 
-/// Find a pattern index by name, or -1 if not found.
+/// Find a pattern index by name (case-insensitive), or -1 if not found.
 static int find_pattern(const PatternData& pat, const std::string& name) noexcept {
-    for (int i = 0; i < pat.count(); ++i) {
-        if (pat.names[static_cast<std::size_t>(i)] == name) return i;
-    }
-    return -1;
+    return pat.find(name);
 }
 
 // ============================================================================

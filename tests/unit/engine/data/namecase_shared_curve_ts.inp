@@ -1,0 +1,44 @@
+[TITLE]
+A pump curve and an inflow timeseries legally share the name "SHARED"
+(legacy keeps CURVE and TSERIES in separate hash tables). References use
+case-variant spellings; each must resolve to its own kind.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             03:00:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         5
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       CurveCoeff  Exponent  Constant
+STOR1   90    10        2          FUNCTIONAL  0           0         1000
+
+[OUTFALLS]
+;;Name  Elev  Type  Gated
+OUT1    80    FREE  NO
+
+[PUMPS]
+;;Name  FromNode  ToNode  PumpCurve  Status  Startup  Shutoff
+P1      STOR1     OUT1    shared     ON      0        0
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries  Type  Mfactor  Sfactor  Baseline
+STOR1   FLOW         SHARED      FLOW  1.0      1.0
+
+[CURVES]
+;;Name   Type   X     Y
+SHARED   PUMP2  0     0
+SHARED          2     4
+SHARED          10    8
+
+[TIMESERIES]
+;;Name  Date  Time  Value
+Shared        0:00  5
+Shared        3:00  5
+
+[REPORT]
+INPUT  NO

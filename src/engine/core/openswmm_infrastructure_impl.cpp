@@ -12,6 +12,7 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_infrastructure.h"
+#include "StringCase.hpp"
 
 #include <cctype>
 #include <string>
@@ -28,6 +29,10 @@ SWMM_ENGINE_API int swmm_transect_add(SWMM_Engine engine, const char* id) {
 
     auto& ctx = to_engine(engine)->context();
     auto& ts = ctx.transects;
+
+    // Reject duplicates (case-insensitive, legacy hash.c parity).
+    for (const auto& existing : ts.names)
+        if (openswmm::ieq(existing, id)) return SWMM_ERR_BADPARAM;
 
     ts.names.push_back(id);
     ts.comments.push_back(std::string{});
@@ -75,9 +80,10 @@ SWMM_ENGINE_API int swmm_transect_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_transect_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
+    // Case-insensitive (legacy hash.c parity)
     const auto& names = to_engine(engine)->context().transects.names;
     for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
+        if (openswmm::ieq(names[i], id)) return static_cast<int>(i);
     }
     return -1;
 }
@@ -238,19 +244,10 @@ SWMM_ENGINE_API int swmm_transect_rename(SWMM_Engine engine, int idx, const char
     if (ts.names[ui] == new_id) return SWMM_OK;
 
     // Case-insensitive collision check against every other slot.
-    auto ieq = [](const std::string& a, const std::string& b) {
-        if (a.size() != b.size()) return false;
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            const unsigned char ca = static_cast<unsigned char>(a[i]);
-            const unsigned char cb = static_cast<unsigned char>(b[i]);
-            if (std::tolower(ca) != std::tolower(cb)) return false;
-        }
-        return true;
-    };
     const std::string newName(new_id);
     for (std::size_t i = 0; i < ts.names.size(); ++i) {
         if (i == ui) continue;
-        if (ieq(ts.names[i], newName)) return SWMM_ERR_BADPARAM;
+        if (openswmm::ieq(ts.names[i], newName)) return SWMM_ERR_BADPARAM;
     }
 
     ts.names[ui] = newName;
@@ -338,9 +335,10 @@ SWMM_ENGINE_API int swmm_street_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_street_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
+    // Case-insensitive (legacy hash.c parity)
     const auto& names = to_engine(engine)->context().streets.names;
     for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
+        if (openswmm::ieq(names[i], id)) return static_cast<int>(i);
     }
     return -1;
 }
@@ -420,9 +418,10 @@ SWMM_ENGINE_API int swmm_inlet_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_inlet_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
+    // Case-insensitive (legacy hash.c parity)
     const auto& names = to_engine(engine)->context().inlets.names;
     for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
+        if (openswmm::ieq(names[i], id)) return static_cast<int>(i);
     }
     return -1;
 }
@@ -505,6 +504,9 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
     if (ctx.state != openswmm::EngineState::BUILDING &&
         ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
+    // Reject duplicates (case-insensitive) BEFORE touching the backing store;
+    // an unguarded NameIndex::add would throw across the C ABI.
+    if (ctx.lid_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
 
     auto& lid = ctx.lid_controls;
     lid.names.push_back(id);
@@ -648,11 +650,9 @@ SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine) {
 
 SWMM_ENGINE_API int swmm_lid_index(SWMM_Engine engine, const char* id) {
     if (!engine || !id) return -1;
-    const auto& names = to_engine(engine)->context().lid_controls.names;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == id) return static_cast<int>(i);
-    }
-    return -1;
+    // Route through the registry (case-insensitive, legacy hash.c parity)
+    // instead of scanning lid_controls.names, which could disagree with it.
+    return to_engine(engine)->context().lid_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx) {

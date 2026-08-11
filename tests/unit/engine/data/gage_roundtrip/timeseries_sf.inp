@@ -74,3 +74,7 @@ AVERAGES             NO
 SUBCATCHMENTS        ALL
 NODES                ALL
 LINKS                ALL
+
+[TIMESERIES]
+;;Name             Date/Time            Value       
+;;---------------- -------------------- ------------
