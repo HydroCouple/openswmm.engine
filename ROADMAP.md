@@ -162,7 +162,9 @@ Two routes are being developed, and they are complementary rather than competing
 
 ---
 
-## 5. Groundwater — Two-Zone Model ✅
+## 5. Groundwater
+
+### 5.1 Two-Zone Model ✅
 
 **Motivation:** Groundwater interaction is central to infiltration-based stormwater controls, baseflow generation, and subsurface drainage. A two-zone (unsaturated/saturated) groundwater model provides subsurface flow representation in the new engine and serves as the flow foundation for the groundwater advection-dispersion transport module (Section 2.3).
 
@@ -171,6 +173,19 @@ Two routes are being developed, and they are complementary rather than competing
 **Remaining scope:**
 - The coupling interface for the groundwater ADE transport module (Section 2.3).
 - Continued legacy-parity verification alongside the rest of the hydrology suite.
+
+### 5.2 Spatially Explicit Groundwater — FV Mesh Integration 🔬
+
+**Motivation:** The two-zone aquifer of Section 5.1 is integrated per subcatchment: lateral exchange is the empirical SWMM cubic polynomial, there is no inter-subcatchment communication, and the aquifer's only feedback to the rest of the engine is an end-of-step infiltration cap. Four physically real processes are therefore not representable: saturation-excess (Dunne) overland flow when the water table reaches the surface, return flow re-emerging downslope after lateral subsurface transport, head-driven pipe and node ↔ aquifer exchange (the physical mechanism behind RDII, groundwater inflow, and sewer exfiltration), and true capillary rise feeding evaporation.
+
+**Status:** Design recorded, following the semidiscrete finite volume multiprocess watershed formulation of Qu & Duffy (2007). No implementation yet.
+
+**Planned scope:**
+- A vertically integrated, complementary two-layer subsurface kernel on the 2D FV mesh — unsaturated moisture depth and saturated thickness per cell, joined at a moving water table.
+- Closed-form interfacial recharge flux with a runtime-selectable soil characteristic (Gardner, Russo, Brooks–Corey, van Genuchten), smooth in both states so no piecewise switching is needed.
+- Lateral saturated Darcy exchange on the same FV stencil the 2D surface router already assembles, giving the four missing processes above without new closures.
+- An enslaved shallow-water-table reduction collapsing each cell to a single ODE in saturated thickness, and a benchmarked comparison against a kinematic-wave approximation of unsaturated-zone dynamics across behavioural regimes from pipe-only urban projects to fully meshed catchments.
+- Legacy alignment: all existing SWMM aquifer behaviour continues to route through the unchanged per-subcatchment path (Section 5.1); the mesh-coupled kernel is opt-in.
 
 ---
 
@@ -218,7 +233,7 @@ means merged and gated but not yet carried by a tag.
 |---------------------------------------------------------------------------------------|-----------------|
 | Data-oriented, reentrant engine core (SoA state, opaque handle, plugin I/O, lifecycle state machine) | 6.0.0-alpha.1   |
 | Public C API, Python bindings and MCP server over the model, options, results and runtime state | 6.0.0-alpha.1 → ongoing |
-| Two-zone groundwater model (Section 5)                                                | 6.0.0-alpha.1   |
+| Two-zone groundwater model (Section 5.1)                                              | 6.0.0-alpha.1   |
 | 1D/2D coupled overland flow — explicit local inertial finite volume marcher (Section 1.2) | 6.0.0-alpha.1 (hardened through alpha.3) |
 | Kokkos GPU/threaded plugin backends for the 2D solver (OpenMP, CUDA, HIP, SYCL)        | 6.0.0-alpha.2   |
 | Decoupled 1D/2D timesteps with conservative per-window exchange booking                | 6.0.0-alpha.3   |
