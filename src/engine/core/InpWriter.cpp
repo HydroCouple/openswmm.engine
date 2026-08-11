@@ -736,8 +736,6 @@ int writeInpFile(const SimulationContext& ctx_internal,
             std::fprintf(f,"%-20s %s\n", "FV_NODE_DT", "NONE");
         if (fvo.node_picard_sweeps != 1)
             std::fprintf(f,"%-20s %d\n", "FV_NODE_PICARD", fvo.node_picard_sweeps);
-        if (fvo.node_cell_coupling)
-            std::fprintf(f,"%-20s %s\n", "FV_NODE_CELL_COUPLING", "YES");
         if (!fvo.compaction)
             std::fprintf(f,"%-20s %s\n", "FV_COMPACTION", "NO");
         std::fprintf(f,"%-20s %s\n", "FV_BACKEND",      sBackend[static_cast<int>(fvo.backend)]);

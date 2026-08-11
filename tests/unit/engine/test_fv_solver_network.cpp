@@ -698,6 +698,22 @@ TEST(FvNetwork, ImplicitDispersionRemovesTheDeltaXSquaredStepRestriction) {
 // §7B.1 — semi-implicit node coupling
 // ===========================================================================
 
+namespace {
+// Give a node a prismatic storage table so it runs the integrated bucket
+// path: plain junctions are algebraic interfaces (node_alg_ excludes any
+// node with a storage table), so the semi-implicit relaxation and the
+// options that act on it now live on storage nodes alone.
+void attachPrismaticStorage(Channel& ch, int node, double area, double dmax) {
+    const auto un = static_cast<std::size_t>(node);
+    ch.mesh.node_vol_off[un]  = static_cast<int>(ch.mesh.node_vol_tbl.size());
+    ch.mesh.node_vol_dmax[un] = dmax;
+    for (int i = 0; i < kNodeVolSamples; ++i)
+        ch.mesh.node_vol_tbl.push_back(
+            area * dmax * static_cast<double>(i) /
+            static_cast<double>(kNodeVolSamples - 1));
+}
+}  // namespace
+
 // The property that makes the damping legitimate rather than a fudge: at
 // EQUILIBRIUM the correction is identically zero. It is proportional to the
 // node's net imbalance, and a settled node has none — so the two couplings
@@ -709,6 +725,7 @@ TEST(FvNetwork, NodeCouplingsAgreeOnTheSteadyState) {
         Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
                                       [](double x) { return 0.002 * (1000.0 - x); },
                                       0.013);
+        attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
         for (int i = 0; i < ch.n; ++i)
             ch.state.cell_a[static_cast<std::size_t>(i)] =
                 k::areaOfDepth(ch.mesh.geom[0], 0.8);
@@ -738,6 +755,8 @@ TEST(FvNetwork, NodeCouplingsAgreeOnTheSteadyState) {
 TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
     Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
                                   [](double) { return 0.0; }, 0.013);
+    attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
+    attachPrismaticStorage(ch, 1, 12.566, 8.0);
     for (int i = 0; i < ch.n; ++i)
         ch.state.cell_a[static_cast<std::size_t>(i)] =
             k::areaOfDepth(ch.mesh.geom[0], 1.2);
@@ -780,6 +799,7 @@ TEST(FvNetwork, SemiImplicitCouplingRemovesTheNodeStepLimit) {
         Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
                                       [](double x) { return 0.002 * (1000.0 - x); },
                                       0.013);
+        attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
         for (int i = 0; i < ch.n; ++i)
             ch.state.cell_a[static_cast<std::size_t>(i)] =
                 k::areaOfDepth(ch.mesh.geom[0], 0.8);
@@ -813,3 +833,165 @@ TEST(FvNetwork, SemiImplicitCouplingRemovesTheNodeStepLimit) {
     EXPECT_LT(si, ex) << "the node still sets the substep";
 }
 
+
+// ===========================================================================
+// Algebraic junctions — the junction as an interface, not a bucket
+// ===========================================================================
+
+// The interface must agree with an integrated bucket on the settled flow: at
+// equilibrium the algebraic balance and a storage node's integrated volume
+// describe the same physics, and disagreement would mean the interface
+// treatment changes the answer rather than the cost of reaching it.
+TEST(FvNetwork, AlgebraicJunctionAgreesWithABucketNodeOnTheSteadyState) {
+    auto settle = [](bool bucket_node) {
+        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                      [](double x) { return 0.002 * (1000.0 - x); },
+                                      0.013);
+        if (bucket_node)
+            attachPrismaticStorage(ch, 0, 12.566, 8.0);
+        for (int i = 0; i < ch.n; ++i)
+            ch.state.cell_a[static_cast<std::size_t>(i)] =
+                k::areaOfDepth(ch.mesh.geom[0], 0.8);
+        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
+        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
+
+        FvOptions o = defaultOptions();
+        runNoded(ch, o, 3000.0, 5.0, /*q_in=*/12.0,
+                 /*stage_dn=*/ch.mesh.node_invert[1] + 0.8);
+        return ch.state.cell_q;
+    };
+
+    const std::vector<double> bucket = settle(true);
+    const std::vector<double> alg    = settle(false);
+    ASSERT_EQ(bucket.size(), alg.size());
+    for (std::size_t i = 5; i + 5 < bucket.size(); ++i)
+        EXPECT_NEAR(alg[i], bucket[i], 0.02 * 12.0)
+            << "steady discharge differs at cell " << i;
+}
+
+// A wet channel at rest between two algebraic junctions must STAY at rest —
+// the residual short-circuit exists so a bracketing probe cannot disturb the
+// balance by the solve tolerance — and a closed system must hold its water.
+TEST(FvNetwork, AlgebraicJunctionKeepsAClosedLakeAtRest) {
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                  [](double) { return 0.0; }, 0.013);
+    ch.mesh.node_kind[1] = kNodeJunction;    // both ends algebraic-eligible
+    for (int i = 0; i < ch.n; ++i)
+        ch.state.cell_a[static_cast<std::size_t>(i)] =
+            k::areaOfDepth(ch.mesh.geom[0], 1.2);
+    ch.state.node_head[0] = 1.2;
+    ch.state.node_head[1] = 1.2;
+
+    FvOptions o = defaultOptions();
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+
+    std::vector<double> lateral(2, 0.0);
+    std::vector<double> fixed(2, std::numeric_limits<double>::quiet_NaN());
+    FvStepForcing f;
+    f.node_lateral    = lateral.data();
+    f.node_fixed_head = fixed.data();
+    f.n_nodes = 2;
+
+    const double v0 = totalVolume(ch);
+    for (double t = 0.0; t < 600.0; t += 5.0) s.advance(t, t + 5.0, f);
+    EXPECT_NEAR(totalVolume(ch), v0, 1.0e-10 * v0)
+        << "the algebraic junction moved water in a closed system at rest";
+    EXPECT_NEAR(ch.state.node_head[0], 1.2, 1.0e-9)
+        << "upstream head drifted at rest";
+    EXPECT_NEAR(ch.state.node_head[1], 1.2, 1.0e-9)
+        << "downstream head drifted at rest";
+    for (int i = 0; i < ch.n; ++i)
+        EXPECT_NEAR(ch.state.cell_q[static_cast<std::size_t>(i)], 0.0, 1.0e-9)
+            << "spurious discharge at cell " << i;
+    s.finalize();
+}
+
+// The point of the treatment: the junction no longer sets the substep. A
+// bucket node's bound CFL·(A_s/T)/(|u|+c) is ~6× below the cell CFL on this
+// fixture; the algebraic run must step on the cells alone.
+TEST(FvNetwork, AlgebraicJunctionRemovesTheNodeStepLimit) {
+    auto substeps = [](bool bucket_node) {
+        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                      [](double x) { return 0.002 * (1000.0 - x); },
+                                      0.013);
+        if (bucket_node)
+            attachPrismaticStorage(ch, 0, 12.566, 8.0);
+        for (int i = 0; i < ch.n; ++i)
+            ch.state.cell_a[static_cast<std::size_t>(i)] =
+                k::areaOfDepth(ch.mesh.geom[0], 0.8);
+        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
+        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
+
+        FvOptions o = defaultOptions();
+        ExplicitFvSolver s;
+        s.initialize(ch.mesh, ch.state, o);
+        std::vector<double> lateral = {12.0, 0.0};
+        std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(),
+                                     ch.mesh.node_invert[1] + 0.8};
+        FvStepForcing f;
+        f.node_lateral = lateral.data();
+        f.node_fixed_head = fixed.data();
+        f.n_nodes = 2;
+        long n = 0;
+        for (double t = 0.0; t < 600.0; t += 5.0) {
+            s.advance(t, t + 5.0, f);
+            n += s.last_num_steps();
+        }
+        s.finalize();
+        return n;
+    };
+
+    const long bucket = substeps(true);
+    const long alg    = substeps(false);
+    std::printf("[fv-alg] substeps bucket %ld vs algebraic %ld (%.2fx)\n",
+                bucket, alg,
+                static_cast<double>(bucket) / static_cast<double>(std::max(1L, alg)));
+    EXPECT_LT(alg, bucket) << "the junction still sets the substep";
+}
+
+// Flooding with a closed ledger: a sealed algebraic junction overdriven past
+// its rim clamps at y_max and books EXACTLY the surplus into flood_vol_ — the
+// water that entered must equal the water in the channel plus the water
+// reported flooded, to the carry tolerance.
+TEST(FvNetwork, AlgebraicJunctionFloodLedgerCloses) {
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                  [](double) { return 0.0; }, 0.013);
+    ch.mesh.node_full_depth[0] = 4.0;        // sealed rim just above the crown
+    ch.mesh.node_sur_depth.assign(2, 0.0);   // fixture leaves this unsized
+    for (int i = 0; i < ch.n; ++i)
+        ch.state.cell_a[static_cast<std::size_t>(i)] =
+            k::areaOfDepth(ch.mesh.geom[0], 0.5);
+    ch.state.node_head[0] = 0.5;
+    ch.state.node_head[1] = 0.5;
+
+    FvOptions o = defaultOptions();
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+
+    const double q_in = 400.0;               // far beyond the pipe's capacity
+    std::vector<double> lateral = {q_in, 0.0};
+    std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(), 0.5};
+    FvStepForcing f;
+    f.node_lateral    = lateral.data();
+    f.node_fixed_head = fixed.data();
+    f.n_nodes = 2;
+
+    const double v0 = totalVolume(ch);
+    const double t_end = 300.0;
+    double outflow = 0.0, flooded = 0.0;
+    for (double t = 0.0; t < t_end; t += 5.0) {
+        s.advance(t, t + 5.0, f);
+        // Per-advance ledgers: water leaving through the fixed-stage
+        // downstream node, and water flooded at the sealed upstream rim.
+        outflow += s.node_inflow_volume()[1] - s.node_outflow_volume()[1];
+        flooded += s.node_flood_volume()[0];
+    }
+    const double in_total = q_in * t_end;
+    const double held = totalVolume(ch) - v0;
+    EXPECT_GT(flooded, 0.0) << "the fixture never flooded";
+    EXPECT_NEAR(held + flooded + outflow, in_total, 1.0e-6 * in_total)
+        << "flood ledger does not close: held " << held << " flooded "
+        << flooded << " out " << outflow << " vs in " << in_total;
+    s.finalize();
+}

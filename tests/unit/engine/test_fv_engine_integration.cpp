@@ -231,14 +231,26 @@ TEST(FvEngine, RefiningTheMeshConvergesTowardTheDynwaveHydrograph) {
        << "50," << e_mid << "\n"
        << "20," << e_fine << "\n";
 
-    EXPECT_LT(e_mid, e_coarse)
-        << "refining from COARSE to dx=50 did not reduce the peak-flow error ("
-        << e_coarse << " -> " << e_mid << ")";
-    EXPECT_LT(e_fine, e_coarse)
-        << "refining from COARSE to dx=20 did not reduce the peak-flow error ("
-        << e_coarse << " -> " << e_fine << ")";
+    // With the pass-through junction interface even COARSE sits at ~3 % mean
+    // peak-flow deviation from DW — inside solver-to-solver noise — so a
+    // strictly monotone trend can no longer be resolved there. Monotonicity
+    // is asserted only while the coarse error is above the noise floor;
+    // below it, every resolution must simply stay inside the floor, which is
+    // a STRONGER statement of convergence than the trend was.
+    constexpr double kNoiseFloor = 0.05;
+    if (e_coarse > kNoiseFloor) {
+        EXPECT_LT(e_mid, e_coarse)
+            << "refining from COARSE to dx=50 did not reduce the peak-flow error ("
+            << e_coarse << " -> " << e_mid << ")";
+        EXPECT_LT(e_fine, e_coarse)
+            << "refining from COARSE to dx=20 did not reduce the peak-flow error ("
+            << e_coarse << " -> " << e_fine << ")";
+    } else {
+        EXPECT_LT(e_mid, kNoiseFloor)
+            << "dx=50 fell out of the noise floor: " << e_mid;
+    }
     // At the finest resolution the peaks must be genuinely close to DW.
-    EXPECT_LT(e_fine, 0.20)
+    EXPECT_LT(e_fine, kNoiseFloor)
         << "mean relative peak-flow error at dx=20 is " << e_fine;
 }
 
@@ -380,20 +392,17 @@ TEST(FvEngine, FvKeysAreInertUnderOtherRoutingModels) {
 }
 
 // ===========================================================================
-// §6.7 — junction storage must appear in the routing balance
+// §6.7 — junction accounting must stay clean at scale
 // ===========================================================================
 
-// The reference model has twelve nodes, and that is why this defect shipped:
-// the routing mass balance excludes plain-junction storage by legacy
-// convention (report_full_volume_ is zero for a junction), which the dynamic
-// wave solver can afford because it never has to hold water in a junction to
-// stay stable. The finite-volume solver's node IS an explicit control volume,
-// so the water standing in it is real — and excluding it turns genuine storage
-// into an apparent continuity error PROPORTIONAL TO JUNCTION COUNT.
-//
-// Measured before the fix: 0.00082 acre-feet per junction. On twelve nodes
-// that rounds to 0.000 %; on five hundred it was 0.887 %. The gate therefore
-// has to be a many-junction model, not a bigger tolerance on a small one.
+// Any per-junction accounting defect is invisible on a twelve-node model and
+// PROPORTIONAL TO JUNCTION COUNT, so the gate has to be a many-junction
+// chain. Two generations of that defect have lived here: the bucket-era
+// balance EXCLUDED the buckets' real MIN_SURFAREA·depth storage (0.00082
+// acre-feet per junction), and after junctions became algebraic interfaces
+// the reporting kept crediting that same relation for water that now stands
+// in the cells — re-counting it at −0.005 % per junction. Both ways the
+// symptom is the same: routing continuity drifting linearly with node count.
 TEST(FvEngine, JunctionStorageIsCountedInTheRoutingBalance) {
     constexpr int kJunctions = 120;
     const std::string dir = outDir();
@@ -918,7 +927,12 @@ std::string writeForceMainModel(const std::string& name, const char* routing) {
           "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
           "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
           "ALLOW_PONDING        NO\n\n"
-          "[JUNCTIONS]\nJA  100.0  30.0  20.0  0  0\n\n"
+          // JA starts DRY: a 20 ft initial head column slamming the main is a
+          // genuine surge (reported peak 51 cfs now that link flow is the
+          // face flux), and the observable here is the steady H-W friction
+          // law, not the fixture's initial condition. The main still
+          // pressurizes fully at the steady 25 cfs (6.9x full depth).
+          "[JUNCTIONS]\nJA  100.0  30.0  0  0  0\n\n"
           "[OUTFALLS]\nOF   90.0  FIXED  95.0  NO\n\n"
           "[CONDUITS]\nFM  JA  OF  1000  0.01  0  0  0  0\n\n"
           "[XSECTIONS]\nFM  FORCE_MAIN  2.0  120  0  0  1\n\n"
@@ -977,14 +991,21 @@ TEST(FvEngine, StructureCouplingSubstepTracksTheMovingHead) {
     const RunResult substep = run_coupling("substep", "SUBSTEP");
     ASSERT_TRUE(frozen.parsed && substep.parsed);
 
-    // The weir is the sensitive one: held at the head difference the step
-    // opened with, it passed 23.0 cfs where re-evaluating gives 12.1.
+    // Historical note: under the integrated junction bucket the two cadences
+    // opened a 2x gap on the weir (23.0 cfs frozen vs 12.1 re-evaluated) —
+    // the bucket's head LAGGED, and the frozen weir kept spending the stale
+    // head difference. An algebraic junction's head is quasi-static (balanced
+    // every substep), so that lag is gone and the cadences must now AGREE;
+    // a re-opened gap would mean junction heads are integration-lagged again.
     ASSERT_TRUE(frozen.peak_flow.count("W1") && substep.peak_flow.count("W1"));
-    EXPECT_LT(substep.peak_flow.at("W1"), 0.8 * frozen.peak_flow.at("W1"))
+    EXPECT_NEAR(substep.peak_flow.at("W1"), frozen.peak_flow.at("W1"),
+                0.2 * frozen.peak_flow.at("W1"))
         << "weir peak " << substep.peak_flow.at("W1") << " cfs under SUBSTEP vs "
-        << frozen.peak_flow.at("W1") << " frozen — the option is still inert";
+        << frozen.peak_flow.at("W1") << " frozen — the cadences diverged";
     EXPECT_LT(std::fabs(substep.continuity_pct), 0.5)
         << "routing continuity " << substep.continuity_pct << " %";
+    EXPECT_LT(std::fabs(frozen.continuity_pct), 0.5)
+        << "routing continuity " << frozen.continuity_pct << " %";
 }
 
 // ===========================================================================
@@ -1273,10 +1294,13 @@ std::string writeNodePicardModel(const std::string& name, int sweeps) {
     // tier puts the node on the macro step, which is the regime it exists for.
     os << "FV_LTS_MAX_TIERS     1\n";
     if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
-    // A wide, shallow channel on small junctions: the node's storage is tiny
-    // against the conduit's conveyance, which is the configuration where the
-    // frozen tangent is furthest from the true flux response.
-    os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\nJ2   99.0  8.0  0  0  0\n\n"
+    // Picard sweeps iterate the integrated-bucket node relaxation. Plain
+    // junctions are algebraic interfaces and never use it, so the machinery's
+    // remaining home is a STORAGE node — a small one, so its storage stays
+    // tiny against the conduit's conveyance, which is the configuration where
+    // the frozen tangent is furthest from the true flux response.
+    os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n\n"
+          "[STORAGE]\nJ2  99.0  8.0  0  FUNCTIONAL  0  0  12.5\n\n"
           "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
           "[CONDUITS]\nC1  J1  J2  300  0.02  0  0  0  0\n"
           "C2  J2  OF  300  0.02  0  0  0  0\n\n"
@@ -1327,8 +1351,11 @@ TEST(FvEngine, NodePicardIsTierWindowSafeUnderLts) {
                   "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
                   "REPORT_STEP          00:05:00\nROUTING_STEP         5\n";
             if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
-            os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\nJ2   99.4  8.0  0  0  0\n"
+            // Picard machinery lives on the storage node (junctions are
+            // algebraic); J2 sits between the tier-split conduits.
+            os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n"
                   "J3   99.0  8.0  0  0  0\n\n"
+                  "[STORAGE]\nJ2  99.4  8.0  0  FUNCTIONAL  0  0  12.5\n\n"
                   "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
                   // 40:1 length ratio — the tier spread the grading sweep exists for
                   "[CONDUITS]\nC1  J1  J2  800  0.02  0  0  0  0\n"
@@ -1399,7 +1426,7 @@ std::string writeMinSurfAreaModel(const std::string& name, const char* msa,
 }
 }  // namespace
 
-TEST(FvEngine, MinSurfAreaIsHonouredByFv) {
+TEST(FvEngine, MinSurfAreaDoesNotShapeFvJunctions) {
     const RunResult small = runModel(
         writeMinSurfAreaModel("msa_small_fv", "0.01", "FV"));
     const RunResult big = runModel(
@@ -1407,28 +1434,19 @@ TEST(FvEngine, MinSurfAreaIsHonouredByFv) {
     ASSERT_TRUE(small.parsed && big.parsed);
     ASSERT_GT(small.peak_flow.at("C2"), 0.0) << "fixture never routed";
 
-    EXPECT_NE(small.peak_flow.at("C2"), big.peak_flow.at("C2"))
-        << "FV output is identical across a 1257x change in MIN_SURFAREA — "
-           "the junction storage convention is back on the compile-time "
-           "constant and the option is being ignored";
-
-    // What the option SHOULD move is small. Shrinking a node's storage by
-    // 1257x is a large change to the network's buffering, and a scheme that is
-    // conserving properly barely notices: measured, FV's peak moves 0.1 %
-    // (14.74 -> 14.76) where the dynamic wave's moves 44 % (15.95 -> 22.93) on
-    // the same deck, and DW's routing continuity degrades to -2.24 %. Asserting
-    // the STABILITY rather than a threshold keeps this about the property that
-    // matters instead of a number that will drift.
+    // Junctions are algebraic interfaces with NO storage of their own — the
+    // convention legacy DW also keeps (its node_getSurfArea is zero for
+    // non-storage nodes; MIN_SURFAREA is a solution-method floor there, not
+    // physics). So a 1257x change in MIN_SURFAREA must leave FV's junction
+    // routing essentially untouched; sensitivity here would mean a spurious
+    // storage bucket is back at the junctions.
     const double dpk = std::fabs(small.peak_flow.at("C2") -
                                  big.peak_flow.at("C2"));
-    EXPECT_LT(dpk, 0.05 * big.peak_flow.at("C2"))
-        << "FV peak moved " << dpk << " cfs across the storage change";
+    EXPECT_LT(dpk, 0.001 * big.peak_flow.at("C2"))
+        << "FV peak moved " << dpk << " cfs across the MIN_SURFAREA change";
 
-    // Continuity: clean at a realistic manhole, and merely degraded — not
-    // broken — at a near-zero-storage node, which is a regime the node update
-    // genuinely finds hard (DW is 7x worse there).
     EXPECT_LT(std::fabs(big.continuity_pct), 0.05) << big.continuity_pct;
-    EXPECT_LT(std::fabs(small.continuity_pct), 0.5) << small.continuity_pct;
+    EXPECT_LT(std::fabs(small.continuity_pct), 0.05) << small.continuity_pct;
 }
 
 // ---------------------------------------------------------------------------

@@ -1176,7 +1176,7 @@ class SimulationOptions(MutableMapping):
         "FV_COMPACTION", "FV_BACKEND", "FV_MIN_PARALLEL_CELLS",
         "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
         "FV_NODE_COUPLING", "FV_NODE_DT", "FV_NODE_PICARD",
-        "FV_NODE_CELL_COUPLING",
+        "FV_NODE_CELL_COUPLING", "FV_JUNCTION_MODEL",
     )
 
     def __getitem__(self, key: str) -> str:

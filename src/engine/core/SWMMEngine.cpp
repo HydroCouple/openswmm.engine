@@ -5827,20 +5827,16 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
         depth > fd)
         return volume;
 
-    // Legacy convention: a plain junction contributes ZERO to reported storage,
-    // because report_full_volume_ is 0 for it. That is a reporting choice the
-    // dynamic wave solver can afford — it never has to hold water in a junction
-    // to remain stable.
-    //
-    // The finite-volume solver does. Its node is an explicit control volume of
-    // area MIN_SURFAREA (D-FV5), and the water standing in it is as real as the
-    // water in a conduit. Excluding it turns genuine storage into an apparent
-    // continuity error PROPORTIONAL TO JUNCTION COUNT — measured 0.00082
-    // acre-feet per junction, invisible on a twelve-node model and 0.9 % on a
-    // five-hundred-node one. So under FV the junction is reported with the same
-    // relation the solver integrates.
-    if (ctx_.options.routing_model == RoutingModel::FV)
-        return constants::MIN_SURFAREA * depth;
+    // Legacy convention: a plain junction contributes ZERO to reported
+    // storage, because report_full_volume_ is 0 for it. FV junctions are now
+    // algebraic INTERFACES that hold no water of their own — the water at a
+    // junction's head stands in the incident cells, already counted through
+    // link volumes — so FV shares the convention. (The earlier bucket model
+    // DID hold MIN_SURFAREA·depth of real water per junction and reported it
+    // here; keeping that relation after the buckets were removed re-counted
+    // the cells' water and read as a continuity error proportional to
+    // junction count — measured −0.005 % per junction on a 120-junction
+    // chain, one MIN_SURFAREA·depth per node.)
 
     return report_full_volume_[ui] * (depth / fd);
 }
