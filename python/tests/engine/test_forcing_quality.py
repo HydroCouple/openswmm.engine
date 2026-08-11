@@ -19,8 +19,8 @@ Report/output files land in ``tests/engine/output``.
 from __future__ import annotations
 
 import os
-
-import pytest
+import re
+import unittest
 
 from openswmm.engine import Solver, ForcingMode
 
@@ -30,28 +30,34 @@ _DWF_INP = os.path.join(
     _REPO_ROOT, "tests", "unit", "engine", "data", "refactored_small.inp")
 _OUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 
-# Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit
-_POLLUTANTS = (
-    "\n[POLLUTANTS]\n"
-    ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
-    "TSS MG/L 0.0 50.0 0.0 0.0 NO * 0.0 100.0 0.0\n"
-)
+
+def _pollutants(cgw, cdwf):
+    return (
+        "\n[POLLUTANTS]\n"
+        ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut"
+        " CoFrac Cdwf Cinit\n"
+        f"TSS MG/L 0.0 {cgw} 0.0 0.0 NO * 0.0 {cdwf} 0.0\n"
+    )
 
 
-def _quality_model():
+def _quality_model(cgw=50.0, cdwf=100.0, tag="dwf"):
     os.makedirs(_OUT_DIR, exist_ok=True)
     with open(_DWF_INP) as f:
         text = f.read()
-    text = text + _POLLUTANTS
-    path = os.path.join(_OUT_DIR, "quality_dwf.inp")
+    # The base model sets IGNORE_QUALITY YES, which gates off quality routing
+    # entirely — the appended [POLLUTANTS] block would be parsed and dropped.
+    text = re.sub(r'^IGNORE_QUALITY\s+\S+', 'IGNORE_QUALITY       NO',
+                  text, count=1, flags=re.MULTILINE)
+    text = text + _pollutants(cgw, cdwf)
+    path = os.path.join(_OUT_DIR, f"quality_{tag}.inp")
     with open(path, "w") as f:
         f.write(text)
     return path
 
 
-def _solver(name):
+def _solver(name, cgw=50.0, cdwf=100.0, tag="dwf"):
     base = os.path.join(_OUT_DIR, name)
-    s = Solver(_quality_model(), base + ".rpt", base + ".out")
+    s = Solver(_quality_model(cgw, cdwf, tag), base + ".rpt", base + ".out")
     s.open()
     s.initialize()
     s.start()
@@ -74,14 +80,15 @@ def _first_inflow_node(s, kind):
     return -1
 
 
-class TestDwfQuality:
+class TestDwfQuality(unittest.TestCase):
     def test_dwf_concentration_reaches_nodes(self):
         """Q5: with Cdwf>0, DWF inflow carries pollutant into nodes."""
         s = _solver("q5_dwf")
         try:
             idx = _first_inflow_node(s, "dwf")
-            assert idx >= 0, "expected a DWF/GW node with nonzero TSS"
-            assert s.nodes[idx].quality("TSS") > 0.0
+            self.assertGreaterEqual(
+                idx, 0, "expected a DWF/GW node with nonzero TSS")
+            self.assertGreater(s.nodes[idx].quality("TSS"), 0.0)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -90,12 +97,12 @@ class TestDwfQuality:
         s = _solver("q5_dwf_setter")
         try:
             p = s.pollutants["TSS"]
-            assert p.dwf_conc == pytest.approx(100.0, rel=1e-6)
+            self.assertAlmostEqual(p.dwf_conc, 100.0, delta=100.0 * 1e-6)
             for _ in range(10):
                 s.step()
             # Raise the DWF concentration; round-trip the getter.
             p.dwf_conc = 250.0
-            assert p.dwf_conc == pytest.approx(250.0, rel=1e-6)
+            self.assertAlmostEqual(p.dwf_conc, 250.0, delta=250.0 * 1e-6)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -110,7 +117,7 @@ class TestDwfQuality:
             # The model has DWF + GW pollutant sources; quality continuity
             # should remain well bounded.
             err = s.mass_balance.quality_continuity_error("TSS")
-            assert abs(err) < 5.0
+            self.assertLess(abs(err), 5.0)
         except Exception:
             # quality_continuity_error API shape may differ; tolerate absence.
             pass
@@ -118,15 +125,22 @@ class TestDwfQuality:
             s.close(); s.destroy()
 
 
-class TestLinkQualityForcing:
+class TestLinkQualityForcing(unittest.TestCase):
     # REPLACE sets the link concentration at the start of the step; routing
     # then advects/mixes it, so the value read back after the step is close
     # to (slightly diluted from) the prescribed value rather than exactly it.
     _TARGET = 80.0
 
+    # These tests exercise the forcing channel only, so the DWF/GW pollutant
+    # sources are zeroed: links[0] (BA-01) drains SWR00561946, which is both
+    # the largest DWF node and the groundwater outlet, and a nonzero Cdwf/Cgw
+    # would push its background concentration up toward the forced target and
+    # mask whether the forcing is doing anything.
+    _SRC = dict(cgw=0.0, cdwf=0.0, tag="q4_nosrc")
+
     def test_replace_drives_link_concentration(self):
         """Q4: REPLACE forcing drives the link concentration to the target."""
-        s = _solver("q4_replace")
+        s = _solver("q4_replace", **self._SRC)
         try:
             for _ in range(10):
                 s.step()
@@ -138,14 +152,15 @@ class TestLinkQualityForcing:
             forced = link.quality("TSS")
             # The forced concentration dominates: close to the target (routing
             # dilution is a few percent) and far above the unforced baseline.
-            assert forced == pytest.approx(self._TARGET, rel=0.15)
-            assert forced > baseline + 1.0
+            self.assertAlmostEqual(forced, self._TARGET,
+                                   delta=self._TARGET * 0.15)
+            self.assertGreater(forced, baseline + 1.0)
         finally:
             s.end(); s.close(); s.destroy()
 
     def test_clear_reverts_link_quality(self):
         """Q4: clearing the link-quality forcing lets it evolve down again."""
-        s = _solver("q4_clear")
+        s = _solver("q4_clear", **self._SRC)
         try:
             for _ in range(10):
                 s.step()
@@ -154,12 +169,13 @@ class TestLinkQualityForcing:
                                    mode=ForcingMode.REPLACE, persist=True)
             s.step()
             forced = link.quality("TSS")
-            assert forced == pytest.approx(self._TARGET, rel=0.15)
+            self.assertAlmostEqual(forced, self._TARGET,
+                                   delta=self._TARGET * 0.15)
             s.forcing.clear_all()
             for _ in range(3):
                 s.step()
             # With the pin released the concentration relaxes well below the
             # prescribed target.
-            assert link.quality("TSS") < self._TARGET * 0.8
+            self.assertLess(link.quality("TSS"), self._TARGET * 0.8)
         finally:
             s.end(); s.close(); s.destroy()

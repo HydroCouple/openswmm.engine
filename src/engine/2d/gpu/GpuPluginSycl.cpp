@@ -4,7 +4,7 @@
  *
  * @details Exports the GpuPluginAbi.h contract for the openswmm_gpu_sycl
  *          plugin. Same shape as GpuPluginCuda.cpp — the probe advertises an
- *          Intel device and the factory constructs a CvodeKokkosSurfaceSolver
+ *          Intel device and the factory constructs the Kokkos marcher
  *          — but the solver's execution space is Kokkos::SYCL (selected by the
  *          OPENSWMM_GPU_EXECSPACE_SYCL define the CMake target sets), so the
  *          whole RHS / preconditioner / vector pipeline runs device-resident.
@@ -36,7 +36,7 @@
 
 #include "../solver/GpuPluginAbi.h"
 #include "../solver/ISurfaceSolver.hpp"
-#include "CvodeKokkosSurfaceSolver.hpp"
+#include "ExplicitKokkosSurfaceSolver.hpp"
 
 #include <Kokkos_Core.hpp>
 #include <sycl/sycl.hpp>
@@ -85,11 +85,9 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
 }
 
 extern "C" OPENSWMM_GPU_ABI void*
-openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* /*probe*/) {
+openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
     ensureKokkosInitialized();
-    // Up-cast to the interface BEFORE erasing to void* so the core's
-    // static_cast<ISurfaceSolver*> recovers a correctly-adjusted pointer.
     openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::CvodeKokkosSurfaceSolver();
+        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
     return static_cast<void*>(solver);
 }

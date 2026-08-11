@@ -99,6 +99,13 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
             result.warnings.push_back("Model will have no outfall boundary after this conversion");
     }
 
+    // Converting a virtual junction to any other type clears the virtual
+    // flag (the zero-storage contract only exists for JUNCTION-typed nodes).
+    if (ui < nd.is_virtual.size() && nd.is_virtual[ui]) {
+        nd.is_virtual[ui] = 0;
+        result.cleared_fields.push_back("is_virtual");
+    }
+
     // Move the subtype row and set nd.type (single source of truth). Erases the
     // old row (if any) and inserts a fresh default row for the new subtype.
     ctx.node_subtypes.set_node_type(nd, idx, new_type);

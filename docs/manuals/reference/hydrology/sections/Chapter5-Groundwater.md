@@ -1,4 +1,6 @@
-﻿#  Chapter 5: Groundwater
+@page hydrology_ref_ch5_groundwater Chapter 5: Groundwater
+
+@tableofcontents
 
 ## 5.1 Introduction
 
@@ -68,7 +70,7 @@ two-zone configuration is similar to that used by Dawdy and O'Donnell
 pass between a subcatchment and a point in the conveyance system in an
 attenuated and delayed fashion.
 
-![Figure 5-1: Two-zone groundwater model showing upper unsaturated zone and lower saturated zone with water flow paths](VolumeI/media/media/figure5-1.png)
+![Figure 5-1: Two-zone groundwater model showing upper unsaturated zone and lower saturated zone with water flow paths](hydrology/media/media/figure5-1.png)
 
 **Figure 5-1 Definitional sketch of the two-zone groundwater model.**
 
@@ -76,7 +78,7 @@ Flow from the unsaturated upper zone to the saturated lower zone is
 controlled by a percolation equation for which parameters may either be
 estimated or calibrated, depending on the availability of the necessary
 soils data. The upper zone receives vertical inflow from infiltrating
-rainfall as described in Chapter 4 and can also lose moisture through
+rainfall as described in @ref hydrology_ref_ch4_infiltration "Chapter 4" and can also lose moisture through
 evapotranspiration. For time steps where the water table has risen to
 the surface (reducing the unsaturated zone volume to zero), infiltration
 ceases and runoff is produced by saturation excess.
@@ -98,21 +100,19 @@ content is fixed at the soil porosity *φ*. Aside from *θ*, the other
 principal unknown is *d<sub>L</sub>*, the depth of the saturated zone (i.e., the
 water table depth). Because the depth from the ground surface to the
 bottom of the lower zone is fixed, the depth of the unsaturated zone
-*d<sub>U</sub>* is simply $E_{G} - E_{B} - d_{L}$.
+*d<sub>U</sub>* is simply \f$E_{G} - E_{B} - d_{L}\f$.
 
 The depths of the two zones and the water content of the upper zone are
 controlled by the volumetric water fluxes shown in Figure 5-1. These
 fluxes, expressed as volume per unit horizontal area per unit time (or
 ft/sec internally in SWMM), consist of the following:
 
-  ------------------------------------------------------------------------------
   f<sub>I</sub>     =   infiltration from the subcatchment surface, which is the value
-                 computed in Chapter 4 multiplied by the fraction of pervious
+                 computed in @ref hydrology_ref_ch4_infiltration "Chapter 4" multiplied by the fraction of pervious
                  area *F<sub>perv</sub>*.
-  ---------- --- ---------------------------------------------------------------
   f<sub>EU</sub>    =   evapotranspiration from the upper zone, which is a fixed
                  fraction of the unused surface evaporation,
-                 $e \times F_{perv}$.
+                 \f$e \times F_{perv}\f$.
 
   f<sub>U</sub>     =   percolation from the upper to lower zone, which depends on the
                  upper zone moisture content *θ* and upper zone depth *d<sub>U</sub>*.
@@ -126,7 +126,6 @@ ft/sec internally in SWMM), consist of the following:
   f<sub>G</sub>     =   lateral groundwater seepage to the conveyance network which
                  depends on the lower zone depth *d<sub>L</sub>* as well as the water
                  surface elevation in the receiving node.
-  ------------------------------------------------------------------------------
 
 Computation of these fluxes will be discussed subsequently, but keep in
 mind that they are either supplied externally or depend on the unknown
@@ -134,27 +133,27 @@ variables *θ* , *d<sub>U</sub>* and *d<sub>L</sub>*.
 
 The conservation of mass equation for the upper zone can be written as:
 
-$$\frac{\partial V_{U}}{\partial t} = f_{UZ}$$ (5-1)
+\f[\frac{\partial V_{U}}{\partial t} = f_{UZ}\f] (5-1)
 
 where *V<sub>U</sub>* is the volume of water per unit area (ft) in the upper zone
 and f<sub>UZ</sub> (ft/sec) is the net influx rate to the upper zone. The
 latter is equal to:
 
-$$f_{UZ} = f_{I} - f_{EU} - f_{U}$$ (5-2)
+\f[f_{UZ} = f_{I} - f_{EU} - f_{U}\f] (5-2)
 
 The conservation of mass equation for the lower zone is:
 
-$$\frac{\partial V_{L}}{\partial t} = f_{LZ}$$ (5-3)
+\f[\frac{\partial V_{L}}{\partial t} = f_{LZ}\f] (5-3)
 
 where *V<sub>L</sub>* is the volume of water per unit area (ft) in the lower zone
 and f<sub>LZ</sub> is the net influx rate into the lower zone given by:
 
-$$f_{LZ} = f_{U} - f_{EL} - f_{L} - f_{G}$$ (5-4)
+\f[f_{LZ} = f_{U} - f_{EL} - f_{L} - f_{G}\f] (5-4)
 
 A third equation is needed to express the change in lower zone depth as
 a function of change in lower zone volume:
 
-$$(\phi - \theta)\frac{\partial d_{L}}{\partial t} = \frac{\partial V_{L}}{\partial t}$$ (5-5)
+\f[(\phi - \theta)\frac{\partial d_{L}}{\partial t} = \frac{\partial V_{L}}{\partial t}\f] (5-5)
 
 This equation accounts for the fact that as the lower zone contracts or
 expands it is consuming or vacating a portion of upper zone which has a
@@ -165,21 +164,21 @@ must be accompanied by a volume increase of *φ - θ* to make up the
 difference. Substituting Equation 5-5 into 5-3 results in the following
 expression for the rate of change of the lower zone depth:
 
-$$\frac{\partial d_{L}}{\partial t} = \frac{f_{LZ}}{(\phi - \theta)}$$ (5-6)
+\f[\frac{\partial d_{L}}{\partial t} = \frac{f_{LZ}}{(\phi - \theta)}\f] (5-6)
 
-And since $V_{U} = \theta d_{U}$, Equation 5-1 can be expanded as:
+And since \f$V_{U} = \theta d_{U}\f$, Equation 5-1 can be expanded as:
 
-$$\frac{\partial V_{U}}{\partial t} = \frac{\partial\left( \theta d_{U} \right)}{\partial t} = d_{U}\frac{\partial\theta}{\partial t} + \theta\frac{\partial d_{U}}{\partial t} = f_{UZ}$$ (5-7)
+\f[\frac{\partial V_{U}}{\partial t} = \frac{\partial\left( \theta d_{U} \right)}{\partial t} = d_{U}\frac{\partial\theta}{\partial t} + \theta\frac{\partial d_{U}}{\partial t} = f_{UZ}\f] (5-7)
 
-From the relation $d_{U} = E_{G} - E_{B} - d_{L}$ and Equation 5-6 one
+From the relation \f$d_{U} = E_{G} - E_{B} - d_{L}\f$ and Equation 5-6 one
 can write:
 
-$$\frac{\partial d_{U}}{\partial t} = - \frac{\partial d_{L}}{\partial t} = - \frac{f_{LZ}}{(\phi - \theta)}$$ (5-8)
+\f[\frac{\partial d_{U}}{\partial t} = - \frac{\partial d_{L}}{\partial t} = - \frac{f_{LZ}}{(\phi - \theta)}\f] (5-8)
 
 Substituting this into 5-7 and solving for
-![](VolumeI/media/media/image28.wmf) gives:
+*[Figure image not available in this format]* gives:
 
-$$\frac{\partial\theta}{\partial t} = \frac{\theta f_{LZ} + (\phi - \theta)f_{UZ}}{(\phi - \theta)\left( E_{G} - E_{B} - d_{L} \right)}$$ (5-9)
+\f[\frac{\partial\theta}{\partial t} = \frac{\theta f_{LZ} + (\phi - \theta)f_{UZ}}{(\phi - \theta)\left( E_{G} - E_{B} - d_{L} \right)}\f] (5-9)
 
 Equations 5-6 and 5-9 form a system of ordinary differential equations
 in *θ* and *d<sub>L</sub>* that can be solved using a standard fifth-order
@@ -193,18 +192,18 @@ must be honored during each time step *Δt* are:
 
 - The volume of infiltration that enters the upper zone over a time step
   must not exceed the available pore volume, i.e.,
-  $f_{I}\Delta t \leq d_{U}(\phi - \theta) + f_{U}\mathrm{\Delta}t$. Any
+  \f$f_{I}\Delta t \leq d_{U}(\phi - \theta) + f_{U}\mathrm{\Delta}t\f$. Any
   excess is subtracted off and returned to the surface in the form of a
   reduced infiltration rate.
 
 - The upper zone moisture content cannot be less than the soil's wilting
   point moisture content nor greater than its porosity, i.e.,
-  $\theta_{WP} \leq \theta \leq \phi$ where *θ<sub>WP</sub>* is the sub-soil
+  \f$\theta_{WP} \leq \theta \leq \phi\f$ where *θ<sub>WP</sub>* is the sub-soil
   wilting point moisture content.
 
 - The depth of the lower layer cannot be greater than the distance from
   the ground surface to the bottom of the saturated zone, i.e.,
-  $d_{L} \leq E_{G} - E_{B}$
+  \f$d_{L} \leq E_{G} - E_{B}\f$
 
 This simple two-zone groundwater model has a number of limitations that
 the reader should be aware of:
@@ -249,7 +248,7 @@ section discusses how each of these terms is modeled.
 ### 5.3.1 Surface Infiltration (f<sub>I</sub>)
 
 The surface infiltration flux rate f<sub>I</sub> is set equal to the runoff
-infiltration rate *f* computed as described in Chapter 4, multiplied by
+infiltration rate *f* computed as described in @ref hydrology_ref_ch4_infiltration "Chapter 4", multiplied by
 the fraction of the subcatchment that is pervious, *F<sub>perv</sub>*. (The
 groundwater zones extend over the entire subcatchment area while surface
 infiltration is computed only for the pervious portion of this area.)
@@ -259,7 +258,7 @@ up the available pore volume of the upper unsaturated zone by the end of
 the time step. This rate f<sub>Imax</sub> can be computed as:
 
 
-$$f_{Imax} = \frac{d_{U}(\phi - \theta)}{\Delta t} + f_{U}$$  (5-10)
+\f[f_{Imax} = \frac{d_{U}(\phi - \theta)}{\Delta t} + f_{U}\f]  (5-10)
 
 where f<sub>U</sub> is an estimate of the percolation flux rate between the
 upper and lower zones at the start of the time period and is computed
@@ -281,17 +280,17 @@ is as follows: 1) land surface evaporation, 2) upper zone
 evapotranspiration, and 3) lower zone transpiration. Upper zone ET is
 computed as:
 
-$f_{EU} = min(e_{\max} - e_{s},\ UEF \times e_{\max})$ (5-11)    
+\f$f_{EU} = min(e_{\max} - e_{s},\ UEF \times e_{\max})\f$ (5-11)    
 
 where *UEF* is a fraction of available evaporation that is apportioned
-to the upper zone, $e_{\max} = eF_{perv}$, *e* is the maximum potential
+to the upper zone, \f$e_{\max} = eF_{perv}\f$, *e* is the maximum potential
 evaporation rate (ft/s) available for the current time period supplied
 externally, *F<sub>perv</sub>* is the fraction of the subcatchment that is
 pervious, and *e<sub>s</sub>* is the evaporation loss (ft/s) seen by any rainfall
 and ponded water on the pervious subcatchment surface. The latter is
 computed as:
 
-$$e_{s} = \frac{\min(e, d_a/\Delta t)}{F_{perv}}$$  (5-12)
+\f[e_{s} = \frac{\min(e, d_a/\Delta t)}{F_{perv}}\f]  (5-12)
 
 where *d<sub>a</sub>* is the depth of available moisture on the pervious area of
 the subcatchment (ft). The latter quantity was evaluated at Step 3b of
@@ -313,12 +312,12 @@ is assumed to vary in direct proportion to the distance that the water
 table sits above some reference level below which no ET can occur. In
 equation form:
 
-$$f_{EL} = (1 - UEF)e_{\max}\frac{DEL - d_{U}}{DEL}$$  (5-13)
+\f[f_{EL} = (1 - UEF)e_{\max}\frac{DEL - d_{U}}{DEL}\f]  (5-13)
 
 where *DEL* is the depth from the ground surface below which no lower
 zone ET is possible (ft). The f<sub>EL</sub> value computed from (5-12) is
 constrained to be non-negative and be no greater than
-$e_{\max} - e_{s} - f_{EU}$.
+\f$e_{\max} - e_{s} - f_{EU}\f$.
 
 ### 5.3.4 Percolation (f<sub>U</sub>)
 
@@ -329,14 +328,12 @@ formulated from Darcy's Law for unsaturated flow, in which the hydraulic
 conductivity, K, is a function of the moisture content, *θ*. For
 one-dimensional, vertical flow, Darcy's Law may be written as:
 
-$$v = K(\theta)\frac{dh}{dz}$$  (5-14)
+\f[v = K(\theta)\frac{dh}{dz}\f]  (5-14)
 
 where:
 
-  ---------------------------------------------------------------------------
   *v*      =   velocity (specific discharge), positive in the downward
                direction of z (ft/s),
-  -------- --- --------------------------------------------------------------
   *z*      =   vertical coordinate with respect to the ground surface (ft),
 
   *K(θ)*   =   hydraulic conductivity (ft/s),
@@ -345,12 +342,11 @@ where:
 
   *h*      =   hydraulic potential or head (ft).
 
-  ---------------------------------------------------------------------------
 
 The hydraulic potential is the sum of the elevation (gravity) and
 pressure heads,
 
-$$h = z + \psi$$  (5-15)
+\f[h = z + \psi\f]  (5-15)
 
 where *ψ* = soil water tension (negative pressure head) in the
 unsaturated zone. Note that the wetting front suction, *ψ<sub>S</sub>*, used in
@@ -359,7 +355,7 @@ wetting front during the infiltration process. Equating vertical
 velocity to percolation, and differentiating the hydraulic potential,
 *h*, yields:
 
-$$f_{U} = K(\theta)(1 + \frac{d\psi}{dz})$$  (5-16)
+\f[f_{U} = K(\theta)(1 + \frac{d\psi}{dz})\f]  (5-16)
 
 A choice is customarily made between using the tension, *ψ*, or the
 moisture content, *θ*, as parameters in equations for unsaturated zone
@@ -369,24 +365,24 @@ Parameter *ψ* can be related to *θ* if the characteristics of the
 unsaturated soil are known. Thus, for use in Equation 5-16, the
 derivative is:
 
-$$\frac{d\psi}{dz} = \frac{d\psi}{d\theta}\frac{d\theta}{dz}$$  (5-17)
+\f[\frac{d\psi}{dz} = \frac{d\psi}{d\theta}\frac{d\theta}{dz}\f]  (5-17)
 
 However, since *θ* is assumed constant throughout the upper zone,
-$\frac{d\theta}{dz = 0}$ and the percolation flux becomes simply:
+\f$\frac{d\theta}{dz = 0}\f$ and the percolation flux becomes simply:
 
-$$f_{U} = K(\theta)$$  (5-18)
+\f[f_{U} = K(\theta)\f]  (5-18)
 
 The hydraulic conductivity *K* as a function of moisture content *θ* is
 approximated functionally in the moisture range of interest as:
 
-$$K(\theta) = K_{s}e^{- (\phi - \theta)HCO}$$  (5-19)
+\f[K(\theta) = K_{s}e^{- (\phi - \theta)HCO}\f]  (5-19)
 
 where *K<sub>S</sub>* is the saturated hydraulic conductivity (ft/s) and *HCO* is
 a calibration parameter. Estimates of HCO can be made from soil test
 data and some examples will be given in section 5.4 below. Substituting
 5-19 into 5-16 yields the final form of the percolation rate expression:
 
-$$f_{U} = K_{s}e^{- (\phi - \theta)HCO}$$  (5-20)
+\f[f_{U} = K_{s}e^{- (\phi - \theta)HCO}\f]  (5-20)
 
 If the moisture content *θ* is less than or equal to field capacity θ<sub>FC</sub>, then the percolation rate becomes zero. This limit is in
 accordance with the concept of field capacity as the drainable soil
@@ -403,7 +399,7 @@ assumed to be percolation through the confining layer and lateral
 outflow to somewhere other than the conveyance system. The arbitrarily
 chosen equation for deep percolation is:
 
-$$f_{L} = DP\frac{d_{L}}{E_{G} - E_{B}}$$  (5-21)
+\f[f_{L} = DP\frac{d_{L}}{E_{G} - E_{B}}\f]  (5-21)
 
 where *DP* is a recession coefficient derived from inter-event water
 table recession curves. The dependence of f<sub>L</sub> on *d<sub>L</sub>* allows it to
@@ -423,13 +419,11 @@ channel receives groundwater, then its upstream node is used instead.
 The flux equation for groundwater discharge takes on the following
 general form:
 
-$$f_{G} = A1\left( d_{L} - h^* \right)^{B1} - A2\left( h_{SW} - h^* \right)^{B2} + A3d_{L}h_{SW}$$  (5-22)
+\f[f_{G} = A1\left( d_{L} - h^* \right)^{B1} - A2\left( h_{SW} - h^* \right)^{B2} + A3d_{L}h_{SW}\f]  (5-22)
 
 where:
 
-  -------------------------------------------------------------------------
   f<sub>G</sub>    =   groundwater flow rate (cfs/ft²),
-  --------- --- -----------------------------------------------------------
   h<sub>SW</sub>   =   height of surface water above the bottom of the groundwater
                 zone (ft),
 
@@ -442,7 +436,6 @@ where:
 
   A3        =   surface-groundwater interaction coefficient.
 
-  -------------------------------------------------------------------------
 
 Figure 5-2 illustrates the meaning of each of the water depths used in
 this expression. The reference height *h^* is typically chosen as the
@@ -465,7 +458,7 @@ in Figure 5-2. Also note that the conveyance system node receiving
 groundwater flow need not be the same node that receives runoff from the
 subcatchment that lies above the groundwater zones.
 
-![Figure 5-2: Cross-sectional diagram showing groundwater zones and height parameters for lateral flow calculation](VolumeI/media/media/figure5-2.png)
+![Figure 5-2: Cross-sectional diagram showing groundwater zones and height parameters for lateral flow calculation](hydrology/media/media/figure5-2.png)
 
 **Figure 5-2 Heights used to compute lateral groundwater flow rate.**
 
@@ -523,7 +516,7 @@ An example for deep percolation flux might be
 
 which is equivalent to expressing f<sub>L</sub> through Darcy's Law as:
 
-$f_{L} = K_{c}(d_{L} - H_{c})/d_{c}$
+\f$f_{L} = K_{c}(d_{L} - H_{c})/d_{c}\f$
 
 where *K<sub>c</sub>* is the hydraulic conductivity of the confining layer
 beneath the shallow aquifer, *d<sub>c</sub>* is the thickness of this layer, and
@@ -585,28 +578,28 @@ Note that at time 0 the state variables θ and d<sub>L</sub> are initialized wit
 **With the above information in hand, the following steps are used to update each subcatchment's groundwater system:**
 
 1. Determine the maximum limit on the upper zone percolation rate, f<sub>Umax</sub>, as:
-   $$f_{Umax} = \frac{d_U(\phi - \theta_{FC})}{\Delta t}$$
+   \f[f_{Umax} = \frac{d_U(\phi - \theta_{FC})}{\Delta t}\f]
    where d<sub>U</sub> = E<sub>G</sub> – E<sub>B</sub> – d<sub>L</sub>.
 
 2. Compute the portion of evaporation consumed by ponded surface water, e<sub>s</sub>:
-   $$e_s = \min[e, d_a/\Delta t] F_{perv}$$
+   \f[e_s = \min[e, d_a/\Delta t] F_{perv}\f]
 
 3. Make an initial estimate of the upper zone percolation rate, f<sub>U</sub>, using Equation 5-19 and limit f<sub>U</sub> to be no greater than f<sub>Umax</sub>.
 
 4. Determine the maximum limit on the infiltration rate f<sub>Imax</sub> as:
-   $$f_{Imax} = \frac{d_U(\phi - \theta)}{\Delta t} - f_U$$
+   \f[f_{Imax} = \frac{d_U(\phi - \theta)}{\Delta t} - f_U\f]
    and set f<sub>I</sub> to the smaller of f×F<sub>perv</sub> (as computed by the infiltration routine) and f<sub>Imax</sub>. If f<sub>I</sub> = f<sub>Imax</sub> then reduce f to f<sub>I</sub>/F<sub>perv</sub> for use in the runoff routine after it returns from the groundwater calculations.
 
 5. Estimate maximum and minimum bounds on lateral groundwater flow f<sub>G</sub> as follows:
-   $$f_{Gmax} = \frac{d_L \phi}{\Delta t}$$ (cannot release more than what is stored)
-   $$f_{Gmin1} = -\frac{d_U(\phi - \theta)}{\Delta t}$$ (cannot accept more than can be stored)
-   $$f_{Gmin2} = \frac{(V_N/\Delta t)}{A}$$ (cannot accept more than node can release)
-   $$f_{Gmin} = \max[f_{Gmin1}, f_{Gmin2}]$$ (the maximum is used because f<sub>Gmin</sub> is negative)
+   \f[f_{Gmax} = \frac{d_L \phi}{\Delta t}\f] (cannot release more than what is stored)
+   \f[f_{Gmin1} = -\frac{d_U(\phi - \theta)}{\Delta t}\f] (cannot accept more than can be stored)
+   \f[f_{Gmin2} = \frac{(V_N/\Delta t)}{A}\f] (cannot accept more than node can release)
+   \f[f_{Gmin} = \max[f_{Gmin1}, f_{Gmin2}]\f] (the maximum is used because f<sub>Gmin</sub> is negative)
    where A is the total area of the subcatchment.
 
 6. Use a standard fifth-order Runge-Kutta integration routine (RK5) with adaptive step size control (Press et al., 1992) to solve the following equations simultaneously:
-   $$\frac{\partial\theta}{\partial t} = \frac{\theta f_{LZ} + \phi f_{UZ}}{\phi(E_G - E_B - d_L)}$$
-   $$\frac{\partial d_L}{\partial t} = \frac{f_{LZ}}{\phi}$$
+   \f[\frac{\partial\theta}{\partial t} = \frac{\theta f_{LZ} + \phi f_{UZ}}{\phi(E_G - E_B - d_L)}\f]
+   \f[\frac{\partial d_L}{\partial t} = \frac{f_{LZ}}{\phi}\f]
    where f<sub>UZ</sub> = f<sub>I</sub> - f<sub>EU</sub> - f<sub>U</sub> and f<sub>LZ</sub> = f<sub>U</sub> - f<sub>EL</sub> - f<sub>L</sub> - f<sub>G</sub>. The solution updates the values of θ and d<sub>L</sub> at time t to new values at time t + Δt. The RK5 routine requires that the right-hand sides of these equations be evaluated at intermediate values of θ and d<sub>L</sub>. The equations used to evaluate the flux terms that comprise f<sub>UZ</sub> and f<sub>LZ</sub> are summarized below:
 
    | Term | Equation | Constraints |
@@ -671,7 +664,7 @@ Jensen et al., 1990; SCS, 1991). The field capacity must be greater than
 the wilting point and less than the porosity. The general relationship
 among soil moisture parameters is shown in Figure 5-3.
 
-![Soil Moisture](VolumeI/media/media/image29.png)
+![Soil Moisture](hydrology/media/media/image29.png)
 
 **Figure 5-3 Relation between soil moisture limits and soil texture class (Schroeder et al., 1994).**
 
@@ -795,19 +788,16 @@ Properties portion of one such report was displayed in Figure 4-1. Using
 the bulk density *ρ<sub>b</sub>* value provided in these reports, an estimate of
 the porosity can be derived from:
 
-$$\phi = 1 - \frac{\rho_{b}}{\rho_{s}}$$  (5-23)
+\f[\phi = 1 - \frac{\rho_{b}}{\rho_{s}}\f]  (5-23)
 
 where:
 
-  ----------------------------------------------------------------------------
   *φ*Â      =    porosity,
-  -------- ---- --------------------------------------------------------------
   *ρ<sub>b</sub>*   =    bulk density (mass of dried soil to total volume of soil and
                 voids), g/cm³,
 
   *ρ<sub>s</sub>*   =    soil particle density, typically in range 2.6-2.7 g/cm³ for
                 quartz particles.
-  ----------------------------------------------------------------------------
 
 As an example, the bulk density for the Woodburn silt loam listed in
 Figure 4-1 is *1.35* g/cm³ and using a *ρ<sub>s</sub>* = 2.65 g/cm³ in
@@ -854,7 +844,7 @@ field capacity, and porosity, respectively.
 
 ²S = weight fraction of sand, C = weight fraction of clay, OM = percent organic matter.
 
-![Soil Water Calc](VolumeI/media/media/image30.png)
+![Soil Water Calc](hydrology/media/media/image30.png)
 
 **Figure 5-4 SPAW\'s soil water characteristics calculator.**
 
@@ -894,17 +884,14 @@ Soils data of this type are becoming more readily available; for
 example, soil science departments at universities often publish such
 information (e.g., Carlisle et al., 1981).
 
-![TouchetSiltLoam.png](VolumeI/media/media/image31.png)
+![TouchetSiltLoam.png](hydrology/media/media/image31.png)
 
-![ColumbiaSandyLoam.png](VolumeI/media/media/image32.png)
+![ColumbiaSandyLoam.png](hydrology/media/media/image32.png)
 
-<figure>
-<img src="VolumeI/media/media/image33.png"
-style="width:4.44854in;height:2.46909in" alt="UnconsolidatedSand.png" />
-<figcaption><p><span id="_Toc426447693"
+![](hydrology/media/media/image33.png "image33")
+<p><span id="_Toc426447693"
 class="anchor"></span><strong>Figure 5-5 Measured hydraulic conductivity
-for three soils.</strong></p></figcaption>
-</figure>
+for three soils.</strong></p>
 
 When soil data like this are available, *K<sub>S</sub>* and *HCO* can be
 estimated by fitting Equation 5-20 to the data, i.e., fitting a straight
@@ -918,9 +905,9 @@ Another alternative is the regression equation derived by Saxton and
 Rawls (2006) from the same soils data base used to derive the moisture
 limit equations listed in Table 5-7. The equation for *K<sub>S</sub>* (in/hr) is:
 
-$$K_{s} = 76{(\phi - \theta_{FC})}^{(3 - \lambda)}$$  (5-24)
+\f[K_{s} = 76{(\phi - \theta_{FC})}^{(3 - \lambda)}\f]  (5-24)
 
-where $\lambda = 0.262ln\left( \frac{\theta_{FC}}{\theta_{WP}} \right)$
+where \f$\lambda = 0.262ln\left( \frac{\theta_{FC}}{\theta_{WP}} \right)\f$
 and *φ* = soil porosity, *θ<sub>FC</sub>* = field capacity and *θ<sub>WP</sub>* = the
 wilting point. This equation is also included in the SPAW soil water
 characteristics calculator described in the previous section and shown
@@ -934,7 +921,7 @@ Figure 4-1.
 *HCO* can be estimated by utilizing Campbell's theoretical power law
 relation (Campbell, 1974) as described in Saxton and Rawls (2006):
 
-$$K(\theta) = K_{S}\left( \frac{\theta}{\phi} \right)^{3 + 2/\lambda}$$  (5-25)
+\f[K(\theta) = K_{S}\left( \frac{\theta}{\phi} \right)^{3 + 2/\lambda}\f]  (5-25)
 
 One can then estimate a value for *HCO* that gives a best fit between
 Equation 5-19 and Equation 5-25 as *θ* ranges between *φ* and *θ<sub>FC</sub>*.
@@ -945,20 +932,17 @@ a series of different moisture levels *θ*. The line of best fit that
 passes through the origin has a slope of 28.864 which would be the
 estimate of HCO for this soil.
 
-<figure>
-<img src="VolumeI/media/media/image34.png"
-style="width:5.02153in;height:3.22962in" alt="HydConFit.png" />
-<figcaption><p><span id="_Toc426447694"
+![](hydrology/media/media/image34.png "image34")
+<p><span id="_Toc426447694"
 class="anchor"></span><strong>Figure 5-6 Fitting SWMM's hydraulic
-conductivity equation to a power law equation.</strong></p></figcaption>
-</figure>
+conductivity equation to a power law equation.</strong></p>
 
 Repeating this fitting process for the sand and clay content of the
 various standard soil classes under a variety of organic contents, using
 the SPAW calculator to estimate the associated moisture limits, produced
 the following regression estimate for HCO:
 
-$HCO = 0.48(\% Sand) + 0.85(\% Clay)$ R² = 0.99  (5-26)
+\f$HCO = 0.48(\% Sand) + 0.85(\% Clay)\f$ R² = 0.99  (5-26)
 
 The resulting HCO values for the different soil classes are shown in
 Table 5-9.
@@ -1050,7 +1034,7 @@ Equation 5-22 and determine the rate of groundwater exchange with a
 specific node in the conveyance system. The equation is repeated here
 for easy reference:
 
-$$f_{G} = A1\left( d_{L} - h^* \right)^{B1} - A2\left( h_{SW} - h^* \right)^{B2} + A3d_{L}h_{SW}$$  (5-27)
+\f[f_{G} = A1\left( d_{L} - h^* \right)^{B1} - A2\left( h_{SW} - h^* \right)^{B2} + A3d_{L}h_{SW}\f]  (5-27)
 
 where the heights *d<sub>L</sub>*, *h<sub>SW</sub>*, and h* are defined in Figure 5-2.
 Because of its general nature this equation can assume a variety of
@@ -1064,7 +1048,7 @@ whose lateral outflow is linearly proportional to the water table depth
 interaction. Without surface water interaction, the groundwater flow
 rate is simply:
 
-$$f_{G} = A1\left( d_{L} - h^* \right)$$  (5-28)
+\f[f_{G} = A1\left( d_{L} - h^* \right)\f]  (5-28)
 
 In terms of Equation 5-27 this implies that *A1 > 0*, *B1 = 1*, and *A2
 = A3 = 0*. Note that the user-supplied value of *A1* would be expressed
@@ -1073,7 +1057,7 @@ water interaction, the groundwater flow rate is proportional to the
 difference between the groundwater table height and the surface water
 height:
 
-$$f_{G} = A1\left( d_{L} - h_{SW} \right)$$  (5-29)
+\f[f_{G} = A1\left( d_{L} - h_{SW} \right)\f]  (5-29)
 
 which can be achieved with *A1 = A2 > 0, B1 = B2 = 1*, and *A3 = 0*.
 *A1* would have the same units as before (cfs/ac-ft or cms/ha-m).
@@ -1088,7 +1072,7 @@ Dupuit-Forcheimer approximation, the relationship between water table
 elevation and groundwater flow rate for the configuration shown in
 Figure 5-7 is (Bouwer, 1978, p.51):
 
-$$f_{G} = \frac{K_{S}}{2L^{2}}\left( h_{1}^{2} - h_{2}^{2} \right)$$  (5-30)
+\f[f_{G} = \frac{K_{S}}{2L^{2}}\left( h_{1}^{2} - h_{2}^{2} \right)\f]  (5-30)
 
 where *K<sub>S</sub>* is the saturated hydraulic conductivity and the other
 parameters are defined in Figure 5-7.
@@ -1099,21 +1083,18 @@ that SWMM computes is only an average over the catchment. One can,
 however, assume this average is equivalent to the average of *h<sub>1</sub>* and
 *h<sub>2</sub>*, i.e.:
 
-$$d_{L} = \frac{h_{1} + h_{2}}{2}$$  (5-31)
+\f[d_{L} = \frac{h_{1} + h_{2}}{2}\f]  (5-31)
 
-so that $h_{1} = 2d_{L} - h_{2}$. Substituting this and $h_{2} = h_{SW}$
+so that \f$h_{1} = 2d_{L} - h_{2}\f$. Substituting this and \f$h_{2} = h_{SW}\f$
 into Equation 5-30 and simplifying terms results in:
 
-<figure>
-<img src="VolumeI/media/media/image35.png" style="width:6in;height:2.82292in"
-alt="x_08" />
-<figcaption><p><span id="_Toc426447695"
+![](hydrology/media/media/image35.png "x_08")
+<p><span id="_Toc426447695"
 class="anchor"></span><strong>Figure 5-7 Definition sketch for
 Dupuit-Forcheimer seepage to an adjacent
-channel.</strong></p></figcaption>
-</figure>
+channel.</strong></p>
 
-$$f_{G} = \left( \frac{2K_{S}}{L^{2}} \right)d_{L}^{2} - \left( \frac{2K_{S}}{L^{2}} \right)d_{L}h_{SW}$$  (5-32)
+\f[f_{G} = \left( \frac{2K_{S}}{L^{2}} \right)d_{L}^{2} - \left( \frac{2K_{S}}{L^{2}} \right)d_{L}h_{SW}\f]  (5-32)
 
 Comparing Equation 5-32 with Equation 5-27 shows that the two will be
 equivalent if *A1 = -A3* *= 2K<sub>S</sub> / L², A2 = 0,* *B1 = 2*, and h* =
@@ -1127,7 +1108,7 @@ The geometry of a tile drainage installation is illustrated in Figure
 5-8. Hooghoudt's relationship (Bouwer, 1978, p. 295) among the indicated
 parameters is
 
-$$f_{G} = \left( 2D_{e} + m \right)4K_{S}\frac{m}{L^{2}}$$  (5-33)
+\f[f_{G} = \left( 2D_{e} + m \right)4K_{S}\frac{m}{L^{2}}\f]  (5-33)
 
 where *D<sub>e</sub>* = effective depth of the impermeable layer below the drain
 center, and the other parameters are defined in Figure 5-8. *D<sub>e</sub>* is
@@ -1135,48 +1116,45 @@ less than or equal to *b<sub>0</sub>* in Figure 5-8 and is a function of *b<sub>
 drain diameter, and drain spacing *L*; the complicated relationship is
 given by Bear (1972, p. 412) and graphed by Bouwer (1978, p. 296).
 
-<figure>
-<img src="VolumeI/media/media/image36.png" style="width:6in;height:2.8125in"
-alt="x_09" />
-<figcaption><p><span id="_Toc426447696"
+![](hydrology/media/media/image36.png "x_09")
+<p><span id="_Toc426447696"
 class="anchor"></span><strong>Figure 5-8 Definition sketch for
 Hooghoudt's method for flow to circular
-drains.</strong></p></figcaption>
-</figure>
+drains.</strong></p>
 
 From Figure 5-8, the maximum rise of the water table, *m*, is:
 
-$$m = h_{1} - b_{0}$$ (5-34)
+\f[m = h_{1} - b_{0}\f] (5-34)
 
 Once again approximating the average water table depth above the
 impermeable layer by:
 
-$$d_{L} = \frac{h_{1} + b_{0}}{2}$$ (5-35)
+\f[d_{L} = \frac{h_{1} + b_{0}}{2}\f] (5-35)
 
 results in:
 
-$$m = 2\left( d_{L} - b_{0} \right)$$ (5-36)
+\f[m = 2\left( d_{L} - b_{0} \right)\f] (5-36)
 
 Substituting 5-36 into 5-33 gives:
 
-$$f_{G} = \left( \frac{16K_{S}}{L^{2}} \right)\left\lbrack \left( d_{L} - b_{0} \right)^{2} - D_{e}b_{0} + D_{e}d_{L} \right\rbrack$$ (5-37)
+\f[f_{G} = \left( \frac{16K_{S}}{L^{2}} \right)\left\lbrack \left( d_{L} - b_{0} \right)^{2} - D_{e}b_{0} + D_{e}d_{L} \right\rbrack\f] (5-37)
 
 This can be written in a format compatible with the general groundwater
 discharge equation 5-27 as follows:
 
-$$f_{G} = A1{(d_{L} - h^*)}^{2} - A2 + A3d_{L}h_{SW}$$ (5-38)
+\f[f_{G} = A1{(d_{L} - h^*)}^{2} - A2 + A3d_{L}h_{SW}\f] (5-38)
 
 where
 
-$A1 = 16K_{S}/L^{2}$,
+\f$A1 = 16K_{S}/L^{2}\f$,
 
-> $B1 = 2$,
+> \f$B1 = 2\f$,
 >
-> $A2 = A1D_{e}b_{0}$,
+> \f$A2 = A1D_{e}b_{0}\f$,
 >
-> $B2 = 0$,
+> \f$B2 = 0\f$,
 >
-> $A3 = A1(\frac{D_{e}}{b_{0}})$,
+> \f$A3 = A1(\frac{D_{e}}{b_{0}})\f$,
 
 h* is set equal to *b<sub>0</sub>* and a constant value of *h<sub>SW</sub>* only
 slightly higher than *b<sub>0</sub>* is used.
@@ -1246,6 +1224,9 @@ into the receiving node. This outflow continues long after the surface
 runoff ceases, creating an extended recession limb on the total outflow
 hydrograph.
 
-![Figure 5-9: 24-hour hydrograph showing rainfall, surface runoff, groundwater flow, and total outflow](VolumeI/media/media/figure5-9.png)
+![Figure 5-9: 24-hour hydrograph showing rainfall, surface runoff, groundwater flow, and total outflow](hydrology/media/media/figure5-9.png)
 
 **Figure 5-9 Surface runoff and groundwater flow for the illustrative groundwater example.**
+
+
+

@@ -32,10 +32,10 @@ namespace openswmm::twoD {
  * @brief Boundary condition types for 2D mesh edges.
  *
  * SPECIFIED_FLOW (3) and RATING_CURVE (4) added per GUI plan §V V-E4 / V-E5.
- * Storage + C API only at this revision — the FV-SWE flux integration for
- * non-Wall BCs is deferred to a follow-up slice (V-E-FLUX). Today the
- * solver treats every boundary edge as Wall regardless of type
- * (see SurfaceFluxCalculator::computeEdgeFluxes line 131).
+ * All five types are enforced at flux time by the explicit marcher via
+ * SurfaceFluxCalculator::boundaryEdgeFlux (and the Kokkos backend's
+ * device-side equivalent); time-varying values are resolved each step in
+ * SurfaceRouter2D::resolveBoundaryValues.
  */
 enum class BoundaryType : int8_t {
     WALL            = 0,   ///< Zero-flux wall (default)
@@ -58,7 +58,8 @@ struct BoundaryData {
     std::vector<int8_t> edge_bc_type;
 
     /// Bed slope for NORMAL_FLOW edges (dimensionless, >= 0).
-    /// If 0.0 at parse time, auto-computed from bed geometry during init.
+    /// A zero slope zeroes the Manning outflow — the edge behaves as a
+    /// Wall (validate_project warns; no auto-compute from bed geometry).
     std::vector<double> edge_bed_slope;
 
     /// Prescribed total head for SPECIFIED_STAGE edges (m).

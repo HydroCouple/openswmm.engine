@@ -42,6 +42,16 @@ $treeview
 $search
 <script type="text/javascript" src="$relpath^mathjax-config.js"></script>
 <script type="text/javascript" id="MathJax-script" async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+<!-- Mermaid: renders workflow/schematic diagrams authored as <pre class="mermaid"> blocks
+     in the manual markdown. Theme follows the doxygen-awesome dark-mode class. -->
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  const mmDark = document.documentElement.classList.contains("dark-mode") ||
+      (!document.documentElement.classList.contains("light-mode") &&
+       window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  mermaid.initialize({ startOnLoad: true, securityLevel: "loose",
+                       theme: mmDark ? "dark" : "neutral" });
+</script>
 <link href="$relpath^$stylesheet" rel="stylesheet" type="text/css" />
 $extrastylesheet
 </head>

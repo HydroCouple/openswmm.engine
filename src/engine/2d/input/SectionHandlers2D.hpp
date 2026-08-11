@@ -36,12 +36,18 @@ namespace openswmm::twoD {
 /**
  * @brief Parse a single line from the [2D_OPTIONS] section.
  *
- * @param tokens Whitespace-split tokens from the line.
- * @param opts   Output solver options to populate.
+ * @param tokens   Whitespace-split tokens from the line.
+ * @param opts     Output solver options to populate.
+ * @param warnings When non-null (the .inp file-load path), keys retired with
+ *                 the CVODE/ARKODE stack — and retired INTEGRATOR values —
+ *                 are IGNORED with a WARNING 104 pushed here, so legacy
+ *                 models still open. When null (the programmatic
+ *                 swmm_options_set_ext path), they remain hard errors.
  * @return Empty string on success, or error description.
  */
 std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
-                                SolverOptions2D& opts);
+                                SolverOptions2D& opts,
+                                std::vector<std::string>* warnings = nullptr);
 
 /**
  * @brief Parse a single line from the [2D_VERTICES] section.
@@ -66,6 +72,18 @@ std::string parse2DVertexLine(const std::vector<std::string>& tokens,
  */
 std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
                                  MeshData& mesh);
+
+/**
+ * @brief Parse a single line from the [2D_INITIAL_VELOCITY] section.
+ *
+ * Format: TRI U V   (m/s; default 0,0 — rows may cover any subset)
+ *
+ * @param tokens Whitespace-split tokens from the line.
+ * @param mesh   Mesh data to update (tri_init_u / tri_init_v).
+ * @return Empty string on success, or error description.
+ */
+std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens,
+                                       MeshData& mesh);
 
 /**
  * @brief Parse a single line from the [2D_VERTEX_NODE_MAP] section.
@@ -140,6 +158,18 @@ std::string parse2DEdgeConveyanceLine(
 bool is2DOptionKey(const std::string& key);
 
 /**
+ * @brief True when @p key (case-insensitive) is a [2D_OPTIONS] parameter
+ *        retired with the CVODE/ARKODE stack (D2, 2026-07-29).
+ *
+ * parse2DOptionsLine hard-errors on these unless given a warnings sink
+ * (the file-load path warns and ignores them); swmm_options_set_ext uses
+ * this predicate to reject them up front so they can never land in the
+ * generic ext_options map (where they would silently persist to the next
+ * save).
+ */
+bool is2DRetiredOptionKey(const std::string& key);
+
+/**
  * @brief Format the current value of a [2D_OPTIONS] parameter as the
  *        string token parse2DOptionsLine accepts (round-trip safe).
  *
@@ -179,6 +209,9 @@ void register2DSections(MeshData& mesh,
  * @param opts         Solver options to populate.
  * @param mesh_file    Path from the [2D_MESH_FILE] FILE token.
  * @param inp_base_dir Directory of the parent .inp file (may be empty).
+ * @param warnings     Optional sink for retired-key warnings (see
+ *                     parse2DOptionsLine); pass &ctx.warnings so a legacy
+ *                     external mesh file still loads.
  * @returns Empty string on success, or an error description on failure.
  */
 std::string load2DMeshExternalFile(MeshData& mesh,
@@ -186,7 +219,8 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                                    const std::string& mesh_file,
-                                   const std::string& inp_base_dir);
+                                   const std::string& inp_base_dir,
+                                   std::vector<std::string>* warnings = nullptr);
 
 /**
  * @brief Scan @p inp_path for a `;; UNITS: <value>` comment header and set

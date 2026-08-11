@@ -17,6 +17,7 @@
 
 #include "core/SimulationContext.hpp"
 #include "data/NodeData.hpp"
+#include "data/StorageGeometry.hpp"
 #include "data/LinkData.hpp"
 #include "data/SubcatchData.hpp"
 #include "data/GageData.hpp"
@@ -194,10 +195,15 @@ protected:
             ctx.subcatches.infil_p3.resize(n);
             ctx.subcatches.infil_p4.resize(n);
             ctx.subcatches.infil_p5.resize(n);
+            ctx.subcatches.rain_scale_factor.resize(n, 1.0);
+            ctx.subcatches.snow_scale_factor.resize(n, 1.0);
             ctx.spatial.subcatch_polygon_x.resize(n);
             ctx.spatial.subcatch_polygon_y.resize(n);
 
             ctx.subcatches.outlet_node[idx] = i;
+            // S1 gets non-default precip scale factors; S2 keeps 1.0.
+            ctx.subcatches.rain_scale_factor[idx] = (i == 0) ? 0.5 : 1.0;
+            ctx.subcatches.snow_scale_factor[idx] = (i == 0) ? 1.3 : 1.0;
             ctx.subcatches.area[idx] = 5.0;
             ctx.subcatches.width[idx] = 500.0;
             ctx.subcatches.slope[idx] = 0.01;
@@ -262,15 +268,61 @@ protected:
             ctx.pollutants.units.resize(n);
             ctx.pollutants.c_rain.resize(n);
             ctx.pollutants.c_gw.resize(n);
+            ctx.pollutants.c_rdii.resize(n);
+            ctx.pollutants.c_dwf.resize(n);
+            ctx.pollutants.init_conc.resize(n);
             ctx.pollutants.k_decay.resize(n);
             ctx.pollutants.snow_only.resize(n);
             ctx.pollutants.co_pollut.resize(n, -1);
             ctx.pollutants.co_frac.resize(n);
 
             ctx.pollutants.units[idx] = MassUnits::MG_PER_L;
-            ctx.pollutants.c_rain[idx] = 0.0;
-            ctx.pollutants.c_gw[idx] = 0.0;
-            ctx.pollutants.k_decay[idx] = 0.0;
+            ctx.pollutants.c_rain[idx] = 12.5;
+            ctx.pollutants.c_gw[idx] = 1.25;
+            // Iteration 4 — the three previously-dropped fields.
+            ctx.pollutants.c_rdii[idx] = 2.5;
+            ctx.pollutants.c_dwf[idx] = 3.5;
+            ctx.pollutants.init_conc[idx] = 4.5;
+            ctx.pollutants.k_decay[idx] = 0.1;
+        }
+
+        // --- LAND USES + BUILDUP + WASHOFF + COVERAGES + LOADINGS ---
+        // (iteration 4 — these tables were previously .gpkg-lossy)
+        {
+            ctx.landuse_names.add("Res");
+            ctx.landuse_names.add("Com");
+            ctx.landuses.resize(2);
+            ctx.landuses.sweep_interval[0] = 7.0;
+            ctx.landuses.sweep_removal[0]  = 0.5;
+            ctx.landuses.last_swept[0]     = 2.0;
+            ctx.landuses.sweep_interval[1] = 14.0;
+
+            ctx.buildup.resize(2, 1);
+            ctx.buildup.func_type[0] = 1;    // Res/TSS POW
+            ctx.buildup.coeff1[0] = 100.0;
+            ctx.buildup.coeff2[0] = 2.0;
+            ctx.buildup.coeff3[0] = 1.5;
+            ctx.buildup.normalizer[0] = 0;   // AREA
+            ctx.buildup.func_type[1] = 3;    // Com/TSS SAT
+            ctx.buildup.coeff1[1] = 50.0;
+            ctx.buildup.normalizer[1] = 1;   // CURB
+
+            ctx.washoff.resize(2, 1);
+            ctx.washoff.func_type[0] = 1;    // Res/TSS EXP
+            ctx.washoff.coeff[0] = 0.1;
+            ctx.washoff.expon[0] = 1.2;
+            ctx.washoff.sweep_effic[0] = 30.0;
+            ctx.washoff.bmp_effic[0] = 15.0;
+
+            ctx.subcatches.resize_coverage(2, 2);
+            ctx.subcatches.coverage[0 * 2 + 0] = 60.0;   // S1/Res
+            ctx.subcatches.coverage[0 * 2 + 1] = 40.0;   // S1/Com
+            ctx.subcatches.coverage[1 * 2 + 0] = 25.0;   // S2/Res
+            ctx.subcatches.sweep_last_swept[0 * 2 + 0] = 1.0;
+
+            ctx.subcatches.resize_quality(1);
+            ctx.subcatches.conc[0 * 1 + 0] = 1.5;        // S1/TSS loading
+            ctx.subcatches.conc[1 * 1 + 0] = 2.25;       // S2/TSS loading
         }
 
         // --- PATTERNS ---
@@ -536,6 +588,146 @@ TEST_F(GeoPackageTest, NodeSubtypeChildTablesRoundTrip) {
     EXPECT_EQ(ID.link_name[uid], "DivLink");
 }
 
+// Storage shapes (STORAGE_SHAPES_PLAN check 5, .gpkg side): the geometric shapes
+// carry a `shape` keyword plus raw dimensions p1/p2/p3 in the storages table. Write
+// all four, read them back, and assert the shape, the raw dimensions AND the derived
+// area coefficients survive — the .gpkg must be as lossless as the .inp.
+TEST_F(GeoPackageTest, StorageShapeChildTableRoundTrip) {
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;   // US: no unit conversion in play
+    ctx.spatial.crs = "EPSG:4326";
+
+    struct Case { const char* name; StorageShape shape; double p1, p2, p3; };
+    const Case cases[] = {
+        {"SCYL", StorageShape::CYLINDRICAL, 30.0, 20.0, 0.0},
+        {"SCON", StorageShape::CONICAL,     30.0, 20.0, 2.5},
+        {"SPAR", StorageShape::PARABOLOID,  30.0, 20.0, 8.0},
+        {"SPYR", StorageShape::PYRAMIDAL,   30.0, 20.0, 2.5},
+    };
+
+    for (const auto& cse : cases) {
+        const int idx = ctx.node_names.add(cse.name);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.spatial.node_x.push_back(static_cast<double>(idx));
+        ctx.spatial.node_y.push_back(0.0);
+
+        auto& S = ctx.node_subtypes.storages;
+        const auto sr = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::STORAGE));
+        S.shape[sr] = cse.shape;
+        S.p1[sr] = cse.p1; S.p2[sr] = cse.p2; S.p3[sr] = cse.p3;
+        double a = 0, b = 0, c = 0;
+        ASSERT_TRUE(storage_shape_coeffs(cse.shape, cse.p1, cse.p2, cse.p3, a, b, c));
+        S.a[sr] = a; S.b[sr] = b; S.c[sr] = c;
+    }
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "shp"), 0);
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "shp"), 0);
+
+    for (const auto& cse : cases) {
+        const int idx = in.node_names.find(cse.name);
+        ASSERT_GE(in.node_subtypes.storage_row(idx), 0) << cse.name;
+        const auto ur = static_cast<std::size_t>(in.node_subtypes.storage_row(idx));
+        const auto& S = in.node_subtypes.storages;
+        EXPECT_EQ(S.shape[ur], cse.shape) << cse.name << ": shape not preserved";
+        EXPECT_DOUBLE_EQ(S.p1[ur], cse.p1) << cse.name;
+        EXPECT_DOUBLE_EQ(S.p2[ur], cse.p2) << cse.name;
+        EXPECT_DOUBLE_EQ(S.p3[ur], cse.p3) << cse.name;
+        double a = 0, b = 0, c = 0;
+        ASSERT_TRUE(storage_shape_coeffs(cse.shape, cse.p1, cse.p2, cse.p3, a, b, c));
+        EXPECT_DOUBLE_EQ(S.a[ur], a) << cse.name << ": coeff a";
+        EXPECT_DOUBLE_EQ(S.b[ur], b) << cse.name << ": coeff b";
+        EXPECT_DOUBLE_EQ(S.c[ur], c) << cse.name << ": coeff c";
+    }
+}
+
+// A .gpkg written before the shape columns existed does not have them at all —
+// SELECTing them fails with "no such column", not NULL. The reader probes with
+// column_exists() and falls back to the pre-shape rule (curve_name set => TABULAR,
+// else FUNCTIONAL). Simulate that legacy file by dropping the four columns from a
+// freshly written db, then assert the read still succeeds with the fallback shape.
+TEST_F(GeoPackageTest, LegacyGpkgWithoutShapeColumnsFallsBack) {
+    using namespace openswmm::gpkg;
+
+    SimulationContext ctx{};
+    ctx.options.flow_units = FlowUnits::CFS;
+    ctx.spatial.crs = "EPSG:4326";
+
+    // Two curve-less storages (would-be FUNCTIONAL) and one with a curve (TABULAR).
+    auto add_storage = [&](const char* nm, const char* curve) {
+        const int idx = ctx.node_names.add(nm);
+        const auto n = static_cast<std::size_t>(idx + 1);
+        ctx.nodes.type.resize(n); ctx.nodes.invert_elev.resize(n);
+        ctx.nodes.full_depth.resize(n); ctx.nodes.init_depth.resize(n);
+        ctx.nodes.sur_depth.resize(n); ctx.nodes.ponded_area.resize(n);
+        ctx.spatial.node_x.push_back(static_cast<double>(idx));
+        ctx.spatial.node_y.push_back(0.0);
+        auto& S = ctx.node_subtypes.storages;
+        const auto sr = static_cast<std::size_t>(
+            ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::STORAGE));
+        // Write it as a geometric shape so, if the fallback DIDN'T fire, the columns
+        // we drop would otherwise have said PYRAMIDAL — proving the fallback is real.
+        S.shape[sr] = StorageShape::PYRAMIDAL;
+        S.p1[sr] = 30.0; S.p2[sr] = 20.0; S.p3[sr] = 2.5;
+        S.a[sr] = 250.0; S.b[sr] = 25.0; S.c[sr] = 600.0;
+        if (curve) S.curve_name[sr] = curve;
+    };
+    add_storage("SFUN", nullptr);
+    add_storage("STAB", "SomeCurve");
+
+    ASSERT_EQ(write_to_file(db_path_, ctx, "legacy"), 0);
+
+    // Drop the post-shipping columns to mimic a pre-shape file (DROP COLUMN needs
+    // SQLite >= 3.35, which the vendored build has).
+    {
+        DbPtr db = open_database(db_path_);
+        for (const char* col : {"shape", "p1", "p2", "p3"})
+            exec(db.get(), std::string("ALTER TABLE storages DROP COLUMN ") + col);
+    }
+
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "legacy"), 0)
+        << "reader must tolerate a .gpkg that predates the shape columns";
+
+    const auto& S = in.node_subtypes.storages;
+    const int ifun = in.node_names.find("SFUN");
+    const auto ufun = static_cast<std::size_t>(in.node_subtypes.storage_row(ifun));
+    EXPECT_EQ(S.shape[ufun], StorageShape::FUNCTIONAL)
+        << "curve-less legacy storage must fall back to FUNCTIONAL";
+
+    const int itab = in.node_names.find("STAB");
+    const auto utab = static_cast<std::size_t>(in.node_subtypes.storage_row(itab));
+    EXPECT_EQ(S.shape[utab], StorageShape::TABULAR)
+        << "curved legacy storage must fall back to TABULAR";
+}
+
+// A .gpkg written before the precip scale-factor columns existed must still
+// open, with the reader defaulting both factors to 1.0 (a true no-op).
+TEST_F(GeoPackageTest, LegacyGpkgWithoutScaleColumnsDefaultsToOne) {
+    auto ctx_out = build_test_context();   // S1 has non-default factors
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "legacy"), 0);
+
+    {
+        DbPtr db = open_database(db_path_);
+        for (const char* col : {"rain_scale_factor", "snow_scale_factor"})
+            exec(db.get(), std::string("ALTER TABLE subcatchments DROP COLUMN ") + col);
+    }
+
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "legacy"), 0)
+        << "reader must tolerate a .gpkg that predates the scale columns";
+
+    const int s1 = in.subcatch_names.find("S1");
+    ASSERT_GE(s1, 0);
+    EXPECT_DOUBLE_EQ(in.subcatches.rain_scale_factor[s1], 1.0)
+        << "missing column must default to 1.0, not 0.0";
+    EXPECT_DOUBLE_EQ(in.subcatches.snow_scale_factor[s1], 1.0);
+}
+
 // Phase 7: relational link child tables (conduits/pumps/orifices/weirs/outlets):
 // lossless field-set round-trip with the param1/param2 -> NAMED column mapping.
 // Emphasis on weir + outlet (no QA model exercises them) and the TABULAR outlet
@@ -771,6 +963,14 @@ TEST_F(GeoPackageTest, SubcatchmentsRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.frac_imperv[s1], 0.25);
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.n_imperv[s1], 0.01);
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.n_perv[s1], 0.1);
+
+    // Precipitation scale factors round-trip; S2 keeps the 1.0 default.
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.rain_scale_factor[s1], 0.5);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.snow_scale_factor[s1], 1.3);
+    int s2 = ctx_in.subcatch_names.find("S2");
+    ASSERT_GE(s2, 0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.rain_scale_factor[s2], 1.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.snow_scale_factor[s2], 1.0);
 }
 
 TEST_F(GeoPackageTest, InfiltrationRoundTrip) {
@@ -888,6 +1088,67 @@ TEST_F(GeoPackageTest, PollutantsRoundTrip) {
     int tss = ctx_in.pollutant_names.find("TSS");
     ASSERT_GE(tss, 0);
     EXPECT_EQ(ctx_in.pollutants.units[tss], MassUnits::MG_PER_L);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_rain[tss], 12.5);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_gw[tss], 1.25);
+    // Iteration 4 — Crdii/Cdwf/Cinit no longer drop on a .gpkg round-trip.
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_rdii[tss], 2.5);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.c_dwf[tss], 3.5);
+    EXPECT_DOUBLE_EQ(ctx_in.pollutants.init_conc[tss], 4.5);
+}
+
+TEST_F(GeoPackageTest, QualityTablesRoundTrip) {
+    // Iteration 4 — landuses / buildup / washoff / coverages / loadings.
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    ASSERT_EQ(ctx_in.landuse_names.size(), 2);
+    const int res = ctx_in.landuse_names.find("Res");
+    const int com = ctx_in.landuse_names.find("Com");
+    ASSERT_GE(res, 0);
+    ASSERT_GE(com, 0);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.sweep_interval[res], 7.0);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.sweep_removal[res], 0.5);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.last_swept[res], 2.0);
+    EXPECT_DOUBLE_EQ(ctx_in.landuses.sweep_interval[com], 14.0);
+
+    const int np = ctx_in.pollutant_names.size();
+    ASSERT_EQ(np, 1);
+    ASSERT_EQ(ctx_in.buildup.n_landuses, 2);
+    ASSERT_EQ(ctx_in.buildup.n_pollutants, 1);
+    EXPECT_EQ(ctx_in.buildup.func_type[res * np + 0], 1);      // POW
+    EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff1[res * np + 0], 100.0);
+    EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff2[res * np + 0], 2.0);
+    EXPECT_DOUBLE_EQ(ctx_in.buildup.coeff3[res * np + 0], 1.5);
+    EXPECT_EQ(ctx_in.buildup.normalizer[res * np + 0], 0);
+    EXPECT_EQ(ctx_in.buildup.func_type[com * np + 0], 3);      // SAT
+    EXPECT_EQ(ctx_in.buildup.normalizer[com * np + 0], 1);
+
+    ASSERT_EQ(ctx_in.washoff.n_landuses, 2);
+    EXPECT_EQ(ctx_in.washoff.func_type[res * np + 0], 1);      // EXP
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.coeff[res * np + 0], 0.1);
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.expon[res * np + 0], 1.2);
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.sweep_effic[res * np + 0], 30.0);
+    EXPECT_DOUBLE_EQ(ctx_in.washoff.bmp_effic[res * np + 0], 15.0);
+    EXPECT_EQ(ctx_in.washoff.func_type[com * np + 0], 0);      // NONE
+
+    const int s1 = ctx_in.subcatch_names.find("S1");
+    const int s2 = ctx_in.subcatch_names.find("S2");
+    ASSERT_GE(s1, 0);
+    ASSERT_GE(s2, 0);
+    const int nLu = ctx_in.subcatches.coverage_n_landuses;
+    ASSERT_EQ(nLu, 2);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s1 * nLu + res], 60.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s1 * nLu + com], 40.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s2 * nLu + res], 25.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.coverage[s2 * nLu + com], 0.0);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.sweep_last_swept[s1 * nLu + res], 1.0);
+
+    ASSERT_EQ(ctx_in.subcatches.conc_n_pollutants, 1);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s1 * np + 0], 1.5);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s2 * np + 0], 2.25);
 }
 
 TEST_F(GeoPackageTest, PatternsRoundTrip) {

@@ -13,7 +13,8 @@
  *   RAINGAGES, SUBCATCHMENTS, SUBAREAS, INFILTRATION,
  *   JUNCTIONS, OUTFALLS, DIVIDERS, STORAGE, CONDUITS, PUMPS, ORIFICES,
  *   WEIRS, OUTLETS, XSECTIONS, LOSSES, TRANSECTS, STREETS, INLETS,
- *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, BUILDUP, WASHOFF, TREATMENT,
+ *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, COVERAGES, BUILDUP, WASHOFF,
+ *   LOADINGS, TREATMENT,
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES,
  *   MAP, COORDINATES, VERTICES, Polygons, SYMBOLS,
  *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
@@ -31,6 +32,7 @@
 #include "InpWriter.hpp"
 #include "PathResolver.hpp"
 #include "SimulationContext.hpp"
+#include "../data/StorageGeometry.hpp"
 #include "DateTime.hpp"
 #include "UnitConversion.hpp"
 #include "../input/PostParseResolver.hpp"
@@ -142,6 +144,9 @@ static const char* gN(const SimulationContext& c, int i) {
 static const char* tN(const SimulationContext& c, int i) {
     return (i>=0 && i<static_cast<int>(c.table_names.size())) ? c.table_names.name_of(i).c_str() : "*";
 }
+static const char* spN(const SimulationContext& c, int i) {
+    return (i>=0 && i<static_cast<int>(c.snowpack_names.size())) ? c.snowpack_names.name_of(i).c_str() : "*";
+}
 static const char* pN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_pollutants()) ? c.pollutant_names.name_of(i).c_str() : "*";
 }
@@ -164,6 +169,19 @@ static const char* ofName(OutfallType t) {
 }
 static bool hasNT(const SimulationContext& c, NodeType t) {
     for(int j=0;j<c.n_nodes();++j) if(c.nodes.type[static_cast<size_t>(j)]==t) return true; return false;
+}
+// Virtual junctions are JUNCTION-typed but emit into [VIRTUAL_JUNCTIONS], not [JUNCTIONS].
+static bool isVirtualNode(const SimulationContext& c, size_t u) {
+    return u < c.nodes.is_virtual.size() && c.nodes.is_virtual[u] != 0;
+}
+static bool hasRegularJunction(const SimulationContext& c) {
+    for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
+        if(c.nodes.type[u]==NodeType::JUNCTION && !isVirtualNode(c,u)) return true;}
+    return false;
+}
+static bool hasVirtualJunction(const SimulationContext& c) {
+    for(int j=0;j<c.n_nodes();++j) if(isVirtualNode(c,static_cast<size_t>(j))) return true;
+    return false;
 }
 static bool hasLT(const SimulationContext& c, LinkType t) {
     for(int j=0;j<c.n_links();++j) if(c.links.type[static_cast<size_t>(j)]==t) return true; return false;
@@ -278,37 +296,35 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     // ---- [2D_OPTIONS] -----------------------------------------------------
     // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
     // keys are parse errors on reload).
-    static const char* sLinSolver[] = {"GMRES", "BICGSTAB", "TFQMR"};
-    static const char* sPrecond[]   = {"NONE", "JACOBI", "ILU", "AMG"};
     static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE"};
     sec(f, "2D_OPTIONS");
     std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
     std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
-    std::fprintf(f, "%-22s %.12g\n", "MIN_TIMESTEP",      o.min_timestep);
-    std::fprintf(f, "%-22s %.12g\n", "REL_TOLERANCE",     o.rel_tolerance);
-    std::fprintf(f, "%-22s %.12g\n", "ABS_TOLERANCE",     o.abs_tolerance);
     std::fprintf(f, "%-22s %.12g\n", "DRY_DEPTH",         o.dry_depth);
     std::fprintf(f, "%-22s %.12g\n", "LIMITER_EPSILON",   o.limiter_epsilon);
+    std::fprintf(f, "%-22s %.12g\n", "FLUX_DH_EPS",       o.flux_dh_eps);
     std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD",       o.coupling_cd);
-    std::fprintf(f, "%-22s %d\n",    "MAX_KRYLOV_DIM",    o.max_krylov_dim);
-    std::fprintf(f, "%-22s %d\n",    "COUPLING_INTERVAL", o.coupling_interval);
-    std::fprintf(f, "%-22s %.12g\n", "COUPLING_WINDOW",   o.coupling_window);
-    std::fprintf(f, "%-22s %s\n",    "ACTIVE_SET",        o.active_set ? "YES" : "NO");
-    std::fprintf(f, "%-22s %d\n",    "ACTIVE_SET_HALO",   o.active_set_halo);
-    std::fprintf(f, "%-22s %d\n",    "MAX_CVODE_STEPS",   o.max_cvode_steps);
-    std::fprintf(f, "%-22s %s\n",    "LINEAR_SOLVER",
-                 sLinSolver[static_cast<int>(o.linear_solver) >= 0 &&
-                            static_cast<int>(o.linear_solver) <= 2
-                                ? static_cast<int>(o.linear_solver) : 0]);
-    std::fprintf(f, "%-22s %s\n",    "PRECONDITIONER",
-                 sPrecond[static_cast<int>(o.preconditioner) >= 0 &&
-                          static_cast<int>(o.preconditioner) <= 3
-                              ? static_cast<int>(o.preconditioner) : 0]);
+    std::fprintf(f, "%-22s %.12g\n", "COUPLING_SYNC",     o.coupling_sync);
     std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
                  sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
                            static_cast<int>(o.rainfall_mode) <= 2
                                ? static_cast<int>(o.rainfall_mode) : 0]);
     std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
+    std::fprintf(f, "%-22s %s\n",    "CELL_CLOSURE",
+                 o.cell_closure == twoD::CellClosure2D::VFR ? "VFR" : "FLAT");
+    std::fprintf(f, "%-22s %s\n",    "FACE_RECONSTRUCTION",
+                 o.face_reconstruction == twoD::FaceDepth2D::VFR_FACE
+                     ? "VFR_FACE" : "MEAN");
+    std::fprintf(f, "%-22s %.12g\n", "VFR_MIN_WET_FRAC",  o.vfr_min_wet_frac);
+    // Explicit-marcher configuration (the only 2D integrator).
+    std::fprintf(f, "%-22s %s\n",    "INTEGRATOR",        "EXPLICIT");
+    std::fprintf(f, "%-22s %.12g\n", "THETA",             o.theta);
+    std::fprintf(f, "%-22s %.12g\n", "CFL_NUMBER",        o.cfl_number);
+    std::fprintf(f, "%-22s %.12g\n", "H_MOVE",            o.h_move);
+    std::fprintf(f, "%-22s %d\n",    "LTS_TIERS",         o.lts_tiers);
+    std::fprintf(f, "%-22s %.12g\n", "FROUDE_MAX",        o.froude_max);
+    std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
+                 o.coupling_area_auto ? "AUTO" : "DEFAULT");
     if (!o.output_file.empty())
         std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", o.output_file.c_str());
 
@@ -379,15 +395,51 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     }
 
     // ---- [2D_TRIANGLES] -------------------------------------------------------
+    // Optional INIT_DEPTH (mesh length units — see the UNITS header above;
+    // default 0 = dry) precedes TAG. The column is
+    // emitted for EVERY row whenever any triangle has a nonzero initial depth
+    // or a tag, so TAG's position stays unambiguous on re-read (a numeric
+    // 5th token always means INIT_DEPTH).
+    bool any_init_depth = false, any_tag = false;
+    for (int t = 0; t < nt; ++t) {
+        if (mesh.tri_init_depth[t] != 0.0) any_init_depth = true;
+        if (!mesh.tri_tag[t].empty()) any_tag = true;
+    }
+    const bool write_depth_col = any_init_depth || any_tag;
     sec(f, "2D_TRIANGLES");
-    std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
-                 "MANNINGS_N", "TAG");
+    if (write_depth_col)
+        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %-12s %s\n", "V1", "V2", "V3",
+                     "MANNINGS_N", "INIT_DEPTH", "TAG");
+    else
+        std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
+                     "MANNINGS_N", "TAG");
     for (int t = 0; t < nt; ++t) {
         std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.tri_v0[t],
                      mesh.tri_v1[t], mesh.tri_v2[t], mesh.mannings_n[t]);
+        if (write_depth_col)
+            std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
         if (!mesh.tri_tag[t].empty())
             std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
         std::fprintf(f, "\n");
+    }
+
+    // ---- [2D_INITIAL_VELOCITY] ------------------------------------------------
+    // Sparse: only triangles with a nonzero initial velocity get a row.
+    // Emitted after [2D_TRIANGLES] — rows validate against loaded triangles.
+    {
+        bool any_uv = false;
+        for (int t = 0; t < nt && !any_uv; ++t)
+            any_uv = mesh.tri_init_u[t] != 0.0 || mesh.tri_init_v[t] != 0.0;
+        if (any_uv) {
+            sec(f, "2D_INITIAL_VELOCITY");
+            std::fprintf(f, ";;%-6s %-12s %s\n", "TRI", "U", "V");
+            for (int t = 0; t < nt; ++t) {
+                if (mesh.tri_init_u[t] == 0.0 && mesh.tri_init_v[t] == 0.0)
+                    continue;
+                std::fprintf(f, "%-8d %-12.6g %.6g\n", t, mesh.tri_init_u[t],
+                             mesh.tri_init_v[t]);
+            }
+        }
     }
 
     // Coupled-node name: prefer the authored name, fall back to the
@@ -421,22 +473,39 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     }
 
     // ---- [2D_TRIANGLE_NODE_MAP] -------------------------------------------------
+    // Repeated-row form: mesh.tri_couplings is the source of truth (several
+    // nodes may couple to one triangle). Fall back to the legacy per-triangle
+    // arrays only when no rows exist (meshes authored before resolve, or via
+    // paths that never synthesised rows).
     {
-        bool any = false;
-        for (int t = 0; t < nt && !any; ++t)
-            any = !node_name_for(mesh.tri_coupled_node_name[t],
-                                 mesh.tri_coupled_node[t]).empty();
-        if (any) {
+        if (!mesh.tri_couplings.empty()) {
             sec(f, "2D_TRIANGLE_NODE_MAP");
             std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE", "CD",
                          "AREA");
-            for (int t = 0; t < nt; ++t) {
-                const std::string cn = node_name_for(
-                    mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
+            for (const auto& row : mesh.tri_couplings) {
+                const std::string cn = node_name_for(row.node_name, row.node);
                 if (cn.empty()) continue;
-                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
-                             mesh.tri_coupling_cd[t],
-                             mesh.tri_coupling_area[t]);
+                if (row.tri < 0 || row.tri >= nt) continue;
+                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", row.tri,
+                             cn.c_str(), row.cd, row.area);
+            }
+        } else {
+            bool any = false;
+            for (int t = 0; t < nt && !any; ++t)
+                any = !node_name_for(mesh.tri_coupled_node_name[t],
+                                     mesh.tri_coupled_node[t]).empty();
+            if (any) {
+                sec(f, "2D_TRIANGLE_NODE_MAP");
+                std::fprintf(f, ";;%-6s %-16s %-10s %s\n", "TRIANGLE", "NODE",
+                             "CD", "AREA");
+                for (int t = 0; t < nt; ++t) {
+                    const std::string cn = node_name_for(
+                        mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
+                    if (cn.empty()) continue;
+                    std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
+                                 mesh.tri_coupling_cd[t],
+                                 mesh.tri_coupling_area[t]);
+                }
             }
         }
     }
@@ -536,7 +605,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     static const char* sFlowUnits[]  = {"CFS","GPM","MGD","CMS","LPS","MLD"};
     static const char* sInfilt[]     = {"HORTON","MODIFIED_HORTON","GREEN_AMPT","MODIFIED_GREEN_AMPT","CURVE_NUMBER"};
-    static const char* sRouting[]    = {"STEADY","KINWAVE","DYNWAVE"};
+    static const char* sRouting[]    = {"STEADY","KINWAVE","DYNWAVE","FV"};
     static const char* sInertial[]   = {"NONE","PARTIAL","FULL"};
     static const char* sNormFlow[]   = {"SLOPE","FROUDE","BOTH","NEITHER"};
     static const char* sSurcharge[]  = {"EXTRAN","SLOT","DYNAMIC_SLOT"};
@@ -552,7 +621,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // --- Group 1: Core process options (FLOW_UNITS .. SKIP_STEADY_STATE) ---
     std::fprintf(f,"%-20s %s\n",  "FLOW_UNITS",       (fu>=0&&fu<=5)?sFlowUnits[fu]:"CFS");
     std::fprintf(f,"%-20s %s\n",  "INFILTRATION",     (inf>=0&&inf<=4)?sInfilt[inf]:"HORTON");
-    std::fprintf(f,"%-20s %s\n",  "FLOW_ROUTING",     (rm>=0&&rm<=2)?sRouting[rm]:"DYNWAVE");
+    std::fprintf(f,"%-20s %s\n",  "FLOW_ROUTING",     (rm>=0&&rm<=3)?sRouting[rm]:"DYNWAVE");
     std::fprintf(f,"%-20s %s\n",  "LINK_OFFSETS",     o.link_offsets==1?"ELEVATION":"DEPTH");
     std::fprintf(f,"%-20s %g\n",  "MIN_SLOPE",        o.min_slope);
     std::fprintf(f,"%-20s %s\n",  "ALLOW_PONDING",    o.allow_ponding?"YES":"NO");
@@ -566,6 +635,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-20s %s\n",  "IGNORE_RDII",       o.ignore_rdii?"YES":"NO");
     std::fprintf(f,"%-20s %s\n",  "IGNORE_ROUTING",    o.ignore_routing?"YES":"NO");
     std::fprintf(f,"%-20s %s\n",  "IGNORE_QUALITY",    o.ignore_quality?"YES":"NO");
+    // OpenSWMM extension, not a legacy key — emit only when set so 1D-only
+    // models keep a legacy-clean [OPTIONS] block.
+    if (o.ignore_2d)
+        std::fprintf(f,"%-20s %s\n",  "IGNORE_2D",         "YES");
     std::fprintf(f,"\n");
 
     // --- Group 3: Date / time options (START_DATE .. RULE_STEP) ---
@@ -628,6 +701,53 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n",  "NODE_CONTINUITY","SEMI_IMPLICIT");
     if (o.anderson_accel)
         std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
+    if (o.virtual_junction_momentum == 1)
+        std::fprintf(f,"%-20s %s\n",  "VIRTUAL_JUNCTION_MOMENTUM", "FULL");
+
+    // Explicit finite-volume solver knobs. Emitted only under FLOW_ROUTING FV
+    // so a DW model's [OPTIONS] block stays legacy-clean; the keys are inert
+    // under other routing models, so a round-trip that changes FLOW_ROUTING
+    // does not lose a user's FV configuration mid-session — it is simply not
+    // written until FV is selected again.
+    if (o.routing_model == RoutingModel::FV) {
+        static const char* sRiemann[] = {"HLL","HLLC"};
+        static const char* sLimiter[] = {"MINMOD","VANLEER","SUPERBEE"};
+        static const char* sScalar[]  = {"UPWIND","MUSCL","QUICKEST_ULTIMATE"};
+        static const char* sTime[]    = {"EULER","RK2"};
+        static const char* sBackend[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
+        const auto& fvo = o.fv;
+        std::fprintf(f,"%-20s %g\n", "FV_CELL_LENGTH",  fvo.cell_length);
+        std::fprintf(f,"%-20s %d\n", "FV_MIN_CELLS",    fvo.min_cells);
+        std::fprintf(f,"%-20s %g\n", "FV_CFL",          fvo.cfl);
+        std::fprintf(f,"%-20s %s\n", "FV_RIEMANN",      sRiemann[static_cast<int>(fvo.riemann)]);
+        std::fprintf(f,"%-20s %d\n", "FV_ORDER",        fvo.order);
+        std::fprintf(f,"%-20s %s\n", "FV_LIMITER",      sLimiter[static_cast<int>(fvo.limiter)]);
+        std::fprintf(f,"%-20s %s\n", "FV_SCALAR_SCHEME",sScalar[static_cast<int>(fvo.scalar_scheme)]);
+        std::fprintf(f,"%-20s %s\n", "FV_TIME_INTEGRATION",
+                     sTime[static_cast<int>(fvo.time_integration)]);
+        std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
+        if (fvo.dispersion > 0.0)
+            std::fprintf(f,"%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
+        if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
+            std::fprintf(f,"%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
+        if (fvo.node_coupling != fv::NodeCoupling::SEMI_IMPLICIT)
+            std::fprintf(f,"%-20s %s\n", "FV_NODE_COUPLING", "EXPLICIT");
+        if (fvo.node_dt_limit != fv::NodeDtLimit::STABILITY)
+            std::fprintf(f,"%-20s %s\n", "FV_NODE_DT", "NONE");
+        if (fvo.node_picard_sweeps != 1)
+            std::fprintf(f,"%-20s %d\n", "FV_NODE_PICARD", fvo.node_picard_sweeps);
+        if (fvo.node_cell_coupling)
+            std::fprintf(f,"%-20s %s\n", "FV_NODE_CELL_COUPLING", "YES");
+        if (!fvo.compaction)
+            std::fprintf(f,"%-20s %s\n", "FV_COMPACTION", "NO");
+        std::fprintf(f,"%-20s %s\n", "FV_BACKEND",      sBackend[static_cast<int>(fvo.backend)]);
+        std::fprintf(f,"%-20s %ld\n","FV_MIN_PARALLEL_CELLS", fvo.min_parallel_cells);
+        if (!fvo.lts)
+            std::fprintf(f,"%-20s %s\n", "FV_LTS", "NO");
+        std::fprintf(f,"%-20s %d\n", "FV_LTS_MAX_TIERS", fvo.lts_max_tiers);
+        if (fvo.cfl_census_interval != 1)
+            std::fprintf(f,"%-20s %d\n","FV_CFL_CENSUS_INTERVAL", fvo.cfl_census_interval);
+    }
     if (!o.crs.empty())
         std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());
     if (o.write_absolute_paths)
@@ -904,12 +1024,33 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }}
 
     // [SUBCATCHMENTS]
+    // Grammar: Name RainGage Outlet Area %Imperv Width %Slope CurbLen
+    //          [Snowpack] [RainScale] [SnowScale]
+    // The Snowpack token (8) was previously never written, silently dropping
+    // snow pack assignments on round-trip. It is now emitted whenever a pack is
+    // assigned, and also as a '*' placeholder when a scale factor needs to be
+    // written past it (same convention as the [RAINGAGES] FILE start date).
+    // Scale factors are omitted entirely when both are 1.0, so models that do
+    // not use them round-trip byte-identically to before.
     if(ctx.n_subcatches()>0){sec(f,"SUBCATCHMENTS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s\n","Name","RainGage","Outlet","Area","%%Imperv","Width","%%Slope","CurbLen");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------","----------");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n","Name","RainGage","Outlet","Area","%%Imperv","Width","%%Slope","CurbLen","Snowpack","RainScale","SnowScale");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------","----------","----------------","----------","----------");
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
     write_obj_comment(f, ctx.subcatches.comments, u);
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f\n",ctx.subcatch_names.name_of(j).c_str(),gN(ctx,ctx.subcatches.gage[u]),nN(ctx,ctx.subcatches.outlet_node[u]),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
+    const int  sp = ctx.subcatches.snowpack[u];
+    const double rsf = ctx.subcatches.rain_scale_factor[u];
+    const double ssf = ctx.subcatches.snow_scale_factor[u];
+    const bool need_scale = (rsf!=1.0 || ssf!=1.0);
+    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f",ctx.subcatch_names.name_of(j).c_str(),gN(ctx,ctx.subcatches.gage[u]),nN(ctx,ctx.subcatches.outlet_node[u]),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
+    // Token 8 must be present to reach tokens 9/10 positionally.
+    if(sp>=0 || need_scale) std::fprintf(f," %-16s",spN(ctx,sp));
+    if(need_scale){
+        // RainScale must be written even when 1.0 if SnowScale is not, to hold
+        // the position of token 10.
+        std::fprintf(f," %-10.4g",rsf);
+        if(ssf!=1.0) std::fprintf(f," %-10.4g",ssf);
+    }
+    std::fprintf(f,"\n");
     }}
 
     // [SUBAREAS]
@@ -1052,18 +1193,32 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }
 
     // [JUNCTIONS]
-    if(hasNT(ctx,NodeType::JUNCTION)){sec(f,"JUNCTIONS");
+    if(hasRegularJunction(ctx)){sec(f,"JUNCTIONS");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","Name","Elev","MaxDepth","InitDepth","SurDepth","Aponded");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","----------------","------------","------------","------------","------------","------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::JUNCTION)continue;
+    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::JUNCTION||isVirtualNode(ctx,u))continue;
     write_obj_comment(f, ctx.nodes.comments, u);
     std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],ctx.nodes.sur_depth[u],ctx.nodes.ponded_area[u]);
     }}
 
+    // [VIRTUAL_JUNCTIONS] — name + invert elevation; all other geometry is
+    // derived from the attached conduits at load time (refactored engine only).
+    if(hasVirtualJunction(ctx)){sec(f,"VIRTUAL_JUNCTIONS");
+    std::fprintf(f,";;%-16s %-12s\n","Name","Elev");
+    std::fprintf(f,";;%-16s %-12s\n","----------------","------------");
+    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(!isVirtualNode(ctx,u))continue;
+    write_obj_comment(f, ctx.nodes.comments, u);
+    std::fprintf(f,"%-16s %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u]);
+    }}
+
     // [OUTFALLS]
+    // Column order must match outfall_readParams() / handle_outfalls():
+    //   Name Elev Type [StageData] Gated [RouteTo]
+    // StageData is present only for FIXED (numeric stage) and TIDAL/TIMESERIES
+    // (table NAME, not the internal index).
     if(hasNT(ctx,NodeType::OUTFALL)){sec(f,"OUTFALLS");
-    std::fprintf(f,";;%-16s %-12s %-12s %-8s\n","Name","Elev","Type","Gated");
-    std::fprintf(f,";;%-16s %-12s %-12s %-8s\n","----------------","------------","------------","--------");
+    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-8s %-16s\n","Name","Elev","Type","Stage Data","Gated","Route To");
+    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-8s %-16s\n","----------------","------------","------------","----------------","--------","----------------");
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::OUTFALL)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
     // Relational side-table (Phase 4).
@@ -1071,8 +1226,23 @@ int writeInpFile(const SimulationContext& ctx_internal,
     const OutfallType otype = (orow>=0)?O.bc_type[static_cast<size_t>(orow)]:OutfallType::FREE;
     const int oflap = (orow>=0)?O.has_flap_gate[static_cast<size_t>(orow)]:0;
     const double oparam = (orow>=0)?O.param[static_cast<size_t>(orow)]:0.0;
-    std::fprintf(f,"%-16s %12.4f %-12s %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype),oflap?"YES":"NO");
-    if(otype==OutfallType::FIXED)std::fprintf(f," %12.4f",oparam);
+    const int oroute = (orow>=0)?O.route_to[static_cast<size_t>(orow)]:-1;
+
+    // Stage-data column.
+    char stage[64]; stage[0]='\0';
+    if(otype==OutfallType::FIXED){
+        std::snprintf(stage,sizeof(stage),"%.4f",oparam);
+    } else if(otype==OutfallType::TIDAL||otype==OutfallType::TIMESERIES){
+        const int t = static_cast<int>(oparam);
+        if(t>=0 && t<static_cast<int>(ctx.tables.tables.size()))
+            std::snprintf(stage,sizeof(stage),"%s",ctx.table_names.name_of(t).c_str());
+    }
+
+    std::fprintf(f,"%-16s %12.4f %-12s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype));
+    if(stage[0]!='\0')std::fprintf(f," %-16s",stage);
+    std::fprintf(f," %-8s",oflap?"YES":"NO");
+    if(oroute>=0 && oroute<ctx.n_subcatches())
+        std::fprintf(f," %-16s",ctx.subcatch_names.name_of(oroute).c_str());
     std::fprintf(f,"\n");
     }}
 
@@ -1146,8 +1316,18 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // Relational side-table (Phase 4).
     const int srow = ctx.node_subtypes.storage_row(j); const auto& S = ctx.node_subtypes.storages;
     const int scurve = (srow>=0)?S.curve[static_cast<size_t>(srow)]:-1;
+    const StorageShape sshape = (srow>=0)?S.shape[static_cast<size_t>(srow)]:StorageShape::FUNCTIONAL;
     if(scurve>=0)
         std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s 0 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve),ctx.nodes.sur_depth[u]);
+    else if(storage_shape_is_geometric(sshape)){
+        // Geometric shapes re-emit the RAW L/W/Z the user gave us, not the derived
+        // a/b/c — that is the whole point of keeping p1..p3 in the SoA. Writing the
+        // coefficients here would silently downgrade the node to FUNCTIONAL on save.
+        const double q1=S.p1[static_cast<size_t>(srow)];
+        const double q2=S.p2[static_cast<size_t>(srow)];
+        const double q3=S.p3[static_cast<size_t>(srow)];
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %-10s %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],storage_shape_keyword(sshape),q1,q2,q3,ctx.nodes.sur_depth[u]);
+    }
     else {
         const double sa=(srow>=0)?S.a[static_cast<size_t>(srow)]:0.0;
         const double sb=(srow>=0)?S.b[static_cast<size_t>(srow)]:0.0;
@@ -1163,7 +1343,11 @@ int writeInpFile(const SimulationContext& ctx_internal,
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::CONDUIT)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int cr=ctx.link_subtypes.conduit_row(j); const auto& CD=ctx.link_subtypes.conduits;
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %12.6f %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
+    // Length and roughness are emitted at full double precision (%.15g), not a
+    // fixed 4/6-decimal field: real models carry sub-metre lengths and 1/n-derived
+    // roughness with many significant figures, and truncating them perturbs the
+    // routing solution — noticeable on large, control-heavy (chaos-sensitive) models.
+    std::fprintf(f,"%-16s %-16s %-16s %15.15g %15.15g %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
     }}
 
     // [PUMPS]
@@ -1172,8 +1356,13 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-16s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------------","----------","----------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::PUMP)continue;
     write_obj_comment(f, ctx.links.comments, u);
-    const int pr=ctx.link_subtypes.pump_row(j);
-    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s 0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,(pr>=0)?ctx.link_subtypes.pumps.curve[static_cast<size_t>(pr)]:-1),ctx.links.setting[u]>0?"ON":"OFF");
+    const int pr=ctx.link_subtypes.pump_row(j); const auto& PD=ctx.link_subtypes.pumps;
+    // Emit the real startup/shutoff depths (and initial state) rather than a
+    // hardcoded "0 0": those are the wet-well depths at which the pump switches
+    // on/off. Dropping them makes every pump run unconditionally on re-read,
+    // changing the pumping regime and downstream flooding/continuity.
+    const char* pstat=(pr>=0)?(PD.init_state[static_cast<size_t>(pr)]?"ON":"OFF"):(ctx.links.setting[u]>0?"ON":"OFF");
+    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s %.10g %.10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,(pr>=0)?PD.curve[static_cast<size_t>(pr)]:-1),pstat,(pr>=0)?PD.startup[static_cast<size_t>(pr)]:0.0,(pr>=0)?PD.shutoff[static_cast<size_t>(pr)]:0.0);
     }}
 
     // [ORIFICES]
@@ -1188,12 +1377,29 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     // [WEIRS]
     if(hasLT(ctx,LinkType::WEIR)){sec(f,"WEIRS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s\n","Name","FromNode","ToNode","Type","CrestHt","Cd","Gated","EndCon","EndCoeff");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s\n","Name","FromNode","ToNode","Type","CrestHt","Cd","Gated","EndCon","EndCoeff","Surcharge");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------","----------");
+    static const char* WEIR_TYPE[]={"TRANSVERSE","SIDEFLOW","V-NOTCH","TRAPEZOIDAL"};
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::WEIR)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int wr=ctx.link_subtypes.weir_row(j); const auto& WD=ctx.link_subtypes.weirs;
-    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f NO       0          0\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),"TRANSVERSE",(wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,(wr>=0)?WD.cd[static_cast<size_t>(wr)]:0.0);
+    // Emit the real weir type, gate, end-contractions, end-coeff and the
+    // can-surcharge flag rather than hardcoding TRANSVERSE/NO/0/0: dropping the
+    // surcharge flag defaults it back to YES on re-read, changing drowned-weir
+    // flow (weir↔orifice switch) and hence overflow/flooding.
+    const int wt=(wr>=0)?static_cast<int>(WD.weir_type[static_cast<size_t>(wr)]):0;
+    const char* wtStr=(wt>=0&&wt<4)?WEIR_TYPE[wt]:"TRANSVERSE";
+    const char* wgate=ctx.links.has_flap_gate[u]?"YES":"NO";
+    const char* wsurch=(wr>=0&&WD.can_surcharge[static_cast<size_t>(wr)])?"YES":"NO";
+    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f %-8s %10.4f %10.4f %s\n",
+        ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),
+        wtStr,
+        (wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,
+        (wr>=0)?WD.cd[static_cast<size_t>(wr)]:0.0,
+        wgate,
+        (wr>=0)?WD.end_contractions[static_cast<size_t>(wr)]:0.0,
+        (wr>=0)?WD.cd2[static_cast<size_t>(wr)]:0.0,
+        wsurch);
     }}
 
     // [OUTLETS]
@@ -1203,7 +1409,23 @@ int writeInpFile(const SimulationContext& ctx_internal,
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::OUTLET)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int olr=ctx.link_subtypes.outlet_row(j); const auto& OUT=ctx.link_subtypes.outlets;
-    std::fprintf(f,"%-16s %-16s %-16s %10.4f FUNCTIONAL   %10g %10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(olr>=0)?OUT.coeff[static_cast<size_t>(olr)]:0.0,(olr>=0)?OUT.expon[static_cast<size_t>(olr)]:0.0);
+    // Rating type (param1): 0 FUNCTIONAL/HEAD, 1 FUNCTIONAL/DEPTH, 2 TABULAR/HEAD,
+    // 3 TABULAR/DEPTH. Legacy SWMM requires the compound TYPE token (and the curve
+    // name for TABULAR); a bare "FUNCTIONAL" both loses the rating curve and
+    // segfaults the legacy parser (strcomp(NULL,"HEAD")).
+    const int otype=(olr>=0)?static_cast<int>(OUT.outlet_type[static_cast<size_t>(olr)]):0;
+    const bool otab=(otype>=2), odepth=(otype==1||otype==3);
+    const char* otypeStr=otab?(odepth?"TABULAR/DEPTH":"TABULAR/HEAD")
+                              :(odepth?"FUNCTIONAL/DEPTH":"FUNCTIONAL/HEAD");
+    const double ocrest=(olr>=0)?OUT.crest_height[static_cast<size_t>(olr)]:ctx.links.offset1[u];
+    const char* ogate=ctx.links.has_flap_gate[u]?"YES":"NO";
+    if(otab){
+        const int oci=(olr>=0)?OUT.curve[static_cast<size_t>(olr)]:-1;
+        const char* ocurve=(oci>=0)?tN(ctx,oci):ctx.links.pump_curve_name[u].c_str();
+        std::fprintf(f,"%-16s %-16s %-16s %10.4f %-16s %-16s %s\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ocrest,otypeStr,ocurve,ogate);
+    } else {
+        std::fprintf(f,"%-16s %-16s %-16s %10.4f %-16s %10g %10g %s\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ocrest,otypeStr,(olr>=0)?OUT.coeff[static_cast<size_t>(olr)]:0.0,(olr>=0)?OUT.expon[static_cast<size_t>(olr)]:0.0,ogate);
+    }
     }}
 
     // [XSECTIONS]
@@ -1211,7 +1433,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","Link","Shape","Geom1","Geom2","Geom3","Geom4","Barrels");
     std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
-    if(ctx.links.type[u]==LinkType::PUMP)continue;
+    // [XSECTIONS] applies to conduits, orifices and weirs only. Pumps and
+    // outlets have no cross-section; emitting one (a default CIRCULAR with
+    // Geom1=0) makes legacy SWMM reject it with ERROR 211 (invalid number).
+    if(ctx.links.type[u]==LinkType::PUMP||ctx.links.type[u]==LinkType::OUTLET)continue;
     const int cr=ctx.link_subtypes.conduit_row(j);
     const int xbarrels=(cr>=0)?ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)]:1;
     // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
@@ -1228,6 +1453,19 @@ int writeInpFile(const SimulationContext& ctx_internal,
             ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,xbarrels);
         continue;
     }
+    // CUSTOM cross-sections reference a named shape curve: Geom1 is the max
+    // height and the Geom2 slot holds the curve NAME (not a dimension), barrels
+    // stay in the Geom5 column. Emitting numeric geometry drops the curve name,
+    // so legacy SWMM reads "0.0000" as the curve id (ERROR 209). The name is
+    // retained in pump_curve_name by the [XSECTIONS] parser.
+    if(ctx.links.xsect_shape[u]==XsectShape::CUSTOM){
+        const double cy=(ctx.links.xsect_geom1[u]!=0.0)?ctx.links.xsect_geom1[u]:ctx.links.xsect_y_full[u];
+        std::fprintf(f,"%-16s %-16s %.15g %-16s %12.4f %12.4f %8d\n",
+            ctx.link_names.name_of(j).c_str(),
+            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
+            cy,ctx.links.pump_curve_name[u].c_str(),0.0,0.0,xbarrels);
+        continue;
+    }
     double g1,g2,g3,g4;
     if(ctx.links.xsect_geom1[u]!=0.0){
         g1=ctx.links.xsect_geom1[u]; g2=ctx.links.xsect_geom2[u];
@@ -1235,7 +1473,9 @@ int writeInpFile(const SimulationContext& ctx_internal,
     } else {
         g1=ctx.links.xsect_y_full[u]; g2=ctx.links.xsect_w_max[u]; g3=0.0; g4=0.0;
     }
-    std::fprintf(f,"%-16s %-16s %12.4f %12.4f %12.4f %12.4f %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
+    // Full precision on the geometry: xsect dimensions (e.g. CUSTOM/irregular
+    // heights like 0.61875) set conduit conveyance; %.4f truncation perturbs routing.
+    std::fprintf(f,"%-16s %-16s %.15g %.15g %.15g %.15g %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
     }}
 
     // [LOSSES]
@@ -1353,6 +1593,28 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.landuses.sweep_interval[u],ctx.landuses.sweep_removal[u],ctx.landuses.last_swept[u]);
     }}
 
+    // [COVERAGES] — percent of each subcatchment covered by each land use
+    // (stored verbatim in percent, matching handle_coverages). Zero rows
+    // are skipped: absent coverage rows parse back to 0.
+    if(ctx.subcatches.coverage_n_landuses>0&&ctx.n_subcatches()>0){
+    const int nLu=ctx.subcatches.coverage_n_landuses;
+    bool any=false;
+    for(std::size_t i=0;i<ctx.subcatches.coverage.size()&&!any;++i)
+        if(ctx.subcatches.coverage[i]!=0.0)any=true;
+    if(any){sec(f,"COVERAGES");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","Subcatchment","LandUse","Percent");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","----------------","----------------","----------");
+    for(int s=0;s<ctx.n_subcatches();++s){
+    for(int lu=0;lu<nLu;++lu){
+    auto idx=static_cast<size_t>(s)*static_cast<size_t>(nLu)+static_cast<size_t>(lu);
+    if(idx>=ctx.subcatches.coverage.size())break;
+    const double pct=ctx.subcatches.coverage[idx];
+    if(pct==0.0)continue;
+    std::fprintf(f,"%-16s %-16s %10.4f\n",
+        ctx.subcatch_names.name_of(s).c_str(),
+        ctx.landuse_names.name_of(lu).c_str(),pct);
+    }}}}
+
     // [BUILDUP]
     if(ctx.buildup.n_landuses>0&&ctx.buildup.n_pollutants>0){sec(f,"BUILDUP");
     std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n","LandUse","Pollutant","FuncType","Coeff1","Coeff2","Coeff3","PerUnit");
@@ -1386,6 +1648,27 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.washoff.coeff[idx],ctx.washoff.expon[idx],
         ctx.washoff.sweep_effic[idx],ctx.washoff.bmp_effic[idx]);
     }}}
+
+    // [LOADINGS] — initial pollutant buildup per subcatchment (stored in
+    // ctx.subcatches.conc by handle_loadings; see also the object-deletion
+    // re-pack tests). Zero rows are skipped: absent rows parse back to 0.
+    if(ctx.subcatches.conc_n_pollutants>0&&ctx.n_subcatches()>0&&ctx.n_pollutants()>0){
+    const int np=ctx.subcatches.conc_n_pollutants;
+    bool any=false;
+    for(std::size_t i=0;i<ctx.subcatches.conc.size()&&!any;++i)
+        if(ctx.subcatches.conc[i]!=0.0)any=true;
+    if(any){sec(f,"LOADINGS");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","Subcatchment","Pollutant","Buildup");
+    std::fprintf(f,";;%-16s %-16s %-10s\n","----------------","----------------","----------");
+    for(int s=0;s<ctx.n_subcatches();++s){
+    for(int p=0;p<np&&p<ctx.n_pollutants();++p){
+    auto idx=static_cast<size_t>(s)*static_cast<size_t>(np)+static_cast<size_t>(p);
+    if(idx>=ctx.subcatches.conc.size())break;
+    const double w=ctx.subcatches.conc[idx];
+    if(w==0.0)continue;
+    std::fprintf(f,"%-16s %-16s %10.4f\n",
+        ctx.subcatch_names.name_of(s).c_str(),pN(ctx,p),w);
+    }}}}
 
     // [TREATMENT]
     if(ctx.treatment.hasAny()){sec(f,"TREATMENT");
@@ -1422,7 +1705,9 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-12s %-16s %-16s %-16s %-16s\n",
         "----------------","----------------","------------","----------------","----------------","----------------","----------------");
     for(int j=0;j<ctx.dwf_inflows.count();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %-16s %12.6f",
+    // Full precision on the average value: DWF base flows are small (~1e-4 m3/s)
+    // with many significant figures; %.6f truncation shifts the base sewage load.
+    std::fprintf(f,"%-16s %-16s %.15g",
         nN(ctx,ctx.dwf_inflows.node_idx[u]),
         ctx.dwf_inflows.constituent[u].c_str(),
         ctx.dwf_inflows.avg_value[u]);
@@ -1470,19 +1755,24 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"\n");
     }}
 
-    // [RDII_DECAY] (exponential IA decay parameters)
+    // [RDII_DECAY] (exponential IA decay parameters; optional degree-day snow
+    // clause "SNOW snow_T snow_ddf" appended to rows with the snow model on)
     if(ctx.rdii_decay.count()>0){sec(f,"RDII_DECAY");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s\n",
-        "UHGroup","Response","k_dep","k_0","k_T","T_ref","theta_rec","T_freeze");
-    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s\n",
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
+        "UHGroup","Response","k_dep","k_0","k_T","T_ref","theta_rec","T_freeze",
+        "Snow","snow_T","snow_ddf");
+    std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
         "----------------","--------","----------","----------","----------",
-        "--------","----------","----------");
+        "--------","----------","----------","----","--------","----------");
     static const char* decayResp[]={"SHORT","MEDIUM","LONG"};
     for(const auto& e:ctx.rdii_decay.entries){
     const char* r=(e.response>=0&&e.response<=2)?decayResp[e.response]:"SHORT";
-    std::fprintf(f,"%-16s %-8s %10.5f %10.5f %10.5f %8.2f %10.5f %10.5f\n",
+    std::fprintf(f,"%-16s %-8s %10.5f %10.5f %10.5f %8.2f %10.5f %10.5f",
         e.uh_name.c_str(),r,
         e.k_dep,e.k_0,e.k_T,e.T_ref,e.theta_rec,e.T_freeze);
+    if(e.snow_on)
+        std::fprintf(f," SNOW %8.2f %10.5f",e.snow_T,e.snow_ddf);
+    std::fprintf(f,"\n");
     }}
 
     // [PATTERNS]
@@ -1574,7 +1864,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,";%.*s\n",static_cast<int>(e-s),tb.comment.data()+s);
         if(e==tb.comment.size())break;s=e+2;}
     }
-    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.6f %12.6f\n",tN(ctx,t),lbl,tb.x[k],tb.y[k]);
+    // The curve TYPE keyword goes on the FIRST row only; continuation rows are
+    // "Name X Y". Legacy SWMM reads a repeated type on a later row as the
+    // X-value → ERROR 211 (invalid number).
+    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.6f %12.6f\n",tN(ctx,t),(k==0?lbl:""),tb.x[k],tb.y[k]);
     }}}
 
     // Geospatial block — section order matches the legacy SWMM GUI ExportMap():

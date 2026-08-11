@@ -7,34 +7,37 @@ Round-trips ``set_file_path`` / ``get_file_path`` against the real engine
 
 from __future__ import annotations
 
-import pytest
+import unittest
 
-pytest.importorskip("openswmm.engine._model")
+try:
+    import openswmm.engine._model  # noqa: F401
+except ImportError as _exc:  # pragma: no cover - environment dependent
+    raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
 from openswmm.engine import FilePathRole, ModelBuilder
 
 
-class TestScalarFilePathRoundTrip:
+class TestScalarFilePathRoundTrip(unittest.TestCase):
     def test_set_then_get_rainfall(self):
         m = ModelBuilder()
         m.set_file_path(FilePathRole.RAINFALL, "rainfall_data.dat")
         absolute, original = m.get_file_path(FilePathRole.RAINFALL)
         # The original token is preserved verbatim; the absolute path is the
         # engine's resolution (may be empty if never resolved on disk).
-        assert original == "rainfall_data.dat"
-        assert isinstance(absolute, str)
+        self.assertEqual(original, "rainfall_data.dat")
+        self.assertIsInstance(absolute, str)
 
     def test_clear_with_empty_path(self):
         m = ModelBuilder()
         m.set_file_path(FilePathRole.RUNOFF, "runoff.dat")
         m.set_file_path(FilePathRole.RUNOFF, "")
         _absolute, original = m.get_file_path(FilePathRole.RUNOFF)
-        assert original == ""
+        self.assertEqual(original, "")
 
 
-class TestFilePathRoleEnum:
+class TestFilePathRoleEnum(unittest.TestCase):
     def test_role_values(self):
         # Values must mirror SWMM_FilePathRole exactly.
-        assert FilePathRole.RAINFALL == 1
-        assert FilePathRole.HOTSTART_SAVE == 8
-        assert FilePathRole.TIMESERIES_DATA == 10
+        self.assertEqual(FilePathRole.RAINFALL, 1)
+        self.assertEqual(FilePathRole.HOTSTART_SAVE, 8)
+        self.assertEqual(FilePathRole.TIMESERIES_DATA, 10)

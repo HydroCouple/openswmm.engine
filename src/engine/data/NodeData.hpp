@@ -70,6 +70,30 @@ enum class DividerType : int8_t {
     WEIR           = 3
 };
 
+/**
+ * @brief Storage-unit surface-area relation.
+ *
+ * @details Values mirror legacy `enum StorageType` (src/legacy/engine/enums.h:833-847)
+ *          ordinal-for-ordinal, so the int carried by the C API is the same code the
+ *          legacy solver uses.
+ *
+ *          The relation determines how the StorageData a/b/c coefficients are read —
+ *          they are **overloaded**:
+ *            - FUNCTIONAL:            Area = c + a*d^b        (power law)
+ *            - CYLINDRICAL..PYRAMIDAL: Area = c + a*d + b*d²   (quadratic)
+ *          See StorageGeometry.hpp for the raw-parameter → coefficient mapping.
+ *
+ * @see Legacy: StorageType in src/legacy/engine/enums.h
+ */
+enum class StorageShape : int8_t {
+    TABULAR     = 0,  ///< Area vs. depth from a curve (StorageData::curve)
+    FUNCTIONAL  = 1,  ///< Area = c + a*d^b
+    CYLINDRICAL = 2,  ///< Elliptical cylinder  (p1 = major axis, p2 = minor axis)
+    CONICAL     = 3,  ///< Elliptical cone      (p1, p2 = base axes, p3 = side slope)
+    PARABOLOID  = 4,  ///< Elliptical paraboloid(p1, p2 = top axes,  p3 = height ≠ 0)
+    PYRAMIDAL   = 5   ///< Rectangular pyramid  (p1 = length, p2 = width, p3 = side slope)
+};
+
 // ============================================================================
 // NodeData — SoA layout
 // ============================================================================
@@ -125,6 +149,17 @@ struct NodeData {
      * @see Legacy: Node[i].pondedArea
      */
     std::vector<double>     ponded_area;
+
+    /**
+     * @brief Virtual-junction flag (0 = regular node, 1 = virtual junction).
+     *
+     * @details A virtual junction is a zero-storage, momentum-transmitting
+     *          JUNCTION connecting exactly two conduits of identical cross
+     *          section (INP section [VIRTUAL_JUNCTIONS]). The NodeType stays
+     *          JUNCTION so the binary .out type-code space is unchanged.
+     *          Refactored engine only — the legacy engine has no support.
+     */
+    std::vector<uint8_t>    is_virtual;
 
     // -----------------------------------------------------------------------
     // Node subtype properties (storage / outfall / divider)
@@ -235,6 +270,24 @@ struct NodeData {
      *          In-memory only (not serialized to hotstart). See plan / review §11.
      */
     std::vector<double>     coupling_volume;
+
+    /**
+     * @brief Delivery queue for the 1D↔2D junction exchange (1D units, ft³).
+     *
+     * @details SurfaceRouter2D::fireAdvanceWindow moves each fired window's
+     *          coupling_volume here after the 2D mass-balance ledger books it;
+     *          assembleLateralInflows drains the queue at the uniform rate
+     *          queue / SimulationContext::coupling_delivery_remaining, so a
+     *          multi-step advance window's exchange volume arrives spread over
+     *          the following routing steps instead of as a single-step pulse
+     *          (window/routing-step × the physical rate — which flooded small
+     *          junctions instantly and drove a per-window drain/spill churn).
+     *          Degenerates exactly to the legacy one-step delivery when the 2D
+     *          advance fires every routing step (delivery window ≤ routing
+     *          step). Signed like coupling_volume: + = 2D→1D drain, − = 1D→2D
+     *          spill. In-memory only (not serialized to hotstart).
+     */
+    std::vector<double>     coupling_queue;
 
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
@@ -446,6 +499,13 @@ struct NodeData {
     /// @see Legacy: NodeStats[i].avgDepth
     std::vector<double>     stat_sum_depth;
 
+    /// Cumulative stored volume for computing average (internal ft³), storage nodes
+    /// only. Accumulated per routing step alongside stat_sum_depth so the Storage
+    /// Volume Summary's average is the true time-average of the node's nonlinear
+    /// volume, not volume-of-the-average-depth (which understates a convex curve).
+    /// @see Legacy: StorageStats[k].avgVol
+    std::vector<double>     stat_sum_volume;
+
     /// Date/time when maximum depth occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: NodeStats[i].maxDepthDate
     std::vector<double>     stat_max_depth_date;
@@ -551,6 +611,7 @@ struct NodeData {
         init_depth.assign(un, 0.0);
         sur_depth.assign(un, 0.0);
         ponded_area.assign(un, 0.0);
+        is_virtual.assign(un, 0);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.assign(un, 0.0);
@@ -566,6 +627,7 @@ struct NodeData {
         iface_inflow.assign(un, 0.0);
         coupling_inflow.assign(un, 0.0);
         coupling_volume.assign(un, 0.0);
+        coupling_queue.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
         qual_vol_in.assign(un, 0.0);
@@ -595,6 +657,7 @@ struct NodeData {
         stat_max_overflow.assign(un, 0.0);
         stat_max_overflow_date.assign(un, 0.0);
         stat_sum_depth.assign(un, 0.0);
+        stat_sum_volume.assign(un, 0.0);
         stat_max_depth_date.assign(un, 0.0);
         stat_max_rpt_depth.assign(un, 0.0);
         stat_max_inflow_date.assign(un, 0.0);
@@ -626,12 +689,13 @@ struct NodeData {
         g(type, NodeType::JUNCTION);
         g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
         g(sur_depth, 0.0); g(ponded_area, 0.0);
+        g(is_virtual, static_cast<uint8_t>(0));
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         g(depth, 0.0); g(head, 0.0); g(volume, 0.0);
         g(lat_flow, 0.0); g(user_lat_flow, 0.0);
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
-        g(coupling_inflow, 0.0); g(coupling_volume, 0.0);
+        g(coupling_inflow, 0.0); g(coupling_volume, 0.0); g(coupling_queue, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
@@ -646,6 +710,7 @@ struct NodeData {
         g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
         g(stat_max_depth, 0.0); g(stat_max_overflow, 0.0);
         g(stat_max_overflow_date, 0.0); g(stat_sum_depth, 0.0);
+        g(stat_sum_volume, 0.0);
         g(stat_max_depth_date, 0.0); g(stat_max_rpt_depth, 0.0);
         g(stat_max_inflow_date, 0.0); g(stat_time_surcharged, 0.0);
         g(stat_max_surcharge_height, 0.0);
@@ -672,6 +737,7 @@ struct NodeData {
         auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
 
         e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
+        e(is_virtual);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables;
         // its rows are erased/renumbered by NodeSubtypes::erase_node (called by the
@@ -680,7 +746,7 @@ struct NodeData {
         e(lat_flow); e(user_lat_flow);
         e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
         e(rdii_inflow); e(iface_inflow);
-        e(coupling_inflow); e(coupling_volume);
+        e(coupling_inflow); e(coupling_volume); e(coupling_queue);
         e(qual_vol_in); e(lid_drain_qual_vol);
         e(inflow); e(outflow); e(overflow); e(losses);
         e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
@@ -688,7 +754,7 @@ struct NodeData {
         e(comments); e(tags); e(rpt_flag);
 
         e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
-        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_max_depth_date);
+        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_sum_volume); e(stat_max_depth_date);
         e(stat_max_rpt_depth); e(stat_max_inflow_date); e(stat_time_surcharged);
         e(stat_max_surcharge_height); e(stat_outfall_avg_flow); e(stat_max_lat_inflow);
         e(stat_max_total_inflow); e(stat_lat_inflow_vol); e(stat_total_inflow_vol);
@@ -765,6 +831,7 @@ struct NodeData {
         init_depth.shrink_to_fit();
         sur_depth.shrink_to_fit();
         ponded_area.shrink_to_fit();
+        is_virtual.shrink_to_fit();
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.shrink_to_fit();
@@ -780,6 +847,7 @@ struct NodeData {
         iface_inflow.shrink_to_fit();
         coupling_inflow.shrink_to_fit();
         coupling_volume.shrink_to_fit();
+        coupling_queue.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
@@ -868,12 +936,13 @@ struct NodeData {
         std::fill(old_net_inflow.begin(), old_net_inflow.end(), 0.0);
         std::fill(old_lat_flow.begin(), old_lat_flow.end(), 0.0);
         std::fill(old_inflow.begin(), old_inflow.end(), 0.0);
-        // coupling_inflow / coupling_volume are NOT cleared by clearInflowSources
-        // (coupling_volume is the carry-across-steps field — its end-of-step value
-        // must persist into the next step's assembly), so zero them explicitly on
-        // cold start.
+        // coupling_inflow / coupling_volume / coupling_queue are NOT cleared by
+        // clearInflowSources (coupling_volume and coupling_queue are the
+        // carry-across-steps fields — their end-of-step values must persist into
+        // the next step's assembly), so zero them explicitly on cold start.
         std::fill(coupling_inflow.begin(), coupling_inflow.end(), 0.0);
         std::fill(coupling_volume.begin(), coupling_volume.end(), 0.0);
+        std::fill(coupling_queue.begin(), coupling_queue.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);

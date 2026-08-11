@@ -33,9 +33,8 @@ justification.  The set's only job is to prevent **accidental** binding gaps
 from __future__ import annotations
 
 import re
+import unittest
 from pathlib import Path
-
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +66,10 @@ _CYTHON_DIR = _PYTHON_DIR / "openswmm" / "engine"
 KNOWN_UNBOUND: frozenset[str] = frozenset({
     # Error introspection — Python raises a typed ``EngineError`` instead of
     # polling C-level last-error state, so these are never called directly.
+    # (The lenient-open accumulator API — swmm_get_error_count/at and
+    # swmm_get_warning_count/at — *is* bound, via ``Solver.open_errors`` /
+    # ``Solver.open_warnings``; only the single-shot last-error accessors and
+    # the static code→string lookup remain served by the exception layer.)
     "swmm_error_message",
     "swmm_get_last_error",
     "swmm_get_last_error_msg",
@@ -165,7 +168,7 @@ def _collect_pxd_decls() -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-class TestApiCoverage:
+class TestApiCoverage(unittest.TestCase):
     """Drift guards for the C API ↔ Cython binding surface."""
 
     def test_extraction_finds_a_large_surface(self):
@@ -177,10 +180,10 @@ class TestApiCoverage:
         # numbers are well below current counts (~823 C / ~819 used at time
         # of writing) so a routine refactor won't trip them, but a broken
         # regex extracting 0 or 5 symbols will.
-        assert len(c_symbols) > 400, (
-            f"Only {len(c_symbols)} C API symbols extracted — regex broken?")
-        assert len(pyx_uses) > 400, (
-            f"Only {len(pyx_uses)} Cython uses extracted — regex broken?")
+        self.assertGreater(len(c_symbols), 400, (
+            f"Only {len(c_symbols)} C API symbols extracted — regex broken?"))
+        self.assertGreater(len(pyx_uses), 400, (
+            f"Only {len(pyx_uses)} Cython uses extracted — regex broken?"))
 
     def test_every_c_symbol_is_used_or_allowlisted(self):
         """The headline drift assertion.
@@ -197,7 +200,7 @@ class TestApiCoverage:
         unbound = c_symbols - pyx_uses - KNOWN_UNBOUND
         if unbound:
             joined = "\n  - " + "\n  - ".join(sorted(unbound))
-            pytest.fail(
+            self.fail(
                 f"{len(unbound)} C API symbol(s) are declared but never "
                 f"called from any `.pyx` and are not in the allowlist:{joined}"
                 "\n\nEither add a call site in the appropriate `.pyx` wrapper "
@@ -213,7 +216,7 @@ class TestApiCoverage:
         phantoms = KNOWN_UNBOUND - c_symbols
         if phantoms:
             joined = "\n  - " + "\n  - ".join(sorted(phantoms))
-            pytest.fail(
+            self.fail(
                 f"{len(phantoms)} allowlisted symbol(s) do not exist in "
                 f"any header — please remove them from "
                 f"``KNOWN_UNBOUND``:{joined}")
@@ -228,7 +231,7 @@ class TestApiCoverage:
         shadowed = KNOWN_UNBOUND & pyx_uses
         if shadowed:
             joined = "\n  - " + "\n  - ".join(sorted(shadowed))
-            pytest.fail(
+            self.fail(
                 f"{len(shadowed)} symbol(s) on the allowlist are actually "
                 f"used — please remove them from ``KNOWN_UNBOUND``:"
                 f"{joined}")
@@ -237,7 +240,7 @@ class TestApiCoverage:
 # ---------------------------------------------------------------------------
 # A diagnostic that's useful to inspect manually:
 #
-#   python -m pytest python/tests/test_api_coverage.py::test_print_summary -s
+#   python -m unittest tests.test_api_coverage.TestPrintSummary -v
 #
 # ...prints how many symbols on each side and how many are used.  Not a
 # regression assertion; just a friendly diagnostic.  It also surfaces any
@@ -246,16 +249,16 @@ class TestApiCoverage:
 # ---------------------------------------------------------------------------
 
 
-def test_print_summary(capsys):
-    """Diagnostic dump (always passes)."""
-    c_symbols = _collect_c_symbols()
-    pyx_uses = _collect_pyx_uses()
-    pxd_decls = _collect_pxd_decls()
-    used = c_symbols & pyx_uses
-    unbound = c_symbols - pyx_uses
-    unjustified = unbound - KNOWN_UNBOUND
-    declared_not_called = (c_symbols & pxd_decls) - pyx_uses
-    with capsys.disabled():
+class TestPrintSummary(unittest.TestCase):
+    def test_print_summary(self):
+        """Diagnostic dump (always passes)."""
+        c_symbols = _collect_c_symbols()
+        pyx_uses = _collect_pyx_uses()
+        pxd_decls = _collect_pxd_decls()
+        used = c_symbols & pyx_uses
+        unbound = c_symbols - pyx_uses
+        unjustified = unbound - KNOWN_UNBOUND
+        declared_not_called = (c_symbols & pxd_decls) - pyx_uses
         print()
         print(f"  C API symbols (SWMM_ENGINE_API): {len(c_symbols):>4}")
         print(f"  Cython .pyx uses:                {len(pyx_uses):>4}")

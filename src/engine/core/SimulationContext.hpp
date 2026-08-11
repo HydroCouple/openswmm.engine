@@ -86,6 +86,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace openswmm {
@@ -717,6 +718,23 @@ struct SimulationContext {
         std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
     } twod_io;
 
+    /**
+     * @brief Section rows whose target object had not been parsed yet.
+     *
+     * @details Sections are dispatched in the order they appear in the file,
+     *          so a property section that names an object defined further down
+     *          (e.g. an [XSECTIONS] row for a link declared in a later
+     *          [ORIFICES]) cannot resolve its name on the first pass. Legacy
+     *          SWMM avoids this with an ID pre-pass; here a handler stashes the
+     *          unresolved row as (section tag, raw line) and InputReader
+     *          re-dispatches it once every section has been read. Rows still
+     *          unresolved after that replay name an object that does not exist
+     *          and raise ERROR 209, as legacy does.
+     *
+     *          Parse-time scratch only — empty once reading finishes.
+     */
+    std::vector<std::pair<std::string, std::string>> deferred_section_rows;
+
     // =========================================================================
     // Error / warning tracking
     // =========================================================================
@@ -768,6 +786,21 @@ struct SimulationContext {
      *          instead, so outfalls are NOT flagged here.
      */
     std::vector<std::uint8_t> coupled_node;
+
+    /**
+     * @brief Remaining seconds of the current 1D↔2D coupling delivery window.
+     * @details Set by SurfaceRouter2D::fireAdvanceWindow to the length of the
+     *          2D advance window whose junction-exchange volumes it just moved
+     *          into NodeData::coupling_queue. assembleLateralInflows drains the
+     *          queue at the uniform rate queue/remaining, counts this down once
+     *          per routing step, and flushes the whole remainder on the step
+     *          where remaining ≤ dt — so the 1D node receives exactly the
+     *          exchanged volume spread over the window instead of as a
+     *          single-step pulse. 0 (the cold-start default, and the steady
+     *          state when the 2D advance fires every routing step) reproduces
+     *          the legacy one-step delivery exactly.
+     */
+    double coupling_delivery_remaining = 0.0;
 
     // =========================================================================
     // Mass balance accumulators (SoA — vectorisable batch updates)
@@ -991,6 +1024,21 @@ struct SimulationContext {
         double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
         bool   active                = false;///< True if the 2D module ran
 
+        // Cumulative marcher statistics (published by SurfaceRouter2D at
+        // finalize from ISurfaceSolver::run_stats). Printed as the "2D Solver
+        // Statistics" report block. -1 = not populated.
+        long   solver_nsteps         = -1;   ///< internal (marcher) substeps
+        long   solver_nrhs           = 0;    ///< face-kernel evaluations
+        double solver_avg_h          = 0.0;  ///< mean accepted internal step (s)
+        double solver_last_h         = 0.0;  ///< last accepted internal step (s)
+
+        // Marcher telemetry (guarded by n_tiers > 0 / non-negative fractions).
+        double solver_active_min     = -1.0; ///< min active-cell fraction
+        double solver_active_mean    = -1.0; ///< mean active-cell fraction
+        double solver_active_max     = -1.0; ///< max active-cell fraction
+        long   solver_tier_cells[8]  = {0};  ///< cumulative cells per LTS tier
+        int    solver_n_tiers        = 0;    ///< populated tier count
+
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
@@ -1103,6 +1151,31 @@ struct SimulationContext {
     } routing_stats;
 
     // =========================================================================
+    // Virtual-junction diagnostics (refactored engine only)
+    // =========================================================================
+
+    /**
+     * @brief Per-virtual-junction momentum-residual accumulators.
+     *
+     * @details Populated by DWSolver after each converged routing step; the
+     *          residual is the discrete momentum-flux imbalance across the
+     *          pair interface (see VIRTUAL_JUNCTION_IMPLEMENTATION_PLAN.md
+     *          §3.2). Reported in the .rpt Virtual Junction Summary.
+     */
+    struct VJDiag {
+        std::vector<int>       node_idx;   ///< virtual junction node index
+        std::vector<int>       up_link;    ///< upstream conduit (through orientation, -1 sag/peak)
+        std::vector<int>       dn_link;    ///< downstream conduit (-1 sag/peak)
+        std::vector<double>    resid_max;  ///< max |R_j| over the run (cfs·ft/s)
+        std::vector<double>    resid_sum;  ///< Σ|R_j| for mean reporting
+        std::vector<long long> resid_n;    ///< number of accumulated steps
+        void clear() {
+            node_idx.clear(); up_link.clear(); dn_link.clear();
+            resid_max.clear(); resid_sum.clear(); resid_n.clear();
+        }
+    } vj_diag;
+
+    // =========================================================================
     // Control action log — Gap #67
     // Populated by ControlEngine::applyPendingActions() when rpt_controls is on.
     // =========================================================================
@@ -1209,6 +1282,7 @@ struct SimulationContext {
         warnings.clear();
         errors.clear();
         title_notes.clear();
+        deferred_section_rows.clear();
 
         // Clear SoA stores
         nodes      = NodeData{};
@@ -1228,6 +1302,9 @@ struct SimulationContext {
 
         // Clear inflow-related stores that aren't reset by their owning solvers
         rdii_decay = RDIIDecayData{};
+
+        // Virtual-junction diagnostics
+        vj_diag.clear();
 
         // Clear daily climate state (re-initialized by SWMMEngine on next run)
         climate_state = climate::ClimateState{};

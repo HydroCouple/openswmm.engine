@@ -60,16 +60,28 @@ struct StorageData {
     /** @brief Base NodeData index this row belongs to (the join key). */
     std::vector<int>         node_idx;
 
-    /** @brief Storage curve index into TableData (-1 = functional A·d^B + C). */
+    /** @brief Storage curve index into TableData (-1 = not tabulated). */
     std::vector<int>         curve;
     /** @brief Curve name for deferred resolution. */
     std::vector<std::string> curve_name;
-    /** @brief Functional area parameter A. */
+    /** @brief Surface-area relation. Selects how a/b/c below are interpreted. */
+    std::vector<StorageShape> shape;
+    /** @brief Area coefficient A (legacy a1). FUNCTIONAL: `A·d^B`; geometric shapes:
+     *  the linear term of `C + A·d + B·d²`. Derived from p1..p3 for the latter. */
     std::vector<double>      a;
-    /** @brief Functional area parameter B. */
+    /** @brief Area coefficient B (legacy a2). FUNCTIONAL: the exponent; geometric
+     *  shapes: the quadratic term. */
     std::vector<double>      b;
-    /** @brief Functional area parameter C (baseline area). */
+    /** @brief Area coefficient C (legacy a0). Baseline area at zero depth. */
     std::vector<double>      c;
+    /** @brief Raw shape parameter 1 — major axis / base length L (geometric shapes only).
+     *  Kept alongside the derived a/b/c so `.inp`/`.gpkg` round-trip losslessly; legacy
+     *  discards these, which is why a legacy model cannot rewrite its own shape params. */
+    std::vector<double>      p1;
+    /** @brief Raw shape parameter 2 — minor axis / base width W. */
+    std::vector<double>      p2;
+    /** @brief Raw shape parameter 3 — side slope Z (run/rise), or height for PARABOLOID. */
+    std::vector<double>      p3;
     /** @brief Seepage rate (project units/day). */
     std::vector<double>      seep_rate;
     /** @brief Fraction of potential evaporation realized (0-1). */
@@ -91,7 +103,9 @@ struct StorageData {
     /** @brief Drop all rows (capacity retained). */
     void clear() noexcept {
         node_idx.clear(); curve.clear(); curve_name.clear();
+        shape.clear();
         a.clear(); b.clear(); c.clear();
+        p1.clear(); p2.clear(); p3.clear();
         seep_rate.clear(); evap_frac.clear(); evap_loss.clear(); exfil_loss.clear();
         exfil_suction.clear(); exfil_ksat.clear(); exfil_imd.clear();
     }
@@ -100,7 +114,9 @@ struct StorageData {
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
         node_idx.reserve(un); curve.reserve(un); curve_name.reserve(un);
+        shape.reserve(un);
         a.reserve(un); b.reserve(un); c.reserve(un);
+        p1.reserve(un); p2.reserve(un); p3.reserve(un);
         seep_rate.reserve(un); evap_frac.reserve(un);
         evap_loss.reserve(un); exfil_loss.reserve(un);
         exfil_suction.reserve(un); exfil_ksat.reserve(un); exfil_imd.reserve(un);
@@ -115,9 +131,15 @@ struct StorageData {
         node_idx.insert(node_idx.begin() + p, i);
         curve.insert(curve.begin() + p, -1);
         curve_name.insert(curve_name.begin() + p, std::string{});
+        // FUNCTIONAL is the historical default for a curve-less storage row: it is what
+        // `curve < 0` has always meant, so existing callers see no behaviour change.
+        shape.insert(shape.begin() + p, StorageShape::FUNCTIONAL);
         a.insert(a.begin() + p, 0.0);
         b.insert(b.begin() + p, 0.0);
         c.insert(c.begin() + p, 0.0);
+        p1.insert(p1.begin() + p, 0.0);
+        p2.insert(p2.begin() + p, 0.0);
+        p3.insert(p3.begin() + p, 0.0);
         seep_rate.insert(seep_rate.begin() + p, 0.0);
         evap_frac.insert(evap_frac.begin() + p, 0.0);
         evap_loss.insert(evap_loss.begin() + p, 0.0);
@@ -134,9 +156,13 @@ struct StorageData {
         node_idx.erase(node_idx.begin() + p);
         curve.erase(curve.begin() + p);
         curve_name.erase(curve_name.begin() + p);
+        shape.erase(shape.begin() + p);
         a.erase(a.begin() + p);
         b.erase(b.begin() + p);
         c.erase(c.begin() + p);
+        p1.erase(p1.begin() + p);
+        p2.erase(p2.begin() + p);
+        p3.erase(p3.begin() + p);
         seep_rate.erase(seep_rate.begin() + p);
         evap_frac.erase(evap_frac.begin() + p);
         evap_loss.erase(evap_loss.begin() + p);
@@ -161,8 +187,13 @@ struct OutfallData {
 
     /** @brief Boundary condition type (FREE/NORMAL/FIXED/TIDAL/TIMESERIES). */
     std::vector<OutfallType> bc_type;
-    /** @brief Fixed stage, or tidal/timeseries table index (per bc_type). */
+    /** @brief Fixed stage, or tidal/timeseries table index (per bc_type).
+     *  For TIDAL/TIMESERIES an unresolved reference is -1 (never 0, which is a
+     *  valid table index). */
     std::vector<double>      param;
+    /** @brief Stage-data table name for TIDAL/TIMESERIES, held for deferred
+     *  name→index resolution in PostParseResolver (empty otherwise). */
+    std::vector<std::string> param_name;
     /** @brief Flap gate present (0/1). */
     std::vector<uint8_t>     has_flap_gate;
     /** @brief Subcatchment index to route discharge to (-1 = none). */
@@ -182,7 +213,7 @@ struct OutfallData {
 
     /** @brief Drop all rows (capacity retained). */
     void clear() noexcept {
-        node_idx.clear(); bc_type.clear(); param.clear();
+        node_idx.clear(); bc_type.clear(); param.clear(); param_name.clear();
         has_flap_gate.clear(); route_to.clear();
         link_idx.clear(); link_offset.clear(); head_2d.clear();
         ramp_2d.clear();
@@ -192,6 +223,7 @@ struct OutfallData {
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
         node_idx.reserve(un); bc_type.reserve(un); param.reserve(un);
+        param_name.reserve(un);
         has_flap_gate.reserve(un); route_to.reserve(un);
         link_idx.reserve(un); link_offset.reserve(un); head_2d.reserve(un);
         ramp_2d.reserve(un);
@@ -205,6 +237,7 @@ struct OutfallData {
         node_idx.insert(node_idx.begin() + p, i);
         bc_type.insert(bc_type.begin() + p, OutfallType::FREE);
         param.insert(param.begin() + p, 0.0);
+        param_name.insert(param_name.begin() + p, std::string{});
         has_flap_gate.insert(has_flap_gate.begin() + p, uint8_t{0});
         route_to.insert(route_to.begin() + p, -1);
         link_idx.insert(link_idx.begin() + p, -1);
@@ -220,6 +253,7 @@ struct OutfallData {
         node_idx.erase(node_idx.begin() + p);
         bc_type.erase(bc_type.begin() + p);
         param.erase(param.begin() + p);
+        param_name.erase(param_name.begin() + p);
         has_flap_gate.erase(has_flap_gate.begin() + p);
         route_to.erase(route_to.begin() + p);
         link_idx.erase(link_idx.begin() + p);

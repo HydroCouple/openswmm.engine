@@ -1,5 +1,6 @@
-# Chapter 5: Transport and Treatment
+@page quality_ref_ch5_transport_treatment Chapter 5: Transport and Treatment
 
+@tableofcontents
 
 ## 5.1 Introduction
 
@@ -26,13 +27,10 @@ water in each link and the volume of water within each storage node. The
 methods used to obtain this hydraulic solution are described in Volume
 II of this manual.
 
-<figure>
-<img src="./VolumeIII/media/media/image2.png"
-style="width:4.22652in;height:3.21365in" alt="Objects2" />
-<figcaption><p><span id="_Toc454288773"
+![](quality/media/media/image2.png "Objects2")
+<p><span id="_Toc454288773"
 class="anchor"></span><strong>Figure 5‑1 Representation of the
-conveyance network in SWMM</strong></p></figcaption>
-</figure>
+conveyance network in SWMM</strong></p>
 
 ## 5.2 Governing Equations
 
@@ -42,7 +40,7 @@ The one-dimensional transport of dissolved constituents along the length
 of a conduit (a pipe or natural channel) is described by the following
 conservation of mass equation (Martin and McCutcheon, 1999):
 
-$$\frac{\partial c}{\partial t} = - \frac{\partial(uc)}{\partial x} + \frac{\partial}{\partial x}\left( D\frac{\partial c}{dx} \right) + r(c)$$   
+\f[\frac{\partial c}{\partial t} = - \frac{\partial(uc)}{\partial x} + \frac{\partial}{\partial x}\left( D\frac{\partial c}{dx} \right) + r(c)\f]   
 (5-1)
 
 where *c* = constituent concentration (ML<sup>-3</sup>), *u* = longitudinal
@@ -69,7 +67,7 @@ associated with it the instantaneous concentration is simply the
 instantaneous flow weighted average concentration of all inflows that
 the junction receives:
 
-$$c_{Nj} = \frac{\sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} + W_{j}}}{\sum_{i \rightarrow j}^{}q_{2i} + Q_{j}}$$   
+\f[c_{Nj} = \frac{\sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} + W_{j}}}{\sum_{i \rightarrow j}^{}q_{2i} + Q_{j}}\f]   
 (5-2)
 
 where *c<sub>Nj</sub>* is the concentration at node *j*, *c<sub>L2i</sub>* is the
@@ -82,7 +80,7 @@ assumed that the contents of the stored volume are completely mixed, the
 uniform concentration within the node is governed by the following
 conservation of mass equation:
 
-$$\frac{d(V_{Nj}c_{Nj})}{dt} = \sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} - \sum_{j \rightarrow k}^{}{c_{Nj}q_{1k} + W_{j} - V_{Nj}r(c_{Nj})}}$$   
+\f[\frac{d(V_{Nj}c_{Nj})}{dt} = \sum_{i \rightarrow j}^{}{c_{L2i}q_{2i} - \sum_{j \rightarrow k}^{}{c_{Nj}q_{1k} + W_{j} - V_{Nj}r(c_{Nj})}}\f]   
 (5-3)
 
 where *V<sub>Nj</sub>* is the volume of water stored at node *j*, *q<sub>2i</sub>* is the
@@ -112,7 +110,7 @@ concentration along the length of a conduit. Equations 5-1 and 5-3 are
 replaced with the conservation of mass equation for a completely mixed
 reactor (either a conduit or storage node)
 
-$$\frac{d(Vc)}{dt} = {C_{in}Q}_{in} - cQ_{out} - \ Vr(c)$$   
+\f[\frac{d(Vc)}{dt} = {C_{in}Q}_{in} - cQ_{out} - \ Vr(c)\f]   
 (5-4)
 
 where *V* is the volume within the reactor, *c* is the concentration
@@ -129,18 +127,18 @@ under the assumptions that:
 
 2.  *V* is represented by an average value over the time step,
 
-3.  $r(c) = K_{1}c$, where *K<sub>1</sub>* is a first-order reaction constant.
+3.  \f$r(c) = K_{1}c\f$, where *K<sub>1</sub>* is a first-order reaction constant.
 
 Under these conditions the concentration within the conduit or storage
 node at the end of a time step *∆t* can be expressed as:
 
-$$c(t + \mathrm{\Delta}t) = c(t)e^{- \propto \mathrm{\Delta}t} + \frac{{C_{in}Q}_{in}}{\propto \overline{V}}\left( 1 - e^{- \propto \mathrm{\Delta}t} \right)$$   
+\f[c(t + \mathrm{\Delta}t) = c(t)e^{- \propto \mathrm{\Delta}t} + \frac{{C_{in}Q}_{in}}{\propto \overline{V}}\left( 1 - e^{- \propto \mathrm{\Delta}t} \right)\f]   
 (5-5)
 
 where
-$\propto = K_{1} + \left( Q_{out} + \frac{\mathrm{\Delta}V}{\mathrm{\Delta}t} \right)/\overline{V}$,
-$\mathrm{\Delta}V = V(t + \mathrm{\Delta}t) - \ V(t)$, and
-$\overline{V} = 0.5\left\lbrack V(t + \mathrm{\Delta}t) + V(t) \right\rbrack$.
+\f$\propto = K_{1} + \left( Q_{out} + \frac{\mathrm{\Delta}V}{\mathrm{\Delta}t} \right)/\overline{V}\f$,
+\f$\mathrm{\Delta}V = V(t + \mathrm{\Delta}t) - \ V(t)\f$, and
+\f$\overline{V} = 0.5\left\lbrack V(t + \mathrm{\Delta}t) + V(t) \right\rbrack\f$.
 Note that values of *Q<sub>in</sub>*, *Q~ou~*~t~ and both the initial and final
 volumes *V* are known from having already routed flow through the
 conveyance network over the period *t* to *t +* *∆t*.
@@ -153,7 +151,7 @@ a relatively large, rapid loss of volume causes α to become negative.
 To avoid these issues, SWMM 5 uses a simpler form of the mixing equation
 which looks as follows:
 
-$$c(t + \mathrm{\Delta}t) = \left\lbrack c(t)V(t)e^{- K_{1}\mathrm{\Delta}t} + C_{in}Q_{in}\mathrm{\Delta}t \right\rbrack/(V(t) + Q_{in}\mathrm{\Delta}t)$$   
+\f[c(t + \mathrm{\Delta}t) = \left\lbrack c(t)V(t)e^{- K_{1}\mathrm{\Delta}t} + C_{in}Q_{in}\mathrm{\Delta}t \right\rbrack/(V(t) + Q_{in}\mathrm{\Delta}t)\f]   
 (5-6)
 
 This equation makes the new concentration in the "reactor" equal the
@@ -174,13 +172,10 @@ seven 800-foot sections of 18" pipe at a 0.5 percent slope. The routing
 time step was 30 seconds. For this particular example the difference
 between the equations is insignificant.
 
-<figure>
-<img src="./VolumeIII/media/media/image19.png"
-style="width:6.5in;height:4.11319in" alt="QualRoute1.png" />
-<figcaption><p><span id="_Toc454288774"
+![](quality/media/media/image19.png "image19")
+<p><span id="_Toc454288774"
 class="anchor"></span><strong>Figure 5‑2 Comparison of completely mixed
-reactor equations for time varying inflow</strong></p></figcaption>
-</figure>
+reactor equations for time varying inflow</strong></p>
 
 Figure 5-3 provides another comparison of Equations 5-5 and 5-6 at the
 end of the same pipeline. This time the upstream inflow hydrograph is a
@@ -195,13 +190,10 @@ above 100 mg/L, which are not physically possible. These results support
 using the simple mixing equation 5-6 in place of the analytical solution
 for SWMM 5 as it provides accurate and robust water quality solutions.
 
-<figure>
-<img src="./VolumeIII/media/media/image20.png"
-style="width:6.5in;height:4.66806in" alt="QuakRoute2.png" />
-<figcaption><p><span id="_Toc454288775"
+![](quality/media/media/image20.png "image20")
+<p><span id="_Toc454288775"
 class="anchor"></span><strong>Figure 5‑3 Comparison of completely mixed
-reactor equations for a step inflow</strong></p></figcaption>
-</figure>
+reactor equations for a step inflow</strong></p>
 
 ## 5.3 Computational Steps
 
@@ -278,13 +270,13 @@ When water is evaporated, the pollutant mass stays behind (unless it
 volatilizes, which is not explicitly modeled by SWMM, although it could
 be approximated through the first order decay process). Thus when
 evaporation occurs pollutant concentrations will increase. SWMM computes
-this increase as a multiplier$f_{evap}$:
+this increase as a multiplier\f$f_{evap}\f$:
 
-$$f_{evap} = 1 + V_{evap}(t)/V(t)$$                       
+\f[f_{evap} = 1 + V_{evap}(t)/V(t)\f]                       
 (5-7)
 
-where $V_{evap}(t)$ is the volume lost to evaporation over the time step
-and $V(t)$ is either *V<sub>N</sub>(t)* for a storage node at Step 2 or *V<sub>L</sub>(t)*
+where \f$V_{evap}(t)\f$ is the volume lost to evaporation over the time step
+and \f$V(t)\f$ is either *V<sub>N</sub>(t)* for a storage node at Step 2 or *V<sub>L</sub>(t)*
 for a conduit link at Step 3. This multiplier is then used to adjust the
 concentration *c<sub>N</sub>(t)* before Step 2 is carried out for a storage node
 or *c<sub>L</sub>(t)* before Step 3 is carried out for a conduit link.
@@ -298,14 +290,14 @@ would be no volume change within the conduit over a time step. However
 the routing process actually does produce a change in volume due to
 changes in flow depths at either end of the conduit. To make the flow
 rates consistent with this volume change, the value of *Q<sub>L1</sub>* is
-adjusted by an amount ∆$Q_{L1}$ found from the following flow balance
+adjusted by an amount ∆\f$Q_{L1}\f$ found from the following flow balance
 equation:
 
-$$\mathrm{\Delta}Q_{L1} = V_{L}(t + \mathrm{\Delta}t) + V_{losses}(t) - V_{L}(t)$$   
+\f[\mathrm{\Delta}Q_{L1} = V_{L}(t + \mathrm{\Delta}t) + V_{losses}(t) - V_{L}(t)\f]   
 (5-8)
 
-where $V_{losses}(t)$ is the volume of evaporation and seepage loss over
-the time period $\mathrm{\Delta}t$.
+where \f$V_{losses}(t)\f$ is the volume of evaporation and seepage loss over
+the time period \f$\mathrm{\Delta}t\f$.
 
 <u>Steady Flow Routing</u>
 
@@ -316,10 +308,10 @@ time step. So there is no mixing of the previous contents with new
 inflow from the upstream node. Thus Step 3 of the basic water quality
 routing procedure becomes:
 
-$$c_{L}(t + \mathrm{\Delta}t) = f_{evap}c_{N}(t + \mathrm{\Delta}t)exp( - K_{1}\mathrm{\Delta}t)$$   
+\f[c_{L}(t + \mathrm{\Delta}t) = f_{evap}c_{N}(t + \mathrm{\Delta}t)exp( - K_{1}\mathrm{\Delta}t)\f]   
 (5-9)
 
-where $c_{N}(t + \mathrm{\Delta}t)$ is the newly computed concentration
+where \f$c_{N}(t + \mathrm{\Delta}t)\f$ is the newly computed concentration
 at the conduit's upstream node.
 
 ## 5.4 Treatment
@@ -439,29 +431,29 @@ The effect of treatment for a particular pollutant at a particular node
 can be expressed mathematically using one of the following general
 expressions (some specific examples will be presented later on):
 
-$$c(t + \mathrm{\Delta}t) = c(\mathbf{C},\ \mathbf{R},\ \mathbf{H})\ $$   
+\f[c(t + \mathrm{\Delta}t) = c(\mathbf{C},\ \mathbf{R},\ \mathbf{H})\ \f]   
 (5-10)
 
-$$c(t + \mathrm{\Delta}t) = \left( 1 - r\left( \mathbf{C},\ \mathbf{R},\ \mathbf{H} \right) \right)C_{in}(t + \mathrm{\Delta}t)\ $$   
+\f[c(t + \mathrm{\Delta}t) = \left( 1 - r\left( \mathbf{C},\ \mathbf{R},\ \mathbf{H} \right) \right)C_{in}(t + \mathrm{\Delta}t)\ \f]   
 (5-11)
 
 where:
 
-$c$                          =   nodal pollutant concentration after treatment is applied
+\f$c\f$                          =   nodal pollutant concentration after treatment is applied
 
-$C_{in}$                     =   pollutant concentration in the node's inflow stream
+\f$C_{in}\f$                     =   pollutant concentration in the node's inflow stream
 
-$c(\ldots)$                  =   concentration-based treatment function
+\f$c(\ldots)\f$                  =   concentration-based treatment function
 
-$r(\ldots)$                  =   removal-based treatment function
+\f$r(\ldots)\f$                  =   removal-based treatment function
 
-$\mathbf{C}$                 =   vector of nodal pollutant concentrations before treatment is applied
+\f$\mathbf{C}\f$                 =   vector of nodal pollutant concentrations before treatment is applied
 
-$\mathbf{C}_{\mathbf{in}}$   =   vector of pollutant concentrations in the node's inflow stream
+\f$\mathbf{C}_{\mathbf{in}}\f$   =   vector of pollutant concentrations in the node's inflow stream
 
-$\mathbf{R}$                 =   vector of fractional removals resulting from treatment
+\f$\mathbf{R}\f$                 =   vector of fractional removals resulting from treatment
 
-$\mathbf{H}$                 =   vector of hydraulic variables at the current time step.
+\f$\mathbf{H}\f$                 =   vector of hydraulic variables at the current time step.
 
 Note that if treatment is made a function of pollutant concentrations,
 then for concentration-based treatment these represent the
@@ -491,12 +483,12 @@ within a completely mixed storage node. It is continuously updated for
 each storage node as the simulation progresses by evaluating the
 following expression:
 
-$$\theta(t + \mathrm{\Delta}t) = (\theta(t) + \mathrm{\Delta}t)\frac{V(t)}{V(t) + Q_{in}\mathrm{\Delta}t}\ $$   
+\f[\theta(t + \mathrm{\Delta}t) = (\theta(t) + \mathrm{\Delta}t)\frac{V(t)}{V(t) + Q_{in}\mathrm{\Delta}t}\ \f]   
 (5-12)
 
-where $\theta(t)$ is the hydraulic residence time at time *t* in
-seconds, $V(t)$ is the cubic feet of stored water at time t, $Q_{in}$ is
-the inflow rate to the storage node in cfs, and $\mathrm{\Delta}t$ is
+where \f$\theta(t)\f$ is the hydraulic residence time at time *t* in
+seconds, \f$V(t)\f$ is the cubic feet of stored water at time t, \f$Q_{in}\f$ is
+the inflow rate to the storage node in cfs, and \f$\mathrm{\Delta}t\f$ is
 the current time step in seconds.
 
 SWMM applies the following conditions when evaluating a treatment
@@ -572,7 +564,7 @@ argument and one for positive argument.
 <u>N-th Order Reaction Kinetics</u>
 
 Suppose that during treatment pollutant X exhibits n-th order reaction
-kinetics where the instantaneous reaction rate is $kC^{n}$ with *k*
+kinetics where the instantaneous reaction rate is \f$kC^{n}\f$ with *k*
 being the rate constant and *n* the reaction order. This can be
 represented as the following SWMM treatment expression for the specific
 case where *k* = 0.02 and *n* = 1.5:
@@ -585,18 +577,18 @@ This is a first-order model with background concentration made popular
 by Kadlec and Knight (1996) for long-term treatment performance of
 wetlands. The general model can be expressed as:
 
-$$c - C^{*} = \left( C_{in} - C^{*} \right)exp( - \frac{k\theta}{d})$$   (5-13)
+\f[c - C^{*} = \left( C_{in} - C^{*} \right)exp( - \frac{k\theta}{d})\f]   (5-13)
 
-where $C^{*}$ is a constant residual concentration that always remains,
+where \f$C^{*}\f$ is a constant residual concentration that always remains,
 *k* is a rate coefficient with units of length/time, *θ* is the
 hydraulic residence time, and *d* is water depth. This equation can be
 re-arranged into a removal function as follows:
 
-$$r = 1 - \frac{c}{C_{in}} = \left\lbrack 1 - \exp\left( - \frac{k\theta}{d} \right) \right\rbrack\left\lbrack 1 - \frac{C^{*}}{C_{in}} \right\rbrack$$   
+\f[r = 1 - \frac{c}{C_{in}} = \left\lbrack 1 - \exp\left( - \frac{k\theta}{d} \right) \right\rbrack\left\lbrack 1 - \frac{C^{*}}{C_{in}} \right\rbrack\f]   
 (5-14)
 
 The corresponding SWMM removal expression of some pollutant X with *k* =
-0.02 (ft/hr) and $C^{*}$ = 20 would look as follows:
+0.02 (ft/hr) and \f$C^{*}\f$ = 20 would look as follows:
 
 ***r = STEP(C_X -- 20) \* ((1 -- exp(-0.02\*HRT/DEPTH)) \*
 (1-20/C_X))***
@@ -609,19 +601,19 @@ inflow concentration is below the residual concentration.
 Consider a size range of suspended particles with average settling
 velocity *u<sub>i</sub>*. During a quiescent period of time *∆t* within a storage
 volume the fraction of these particles that will settle out is
-$u_{i}\mathrm{\Delta}t/d$ where *d* is the water depth. Summing over all
+\f$u_{i}\mathrm{\Delta}t/d\f$ where *d* is the water depth. Summing over all
 particle size ranges leads to the following expression for the change in
 TSS concentration *ΔC* during a time step *Δt*:
 
-$$\mathrm{\Delta}c = c(t)\sum_{i}^{}{f_{i}u_{i}}\left( \frac{\mathrm{\Delta}t}{d} \right)$$   
+\f[\mathrm{\Delta}c = c(t)\sum_{i}^{}{f_{i}u_{i}}\left( \frac{\mathrm{\Delta}t}{d} \right)\f]   
 (5-15)
 
-where $f_{i}$ is the fraction of particles with settling velocity
-$u_{i}$. Because $\sum_{}^{}{f_{i}u_{i}}$ is generally not known, it can
+where \f$f_{i}\f$ is the fraction of particles with settling velocity
+\f$u_{i}\f$. Because \f$\sum_{}^{}{f_{i}u_{i}}\f$ is generally not known, it can
 be replaced with a fitting parameter *k* and in the limit Equation 5-15
 becomes:
 
-$$\frac{\partial c}{\partial t} = - \frac{k}{d}c(t)$$     
+\f[\frac{\partial c}{\partial t} = - \frac{k}{d}c(t)\f]     
 (5-16)
 
 Note that *k* has units of velocity (length/time) and can be thought of
@@ -629,9 +621,9 @@ as a representative settling velocity for the particles that make up the
 total suspended solids in solution. Integrating 5-16 between times *t*
 *and t + ∆t*, and assuming there is some residual amount of suspended
 solids *C\** that is non-settleable leads to the following expression
-for $c(t + \mathrm{\Delta}t)$:
+for \f$c(t + \mathrm{\Delta}t)\f$:
 
-$$c(t + \mathrm{\Delta}t) = C^{*} + \left( c(t) - C^{*} \right)exp( - \frac{k\mathrm{\Delta}t}{d})$$   
+\f[c(t + \mathrm{\Delta}t) = C^{*} + \left( c(t) - C^{*} \right)exp( - \frac{k\mathrm{\Delta}t}{d})\f]   
 (5-17)
 
 For particular values of *C\** = 20 and *k* = 0.01 ft/hr this equation
@@ -659,6 +651,105 @@ at 100 mg/L and begins to settle out once the inflow ceases. As the pond
 depth decreases while it empties more solids settle out reducing the TSS
 level until the residual concentration of 20 mg/L is reached.
 
-![TreatmentExample.png](./VolumeIII/media/media/image21.png)
+![TreatmentExample.png](quality/media/media/image21.png)
 
 **Figure 5‑4 Gravity settling treatment of TSS within a detention pond**
+
+### 5.4.4 Expression Syntax and Validation in the Modern Engine
+
+The modern OpenSWMM engine implements the treatment system described
+above with a compiled expression language. Each treatment expression
+supplied in the input file's `[TREATMENT]` section has the form:
+
+***R = \<expression\>***     or     ***C = \<expression\>***
+
+where the left hand side must be exactly ***R*** (the expression
+computes a fractional removal, Equation 5-11) or ***C*** (the
+expression computes a treated concentration, Equation 5-10). Each
+expression is parsed once at simulation initialization into a postfix
+token list (using the shunting-yard algorithm) and is evaluated with a
+stack machine at every routing time step, so expression complexity adds
+no per-step parsing cost.
+
+The right hand side may contain numeric constants (including scientific
+notation), parentheses, the arithmetic operators ***+  -  \*  /  ^***
+(with standard precedence and a unary minus), and the variables and
+functions listed in Tables 5-4 and 5-5. Variable and function names are
+case-insensitive.
+
+**Table 5‑4 Variables available in treatment expressions**
+
+| Variable | Meaning | Units |
+|----------|---------|-------|
+| ***C*** | Pollutant concentration — the inflow concentration *C<sub>in</sub>* in an ***R =*** expression, or the nodal concentration prior to treatment in a ***C =*** expression | concentration units |
+| ***Q*** | Flow rate into the node (legacy SWMM 5 name ***FLOW***) | user flow units |
+| ***D*** | Average water depth in the node over the time step (legacy SWMM 5 name ***DEPTH***) | ft or m |
+| ***AREA*** | Average node surface area over the time step | ft<sup>2</sup> or m<sup>2</sup> |
+| ***V*** | Volume of water stored at the node | ft<sup>3</sup> |
+| ***DT*** | Current routing time step | seconds |
+| ***HRT*** | Hydraulic residence time of a storage node (Equation 5-12) | hours |
+
+Note that the modern engine uses the short names ***Q*** and ***D*** in
+place of the legacy SWMM 5 names ***FLOW*** and ***DEPTH*** that appear
+in the examples of Section 5.4.3, and adds the stored volume ***V*** as
+an additional process variable. Co-pollutant references of the form
+***C_pollutant*** and ***R_pollutant***, used by the Co-Removal and
+Concentration-Dependent examples of Section 5.4.3, are part of the
+legacy SWMM 5 expression language; they are recognized by the modern
+expression grammar but are not currently compiled by the engine, and
+the expression validator reports them as unsupported.
+
+**Table 5‑5 Math functions available in treatment expressions**
+
+| Function | Meaning |
+|----------|---------|
+| ***exp(x)*** | Exponential *e*<sup>x</sup> |
+| ***log(x)***, ***ln(x)*** | Natural logarithm (evaluates to 0 when *x* ≤ 0) |
+| ***sqrt(x)*** | Square root (evaluates to 0 when *x* \< 0) |
+| ***abs(x)*** | Absolute value |
+| ***sgn(x)*** | Sign function (-1, 0, or +1) |
+| ***step(x)*** | Unit step function (1 when *x* \> 0, otherwise 0) |
+| ***min(x, y)*** | Smaller of the two arguments |
+| ***max(x, y)*** | Larger of the two arguments |
+
+Evaluation is guarded so that a treatment expression can never produce
+a non-finite result: division by zero evaluates to 0, as do the
+logarithm of a non-positive argument and the square root of a negative
+argument. After evaluation the result is clamped exactly as described
+in Section 5.4.2 — a fractional removal is limited to the range \[0, 1\]
+and a treated concentration is limited to the range from 0 up to the
+concentration prior to treatment.
+
+Treatment is applied at each node immediately after the mixed nodal
+concentration has been computed (Step 2 of Section 5.3) and before any
+first-order decay. As part of this step the hydraulic residence time of
+each storage node with treatment is updated using Equation 5-12. The
+pollutant mass removed by treatment is accumulated into the water
+quality mass balance as reacted mass, so treated mass appears in the
+continuity report alongside first-order decay losses.
+
+Treatment expressions can also be inspected and edited at run time
+through the programmatic C API. `swmm_treatment_set`,
+`swmm_treatment_get`, and `swmm_treatment_clear` read or replace the
+expression assigned to a (node, pollutant) pair; a mid-run edit is
+recompiled immediately and takes effect at the next quality routing
+step. The companion function `swmm_treatment_validate_expression`
+checks an expression against the production grammar without modifying
+any engine state, returning a human-readable diagnostic message and the
+character position of the first error. It is intended for editor and
+GUI use (e.g., validating an expression on every keystroke) and is
+deliberately stricter than the runtime tokenizer in one respect:
+characters that the tokenizer would silently skip are reported as
+errors. See @ref openswmm_quality.h for the full API.
+
+*Implementation notes:* The expression parser and stack-machine
+evaluator reside in `src/engine/quality/Treatment.cpp` (namespace
+`openswmm::treatment`). Treatment application, HRT updating, and
+mass-balance accounting are implemented in
+`QualitySolver::applyTreatment()` in
+`src/engine/quality/QualityRouting.cpp`. Expressions are compiled
+during quality initialization in `src/engine/core/SWMMEngine.cpp`, and
+the C API entry points are declared in @ref openswmm_quality.h.
+
+
+

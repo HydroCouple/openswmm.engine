@@ -2,8 +2,7 @@
  * @file GpuPluginAbi.h
  * @brief Stable C ABI between the core engine and an optional GPU solver plugin.
  *
- * @details Phase 0 scaffolding for the portable GPU CVODE strategy
- *          (docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §4.1). The GPU backend
+ * @details The GPU backend
  *          ships as a SEPARATE shared library that the core discovers and
  *          dlopen()s at runtime; it is never linked into openswmm_engine.
  *          Communication therefore crosses a plain C ABI so it is robust to
@@ -12,7 +11,7 @@
  *
  *          Two symbols form the contract:
  *            - openswmm_gpu_probe()              — cheap capability query
- *            - openswmm_make_gpu_surface_solver()— factory for the backend
+ *            - openswmm_make_gpu_explicit_solver() — marcher factory
  *
  *          The factory returns an ISurfaceSolver* as a void* (the core casts
  *          it back); ownership transfers to the core, which deletes through
@@ -55,9 +54,10 @@ extern "C" {
 #endif
 
 /** ABI version. The core refuses a plugin whose abi_version disagrees.
- *  v2: SurfaceStateData grew the active_set pointer (dry-cell masking) —
- *  a v1 plugin would mis-read the struct layout. */
-#define OPENSWMM_GPU_ABI_VERSION 2
+ *  v3: CVODE/ARKODE plugin solvers retired (D2, 2026-07-29) — the explicit
+ *  marcher factory is the only solver entry, and SurfaceStateData dropped the
+ *  active_set pointer, so a v2 plugin would mis-read the struct layout. */
+#define OPENSWMM_GPU_ABI_VERSION 3
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {
@@ -91,23 +91,14 @@ typedef struct OpenSwmmGpuProbe {
 OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
 
 /**
- * @brief Construct the GPU surface solver.
+ * @brief Construct the Kokkos explicit LTS marcher surface solver.
  *
- * @param probe  The probe result the core obtained from openswmm_gpu_probe().
- * @return An ISurfaceSolver* (as void*) owned by the caller, or NULL on
- *         failure. The core deletes it via the ISurfaceSolver destructor.
+ * The only solver factory in the contract: the core dlsym()s it and falls
+ * back to the serial CPU ExplicitInertialSolver when a plugin does not
+ * export it. Implements BOTH cell closures (FLAT and VFR). Returns an
+ * ISurfaceSolver* (as void*) owned by the caller, or NULL.
  */
-OPENSWMM_GPU_ABI void* openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* probe);
-
-/**
- * @brief Construct the GPU LOCAL-INERTIAL surface solver (MOMENTUM=inertial).
- *
- * OPTIONAL ABI symbol (does not bump OPENSWMM_GPU_ABI_VERSION): the core
- * dlsym()s it only when the model selects the local-inertial momentum closure,
- * and falls back to the serial CPU ArkodeSurfaceSolver when a plugin does not
- * export it. Returns an ISurfaceSolver* (as void*) owned by the caller, or NULL.
- */
-OPENSWMM_GPU_ABI void* openswmm_make_gpu_inertial_solver(const OpenSwmmGpuProbe* probe);
+OPENSWMM_GPU_ABI void* openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe);
 
 #ifdef __cplusplus
 } /* extern "C" */

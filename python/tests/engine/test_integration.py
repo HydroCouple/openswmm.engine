@@ -4,17 +4,17 @@ Migrated to the v1 Pythonic bindings (see
 ``docs/PYTHONIC_BINDINGS_DONE.md``).
 """
 
-import pytest
-
 from openswmm.engine import RoutingTotal, Solver
 
+from tests.engine._solver_cases import EngineSolverCase
 
-class TestFullSimulationWithExpandedAPI:
+
+class TestFullSimulationWithExpandedAPI(EngineSolverCase):
     """Run a full simulation using the v1 property-style API."""
 
-    def test_read_all_properties_during_simulation(self, solver_files):
+    def test_read_all_properties_during_simulation(self):
         """Read every wrapper property during a live sim."""
-        inp, rpt, out = solver_files
+        inp, rpt, out = self.solver_files()
         s = Solver(inp, rpt, out)
         s.open()
         s.initialize()
@@ -34,7 +34,7 @@ class TestFullSimulationWithExpandedAPI:
 
             # Per-object property reads — same iteration via wrappers.
             for node in s.nodes:
-                assert node.depth >= 0.0
+                self.assertGreaterEqual(node.depth, 0.0)
                 _ = node.head, node.volume, node.lateral_inflow
                 _ = node.overflow, node.inflow, node.type
                 _ = node.invert_elev, node.max_depth
@@ -52,11 +52,11 @@ class TestFullSimulationWithExpandedAPI:
 
             # Bulk operations — properties now.
             depths = s.nodes.depths
-            assert depths.shape == (n_nodes,)
+            self.assertEqual(depths.shape, (n_nodes,))
             heads = s.nodes.heads
-            assert heads.shape == (n_nodes,)
+            self.assertEqual(heads.shape, (n_nodes,))
             flows = s.links.flows
-            assert flows.shape == (n_links,)
+            self.assertEqual(flows.shape, (n_links,))
 
         # Drive the rest of the simulation to completion so the continuity
         # checks below have a complete mass balance.
@@ -75,16 +75,16 @@ class TestFullSimulationWithExpandedAPI:
 
         # Mass balance.
         mb = s.mass_balance
-        assert abs(mb.runoff_continuity_error) < 0.10
-        assert abs(mb.routing_continuity_error) < 0.10
+        self.assertLess(abs(mb.runoff_continuity_error), 0.10)
+        self.assertLess(abs(mb.routing_continuity_error), 0.10)
 
         s.report()
         s.close()
         s.destroy()
 
-    def test_lateral_inflow_injection(self, solver_files):
+    def test_lateral_inflow_injection(self):
         """Inject lateral inflow at a node and verify it appears in routing totals."""
-        inp, rpt, out = solver_files
+        inp, rpt, out = self.solver_files()
         s = Solver(inp, rpt, out)
         s.open()
         s.initialize()
@@ -108,15 +108,16 @@ class TestFullSimulationWithExpandedAPI:
         # Runtime-API-injected lateral inflow accumulates in the FORCING_INFLOW
         # bucket — distinct from EXTERNAL.
         forced_inflow = s.mass_balance.routing_total(RoutingTotal.FORCING_INFLOW)
-        assert forced_inflow > 0.0, "Forced inflow should be positive after injection"
+        self.assertGreater(forced_inflow, 0.0,
+                           "Forced inflow should be positive after injection")
 
         s.report()
         s.close()
         s.destroy()
 
-    def test_rainfall_override(self, solver_files):
+    def test_rainfall_override(self):
         """Override rainfall on a subcatchment and verify runoff response."""
-        inp, rpt, out = solver_files
+        inp, rpt, out = self.solver_files()
         s = Solver(inp, rpt, out)
         s.open()
         s.initialize()
@@ -137,7 +138,8 @@ class TestFullSimulationWithExpandedAPI:
             pass
 
         s.end()
-        assert max_runoff > 0.0, "Runoff should occur after rainfall override"
+        self.assertGreater(max_runoff, 0.0,
+                           "Runoff should occur after rainfall override")
 
         s.report()
         s.close()

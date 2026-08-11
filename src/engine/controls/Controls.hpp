@@ -164,6 +164,19 @@ struct Rule {
 // Control engine
 // ============================================================================
 
+/**
+ * @brief Diagnostic for the most recent parseRuleText() rejection.
+ *
+ * @details `line` is 1-based and indexes the *original* rule text, counting
+ *          blank lines, so it can be shown directly against what the caller
+ *          submitted. Both fields are only meaningful after parseRuleText()
+ *          returns < 0.
+ */
+struct ParseError {
+    int         line = -1;   ///< 1-based line in the submitted text; -1 if unknown
+    std::string message;     ///< Human-readable reason for the rejection
+};
+
 class ControlEngine {
 public:
     void init(const std::vector<Rule>& rules);
@@ -187,6 +200,17 @@ public:
 
     // Rule parsing (from [CONTROLS] text)
     int parseRuleText(const std::string& text, SimulationContext& ctx);
+
+    /// Diagnostic for the last parseRuleText() rejection (line + reason).
+    /// Only meaningful when that call returned < 0.
+    const ParseError& lastParseError() const noexcept { return last_parse_error_; }
+
+    /// Discard every compiled rule and all parser-derived state.
+    ///
+    /// parseRuleText() *appends*, so recompiling the rule store without
+    /// clearing first would duplicate rules. Call this before re-parsing
+    /// the full `ctx.control_rules.rule_text` list.
+    void clearRules();
 
     // Named variables
     void addNamedVariable(const std::string& name, ConditionVar var, int idx);
@@ -259,6 +283,7 @@ private:
     std::vector<NamedVariable> named_vars_;
     std::vector<mathexpr::Expression> expressions_;
     std::unordered_map<std::string, int> expr_index_;
+    ParseError               last_parse_error_;  ///< Set on parseRuleText() reject
 
     // SoA premise groups (one per variable type that has premises)
     std::vector<PremiseSoA>  premise_groups_;

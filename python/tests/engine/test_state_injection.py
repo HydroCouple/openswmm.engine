@@ -20,8 +20,7 @@ All tests run against the real handle-based ``openswmm.engine.Solver``
 from __future__ import annotations
 
 import os
-
-import pytest
+import unittest
 
 from openswmm.engine import Solver
 
@@ -54,10 +53,10 @@ def _first_gw_subcatch(s):
             return i
         except Exception:
             continue
-    pytest.skip("no groundwater subcatchment in model")
+    raise unittest.SkipTest("no groundwater subcatchment in model")
 
 
-class TestGroundwaterState:
+class TestGroundwaterState(unittest.TestCase):
     def test_theta_round_trip_and_clamp(self):
         """S1: set/get upper-zone moisture; values clamp to porosity."""
         s = _solver(_GW_INP, "gw_theta")
@@ -70,11 +69,11 @@ class TestGroundwaterState:
             sc.set_gw_state(theta=target)
             s.step()
             theta1, _ = sc.get_gw_state()
-            assert theta1 == pytest.approx(target, abs=1e-6) or theta1 != theta0
+            self.assertTrue(abs(theta1 - target) <= 1e-6 or theta1 != theta0)
             # An over-porosity request must be clamped, not stored verbatim.
             sc.set_gw_state(theta=10.0)
             theta_cap, _ = sc.get_gw_state()
-            assert theta_cap <= 1.0
+            self.assertLessEqual(theta_cap, 1.0)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -90,7 +89,7 @@ class TestGroundwaterState:
             # Only update lower_depth; theta must be preserved.
             sc.set_gw_state(lower_depth=-1.0)
             after = sc.get_gw_state()
-            assert after[0] == pytest.approx(before[0], abs=1e-9)
+            self.assertAlmostEqual(after[0], before[0], delta=1e-9)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -119,10 +118,10 @@ class TestGroundwaterState:
         injected = run(True)
         # The injected moisture leaves a detectable difference in the
         # upper-zone state trajectory.
-        assert injected != pytest.approx(baseline, abs=1e-6)
+        self.assertNotAlmostEqual(injected, baseline, delta=1e-6)
 
 
-class TestSnowState:
+class TestSnowState(unittest.TestCase):
     def test_swe_round_trip(self):
         """S2: SWE/ATI/cold-content set then read back in user units."""
         s = _solver(_SNOW_INP, "snow_roundtrip")
@@ -132,10 +131,10 @@ class TestSnowState:
                 s.step()
             sc.set_snow_state(_PERV, swe=4.0, fw=0.5, ati=28.0, coldc=0.1)
             swe, fw, ati, coldc = sc.get_snow_state(_PERV)
-            assert swe == pytest.approx(4.0, abs=1e-6)
-            assert fw == pytest.approx(0.5, abs=1e-6)
-            assert ati == pytest.approx(28.0, abs=1e-3)
-            assert coldc == pytest.approx(0.1, abs=1e-6)
+            self.assertAlmostEqual(swe, 4.0, delta=1e-6)
+            self.assertAlmostEqual(fw, 0.5, delta=1e-6)
+            self.assertAlmostEqual(ati, 28.0, delta=1e-3)
+            self.assertAlmostEqual(coldc, 0.1, delta=1e-6)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -148,7 +147,7 @@ class TestSnowState:
                 s.step()
             sc.set_snow_state(_PERV, swe=1.0, fw=5.0)
             swe, fw, _, _ = sc.get_snow_state(_PERV)
-            assert fw <= swe + 1e-9
+            self.assertLessEqual(fw, swe + 1e-9)
         finally:
             s.end(); s.close(); s.destroy()
 
@@ -164,12 +163,12 @@ class TestSnowState:
                 sc.set_snow_state(surf, swe=5.0, fw=0.0, ati=32.0, coldc=0.0)
             s.step()
             peak = sc.snow_depth
-            assert peak > 0.0
+            self.assertGreater(peak, 0.0)
             # Force strong warmth so the pack melts; stop any further snowfall.
             s.forcing.subcatchment_snowfall("S1", 0.0, persist=True)
             s.forcing.climate_temperature(80.0, persist=True)
             for _ in range(240):
                 s.step()
-            assert sc.snow_depth < peak
+            self.assertLess(sc.snow_depth, peak)
         finally:
             s.end(); s.close(); s.destroy()

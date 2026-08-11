@@ -28,6 +28,8 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+
+#include "../hydraulics/fv/FvOptions.hpp"
 #include <cstdint>
 #include <cmath>
 
@@ -57,7 +59,8 @@ enum class FlowUnits : int {
 enum class RoutingModel : int {
     STEADY   = 0,  ///< Steady-state (no routing)
     KINWAVE  = 1,  ///< Kinematic wave approximation
-    DYNWAVE  = 2   ///< Dynamic wave (full Saint-Venant)
+    DYNWAVE  = 2,  ///< Dynamic wave (full Saint-Venant, implicit Picard)
+    FV       = 3   ///< Explicit conservative finite volume (Godunov, HLL/HLLC)
 };
 
 /**
@@ -192,6 +195,18 @@ struct SimulationOptions {
     /** @brief Routing method. Legacy default: DYNWAVE. */
     RoutingModel routing_model = RoutingModel::DYNWAVE;
 
+    /**
+     * @brief Knobs for FLOW_ROUTING FV, grouped rather than spread across this
+     *        struct (plan §4.2 — first-class [OPTIONS] keys, no new section).
+     *
+     * @details Length-dimensioned members are stored here in the PROJECT's
+     *          display units exactly as parsed; Router::init converts them to
+     *          internal feet, the same treatment HEAD_TOLERANCE gets. FV_* keys
+     *          are accepted and inert under any other routing model, so
+     *          switching FLOW_ROUTING never invalidates a file.
+     */
+    fv::FvOptions fv;
+
     /** @brief Infiltration method for subcatchments. */
     InfiltrationModel infiltration = InfiltrationModel::HORTON;
 
@@ -232,6 +247,17 @@ struct SimulationOptions {
 
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
+
+    /** @brief Virtual-junction momentum treatment: 0=BASIC, 1=FULL.
+     *  @details BASIC applies zero storage, the shared junction sigma and
+     *           cross-junction upwinding; FULL adds the cross-junction
+     *           convective flux correction (dq4_j). Refactored engine only.
+     *  @code
+     *  VIRTUAL_JUNCTION_MOMENTUM  BASIC  ;; default
+     *  VIRTUAL_JUNCTION_MOMENTUM  FULL
+     *  @endcode
+     */
+    int virtual_junction_momentum = 0;
 
     /** @brief Enable Anderson acceleration for Picard iteration convergence.
      *  @details When true, uses depth-2 Anderson mixing to accelerate node
@@ -322,6 +348,17 @@ struct SimulationOptions {
 
     /** @brief Ignore water quality. */
     bool ignore_quality = false;
+
+    /**
+     * @brief Ignore the 2D surface-routing module.
+     *
+     * @details Parsed from IGNORE_2D in [OPTIONS] (OpenSWMM extension — not a
+     * legacy key, so the InpWriter emits it only when YES). When set, the 2D
+     * solver never activates even if the model carries a mesh: the GUI's
+     * "2D Surface Routing" module checkbox writes this so unchecking it
+     * genuinely runs the model 1D-only without stripping the mesh sections.
+     */
+    bool ignore_2d = false;
 
     // -----------------------------------------------------------------------
     /**

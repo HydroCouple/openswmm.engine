@@ -187,12 +187,17 @@ class RouteModel(IntEnum):
 
     @cvar STEADY: Steady-state routing.
     @cvar KINWAVE: Kinematic wave routing.
-    @cvar DYNWAVE: Dynamic wave (full Saint-Venant) routing.
+    @cvar DYNWAVE: Dynamic wave (full Saint-Venant), implicit. The default.
+    @cvar FV: Explicit conservative finite volume (Godunov). Conserves volume
+        exactly and captures pressurization fronts and transcritical flow, at
+        the cost of needing a resolved mesh — set ``FV_CELL_LENGTH``. See the
+        Hydraulics Reference Manual, Chapter 8.
     """
 
     STEADY = 0
     KINWAVE = 1
     DYNWAVE = 2
+    FV = 3
 
 
 class NodeType(IntEnum):
@@ -295,28 +300,71 @@ class OutfallType(IntEnum):
     TIMESERIES = 4
 
 
+class StorageShape(IntEnum):
+    """Storage-unit surface-area relation codes.
+
+    Ordinals match the C API's ``SWMM_StorageShape`` (and the legacy solver's
+    ``enum StorageType``), so the same int is valid on both engines. The four
+    geometric shapes take three raw dimensions (see
+    :attr:`StorageView.geometry`); TABULAR takes a curve; FUNCTIONAL takes the
+    a/b/c power-law coefficients.
+
+    @cvar TABULAR: Area vs. depth from a curve.
+    @cvar FUNCTIONAL: ``Area = c + a*d^b``.
+    @cvar CYLINDRICAL: Elliptical cylinder: p1 = major axis, p2 = minor axis.
+    @cvar CONICAL: Elliptical cone: p1, p2 = base axes, p3 = side slope.
+    @cvar PARABOLOID: Elliptical paraboloid: p1, p2 = top axes, p3 = height (≠ 0).
+    @cvar PYRAMIDAL: Rectangular pyramid: p1 = length, p2 = width, p3 = side slope.
+    """
+
+    TABULAR = 0
+    FUNCTIONAL = 1
+    CYLINDRICAL = 2
+    CONICAL = 3
+    PARABOLOID = 4
+    PYRAMIDAL = 5
+
+
 class XSectShape(IntEnum):
     """Cross-section shape codes.
 
-    @cvar CIRCULAR: Circular pipe.
-    @cvar FILLED_CIRCULAR: Filled circular pipe.
-    @cvar RECT_CLOSED: Closed rectangular.
-    @cvar RECT_OPEN: Open rectangular.
-    @cvar TRAPEZOIDAL: Trapezoidal channel.
-    @cvar TRIANGULAR: Triangular channel.
-    @cvar PARABOLIC: Parabolic channel.
-    @cvar POWER: Power-law shaped channel.
-    @cvar MODBASKETHANDLE: Modified baskethandle.
-    @cvar EGGSHAPED: Egg-shaped pipe.
-    @cvar HORSESHOE: Horseshoe-shaped pipe.
-    @cvar GOTHIC: Gothic arch pipe.
-    @cvar CATENARY: Catenary-shaped pipe.
-    @cvar SEMIELLIPTICAL: Semi-elliptical pipe.
-    @cvar BASKETHANDLE: Baskethandle-shaped pipe.
-    @cvar SEMICIRCULAR: Semi-circular pipe.
-    @cvar IRREGULAR: Irregular (from transect data).
-    @cvar CUSTOM: Custom shape (from shape curve).
-    @cvar FORCE_MAIN: Force main (pressurized).
+    These mirror the engine's ``SWMM_XSectShape`` / ``openswmm::XsectShape``
+    storage codes exactly; ``test_enum_parity`` pins them against the C header
+    so the two can never drift.
+
+    .. warning::
+       **Renumbered in 6.0.** ``IRREGULAR``, ``CUSTOM`` and ``FORCE_MAIN``
+       previously carried the values 16/17/18, which the engine read as
+       ``RECT_TRIANG``/``RECT_ROUND``/``HORIZ_ELLIPSE`` — assigning them
+       silently produced the wrong cross-section. Always pass the enum member
+       rather than a bare integer and the correction is automatic.
+
+    @cvar CIRCULAR: Circular pipe. geom1=diameter.
+    @cvar FILLED_CIRCULAR: Circular pipe with sediment. geom1=diameter, geom2=filled depth.
+    @cvar RECT_CLOSED: Closed rectangular. geom1=height, geom2=width.
+    @cvar RECT_OPEN: Open rectangular. geom1=height, geom2=width, geom3=# sides removed.
+    @cvar TRAPEZOIDAL: Trapezoidal channel. geom1=height, geom2=bottom width, geom3/geom4=side slopes.
+    @cvar TRIANGULAR: Triangular channel. geom1=height, geom2=top width.
+    @cvar PARABOLIC: Parabolic channel. geom1=height, geom2=top width.
+    @cvar POWER: Power-law shaped channel. geom1=height, geom2=top width, geom3=exponent.
+    @cvar MODBASKETHANDLE: Modified baskethandle. geom1=height, geom2=bottom width, geom3=top radius.
+    @cvar EGGSHAPED: Egg-shaped pipe. geom1=height.
+    @cvar HORSESHOE: Horseshoe-shaped pipe. geom1=height.
+    @cvar GOTHIC: Gothic arch pipe. geom1=height.
+    @cvar CATENARY: Catenary-shaped pipe. geom1=height.
+    @cvar SEMIELLIPTICAL: Semi-elliptical pipe. geom1=height.
+    @cvar BASKETHANDLE: Baskethandle-shaped pipe. geom1=height.
+    @cvar SEMICIRCULAR: Semi-circular pipe. geom1=height.
+    @cvar RECT_TRIANG: Rectangular-triangular. geom1=height, geom2=top width, geom3=triangle height.
+    @cvar RECT_ROUND: Rectangular-round. geom1=height, geom2=top width, geom3=bottom radius.
+    @cvar HORIZ_ELLIPSE: Horizontal ellipse. geom1=height, geom2=width.
+    @cvar VERT_ELLIPSE: Vertical ellipse. geom1=height, geom2=width.
+    @cvar ARCH: Arch pipe. geom1=height, geom2=width.
+    @cvar IRREGULAR: Irregular (from transect data). geom1=transect index.
+    @cvar CUSTOM: Custom shape (from shape curve). geom1=height, geom2=shape-curve index.
+    @cvar FORCE_MAIN: Force main (pressurized). geom1=diameter, geom2=roughness.
+    @cvar STREET_XSECT: Street cross-section (from ``[STREETS]``). geom1=street index.
+    @cvar DUMMY: Dummy — no geometry; all queries return 0.
     """
 
     CIRCULAR = 0
@@ -335,9 +383,16 @@ class XSectShape(IntEnum):
     SEMIELLIPTICAL = 13
     BASKETHANDLE = 14
     SEMICIRCULAR = 15
-    IRREGULAR = 16
-    CUSTOM = 17
-    FORCE_MAIN = 18
+    RECT_TRIANG = 16
+    RECT_ROUND = 17
+    HORIZ_ELLIPSE = 18
+    VERT_ELLIPSE = 19
+    ARCH = 20
+    IRREGULAR = 21
+    CUSTOM = 22
+    FORCE_MAIN = 23
+    STREET_XSECT = 24
+    DUMMY = 25
 
 
 # =============================================================================

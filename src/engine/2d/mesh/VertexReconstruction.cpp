@@ -8,7 +8,7 @@
  */
 
 #include "VertexReconstruction.hpp"
-#include "../data/ActiveSetData.hpp"
+#include "VfrClosure.hpp"
 
 #include <vector>
 #include <cmath>
@@ -148,17 +148,10 @@ void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
                              [[maybe_unused]] int nthreads) {
     int nv = mesh.n_vertices();
 
-    // Active-set masking: a vertex touched only by frozen cells keeps its
-    // seed-pass value — its stencil heads are frozen too, so the gather
-    // would reproduce it exactly.
-    const ActiveSetData* as = state.active_set;
-    const bool masked = (as != nullptr) && as->enabled;
-
     // CSR gather: each vertex reads its stencil's cell heads (read-only) and
     // writes only its own vert_head[b]. schedule(static) ⇒ bit-exact serial.
 #pragma omp parallel for schedule(static) num_threads(nthreads)
     for (int b = 0; b < nv; ++b) {
-        if (masked && !as->vert_active[b]) continue;
         int start = mesh.vert_stencil_ptr[b];
         int end   = mesh.vert_stencil_ptr[b + 1];
 
@@ -167,6 +160,73 @@ void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
             h += mesh.vert_stencil_wt[k] * state.head[mesh.vert_stencil_idx[k]];
         }
         state.vert_head[b] = h;
+    }
+}
+
+
+double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
+                                double zc) {
+    // Delegates to the shared VFR closure (VfrClosure.hpp) with eps = 0 — the
+    // EXACT relation, the same math this function carried before the solver
+    // adopted the closure. Single source of truth: render and solver cannot
+    // drift apart. (NaN mean_depth: !(NaN > 0) → lowest vertex, as before.)
+    double z1 = za, z2 = zb, z3 = zc;
+    vfrSort3(z1, z2, z3);
+    if (!(mean_depth > 0.0)) return z1;
+    return vfrEtaFromMeanDepth(z1, z2, z3, mean_depth, 0.0);
+}
+
+
+void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state,
+                                   double dry_depth,
+                                   [[maybe_unused]] int nthreads) {
+    const int nv = mesh.n_vertices();
+
+    // Per-vertex CSR gather over the stencil's cell LIST (topology only — the
+    // pseudo-Laplacian weights are a solver concern). Each iteration writes
+    // only vert_depth_signed[b]; schedule(static) => bit-exact vs serial.
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+    for (int b = 0; b < nv; ++b) {
+        const int start = mesh.vert_stencil_ptr[b];
+        const int end   = mesh.vert_stencil_ptr[b + 1];
+
+        double vsum = 0.0, wsum = 0.0, eta_max = 0.0;
+        bool   wet  = false;
+        for (int k = start; k < end; ++k) {
+            const int    t = mesh.vert_stencil_idx[k];
+            const double h = state.depth[t];
+            if (!(h >= dry_depth)) continue;        // dry skip (NaN-robust)
+            const double eta = cellFreeSurfaceElevation(
+                h, mesh.vz[mesh.tri_v0[t]], mesh.vz[mesh.tri_v1[t]],
+                mesh.vz[mesh.tri_v2[t]]);
+            if (!std::isfinite(eta)) continue;      // nodata z must not spread
+            // Wetted-contact gate: a cell votes at this vertex only if its
+            // water surface actually reaches the vertex's corner (η above the
+            // vertex bed). Without it a thin film pooled at the BASE of a
+            // steep cell stamps its low η onto the cell's HIGH vertex,
+            // dragging the reported level there down to the film level (the
+            // wall-base "notch" in profile plots). Strict >: at equality the
+            // contribution's signed depth is 0 — indistinguishable from the
+            // no-data sentinel, so excluding it is harmless. This gate is
+            // also why no no-new-minima clamp exists: a mean over gated
+            // contributors is already bounded below by min η_k > z_v.
+            if (!(eta > mesh.vz[b])) continue;
+            vsum += h * eta;
+            wsum += h;
+            if (!wet || eta > eta_max) { eta_max = eta; wet = true; }
+        }
+
+        if (wsum > 0.0) {
+            double eta_v = vsum / wsum;
+            // No-new-maxima guard: a depth-weighted mean is already bounded by
+            // the incident wet-cell etas; keep the clamp as a hard invariant in
+            // case the weighting scheme ever changes.
+            if (eta_v > eta_max) eta_v = eta_max;
+            const double d = eta_v - mesh.vz[b];    // SIGNED depth (VFR)
+            state.vert_depth_signed[b] = std::isfinite(d) ? d : 0.0;
+        } else {
+            state.vert_depth_signed[b] = 0.0;       // no wet incident cell
+        }
     }
 }
 

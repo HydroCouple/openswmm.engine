@@ -123,6 +123,32 @@ Use :meth:`Solver.run` for a one-call run-to-completion when there's
 nothing to do between steps; or the free function
 :func:`openswmm.engine.run` if you have no Solver yet.
 
+Lenient (permissive) open
+-------------------------
+
+By default :meth:`Solver.open` is **strict**: any post-parse validation
+error (undefined objects, missing curves, bad references) fails the open.
+Editor / GUI loads that must show as much of a broken model as possible
+can call :meth:`Solver.set_lenient_open` *before* :meth:`open`. With
+lenient open enabled, those validation errors are recorded but the engine
+still reaches ``OPENED`` with all parsed objects intact and editable;
+hard reader failures still fail the open.
+
+.. code-block:: python
+
+    s = Solver("broken.inp", "broken.rpt", "broken.out")
+    s.set_lenient_open(True)      # permissive load — call before open()
+    s.open()                      # reaches OPENED even with validation errors
+    for msg in s.open_errors:     # accumulated validation messages
+        print("error:", msg)
+    for msg in s.open_warnings:   # non-fatal warnings from the load
+        print("warning:", msg)
+
+:attr:`Solver.open_errors` and :attr:`Solver.open_warnings` are lists of
+human-readable message strings. A strict open that succeeds leaves
+``open_errors`` empty. Lenient open is intended for inspection and
+editing only — running a model still needs a fresh, strict open.
+
 ----
 
 Typed property surface

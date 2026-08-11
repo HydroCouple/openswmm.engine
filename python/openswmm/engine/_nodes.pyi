@@ -15,7 +15,7 @@ from typing import Any, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ._enums import NodeType, OutfallType
+from ._enums import NodeType, OutfallType, StorageShape
 from ._solver import Solver
 
 
@@ -32,6 +32,8 @@ class NodeStatsView:
 class StorageView:
     curve: int
     functional: Tuple[float, float, float]
+    shape: StorageShape
+    geometry: Tuple[float, float, float]
     seep_rate: float
     exfil_params: Tuple[float, float, float]
 
@@ -61,6 +63,8 @@ class Node:
     tag: str
     index: int
     type: NodeType
+    is_virtual: bool
+    virtual_rule_violation: int
     solver: Solver
 
     # Geometry

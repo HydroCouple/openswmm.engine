@@ -22,10 +22,12 @@ No mocks; skips cleanly when the build lacks 2D support.
 from __future__ import annotations
 
 import os
+import unittest
 
-import pytest
-
-pytest.importorskip("openswmm.engine._2d")
+try:
+    import openswmm.engine._2d  # noqa: F401
+except ImportError as _exc:  # pragma: no cover - environment dependent
+    raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
 from openswmm.engine import Solver, ForcingPersist
 
@@ -67,26 +69,26 @@ def _run_with_evap(rate_mm_hr, n=30, rain_mm_hr=30.0):
         s.end(); s.close(); s.destroy()
 
 
-class TestSurface2dEvap:
+class TestSurface2dEvap(unittest.TestCase):
     def test_evap_out_key_present(self):
         """§4.1: get_mass_balance exposes the evap_out term, non-negative."""
         mb = _run_with_evap(0.0)
-        assert "evap_out" in mb
-        assert mb["evap_out"] >= 0.0
+        self.assertIn("evap_out", mb)
+        self.assertGreaterEqual(mb["evap_out"], 0.0)
 
     def test_forced_evap_produces_loss(self):
         """T1: forcing evaporation accumulates a positive evap_out."""
         mb = _run_with_evap(8.0)
-        assert mb["evap_out"] > 0.0
+        self.assertGreater(mb["evap_out"], 0.0)
 
     def test_evap_out_scales_with_rate(self):
         """T1: doubling the evaporation rate ~doubles the accumulated loss."""
         low = _run_with_evap(5.0)["evap_out"]
         high = _run_with_evap(10.0)["evap_out"]
-        assert low > 0.0
+        self.assertGreater(low, 0.0)
         # Same wet area and steps, so the loss scales with the rate (allow a
         # generous tolerance for depth-limited dry-out at the higher rate).
-        assert high == pytest.approx(2.0 * low, rel=0.25)
+        self.assertAlmostEqual(high, 2.0 * low, delta=0.25 * 2.0 * low)
 
     def test_one_shot_reset_applies_single_step(self):
         """T1: a RESET (persist=False) evap prescription lasts one step."""
@@ -101,7 +103,7 @@ class TestSurface2dEvap:
             surf.force_evap_uniform(10.0 * _MM_HR_TO_MS)
             s.step()
             after_one = surf.get_mass_balance()["evap_out"]
-            assert after_one > before
+            self.assertGreater(after_one, before)
             # No further evap forcing → evap_out stops growing.
             delta1 = after_one - before
             s.step()
@@ -109,6 +111,6 @@ class TestSurface2dEvap:
             after_more = surf.get_mass_balance()["evap_out"]
             # The post-reset growth is at most the single-step delta's noise,
             # i.e. far less than if the prescription had persisted.
-            assert (after_more - after_one) <= delta1 * 0.5 + 1e-9
+            self.assertLessEqual(after_more - after_one, delta1 * 0.5 + 1e-9)
         finally:
             s.end(); s.close(); s.destroy()

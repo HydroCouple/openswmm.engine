@@ -91,7 +91,7 @@ try:
     version = openswmm.__version__
     release = openswmm.__version__
 except Exception:
-    version = '6.0.0a1'
+    version = '6.0.0a3'
     release = version
 
 # -- General configuration ------------------------------------------------
@@ -108,6 +108,9 @@ extensions = [
     # sphinx-design: tab-set / grid / grid-item-card directives used in
     # the User Guide and Migration pages.
     'sphinx_design',
+    # sphinxcontrib-mermaid: workflow / state diagrams (.. mermaid::)
+    # rendered client-side, matching the Doxygen manuals.
+    'sphinxcontrib.mermaid',
 ]
 
 # MyST (Markdown) settings

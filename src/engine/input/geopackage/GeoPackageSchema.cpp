@@ -13,7 +13,7 @@ namespace openswmm::gpkg {
 // GeoPackage metadata tables (OGC standard)
 // ============================================================================
 
-static const char* GPKG_METADATA_DDL = R"SQL(
+static const char GPKG_METADATA_DDL[] = R"SQL(
 -- GeoPackage required metadata tables (OGC 12-128r18)
 CREATE TABLE IF NOT EXISTS gpkg_spatial_ref_sys (
     srs_name                 TEXT NOT NULL,
@@ -58,12 +58,18 @@ CREATE TABLE IF NOT EXISTS gpkg_geometry_columns (
     CONSTRAINT fk_gc_srs FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys(srs_id)
 );
 )SQL";
+static_assert(sizeof(GPKG_METADATA_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part A: Model Input tables
+//
+// Split into four chunks (A1..A4) purely to stay under the MSVC 16380-byte
+// per-string-literal limit (error C2026); the split points are statement
+// boundaries and the concatenation is the original Part A DDL verbatim.
 // ============================================================================
 
-static const char* PART_A_DDL = R"SQL(
+// Part A1: options + the node family (nodes and its 1:1 subtype tables).
+static const char PART_A1_DDL[] = R"SQL(
 -- Options (key-value)
 CREATE TABLE IF NOT EXISTS options (
     simulation_id  TEXT NOT NULL,
@@ -92,16 +98,25 @@ CREATE TABLE IF NOT EXISTS nodes (
     UNIQUE(simulation_id, node_id)
 );
 
--- Storage units (1:1 with a STORAGE node). curve_name set => tabulated;
--- otherwise functional A·d^B + C. Values are canonical internal units (the
--- whole .gpkg is internal-unit; see read path). Lossless side-table mirror.
+-- Storage units (1:1 with a STORAGE node). `shape` is the area relation
+-- (TABULAR / FUNCTIONAL / CYLINDRICAL / CONICAL / PARABOLIC / PYRAMIDAL) and decides
+-- how a/b/c are read: FUNCTIONAL is the power law A·d^B + C, the geometric shapes are
+-- the quadratic C + A·d + B·d². For the geometric shapes p1/p2/p3 carry the raw user
+-- dimensions (L/W/Z) that a/b/c were derived from, so the file round-trips losslessly.
+-- `shape` is NULL in files written before it existed — the reader then falls back to
+-- the old rule (curve_name set => TABULAR, else FUNCTIONAL). Values are canonical
+-- internal units (the whole .gpkg is internal-unit; see read path).
 CREATE TABLE IF NOT EXISTS storages (
     simulation_id   TEXT NOT NULL,
     node_id         TEXT NOT NULL,
     curve_name      TEXT,
+    shape           TEXT,
     a               REAL,
     b               REAL,
     c               REAL,
+    p1              REAL,
+    p2              REAL,
+    p3              REAL,
     seep_rate       REAL,
     evap_frac       REAL,
     exfil_suction   REAL,
@@ -146,6 +161,11 @@ CREATE TABLE IF NOT EXISTS dividers (
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+)SQL";
+static_assert(sizeof(PART_A1_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
+// Part A2: the link family (links and its 1:1 subtype tables).
+static const char PART_A2_DDL[] = R"SQL(
 -- Links (LINESTRING feature table). Phase 7: slim relational base — common
 -- fields + discriminator + geom. Subtype properties live in the
 -- conduits/pumps/orifices/weirs/outlets child tables (1:1 specialization,
@@ -259,6 +279,11 @@ CREATE TABLE IF NOT EXISTS outlets (
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+)SQL";
+static_assert(sizeof(PART_A2_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
+// Part A3: hydrology, connectivity, lookup tables, and inflows.
+static const char PART_A3_DDL[] = R"SQL(
 -- Subcatchments (MULTIPOLYGON feature table)
 CREATE TABLE IF NOT EXISTS subcatchments (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -287,6 +312,8 @@ CREATE TABLE IF NOT EXISTS subcatchments (
     infil_p4        REAL,
     infil_p5        REAL,
     tag             TEXT,
+    rain_scale_factor REAL DEFAULT 1.0,  -- optional [SUBCATCHMENTS] token 9
+    snow_scale_factor REAL DEFAULT 1.0,  -- optional [SUBCATCHMENTS] token 10
     UNIQUE(simulation_id, subcatch_id)
 );
 
@@ -410,6 +437,11 @@ CREATE TABLE IF NOT EXISTS dwf_inflows (
 );
 CREATE INDEX IF NOT EXISTS idx_dwf_node ON dwf_inflows(simulation_id, node_id);
 
+)SQL";
+static_assert(sizeof(PART_A3_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
+// Part A4: controls, climate, water quality, LID, RDII, and transects.
+static const char PART_A4_DDL[] = R"SQL(
 -- Control rules ([CONTROLS]) — one row per rule; rule_text is the full
 -- multi-line "RULE/IF/THEN/ELSE/PRIORITY" block, stored verbatim (names +
 -- setpoints resolved by the control engine, identically to the .inp path).
@@ -490,7 +522,8 @@ CREATE TABLE IF NOT EXISTS subcatch_adjustments (
     UNIQUE(simulation_id, subcatch_id, adjust_type)
 );
 
--- Pollutants
+-- Pollutants. dwf_conc/init_conc (iteration 4): the [POLLUTANTS] Cdwf and
+-- Cinit columns — absent in older files, read back as 0 via column_exists.
 CREATE TABLE IF NOT EXISTS pollutants (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
     simulation_id   TEXT NOT NULL,
@@ -503,7 +536,74 @@ CREATE TABLE IF NOT EXISTS pollutants (
     snow_only       INTEGER,
     co_pollutant    TEXT,
     co_fraction     REAL,
+    dwf_conc        REAL DEFAULT 0,
+    init_conc       REAL DEFAULT 0,
     UNIQUE(simulation_id, pollutant_id)
+);
+
+-- Land uses ([LANDUSES]) — sweeping params per land use (iteration 4).
+CREATE TABLE IF NOT EXISTS landuses (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    landuse_id      TEXT NOT NULL,
+    sweep_interval  REAL DEFAULT 0,
+    sweep_removal   REAL DEFAULT 0,
+    last_swept      REAL DEFAULT 0,
+    comment         TEXT,
+    UNIQUE(simulation_id, landuse_id)
+);
+
+-- Buildup functions ([BUILDUP]) — one row per (landuse, pollutant) with a
+-- non-NONE function (iteration 4). Mirrors the treatment keying.
+CREATE TABLE IF NOT EXISTS buildup (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    landuse_id      TEXT NOT NULL,
+    pollutant_id    TEXT NOT NULL,
+    func_type       TEXT NOT NULL,   -- 'POW' | 'EXP' | 'SAT' | 'EXT'
+    coeff1          REAL DEFAULT 0,
+    coeff2          REAL DEFAULT 0,
+    coeff3          REAL DEFAULT 0,
+    normalizer      TEXT DEFAULT 'AREA',   -- 'AREA' | 'CURB'
+    UNIQUE(simulation_id, landuse_id, pollutant_id)
+);
+
+-- Washoff functions ([WASHOFF]) — one row per (landuse, pollutant) with a
+-- non-NONE function (iteration 4).
+CREATE TABLE IF NOT EXISTS washoff (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    landuse_id      TEXT NOT NULL,
+    pollutant_id    TEXT NOT NULL,
+    func_type       TEXT NOT NULL,   -- 'EXP' | 'RC' | 'EMC'
+    coeff           REAL DEFAULT 0,
+    expon           REAL DEFAULT 0,
+    sweep_effic     REAL DEFAULT 0,
+    bmp_effic       REAL DEFAULT 0,
+    UNIQUE(simulation_id, landuse_id, pollutant_id)
+);
+
+-- Subcatchment land-use coverages ([COVERAGES], percent) + per-pair days
+-- since last swept (iteration 4). Zero-percent pairs are not stored.
+CREATE TABLE IF NOT EXISTS subcatch_coverages (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    subcatch_id     TEXT NOT NULL,
+    landuse_id      TEXT NOT NULL,
+    percent         REAL NOT NULL,
+    last_swept      REAL DEFAULT 0,
+    UNIQUE(simulation_id, subcatch_id, landuse_id)
+);
+
+-- Initial pollutant loadings ([LOADINGS]) — initial buildup per
+-- (subcatchment, pollutant); zero rows are not stored (iteration 4).
+CREATE TABLE IF NOT EXISTS subcatch_loadings (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    subcatch_id     TEXT NOT NULL,
+    pollutant_id    TEXT NOT NULL,
+    init_buildup    REAL NOT NULL,
+    UNIQUE(simulation_id, subcatch_id, pollutant_id)
 );
 
 -- LID control definitions (one row per lid-layer combination)
@@ -562,6 +662,9 @@ CREATE TABLE IF NOT EXISTS unit_hydrographs (
 );
 
 -- RDII exponential-decay IA parameters (one row per UH group x response).
+-- snow_on/snow_T/snow_ddf: optional degree-day snow model (accumulate SWE at
+-- T <= snow_T; melt at snow_ddf*(T - snow_T) per day above it). Older files
+-- without the snow columns read as snow-off.
 -- @see docs/RDII_ExpDecay_Implementation.md
 CREATE TABLE IF NOT EXISTS rdii_decay (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -574,6 +677,9 @@ CREATE TABLE IF NOT EXISTS rdii_decay (
     T_ref           REAL NOT NULL,
     theta_rec       REAL NOT NULL,
     T_freeze        REAL NOT NULL,
+    snow_on         INTEGER DEFAULT 0,
+    snow_T          REAL DEFAULT 1.0,
+    snow_ddf        REAL DEFAULT 0,
     UNIQUE(simulation_id, uh_name, response)
 );
 
@@ -613,12 +719,13 @@ CREATE TABLE IF NOT EXISTS transects (
 );
 CREATE INDEX IF NOT EXISTS idx_transects_lookup ON transects(simulation_id, transect_id, ordinal);
 )SQL";
+static_assert(sizeof(PART_A4_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part B: Simulation Results & Reports
 // ============================================================================
 
-static const char* PART_B_DDL = R"SQL(
+static const char PART_B_DDL[] = R"SQL(
 -- Simulation run registry
 CREATE TABLE IF NOT EXISTS simulations (
     simulation_id              TEXT PRIMARY KEY,
@@ -675,12 +782,13 @@ CREATE TABLE IF NOT EXISTS result_summary (
     PRIMARY KEY (simulation_id, object_type, object_id, variable_id)
 );
 )SQL";
+static_assert(sizeof(PART_B_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part C: Observed / Sensor Data
 // ============================================================================
 
-static const char* PART_C_DDL = R"SQL(
+static const char PART_C_DDL[] = R"SQL(
 CREATE TABLE IF NOT EXISTS observed_series (
     series_id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name              TEXT NOT NULL UNIQUE,
@@ -708,6 +816,7 @@ CREATE TABLE IF NOT EXISTS observed_values (
 CREATE INDEX IF NOT EXISTS idx_obs_values_lookup
     ON observed_values(series_id, timestamp);
 )SQL";
+static_assert(sizeof(PART_C_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part D: External-File Content (Slice IO-5)
@@ -729,7 +838,7 @@ CREATE INDEX IF NOT EXISTS idx_obs_values_lookup
 // split that lets each pollutant row carry its own owning-object FK).
 // ============================================================================
 
-static const char* PART_D_DDL = R"SQL(
+static const char PART_D_DDL[] = R"SQL(
 -- ----------------------------------------------------------------------------
 -- Hot-start state (replaces opaque .hsf snapshots).
 -- ----------------------------------------------------------------------------
@@ -980,6 +1089,7 @@ CREATE TABLE IF NOT EXISTS routing_interface_node_pollutants (
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 )SQL";
+static_assert(sizeof(PART_D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Part E — 2D surface-routing mesh (model definition only; 2D simulation
@@ -1008,7 +1118,7 @@ CREATE TABLE IF NOT EXISTS routing_interface_node_pollutants (
 // Part A model table.
 // ============================================================================
 
-static const char* MESH_2D_DDL = R"SQL(
+static const char MESH_2D_DDL[] = R"SQL(
 -- ----------------------------------------------------------------------------
 -- 2D mesh vertices (POINT feature layer; x/y/z are canonical, geom derived).
 -- ----------------------------------------------------------------------------
@@ -1037,6 +1147,7 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangles (
     v1              INTEGER NOT NULL,
     v2              INTEGER NOT NULL,
     mannings_n      REAL NOT NULL DEFAULT 0.035,
+    init_depth      REAL NOT NULL DEFAULT 0,
     tag             TEXT,
     bed_elev        REAL,
     coupled_node    TEXT,
@@ -1143,6 +1254,7 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
 CREATE INDEX IF NOT EXISTS idx_mesh2d_tc_node
     ON mesh_2d_triangle_coupling(simulation_id, node_id);
 )SQL";
+static_assert(sizeof(MESH_2D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Implementation
@@ -1154,7 +1266,10 @@ void create_schema(sqlite3* db) {
     exec(db, "PRAGMA application_id=0x47504B47"); // 'GPKG'
 
     exec(db, GPKG_METADATA_DDL);
-    exec(db, PART_A_DDL);
+    exec(db, PART_A1_DDL);
+    exec(db, PART_A2_DDL);
+    exec(db, PART_A3_DDL);
+    exec(db, PART_A4_DDL);
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);

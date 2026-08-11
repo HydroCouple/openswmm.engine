@@ -1,4 +1,6 @@
-# References
+@page hydraulics_ref_references References
+
+@tableofcontents
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
@@ -233,3 +235,6 @@ Record*, p. 866, Dec 25, 1947.
 Yen, B.C., "Hydraulics of Sewer Systems", Chapter 6 in *Stormwater
 Collection Systems Design Handbook*, L.W. Mays editor, McGraw-Hill, NY,
 2001.
+
+
+

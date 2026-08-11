@@ -40,6 +40,9 @@ class RDIIDecayEntry(NamedTuple):
     T_ref: float
     theta_rec: float
     T_freeze: float
+    snow_on: bool = False
+    snow_T: float = 1.0
+    snow_ddf: float = 0.0
 
 
 class Inflows:
@@ -109,6 +112,7 @@ class Inflows:
         self, uh_name: str, response: int,
         k_dep: float, k_0: float, k_T: float,
         T_ref: float, theta_rec: float, T_freeze: float,
+        snow_on: bool = ..., snow_T: float = ..., snow_ddf: float = ...,
     ) -> None: ...
     def get_rdii_decay(self, idx: int) -> RDIIDecayEntry: ...
     rdii_decay_count: int
@@ -116,5 +120,6 @@ class Inflows:
         self, uh_name: str, response: int,
         k_dep: float, k_0: float, k_T: float,
         T_ref: float, theta_rec: float, T_freeze: float,
+        snow_on: bool = ..., snow_T: float = ..., snow_ddf: float = ...,
     ) -> None: ...
     def remove_rdii_decay(self, uh_name: str, response: int) -> None: ...

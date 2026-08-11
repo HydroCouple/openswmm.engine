@@ -3,7 +3,7 @@
  * \brief Subcatchment water quality functions.
  * \author L. Rossman
  * \date Created: 2023-07-14 (Build 5.2.4)
- * \date Last edited: 2025-02-07
+ * \date Last edited: 2026-07-11
  * \version 5.3
  * \details Subcatchment water quality functions.
  *
@@ -21,7 +21,27 @@
  *   inflows reported for conveyance system nodes.
  * Build 5.3.0
  * - Added support for API provided pollutant build up and washoff.
+ * - Fixed the runoff quality continuity error introduced in Build 5.2.4. Zeroing
+ *   the low runoff concentration ahead of the mass balance bookings (rather than
+ *   only ahead of the reported load) left any pollutant load generated in that
+ *   step assigned to no output category, so the mass was silently dropped. The
+ *   washoff concentration is now computed whenever there is inflow. This affects
+ *   subcatchments with LID controls (where capture approaching 100% drives the
+ *   surface + underdrain outflow below the cutoff) and subcatchments without LID
+ *   controls (wet deposition and/or runon while runoff is below the cutoff).
+ *   Note the Build 5.2.4 rationale does not require zeroing the concentration:
+ *   no cutoff is applied to node mass inflow, and the only cutoff lives in
+ *   subcatch_getResults(), which zeroes the *reported* runoff rather than the
+ *   newRunoff used for routing.
+ * - Pollutant mass carried into the native soil by LID infiltration is now
+ *   reported under Infiltration Loss (INFIL_LOAD) instead of being lumped into
+ *   BMP Removal, so infiltration loss, treatment removal and underdrain/surface
+ *   overflow export are accounted for separately.
  * \TODO: Add support for tracking the mass balance of API provided pollutant build up and washoff seperately.
+ * \TODO: Concentration-based LID treatment (pollutant mass stored in the LID and
+ *        released through the drain, overflow and infiltration) is not yet modeled;
+ *        LID removal is still driven by volume reduction plus the underdrain
+ *        REMOVALS fraction.
  */
 #define _CRT_SECURE_NO_DEPRECATE
 
@@ -248,7 +268,6 @@ void surfqual_sweepBuildup(int subcatchIndex, DateTime aDate)
 void surfqual_getWashoff(int subcatchIndex, double runoff, double tStep)
 {
     int p;            // pollutant index
-    int hasOutflow;   // TRUE if subcatchment has outflow
     double cOut;      // final washoff concentration (mass/ft3)
     double massLoad;  // pollut. mass load (mass)
     double vLidRain;  // rainfall volume on LID area (ft3)
@@ -256,6 +275,9 @@ void surfqual_getWashoff(int subcatchIndex, double runoff, double tStep)
     double vSurfOut;  // surface runoff volume leaving subcatchment (ft3)
     double vOut1;     // runoff volume prior to LID treatment (ft3)
     double vOut2;     // runoff volume after LID treatment (ft3)
+    double vLidInfil; // infiltration into native soil beneath LID units (ft3)
+    double vLost;     // pre/post-LID volume difference (ft3)
+    double vInfil;    // portion of vLost attributed to native-soil infil (ft3)
     double area;      // subcatchment area (ft2)
 
     // --- return if there is no area or no pollutants
@@ -292,22 +314,40 @@ void surfqual_getWashoff(int subcatchIndex, double runoff, double tStep)
     vSurfOut = Subcatch[subcatchIndex].newRunoff * tStep;
     vOut2 = vSurfOut + VlidDrain;
 
-    // --- determine if subcatchment outflow is below a small cutoff
-    hasOutflow = (vOut2 > MIN_RUNOFF * area * tStep);
+    // --- volume infiltrated into the native soil beneath the LID units (ft3)
+    //     (VlidInfil is accumulated in subcatch_getRunoff; it is used here to
+    //      give infiltrated pollutant mass its own INFIL_LOAD category instead
+    //      of lumping it into BMP removal)
+    vLidInfil = VlidInfil;
 
     // --- for each pollutant
     for (p = 0; p < Nobjects[POLLUT]; p++)
     {
         // --- convert washoff load to a concentration
+        //     (use the pre-LID outflow volume whenever it exists; this is NOT
+        //      gated on a post-LID outflow cutoff, otherwise all of the load
+        //      generated over the LID inflow is orphaned - producing a large
+        //      runoff-quality continuity error - whenever the LID units capture
+        //      essentially the entire inflow, i.e. treatment approaches 100%)
         cOut = 0.0;
-        if (vOut1 > 0.0 && hasOutflow)
+        if (vOut1 > 0.0)
             cOut = OutflowLoad[p] / vOut1;
 
-        // --- assign any difference between pre- and post-LID
-        //     subcatchment outflow loads to BMP removal
+        // --- distribute the pre/post-LID volume difference between the mass
+        //     lost to native-soil infiltration and the mass removed by BMP
+        //     treatment / retention (ET + storage). Splitting the two keeps
+        //     the categories physically distinct and closes the mass balance.
         if (Subcatch[subcatchIndex].lidArea > 0.0)
         {
-            massLoad = cOut * (vOut1 - vOut2) * Pollut[p].mcf;
+            vLost = vOut1 - vOut2;
+            if (vLost < 0.0) vLost = 0.0;
+            vInfil = MIN(vLidInfil, vLost);
+
+            massLoad = cOut * vInfil * Pollut[p].mcf;
+            if (massLoad > 0.0)
+                massbal_updateLoadingTotals(INFIL_LOAD, p, massLoad);
+
+            massLoad = cOut * (vLost - vInfil) * Pollut[p].mcf;
             if (massLoad > 0.0)
                 massbal_updateLoadingTotals(BMP_REMOVAL_LOAD, p, massLoad);
         }

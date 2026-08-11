@@ -495,12 +495,18 @@ int InterfaceManager::getIfaceNode(int index) const {
 bool InterfaceManager::isOutletNode(const SimulationContext& ctx, int node_idx) {
     auto ui = static_cast<std::size_t>(node_idx);
 
-    // For dynamic wave routing, only outfalls are outlets
-    if (ctx.options.routing_model == RoutingModel::DYNWAVE) {
+    // Under a routing model that solves the full network, only an OUTFALL
+    // discharges out of it — every other node is interior however its links are
+    // oriented. FV belongs on this side with DW: sending it down the branch
+    // below wrote SAVE OUTFLOWS for a different set of nodes than the run
+    // actually discharged through.
+    if (ctx.options.routing_model == RoutingModel::DYNWAVE ||
+        ctx.options.routing_model == RoutingModel::FV) {
         return ctx.nodes.type[ui] == NodeType::OUTFALL;
     }
 
-    // For other routing methods, outlets are nodes with no outflow links
+    // KINWAVE / STEADY route downhill only, so an outlet is a node with no
+    // outflow links.
     return ctx.nodes.degree[ui] == 0;
 }
 

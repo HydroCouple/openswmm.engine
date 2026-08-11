@@ -16,8 +16,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
+from ._geometry import CrossSection
 from ._nodes import Node
 from ._solver import Solver
+from ._xsect import XSectionGeometry
 
 
 _Key = Union[int, str]
@@ -41,6 +43,8 @@ class XSection:
     g3: float
     g4: float
     def as_tuple(self) -> Tuple[XSectShape, float, float, float, float]: ...
+    def info(self) -> CrossSection: ...
+    def geometry(self) -> XSectionGeometry: ...
     def __iter__(self) -> Iterator[Any]: ...
 
 
@@ -147,6 +151,7 @@ class Links:
     # Identity lookups
     def get_index(self, link_id: str) -> int: ...
     def get_id(self, idx: int) -> str: ...
+    def get_xsect_info(self, key: _Key) -> CrossSection: ...
 
     # Editing (bumps generation)
     def add(self, link_id: str, link_type: LinkType) -> Link: ...

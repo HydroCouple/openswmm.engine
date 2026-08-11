@@ -48,7 +48,12 @@ Helper return types
 ===================
 
 * :class:`ImpactEntry` — one row in the report of "what this change
-  would affect": kind, id, description.
+  would affect": kind, id, description.  Its ``obj_type_name`` covers
+  all 22 referenceable object categories (node, link, subcatchment,
+  gage, table, transect, inlet_usage, ext_inflow, dwf_inflow,
+  rdii_assign, treatment, lid_usage, snowpack, hydrograph, pollutant,
+  pattern, aquifer, lid_control, street, inlet_design, landuse, and
+  control_rule).
 * :class:`ConversionResult` — outcome of a type conversion: success,
   warnings, fields that had to be defaulted.
 
@@ -112,6 +117,25 @@ Impact analysis  (read-only — no mutation)
      - Same, for a table / curve.
    * - :meth:`analyze_transect_impact(idx)`
      - Same, for a transect.
+   * - :meth:`analyze_pollutant_impact(id_or_idx)`
+     - Same, for a pollutant (per-pollutant matrices are re-packed on
+       deletion).
+   * - :meth:`analyze_pattern_impact(id_or_idx)`
+     - Same, for a time pattern.
+   * - :meth:`analyze_aquifer_impact(id_or_idx)`
+     - Same, for an aquifer (referencing subcatchments).
+   * - :meth:`analyze_snowpack_impact(id_or_idx)`
+     - Same, for a snowpack (referencing subcatchments).
+   * - :meth:`analyze_lid_impact(id_or_idx)`
+     - Same, for a LID control (referencing LID-usage rows).
+   * - :meth:`analyze_street_impact(id_or_idx)`
+     - Same, for a street (referencing inlet-usage rows).
+   * - :meth:`analyze_inlet_impact(id_or_idx)`
+     - Same, for an inlet design (referencing inlet-usage rows).
+   * - :meth:`analyze_landuse_impact(id_or_idx)`
+     - Same, for a land use.
+   * - :meth:`analyze_hydrograph_impact(uh_name)`
+     - Same, for a unit-hydrograph group (keyed by name).
 
 Deletion
 --------
@@ -135,6 +159,26 @@ Deletion
      - Same, for a table / curve.
    * - :meth:`delete_transect(idx)`
      - Same, for a transect.
+   * - :meth:`delete_pollutant(id_or_idx)`
+     - Delete a pollutant and re-pack every per-pollutant matrix.
+   * - :meth:`delete_pattern(id_or_idx)`
+     - Delete a time pattern and clear all name-based references.
+   * - :meth:`delete_aquifer(id_or_idx)`
+     - Delete an aquifer; referencing subcatchments lose their
+       groundwater.
+   * - :meth:`delete_snowpack(id_or_idx)`
+     - Delete a snowpack; clear referencing subcatchments and renumber.
+   * - :meth:`delete_lid(id_or_idx)`
+     - Delete a LID control; cascade-delete referencing LID-usage rows.
+   * - :meth:`delete_street(id_or_idx)`
+     - Delete a street; cascade-delete referencing inlet-usage rows.
+   * - :meth:`delete_inlet(id_or_idx)`
+     - Delete an inlet design; cascade-delete referencing inlet-usage
+       rows.
+   * - :meth:`delete_landuse(id_or_idx)`
+     - Delete a land use; re-pack buildup/washoff and coverage columns.
+   * - :meth:`delete_hydrograph(uh_name)`
+     - Delete a unit-hydrograph group (keyed by name).
 
 Type conversion
 ---------------

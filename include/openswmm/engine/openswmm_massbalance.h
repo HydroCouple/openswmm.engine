@@ -68,10 +68,11 @@ typedef enum SWMM_RoutingTotal {
                                        *   lateral inflow volume (i.e. flow
                                        *   injected via
                                        *   `swmm_node_set_lateral_inflow` or
-                                       *   transient ForcingData). Distinct
-                                       *   from `SWMM_ROUTING_EXTERNAL`, which
-                                       *   only counts INP `[INFLOWS]`-derived
-                                       *   inflow. */
+                                       *   transient ForcingData). A subset of
+                                       *   `SWMM_ROUTING_EXTERNAL`, which also
+                                       *   counts INP `[INFLOWS]`-derived,
+                                       *   interface-file, and 2D-coupling
+                                       *   inflow (issue #113). */
 } SWMM_RoutingTotal;
 
 /**

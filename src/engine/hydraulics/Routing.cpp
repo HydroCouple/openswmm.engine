@@ -10,7 +10,11 @@
  */
 
 #include "Routing.hpp"
+#include "fv/ExplicitFvSolver.hpp"
+#include "fv/NetworkMeshBuilder.hpp"
+#include "fv/NetworkSolverFactory.hpp"
 #include "../core/Constants.hpp"
+#include "../core/ErrorCodes.hpp"
 #include "../core/UnitConversion.hpp"
 #include "Outfall.hpp"
 #include "Divider.hpp"
@@ -275,6 +279,10 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
         }
+        case RouteModel::FV: {
+            initFv(ctx);
+            break;
+        }
         case RouteModel::STEADY: {
             // Build topological link order (same as KW — upstream → downstream)
             int n_sorted = toposort::sortLinks(ctx.links.node1.data(),
@@ -387,6 +395,10 @@ int Router::step(SimulationContext& ctx, double dt,
             iters = dw_solver_.execute(ctx, dt, non_conduit_fn);
             break;
 
+        case RouteModel::FV:
+            iters = stepFv(ctx, dt, non_conduit_fn);
+            break;
+
         case RouteModel::STEADY:
             iters = executeSteadyFlow(ctx, dt);
             break;
@@ -409,6 +421,19 @@ double Router::getAdaptiveStep(SimulationContext& ctx,
                                 double fixed_step, double courant) {
     if (model_ == RouteModel::DYNWAVE) {
         return dw_solver_.getRoutingStep(ctx, fixed_step, courant);
+    }
+    if (model_ == RouteModel::FV && fv_solver_) {
+        // The FV solver substeps internally at its own CFL limit, so the
+        // ROUTING step is only the reporting/forcing cadence — there is no
+        // stability reason to shrink it. Publishing the substep census as the
+        // suggestion anyway lets VARIABLE_STEP models see the same signal DW
+        // gives them, and keeps a routing step from spanning so many substeps
+        // that structure flows (held constant across them, D-FV3) go stale.
+        const double sug = fv_solver_->suggested_step();
+        if (courant > 0.0 && sug > 0.0) {
+            const double cap = std::max(fixed_step * courant, sug);
+            return std::min(fixed_step, cap);
+        }
     }
     return fixed_step;
 }
@@ -575,10 +600,15 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                 seep_loss = CD.seep_rate[ucr] * width * length;
             }
 
-            // Limit total to available volume (DW) or flow (other models)
+            // Limit the total to what is actually there. A volume-tracking
+            // solver caps on the water it holds; KINWAVE/STEADY have no conduit
+            // volume state of their own and cap on the flow instead. FV holds
+            // volume, so capping it on |flow| meant standing water in a conduit
+            // with no flow never evaporated at all.
             double total = evap_loss + seep_loss;
             if (total > 0.0) {
-                double q_avail = (model_ == RouteModel::DYNWAVE)
+                double q_avail = (model_ == RouteModel::DYNWAVE ||
+                                  model_ == RouteModel::FV)
                     ? links.volume[uj] / dt
                     : std::fabs(links.flow[uj]);
                 if (total > q_avail && q_avail >= 0.0) {
@@ -753,6 +783,558 @@ void Router::updateLinkStates(SimulationContext& ctx) {
                        ctx.nodes.depth.data(),
                        ctx.nodes.head.data(),
                        ctx.n_nodes());
+}
+
+// ============================================================================
+// Explicit finite-volume routing (FLOW_ROUTING FV)
+// ============================================================================
+
+/**
+ * @brief Build the FV mesh, pick a backend and seed the solver state.
+ *
+ * Called from Router::init AFTER the Courant-lengthening block has written
+ * mod_length/rough_factor: the mesh reuses that lengthening as its Δx floor and
+ * the friction closure as its rough_factor, so the two must already agree.
+ */
+void Router::initFv(SimulationContext& ctx) {
+    fv_warnings_.clear();
+    fv_errors_.clear();
+
+    // FV_* keys are entered in project display units; convert to internal feet
+    // here, the same treatment HEAD_TOLERANCE gets in the DYNWAVE arm above.
+    const double ucf_len = ucf::Ucf[ucf::LENGTH][
+        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+    fv_opts_ = ctx.options.fv;
+    fv_opts_.cell_length   = ctx.options.fv.cell_length   / ucf_len;
+    fv_opts_.slot_celerity = ctx.options.fv.slot_celerity / ucf_len;
+    fv_opts_.dispersion    = ctx.options.fv.dispersion    / (ucf_len * ucf_len);
+
+    // Options that are parsed and stored but reach nothing. Saying so at open
+    // is the whole point: a model calibrated with FV_DISPERSION set would
+    // otherwise run as if the value had been honoured.
+    if (ctx.options.fv.dispersion != 0.0)
+        fv_warnings_.push_back(format_warning(WARN_FV_OPTION_INERT,
+                                              "FV_DISPERSION"));
+    if (ctx.options.fv.scalar_scheme != fv::ScalarScheme::MUSCL)
+        fv_warnings_.push_back(format_warning(WARN_FV_OPTION_INERT,
+                                              "FV_SCALAR_SCHEME"));
+
+    // Dynamic wave options that carry no meaning for an explicit solver. FV
+    // takes one step rather than iterating, resolves transcritical flow
+    // natively, and picks its own substep from the Courant limit.
+    if (ctx.options.inertial_damping != 1)
+        fv_warnings_.push_back(format_warning(WARN_DW_OPTION_UNDER_FV,
+                                              "INERTIAL_DAMPING"));
+    if (ctx.options.surcharge_method != 0)
+        fv_warnings_.push_back(format_warning(WARN_DW_OPTION_UNDER_FV,
+                                              "SURCHARGE_METHOD"));
+    if (ctx.options.normal_flow_ltd != 2)
+        fv_warnings_.push_back(format_warning(WARN_DW_OPTION_UNDER_FV,
+                                              "NORMAL_FLOW_LIMITED"));
+
+    const fv::MeshBuildReport rep =
+        fv::buildNetworkMesh(ctx, fv_opts_, fv_mesh_);
+    fv_warnings_.insert(fv_warnings_.end(), rep.warnings.begin(),
+                        rep.warnings.end());
+    fv_errors_   = rep.errors;
+    if (!rep.errors.empty()) return;
+
+    const int nc = fv_mesh_.n_cells();
+    const int nn = fv_mesh_.n_nodes();
+    fv_state_.resize(nc, nn, 0);
+
+    // Seed cell state from the model's initial condition. LinkData carries ONE
+    // depth per conduit, and that depth is the average of the two end-node
+    // DEPTHS — which are measured from different inverts. Laying it down as a
+    // uniform depth is therefore only the right projection on a level bed; over
+    // a sloping one a uniform depth IS a sloping free surface, which is not at
+    // rest, and over a shoreline it is worse than that.
+    //
+    // On the SWASHES emerged lake-at-rest (a 0.1 m lake split by a bank rising
+    // to 0.15 m) the ramp conduit averages the wet bank's 0.1 with the dry
+    // crest's 0 and lays 0.05 over a mid-bed of 0.075: a surface at 0.125, i.e.
+    // 25 mm of water perched on dry ground. It slumps, and because that pool has
+    // no outlet the excess never leaves — the lake settles at 0.102747 m against
+    // an analytic 0.1, which is (0.8 + 0.009 + 0.05 + 0.075)/9.09 to six
+    // figures. The whole error, and it is an initial condition, not a scheme:
+    // the pool it produces is flat and well balanced, just at the wrong height.
+    //
+    // So where one bank is DRY, project the free SURFACE instead: a dry node
+    // reports depth 0 and therefore defines no surface at all, so there is
+    // nothing to average — the wet end carries its surface across and each cell
+    // takes the depth that leaves over its own bed.
+    //
+    // Only where one bank is dry. With both ends wet the link's depth is an
+    // average of two real surfaces, and which projection is right depends on a
+    // regime the deck does not state: an at-rest pool wants a level surface, a
+    // channel at normal depth wants a uniform depth parallel to the bed, and a
+    // pressurized main wants a linear HGL. Overriding that case is not a fix but
+    // a different guess — measured, it starts a 30.09 cfs transient in a force
+    // main whose steady flow is the 25 cfs being pumped in. So it is left alone.
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const int begin = fv_mesh_.conduit_cell_begin[ur];
+        const int count = fv_mesh_.conduit_cell_count[ur];
+        if (begin < 0) continue;
+        const int j = fv_mesh_.conduit_link[ur];
+        const auto uj = static_cast<std::size_t>(j);
+        const fv::FvGeometry& g = fv_mesh_.geom[ur];
+        // areaOfDepth already returns the AGGREGATE section of all barrels, and
+        // links.flow is the aggregate discharge, so neither is divided here.
+        const double q = ctx.links.flow[uj];
+
+        // Surface at each end, where that end has water to define one.
+        auto bank_eta = [&](int nd, double& eta) {
+            if (nd < 0) return false;
+            const auto und = static_cast<std::size_t>(nd);
+            if (ctx.nodes.depth[und] <= 0.0) return false;
+            eta = ctx.nodes.invert_elev[und] + ctx.nodes.depth[und];
+            return true;
+        };
+        double eta1 = 0.0, eta2 = 0.0;
+        const bool wet1 = bank_eta(ctx.links.node1[uj], eta1);
+        const bool wet2 = bank_eta(ctx.links.node2[uj], eta2);
+        // ...and only across a BED STEP. Two depths measured from the same
+        // invert average to something meaningful; two measured from different
+        // inverts do not, and only the latter can perch water on a dry bank. On
+        // a level conduit the average is not merely harmless but right: it is
+        // the cell mean of a discontinuity, which is what a dam break puts
+        // there. Overriding it moves Ritter's dam half a cell downstream and
+        // costs 4 % of the L1 depth error (0.0522 -> 0.0544).
+        const bool step = (fv_mesh_.cell_dzdx[static_cast<std::size_t>(begin)]
+                           != 0.0);
+        const bool shoreline = (wet1 != wet2) && step;
+        const double eta_wet = wet1 ? eta1 : eta2;
+
+        const double uniform =
+            fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
+
+        double vol = 0.0, a_len = 0.0, sum_len = 0.0;
+        for (int c = begin; c < begin + count; ++c) {
+            const auto uc = static_cast<std::size_t>(c);
+            double a_c = uniform;
+            if (shoreline) {
+                a_c = fv::kernels::areaOfDepth(
+                    g, std::max(0.0, eta_wet - fv_mesh_.cell_zb[uc]));
+            }
+            fv_state_.cell_a[uc] = a_c;
+            // A cell the projection leaves dry carries no discharge either:
+            // keeping q on it would divide by the area floor on the first
+            // refresh and launch a velocity that was never in the model.
+            fv_state_.cell_q[uc] = (a_c > fv::kernels::kDryArea) ? q : 0.0;
+
+            const double dx = fv_mesh_.cell_dx[uc];
+            sum_len += dx;
+            a_len   += a_c * dx;
+            vol     += a_c * dx;
+        }
+
+        // Publish what was actually seeded, by the same reduction publishFv
+        // uses. initMassBalance books the run's initial storage from
+        // links.volume AFTER this returns, so without it the ledger opens on the
+        // DW-shaped volume while the solver integrates the projected one, and
+        // the difference is reported as water lost during the run: on the
+        // emerged lake-at-rest that is the dry ramp cells, 688 ft^3 = 0.016
+        // acre-feet, reported as a 17 % continuity error on a model where
+        // nothing moves and nothing leaves.
+        if (sum_len > 0.0) {
+            ctx.links.volume[uj] = vol;
+            ctx.links.depth[uj]  =
+                fv::kernels::depthOfArea(g, a_len / sum_len);
+        }
+    }
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        fv_state_.node_head[un] = ctx.nodes.invert_elev[un] + ctx.nodes.depth[un];
+    }
+
+    fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc);
+
+    // The per-substep refresh is a callback into HydStructures, which a device
+    // backend cannot reach. Say so rather than letting the option go quiet.
+    if (fv_opts_.structure_coupling == fv::StructureCoupling::SUBSTEP &&
+        !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
+        fv_opts_.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
+        fv_warnings_.push_back(format_warning(
+            WARN_FV_OPTION_INERT,
+            "FV_STRUCTURE_COUPLING SUBSTEP on the '" + fv_backend_ +
+                "' backend, which cannot call the structure equations; "
+                "clamped to ROUTING_STEP"));
+    }
+    fv_solver_->initialize(fv_mesh_, fv_state_, fv_opts_);
+
+    fv_lateral_.assign(static_cast<std::size_t>(nn), 0.0);
+    fv_fixed_head_.assign(static_cast<std::size_t>(nn),
+                          std::numeric_limits<double>::quiet_NaN());
+    fv_struct_flow_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
+    fv_cond_loss_.assign(static_cast<std::size_t>(fv_mesh_.n_conduits()), 0.0);
+    fv_struct_int_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
+}
+
+/**
+ * @brief One FV routing step: assemble forcing, advance, publish.
+ *
+ * Structure equations are evaluated here, against the current node heads, and
+ * under FV_STRUCTURE_COUPLING SUBSTEP (the default) re-evaluated at the top of
+ * every substep through the forcing's refresh hook. That hook is a callback
+ * into the engine, so it exists only on the CPU path: a device backend cannot
+ * reach HydStructures and clamps to ROUTING_STEP.
+ *
+ * Control RULES are not re-evaluated — they run on the engine's own rule step
+ * and are tuned for DW-scale cadence; only the head-dependent discharge of the
+ * structures they set is refreshed.
+ */
+int Router::stepFv(SimulationContext& ctx, double dt,
+                   dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
+    if (!fv_solver_) return 0;
+
+    const int nn = ctx.n_nodes();
+    const int nl = ctx.n_links();
+
+    // Lateral inflows exactly as assembled by SWMMEngine::assembleLateralInflows.
+    // Virtual junctions cannot carry them (rule 5), so they never appear here.
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        // Net of the node's own losses. `nodes.losses` carries storage
+        // evaporation and Green-Ampt exfiltration, computed by the SHARED
+        // Router::initNodeFlows — the dynamic-wave solver drains it by seeding
+        // nodes.outflow with it, and publishFv reports it as outflow, but
+        // nothing ever removed it from the FV node's water. The mass balance
+        // was charged for water the solver still held, a continuity error
+        // scaling with the number of storage units that lose.
+        fv_lateral_[un] = ctx.nodes.lat_flow[un] - ctx.nodes.losses[un];
+        // Outfalls (and anything else the engine pins) are stage boundaries:
+        // setAllOutfallDepths has already written the head for this step.
+        fv_fixed_head_[un] =
+            (ctx.nodes.type[un] == NodeType::OUTFALL)
+                ? ctx.nodes.invert_elev[un] + ctx.nodes.depth[un]
+                : std::numeric_limits<double>::quiet_NaN();
+    }
+
+    // Non-conduit structures, evaluated against the CURRENT node heads.
+    auto evaluate_structures = [&]() {
+        if (non_conduit_fn) non_conduit_fn(ctx, dt, 0);
+        for (int j = 0; j < nl; ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            fv_struct_flow_[uj] = (ctx.links.type[uj] == LinkType::CONDUIT)
+                                      ? 0.0 : ctx.links.flow[uj];
+        }
+    };
+    std::fill(fv_struct_int_.begin(), fv_struct_int_.end(), 0.0);
+    fv_struct_t_prev_ = 0.0;
+    evaluate_structures();
+
+    // Distributed conduit losses as a rate per unit length (ft²/s): the solver
+    // subtracts them from the cell AREA, so the per-barrel volumetric rate has
+    // to be divided by the conduit's meshed length.
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const auto& CD = ctx.link_subtypes.conduits;
+        const int begin = fv_mesh_.conduit_cell_begin[ur];
+        if (begin < 0) { fv_cond_loss_[ur] = 0.0; continue; }
+        // computeConduitLosses returns the rate for ONE barrel while the cell
+        // carries the aggregate section, so the loss is charged for all of
+        // them — which is also what the mass balance books
+        // (SWMMEngine.cpp:3270, rate x barrels). Dividing by the count instead
+        // made a two-barrel conduit shed a quarter of its seepage.
+        const double rate = (CD.evap_loss_rate[ur] + CD.seep_loss_rate[ur]) *
+                            static_cast<double>(std::max(1, CD.barrels[ur]));
+        const double len  = fv_mesh_.cell_dx[static_cast<std::size_t>(begin)] *
+                            static_cast<double>(fv_mesh_.conduit_cell_count[ur]);
+        fv_cond_loss_[ur] = (len > 0.0) ? rate / len : 0.0;
+    }
+
+    fv::FvStepForcing forcing;
+    forcing.node_lateral    = fv_lateral_.data();
+    forcing.node_fixed_head = fv_fixed_head_.data();
+    forcing.structure_flow  = fv_struct_flow_.data();
+    forcing.conduit_loss    = fv_cond_loss_.data();
+    forcing.n_nodes = nn;
+    forcing.n_links = nl;
+
+    // Per-substep refresh (FV_STRUCTURE_COUPLING SUBSTEP). The structures read
+    // ctx.nodes.head, which the solver has not published mid-advance, so the
+    // hook publishes the heads it is holding, re-runs the SAME shared code the
+    // dynamic wave solver calls — setAllOutfallDepths for the stage boundaries
+    // and the non-conduit callback for the structures — and refills the two
+    // forcing arrays in place.
+    struct RefreshCtx {
+        Router*            self;
+        SimulationContext* ctx;
+        const std::function<void()>* eval;
+    };
+    std::function<void()> eval_fn = evaluate_structures;
+    RefreshCtx rctx{this, &ctx, &eval_fn};
+    if (fv_opts_.structure_coupling == fv::StructureCoupling::SUBSTEP) {
+        forcing.refresh_user = &rctx;
+        forcing.refresh = [](void* user, double t_elapsed) {
+            auto* r = static_cast<RefreshCtx*>(user);
+            r->self->refreshFvBoundaryFlows(*r->ctx, t_elapsed, *r->eval);
+        };
+    }
+
+    fv_solver_->advance(0.0, dt, forcing);
+    publishFv(ctx, dt);
+    return static_cast<int>(fv_solver_->last_num_steps());
+}
+
+// ============================================================================
+// accumulateStructureFlows — time-weighted structure discharge
+// ============================================================================
+
+void Router::accumulateStructureFlows(const SimulationContext& ctx, double t_now) {
+    const double span = t_now - fv_struct_t_prev_;
+    if (span <= 0.0) return;
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        fv_struct_int_[uj] += fv_struct_flow_[uj] * span;
+    }
+    fv_struct_t_prev_ = t_now;
+}
+
+// ============================================================================
+// refreshFvBoundaryFlows — mid-advance re-evaluation of head-dependent forcing
+// ============================================================================
+
+void Router::refreshFvBoundaryFlows(SimulationContext& ctx, double t_elapsed,
+                                    const std::function<void()>& eval_structures) {
+    auto* impl = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    if (!impl) return;
+
+    // Bank the discharge that has been in force since the last refresh, before
+    // replacing it. The solver applied exactly this over exactly this span.
+    accumulateStructureFlows(ctx, t_elapsed);
+
+    // Publish the heads the solver is holding so the structure equations and
+    // the outfall stage relations see the state they are being asked about.
+    // Depth and head only — this is not publishFv: flows, volumes and the node
+    // ledger belong to the end of the step.
+    const int nn = ctx.n_nodes();
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (fv_mesh_.node_kind[un] == fv::kNodeVirtual) continue;
+        const double depth = fv_state_.node_head[un] - fv_mesh_.node_invert[un];
+        ctx.nodes.depth[un] = std::max(0.0, depth);
+        ctx.nodes.head[un]  = fv_state_.node_head[un];
+    }
+
+    // Stage boundaries first — a FREE or NORMAL outfall's depth is a function
+    // of the conduit that feeds it, so it moves within the step exactly as the
+    // structures do.
+    outfall::setAllOutfallDepths(ctx, ctx.current_date);
+    for (int n = 0; n < nn; ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (ctx.nodes.type[un] != NodeType::OUTFALL) continue;
+        fv_fixed_head_[un] = ctx.nodes.invert_elev[un] + ctx.nodes.depth[un];
+    }
+
+    eval_structures();
+}
+
+/**
+ * @brief Map cell/node state back onto the per-link and per-node reporting
+ *        contracts (plan §4.3).
+ *
+ * Link flow is the length-weighted MEAN over the routing step, not an
+ * end-of-step snapshot: a routing step can span hundreds of substeps and the
+ * snapshot aliases badly against them. Depth and volume are instantaneous,
+ * matching what DW reports.
+ */
+void Router::publishFv(SimulationContext& ctx, double dt) {
+    auto* impl = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+
+    // ---- links ------------------------------------------------------------
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const int begin = fv_mesh_.conduit_cell_begin[ur];
+        const int count = fv_mesh_.conduit_cell_count[ur];
+        if (begin < 0 || count <= 0) continue;
+        const int j = fv_mesh_.conduit_link[ur];
+        const auto uj = static_cast<std::size_t>(j);
+        const fv::FvGeometry& g = fv_mesh_.geom[ur];
+        // Cell area and discharge are ALREADY the aggregate of all barrels
+        // (FvGeometry::barrel_scale), so nothing here is scaled by the count.
+        double sum_len = 0.0, q_len = 0.0, a_len = 0.0, vol = 0.0;
+        for (int c = begin; c < begin + count; ++c) {
+            const auto uc = static_cast<std::size_t>(c);
+            const double dx = fv_mesh_.cell_dx[uc];
+            const double q = (impl && dt > 0.0)
+                                 ? impl->cell_flow_integral()[uc] / dt
+                                 : fv_state_.cell_q[uc];
+            sum_len += dx;
+            q_len   += q * dx;
+            a_len   += fv_state_.cell_a[uc] * dx;
+            vol     += fv_state_.cell_a[uc] * dx;
+        }
+        const double q_mean = (sum_len > 0.0) ? q_len / sum_len : 0.0;
+        const double a_mean = (sum_len > 0.0) ? a_len / sum_len : 0.0;
+
+        ctx.links.flow[uj]   = q_mean;
+        ctx.links.depth[uj]  = fv::kernels::depthOfArea(g, a_mean);
+        // Inlet control was applied inside the solver, at the culvert's
+        // upstream face; only the report flag comes back out here.
+        if (impl) {
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            if (cr >= 0)
+                ctx.link_subtypes.conduits.inlet_control[
+                    static_cast<std::size_t>(cr)] = impl->inlet_control()[ur];
+        }
+        ctx.links.volume[uj] = vol;
+        const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;
+        const double hyd_depth =
+            (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)
+                ? a_mean / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
+                : 0.0;
+        ctx.links.froude[uj] =
+            (hyd_depth > 0.0)
+                ? std::fabs(v) * constants::INV_SQRT_GRAVITY / std::sqrt(hyd_depth)
+                : 0.0;
+
+        // Flow class and the end-full flags. Neither was ever written under FV,
+        // so the Flow Classification Summary read 100 % dry on every model and
+        // the Conduit Surcharge Summary was permanently empty — both plausible
+        // and both wrong.
+        //
+        // The classes FV can honestly report are the dry ones and the
+        // sub/supercritical split, read from the cells themselves. UP_CRITICAL
+        // and DN_CRITICAL are DW's END-CONDITION patches: FV imposes no
+        // critical-depth boundary because the Riemann solver resolves the
+        // transition natively, so those columns stay zero — that is the scheme
+        // reporting what it does, not a gap.
+        const auto uc_first = static_cast<std::size_t>(begin);
+        const auto uc_last  = static_cast<std::size_t>(begin + count - 1);
+        const bool up_dry = fv_state_.cell_h[uc_first] <= fv::kernels::kDryDepth;
+        const bool dn_dry = fv_state_.cell_h[uc_last]  <= fv::kernels::kDryDepth;
+        FlowClass fc;
+        if (up_dry && dn_dry)   fc = FlowClass::DRY;
+        else if (up_dry)        fc = FlowClass::UP_DRY;
+        else if (dn_dry)        fc = FlowClass::DN_DRY;
+        else fc = (ctx.links.froude[uj] > 1.0) ? FlowClass::SUPERCRITICAL
+                                               : FlowClass::SUBCRITICAL;
+        ctx.links.flow_class[uj] = fc;
+
+        const int cr_fs = ctx.link_subtypes.conduit_row(j);
+        if (cr_fs >= 0) {
+            const double yf = g.y_full;
+            const int8_t fs = static_cast<int8_t>(
+                ((fv_state_.cell_h[uc_first] >= yf) ? 1 : 0) |
+                ((fv_state_.cell_h[uc_last]  >= yf) ? 2 : 0));
+            ctx.link_subtypes.conduits.full_state[
+                static_cast<std::size_t>(cr_fs)] = fs;
+        }
+    }
+
+    // ---- nodes ------------------------------------------------------------
+    for (int n = 0; n < ctx.n_nodes(); ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (fv_mesh_.node_kind[un] == fv::kNodeVirtual) {
+            // A virtual junction has no volume of its own — its faces became
+            // interior faces. Report the shared face state so the node still
+            // has a sensible head in the .out file.
+            continue;
+        }
+        const double depth = fv_state_.node_head[un] - fv_mesh_.node_invert[un];
+        ctx.nodes.depth[un] = std::max(0.0, depth);
+        ctx.nodes.head[un]  = fv_state_.node_head[un];
+        // Volume through the ENGINE's own storage relation, not the solver's
+        // flattened table, so the reported mass balance stays on one authority.
+        //
+        // ABOVE THE RIM that relation stops describing the node, and DW writes
+        // the volume directly there rather than deriving it from depth
+        // (getFloodedDepth). FV must do the same or the mass balance misreads
+        // the node: the flooding term is only booked while volume <=
+        // full_volume, so a surcharged junction whose linear getVolume kept
+        // climbing had its flooding silently dropped, and a ponded junction
+        // whose retained water was reported as MIN_SURFAREA x depth lost the
+        // pond from Final Stored Volume. Both showed up as tens of percent of
+        // routing continuity error.
+        const double full_d = fv_mesh_.node_full_depth[un];
+        if (full_d > 0.0 && ctx.nodes.depth[un] > full_d) {
+            ctx.nodes.volume[un] =
+                fv_mesh_.node_can_pond[un]
+                    ? std::max(fv_state_.node_volume[un], ctx.nodes.full_volume[un])
+                    : ctx.nodes.full_volume[un];
+        } else {
+            ctx.nodes.volume[un] = node::getVolume(ctx.nodes, n, ctx.nodes.depth[un],
+                                                   &ctx.tables, us, &ctx.node_subtypes);
+        }
+        if (impl && dt > 0.0)
+            ctx.nodes.overflow[un] = impl->node_flood_volume()[un] / dt;
+
+        // SWMM's node ledger keeps inflow and outflow as separate MAGNITUDES,
+        // not a net figure — the mass balance books an outfall's system
+        // discharge from `inflow` alone (SWMMEngine's node_getSystemOutflow
+        // port), so publishing only the net would make every outfall discharge
+        // vanish and drive routing continuity to ~100 %.
+        //
+        // The magnitudes come from the solver's accumulated BOUNDARY FLUXES,
+        // not from the published mean link flow: the face flux at the node is
+        // the water that actually crossed into it, which is what continuity
+        // has to balance.
+        if (impl && dt > 0.0) {
+            const double lat = ctx.nodes.lat_flow[un];
+            ctx.nodes.inflow[un]  = impl->node_inflow_volume()[un] / dt +
+                                    ((lat > 0.0) ? lat : 0.0);
+            ctx.nodes.outflow[un] = impl->node_outflow_volume()[un] / dt +
+                                    ((lat < 0.0) ? -lat : 0.0) +
+                                    ctx.nodes.losses[un];
+        }
+    }
+
+    // Structure discharge is the routing-step MEAN, for the same reason link
+    // flow is: under per-substep coupling the discharge moves within the step,
+    // and the solver applied that whole trajectory. Publishing the last
+    // substep's sample instead reported a number the mass balance never saw —
+    // and it aliased badly, a weir peaking at 12.1 / 14.3 / 7.4 cfs as the mesh
+    // refined while the pump and orifice converged smoothly.
+    if (dt > 0.0) {
+        const_cast<Router*>(this)->accumulateStructureFlows(ctx, dt);
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+            ctx.links.flow[uj] = fv_struct_int_[uj] / dt;
+        }
+    }
+
+    // Non-conduit structures move water between node ledgers exactly as they do
+    // under DW (DynamicWave.cpp:2723-2727): positive flow leaves node1 and
+    // arrives at node2.
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        const int n1 = ctx.links.node1[uj];
+        const int n2 = ctx.links.node2[uj];
+        if (n1 < 0 || n2 < 0) continue;
+        const double q = ctx.links.flow[uj];
+        const auto u1 = static_cast<std::size_t>(n1);
+        const auto u2 = static_cast<std::size_t>(n2);
+        if (q > 0.0) { ctx.nodes.outflow[u1] += q;  ctx.nodes.inflow[u2]  += q; }
+        else         { ctx.nodes.inflow[u1]  -= q;  ctx.nodes.outflow[u2] -= q; }
+    }
+
+    // Virtual junctions take the head of the cell on either side of their
+    // spliced face, which is what "the shared face state" means for reporting.
+    for (int f = 0; f < fv_mesh_.n_faces(); ++f) {
+        const auto uf = static_cast<std::size_t>(f);
+        if (!fv_mesh_.face_virtual[uf]) continue;
+        const int cl = fv_mesh_.face_cl[uf];
+        if (cl < 0) continue;
+        const auto ucl = static_cast<std::size_t>(cl);
+        // Find the virtual node this face replaced by matching its invert.
+        for (int n = 0; n < ctx.n_nodes(); ++n) {
+            const auto un = static_cast<std::size_t>(n);
+            if (fv_mesh_.node_kind[un] != fv::kNodeVirtual) continue;
+            if (std::fabs(fv_mesh_.node_invert[un] - fv_mesh_.face_zb[uf]) > 1.0e-9)
+                continue;
+            const double eta = fv_mesh_.cell_zb[ucl] + fv_state_.cell_h[ucl];
+            ctx.nodes.head[un]  = eta;
+            ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
+            ctx.nodes.volume[un] = 0.0;   // zero-storage by construction
+            break;
+        }
+    }
 }
 
 } // namespace openswmm

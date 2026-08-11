@@ -11,11 +11,11 @@ computation in USE mode (that integration is tracked as a follow-up).
 from __future__ import annotations
 
 import os
-import pytest
+import unittest
 
 from openswmm.engine import EngineState, Solver
 
-from tests.engine.conftest import SITE_DRAINAGE_INP
+from tests._paths import SITE_DRAINAGE_INP, artifact_dir
 
 
 def _drive_to_end(solver):
@@ -30,14 +30,15 @@ def _drive_to_end(solver):
 # ---------------------------------------------------------------------------
 
 
-class TestRunoffInterfaceSaveMode:
+class TestRunoffInterfaceSaveMode(unittest.TestCase):
     """SAVE mode is the headline path — open the file, run the
     simulation, the engine auto-emits records, close the file."""
 
-    def test_save_mode_writes_a_non_trivial_file(self, tmp_path):
-        rpt = str(tmp_path / "rfi_save.rpt")
-        out = str(tmp_path / "rfi_save.out")
-        rfi = str(tmp_path / "phase1b.rfi")
+    def test_save_mode_writes_a_non_trivial_file(self):
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "rfi_save.rpt")
+        out = os.path.join(d, "rfi_save.out")
+        rfi = os.path.join(d, "phase1b.rfi")
 
         s = Solver(SITE_DRAINAGE_INP, rpt, out)
         try:
@@ -56,14 +57,16 @@ class TestRunoffInterfaceSaveMode:
             s.destroy()
 
         # File must exist and be larger than the 28-byte header.
-        assert os.path.exists(rfi)
-        assert os.path.getsize(rfi) > 28, (
+        self.assertTrue(os.path.exists(rfi))
+        self.assertGreater(
+            os.path.getsize(rfi), 28,
             "Expected at least one substep record beyond the header")
 
-    def test_save_then_read_round_trip(self, tmp_path):
-        rpt = str(tmp_path / "rfi_rt.rpt")
-        out = str(tmp_path / "rfi_rt.out")
-        rfi = str(tmp_path / "phase1b_rt.rfi")
+    def test_save_then_read_round_trip(self):
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "rfi_rt.rpt")
+        out = os.path.join(d, "rfi_rt.out")
+        rfi = os.path.join(d, "phase1b_rt.rfi")
 
         # Phase 1: SAVE mode — drive the simulation and write the file.
         s = Solver(SITE_DRAINAGE_INP, rpt, out)
@@ -99,7 +102,7 @@ class TestRunoffInterfaceSaveMode:
                     break
                 records += 1
             else:
-                pytest.fail("read_runoff_step appears to loop past EOF")
+                self.fail("read_runoff_step appears to loop past EOF")
             s2.close_runoff_interface()
             s2.end()
         finally:
@@ -109,7 +112,7 @@ class TestRunoffInterfaceSaveMode:
                 pass
             s2.destroy()
 
-        assert records > 0
+        self.assertGreater(records, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -117,12 +120,13 @@ class TestRunoffInterfaceSaveMode:
 # ---------------------------------------------------------------------------
 
 
-class TestRunoffInterfaceContracts:
+class TestRunoffInterfaceContracts(unittest.TestCase):
     """Lifecycle + idempotency contracts that don't require a full run."""
 
-    def test_close_is_idempotent(self, tmp_path):
-        rpt = str(tmp_path / "rfi_close.rpt")
-        out = str(tmp_path / "rfi_close.out")
+    def test_close_is_idempotent(self):
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "rfi_close.rpt")
+        out = os.path.join(d, "rfi_close.out")
         s = Solver(SITE_DRAINAGE_INP, rpt, out)
         try:
             s.open()
@@ -137,15 +141,16 @@ class TestRunoffInterfaceContracts:
                 pass
             s.destroy()
 
-    def test_read_step_returns_false_when_no_file_open(self, tmp_path):
-        rpt = str(tmp_path / "rfi_nofile.rpt")
-        out = str(tmp_path / "rfi_nofile.out")
+    def test_read_step_returns_false_when_no_file_open(self):
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "rfi_nofile.rpt")
+        out = os.path.join(d, "rfi_nofile.out")
         s = Solver(SITE_DRAINAGE_INP, rpt, out)
         try:
             s.open()
             s.initialize()
             # No file ever opened.
-            assert s.read_runoff_step() is False
+            self.assertIs(s.read_runoff_step(), False)
         finally:
             try:
                 s.close()
@@ -153,9 +158,10 @@ class TestRunoffInterfaceContracts:
                 pass
             s.destroy()
 
-    def test_save_step_is_noop_when_no_file_open(self, tmp_path):
-        rpt = str(tmp_path / "rfi_nosave.rpt")
-        out = str(tmp_path / "rfi_nosave.out")
+    def test_save_step_is_noop_when_no_file_open(self):
+        d = artifact_dir(self)
+        rpt = os.path.join(d, "rfi_nosave.rpt")
+        out = os.path.join(d, "rfi_nosave.out")
         s = Solver(SITE_DRAINAGE_INP, rpt, out)
         try:
             s.open()

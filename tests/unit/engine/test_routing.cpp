@@ -869,6 +869,48 @@ TEST_F(AASkipFlagTest, AADisabledNoFlags) {
     }
 }
 
+// ============================================================================
+// Semi-implicit node continuity: denominator sign regression (issue #119)
+//
+// sumdqdh is accumulated POSITIVE from the link dqdh values while the
+// physical head-flow feedback is dQ_net/dH = -sumdqdh, so the Crank-Nicolson
+// update must divide by (A + 0.5*dt*sumdqdh) — the term is implicit DAMPING.
+// A flipped sign shrinks the denominator and amplifies depth changes instead.
+// ============================================================================
+
+TEST_F(AASkipFlagTest, SemiImplicitSumdqdhDampsDepthUpdate) {
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::SEMI_IMPLICIT);
+
+    // One execute() builds the node-invariant tile setNodeDepth reads.
+    solver.execute(ctx, 10.0);
+
+    // Controlled state at interior junction J1:
+    //   dQ = inflow - outflow = 1, old_net_inflow = 1
+    //   dV = 0.5 * (1 + 1) * dt = 10 ft³   (dt = 10 s)
+    //   A  = 50 ft² (above MIN_SURFAREA), sumdqdh = 4 ft²/s
+    const double dt = 10.0;
+    ctx.nodes.old_depth[1] = 1.0;
+    ctx.nodes.depth[1] = 1.0;
+    ctx.nodes.head[1] = ctx.nodes.invert_elev[1] + 1.0;
+    ctx.nodes.inflow[1] = 1.0;
+    ctx.nodes.outflow[1] = 0.0;
+    ctx.nodes.old_net_inflow[1] = 1.0;
+    solver.nodeNewSurfAreaDataMut()[1] = 50.0;
+    solver.nodeSumDqdh(1) = 4.0;
+    solver.nodeSurchargedFlag(1) = 0;
+
+    solver.setNodeDepthForTest(ctx, 1, dt, /*step=*/0);
+
+    // dy = dV / (A + 0.5*dt*sumdqdh) = 10 / (50 + 20) = 1/7.
+    // The flipped sign would give 10 / (50 - 20) = 1/3.
+    const double expected = 1.0 + 10.0 / 70.0;
+    EXPECT_NEAR(ctx.nodes.depth[1], expected, 1e-12)
+        << "Semi-implicit denominator must be A + 0.5*dt*sumdqdh (damping)";
+    // The sumdqdh feedback must attenuate relative to the plain dV/A step.
+    EXPECT_LT(ctx.nodes.depth[1], 1.0 + 10.0 / 50.0)
+        << "sumdqdh term must damp, not amplify, the depth update";
+}
+
 TEST(DPS, DeltaAsFromDhs) {
     // Head-first form of Eq. 19: dAs = T_s · dhs, where T_s = g·A_C·P²/c_pT².
     // In the link-node solver, dhs is set by the node-depth update and dAs

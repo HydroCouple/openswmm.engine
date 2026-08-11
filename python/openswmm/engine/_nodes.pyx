@@ -50,7 +50,7 @@ import numpy as np
 cimport numpy as np
 
 from ._common cimport *
-from ._enums import NodeType, OutfallType
+from ._enums import NodeType, OutfallType, StorageShape
 from ._exceptions import ElementNotFoundError, StaleObjectError
 
 
@@ -156,6 +156,40 @@ cdef class StorageView:
         a, b, c = value
         _check(swmm_node_set_storage_functional(
             _h(self._node._solver), self._node._index, a, b, c))
+
+    @property
+    def shape(self):
+        """The surface-area relation as a :class:`StorageShape`."""
+        _check_fresh(self._node)
+        cdef int v = 0
+        _check(swmm_node_get_storage_shape(_h(self._node._solver), self._node._index, &v))
+        return StorageShape(v)
+
+    @shape.setter
+    def shape(self, value) -> None:
+        _check_fresh(self._node)
+        _check(swmm_node_set_storage_shape(
+            _h(self._node._solver), self._node._index, int(value)))
+
+    @property
+    def geometry(self) -> tuple:
+        """``(p1, p2, p3)`` raw dimensions of a geometric storage shape.
+
+        Meaning depends on the current :attr:`shape` — see
+        :class:`StorageShape`. Zeros for a non-geometric shape.
+        """
+        _check_fresh(self._node)
+        cdef double p1 = 0.0, p2 = 0.0, p3 = 0.0
+        _check(swmm_node_get_storage_geometry(
+            _h(self._node._solver), self._node._index, &p1, &p2, &p3))
+        return (p1, p2, p3)
+
+    @geometry.setter
+    def geometry(self, value) -> None:
+        _check_fresh(self._node)
+        p1, p2, p3 = value
+        _check(swmm_node_set_storage_geometry(
+            _h(self._node._solver), self._node._index, p1, p2, p3))
 
     @property
     def seep_rate(self) -> float:
@@ -391,6 +425,51 @@ cdef class Node:
         cdef int v = 0
         _check(swmm_node_get_type(_h(self._solver), self._index, &v))
         return NodeType(v)
+
+    @property
+    def is_virtual(self) -> bool:
+        """C{True} when this node is a virtual junction.
+
+        A virtual junction is a zero-storage, momentum-transmitting
+        JUNCTION-typed node connecting exactly two conduits of identical
+        cross-section (INP C{[VIRTUAL_JUNCTIONS]}; refactored engine only).
+
+        Setting to C{True} runs full validation of the usage rules (exactly
+        two conduits, identical cross-section, zero offsets, no lateral
+        inflow sources) and applies the derived-geometry contract; a violated
+        rule raises with the specific rule message. Setting to C{False}
+        always succeeds for a virtual node.
+
+        @rtype: bool
+        """
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_node_is_virtual(_h(self._solver), self._index, &v))
+        return v != 0
+
+    @is_virtual.setter
+    def is_virtual(self, value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_virtual(_h(self._solver), self._index,
+                                     1 if value else 0))
+
+    @property
+    def virtual_rule_violation(self) -> int:
+        """Dry-run check of the virtual-junction usage rules for this node.
+
+        C{0} when the node satisfies every structural rule (exactly two
+        attached conduits of identical cross-section, zero offsets, no
+        lateral inflow sources, dynamic-wave routing) — i.e. setting
+        L{is_virtual} to C{True} would succeed on a JUNCTION-typed node —
+        else the distinct ERR_VJ_* rule code (609-621) identifying the
+        violated rule. Read-only; no state is changed.
+
+        @rtype: int
+        """
+        _check_fresh(self)
+        cdef int code = 0
+        _check(swmm_node_virtual_eligible(_h(self._solver), self._index, &code))
+        return code
 
     @property
     def solver(self):

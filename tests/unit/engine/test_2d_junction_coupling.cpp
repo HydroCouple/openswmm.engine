@@ -57,7 +57,7 @@ namespace {
 // patch bed sits at z = 1.0 m = J1's crown elevation, so spill/capture happen at
 // the rim. ALLOW_PONDING is OFF on purpose: only the 2D-coupled exception lets
 // J1's HGL climb above the crown.
-std::string build_junction_model() {
+std::string build_junction_model(const std::string& extra_2d_options) {
     return
         "[OPTIONS]\n"
         "FLOW_UNITS           CMS\n"
@@ -101,9 +101,8 @@ std::string build_junction_model() {
         "MAX_TIMESTEP     1\n"
         "DRY_DEPTH        0.002\n"
         "COUPLING_CD      0.7\n"
-        "LINEAR_SOLVER    GMRES\n"
-        "PRECONDITIONER   JACOBI\n"
         "REPORT_2D        NO\n"
+        + extra_2d_options +
         "\n"
         "[2D_VERTICES]\n"
         ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
@@ -132,12 +131,13 @@ struct RunResult {
     double cont_routing = 0.0;
 };
 
-RunResult run_junction_model(const fs::path& dir) {
+RunResult run_junction_model(const fs::path& dir, const std::string& tag,
+                             const std::string& extra_2d_options) {
     RunResult r;
-    const fs::path inp = dir / "junction_coupling.inp";
-    const fs::path rpt = dir / "junction_coupling.rpt";
-    const fs::path out = dir / "junction_coupling.out";
-    { std::ofstream f(inp); f << build_junction_model(); }
+    const fs::path inp = dir / (tag + ".inp");
+    const fs::path rpt = dir / (tag + ".rpt");
+    const fs::path out = dir / (tag + ".out");
+    { std::ofstream f(inp); f << build_junction_model(extra_2d_options); }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -198,7 +198,7 @@ protected:
 // crown, junction spill never fires, and the patch stays dry. Post-fix the HGL
 // rises above the crown, the patch wets on surcharge and drains on capture.
 TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
-    RunResult r = run_junction_model(dir_);
+    RunResult r = run_junction_model(dir_, "junction_coupling", "");
 
     ASSERT_TRUE(r.ok) << "coupled junction run failed";
     ASSERT_EQ(r.n_tri, 2);

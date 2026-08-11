@@ -1,0 +1,80 @@
+[TITLE]
+Precip scaling — COLD snow model with all three factors non-default.
+Gage snow catch factor SCF = 0.7, subcatchment snow scale = 1.3, rain scale =
+0.8. Air temperature pinned to 20 F (< SNOW_THRESHOLD 34 F) so all precip is
+snow: the SCF (A1) and the snow scale factor (D3 accumulation/melt) are the
+active levers; the rain scale rides along on token 9 to prove the writer/reader
+hold both positions. Used by test_subcatch_scale_factors (snow-pack continuity)
+and by the legacy-vs-C++ regression suite.
+
+Snowfall injected into the pack each step (legacy gage.c:519, C++ splitPrecip):
+    snowfall = gage_intensity * gage.SCF * subcatch.snowScale
+             = 1.0 in/hr      * 0.7     * 1.3   = 0.910 in/hr equivalent
+Both engines must agree, and the snow-pack runoff continuity must still close.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+INFILTRATION         HORTON
+START_DATE           01/01/2026
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2026
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2026
+END_TIME             02:00:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         0:00:30
+
+[RAINGAGES]
+;;Name Format Interval SCF Source
+RG1  INTENSITY 1:00 0.7 TIMESERIES TS1
+
+[SUBCATCHMENTS]
+;;Name RainGage Outlet Area %Imperv Width Slope Curblen SnowPack RainScale SnowScale
+S1  RG1  J1  10.0  100  500  0.5  0  SP1  0.8  1.3
+
+[SUBAREAS]
+;;Subcatch Nimp Nperv Simp Sperv PctZero RouteTo
+S1  0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+;;Subcatch MaxRate MinRate Decay DryTime MaxInfil
+S1  3.0  0.5  4.0  7  0
+
+[TIMESERIES]
+;;Name Date Time Value
+TS1  01/01/2026 00:00 1.0
+TS1  01/01/2026 01:00 1.0
+TS1  01/01/2026 02:00 0.0
+
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded
+J1  100.0  10.0  0.0  0.0  0.0
+
+[OUTFALLS]
+;;Name Elev Type
+O1  95.0  FREE
+
+[CONDUITS]
+;;Name From To Length N InOff OutOff
+C1  J1  O1  400.0  0.013  0  0
+
+[XSECTIONS]
+;;Link Shape Geom1 Geom2 Geom3 Geom4 Barrels
+C1  CIRCULAR  1.5  0  0  0  1
+
+[SNOWPACKS]
+;;Name Surface Cmin Cmax Tbase FWF SD0 FW0 SNN0/SFrac
+SP1  PLOWABLE    0.001  0.001  32  0.10  0  0  0.5
+SP1  IMPERVIOUS  0.001  0.001  32  0.10  0  0  0.0
+SP1  PERVIOUS    0.001  0.001  32  0.10  0  0  0.0
+SP1  REMOVAL     1.0  0  0  0  0  0
+
+[TEMPERATURE]
+TIMESERIES TEMPTS
+
+[TIMESERIES]
+TEMPTS  01/01/2026 00:00 20
+TEMPTS  01/01/2026 12:00 20

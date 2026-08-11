@@ -2119,6 +2119,16 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
             Subcatch[index].apiExtBuildup[pollutantIndex] = value;
             return 0;
         }
+        // Precipitation scale factors are settable mid-run so a calibration or
+        // RTC loop can drive them (matching swmm_GAGE_SCALEFACTOR).
+        case swmm_SUBCATCH_RAIN_SCALE_FACTOR:
+            if (value <= 0.0) return ERR_API_PROPERTY_VALUE;
+            Subcatch[index].rainScaleFactor = value;
+            return 0;
+        case swmm_SUBCATCH_SNOW_SCALE_FACTOR:
+            if (value <= 0.0) return ERR_API_PROPERTY_VALUE;
+            Subcatch[index].snowScaleFactor = value;
+            return 0;
         default:
             return ERR_API_IS_RUNNING;
         }
@@ -2155,6 +2165,22 @@ int setSubcatchValue(int property, int index, int subIndex, int pollutantIndex, 
             if (value >= 0.0)
             {
                 Subcatch[index].curbLength = value / UCF(LENGTH);
+                return 0;
+            }
+            else
+                return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_RAIN_SCALE_FACTOR:
+            if (value > 0.0)
+            {
+                Subcatch[index].rainScaleFactor = value;
+                return 0;
+            }
+            else
+                return ERR_API_PROPERTY_VALUE;
+        case swmm_SUBCATCH_SNOW_SCALE_FACTOR:
+            if (value > 0.0)
+            {
+                Subcatch[index].snowScaleFactor = value;
                 return 0;
             }
             else
@@ -2516,6 +2542,10 @@ static double getSubcatchValue(int property, int index, int subIndex, int pollut
         return subcatch->width * UCF(LENGTH);
     case swmm_SUBCATCH_SLOPE:
         return subcatch->slope;
+    case swmm_SUBCATCH_RAIN_SCALE_FACTOR:
+        return subcatch->rainScaleFactor;
+    case swmm_SUBCATCH_SNOW_SCALE_FACTOR:
+        return subcatch->snowScaleFactor;
     case swmm_SUBCATCH_OUTLET_TYPE:
         return subcatch->outSubcatch >= 0 ? swmm_SUBCATCH : swmm_NODE;
     case swmm_SUBCATCH_OUTLET_INDEX:

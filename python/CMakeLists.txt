@@ -60,7 +60,7 @@ endif()
 # Base wheel stays CPU-only / portable.
 #
 # As of the GPU-default-on change, the engine vcpkg.json lists "gpu" in
-# default-features (pulling Kokkos + SUNDIALS[kokkos]) and OPENSWMM_BUILD_GPU_PLUGIN
+# default-features (pulling Kokkos) and OPENSWMM_BUILD_GPU_PLUGIN
 # defaults ON. That is right for source/dev/C++-release builds, but the published
 # `openswmm` wheel must remain Kokkos-free and portable: OpenMP acceleration is
 # shipped separately via the `openswmm-gpu-omp` companion wheel (see
@@ -77,15 +77,11 @@ if(NOT DEFINED CACHE{VCPKG_MANIFEST_NO_DEFAULT_FEATURES})
         "Base wheel opts out of vcpkg default-features (excludes gpu/Kokkos)" FORCE)
 endif()
 if(NOT DEFINED CACHE{VCPKG_MANIFEST_FEATURES})
-    # 2d  → SUNDIALS/CVODE + HDF5 (the surface solver + its output).
-    # hypre → BoomerAMG preconditioner so PRECONDITIONER=AMG (the 2D solver's
-    #         default) works in the published wheel. Pulls BLAS/LAPACK (+ MPI on
-    #         some ports, used sequentially via MPI_COMM_SELF); keeps the wheel
-    #         CPU-only/Kokkos-free — AMG here is the serial HypreAmgPreconditioner.
-    #         OPENSWMM_WITH_HYPRE defaults ON, so this must stay listed or the
-    #         build fails at find_package(HYPRE REQUIRED).
-    set(VCPKG_MANIFEST_FEATURES "2d;hypre" CACHE STRING
-        "Explicit vcpkg features for the CPU-only base wheel (2d + hypre BoomerAMG)" FORCE)
+    # 2d → HDF5 for the CF-1.11/UGRID output of the explicit marcher (the only
+    #      2D integrator since the D2 retirement — no SUNDIALS, no hypre).
+    #      Keeps the wheel CPU-only/Kokkos-free.
+    set(VCPKG_MANIFEST_FEATURES "2d" CACHE STRING
+        "Explicit vcpkg features for the CPU-only base wheel (2d)" FORCE)
 endif()
 
 # Auto-load vcpkg toolchain when VCPKG_ROOT is set in the environment.

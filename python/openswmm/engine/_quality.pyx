@@ -99,6 +99,16 @@ class Landuse:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_landuse_set_sweep_removal(h, self._index, value))
 
+    def rename(self, str new_id) -> None:
+        """Rename this land use in place.
+
+        Land uses are referenced positionally, so buildup/washoff rows and
+        subcatchment coverages follow automatically.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_landuse_rename(h, self._index, b))
+
     def __repr__(self) -> str:
         try:
             return f"<Landuse id={self.id!r} index={self._index}>"
@@ -266,6 +276,23 @@ class Quality:
         cdef int pi = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_treatment_clear(h, ni, pi))
+
+    def validate_treatment_expression(self, str expression):
+        """Validate a treatment expression WITHOUT modifying the engine.
+
+        Returns ``(ok, message, col)`` — ``ok`` True when the expression
+        parses; on failure ``message`` is the diagnostic and ``col`` the
+        0-based character offset of the error (-1 when not attributable).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = expression.encode('utf-8')
+        cdef char errbuf[512]
+        cdef int col = -1
+        errbuf[0] = 0
+        cdef int rc = swmm_treatment_validate_expression(h, b, errbuf, 512, &col)
+        if rc == 0:
+            return (True, "", -1)
+        return (False, errbuf.decode('utf-8'), col)
 
     def __repr__(self) -> str:
         try:

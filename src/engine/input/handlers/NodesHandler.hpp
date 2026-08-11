@@ -22,6 +22,12 @@ namespace openswmm::input {
 /** @brief Parse [JUNCTIONS] into NodeData + node_names. */
 void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& lines);
 
+/** @brief Parse [VIRTUAL_JUNCTIONS] — junction-typed nodes with is_virtual = 1.
+ *  @details One token per line (the node name); geometry is derived from the
+ *           two attached conduits in PostParseResolver. Extra tokens are a
+ *           parse error (ERR_VJ_EXTRA_TOKENS). Refactored engine only. */
+void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::string>& lines);
+
 /** @brief Parse [OUTFALLS] — sets outfall-specific fields for nodes of type OUTFALL. */
 void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lines);
 

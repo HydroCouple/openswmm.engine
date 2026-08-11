@@ -19,84 +19,59 @@
 namespace openswmm::twoD {
 
 /**
- * @brief Krylov linear solver selector for the BDF + Newton + Krylov stack.
+ * @brief Volume → free-surface closure for a 2D cell.
  *
- * Phase 1 wires GMRES only; BICGSTAB and TFQMR are kept as enum values to
- * preserve the input-file parsing surface and to mark slots reserved for
- * possible Phase 2 work, but selecting them today triggers a clear
- * runtime error in CvodeSurfaceSolver::initialize().
+ * FLAT (default, legacy) reconstructs η = tri_cz + V/A — exact only for a
+ * fully wetted cell. On a partially wet (slope/step-spanning) cell it
+ * overstates η by up to two-thirds of the cell relief, which is the driver of
+ * the water-climbs-uphill artifact (spurious head pushes thin films upslope;
+ * lake-at-rest is not a steady state at shorelines).
  *
- * GMRES is the canonical choice for the elliptic-flavoured diffusive-wave
- * Jacobian and pairs cleanly with multigrid preconditioners (the Phase 2
- * BoomerAMG path); the other two Krylov methods would only earn their keep
- * for problem classes we do not currently solve.
+ * VFR reconstructs η from the exact stage–storage relation of the plane bed
+ * through the cell's three vertex elevations (Begnudelli & Sanders 2006/2007
+ * volume/free-surface relationships), C¹-regularized by a
+ * wetted-area-fraction floor (VFR_MIN_WET_FRAC). Restores the C-property
+ * at shorelines. CPU solver only; the Kokkos GPU backends degrade to FLAT
+ * with a one-line notice until ported.
+ *
+ * Parsed from [2D_OPTIONS] CELL_CLOSURE (FLAT|VFR).
+ * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
  */
-enum class LinearSolverType : int8_t {
-    GMRES    = 0,   ///< Phase 1: WIRED (SUNLinSol_SPGMR).
-    BICGSTAB = 1,   ///< Reserved; rejected at initialize() in Phase 1.
-    TFQMR    = 2    ///< Reserved; rejected at initialize() in Phase 1.
+enum class CellClosure2D : int8_t {
+    FLAT = 0,   ///< Legacy flat-cell closure η = tri_cz + V/A (default).
+    VFR  = 1    ///< Planar-bed VFR closure (regularized), CPU solvers only.
 };
 
 /**
- * @brief Preconditioner selector for the Krylov inner solver.
+ * @brief Effective conveyance depth at a shared edge for the diffusive-wave flux.
  *
- * NONE (no preconditioning) and JACOBI (per-cell diagonal approximation
- * rebuilt each Jacobian refresh) are always available. AMG (hypre BoomerAMG)
- * is wired only when the engine is built with OPENSWMM_WITH_HYPRE; selecting
- * it otherwise triggers a clear runtime error in the solver's initialize().
- * ILU remains a reserved-but-rejected slot.
+ * MEAN (default, legacy) uses the upwind cell's MEAN depth V/A — blind to
+ * where the waterline sits relative to the edge, so a cell with water pooled
+ * in its low corner can discharge across an edge whose bed is entirely above
+ * the waterline (uphill creep), and drainage strands water on slopes.
  *
- * Tier rationale (see also the Phase 1/2 discussion in
- * docs/2D_KNOWN_STIFFNESS_ISSUE.md):
+ * VFR_FACE reconstructs the depth at the edge from the upwind free surface
+ * and the edge's two endpoint bed elevations (Begnudelli & Sanders 2007,
+ * Eq. 14, adapted as the Manning conveyance depth): zero when the upwind
+ * surface is below the whole edge (no flow — the wetting gate), the exact
+ * partially-submerged mean when the waterline crosses the edge. C¹ in η.
  *
- *   - NONE   : baseline; useful for measuring how much the Jacobi heuristic
- *              actually buys at a given mesh size.
- *   - JACOBI : O(n) setup, O(n) apply, embarrassingly parallel. Effective
- *              while the Newton matrix M = I − γJ is diagonally dominant;
- *              expected to scale acceptably to ~10k–50k cells.
- *   - ILU    : O(nnz) setup + apply via KLU. Better convergence per
- *              Krylov iteration than JACOBI but still asymptotically
- *              non-scalable on this elliptic operator. *Not implemented*.
- *   - AMG    : O(n) setup amortised, near-constant Krylov iterations
- *              regardless of mesh size. The only scalable option past
- *              ~100k cells. Requires hypre/BoomerAMG. *Not yet wired.*
+ * Scope per solver path: BOUNDARY edges honour the mode in
+ * SurfaceFluxCalculator::boundaryEdgeFlux. Under the explicit local-inertial
+ * marcher, VFR_FACE also governs INTERIOR faces: the face flow depth becomes
+ * faceFlowDepthVfr(η_L, η_R, ze_lo, ze_hi) — the Eq. 14 wetted-edge depth of
+ * the driving surface over the shared edge's TRUE endpoint beds — so thin
+ * crests (embankments/levees/road crowns resolved as lines of high vertices)
+ * block until the water genuinely reaches the crest instead of the
+ * centroid-diluted zface (≈ ⅓-height early overtopping). MEAN keeps the
+ * legacy centroid zface bit-identical on interior faces.
+ *
+ * Parsed from [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE).
+ * See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
  */
-enum class PreconditionerType : int8_t {
-    NONE   = 0,     ///< WIRED (no preconditioning).
-    JACOBI = 1,     ///< WIRED (diagonal heuristic).
-    ILU    = 2,     ///< Reserved; rejected at initialize().
-    AMG    = 3      ///< WIRED when built with OPENSWMM_WITH_HYPRE (BoomerAMG).
-};
-
-/**
- * @brief Time-integrator selector for the 2D surface ODE.
- *
- * CVODE is the default fully-implicit BDF integrator (CvodeSurfaceSolver).
- * ARKODE selects the ARKStep additive-Runge–Kutta IMEX integrator
- * (ArkodeSurfaceSolver) — the diffusion flux is integrated implicitly while the
- * non-stiff source forcing is explicit. See
- * docs/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md. Orthogonal to the
- * serial/omp/gpu backend selector; ARKODE is CPU-only. The env var
- * OPENSWMM_2D_INTEGRATOR (cvode|arkode) overrides this field.
- */
-enum class IntegratorType : int8_t {
-    CVODE  = 0,     ///< Default: fully-implicit BDF (CvodeSurfaceSolver).
-    ARKODE = 1      ///< ARKStep IMEX additive-RK (ArkodeSurfaceSolver).
-};
-
-/**
- * @brief Surface-momentum closure for the 2D flux.
- *
- * DW (default) is the Manning diffusive wave (no inertia; state = cell volume
- * only). INERTIAL adds the LISFLOOD-FP local-inertial momentum: a prognostic
- * per-edge discharge q with implicit gravity + friction, integrated by the
- * ARKStep IMEX solver. See docs/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md §2.
- * Only honored by ArkodeSurfaceSolver; env OPENSWMM_2D_MOMENTUM (dw|inertial)
- * overrides this field.
- */
-enum class MomentumType : int8_t {
-    DW       = 0,   ///< Manning diffusive wave (default).
-    INERTIAL = 1    ///< Local-inertial (LISFLOOD-FP) with per-edge q.
+enum class FaceDepth2D : int8_t {
+    MEAN     = 0,   ///< Legacy: upwind cell-mean depth (default).
+    VFR_FACE = 1    ///< B&S Eq. 14 face depth + wetting gate.
 };
 
 /**
@@ -124,16 +99,15 @@ enum class RainfallMode : int8_t {
 };
 
 /**
- * @brief Configuration for the 2D surface routing CVODE solver.
+ * @brief Configuration for the 2D surface routing solver.
  *
  * Populated from [2D_OPTIONS] input section. Defaults are chosen for
  * typical urban drainage surface routing problems.
  */
 struct SolverOptions2D {
-    double max_timestep      = 10.0;    ///< Max CVODE internal step (s)
-    double min_timestep      = 0.001;   ///< Min CVODE internal step (s)
-    double rel_tolerance     = 1.0e-4;  ///< CVODE relative tolerance
-    double abs_tolerance     = 1.0e-6;  ///< CVODE absolute tolerance (m)
+    /// Max marcher step (s): caps film-cell CFL steps (and thus the LTS tier
+    /// spread) and the co-advance sync-batch span.
+    double max_timestep      = 10.0;
     double dry_depth         = 0.001;   ///< Dry cell threshold (m)
     double limiter_epsilon   = 1.0e-6;  ///< Slope limiter epsilon
     /// Head-difference regularization (m) for the diffusive-wave flux √|Δη|.
@@ -145,43 +119,18 @@ struct SolverOptions2D {
     /// very deep problems. Default 4 mm; 0 = bare √. Parsed from
     /// [2D_OPTIONS] FLUX_DH_EPS; env OPENSWMM_2D_FLUX_DH_EPS overrides.
     double flux_dh_eps       = 0.004;   ///< Diffusive-flux gradient floor (m)
+    /// [2D_OPTIONS] COUPLING_SYNC (s): 1D↔2D co-advance sync-batch span.
+    /// 0 (default) couples every routing step — exchange volumes reach the
+    /// 1D with at most one routing step of lag, which keeps fill-and-spill
+    /// coupling (weir/culvert ponds) free of batch-delay ringing. > 0
+    /// batches the 2D advance over ~SPAN seconds (clamped to
+    /// [routing_step, 60]) — the wall-clock lever for large meshes where
+    /// per-step advances degenerate to the global-dt tail; expect the
+    /// held-exchange error to grow with the span.
+    double coupling_sync     = 0.0;
+
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
-    int    max_krylov_dim    = 30;      ///< Max Krylov subspace dimension
-    int    coupling_interval = 0;       ///< 0 = every SWMM step
-    /// 2D advance window in SECONDS of simulation time. −1 = AUTO (window =
-    /// the nominal [OPTIONS] ROUTING_STEP, clamped to MAX_TIMESTEP); 0 =
-    /// advance every routing step; > 0 = explicit window length. A time-based
-    /// window is immune to 1D variable-step collapse — a step-count
-    /// COUPLING_INTERVAL silently shrinks with the routing step, which is
-    /// exactly the regime where the 2D advance cost explodes. An explicit
-    /// COUPLING_WINDOW takes precedence over COUPLING_INTERVAL; AUTO defers to
-    /// COUPLING_INTERVAL > 1 for backward compatibility. Parsed from
-    /// [2D_OPTIONS] COUPLING_WINDOW; env OPENSWMM_2D_COUPLING_WINDOW overrides.
-    double coupling_window   = -1.0;
-    int    max_cvode_steps   = 500;     ///< Max CVODE steps per advance
-
-    /// Dry-cell active-set masking: restrict the RHS pipeline to wet/sourced
-    /// cells plus an ACTIVE_SET_HALO-ring neighbourhood; frozen cells get
-    /// ydot ≡ 0 (exactly their unmasked value — dry, source-free, walled).
-    /// The CVODE system stays full size. Exactly OFF-able; default OFF until
-    /// field-validated. Parsed from [2D_OPTIONS] ACTIVE_SET (YES/NO); env
-    /// OPENSWMM_2D_ACTIVE_SET (0/1) overrides. CVODE+DW only.
-    bool   active_set        = false;
-    /// BFS halo ring count around the wet/sourced seed set (≥1); auto-doubled
-    /// (capped) when a front crosses the whole halo within one window. Parsed
-    /// from [2D_OPTIONS] ACTIVE_SET_HALO; env OPENSWMM_2D_ACTIVE_SET_HALO.
-    int    active_set_halo   = 2;
     bool   report_2d         = true;    ///< Write 2D results to output
-
-    // Time integrator. Default CVODE (validated path); ARKODE selects the
-    // ARKStep IMEX solver. Parsed from [2D_OPTIONS] INTEGRATOR; env
-    // OPENSWMM_2D_INTEGRATOR overrides at solver-construction time.
-    IntegratorType     integrator      = IntegratorType::CVODE;
-
-    // Surface-momentum closure. Default DW (diffusive wave). INERTIAL selects the
-    // local-inertial scheme (per-edge q), honored only by ArkodeSurfaceSolver.
-    // Parsed from [2D_OPTIONS] MOMENTUM; env OPENSWMM_2D_MOMENTUM overrides.
-    MomentumType       momentum        = MomentumType::DW;
 
     // Rainfall→mesh mapping. Default NATURAL_NEIGHBOUR (spatial interpolation
     // across all located gages); SYSTEM applies the uniform all-gage mean.
@@ -189,15 +138,62 @@ struct SolverOptions2D {
     // (natural|system) overrides.
     RainfallMode       rainfall_mode   = RainfallMode::NATURAL_NEIGHBOUR;
 
-    LinearSolverType   linear_solver   = LinearSolverType::GMRES;
-    // Default to AMG (hypre BoomerAMG): the only preconditioner with
-    // near-mesh-independent Krylov counts on the elliptic diffusive-wave
-    // operator, so it is the right default at every scale (and essential past
-    // ~100k cells). The value is unconditional here (keeping one struct layout
-    // across all TUs); a build WITHOUT hypre resolves AMG → JACOBI at solver
-    // initialize with a one-line notice, so the portable base build still runs.
-    // See docs/2D_KNOWN_STIFFNESS_ISSUE.md.
-    PreconditionerType preconditioner  = PreconditionerType::AMG;
+    // Volume → free-surface cell closure. Default FLAT (legacy η = tri_cz + V/A):
+    // fast and the right choice for typical deep-water urban flooding, where a
+    // partially wet cell is the exception. VFR (planar-bed volume/free-surface,
+    // fully implemented on all backends) restores the C-property at shorelines
+    // and removes the water-climbs-uphill artifact, but resolves the shoreline
+    // wetting/drying FLAT freezes out — ~3–8× more marcher substeps — so it is
+    // OPT-IN (best on shallow water / gentle slopes). Parsed from [2D_OPTIONS]
+    // CELL_CLOSURE (FLAT|VFR). See plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md.
+    CellClosure2D      cell_closure    = CellClosure2D::FLAT;
+
+    // Effective conveyance depth at shared edges. Default MEAN (legacy upwind
+    // cell-mean depth). VFR_FACE (B&S Eq. 14 face depth + wetting gate) pairs
+    // with CELL_CLOSURE=VFR to complete the artifact fix; opt-in for the same
+    // reason. Parsed from [2D_OPTIONS] FACE_RECONSTRUCTION (MEAN|VFR_FACE).
+    FaceDepth2D        face_reconstruction = FaceDepth2D::MEAN;
+
+    /// Wetted-area-fraction floor ε of the regularized VFR closure: below wet
+    /// fraction ε the η(V) relation continues linearly (slope 1/(εA)), bounding
+    /// dη/dV for the implicit solvers' Newton/Jacobian path. Exact elsewhere.
+    /// Only used when CELL_CLOSURE = VFR. Parsed from [2D_OPTIONS]
+    /// VFR_MIN_WET_FRAC; valid range (0, 0.5].
+    double             vfr_min_wet_frac = 0.01;
+
+    // -----------------------------------------------------------------------
+    // Explicit local-inertial marcher (INTEGRATOR EXPLICIT — the only 2D
+    // integrator since the D2 CVODE/ARKODE retirement) options. Defaults per
+    // the 2026-07-29 reimplementation plan.
+    // -----------------------------------------------------------------------
+    /// Face-update θ weighting (de Almeida & Bates 2013): 1 = pure Bates 2010
+    /// (no numerical diffusion), <1 blends the Perot-reconstructed neighbour
+    /// discharge to damp thin-film checkerboarding on steep faces.
+    double theta        = 0.8;    ///< [2D_OPTIONS] THETA, (0, 1]
+    double cfl_number   = 0.7;    ///< [2D_OPTIONS] CFL_NUMBER — α in
+                                  ///< dt = α·L_char/(√(gh)+|u|). L_char is
+                                  ///< derived from the discrete wave operator
+                                  ///< (InertialEdges), so α is a TRUE Courant
+                                  ///< fraction: 1.0 = linear stability limit,
+                                  ///< 0.7 default = 30% margin on any mesh.
+    /// Flux-activation depth (m): cells below it are source-only (lazy rain
+    /// accumulation, no face flux). Hysteresis band ±1 mm around it.
+    double h_move       = 0.003;  ///< [2D_OPTIONS] H_MOVE (m) — flux-active
+                                  ///< cell threshold; the marcher's on/off
+                                  ///< hysteresis band is min(1 mm, h_move/2),
+                                  ///< so thin-depth models (H_MOVE ≪ 1 mm)
+                                  ///< activate near h_move as requested.
+    int    lts_tiers    = 4;      ///< [2D_OPTIONS] LTS_TIERS, 1..8 (1 = global dt)
+    double froude_max   = 1.5;    ///< [2D_OPTIONS] FROUDE_MAX face |u| clamp
+    /// Positivity/exchange availability fraction β: max share of a cell's
+    /// volume that outgoing fluxes (or a coupling drain) may take per own-step.
+    double exchange_beta  = 0.8;
+    /// Optional EMA sub-relaxation of per-substep coupling exchange (1 = off).
+    double exchange_relax = 1.0;
+    /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
+    /// resolve from the largest connected conduit (clamp(1.25·A_conduit,
+    /// 0.05, 2.0) m²) for rows that did not author an explicit area.
+    bool   coupling_area_auto = false;
 
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
     std::string mesh_file;

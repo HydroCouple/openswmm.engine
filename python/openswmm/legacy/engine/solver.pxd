@@ -126,6 +126,8 @@ cdef extern from "openswmm_solver.h":
         swmm_SUBCATCH_SNOW_FW # Snow pack free water on a snow subarea
         swmm_SUBCATCH_SNOW_ATI # Snow pack antecedent temperature index
         swmm_SUBCATCH_SNOW_COLDC # Snow pack cold content
+        swmm_SUBCATCH_RAIN_SCALE_FACTOR # Rainfall scale factor (default 1.0)
+        swmm_SUBCATCH_SNOW_SCALE_FACTOR # Snowfall scale factor (default 1.0)
 
     # SWMM Node properties
     ctypedef enum swmm_NodeProperty:

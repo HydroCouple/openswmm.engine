@@ -413,6 +413,13 @@ void snow_plowSnow(int subcatchIndex, double tStep)
     // --- see if there's any snowfall
     gage_getPrecip(Subcatch[subcatchIndex].gage, &rainfall, &snowfall);
 
+    // --- apply the subcatchment snow scale factor to the gage-derived
+    //     component. This MUST match the scaling done in getNetPrecip()
+    //     (subcatch.c) -- accumulation here and melt there consume the same
+    //     snowfall value, and if they disagree the snow pack mass balance
+    //     will not close.
+    snowfall *= Subcatch[subcatchIndex].snowScaleFactor;
+
     // --- include any API prescribed snowfall so prescribed snow
     //     accumulates in the pack (previously it only influenced melt
     //     computations, leaving a runoff continuity hole)

@@ -1,4 +1,6 @@
-﻿# Chapter 1: Overview
+@page hydrology_ref_ch1_overview Chapter 1: Overview
+
+@tableofcontents
 
 ## 1.1 Introduction
 
@@ -70,12 +72,8 @@ system. SWMM conceptualizes this system as a series of water and
 material flows between several major environmental compartments. These
 compartments include:
 
-<figure>
-<img src="VolumeI/media/media/image1.jpeg"
-style="width:6.5in;height:4.20726in"
-alt="http://www.epa.ohio.gov/portals/35/cso/wet_weather_flow_graphic.jpg" />
-<figcaption><strong>Figure 1-1 Elements of a typical urban drainage system</strong></figcaption>
-</figure>
+![](hydrology/media/media/image1.jpeg "image1")
+<strong>Figure 1-1 Elements of a typical urban drainage system</strong>
 
 
 - The Atmosphere compartment, which generates precipitation and deposits
@@ -124,11 +122,8 @@ SWMM model. Table 1-2 provides a summary of the various objects used in
 SWMM. Their properties and functions will be described in more detail
 throughout the course of this manual.
 
-<figure>
-<img src="VolumeI/media/media/image2.png"
-style="width:3.52133in;height:2.67746in" alt="Objects1.png" />
-<figcaption><strong>Figure 1-2 SWMM's conceptual model of a stormwater drainage system</strong></figcaption>
-</figure>
+![](hydrology/media/media/image2.png "image2")
+<strong>Figure 1-2 SWMM's conceptual model of a stormwater drainage system</strong>
 
 **Table 1-2 SWMM's modeling objects**
 
@@ -162,10 +157,8 @@ style="width:3.52133in;height:2.67746in" alt="Objects1.png" />
 
 ## 1.3 SWMM's Process Models
 
-<figure>
-<img src="VolumeI/media/media/figure1-3.png" alt="Processes modeled by SWMM" />
-<figcaption><strong>Figure 1-3 Processes modeled by SWMM</strong></figcaption>
-</figure>
+![](hydrology/media/media/figure1-3.png "Processes modeled by SWMM")
+<strong>Figure 1-3 Processes modeled by SWMM</strong>
 
 Figure 1-3 depicts the processes that SWMM models using the objects
 described previously and how they are tied to one another. The
@@ -249,9 +242,7 @@ step as the simulation proceeds:
 
 where
 
-  -----------------------------------------------------------------------------
   *X*<sub>*t*</sub>   =   a vector of state variables at time *t*,
-  -------- --- ----------------------------------------------------------------
   *Y*<sub>*t*</sub>   =   a vector of output variables at time *t*,
 
   *I*<sub>*t*</sub>   =   a vector of inputs at time *t*,
@@ -262,12 +253,9 @@ where
 
   *g*      =   a vector-valued output transform function.
 
-  -----------------------------------------------------------------------------
 
-<figure>
-<img src="VolumeI/media/media/figure1-4.png" alt="Block diagram of SWMM's state transition process" />
-<figcaption><strong>Figure 1-4 Block diagram of SWMM's state transition process</strong></figcaption>
-</figure>
+![](hydrology/media/media/figure1-4.png "Block diagram of SWMM")
+<strong>Figure 1-4 Block diagram of SWMM's state transition process</strong>
 
 Figure 1-4 depicts the simulation process in block diagram fashion.
 
@@ -285,7 +273,7 @@ discussed in later chapters.
 | **Process** | **Variable** | **Description** | **Initial Value** |
 |-------------|--------------|-----------------|-------------------|
 | **Runoff** | *d* | Depth of runoff on a subcatchment surface | 0 |
-| **Infiltration*** | *t*<sub>*p*</sub> | Equivalent time on the Horton curve | 0 |
+| **Infiltration** | *t*<sub>*p*</sub> | Equivalent time on the Horton curve | 0 |
 | | *F*<sub>*e*</sub> | Cumulative excess infiltration volume | 0 |
 | | *F*<sub>*u*</sub> | Upper zone moisture content | 0 |
 | | *T* | Time until the next rainfall event | 0 |
@@ -359,10 +347,8 @@ are not needed if groundwater is not being modeled). The subsequent
 chapters of this manual carefully define each parameter and make
 suggestions on how to estimate its value.
 
-<figure>
-<img src="VolumeI/media/media/figure1-5.png" alt="Flow chart of SWMM's simulation procedure" />
-<figcaption><strong>Figure 1-5 Flow chart of SWMM's simulation procedure</strong></figcaption>
-</figure>
+![](hydrology/media/media/figure1-5.png "Flow chart of SWMM")
+<strong>Figure 1-5 Flow chart of SWMM's simulation procedure</strong>
 
 A flowchart of the overall simulation process is shown in Figure 1-5.
 The process begins by reading a description of each object and its
@@ -398,10 +384,8 @@ aforementioned input file and for viewing the computed output.
 
 ## 1.5 Interpolation and Units
 
-<figure>
-<img src="VolumeI/media/media/figure1-6.png" alt="Interpolation of reported values from computed values" />
-<figcaption><strong>Figure 1-6 Interpolation of reported values from computed values</strong></figcaption>
-</figure>
+![](hydrology/media/media/figure1-6.png "Interpolation of reported values from computed values")
+<strong>Figure 1-6 Interpolation of reported values from computed values</strong>
 
 SWMM uses linear interpolation to obtain values for quantities at times
 that fall in between times at which input time series are recorded or at
@@ -453,4 +437,7 @@ back to the user's choice of unit system.
 | Velocity | feet/second | meters/second |
 | Width | feet | meters |
 | Wind Speed | miles/hour | kilometers/hour |
+
+
+
 

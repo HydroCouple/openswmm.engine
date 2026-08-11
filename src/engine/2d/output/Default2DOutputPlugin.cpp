@@ -446,6 +446,18 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     writeStringAttr(ds_node_head_, "mesh", "Mesh2");
     writeStringAttr(ds_node_head_, "location", "node");
 
+    // Node SIGNED depth [nTime, nNode] — wet-masked render reconstruction
+    // (eta_v - z_v; wetted-contact gated, so current engines emit > 0 or the
+    // 0 no-data sentinel; files from older engines may carry negatives). This
+    // is the field renderers/profilers should interpolate; Mesh2_node_head is
+    // the solver field (dry-cell head = bed elevation) kept for back-compat.
+    ds_node_depth_ = createUnlimitedDataset("Mesh2_node_depth", 2, zero2n, node_chunk);
+    writeStringAttr(ds_node_depth_, "long_name",
+                    "signed vertex water depth (wet-masked render reconstruction)");
+    writeStringAttr(ds_node_depth_, "units", "m");
+    writeStringAttr(ds_node_depth_, "mesh", "Mesh2");
+    writeStringAttr(ds_node_depth_, "location", "node");
+
     // --- Cumulative rendering envelopes (fixed [nFace], overwritten in place) ---
     ds_face_max_depth_ = createFaceEnvelopeDataset(
         "Mesh2_face_max_depth", "maximum overland flow depth", "m");
@@ -495,6 +507,8 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
 
     // Write per-node fields
     extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
+    if (static_cast<hsize_t>(snap.surface_vert_depth.size()) == n_nodes_)
+        extendAndWrite2D(ds_node_depth_, snap.surface_vert_depth.data(), n_nodes_);
 
     // Overwrite cumulative envelopes in place (monotone; last write is final).
     if (snap.surface_stat_max_depth.size() == n_faces_)
@@ -562,6 +576,7 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_continuity_err_);
     closeDS(ds_edge_flux_);
     closeDS(ds_node_head_);
+    closeDS(ds_node_depth_);
     closeDS(ds_face_max_depth_);
     closeDS(ds_face_max_velocity_);
     closeDS(ds_face_max_continuity_err_);

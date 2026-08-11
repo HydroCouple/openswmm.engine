@@ -92,6 +92,8 @@ std::string upper_key(const char* key) {
     return k;
 }
 
+std::string upper_copy(const std::string& v) { return upper_key(v.c_str()); }
+
 } // anonymous
 
 extern "C" {
@@ -664,6 +666,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
             case openswmm::RoutingModel::STEADY:  val = "STEADY";  break;
             case openswmm::RoutingModel::KINWAVE: val = "KINWAVE"; break;
             case openswmm::RoutingModel::DYNWAVE: val = "DYNWAVE"; break;
+            case openswmm::RoutingModel::FV:      val = "FV"; break;
         }
     }
     else if (k == "LINK_OFFSETS")  val = (opt.link_offsets == 1) ? "ELEVATION" : "DEPTH";
@@ -813,6 +816,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "IGNORE_RDII")        val = opt.ignore_rdii       ? "YES" : "NO";
     else if (k == "IGNORE_QUALITY")     val = opt.ignore_quality    ? "YES" : "NO";
     else if (k == "IGNORE_ROUTING")     val = opt.ignore_routing    ? "YES" : "NO";
+    else if (k == "IGNORE_2D")          val = opt.ignore_2d         ? "YES" : "NO";
 
     // Routing & Hydraulics — enums + scalars.
     else if (k == "SURCHARGE_METHOD") {
@@ -848,16 +852,77 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "DPS_DECAY_TIME")    val = std::to_string(opt.dps_decay_time);
     else if (k == "LENGTHENING_STEP")  val = std::to_string(opt.lengthening_step);
     else if (k == "VARIABLE_STEP")     val = std::to_string(opt.variable_step);
+    else if (k == "MINIMUM_STEP")      val = std::to_string(opt.min_routing_step);
     else if (k == "MAX_TRIALS")        val = std::to_string(opt.max_trials);
     else if (k == "HEAD_TOLERANCE")    val = std::to_string(opt.head_tol);
-    // LAT_FLOW_TOL / SYS_FLOW_TOL are stored as fractions; the GUI uses
-    // fractions on both read and write (see readFromEngine fallback +
-    // writeToEngine). The percent⇄fraction conversion happens only at
-    // the [OPTIONS] parser / InpWriter boundary, never through this API.
-    else if (k == "LAT_FLOW_TOL")      val = std::to_string(opt.lat_flow_tol);
-    else if (k == "SYS_FLOW_TOL")      val = std::to_string(opt.sys_flow_tol);
+    // LAT_FLOW_TOL / SYS_FLOW_TOL speak percent through this API on both
+    // get and set, mirroring the [OPTIONS] surface; the stored fraction
+    // (value / 100) is internal to the routing solver.
+    else if (k == "LAT_FLOW_TOL")      val = std::to_string(opt.lat_flow_tol * 100.0);
+    else if (k == "SYS_FLOW_TOL")      val = std::to_string(opt.sys_flow_tol * 100.0);
     else if (k == "MIN_SURFAREA")      val = std::to_string(opt.min_surf_area);
     else if (k == "MIN_SLOPE")         val = std::to_string(opt.min_slope);
+
+    // Explicit finite-volume solver (FLOW_ROUTING FV). Readable and writable
+    // under ANY routing model — the keys are inert rather than rejected, so a
+    // GUI or script can configure FV before selecting it (matches the
+    // [OPTIONS] parser contract, plan §4.2).
+    else if (k == "FV_CELL_LENGTH")    val = std::to_string(opt.fv.cell_length);
+    else if (k == "FV_MIN_CELLS")      val = std::to_string(opt.fv.min_cells);
+    else if (k == "FV_CFL")            val = std::to_string(opt.fv.cfl);
+    else if (k == "FV_RIEMANN")
+        val = (opt.fv.riemann == openswmm::fv::RiemannSolver::HLL) ? "HLL" : "HLLC";
+    else if (k == "FV_ORDER")          val = std::to_string(opt.fv.order);
+    else if (k == "FV_LIMITER") {
+        switch (opt.fv.limiter) {
+            case openswmm::fv::Limiter::VANLEER:  val = "VANLEER";  break;
+            case openswmm::fv::Limiter::SUPERBEE: val = "SUPERBEE"; break;
+            default:                              val = "MINMOD";   break;
+        }
+    }
+    else if (k == "FV_SCALAR_SCHEME") {
+        switch (opt.fv.scalar_scheme) {
+            case openswmm::fv::ScalarScheme::UPWIND: val = "UPWIND"; break;
+            case openswmm::fv::ScalarScheme::QUICKEST_ULTIMATE:
+                val = "QUICKEST_ULTIMATE"; break;
+            default:                                 val = "MUSCL";  break;
+        }
+    }
+    else if (k == "FV_TIME_INTEGRATION")
+        val = (opt.fv.time_integration == openswmm::fv::TimeIntegration::RK2)
+                  ? "RK2" : "EULER";
+    else if (k == "FV_SLOT_CELERITY")  val = std::to_string(opt.fv.slot_celerity);
+    else if (k == "FV_DISPERSION")     val = std::to_string(opt.fv.dispersion);
+    else if (k == "FV_STRUCTURE_COUPLING")
+        val = (opt.fv.structure_coupling == openswmm::fv::StructureCoupling::ROUTING_STEP)
+                  ? "ROUTING_STEP" : "SUBSTEP";
+    else if (k == "FV_COMPACTION")     val = opt.fv.compaction ? "YES" : "NO";
+    else if (k == "FV_NODE_COUPLING")
+        val = (opt.fv.node_coupling == openswmm::fv::NodeCoupling::EXPLICIT)
+                  ? "EXPLICIT" : "SEMI_IMPLICIT";
+    else if (k == "FV_NODE_DT")
+        val = (opt.fv.node_dt_limit == openswmm::fv::NodeDtLimit::NONE)
+                  ? "NONE" : "STABILITY";
+    else if (k == "FV_NODE_PICARD")
+        val = std::to_string(opt.fv.node_picard_sweeps);
+    else if (k == "FV_NODE_CELL_COUPLING")
+        val = opt.fv.node_cell_coupling ? "YES" : "NO";
+    else if (k == "FV_BACKEND") {
+        switch (opt.fv.backend) {
+            case openswmm::fv::Backend::CPU:  val = "CPU";  break;
+            case openswmm::fv::Backend::OMP:  val = "OMP";  break;
+            case openswmm::fv::Backend::CUDA: val = "CUDA"; break;
+            case openswmm::fv::Backend::HIP:  val = "HIP";  break;
+            case openswmm::fv::Backend::SYCL: val = "SYCL"; break;
+            default:                          val = "AUTO"; break;
+        }
+    }
+    else if (k == "FV_MIN_PARALLEL_CELLS")
+        val = std::to_string(opt.fv.min_parallel_cells);
+    else if (k == "FV_LTS")            val = opt.fv.lts ? "YES" : "NO";
+    else if (k == "FV_LTS_MAX_TIERS")  val = std::to_string(opt.fv.lts_max_tiers);
+    else if (k == "FV_CFL_CENSUS_INTERVAL")
+        val = std::to_string(opt.fv.cfl_census_interval);
 
     // System / Performance
     else if (k == "THREADS")           val = std::to_string(opt.num_threads);
@@ -894,6 +959,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         std::string vu(v);
         for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
         if      (vu == "DYNWAVE")  opt.routing_model = openswmm::RoutingModel::DYNWAVE;
+        else if (vu == "FV")       opt.routing_model = openswmm::RoutingModel::FV;
         else if (vu == "KINWAVE")  opt.routing_model = openswmm::RoutingModel::KINWAVE;
         else if (vu == "STEADY")   opt.routing_model = openswmm::RoutingModel::STEADY;
         else return SWMM_ERR_BADPARAM;
@@ -1067,6 +1133,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
           || k == "IGNORE_RDII"
           || k == "IGNORE_QUALITY"
           || k == "IGNORE_ROUTING"
+          || k == "IGNORE_2D"
           || k == "ANDERSON_ACCEL") {
         std::string vu(v);
         for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
@@ -1082,6 +1149,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (k == "IGNORE_RDII")        opt.ignore_rdii        = b;
         else if (k == "IGNORE_QUALITY")     opt.ignore_quality     = b;
         else if (k == "IGNORE_ROUTING")     opt.ignore_routing     = b;
+        else if (k == "IGNORE_2D")          opt.ignore_2d          = b;
         else if (k == "ANDERSON_ACCEL")     opt.anderson_accel     = b;
     }
 
@@ -1132,11 +1200,12 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     else if (k == "DPS_DECAY_TIME")    opt.dps_decay_time      = std::stod(v);
     else if (k == "LENGTHENING_STEP")  opt.lengthening_step    = std::stod(v);
     else if (k == "VARIABLE_STEP")     opt.variable_step       = std::stod(v);
+    // MINIMUM_STEP takes seconds or HH:MM:SS, same grammar as the [OPTIONS]
+    // parser (OptionsHandler) and ROUTING_STEP above.
+    else if (k == "MINIMUM_STEP")
+        opt.min_routing_step = openswmm::input::parse_time_seconds(v);
     else if (k == "MAX_TRIALS")        opt.max_trials          = std::stoi(v);
     else if (k == "HEAD_TOLERANCE")    opt.head_tol            = std::stod(v);
-    // LAT_FLOW_TOL / SYS_FLOW_TOL: fraction in / fraction out via this API
-    // (see read comment above). The percent⇄fraction conversion stays at
-    // the [OPTIONS] parser / InpWriter boundary.
     // Flow tolerances are percentages per the INP/[OPTIONS] contract; the
     // OptionsHandler parser and the routing solver store them as fractions
     // (value / 100), so convert here to match — a raw std::stod stored 500%
@@ -1146,6 +1215,95 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     else if (k == "MIN_SURFAREA")      opt.min_surf_area       = std::stod(v);
     else if (k == "MIN_SLOPE")         opt.min_slope           = std::stod(v);
     else if (k == "THREADS")           opt.num_threads         = std::stoi(v);
+
+    // Explicit finite-volume solver. Same value grammar as the [OPTIONS]
+    // parser, so a value round-trips between the file and this API unchanged.
+    else if (k == "FV_CELL_LENGTH")    opt.fv.cell_length      = std::stod(v);
+    else if (k == "FV_MIN_CELLS")      opt.fv.min_cells        = std::max(1, std::stoi(v));
+    else if (k == "FV_CFL")            opt.fv.cfl              = std::stod(v);
+    else if (k == "FV_ORDER")          opt.fv.order            = std::stoi(v);
+    else if (k == "FV_SLOT_CELERITY")  opt.fv.slot_celerity    = std::stod(v);
+    else if (k == "FV_DISPERSION")     opt.fv.dispersion       = std::stod(v);
+    else if (k == "FV_MIN_PARALLEL_CELLS")
+        opt.fv.min_parallel_cells = std::stol(v);
+    else if (k == "FV_COMPACTION") {
+        const std::string vu = upper_copy(v);
+        opt.fv.compaction = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
+    }
+    else if (k == "FV_NODE_COUPLING") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "EXPLICIT")
+            opt.fv.node_coupling = openswmm::fv::NodeCoupling::EXPLICIT;
+        else if (vu == "SEMI_IMPLICIT")
+            opt.fv.node_coupling = openswmm::fv::NodeCoupling::SEMI_IMPLICIT;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_NODE_DT") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "STABILITY") opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::STABILITY;
+        else if (vu == "NONE")      opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::NONE;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_NODE_PICARD")
+        opt.fv.node_picard_sweeps = std::max(1, std::stoi(v));
+    else if (k == "FV_NODE_CELL_COUPLING") {
+        const std::string vu = upper_copy(v);
+        opt.fv.node_cell_coupling =
+            (vu == "YES" || vu == "TRUE" || vu == "1" || vu == "ON");
+    }
+    else if (k == "FV_LTS") {
+        const std::string vu = upper_copy(v);
+        opt.fv.lts = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
+    }
+    else if (k == "FV_LTS_MAX_TIERS")
+        opt.fv.lts_max_tiers = std::max(1, std::stoi(v));
+    else if (k == "FV_CFL_CENSUS_INTERVAL")
+        opt.fv.cfl_census_interval = std::max(1, std::stoi(v));
+    else if (k == "FV_RIEMANN") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "HLL")  opt.fv.riemann = openswmm::fv::RiemannSolver::HLL;
+        else if (vu == "HLLC") opt.fv.riemann = openswmm::fv::RiemannSolver::HLLC;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_LIMITER") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "MINMOD")   opt.fv.limiter = openswmm::fv::Limiter::MINMOD;
+        else if (vu == "VANLEER")  opt.fv.limiter = openswmm::fv::Limiter::VANLEER;
+        else if (vu == "SUPERBEE") opt.fv.limiter = openswmm::fv::Limiter::SUPERBEE;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_SCALAR_SCHEME") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "UPWIND") opt.fv.scalar_scheme = openswmm::fv::ScalarScheme::UPWIND;
+        else if (vu == "MUSCL")  opt.fv.scalar_scheme = openswmm::fv::ScalarScheme::MUSCL;
+        else if (vu == "QUICKEST_ULTIMATE" || vu == "QUICKEST")
+            opt.fv.scalar_scheme = openswmm::fv::ScalarScheme::QUICKEST_ULTIMATE;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_TIME_INTEGRATION") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "EULER") opt.fv.time_integration = openswmm::fv::TimeIntegration::EULER;
+        else if (vu == "RK2")   opt.fv.time_integration = openswmm::fv::TimeIntegration::RK2;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_STRUCTURE_COUPLING") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "SUBSTEP")
+            opt.fv.structure_coupling = openswmm::fv::StructureCoupling::SUBSTEP;
+        else if (vu == "ROUTING_STEP")
+            opt.fv.structure_coupling = openswmm::fv::StructureCoupling::ROUTING_STEP;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_BACKEND") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "CPU")  opt.fv.backend = openswmm::fv::Backend::CPU;
+        else if (vu == "AUTO") opt.fv.backend = openswmm::fv::Backend::AUTO;
+        else if (vu == "OMP")  opt.fv.backend = openswmm::fv::Backend::OMP;
+        else if (vu == "CUDA") opt.fv.backend = openswmm::fv::Backend::CUDA;
+        else if (vu == "HIP")  opt.fv.backend = openswmm::fv::Backend::HIP;
+        else if (vu == "SYCL") opt.fv.backend = openswmm::fv::Backend::SYCL;
+        else return SWMM_ERR_BADPARAM;
+    }
 
     else {
         return SWMM_ERR_BADPARAM;
@@ -1211,6 +1369,12 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
         ctx.options.ext_options.erase(key);
         return SWMM_OK;
     }
+
+    // Keys retired with the CVODE/ARKODE stack (D2) hard-fail here — letting
+    // them fall through to the generic ext_options map would silently persist
+    // them to the next save. (File load, by contrast, warns and ignores them
+    // so legacy models still open.)
+    if (openswmm::twoD::is2DRetiredOptionKey(key)) return SWMM_ERR_BADPARAM;
 
     // Route [2D_OPTIONS] keys into the live SolverOptions2D so GUI/API
     // edits actually reach the 2D solver and persist (InpWriter emits them

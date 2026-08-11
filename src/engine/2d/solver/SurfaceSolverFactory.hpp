@@ -5,8 +5,8 @@
  * @details Resolves which ISurfaceSolver to construct based on the
  *          OPENSWMM_2D_BACKEND policy, discovering and dlopen()ing a GPU
  *          plugin when one is present and usable, and falling back to the
- *          serial CPU CvodeSurfaceSolver otherwise. This is the runtime
- *          half of docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §4.2 — the core
+ *          serial CPU ExplicitInertialSolver otherwise. This is the runtime
+ *          half of the portable-GPU strategy — the core
  *          stays Kokkos/GPU-free; the device backend lives entirely in a
  *          separately built plugin loaded here at runtime.
  *

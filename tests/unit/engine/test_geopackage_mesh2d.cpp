@@ -137,6 +137,7 @@ protected:
         mesh_.tri_v1 = {1, 2};
         mesh_.tri_v2 = {2, 3};
         mesh_.mannings_n = {0.03, 0.045};
+        mesh_.tri_init_depth = {0.25, 0.0};
         mesh_.tri_tag[1] = "T1";
     }
 
@@ -179,6 +180,7 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
         EXPECT_EQ(mesh_in_.tri_v1[t], mesh_.tri_v1[t]);
         EXPECT_EQ(mesh_in_.tri_v2[t], mesh_.tri_v2[t]);
         EXPECT_DOUBLE_EQ(mesh_in_.mannings_n[t], mesh_.mannings_n[t]);
+        EXPECT_DOUBLE_EQ(mesh_in_.tri_init_depth[t], mesh_.tri_init_depth[t]);
         EXPECT_EQ(mesh_in_.tri_tag[t], mesh_.tri_tag[t]);
     }
     // Derived topology is NOT persisted — it stays at the resize defaults
@@ -194,18 +196,22 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
     makeUnitSquareMesh();
 
     opts_.max_timestep      = 5.5;
-    opts_.min_timestep      = 0.0025;
-    opts_.rel_tolerance     = 3.0e-5;
-    opts_.abs_tolerance     = 7.0e-12;   // would be destroyed by %.6f formatting
     opts_.dry_depth         = 0.002;
-    opts_.limiter_epsilon   = 2.0e-7;
+    opts_.limiter_epsilon   = 2.0e-7;   // would be destroyed by %.6f formatting
+    opts_.flux_dh_eps       = 7.0e-12;  // ditto — g17 formatting must preserve it
     opts_.coupling_cd       = 0.71;
-    opts_.max_krylov_dim    = 42;
-    opts_.coupling_interval = 3;
-    opts_.max_cvode_steps   = 750;
     opts_.report_2d         = false;
-    opts_.linear_solver     = twoD::LinearSolverType::BICGSTAB;
-    opts_.preconditioner    = twoD::PreconditionerType::JACOBI;
+    // Closure keys.
+    opts_.cell_closure        = twoD::CellClosure2D::VFR;
+    opts_.face_reconstruction = twoD::FaceDepth2D::VFR_FACE;
+    opts_.vfr_min_wet_frac    = 0.025;
+    // Explicit-marcher keys (D2: the marcher is the only 2D integrator).
+    opts_.theta             = 0.65;
+    opts_.cfl_number        = 0.45;
+    opts_.h_move            = 0.007;
+    opts_.lts_tiers         = 6;
+    opts_.froude_max        = 2.25;
+    opts_.coupling_area_auto = true;
     opts_.output_file       = "results/run.h5";
     opts_.mesh_units_si     = true;
     opts_.mesh_file         = "meshes/site.2dm";  // provenance only
@@ -223,18 +229,20 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
     }
 
     EXPECT_DOUBLE_EQ(opts_in_.max_timestep,    5.5);
-    EXPECT_DOUBLE_EQ(opts_in_.min_timestep,    0.0025);
-    EXPECT_DOUBLE_EQ(opts_in_.rel_tolerance,   3.0e-5);
-    EXPECT_DOUBLE_EQ(opts_in_.abs_tolerance,   7.0e-12);
     EXPECT_DOUBLE_EQ(opts_in_.dry_depth,       0.002);
     EXPECT_DOUBLE_EQ(opts_in_.limiter_epsilon, 2.0e-7);
+    EXPECT_DOUBLE_EQ(opts_in_.flux_dh_eps,     7.0e-12);
     EXPECT_DOUBLE_EQ(opts_in_.coupling_cd,     0.71);
-    EXPECT_EQ(opts_in_.max_krylov_dim,    42);
-    EXPECT_EQ(opts_in_.coupling_interval, 3);
-    EXPECT_EQ(opts_in_.max_cvode_steps,   750);
     EXPECT_FALSE(opts_in_.report_2d);
-    EXPECT_EQ(opts_in_.linear_solver,  twoD::LinearSolverType::BICGSTAB);
-    EXPECT_EQ(opts_in_.preconditioner, twoD::PreconditionerType::JACOBI);
+    EXPECT_EQ(opts_in_.cell_closure,        twoD::CellClosure2D::VFR);
+    EXPECT_EQ(opts_in_.face_reconstruction, twoD::FaceDepth2D::VFR_FACE);
+    EXPECT_DOUBLE_EQ(opts_in_.vfr_min_wet_frac, 0.025);
+    EXPECT_DOUBLE_EQ(opts_in_.theta,        0.65);
+    EXPECT_DOUBLE_EQ(opts_in_.cfl_number,   0.45);
+    EXPECT_DOUBLE_EQ(opts_in_.h_move,       0.007);
+    EXPECT_EQ(opts_in_.lts_tiers,           6);
+    EXPECT_DOUBLE_EQ(opts_in_.froude_max,   2.25);
+    EXPECT_TRUE(opts_in_.coupling_area_auto);
     // 2D results always live in the HDF5 file — the path must round-trip so
     // SWMMEngine::open re-creates the Default2DOutputPlugin.
     EXPECT_EQ(opts_in_.output_file, "results/run.h5");

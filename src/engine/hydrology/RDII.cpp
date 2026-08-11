@@ -12,6 +12,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
+#include "../core/ErrorCodes.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -146,6 +147,23 @@ void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
                 e.uh_name + "' (" + resp + "): recovery is suppressed at the "
                 "reference temperature; check the freeze threshold.");
         }
+        if (e.snow_on && ctx.options.temp_source == 0) {
+            // With no temperature source, T is pinned at T_ref: either every
+            // precipitation event becomes permanent snowpack (T_ref <= snow_T,
+            // RDII silently vanishes) or the snow model never engages.
+            ctx.warnings.emplace_back(
+                (e.T_ref <= e.snow_T)
+                    ? ("WARNING: [RDII_DECAY] snow model is on for group '" +
+                       e.uh_name + "' (" + resp + ") but no temperature source "
+                       "is configured and T_ref <= snow_T: all rainfall will "
+                       "accumulate as snow and never melt, producing zero RDII "
+                       "for this response.")
+                    : ("WARNING: [RDII_DECAY] snow model is on for group '" +
+                       e.uh_name + "' (" + resp + ") but no temperature source "
+                       "is configured: temperature is fixed at T_ref, so no "
+                       "snow will ever accumulate and the snow parameters have "
+                       "no effect."));
+        }
     }
 }
 
@@ -153,6 +171,12 @@ void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
 // init() — populate UH params from parsed data, allocate per-response buffers.
 // ---------------------------------------------------------------------------
 void RDIISolver::init(SimulationContext& ctx) {
+    // Tracks which (month, response) slots each UH group has already been
+    // assigned, so repeated assignments to the same month (e.g. an ALL entry
+    // overriding earlier month-specific entries) can be flagged — matching
+    // legacy WARN13 issued from rdii_readUnitHydParams().
+    std::unordered_map<int, std::array<std::array<bool, 3>, 12>> params_seen;
+
     // Populate UH params from parsed [HYDROGRAPHS] data
     for (const auto& entry : ctx.unit_hyds.entries) {
         int idx = findUnitHyd(entry.name);
@@ -168,6 +192,19 @@ void RDIISolver::init(SimulationContext& ctx) {
         int m_start = (entry.month < 0) ? 0  : entry.month;
         int m_end   = (entry.month < 0) ? 11 : entry.month;
         int k = entry.response;
+
+        // Warn once per entry that re-assigns an already-assigned month;
+        // the values entered last are the ones used.
+        auto& seen = params_seen[idx];
+        bool repeated = false;
+        for (int m = m_start; m <= m_end; ++m) {
+            if (seen[static_cast<size_t>(m)][static_cast<size_t>(k)]) repeated = true;
+            seen[static_cast<size_t>(m)][static_cast<size_t>(k)] = true;
+        }
+        if (repeated) {
+            ctx.warnings.push_back(
+                format_warning(WARN_UH_PARAMS_REPEATED, entry.name));
+        }
 
         for (int m = m_start; m <= m_end; ++m) {
             uh.r[m][k]       = entry.r;
@@ -196,6 +233,9 @@ void RDIISolver::init(SimulationContext& ctx) {
         dp.T_ref     = d.T_ref;
         dp.theta_rec = d.theta_rec;
         dp.T_freeze  = d.T_freeze;
+        dp.snow_on   = d.snow_on;
+        dp.snow_T    = d.snow_T;
+        dp.snow_ddf  = d.snow_ddf;
     }
     validateExpDecay(ctx);
 
@@ -323,6 +363,12 @@ static inline double fToC(double tf) { return (tf - 32.0) * 5.0 / 9.0; }
 // dependent recovery during dry periods. Falls back to T_ref when no
 // temperature source is configured (warned at init time).
 //
+// Optional degree-day snow model (dp.snow_on) — matches the reference
+// IAModel (snow=True): precipitation at T <= snow_T accumulates as SWE with
+// no liquid input (the step then follows the dry recovery branch); at
+// T > snow_T any SWE melts at snow_ddf*(T - snow_T)*dt_days, capped by the
+// available SWE, and the melt is added to rainfall (rain-on-snow adds).
+//
 // Mass-consistent bookkeeping: the storage is drained by exactly the depth it
 // abstracts from the rainfall (ia_consumed), and the excess is computed from
 // that same ia_consumed. Declared in RDII.hpp so unit tests can pin the
@@ -341,6 +387,26 @@ double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
     double ia_avail = iaMax - rd.ia_used;
     ia_avail = std::clamp(ia_avail, 0.0, iaMax);
 
+    // Air temperature (deg C) — needed by both the snow partition and the
+    // dry-period recovery branch. Falls back to T_ref with no temp source.
+    double T_c = (ctx.options.temp_source != 0)
+                   ? fToC(ctx.climate_state.temperature)
+                   : dp.T_ref;
+
+    // Degree-day snow partition — transforms the precipitation input before
+    // the depletion/recovery branch (reference: IAModel compute_excess_series).
+    if (dp.snow_on) {
+        if (T_c <= dp.snow_T) {
+            rd.swe += rainDepth;
+            rainDepth = 0.0;                 // snowfall: no liquid input
+        } else if (rd.swe > 0.0) {
+            double melt = std::min(
+                rd.swe, dp.snow_ddf * (T_c - dp.snow_T) * dt_sec / 86400.0);
+            rd.swe -= melt;
+            rainDepth += melt;               // rain-on-snow adds
+        }
+    }
+
     if (rainDepth > 0.0) {
         // Exponential depletion — temperature-independent
         double ia_new = ia_avail * std::exp(-dp.k_dep * rainDepth);
@@ -352,9 +418,6 @@ double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
     }
 
     // Dry — additive recovery
-    double T_c = (ctx.options.temp_source != 0)
-                   ? fToC(ctx.climate_state.temperature)
-                   : dp.T_ref;
     double kr = getRecoveryRate(dp, T_c);
     if (kr <= 0.0) return 0.0;  // frozen ground or fully recovered
 

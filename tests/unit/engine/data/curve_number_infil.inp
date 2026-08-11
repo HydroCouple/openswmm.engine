@@ -1,0 +1,72 @@
+[TITLE]
+;;Project Title/Notes
+Minimal CURVE_NUMBER infiltration fixture. Pins that the third [INFILTRATION]
+column (drying time, legacy curvenum_setParams p[2]) lands in the same slot
+the C API getter/setter and the runoff solver use. PctZero in [SUBAREAS]
+exercises swmm_subcatch_get_zero_imperv_pct against a parsed value.
+
+[OPTIONS]
+;;Option               Value
+FLOW_UNITS           CFS
+INFILTRATION         CURVE_NUMBER
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/02/2026
+END_TIME             00:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         30
+
+[RAINGAGES]
+;;Name  Format     Interval  SCF   Source
+RG1     INTENSITY  0:15      1.0   TIMESERIES TS1
+
+[TIMESERIES]
+;;Name  Date        Time   Value
+TS1     01/01/2026  00:00  0.5
+TS1     01/01/2026  01:00  0.0
+
+[SUBCATCHMENTS]
+;;Name  Raingage  Outlet  Area  %Imperv  Width  %Slope  CurbLen
+S1      RG1       J1      5.0   25       500    0.5     0
+S2      RG1       J1      3.0   40       300    1.0     0
+
+[SUBAREAS]
+;;Subcatchment  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo
+S1              0.015     0.24    0.06      0.3     25       OUTLET
+S2              0.015     0.24    0.06      0.3     60       OUTLET
+
+[INFILTRATION]
+;;Subcatchment  CurveNum   Conduct    DryTime
+S1              80         0.5        7
+S2              65         0.5        3
+
+[JUNCTIONS]
+;;Name  Elevation  MaxDepth  InitDepth  SurDepth  Aponded
+J1      100.0      10.0      0          0         0
+
+[OUTFALLS]
+;;Name  Elevation  Type  StageData  Gated  RouteTo
+O1      95.0       FREE  *          NO     *
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+C1      J1        O1      400     0.013      0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  1.0    0      0      0      1
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J1      0.0      0.0
+O1      500.0    0.0
+
+[MAP]
+UNITS      FEET

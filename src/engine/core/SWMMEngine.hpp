@@ -209,6 +209,10 @@ public:
     snow::SnowSolver&       snowSolver()       noexcept { return snow_; }
     const snow::SnowSolver& snowSolver() const noexcept { return snow_; }
 
+    /// Control engine access (for C API rule compilation after initialize()).
+    controls::ControlEngine&       controlEngine()       noexcept { return controls_; }
+    const controls::ControlEngine& controlEngine() const noexcept { return controls_; }
+
     /// Inflow solver access (for C API runtime pattern-cache refresh).
     inflow::InflowSolver&       inflowSolver()       noexcept { return inflow_; }
     const inflow::InflowSolver& inflowSolver() const noexcept { return inflow_; }
@@ -317,6 +321,22 @@ public:
         return ctx_.error_message.c_str();
     }
 
+    /**
+     * @brief Enable/disable lenient (permissive) open.
+     *
+     * @details When enabled, open() still records post-parse validation errors
+     *          (undefined objects, missing curves, etc.) into ctx.errors and the
+     *          report, but does NOT fail the open — it leaves the engine in the
+     *          OPENED state with all parsed objects intact and editable. This
+     *          lets an editor/GUI load as many objects as feasible from a broken
+     *          model. Hard reader failures (unreadable/malformed file) still
+     *          fail. The default (false) preserves strict, legacy-matching
+     *          behavior for the CLI and simulation. Callers should inspect the
+     *          error list after a lenient open; running such a model still
+     *          requires a fresh, strict open.
+     */
+    void set_lenient_open(bool on) noexcept { lenient_open_ = on; }
+
 #ifdef OPENSWMM_HAS_2D
     /** @brief Access the 2D surface router (for C API delegation). */
     twoD::SurfaceRouter2D&       surfaceRouter2D()       noexcept { return surface_router_; }
@@ -330,6 +350,7 @@ private:
     // -----------------------------------------------------------------------
 
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
+    bool                   lenient_open_ = false;  ///< permissive open (see setter)
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread
 
@@ -436,6 +457,12 @@ private:
 
     EngineCallbacks callbacks_;   ///< Registered callback bundle
     int save_results_ = 0;        ///< Whether to save binary results
+
+    /// Legacy DoRouting analog (swmm5.c:748): routing executes only when the
+    /// model has nodes and IGNORE_ROUTING is off. Computed once in start();
+    /// gates stepRouting(), statistics, routing mass balance, the routing
+    /// step-size selection, and the outfall interface write.
+    bool do_routing_ = true;
 
     // -----------------------------------------------------------------------
     // Report averaging accumulator (legacy RptFlags.averages)
@@ -701,11 +728,41 @@ private:
      */
     void applyForcings(double dt) noexcept;
 
+    /**
+     * @brief Project-level validation + step-clamp warnings (legacy project_validate).
+     *
+     * @details Clamps the dry/routing/wet time steps to legal relative ordering
+     *          and to rain-gage recording intervals, recording legacy WARNING
+     *          01/06/07 into ctx_.warnings (so they reach the .rpt). Called after
+     *          resolve_cross_references and before the fatal-error gate in open().
+     */
+    void validate_project() noexcept;
+
+    /**
+     * @brief Write a report file containing the accumulated errors/warnings when
+     *        open() fails before the report plugin is prepared.
+     *
+     * @details Matches legacy behavior where a failed swmm_open still leaves a
+     *          .rpt with the ERROR/WARNING lines. No-op if no report path is set.
+     */
+    void write_open_failure_report() noexcept;
+
     /** @brief Set a fatal error on the context and transition to ERROR_STATE. */
     void set_error(int code, const char* message) noexcept;
 
     /** @brief Fire the warning callback (if registered). */
     void emit_warning(int code, const char* message) noexcept;
+
+    /**
+     * @brief Record a warning so it reaches BOTH the report (.rpt) and the API.
+     *
+     * @details Pushes @p message onto ctx_.warnings (the accumulator the report
+     *          writer flushes, matching legacy report_writeWarningMsg) AND fires
+     *          the on_warning callback. Use for engine-level warnings that would
+     *          otherwise be callback-only (e.g. unknown/skipped input sections)
+     *          and never appear in the report.
+     */
+    void push_report_warning(const std::string& message, int code) noexcept;
 
     /** @brief Fire the progress callback (if registered). */
     void emit_progress() noexcept;

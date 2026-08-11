@@ -67,8 +67,6 @@ const char* k2DSections = R"INP(
 MAX_TIMESTEP        5
 DRY_DEPTH           0.002
 COUPLING_CD         0.7
-LINEAR_SOLVER       GMRES
-PRECONDITIONER      JACOBI
 REPORT_2D           NO
 
 [2D_VERTICES]
@@ -79,8 +77,8 @@ REPORT_2D           NO
 0       10    11.5
 
 [2D_TRIANGLES]
-;;V1  V2  V3  MANNINGS_N
-0     1   2   0.03
+;;V1  V2  V3  MANNINGS_N  INIT_DEPTH  TAG
+0     1   2   0.03        0.25        wetcell
 0     2   3   0.045
 
 [2D_VERTEX_NODE_MAP]
@@ -166,6 +164,10 @@ protected:
             ASSERT_EQ(swmm_2d_triangle_get_vertices(b, t, &vb[0], &vb[1], &vb[2]), 0);
             ASSERT_EQ(swmm_2d_triangle_get_mannings(a, t, &ma), 0);
             ASSERT_EQ(swmm_2d_triangle_get_mannings(b, t, &mb), 0);
+            double da = -1.0, db = -1.0;
+            ASSERT_EQ(swmm_2d_triangle_get_init_depth(a, t, &da), 0);
+            ASSERT_EQ(swmm_2d_triangle_get_init_depth(b, t, &db), 0);
+            EXPECT_NEAR(da, db, 1e-12) << "init_depth tri " << t;
             ASSERT_EQ(swmm_2d_triangle_get_neighbours(a, t, &na[0], &na[1], &na[2]), 0);
             ASSERT_EQ(swmm_2d_triangle_get_neighbours(b, t, &nb[0], &nb[1], &nb[2]), 0);
             for (int k = 0; k < 3; ++k) {
@@ -220,6 +222,36 @@ TEST_F(InpWriter2DTest, InlineRoundTrip) {
     EXPECT_NE(text.find("[2D_BOUNDARY_CONDITIONS]"), std::string::npos);
     EXPECT_NE(text.find("NORMAL_FLOW"), std::string::npos);
     EXPECT_NE(text.find("[2D_EDGE_CONVEYANCE]"), std::string::npos);
+    // The INIT_DEPTH column is written (fixture triangle 0 has 0.25 m).
+    EXPECT_NE(text.find("INIT_DEPTH"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// INIT_DEPTH seeds the solver state: total volume = depth * area at start,
+// and the mass-balance ledger opens with it as initial storage (not error).
+// ---------------------------------------------------------------------------
+
+TEST_F(InpWriter2DTest, InitDepthSeedsVolume) {
+    const fs::path inp = dir_ / "seed.inp";
+    write_file(inp, replace(k1DBase, "{FLOW_UNITS}", "CMS") + k2DSections);
+
+    eng_a_ = open_engine(inp);
+    ASSERT_EQ(swmm_engine_initialize(eng_a_), 0);
+    int active = 0;
+    ASSERT_EQ(swmm_2d_is_active(eng_a_, &active), 0);
+    ASSERT_EQ(active, 1);
+
+    double d0 = -1.0, d1 = -1.0;
+    ASSERT_EQ(swmm_2d_triangle_get_init_depth(eng_a_, 0, &d0), 0);
+    ASSERT_EQ(swmm_2d_triangle_get_init_depth(eng_a_, 1, &d1), 0);
+    EXPECT_NEAR(d0, 0.25, 1e-12);
+    EXPECT_NEAR(d1, 0.0, 1e-12);
+
+    double a0 = 0.0, vol = -1.0;
+    ASSERT_EQ(swmm_2d_triangle_get_area(eng_a_, 0, &a0), 0);
+    ASSERT_EQ(swmm_2d_get_total_volume(eng_a_, &vol), 0);
+    EXPECT_NEAR(vol, 0.25 * a0, 1e-9)
+        << "initial volume must equal init_depth * area of the wet triangle";
 }
 
 // ---------------------------------------------------------------------------
@@ -311,17 +343,21 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
 
     // Set exactly like the GUI's 2D Surface Routing tab does.
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "0.005"), 0);
-    ASSERT_EQ(swmm_options_set_ext(eng_a_, "LINEAR_SOLVER", "TFQMR"), 0);
-    ASSERT_EQ(swmm_options_set_ext(eng_a_, "MAX_KRYLOV_DIM", "55"), 0);
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "THETA", "0.9"), 0);
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "LTS_TIERS", "6"), 0);
     // Invalid values are rejected (parse2DOptionsLine validation).
     EXPECT_NE(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "not_a_number"), 0);
+    // Retired CVODE-stack keys are hard errors (D2, 2026-07-29).
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "LINEAR_SOLVER", "GMRES"), 0);
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "MAX_CVODE_STEPS", "500"), 0);
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "INTEGRATOR", "CVODE"), 0);
 
     // Read-back comes from the live SolverOptions2D, not a side store.
     char buf[64] = {};
     ASSERT_EQ(swmm_options_get_ext(eng_a_, "DRY_DEPTH", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.005");
-    ASSERT_EQ(swmm_options_get_ext(eng_a_, "LINEAR_SOLVER", buf, sizeof(buf)), 0);
-    EXPECT_STREQ(buf, "TFQMR");
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "THETA", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "0.9");
 
     // The edits persist: the emitted [2D_OPTIONS] carries them...
     const fs::path inp_b = dir_ / "opt_out.inp";
@@ -332,14 +368,16 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     const std::string dd_line = text.substr(dd, text.find('\n', dd) - dd);
     EXPECT_NE(dd_line.find("0.005"), std::string::npos)
         << "DRY_DEPTH line was: " << dd_line;
-    EXPECT_NE(text.find("TFQMR"), std::string::npos);
+    // ...retired keys are never written back...
+    EXPECT_EQ(text.find("LINEAR_SOLVER"), std::string::npos);
+    EXPECT_EQ(text.find("MAX_CVODE_STEPS"), std::string::npos);
 
     // ...and survive a reload.
     eng_b_ = open_engine(inp_b);
     ASSERT_EQ(swmm_options_get_ext(eng_b_, "DRY_DEPTH", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.005");
-    ASSERT_EQ(swmm_options_get_ext(eng_b_, "MAX_KRYLOV_DIM", buf, sizeof(buf)), 0);
-    EXPECT_STREQ(buf, "55");
+    ASSERT_EQ(swmm_options_get_ext(eng_b_, "LTS_TIERS", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "6");
 
     // Non-2D keys keep the generic ext_options behavior.
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "MY_PLUGIN_KEY", "hello"), 0);

@@ -43,29 +43,47 @@ typedef enum SWMM_LinkType {
  * @details Used with swmm_link_set_xsect() and swmm_link_get_xsect(). The
  *          interpretation of geom1–geom4 depends on the shape; see the
  *          SWMM 5.2 reference manual for cross-section geometry definitions.
+ *
+ * @warning **Renumbered in 6.0.** These codes are the engine's own storage
+ *          codes (`openswmm::XsectShape`). Prior to 6.0 every constant from
+ *          8 upward named a *different* shape than the one the engine stored,
+ *          so e.g. `SWMM_XSECT_IRREGULAR` silently produced a vertical
+ *          ellipse. Code that passed these constants symbolically and is
+ *          recompiled against this header is corrected automatically; code
+ *          that hard-coded the old integers must be renumbered.
+ *          `swmm_xsect_shape_name()` is provided to check a code at runtime.
+ *
+ * @note These are NOT the legacy SWMM 5 `XsectType` codes (which put DUMMY at
+ *       0 and are used internally by the geometry kernels); the engine
+ *       translates between the two at its own boundary.
  */
 typedef enum SWMM_XSectShape {
     SWMM_XSECT_CIRCULAR        =  0, /**< Full circular pipe.                   geom1=diameter. */
     SWMM_XSECT_FILLED_CIRCULAR =  1, /**< Circular pipe with sediment deposit.  geom1=diameter, geom2=filled depth. */
     SWMM_XSECT_RECT_CLOSED     =  2, /**< Closed rectangular conduit.           geom1=height, geom2=width. */
-    SWMM_XSECT_RECT_OPEN       =  3, /**< Open rectangular channel.             geom1=height, geom2=width. */
-    SWMM_XSECT_TRAPEZOIDAL     =  4, /**< Trapezoidal channel.                  geom1=height, geom2=bottom width, geom3=side slope. */
+    SWMM_XSECT_RECT_OPEN       =  3, /**< Open rectangular channel.             geom1=height, geom2=width, geom3=# sides removed (0/1/2). */
+    SWMM_XSECT_TRAPEZOIDAL     =  4, /**< Trapezoidal channel.                  geom1=height, geom2=bottom width, geom3/geom4=side slopes. */
     SWMM_XSECT_TRIANGULAR      =  5, /**< Triangular channel.                   geom1=height, geom2=top width. */
     SWMM_XSECT_PARABOLIC       =  6, /**< Parabolic channel.                    geom1=height, geom2=top width. */
     SWMM_XSECT_POWER           =  7, /**< Power-law shaped channel.             geom1=height, geom2=top width, geom3=exponent. */
-    SWMM_XSECT_RECT_TRIANG     =  8, /**< Rectangular-triangular channel.       geom1=height, geom2=top width, geom3=triangle height. */
-    SWMM_XSECT_RECT_ROUND      =  9, /**< Rectangular-round channel.            geom1=height, geom2=top width, geom3=bottom radius. */
-    SWMM_XSECT_MOD_BASKET      = 10, /**< Modified baskethandle.                geom1=height, geom2=bottom width, geom3=top radius. */
-    SWMM_XSECT_HORIZ_ELLIPSE   = 11, /**< Horizontal ellipse.                   geom1=height, geom2=width. */
-    SWMM_XSECT_VERT_ELLIPSE    = 12, /**< Vertical ellipse.                     geom1=height, geom2=width. */
-    SWMM_XSECT_ARCH            = 13, /**< Arch pipe.                            geom1=height, geom2=width. */
-    SWMM_XSECT_EGGSHAPED       = 14, /**< Egg-shaped (standard).                geom1=height. */
-    SWMM_XSECT_HORSESHOE       = 15, /**< Horseshoe.                            geom1=height. */
-    SWMM_XSECT_GOTHIC          = 16, /**< Gothic.                               geom1=height. */
-    SWMM_XSECT_CATENARY        = 17, /**< Catenary.                             geom1=height. */
-    SWMM_XSECT_SEMIELLIPTICAL  = 18, /**< Semi-elliptical.                      geom1=height. */
-    SWMM_XSECT_IRREGULAR       = 19, /**< Irregular (from transect data).       geom1=transect index. */
-    SWMM_XSECT_STREET          = 24  /**< Street cross-section (from [STREETS]). geom1=street index. */
+    SWMM_XSECT_MOD_BASKET      =  8, /**< Modified baskethandle.                geom1=height, geom2=bottom width, geom3=top radius. */
+    SWMM_XSECT_EGGSHAPED       =  9, /**< Egg-shaped (standard).                geom1=height. */
+    SWMM_XSECT_HORSESHOE       = 10, /**< Horseshoe.                            geom1=height. */
+    SWMM_XSECT_GOTHIC          = 11, /**< Gothic.                               geom1=height. */
+    SWMM_XSECT_CATENARY        = 12, /**< Catenary.                             geom1=height. */
+    SWMM_XSECT_SEMIELLIPTICAL  = 13, /**< Semi-elliptical.                      geom1=height. */
+    SWMM_XSECT_BASKETHANDLE    = 14, /**< Baskethandle.                         geom1=height. */
+    SWMM_XSECT_SEMICIRCULAR    = 15, /**< Semi-circular.                        geom1=height. */
+    SWMM_XSECT_RECT_TRIANG     = 16, /**< Rectangular-triangular channel.       geom1=height, geom2=top width, geom3=triangle height. */
+    SWMM_XSECT_RECT_ROUND      = 17, /**< Rectangular-round channel.            geom1=height, geom2=top width, geom3=bottom radius. */
+    SWMM_XSECT_HORIZ_ELLIPSE   = 18, /**< Horizontal ellipse.                   geom1=height, geom2=width. */
+    SWMM_XSECT_VERT_ELLIPSE    = 19, /**< Vertical ellipse.                     geom1=height, geom2=width. */
+    SWMM_XSECT_ARCH            = 20, /**< Arch pipe.                            geom1=height, geom2=width. */
+    SWMM_XSECT_IRREGULAR       = 21, /**< Irregular (from transect data).       geom1=transect index. */
+    SWMM_XSECT_CUSTOM          = 22, /**< Custom shape (from a shape curve).    geom1=height, geom2=shape-curve index. */
+    SWMM_XSECT_FORCE_MAIN      = 23, /**< Circular force main.                  geom1=diameter, geom2=roughness (H-W C or D-W eps). */
+    SWMM_XSECT_STREET          = 24, /**< Street cross-section (from [STREETS]). geom1=street index. */
+    SWMM_XSECT_DUMMY           = 25  /**< Dummy — no geometry; all queries return 0. */
 } SWMM_XSectShape;
 
 /* =========================================================================
