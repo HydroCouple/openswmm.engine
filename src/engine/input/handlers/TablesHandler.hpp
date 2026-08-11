@@ -18,10 +18,10 @@ namespace openswmm { struct SimulationContext; }
 
 namespace openswmm::input {
 
-/** @brief Parse [TIMESERIES] into TableData + table_names. */
+/** @brief Parse [TIMESERIES] into TableData (kind-scoped names). */
 void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& lines);
 
-/** @brief Parse [CURVES] into TableData + table_names. */
+/** @brief Parse [CURVES] into TableData (kind-scoped names). */
 void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines);
 
 } /* namespace openswmm::input */

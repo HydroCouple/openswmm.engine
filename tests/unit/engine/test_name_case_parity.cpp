@@ -126,6 +126,26 @@ TEST(NameCaseParity, MultiLineContinuationSpellingsMergeWithout207) {
     (void)rpt_text;
 }
 
+// A pump curve and an inflow timeseries may share one name — legacy keeps
+// CURVE and TSERIES in separate hash tables. Both objects must exist and
+// each case-variant reference must resolve to its own kind.
+TEST(NameCaseParity, CurveAndTimeseriesMayShareAName) {
+    SWMM_Engine e = swmm_engine_create();
+    const int rc = swmm_engine_open(e, "namecase_shared_curve_ts.inp",
+                                    "namecase_shared_curve_ts.rpt",
+                                    nullptr, nullptr);
+    EXPECT_EQ(rc, SWMM_OK);
+    EXPECT_EQ(swmm_table_count(e), 2);  // one curve + one timeseries
+    EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    EXPECT_EQ(swmm_engine_start(e, 0), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    EXPECT_EQ(swmm_engine_end(e), SWMM_OK);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+
 // Linear-scan-backed C API lookups (transects here as the representative)
 // are case-insensitive too, and their adders reject case-variant duplicates.
 TEST(NameCaseParity, TransectLookupIsCaseInsensitive) {

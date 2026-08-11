@@ -161,8 +161,7 @@ TEST_F(CapiFilePathsTest, RaingageDataVectorSlotByGageId) {
 TEST_F(CapiFilePathsTest, TimeseriesDataVectorSlotBySeriesId) {
     auto* h = engine;
     auto& ctx = static_cast<openswmm::SWMMEngine*>(h)->context();
-    int t = ctx.table_names.add("RAIN_X");
-    ctx.tables.add("RAIN_X", openswmm::TableType::TIMESERIES);
+    int t = ctx.tables.add("RAIN_X", openswmm::TableType::TIMESERIES);
     ASSERT_GE(t, 0);
 
     EXPECT_EQ(swmm_file_path_set(engine, SWMM_FILE_TIMESERIES_DATA, "RAIN_X",

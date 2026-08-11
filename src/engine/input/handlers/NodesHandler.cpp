@@ -235,7 +235,7 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
             // tok[4] = curve name (deferred)
             if (tok.size() > 4) {
                 D.curve_name[drow] = tok[4];
-                int ci = ctx.table_names.find(tok[4]);
+                int ci = ctx.find_curve(tok[4]);
                 D.curve[drow] = ci; // may be -1
             }
         } else if (dtype == "WEIR") {

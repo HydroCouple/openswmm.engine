@@ -101,7 +101,7 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
         // it here broke the save/re-open round-trip for ideal pumps.
         if (tok.size() > 3 && tok[3] != "*") {
             ctx.links.pump_curve_name[idx] = tok[3];
-            ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(tok[3]);
+            ctx.link_subtypes.pumps.curve[upr] = ctx.find_curve(tok[3]);
         }
         // tok[4]: init status (ON/OFF)
         if (tok.size() > 4) {

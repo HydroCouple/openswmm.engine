@@ -312,7 +312,7 @@ CascadeResult analyze_table_impact(const SimulationContext& ctx, int table_idx) 
 
     // External-inflow rows referencing this timeseries by name
     {
-        const std::string& t_name = ctx.table_names.name_of(table_idx);
+        const std::string& t_name = ctx.tables[table_idx].id;
         if (!t_name.empty()) {
             for (int i = 0; i < ctx.ext_inflows.count(); ++i)
                 if (ctx.ext_inflows.ts_name[static_cast<std::size_t>(i)] == t_name)
@@ -724,7 +724,7 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
 
     // External-inflow rows reference timeseries by name only.
     {
-        const std::string& t_name = ctx.table_names.name_of(table_idx);
+        const std::string& t_name = ctx.tables[table_idx].id;
         if (!t_name.empty()) {
             for (int i = 0; i < ctx.ext_inflows.count(); ++i) {
                 const auto ui = static_cast<std::size_t>(i);
@@ -802,9 +802,8 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
 
     // --- Step 2: erase the table entry ---
     ctx.tables.tables.erase(ctx.tables.tables.begin() + static_cast<std::ptrdiff_t>(table_idx));
-    ctx.table_names.remove_at(table_idx);
 
-    // Subcatchment adjustment patterns index table_names (see InpWriter tN)
+    // Subcatchment adjustment patterns index ctx.tables (see InpWriter tN)
     auto clear_adj = [&](std::vector<int>& v, const char* field) {
         for (std::size_t i = 0; i < v.size(); ++i) {
             if (v[i] == table_idx) {

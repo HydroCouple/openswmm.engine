@@ -98,7 +98,7 @@ SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
-    int ts_idx = ctx.table_names.find(ts_id);
+    int ts_idx = ctx.find_timeseries(ts_id);
     if (ts_idx < 0) return SWMM_ERR_BADPARAM;
     ctx.gages.ts_index[static_cast<std::size_t>(idx)] = ts_idx;
     ctx.gages.source[static_cast<std::size_t>(idx)] = openswmm::RainSource::TIMESERIES;
@@ -226,8 +226,8 @@ SWMM_ENGINE_API int swmm_gage_get_timeseries(SWMM_Engine engine, int idx, char* 
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     const int ts = ctx.gages.ts_index[static_cast<std::size_t>(idx)];
     std::string id;
-    if (ts >= 0 && ts < static_cast<int>(ctx.table_names.size()))
-        id = ctx.table_names.name_of(ts);
+    if (ts >= 0 && ts < ctx.n_tables())
+        id = ctx.tables[ts].id;
     else
         id = ctx.gages.ts_name[static_cast<std::size_t>(idx)];  // unresolved name, if any
     gage_fill_buf(buf, buflen, id);

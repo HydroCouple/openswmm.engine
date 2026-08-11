@@ -121,7 +121,7 @@ void InflowSolver::init(SimulationContext& ctx) {
         // Resolve timeseries name → table index
         const auto& ts_name = ctx.ext_inflows.ts_name[ui];
         if (!ts_name.empty()) {
-            ext_inflows_.ts_idx[ui] = ctx.table_names.find(ts_name);
+            ext_inflows_.ts_idx[ui] = ctx.find_timeseries(ts_name);
         } else {
             ext_inflows_.ts_idx[ui] = -1;
         }

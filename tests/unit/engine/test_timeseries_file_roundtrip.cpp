@@ -83,9 +83,7 @@ TEST(TimeseriesFileRoundTrip, ParserPreservesColumnSuffixVerbatim) {
 
 TEST(TimeseriesFileRoundTrip, WriterEmitsFileRowForFileBackedSeries) {
     SimulationContext ctx;
-    int nidx = ctx.table_names.add("RAIN_A");
-    int idx  = ctx.tables.add("RAIN_A", TableType::TIMESERIES);
-    ASSERT_EQ(nidx, idx);
+    int idx = ctx.tables.add("RAIN_A", TableType::TIMESERIES);
     ctx.tables[idx].file_path = "rain_2024.csv";
 
     const auto path = (fs::temp_directory_path()
@@ -117,9 +115,7 @@ TEST(TimeseriesFileRoundTrip, WriterEmitsFileRowForFileBackedSeries) {
 
 TEST(TimeseriesFileRoundTrip, WriterPreservesColumnSuffix) {
     SimulationContext ctx;
-    int nidx = ctx.table_names.add("RAIN_E");
-    int idx  = ctx.tables.add("RAIN_E", TableType::TIMESERIES);
-    ASSERT_EQ(nidx, idx);
+    int idx = ctx.tables.add("RAIN_E", TableType::TIMESERIES);
     ctx.tables[idx].file_path = "rainfall_2024.csv:East_Gage";
 
     const auto path = (fs::temp_directory_path()

@@ -244,8 +244,7 @@ protected:
 
         // --- TIMESERIES ---
         {
-            int idx = ctx.table_names.add("TS1");
-            ctx.tables.add("TS1", TableType::TIMESERIES);
+            int idx = ctx.tables.add("TS1", TableType::TIMESERIES);
             ctx.tables[idx].x = {0.0, 1.0, 2.0, 3.0};
             ctx.tables[idx].y = {0.5, 2.0, 1.5, 0.0};
 
@@ -255,8 +254,7 @@ protected:
 
         // --- CURVES ---
         {
-            int idx = ctx.table_names.add("StorageCurve1");
-            ctx.tables.add("StorageCurve1", TableType::CURVE_CONTROL);
+            int idx = ctx.tables.add("StorageCurve1", TableType::CURVE_CONTROL);
             ctx.tables[idx].x = {0.0, 2.0, 4.0};
             ctx.tables[idx].y = {100.0, 200.0, 500.0};
         }
@@ -1053,7 +1051,7 @@ TEST_F(GeoPackageTest, TimeseriesRoundTrip) {
     SimulationContext ctx_in{};
     ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
 
-    int ts = ctx_in.table_names.find("TS1");
+    int ts = ctx_in.find_timeseries("TS1");
     ASSERT_GE(ts, 0);
     EXPECT_EQ(ctx_in.tables[ts].type, TableType::TIMESERIES);
     ASSERT_EQ(ctx_in.tables[ts].x.size(), 4u);
@@ -1068,7 +1066,7 @@ TEST_F(GeoPackageTest, CurvesRoundTrip) {
     SimulationContext ctx_in{};
     ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
 
-    int sc = ctx_in.table_names.find("StorageCurve1");
+    int sc = ctx_in.find_curve("StorageCurve1");
     ASSERT_GE(sc, 0);
     EXPECT_NE(ctx_in.tables[sc].type, TableType::TIMESERIES);
     ASSERT_EQ(ctx_in.tables[sc].x.size(), 3u);

@@ -571,7 +571,7 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
                 ctx.links.pump_curve_name[idx] = ref_name;
                 ctx.links.xsect_curve[idx] = -1;
             } else {
-                ctx.links.xsect_curve[idx] = ctx.table_names.find(ref_name);
+                ctx.links.xsect_curve[idx] = ctx.find_curve(ref_name);
             }
         }
         ctx.links.has_flap_gate[idx] = column_int(stmt.get(), 16) != 0;
@@ -818,7 +818,7 @@ static void read_rain_gages(sqlite3* db, SimulationContext& ctx, const std::stri
             // timeseries: gages are read before [TIMESERIES], so find() here is
             // -1 until the deferred re-resolution runs against ts_name.
             ctx.gages.ts_name[static_cast<size_t>(idx)] = src;
-            ctx.gages.ts_index[idx] = ctx.table_names.find(src);
+            ctx.gages.ts_index[idx] = ctx.find_timeseries(src);
         }
     }
 }
@@ -834,13 +834,12 @@ static void read_curves(sqlite3* db, SimulationContext& ctx, const std::string& 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string name = column_text(stmt.get(), 0);
         if (name != prev_name) {
-            idx = ctx.table_names.find(name);
+            idx = ctx.find_curve(name);
             if (idx < 0) {
                 // Determine the curve type from the stored integer
                 int ctype_int = std::stoi(column_text(stmt.get(), 1));
                 TableType ttype = static_cast<TableType>(ctype_int);
-                idx = ctx.table_names.add(name);
-                ctx.tables.add(name, ttype);
+                idx = ctx.tables.add(name, ttype);
             }
             prev_name = name;
         }
@@ -862,10 +861,9 @@ static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::stri
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string name = column_text(stmt.get(), 0);
         if (name != prev_name) {
-            idx = ctx.table_names.find(name);
+            idx = ctx.find_timeseries(name);
             if (idx < 0) {
-                idx = ctx.table_names.add(name);
-                ctx.tables.add(name, TableType::TIMESERIES);
+                idx = ctx.tables.add(name, TableType::TIMESERIES);
             }
             prev_name = name;
         }
@@ -1333,7 +1331,7 @@ static void read_adjustments(sqlite3* db, SimulationContext& ctx,
             std::string pat_name = column_text(stmt.get(), 2);
 
             int si = ctx.subcatch_names.find(sc_name);
-            int pi = ctx.table_names.find(pat_name);
+            int pi = ctx.find_table_any(pat_name);
             if (si < 0 || pi < 0) continue;
 
             auto usi = static_cast<size_t>(si);

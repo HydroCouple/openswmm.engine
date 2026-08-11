@@ -128,11 +128,10 @@ void hydrateTimeseries(sqlite3* db, SimulationContext& ctx,
         auto wr = formats::writeTimeseriesText(scratch_path, rows);
         if (!wr.ok) throw GpkgError("timeseries materialise failed: " + wr.error);
 
-        // Bind to the matching Table in ctx (create one if absent).
-        int t = ctx.table_names.find(sid);
+        // Bind to the matching timeseries Table in ctx (create if absent).
+        int t = ctx.find_timeseries(sid);
         if (t < 0) {
-            t = ctx.table_names.add(sid);
-            ctx.tables.add(sid, TableType::TIMESERIES);
+            t = ctx.tables.add(sid, TableType::TIMESERIES);
         }
         std::string token = spec.column.empty()
                               ? scratch_path
