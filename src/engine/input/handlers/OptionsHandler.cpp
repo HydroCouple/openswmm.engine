@@ -414,6 +414,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "FV_NODE_PICARD") {
             opt.fv.node_picard_sweeps = std::max(1, static_cast<int>(to_double(val)));
 
+        } else if (key == "FV_NODE_CELL_COUPLING") {
+            const std::string cc = norm(val);
+            opt.fv.node_cell_coupling =
+                (cc == "YES" || cc == "TRUE" || cc == "1" || cc == "ON");
+
         } else if (key == "NODE_CONTINUITY") {
             const std::string nc = norm(val);
             if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;

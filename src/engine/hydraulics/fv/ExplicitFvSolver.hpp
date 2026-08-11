@@ -137,6 +137,15 @@ private:
     void   updateNodes(double dt, const FvStepForcing& forcing);
     void   dispersionSolve(double dt);
 
+    /// Scatter forcing.structure_flow into a per-node net source, once per
+    /// forcing refresh. One array read by the node relaxation, the global node
+    /// ledger and the tiered node update alike, so all three integrate the
+    /// same continuity equation — the relaxation previously omitted structure
+    /// flows and equilibrated the node against a residual the ledger did not
+    /// integrate.
+    void   refreshStructFlows(const FvStepForcing& forcing);
+    std::vector<double> node_qstruct_;
+
     double nodeDepthFromVolume(int node, double volume) const;
 
     /// dV/dH at an arbitrary depth — what the semi-implicit node correction is
@@ -158,6 +167,19 @@ private:
     /// estimate of what that face is carrying), and the linear correction is
     /// still written to all of them, exactly as the single-sweep scheme did —
     /// only the re-solve is gated. On the global path every face is live.
+    /// Can the LTS macro cycle run under the current options and state?
+    /// One predicate shared by advance() and censusDt(): tiering is off under
+    /// RK2 (the two stages must share one Δt) and under transport (the FCT
+    /// sweep is synchronous). censusDt() skips the node stability term only
+    /// when tiering can actually supply the node its own fine tier — gating
+    /// that skip on the FV_LTS option alone silently dropped the node bound
+    /// from the global path whenever the option was on but tiering was not
+    /// running (RK2, species), reproducing FV_NODE_DT NONE unasked.
+    bool ltsEligible() const noexcept {
+        return opts_.lts && opts_.time_integration != TimeIntegration::RK2 &&
+               state_ && state_->n_species == 0;
+    }
+
     bool faceIsLive(int f) const noexcept {
         return all_faces_live_ ||
                (!live_stamp_.empty() &&
