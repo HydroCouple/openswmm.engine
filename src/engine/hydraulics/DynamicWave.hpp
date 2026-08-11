@@ -593,6 +593,15 @@ public:
     /// means anything inside the implicit node-continuity solve.
     double& nodeSumDqdh(int n) { return xnode_.sumdqdh[static_cast<std::size_t>(n)]; }
 
+    /// Direct call into the private per-node depth update (for tests): runs
+    /// the node-continuity update on the current ctx/xnode_ state and commits
+    /// the result. PRECONDITION: execute() has run at least once so the
+    /// node-invariant tile is built.
+    void setNodeDepthForTest(SimulationContext& ctx, int node_idx, double dt,
+                             int step) {
+        setNodeDepth(ctx, node_idx, dt, step);
+    }
+
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
     const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }
 

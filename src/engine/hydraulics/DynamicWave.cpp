@@ -2885,7 +2885,7 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     // continuity formulation, where setNodeDepth switches to the dQ/dH surcharge
     // branch at the crown — a branch-discontinuous operator that violates AA's
     // smooth-G assumption. Under SEMI_IMPLICIT the unified Crank-Nicolson update
-    // (dy = dV / (A - 0.5*dt*sumdqdh)) is C1-smooth through the free-surface ⟷
+    // (dy = dV / (A + 0.5*dt*sumdqdh)) is C1-smooth through the free-surface ⟷
     // surcharge transition, so plain surcharged junctions are AA-eligible. The
     // genuinely-discrete cases (pumps, weir/orifice at crown, active DPS slot,
     // static-slot kink) are non-smooth in the link-level sumdqdh inputs — not in
@@ -3304,10 +3304,12 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         //
         //   Q_net_new ≈ Q_net + (dQ_net/dH) * dH
         //
-        // where dQ_net/dH = sumdqdh (positive: higher head ⟶ more net
-        // outflow through connected links).  Substituting and rearranging:
+        // where sumdqdh is accumulated POSITIVE from the link dqdh values
+        // (higher head ⟶ more net outflow through connected links), so
+        // dQ_net/dH = -sumdqdh — the same sign convention the EXTRAN
+        // surcharge branch divides by.  Substituting and rearranging:
         //
-        //   dH = dV / (A - dt * sumdqdh / 2)
+        //   dH = dV / (A + dt * sumdqdh / 2)
         //
         // dV already contains the trapezoidal average of old_net_inflow and
         // current dQ, so the sumdqdh correction folds the head-dependent
@@ -3319,7 +3321,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
         // over, producing a smooth transition without a branch.
         // =================================================================
 
-        double denom = surf_area - 0.5 * dt * xnode_.sumdqdh[ui];
+        double denom = surf_area + 0.5 * dt * xnode_.sumdqdh[ui];
         denom = std::max(denom, min_surf_area_);
 
         double dy = dV / denom;
