@@ -26,6 +26,34 @@
 
 #include "IPluginComponentInfo.hpp"
 
+/* =========================================================================
+ * Export macro
+ *
+ * The engine target sets WINDOWS_EXPORT_ALL_SYMBOLS OFF and relies on explicit
+ * export macros (see src/engine/CMakeLists.txt). On ELF/Mach-O the target's
+ * CXX_VISIBILITY_PRESET is `default`, so omitting the macro still exports the
+ * symbol — which is why the unannotated declarations below linked fine on
+ * Linux/macOS while failing on Windows with:
+ *     error LNK2001: unresolved external symbol openswmm::discover_all_filters
+ * Block is byte-identical to the one in openswmm_engine.h / openswmm_2d.h;
+ * identical macro redefinition is well-defined, so including those alongside
+ * this header is safe.
+ * ========================================================================= */
+
+#ifdef OPENSWMM_ENGINE_STATIC
+#  define SWMM_ENGINE_API
+#else
+#  ifdef _WIN32
+#    ifdef openswmm_engine_EXPORTS
+#      define SWMM_ENGINE_API __declspec(dllexport)
+#    else
+#      define SWMM_ENGINE_API __declspec(dllimport)
+#    endif
+#  else
+#    define SWMM_ENGINE_API __attribute__((visibility("default")))
+#  endif
+#endif
+
 namespace openswmm {
 
 /**
@@ -59,8 +87,13 @@ struct DiscoveredFilter {
  *          The returned list preserves the order of (plugin, filter-within-plugin).
  *
  * @returns Flat snapshot of all advertised filters.
+ *
+ * @note Returns std::vector by value across the library boundary. Safe for
+ *       consumers built with the same toolchain and C++ runtime as the engine
+ *       (which is what the GUI and the in-tree CI do). A consumer built with a
+ *       different MSVC runtime/STL must not call this directly.
  */
-std::vector<DiscoveredFilter> discover_all_filters();
+SWMM_ENGINE_API std::vector<DiscoveredFilter> discover_all_filters();
 
 /**
  * @brief A plugin grouped by id with all the roles and filters it advertises.
@@ -114,8 +147,10 @@ struct DiscoveredPlugin {
  *          rather than "give me every (plugin, filter) pair".
  *
  * @returns Flat snapshot of plugins, one entry per `plugin_id`.
+ *
+ * @note Same cross-boundary std::vector caveat as discover_all_filters().
  */
-std::vector<DiscoveredPlugin> discover_plugins_by_id();
+SWMM_ENGINE_API std::vector<DiscoveredPlugin> discover_plugins_by_id();
 
 } /* namespace openswmm */
 

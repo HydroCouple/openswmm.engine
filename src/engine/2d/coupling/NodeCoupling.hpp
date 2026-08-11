@@ -46,6 +46,10 @@ struct CouplingPoint {
     double area;        ///< Effective exchange area (m²)
     bool is_outfall;    ///< True if the SWMM node is an outfall
     bool has_flap_gate; ///< True if outfall has a flap gate
+    /// True when the input authored an explicit AREA token for this point;
+    /// false = defaulted, eligible for the COUPLING_AREA AUTO derivation
+    /// (clamp(1.25 × largest connected conduit area, 0.05, 2.0) m²).
+    bool area_authored = true;
 };
 
 /**
@@ -62,29 +66,69 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
                                                 const SimulationContext& ctx);
 
 /**
- * @brief Compute exchange flows at all coupling points and inject into forcing API.
+ * @brief Head sensitivity G = −∂Q/∂h_1d ≥ 0 of the coupling orifice at a
+ *        point (SI: m³/s per m of 1D head, with h_1d in 2D metres).
  *
- * For each coupling point:
- * 1. Computes head difference Δh = h_2d - h_swmm
- * 2. Applies orifice equation: Q = Cd * A * sign(Δh) * sqrt(2g|Δh|)
- * 3. Handles outfall boundary feedback and flap gates
- * 4. Suppresses ponding at coupled nodes
- * 5. Injects Q into forcing API as lateral inflow (ADD, RESET)
- * 6. Records coupling flux back into 2D state
- *
- * @param cps    Coupling points.
- * @param mesh   Mesh data.
- * @param state  2D surface state.
- * @param ctx    Simulation context (node heads, forcing API, mass balance).
- * @param opts   2D solver options (uses dry_depth as the wet/dry threshold).
- * @param dt     Current SWMM routing timestep (s).
+ * @details Windowless-coupling stabilizer (2026-07-29 plan §5.4): scattered
+ *          into the dynamic-wave node continuity denominator (`sumdqdh`) each
+ *          Picard iteration so the exchange stops being a zero-sensitivity
+ *          explicit source — the measured fix for drain/spill iteration churn.
+ *          Gate/ramp derivative terms are dropped to guarantee G ≥ 0 (pure
+ *          damping; the denominator can only grow).
  */
-void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
-                              const MeshData& mesh,
-                              SurfaceStateData& state,
-                              SimulationContext& ctx,
-                              const SolverOptions2D& opts,
-                              double dt);
+double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
+                                 const MeshData& mesh,
+                                 const SurfaceStateData& state,
+                                 const NodeData& nodes,
+                                 const SolverOptions2D& opts) noexcept;
+
+
+
+/**
+ * @brief Per-routing-step outfall discharge accumulation.
+ *
+ * @details Per-step successor of the retired transferOutfallDischarges: samples the LIVE
+ *          net outfall exchange (nodes.inflow − nodes.outflow, this routing
+ *          step) and accumulates Q_net·dt (m³, + = 1D discharge onto the 2D
+ *          surface, − = surface water drawn back through the outfall) into
+ *          accum_m3[k]. Withdrawals are capped by the shared per-cell budget so
+ *          the accumulated window sink cannot overdraw the frozen 2D state.
+ *
+ * @param sample_row Optional (nullable): net 2D-source rate row for the
+ *                   interpolated-forcing series — this step's capped Q_net
+ *                   written as +Q_net into sample_row[k] (already
+ *                   source-positive). Junction slots left untouched.
+ * @return Number of outfalls whose withdrawal was clamped this step.
+ */
+int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps,
+                                   const MeshData& mesh,
+                                   const SurfaceStateData& state,
+                                   const SimulationContext& ctx,
+                                   const SolverOptions2D& opts,
+                                   double dt,
+                                   std::vector<double>& accum_m3,
+                                   std::vector<double>& cell_budget_m3,
+                                   double* sample_row);
+
+/**
+ * @brief Inject a per-point accumulated exchange volume into the 2D window
+ *        source field.
+ *
+ * @details Window-fire counterpart of the per-step accumulators: converts each
+ *          accumulated volume to the mean rate over the window
+ *          (Q_k = accum_m3[k] / window_dt) and scatters it into
+ *          state.coupling_flux with the given sign convention
+ *          (+1: accum is already 2D-source-positive, e.g. outfall discharge;
+ *          −1: accum is 2D→1D-drain-positive, e.g. junction exchange, so the
+ *          2D-side source is its negation). coupling_flux is NOT cleared here —
+ *          callers zero it once before injecting both accumulators.
+ */
+void injectAccumulatedExchange(const std::vector<CouplingPoint>& cps,
+                               const MeshData& mesh,
+                               SurfaceStateData& state,
+                               const std::vector<double>& accum_m3,
+                               double window_dt,
+                               double sign);
 
 /**
  * @brief Live node-coupling orifice flux for ONE non-outfall coupling point.
@@ -93,7 +137,7 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
  * 2D → 1D, < 0 spills 1D → 2D) from the CURRENT 2D state (head/depth/vert_head,
  * reconstructed live inside the CVODE RHS) against the 1D node head, which is
  * frozen for the duration of a 2D advance() window. Unlike
- * computeCouplingExchange (which pre-computes a HELD flux per window and caps it
+ * the retired computeCouplingExchange (which pre-computed a HELD flux per window and capped it
  * by available volume / dt to stop a held drain overshooting), this is the
  * continuous form for use inside the RHS: the orifice + capped-pipe gate + the
  * wet/dry Hermite ramp on the LIVE source-side depth make Q self-limit smoothly
@@ -102,12 +146,23 @@ void computeCouplingExchange(const std::vector<CouplingPoint>& cps,
  *
  * Booking/conservation is handled by the caller integrating ∫Q dt (a per-point
  * accumulator carried in the augmented state vector) over the window.
+ *
+ * @param provisional_vol_m3 Optional per-cell volume (m³) overriding the 2D
+ *        state's own depth/head for the driving-head and wet/dry-ramp terms.
+ *        nullptr on the live-RHS path (CVODE's state is already current). The
+ *        per-routing-step decoupled path passes the window's remaining
+ *        withdrawal budget so the exchange self-limits as the surface drains
+ *        provisionally — without it the frozen window state makes the same
+ *        full-rate drain repeat every sub-step and the window's total exchange
+ *        scales with the number of routing steps in it.
  */
 double computeNodeCouplingQ(const CouplingPoint& cp,
                             const MeshData& mesh,
                             const SurfaceStateData& state,
                             const NodeData& nodes,
-                            const SolverOptions2D& opts) noexcept;
+                            const SolverOptions2D& opts,
+                            const double* provisional_vol_m3 = nullptr,
+                            double h1d_offset_m = 0.0) noexcept;
 
 /**
  * @brief Scatter a signed volumetric exchange Q (m³/s) directly onto the cell
@@ -144,32 +199,6 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                               SimulationContext& ctx,
                               const SolverOptions2D& opts);
 
-/**
- * @brief Transfer outfall discharges into 2D coupling cells.
- *
- * After 1D routing, the outfall discharge is a source for the 2D cell
- * at the outfall coupling point. Withdrawal (net backflow into the pipe)
- * is capped at the water actually available in the receiving cell(s) so
- * the held sink cannot pull cell volumes negative over the window.
- *
- * @param cps        Coupling points.
- * @param mesh       Mesh data.
- * @param state      2D surface state.
- * @param ctx        Simulation context.
- * @param opts       2D solver options (for unit-system coupling factors).
- * @param dt         2D advance window (s); used for the withdrawal cap.
- * @param applied_q  Out: net SI exchange (m³/s, +into 2D) actually applied per
- *                   outfall node index — the mass-balance ledger must book
- *                   exactly these (clamped) values, not the raw 1D rates.
- * @return Number of outfalls whose withdrawal was clamped this window.
- */
-int transferOutfallDischarges(const std::vector<CouplingPoint>& cps,
-                                const MeshData& mesh,
-                                SurfaceStateData& state,
-                                const SimulationContext& ctx,
-                                const SolverOptions2D& opts,
-                                double dt,
-                                std::unordered_map<int, double>& applied_q);
 
 } // namespace openswmm::twoD
 

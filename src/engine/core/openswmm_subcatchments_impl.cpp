@@ -122,6 +122,15 @@ SWMM_ENGINE_API int swmm_subcatch_set_imperv_pct(SWMM_Engine engine, int idx, do
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine engine, int idx, double pct) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] = pct / 100.0;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_subcatch_set_n_imperv(SWMM_Engine engine, int idx, double n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
@@ -203,7 +212,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_green_ampt(SWMM_Engine engine, int i
 }
 
 SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int idx,
-                                                           double cn) {
+                                                           double cn, double drying_time) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
@@ -211,6 +220,9 @@ SWMM_ENGINE_API int swmm_subcatch_set_infil_curve_number(SWMM_Engine engine, int
     auto uidx = static_cast<std::size_t>(idx);
     ctx.subcatches.infil_model[uidx] = 4; // CURVE_NUMBER
     ctx.subcatches.infil_p1[uidx] = cn;
+    // p3 is the drying-time slot for CURVE_NUMBER: it is the third
+    // [INFILTRATION] column and legacy curvenum_setParams reads p[2].
+    ctx.subcatches.infil_p3[uidx] = drying_time;
     return SWMM_OK;
 }
 
@@ -249,6 +261,14 @@ SWMM_ENGINE_API int swmm_subcatch_get_imperv_pct(SWMM_Engine engine, int idx, do
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     if (pct) *pct = ctx.subcatches.frac_imperv[static_cast<std::size_t>(idx)] * 100.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_zero_imperv_pct(SWMM_Engine engine, int idx, double* pct) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (pct) *pct = ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] * 100.0;
     return SWMM_OK;
 }
 
@@ -376,11 +396,14 @@ SWMM_ENGINE_API int swmm_subcatch_get_infil_green_ampt(SWMM_Engine engine, int i
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx, double* cn) {
+SWMM_ENGINE_API int swmm_subcatch_get_infil_curve_number(SWMM_Engine engine, int idx,
+                                                           double* cn, double* drying_time) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
-    if (cn) *cn = ctx.subcatches.infil_p1[static_cast<std::size_t>(idx)];
+    auto uidx = static_cast<std::size_t>(idx);
+    if (cn)          *cn          = ctx.subcatches.infil_p1[uidx];
+    if (drying_time) *drying_time = ctx.subcatches.infil_p3[uidx];
     return SWMM_OK;
 }
 
@@ -456,6 +479,68 @@ SWMM_ENGINE_API int swmm_subcatch_get_coverage(SWMM_Engine engine, int sc_idx, i
              static_cast<std::size_t>(ctx.n_landuses()) +
              static_cast<std::size_t>(lu_idx);
     if (fraction) *fraction = ctx.subcatches.coverage[k];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_coverages(SWMM_Engine engine, int sc_idx, double* out, int n) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    CHECK_INDEX(n >= 0 && n <= ctx.n_landuses());
+    if (!out) return SWMM_ERR_BADPARAM;
+
+    const bool sized = !ctx.subcatches.coverage.empty() &&
+                       ctx.subcatches.coverage_n_landuses == ctx.n_landuses();
+    const auto base = static_cast<std::size_t>(sc_idx) *
+                      static_cast<std::size_t>(ctx.n_landuses());
+    for (int lu = 0; lu < n; ++lu)
+        out[lu] = sized ? ctx.subcatches.coverage[base + static_cast<std::size_t>(lu)]
+                        : 0.0;
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Initial pollutant loadings ([LOADINGS])
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double buildup) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
+
+    // Ensure the quality arrays are sized ([LOADINGS] parks the initial
+    // buildup in subcatches.conc — same storage handle_loadings uses).
+    if (ctx.subcatches.conc_n_pollutants != ctx.n_pollutants() ||
+        static_cast<int>(ctx.subcatches.conc.size()) !=
+            ctx.n_subcatches() * ctx.n_pollutants()) {
+        ctx.subcatches.resize_quality(ctx.n_pollutants());
+    }
+
+    auto k = static_cast<std::size_t>(sc_idx) *
+             static_cast<std::size_t>(ctx.n_pollutants()) +
+             static_cast<std::size_t>(pollut_idx);
+    ctx.subcatches.conc[k] = buildup;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc_idx, int pollut_idx, double* buildup) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
+
+    if (ctx.subcatches.conc.empty() ||
+        ctx.subcatches.conc_n_pollutants != ctx.n_pollutants()) {
+        if (buildup) *buildup = 0.0;
+        return SWMM_OK;
+    }
+
+    auto k = static_cast<std::size_t>(sc_idx) *
+             static_cast<std::size_t>(ctx.n_pollutants()) +
+             static_cast<std::size_t>(pollut_idx);
+    if (buildup) *buildup = ctx.subcatches.conc[k];
     return SWMM_OK;
 }
 
@@ -1245,6 +1330,47 @@ SWMM_ENGINE_API int swmm_snowpack_get_removal_subcatch(SWMM_Engine engine, int i
     const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
     std::memcpy(buf, s.data(), n);
     buf[n] = '\0';
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Precipitation scale factors
+//
+// No CHECK_GEOMETRY on the setters — these are deliberately settable mid-run so
+// a calibration or RTC loop can drive them, matching swmm_gage_set_scale_factor.
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_set_rain_scale_factor(SWMM_Engine engine, int idx, double factor) {
+    CHECK_HANDLE(engine);
+    if (factor <= 0.0) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.rain_scale_factor[static_cast<std::size_t>(idx)] = factor;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_rain_scale_factor(SWMM_Engine engine, int idx, double* factor) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (factor) *factor = ctx.subcatches.rain_scale_factor[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_snow_scale_factor(SWMM_Engine engine, int idx, double factor) {
+    CHECK_HANDLE(engine);
+    if (factor <= 0.0) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.snow_scale_factor[static_cast<std::size_t>(idx)] = factor;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_subcatch_get_snow_scale_factor(SWMM_Engine engine, int idx, double* factor) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    if (factor) *factor = ctx.subcatches.snow_scale_factor[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 

@@ -93,8 +93,13 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
         const auto upr = static_cast<std::size_t>(pr);
         ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
         ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
-        // tok[3]: pump curve name — store for deferred resolution
-        if (tok.size() > 3) {
+        // tok[3]: pump curve name — store for deferred resolution.
+        // "*" is the ideal-pump placeholder (legacy pump_readParams,
+        // link.c:1437), not a curve name: leave curve at -1 so the pump is
+        // typed IDEAL (curve_type 6) instead of raising ERR_NAME on a lookup
+        // of "*". The .inp writer emits "*" for an unset curve, so rejecting
+        // it here broke the save/re-open round-trip for ideal pumps.
+        if (tok.size() > 3 && tok[3] != "*") {
             ctx.links.pump_curve_name[idx] = tok[3];
             ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(tok[3]);
         }
@@ -293,7 +298,13 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         if (tok.size() < 3) continue;
 
         const int idx = ctx.link_names.find(tok[0]);
-        if (idx < 0) continue;  // Unknown link — xsection appears before conduit?
+        if (idx < 0) {
+            // The link is declared in a section further down the file. Stash the
+            // row for InputReader to re-dispatch once everything is parsed; a
+            // silent drop here left the link with zero area and zero flow.
+            ctx.deferred_section_rows.emplace_back("XSECTIONS", line);
+            continue;
+        }
 
         ensure_link_capacity(ctx, idx);
 
@@ -377,7 +388,11 @@ void handle_losses(SimulationContext& ctx, const std::vector<std::string>& lines
         if (tok.size() < 2) continue;  // At minimum: Link Kentry
 
         const int idx = ctx.link_names.find(tok[0]);
-        if (idx < 0) continue;  // Unknown link
+        if (idx < 0) {
+            // Same deferral as [XSECTIONS] — the link may be declared later.
+            ctx.deferred_section_rows.emplace_back("LOSSES", line);
+            continue;
+        }
 
         ensure_link_capacity(ctx, idx);
 

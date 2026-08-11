@@ -394,6 +394,47 @@ private:
     std::vector<uint8_t> csr_is_n2_;         ///< 0 = node1 end, 1 = node2 end
     std::vector<uint8_t> csr_other_outfall_; ///< other-end node is an OUTFALL
 
+    // ------------------------------------------------------------------------
+    // Virtual junctions — zero-storage, momentum-transmitting pair nodes
+    // (see plans/VIRTUAL_JUNCTION_IMPLEMENTATION_PLAN.md). vjunc_ is empty for
+    // models without [VIRTUAL_JUNCTIONS]; every hot-loop hook below is gated
+    // on that emptiness so VJ-free models compile down to the original paths.
+    // ------------------------------------------------------------------------
+    struct VJuncPair {
+        int node    = -1;             ///< virtual junction node index
+        int link_a  = -1, link_b = -1;///< the two attached conduits (any orientation)
+        int up_link = -1, dn_link = -1;///< through orientation (node2(up)==node, node1(dn)==node)
+        uint8_t through = 0;          ///< 1 when a through orientation exists (not a sag/peak pair)
+        double lambda = 0.0;          ///< (L_a + L_b) / 2 — interface control-volume span
+
+        // Per-Picard-iteration cache (filled by vjPrepareIteration):
+        double  sigma_j  = 1.0;       ///< shared junction sigma from through-flow Froude
+        double  a_up_mid = 0.0;       ///< up-link mid area (cross-junction upwind state)
+        double  r_up_mid = 0.0;       ///< up-link mid hyd. radius (upwind state)
+        double  dq4j     = 0.0;       ///< cross-junction convective correction (FULL mode)
+        uint8_t active   = 0;         ///< pair coupling live this iteration (wet through pair)
+        int8_t  dirn     = 0;         ///< coherent through-flow: +1 up→dn, −1 dn→up, 0 opposing/still
+
+        // Momentum-residual diagnostic accumulators (whole run):
+        double resid_max = 0.0;
+        double resid_sum = 0.0;
+        long long resid_n = 0;
+    };
+    std::vector<VJuncPair> vjunc_;
+    /// Link j → vjunc_ row of the pair at each end (-1 = none). A chain link
+    /// belongs to TWO pairs (dn side of its node1's pair, up side of its
+    /// node2's pair) — a single map drops one side and biases the coupling.
+    std::vector<int32_t>   vj_pair_n1_;
+    std::vector<int32_t>   vj_pair_n2_;
+
+    /// Build vjunc_ / vj_of_link_ from topology (called from init(), post-CSR).
+    void buildVirtualJunctionPairs(const SimulationContext& ctx);
+    /// Per-Picard-iteration pair cache: shared sigma, upwind states, dq4j.
+    /// Serial (omp single) — pair count is tiny.
+    void vjPrepareIteration(const SimulationContext& ctx, double dt);
+    /// Post-step momentum-residual accumulation into ctx.vj_diag.
+    void vjAccumulateResiduals(SimulationContext& ctx);
+
     // Node-dense tile of the per-node invariants setNodeDepth touches every
     // Picard iteration. setNodeDepth reads ~20 SoA arrays per node; the seven
     // step-invariant ones below otherwise cost seven separate cache streams
@@ -413,6 +454,7 @@ private:
         int32_t degree;
         uint8_t is_storage;
         uint8_t is_outfall;
+        uint8_t is_virtual;    ///< zero-storage virtual junction (see vjunc_)
     };
     std::vector<NodeTile> node_tile_;
     // Unit system for node volume/surf-area table dispatch, hoisted from the
@@ -505,24 +547,60 @@ private:
     void updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                               int& unconv_shared);
     void setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int step);
+    /// Canonical commit of an accepted node depth candidate: reapplies the
+    /// physical lower bound and the flooding/ponding upper cap, then derives
+    /// overflow, volume, dYdT (CFL) and the depth/head pair from that SAME
+    /// candidate. The ONLY place an accepted depth becomes committed state.
+    /// Called by setNodeDepth() for the raw Picard result and by the
+    /// accepted-Anderson branch in updateNodeDepthsTeam(), so a mixed depth
+    /// can never leave volume/overflow/dYdT describing the unmixed candidate.
+    void commitNodeDepthState(SimulationContext& ctx, int node_idx,
+                              double y_new, double dV, double dt);
     double getLinkStep(const SimulationContext& ctx, int link_idx) const;
 
 public:
+    /// True once init() has sized the per-node and per-link work arrays.
+    ///
+    /// The non-conduit structure callback is SHARED with the finite-volume
+    /// router, which never calls init() — Router::init only constructs the DW
+    /// solver in its DYNWAVE arm. Everything below indexes arrays that init()
+    /// allocates, so a caller outside the dynamic-wave loop must test this
+    /// first. Without it, an FV model containing any pump, orifice, weir or
+    /// outlet indexes empty vectors.
+    bool isInitialized() const noexcept { return !xnode_.sumdqdh.empty(); }
+
     /// Direct write access to the per-node is_surcharged flag (for tests/non-conduit scatter).
     uint8_t& nodeSurchargedFlag(int idx) { return xnode_.is_surcharged[static_cast<std::size_t>(idx)]; }
 
-    /// Mutable pointer to the per-node new_surf_area array (for HydStructures scatter).
+    /// Mutable pointer to the per-node new_surf_area array (for HydStructures
+    /// scatter). Null when uninitialized; the two consumers already guard.
     double* nodeNewSurfAreaDataMut() { return xnode_.new_surf_area.data(); }
 
     /// Per-link bypass flag (1 = both end nodes converged → flow held this
     /// iteration). Read by the non_conduit_fn callback to hold bypassed
     /// weir/orifice/pump/outlet flows, matching legacy findLinkFlows.
+    ///
+    /// Reports "not bypassed" when uninitialized, which is the right answer for
+    /// a caller with no Picard loop: bypassing means "hold the previous
+    /// iteration's flow", and there is no previous iteration to hold.
     bool isBypassed(int j) const {
-        return bypassed_[static_cast<std::size_t>(j)] != 0;
+        const auto uj = static_cast<std::size_t>(j);
+        return uj < bypassed_.size() && bypassed_[uj] != 0;
     }
 
     /// Mutable reference to the per-node sumdqdh accumulator at index n.
+    /// PRECONDITION: isInitialized(). The head-sensitivity accumulator only
+    /// means anything inside the implicit node-continuity solve.
     double& nodeSumDqdh(int n) { return xnode_.sumdqdh[static_cast<std::size_t>(n)]; }
+
+    /// Direct call into the private per-node depth update (for tests): runs
+    /// the node-continuity update on the current ctx/xnode_ state and commits
+    /// the result. PRECONDITION: execute() has run at least once so the
+    /// node-invariant tile is built.
+    void setNodeDepthForTest(SimulationContext& ctx, int node_idx, double dt,
+                             int step) {
+        setNodeDepth(ctx, node_idx, dt, step);
+    }
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).
     const std::vector<uint8_t>& aaSkipFlags() const { return aa_skip_; }

@@ -53,6 +53,11 @@ from ._edit import (
 # =============================================================================
 from ._nodes import Nodes as Nodes
 from ._links import Links as Links
+from ._geometry import CrossSection as CrossSection
+from ._xsect import (
+    XSectionGeometry as XSectionGeometry,
+    shape_name as shape_name,
+)
 from ._subcatchments import Subcatchments as Subcatchments
 from ._gages import Gages as Gages
 

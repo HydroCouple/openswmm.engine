@@ -1,5 +1,6 @@
-# Chapter 4: Surface Washoff
+@page quality_ref_ch4_surface_washoff Chapter 4: Surface Washoff
 
+@tableofcontents
 
 ## 4.1 Introduction
 
@@ -39,7 +40,7 @@ flushed from streets using a sprinkler system. From the figure it would
 appear that an exponential relationship could be developed to describe
 washoff of the form:
 
-$$W(t) = m_{B}(0)(1 - e^{- kt})$$                          
+\f[W(t) = m_{B}(0)(1 - e^{- kt})\f]                          
 (4-1)
 
 where *W* = the cumulative mass of constituent washed off at time *t*,
@@ -51,28 +52,24 @@ size and runoff rate. An analysis of the Sartor and Boyd (1972) data by
 Ammon (1979) indicates that *k* increases with runoff rate, as would be
 expected, and decreases with particle size.
 
-<figure>
-<img src="./VolumeIII/media/media/image12.png"
-style="width:6.5625in;height:3.12734in"
-alt="sartor and boyd washoff plots" />
-<figcaption><p><span id="_Toc454288769"
+![](quality/media/media/image12.png "sartor and boyd washoff plots")
+<p><span id="_Toc454288769"
 class="anchor"></span><strong>Figure 4‑1 Washoff of street solids by
 flushing with a sprinkler system (from Sartor and Boyd,
-1972)</strong></p></figcaption>
-</figure>
+1972)</strong></p>
 
 The Sartor and Boyd data lend credibility to the washoff assumption
 included in the original SWMM release (and all versions to date) that
 the rate of washoff, *w*, (e.g., mg/hr) at any time is proportional to
 the remaining pollutant buildup:
 
-$$w = \frac{dm_{B}}{dt} = - km_{B}$$                      
+\f[w = \frac{dm_{B}}{dt} = - km_{B}\f]                      
 (4-2)
 
 It follows then that the amount of buildup *B* remaining on the surface
 after a time *t* of washoff is:
 
-$$m_{B}(t) = m_{B}(0)e^{- kt}$$                           
+\f[m_{B}(t) = m_{B}(0)e^{- kt}\f]                           
 (4-3)
 
 This relation was first proposed by Mr. Allen J. Burdoin, a consultant
@@ -80,7 +77,7 @@ to Metcalf and Eddy, during the original SWMM development. The
 coefficient *k* may be evaluated by assuming it is proportional to
 runoff rate:
 
-$$k = K_{W}q$$                                            
+\f[k = K_{W}q\f]                                            
 (4-4)
 
 where *K<sub>W</sub>* = a washoff coefficient (in<sup>-1</sup>) and *q* = the runoff rate
@@ -110,20 +107,20 @@ concentrations as a function of time. To see this, substitute (4-4) into
 (4-2) and convert the mass rate *w* to a concentration by dividing by
 the volumetric runoff rate *qA*, where *A* is the subcatchment area:
 
-$$c = \frac{(\frac{dm_{B}}{dt})}{qA} = \frac{K_{W}qm_{B}}{qA} = \frac{K_{W}m_{B}}{A}$$   
+\f[c = \frac{(\frac{dm_{B}}{dt})}{qA} = \frac{K_{W}qm_{B}}{qA} = \frac{K_{W}m_{B}}{A}\f]   
 (4-5)
 
 Thus concentration *c* would decrease continually as the remaining
 buildup *m<sub>B</sub>* does the same over time. To avoid this behavior, the
 relationship in (4-4) was modified to be:
 
-$$k = K_{W}q^{N_{W}}$$                                    
+\f[k = K_{W}q^{N_{W}}\f]                                    
 (4-6)
 
 where *N<sub>W</sub>* is a washoff exponent. The resulting equation for
 exponential washoff now becomes:
 
-$$w = K_{W}q^{N_{W}}m_{B}$$                               
+\f[w = K_{W}q^{N_{W}}m_{B}\f]                               
 (4-7)
 
 with units of mass/hour.
@@ -135,7 +132,7 @@ result that load rate of sediment is proportional to flow rate raised to
 a power. For instance, sediment data from streams can usually be
 described by a sediment rating curve of the form
 
-$$w = K_{W}Q^{N_{W}}$$                                    
+\f[w = K_{W}Q^{N_{W}}\f]                                    
 (4-8)
 
 where *w* is sediment loading rate (mass/sec), *Q* is flow rate (cfs),
@@ -161,7 +158,7 @@ impervious areas). Rating curve washoff uses the volumetric runoff rate
 *Q* in cfs, over the fraction *f<sub>LU</sub>* of total subcatchment area *A* (in
 acres) devoted to the land use being analyzed. That is,
 
-$$Q = qf_{LU}A$$                                          
+\f[Q = qf_{LU}A\f]                                          
 (4-9)
 
 The rating curve approach may be combined with constituent buildup if
@@ -193,13 +190,13 @@ particularly valuable data. As a practical matter, EMCs are the most
 common parameters used to estimate nonpoint water quality loads in SWMM
 and in most other models. The EMC washoff function has the form:
 
-$$w = K_{W}qf_{LU}A$$                                     
+\f[w = K_{W}qf_{LU}A\f]                                     
 (4-10)
 
 where now *K<sub>W</sub>* is the EMC concentration expressed in the same
 volumetric units as flow rate (e.g., if the EMC is in mg/L and flow is
 in cfs then *K<sub>W</sub>* = EMC × 28.3 L/ft<sup>3</sup>). As with rating curve washoff,
-$qf_{LU}A$ is the fraction of the total runoff rate that applies to the
+\f$qf_{LU}A\f$ is the fraction of the total runoff rate that applies to the
 land use being analyzed. With EMC washoff all storms will have identical
 within-storm washoff concentrations. Only the loading rate will vary in
 direct proportion to runoff rate.
@@ -241,13 +238,10 @@ Rating Curve               850 (mg/sec)(cfs)<sup>-1.5</sup>           1.5
 
 EMC                        20 mg/L × 28.3 L/ft<sup>3</sup>            \-
 
-<figure>
-<img src="./VolumeIII/media/media/image13.png"
-style="width:6.02167in;height:3.75052in" alt="washoff.png" />
-<figcaption><p><span id="_Toc454288770"
+![](quality/media/media/image13.png "image13")
+<p><span id="_Toc454288770"
 class="anchor"></span><strong>Figure 4‑2 Comparison of washoff
-functions</strong></p></figcaption>
-</figure>
+functions</strong></p>
 
 It is possible to estimate a *K<sub>W</sub>* for rating curve washoff that will
 produce results roughly similar to those for exponential washoff by
@@ -256,7 +250,7 @@ storm event and converting from mass/hr to mass/sec. So for this
 example, assuming an average buildup of 15 lb over the event, the result
 is:
 
-> $$K_{W,\ RC} = 0.45 \times 15\ lb\  \times 454000\ (\frac{mg}{lb)\  \times (\frac{1}{3600)\ (\frac{hr}{sec) \approx 850}}}$$
+> \f[K_{W,\ RC} = 0.45 \times 15\ lb\  \times 454000\ (\frac{mg}{lb)\  \times (\frac{1}{3600)\ (\frac{hr}{sec) \approx 850}}}\f]
 
 The exponential *K<sub>W</sub>* value of 0.45 was selected by trial and error to
 achieve the target of removing 45 percent of the initial buildup.
@@ -285,10 +279,10 @@ pollutant and volume of the washoff stream originating from the ponded
 surface water that receives upstream run-on and direct deposition can be
 written as:
 
-$$\frac{d\left( V_{ponded}C_{ponded} \right)}{dt} = Q_{runon}C_{runon} + Q_{ppt}C_{ppt} - C_{ponded}\left( Q_{infil} + Q_{out} \right)$$     
+\f[\frac{d\left( V_{ponded}C_{ponded} \right)}{dt} = Q_{runon}C_{runon} + Q_{ppt}C_{ppt} - C_{ponded}\left( Q_{infil} + Q_{out} \right)\f]     
 (4-11)
 
-$$\frac{dV_{ponded}}{dt} = Q_{runon} + Q_{ppt} - Q_{infil} - Q_{evap} - Q_{out}$$                                                            
+\f[\frac{dV_{ponded}}{dt} = Q_{runon} + Q_{ppt} - Q_{infil} - Q_{evap} - Q_{out}\f]                                                            
 (4-12)
 
 with the variables defined as follows:
@@ -311,13 +305,10 @@ with the variables defined as follows:
 
 *Q<sub>out</sub>*       =   rate of runoff leaving the subcatchment (cfs).
 
-<figure>
-<img src="./VolumeIII/media/media/image14.png"
-style="width:6.02167in;height:4.27143in" alt="PollutWashoff.png" />
-<figcaption><p><span id="_Toc454288771"
+![](quality/media/media/image14.png "image14")
+<p><span id="_Toc454288771"
 class="anchor"></span><strong>Figure 4‑3 Two-stream approach to modeling
-pollutant washoff</strong></p></figcaption>
-</figure>
+pollutant washoff</strong></p>
 
 Note the following:
 
@@ -351,7 +342,7 @@ of pollutant in the subcatchment's runoff is *W<sub>out</sub> / Q<sub>out</sub>*
 
 Note that this scheme requires that an additional set of state variables
 be kept track of over a simulation, namely the ponded mass
-($m_{P} = V_{ponded}C_{ponded}$) for each pollutant in each
+(\f$m_{P} = V_{ponded}C_{ponded}\f$) for each pollutant in each
 subcatchment.
 
 ### 4.2.6 BMP Removal
@@ -378,7 +369,7 @@ category of land use. For washoff of surface buildup, they are applied
 separately to the washoff rate computed for each pollutant in each land
 use in a given subcatchment:
 
-$$W_{washoff} = \sum_{j}^{}{w_{jp}(1 - R_{jp})}$$         
+\f[W_{washoff} = \sum_{j}^{}{w_{jp}(1 - R_{jp})}\f]         
 (4-13)
 
 where *W<sub>washoff</sub>* is the total washoff rate (mass/sec) from buildup of
@@ -390,13 +381,13 @@ For the pollutant load from rainfall/runon across the entire
 subcatchment (and therefore all land uses) an area weighted average
 removal factor is used:
 
-$$R_{avg,p} = \frac{\sum_{j}^{}{R_{jp}A_{j}}}{\sum_{j}^{}A_{j}}$$   
+\f[R_{avg,p} = \frac{\sum_{j}^{}{R_{jp}A_{j}}}{\sum_{j}^{}A_{j}}\f]   
 (4-14)
 
 where *A<sub>j</sub>* is the area of land use *j* in the subcatchment. Thus
 *W<sub>ponded</sub>* for pollutant *p* in the subcatchment becomes:
 
-$$W_{ponded} = Q_{out}C_{ponded}(1 - R_{avg,p})$$          
+\f[W_{ponded} = Q_{out}C_{ponded}(1 - R_{avg,p})\f]          
 (4-15)
 
 where it is understood that *Q<sub>out</sub>* and *C<sub>ponded</sub>* refer to the
@@ -427,11 +418,11 @@ start of the current time step of length *∆t*:
 
 *A*           subcatchment area (acres)
 
-$f_{LUj}$   fraction of subcatchment area occupied by each land use *j*
+\f$f_{LUj}\f$   fraction of subcatchment area occupied by each land use *j*
 
 *q*           runoff rate per unit area before any internal re-routing is made (in/hr)
 
-$m_{Bjp}$   mass of buildup of each pollutant *p* on each land use area *j* of the subcatchment
+\f$m_{Bjp}\f$   mass of buildup of each pollutant *p* on each land use area *j* of the subcatchment
 
 The computational steps for finding the washoff rate from pollutant
 buildup on a particular subcatchment at the current time step are:
@@ -447,24 +438,24 @@ buildup on a particular subcatchment at the current time step are:
         rate *w<sub>jp</sub>* = 0.
 
     b.  Otherwise use the appropriate washoff function (Equation 4-7,
-        4-8, or 4-10) to find the washoff rate $w_{jp}$ for each
+        4-8, or 4-10) to find the washoff rate \f$w_{jp}\f$ for each
         pollutant and land use. For rating curve and EMC functions use a
-        flow rate of$\ Q = qf_{LUj}A$.
+        flow rate of\f$\ Q = qf_{LUj}A\f$.
 
     c.  Reduce the buildup by the amount of washoff over the time step:
-        $m_{Bjp} = m_{Bjp} - w_{jp}\mathrm{\Delta}t$.
+        \f$m_{Bjp} = m_{Bjp} - w_{jp}\mathrm{\Delta}t\f$.
 
     d.  Reduce the washoff rate by the BMP removal factor:
-        $w_{jp} = w_{jp}(1 - R_{jp})$.
+        \f$w_{jp} = w_{jp}(1 - R_{jp})\f$.
 
     e.  Add the washoff rate for this land use to the total rate
         *W<sub>washoff,p</sub>* for the subcatchment:
-        $W_{washoff,p} = W_{washoff,p} + w_{jp}$.
+        \f$W_{washoff,p} = W_{washoff,p} + w_{jp}\f$.
 
 3.  After all land uses and pollutants have been evaluated, increase the
     total washoff rate of pollutant *p* by the amount contributed by any
     co-pollutant *k*:
-    $W_{washoff,p} = W_{washoff,p} + f_{pk}W_{washoff,k}$ where *f<sub>pk</sub>*
+    \f$W_{washoff,p} = W_{washoff,p} + f_{pk}W_{washoff,k}\f$ where *f<sub>pk</sub>*
     is the co-pollutant fraction.
 
 ### 4.3.2 Washoff Load from Rainfall/Runon
@@ -510,18 +501,18 @@ from rainfall/runon is washed off a given subcatchment.
 
 1.  Find the initial ponded surface volume plus the volume of
     rainfall/runon over the current time step:
-    $V_{ponded} = d_{1}A + (Q_{ppt} + Q_{runon})\mathrm{\Delta}t$.
+    \f$V_{ponded} = d_{1}A + (Q_{ppt} + Q_{runon})\mathrm{\Delta}t\f$.
 
-2.  Do the same for the pollutant mass: $$M_{Ponded} = m_{p} + (Q_{ppt}C_{ppt} + W_{runon})\mathrm{\Delta}t$$.
+2.  Do the same for the pollutant mass: \f[M_{Ponded} = m_{p} + (Q_{ppt}C_{ppt} + W_{runon})\mathrm{\Delta}t\f].
 
 3.  Compute a concentration for this pollutant mass:
-    $C_{ponded} = M_{ponded}/V_{ponded}$.
+    \f$C_{ponded} = M_{ponded}/V_{ponded}\f$.
 
 4.  Find the rainfall/runon mass remaining at the end of the time step:
-    $m_{p} = C_{ponded}d_{2}A$.
+    \f$m_{p} = C_{ponded}d_{2}A\f$.
 
 5.  Find the rate of mass leaving the subcatchment volume, adjusted for
-    any BMP removal: $W_{ponded} = Q_{out}C_{ponded}(1 - R_{avg})$.
+    any BMP removal: \f$W_{ponded} = Q_{out}C_{ponded}(1 - R_{avg})\f$.
 
 Note that the effects of mass lost to infiltration and volume loss due
 to evaporation are implicitly accounted for in step 5 where the
@@ -534,13 +525,13 @@ The final phase of the calculation adds together the two mass flow
 streams to arrive at a total washoff loading rate, *W~out\ ~*for the
 subcatchment and pollutant being analyzed:
 
-$$W_{out} = W_{washoff} + W_{ponded}$$                    
+\f[W_{out} = W_{washoff} + W_{ponded}\f]                    
 (4-16)
 
 The concentration of pollutant in the subcatchment's outflow runoff at
 the end of the current time step is then:
 
-$$C_{out} = \frac{W_{out}}{28.3Q_{out}}$$                 
+\f[C_{out} = \frac{W_{out}}{28.3Q_{out}}\f]                 
 (4-17)
 
 with units of mass//L. If the subcatchment in question sends its runoff
@@ -605,9 +596,9 @@ Washoff is higher for flows on the ascending limb of the hydrograph
 because there is higher buildup available and lower during the
 descending limb since there is less buildup present.
 
-![](./VolumeIII/media/media/image15.png)   ![](./VolumeIII/media/media/image16.png)
+![](quality/media/media/image15.png)   ![](quality/media/media/image16.png)
 
-![](./VolumeIII/media/media/image17.png) ![](./VolumeIII/media/media/image18.png)
+![](quality/media/media/image17.png) ![](quality/media/media/image18.png)
 
 **Figure 4‑4 Simulated load variations within a storm as a function of runoff rate**
 
@@ -755,5 +746,8 @@ classified by rainfall amounts.
 | **COD** | 52.8 | 239 | 105 | 261 | 227 | 106 | 66 | 98 | N/R | 38 | 73 | 64 | 112 |
 
 N/R: Not Recorded
+
+
+
 
 

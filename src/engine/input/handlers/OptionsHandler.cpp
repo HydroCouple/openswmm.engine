@@ -143,6 +143,14 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.routing_model = RoutingModel::KINWAVE;
             else if (rv == "DYNWAVE"   || rv == "DYNAMIC_WAVE")
                 opt.routing_model = RoutingModel::DYNWAVE;
+            else if (rv == "FV" || rv == "FINITE_VOLUME")
+                opt.routing_model = RoutingModel::FV;
+            // Legacy FLOW_ROUTING NONE maps to the NO_ROUTING method and forces
+            // IgnoreRouting = TRUE (project.c:504). The refactored RoutingModel
+            // enum has no NONE value, so realize the same effect by setting the
+            // ignore_routing flag directly (routing_model is unused when routing
+            // is ignored).
+            else if (rv == "NONE" || rv == "NO_ROUTING") opt.ignore_routing = true;
             else opt.ext_options[key] = val;
 
         // -----------------------------------------------------------------
@@ -229,6 +237,8 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.ignore_routing = Tokenizer::parse_boolean(val);
         } else if (key == "IGNORE_QUALITY") {
             opt.ignore_quality = Tokenizer::parse_boolean(val);
+        } else if (key == "IGNORE_2D") {
+            opt.ignore_2d = Tokenizer::parse_boolean(val);
 
         // -----------------------------------------------------------------
         // CRS (R06)
@@ -305,10 +315,119 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "DPS_DECAY_TIME") {
             opt.dps_decay_time = to_double(val);
 
+        // -----------------------------------------------------------------
+        // Explicit finite-volume solver (FLOW_ROUTING FV).
+        //
+        // First-class [OPTIONS] keys rather than a separate section (plan
+        // §4.2). They are ACCEPTED AND INERT under any other routing model —
+        // no warning, just unused — so switching FLOW_ROUTING back and forth
+        // never invalidates a file. Length-dimensioned values stay in project
+        // display units here; Router::init converts, exactly as it does for
+        // HEAD_TOLERANCE.
+        // -----------------------------------------------------------------
+        } else if (key == "FV_CELL_LENGTH") {
+            opt.fv.cell_length = to_double(val);
+
+        } else if (key == "FV_MIN_CELLS") {
+            opt.fv.min_cells = std::max(1, static_cast<int>(to_double(val)));
+
+        } else if (key == "FV_CFL") {
+            opt.fv.cfl = to_double(val);
+
+        } else if (key == "FV_RIEMANN") {
+            const std::string rv2 = norm(val);
+            if      (rv2 == "HLL")  opt.fv.riemann = fv::RiemannSolver::HLL;
+            else if (rv2 == "HLLC") opt.fv.riemann = fv::RiemannSolver::HLLC;
+
+        } else if (key == "FV_ORDER") {
+            opt.fv.order = static_cast<int>(to_double(val));
+
+        } else if (key == "FV_LIMITER") {
+            const std::string lv = norm(val);
+            if      (lv == "MINMOD")   opt.fv.limiter = fv::Limiter::MINMOD;
+            else if (lv == "VANLEER")  opt.fv.limiter = fv::Limiter::VANLEER;
+            else if (lv == "SUPERBEE") opt.fv.limiter = fv::Limiter::SUPERBEE;
+
+        } else if (key == "FV_SCALAR_SCHEME") {
+            const std::string sv2 = norm(val);
+            if      (sv2 == "UPWIND") opt.fv.scalar_scheme = fv::ScalarScheme::UPWIND;
+            else if (sv2 == "MUSCL")  opt.fv.scalar_scheme = fv::ScalarScheme::MUSCL;
+            else if (sv2 == "QUICKEST_ULTIMATE" || sv2 == "QUICKEST")
+                opt.fv.scalar_scheme = fv::ScalarScheme::QUICKEST_ULTIMATE;
+
+        } else if (key == "FV_TIME_INTEGRATION") {
+            const std::string tv = norm(val);
+            if      (tv == "EULER") opt.fv.time_integration = fv::TimeIntegration::EULER;
+            else if (tv == "RK2")   opt.fv.time_integration = fv::TimeIntegration::RK2;
+
+        } else if (key == "FV_SLOT_CELERITY") {
+            opt.fv.slot_celerity = to_double(val);
+
+        } else if (key == "FV_DISPERSION") {
+            opt.fv.dispersion = to_double(val);
+
+        } else if (key == "FV_STRUCTURE_COUPLING") {
+            const std::string cv = norm(val);
+            if      (cv == "SUBSTEP")
+                opt.fv.structure_coupling = fv::StructureCoupling::SUBSTEP;
+            else if (cv == "ROUTING_STEP")
+                opt.fv.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
+
+        } else if (key == "FV_NODE_COUPLING") {
+            const std::string nv = norm(val);
+            if      (nv == "EXPLICIT")
+                opt.fv.node_coupling = fv::NodeCoupling::EXPLICIT;
+            else if (nv == "SEMI_IMPLICIT")
+                opt.fv.node_coupling = fv::NodeCoupling::SEMI_IMPLICIT;
+
+        } else if (key == "FV_COMPACTION") {
+            const std::string bv = norm(val);
+            opt.fv.compaction = !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
+
+        } else if (key == "FV_BACKEND") {
+            const std::string bv = norm(val);
+            if      (bv == "CPU")  opt.fv.backend = fv::Backend::CPU;
+            else if (bv == "AUTO") opt.fv.backend = fv::Backend::AUTO;
+            else if (bv == "OMP")  opt.fv.backend = fv::Backend::OMP;
+            else if (bv == "CUDA") opt.fv.backend = fv::Backend::CUDA;
+            else if (bv == "HIP")  opt.fv.backend = fv::Backend::HIP;
+            else if (bv == "SYCL") opt.fv.backend = fv::Backend::SYCL;
+
+        } else if (key == "FV_MIN_PARALLEL_CELLS") {
+            opt.fv.min_parallel_cells = static_cast<long>(to_double(val));
+
+        } else if (key == "FV_LTS") {
+            const std::string bv = norm(val);
+            opt.fv.lts = !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
+
+        } else if (key == "FV_LTS_MAX_TIERS") {
+            opt.fv.lts_max_tiers = std::max(1, static_cast<int>(to_double(val)));
+
+        } else if (key == "FV_CFL_CENSUS_INTERVAL") {
+            opt.fv.cfl_census_interval = std::max(1, static_cast<int>(to_double(val)));
+
+        } else if (key == "FV_NODE_DT") {
+            const std::string nd = norm(val);
+            if      (nd == "STABILITY") opt.fv.node_dt_limit = fv::NodeDtLimit::STABILITY;
+            else if (nd == "NONE")      opt.fv.node_dt_limit = fv::NodeDtLimit::NONE;
+
+        } else if (key == "FV_NODE_PICARD") {
+            opt.fv.node_picard_sweeps = std::max(1, static_cast<int>(to_double(val)));
+
+        } else if (key == "FV_NODE_CELL_COUPLING") {
+            const std::string cc = norm(val);
+            opt.fv.node_cell_coupling =
+                (cc == "YES" || cc == "TRUE" || cc == "1" || cc == "ON");
+
         } else if (key == "NODE_CONTINUITY") {
             const std::string nc = norm(val);
             if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;
             else if (nc == "SEMI_IMPLICIT") opt.node_continuity = NodeContinuity::SEMI_IMPLICIT;
+
+        } else if (key == "VIRTUAL_JUNCTION_MOMENTUM") {
+            const std::string vm = norm(val);
+            if      (vm == "BASIC") opt.virtual_junction_momentum = 0;
+            else if (vm == "FULL")  opt.virtual_junction_momentum = 1;
 
         } else if (key == "ANDERSON_ACCEL") {
             const std::string av = norm(val);
@@ -343,7 +462,12 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // -----------------------------------------------------------------
         } else {
             opt.ext_options[key] = val;
-            // Record a warning (non-fatal)
+            // Record a warning (non-fatal). Push to ctx.warnings so it reaches
+            // the .rpt (legacy project.c warns per unknown keyword); keep the
+            // legacy wording, and retain warning_code for the C API.
+            ctx.warnings.push_back(
+                "WARNING: Unknown option keyword '" + tokens[0] +
+                "' in [OPTIONS] section - option will be ignored.");
             if (ctx.warning_code == 0) {
                 ctx.warning_code = 101;  // SWMM_WARN_UNKNOWN_OPTION
             }

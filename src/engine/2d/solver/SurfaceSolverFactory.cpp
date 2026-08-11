@@ -2,6 +2,15 @@
  * @file SurfaceSolverFactory.cpp
  * @brief Implementation of runtime 2D surface-solver backend selection.
  *
+ * @details The explicit local-inertial LTS marcher is the only 2D integrator
+ *          (D2 retirement, 2026-07-29). Selection is purely serial-vs-plugin:
+ *          prefer the Kokkos marcher plugin (openswmm_make_gpu_explicit_solver
+ *          — OpenMP threads on the host build, device-resident on
+ *          CUDA/HIP/SYCL), fall back to the serial ExplicitInertialSolver.
+ *          Respects OPENSWMM_2D_BACKEND (cpu|auto|omp|cuda|hip|sycl) and the
+ *          small-mesh launch-overhead gate. The marcher kernels implement both
+ *          cell closures, so no CELL_CLOSURE restriction applies.
+ *
  * @see SurfaceSolverFactory.hpp
  * @ingroup engine_2d
  */
@@ -10,8 +19,7 @@
 
 #include "SurfaceSolverFactory.hpp"
 #include "ISurfaceSolver.hpp"
-#include "CvodeSurfaceSolver.hpp"
-#include "ArkodeSurfaceSolver.hpp"
+#include "ExplicitInertialSolver.hpp"
 #include "GpuPluginAbi.h"
 #include "../data/SolverOptions2D.hpp"
 
@@ -143,13 +151,11 @@ void* load_cached(const std::string& path) {
 using ProbeFn = int (*)(OpenSwmmGpuProbe*);
 using MakeFn  = void* (*)(const OpenSwmmGpuProbe*);
 
-// Try to load a specific backend plugin and build its solver. Returns null
-// (without throwing) if the plugin is absent, broken, reports no device, or does
-// not export @p maker_sym (e.g. an older plugin without the inertial entry).
+// Try to load a specific backend plugin and build its marcher solver. Returns
+// null (without throwing) if the plugin is absent, broken, reports no device,
+// carries a stale ABI, or does not export the explicit-marcher factory.
 std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
-                                           std::string* chosen,
-                                           const char* maker_sym =
-                                               "openswmm_make_gpu_surface_solver") {
+                                           std::string* chosen) {
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -159,7 +165,8 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             void* h = load_cached(path.string());
             if (!h) continue;
             auto probe = reinterpret_cast<ProbeFn>(platform_sym(h, "openswmm_gpu_probe"));
-            auto make  = reinterpret_cast<MakeFn>(platform_sym(h, maker_sym));
+            auto make  = reinterpret_cast<MakeFn>(
+                platform_sym(h, "openswmm_make_gpu_explicit_solver"));
             if (!probe || !make) continue;
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
@@ -174,8 +181,8 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             const std::string label = backend + " (" + info.device_name + ")";
             if (chosen) *chosen = label;
             // Announce the selected acceleration backend once, on successful
-            // plugin load. This is the signal test_engine_2d_omp_default checks
-            // for; it also gives operators a record of which 2D backend ran.
+            // plugin load. This is the signal the omp gate tests check for; it
+            // also gives operators a record of which 2D backend ran.
             std::fprintf(stderr, "[openswmm 2D] using GPU backend: %s\n",
                          label.c_str());
             return std::unique_ptr<ISurfaceSolver>(solver);
@@ -186,101 +193,43 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
 
 } // anonymous namespace
 
-std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
+std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*/,
                                                   std::string* chosen,
                                                   int n_cells) {
-    // Integrator selection — orthogonal to the serial/omp/gpu backend below.
-    // ARKODE (ARKStep IMEX) is CPU-only: when selected we return it directly and
-    // skip GPU-plugin discovery (there is no ARKODE device plugin). The env var
-    // OPENSWMM_2D_INTEGRATOR (cvode|arkode) overrides the [2D_OPTIONS] field.
-    const std::string integ = lower(env("OPENSWMM_2D_INTEGRATOR"));
-    const std::string mom    = lower(env("OPENSWMM_2D_MOMENTUM"));
-    // Local-inertial momentum is implemented only in the ARKStep IMEX solver, so
-    // requesting it forces ARKODE regardless of the integrator selector.
-    const bool want_inertial =
-        (mom == "inertial") ||
-        (mom.empty() && opts.momentum == MomentumType::INERTIAL);
-    const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
-
-    if (want_inertial && integ != "cvode") {
-        // Local-inertial. Prefer a Kokkos inertial plugin (its augmented [V,q]
-        // N_Vector makes the vector ops parallel too); fall back to the serial
-        // CPU ArkodeSurfaceSolver. The serial solver is always available, so a
-        // missing/old plugin never hard-fails. Respects OPENSWMM_2D_BACKEND and
-        // the small-mesh gate, mirroring the DW backend policy below.
-        auto serial_inertial = [&]() -> std::unique_ptr<ISurfaceSolver> {
-            if (chosen) *chosen = "cpu (serial ARKODE IMEX, local-inertial)";
-            return std::make_unique<ArkodeSurfaceSolver>();
-        };
-        if (mode == "cpu") return serial_inertial();
-
-        const bool gated = (mode.empty() || mode == "auto") && [&] {
-            if (n_cells <= 0) return false;
-            long min_par = 20000;
-            if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
-                min_par = std::atol(s);
-            return n_cells < min_par;
-        }();
-        if (!gated) {
-            const char* sym = "openswmm_make_gpu_inertial_solver";
-            if (mode.empty() || mode == "auto") {
-                for (const char* b : {"cuda", "hip", "sycl", "omp"})
-                    if (auto s = try_plugin(b, chosen, sym)) return s;
-            } else if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
-                if (auto s = try_plugin(mode, chosen, sym)) return s;
-            }
-        }
-        return serial_inertial();
-    }
-
-    const bool use_arkode =
-        (integ == "arkode") ||
-        (integ.empty() && opts.integrator == IntegratorType::ARKODE);
-    if (use_arkode && integ != "cvode") {
-        if (chosen) *chosen = "cpu (ARKODE/ARKStep IMEX)";
-        return std::make_unique<ArkodeSurfaceSolver>();
-    }
-
-    auto cpu = [&]() -> std::unique_ptr<ISurfaceSolver> {
-        if (chosen) *chosen = "cpu (serial CVODE)";
-        return std::make_unique<CvodeSurfaceSolver>();
+    auto serial_marcher = [&]() -> std::unique_ptr<ISurfaceSolver> {
+        if (chosen) *chosen = "cpu (explicit local-inertial marcher)";
+        return std::make_unique<ExplicitInertialSolver>();
     };
 
-    if (mode.empty() || mode == "auto") {
-        // Small-mesh gate: a Kokkos plugin (OpenMP/CUDA/HIP/SYCL) pays a
-        // per-kernel launch overhead that dominates on small meshes, where the
-        // serial CVODE solver is faster. Below a threshold, stay serial unless
-        // the backend was requested explicitly above. Threshold is env-tunable
-        // (OPENSWMM_2D_MIN_PARALLEL_CELLS); 0 cells = unknown ⇒ no gate.
-        if (n_cells > 0) {
-            long min_par = 20000;
-            if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
-                min_par = std::atol(s);
-            if (n_cells < min_par) return cpu();
+    const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
+    if (mode == "cpu") return serial_marcher();
+
+    // Mesh-size gate: a Kokkos plugin pays a per-kernel launch overhead on
+    // EVERY marcher substep, and the built-in marcher is itself OpenMP-
+    // threaded — the plugin only pays off when per-cell work amortizes the
+    // launches. Measured on a 25k-cell coupled model (Bellinge, 48 h storm)
+    // the omp plugin ran 15–20× SLOWER than the built-in marcher (238 s vs
+    // >20× that pace), so the auto crossover sits far above the old 20k
+    // default. Below the threshold, stay serial unless the backend was
+    // requested explicitly (OPENSWMM_2D_BACKEND=omp|cuda|... bypasses it).
+    // Env-tunable (OPENSWMM_2D_MIN_PARALLEL_CELLS); 0 cells = unknown ⇒ no gate.
+    const bool gated = (mode.empty() || mode == "auto") && [&] {
+        if (n_cells <= 0) return false;
+        long min_par = 200000;
+        if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
+            min_par = std::atol(s);
+        return n_cells < min_par;
+    }();
+    if (!gated) {
+        if (mode.empty() || mode == "auto") {
+            for (const char* b : {"cuda", "hip", "sycl", "omp"})
+                if (auto s = try_plugin(b, chosen)) return s;
+        } else if (mode == "omp" || mode == "cuda" || mode == "hip" ||
+                   mode == "sycl") {
+            if (auto s = try_plugin(mode, chosen)) return s;
         }
-        // Prefer a GPU device, then the Kokkos-OpenMP CPU-parallel plugin, then
-        // the serial solver. `omp` is auto-selected by design as of 2026-06-13
-        // (docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §4.2, revised) — so OpenMP is
-        // the default acceleration *wherever the plugin is installed*. The omp
-        // plugin is NOT part of the base/portable build (it is opt-in, like the
-        // device plugins), so a stock install finds no plugin here and falls
-        // through to the serial CPU solver. The base build stays Kokkos-free.
-        for (const char* b : {"cuda", "hip", "sycl", "omp"}) {
-            if (auto s = try_plugin(b, chosen))
-                return s;
-        }
-        return cpu();
     }
-
-    if (mode == "cpu") return cpu();
-
-    if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
-        if (auto s = try_plugin(mode, chosen))
-            return s;
-        return cpu();
-    }
-
-    return cpu();
+    return serial_marcher();
 }
 
 } // namespace openswmm::twoD

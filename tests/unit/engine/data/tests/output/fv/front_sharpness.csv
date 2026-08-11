@@ -1,0 +1,5 @@
+riemann,scalar_scheme,front_width_cells
+HLL,UPWIND,69
+HLLC,UPWIND,25
+HLLC,MUSCL,9
+HLLC,QUICKEST_ULTIMATE,5

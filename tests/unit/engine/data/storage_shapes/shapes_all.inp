@@ -1,0 +1,128 @@
+[TITLE]
+;;Storage-shapes fixture — all six shape forms (US units).
+;;Exercises the refactored engine's storage-shape support end to end:
+;;  - InpWriter/parser round-trip (test_storage_shape_roundtrip.cpp, check 5)
+;;  - legacy-vs-refactored solver cross-check (check 3): the same file is run
+;;    through openswmm and openswmm-legacy and the node depth summaries compared.
+;;Each storage receives its own FLOW inflow and drains through a small conduit to
+;;a shared free outfall, so every unit fills into (0, fullDepth) during the run.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             04:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         30
+RULE_STEP            00:00:00
+
+INERTIAL_DAMPING     PARTIAL
+NORMAL_FLOW_LIMITED  BOTH
+FORCE_MAIN_EQUATION  H-W
+VARIABLE_STEP        0
+LENGTHENING_STEP     0
+MIN_SURFAREA         1.0
+MAX_TRIALS           8
+HEAD_TOLERANCE       0.0015
+SYS_FLOW_TOL         5
+LAT_FLOW_TOL         5
+MINIMUM_STEP         0.5
+THREADS              1
+IGNORE_SNOWMELT      YES
+IGNORE_QUALITY       YES
+
+[OUTFALLS]
+;;Name           Elevation  Type    Stage Data  Gated
+OTAB             60         FREE                NO
+OFUN             60         FREE                NO
+OCYL             60         FREE                NO
+OCON             60         FREE                NO
+OPAR             60         FREE                NO
+OPYR             60         FREE                NO
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape        p1/A1  p2/A2  p3/A0  SurDepth
+STAB    90    20        0          TABULAR      SC1    0      0      0
+SFUN    90    20        0          FUNCTIONAL   10     2      50     0
+SCYL    90    20        0          CYLINDRICAL  30     20     0      0
+SCON    90    20        0          CONICAL      30     20     2.5    0
+SPAR    90    20        0          PARABOLIC    30     20     8      0
+SPYR    90    20        0          PYRAMIDAL    30     20     2.5    0
+
+[CURVES]
+;;Name  Type       Depth  Area
+SC1     Storage    0      600
+SC1                10     900
+SC1                20     1200
+
+[CONDUITS]
+;;Name  From   To    Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
+CTAB    STAB   OTAB  200     0.013      0         0          0         0
+CFUN    SFUN   OFUN  200     0.013      0         0          0         0
+CCYL    SCYL   OCYL  200     0.013      0         0          0         0
+CCON    SCON   OCON  200     0.013      0         0          0         0
+CPAR    SPAR   OPAR  200     0.013      0         0          0         0
+CPYR    SPYR   OPYR  200     0.013      0         0          0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+CTAB    CIRCULAR  1.5    0      0      0      1
+CFUN    CIRCULAR  1.5    0      0      0      1
+CCYL    CIRCULAR  1.5    0      0      0      1
+CCON    CIRCULAR  1.5    0      0      0      1
+CPAR    CIRCULAR  1.5    0      0      0      1
+CPYR    CIRCULAR  1.5    0      0      0      1
+
+[INFLOWS]
+;;Node  Constituent  Time Series  Type  Mfactor  Sfactor  Baseline  Pattern
+STAB    FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+SFUN    FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+SCYL    FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+SCON    FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+SPAR    FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+SPYR    FLOW         INFLOW_TS    FLOW  1.0      1.0      0
+
+[TIMESERIES]
+;;Name       Date  Time   Value
+INFLOW_TS          0:00   6.0
+INFLOW_TS          4:00   6.0
+
+[REPORT]
+INPUT      NO
+CONTROLS   NO
+NODES      ALL
+LINKS      ALL
+
+[MAP]
+DIMENSIONS 0 0 1000 1000
+UNITS      None
+
+[COORDINATES]
+;;Node           X-Coord            Y-Coord
+STAB             0                  0
+SFUN             0                  100
+SCYL             0                  200
+SCON             0                  300
+SPAR             0                  400
+SPYR             0                  500
+OTAB             400                0
+OFUN             400                100
+OCYL             400                200
+OCON             400                300
+OPAR             400                400
+OPYR             400                500

@@ -22,8 +22,7 @@
 
 #include "../solver/GpuPluginAbi.h"
 #include "../solver/ISurfaceSolver.hpp"
-#include "CvodeKokkosSurfaceSolver.hpp"
-#include "ArkodeKokkosSurfaceSolver.hpp"
+#include "ExplicitKokkosSurfaceSolver.hpp"
 
 #include <Kokkos_Core.hpp>
 
@@ -64,19 +63,9 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
 }
 
 extern "C" OPENSWMM_GPU_ABI void*
-openswmm_make_gpu_surface_solver(const OpenSwmmGpuProbe* /*probe*/) {
-    ensureKokkosInitialized();
-    // Up-cast to the interface BEFORE erasing to void* so the core's
-    // static_cast<ISurfaceSolver*> recovers a correctly-adjusted pointer.
-    openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::CvodeKokkosSurfaceSolver();
-    return static_cast<void*>(solver);
-}
-
-extern "C" OPENSWMM_GPU_ABI void*
-openswmm_make_gpu_inertial_solver(const OpenSwmmGpuProbe* /*probe*/) {
+openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
     ensureKokkosInitialized();
     openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::ArkodeKokkosSurfaceSolver();
+        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
     return static_cast<void*>(solver);
 }

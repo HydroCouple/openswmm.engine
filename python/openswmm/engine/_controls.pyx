@@ -34,6 +34,8 @@ a :class:`MutableSequence` of :class:`ControlRule` records over the
 from collections.abc import MutableSequence
 from typing import NamedTuple
 
+from libc.stdlib cimport malloc, free
+
 from ._common cimport *
 
 
@@ -107,11 +109,8 @@ class Controls(MutableSequence):
             idx += n
         if not 0 <= idx < n:
             raise IndexError(idx)
-        existing = [self[i] for i in range(n)]
-        del existing[idx]
-        self.clear()
-        for r in existing:
-            self.append(r)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_control_remove_rule(h, idx))
 
     def insert(self, idx, value):
         """Insert *value* at *idx* (emulated via clear + re-add; the C rule API is append-only)."""
@@ -136,6 +135,58 @@ class Controls(MutableSequence):
         """Remove all control rules from the model."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_control_clear_rules(h))
+
+    def remove_rule(self, int idx) -> None:
+        """Remove a single control rule by index.
+
+        Later rule indices shift down by one, mirroring the C API. Requires
+        the engine to be in ``BUILDING`` or ``OPENED`` state.
+
+        :param idx: Zero-based rule index (``0 .. len(controls) - 1``).
+        :raises IndexError: If *idx* is out of range.
+        :raises EngineError: On C API failure.
+        """
+        n = len(self)
+        if idx < 0:
+            idx += n
+        if not 0 <= idx < n:
+            raise IndexError(idx)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_control_remove_rule(h, idx))
+
+    def find_references(self, str object_name) -> list:
+        """Return the indices of control rules that reference *object_name*.
+
+        Scans each rule's clauses for an object-type keyword (``NODE``,
+        ``LINK``, ``CONDUIT``, ``PUMP``, ``ORIFICE``, ``WEIR``, ``OUTLET``)
+        immediately followed by *object_name* (case-insensitive, matching
+        legacy rule parsing). Read-only — no rule text is edited.
+
+        :param object_name: Object name to search for.
+        :returns: Ascending list of matching zero-based rule indices.
+        :rtype: list[int]
+        :raises EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = object_name.encode('utf-8')
+        cdef int n = 0
+        cdef int cap
+        cdef int* buf
+        cdef list result
+        # First pass: query the count (rule_indices_out == NULL).
+        _check(swmm_control_find_references(h, b, NULL, &n))
+        if n <= 0:
+            return []
+        buf = <int*>malloc(n * sizeof(int))
+        if buf == NULL:
+            raise MemoryError("Failed to allocate rule-index buffer")
+        try:
+            cap = n
+            _check(swmm_control_find_references(h, b, buf, &cap))
+            result = [buf[i] for i in range(cap)]
+        finally:
+            free(buf)
+        return result
 
     @staticmethod
     def _unpack(value) -> str:

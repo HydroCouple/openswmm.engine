@@ -134,6 +134,24 @@ int parse(const std::string& expr_str, TreatExpr& result,
           int (*pollut_lookup)(const std::string& name));
 
 /**
+ * @brief Validate a treatment expression without touching engine state.
+ *
+ * @details Diagnostic peer of parse() for editors: same grammar, but
+ *          reports a human-readable message and character position on
+ *          failure. Stricter than parse() in one deliberate way — unknown
+ *          characters are an error here, where the tokenizer silently
+ *          skips them. Ends with a parse() cross-check so the verdict can
+ *          never drift ahead of what the engine accepts.
+ *
+ * @param expr_str  Full expression string ("R = ..." / "C = ...").
+ * @param[out] msg  Failure diagnostic (empty on success).
+ * @param[out] col  0-based character offset of the error, or -1 when the
+ *                  position is not attributable.
+ * @returns 0 when valid, -1 otherwise.
+ */
+int validate(const std::string& expr_str, std::string& msg, int& col);
+
+/**
  * @brief Evaluate a treatment expression with given variable values.
  *
  * @param expr   Parsed expression.

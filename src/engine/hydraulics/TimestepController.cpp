@@ -39,11 +39,14 @@ double TimestepController::compute_next(
     //   4. Save results when NewRoutingTime >= ReportTime (no alignment)
     // ================================================================
 
-    // Step 1: CFL-limited step, clamped to user's fixed routing step
+    // Step 1: CFL-limited step, clamped to user's fixed routing step.
+    // PARITY dynwave.c:196/865 — the MINIMUM_STEP floor belongs ONLY to the
+    // variable-step (CourantFactor > 0) path and is applied inside
+    // DWSolver::getRoutingStep, where legacy also pre-clamps
+    // MinRouteStep = min(MinRouteStep, RouteStep) (dynwave_validate).
+    // Flooring here silently inflated a fixed ROUTING_STEP below 0.5 s
+    // (e.g. 0.05 s decks marched at 0.5 s while reporting 0.05 s).
     double dt = std::min(opt.routing_step, dt_cfl);
-
-    // Enforce minimum floor (from [OPTIONS] MINIMUM_STEP)
-    dt = std::max(dt, min_step);
 
     // Step 2: Adjust so total duration is not exceeded
     //         (matching legacy swmm5.c:975-979: nextRoutingTime > RoutingDuration

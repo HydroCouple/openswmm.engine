@@ -334,7 +334,10 @@ SWMM_ENGINE_API int swmm_gpkg_create_observed_series(SWMM_Gpkg gpkg,
             bind_text(ins.get(), 1, variable_name);
             bind_text(ins.get(), 2, obj_type);
             bind_text(ins.get(), 3, safe_str(units));
-            sqlite3_step(ins.get());
+            if (sqlite3_step(ins.get()) != SQLITE_DONE) {
+                h->error_msg = sqlite3_errmsg(h->db.get());
+                return SWMM_GPKG_ERR;
+            }
             vid = static_cast<int>(sqlite3_last_insert_rowid(h->db.get()));
         }
 
@@ -352,7 +355,13 @@ SWMM_ENGINE_API int swmm_gpkg_create_observed_series(SWMM_Gpkg gpkg,
         else bind_null(stmt.get(), 5);
         if (units) bind_text(stmt.get(), 6, units);
         else bind_null(stmt.get(), 6);
-        sqlite3_step(stmt.get());
+        // A failed insert (e.g. UNIQUE violation on name) previously went
+        // unchecked, and sqlite3_last_insert_rowid() then returned a stale or
+        // zero rowid — callers wrote observed values into a bogus series_id.
+        if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+            h->error_msg = sqlite3_errmsg(h->db.get());
+            return SWMM_GPKG_ERR;
+        }
 
         return static_cast<int>(sqlite3_last_insert_rowid(h->db.get()));
     } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
@@ -374,7 +383,10 @@ SWMM_ENGINE_API int swmm_gpkg_write_observed_value(SWMM_Gpkg gpkg,
         bind_double(stmt.get(), 3, value);
         if (quality_flag) bind_text(stmt.get(), 4, quality_flag);
         else bind_null(stmt.get(), 4);
-        sqlite3_step(stmt.get());
+        if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+            h->error_msg = sqlite3_errmsg(h->db.get());
+            return SWMM_GPKG_ERR;
+        }
         return SWMM_GPKG_OK;
     } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
 }

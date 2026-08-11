@@ -7,9 +7,13 @@ Cross-Section Geometry
 :license: MIT
 
 Provides the :class:`CrossSection` dataclass, which wraps the raw
-``(shape, geom1, geom2, geom3, geom4)`` tuple returned by
-:meth:`Links.get_xsect` with human-readable field labels and a
-``shape_name`` derived from the :class:`XSectShape` enum.
+``(shape, geom1, geom2, geom3, geom4)`` tuple a link reports with
+human-readable field labels and a ``shape_name`` derived from the
+:class:`XSectShape` enum.
+
+Obtain one from :meth:`Links.get_xsect_info` or ``link.xsect.info()``. For the
+hydraulic geometry of a section — area, top width, hydraulic radius, critical
+depth — see :class:`~openswmm.engine.XSectionGeometry` instead.
 
 Example::
 
@@ -46,8 +50,8 @@ _GEOM_LABELS: dict[int, tuple[str, ...]] = {
     XSectShape.CIRCULAR:          ("diameter",),
     XSectShape.FILLED_CIRCULAR:   ("diameter", "filled_depth"),
     XSectShape.RECT_CLOSED:       ("height", "width"),
-    XSectShape.RECT_OPEN:         ("height", "width"),
-    XSectShape.TRAPEZOIDAL:       ("height", "bottom_width", "side_slope"),
+    XSectShape.RECT_OPEN:         ("height", "width", "sides_removed"),
+    XSectShape.TRAPEZOIDAL:       ("height", "bottom_width", "left_slope", "right_slope"),
     XSectShape.TRIANGULAR:        ("height", "top_width"),
     XSectShape.PARABOLIC:         ("height", "top_width"),
     XSectShape.POWER:             ("height", "top_width", "exponent"),
@@ -59,23 +63,22 @@ _GEOM_LABELS: dict[int, tuple[str, ...]] = {
     XSectShape.SEMIELLIPTICAL:    ("height",),
     XSectShape.BASKETHANDLE:      ("height",),
     XSectShape.SEMICIRCULAR:      ("height",),
+    XSectShape.RECT_TRIANG:       ("height", "top_width", "triangle_height"),
+    XSectShape.RECT_ROUND:        ("height", "top_width", "bottom_radius"),
+    XSectShape.HORIZ_ELLIPSE:     ("height", "width"),
+    XSectShape.VERT_ELLIPSE:      ("height", "width"),
+    XSectShape.ARCH:              ("height", "width"),
     XSectShape.IRREGULAR:         ("transect_index",),
-    XSectShape.CUSTOM:            ("shape_curve_index",),
+    XSectShape.CUSTOM:            ("height", "shape_curve_index"),
     XSectShape.FORCE_MAIN:        ("diameter", "roughness"),
-}
-
-# Shapes not in the enum (ellipse/arch variants that some engine builds expose)
-_GEOM_LABELS_EXTRA: dict[int, tuple[str, ...]] = {
-    # HORIZ_ELLIPSE / VERT_ELLIPSE / ARCH (integer codes beyond the enum)
-    19: ("height", "width"),
-    20: ("height", "width"),
-    21: ("height", "width"),
+    XSectShape.STREET_XSECT:      ("street_index",),
+    XSectShape.DUMMY:             (),
 }
 
 
 def _resolve_geom_labels(shape: int) -> tuple[str, ...]:
     """Return the ordered label tuple for *shape*, falling back to generic names."""
-    labels = _GEOM_LABELS.get(shape) or _GEOM_LABELS_EXTRA.get(shape)
+    labels = _GEOM_LABELS.get(shape)
     if labels is not None:
         return labels
     return ("geom1", "geom2", "geom3", "geom4")
@@ -107,6 +110,28 @@ class CrossSection:
     geom2: float
     geom3: float
     geom4: float
+
+    @classmethod
+    def from_raw(cls, shape: int, geom1: float, geom2: float, geom3: float,
+                 geom4: float) -> "CrossSection":
+        """Build from the raw ``(shape, geom1..geom4)`` the engine reports.
+
+        @param shape: Integer shape code (see :class:`XSectShape`).
+        @param geom1: First geometry parameter.
+        @param geom2: Second geometry parameter.
+        @param geom3: Third geometry parameter.
+        @param geom4: Fourth geometry parameter.
+        @rtype: CrossSection
+        """
+        code = int(shape)
+        return cls(
+            shape=code,
+            shape_name=_XSECT_SHAPE_NAMES.get(code, f"UNKNOWN({code})"),
+            geom1=float(geom1),
+            geom2=float(geom2),
+            geom3=float(geom3),
+            geom4=float(geom4),
+        )
 
     @property
     def geom_labels(self) -> dict[str, float]:

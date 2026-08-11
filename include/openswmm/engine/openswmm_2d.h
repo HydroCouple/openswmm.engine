@@ -102,7 +102,7 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
  *
  *  When called while the engine is RUNNING, the solver state (`head`,
  *  `depth`) is intentionally **not** rewritten — `head` remains the value
- *  CVODE is integrating; the implied `depth = head - bed` therefore changes
+ *  the solver is integrating; the implied `depth = head - bed` therefore changes
  *  by the same amount as bed. This is the expected physical semantics
  *  ("raising the bed under water reduces water depth there").
  *
@@ -143,6 +143,38 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_mannings(SWMM_Engine engine, int idx,
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_triangle_mannings(SWMM_Engine engine, int idx,
                                                     double n);
+
+/** @brief Get triangle initial water depth (`[2D_TRIANGLES]` INIT_DEPTH
+ *         column, default 0 = dry). Value is in MESH length units — feet on a
+ *         US-FLOW_UNITS project, metres on SI or on a mesh file that declared
+ *         `;; UNITS: SI (m)` — the same convention as the vertex Z column.
+ *         @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_triangle_get_init_depth(SWMM_Engine engine,
+                                                    int idx, double* d);
+
+/** @brief Set triangle initial water depth (mesh length units, >= 0;
+ *         SWMM_ERR_BADPARAM otherwise — see the getter for the unit
+ *         convention). Converted to SI and applied to the solver state when
+ *         the 2D surface initializes, and persisted in the `INIT_DEPTH` column
+ *         of `[2D_TRIANGLES]` on save (written before TAG). @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_triangle_init_depth(SWMM_Engine engine,
+                                                    int idx, double d);
+
+/** @brief Get triangle initial velocity (u, v in m/s; `[2D_INITIAL_VELOCITY]`
+ *         rows, default 0,0). @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_triangle_get_init_velocity(SWMM_Engine engine,
+                                                       int idx, double* u,
+                                                       double* v);
+
+/** @brief Set triangle initial velocity (u, v in m/s; finite values;
+ *         SWMM_ERR_BADPARAM otherwise). Projected onto the explicit
+ *         marcher's face normals as (h*u, h*v) when the 2D surface
+ *         initializes (t = 0 only — hotstart/reinitialize still zeroes face
+ *         momentum), and persisted as sparse `[2D_INITIAL_VELOCITY]` rows on
+ *         save. @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_triangle_init_velocity(SWMM_Engine engine,
+                                                       int idx, double u,
+                                                       double v);
 
 /** @brief Set the descriptive tag of a vertex (the `[2D_VERTICES]` TAG
  *         column). Distinct from the 1D<->2D coupling node. Empty / NULL
@@ -238,6 +270,56 @@ SWMM_ENGINE_API int swmm_2d_triangle_get_coupled_node(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine,
                                                       int vertex_idx,
                                                       const char* node_name);
+
+/** @brief Append one node→cell coupling row (`[2D_TRIANGLE_NODE_MAP]`
+ *         repeated-row form).
+ *
+ *  A triangle may carry several coupling rows — one per node — so this
+ *  APPENDS rather than overwrites (contrast swmm_2d_set_vertex_coupled_node).
+ *  The node NAME is stored verbatim and resolved against the current model
+ *  (-1 tolerated until re-resolution, mirroring the vertex setter). The
+ *  `.inp` writer emits one `[2D_TRIANGLE_NODE_MAP]` row per coupling.
+ *
+ *  @param tri_idx   Triangle index in `[0, triangle_count)`.
+ *  @param node_name SWMM node id (must be non-empty).
+ *  @param cd        Discharge coefficient; must be > 0 (engine default 0.65).
+ *  @param area      Effective exchange area, m²; must be > 0.
+ *  @return SWMM_OK; SWMM_ERR_BADINDEX on bad triangle; SWMM_ERR_BADPARAM on
+ *          empty name / non-positive cd or area.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_add_triangle_coupling(SWMM_Engine engine,
+                                                    int tri_idx,
+                                                    const char* node_name,
+                                                    double cd,
+                                                    double area);
+
+/** @brief Remove every authored node→cell coupling row (all triangles).
+ *
+ *  Also clears the legacy per-triangle mirror (coupled node, CD, AREA back
+ *  to defaults). Vertex couplings are untouched. Typical use: the GUI's
+ *  Remap 1D↔2D re-authoring the full cell-coupling set.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_clear_triangle_couplings(SWMM_Engine engine);
+
+/** @brief Number of authored node→cell coupling rows.
+ *  @param count Output row count (>= number of distinct coupled triangles).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_triangle_coupling_rows(SWMM_Engine engine,
+                                                     int* count);
+
+/** @brief Read one authored node→cell coupling row by row index.
+ *  @param row_idx   Row index in `[0, swmm_2d_triangle_coupling_rows)`.
+ *  @param tri_idx   Output triangle index.
+ *  @param node_idx  Output SWMM node index (-1 if unresolved).
+ *  @param cd        Output discharge coefficient.
+ *  @param area      Output exchange area (m²).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_triangle_coupling_row(SWMM_Engine engine,
+                                                        int row_idx,
+                                                        int* tri_idx,
+                                                        int* node_idx,
+                                                        double* cd,
+                                                        double* area);
 
 /** @brief Get the coupling discharge coefficient of a vertex
  *         (`[2D_VERTEX_NODE_MAP]` CD column; default 0.65).
@@ -349,7 +431,7 @@ SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,
  * slot on the neighbour triangle so mass conservation is preserved.
  *
  * Safe to call between routing steps. Calling during a routing step is
- * undefined — the CVODE sub-stepper holds a const reference to the mesh.
+ * undefined — the 2D sub-stepper holds a const reference to the mesh.
  * ========================================================================= */
 
 /** @brief Get the per-edge conveyance factor for one edge.
@@ -404,6 +486,18 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_head(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_vertex_get_heads_bulk(SWMM_Engine engine,
                                                     double* heads);
 
+/** @brief Bulk get render-oriented SIGNED vertex depths (m) at all vertices.
+ *
+ *  The wet-masked, depth-weighted free-surface reconstruction eta_v - z_v:
+ *  dry-cell bed elevations never contribute (unlike the vertex heads above,
+ *  which are the solver field with dry-cell head = bed elevation). Negative
+ *  over the dry side of partially wet cells (sub-cell shoreline intercept),
+ *  0 where no incident cell is wet. This is the field GUIs should interpolate
+ *  for water-surface rendering and profiles.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_vertex_get_render_depths_bulk(SWMM_Engine engine,
+                                                            double* depths);
+
 /* =========================================================================
  * 2D Solver Statistics
  * ========================================================================= */
@@ -422,14 +516,18 @@ SWMM_ENGINE_API int swmm_2d_get_total_volume(SWMM_Engine engine, double* volume)
 SWMM_ENGINE_API int swmm_2d_get_total_exchange_flow(SWMM_Engine engine,
                                                       double* flow);
 
-/** @brief Get number of CVODE internal steps taken in the last advance.
+/** @brief Get number of explicit-marcher sub-steps taken in the last advance.
+ *  (Renamed from swmm_2d_get_cvode_steps with the D2 CVODE/ARKODE
+ *  retirement.)
  *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_cvode_steps(SWMM_Engine engine, long* steps);
+SWMM_ENGINE_API int swmm_2d_get_solver_steps(SWMM_Engine engine, long* steps);
 
-/** @brief Get CVODE last internal step size.
+/** @brief Get the explicit marcher's last sub-step size (s).
+ *  (Renamed from swmm_2d_get_cvode_last_step with the D2 CVODE/ARKODE
+ *  retirement.)
  *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_cvode_last_step(SWMM_Engine engine,
-                                                  double* h_last);
+SWMM_ENGINE_API int swmm_2d_get_solver_last_step(SWMM_Engine engine,
+                                                   double* h_last);
 
 /** @brief Get per-triangle max depth statistics (cumulative).
  *  @param max_depths Output array (pre-allocated to triangle_count).
@@ -534,21 +632,9 @@ SWMM_ENGINE_API int swmm_2d_get_dry_depth(SWMM_Engine engine, double* dry_depth)
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_dry_depth(SWMM_Engine engine, double dry_depth);
 
-/** @brief Get CVODE relative tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_rel_tolerance(SWMM_Engine engine, double* rtol);
 
-/** @brief Set CVODE relative tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_set_rel_tolerance(SWMM_Engine engine, double rtol);
 
-/** @brief Get CVODE absolute tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_get_abs_tolerance(SWMM_Engine engine, double* atol);
 
-/** @brief Set CVODE absolute tolerance.
- *  @ingroup engine_2d */
-SWMM_ENGINE_API int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol);
 
 /* =========================================================================
  * 2D Boundary Conditions
@@ -558,10 +644,11 @@ SWMM_ENGINE_API int swmm_2d_set_abs_tolerance(SWMM_Engine engine, double atol);
  *
  *  WALL / NORMAL_FLOW / SPECIFIED_STAGE were the original three; the
  *  SPECIFIED_FLOW (3) and RATING_CURVE (4) values were added per GUI plan
- *  §V V-E4 / V-E5. Storage + this C API only at this revision — the
- *  FV-SWE flux integration for non-Wall BCs is deferred to a separate
- *  slice (V-E-FLUX). The solver still treats every boundary edge as
- *  Wall regardless of type today (see SurfaceFluxCalculator.cpp:131).
+ *  §V V-E4 / V-E5. All five types are enforced at flux time by the
+ *  explicit marcher (SurfaceFluxCalculator::boundaryEdgeFlux); timeseries
+ *  and rating-curve driving values are re-resolved every step. Note a
+ *  NORMAL_FLOW edge with zero bed slope produces zero flux (behaves as a
+ *  Wall).
  */
 #define SWMM_2D_BC_WALL            0
 #define SWMM_2D_BC_NORMAL_FLOW     1
@@ -576,7 +663,7 @@ SWMM_ENGINE_API int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count);
 /** @brief Get boundary condition type for an edge.
  *  @param tri_idx Triangle index (0-based).
  *  @param edge    Local edge index (0, 1, or 2).
- *  @param bc_type Output: SWMM_2D_BC_WALL, SWMM_2D_BC_NORMAL_FLOW, or SWMM_2D_BC_SPECIFIED_STAGE.
+ *  @param bc_type Output: one of the SWMM_2D_BC_* constants.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_type(SWMM_Engine engine,
                                                int tri_idx, int edge,

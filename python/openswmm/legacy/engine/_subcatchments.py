@@ -67,6 +67,32 @@ class LegacySubcatchment:
         self._set(SP.SLOPE, value)
 
     @property
+    def rain_scale_factor(self) -> float:
+        """Per-subcatchment rainfall scale factor (> 0; 1.0 = no scaling).
+
+        Optional [SUBCATCHMENTS] token 9. Multiplies the gage-derived rainfall,
+        composing with the gage scale factor. Settable mid-run. Raises if <= 0.
+        """
+        return self._get(SP.RAIN_SCALE_FACTOR)
+
+    @rain_scale_factor.setter
+    def rain_scale_factor(self, value: float) -> None:
+        self._set(SP.RAIN_SCALE_FACTOR, value)
+
+    @property
+    def snow_scale_factor(self) -> float:
+        """Per-subcatchment snowfall scale factor (> 0; 1.0 = no scaling).
+
+        Optional [SUBCATCHMENTS] token 10. Composes with the gage snow catch
+        factor (SCF). Settable mid-run. Raises if <= 0.
+        """
+        return self._get(SP.SNOW_SCALE_FACTOR)
+
+    @snow_scale_factor.setter
+    def snow_scale_factor(self, value: float) -> None:
+        self._set(SP.SNOW_SCALE_FACTOR, value)
+
+    @property
     def curb_length(self) -> float:
         """Total curb length."""
         return self._get(SP.CURB_LENGTH)

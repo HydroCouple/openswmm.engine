@@ -13,6 +13,8 @@
 #include "openswmm_api_common.hpp"
 #include "TypeHelpers.hpp"
 #include "../../../include/openswmm/engine/openswmm_nodes.h"
+#include "../data/StorageGeometry.hpp"
+#include "../edit/VirtualJunctionOps.hpp"
 #include "../hydraulics/Node.hpp"
 
 #include <algorithm>
@@ -21,6 +23,10 @@
 
 using openswmm::c_to_internal_node_type;
 using openswmm::internal_to_c_node_type;
+using openswmm::StorageShape;
+using openswmm::storage_shape_is_valid_code;
+using openswmm::storage_shape_is_geometric;
+using openswmm::storage_shape_coeffs;
 
 extern "C" {
 
@@ -179,6 +185,37 @@ SWMM_ENGINE_API int swmm_node_get_type(SWMM_Engine engine, int idx, int* type) {
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_is_virtual(SWMM_Engine engine, int idx, int* is_virtual) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (is_virtual) {
+        const auto ui = static_cast<std::size_t>(idx);
+        *is_virtual = (ui < ctx.nodes.is_virtual.size() &&
+                       ctx.nodes.is_virtual[ui]) ? 1 : 0;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_virtual) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const int code = openswmm::edit::vj_set_virtual(ctx, idx, make_virtual != 0);
+    if (code == 0)  return SWMM_OK;
+    if (code == -1) return SWMM_ERR_BADPARAM;   // non-junction node
+    return code;   // distinct ERR_VJ_* rule code (see openswmm_nodes.h)
+}
+
+SWMM_ENGINE_API int swmm_node_virtual_eligible(SWMM_Engine engine, int idx, int* rule_code) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (rule_code) *rule_code = openswmm::edit::vj_rule_violation(ctx, idx);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_node_get_invert_elev(SWMM_Engine engine, int idx, double* elev) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
@@ -267,6 +304,10 @@ SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, do
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
+    // Virtual junctions cannot receive lateral inflow (zero-storage contract).
+    if (uidx < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[uidx] &&
+        flow != 0.0)
+        return SWMM_ERR_BADPARAM;
     if (uidx >= ctx.nodes.user_lat_flow.size()) {
         // Lazily resize if not yet allocated (e.g. hot-started context)
         ctx.nodes.user_lat_flow.resize(ctx.nodes.lat_flow.size(), 0.0);
@@ -389,6 +430,14 @@ SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const dou
     CHECK_RUNNING(ctx);
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
+    // Virtual junctions cannot receive lateral inflow: a nonzero entry for a
+    // virtual node rejects the whole call so the caller can fix its buffer.
+    for (int i = 0; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (ui < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[ui] &&
+            buf[i] != 0.0)
+            return SWMM_ERR_BADPARAM;
+    }
     for (int i = 0; i < n; ++i)
         ctx.nodes.lat_flow[static_cast<std::size_t>(i)] = to_internal(ctx, openswmm::ucf::FLOW, buf[i]); // units
     return SWMM_OK;
@@ -500,7 +549,15 @@ SWMM_ENGINE_API int swmm_node_set_storage_curve(SWMM_Engine engine, int idx, int
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     const int r = ctx.node_subtypes.storage_row(idx);
-    if (r >= 0) ctx.node_subtypes.storages.curve[static_cast<std::size_t>(r)] = curve_idx;
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        ctx.node_subtypes.storages.curve[ur] = curve_idx;
+        // Keep shape coherent with the curve so a caller can never wedge a node into
+        // "shape says PYRAMIDAL but a curve is attached". Attaching ⇒ TABULAR;
+        // detaching ⇒ back to FUNCTIONAL, which is what curve < 0 has always meant.
+        ctx.node_subtypes.storages.shape[ur] =
+            (curve_idx >= 0) ? StorageShape::TABULAR : StorageShape::FUNCTIONAL;
+    }
     return SWMM_OK;
 }
 
@@ -526,6 +583,11 @@ SWMM_ENGINE_API int swmm_node_set_storage_functional(SWMM_Engine engine, int idx
         ctx.node_subtypes.storages.a[ur] = a;
         ctx.node_subtypes.storages.b[ur] = b;
         ctx.node_subtypes.storages.c[ur] = c;
+        // Writing power-law coefficients means the node IS functional: drop any curve
+        // and any geometric shape, else the solver would read these a/b/c as the
+        // quadratic coefficients of a cone.
+        ctx.node_subtypes.storages.shape[ur] = StorageShape::FUNCTIONAL;
+        ctx.node_subtypes.storages.curve[ur] = -1;
     }
     return SWMM_OK;
 }
@@ -544,6 +606,91 @@ SWMM_ENGINE_API int swmm_node_get_storage_functional(SWMM_Engine engine, int idx
         if (a) *a = 0.0;
         if (b) *b = 0.0;
         if (c) *c = 0.0;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_storage_shape(SWMM_Engine engine, int idx, int shape) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!storage_shape_is_valid_code(shape)) return SWMM_ERR_BADPARAM;
+
+    const int r = ctx.node_subtypes.storage_row(idx);
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        auto& S = ctx.node_subtypes.storages;
+        const auto s = static_cast<StorageShape>(shape);
+        S.shape[ur] = s;
+        // A geometric shape cannot also be tabulated; drop the curve and re-derive the
+        // coefficients from whatever raw params the row already carries. If those are
+        // still at their 0 defaults the derivation fails and a/b/c are left alone —
+        // the caller is expected to follow with set_storage_geometry().
+        if (storage_shape_is_geometric(s)) {
+            S.curve[ur] = -1;
+            double a = 0.0, b = 0.0, c = 0.0;
+            if (storage_shape_coeffs(s, S.p1[ur], S.p2[ur], S.p3[ur], a, b, c)) {
+                S.a[ur] = a; S.b[ur] = b; S.c[ur] = c;
+            }
+        } else if (s == StorageShape::FUNCTIONAL) {
+            S.curve[ur] = -1;
+        }
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_storage_shape(SWMM_Engine engine, int idx, int* shape) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const int r = ctx.node_subtypes.storage_row(idx);
+    if (shape) {
+        *shape = (r >= 0)
+            ? static_cast<int>(ctx.node_subtypes.storages.shape[static_cast<std::size_t>(r)])
+            : static_cast<int>(StorageShape::FUNCTIONAL);
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_storage_geometry(SWMM_Engine engine, int idx,
+                                                   double p1, double p2, double p3) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+
+    const int r = ctx.node_subtypes.storage_row(idx);
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        auto& S = ctx.node_subtypes.storages;
+        const StorageShape s = S.shape[ur];
+        if (!storage_shape_is_geometric(s)) return SWMM_ERR_BADPARAM;   // set the shape first
+        // Reject bad dimensions BEFORE mutating, so a failed call leaves the node on
+        // its previous valid geometry rather than half-written.
+        double a = 0.0, b = 0.0, c = 0.0;
+        if (!storage_shape_coeffs(s, p1, p2, p3, a, b, c)) return SWMM_ERR_BADPARAM;
+        S.p1[ur] = p1; S.p2[ur] = p2; S.p3[ur] = p3;
+        S.a[ur]  = a;  S.b[ur]  = b;  S.c[ur]  = c;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx,
+                                                   double* p1, double* p2, double* p3) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const int r = ctx.node_subtypes.storage_row(idx);
+    if (r >= 0) {
+        const auto ur = static_cast<std::size_t>(r);
+        if (p1) *p1 = ctx.node_subtypes.storages.p1[ur];
+        if (p2) *p2 = ctx.node_subtypes.storages.p2[ur];
+        if (p3) *p3 = ctx.node_subtypes.storages.p3[ur];
+    } else {
+        if (p1) *p1 = 0.0;
+        if (p2) *p2 = 0.0;
+        if (p3) *p3 = 0.0;
     }
     return SWMM_OK;
 }

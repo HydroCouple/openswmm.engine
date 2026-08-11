@@ -11,6 +11,7 @@
 #include "../data/BoundaryData.hpp"
 #include "../../input/InputReader.hpp"
 #include "../../input/Tokenizer.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../core/SimulationContext.hpp"
 
 #include <algorithm>
@@ -68,11 +69,33 @@ int findTriangleByTag(const MeshData& mesh, const std::string& tag) {
     return -1;
 }
 
+/// Hard-error suffix for [2D_OPTIONS] keys retired with the CVODE/ARKODE
+/// stack (D2, 2026-07-29).
+const std::string RETIRED_SUFFIX =
+    " was retired with the CVODE/ARKODE 2D solvers: the explicit "
+    "local-inertial marcher is the only 2D integrator. Remove the line; "
+    "marcher settings are THETA, CFL_NUMBER, LTS_TIERS, H_MOVE, FROUDE_MAX, "
+    "MAX_TIMESTEP, COUPLING_AREA.";
+
+/// Retired [2D_OPTIONS] material: warn-and-ignore when a warnings sink is
+/// available (the file-load path — legacy models must still open), hard
+/// error otherwise (the programmatic set path).
+std::string retiredOption(const std::string& what,
+                          std::vector<std::string>* warnings) {
+    if (warnings) {
+        warnings->push_back(
+            openswmm::format_warning(openswmm::WARN_2D_OPTION_RETIRED, what));
+        return {};
+    }
+    return what + RETIRED_SUFFIX;
+}
+
 } // anonymous namespace
 
 
 std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
-                                SolverOptions2D& opts) {
+                                SolverOptions2D& opts,
+                                std::vector<std::string>* warnings) {
     if (tokens.size() < 2) return "Expected PARAMETER VALUE";
 
     const auto& key = tokens[0];
@@ -82,69 +105,41 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     if (iequals(key, "MAX_TIMESTEP")) {
         opts.max_timestep = tryParseDouble(val, ok);
         if (!ok) return "Invalid MAX_TIMESTEP value";
-    } else if (iequals(key, "MIN_TIMESTEP")) {
-        opts.min_timestep = tryParseDouble(val, ok);
-        if (!ok) return "Invalid MIN_TIMESTEP value";
-    } else if (iequals(key, "REL_TOLERANCE")) {
-        opts.rel_tolerance = tryParseDouble(val, ok);
-        if (!ok) return "Invalid REL_TOLERANCE value";
-    } else if (iequals(key, "ABS_TOLERANCE")) {
-        opts.abs_tolerance = tryParseDouble(val, ok);
-        if (!ok) return "Invalid ABS_TOLERANCE value";
     } else if (iequals(key, "DRY_DEPTH")) {
         opts.dry_depth = tryParseDouble(val, ok);
         if (!ok) return "Invalid DRY_DEPTH value";
-    } else if (iequals(key, "MAX_KRYLOV_DIM")) {
-        opts.max_krylov_dim = tryParseInt(val, ok);
-        if (!ok) return "Invalid MAX_KRYLOV_DIM value";
-    } else if (iequals(key, "COUPLING_INTERVAL")) {
-        opts.coupling_interval = tryParseInt(val, ok);
-        if (!ok) return "Invalid COUPLING_INTERVAL value";
-    } else if (iequals(key, "COUPLING_WINDOW")) {
-        opts.coupling_window = tryParseDouble(val, ok);
-        if (!ok) return "Invalid COUPLING_WINDOW value";
-    } else if (iequals(key, "ACTIVE_SET")) {
-        if (iequals(val, "YES") || val == "1")
-            opts.active_set = true;
-        else if (iequals(val, "NO") || val == "0")
-            opts.active_set = false;
-        else
-            return "Invalid ACTIVE_SET value (YES/NO)";
-    } else if (iequals(key, "ACTIVE_SET_HALO")) {
-        opts.active_set_halo = tryParseInt(val, ok);
-        if (!ok || opts.active_set_halo < 1) return "Invalid ACTIVE_SET_HALO value";
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
+    } else if (iequals(key, "COUPLING_SYNC")) {
+        opts.coupling_sync = tryParseDouble(val, ok);
+        if (!ok || opts.coupling_sync < 0.0)
+            return "Invalid COUPLING_SYNC value (seconds, >= 0)";
     } else if (iequals(key, "LIMITER_EPSILON")) {
         opts.limiter_epsilon = tryParseDouble(val, ok);
         if (!ok) return "Invalid LIMITER_EPSILON value";
     } else if (iequals(key, "FLUX_DH_EPS")) {
         opts.flux_dh_eps = tryParseDouble(val, ok);
         if (!ok) return "Invalid FLUX_DH_EPS value";
-    } else if (iequals(key, "MAX_CVODE_STEPS")) {
-        opts.max_cvode_steps = tryParseInt(val, ok);
-        if (!ok) return "Invalid MAX_CVODE_STEPS value";
-    } else if (iequals(key, "LINEAR_SOLVER")) {
-        if (iequals(val, "GMRES"))
-            opts.linear_solver = LinearSolverType::GMRES;
-        else if (iequals(val, "BICGSTAB"))
-            opts.linear_solver = LinearSolverType::BICGSTAB;
-        else if (iequals(val, "TFQMR"))
-            opts.linear_solver = LinearSolverType::TFQMR;
+    } else if (iequals(key, "CELL_CLOSURE")) {
+        if (iequals(val, "FLAT"))
+            opts.cell_closure = CellClosure2D::FLAT;
+        else if (iequals(val, "VFR"))
+            opts.cell_closure = CellClosure2D::VFR;
         else
-            return "Unknown LINEAR_SOLVER: " + val;
-    } else if (iequals(key, "PRECONDITIONER")) {
-        if (iequals(val, "NONE"))
-            opts.preconditioner = PreconditionerType::NONE;
-        else if (iequals(val, "JACOBI"))
-            opts.preconditioner = PreconditionerType::JACOBI;
-        else if (iequals(val, "ILU"))
-            opts.preconditioner = PreconditionerType::ILU;
-        else if (iequals(val, "AMG"))
-            opts.preconditioner = PreconditionerType::AMG;
+            return "Unknown CELL_CLOSURE: " + val;
+    } else if (iequals(key, "FACE_RECONSTRUCTION")) {
+        if (iequals(val, "MEAN"))
+            opts.face_reconstruction = FaceDepth2D::MEAN;
+        else if (iequals(val, "VFR_FACE"))
+            opts.face_reconstruction = FaceDepth2D::VFR_FACE;
         else
-            return "Unknown PRECONDITIONER: " + val;
+            return "Unknown FACE_RECONSTRUCTION: " + val;
+    } else if (iequals(key, "VFR_MIN_WET_FRAC")) {
+        const double frac = tryParseDouble(val, ok);
+        if (!ok || frac <= 0.0 || frac > 0.5)
+            return "Invalid VFR_MIN_WET_FRAC value (expected (0, 0.5])";
+        opts.vfr_min_wet_frac = frac;
     } else if (iequals(key, "RAINFALL_MODE")) {
         if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
@@ -165,6 +160,51 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         // Stored as the raw token; resolved against the .inp directory in
         // SWMMEngine::open when the Default2DOutputPlugin is instantiated.
         opts.output_file = val;
+    } else if (iequals(key, "INTEGRATOR")) {
+        // The explicit marcher is the only integrator (D2 retirement,
+        // 2026-07-29). EXPLICIT is accepted (and the default); the retired
+        // CVODE/ARKODE selections warn on file load (the model opens and
+        // runs the marcher — not silent, WARNING 104 names the substitution)
+        // and hard-error on the programmatic set path.
+        if (!iequals(val, "EXPLICIT"))
+            return retiredOption("INTEGRATOR " + val, warnings);
+    } else if (iequals(key, "THETA")) {
+        const double th = tryParseDouble(val, ok);
+        if (!ok || th <= 0.0 || th > 1.0)
+            return "Invalid THETA value (expected (0, 1])";
+        opts.theta = th;
+    } else if (iequals(key, "CFL_NUMBER")) {
+        const double c = tryParseDouble(val, ok);
+        if (!ok || c <= 0.0 || c > 1.0)
+            return "Invalid CFL_NUMBER value (expected (0, 1])";
+        opts.cfl_number = c;
+    } else if (iequals(key, "H_MOVE")) {
+        const double h = tryParseDouble(val, ok);
+        if (!ok || h < 0.0)
+            return "Invalid H_MOVE value (expected metres >= 0)";
+        opts.h_move = h;
+    } else if (iequals(key, "LTS_TIERS")) {
+        const int k = tryParseInt(val, ok);
+        if (!ok || k < 1 || k > 8)
+            return "Invalid LTS_TIERS value (expected 1..8)";
+        opts.lts_tiers = k;
+    } else if (iequals(key, "FROUDE_MAX")) {
+        const double f = tryParseDouble(val, ok);
+        if (!ok || f <= 0.0)
+            return "Invalid FROUDE_MAX value (expected > 0)";
+        opts.froude_max = f;
+    } else if (iequals(key, "COUPLING_AREA")) {
+        if (iequals(val, "AUTO"))
+            opts.coupling_area_auto = true;
+        else if (iequals(val, "DEFAULT"))
+            opts.coupling_area_auto = false;
+        else
+            return "Unknown COUPLING_AREA: " + val + " (expected AUTO|DEFAULT)";
+    } else if (is2DRetiredOptionKey(key)) {
+        // These keys configured the deleted CVODE/ARKODE stack. On file load
+        // they are ignored with a WARNING 104 (legacy models must still
+        // open); on the programmatic set path they stay hard errors.
+        return retiredOption(key, warnings);
     } else {
         return "Unknown 2D_OPTIONS parameter: " + key;
     }
@@ -173,14 +213,28 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
 }
 
 
+bool is2DRetiredOptionKey(const std::string& key) {
+    static const char* kRetired[] = {
+        "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE", "MAX_CVODE_STEPS",
+        "MAX_KRYLOV_DIM", "LINEAR_SOLVER", "PRECONDITIONER", "JACOBIAN",
+        "ATOL_AREA_REF", "COUPLING_INTERVAL", "COUPLING_WINDOW",
+        "ACTIVE_SET", "ACTIVE_SET_HALO", "MOMENTUM",
+    };
+    for (const char* k : kRetired) {
+        if (iequals(key, k)) return true;
+    }
+    return false;
+}
+
+
 bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
-        "MAX_TIMESTEP", "MIN_TIMESTEP", "REL_TOLERANCE", "ABS_TOLERANCE",
-        "DRY_DEPTH", "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_WINDOW",
-        "ACTIVE_SET", "ACTIVE_SET_HALO",
-        "COUPLING_CD", "LIMITER_EPSILON", "FLUX_DH_EPS", "MAX_CVODE_STEPS",
-        "LINEAR_SOLVER", "PRECONDITIONER", "RAINFALL_MODE", "REPORT_2D",
+        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC",
+        "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
+        "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
+        "INTEGRATOR", "THETA", "CFL_NUMBER", "H_MOVE",
+        "LTS_TIERS", "FROUDE_MAX", "COUPLING_AREA",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -198,38 +252,19 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     };
 
     if (iequals(key, "MAX_TIMESTEP"))      return fmt_g(opts.max_timestep);
-    if (iequals(key, "MIN_TIMESTEP"))      return fmt_g(opts.min_timestep);
-    if (iequals(key, "REL_TOLERANCE"))     return fmt_g(opts.rel_tolerance);
-    if (iequals(key, "ABS_TOLERANCE"))     return fmt_g(opts.abs_tolerance);
     if (iequals(key, "DRY_DEPTH"))         return fmt_g(opts.dry_depth);
     if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
     if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
-    if (iequals(key, "MAX_KRYLOV_DIM"))    return std::to_string(opts.max_krylov_dim);
-    if (iequals(key, "COUPLING_INTERVAL")) return std::to_string(opts.coupling_interval);
-    if (iequals(key, "COUPLING_WINDOW"))   return fmt_g(opts.coupling_window);
-    if (iequals(key, "ACTIVE_SET"))        return opts.active_set ? "YES" : "NO";
-    if (iequals(key, "ACTIVE_SET_HALO"))   return std::to_string(opts.active_set_halo);
-    if (iequals(key, "MAX_CVODE_STEPS"))   return std::to_string(opts.max_cvode_steps);
+    if (iequals(key, "COUPLING_SYNC"))     return fmt_g(opts.coupling_sync);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
-    if (iequals(key, "LINEAR_SOLVER")) {
-        switch (opts.linear_solver) {
-            case LinearSolverType::GMRES:    return "GMRES";
-            case LinearSolverType::BICGSTAB: return "BICGSTAB";
-            case LinearSolverType::TFQMR:    return "TFQMR";
-        }
-        return "GMRES";
-    }
-    if (iequals(key, "PRECONDITIONER")) {
-        switch (opts.preconditioner) {
-            case PreconditionerType::NONE:   return "NONE";
-            case PreconditionerType::JACOBI: return "JACOBI";
-            case PreconditionerType::ILU:    return "ILU";
-            case PreconditionerType::AMG:    return "AMG";
-        }
-        return "JACOBI";
-    }
+    if (iequals(key, "CELL_CLOSURE"))
+        return (opts.cell_closure == CellClosure2D::VFR) ? "VFR" : "FLAT";
+    if (iequals(key, "FACE_RECONSTRUCTION"))
+        return (opts.face_reconstruction == FaceDepth2D::VFR_FACE) ? "VFR_FACE"
+                                                                   : "MEAN";
+    if (iequals(key, "VFR_MIN_WET_FRAC")) return fmt_g(opts.vfr_min_wet_frac);
     if (iequals(key, "RAINFALL_MODE")) {
         switch (opts.rainfall_mode) {
             case RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
@@ -238,6 +273,13 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         }
         return "NATURAL_NEIGHBOUR";
     }
+    if (iequals(key, "INTEGRATOR"))    return "EXPLICIT";
+    if (iequals(key, "THETA"))         return fmt_g(opts.theta);
+    if (iequals(key, "CFL_NUMBER"))    return fmt_g(opts.cfl_number);
+    if (iequals(key, "H_MOVE"))        return fmt_g(opts.h_move);
+    if (iequals(key, "LTS_TIERS"))     return std::to_string(opts.lts_tiers);
+    if (iequals(key, "FROUDE_MAX"))    return fmt_g(opts.froude_max);
+    if (iequals(key, "COUPLING_AREA")) return opts.coupling_area_auto ? "AUTO" : "DEFAULT";
     return {};
 }
 
@@ -272,7 +314,8 @@ std::string parse2DVertexLine(const std::vector<std::string>& tokens,
 
 std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
                                  MeshData& mesh) {
-    if (tokens.size() < 4) return "Expected V1 V2 V3 MANNINGS_N [TAG]";
+    if (tokens.size() < 4)
+        return "Expected V1 V2 V3 MANNINGS_N [INIT_DEPTH] [TAG]";
 
     bool ok = false;
     int v0 = tryParseInt(tokens[0], ok);
@@ -287,8 +330,24 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
     double n = tryParseDouble(tokens[3], ok);
     if (!ok) return "Invalid MANNINGS_N value";
 
+    // Optional column 5: INIT_DEPTH when numeric (m, >= 0, default 0 = dry),
+    // otherwise it is the TAG (backward compatible with the historical
+    // `V1 V2 V3 MANNINGS_N TAG` form). Column 6 is TAG when INIT_DEPTH is
+    // present. Files written by the engine/GUI always emit INIT_DEPTH when a
+    // tag exists, so round-tripped files are unambiguous.
+    double init_depth = 0.0;
     std::string tag;
-    if (tokens.size() >= 5) tag = tokens[4];
+    if (tokens.size() >= 5) {
+        bool num = false;
+        double d = tryParseDouble(tokens[4], num);
+        if (num) {
+            if (d < 0.0) return "Invalid INIT_DEPTH (must be >= 0)";
+            init_depth = d;
+            if (tokens.size() >= 6) tag = tokens[5];
+        } else {
+            tag = tokens[4];
+        }
+    }
 
     int idx = mesh.n_triangles();
     mesh.resize_triangles(idx + 1);
@@ -296,8 +355,35 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
     mesh.tri_v1[idx] = v1;
     mesh.tri_v2[idx] = v2;
     mesh.mannings_n[idx] = n;
+    mesh.tri_init_depth[idx] = init_depth;
     mesh.tri_tag[idx] = tag;
 
+    return {};
+}
+
+
+// [2D_INITIAL_VELOCITY] — optional per-triangle initial velocity (m/s):
+//   TRI  U  V
+// Default is (0, 0); rows may cover any subset of triangles. The explicit
+// marcher projects (h·u, h·v) onto its face normals at initialize to seed the
+// prognostic face discharges (a depth-only IC cannot represent solutions with
+// v(t=0) ≠ 0, e.g. the SWASHES Thacker planar oscillation).
+std::string parse2DInitialVelocityLine(const std::vector<std::string>& tokens,
+                                       MeshData& mesh) {
+    if (tokens.size() < 3) return "Expected TRI U V";
+
+    bool ok = false;
+    int tri = tryParseInt(tokens[0], ok);
+    if (!ok || tri < 0 || tri >= mesh.n_triangles())
+        return "Invalid triangle index: " + tokens[0];
+
+    double u = tryParseDouble(tokens[1], ok);
+    if (!ok) return "Invalid U value";
+    double v = tryParseDouble(tokens[2], ok);
+    if (!ok) return "Invalid V value";
+
+    mesh.tri_init_u[tri] = u;
+    mesh.tri_init_v[tri] = v;
     return {};
 }
 
@@ -306,11 +392,15 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens,
                                       MeshData& mesh) {
     if (tokens.size() < 2) return "Expected VERTEX_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]";
 
-    // Try to parse as integer index first
+    // Token is VERTEX_INDEX_OR_TAG. Try a numeric index first, but if the number
+    // is out of range fall back to a tag lookup — meshes can name vertices with
+    // numeric tags (e.g. "5001"), which must not be mis-read as an index and
+    // rejected as out-of-range.
     bool ok = false;
     int vidx = tryParseInt(tokens[0], ok);
+    if (ok && (vidx < 0 || vidx >= mesh.n_vertices()))
+        ok = false;  // numeric but not a valid index — treat as a tag
     if (!ok) {
-        // Try as tag name
         vidx = findVertexByTag(mesh, tokens[0]);
         if (vidx < 0) return "Unknown vertex index or tag: " + tokens[0];
     }
@@ -329,7 +419,10 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens,
     // Optional exchange area
     if (tokens.size() >= 4) {
         double area = tryParseDouble(tokens[3], ok);
-        if (ok) mesh.vert_coupling_area[vidx] = area;
+        if (ok) {
+            mesh.vert_coupling_area[vidx] = area;
+            mesh.vert_coupling_area_set[vidx] = 1;
+        }
     }
 
     return {};
@@ -340,8 +433,13 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
                                         MeshData& mesh) {
     if (tokens.size() < 2) return "Expected TRIANGLE_INDEX_OR_TAG SWMM_NODE_NAME [CD] [AREA]";
 
+    // Token is TRIANGLE_INDEX_OR_TAG. Try a numeric index first, but fall back to
+    // a tag lookup when the number is out of range (numeric triangle tags must
+    // not be mis-read as indices and rejected).
     bool ok = false;
     int tidx = tryParseInt(tokens[0], ok);
+    if (ok && (tidx < 0 || tidx >= mesh.n_triangles()))
+        ok = false;  // numeric but not a valid index — treat as a tag
     if (!ok) {
         tidx = findTriangleByTag(mesh, tokens[0]);
         if (tidx < 0) return "Unknown triangle index or tag: " + tokens[0];
@@ -350,17 +448,36 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
     if (tidx < 0 || tidx >= mesh.n_triangles())
         return "Triangle index out of range: " + tokens[0];
 
-    mesh.tri_coupled_node_name[tidx] = tokens[1];
+    // Repeated-row form: every line APPENDS a coupling row, so several nodes
+    // may couple to the same triangle. (Previously per-triangle arrays were
+    // overwritten — last line won.)
+    MeshData::TriCouplingRow row;
+    row.tri       = tidx;
+    row.node_name = tokens[1];
 
     if (tokens.size() >= 3) {
         double cd = tryParseDouble(tokens[2], ok);
-        if (ok) mesh.tri_coupling_cd[tidx] = cd;
+        if (ok) row.cd = cd;
     }
 
     if (tokens.size() >= 4) {
         double area = tryParseDouble(tokens[3], ok);
-        if (ok) mesh.tri_coupling_area[tidx] = area;
+        if (ok) {
+            row.area = area;
+            row.area_set = true;
+        }
     }
+
+    // Keep the legacy per-triangle mirror in step (last row wins), same as
+    // swmm_2d_add_triangle_coupling. Consumers that run BEFORE resolve —
+    // the GeoPackage writer above all — read these arrays, so leaving them
+    // to SurfaceRouter2D::initialize would drop couplings on an
+    // opened-but-not-initialized model.
+    mesh.tri_coupled_node_name[tidx] = row.node_name;
+    mesh.tri_coupling_cd[tidx]       = row.cd;
+    mesh.tri_coupling_area[tidx]     = row.area;
+
+    mesh.tri_couplings.push_back(std::move(row));
 
     return {};
 }
@@ -516,10 +633,24 @@ void register2DSections(MeshData& mesh,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         input::SectionRegistry& registry)
 {
+    // Full-form handler (not makeSectionHandler): parse2DOptionsLine needs
+    // ctx.warnings so retired CVODE-era keys warn-and-ignore on file load.
     registry.register_custom("2D_OPTIONS",
-        makeSectionHandler([&options](const std::vector<std::string>& tokens) {
-            return parse2DOptionsLine(tokens, options);
-        }));
+        [&options](openswmm::SimulationContext& ctx,
+                   const std::vector<std::string>& lines)
+        {
+            for (const auto& raw : lines) {
+                auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+                if (tokens.empty()) continue;
+                std::string err =
+                    parse2DOptionsLine(tokens, options, &ctx.warnings);
+                if (!err.empty()) {
+                    ctx.error_code    = 5;  // SWMM_ERR_PARSE (see makeSectionHandler)
+                    ctx.error_message = "[2D] " + err + " — line: " + raw;
+                    return;
+                }
+            }
+        });
 
     registry.register_custom("2D_VERTICES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
@@ -529,6 +660,11 @@ void register2DSections(MeshData& mesh,
     registry.register_custom("2D_TRIANGLES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_INITIAL_VELOCITY",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialVelocityLine(tokens, mesh);
         }));
 
     registry.register_custom("2D_VERTEX_NODE_MAP",
@@ -582,7 +718,8 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                                    const std::string& mesh_file,
-                                   const std::string& inp_base_dir)
+                                   const std::string& inp_base_dir,
+                                   std::vector<std::string>* warnings)
 {
     namespace fs = std::filesystem;
 
@@ -594,8 +731,8 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     // Build a minimal registry (no 2D_MESH_FILE — prevents recursion)
     openswmm::input::SectionRegistry mini;
     mini.register_custom("2D_OPTIONS",
-        makeSectionHandler([&opts](const std::vector<std::string>& tokens) {
-            return parse2DOptionsLine(tokens, opts);
+        makeSectionHandler([&opts, warnings](const std::vector<std::string>& tokens) {
+            return parse2DOptionsLine(tokens, opts, warnings);
         }));
     mini.register_custom("2D_VERTICES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
@@ -604,6 +741,10 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     mini.register_custom("2D_TRIANGLES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_INITIAL_VELOCITY",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DInitialVelocityLine(tokens, mesh);
         }));
     mini.register_custom("2D_VERTEX_NODE_MAP",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {

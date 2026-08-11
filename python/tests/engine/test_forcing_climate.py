@@ -10,8 +10,9 @@ Covers docs/RUNTIME_FORCING_API_GAP_PLAN.md items:
     channel codes were expected)
 
 All tests run against the real handle-based ``openswmm.engine.Solver``
-(no mocks). Report/output files are written to ``tests/engine/output``
-so they remain reviewable after the run.
+(no mocks). The aligned base model is written to ``tests/engine/output``
+and per-test report/output files to ``tests/_artifacts`` so they remain
+reviewable after the run.
 
 The bundled site-drainage model has no temperature or wind data source,
 so the engine defaults apply (70 deg F, 0 mph) and any other value
@@ -24,10 +25,11 @@ require a snowpack fixture and are tracked as follow-up work in the plan.
 from __future__ import annotations
 
 import os
-
-import pytest
+import unittest
 
 from openswmm.engine import Solver, ForcingMode, ForcingTarget
+
+from tests._paths import artifact_dir
 
 _DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "data", "solver")
@@ -60,129 +62,143 @@ def _aligned_model():
     return path
 
 
-@pytest.fixture
-def climate_solver(request):
-    """A running Solver whose rpt/out files land in a reviewable folder."""
-    os.makedirs(_OUT_DIR, exist_ok=True)
-    base = os.path.join(_OUT_DIR, f"climate_{request.node.name}")
-    s = Solver(_aligned_model(), base + ".rpt", base + ".out")
-    s.open()
-    s.initialize()
-    s.start()
-    yield s
-    try:
-        s.end()
-        s.report()
-    except Exception:
-        pass
-    try:
-        s.close()
-    except Exception:
-        pass
-    s.destroy()
+class ClimateSolverCase(unittest.TestCase):
+    """Base TestCase providing a running climate-aligned Solver."""
+
+    def climate_solver(self):
+        """A running Solver whose rpt/out files land in a reviewable folder."""
+        base = os.path.join(artifact_dir(self), "climate")
+        s = Solver(_aligned_model(), base + ".rpt", base + ".out")
+        s.open()
+        s.initialize()
+        s.start()
+        self.addCleanup(self._teardown_solver, s)
+        return s
+
+    @staticmethod
+    def _teardown_solver(s):
+        try:
+            s.end()
+            s.report()
+        except Exception:
+            pass
+        try:
+            s.close()
+        except Exception:
+            pass
+        s.destroy()
 
 
-class TestTemperatureForcing:
-    def test_replace_round_trip(self, climate_solver):
-        s = climate_solver
+class TestTemperatureForcing(ClimateSolverCase):
+    def test_replace_round_trip(self):
+        s = self.climate_solver()
         s.forcing.climate_temperature(50.0, persist=True)
         s.step()
-        assert s.forcing.get_climate_temperature() == pytest.approx(50.0)
+        self.assertAlmostEqual(s.forcing.get_climate_temperature(), 50.0,
+                               places=6)
 
-    def test_add_mode_is_delta(self, climate_solver):
-        s = climate_solver
+    def test_add_mode_is_delta(self):
+        s = self.climate_solver()
         s.forcing.climate_temperature(
             5.0, mode=ForcingMode.ADD, persist=True)
         s.step()
-        assert s.forcing.get_climate_temperature() == pytest.approx(
-            _DEFAULT_TEMP_F + 5.0)
+        self.assertAlmostEqual(s.forcing.get_climate_temperature(),
+                               _DEFAULT_TEMP_F + 5.0, places=6)
 
-    def test_one_shot_resets(self, climate_solver):
-        s = climate_solver
+    def test_one_shot_resets(self):
+        s = self.climate_solver()
         s.forcing.climate_temperature(50.0, persist=False)
         s.step()
-        assert s.forcing.get_climate_temperature() == pytest.approx(50.0)
+        self.assertAlmostEqual(s.forcing.get_climate_temperature(), 50.0,
+                               places=6)
         s.step()
-        assert s.forcing.get_climate_temperature() == pytest.approx(
-            _DEFAULT_TEMP_F)
+        self.assertAlmostEqual(s.forcing.get_climate_temperature(),
+                               _DEFAULT_TEMP_F, places=6)
 
-    def test_clear_climate_target(self, climate_solver):
-        s = climate_solver
+    def test_clear_climate_target(self):
+        s = self.climate_solver()
         s.forcing.climate_temperature(50.0, persist=True)
         s.step()
         s.forcing.clear(ForcingTarget.CLIMATE, 0)
         s.step()
-        assert s.forcing.get_climate_temperature() == pytest.approx(
-            _DEFAULT_TEMP_F)
+        self.assertAlmostEqual(s.forcing.get_climate_temperature(),
+                               _DEFAULT_TEMP_F, places=6)
 
 
-class TestWindForcing:
-    def test_replace_round_trip(self, climate_solver):
-        s = climate_solver
+class TestWindForcing(ClimateSolverCase):
+    def test_replace_round_trip(self):
+        s = self.climate_solver()
         s.forcing.climate_wind(12.5, persist=True)
         s.step()
-        assert s.forcing.get_climate_wind_speed() == pytest.approx(12.5)
+        self.assertAlmostEqual(s.forcing.get_climate_wind_speed(), 12.5,
+                               places=6)
 
-    def test_negative_override_rejected(self, climate_solver):
-        s = climate_solver
-        with pytest.raises(Exception):
+    def test_negative_override_rejected(self):
+        s = self.climate_solver()
+        with self.assertRaises(Exception):
             s.forcing.climate_wind(-1.0)
 
-    def test_one_shot_resets(self, climate_solver):
-        s = climate_solver
+    def test_one_shot_resets(self):
+        s = self.climate_solver()
         s.forcing.climate_wind(8.0, persist=False)
         s.step()
-        assert s.forcing.get_climate_wind_speed() == pytest.approx(8.0)
+        self.assertAlmostEqual(s.forcing.get_climate_wind_speed(), 8.0,
+                               places=6)
         s.step()
-        assert s.forcing.get_climate_wind_speed() == pytest.approx(
-            _DEFAULT_WIND)
+        self.assertAlmostEqual(s.forcing.get_climate_wind_speed(),
+                               _DEFAULT_WIND, places=6)
 
 
-class TestRainfallForcingRegression:
+class TestRainfallForcingRegression(ClimateSolverCase):
     """A2: rainfall forcing must not be clobbered by the gage re-read."""
 
-    def test_override_reaches_subcatchment(self, climate_solver):
-        s = climate_solver
+    def test_override_reaches_subcatchment(self):
+        s = self.climate_solver()
         s.forcing.subcatchment_rainfall("S1", 2.0, persist=True)
         s.step()
         # rainfall getter returns user units (in/hr); the storm value at
         # the gage differs from 2.0, so equality proves the override won.
-        assert s.subcatchments["S1"].rainfall == pytest.approx(2.0, rel=1e-6)
+        self.assertAlmostEqual(s.subcatchments["S1"].rainfall, 2.0,
+                               delta=2.0 * 1e-6)
 
-    def test_add_mode_augments_gage(self, climate_solver):
-        s = climate_solver
+    def test_add_mode_augments_gage(self):
+        s = self.climate_solver()
         s.forcing.subcatchment_rainfall(
             "S1", 1.0, mode=ForcingMode.ADD, persist=True)
         s.step()
         # S1 and S2 share the same gage, so S1 must read exactly the
         # gage value (visible on S2) plus the added 1.0 in/hr.
-        assert s.subcatchments["S1"].rainfall == pytest.approx(
-            s.subcatchments["S2"].rainfall + 1.0, rel=1e-6)
+        expected = s.subcatchments["S2"].rainfall + 1.0
+        self.assertAlmostEqual(s.subcatchments["S1"].rainfall, expected,
+                               delta=abs(expected) * 1e-6)
 
 
-class TestClearTargetRegression:
+class TestClearTargetRegression(ClimateSolverCase):
     """A5: clear() must clear the requested object kind's channels."""
 
-    def test_clear_subcatch_clears_subcatch_channels(self, climate_solver):
-        s = climate_solver
+    def test_clear_subcatch_clears_subcatch_channels(self):
+        s = self.climate_solver()
         s.forcing.subcatchment_rainfall("S1", 2.0, persist=True)
         s.forcing.subcatchment_evap("S1", 2.4, persist=True)
         s.step()
-        assert s.subcatchments["S1"].rainfall == pytest.approx(2.0, rel=1e-6)
+        self.assertAlmostEqual(s.subcatchments["S1"].rainfall, 2.0,
+                               delta=2.0 * 1e-6)
         s.forcing.clear(ForcingTarget.SUBCATCH, "S1")
         s.step()
         # Both subcatchment channels are cleared: rainfall reverts to the
         # gage and evap to the (zero) climate rate.
-        assert s.subcatchments["S1"].rainfall == pytest.approx(
-            s.subcatchments["S2"].rainfall, rel=1e-6)
-        assert s.subcatchments["S1"].evap == pytest.approx(0.0, abs=1e-12)
+        expected = s.subcatchments["S2"].rainfall
+        self.assertAlmostEqual(s.subcatchments["S1"].rainfall, expected,
+                               delta=max(abs(expected) * 1e-6, 1e-12))
+        self.assertAlmostEqual(s.subcatchments["S1"].evap, 0.0, delta=1e-12)
 
-    def test_clear_subcatch_leaves_other_targets(self, climate_solver):
-        s = climate_solver
+    def test_clear_subcatch_leaves_other_targets(self):
+        s = self.climate_solver()
         s.forcing.climate_temperature(50.0, persist=True)
         s.forcing.subcatchment_rainfall("S1", 2.0, persist=True)
         s.step()
         s.forcing.clear(ForcingTarget.SUBCATCH, "S1")
         s.step()
         # The climate prescription must survive a subcatchment clear.
-        assert s.forcing.get_climate_temperature() == pytest.approx(50.0)
+        self.assertAlmostEqual(s.forcing.get_climate_temperature(), 50.0,
+                               places=6)

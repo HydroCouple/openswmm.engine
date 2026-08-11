@@ -471,12 +471,17 @@ SWMM_ENGINE_API int swmm_hydrograph_group_rename(SWMM_Engine engine, int idx, co
  *          `swmm_rdii_decay_remove` to delete a row (existence of a row
  *          IS the "active" flag in the engine model).
  *
+ * @param snow_on   Non-zero enables the degree-day snow model for this row.
+ * @param snow_T    Rain/snow partition threshold & melt base (deg C).
+ * @param snow_ddf  Degree-day melt factor (project rain-depth unit/degC/day);
+ *                  must be >= 0.
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_rdii_decay_set(SWMM_Engine engine, const char* uh_name,
                                           int response,
                                           double k_dep, double k_0, double k_T,
-                                          double T_ref, double theta_rec, double T_freeze);
+                                          double T_ref, double theta_rec, double T_freeze,
+                                          int snow_on, double snow_T, double snow_ddf);
 
 /**
  * @brief Remove the exponential-decay row for one (group, response) pair.
@@ -511,12 +516,20 @@ SWMM_ENGINE_API int swmm_rdii_decay_remove(SWMM_Engine engine, const char* uh_na
  * @param T_ref      Reference temperature (deg C) for the thermal term.
  * @param theta_rec  Temperature sensitivity (1/deg C) of the thermal term.
  * @param T_freeze   Recovery is suppressed when air temperature < T_freeze (deg C).
+ * @param snow_on    Non-zero enables the degree-day snow model: precipitation
+ *                   at T <= snow_T accumulates as SWE; above snow_T it melts
+ *                   at snow_ddf*(T - snow_T) per day and the melt is added to
+ *                   rainfall ahead of the IA depletion step (rain-on-snow).
+ * @param snow_T     Rain/snow partition threshold & melt base (deg C).
+ * @param snow_ddf   Degree-day melt factor (project rain-depth unit/degC/day);
+ *                   must be >= 0.
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_rdii_decay_add(SWMM_Engine engine, const char* uh_name,
                                           int response,
                                           double k_dep, double k_0, double k_T,
-                                          double T_ref, double theta_rec, double T_freeze);
+                                          double T_ref, double theta_rec, double T_freeze,
+                                          int snow_on, double snow_T, double snow_ddf);
 
 /**
  * @brief Read back an exponential-decay parameter row by index.
@@ -532,13 +545,17 @@ SWMM_ENGINE_API int swmm_rdii_decay_add(SWMM_Engine engine, const char* uh_name,
  * @param T_ref      [out] Reference temperature.
  * @param theta_rec  [out] Temperature sensitivity.
  * @param T_freeze   [out] Frozen-ground threshold.
+ * @param snow_on    [out] Degree-day snow model flag (0/1).
+ * @param snow_T     [out] Rain/snow partition threshold & melt base (deg C).
+ * @param snow_ddf   [out] Degree-day melt factor.
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_rdii_decay_get(SWMM_Engine engine, int entry_idx,
                                           char* uh_buf, int buflen,
                                           int* response,
                                           double* k_dep, double* k_0, double* k_T,
-                                          double* T_ref, double* theta_rec, double* T_freeze);
+                                          double* T_ref, double* theta_rec, double* T_freeze,
+                                          int* snow_on, double* snow_T, double* snow_ddf);
 
 /**
  * @brief Count exponential-decay parameter rows.

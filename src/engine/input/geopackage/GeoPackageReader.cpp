@@ -6,12 +6,14 @@
 
 #include "GeoPackageReader.hpp"
 #include "ExternalContentReader.hpp"
+#include <stdexcept>
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
 
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
+#include "data/StorageGeometry.hpp"
 #include "data/LinkData.hpp"
 #include "data/SubcatchData.hpp"
 #include "data/GageData.hpp"
@@ -158,34 +160,44 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     if (!o) return;
 
     if      (key == "2D_MAX_TIMESTEP")      o->max_timestep      = std::stod(val);
-    else if (key == "2D_MIN_TIMESTEP")      o->min_timestep      = std::stod(val);
-    else if (key == "2D_REL_TOLERANCE")     o->rel_tolerance     = std::stod(val);
-    else if (key == "2D_ABS_TOLERANCE")     o->abs_tolerance     = std::stod(val);
     else if (key == "2D_DRY_DEPTH")         o->dry_depth         = std::stod(val);
     else if (key == "2D_LIMITER_EPSILON")   o->limiter_epsilon   = std::stod(val);
     else if (key == "2D_COUPLING_CD")       o->coupling_cd       = std::stod(val);
-    else if (key == "2D_MAX_KRYLOV_DIM")    o->max_krylov_dim    = std::stoi(val);
-    else if (key == "2D_COUPLING_INTERVAL") o->coupling_interval = std::stoi(val);
-    else if (key == "2D_COUPLING_WINDOW")   o->coupling_window   = std::stod(val);
-    else if (key == "2D_ACTIVE_SET")        o->active_set        = (val == "YES");
-    else if (key == "2D_ACTIVE_SET_HALO")   o->active_set_halo   = std::stoi(val);
-    else if (key == "2D_MAX_CVODE_STEPS")   o->max_cvode_steps   = std::stoi(val);
-    else if (key == "2D_LINEAR_SOLVER") {
-        if      (val == "GMRES")    o->linear_solver = twoD::LinearSolverType::GMRES;
-        else if (val == "BICGSTAB") o->linear_solver = twoD::LinearSolverType::BICGSTAB;
-        else if (val == "TFQMR")    o->linear_solver = twoD::LinearSolverType::TFQMR;
-    }
-    else if (key == "2D_PRECONDITIONER") {
-        if      (val == "NONE")   o->preconditioner = twoD::PreconditionerType::NONE;
-        else if (val == "JACOBI") o->preconditioner = twoD::PreconditionerType::JACOBI;
-        else if (val == "ILU")    o->preconditioner = twoD::PreconditionerType::ILU;
-        else if (val == "AMG")    o->preconditioner = twoD::PreconditionerType::AMG;
+    else if (key == "2D_COUPLING_SYNC")     o->coupling_sync     = std::stod(val);
+    else if (key == "2D_MIN_TIMESTEP"    || key == "2D_REL_TOLERANCE" ||
+             key == "2D_ABS_TOLERANCE"   || key == "2D_MAX_KRYLOV_DIM" ||
+             key == "2D_COUPLING_INTERVAL" || key == "2D_COUPLING_WINDOW" ||
+             key == "2D_ACTIVE_SET"      || key == "2D_ACTIVE_SET_HALO" ||
+             key == "2D_MAX_CVODE_STEPS" || key == "2D_LINEAR_SOLVER" ||
+             key == "2D_PRECONDITIONER") {
+        // Retired with the CVODE/ARKODE stack (D2, 2026-07-29): same hard-
+        // error policy as the .inp parser — a package authored for the
+        // implicit solvers must not silently run different physics.
+        throw std::runtime_error(
+            "GeoPackage option '" + key + "' was retired with the "
+            "CVODE/ARKODE 2D solvers; re-save the package (the explicit "
+            "local-inertial marcher is the only 2D integrator).");
     }
     else if (key == "2D_RAINFALL_MODE") {
         if      (val == "NATURAL_NEIGHBOUR") o->rainfall_mode = twoD::RainfallMode::NATURAL_NEIGHBOUR;
         else if (val == "SYSTEM")            o->rainfall_mode = twoD::RainfallMode::SYSTEM;
         else if (val == "NONE")              o->rainfall_mode = twoD::RainfallMode::NONE;
     }
+    else if (key == "2D_FLUX_DH_EPS")   o->flux_dh_eps = std::stod(val);
+    else if (key == "2D_CELL_CLOSURE")
+        o->cell_closure = (val == "VFR") ? twoD::CellClosure2D::VFR
+                                         : twoD::CellClosure2D::FLAT;
+    else if (key == "2D_FACE_RECONSTRUCTION")
+        o->face_reconstruction = (val == "VFR_FACE")
+                                     ? twoD::FaceDepth2D::VFR_FACE
+                                     : twoD::FaceDepth2D::MEAN;
+    else if (key == "2D_VFR_MIN_WET_FRAC") o->vfr_min_wet_frac = std::stod(val);
+    else if (key == "2D_THETA")         o->theta        = std::stod(val);
+    else if (key == "2D_CFL_NUMBER")    o->cfl_number   = std::stod(val);
+    else if (key == "2D_H_MOVE")        o->h_move       = std::stod(val);
+    else if (key == "2D_LTS_TIERS")     o->lts_tiers    = std::stoi(val);
+    else if (key == "2D_FROUDE_MAX")    o->froude_max   = std::stod(val);
+    else if (key == "2D_COUPLING_AREA") o->coupling_area_auto = (val == "AUTO");
     else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
     // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).
@@ -213,9 +225,12 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "ALLOW_PONDING") ctx.options.allow_ponding = (val == "YES");
         else if (key == "IGNORE_RAINFALL") ctx.options.ignore_rainfall = (val == "YES");
         else if (key == "IGNORE_SNOWMELT") ctx.options.ignore_snow_melt = (val == "YES");
-        else if (key == "IGNORE_GW") ctx.options.ignore_groundwater = (val == "YES");
+        // Accept the normalized "IGNORE_GROUNDWATER" and the legacy short
+        // "IGNORE_GW" spelling so pre-normalization .gpkg files still load.
+        else if (key == "IGNORE_GROUNDWATER" || key == "IGNORE_GW") ctx.options.ignore_groundwater = (val == "YES");
         else if (key == "IGNORE_ROUTING") ctx.options.ignore_routing = (val == "YES");
         else if (key == "IGNORE_QUALITY") ctx.options.ignore_quality = (val == "YES");
+        else if (key == "IGNORE_2D") ctx.options.ignore_2d = (val == "YES");
         else if (key == "WET_STEP") ctx.options.wet_step = std::stod(val);
         else if (key == "DRY_STEP") ctx.options.dry_step = std::stod(val);
         else if (key == "ROUTING_STEP") ctx.options.routing_step = std::stod(val);
@@ -292,6 +307,8 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
 }
 
 static bool table_exists(sqlite3* db, const std::string& name);  // defined below
+static bool column_exists(sqlite3* db, const std::string& table,
+                          const std::string& column);            // defined below
 
 static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // --- base nodes (common columns + discriminator + geometry) ---
@@ -329,9 +346,21 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
 
     // --- storages child table → side-table (rows created above by set_node_type) ---
     {
+        // `shape` / p1..p3 are columns appended after the schema shipped. A .gpkg
+        // written by an older engine does not have them at all — SELECTing them would
+        // fail with "no such column", not return NULL — and the db is opened READONLY
+        // so we cannot ALTER it. Probe, then read the shape columns only if present;
+        // otherwise fall back to the pre-shape rule (curve_name set => TABULAR, else
+        // FUNCTIONAL), which is exactly how such a file behaved before.
+        const bool has_shape = column_exists(db, "storages", "shape");
         auto stmt = prepare(db,
-            "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
-            "exfil_suction, exfil_ksat, exfil_imd FROM storages WHERE simulation_id = ?");
+            has_shape
+                ? "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
+                  "exfil_suction, exfil_ksat, exfil_imd, shape, p1, p2, p3 "
+                  "FROM storages WHERE simulation_id = ?"
+                : "SELECT node_id, curve_name, a, b, c, seep_rate, evap_frac, "
+                  "exfil_suction, exfil_ksat, exfil_imd "
+                  "FROM storages WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         auto& S = ctx.node_subtypes.storages;
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -347,6 +376,17 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
             S.exfil_suction[ur] = column_double(stmt.get(), 7);
             S.exfil_ksat[ur]    = column_double(stmt.get(), 8);
             S.exfil_imd[ur]     = column_double(stmt.get(), 9);
+
+            StorageShape sshape = S.curve_name[ur].empty() ? StorageShape::FUNCTIONAL
+                                                           : StorageShape::TABULAR;
+            if (has_shape) {
+                if (!column_is_null(stmt.get(), 10))
+                    storage_shape_from_keyword(column_text(stmt.get(), 10), sshape);
+                S.p1[ur] = column_double(stmt.get(), 11);
+                S.p2[ur] = column_double(stmt.get(), 12);
+                S.p3[ur] = column_double(stmt.get(), 13);
+            }
+            S.shape[ur] = sshape;
         }
     }
 
@@ -643,13 +683,25 @@ static void read_links(sqlite3* db, SimulationContext& ctx, const std::string& s
 }
 
 static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    // Scale factors were added after the initial subcatchments schema. Probe for
+    // them so pre-existing .gpkg files (which lack the columns) still open; when
+    // absent the SoA keeps its 1.0 default, a true no-op.
+    const bool has_scale = column_exists(db, "subcatchments", "rain_scale_factor");
     auto stmt = prepare(db,
-        "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
-        "area, width, slope, curb_length, frac_imperv, "
-        "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
-        "subarea_routing, pct_routed, "
-        "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag "
-        "FROM subcatchments WHERE simulation_id = ? ORDER BY fid");
+        has_scale
+            ? "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
+              "area, width, slope, curb_length, frac_imperv, "
+              "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
+              "subarea_routing, pct_routed, "
+              "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag, "
+              "rain_scale_factor, snow_scale_factor "
+              "FROM subcatchments WHERE simulation_id = ? ORDER BY fid"
+            : "SELECT subcatch_id, geom, outlet_node, outlet_subcatch, rain_gage, "
+              "area, width, slope, curb_length, frac_imperv, "
+              "n_imperv, n_perv, ds_imperv, ds_perv, pct_zero_imperv, "
+              "subarea_routing, pct_routed, "
+              "infil_model, infil_p1, infil_p2, infil_p3, infil_p4, infil_p5, tag "
+              "FROM subcatchments WHERE simulation_id = ? ORDER BY fid");
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -716,6 +768,13 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
             const auto u = static_cast<std::size_t>(idx);
             if (u >= ctx.subcatches.tags.size()) ctx.subcatches.tags.resize(u + 1);
             ctx.subcatches.tags[u] = column_text(stmt.get(), 23);
+        }
+
+        if (has_scale) {
+            if (!column_is_null(stmt.get(), 24))
+                ctx.subcatches.rain_scale_factor[idx] = column_double(stmt.get(), 24);
+            if (!column_is_null(stmt.get(), 25))
+                ctx.subcatches.snow_scale_factor[idx] = column_double(stmt.get(), 25);
         }
     }
 }
@@ -817,11 +876,26 @@ static void read_timeseries(sqlite3* db, SimulationContext& ctx, const std::stri
     }
 }
 
+// Backward-compat helpers (defined below, used by the quality readers).
+static bool table_exists(sqlite3* db, const std::string& name);
+static bool column_exists(sqlite3* db, const std::string& table,
+                          const std::string& column);
+
 static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
-    auto stmt = prepare(db,
+    // ii_conc has been declared since the original schema but never bound;
+    // dwf_conc/init_conc are iteration-4 columns — all three read via the
+    // column_exists fallback so pre-existing .gpkg files still open.
+    const bool hasIi   = column_exists(db, "pollutants", "ii_conc");
+    const bool hasDwf  = column_exists(db, "pollutants", "dwf_conc");
+    const bool hasInit = column_exists(db, "pollutants", "init_conc");
+    std::string sql =
         "SELECT pollutant_id, units, rain_conc, gw_conc, decay_coeff, "
-        "snow_only, co_pollutant, co_fraction "
-        "FROM pollutants WHERE simulation_id = ?");
+        "snow_only, co_pollutant, co_fraction";
+    if (hasIi)   sql += ", ii_conc";
+    if (hasDwf)  sql += ", dwf_conc";
+    if (hasInit) sql += ", init_conc";
+    sql += " FROM pollutants WHERE simulation_id = ?";
+    auto stmt = prepare(db, sql);
     bind_text(stmt.get(), 1, sim_id);
 
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -834,6 +908,9 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
         grow(ctx.pollutants.units);
         grow(ctx.pollutants.c_rain);
         grow(ctx.pollutants.c_gw);
+        grow(ctx.pollutants.c_rdii);
+        grow(ctx.pollutants.c_dwf);
+        grow(ctx.pollutants.init_conc);
         grow(ctx.pollutants.k_decay);
         grow(ctx.pollutants.snow_only);
         grow(ctx.pollutants.co_pollut);
@@ -850,6 +927,170 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
             ctx.pollutants.co_pollut[idx] = ctx.pollutant_names.find(co);
         }
         ctx.pollutants.co_frac[idx] = column_double(stmt.get(), 7);
+
+        int c = 8;
+        if (hasIi)   ctx.pollutants.c_rdii[idx]    = column_double(stmt.get(), c++);
+        if (hasDwf)  ctx.pollutants.c_dwf[idx]     = column_double(stmt.get(), c++);
+        if (hasInit) ctx.pollutants.init_conc[idx] = column_double(stmt.get(), c++);
+    }
+}
+
+// ============================================================================
+// Quality read functions (iteration 4) — landuses / buildup / washoff /
+// coverages / loadings. All table_exists-guarded: older .gpkg files simply
+// have none of these tables.
+// ============================================================================
+
+static void read_landuses(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "landuses")) return;
+    auto stmt = prepare(db,
+        "SELECT landuse_id, sweep_interval, sweep_removal, last_swept, comment "
+        "FROM landuses WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+
+    // Two passes: LanduseData::resize() is assign-and-wipe, so collect all
+    // rows first, size once, then fill.
+    struct Row { std::string name; double si, sr, ls; std::string comment; };
+    std::vector<Row> rows;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        Row r;
+        r.name = column_text(stmt.get(), 0);
+        r.si   = column_double(stmt.get(), 1);
+        r.sr   = column_double(stmt.get(), 2);
+        r.ls   = column_double(stmt.get(), 3);
+        if (!column_is_null(stmt.get(), 4))
+            r.comment = column_text(stmt.get(), 4);
+        rows.push_back(std::move(r));
+    }
+    for (const auto& r : rows)
+        if (ctx.landuse_names.find(r.name) < 0)
+            ctx.landuse_names.add(r.name);
+    ctx.landuses.resize(ctx.landuse_names.size());
+    for (const auto& r : rows) {
+        const int idx = ctx.landuse_names.find(r.name);
+        if (idx < 0) continue;
+        auto u = static_cast<size_t>(idx);
+        ctx.landuses.sweep_interval[u] = r.si;
+        ctx.landuses.sweep_removal[u]  = r.sr;
+        ctx.landuses.last_swept[u]     = r.ls;
+        if (u < ctx.landuses.comments.size())
+            ctx.landuses.comments[u] = r.comment;
+    }
+
+    // Size the (landuse x pollutant) and (subcatch x landuse) matrices now
+    // that the land use count is known — mirrors swmm_landuse_add.
+    const int nLu = ctx.landuse_names.size();
+    if (nLu > 0) {
+        if (ctx.pollutant_names.size() > 0) {
+            ctx.buildup.resize(nLu, ctx.pollutant_names.size());
+            ctx.washoff.resize(nLu, ctx.pollutant_names.size());
+        }
+        if (ctx.subcatch_names.size() > 0)
+            ctx.subcatches.resize_coverage(ctx.subcatch_names.size(), nLu);
+    }
+}
+
+static void read_buildup_washoff(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    const int nLu = ctx.landuse_names.size();
+    const int np  = ctx.pollutant_names.size();
+    if (nLu <= 0 || np <= 0) return;
+
+    if (table_exists(db, "buildup")) {
+        auto stmt = prepare(db,
+            "SELECT landuse_id, pollutant_id, func_type, coeff1, coeff2, "
+            "coeff3, normalizer FROM buildup WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int lu = ctx.landuse_names.find(column_text(stmt.get(), 0));
+            const int p  = ctx.pollutant_names.find(column_text(stmt.get(), 1));
+            if (lu < 0 || p < 0) continue;
+            const std::string ft = column_text(stmt.get(), 2);
+            int t = 0;
+            if      (ft == "POW") t = 1;
+            else if (ft == "EXP") t = 2;
+            else if (ft == "SAT") t = 3;
+            else if (ft == "EXT") t = 4;
+            auto idx = static_cast<size_t>(lu * np + p);
+            if (idx >= ctx.buildup.func_type.size()) continue;
+            ctx.buildup.func_type[idx] = t;
+            ctx.buildup.coeff1[idx] = column_double(stmt.get(), 3);
+            ctx.buildup.coeff2[idx] = column_double(stmt.get(), 4);
+            ctx.buildup.coeff3[idx] = column_double(stmt.get(), 5);
+            const std::string norm = column_text(stmt.get(), 6);
+            ctx.buildup.normalizer[idx] = (norm == "CURB") ? 1 : 0;
+        }
+    }
+    if (table_exists(db, "washoff")) {
+        auto stmt = prepare(db,
+            "SELECT landuse_id, pollutant_id, func_type, coeff, expon, "
+            "sweep_effic, bmp_effic FROM washoff WHERE simulation_id = ?");
+        bind_text(stmt.get(), 1, sim_id);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int lu = ctx.landuse_names.find(column_text(stmt.get(), 0));
+            const int p  = ctx.pollutant_names.find(column_text(stmt.get(), 1));
+            if (lu < 0 || p < 0) continue;
+            const std::string ft = column_text(stmt.get(), 2);
+            int t = 0;
+            if      (ft == "EXP") t = 1;
+            else if (ft == "RC")  t = 2;
+            else if (ft == "EMC") t = 3;
+            auto idx = static_cast<size_t>(lu * np + p);
+            if (idx >= ctx.washoff.func_type.size()) continue;
+            ctx.washoff.func_type[idx] = t;
+            ctx.washoff.coeff[idx]       = column_double(stmt.get(), 3);
+            ctx.washoff.expon[idx]       = column_double(stmt.get(), 4);
+            ctx.washoff.sweep_effic[idx] = column_double(stmt.get(), 5);
+            ctx.washoff.bmp_effic[idx]   = column_double(stmt.get(), 6);
+        }
+    }
+}
+
+static void read_subcatch_coverages(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "subcatch_coverages")) return;
+    const int nLu = ctx.landuse_names.size();
+    const int nSc = ctx.subcatch_names.size();
+    if (nLu <= 0 || nSc <= 0) return;
+    if (ctx.subcatches.coverage_n_landuses != nLu ||
+        static_cast<int>(ctx.subcatches.coverage.size()) != nSc * nLu)
+        ctx.subcatches.resize_coverage(nSc, nLu);
+
+    auto stmt = prepare(db,
+        "SELECT subcatch_id, landuse_id, percent, last_swept "
+        "FROM subcatch_coverages WHERE simulation_id = ?");
+    bind_text(stmt.get(), 1, sim_id);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int s  = ctx.subcatch_names.find(column_text(stmt.get(), 0));
+        const int lu = ctx.landuse_names.find(column_text(stmt.get(), 1));
+        if (s < 0 || lu < 0) continue;
+        auto idx = static_cast<size_t>(s) * static_cast<size_t>(nLu)
+                   + static_cast<size_t>(lu);
+        ctx.subcatches.coverage[idx] = column_double(stmt.get(), 2);
+        if (idx < ctx.subcatches.sweep_last_swept.size())
+            ctx.subcatches.sweep_last_swept[idx] = column_double(stmt.get(), 3);
+    }
+}
+
+static void read_subcatch_loadings(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "subcatch_loadings")) return;
+    const int np  = ctx.pollutant_names.size();
+    const int nSc = ctx.subcatch_names.size();
+    if (np <= 0 || nSc <= 0) return;
+    if (ctx.subcatches.conc_n_pollutants != np ||
+        static_cast<int>(ctx.subcatches.conc.size()) != nSc * np)
+        ctx.subcatches.resize_quality(np);
+
+    auto stmt = prepare(db,
+        "SELECT subcatch_id, pollutant_id, init_buildup "
+        "FROM subcatch_loadings WHERE simulation_id = ?");
+    bind_text(stmt.get(), 1, sim_id);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int s = ctx.subcatch_names.find(column_text(stmt.get(), 0));
+        const int p = ctx.pollutant_names.find(column_text(stmt.get(), 1));
+        if (s < 0 || p < 0) continue;
+        auto idx = static_cast<size_t>(s) * static_cast<size_t>(np)
+                   + static_cast<size_t>(p);
+        if (idx < ctx.subcatches.conc.size())
+            ctx.subcatches.conc[idx] = column_double(stmt.get(), 2);
     }
 }
 
@@ -1283,9 +1524,16 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
 
     // RDII exponential-decay parameters (optional — older GeoPackages won't have it)
     if (table_exists(db, "rdii_decay")) {
-        auto stmt = prepare(db,
-            "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, T_freeze "
-            "FROM rdii_decay WHERE simulation_id = ?");
+        // Snow columns are newer than the table itself — files written before
+        // the degree-day snow model lack them and read as snow-off.
+        const bool has_snow = column_exists(db, "rdii_decay", "snow_on");
+        auto stmt = prepare(db, has_snow
+            ? "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
+              "T_freeze, snow_on, snow_T, snow_ddf "
+              "FROM rdii_decay WHERE simulation_id = ?"
+            : "SELECT uh_name, response, k_dep, k_0, k_T, T_ref, theta_rec, "
+              "T_freeze "
+              "FROM rdii_decay WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             RDIIDecayEntry e{};
@@ -1301,6 +1549,11 @@ static void read_rdii(sqlite3* db, SimulationContext& ctx,
             e.T_ref     = sqlite3_column_double(stmt.get(), 5);
             e.theta_rec = sqlite3_column_double(stmt.get(), 6);
             e.T_freeze  = sqlite3_column_double(stmt.get(), 7);
+            if (has_snow) {
+                e.snow_on  = sqlite3_column_int(stmt.get(), 8) != 0;
+                e.snow_T   = sqlite3_column_double(stmt.get(), 9);
+                e.snow_ddf = sqlite3_column_double(stmt.get(), 10);
+            }
             ctx.rdii_decay.add(e);
         }
     }
@@ -1515,9 +1768,14 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
                             "contiguous [0, n)");
         mesh.resize_triangles(n);
 
-        auto stmt = prepare(db,
-            "SELECT tri_idx, v0, v1, v2, mannings_n, tag FROM mesh_2d_triangles "
-            "WHERE simulation_id = ? ORDER BY tri_idx");
+        // init_depth was added 2026-08 (default 0 = dry); older files lack it.
+        const bool has_init_depth =
+            column_exists(db, "mesh_2d_triangles", "init_depth");
+        auto stmt = prepare(db, has_init_depth
+            ? "SELECT tri_idx, v0, v1, v2, mannings_n, tag, init_depth "
+              "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx"
+            : "SELECT tri_idx, v0, v1, v2, mannings_n, tag "
+              "FROM mesh_2d_triangles WHERE simulation_id = ? ORDER BY tri_idx");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int t = column_int(stmt.get(), 0);
@@ -1527,6 +1785,8 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
             mesh.tri_v2[t]      = column_int(stmt.get(), 3);
             mesh.mannings_n[t]  = column_double(stmt.get(), 4);
             mesh.tri_tag[t]     = column_text(stmt.get(), 5);
+            if (has_init_depth)
+                mesh.tri_init_depth[t] = column_double(stmt.get(), 6);
         }
     }
 
@@ -1648,6 +1908,12 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_curves(db, ctx, simulation_id);
         read_timeseries(db, ctx, simulation_id);
         read_pollutants(db, ctx, simulation_id);
+        // Iteration 4 — quality tables (table_exists-guarded for old files).
+        // After pollutants + subcatchments so the matrices size correctly.
+        read_landuses(db, ctx, simulation_id);
+        read_buildup_washoff(db, ctx, simulation_id);
+        read_subcatch_coverages(db, ctx, simulation_id);
+        read_subcatch_loadings(db, ctx, simulation_id);
         read_patterns(db, ctx, simulation_id);
         read_evaporation(db, ctx, simulation_id);
         read_climate_settings(db, ctx, simulation_id);

@@ -75,6 +75,15 @@ struct SubcatchData {
     std::vector<std::string> snowpack_name;
 
     /**
+     * @brief Rain gage name string for deferred resolution.
+     * @details Stored during parsing (SUBCATCHMENTS column 1) so
+     *          PostParseResolver can resolve/validate `gage` once RAINGAGES has
+     *          been parsed, regardless of section order, and raise ERR_NAME for
+     *          an undefined gage (legacy fatal). Parse-time config only.
+     */
+    std::vector<std::string> gage_name;
+
+    /**
      * @brief Rain gage index for this subcatchment.
      * @see Legacy: Subcatch[i].gage
      */
@@ -103,6 +112,32 @@ struct SubcatchData {
      * @see Legacy: Subcatch[i].curbLength
      */
     std::vector<double> curb_length;
+
+    /**
+     * @brief Subcatchment-level rainfall scale factor (default 1.0 = no scaling).
+     *
+     * @details Optional trailing token 9 of [SUBCATCHMENTS]. Multiplies the
+     *          gage-derived rainfall for this subcatchment only, composing
+     *          multiplicatively with the gage's own scale factor:
+     *              rainfall = gage_rain * gage.scale_factor * rain_scale_factor
+     *          API/forcing overrides are deliberately NOT scaled.
+     * @see Legacy: Subcatch[i].rainScaleFactor
+     */
+    std::vector<double> rain_scale_factor;
+
+    /**
+     * @brief Subcatchment-level snowfall scale factor (default 1.0 = no scaling).
+     *
+     * @details Optional trailing token 10 of [SUBCATCHMENTS]. Composes with the
+     *          gage snow catch factor (SCF):
+     *              snowfall = gage_rain * gage.scale_factor * gage.snow_factor
+     *                                   * snow_scale_factor
+     *          Distinct from the gage SCF: SCF corrects a physical gage's
+     *          snow-catch deficiency, this represents spatial variation
+     *          (orographic gradient, canopy interception, drifting).
+     * @see Legacy: Subcatch[i].snowScaleFactor
+     */
+    std::vector<double> snow_scale_factor;
 
     /**
      * @brief Fraction of area that is impervious (0–1).
@@ -170,9 +205,9 @@ struct SubcatchData {
 
     /** @brief Infiltration param 1: f0 (Horton), suction (GA), CN (CN). */
     std::vector<double> infil_p1;
-    /** @brief Infiltration param 2: fmin (Horton), conductivity (GA), 0 (CN). */
+    /** @brief Infiltration param 2: fmin (Horton), conductivity (GA), unused (CN). */
     std::vector<double> infil_p2;
-    /** @brief Infiltration param 3: decay (Horton), initial deficit (GA), 0 (CN). */
+    /** @brief Infiltration param 3: decay (Horton), initial deficit (GA), drying time (CN). */
     std::vector<double> infil_p3;
     /** @brief Infiltration param 4: dry time (Horton), 0 (GA/CN). */
     std::vector<double> infil_p4;
@@ -514,11 +549,14 @@ struct SubcatchData {
         outlet_subcatch.assign(un, -1);
         outlet_name.resize(un);
         snowpack_name.resize(un);
+        gage_name.resize(un);
         gage.assign(un, -1);
         area.assign(un, 0.0);
         width.assign(un, 0.0);
         slope.assign(un, 0.0);
         curb_length.assign(un, 0.0);
+        rain_scale_factor.assign(un, 1.0);
+        snow_scale_factor.assign(un, 1.0);
         frac_imperv.assign(un, 0.0);
         frac_imperv_no_store.assign(un, 0.0);
         n_imperv.assign(un, 0.013);
@@ -600,8 +638,10 @@ struct SubcatchData {
         const auto un = static_cast<std::size_t>(n);
         auto g = [&](auto& vec, auto def) { vec.resize(un, def); };
         g(outlet_node, -1); g(outlet_subcatch, -1);
-        outlet_name.resize(un); snowpack_name.resize(un); g(gage, -1);
+        outlet_name.resize(un); snowpack_name.resize(un);
+        gage_name.resize(un); g(gage, -1);
         g(area, 0.0); g(width, 0.0); g(slope, 0.0); g(curb_length, 0.0);
+        g(rain_scale_factor, 1.0); g(snow_scale_factor, 1.0);
         g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0);
         g(n_imperv, 0.013); g(n_perv, 0.1);
         g(ds_imperv, 0.0); g(ds_perv, 0.0);
@@ -658,6 +698,7 @@ struct SubcatchData {
 
         e(outlet_node); e(outlet_subcatch); e(outlet_name); e(gage);
         e(area); e(width); e(slope); e(curb_length);
+        e(rain_scale_factor); e(snow_scale_factor);
         e(frac_imperv); e(frac_imperv_no_store); e(n_imperv); e(n_perv);
         e(ds_imperv); e(ds_perv); e(subarea_routing); e(pct_routed);
 
@@ -751,6 +792,8 @@ struct SubcatchData {
         width.shrink_to_fit();
         slope.shrink_to_fit();
         curb_length.shrink_to_fit();
+        rain_scale_factor.shrink_to_fit();
+        snow_scale_factor.shrink_to_fit();
         frac_imperv.shrink_to_fit();
         frac_imperv_no_store.shrink_to_fit();
         n_imperv.shrink_to_fit();

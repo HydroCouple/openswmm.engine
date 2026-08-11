@@ -46,10 +46,11 @@ class InfiltrationView:
     horton: Tuple[float, float, float, float]
     green_ampt: Tuple[float, float, float]
     curve_number: float
+    curve_number_drying_time: float
 
     def set_horton(self, f0: float, fmin: float, decay: float, dry_time: float) -> None: ...
     def set_green_ampt(self, suction: float, conductivity: float, initial_deficit: float) -> None: ...
-    def set_curve_number(self, cn: float) -> None: ...
+    def set_curve_number(self, cn: float, drying_time: float) -> None: ...
 
 
 class CoverageView(MutableMapping[str, float]):
@@ -75,6 +76,7 @@ class Subcatchment:
     width: float
     slope: float
     imperv_pct: float
+    zero_imperv_pct: float
     n_imperv: float
     n_perv: float
     ds_imperv: float

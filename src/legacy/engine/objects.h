@@ -406,6 +406,8 @@ typedef struct
    MathExpr*     gwLatFlowExpr;   // user-supplied lateral outflow expression
    MathExpr*     gwDeepFlowExpr;  // user-supplied deep percolation expression
    TSnowpack*    snowpack;        // associated snow pack data
+   double        rainScaleFactor; // rainfall scale factor (default 1.0)
+   double        snowScaleFactor; // snowfall scale factor (default 1.0)
    int           nPervPattern;    // pervious N pattern index
    int           dStorePattern;   // depression storage pattern index
    int           infilPattern;    // infiltration rate pattern index
@@ -489,6 +491,7 @@ typedef struct
    double        r[12][3];        // fraction of rainfall becoming I&I
    long          tBase[12][3];    // time base of each UH in each month (sec)
    long          tPeak[12][3];    // time to peak of each UH in each month (sec)
+   char          paramsSet[12][3];// TRUE if UH params assigned to month
 }  TUnitHyd;
 
 //-----------------

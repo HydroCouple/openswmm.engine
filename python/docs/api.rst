@@ -113,6 +113,19 @@ Links
    :undoc-members:
    :show-inheritance:
 
+Cross-Section Geometry
+----------------------
+
+.. automodule:: openswmm.engine._xsect
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: openswmm.engine._geometry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Subcatchments
 -------------
 
@@ -141,6 +154,14 @@ Advanced forcing  (mode + persistence)
 --------------------------------------
 
 .. automodule:: openswmm.engine._forcing
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Climate  (temperature, evaporation, wind, snowmelt, adjustments)
+----------------------------------------------------------------
+
+.. automodule:: openswmm.engine._climate
    :members:
    :undoc-members:
    :show-inheritance:

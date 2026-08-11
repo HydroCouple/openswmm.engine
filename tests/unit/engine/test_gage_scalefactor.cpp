@@ -362,3 +362,25 @@ TEST_F(GageScaleFactorCApi, SetAllowedDuringRunning) {
 
     swmm_engine_end(engine_);
 }
+
+// The snow catch factor (SCF) is a scalar precip multiplier, so — like the
+// rainfall scale factor — it must be settable mid-run (its CHECK_GEOMETRY guard
+// was removed to match). Guards against that guard creeping back.
+TEST_F(GageScaleFactorCApi, SnowFactorSettableDuringRunning) {
+    openModel("gage_noscalefactor.inp",
+              "_gage_snow_running.rpt", "_gage_snow_running.out");
+
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
+    double elapsed = 0.0;
+    ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK);
+
+    EXPECT_EQ(swmm_gage_set_snow_factor(engine_, 0, 1.6), SWMM_OK);
+    double v = 0.0;
+    EXPECT_EQ(swmm_gage_get_snow_factor(engine_, 0, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 1.6);
+    // Still rejects a non-positive value.
+    EXPECT_NE(swmm_gage_set_snow_factor(engine_, 0, 0.0), SWMM_OK);
+
+    swmm_engine_end(engine_);
+}

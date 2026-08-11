@@ -18,6 +18,7 @@ set(_engine_modules
     _edit
     _nodes
     _links
+    _xsect
     _subcatchments
     _gages
     _hotstart
@@ -45,7 +46,7 @@ foreach(_mod IN LISTS _engine_modules)
     )
 endforeach()
 
-# Optional 2-D module (requires SUNDIALS/CVODE; off by default).
+# Optional 2-D module (off by default).
 if(OPENSWMM_BUILD_2D)
     add_cython_extension(
         NAME        _2d

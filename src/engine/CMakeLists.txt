@@ -115,7 +115,7 @@ target_link_libraries(openswmm_engine
     PUBLIC
         openswmm_common
     PRIVATE
-        # On macOS, libm is part of libSystem and HDF5/SUNDIALS already pull in
+        # On macOS, libm is part of libSystem and HDF5 already pulls in
         # -lm transitively — adding it here produces an "ignoring duplicate
         # libraries: '-lm'" ld warning. Restrict to non-APPLE UNIX.
         $<$<AND:$<NOT:$<BOOL:$<CXX_COMPILER_ID:MSVC>>>,$<NOT:$<PLATFORM_ID:Darwin>>>:m>
@@ -129,8 +129,8 @@ target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
 # macOS/AppleClang is the only platform where the stock FindOpenMP cannot
 # locate OpenMP on its own (Homebrew libomp): there we add the project cmake/
 # dir to the module path and use the custom finder. On Linux/Windows the stock
-# FindOpenMP discovers the compiler's OpenMP — and is also what Kokkos/SUNDIALS
-# find_dependency(OpenMP) resolves to at find_package(SUNDIALS) time — so we
+# FindOpenMP discovers the compiler's OpenMP — and is also what Kokkos'
+# find_dependency(OpenMP) resolves to at find_package(Kokkos) time — so we
 # must NOT put cmake/FindOpenMP.cmake on the module path there (it is Apple-only
 # and would shadow stock, breaking that transitive find).
 if(APPLE)
@@ -328,7 +328,7 @@ endif()
 # dylib's copy and crashes in HDF5's atexit teardown (H5_term_library →
 # H5I_clear_type operating on a foreign HDF5's global state). Hiding these from
 # the export table makes each binary use its own copy end-to-end, regardless of
-# version. (sundials/Kokkos are not hidden here: no current consumer links its
+# version. (Kokkos is not hidden here: no current consumer links its
 # own copy, and the GPU plugin carries its own statically.)
 if(APPLE)
     target_link_options(openswmm_engine PRIVATE
@@ -353,10 +353,6 @@ install(
 # already configured on the engine ("@loader_path/../.dylibs" stays for the
 # wheel path; "@loader_path" + "$ORIGIN" cover the standalone-install path).
 openswmm_install_runtime_deps(${CMAKE_INSTALL_BINDIR}
-    SUNDIALS::cvode
-    SUNDIALS::nvecserial
-    SUNDIALS::sunmatrixdense
-    SUNDIALS::sunlinsoldense
     hdf5::hdf5-shared
     unofficial::sqlite3::sqlite3
     SQLite::SQLite3
@@ -431,13 +427,14 @@ endif()
 
 # ---- Optional 2D Surface Routing Module ----
 if(OPENSWMM_BUILD_2D)
-    # Collect 2D source files (non-CVODE sources are always compiled)
+    # Collect 2D source files. The explicit local-inertial LTS marcher is the
+    # only integrator (D2 retirement, 2026-07-29): no SUNDIALS, no hypre, no
+    # global linear solve anywhere in the 2D module.
     file(GLOB_RECURSE OPENSWMM_2D_SOURCES
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
         2d/mesh/*.cpp
         2d/solver/SurfaceFluxCalculator.cpp
-        2d/solver/ActiveSetBuilder.cpp
         2d/coupling/*.cpp
         2d/input/*.cpp
         2d/output/*.cpp
@@ -445,60 +442,17 @@ if(OPENSWMM_BUILD_2D)
         2d/api/*.cpp
     )
 
-    # CVODE wrapper requires SUNDIALS
-    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/CvodeSurfaceSolver.cpp)
-
-    # ARKODE/ARKStep IMEX wrapper (alternative integrator, OPENSWMM_2D_INTEGRATOR
-    # = arkode). Reuses the same SUNDIALS already linked for CVODE. The unique-
-    # edge structure backs the local-inertial (MOMENTUM=inertial) momentum DOFs.
-    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ArkodeSurfaceSolver.cpp)
+    # Explicit local-inertial marcher (the 2D integrator) + its unique-edge
+    # CSR layout.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
-
-    # Approximate-Jacobian (diffusion-stencil) assembly — pure C++, shared by
-    # the Jacobi and AMG preconditioners. Always compiled.
-    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceJacobian.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialSolver.cpp)
 
     # Runtime backend selector (dlopen of the optional GPU plugin; serial CPU
     # fallback). Lives in the core — it owns the CPU↔plugin decision — but
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
 
-    # hypre BoomerAMG preconditioner (PRECONDITIONER=AMG) — compiled only when
-    # OPENSWMM_WITH_HYPRE is ON (the source includes HYPRE.h).
-    if(OPENSWMM_WITH_HYPRE)
-        list(APPEND OPENSWMM_2D_SOURCES 2d/solver/HypreAmgPreconditioner.cpp)
-    endif()
-
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
-
-    # Find SUNDIALS (CVODE + ARKODE + the threaded OpenMP N_Vector). The OpenMP
-    # N_Vector (SUNDIALS::nvecopenmp) lets the core CPU solver run its vector ops
-    # multithreaded under the THREADS option without the Kokkos plugin.
-    find_package(SUNDIALS REQUIRED COMPONENTS cvode arkode nvecopenmp)
-    target_link_libraries(openswmm_engine PRIVATE
-        SUNDIALS::cvode SUNDIALS::arkode SUNDIALS::nvecopenmp)
-
-    # hypre BoomerAMG — opt-in algebraic-multigrid preconditioner for the 2D
-    # solver. We call hypre's IJ/BoomerAMG API directly from the psetup/psolve
-    # callbacks (no SUNDIALS N_VParHyp coupling), so SUNDIALS need not be built
-    # with hypre. Built sequentially (MPI_COMM_SELF); the `hypre` vcpkg feature
-    # supplies the library.
-    if(OPENSWMM_WITH_HYPRE)
-        find_package(HYPRE CONFIG REQUIRED)
-        target_link_libraries(openswmm_engine PRIVATE HYPRE::HYPRE)
-        # PUBLIC, not PRIVATE: CvodeSurfaceSolver.hpp gates the amg_precond_
-        # member on OPENSWMM_HAVE_HYPRE, so sizeof(CvodeSurfaceSolver) depends
-        # on it. Any consumer that includes the header (unit tests, GUI) MUST
-        # see the same definition or the struct layout disagrees with the
-        # library — an ODR violation that corrupts the stack. Linking hypre
-        # stays PRIVATE; only the ABI-affecting macro is propagated.
-        target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAVE_HYPRE)
-        if(TARGET openswmm_engine_internal)
-            target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAVE_HYPRE)
-        endif()
-        message(STATUS "OpenSWMM Engine: hypre BoomerAMG preconditioner ENABLED "
-                       "(PRECONDITIONER=AMG available)")
-    endif()
 
     # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
     # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
@@ -526,18 +480,6 @@ if(OPENSWMM_BUILD_2D)
     # Also add to the internal static library for MSVC unit tests
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
-        target_link_libraries(openswmm_engine_internal PRIVATE
-            SUNDIALS::cvode SUNDIALS::arkode SUNDIALS::nvecopenmp)
-        # The 2D sources include HypreAmgPreconditioner.cpp, which references
-        # HYPRE_* symbols when OPENSWMM_HAVE_HYPRE is set. The shared engine
-        # links HYPRE above; the internal STATIC lib must link it too, or MSVC
-        # unit-test exes (which link openswmm_engine_internal, not the shared
-        # lib) fail with LNK1120 unresolved HYPRE_* externals. Static libraries
-        # don't carry their deps, so this PRIVATE link is propagated to the
-        # exe link line by CMake.
-        if(OPENSWMM_WITH_HYPRE)
-            target_link_libraries(openswmm_engine_internal PRIVATE HYPRE::HYPRE)
-        endif()
         if(hdf5_FOUND)
             target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
         else()
@@ -547,7 +489,7 @@ if(OPENSWMM_BUILD_2D)
         target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_2D=1)
     endif()
 
-    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (SUNDIALS/CVODE + HDF5)")
+    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher + HDF5)")
 
     # Optional GPU surface-solver plugin (standalone shared lib, dlopen()ed
     # at runtime — NOT linked into openswmm_engine). Phase 0 stub for now.

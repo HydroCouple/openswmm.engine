@@ -1,6 +1,6 @@
 """Tests for :mod:`openswmm.engine._enums` integer enum definitions."""
 
-import pytest
+import unittest
 
 from openswmm.engine import (
     ErrorCode, EngineState, NodeType, LinkType,
@@ -11,15 +11,15 @@ from openswmm.engine import (
 # ---------------------------------------------------------------------------
 # ErrorCode
 # ---------------------------------------------------------------------------
-class TestErrorCode:
+class TestErrorCode(unittest.TestCase):
     """Verify ErrorCode values and membership."""
 
     def test_ok_is_zero(self):
-        assert ErrorCode.OK == 0
+        self.assertEqual(ErrorCode.OK, 0)
 
     def test_all_values_unique(self):
         vals = [e.value for e in ErrorCode]
-        assert len(vals) == len(set(vals))
+        self.assertEqual(len(vals), len(set(vals)))
 
     def test_known_values(self):
         expected = {
@@ -30,16 +30,16 @@ class TestErrorCode:
             "INTERNAL": 99,
         }
         for name, val in expected.items():
-            assert ErrorCode[name].value == val
+            self.assertEqual(ErrorCode[name].value, val)
 
     def test_member_count(self):
-        assert len(ErrorCode) == 17
+        self.assertEqual(len(ErrorCode), 17)
 
 
 # ---------------------------------------------------------------------------
 # EngineState
 # ---------------------------------------------------------------------------
-class TestEngineState:
+class TestEngineState(unittest.TestCase):
     """Verify EngineState values."""
 
     def test_known_values(self):
@@ -49,59 +49,70 @@ class TestEngineState:
             "BUILDING": 8,
         }
         for name, val in expected.items():
-            assert EngineState[name].value == val
+            self.assertEqual(EngineState[name].value, val)
 
     def test_member_count(self):
-        assert len(EngineState) == 9
+        self.assertEqual(len(EngineState), 9)
 
 
 # ---------------------------------------------------------------------------
 # NodeType
 # ---------------------------------------------------------------------------
-class TestNodeType:
+class TestNodeType(unittest.TestCase):
     """Verify NodeType values."""
 
     def test_known_values(self):
         expected = {"JUNCTION": 0, "OUTFALL": 1, "STORAGE": 2, "DIVIDER": 3}
         for name, val in expected.items():
-            assert NodeType[name].value == val
+            self.assertEqual(NodeType[name].value, val)
 
     def test_member_count(self):
-        assert len(NodeType) == 4
+        self.assertEqual(len(NodeType), 4)
 
     def test_is_int(self):
-        assert isinstance(NodeType.JUNCTION, int)
+        self.assertIsInstance(NodeType.JUNCTION, int)
 
 
 # ---------------------------------------------------------------------------
 # LinkType
 # ---------------------------------------------------------------------------
-class TestLinkType:
+class TestLinkType(unittest.TestCase):
     """Verify LinkType values."""
 
     def test_known_values(self):
         expected = {"CONDUIT": 0, "PUMP": 1, "ORIFICE": 2, "WEIR": 3, "OUTLET": 4}
         for name, val in expected.items():
-            assert LinkType[name].value == val
+            self.assertEqual(LinkType[name].value, val)
 
     def test_member_count(self):
-        assert len(LinkType) == 5
+        self.assertEqual(len(LinkType), 5)
 
 
 # ---------------------------------------------------------------------------
 # XSectShape
 # ---------------------------------------------------------------------------
-class TestXSectShape:
-    """Verify XSectShape values."""
+class TestXSectShape(unittest.TestCase):
+    """Verify XSectShape values.
+
+    These are the engine's storage codes (``openswmm::XsectShape`` /
+    ``SWMM_XSectShape``), not the legacy SWMM 5 ``XsectType`` ordering.
+
+    Renumbered in 6.0: IRREGULAR/CUSTOM/FORCE_MAIN previously carried 16/17/18,
+    which the engine read as RECT_TRIANG/RECT_ROUND/HORIZ_ELLIPSE — so
+    assigning them silently produced the wrong cross-section. The seven shapes
+    the enum had been missing were added at the same time.
+    ``test_xsect_geometry.TestShapeEnumParity`` pins these against the engine
+    itself; this module just pins the literals.
+    """
 
     def test_circular_is_zero(self):
-        assert XSectShape.CIRCULAR == 0
+        self.assertEqual(XSectShape.CIRCULAR, 0)
 
     def test_force_main(self):
-        assert XSectShape.FORCE_MAIN == 18
+        self.assertEqual(XSectShape.FORCE_MAIN, 23)
 
     def test_member_count(self):
-        assert len(XSectShape) == 19
+        self.assertEqual(len(XSectShape), 26)
 
     def test_known_values(self):
         expected = {
@@ -110,47 +121,49 @@ class TestXSectShape:
             "PARABOLIC": 6, "POWER": 7, "MODBASKETHANDLE": 8,
             "EGGSHAPED": 9, "HORSESHOE": 10, "GOTHIC": 11,
             "CATENARY": 12, "SEMIELLIPTICAL": 13, "BASKETHANDLE": 14,
-            "SEMICIRCULAR": 15, "IRREGULAR": 16, "CUSTOM": 17,
-            "FORCE_MAIN": 18,
+            "SEMICIRCULAR": 15, "RECT_TRIANG": 16, "RECT_ROUND": 17,
+            "HORIZ_ELLIPSE": 18, "VERT_ELLIPSE": 19, "ARCH": 20,
+            "IRREGULAR": 21, "CUSTOM": 22, "FORCE_MAIN": 23,
+            "STREET_XSECT": 24, "DUMMY": 25,
         }
         for name, val in expected.items():
-            assert XSectShape[name].value == val
+            self.assertEqual(XSectShape[name].value, val)
 
 
 # ---------------------------------------------------------------------------
 # FlowUnits
 # ---------------------------------------------------------------------------
-class TestFlowUnits:
+class TestFlowUnits(unittest.TestCase):
     """Verify FlowUnits values."""
 
     def test_known_values(self):
         expected = {"CFS": 0, "GPM": 1, "MGD": 2, "CMS": 3, "LPS": 4, "MLD": 5}
         for name, val in expected.items():
-            assert FlowUnits[name].value == val
+            self.assertEqual(FlowUnits[name].value, val)
 
     def test_member_count(self):
-        assert len(FlowUnits) == 6
+        self.assertEqual(len(FlowUnits), 6)
 
 
 # ---------------------------------------------------------------------------
 # RouteModel
 # ---------------------------------------------------------------------------
-class TestRouteModel:
+class TestRouteModel(unittest.TestCase):
     """Verify RouteModel values."""
 
     def test_known_values(self):
-        expected = {"STEADY": 0, "KINWAVE": 1, "DYNWAVE": 2}
+        expected = {"STEADY": 0, "KINWAVE": 1, "DYNWAVE": 2, "FV": 3}
         for name, val in expected.items():
-            assert RouteModel[name].value == val
+            self.assertEqual(RouteModel[name].value, val)
 
     def test_member_count(self):
-        assert len(RouteModel) == 3
+        self.assertEqual(len(RouteModel), 4)
 
 
 # ---------------------------------------------------------------------------
 # WarnCode
 # ---------------------------------------------------------------------------
-class TestWarnCode:
+class TestWarnCode(unittest.TestCase):
     """Verify WarnCode values."""
 
     def test_known_values(self):
@@ -160,16 +173,16 @@ class TestWarnCode:
             "NUMERICAL": 6, "STABILITY_LIMIT": 7,
         }
         for name, val in expected.items():
-            assert WarnCode[name].value == val
+            self.assertEqual(WarnCode[name].value, val)
 
     def test_member_count(self):
-        assert len(WarnCode) == 8
+        self.assertEqual(len(WarnCode), 8)
 
 
 # ---------------------------------------------------------------------------
 # ObjectType
 # ---------------------------------------------------------------------------
-class TestObjectType:
+class TestObjectType(unittest.TestCase):
     """Verify ObjectType values."""
 
     def test_known_values(self):
@@ -180,30 +193,33 @@ class TestObjectType:
             "LID": 12,
         }
         for name, val in expected.items():
-            assert ObjectType[name].value == val
+            self.assertEqual(ObjectType[name].value, val)
 
     def test_member_count(self):
-        assert len(ObjectType) == 13
+        self.assertEqual(len(ObjectType), 13)
 
 
 # ---------------------------------------------------------------------------
 # Cross-cutting
 # ---------------------------------------------------------------------------
-class TestEnumsCrossCutting:
+class TestEnumsCrossCutting(unittest.TestCase):
     """General properties all enums should satisfy."""
 
-    @pytest.mark.parametrize("enum_cls", [
-        ErrorCode, EngineState, NodeType, LinkType,
-        XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
-    ])
-    def test_all_members_are_int(self, enum_cls):
-        for member in enum_cls:
-            assert isinstance(member.value, int)
+    def test_all_members_are_int(self):
+        for enum_cls in (
+            ErrorCode, EngineState, NodeType, LinkType,
+            XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
+        ):
+            with self.subTest(enum_cls=enum_cls):
+                for member in enum_cls:
+                    self.assertIsInstance(member.value, int)
 
-    @pytest.mark.parametrize("enum_cls", [
-        ErrorCode, EngineState, NodeType, LinkType,
-        XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
-    ])
-    def test_values_are_unique(self, enum_cls):
-        vals = [e.value for e in enum_cls]
-        assert len(vals) == len(set(vals)), f"Duplicate values in {enum_cls.__name__}"
+    def test_values_are_unique(self):
+        for enum_cls in (
+            ErrorCode, EngineState, NodeType, LinkType,
+            XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
+        ):
+            with self.subTest(enum_cls=enum_cls):
+                vals = [e.value for e in enum_cls]
+                self.assertEqual(len(vals), len(set(vals)),
+                                 f"Duplicate values in {enum_cls.__name__}")

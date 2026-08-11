@@ -22,9 +22,9 @@ class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
 
     The module solves the depth-averaged shallow-water equations on an
-    unstructured triangular mesh and is integrated in time with CVODE
-    from SUNDIALS. Two-way coupling with the 1D drainage network is
-    supported per-vertex and per-triangle.
+    unstructured triangular mesh and is integrated in time with the
+    explicit local-inertial finite-volume marcher. Two-way coupling with
+    the 1D drainage network is supported per-vertex and per-triangle.
 
     Example::
 
@@ -186,6 +186,22 @@ class Surface2D:
         """Set Manning's M{n} for a triangle (must be strictly positive)."""
         ...
 
+    def get_triangle_init_depth(self, idx: int) -> float:
+        """Return the initial water depth of a triangle, in mesh length units."""
+        ...
+
+    def set_triangle_init_depth(self, idx: int, depth: float) -> None:
+        """Set the initial water depth of a triangle (mesh length units, M{>= 0})."""
+        ...
+
+    def get_triangle_init_velocity(self, idx: int) -> tuple[float, float]:
+        """Return the C{(u, v)} initial velocity of a triangle, in m/s."""
+        ...
+
+    def set_triangle_init_velocity(self, idx: int, u: float, v: float) -> None:
+        """Set the C{(u, v)} initial velocity of a triangle (m/s, finite)."""
+        ...
+
     def get_triangle_tag(self, idx: int) -> str:
         """Return the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG)."""
         ...
@@ -298,6 +314,30 @@ class Surface2D:
         @rtype: int
         @raise RuntimeError: If the C API call fails.
         """
+        ...
+
+    def add_triangle_coupling(self, tri_idx: int, node_name: str,
+                              cd: float, area: float) -> None:
+        """Append one node->cell coupling row for a triangle
+        (C{[2D_TRIANGLE_NODE_MAP]} repeated-row form; appends, does not
+        overwrite)."""
+        ...
+
+    def clear_triangle_couplings(self) -> None:
+        """Remove every authored node->cell coupling row; vertex couplings
+        are untouched."""
+        ...
+
+    @property
+    def triangle_coupling_rows(self) -> int:
+        """Number of authored node->cell coupling rows."""
+        ...
+
+    def get_triangle_coupling_row(
+        self, row_idx: int
+    ) -> tuple[int, int, float, float]:
+        """Read one authored row: C{(tri_idx, node_idx, cd, area)};
+        C{node_idx} is C{-1} if unresolved."""
         ...
 
     # ====================================================================
@@ -429,6 +469,19 @@ class Surface2D:
         """
         ...
 
+    def get_vertex_render_depths(self) -> npt.NDArray[np.float64]:
+        """Return render-oriented signed water depths at all vertices.
+
+        The wet-masked, depth-weighted free-surface reconstruction
+        C{eta_v - z_v} (m) that GUIs should interpolate for water-surface
+        rendering. GIL is released during the C call.
+
+        @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     # ====================================================================
     # State (depth/velocity) - statistics
     # ====================================================================
@@ -465,8 +518,10 @@ class Surface2D:
         ...
 
     @property
-    def cvode_steps(self) -> int:
-        """Number of CVODE internal steps in the last advance.
+    def solver_steps(self) -> int:
+        """Number of explicit-marcher sub-steps in the last advance.
+
+        Renamed from C{cvode_steps} with the D2 CVODE/ARKODE retirement.
 
         @return: Step count.
         @rtype: int
@@ -475,8 +530,11 @@ class Surface2D:
         ...
 
     @property
-    def cvode_last_step(self) -> float:
-        """Last CVODE internal step size.
+    def solver_last_step(self) -> float:
+        """The explicit marcher's last sub-step size in seconds.
+
+        Renamed from C{cvode_last_step} with the D2 CVODE/ARKODE
+        retirement.
 
         @return: Step size.
         @rtype: float
@@ -682,50 +740,6 @@ class Surface2D:
         @raise RuntimeError: If the C API rejects the value.
         """
         ...
-
-    @property
-    def rel_tolerance(self) -> float:
-        """CVODE relative tolerance.
-
-        @return: Relative tolerance.
-        @rtype: float
-        @raise RuntimeError: If the C API call fails.
-        """
-        ...
-
-    @rel_tolerance.setter
-    def rel_tolerance(self, value: float) -> None:
-        """Set the CVODE relative tolerance.
-
-        @param value: New relative tolerance.
-        @type value: float
-        @raise RuntimeError: If the C API rejects the value.
-        """
-        ...
-
-    @property
-    def abs_tolerance(self) -> float:
-        """CVODE absolute tolerance.
-
-        @return: Absolute tolerance.
-        @rtype: float
-        @raise RuntimeError: If the C API call fails.
-        """
-        ...
-
-    @abs_tolerance.setter
-    def abs_tolerance(self, value: float) -> None:
-        """Set the CVODE absolute tolerance.
-
-        @param value: New absolute tolerance.
-        @type value: float
-        @raise RuntimeError: If the C API rejects the value.
-        """
-        ...
-
-    # ====================================================================
-    # Boundary conditions - boundary edges
-    # ====================================================================
 
     @property
     def boundary_edge_count(self) -> int:

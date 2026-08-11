@@ -21,6 +21,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
+#include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
 
 #include <version.h>
 
@@ -491,24 +492,30 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
     std::fprintf(f, "\n  Flow Units ............... %s", FlowUnitWords[fu]);
 
+    // Process Models — legacy report_writeOptions() prints NO when the ignore
+    // flag is set OR the object class is empty (report.c:270-298).
     std::fprintf(f, "\n  Process Models:");
     std::fprintf(f, "\n    Rainfall/Runoff ........ %s",
-                 (ctx.n_subcatches() > 0 && ctx.n_gages() > 0) ? "YES" : "NO");
+                 (ctx.n_subcatches() > 0 && ctx.n_gages() > 0
+                  && !opt.ignore_rainfall) ? "YES" : "NO");
     bool has_exp_decay = (ctx.rdii_decay.count() > 0);
     std::fprintf(f, "\n    RDII ................... %s",
-                 has_rdii ? (has_exp_decay ? "YES (Exponential IA)"
-                                           : "YES (Linear IA)")
-                          : "NO");
-    std::fprintf(f, "\n    Snowmelt ............... %s", has_snow ? "YES" : "NO");
-    std::fprintf(f, "\n    Groundwater ............ %s", has_gw ? "YES" : "NO");
+                 (has_rdii && !opt.ignore_rdii)
+                     ? (has_exp_decay ? "YES (Exponential IA)"
+                                      : "YES (Linear IA)")
+                     : "NO");
+    std::fprintf(f, "\n    Snowmelt ............... %s",
+                 (has_snow && !opt.ignore_snow_melt) ? "YES" : "NO");
+    std::fprintf(f, "\n    Groundwater ............ %s",
+                 (has_gw && !opt.ignore_groundwater) ? "YES" : "NO");
     std::fprintf(f, "\n    Flow Routing ........... %s",
-                 (ctx.n_links() > 0) ? "YES" : "NO");
+                 (ctx.n_links() > 0 && !opt.ignore_routing) ? "YES" : "NO");
     if (ctx.n_links() > 0) {
         std::fprintf(f, "\n    Ponding Allowed ........ %s",
                      opt.allow_ponding ? "YES" : "NO");
     }
     std::fprintf(f, "\n    Water Quality .......... %s",
-                 (ctx.n_pollutants() > 0) ? "YES" : "NO");
+                 (ctx.n_pollutants() > 0 && !opt.ignore_quality) ? "YES" : "NO");
 
     if (ctx.n_subcatches() > 0) {
         int im = static_cast<int>(opt.infiltration);
@@ -518,7 +525,10 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
     if (ctx.n_links() > 0) {
         int rm = static_cast<int>(opt.routing_model);
-        const char* rm_name = (rm == 2) ? "DYNWAVE" : (rm == 1 ? "KINWAVE" : "STEADY");
+        const char* rm_name = (rm == 3) ? "FV"
+                            : (rm == 2) ? "DYNWAVE"
+                            : (rm == 1) ? "KINWAVE"
+                                        : "STEADY";
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
 
         if (rm == 2) { // DYNWAVE
@@ -672,7 +682,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Internal units: buildup-derived fields are in display mass (lbs for US);
     //                 volumetric mass fields (wet dep, infil, runoff) are in mg.
     // =====================================================================
-    if (opt.rpt_continuity && ctx.n_pollutants() > 0) {
+    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
 
@@ -728,7 +738,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Groundwater Continuity — matches legacy report_writeGwaterError()
     // =====================================================================
-    if (has_gw && opt.rpt_continuity) {
+    if (has_gw && opt.rpt_continuity && !opt.ignore_groundwater) {
         const auto& mb = ctx.mass_balance;
 
         // Compute total GW area (ft²) for depth conversion
@@ -786,8 +796,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     // =====================================================================
     // Flow Routing Continuity — matches legacy report_writeFlowError()
+    // (report.c:288: suppressed when routing is ignored).
     // =====================================================================
-    if (opt.rpt_continuity) {
+    if (opt.rpt_continuity && !opt.ignore_routing) {
         const auto& mb = ctx.mass_balance;
         std::fprintf(f, "\n  **************************        Volume        Volume");
         std::fprintf(f, si_report
@@ -848,6 +859,91 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                      mb2.error() * 100.0);
+
+        // 2D Solver Statistics — cumulative marcher throughput. Printed only
+        // when populated (>=0).
+        if (mb2.solver_nsteps >= 0) {
+            WRITE(f, "");
+            WRITE(f, "");
+            std::fprintf(f, "\n  *************************");
+            std::fprintf(f, "\n  2D Solver Statistics");
+            std::fprintf(f, "\n  *************************");
+            auto srow = [&](const char* label, long v) {
+                std::fprintf(f, "\n  %s%14ld", label, v);
+            };
+            srow("Internal Steps ...........", mb2.solver_nsteps);
+            srow("Face-Kernel Evals ........", mb2.solver_nrhs);
+            std::fprintf(f, "\n  Avg Internal Step (s) ....%14.4f", mb2.solver_avg_h);
+            std::fprintf(f, "\n  Last Internal Step (s) ...%14.4f", mb2.solver_last_h);
+
+            // Marcher-only telemetry (EXPLICIT integrator): active-fraction
+            // spread over rebuild samples + LTS tier-occupancy shares.
+            if (mb2.solver_active_mean >= 0.0) {
+                std::fprintf(f,
+                    "\n  Active Cells min/mean/max %8.1f /%5.1f /%5.1f  (%%)",
+                    100.0 * mb2.solver_active_min,
+                    100.0 * mb2.solver_active_mean,
+                    100.0 * mb2.solver_active_max);
+            }
+            if (mb2.solver_n_tiers > 0) {
+                long total = 0;
+                for (int k = 0; k < mb2.solver_n_tiers; ++k)
+                    total += mb2.solver_tier_cells[k];
+                if (total > 0) {
+                    for (int k = 0; k < mb2.solver_n_tiers; ++k)
+                        std::fprintf(f,
+                            "\n  LTS Tier %d Occupancy (%%) .%14.1f", k,
+                            100.0 * static_cast<double>(mb2.solver_tier_cells[k])
+                                  / static_cast<double>(total));
+                }
+            }
+        }
+
+        // 1D <-> 2D Exchange Reconciliation — the coupled-loop ledger books
+        // spill as Flooding Loss and drain as external inflow, so the plain
+        // flow-routing continuity above double-counts exchanged water as both
+        // a loss and a new inflow. Recompute it here with the exchange treated
+        // as an internal transfer between the two domains (report-only; the
+        // underlying ledgers are untouched).
+        if (mb2.coupling_1d_to_2d_in > 0.0 || mb2.coupling_2d_to_1d_out > 0.0) {
+            const auto& mb1 = ctx.mass_balance;
+            // 2D ledger volumes are SI m³; the 1D balance is internal ft³
+            // regardless of flow units (legacy parity; land_vcf/mvol_vcf
+            // convert ft³ → report units), so convert the exchange to ft³.
+            const double m3_to_1d = 1.0 / 0.028316846592;
+            const double spill_1d = mb2.coupling_1d_to_2d_in  * m3_to_1d;
+            const double drain_1d = mb2.coupling_2d_to_1d_out * m3_to_1d;
+
+            WRITE(f, "");
+            WRITE(f, "");
+            std::fprintf(f, "\n  **************************        Volume        Volume");
+            std::fprintf(f, si_report
+                ? "\n  1D <-> 2D Exchange Reconcil.   hectare-m      10^6 ltr"
+                : "\n  1D <-> 2D Exchange Reconcil.   acre-feet      10^6 gal");
+            std::fprintf(f, "\n  **************************     ---------     ---------");
+            auto rowx = [&](const char* label, double vol_1d) {
+                std::fprintf(f, "\n  %s%14.3f%14.3f", label,
+                             vol_1d * land_vcf, vol_1d * mvol_vcf);
+            };
+            rowx("1D -> 2D Spill ...........", spill_1d);
+            rowx("2D -> 1D Drain ...........", drain_1d);
+            rowx("Net 1D -> 2D .............", spill_1d - drain_1d);
+
+            // Flow-routing continuity with the exchange internal: remove the
+            // drain from external inflow and the spill from flooding loss.
+            const double in_adj  = mb1.routing_dry_weather + mb1.routing_wet_weather
+                                 + mb1.routing_gw_inflow + mb1.routing_rdii
+                                 + (mb1.routing_external - drain_1d)
+                                 + mb1.routing_init_storage;
+            const double out_adj = (mb1.routing_flooding - spill_1d)
+                                 + mb1.routing_outflow + mb1.routing_evap_loss
+                                 + mb1.routing_seep_loss + mb1.routing_final_storage;
+            const double err_adj = (in_adj > 0.0)
+                                 ? (in_adj - out_adj) / in_adj : 0.0;
+            std::fprintf(f,
+                "\n  Flow Continuity w/ Exchange Internal (%%) %8.3f",
+                err_adj * 100.0);
+        }
     }
 
     WRITE(f, "");
@@ -855,8 +951,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     // =====================================================================
     // Quality Routing Continuity — Gap #71, matches legacy writeQualError()
+    // (report.c:298: suppressed when there are no pollutants or quality is ignored).
     // =====================================================================
-    if (opt.rpt_continuity) {
+    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
         // Internal mass unit: conc (mg/L or ug/L) × volume (ft³)
@@ -1062,10 +1159,24 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                          rs.max_step);
             std::fprintf(f, "\n  %% of Time in Steady State   :  %7.2f",
                          rs.steady_pct);
-            std::fprintf(f, "\n  Average Iterations per Step :  %7.2f",
-                         rs.computed_avg_iterations());
-            std::fprintf(f, "\n  %% of Steps Not Converging   :  %7.2f",
-                         rs.pct_non_converged());
+            // FV has no Picard loop, so what the counter holds is the number
+            // of explicit SUBSTEPS the step was filled with. Printing that
+            // under the iteration label reads as catastrophic non-convergence
+            // when the value runs to the hundreds — it is the opposite, a
+            // scheme that never iterates. Both lines are relabelled rather
+            // than dropped: the substep count is the useful number here.
+            const bool is_fv =
+                (opt.routing_model == RoutingModel::FV);
+            if (is_fv) {
+                std::fprintf(f, "\n  Average Substeps per Step   :  %7.2f",
+                             rs.computed_avg_iterations());
+                std::fprintf(f, "\n  %% of Steps Not Converging   :      n/a");
+            } else {
+                std::fprintf(f, "\n  Average Iterations per Step :  %7.2f",
+                             rs.computed_avg_iterations());
+                std::fprintf(f, "\n  %% of Steps Not Converging   :  %7.2f",
+                             rs.pct_non_converged());
+            }
 
             // Time step frequency table
             // Build histogram if not already built
@@ -1090,6 +1201,37 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // =====================================================================
+    // Virtual Junction Summary — refactored-engine feature (momentum-
+    // residual diagnostic from DWSolver; see the virtual-junction plan §8).
+    // =====================================================================
+    if (!ctx.vj_diag.node_idx.empty()) {
+        WRITE(f, "***********************");
+        WRITE(f, "Virtual Junction Summary");
+        WRITE(f, "***********************");
+        std::fprintf(f,
+            "\n                        Upstream         Downstream         Momentum Residual (cfs·ft/s)");
+        std::fprintf(f,
+            "\n  Name                 Conduit          Conduit               Maximum          Mean");
+        std::fprintf(f,
+            "\n  ------------------------------------------------------------------------------------");
+        for (std::size_t r = 0; r < ctx.vj_diag.node_idx.size(); ++r) {
+            const int ni = ctx.vj_diag.node_idx[r];
+            const int ju = ctx.vj_diag.up_link[r];
+            const int jd = ctx.vj_diag.dn_link[r];
+            const long long n = ctx.vj_diag.resid_n[r];
+            const double mean = (n > 0)
+                ? ctx.vj_diag.resid_sum[r] / static_cast<double>(n) : 0.0;
+            std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
+                ctx.node_names.name_of(ni).c_str(),
+                (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                ctx.vj_diag.resid_max[r], mean);
+        }
+        WRITE(f, "");
+        WRITE(f, "");
+    }
 
     } // end rpt_flowstats
 
@@ -1243,7 +1385,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Subcatchment Washoff Summary — Gap #64, matches legacy writeSubcatchLoads()
     // total_load is in mg (washoff_load [mg/s] × dt [s]); convert to lbs: /453592
     // =====================================================================
-    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0) {
+    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0
+        && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
         int np = ctx.n_pollutants();
         static constexpr double MG_TO_LBS = 1.0 / 453592.0;
@@ -1299,7 +1442,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()
     // =====================================================================
-    if (has_gw && opt.rpt_subcatchments != 0) {
+    if (has_gw && opt.rpt_subcatchments != 0 && !opt.ignore_groundwater) {
         WRITE(f, "*******************");
         WRITE(f, "Groundwater Summary");
         WRITE(f, "*******************");
@@ -1633,24 +1776,38 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx.nodes.type[uj] != NodeType::STORAGE) continue;
 
-                double full_vol = ctx.nodes.full_volume[uj];
-                // Average volume approximated from average depth
-                double avg_depth = ctx.nodes.stat_sum_depth[uj] / static_cast<double>(report_steps);
-                // Max depth to max volume
-                double max_depth = ctx.nodes.stat_max_depth[uj];
+                const double full_vol = ctx.nodes.full_volume[uj];
+                const double max_depth = ctx.nodes.stat_max_depth[uj];
 
-                // For functional storage: Volume = A * depth^B + C * depth
-                // Approximate: use depth ratio for percentage
-                double pct_avg = (ctx.nodes.full_depth[uj] > 0.0) ?
-                    avg_depth / ctx.nodes.full_depth[uj] * 100.0 : 0.0;
-                double pct_max = (ctx.nodes.full_depth[uj] > 0.0) ?
-                    max_depth / ctx.nodes.full_depth[uj] * 100.0 : 0.0;
+                // Volume from the node's actual depth→volume relation, not a linear
+                // depth ratio. Storage surface area varies with depth for FUNCTIONAL,
+                // TABULAR and the geometric shapes, so full_vol*(depth/full_depth) is
+                // exact only for a constant-area unit and grossly overstates the rest
+                // (a shallow functional/geometric node was reported ~20x too full).
+                // Average is the true time-average accumulated per routing step
+                // (stat_sum_volume); maximum is exact — V(d) is monotonic, so the max
+                // volume occurs at the max depth. node::getVolume returns internal ft³
+                // from the same relation the solver routes on.
+                const int us =
+                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+                // const_cast: getVolume takes a mutable TableData* for the tabular
+                // curve's lookup cursor cache; the report context is const and this
+                // is a read-only computation, so mutating the cursor is benign.
+                auto* tbls = const_cast<TableData*>(&ctx.tables);
+                const double avg_vol_ft3 =
+                    ctx.nodes.stat_sum_volume[uj] / static_cast<double>(report_steps);
+                const double max_vol_ft3 = node::getVolume(
+                    ctx.nodes, j, max_depth, tbls, us, &ctx.node_subtypes);
+
+                // Percent full is by VOLUME (legacy semantics), not by depth.
+                double pct_avg = (full_vol > 0.0) ? avg_vol_ft3 / full_vol * 100.0 : 0.0;
+                double pct_max = (full_vol > 0.0) ? max_vol_ft3 / full_vol * 100.0 : 0.0;
                 pct_avg = std::min(pct_avg, 100.0);
                 pct_max = std::min(pct_max, 100.0);
 
-                // Volume approximation (using full_volume ratio); ft³ → 1000 ft³|m³
-                double avg_vol = full_vol * (pct_avg / 100.0) * svol_ucf / 1000.0;
-                double max_vol = full_vol * (pct_max / 100.0) * svol_ucf / 1000.0;
+                // ft³ → 1000 ft³|m³
+                const double avg_vol = avg_vol_ft3 * svol_ucf / 1000.0;
+                const double max_vol = max_vol_ft3 * svol_ucf / 1000.0;
 
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
@@ -2038,7 +2195,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Link Pollutant Load Summary — Gap #64, matches legacy writeLinkLoads()
     // stat_total_load is in ft³ × mg/L; convert to lbs: × 28.317/453592
     // =====================================================================
-    if (ctx.n_links() > 0 && ctx.n_pollutants() > 0 && opt.rpt_links != 0) {
+    if (ctx.n_links() > 0 && ctx.n_pollutants() > 0 && opt.rpt_links != 0
+        && !opt.ignore_quality) {
         int nl = ctx.n_links();
         int np = ctx.n_pollutants();
         // conversion: CFS × mg/L × sec × (28.317 L/ft³) / (453592 mg/lb) = lbs

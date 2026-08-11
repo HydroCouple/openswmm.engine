@@ -1,4 +1,6 @@
-﻿#  Chapter 4: Infiltration
+@page hydrology_ref_ch4_infiltration Chapter 4: Infiltration
+
+@tableofcontents
 
 ## 4.1 Introduction
 
@@ -45,7 +47,7 @@ by consulting:
 Additional soil characterization (physics and chemical) data are
 available at the aforementioned web sites.
 
-**Table 4-1 Hydrologic soil group meanings (NRCS, 2009, Chapter 7)**
+**Table 4-1 Hydrologic soil group meanings (NRCS, 2009, @ref hydrology_ref_ch7_rdii "Chapter 7")**
 
 | Group | Meaning |
 |-------|---------|
@@ -80,7 +82,7 @@ In short, the NRCS provides an invaluable resource for information on
 soils and drainage of soils. The agency's data are ever more valuable as
 they increasingly reside on-line on the Web.
 
-![NRCS Table](VolumeI/media/media/image15.png)
+![NRCS Table](hydrology/media/media/image15.png)
 
 **Figure 4-1 Physical properties for Woodburn silt loam, Benton County, Oregon.**
 
@@ -101,7 +103,7 @@ Horton (1933, 1940) proposed the following exponential equation to
 predict the reduction in infiltration capacity over time as observed
 from field measurements:
 
-$$f_{p} = f_{\infty} + \left( f_{0} - f_{\infty} \right)e^{- k_{d}t}$$ (4-1) 
+\f[f_{p} = f_{\infty} + \left( f_{0} - f_{\infty} \right)e^{- k_{d}t}\f] (4-1) 
 
 where:
 
@@ -121,21 +123,18 @@ from the Richards equation under the proper set of assumptions
 (Eagleson, 1970). Note that actual infiltration will be the lesser of
 actual rainfall and infiltration capacity:
 
-$$f(t) = min\left\lbrack f_{p}(t),\ i(t) \right\rbrack$$ (4-2) 
+\f[f(t) = min\left\lbrack f_{p}(t),\ i(t) \right\rbrack\f] (4-2) 
 
 where:
 
-  --------------------------------------------------------------------------
   *f*   =   actual infiltration into the soil (ft/sec)
-  ----- --- ----------------------------------------------------------------
   *i*   =   rainfall intensity (ft/sec).
 
-  --------------------------------------------------------------------------
 
   : Thus for the case illustrated in Figure 4-2 runoff would be
   intermittent.
 
-![Horton infiltration curve](VolumeI/media/media/figure4-2.png)
+![Horton infiltration curve](hydrology/media/media/figure4-2.png)
 
 **Figure 4-2 The Horton infiltration curve**
 
@@ -150,7 +149,7 @@ soil.
 To correct this problem, the integrated form of Horton's equation 4-1 is
 used in SWMM:
 
-$$F\left( t_{p} \right) = \int_{0}^{t_{p}}{f_{p}dt = f_{\infty}t_{p} + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t_{p}} \right)}$$ (4-3)
+\f[F\left( t_{p} \right) = \int_{0}^{t_{p}}{f_{p}dt = f_{\infty}t_{p} + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t_{p}} \right)}\f] (4-3)
 
 where *F* is the cumulative infiltration capacity at time *t*<sub>p</sub> in
 feet. This function is plotted in Figure 4-3 where it is assumed that
@@ -158,9 +157,9 @@ actual infiltration has been equal to *f*<sub>p</sub> over all time *t*. As note
 before, there will in fact be times when infiltration *f* is less than
 *f*<sub>p</sub>, so that the true cumulative infiltration will be:
 
-$$F(t) = \int_{0}^{t}{\min\left\lbrack f_{p},\ i \right\rbrack d\tau}$$ (4-4) 
+\f[F(t) = \int_{0}^{t}{\min\left\lbrack f_{p},\ i \right\rbrack d\tau}\f] (4-4) 
 
-![Cumulative infiltration F as the area under the Horton curve](VolumeI/media/media/figure4-3.png)
+![Cumulative infiltration F as the area under the Horton curve](hydrology/media/media/figure4-3.png)
 
 **Figure 4-3 Cumulative infiltration F as the area under the Horton curve**
 
@@ -170,7 +169,7 @@ is, *F* is updated with the actual infiltration *f* over the current
 time step and then the following equation, with *t*<sub>p</sub> as the only
 unknown, is solved:
 
-$$F = f_{\infty}t_{p} + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t_{p}} \right)$$ (4-5) 
+\f[F = f_{\infty}t_{p} + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t_{p}} \right)\f] (4-5) 
 
 Once the new *t*<sub>p</sub> is known, the infiltration capacity *f*<sub>p</sub> for the
 next time step can be found from Equation 4-1.
@@ -191,46 +190,43 @@ whenever a subcatchment is dry -- meaning it receives no precipitation
 and has no ponded surface water -- according to the hypothetical drying
 curve sketched in Figure 4-4:
 
-$$f_{p} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t - t_{w} \right)}$$ (4-6) 
+\f[f_{p} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t - t_{w} \right)}\f] (4-6) 
 
 where:
 
-  ----------------------------------------------------------------------------
   *k*<sub>r</sub>   =   decay coefficient for the recovery curve (sec<sup>-1</sup>)
-  -------- --- ---------------------------------------------------------------
   *t*<sub>w</sub>   =   hypothetical projected time at which *f*<sub>p</sub> = *f*<sub>∞</sub> on the
                recovery curve (sec).
 
-  ----------------------------------------------------------------------------
 
 New values of *t*<sub>p</sub> are then generated as indicated in Figure 4-4 as
 recovery proceeds. For example, let *t*<sub>pr</sub> be the *t*<sub>p</sub> value at which
 recovery begins with *f*<sub>r</sub> as the corresponding infiltration capacity.
 According to the recovery curve,
 
-$$f_{r} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t_{pr} - t_{w} \right)}$$ (4-7) 
+\f[f_{r} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t_{pr} - t_{w} \right)}\f] (4-7) 
 
 one can compute *t*<sub>w</sub> as:
 
-$$t_{w} = t_{pr} - \frac{1}{k_{r}}\ln\left( \frac{f_{0} - f_{\infty}}{f_{0} - f_{r}} \right)$$ (4-8) 
+\f[t_{w} = t_{pr} - \frac{1}{k_{r}}\ln\left( \frac{f_{0} - f_{\infty}}{f_{0} - f_{r}} \right)\f] (4-8) 
 
-![Regeneration (recovery) of infiltration capacity during dry time steps](VolumeI/media/media/figure4-4.png)
+![Regeneration (recovery) of infiltration capacity during dry time steps](hydrology/media/media/figure4-4.png)
 
 **Figure 4-4 Regeneration (recovery) of infiltration capacity during dry time steps**
 
 Then after a recovery time to *t*<sub>w1</sub> = *t*<sub>pr</sub> + Δ*t*, the new
 infiltration capacity *f*<sub>1</sub> is found from:
 
-$$f_{1} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t_{w1} - t_{w} \right)}$$ (4-9) 
+\f[f_{1} = f_{0} - \left( f_{0} - f_{\infty} \right)e^{- k_{r}\left( t_{w1} - t_{w} \right)}\f] (4-9) 
 
 Finally, the new equivalent time *t*<sub>p1</sub> on the infiltration curve from
 which the infiltration process would re-start under a wet condition is:
 
-$$t_{p1} = \frac{1}{k_{d}}\ln\left( \frac{f_{0} - f_{\infty}}{f_{1} - f_{\infty}} \right)$$ (4-10) 
+\f[t_{p1} = \frac{1}{k_{d}}\ln\left( \frac{f_{0} - f_{\infty}}{f_{1} - f_{\infty}} \right)\f] (4-10) 
 
 These steps can be combined into the following equation:
 
-$$t_{p1} = \frac{1}{k_{d}}\ln\left\lbrack 1 - e^{- k_{r}\mathrm{\Delta}t}\left( 1 - e^{- k_{d}t_{pr}} \right) \right\rbrack$$ (4-11) 
+\f[t_{p1} = \frac{1}{k_{d}}\ln\left\lbrack 1 - e^{- k_{r}\mathrm{\Delta}t}\left( 1 - e^{- k_{d}t_{pr}} \right) \right\rbrack\f] (4-11) 
 
 On succeeding time steps, *t*<sub>p1</sub> may be substituted for *t*<sub>pr</sub>, and
 *t*<sub>p2</sub> substituted for *t*<sub>p1</sub>, etc. Note that *f*<sub>p</sub> has reached its
@@ -517,7 +513,7 @@ recovery time solely on the soil's saturated hydraulic conductivity
 *K*<sub>S</sub>. Adopting its approach produces the following estimate for
 *T*<sub>dry</sub> in days:
 
-$$T_{dry} = \frac{3.125}{\sqrt{K_{s}}}$$ (4-12) 
+\f[T_{dry} = \frac{3.125}{\sqrt{K_{s}}}\f] (4-12) 
 
 where *K*<sub>S</sub> is expressed in in/hr. Thus this equation predicts a drying
 time of 2 days for a sandy soil with *K*<sub>S</sub> = 2.0 in/hr versus 10 days
@@ -529,11 +525,11 @@ its initial value *f*<sub>0</sub>, SWMM considers "full recovery" to occur when
 98 percent of the difference between the initial and minimum capacities
 has been achieved. Thus from Equation 4-6 (for *k*<sub>r</sub> in days<sup>-1</sup>),
 
-$$0.02\left( f_{0} - f_{\infty} \right) = \left( f_{0} - f_{\infty} \right)e^{- k_{r}T_{dry}}$$ (4-13) 
+\f[0.02\left( f_{0} - f_{\infty} \right) = \left( f_{0} - f_{\infty} \right)e^{- k_{r}T_{dry}}\f] (4-13) 
 
 which leads to the following estimate of *k*<sub>r</sub> expressed in days<sup>-1</sup>:
 
-$$k_{r} = \frac{- ln(0.02)}{T_{dry}} = \frac{3.912}{T_{dry}}$$ (4-14) 
+\f[k_{r} = \frac{- ln(0.02)}{T_{dry}} = \frac{3.912}{T_{dry}}\f] (4-14) 
 
 This computation of *k*<sub>r</sub> from a user-supplied value of *T*<sub>dry</sub> and
 its subsequent conversion from days<sup>-1</sup> to sec<sup>-1</sup> is done internally by
@@ -560,7 +556,7 @@ infiltration estimates when low rainfall intensities occur.
 The modified method starts with the same exponential decay equation as
 the original Horton method:
 
-$$f_{p} = f_{\infty} + \left( f_{0} - f_{\infty} \right)e^{- k_{d}t}$$ (4-15) 
+\f[f_{p} = f_{\infty} + \left( f_{0} - f_{\infty} \right)e^{- k_{d}t}\f] (4-15) 
 
 where all symbols have been previously defined.
 
@@ -569,26 +565,26 @@ the smaller of *f*<sub>p</sub> and the rainfall rate *i*. Integrating Equation
 4-15 from 0 to time t produces the following equation for the cumulative
 infiltration through time t:
 
-$$F = f_{\infty}t + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t} \right)$$ (4-16) 
+\f[F = f_{\infty}t + \frac{\left( f_{0} - f_{\infty} \right)}{k_{d}}\left( 1 - e^{- k_{d}t} \right)\f] (4-16) 
 
-Solving for $e^{- k_{d}t}$ from (4-15) and substituting into (4-16)
+Solving for \f$e^{- k_{d}t}\f$ from (4-15) and substituting into (4-16)
 gives:
 
-$$F = f_{\infty}t + \frac{f_{0} - f_{p}}{k_{d}}$$ (4-17) 
+\f[F = f_{\infty}t + \frac{f_{0} - f_{p}}{k_{d}}\f] (4-17) 
 
 and solving for *f*<sub>p</sub> gives:
 
-$$f_{p} = f_{0} - k_{d}(F - f_{\infty}t)$$ (4-18) 
+\f[f_{p} = f_{0} - k_{d}(F - f_{\infty}t)\f] (4-18) 
 
 The last term in parenthesis is equivalent
-to$\int_{0}^{t}{\left( f - f_{\infty} \right)dt}$. So one can
+to\f$\int_{0}^{t}{\left( f - f_{\infty} \right)dt}\f$. So one can
 approximate Eq. (4-18) by
 
-$$f_{p} = f_{0} - {k_{d}F}_{e}$$ (4-19) 
+\f[f_{p} = f_{0} - {k_{d}F}_{e}\f] (4-19) 
 
-where $F_{e} = \sum_{i}^{}{(f_{i} - f_{\infty})\mathrm{\Delta}t_{i}}$
-and $f_{i}$ is the actual infiltration over a previous time interval
-$\mathrm{\Delta}t_{i}$.
+where \f$F_{e} = \sum_{i}^{}{(f_{i} - f_{\infty})\mathrm{\Delta}t_{i}}\f$
+and \f$f_{i}\f$ is the actual infiltration over a previous time interval
+\f$\mathrm{\Delta}t_{i}\f$.
 
 ### 4.3.2 Recovery of Infiltration Capacity
 
@@ -596,32 +592,32 @@ Regarding recovery of infiltration capacity during dry periods, one can
 assume that the instantaneous recovery rate is proportional to the
 difference between the current capacity and the maximum capacity:
 
-$$\frac{df_{r}}{dt} = k_{r}(f_{0} - f_{r})$$ (4-20) 
+\f[\frac{df_{r}}{dt} = k_{r}(f_{0} - f_{r})\f] (4-20) 
 
-where $f_{r}$ represents the infiltration capacity during recovery and
-$k_{r}$ is the same regeneration coefficient (1/sec) used in the
+where \f$f_{r}\f$ represents the infiltration capacity during recovery and
+\f$k_{r}\f$ is the same regeneration coefficient (1/sec) used in the
 conventional Horton method. Integrating this equation starting at some
-time where the infiltration capacity is $f_{r0}$ produces the following
+time where the infiltration capacity is \f$f_{r0}\f$ produces the following
 result for the capacity after a recovery time of *t:*
 
-$$f_{r} = f_{0} - (f_{0} - f_{r0})e^{- k_{r}t}$$ (4-21) 
+\f[f_{r} = f_{0} - (f_{0} - f_{r0})e^{- k_{r}t}\f] (4-21) 
 
 From Eq. 4-19, the cumulative excess infiltration volume corresponding
-to this capacity,$F_{er}$, would be:
+to this capacity,\f$F_{er}\f$, would be:
 
-$$F_{er} = (f_{0} - f_{r})/k_{d}$$ (4-22) 
+\f[F_{er} = (f_{0} - f_{r})/k_{d}\f] (4-22) 
 
-and substituting 4-21 for $f_{r}$ gives:
+and substituting 4-21 for \f$f_{r}\f$ gives:
 
-$$F_{er} = \frac{\left( f_{0} - f_{r0} \right)}{k_{d}}e^{- k_{r}t}$$ (4-23) 
+\f[F_{er} = \frac{\left( f_{0} - f_{r0} \right)}{k_{d}}e^{- k_{r}t}\f] (4-23) 
 
 But again from 4-19,
 
-$$(f_{0} - f_{r0})/k_{d} = F_{e}$$ (4-24) 
+\f[(f_{0} - f_{r0})/k_{d} = F_{e}\f] (4-24) 
 
 so the new cumulative volume after recovery is simply:
 
-$$F_{er} = F_{e}e^{- k_{r}t}$$ (4-25) 
+\f[F_{er} = F_{e}e^{- k_{r}t}\f] (4-25) 
 
 ### 4.3.3 Computational Scheme
 
@@ -703,7 +699,7 @@ beginning at the surface (Figure 4-5). In the wetted zone the moisture
 content *θ* is at saturation *θ*<sub>s</sub> while the moisture content in the
 un-wetted zone is at some known initial level *θ*<sub>i</sub>.
 
-![Two-zone representation of the Green-Ampt infiltration model](VolumeI/media/media/figure4-5.png)
+![Two-zone representation of the Green-Ampt infiltration model](hydrology/media/media/figure4-5.png)
 
 **Figure 4-5 Two-zone representation of the Green-Ampt infiltration model (after Nicklow et al., 2006)**
 
@@ -713,35 +709,35 @@ suction head along the wetting front *ψ*<sub>S</sub>, the depth of ponded water
 at the surface *d*, and the depth of the saturated layer below the
 surface *L*<sub>s</sub>:
 
-$$f_{p} = K_{s}\left\lbrack \frac{d + L_{s} + \psi_{s}}{L_{s}} \right\rbrack$$ (4-26) 
+\f[f_{p} = K_{s}\left\lbrack \frac{d + L_{s} + \psi_{s}}{L_{s}} \right\rbrack\f] (4-26) 
 
 The depth of the saturated layer *L*<sub>s</sub> can be expressed in terms of the
 cumulative infiltration, *F*, and the initial moisture deficit to be
 filled below the wetting front, *θ*<sub>d</sub> = *θ*<sub>s</sub> - *θ*<sub>i</sub> as
-![](VolumeI/media/media/image20.wmf). Substituting this into Equation 4-26 and
+*[Figure image not available in this format]*. Substituting this into Equation 4-26 and
 assuming that *d* is small compared to the other depths gives the
 Green-Ampt equation for saturated conditions:
 
-$$f_{p} = K_{s}\left\lbrack 1 + \frac{\psi_{s}\theta_{d}}{F} \right\rbrack$$ (4-27) 
+\f[f_{p} = K_{s}\left\lbrack 1 + \frac{\psi_{s}\theta_{d}}{F} \right\rbrack\f] (4-27) 
 
 Equation 4-27 applies only after a saturated layer develops at the
 ground surface. Prior to this point in time the infiltration capacity
 will equal the rainfall intensity:
 
-$$f_{p} = i$$ (4-28) 
+\f[f_{p} = i\f] (4-28) 
 
 As time increases, one can test whether saturation has been reached by
 solving 4-27 for *F* (which will be denoted as *F*<sub>s</sub>) with *f*<sub>p</sub> set
 equal to *i* and check if this value equals or exceeds the actual
 cumulative infiltration *F*:
 
-$$F_{s} = \frac{K_{s}\psi_{s}\theta_{d}}{i - K_{s}}$$ (4-29) 
+\f[F_{s} = \frac{K_{s}\psi_{s}\theta_{d}}{i - K_{s}}\f] (4-29) 
 
 Note that there is no calculation of *F*<sub>s</sub> when *i \<= K~s~*, although
 *F* still gets updated during such periods. Finally, in this scheme the
 actual infiltration *f* is the same as the potential value *f*<sub>p</sub>:
 
-$$f = f_{p}$$ (4-30) 
+\f[f = f_{p}\f] (4-30) 
 
 The two equations are illustrated in Figure 4-6 for the situation *K*<sub>S</sub>
 = 0.25 in/hr, *ψ*<sub>S</sub> = 6.5 in, and *θ*<sub>d</sub> = 0.20. The initial, flat
@@ -750,7 +746,7 @@ F~s~* (Equation 4-29). The remainder of the curve corresponds to the
 potential rate computed with Equation 4-27. Note that the infiltration
 rate approaches *K*<sub>S</sub> (0.25 in/hr) asymptotically.
 
-![Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method](VolumeI/media/media/figure4-6.png)
+![Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method](hydrology/media/media/figure4-6.png)
 
 **Figure 4-6 Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method**
 
@@ -761,19 +757,19 @@ over long time steps, the integrated form of the Green-Ampt equation is
 more suitable. That is, *f*<sub>p</sub> is replaced by *dF/dt* and integrated to
 obtain:
 
-$$F = K_{s} + \psi_{s}\theta_{d}\ln\left( 1 + \frac{F}{\psi_{s}\theta_{d}} \right)$$ (4-31) 
+\f[F = K_{s} + \psi_{s}\theta_{d}\ln\left( 1 + \frac{F}{\psi_{s}\theta_{d}} \right)\f] (4-31) 
 
 If *F*<sub>1</sub> is the known cumulative infiltration at the start of the time
 step and *F*<sub>2</sub> the unknown cumulative infiltration at the end of the
 time step then one can write:
 
-$$F_{2} = C + \psi_{s}\theta_{d}\ln\left( F_{2} + \psi_{s}\theta_{d} \right)$$ (4-32) 
+\f[F_{2} = C + \psi_{s}\theta_{d}\ln\left( F_{2} + \psi_{s}\theta_{d} \right)\f] (4-32) 
 
 where
-$C = K_{s}\Delta t + F_{1} - \psi_{s}\theta_{d}\ln\left( F_{1} + \psi_{s}\theta_{d} \right)$
+\f$C = K_{s}\Delta t + F_{1} - \psi_{s}\theta_{d}\ln\left( F_{1} + \psi_{s}\theta_{d} \right)\f$
 is a known constant. Equation 4-32 can be solved numerically for *F*<sub>2</sub>.
 The average infiltration capacity *f*<sub>p</sub> over the time step can then be
-computed as $\left( F_{2} - F_{1} \right)/\Delta t$.
+computed as \f$\left( F_{2} - F_{1} \right)/\Delta t\f$.
 
 ### 4.4.2 Recovery of Infiltration Capacity
 
@@ -792,7 +788,7 @@ of the soil. The thickness of this layer depends on the soil type; for a
 sandy soil it could be several inches, for heavy clay it would be less.
 The equation used to determine the thickness of the layer *L*<sub>u</sub> is:
 
-$$L_{u} = 4\sqrt{K_{s}}$$ (4-33) 
+\f[L_{u} = 4\sqrt{K_{s}}\f] (4-33) 
 
 where *L*<sub>u</sub> has units of inches and *K*<sub>S</sub> is expressed in in/hr. Thus
 for a high *K*<sub>S</sub> of 0.5 in/hr (12.7 mm/hr) the thickness computed by
@@ -814,12 +810,12 @@ user-supplied initial value of *θ*<sub>dmax</sub>. During a wet period when
 infiltration occurs at a rate *f* over a time step of *Δt*, *θ*<sub>du</sub> is
 decreased according to:
 
-$$\theta_{du} \leftarrow \theta_{du} - \frac{f\Delta t}{L_{u}}$$ (4-34) 
+\f[\theta_{du} \leftarrow \theta_{du} - \frac{f\Delta t}{L_{u}}\f] (4-34) 
 
 down to a possible limiting value of 0. During a dry period it increases
 as follows:
 
-$$\theta_{du} \leftarrow \theta_{du} + k_{r}\theta_{dmax}\Delta t$$ (4-35) 
+\f[\theta_{du} \leftarrow \theta_{du} + k_{r}\theta_{dmax}\Delta t\f] (4-35) 
 
 up to a maximum possible value of *θ*<sub>dmax</sub> , where *k*<sub>r</sub> is a recovery
 constant (hr<sup>-1</sup>).
@@ -829,22 +825,22 @@ such that tight, clay soils with low *K*<sub>S</sub> take longer to recover than
 do loose, sandy soils with high *K*<sub>S</sub>. The following relationship is
 used for *k*<sub>r</sub>:
 
-$$k_{r} = \frac{\sqrt{K_{s}}}{75}$$ (4-36) 
+\f[k_{r} = \frac{\sqrt{K_{s}}}{75}\f] (4-36) 
 
 where the constant 75 has units of (in-hr)<sup>1/2</sup>. Note that the time it
 would take a fully saturated soil to recovery to its maximum capacity is
 simply:
 
-$$\frac{1}{k_{r}} = \frac{75}{\sqrt{K_{s}}}\ $$ 
+\f[\frac{1}{k_{r}} = \frac{75}{\sqrt{K_{s}}}\ \f] 
 
-hours (or $3.125/\sqrt{K_{s}}$ days).
+hours (or \f$3.125/\sqrt{K_{s}}\f$ days).
 
 To complete the recovery process it is necessary to define the minimum
 amount of time that a soil must remain in recovery before any further
 rainfall would be considered as an independent event. This time *T*<sub>r</sub>
 (hr) is computed as:
 
-$$T_{r} = \frac{0.06}{k_{r}} = \frac{4.5}{\sqrt{K_{s}}}$$ (4-37) 
+\f[T_{r} = \frac{0.06}{k_{r}} = \frac{4.5}{\sqrt{K_{s}}}\f] (4-37) 
 
 Thus when a new period of rainfall occurs after a recovery interval of
 at least *T*<sub>r</sub> hours, the two-stage Green-Ampt infiltration process is
@@ -853,7 +849,7 @@ functional dependence of the three internally computed recovery
 parameters *L*<sub>u</sub>, *k*<sub>r</sub>, and *T*<sub>r</sub> on the saturated hydraulic
 conductivity *K*<sub>S</sub>.
 
-![Green-Ampt recovery parameters as functions of hydraulic conductivity](VolumeI/media/media/figure4-7.png)
+![Green-Ampt recovery parameters as functions of hydraulic conductivity](hydrology/media/media/figure4-7.png)
 
 **Figure 4-7 Green-Ampt recovery parameters as functions of hydraulic conductivity**
 
@@ -950,7 +946,7 @@ the exception.
 The suction head, *ψ*<sub>S</sub> (also referred to as capillary tension), is
 perhaps the most difficult parameter to measure. It can be derived from
 soil moisture - conductivity data (Mein and Larsen, 1973) of the type
-shown in Figures 5-5 in Chapter 5 for groundwater. Unfortunately, such
+shown in Figures 5-5 in @ref hydrology_ref_ch5_groundwater "Chapter 5" for groundwater. Unfortunately, such
 detailed data are rare for most soils. Fortunately the results obtained
 for Green-Ampt infiltration are not highly sensitive to the estimate of
 *ψ*<sub>S</sub> (Brakensiek and Onstad, 1977).
@@ -974,7 +970,7 @@ conductivity over all soil classes. Using nonlinear regression on the
 average values for these two variables listed in Table 4-7 produces the
 following relationship for *K*<sub>S</sub> in in/hr and *ψ*<sub>S</sub> in inches:
 
-$\psi_{s} = 3.237K_{S}^{- 0.328}$ (*R*<sup>2</sup>> = 0.9) (4-38)                
+\f$\psi_{s} = 3.237K_{S}^{- 0.328}\f$ (*R*<sup>2</sup>> = 0.9) (4-38)                
 
 **Maximum Moisture Deficit (*θ*<sub>dmax</sub>)**
 
@@ -1040,7 +1036,7 @@ Finally, the initial moisture deficit can be related to another very
 general measure of a soil: its storage capacity, S, which can be
 expressed as:
 
-$$S = d_{wt}\theta_{dmax}$$ (4-39) 
+\f[S = d_{wt}\theta_{dmax}\f] (4-39) 
 
 where *d*<sub>wt</sub> is the depth to the sub-surface water table. Estimates of
 soil storage capacity, *S*, are available using the Curve Number method,
@@ -1076,7 +1072,7 @@ to relate total event runoff *Q* (in) to total event precipitation *P*
 (in) (Haan et al., 1994; McCuen, 1998; Bedient et al., 2013; NRCS,
 2004b):
 
-$$Q = \frac{P^{2}}{P + S_{\max}}$$ (4-40)
+\f[Q = \frac{P^{2}}{P + S_{\max}}\f] (4-40)
 
 where *S*<sub>max</sub> = the soil's maximum moisture storage capacity (inches).
 *S*<sub>max</sub> can also be thought of as the difference in water volume
@@ -1087,7 +1083,7 @@ basis rather than as a fraction (see Equation 4-39). *S*<sub>max</sub> is derive
 from a tabulated "curve number" *CN* that varies with soil type and
 antecedent conditions:
 
-$$S_{\max} = \frac{1000}{CN} - 10$$ (4-41)
+\f[S_{\max} = \frac{1000}{CN} - 10\f] (4-41)
 
 It should be emphasized that Equation 4-40 and subsequent equations use
 units of **inches**. Curve numbers for various soil types and
@@ -1105,7 +1101,7 @@ Assuming that all rainfall that does not run off is lost to infiltration
 (i.e., *P* - *Q* = *F*), Equation 4-40 can be extended to predict total
 (cumulative) infiltration *F* (in) as:
 
-$$F = P - \frac{P^{2}}{P + S_{\max}}$$ (4-42)
+\f[F = P - \frac{P^{2}}{P + S_{\max}}\f] (4-42)
 
 For a continuous model like SWMM, Equation 4-42 can be applied in an
 incremental fashion to compute an infiltration rate *f* at each time
@@ -1113,11 +1109,11 @@ step. Let *P*<sub>1</sub> and *F*<sub>1</sub> be the cumulative precipitation an
 infiltration, respectively, at the start of the time step. At the end of
 the time step:
 
-$$P_{2} = P_{1} + i\Delta t$$ (4-43) 
+\f[P_{2} = P_{1} + i\Delta t\f] (4-43) 
 
 and
 
-$$F_{2} = P_{2} - \frac{P_{2}^{2}}{P_{2} + S_{e}}$$ (4-44) 
+\f[F_{2} = P_{2} - \frac{P_{2}^{2}}{P_{2} + S_{e}}\f] (4-44) 
 
 where *P*<sub>2</sub> and *F*<sub>2</sub> are the cumulative precipitation and
 infiltration values, respectively, at the end of a time step *Δt* (hr),
@@ -1130,7 +1126,7 @@ section.
 
 The infiltration rate *f* (ft/sec) can then be computed as:
 
-$$f = \left( F_{2} - F_{1} \right)/\Delta t$$ (4-45) 
+\f[f = \left( F_{2} - F_{1} \right)/\Delta t\f] (4-45) 
 
 and the cumulative values get updated to *P*<sub>1</sub> = *P*<sub>2</sub> and *F*<sub>1</sub> = *F*<sub>2</sub>
 to prepare for the next time step. Note that as it stands, this model
@@ -1153,7 +1149,7 @@ Whenever infiltration at rate *f* occurs over a time step *Δt*, *S* is
 reduced by *fΔt*. During a period with no infiltration *S* is assumed to
 be replenished at a rate proportional to *S*<sub>max</sub>:
 
-$$S \leftarrow S + k_{r}S_{\max}\mathrm{\Delta}t$$ (4-46) 
+\f[S \leftarrow S + k_{r}S_{\max}\mathrm{\Delta}t\f] (4-46) 
 
 where *k*<sub>r</sub> is a storage capacity recovery constant (hr<sup>-1</sup>). This
 recovery expression has the same form as used in the Green-Ampt model
@@ -1169,7 +1165,7 @@ before the next rainfall period is deemed to begin a new event. *T*<sub>r</sub>
 is assumed to be related to the recovery constant *k*<sub>r</sub> through
 Equation 4-25 which is repeated here:
 
-$$T_{r} = \frac{0.06}{k_{r}}$$ (4-47) 
+\f[T_{r} = \frac{0.06}{k_{r}}\f] (4-47) 
 
 ### 4.5.3 Computational Scheme
 
@@ -1256,7 +1252,7 @@ capacity (*S*<sub>max</sub>) using Equation 4-41. The drying time *T*<sub>dry</s
 days is used to compute the regeneration constant *k*<sub>r</sub> in hours<sup>-1</sup>
 as:
 
-$$k_{r} = \frac{1}{24T_{dry}}$$ (4-48) 
+\f[k_{r} = \frac{1}{24T_{dry}}\f] (4-48) 
 
 The minimum inter-event recovery time *T*<sub>r</sub> is then computed from
 *k*<sub>r</sub> using Equation 4-47.
@@ -1276,9 +1272,9 @@ moisture conditions (AMC II). For AMC I (low moisture) or AMC III (high
 moisture) the following adjustments can be made to the tabulated values
 (NRCS, 2004a):
 
-$$CN_{I} = \frac{4.2CN_{II}}{10 - 0.058{CN}_{II}}$$ (4-49) 
+\f[CN_{I} = \frac{4.2CN_{II}}{10 - 0.058{CN}_{II}}\f] (4-49) 
 
-$${CN}_{III} = \frac{23{CN}_{II}}{10 - 0.13{CN}_{II}}$$ (4-50) 
+\f[{CN}_{III} = \frac{23{CN}_{II}}{10 - 0.13{CN}_{II}}\f] (4-50) 
 
 where *CN*<sub>i</sub> refers to the curve number for antecedent moisture
 condition *i*. For long-term simulations the AMC I curve number should
@@ -1319,13 +1315,12 @@ calibration against field measurements (see Shuster and Pappas, 2011).
 | Fair condition: grass cover on 50 -- 75% of the area | 49 | 69 | 79 | 84 |
 | **Commercial and business areas (85% impervious)** | 89 | 92 | 94 | 95 |
 | **Industrial districts (72% impervious)** | 81 | 88 | 91 | 93 |
-| **Residential³** | | | | |
-| Average lot size | Average % impervious⁴ | | | |
-| 1/8 ac or less | 65 | 77 | 85 | 90 | 92 |
-| 1/4 ac | 38 | 61 | 75 | 83 | 87 |
-| 1/3 ac | 30 | 57 | 72 | 81 | 86 |
-| 1/2 ac | 25 | 54 | 70 | 80 | 85 |
-| 1 ac | 20 | 51 | 68 | 79 | 84 |
+| **Residential³ (by average lot size and average % impervious⁴)** | | | | |
+| 1/8 ac or less (65% impervious) | 77 | 85 | 90 | 92 |
+| 1/4 ac (38% impervious) | 61 | 75 | 83 | 87 |
+| 1/3 ac (30% impervious) | 57 | 72 | 81 | 86 |
+| 1/2 ac (25% impervious) | 54 | 70 | 80 | 85 |
+| 1 ac (20% impervious) | 51 | 68 | 79 | 84 |
 | **Paved parking lots, roofs, driveways, etc.⁵** | 98 | 98 | 98 | 98 |
 | **Streets and roads** | | | | |
 | Paved with curbs and storm sewers⁵ | 98 | 98 | 98 | 98 |
@@ -1351,7 +1346,7 @@ and the Green-Ampt recovery process in Section 4.3.2. It was suggested
 that the drying time *T*<sub>dry</sub> in days could be related to a soil's
 saturated hydraulic conductivity *K*<sub>S</sub> in in/hr as follows:
 
-$$T_{dry} = \frac{3.125}{\sqrt{K_{s}}}$$ (4-51) 
+\f[T_{dry} = \frac{3.125}{\sqrt{K_{s}}}\f] (4-51) 
 
 where estimates of *K*<sub>S</sub> based on soil type can be found from Table
 4-7.
@@ -1400,14 +1395,14 @@ different infiltration patterns over time. These patterns are influenced
 not only by the parameters that were chosen for each method, but also by
 the temporal pattern of rainfall intensity that occurs during an event.
 
-<figure>
-<img src="VolumeI/media/media/image24.png"
-style="width:5.59453in;height:4.16725in" alt="InfilExample.png" />
-<figcaption><p><span id="_Toc426447688"
+![](hydrology/media/media/image24.png "image24")
+<p><span id="_Toc426447688"
 class="anchor"></span><strong>Figure 4-8 Infiltration rates produced by
-different methods for a 2-inch rainfall event.</strong></p></figcaption>
-</figure>
+different methods for a 2-inch rainfall event.</strong></p>
 
 (Numbers in parentheses are the fraction of rainfall that becomes
 runoff.)
+
+
+
 

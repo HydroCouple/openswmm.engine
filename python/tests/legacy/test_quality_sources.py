@@ -28,8 +28,7 @@
 
 import os
 import re
-
-import pytest
+import unittest
 
 from openswmm import solver
 from openswmm.legacy.engine import LegacyNodes, LegacySubcatchments, LegacySystem
@@ -114,7 +113,7 @@ def _max_node_quality(s, max_steps):
 # --------------------------------------------------------------------------- #
 # Q1 — rain (wet-deposition) concentration
 # --------------------------------------------------------------------------- #
-class TestRainConcentration:
+class TestRainConcentration(unittest.TestCase):
     def _peak_runoff_tss(self, rain_conc, name):
         s = _open(_SITE_DRAINAGE, name)
         s.set_value(_PObj, _PProp.RAIN_CONCENTRATION, 0, rain_conc)
@@ -133,8 +132,8 @@ class TestRainConcentration:
 
     def test_rain_concentration_drives_washoff(self):
         """Q1: wet-deposition concentration appears in subcatchment runoff."""
-        assert self._peak_runoff_tss(0.0, "q1_rain_off") == pytest.approx(0.0, abs=1e-6)
-        assert self._peak_runoff_tss(100.0, "q1_rain_on") > 50.0
+        self.assertAlmostEqual(self._peak_runoff_tss(0.0, "q1_rain_off"), 0.0, delta=1e-6)
+        self.assertGreater(self._peak_runoff_tss(100.0, "q1_rain_on"), 50.0)
 
     def test_rain_concentration_round_trip(self):
         """Q1: the rain-concentration getter round-trips a mid-run set."""
@@ -143,7 +142,7 @@ class TestRainConcentration:
             for _ in range(5):
                 s.step()
             s.set_value(_PObj, _PProp.RAIN_CONCENTRATION, 0, 73.0)
-            assert s.get_value(_PObj, _PProp.RAIN_CONCENTRATION, 0) == pytest.approx(73.0)
+            self.assertAlmostEqual(s.get_value(_PObj, _PProp.RAIN_CONCENTRATION, 0), 73.0, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -151,14 +150,14 @@ class TestRainConcentration:
 # --------------------------------------------------------------------------- #
 # Q2 — groundwater inflow concentration
 # --------------------------------------------------------------------------- #
-class TestGwConcentration:
+class TestGwConcentration(unittest.TestCase):
     def test_gw_concentration_reaches_node(self):
         """Q2: with Cgw>0 only, a GW-fed node carries the pollutant."""
         inp = _derive_legacy_small(0.0, 50.0, 0.0, 0.0, "gw")
         s = _open(inp, "q2_gw")
         try:
             peak, who = _max_node_quality(s, max_steps=600)
-            assert peak > 1.0, f"expected GW-sourced node TSS>1 (got {peak} at {who})"
+            self.assertGreater(peak, 1.0, f"expected GW-sourced node TSS>1 (got {peak} at {who})")
         finally:
             s.end(); s.finalize()
 
@@ -169,9 +168,9 @@ class TestGwConcentration:
         try:
             for _ in range(5):
                 s.step()
-            assert s.get_value(_PObj, _PProp.GW_CONCENTRATION, 0) == pytest.approx(50.0)
+            self.assertAlmostEqual(s.get_value(_PObj, _PProp.GW_CONCENTRATION, 0), 50.0, places=6)
             s.set_value(_PObj, _PProp.GW_CONCENTRATION, 0, 120.0)
-            assert s.get_value(_PObj, _PProp.GW_CONCENTRATION, 0) == pytest.approx(120.0)
+            self.assertAlmostEqual(s.get_value(_PObj, _PProp.GW_CONCENTRATION, 0), 120.0, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -179,14 +178,14 @@ class TestGwConcentration:
 # --------------------------------------------------------------------------- #
 # Q3 — RDII inflow concentration
 # --------------------------------------------------------------------------- #
-class TestRdiiConcentration:
+class TestRdiiConcentration(unittest.TestCase):
     def test_rdii_concentration_reaches_node(self):
         """Q3: with Crdii>0 only, an RDII-fed node carries the pollutant."""
         inp = _derive_legacy_small(0.0, 0.0, 50.0, 0.0, "rdii")
         s = _open(inp, "q3_rdii")
         try:
             peak, who = _max_node_quality(s, max_steps=600)
-            assert peak > 1.0, f"expected RDII-sourced node TSS>1 (got {peak} at {who})"
+            self.assertGreater(peak, 1.0, f"expected RDII-sourced node TSS>1 (got {peak} at {who})")
         finally:
             s.end(); s.finalize()
 
@@ -197,9 +196,9 @@ class TestRdiiConcentration:
         try:
             for _ in range(5):
                 s.step()
-            assert s.get_value(_PObj, _PProp.RDII_CONCENTRATION, 0) == pytest.approx(50.0)
+            self.assertAlmostEqual(s.get_value(_PObj, _PProp.RDII_CONCENTRATION, 0), 50.0, places=6)
             s.set_value(_PObj, _PProp.RDII_CONCENTRATION, 0, 33.0)
-            assert s.get_value(_PObj, _PProp.RDII_CONCENTRATION, 0) == pytest.approx(33.0)
+            self.assertAlmostEqual(s.get_value(_PObj, _PProp.RDII_CONCENTRATION, 0), 33.0, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -207,7 +206,7 @@ class TestRdiiConcentration:
 # --------------------------------------------------------------------------- #
 # Q5 (legacy) — dry-weather-flow concentration
 # --------------------------------------------------------------------------- #
-class TestDwfConcentration:
+class TestDwfConcentration(unittest.TestCase):
     def test_dwf_concentration_reaches_node(self):
         """Q5: with Cdwf>0 only, a pure-DWF node concentration equals Cdwf."""
         inp = _derive_legacy_small(0.0, 0.0, 0.0, 50.0, "dwf")
@@ -215,7 +214,7 @@ class TestDwfConcentration:
         try:
             peak, who = _max_node_quality(s, max_steps=600)
             # A node fed solely by DWF mixes to the prescribed concentration.
-            assert peak == pytest.approx(50.0, rel=0.2), f"got {peak} at {who}"
+            self.assertAlmostEqual(peak, 50.0, delta=0.2 * 50.0, msg=f"got {peak} at {who}")
         finally:
             s.end(); s.finalize()
 
@@ -223,7 +222,7 @@ class TestDwfConcentration:
 # --------------------------------------------------------------------------- #
 # Q6 — ponded surface-quality injection
 # --------------------------------------------------------------------------- #
-class TestPondedInjection:
+class TestPondedInjection(unittest.TestCase):
     def _run_to_ponding(self, s):
         """Step until a subcatchment has active runoff (surface depth > 0)."""
         subs = LegacySubcatchments(s)
@@ -241,13 +240,13 @@ class TestPondedInjection:
         s = _open(_SITE_DRAINAGE, "q6_round_trip")
         try:
             subs, idx = self._run_to_ponding(s)
-            assert idx >= 0, "no subcatchment developed ponded depth"
+            self.assertGreaterEqual(idx, 0, "no subcatchment developed ponded depth")
             subs[idx].set_ponded_concentration(0, 500.0)
             back = s.get_value(
                 solver.SWMMObjects.SUBCATCHMENT,
                 solver.SWMMSubcatchmentProperties.POLLUTANT_PONDED_CONCENTRATION,
                 idx, pollutant_index=0)
-            assert back == pytest.approx(500.0, rel=1e-6)
+            self.assertAlmostEqual(back, 500.0, delta=500.0 * 1e-6)
         finally:
             s.end(); s.finalize()
 
@@ -269,7 +268,7 @@ class TestPondedInjection:
 
         base_load, idx = total_load(False)
         inj_load, _ = total_load(True)
-        assert idx >= 0
+        self.assertGreaterEqual(idx, 0)
         # The injected ponded mass washes off, so the cumulative load strictly
         # exceeds the no-injection baseline.
-        assert inj_load > base_load
+        self.assertGreater(inj_load, base_load)

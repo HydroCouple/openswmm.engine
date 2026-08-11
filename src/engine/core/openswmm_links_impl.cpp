@@ -25,6 +25,63 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+// ============================================================================
+// ABI ⇄ storage shape-code parity (compile-time)
+// ============================================================================
+//
+// swmm_link_set_xsect/get_xsect pass the shape code straight through with a
+// static_cast between `int` and openswmm::XsectShape — there is no translation
+// step and there must not be one, because SWMM_XSectShape IS the storage
+// numbering. These assertions are what make that cast sound: renumber either
+// side and the build breaks here instead of silently storing the wrong shape.
+//
+// This is not hypothetical. Before 6.0 the two disagreed for every code from 8
+// up (SWMM_XSECT_IRREGULAR=19 landed on VERT_ELLIPSE), and with nothing pinning
+// them the defect reached the GUI's shape picker and the Python enum. Keep the
+// list exhaustive — a shape added to XsectShape but not asserted here is
+// exactly the hole that let it happen.
+//
+// NOTE: the legacy/batch openswmm::XSectShape (XSectBatch.hpp) is a THIRD,
+// unrelated numbering used by the geometry kernels; cross it only through
+// link::translateShape().
+namespace {
+#define OPENSWMM_ASSERT_SHAPE(abi, stored)                                     \
+    static_assert(static_cast<int>(abi) ==                                     \
+                      static_cast<int>(openswmm::XsectShape::stored),          \
+                  #abi " must equal openswmm::XsectShape::" #stored            \
+                       " — the C ABI and the engine's storage codes are the "  \
+                       "same numbering (see openswmm_links.h)")
+
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_CIRCULAR,        CIRCULAR);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_FILLED_CIRCULAR, FILLED_CIRCULAR);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_RECT_CLOSED,     RECT_CLOSED);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_RECT_OPEN,       RECT_OPEN);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_TRAPEZOIDAL,     TRAPEZOIDAL);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_TRIANGULAR,      TRIANGULAR);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_PARABOLIC,       PARABOLIC);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_POWER,           POWER);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_MOD_BASKET,      MODBASKETHANDLE);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_EGGSHAPED,       EGGSHAPED);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_HORSESHOE,       HORSESHOE);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_GOTHIC,          GOTHIC);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_CATENARY,        CATENARY);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_SEMIELLIPTICAL,  SEMIELLIPTICAL);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_BASKETHANDLE,    BASKETHANDLE);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_SEMICIRCULAR,    SEMICIRCULAR);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_RECT_TRIANG,     RECT_TRIANG);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_RECT_ROUND,      RECT_ROUND);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_HORIZ_ELLIPSE,   HORIZ_ELLIPSE);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_VERT_ELLIPSE,    VERT_ELLIPSE);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_ARCH,            ARCH);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_IRREGULAR,       IRREGULAR);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_CUSTOM,          CUSTOM);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_FORCE_MAIN,      FORCE_MAIN);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_STREET,          STREET_XSECT);
+OPENSWMM_ASSERT_SHAPE(SWMM_XSECT_DUMMY,           DUMMY);
+
+#undef OPENSWMM_ASSERT_SHAPE
+} // namespace
+
 extern "C" {
 
 // ============================================================================

@@ -104,6 +104,12 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;
         // Name  Gage  Outlet  Area  %Imperv  Width  %Slope  [CurbLen]
+        //       [Snowpack] [RainScale] [SnowScale]
+        //
+        // Snowpack (tok 8) accepts "*" as a placeholder meaning "no snow pack",
+        // which lets a model reach tokens 9/10 without assigning one. Same
+        // convention as the omitted start date in the [RAINGAGES] FILE format.
+        // RainScale (tok 9) and SnowScale (tok 10) default to 1.0.
 
         const std::string& name = tok[0];
         int idx = ctx.subcatch_names.find(name);
@@ -111,7 +117,10 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
 
         ensure_subcatch_capacity(ctx, idx);
 
-        // Gage — resolve index, may be -1 if gage not yet parsed
+        // Gage — resolve index, may be -1 if gage not yet parsed. Store the
+        // name so PostParseResolver can re-resolve a forward reference and
+        // raise ERR_NAME for a truly undefined gage (legacy fatal).
+        ctx.subcatches.gage_name[idx] = tok[1];
         ctx.subcatches.gage[idx] = ctx.gage_names.find(tok[1]);
 
         // Outlet: could be a node or another subcatchment
@@ -137,10 +146,24 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         // Optional SnowPack (column 8) — store the name for deferred
         // resolution (SNOWPACKS is usually parsed after SUBCATCHMENTS) and
         // attempt an immediate resolve in case it was parsed first.
-        if (tok.size() > 8 && !tok[8].empty()) {
+        // "*" is a positional placeholder, not a snow pack name.
+        if (tok.size() > 8 && !tok[8].empty() && tok[8] != "*") {
             ctx.subcatches.snowpack_name[idx] = tok[8];
             ctx.subcatches.snowpack[idx] = ctx.snowpack_names.find(tok[8]);
         }
+
+        // Optional rainfall / snowfall scale factors (columns 9, 10).
+        // Both default to 1.0; non-positive values are ignored rather than
+        // silently zeroing a subcatchment's precipitation.
+        if (tok.size() > 9) {
+            double rsf = to_double(tok[9]);
+            if (rsf > 0.0) ctx.subcatches.rain_scale_factor[idx] = rsf;
+        }
+        if (tok.size() > 10) {
+            double ssf = to_double(tok[10]);
+            if (ssf > 0.0) ctx.subcatches.snow_scale_factor[idx] = ssf;
+        }
+
         if (!pl.comment.empty())
             ctx.subcatches.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

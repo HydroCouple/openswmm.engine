@@ -95,7 +95,7 @@ TEST_F(ControlRuleValidateTest, RejectsRuleWithNoName) {
               SWMM_ERR_BADPARAM);
     // The buffer should hold a non-empty message on reject.
     EXPECT_GT(std::strlen(errbuf), 0u);
-    EXPECT_EQ(line, -1);
+    EXPECT_EQ(line, 1);
 }
 
 TEST_F(ControlRuleValidateTest, RejectsUnresolvedNodeName) {
@@ -188,7 +188,86 @@ TEST_F(ControlRuleValidateTest, NullErrbufIsTolerated) {
                                           nullptr, 0, &line),
               SWMM_ERR_BADPARAM);
     // Should not crash — line still gets a value.
+    EXPECT_EQ(line, 1);
+}
+
+// ============================================================================
+// Line-precise diagnostics — the rejection must name the offending line and
+// say why, not just "the parser said no". `line` is 1-based over the text as
+// submitted, blank lines included.
+// ============================================================================
+
+TEST_F(ControlRuleValidateTest, ReportsLineAndReasonForUnknownLink) {
+    char errbuf[256] = {};
+    int  line = 0;
+    const char* rule =
+        "RULE R_BadLink\n"        // 1
+        "IF NODE J1 DEPTH > 5\n"  // 2
+        "THEN PUMP P1 STATUS = ON\n"
+        "AND PUMP P_GHOST STATUS = OFF";  // 4 — the bad one
+    ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(line, 4);
+    EXPECT_NE(std::string(errbuf).find("P_GHOST"), std::string::npos)
+        << "message should name the unresolved link; got: " << errbuf;
+}
+
+TEST_F(ControlRuleValidateTest, LineNumberCountsBlankLines) {
+    // Blank lines are skipped by the parser but must still be counted, so the
+    // reported number indexes the caller's text directly.
+    char errbuf[256] = {};
+    int  line = 0;
+    const char* rule =
+        "RULE R_Blank\n"          // 1
+        "\n"                      // 2
+        "IF NODE J1 DEPTH > 5\n"  // 3
+        "\n"                      // 4
+        "THEN PUMP P1 STATUS = MAYBE";  // 5
+    ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(line, 5);
+}
+
+TEST_F(ControlRuleValidateTest, ReportsReasonForBadRelationalOperator) {
+    char errbuf[256] = {};
+    int  line = 0;
+    const char* rule =
+        "RULE R_BadOp\n"
+        "IF NODE J1 DEPTH => 5\n"   // "=>" is not an operator; ">=" is
+        "THEN PUMP P1 STATUS = ON";
+    ASSERT_EQ(swmm_control_validate_rule(engine, rule, errbuf, sizeof(errbuf), &line),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(line, 2);
+    EXPECT_NE(std::string(errbuf).find("relational operator"), std::string::npos)
+        << "got: " << errbuf;
+}
+
+TEST_F(ControlRuleValidateTest, EmptyTextHasNoOffendingLine) {
+    // Whitespace-only input parses cleanly but yields no rule, so there is no
+    // single line to blame — line_out stays -1 while the call still fails.
+    char errbuf[128] = {};
+    int  line = 0;
+    EXPECT_EQ(swmm_control_validate_rule(engine, "   \n\n", errbuf, sizeof(errbuf), &line),
+              SWMM_ERR_BADPARAM);
     EXPECT_EQ(line, -1);
+    EXPECT_GT(std::strlen(errbuf), 0u);
+}
+
+// ============================================================================
+// Multi-action THEN blocks — `AND`-chained actions are unbounded. Pinned
+// because a user reported (incorrectly) that a 7-action rule hit a limit.
+// ============================================================================
+
+TEST_F(ControlRuleValidateTest, AcceptsManyChainedActions) {
+    std::string rule = "RULE R_Many\nIF SIMULATION TIME >= 0\n"
+                       "THEN PUMP P1 STATUS = ON";
+    for (int i = 0; i < 32; ++i) rule += "\nAND PUMP P1 SETTING = 0.5";
+
+    char errbuf[256] = {};
+    int  line = 0;
+    EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(),
+                                          errbuf, sizeof(errbuf), &line),
+              SWMM_OK) << errbuf;
 }
 
 TEST_F(ControlRuleValidateTest, NullLineOutIsTolerated) {

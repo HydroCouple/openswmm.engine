@@ -1,4 +1,6 @@
-﻿#  Chapter 2: Meteorology
+@page hydrology_ref_ch2_meteorology Chapter 2: Meteorology
+
+@tableofcontents
 
 ## 2.1 Precipitation
 
@@ -147,6 +149,102 @@ subcatchment rainfalls ***I***<sub>t</sub> would equal the vector of cell
 rainfall values ***R***<sub>t</sub> multiplied by the weighting matrix ***W***.
 These data for each time period could be placed in a standard SWMM
 user-prepared rainfall file for direct use by SWMM (see below).
+
+### 2.1.5 Precipitation Scaling Factors
+
+In addition to assigning different rain gages to different
+subcatchments, SWMM provides two levels of multiplicative scaling
+factors that adjust the precipitation a subcatchment receives from its
+assigned gage. Gage-level factors correct systematic bias in the
+measurement itself, while subcatchment-level factors represent spatial
+differences between the gage location and the land parcel being modeled.
+All factors default to 1.0, must be positive, and enter the calculation
+only as multipliers, so a model that does not use them behaves exactly
+as if the factors were absent.
+
+At the gage level, each Rain Gage object accepts an optional rainfall
+scale factor *SF<sub>g</sub>*. It is applied to every precipitation value read
+from the gage's data source, together with the units conversion and the
+monthly rainfall adjustment factor described in Section 2.7:
+
+\f[I_{g} = SF_{g}\ f_{R,m}\ I_{raw}\f]  (2-12)
+
+where *I<sub>raw</sub>* is the precipitation intensity read from the gage's time
+series or file (after conversion to intensity units), *f<sub>R,m</sub>* is the
+monthly rainfall adjustment factor for month *m* (Section 2.7, equal to
+1.0 by default), and *I<sub>g</sub>* is the resulting gage precipitation
+intensity. Each gage also has a snow catch factor *SCF<sub>g</sub>* that
+compensates for the catch deficiency most gages exhibit during snowfall;
+its physical basis is discussed with the snowmelt model in Chapter 6
+(see @ref hydrology_ref_ch6_snowmelt "Chapter 6"). When two gages share
+the same time series (co-gages), the secondary gage's precipitation is
+the primary's value re-scaled by the ratio of the two gages' scale
+factors.
+
+At the subcatchment level, each subcatchment accepts an optional
+rainfall scale factor *φ<sub>R,j</sub>* and snowfall scale factor *φ<sub>S,j</sub>*.
+During each time step the gage intensity is first partitioned into rain
+or snow by comparing the current air temperature against the dividing
+temperature between rain and snow (see Chapter 6); the scale factors are
+then applied to the appropriate component. For subcatchment *j* served
+by gage *g*:
+
+\f[P_{rain,j} = I_{g}\ \varphi_{R,j}\f]  (2-13)
+
+\f[P_{snow,j} = I_{g}\ SCF_{g}\ \varphi_{S,j}\f]  (2-14)
+
+Note that the gage snow catch factor and the subcatchment snowfall scale
+factor compose multiplicatively rather than one overriding the other.
+They represent different physical effects: *SCF<sub>g</sub>* is an instrument
+correction for the catch deficiency of a particular physical gage, while
+*φ<sub>S,j</sub>* is a spatial adjustment (orographic gradients, canopy
+interception, drifting) for a particular land parcel. The same
+distinction applies on the rain side, where *SF<sub>g</sub>* corrects gage bias
+and *φ<sub>R,j</sub>* represents spatial variation.
+
+Typical uses of these factors include:
+
+- correcting a known measurement bias at a gage (e.g., wind-induced
+  under-catch) without editing its recorded time series,
+
+- applying a uniform climate-change adjustment (e.g., increasing all
+  rainfall by 10 percent) to an existing precipitation record,
+
+- representing orographic or other spatial precipitation gradients when
+  several subcatchments must share a single distant gage,
+
+- calibration, since the factors can also be set through the runtime
+  API while a simulation is in progress.
+
+The gage rainfall scale factor is supplied as an optional trailing value
+on a `[RAINGAGES]` line, following the snow catch factor. The
+subcatchment factors are supplied as optional ninth and tenth values on
+a `[SUBCATCHMENTS]` line, following the snow pack name; a `*` may be
+entered as a placeholder in the snow pack field so that the scale
+factors can be reached when no snow pack is assigned:
+
+```
+[SUBCATCHMENTS]
+;;Name  RainGage  Outlet  Area  %Imperv  Width  %Slope  CurbLen  Snowpack  RainScale  SnowScale
+S1      G1        N1      5.0   40       500    0.5     0        *         1.15       0.90
+```
+
+Two limitations should be noted. First, RDII unit hydrographs (Chapter
+7) are driven directly from the rain gage rather than from a
+subcatchment, so the gage-level scale factor affects RDII but the
+subcatchment-level factors do not. Second, rainfall prescribed directly
+through the runtime API is an absolute injection and is deliberately not
+scaled by any of these factors.
+
+**Implementation.** The gage-level pipeline of Equation 2-12 is applied
+in `convertRainfall()` and the per-subcatchment rain/snow split with
+subcatchment scale factors (Equations 2-13 and 2-14) in `splitPrecip()`,
+both in src/engine/hydrology/Gage.cpp (see @ref openswmm::gage::splitPrecip).
+The factors are stored in @ref openswmm::GageData (`scale_factor`,
+`snow_factor`) and @ref openswmm::SubcatchData (`rain_scale_factor`,
+`snow_scale_factor`), parsed in
+src/engine/input/handlers/CatchmentHandler.cpp, and exposed for runtime
+modification in src/engine/core/openswmm_subcatchments_impl.cpp.
 
 ## 2.2 Precipitation Data Sources
 
@@ -356,7 +454,6 @@ only good, non-zero precipitation data.
 | 410427 | 07 | QPCP | HT | 1997 | 07 | 31 | 2500 | 00010 | | |
 
 
-**\**
 
 **Table 2-4 15-minute precipitation data in space-delimited format**
 
@@ -692,13 +789,10 @@ between the maximum of the previous day and the minimum of the present,
 2) between the minimum and maximum of the present, and 3) between the
 maximum of the present and minimum of the following day.
 
-<figure>
-<img src="VolumeI/media/media/image4.png"
-style="width:5.98958in;height:3.125in" alt="ii_01" />
-<figcaption><p><span id="_Toc426447667"
+![](hydrology/media/media/image4.png "ii_01")
+<p><span id="_Toc426447667"
 class="anchor"></span><strong>Figure 2-1 Sinusoidal interpolation of
-hourly temperatures.</strong></p></figcaption>
-</figure>
+hourly temperatures.</strong></p>
 
 The time of day of sunrise and sunset are easily obtained as a function
 of latitude and longitude of the catchment and the date. Techniques for
@@ -720,30 +814,27 @@ at sunrise and sunset, the solar altitude of the sun (vertical angle of
 the sun measured from the earth's surface) is zero, and the hour angle
 is computed only as a function of latitude and declination,
 
-$$cos\ h = -tan\ \delta \cdot tan\ \phi$$ (2-1)
+\f[cos\ h = -tan\ \delta \cdot tan\ \phi\f] (2-1)
 
 where
 
-  ---------------------------------------------------------------------------
   *h*   =   hour angle at sunrise or sunset, radians,
-  ----- --- -----------------------------------------------------------------
   *δ*   =   earth's declination, a function of season (date), radians, and
 
   *φ*   =   latitude of observer, radians.
 
-  ---------------------------------------------------------------------------
 
 The earth's declination is provided in tables (e.g., List, 1966), but
 for programming purposes an approximate formula is used (TVA, 1972):
 
-$$\delta = \left( \frac{23.45\ \pi}{180} \right)\cos\left\lbrack \frac{2\pi}{365}(172 - D) \right\rbrack$$ (2-2)
+\f[\delta = \left( \frac{23.45\ \pi}{180} \right)\cos\left\lbrack \frac{2\pi}{365}(172 - D) \right\rbrack\f] (2-2)
 
 where *D* is number of the day of the year (no leap year correction is
 warranted) and *δ* is in radians. Having the latitude as an input
 parameter, the hour angle is thus computed in [hours]{.underline},
 positive for sunset, negative for sunrise, as
 
-$$h = \left(\frac{12}{\pi}\right)\cos^{-1}(-tan\ \delta \cdot tan\ \phi)$$ (2-3)
+\f[h = \left(\frac{12}{\pi}\right)\cos^{-1}(-tan\ \delta \cdot tan\ \phi)\f] (2-3)
 
 The computation is valid for any latitude between the Arctic and
 Antarctic Circles, and no correction is made for obstruction of the
@@ -763,7 +854,7 @@ might be expected on the basis of the local longitude, e.g., most of
 Alaska is much further west than the standard meridian for Alaska time
 of 135<sup>o</sup>W. The longitude correction is readily computed as
 
-$$\Delta T_{LONG} = 4\frac{minutes}{degree}(\theta - SM)$$ (2-4)
+\f[\Delta T_{LONG} = 4\frac{minutes}{degree}(\theta - SM)\f] (2-4)
 
 where Δ*T*<sub>LONG</sub> = longitude correction, minutes (of time), *θ* =
 longitude of the observer, degrees, and SM = standard meridian of the
@@ -777,11 +868,11 @@ neglected "equation of time.")
 
 The time of day of sunrise is then
 
-$$H_{SR} = 12 - h + \frac{\Delta T_{LONG}}{60}$$ (2-5)
+\f[H_{SR} = 12 - h + \frac{\Delta T_{LONG}}{60}\f] (2-5)
 
 and the time of day of sunset is
 
-$$H_{SS} = 12 + h + \frac{\Delta T_{LONG}}{60}$$ (2-6)
+\f[H_{SS} = 12 + h + \frac{\Delta T_{LONG}}{60}\f] (2-6)
 
 From these times, the hours at which the minimum (*T*<sub>min</sub>) and maximum
 (*T*<sub>max</sub>) temperatures
@@ -811,14 +902,14 @@ follows:
 
 1.  If *H* < *H*<sub>min</sub> then
 
-$$T = T_{\min} + \frac{\Delta T_{1}}{2}\ sin\left( \frac{\pi\left( H_{\min} - H \right)}{H_{\min} + 24 - H_{\max}} \right)$$ (2-7)
+\f[T = T_{\min} + \frac{\Delta T_{1}}{2}\ sin\left( \frac{\pi\left( H_{\min} - H \right)}{H_{\min} + 24 - H_{\max}} \right)\f] (2-7)
 
 > where Δ*T*<sub>1</sub> is the difference between the previous day's maximum
 > temperature and the current day's minimum temperature.
 
 2.  If *H*<sub>min</sub> ≤ *H* ≤ *H*<sub>max</sub> then
 
-$$T = T_{avg} + \frac{\Delta T}{2}\ sin\left( \frac{\pi\left( H_{avg} - H \right)}{H_{\min} - H_{\max}} \right)$$ (2-8)
+\f[T = T_{avg} + \frac{\Delta T}{2}\ sin\left( \frac{\pi\left( H_{avg} - H \right)}{H_{\min} - H_{\max}} \right)\f] (2-8)
 
 > where *T*<sub>avg</sub> is the average of *T*<sub>min</sub> and *T*<sub>max</sub>, Δ*T* is the
 > difference between *T*<sub>max</sub> and *T*<sub>min</sub>, and *H*<sub>avg</sub> is the average
@@ -826,9 +917,8 @@ $$T = T_{avg} + \frac{\Delta T}{2}\ sin\left( \frac{\pi\left( H_{avg} - H \right
 
 3.  If *H* > *H*<sub>max</sub> then
 
-$$T = T_{\max} - \frac{\Delta T}{2}\ sin\left( \frac{\pi\left( H - H_{max} \right)}{H_{\min} + 24 - H_{\max}} \right)$$ (2-9)
+\f[T = T_{\max} - \frac{\Delta T}{2}\ sin\left( \frac{\pi\left( H - H_{max} \right)}{H_{\min} + 24 - H_{\max}} \right)\f] (2-9)
 
-## 
 
 ## 2.5 Evaporation Data
 
@@ -895,7 +985,7 @@ compute evaporation rates from the daily max-min temperatures contained
 in a climate file and the study area's latitude. The governing equation
 is:
 
-$$E = 0.0023\left( \frac{R_{a}}{\lambda} \right)T_{r}^{1/2}\left( T_{a} + 17.8 \right)$$ (2-10)
+\f[E = 0.0023\left( \frac{R_{a}}{\lambda} \right)T_{r}^{1/2}\left( T_{a} + 17.8 \right)\f] (2-10)
 
 where:
 
@@ -905,7 +995,7 @@ where:
 - *T*<sub>a</sub> = average daily temperature for a period of days (deg C)
 - *λ* = latent heat of vaporization (MJkg<sup>-1</sup>)
 
-  $$λ = 2.50 - 0.002361T_a$$
+  \f[λ = 2.50 - 0.002361T_a\f]
 
 As noted in Hargreaves and Merkley (1998), for the equation to provide
 satisfactory results *T*<sub>r</sub> and *T*<sub>a</sub> must be averaged over a period of
@@ -913,23 +1003,79 @@ satisfactory results *T*<sub>r</sub> and *T*<sub>a</sub> must be averaged over a
 variables derived from the record of daily max-min temperatures. The
 extraterrestrial radiation *R*<sub>a</sub> is computed as:
 
-$$R_{a} = 37.6d_{r}\left( w_{s}sin(\phi)\ sin(\delta) + cos(\phi)\ cos(\delta)\ sin(w_{s}) \right)$$ (2-11)
+\f[R_{a} = 37.6d_{r}\left( w_{s}sin(\phi)\ sin(\delta) + cos(\phi)\ cos(\delta)\ sin(w_{s}) \right)\f] (2-11)
 
 where:
 
 - *d*<sub>r</sub> = relative earth-sun distance
 
-  $$d_r = 1 + 0.033\cos\left( \frac{2\pi J}{365} \right)$$
+  \f[d_r = 1 + 0.033\cos\left( \frac{2\pi J}{365} \right)\f]
 
 - *J* = Julian day (1 to 365)
 - *w*<sub>s</sub> = sunset hour angle (radians)
 
-  $$w_s = \cos^{-1}\left( - \tan(\phi)\tan(\delta) \right)$$
+  \f[w_s = \cos^{-1}\left( - \tan(\phi)\tan(\delta) \right)\f]
 
 - *φ* = latitude (radians)
 - *δ* = solar declination (radians)
 
-  $$\delta = 0.4093\sin\left( \frac{2\pi(284 + J)}{365} \right)$$
+  \f[\delta = 0.4093\sin\left( \frac{2\pi(284 + J)}{365} \right)\f]
+
+### 2.5.1 Prescribed Subcatchment Evaporation Rates
+
+All of the evaporation data sources listed above produce a single
+climate-derived evaporation rate that applies uniformly to every
+subcatchment in a project. SWMM also allows a potential
+evapotranspiration (PET) rate to be prescribed for individual
+subcatchments at runtime through its API. This supports applications
+where evaporative demand varies spatially — for example when PET is
+computed externally from land cover, energy-balance, or remotely sensed
+data — as well as coupling with external models that supply their own
+evaporative forcing.
+
+A prescribed rate can either replace or augment the climate-derived
+rate. If *e<sub>clim</sub>* is the climate-derived evaporation rate (after the
+monthly adjustment of Section 2.7 and any pan coefficients have been
+applied) and *e<sub>p,j</sub>* is the rate prescribed for subcatchment *j*, then
+the potential rate used for that subcatchment is:
+
+\f[e_{j} = \begin{cases} e_{p,j} & \text{override mode} \\ e_{clim} + e_{p,j} & \text{additive mode} \\ e_{clim} & \text{no prescription} \end{cases}\f]  (2-15)
+
+Prescribed rates are supplied in the user's unit system (in/day for US
+units, mm/day for SI metric units) and are converted internally to
+ft/sec. A prescription can be flagged either to apply for a single time
+step (after which it automatically clears) or to persist until
+explicitly cleared, so a caller may set a rate once per day or update it
+continuously.
+
+The resulting rate *e<sub>j</sub>* is consumed by every subcatchment-level
+evaporation pathway: standing water in depression storage on the
+subcatchment surface, water stored in any LID controls placed within the
+subcatchment, and upper-zone soil moisture in the subcatchment's
+groundwater aquifer (Chapter 5). It does not affect evaporation from
+open channels or storage nodes, which continue to use the
+climate-derived rate. In every pathway the prescribed value remains a
+*potential* rate — actual evaporation is still limited by the water
+available in each compartment, and the evaporated volumes flow into the
+normal runoff continuity totals so that mass balance is preserved.
+
+Two precedence rules apply. A prescribed rate in override mode is used
+verbatim: it bypasses the "dry-only" evaporation option (which normally
+suppresses surface evaporation during rainfall) and is not modified by
+the monthly evaporation adjustment factors of Section 2.7. Callers who
+want such adjustments applied to a prescribed rate can read the current
+climate-derived rate through the API, apply their own factors, and
+prescribe the result.
+
+**Implementation.** Prescribed PET is carried in the per-subcatchment
+forcing channel of @ref openswmm::ForcingData, whose
+`effective_evap_rate()` helper implements Equation 2-15. It is consumed
+by the surface runoff solver (src/engine/hydrology/Runoff.cpp), the LID
+solver (src/engine/hydrology/LID.cpp), and the groundwater solver
+(src/engine/hydrology/Groundwater.cpp). The C API entry point is
+`swmm_forcing_subcatch_evap()` in
+src/engine/core/openswmm_forcing_impl.cpp, which performs the
+user-units-to-internal conversion.
 
 ## 2.6 Wind Speed Data
 
@@ -961,4 +1107,73 @@ source). SWMM automatically converts the units used for wind speed by
 the NCDC file, but for the user-supplied file they must be in miles/hour
 for US unit system data sets or in km/hour for metric data sets. The
 Canadian DLY file does not report daily wind speed.
+
+## 2.7 Monthly Climate Adjustments
+
+All of the meteorological inputs described in this chapter can be
+modified on a month-by-month basis through a set of climate adjustment
+factors supplied in the `[ADJUSTMENTS]` section of a SWMM input file.
+These adjustments allow a historical meteorological record to be
+perturbed without editing the underlying data — most commonly to
+evaluate climate-change scenarios, but also to correct known seasonal
+biases in a data source or to test model sensitivity. Four adjustments
+are available, each specified as twelve values, one per calendar month
+(January through December), as summarized in Table 2-15.
+
+**Table 2-15 Monthly climate adjustments available in the
+`[ADJUSTMENTS]` section**
+
+| Keyword | Applies to | Operation | Default |
+|---------|------------|-----------|---------|
+| `TEMP` | Air temperature | Added to each temperature value (deg F or deg C) | 0 |
+| `EVAP` | Evaporation rate | Multiplies the climate-derived rate | 1.0 |
+| `RAIN` | Precipitation | Multiplies each rain gage's precipitation | 1.0 |
+| `CONDUCT` | Soil hydraulic conductivity | Multiplies the conductivity used by infiltration | 1.0 |
+
+The temperature adjustment *ΔT<sub>m</sub>* for month *m* is additive and is
+applied to the air temperature obtained from whichever temperature data
+source is in use (time series or climate file, including the daily
+minimum and maximum values used for the interpolation of Section 2.4):
+
+\f[T_{adj} = T + \Delta T_{m}\f]  (2-16)
+
+The evaporation adjustment *f<sub>E,m</sub>* multiplies the evaporation rate
+produced by any of the data sources of Section 2.5 (constant, monthly,
+time series, climate file, or Hargreaves-computed):
+
+\f[E_{adj} = f_{E,m}\ E\f]  (2-17)
+
+The rainfall adjustment *f<sub>R,m</sub>* multiplies the precipitation intensity
+of every rain gage in the project and appears as part of the gage-level
+scaling pipeline of Equation 2-12. Because it is applied at the gage, it
+propagates to surface runoff, snowfall, and RDII alike.
+
+The conductivity adjustment *f<sub>K,m</sub>* multiplies the saturated hydraulic
+conductivity (or infiltration capacity) used by the infiltration methods
+of Chapter 4 — the maximum and minimum infiltration rates of the Horton
+method and the hydraulic conductivity of the Green-Ampt and Curve Number
+methods:
+
+\f[K_{adj} = f_{K,m}\ K_{s}\f]  (2-18)
+
+Non-positive conductivity multipliers are replaced by 1.0. The
+conductivity adjustment is typically used to reflect seasonal variation
+in infiltration capacity, such as reduced conductivity when the ground
+is frozen. Note that the monthly evaporation adjustment is not applied
+to subcatchment PET rates prescribed through the runtime API in override
+mode (Section 2.5.1).
+
+**Implementation.** The `[ADJUSTMENTS]` section is parsed by
+`handle_adjustments()` in src/engine/input/handlers/InfraHandler.cpp.
+The monthly arrays are held on @ref openswmm::climate::ClimateState and
+applied once per day (or whenever the simulation month changes) in the
+climate update step of src/engine/core/SWMMEngine.cpp: the temperature
+adjustment is added to the current temperature, the evaporation
+adjustment multiplies `evap_rate`, the rainfall adjustment sets each
+gage's `adjust_factor` (see src/engine/hydrology/Gage.cpp), and the
+conductivity adjustment sets the `infil_factor` consumed by the
+infiltration solvers in src/engine/hydrology/Runoff.cpp.
+
+
+
 

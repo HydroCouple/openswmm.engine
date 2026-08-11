@@ -191,6 +191,14 @@ struct RDIIDecayEntry {
     double T_ref     = 10.0;///< Reference temperature (deg C)
     double theta_rec = 0.0; ///< Temperature sensitivity (1/deg C)
     double T_freeze  = 0.0; ///< Recovery suppressed when T < T_freeze (deg C)
+
+    // Optional degree-day snow model (SNOW keyword + 2 extra columns).
+    // When on, precipitation at T <= snow_T accumulates as SWE (no liquid
+    // input); at T > snow_T, melt = min(SWE, snow_ddf*(T - snow_T)*dt_days)
+    // is added to rainfall before the IA update (rain-on-snow adds).
+    bool   snow_on   = false; ///< Degree-day snow model enabled for this row
+    double snow_T    = 1.0;   ///< Rain/snow partition threshold & melt base (deg C)
+    double snow_ddf  = 0.0;   ///< Degree-day melt factor (project rain-depth unit/degC/day)
 };
 
 struct RDIIDecayData {

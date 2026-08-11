@@ -16,7 +16,7 @@
 import os
 import re
 
-import pytest
+import unittest
 
 from openswmm import solver
 from openswmm.legacy.engine import LegacyNodes
@@ -81,7 +81,7 @@ def _open(inp, name):
 # --------------------------------------------------------------------------- #
 # P6 — time-pattern factors (legacy parity)
 # --------------------------------------------------------------------------- #
-class TestLegacyPatternFactors:
+class TestLegacyPatternFactors(unittest.TestCase):
     def _biggest_dwf_node(self, s, nodes):
         idx = max(range(len(nodes)), key=lambda i: nodes[i].lateral_inflow)
         return idx, nodes[idx].lateral_inflow
@@ -91,11 +91,12 @@ class TestLegacyPatternFactors:
         s = _open(_derive_dwf_model(), "p6_legacy_rt")
         try:
             npat = s.get_object_count(_TP)
-            assert npat > 0
+            self.assertGreater(npat, 0)
             count = int(s.get_value(_TP, _PatProp.COUNT, 0))
-            assert count > 0
+            self.assertGreater(count, 0)
             s.set_value(_TP, _PatProp.FACTOR, 0, 2.5, sub_index=0)
-            assert s.get_value(_TP, _PatProp.FACTOR, 0, sub_index=0) == pytest.approx(2.5)
+            self.assertAlmostEqual(
+                s.get_value(_TP, _PatProp.FACTOR, 0, sub_index=0), 2.5, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -107,7 +108,7 @@ class TestLegacyPatternFactors:
             for _ in range(12):
                 s.step()
             idx, before = self._biggest_dwf_node(s, nodes)
-            assert before > 1e-9, "expected a DWF-fed node"
+            self.assertGreater(before, 1e-9, "expected a DWF-fed node")
             npat = s.get_object_count(_TP)
             for p in range(npat):
                 cnt = int(s.get_value(_TP, _PatProp.COUNT, p))
@@ -115,7 +116,7 @@ class TestLegacyPatternFactors:
                     s.set_value(_TP, _PatProp.FACTOR, p, 10.0, sub_index=k)
             s.step()
             after = nodes[idx].lateral_inflow
-            assert after > before * 1.5, (before, after)
+            self.assertGreater(after, before * 1.5, (before, after))
         finally:
             s.end(); s.finalize()
 
@@ -123,19 +124,21 @@ class TestLegacyPatternFactors:
 # --------------------------------------------------------------------------- #
 # P4 — street sweeping (legacy parity)
 # --------------------------------------------------------------------------- #
-class TestLegacySweep:
+class TestLegacySweep(unittest.TestCase):
     def test_sweep_params_round_trip(self):
         """P4: set/get land-use sweep interval and removal mid-run."""
         s = _open(_SITE_DRAINAGE, "p4_legacy_rt")
         try:
             nlu = s.get_object_count(_LU)
-            assert nlu > 0, "fixture must define land uses"
+            self.assertGreater(nlu, 0, "fixture must define land uses")
             for _ in range(5):
                 s.step()
             s.set_value(_LU, _LuProp.SWEEP_INTERVAL, 0, 5.0)
             s.set_value(_LU, _LuProp.SWEEP_REMOVAL, 0, 0.65)
-            assert s.get_value(_LU, _LuProp.SWEEP_INTERVAL, 0) == pytest.approx(5.0)
-            assert s.get_value(_LU, _LuProp.SWEEP_REMOVAL, 0) == pytest.approx(0.65)
+            self.assertAlmostEqual(
+                s.get_value(_LU, _LuProp.SWEEP_INTERVAL, 0), 5.0, places=6)
+            self.assertAlmostEqual(
+                s.get_value(_LU, _LuProp.SWEEP_REMOVAL, 0), 0.65, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -143,7 +146,7 @@ class TestLegacySweep:
         """P4: an out-of-range removal fraction is rejected."""
         s = _open(_SITE_DRAINAGE, "p4_legacy_bounds")
         try:
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_value(_LU, _LuProp.SWEEP_REMOVAL, 0, 1.5)
         finally:
             s.end(); s.finalize()
@@ -152,18 +155,22 @@ class TestLegacySweep:
 # --------------------------------------------------------------------------- #
 # P2 — buildup / washoff coefficients (legacy parity)
 # --------------------------------------------------------------------------- #
-class TestLegacyBuildupWashoff:
+class TestLegacyBuildupWashoff(unittest.TestCase):
     def test_buildup_coeffs_round_trip(self):
         """P2: set/get land-use buildup coefficients per pollutant (subIndex)."""
         s = _open(_SITE_DRAINAGE, "p2_legacy_buildup")
         try:
-            assert s.get_object_count(_LU) > 0
+            self.assertGreater(s.get_object_count(_LU), 0)
             for _ in range(5):
                 s.step()
             s.set_value(_LU, _LuProp.BUILDUP_COEFF1, 0, 77.0, sub_index=0)
             s.set_value(_LU, _LuProp.BUILDUP_COEFF2, 0, 0.4, sub_index=0)
-            assert s.get_value(_LU, _LuProp.BUILDUP_COEFF1, 0, sub_index=0) == pytest.approx(77.0)
-            assert s.get_value(_LU, _LuProp.BUILDUP_COEFF2, 0, sub_index=0) == pytest.approx(0.4)
+            self.assertAlmostEqual(
+                s.get_value(_LU, _LuProp.BUILDUP_COEFF1, 0, sub_index=0),
+                77.0, places=6)
+            self.assertAlmostEqual(
+                s.get_value(_LU, _LuProp.BUILDUP_COEFF2, 0, sub_index=0),
+                0.4, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -176,8 +183,12 @@ class TestLegacyBuildupWashoff:
             # EMC washoff (funcType 3): concentration = coeff
             s.set_value(_LU, _LuProp.WASHOFF_FUNC, 0, 3, sub_index=0)
             s.set_value(_LU, _LuProp.WASHOFF_COEFF, 0, 250.0, sub_index=0)
-            assert s.get_value(_LU, _LuProp.WASHOFF_FUNC, 0, sub_index=0) == pytest.approx(3)
-            assert s.get_value(_LU, _LuProp.WASHOFF_COEFF, 0, sub_index=0) == pytest.approx(250.0)
+            self.assertAlmostEqual(
+                s.get_value(_LU, _LuProp.WASHOFF_FUNC, 0, sub_index=0),
+                3, places=6)
+            self.assertAlmostEqual(
+                s.get_value(_LU, _LuProp.WASHOFF_COEFF, 0, sub_index=0),
+                250.0, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -185,7 +196,7 @@ class TestLegacyBuildupWashoff:
         """P2: an out-of-range sweep efficiency is rejected."""
         s = _open(_SITE_DRAINAGE, "p2_legacy_bounds")
         try:
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_value(_LU, _LuProp.WASHOFF_SWEEP_EFFIC, 0, 2.0, sub_index=0)
         finally:
             s.end(); s.finalize()
@@ -198,7 +209,7 @@ _POBJ = solver.SWMMObjects.POLLUTANT
 _PProp = solver.SWMMPollutantProperties
 
 
-class TestLegacyKinetics:
+class TestLegacyKinetics(unittest.TestCase):
     def test_kinetics_round_trip(self):
         """P5: kdecay (1/day), co-fraction, snow-only set/get mid-run."""
         s = _open(_SITE_DRAINAGE, "p5_legacy_rt")
@@ -206,11 +217,14 @@ class TestLegacyKinetics:
             for _ in range(5):
                 s.step()
             s.set_value(_POBJ, _PProp.KDECAY, 0, 2.0)
-            assert s.get_value(_POBJ, _PProp.KDECAY, 0) == pytest.approx(2.0)
+            self.assertAlmostEqual(
+                s.get_value(_POBJ, _PProp.KDECAY, 0), 2.0, places=6)
             s.set_value(_POBJ, _PProp.CO_FRACTION, 0, 0.3)
-            assert s.get_value(_POBJ, _PProp.CO_FRACTION, 0) == pytest.approx(0.3)
+            self.assertAlmostEqual(
+                s.get_value(_POBJ, _PProp.CO_FRACTION, 0), 0.3, places=6)
             s.set_value(_POBJ, _PProp.SNOW_ONLY, 0, 1)
-            assert s.get_value(_POBJ, _PProp.SNOW_ONLY, 0) == pytest.approx(1)
+            self.assertAlmostEqual(
+                s.get_value(_POBJ, _PProp.SNOW_ONLY, 0), 1, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -220,7 +234,7 @@ class TestLegacyKinetics:
         try:
             for _ in range(5):
                 s.step()
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_value(_POBJ, _PProp.INIT_CONCENTRATION, 0, 5.0)
         finally:
             s.end(); s.finalize()
@@ -234,7 +248,7 @@ class TestLegacyKinetics:
 # from the next routing step on (treatmnt_treat applies zero removal for
 # cleared pairs).
 # --------------------------------------------------------------------------- #
-class TestLegacyTreatment:
+class TestLegacyTreatment(unittest.TestCase):
     def test_treatment_set_mid_run_reduces_quality(self):
         """P3: a mid-run "R = 0.95" treatment cuts node quality; clear recovers."""
         s = _open(_derive_dwf_model(quality=True), "p3_legacy_treat")
@@ -249,18 +263,18 @@ class TestLegacyTreatment:
                 before = nodes[ni].get_pollutant_concentration(0)
                 if before > 10.0:
                     break
-            assert before > 10.0, "expected a DWF-loaded node"
+            self.assertGreater(before, 10.0, "expected a DWF-loaded node")
             s.set_treatment(ni, 0, "R = 0.95")
             for _ in range(2):
                 s.step()
             treated = nodes[ni].get_pollutant_concentration(0)
-            assert treated < before * 0.5, (before, treated)
+            self.assertLess(treated, before * 0.5, (before, treated))
             # Clearing the expression lets quality recover.
             s.clear_treatment(ni, 0)
             for _ in range(4):
                 s.step()
             recovered = nodes[ni].get_pollutant_concentration(0)
-            assert recovered > treated, (treated, recovered)
+            self.assertGreater(recovered, treated, (treated, recovered))
         finally:
             s.end(); s.finalize()
 
@@ -272,9 +286,9 @@ class TestLegacyTreatment:
                 s.step()
             name = s.get_object_name(solver.SWMMObjects.NODE, 0)
             s.set_treatment(name, 0, "R = 0.5")   # by name, parses fine
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_treatment(0, 0, "not a treatment expr")
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_treatment(len(LegacyNodes(s)), 0, "R = 0.5")  # bad index
             s.clear_treatment(name, 0)
         finally:
@@ -315,7 +329,7 @@ def _derive_lid_rb_model():
     return path
 
 
-class TestLegacyLidDrain:
+class TestLegacyLidDrain(unittest.TestCase):
     def test_drain_edit_drains_barrels_mid_run(self):
         """P11: opening the underdrain mid-run produces outlet inflow next step."""
         s = _open(_derive_lid_rb_model(), "p11_legacy_drain")
@@ -329,7 +343,7 @@ class TestLegacyLidDrain:
             for _ in range(4):
                 s.step()
             after = nodes[j1].lateral_inflow
-            assert after > max(before, 1e-3) * 10, (before, after)
+            self.assertGreater(after, max(before, 1e-3) * 10, (before, after))
         finally:
             s.end(); s.finalize()
 
@@ -338,9 +352,9 @@ class TestLegacyLidDrain:
         s = _open(_derive_lid_rb_model(), "p11_legacy_drain_err")
         try:
             s.step()
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_lid_drain(99, 1.0, 0.5, 0.0)
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_lid_drain("RB1", -1.0, 0.5, 0.0)
         finally:
             s.end(); s.finalize()
@@ -358,21 +372,23 @@ _AQ = solver.SWMMObjects.AQUIFER
 _AqProp = solver.SWMMAquiferProperties
 
 
-class TestLegacyAquiferParams:
+class TestLegacyAquiferParams(unittest.TestCase):
     def test_flux_param_round_trip_mid_run(self):
         """P10: a flux-coefficient edit round-trips mid-run (input-file units)."""
         s = _open(_derive_dwf_model(), "p10_legacy_flux")
         try:
-            assert s.get_object_count(_AQ) > 0
+            self.assertGreater(s.get_object_count(_AQ), 0)
             for _ in range(5):
                 s.step()
             k = s.get_value(_AQ, _AqProp.CONDUCTIVITY, 0)
             s.set_value(_AQ, _AqProp.CONDUCTIVITY, 0, k * 2.0 + 1.0)
-            assert s.get_value(_AQ, _AqProp.CONDUCTIVITY, 0) == \
-                pytest.approx(k * 2.0 + 1.0)
+            self.assertAlmostEqual(
+                s.get_value(_AQ, _AqProp.CONDUCTIVITY, 0),
+                k * 2.0 + 1.0, places=6)
             s.set_value(_AQ, _AqProp.UPPER_EVAP_FRAC, 0, 0.42)
-            assert s.get_value(_AQ, _AqProp.UPPER_EVAP_FRAC, 0) == \
-                pytest.approx(0.42)
+            self.assertAlmostEqual(
+                s.get_value(_AQ, _AqProp.UPPER_EVAP_FRAC, 0),
+                0.42, places=6)
         finally:
             s.end(); s.finalize()
 
@@ -382,9 +398,9 @@ class TestLegacyAquiferParams:
         try:
             for _ in range(5):
                 s.step()
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_value(_AQ, _AqProp.POROSITY, 0, 0.4)
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_value(_AQ, _AqProp.WATER_TABLE_ELEV, 0, 10.0)
         finally:
             s.end(); s.finalize()
@@ -394,9 +410,9 @@ class TestLegacyAquiferParams:
         s = _open(_derive_dwf_model(), "p10_legacy_bounds")
         try:
             s.step()
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_value(_AQ, _AqProp.CONDUCTIVITY, 0, -1.0)
-            with pytest.raises(Exception):
+            with self.assertRaises(Exception):
                 s.set_value(_AQ, _AqProp.UPPER_EVAP_FRAC, 0, 2.0)
         finally:
             s.end(); s.finalize()

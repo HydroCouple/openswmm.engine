@@ -184,6 +184,81 @@ XSectParams buildXSectParams(
     return xs;
 }
 
+// ============================================================================
+// Per-element: applyTabulatedXSectParams
+// ============================================================================
+
+namespace {
+
+// Height at the LOWEST widest point, from the normalized width table
+// (xsect.c:688-699 for CUSTOM, xsect.c:1347-1358 for IRREGULAR). Scan up while
+// the width is still increasing; the first decrease ends it.
+double widestPointHeight(const transect::TransectData& td, double y_full) {
+    int i_max = 0;
+    double wt_max = td.width_tbl[0];
+    for (int i = 1; i < transect::N_TRANSECT_TBL; ++i) {
+        if (td.width_tbl[i] < wt_max) break;
+        wt_max = td.width_tbl[i];
+        i_max = i;
+    }
+    return y_full * static_cast<double>(i_max) /
+           static_cast<double>(transect::N_TRANSECT_TBL - 1);
+}
+
+} // namespace
+
+void applyTabulatedXSectParams(XSectParams& xs, const transect::TransectData& td,
+                               double y_full, int transect_idx) {
+    switch (static_cast<XSectShape>(xs.type)) {
+    case XSectShape::CUSTOM:
+        // PARITY: legacy xsect_setCustomXsectParams (xsect.c:668-700). The
+        // shape curve is built at UNIT height, so the extensive properties
+        // scale by y_full here rather than in buildCustomTables.
+        xs.y_full = y_full;
+        xs.a_full = td.a_full;
+        xs.r_full = td.r_full;
+        xs.w_max  = td.w_max;
+        xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);  // xsect.c:684 (no clamp)
+        xs.s_max  = td.s_max * y_full * y_full * std::pow(y_full, 2.0 / 3.0);  // xsect.c:685-686
+        xs.a_bot  = td.a_max * y_full * y_full;
+        xs.yw_max = widestPointHeight(td, xs.y_full);
+        break;
+
+    case XSectShape::IRREGULAR:
+        // PARITY: legacy getTransectParams (xsect.c:1339-1358). The table is
+        // built at true scale, so these are absolute.
+        xs.y_full = td.y_full;
+        xs.a_full = td.a_full;
+        xs.r_full = td.r_full;
+        xs.w_max  = td.w_max;
+        xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);  // xsect.c:1343
+        xs.s_max  = td.s_max;   // xsect.c:1344 (absolute)
+        xs.a_bot  = td.a_max;   // xsect.c:1345
+        xs.yw_max = widestPointHeight(td, xs.y_full);
+        break;
+
+    default:
+        // STREET_XSECT. street::buildTransect does not compute a peak section
+        // factor, so s_max stays at s_full and a_bot is left alone; yw_max is
+        // pinned at full depth rather than scanned. Faithful to the street
+        // branch of PostParseResolver, which this consolidates.
+        xs.y_full = td.y_full;
+        xs.a_full = td.a_full;
+        xs.r_full = td.r_full;
+        xs.w_max  = td.w_max;
+        xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
+        xs.s_max  = xs.s_full;
+        xs.yw_max = xs.y_full;
+        break;
+    }
+
+    xs.transect          = transect_idx;
+    xs.area_tbl          = td.area_tbl;
+    xs.hrad_tbl          = td.hrad_tbl;
+    xs.width_tbl         = td.width_tbl;
+    xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+}
+
 // Phase 6: the dead batch helpers computeVelocities/computeFroude/
 // computeAllConveyance were removed — they had no callers repo-wide and
 // referenced conduit fields now owned by ConduitData (LinkSubtypes.hpp).

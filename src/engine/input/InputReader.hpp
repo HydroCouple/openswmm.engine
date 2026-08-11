@@ -123,6 +123,19 @@ private:
         const std::vector<std::string>& lines,
         SimulationContext&             ctx
     );
+
+    /**
+     * @brief Re-dispatch rows a handler could not resolve on the first pass.
+     *
+     * @details Sections are dispatched in file order, so a property row naming
+     *          an object declared further down cannot resolve. Handlers stash
+     *          such rows in `ctx.deferred_section_rows`; this replays them once,
+     *          after every section has been read, which makes those sections
+     *          order-independent as they are in legacy SWMM. Rows that are
+     *          still unresolved afterwards name an object that does not exist
+     *          and raise ERROR 209.
+     */
+    void replay_deferred_rows(SimulationContext& ctx);
 };
 
 } /* namespace openswmm::input */

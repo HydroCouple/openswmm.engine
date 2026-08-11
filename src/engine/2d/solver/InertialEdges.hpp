@@ -16,9 +16,10 @@
  *          cR = max(t,nbr). q_e > 0 means flow cL→cR. So q_e is OUTFLOW from cL
  *          (sign +1) and INFLOW to cR (sign −1).
  *
- *          Boundary edges (nbr < 0) carry NO q DOF here — they are walls in the
- *          closed-basin Phase-2 validation. Prescribed-boundary momentum is a
- *          later addition (plan §3: prescribed boundaries stay explicit).
+ *          Boundary edges (nbr < 0) carry NO q DOF here. Non-Wall boundary
+ *          types are applied as explicit mass sources/sinks on the owning
+ *          cell via SurfaceFluxCalculator::boundaryEdgeFlux (plan §3:
+ *          prescribed boundaries stay explicit — no boundary momentum DOF).
  *
  * @ingroup engine_2d
  *
@@ -47,8 +48,28 @@ struct InertialEdges {
     std::vector<int>    cL, cR;       ///< incident cell indices
     std::vector<double> xi;           ///< edge length ξ (m)
     std::vector<double> inv_dx;       ///< 1 / centroid-to-centroid distance (1/m)
-    std::vector<double> zface;        ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m)
+    std::vector<double> zface;        ///< max(tri_cz[cL], tri_cz[cR]) interface bed (m) — MEAN face mode
+    /// Shared edge's TRUE endpoint bed elevations, sorted ze_lo ≤ ze_hi (m).
+    /// Used by FACE_RECONSTRUCTION = VFR_FACE to evaluate the B&S Eq. 14
+    /// wetted-edge depth so thin crests block at their real elevation instead
+    /// of the centroid-diluted zface (same endpoint rule as the boundary
+    /// path's edgeEndpointZ — both incident cells see the identical pair).
+    std::vector<double> ze_lo, ze_hi;
     std::vector<int>    slotL, slotR; ///< flat mesh edge slots [tri*3+e] for writeback
+
+    // Explicit-marcher extension (ExplicitInertialSolver). Precomputed here so
+    // the per-substep kernels stay pure arithmetic.
+    std::vector<double> nx, ny;       ///< unit normal, oriented cL→cR
+    std::vector<double> mx, my;       ///< edge midpoint (m)
+    /// 1 / face-normal projected centroid distance: |(c⃗_R−c⃗_L)·n̂|, floored at
+    /// 0.3·|c⃗_R−c⃗_L| against near-degenerate pairs. The projection is the
+    /// correct gradient arm under cell-size disparity; the raw centroid chord
+    /// (inv_dx above) overestimates slopes on non-orthogonal triangle pairs.
+    std::vector<double> inv_dx_normal;
+    std::vector<double> n2_face;      ///< (½(n_L+n_R))² Manning coefficient
+    /// Per-CELL characteristic length L_char = 2A/ξ_max (smallest altitude, m)
+    /// for the CFL step bound dt = α·L_char/√(g·h).
+    std::vector<double> cell_lchar;
 
     // Per-cell CSR incidence for the conservative continuity gather. For cell i,
     // the incident edges are cell_edge[cell_ptr[i] .. cell_ptr[i+1]) with sign

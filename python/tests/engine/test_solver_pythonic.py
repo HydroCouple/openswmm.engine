@@ -22,12 +22,15 @@ available, every test in this module is skipped at collection time.
 
 from __future__ import annotations
 
+import os
+import unittest
 from datetime import datetime, timedelta
 
-import pytest
-
 # Skip the whole module if the engine isn't built.
-pytest.importorskip("openswmm.engine._solver")
+try:
+    import openswmm.engine._solver  # noqa: F401
+except ImportError as _exc:  # pragma: no cover - environment dependent
+    raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
 from openswmm.engine import (  # noqa: E402
     Solver,
@@ -42,59 +45,71 @@ from openswmm.engine._solver import (  # noqa: E402
     Event,
 )
 
+from tests._paths import artifact_dir  # noqa: E402
+from tests.engine._solver_cases import EngineSolverCase  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Typed property surface
 # ---------------------------------------------------------------------------
 
 
-class TestTypedProperties:
-    def test_state_is_engine_state_enum(self, running_solver):
-        assert isinstance(running_solver.state, EngineState)
-        assert running_solver.state in (EngineState.STARTED, EngineState.RUNNING)
+class TestTypedProperties(EngineSolverCase):
+    def test_state_is_engine_state_enum(self):
+        solver = self.running_solver()
+        self.assertIsInstance(solver.state, EngineState)
+        self.assertIn(solver.state, (EngineState.STARTED, EngineState.RUNNING))
 
-    def test_elapsed_is_timedelta(self, stepped_solver):
-        assert isinstance(stepped_solver.elapsed, timedelta)
+    def test_elapsed_is_timedelta(self):
+        solver = self.stepped_solver()
+        self.assertIsInstance(solver.elapsed, timedelta)
         # We stepped 12 times — elapsed must be > 0.
-        assert stepped_solver.elapsed > timedelta(0)
+        self.assertGreater(solver.elapsed, timedelta(0))
 
-    def test_routing_step_is_timedelta(self, opened_solver):
-        opened_solver.initialize()
-        opened_solver.start()
-        assert isinstance(opened_solver.routing_step, timedelta)
+    def test_routing_step_is_timedelta(self):
+        solver = self.opened_solver()
+        solver.initialize()
+        solver.start()
+        self.assertIsInstance(solver.routing_step, timedelta)
         # Smoke check: routing step is positive and well under a day.
-        assert timedelta(milliseconds=1) < opened_solver.routing_step < timedelta(days=1)
+        self.assertLess(timedelta(milliseconds=1), solver.routing_step)
+        self.assertLess(solver.routing_step, timedelta(days=1))
 
-    def test_datetimes(self, opened_solver):
-        assert isinstance(opened_solver.start_datetime, datetime)
-        assert isinstance(opened_solver.end_datetime, datetime)
-        assert isinstance(opened_solver.report_start_datetime, datetime)
-        assert opened_solver.end_datetime > opened_solver.start_datetime
+    def test_datetimes(self):
+        solver = self.opened_solver()
+        self.assertIsInstance(solver.start_datetime, datetime)
+        self.assertIsInstance(solver.end_datetime, datetime)
+        self.assertIsInstance(solver.report_start_datetime, datetime)
+        self.assertGreater(solver.end_datetime, solver.start_datetime)
 
-    def test_current_datetime_progresses(self, running_solver):
-        start_dt = running_solver.start_datetime
-        before = running_solver.current_datetime
-        running_solver.step()
-        after = running_solver.current_datetime
-        assert after >= before
+    def test_current_datetime_progresses(self):
+        solver = self.running_solver()
+        start_dt = solver.start_datetime
+        before = solver.current_datetime
+        solver.step()
+        after = solver.current_datetime
+        self.assertGreaterEqual(after, before)
         # Sanity: current never precedes the configured start.
-        assert before >= start_dt
+        self.assertGreaterEqual(before, start_dt)
 
-    def test_datetime_setter_round_trip(self, opened_solver):
-        original = opened_solver.start_datetime
+    def test_datetime_setter_round_trip(self):
+        solver = self.opened_solver()
+        original = solver.start_datetime
         new = original + timedelta(hours=3, microseconds=123_456)
-        opened_solver.start_datetime = new
+        solver.start_datetime = new
         # ≤ 1 µs tolerance per _dates.py.
-        assert abs((opened_solver.start_datetime - new).total_seconds()) <= 1e-6
+        self.assertLessEqual(abs((solver.start_datetime - new).total_seconds()), 1e-6)
 
-    def test_handle_is_nonzero_int(self, opened_solver):
-        assert isinstance(opened_solver.handle, int)
-        assert opened_solver.handle != 0
+    def test_handle_is_nonzero_int(self):
+        solver = self.opened_solver()
+        self.assertIsInstance(solver.handle, int)
+        self.assertNotEqual(solver.handle, 0)
 
-    def test_repr_contains_state_name(self, opened_solver):
-        r = repr(opened_solver)
-        assert "Solver" in r
-        assert opened_solver.state.name in r
+    def test_repr_contains_state_name(self):
+        solver = self.opened_solver()
+        r = repr(solver)
+        self.assertIn("Solver", r)
+        self.assertIn(solver.state.name, r)
 
 
 # ---------------------------------------------------------------------------
@@ -102,22 +117,24 @@ class TestTypedProperties:
 # ---------------------------------------------------------------------------
 
 
-class TestLifecycleRaises:
-    def test_open_nonexistent_raises(self, tmp_path):
-        s = Solver(tmp_path / "no_such.inp")
-        with pytest.raises(EngineError):
+class TestLifecycleRaises(EngineSolverCase):
+    def test_open_nonexistent_raises(self):
+        s = Solver(os.path.join(artifact_dir(self), "no_such.inp"))
+        with self.assertRaises(EngineError):
             s.open()
         s.destroy()
 
-    def test_step_returns_timedelta(self, running_solver):
-        td = running_solver.step()
-        assert isinstance(td, timedelta)
-        assert td > timedelta(0)
+    def test_step_returns_timedelta(self):
+        solver = self.running_solver()
+        td = solver.step()
+        self.assertIsInstance(td, timedelta)
+        self.assertGreater(td, timedelta(0))
 
-    def test_stride_returns_timedelta(self, running_solver):
-        td = running_solver.stride(5)
-        assert isinstance(td, timedelta)
-        assert td > timedelta(0)
+    def test_stride_returns_timedelta(self):
+        solver = self.running_solver()
+        td = solver.stride(5)
+        self.assertIsInstance(td, timedelta)
+        self.assertGreater(td, timedelta(0))
 
 
 # ---------------------------------------------------------------------------
@@ -125,35 +142,39 @@ class TestLifecycleRaises:
 # ---------------------------------------------------------------------------
 
 
-class TestIteration:
-    def test_steps_terminates(self, running_solver):
+class TestIteration(EngineSolverCase):
+    def test_steps_terminates(self):
+        solver = self.running_solver()
         count = 0
         last = timedelta(0)
-        for elapsed in running_solver.steps():
+        for elapsed in solver.steps():
             count += 1
-            assert elapsed > last      # monotonic non-decreasing
+            self.assertGreater(elapsed, last)      # monotonic non-decreasing
             last = elapsed
         # If we got here, the iterator terminated naturally.
-        assert count > 0
-        assert running_solver.state in (EngineState.RUNNING, EngineState.ENDED)
+        self.assertGreater(count, 0)
+        self.assertIn(solver.state, (EngineState.RUNNING, EngineState.ENDED))
 
-    def test_until_with_timedelta(self, running_solver):
+    def test_until_with_timedelta(self):
+        solver = self.running_solver()
         target = timedelta(hours=1)
-        reached = running_solver.until(target)
+        reached = solver.until(target)
         # Either we got to the target, or the simulation ended first.
-        assert reached >= target or running_solver.state == EngineState.ENDED
+        self.assertTrue(reached >= target or solver.state == EngineState.ENDED)
 
-    def test_until_with_datetime(self, running_solver):
-        target = running_solver.start_datetime + timedelta(hours=2)
-        running_solver.until(target)
+    def test_until_with_datetime(self):
+        solver = self.running_solver()
+        target = solver.start_datetime + timedelta(hours=2)
+        solver.until(target)
         # After the call, current_datetime should be at or past target — or the
         # sim ended before the target.
-        assert (running_solver.current_datetime >= target
-                or running_solver.state == EngineState.ENDED)
+        self.assertTrue(solver.current_datetime >= target
+                        or solver.state == EngineState.ENDED)
 
-    def test_until_rejects_wrong_type(self, running_solver):
-        with pytest.raises(TypeError):
-            running_solver.until(42)
+    def test_until_rejects_wrong_type(self):
+        solver = self.running_solver()
+        with self.assertRaises(TypeError):
+            solver.until(42)
 
 
 # ---------------------------------------------------------------------------
@@ -161,35 +182,41 @@ class TestIteration:
 # ---------------------------------------------------------------------------
 
 
-class TestOptionsView:
-    def test_is_mutable_mapping(self, opened_solver):
+class TestOptionsView(EngineSolverCase):
+    def test_is_mutable_mapping(self):
+        solver = self.opened_solver()
         from collections.abc import MutableMapping
-        assert isinstance(opened_solver.options, MutableMapping)
+        self.assertIsInstance(solver.options, MutableMapping)
 
-    def test_string_get_set(self, opened_solver):
+    def test_string_get_set(self):
+        solver = self.opened_solver()
         # FLOW_UNITS is always present.
-        original = opened_solver.options["FLOW_UNITS"]
-        opened_solver.options["FLOW_UNITS"] = original  # round-trip should succeed
-        assert opened_solver.options["FLOW_UNITS"] == original
+        original = solver.options["FLOW_UNITS"]
+        solver.options["FLOW_UNITS"] = original  # round-trip should succeed
+        self.assertEqual(solver.options["FLOW_UNITS"], original)
 
-    def test_unknown_key_raises_keyerror(self, opened_solver):
-        with pytest.raises(KeyError):
-            opened_solver.options["NO_SUCH_OPTION"]
+    def test_unknown_key_raises_keyerror(self):
+        solver = self.opened_solver()
+        with self.assertRaises(KeyError):
+            solver.options["NO_SUCH_OPTION"]
 
-    def test_contains(self, opened_solver):
-        assert "FLOW_UNITS" in opened_solver.options
-        assert "NO_SUCH_OPTION" not in opened_solver.options
+    def test_contains(self):
+        solver = self.opened_solver()
+        self.assertIn("FLOW_UNITS", solver.options)
+        self.assertNotIn("NO_SUCH_OPTION", solver.options)
 
-    def test_iter_yields_present_keys(self, opened_solver):
-        keys = list(opened_solver.options)
-        assert "FLOW_UNITS" in keys
+    def test_iter_yields_present_keys(self):
+        solver = self.opened_solver()
+        keys = list(solver.options)
+        self.assertIn("FLOW_UNITS", keys)
         # Every yielded key must be retrievable.
         for k in keys:
-            assert opened_solver.options[k] is not None
+            self.assertIsNotNone(solver.options[k])
 
-    def test_typed_shortcuts(self, opened_solver):
-        assert isinstance(opened_solver.options.start_datetime, datetime)
-        assert isinstance(opened_solver.options.routing_step, timedelta)
+    def test_typed_shortcuts(self):
+        solver = self.opened_solver()
+        self.assertIsInstance(solver.options.start_datetime, datetime)
+        self.assertIsInstance(solver.options.routing_step, timedelta)
 
 
 # ---------------------------------------------------------------------------
@@ -197,34 +224,39 @@ class TestOptionsView:
 # ---------------------------------------------------------------------------
 
 
-class TestUserFlags:
-    def test_unknown_key_raises_keyerror(self, opened_solver):
-        with pytest.raises(KeyError):
-            _ = opened_solver.userflags["NO_SUCH_FLAG"]
+class TestUserFlags(EngineSolverCase):
+    def test_unknown_key_raises_keyerror(self):
+        solver = self.opened_solver()
+        with self.assertRaises(KeyError):
+            _ = solver.userflags["NO_SUCH_FLAG"]
 
-    def test_round_trip_bool(self, opened_solver):
+    def test_round_trip_bool(self):
+        solver = self.opened_solver()
         # Setting a value adds the flag; reading it returns the right type.
-        opened_solver.userflags["TEST_FLAG_BOOL"] = True
-        v = opened_solver.userflags["TEST_FLAG_BOOL"]
+        solver.userflags["TEST_FLAG_BOOL"] = True
+        v = solver.userflags["TEST_FLAG_BOOL"]
         # The flag exists in some form; bool readback may surface as int.
-        assert v in (True, 1)
+        self.assertIn(v, (True, 1))
 
-    def test_round_trip_int(self, opened_solver):
-        opened_solver.userflags["TEST_FLAG_INT"] = 7
-        assert opened_solver.userflags["TEST_FLAG_INT"] in (7, True, False) or \
-               opened_solver.userflags["TEST_FLAG_INT"] == 7
+    def test_round_trip_int(self):
+        solver = self.opened_solver()
+        solver.userflags["TEST_FLAG_INT"] = 7
+        self.assertTrue(solver.userflags["TEST_FLAG_INT"] in (7, True, False) or
+                        solver.userflags["TEST_FLAG_INT"] == 7)
 
-    def test_round_trip_float(self, opened_solver):
-        opened_solver.userflags["TEST_FLAG_REAL"] = 3.14
-        v = opened_solver.userflags["TEST_FLAG_REAL"]
-        assert isinstance(v, float)
-        assert abs(v - 3.14) < 1e-9
+    def test_round_trip_float(self):
+        solver = self.opened_solver()
+        solver.userflags["TEST_FLAG_REAL"] = 3.14
+        v = solver.userflags["TEST_FLAG_REAL"]
+        self.assertIsInstance(v, float)
+        self.assertLess(abs(v - 3.14), 1e-9)
 
-    def test_wrong_value_type_raises(self, opened_solver):
+    def test_wrong_value_type_raises(self):
+        solver = self.opened_solver()
         # bool/int/float/str are all accepted (str auto-defines a STRING
         # flag); a container type has no supported setter and must raise.
-        with pytest.raises(TypeError):
-            opened_solver.userflags["X"] = [1, 2, 3]
+        with self.assertRaises(TypeError):
+            solver.userflags["X"] = [1, 2, 3]
 
 
 # ---------------------------------------------------------------------------
@@ -232,36 +264,40 @@ class TestUserFlags:
 # ---------------------------------------------------------------------------
 
 
-class TestEventsView:
-    def test_is_mutable_sequence(self, opened_solver):
+class TestEventsView(EngineSolverCase):
+    def test_is_mutable_sequence(self):
+        solver = self.opened_solver()
         from collections.abc import MutableSequence
-        assert isinstance(opened_solver.events, MutableSequence)
+        self.assertIsInstance(solver.events, MutableSequence)
 
-    def test_initially_empty_or_present(self, opened_solver):
+    def test_initially_empty_or_present(self):
+        solver = self.opened_solver()
         # Site_drainage_example.inp has no [EVENTS] section by default.
-        n = len(opened_solver.events)
-        assert n >= 0
+        n = len(solver.events)
+        self.assertGreaterEqual(n, 0)
 
-    def test_append_and_read_back(self, opened_solver):
-        opened_solver.events.clear()
+    def test_append_and_read_back(self):
+        solver = self.opened_solver()
+        solver.events.clear()
         start = datetime(2024, 1, 1, 0, 0, 0)
         end = datetime(2024, 1, 1, 12, 0, 0)
-        opened_solver.events.append(Event(start=start, end=end))
-        assert len(opened_solver.events) == 1
-        ev = opened_solver.events[0]
-        assert isinstance(ev, Event)
+        solver.events.append(Event(start=start, end=end))
+        self.assertEqual(len(solver.events), 1)
+        ev = solver.events[0]
+        self.assertIsInstance(ev, Event)
         # Whole-second precision; the C round-trip can drop microseconds.
-        assert (ev.start - start) < timedelta(seconds=1)
-        assert (ev.end - end) < timedelta(seconds=1)
+        self.assertLess((ev.start - start), timedelta(seconds=1))
+        self.assertLess((ev.end - end), timedelta(seconds=1))
 
-    def test_delete_and_clear(self, opened_solver):
-        opened_solver.events.clear()
-        opened_solver.events.append((datetime(2024,1,1), datetime(2024,1,2)))
-        opened_solver.events.append((datetime(2024,2,1), datetime(2024,2,2)))
-        del opened_solver.events[0]
-        assert len(opened_solver.events) == 1
-        opened_solver.events.clear()
-        assert len(opened_solver.events) == 0
+    def test_delete_and_clear(self):
+        solver = self.opened_solver()
+        solver.events.clear()
+        solver.events.append((datetime(2024,1,1), datetime(2024,1,2)))
+        solver.events.append((datetime(2024,2,1), datetime(2024,2,2)))
+        del solver.events[0]
+        self.assertEqual(len(solver.events), 1)
+        solver.events.clear()
+        self.assertEqual(len(solver.events), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -269,16 +305,18 @@ class TestEventsView:
 # ---------------------------------------------------------------------------
 
 
-class TestCollectionStubs:
-    @pytest.mark.parametrize("attr", [
-        "nodes", "links", "subcatchments", "gages",
-        "pollutants", "tables", "inflows", "controls",
-        "forcing", "infrastructure", "spatial", "quality",
-        "statistics", "mass_balance", "editor",
-    ])
-    def test_lazy_collection_attribute_exists(self, opened_solver, attr):
-        first = getattr(opened_solver, attr)
-        assert first is not None
-        # Cached: second access returns the same object.
-        second = getattr(opened_solver, attr)
-        assert first is second
+class TestCollectionStubs(EngineSolverCase):
+    def test_lazy_collection_attribute_exists(self):
+        solver = self.opened_solver()
+        for attr in (
+            "nodes", "links", "subcatchments", "gages",
+            "pollutants", "tables", "inflows", "controls",
+            "forcing", "infrastructure", "spatial", "quality",
+            "statistics", "mass_balance", "editor",
+        ):
+            with self.subTest(attr=attr):
+                first = getattr(solver, attr)
+                self.assertIsNotNone(first)
+                # Cached: second access returns the same object.
+                second = getattr(solver, attr)
+                self.assertIs(first, second)

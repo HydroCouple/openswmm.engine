@@ -2,16 +2,14 @@
  * @file ISurfaceSolver.hpp
  * @brief Backend-neutral interface for the 2D surface-routing time integrator.
  *
- * @details Phase 0 of the portable GPU CVODE strategy
- *          (docs/2D_GPU_PORTABLE_CVODE_STRATEGY.md §6). Extracts the solver
- *          contract that SurfaceRouter2D depends on so the concrete solver
- *          can be chosen at runtime:
+ * @details Extracts the solver contract that SurfaceRouter2D depends on so the
+ *          concrete solver can be chosen at runtime:
  *
  *            ISurfaceSolver
- *             ├── CvodeSurfaceSolver        (serial CPU; today's path, default)
- *             └── CvodeKokkosSurfaceSolver  (GPU plugin; lands Phase 2+)
+ *             ├── ExplicitInertialSolver      (serial CPU; default)
+ *             └── ExplicitKokkosSurfaceSolver (GPU/threaded plugin)
  *
- *          This header is dependency-free (no SUNDIALS, no Kokkos): it only
+ *          This header is dependency-free (no Kokkos): it only
  *          forward-declares the 2D data types it passes by reference, so it
  *          compiles regardless of which backend — if any — is available.
  *
@@ -61,6 +59,14 @@ public:
     /// Reinitialize the integrator at @p t0 after external state edits.
     virtual void reinitialize(double t0) = 0;
 
+    /// Re-time the integrator at @p t0 keeping the SIGNED cell volumes from
+    /// state.volume. Used by the failed-window freeze path: reinitialize()
+    /// reseeds from the reconstructed head, which clamps at the dry anchor and
+    /// silently zeroes negative-volume debt (creating water); this variant
+    /// preserves it. Default falls back to reinitialize() for backends that
+    /// have not implemented volume-exact resync.
+    virtual void resyncFromVolumes(double t0) { reinitialize(t0); }
+
     /// Release all backend resources.
     virtual void finalize() = 0;
 
@@ -72,11 +78,31 @@ public:
 
     /// Per-point ∫Q dt (m³) from the live node-coupling macro-step path. Default
     /// returns empty for backends that do not implement live coupling (so the
-    /// caller falls back to the held-flux booking). See CvodeSurfaceSolver.
+    /// caller falls back to the held-flux booking). See ExplicitInertialSolver.
     virtual const std::vector<double>& last_coupling_exchange() const noexcept {
         static const std::vector<double> kEmpty;
         return kEmpty;
     }
+
+    /// Cumulative marcher statistics over the whole run — the throughput
+    /// numbers the "2D Solver Statistics" report block reads.
+    struct RunStats {
+        long   nsteps    = 0;   ///< internal (marcher) substeps
+        long   nrhs      = 0;   ///< face-kernel evaluations
+        double last_h    = 0.0; ///< last accepted internal step (s)
+        double avg_h     = 0.0; ///< sim-time / nsteps (s), filled by the caller
+
+        // Marcher telemetry. Guarded: n_tiers == 0 and negative fractions
+        // mean "not populated".
+        double active_frac_min  = -1.0; ///< min active-cell fraction (rebuild samples)
+        double active_frac_mean = -1.0; ///< mean active-cell fraction
+        double active_frac_max  = -1.0; ///< max active-cell fraction
+        long   tier_cells[8]    = {0};  ///< cumulative rebuild-sampled cells per LTS tier
+        int    n_tiers          = 0;    ///< populated tier count (≤ 8)
+    };
+
+    /// Read cumulative statistics. Default: zeros (backend has no counters).
+    virtual RunStats run_stats() const noexcept { return {}; }
 
     /// True once initialize() has completed and the solver is ready.
     virtual bool is_initialized() const noexcept = 0;

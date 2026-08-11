@@ -1,4 +1,6 @@
-# Chapter 6: Pumps and Regulators
+@page hydraulics_ref_ch6_pumps_regulators Chapter 6: Pumps and Regulators
+
+@tableofcontents
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
@@ -53,11 +55,11 @@ volumes.
 
 | **Type** | **Description** | **Image** |
 |---|---|---|
-| **Type1** | Consists of a series of constant flow rates that apply over a corresponding series of volume intervals at the pump's inlet node. | ![pump1.bmp](VolumeII/media/media/image40.png) |
-| **Type2** | Similar to a Type1 pump except that the fixed flow rate levels vary over a set of depth intervals at the pump's inlet node. | ![pump2.bmp](VolumeII/media/media/image41.png) |
-| **Type3** | A centrifugal pump characteristic curve at some nominal impeller speed represented in a piecewise linear fashion. Flow is a function of the head difference between the inlet and outlet nodes. | ![pump3.bmp](VolumeII/media/media/image42.png) |
-| **Type4** | A variable speed in-line pump where flow varies continuously with inlet node depth. | ![pump4.bmp](VolumeII/media/media/image43.png) |
-| **Type5** | A variable speed version of the Type3 pump where the head v. flow curve shifts position depending on the pump's speed setting. | ![Pump5.bmp](VolumeII/media/media/image44.png) |
+| **Type1** | Consists of a series of constant flow rates that apply over a corresponding series of volume intervals at the pump's inlet node. | ![pump1.bmp](hydraulics/media/media/image40.png) |
+| **Type2** | Similar to a Type1 pump except that the fixed flow rate levels vary over a set of depth intervals at the pump's inlet node. | ![pump2.bmp](hydraulics/media/media/image41.png) |
+| **Type3** | A centrifugal pump characteristic curve at some nominal impeller speed represented in a piecewise linear fashion. Flow is a function of the head difference between the inlet and outlet nodes. | ![pump3.bmp](hydraulics/media/media/image42.png) |
+| **Type4** | A variable speed in-line pump where flow varies continuously with inlet node depth. | ![pump4.bmp](hydraulics/media/media/image43.png) |
+| **Type5** | A variable speed version of the Type3 pump where the head v. flow curve shifts position depending on the pump's speed setting. | ![Pump5.bmp](hydraulics/media/media/image44.png) |
 
 For Type1 and Type 2 curves, the curve is searched in step-wise fashion
 for the first point whose volume or depth exceeds the volume or depth at
@@ -75,7 +77,7 @@ The Type5 pump curve is shifted depending on what relative speed setting
 *ω* the pump is currently operating under, where a setting of 1.0
 applies to the original user-supplied curve. Following the pump affinity
 laws (Sanks et al., 1998), a point with head *H* and flow *Q* on the
-original curve becomes $\omega^{2}H$ and $\omega Q$, respectively on the
+original curve becomes \f$\omega^{2}H\f$ and \f$\omega Q\f$, respectively on the
 speed-adjusted curve. For the other pump types only the flow value found
 from the original curve is multiplied by the speed setting.
 
@@ -87,7 +89,7 @@ checked to insure it does not cause the water level at the inlet node to
 drop below 0 over the current time step. If the node is a storage node
 then the pumping rate cannot exceed *Q*<sub>max</sub> where
 
-$$Q_{\max} = Q_{in} + \frac{V_{N}}{\Delta t}$$                 
+\f[Q_{\max} = Q_{in} + \frac{V_{N}}{\Delta t}\f]                 
 (6-1)
  
 and *Q*<sub>in</sub> is the most recently computed total inflow to the node,
@@ -116,7 +118,7 @@ Some additional computational details regarding pumps are as follows:
         assemblies at their inlet and outlet nodes.
 
     b.  For Type3, Type4 and Type5 pump curves the
-        $\frac{\partial Q}{\partial H}$ term used for evaluating a
+        \f$\frac{\partial Q}{\partial H}\f$ term used for evaluating a
         surcharged node is the negative of the slope of the line segment
         on which the pumping rate lies. For the other pump types it is
         zero since their line segments have zero slope.
@@ -127,7 +129,7 @@ Some additional computational details regarding pumps are as follows:
 3.  SWMM computes the power consumed in kilowatt-hours by each pump over
     each time step *∆t* as:
 
-$$Kwh = 0.7457\left( H_{2} - H_{1} \right)\frac{Q\left( \frac{\Delta t}{3600} \right)}{8.814}$$   
+\f[Kwh = 0.7457\left( H_{2} - H_{1} \right)\frac{Q\left( \frac{\Delta t}{3600} \right)}{8.814}\f]   
 (6-2)
 
 where heads *H*<sub>1</sub> and *H*<sub>2</sub> are in feet, flow *Q* is in cfs, and
@@ -164,13 +166,10 @@ inlet node must be a storage node since this is the only type of node
 for which a true hydraulic head is computed. For dynamic wave analysis
 it can be any type of node.
 
-<figure>
-<img src="VolumeII/media/media/image45.png"
-style="width:4.59318in;height:1.81227in" alt="Orifice2.png" />
-<figcaption><p><span id="_Toc484694735"
+![](hydraulics/media/media/image45.png "image45")
+<p><span id="_Toc484694735"
 class="anchor"></span><strong>Figure 6‑1 Orifice
-orientations</strong></p></figcaption>
-</figure>
+orientations</strong></p>
 
 The properties of an orifice link include:
 
@@ -200,7 +199,7 @@ wave solution procedure with its inlet side fully submerged its flow
 rate *Q* (cfs) can be found using Torricelli's equation (Brater et al.,
 1996):
 
-$$Q = C_{d}A_{O}\sqrt{2gH_{e}}$$                            
+\f[Q = C_{d}A_{O}\sqrt{2gH_{e}}\f]                            
 (6-3)
 
 where *C*<sub>d</sub> is a dimensionless orifice discharge coefficient, *A*<sub>O</sub> is
@@ -228,12 +227,12 @@ for the current time step ω = *ω\**. Otherwise let *∆ω* be defined as
 
 | **Condition** | **Value** | **Equation** |
 |---|---|---|
-| if $\frac{\Delta t}{{\Delta t}_{O}} < \Delta\omega$ | $\omega + \frac{sgn(\Delta\omega)\Delta t}{{\Delta t}_{O}}$ | (6-4) |
-| otherwise | $\omega^{*}$ | |
+| if \f$\frac{\Delta t}{{\Delta t}_{O}} < \Delta\omega\f$ | \f$\omega + \frac{sgn(\Delta\omega)\Delta t}{{\Delta t}_{O}}\f$ | (6-4) |
+| otherwise | \f$\omega^{*}\f$ | |
 
 where *∆t* is the length of the current time step. With the setting
 established, the area of the orifice opening is determined using the
-methods described in Chapter 5 to find the area of either a circular or
+methods described in @ref hydraulics_ref_ch5_cross_section "Chapter 5" to find the area of either a circular or
 rectangular cross section, depending on orifice shape, at a fraction *ω*
 of its full height.
 
@@ -245,7 +244,7 @@ the most recently computed head at the orifice's nominal upstream node
 and *H*<sub>2</sub> be the same at the nominal downstream node. For kinematic
 wave analysis, since the upstream node must be a storage node, *H*<sub>1</sub> is
 the water surface elevation in the storage unit while *H*<sub>2</sub> is the
-invert elevation of the downstream node. If $H_{1} < H_{2}$ and the
+invert elevation of the downstream node. If \f$H_{1} < H_{2}\f$ and the
 orifice does not have a flap gate then the head values are reversed (so
 *H*<sub>1</sub> has the higher value) and the computed flow will be opposite to
 the nominal downstream direction.
@@ -259,15 +258,15 @@ height:
 
 | **Condition** | **Value** | **Equation** |
 |---|---|---|
-| for $H_{2} < Z_{O} + \omega\frac{Y_{full}}{2}$ | $H_{1} - \left( Z_{O} + \omega\frac{Y_{full}}{2} \right)$ | (6-5) |
-| otherwise | $H_{1} - H_{2}$ | |
+| for \f$H_{2} < Z_{O} + \omega\frac{Y_{full}}{2}\f$ | \f$H_{1} - \left( Z_{O} + \omega\frac{Y_{full}}{2} \right)\f$ | (6-5) |
+| otherwise | \f$H_{1} - H_{2}\f$ | |
 
 2.  For a bottom orifice:
 
 | **Condition** | **Value** | **Equation** |
 |---|---|---|
-| for $H_{2} \leq Z_{O}$ | $H_{1} - Z_{O}$ | (6-6) |
-| otherwise | $H_{1} - H_{2}$ | |
+| for \f$H_{2} \leq Z_{O}\f$ | \f$H_{1} - Z_{O}\f$ | (6-6) |
+| otherwise | \f$H_{1} - H_{2}\f$ | |
 
 Figure 6-2 illustrates how *H*<sub>e</sub> is evaluated for a side orifice.
 
@@ -283,40 +282,37 @@ using the standard rectangular weir formula to compute the orifice's
 flow rate. The details differ for side and bottom orifices as described
 below.
 
-   ![Orifice4.png](VolumeII/media/media/image46.png)   ![Orifice5.png](VolumeII/media/media/image47.png)
+   ![Orifice4.png](hydraulics/media/media/image46.png)   ![Orifice5.png](hydraulics/media/media/image47.png)
                                                                     
      Submerged Upstream Only                            Submerged Both Up and Downstream
 
 **Figure 6‑2 Determination of effective head for an orifice**
 
-<figure>
-<img src="VolumeII/media/media/image48.png"
-style="width:4.03288in;height:2.79833in" alt="Orifice6.png" />
-<figcaption><p><span id="_Toc484694737"
+![](hydraulics/media/media/image48.png "image48")
+<p><span id="_Toc484694737"
 class="anchor"></span><strong>Figure 6‑3 Orifice with unsubmerged
-inlet</strong></p></figcaption>
-</figure>
+inlet</strong></p>
 
 <u>Side Orifices</u>
 
 For a side orifice, weir behavior occurs when the inlet water level is
 below the top of the orifice opening. Thus the threshold head *H\** is:
 
-$$H^{*} = Z_{O} + \omega Y_{full}$$                         
+\f[H^{*} = Z_{O} + \omega Y_{full}\f]                         
 (6-7)
 
 When the inlet head *H*<sub>1</sub> is below this height the flow through the
 orifice can be approximated by using the general weir formula:
 
-$$Q = C_{W}L\left( H_{1} - Z_{O} \right)^{1.5}$$                 
+\f[Q = C_{W}L\left( H_{1} - Z_{O} \right)^{1.5}\f]                 
 (6-8)
 
 where *C*<sub>W</sub> is a weir coefficient (ft<sup>1/2</sup>/sec) and *L* is the crest
 length of the equivalent weir (ft). Equating the flow from this equation
-to that from the orifice equation 6-3 when $H_{1} = H^{*}$ and solving
+to that from the orifice equation 6-3 when \f$H_{1} = H^{*}\f$ and solving
 for *C*<sub>W</sub>*L* results in:
 
-$$C_{W}L = \frac{C_{d}A_{O}\sqrt{g}}{\omega Y_{full}}$$                 
+\f[C_{W}L = \frac{C_{d}A_{O}\sqrt{g}}{\omega Y_{full}}\f]                 
 (6-9)
 
 Thus whenever the upstream head *H*<sub>1</sub> is below *H*\**, flow through the
@@ -330,12 +326,12 @@ for weir flow will be at a point where the flow through the orifice
 using both the orifice and general weir equations will be the same. In
 equation terms:
 
-$$C_{d}A_{O}\sqrt{2g}\left( H^{*} - Z_{O} \right)^{0.5} = C_{W}L\left( H^{*} - Z_{O} \right)^{1.5}$$   
+\f[C_{d}A_{O}\sqrt{2g}\left( H^{*} - Z_{O} \right)^{0.5} = C_{W}L\left( H^{*} - Z_{O} \right)^{1.5}\f]   
 (6-10)
 
 Solving for *H\** results in:
 
-$$H^{*} = Z_{O} + \frac{C_{d}A_{O}\sqrt{2g}}{C_{W}L}$$      
+\f[H^{*} = Z_{O} + \frac{C_{d}A_{O}\sqrt{2g}}{C_{W}L}\f]      
 (6-11)
 
 In order to evaluate *H*\** values for *C*<sub>W</sub> and *L* must be assigned.
@@ -345,8 +341,8 @@ circumference of the opening as follows:
 
 | **Opening Type** | **Value** | **Equation** |
 |---|---|---|
-| for a circular opening | $\pi\omega Y_{full}$ | (6-12) |
-| for a rectangular opening | $2\left( b + \omega Y_{full} \right)$ | |
+| for a circular opening | \f$\pi\omega Y_{full}\f$ | (6-12) |
+| for a rectangular opening | \f$2\left( b + \omega Y_{full} \right)\f$ | |
 
 where *b* is the fixed width of the rectangular opening. Now *H*\** can
 be determined for a given orifice coefficient and opening dimensions.
@@ -364,7 +360,7 @@ downstream head *H*<sub>2</sub> is above the bottom of the orifice opening
 *Z*<sub>O</sub>, the following submergence adjustment factor *f*<sub>S</sub> is applied to
 the computed flow value:
 
-$$f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{1.5} \right\rbrack^{0.385}$$   
+\f[f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{1.5} \right\rbrack^{0.385}\f]   
 (6-13)
 
 ### 6.2.4 Flap Gate Head Loss Adjustment
@@ -374,11 +370,11 @@ flow through the gate. An empirical formula for this head loss was
 derived from experiments performed at Iowa State University in the
 1930's and published by Armco (1978):
 
-$$\Delta H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right)$$   
+\f[\Delta H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right)\f]   
 (6-14)
 
 where *∆H* is the head loss added by the flap gate (ft) and *U* is the
-velocity through the orifice (ft/sec) which equals $\frac{Q}{A_{O}}$.
+velocity through the orifice (ft/sec) which equals \f$\frac{Q}{A_{O}}\f$.
 After the orifice's flow is first computed without this additional head
 loss, *∆H* is computed with Equation 6-14 and subtracted from *H*<sub>e</sub>.
 Then the flow is re-computed, this time using the adjusted value of
@@ -388,7 +384,7 @@ effective head.
 
 Dynamic wave modeling uses the surface area of the links attached to a
 node to update the node's head when it is not in a surcharged state (see
-Chapter 3). As an orifice has no length, its contribution to a node's
+@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3"). As an orifice has no length, its contribution to a node's
 surface area should be zero. However in older versions of SWMM an
 orifice was represented as an equivalent pipe that contributed surface
 area to its end nodes just as a real conduit did. To maintain
@@ -397,16 +393,16 @@ compatibility with previous versions, SWMM 5 computes a surface area
 
 | **Orifice Type** | **Value** | **Equation** |
 |---|---|---|
-| for a side orifice | $W(Y_{O})L_{O}$ | (6-15) |
-| for a bottom orifice | $A\left( \omega Y_{full} \right)$ | |
+| for a side orifice | \f$W(Y_{O})L_{O}\f$ | (6-15) |
+| for a bottom orifice | \f$A\left( \omega Y_{full} \right)\f$ | |
 
 where:
 
   *Y*<sub>O</sub>      =   depth of flow through the orifice (ft), equal to
-                  $\min\left( H_{1} - Z_{O}\ ,\ \omega Y_{full} \right)$
+                  \f$\min\left( H_{1} - Z_{O}\ ,\ \omega Y_{full} \right)\f$
 
   *L*<sub>O</sub>      =   equivalent conduit length of the orifice (ft), equal to 
-$$\max\left( 2{\Delta t}_{\max}\sqrt{gY_{full}}\ ,200 \right)$$
+\f[\max\left( 2{\Delta t}_{\max}\sqrt{gY_{full}}\ ,200 \right)\f]
 
   *∆t*<sub>max</sub>   =   maximum time step assigned by the user to the simulation (sec)
 
@@ -414,7 +410,7 @@ $$\max\left( 2{\Delta t}_{\max}\sqrt{gY_{full}}\ ,200 \right)$$
 
   *A(Y)*      =   area of orifice opening at flow depth *Y* (ft)
 
-*W(Y)* and *A(Y)* are evaluated using the formulas from Chapter 5 for
+*W(Y)* and *A(Y)* are evaluated using the formulas from @ref hydraulics_ref_ch5_cross_section "Chapter 5" for
 either a circular or closed rectangular cross section shape. Half of
 *A*<sub>SL</sub> is assigned to each of the orifice's end nodes providing that
 the node is not a storage unit nor has its head below the orifice
@@ -426,13 +422,13 @@ surcharged node connected to the link (see section 3.3.5). For submerged
 headwater orifices that use Equation 6-3 to compute flow rate *Q*, this
 derivative is:
 
-$$\frac{dQ}{dH} = 0.5\frac{Q}{H_{e}}$$                      
+\f[\frac{dQ}{dH} = 0.5\frac{Q}{H_{e}}\f]                      
 (6-16)
 
 while for unsubmerged headwater orifices that use Equation 6-8 to
 compute *Q* it is:
 
-$$\frac{dQ}{dH} = 1.5\frac{Q}{\left( H_{1} - Z_{O} \right)}$$   
+\f[\frac{dQ}{dH} = 1.5\frac{Q}{\left( H_{1} - Z_{O} \right)}\f]   
 (6-17)
 
 ### 6.2.6 Summary of Orifice Computations
@@ -480,7 +476,7 @@ through the orifice:
 
 6.  Under dynamic wave analysis use Equation 6-15 to assign a surface
     area to the orifice and use Equation 6-16 (for side orifices) or
-    6-17 (for bottom orifices) to compute $\frac{dQ}{dH}$ for the
+    6-17 (for bottom orifices) to compute \f$\frac{dQ}{dH}\f$ for the
     orifice.
 
 ## 6.3 Weirs
@@ -520,13 +516,10 @@ The properties of a weir link include:
 Figure 6-4 shows the different shapes of transverse weirs modeled by
 SWMM. The only shape allowed for a side weir is rectangular.
 
-<figure>
-<img src="VolumeII/media/media/image49.png"
-style="width:6.5in;height:3.18056in" alt="Weirs1.png" />
-<figcaption><p><span id="_Toc484694738"
+![](hydraulics/media/media/image49.png "image49")
+<p><span id="_Toc484694738"
 class="anchor"></span><strong>Figure 6‑4 Transverse weir
-shapes</strong></p></figcaption>
-</figure>
+shapes</strong></p>
 
 A suppressed rectangular weir has its opening extended across the entire
 channel while a contracted weir does not. Weirs are also classified as
@@ -554,12 +547,12 @@ settings the crest elevation equals its lowest possible value plus 1 -
 The general equation for free flow over a transverse rectangular weir is
 (Brater et al., 1996):
 
-$$Q = C_{W}L_{e}H_{e}^{3/2}$$                               
+\f[Q = C_{W}L_{e}H_{e}^{3/2}\f]                               
 (6-18)
 
 and for a triangular weir is (Brater et al., 1996):
 
-$$Q = C_{W}\tan\left( \frac{\theta}{2} \right)H_{e}^{5/2}$$   
+\f[Q = C_{W}\tan\left( \frac{\theta}{2} \right)H_{e}^{5/2}\f]   
 (6-19)
 
 In these equations *Q* is the flow rate (cfs), *L*<sub>e</sub> is the effective
@@ -569,13 +562,13 @@ is a weir coefficient (ft<sup>1/2</sup>/sec). A trapezoidal weir can be treated
 as a combination of a rectangular weir and two half-triangular weirs
 (Featherstone and Nalluri, 1982) leading to the equations:
 
-$$Q = Q_{R} + Q_{T}$$                                     
+\f[Q = Q_{R} + Q_{T}\f]                                     
 (6-20a)
 
-$$Q_{R} = C_{WR}L_{e}H_{e}^{3/2}$$                        
+\f[Q_{R} = C_{WR}L_{e}H_{e}^{3/2}\f]                        
 (6-20b)
 
-$$Q_{T} = C_{WT}sH_{e}^{5/2}$$                            
+\f[Q_{T} = C_{WT}sH_{e}^{5/2}\f]                            
 (6-20c)
 
 where *s* is the slope (run / rise) of the trapezoidal side wall and
@@ -587,7 +580,7 @@ and triangular portions of the weir, respectively.
 The effective head seen by a weir, accounting for its current setting,
 is:
 
-$$H_{e} = H_{1} - \left( Z_{W} + (1 - \omega)Y_{full} \right)$$   
+\f[H_{e} = H_{1} - \left( Z_{W} + (1 - \omega)Y_{full} \right)\f]   
 (6-21)
 
 where *H*<sub>1</sub> is the higher of the heads at the weir's end nodes, *Z*<sub>W</sub>*
@@ -595,14 +588,14 @@ is the elevation of the weir's crest when fully open (i.e., when *ω* =
 1), and *Y*<sub>full</sub> is the full height of the weir's opening. If *H*<sub>1</sub>*
 corresponds to the downstream node of the weir then reverse flow occurs
 through the weir unless a flap gate is present in which case the flow is
-0. Flow will also be 0 if $H_{e} \leq 0.$
+0. Flow will also be 0 if \f$H_{e} \leq 0.\f$
 
 <u>Effective Crest Length</u> (*L*<sub>e</sub>)
 
 The effective crest length of a rectangular weir is reduced by the
 number of end contractions as follows (Mays, 2001):
 
-$$L_{e} = L - 0.1nH_{e}$$                                   
+\f[L_{e} = L - 0.1nH_{e}\f]                                   
 (6-22)
 
 where *L* is the actual crest length and *n* = 1 if the weir is placed
@@ -614,9 +607,9 @@ When the setting *ω* for a triangular weir is less than 1 its opening
 takes the shape of a trapezoidal weir. In this case the trapezoidal weir
 equation 6-18 is used with both *C*<sub>WR</sub> and *C*<sub>WT</sub> set equal to the
 weir's original coefficient, the side wall slope *s* set equal to
-$\tan\left( \frac{\theta}{2} \right)$ and the effective length becomes:
+\f$\tan\left( \frac{\theta}{2} \right)\f$ and the effective length becomes:
 
-$$L_{e} = 2s(1 - \omega)Y_{full}$$                          
+\f[L_{e} = 2s(1 - \omega)Y_{full}\f]                          
 (6-23)
 
 This equation is also used for a trapezoidal weir whose setting is less
@@ -626,12 +619,12 @@ than 1.
 
 The standard weir coefficient *C*<sub>W</sub> for a sharp crested rectangular
 weir is 3.33 ft<sup>1/2</sup>/sec (Mays, 2001). For
-$\frac{H_{W}}{L} > \frac{1}{3}$ the coefficient has been found to vary
+\f$\frac{H_{W}}{L} > \frac{1}{3}\f$ the coefficient has been found to vary
 with effective head and weir sizing and placement (Bureau of
 Reclamation, 2001). The Kindsvater-Carter method (Bureau of Reclamation,
 2001) expresses this dependence with the following formula:
 
-$$C_{W} = c1\left( \frac{H_{W}}{Z_{W}} \right) + c2$$       
+\f[C_{W} = c1\left( \frac{H_{W}}{Z_{W}} \right) + c2\f]       
 (6-24)
 
 where the constants *c1* and *c2* vary with the ratio of the crest
@@ -668,7 +661,7 @@ ft<sup>1/2</sup>/sec ) with head over the weir *H*<sub>W</sub> (in feet) present
 Brater and King (1976). The range of coefficients is rather small, from
 2.5 up to 2.8.
 
-> ![CWT.png](VolumeII/media/media/image50.png)
+> ![CWT.png](hydraulics/media/media/image50.png)
 
 **Figure 6‑5 Coefficient for triangular weirs (from Brater and King, 1976)**
 
@@ -705,7 +698,7 @@ weir coefficient vary spatially. Unfortunately these approaches are too
 complex to implement in a program like SWMM. The empirical Engels
 equation (Metcalf & Eddy, Inc. 1972) is used instead:
 
-$$Q = C_{W}L_{e}^{0.83}H_{e}^{1.67}$$                       
+\f[Q = C_{W}L_{e}^{0.83}H_{e}^{1.67}\f]                       
 (6-25)
 
 Where flow *Q* is in cfs, length *L*<sub>e</sub> and head *H*<sub>e</sub> are in feet, and
@@ -730,7 +723,7 @@ on the upstream side of the weir (*H*<sub>1</sub>) but also to *H*<sub>2</sub> a
 applying an adjustment factor *f*<sub>S</sub> developed by Villemonte (1947) to
 the flow computed using the free flow equation:
 
-$$f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{n} \right\rbrack^{0.385}$$   
+\f[f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{n} \right\rbrack^{0.385}\f]   
 (6-26)
 
 where *n* is the exponent on head used in the weir flow equation and the
@@ -741,27 +734,24 @@ weirs separate submergence factors are computed for the rectangular flow
 portion (*Q*<sub>R</sub> in Equation 6-20b with *n* = 3/2) and for the triangular
 flow portion (*Q*<sub>T</sub> in Equation 6-20c with *n* = 5/2).
 
-<figure>
-<img src="VolumeII/media/media/image51.png"
-style="width:4.87568in;height:2.33366in" alt="Weirs2b.png" />
-<figcaption><p><span id="_Toc484694740"
+![](hydraulics/media/media/image51.png "image51")
+<p><span id="_Toc484694740"
 class="anchor"></span><strong>Figure 6‑6 Definitions of submerged and
-surcharged weir flow</strong></p></figcaption>
-</figure>
+surcharged weir flow</strong></p>
 
 ### 6.3.5 Surcharged Weir Flow
 
 As shown in Figure 6-4, the weirs modeled by SWMM assume that the top of
 the flow opening extends to the top of the structure that houses the
 weir. If this structure is an open channel then the highest head that
-the weir can see is ${\omega Y}_{full}$ where *ω* reflects the weir's
+the weir can see is \f${\omega Y}_{full}\f$ where *ω* reflects the weir's
 current setting. If the structure encloses the weir from above, such as
 in a sewer pipe, then the head on the upstream side of the weir can
 exceed the structure's crown elevation causing the weir to become
 surcharged (see Figure 6-6). In this case the weir acts as an orifice
 and its flow should be evaluated using the equivalent of Equation 6-3:
 
-$$Q = C_{d}A_{O}\sqrt{2gH_{e}} = C_{O}\sqrt{H_{e}}$$                 
+\f[Q = C_{d}A_{O}\sqrt{2gH_{e}} = C_{O}\sqrt{H_{e}}\f]                 
 (6-27)
 
 where *C*<sub>O</sub> is an equivalent orifice constant with units of
@@ -770,17 +760,17 @@ ft<sup>5/2</sup>/sec.
 *C*<sub>O</sub> can be evaluated by setting Equation 6-27 equal to the
 appropriate weir equation (6-18, 6-19, 6-20, or 6-25 depending on weir
 type) evaluated at a weir head 
-$$H_{e} = {\omega Y}_{full}$$ 
+\f[H_{e} = {\omega Y}_{full}\f] 
 for which the corresponding orifice head would be 
-$$\frac{{\omega Y}_{full}}{2}$$
+\f[\frac{{\omega Y}_{full}}{2}\f]
 . The result is:
 
-$$C_{O} = \frac{Q_{W}\left( {\omega Y}_{full} \right)}{\sqrt{\frac{{\omega Y}_{full}}{2}}}$$                 
+\f[C_{O} = \frac{Q_{W}\left( {\omega Y}_{full} \right)}{\sqrt{\frac{{\omega Y}_{full}}{2}}}\f]                 
 (6-28)
 
 where 
-$$Q_{W}\left( {\omega Y}_{full} \right)$$
-is the flow in cfs from the relevant weir equation for a head of ${\omega Y}_{full}$ feet. The
+\f[Q_{W}\left( {\omega Y}_{full} \right)\f]
+is the flow in cfs from the relevant weir equation for a head of \f${\omega Y}_{full}\f$ feet. The
 constant *C*<sub>O</sub> is re-evaluated each time a weir's setting changes.
 
 Thus if the user indicates that a weir is allowed to surcharge, then
@@ -789,15 +779,15 @@ computed using Equation 6-27. The head *H*<sub>e</sub> to be used in this
 equation is computed as follows. Let *H\** be the head corresponding to
 the elevation at half of the weir's opening height, i.e.:
 
-$$H^{*} = Z_{W} + (1 - \omega)Y_{full} + \frac{\omega Y_{full}}{2}$$   
+\f[H^{*} = Z_{W} + (1 - \omega)Y_{full} + \frac{\omega Y_{full}}{2}\f]   
 (6-29)
 
 Then
 
 | Condition | Value | Equation |
 |---|---|---|
-| for $H_{2} < H^{*}$ | $H_{1} - H^{*}$ | (6-30) |
-| otherwise | $H_{1} - H_{2}$ | |
+| for \f$H_{2} < H^{*}\f$ | \f$H_{1} - H^{*}\f$ | (6-30) |
+| otherwise | \f$H_{1} - H_{2}\f$ | |
 
 In addition, the correction for weir submergence is not applied.
 
@@ -807,7 +797,7 @@ When a weir has a flap gate it adds a small amount of head loss for flow
 through the gate. The same Armco formula used for orifices is used to
 compute this head loss for weirs:
 
-$$\Delta H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right)$$   
+\f[\Delta H = \frac{4U^{2}}{g}\exp\left( - 1.15\frac{U}{\sqrt{H_{e}}} \right)\f]   
 (6-31)
 
 where *∆H* is the head loss added by the flap gate (ft) and *U* is the
@@ -817,15 +807,15 @@ the weir. This area equals
 
 | Condition | Value | Equation |
 |---|---|---|
-| for normal weir flow | $A\left( H_{W} + y_{C} \right) - A\left( y_{C} \right)$ | (6-32) |
-| for surcharged weir flow | $A\left( Y_{full} \right) - A\left( y_{C} \right)$ | |
+| for normal weir flow | \f$A\left( H_{W} + y_{C} \right) - A\left( y_{C} \right)\f$ | (6-32) |
+| for surcharged weir flow | \f$A\left( Y_{full} \right) - A\left( y_{C} \right)\f$ | |
 
 where *Y*<sub>full</sub> is the full height of the weir opening, *y*<sub>C</sub> is the
 distance that the weir crest has been raised due to the current setting
-(equal to $(1 - \omega)Y_{full}$ ), and *A(y)* is the area of the weir
+(equal to \f$(1 - \omega)Y_{full}\f$ ), and *A(y)* is the area of the weir
 opening at flow depth *y*. The latter quantity is found using the
-geometry functions described in Chapter 5 for either a rectangular,
-triangular, or trapezoidal shape. Knowing *A*<sub>e</sub>, $U = \frac{Q}{A_{e}}$,
+geometry functions described in @ref hydraulics_ref_ch5_cross_section "Chapter 5" for either a rectangular,
+triangular, or trapezoidal shape. Knowing *A*<sub>e</sub>, \f$U = \frac{Q}{A_{e}}\f$,
 where the flow *Q* has been determined using the methods described in
 the previous sections.
 
@@ -845,14 +835,14 @@ head *(dQ/dH)*, used when updating the head of a surcharged end node
 
 | **Weir Type** | **Flow Derivative *(dQ/dH)*** |
 |---|---|
-| Transverse Rectangular | $1.5\frac{\vert Q \vert}{H_{e}}$ |
+| Transverse Rectangular | \f$1.5\frac{\vert Q \vert}{H_{e}}\f$ |
 | Side Flow Rectangular: | |
-| &nbsp;&nbsp;&nbsp;&nbsp;a. $Q \geq 0$ | $1.67\frac{\vert Q \vert}{H_{e}}$ |
-| &nbsp;&nbsp;&nbsp;&nbsp;b. $Q < 0$ | $1.5\frac{\vert Q \vert}{H_{e}}$ |
+| &nbsp;&nbsp;&nbsp;&nbsp;a. \f$Q \geq 0\f$ | \f$1.67\frac{\vert Q \vert}{H_{e}}\f$ |
+| &nbsp;&nbsp;&nbsp;&nbsp;b. \f$Q < 0\f$ | \f$1.5\frac{\vert Q \vert}{H_{e}}\f$ |
 | Transverse Triangular: | |
-| &nbsp;&nbsp;&nbsp;&nbsp;a. Fully open (*ω* = 1) | $2.5\frac{\vert Q \vert}{H_{e}}$ |
-| &nbsp;&nbsp;&nbsp;&nbsp;b. Partly open (*ω* < 1) | $1.5\frac{\vert Q_{R} \vert}{H_{e}} + 2.5\frac{\vert Q_{T} \vert}{H_{e}}$ |
-| Transverse Trapezoidal | $1.5\frac{\vert Q_{R} \vert}{H_{e}} + 2.5\frac{\vert Q_{T} \vert}{H_{e}}$ |
+| &nbsp;&nbsp;&nbsp;&nbsp;a. Fully open (*ω* = 1) | \f$2.5\frac{\vert Q \vert}{H_{e}}\f$ |
+| &nbsp;&nbsp;&nbsp;&nbsp;b. Partly open (*ω* < 1) | \f$1.5\frac{\vert Q_{R} \vert}{H_{e}} + 2.5\frac{\vert Q_{T} \vert}{H_{e}}\f$ |
+| Transverse Trapezoidal | \f$1.5\frac{\vert Q_{R} \vert}{H_{e}} + 2.5\frac{\vert Q_{T} \vert}{H_{e}}\f$ |
 
 Note: For trapezoidal openings, *Q*<sub>R</sub> is the flow through the central
 rectangular portion and *Q*<sub>T</sub> is the flow through the triangular end
@@ -894,7 +884,7 @@ requires computing flow through the weir:
 7.  If the weir has reverse flow then make the computed flow negative.
 
 8.  Under dynamic wave analysis use the formulas in Table 6-4 to compute
-    $\frac{dQ}{dH}$ for the weir.
+    \f$\frac{dQ}{dH}\f$ for the weir.
 
 ## 6.4 Outlets
 
@@ -939,7 +929,7 @@ The rating curve can be defined either as an analytical power law
 function or a tabular listing of points on the curve. The analytical
 power function has the form:
 
-$$Q = aH_{e}^{b}$$                                          
+\f[Q = aH_{e}^{b}\f]                                          
 (6-33)
 
 where *Q* is flow rate (cfs), *H*<sub>e</sub> is the effective head (ft), and *a*
@@ -947,13 +937,10 @@ and *b* are user-supplied constants. The tabular rating curve consists
 of pairs of head (*H*<sub>e</sub>) and flow (*Q*) values for points that the user
 chooses to represent the shape of the outlet's rating curve.
 
-<figure>
-<img src="VolumeII/media/media/image52.png"
-style="width:2.68793in;height:3.39631in" alt="hydra-brake4.png" />
-<figcaption><p><span id="_Toc484694741"
+![](hydraulics/media/media/image52.png "image52")
+<p><span id="_Toc484694741"
 class="anchor"></span><strong>Figure 6‑7 Rating curve for a vortex
-device compared to an orifice</strong></p></figcaption>
-</figure>
+device compared to an orifice</strong></p>
 
 The following steps are used whenever the flow through an outlet link
 must be computed:
@@ -970,8 +957,8 @@ must be computed:
 
 3.  For dynamic wave modeling, if the outlet's rating curve is based on
     head difference then compute an effective head on the outlet as
-    $H_{e} = H_{1} - max\left( H_{2},\ \ \ Z_{O} \right)$ where *Z*<sub>O</sub>*
-    is the outlet's offset elevation. Otherwise $H_{e} = H_{1} - Z_{O}$.
+    \f$H_{e} = H_{1} - max\left( H_{2},\ \ \ Z_{O} \right)\f$ where *Z*<sub>O</sub>*
+    is the outlet's offset elevation. Otherwise \f$H_{e} = H_{1} - Z_{O}\f$.
 
 4.  For an analytical rating curve use Equation 6-33 to compute the
     outlet's flow rate *Q*. For a tabular rating curve find the adjacent
@@ -983,3 +970,6 @@ must be computed:
 
 5.  Multiply *Q* by whatever outlet setting is currently in effect and
     change its sign if reverse flow occurs.
+
+
+

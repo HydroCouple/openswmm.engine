@@ -5,129 +5,147 @@ C API correctly. Requires OPENSWMM_WITH_GEOPACKAGE=ON at build time.
 """
 
 import os
-import pytest
+import unittest
+
 import numpy as np
 
 # Skip all tests if GeoPackage not built
-gpkg_available = False
 try:
     from openswmm.engine._geopackage import GeoPackage, register, is_registered
-    gpkg_available = True
-except ImportError:
-    pass
+except ImportError:  # pragma: no cover - environment dependent
+    raise unittest.SkipTest(
+        "GeoPackage bindings not available (build with -DOPENSWMM_WITH_GEOPACKAGE=ON)"
+    )
 
-pytestmark = pytest.mark.skipif(
-    not gpkg_available,
-    reason="GeoPackage bindings not available (build with -DOPENSWMM_WITH_GEOPACKAGE=ON)"
-)
+from tests._paths import artifact_dir  # noqa: E402
 
 
 # ============================================================================
-# Fixtures
+# Helpers (former fixtures)
 # ============================================================================
 
-@pytest.fixture
-def gpkg_path(tmp_path):
-    """Path for a temporary GeoPackage file."""
-    return str(tmp_path / "test.gpkg")
+class GeoPackageCase(unittest.TestCase):
+    """Base TestCase providing the former ``gpkg_path`` / ``gpkg_with_schema``
+    fixtures as helper methods."""
 
+    def gpkg_path(self):
+        """Path for a per-test GeoPackage file.
 
-@pytest.fixture
-def gpkg_with_schema(gpkg_path):
-    """A GeoPackage opened for the first time (creates file)."""
-    gpkg = GeoPackage(gpkg_path)
-    yield gpkg
-    gpkg.close()
+        The artifact tree persists across runs (it lives in the source
+        checkout so outputs are reviewable), so remove any stale database
+        from a previous run — otherwise rows accumulate and counts double
+        (seen when cibuildwheel runs the suite once per Python version).
+        """
+        path = os.path.join(artifact_dir(self), "test.gpkg")
+        for stale in (path, path + "-wal", path + "-shm"):
+            if os.path.exists(stale):
+                os.remove(stale)
+        return path
+
+    def gpkg_with_schema(self):
+        """A GeoPackage opened for the first time (creates file)."""
+        gpkg = GeoPackage(self.gpkg_path())
+        self.addCleanup(gpkg.close)
+        return gpkg
 
 
 # ============================================================================
 # Lifecycle
 # ============================================================================
 
-class TestLifecycle:
+class TestLifecycle(GeoPackageCase):
     """GeoPackage open/close lifecycle."""
 
-    def test_open_creates_file(self, tmp_path):
-        path = str(tmp_path / "new.gpkg")
+    def test_open_creates_file(self):
+        path = os.path.join(artifact_dir(self), "new.gpkg")
         gpkg = GeoPackage(path)
-        assert os.path.exists(path) or gpkg is not None
+        self.assertTrue(os.path.exists(path) or gpkg is not None)
         gpkg.close()
 
-    def test_context_manager(self, gpkg_path):
-        with GeoPackage(gpkg_path) as gpkg:
-            assert gpkg is not None
+    def test_context_manager(self):
+        with GeoPackage(self.gpkg_path()) as gpkg:
+            self.assertIsNotNone(gpkg)
 
-    def test_double_close_safe(self, gpkg_path):
-        gpkg = GeoPackage(gpkg_path)
+    def test_double_close_safe(self):
+        gpkg = GeoPackage(self.gpkg_path())
         gpkg.close()
         gpkg.close()  # should not raise
 
-    def test_last_error_default(self, gpkg_with_schema):
-        err = gpkg_with_schema.last_error
-        assert isinstance(err, str)
+    def test_last_error_default(self):
+        gpkg = self.gpkg_with_schema()
+        err = gpkg.last_error
+        self.assertIsInstance(err, str)
 
 
 # ============================================================================
 # Simulation metadata
 # ============================================================================
 
-class TestSimulationMetadata:
+class TestSimulationMetadata(GeoPackageCase):
     """Querying simulation runs and object counts."""
 
-    def test_simulation_count_empty(self, gpkg_with_schema):
+    def test_simulation_count_empty(self):
         """New file should have zero simulations."""
-        n = gpkg_with_schema.simulation_count()
-        assert isinstance(n, int)
-        assert n >= 0
+        gpkg = self.gpkg_with_schema()
+        n = gpkg.simulation_count()
+        self.assertIsInstance(n, int)
+        self.assertGreaterEqual(n, 0)
 
-    def test_simulation_ids_empty(self, gpkg_with_schema):
-        ids = gpkg_with_schema.simulation_ids()
-        assert isinstance(ids, list)
+    def test_simulation_ids_empty(self):
+        gpkg = self.gpkg_with_schema()
+        ids = gpkg.simulation_ids()
+        self.assertIsInstance(ids, list)
 
-    def test_variable_count(self, gpkg_with_schema):
-        n = gpkg_with_schema.variable_count()
-        assert isinstance(n, int)
-        assert n >= 0
+    def test_variable_count(self):
+        gpkg = self.gpkg_with_schema()
+        n = gpkg.variable_count()
+        self.assertIsInstance(n, int)
+        self.assertGreaterEqual(n, 0)
 
 
 # ============================================================================
 # Transactions
 # ============================================================================
 
-class TestTransactions:
+class TestTransactions(GeoPackageCase):
     """Transaction begin/commit/rollback."""
 
-    def test_begin_commit(self, gpkg_with_schema):
-        gpkg_with_schema.begin()
-        gpkg_with_schema.commit()
+    def test_begin_commit(self):
+        gpkg = self.gpkg_with_schema()
+        gpkg.begin()
+        gpkg.commit()
 
-    def test_begin_rollback(self, gpkg_with_schema):
-        gpkg_with_schema.begin()
-        gpkg_with_schema.rollback()
+    def test_begin_rollback(self):
+        gpkg = self.gpkg_with_schema()
+        gpkg.begin()
+        gpkg.rollback()
 
 
 # ============================================================================
 # Observed data CRUD
 # ============================================================================
 
-class TestObservedData:
+class TestObservedData(GeoPackageCase):
     """Observed data series create/write/read."""
 
-    def test_create_series(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series(
+    def test_create_series(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series(
             "test_flow", "flow",
             obj_type="NODE", obj_id="J1",
             source="Test", units="CFS")
-        assert isinstance(sid, int)
-        assert sid >= 0
+        self.assertIsInstance(sid, int)
+        self.assertGreaterEqual(sid, 0)
 
-    def test_write_single_value(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series("s1", "depth")
-        gpkg_with_schema.write_observed_value(
+    def test_write_single_value(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series("s1", "depth")
+        gpkg.write_observed_value(
             sid, "2026-01-15T08:00:00Z", 1.5, "A")
 
-    def test_write_read_roundtrip(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series("s2", "flow")
+    def test_write_read_roundtrip(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series("s2", "flow")
 
         timestamps = [
             "2026-01-15T08:00:00Z",
@@ -136,70 +154,75 @@ class TestObservedData:
         ]
         values = [1.0, 2.5, 3.0]
 
-        gpkg_with_schema.begin()
-        gpkg_with_schema.write_observed_values(sid, timestamps, values)
-        gpkg_with_schema.commit()
+        gpkg.begin()
+        gpkg.write_observed_values(sid, timestamps, values)
+        gpkg.commit()
 
         # Read back
-        ts_back, vals_back = gpkg_with_schema.read_observed_values(sid)
-        assert len(ts_back) == 3
-        assert len(vals_back) == 3
+        ts_back, vals_back = gpkg.read_observed_values(sid)
+        self.assertEqual(len(ts_back), 3)
+        self.assertEqual(len(vals_back), 3)
         np.testing.assert_allclose(vals_back, [1.0, 2.5, 3.0], atol=1e-6)
 
-    def test_observed_series_count(self, gpkg_with_schema):
-        gpkg_with_schema.create_observed_series("a", "depth")
-        gpkg_with_schema.create_observed_series("b", "flow")
-        n = gpkg_with_schema.observed_series_count()
-        assert n >= 2
+    def test_observed_series_count(self):
+        gpkg = self.gpkg_with_schema()
+        gpkg.create_observed_series("a", "depth")
+        gpkg.create_observed_series("b", "flow")
+        n = gpkg.observed_series_count()
+        self.assertGreaterEqual(n, 2)
 
-    def test_observed_value_count(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series("c", "depth")
-        gpkg_with_schema.write_observed_value(sid, "2026-01-01T00:00:00Z", 0.5)
-        gpkg_with_schema.write_observed_value(sid, "2026-01-01T01:00:00Z", 0.7)
-        n = gpkg_with_schema.observed_value_count(sid)
-        assert n == 2
+    def test_observed_value_count(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series("c", "depth")
+        gpkg.write_observed_value(sid, "2026-01-01T00:00:00Z", 0.5)
+        gpkg.write_observed_value(sid, "2026-01-01T01:00:00Z", 0.7)
+        n = gpkg.observed_value_count(sid)
+        self.assertEqual(n, 2)
 
-    def test_bulk_write_performance(self, gpkg_with_schema):
+    def test_bulk_write_performance(self):
         """Bulk write 1000 values should not crash."""
-        sid = gpkg_with_schema.create_observed_series("bulk", "flow")
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series("bulk", "flow")
         timestamps = [f"2026-01-15T{h:02d}:{m:02d}:00Z"
                       for h in range(24) for m in range(0, 60, 1)][:1000]
         values = list(range(1000))
 
-        gpkg_with_schema.begin()
-        gpkg_with_schema.write_observed_values(sid, timestamps, values)
-        gpkg_with_schema.commit()
+        gpkg.begin()
+        gpkg.write_observed_values(sid, timestamps, values)
+        gpkg.commit()
 
-        n = gpkg_with_schema.observed_value_count(sid)
-        assert n == 1000
+        n = gpkg.observed_value_count(sid)
+        self.assertEqual(n, 1000)
 
 
 # ============================================================================
 # Ad-hoc queries
 # ============================================================================
 
-class TestAdHocQueries:
+class TestAdHocQueries(GeoPackageCase):
     """SQL query pass-through."""
 
-    def test_query_int(self, gpkg_with_schema):
-        v = gpkg_with_schema.query_int("SELECT 42")
-        assert v == 42
+    def test_query_int(self):
+        gpkg = self.gpkg_with_schema()
+        v = gpkg.query_int("SELECT 42")
+        self.assertEqual(v, 42)
 
-    def test_query_double(self, gpkg_with_schema):
-        v = gpkg_with_schema.query_double("SELECT 3.14159")
-        assert v == pytest.approx(3.14159, abs=1e-4)
+    def test_query_double(self):
+        gpkg = self.gpkg_with_schema()
+        v = gpkg.query_double("SELECT 3.14159")
+        self.assertAlmostEqual(v, 3.14159, delta=1e-4)
 
 
 # ============================================================================
 # Registration
 # ============================================================================
 
-class TestRegistration:
+class TestRegistration(unittest.TestCase):
     """Plugin registration functions."""
 
     def test_is_registered_returns_bool(self):
         v = is_registered()
-        assert isinstance(v, bool)
+        self.assertIsInstance(v, bool)
 
     def test_register_accepts_all_empty(self):
         """Regression for Phase 2c: ``register()`` previously used the
@@ -211,69 +234,75 @@ class TestRegistration:
         and the return is bool.
         """
         v = register()
-        assert isinstance(v, bool)
+        self.assertIsInstance(v, bool)
 
     def test_register_accepts_partial_strings(self):
         """Same regression — exercise the path where some args are
         non-empty and others fall back to the NULL sentinel.
         """
         v = register(key="", org="test-org", email="", deploy="test-deploy")
-        assert isinstance(v, bool)
+        self.assertIsInstance(v, bool)
 
 
-class TestObservedSeriesOptionalArgs:
+class TestObservedSeriesOptionalArgs(GeoPackageCase):
     """Regression for Phase 2c: ``create_observed_series`` and
     ``write_observed_value`` both used the unsafe conditional pattern for
     nullable string arguments. Each combination must transpile and run.
     """
 
-    def test_create_series_all_optional_empty(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series("p2c_a", "depth")
-        assert sid >= 0
+    def test_create_series_all_optional_empty(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series("p2c_a", "depth")
+        self.assertGreaterEqual(sid, 0)
 
-    def test_create_series_all_optional_set(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series(
+    def test_create_series_all_optional_set(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series(
             "p2c_b", "flow",
             obj_type="NODE", obj_id="J1",
             source="Phase2c", units="CFS")
-        assert sid >= 0
+        self.assertGreaterEqual(sid, 0)
 
-    def test_create_series_mixed_optionals(self, gpkg_with_schema):
+    def test_create_series_mixed_optionals(self):
+        gpkg = self.gpkg_with_schema()
         # obj_type set, obj_id empty, source set, units empty —
         # forces the per-arg branch in the Cython wrapper.
-        sid = gpkg_with_schema.create_observed_series(
+        sid = gpkg.create_observed_series(
             "p2c_c", "depth",
             obj_type="NODE", obj_id="",
             source="src", units="")
-        assert sid >= 0
+        self.assertGreaterEqual(sid, 0)
 
-    def test_write_observed_value_no_flag(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series("p2c_d", "depth")
+    def test_write_observed_value_no_flag(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series("p2c_d", "depth")
         # flag="" triggers the NULL path in the C call.
-        gpkg_with_schema.write_observed_value(
+        gpkg.write_observed_value(
             sid, "2026-05-25T00:00:00Z", 1.23)
-        assert gpkg_with_schema.observed_value_count(sid) == 1
+        self.assertEqual(gpkg.observed_value_count(sid), 1)
 
-    def test_write_observed_value_with_flag(self, gpkg_with_schema):
-        sid = gpkg_with_schema.create_observed_series("p2c_e", "depth")
-        gpkg_with_schema.write_observed_value(
+    def test_write_observed_value_with_flag(self):
+        gpkg = self.gpkg_with_schema()
+        sid = gpkg.create_observed_series("p2c_e", "depth")
+        gpkg.write_observed_value(
             sid, "2026-05-25T01:00:00Z", 4.56, "A")
-        assert gpkg_with_schema.observed_value_count(sid) == 1
+        self.assertEqual(gpkg.observed_value_count(sid), 1)
 
 
 # ============================================================================
 # Topology edge count
 # ============================================================================
 
-class TestTopologyEdgeCount:
+class TestTopologyEdgeCount(GeoPackageCase):
     """Test topology_edge_count method."""
 
-    def test_topology_edge_count(self, gpkg_with_schema):
+    def test_topology_edge_count(self):
+        gpkg = self.gpkg_with_schema()
         # A freshly-opened gpkg has no simulations (see
         # TestSimulationMetadata.test_simulation_ids_empty), so we pass a
         # synthetic sim_id rather than indexing simulation_ids()[0]. The
         # contract under test is that the call succeeds and returns a
         # non-negative integer regardless of whether the sim_id exists.
-        count = gpkg_with_schema.topology_edge_count("none")
-        assert isinstance(count, int)
-        assert count >= 0
+        count = gpkg.topology_edge_count("none")
+        self.assertIsInstance(count, int)
+        self.assertGreaterEqual(count, 0)

@@ -87,6 +87,9 @@ struct MeshData {
 
     // Surface properties
     std::vector<double> mannings_n;     ///< Manning's roughness coefficient
+    std::vector<double> tri_init_depth; ///< Initial water depth (m, default 0 = dry)
+    std::vector<double> tri_init_u;     ///< [2D_INITIAL_VELOCITY] u (m/s, default 0)
+    std::vector<double> tri_init_v;     ///< [2D_INITIAL_VELOCITY] v (m/s, default 0)
     std::vector<std::string> tri_tag;   ///< Optional triangle tag
 
     // -----------------------------------------------------------------------
@@ -107,12 +110,36 @@ struct MeshData {
     // Coupling parameters (per vertex/triangle coupling point)
     std::vector<double> vert_coupling_cd;       ///< Discharge coefficient (default 0.65)
     std::vector<double> vert_coupling_area;     ///< Effective exchange area (m²)
+    /// 1 when the [2D_VERTEX_NODE_MAP] row authored an explicit AREA token.
+    /// Rows without one keep the 1.0 default value but are eligible for the
+    /// COUPLING_AREA AUTO derivation at coupling-point resolve.
+    std::vector<uint8_t> vert_coupling_area_set;
     std::vector<double> tri_coupling_cd;        ///< Discharge coefficient
     std::vector<double> tri_coupling_area;      ///< Effective exchange area
 
     // Deferred resolution names (populated during parsing, cleared after resolve)
     std::vector<std::string> vert_coupled_node_name;
     std::vector<std::string> tri_coupled_node_name;
+
+    /// One authored node→cell coupling row (repeated-row form of
+    /// [2D_TRIANGLE_NODE_MAP]). A triangle may carry several rows — one per
+    /// coupled node — so these live in a flat vector, not per-triangle
+    /// arrays. Source of truth for cell couplings: the parser, the GUI C API
+    /// and (synthesised at resolve time) the legacy per-triangle arrays all
+    /// feed this vector, and buildCouplingPoints() iterates it. The legacy
+    /// arrays above are kept as a last-row-wins mirror for the existing
+    /// getter API and the GeoPackage writer (single-coupling only).
+    struct TriCouplingRow {
+        int         tri  = -1;    ///< Triangle index
+        int         node = -1;    ///< SWMM node index (-1 until resolved)
+        std::string node_name;    ///< Deferred name (cleared after resolve)
+        double      cd   = 0.65;  ///< Discharge coefficient
+        double      area = 1.0;   ///< Effective exchange area
+        bool        area_set = false; ///< True when the row authored an
+                                      ///< explicit AREA token (COUPLING_AREA
+                                      ///< AUTO derives the rest at resolve).
+    };
+    std::vector<TriCouplingRow> tri_couplings;
 
     // -----------------------------------------------------------------------
     // Capacity queries
@@ -135,6 +162,7 @@ struct MeshData {
         vert_coupled_node_name.resize(n);
         vert_coupling_cd.resize(n, 0.65);
         vert_coupling_area.resize(n, 1.0);
+        vert_coupling_area_set.resize(n, 0);
     }
 
     void resize_triangles(int nt) {
@@ -160,6 +188,9 @@ struct MeshData {
         edge_conveyance.resize(n3, 1.0);  // §11A — default unrestricted
 
         mannings_n.resize(n, 0.035);
+        tri_init_depth.resize(n, 0.0);
+        tri_init_u.resize(n, 0.0);
+        tri_init_v.resize(n, 0.0);
         tri_tag.resize(n);
         tri_coupled_node.resize(n, -1);
         tri_coupled_node_name.resize(n);

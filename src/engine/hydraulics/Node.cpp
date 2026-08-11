@@ -13,6 +13,7 @@
 
 #include "../core/UnitConversion.hpp"
 #include "../data/NodeSubtypes.hpp"
+#include "../data/StorageGeometry.hpp"
 #include "../math/FindRoot.hpp"
 #include <cmath>
 #include <algorithm>
@@ -30,7 +31,7 @@ namespace node {
 // otherwise the resize defaults (-1 curve / 0 a,b,c) for the degenerate case
 // (no side-table, or a non-storage node — callers gate on type[i]==STORAGE).
 namespace {
-struct StorageGeom { int curve; double a; double b; double c; };
+struct StorageGeom { int curve; double a; double b; double c; StorageShape shape; };
 
 inline StorageGeom storageGeom(const NodeData& nodes, const NodeSubtypes* subs,
                                std::size_t ui) {
@@ -40,10 +41,25 @@ inline StorageGeom storageGeom(const NodeData& nodes, const NodeSubtypes* subs,
         if (r >= 0) {
             const auto ur = static_cast<std::size_t>(r);
             return StorageGeom{ subs->storages.curve[ur], subs->storages.a[ur],
-                                subs->storages.b[ur], subs->storages.c[ur] };
+                                subs->storages.b[ur], subs->storages.c[ur],
+                                subs->storages.shape[ur] };
         }
     }
-    return StorageGeom{ -1, 0.0, 0.0, 0.0 };
+    return StorageGeom{ -1, 0.0, 0.0, 0.0, StorageShape::FUNCTIONAL };
+}
+
+// The four geometric shapes (CYLINDRICAL/CONICAL/PARABOLOID/PYRAMIDAL) reuse the
+// a/b/c slots as the coefficients of a QUADRATIC area relation, not the power law
+// FUNCTIONAL uses (legacy node.c:993-999 vs :972-975):
+//
+//   geometric:  A(d) = c + a*d + b*d²      V(d) = d*(c + d*(a/2 + d*b/3))
+//   functional: A(d) = c + a*d^b           V(d) = c*d + a/(b+1)*d^(b+1)
+//
+// `curve >= 0` (tabular) is still checked FIRST by every caller, so shape is only
+// consulted for curve-less rows — that keeps the existing tabular/functional paths
+// bit-identical.
+inline bool isGeometric(const StorageGeom& g) {
+    return storage_shape_is_geometric(g.shape);
 }
 }  // namespace
 
@@ -76,6 +92,15 @@ double getVolume(const NodeData& nodes, int idx, double depth,
             }
             return 0.0;
         }
+        // Geometric shapes: integrate the quadratic A(d) = a0 + a1*d + a2*d² →
+        // V = a0*d + (a1/2)*d² + (a2/3)*d³, evaluated in Horner form exactly as
+        // legacy does (node.c:955-957) so the FP rounding matches.
+        if (isGeometric(g)) {
+            double d = depth * ucf::Ucf[ucf::LENGTH][unit_sys];
+            double v = d * (g.c + d * (g.a / 2.0 + d * g.b / 3.0));
+            return v / ucf::Ucf[ucf::VOLUME][unit_sys];
+        }
+
         // Functional: integrate A(d) = a0 + a1*d^a2 → V = a0*d + a1/(a2+1)*d^(a2+1)
         //
         // PARITY: legacy storage_getVolume (node.c:923-927) keeps a0/a1/a2 in
@@ -150,10 +175,44 @@ double getDepth(const NodeData& nodes, int idx, double volume,
         double a1 = g.a;
         double a2 = g.b;
         const double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
-        double v = volume * ucf::Ucf[ucf::VOLUME][unit_sys];
+        const double ucf_vol = ucf::Ucf[ucf::VOLUME][unit_sys];
+        double v = volume * ucf_vol;
         double d;
 
-        if (a2 == 0.0) {
+        // The Newton functor is shared by the functional and geometric branches: it
+        // recurses through getVolume/getSurfArea, which already dispatch on shape, so
+        // the only per-shape work here is the seed and the closed forms.
+        auto newtonSolve = [&](double seed) {
+            d = seed;
+            findroot::newton(0.0, fd * ucf_len, &d, 0.001,
+                [&](double y, double* f, double* df) {
+                    double yFt = y / ucf_len;
+                    *f  = getVolume(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol - v;
+                    *df = getSurfArea(nodes, idx, yFt, tables, unit_sys, subs) * ucf_vol / ucf_len;
+                });
+        };
+
+        if (isGeometric(g)) {
+            // Geometric shapes invert the QUADRATIC area relation, so none of the
+            // FUNCTIONAL closed forms below apply — they would silently mis-fire on
+            // these coefficients (e.g. a CYLINDRICAL row has a2 == 0, which would hit
+            // the `v / (a0 + a1)` power-law case). Legacy node.c:855-861.
+            switch (g.shape) {
+                case StorageShape::CYLINDRICAL:
+                    // area = a0 (constant); v = a0*d.  a0 = π·A·B > 0 by validation.
+                    d = v / a0;
+                    break;
+                case StorageShape::PARABOLOID:
+                    // area = a1*d; v = (a1/2)*d².  a1 = π·A·B/Z > 0 by validation.
+                    d = std::sqrt(2.0 * v / a1);
+                    break;
+                default:
+                    // CONICAL / PYRAMIDAL: cubic in d — seed with the prismatic guess
+                    // v/a0 and let Newton converge (node.c:857-860).
+                    newtonSolve(v / a0);
+                    break;
+            }
+        } else if (a2 == 0.0) {
             // area = a0 + a1; v = (a0 + a1) * d              (node.c:825-829)
             d = v / (a0 + a1);
         } else if (a0 == 0.0) {
@@ -164,21 +223,23 @@ double getDepth(const NodeData& nodes, int idx, double volume,
             // area = a0 + a1*d; v = a0*d + (a1/2)*d^2        (node.c:838-841)
             d = (std::sqrt(a0 * a0 + 2. * a1 * v) - a0) / a1;
         } else {
-            // area = a0 + a1*d^a2 — Newton/bisection on the USER-unit depth
-            // over [0, fullDepth*UCF(LENGTH)], xacc 0.001  (node.c:843-847).
-            // Legacy's storage_getVolDiff (node.c:871-891) differences the
-            // INTERNAL-unit storage_getVolume at the user-unit trial depth
-            // against the USER-unit target v, and uses the internal-unit
-            // storage_getSurfArea as the derivative — a legacy unit quirk,
-            // replicated as-is. (Legacy also passes the storage subIndex
-            // where those functions expect a node index; we pass the node
-            // index, which resolves to the same storage geometry.)
-            d = v / (a0 + a1);
-            findroot::newton(0.0, fd * ucf_len, &d, 0.001,
-                [&](double y, double* f, double* df) {
-                    *f  = getVolume(nodes, idx, y, tables, unit_sys, subs) - v;
-                    *df = getSurfArea(nodes, idx, y, tables, unit_sys, subs);
-                });
+            // area = a0 + a1*d^a2 — Newton on the USER-unit depth over
+            // [0, fullDepth*UCF(LENGTH)], xacc 0.001  (node.c:843-847).
+            //
+            // getVolume/getSurfArea take depth in INTERNAL (ft) units and
+            // return volume/area in INTERNAL (ft3/ft2) units, while y and v
+            // here are USER-unit. Convert at this boundary so *f/*df aren't
+            // a mix of unit systems.
+            //
+            // BUGFIX (was PARITY-replicated quirk): legacy's storage_getVolDiff
+            // (node.c:871-891 pre-fix) passed the user-unit trial depth
+            // straight into the internal-unit storage_getVolume/
+            // storage_getSurfArea and diffed the internal-unit result against
+            // the user-unit target v — silent under US units (UCF(LENGTH) ==
+            // UCF(VOLUME) == 1.0) but numerically wrong under SI. Legacy has
+            // since been fixed the same way (node.c storage_getVolDiff); this
+            // mirrors that fix rather than the original quirk.
+            newtonSolve(v / (a0 + a1));
         }
         d /= ucf_len;                                       // node.c:861
         return std::min(d, fd);                             // node.c:862-864
@@ -223,6 +284,16 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
             }
             return 0.0;
         }
+        double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+
+        // Geometric shapes: quadratic area = a0 + d*(a1 + d*a2), Horner form and the
+        // same two successive divisions as below (legacy node.c:993-999).
+        if (isGeometric(g)) {
+            double d = depth * ucf_len;
+            double area = g.c + d * (g.a + d * g.b);
+            return area / ucf_len / ucf_len;
+        }
+
         // Functional: area = a0 + a1 * d^a2
         //
         // PARITY: legacy storage_getSurfArea (node.c:966-968, 977) keeps
@@ -230,7 +301,6 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
         // divisions (not one divide by len²):
         //   area = Storage[k].a0 + Storage[k].a1 * pow(d*UCF(LENGTH), Storage[k].a2);
         //   return area / UCF(LENGTH) / UCF(LENGTH);
-        double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
         double area = g.c + g.a * std::pow(depth * ucf_len, g.b);
         return area / ucf_len / ucf_len;
     }

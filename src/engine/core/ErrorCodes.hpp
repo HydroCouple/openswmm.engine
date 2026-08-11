@@ -171,6 +171,15 @@ enum ErrorCode : int {
     ERR_TIMESERIES_NAN          = 603,  ///< Time Series %s contains NaN or Inf values
     ERR_TABLE_COL_MISMATCH      = 605,  ///< column count mismatch in data for %s
     ERR_GAGE_TSERIES_NOTFOUND   = 607,  ///< Rain Gage %s references unknown time series
+
+    // --- Virtual junctions (609–621) — refactored engine only ---
+    ERR_VJ_LINK_COUNT           = 609,  ///< Virtual Junction %s must connect exactly two conduits
+    ERR_VJ_XSECT_MISMATCH       = 611,  ///< Virtual Junction %s connects conduits with different cross sections
+    ERR_VJ_OFFSET               = 613,  ///< Virtual Junction %s has a conduit with a nonzero offset
+    ERR_VJ_INVERT_MISMATCH      = 615,  ///< Virtual Junction %s conduit inverts do not agree at the node
+    ERR_VJ_LATERAL_INFLOW       = 617,  ///< Virtual Junction %s cannot receive lateral inflow
+    ERR_VJ_ROUTING_MODEL        = 619,  ///< Virtual Junction %s requires DYNWAVE or FV flow routing
+    ERR_VJ_EXTRA_TOKENS         = 621,  ///< too many items for Virtual Junction %s
 };
 
 // ============================================================================
@@ -214,7 +223,7 @@ enum CffiWarnCode : int {
 };
 
 // ============================================================================
-// Warning codes — matching legacy text.h WARN01–WARN12
+// Warning codes — matching legacy text.h WARN01–WARN13
 // ============================================================================
 
 enum WarnCode : int {
@@ -231,11 +240,15 @@ enum WarnCode : int {
     WARN_REGULATOR_CREST_LOW    = 10,  ///< crest elevation is below downstream invert for regulator Link %s
     WARN_CONTROL_RULE_ATTR      = 11,  ///< non-matching attributes in Control Rule %s
     WARN_INLET_REMOVED          = 12,  ///< inlet removed due to unsupported shape for Conduit %s
+    WARN_UH_PARAMS_REPEATED     = 13,  ///< parameters for same month provided more than once for Unit Hydrograph %s
 
     // --- New 6.0 warnings (100+) ---
     WARN_TIMESERIES_DUPLICATE_X = 101, ///< Time Series %s has duplicate x values
     WARN_BOUNDARY_OVERLAP       = 102, ///< boundary regions overlap for %s
     WARN_FILES_SLOT_UNSUPPORTED = 103, ///< [FILES] %s is not supported and was ignored
+    WARN_2D_OPTION_RETIRED      = 104, ///< [2D_OPTIONS] %s retired with CVODE/ARKODE and was ignored
+    WARN_FV_OPTION_INERT        = 105, ///< %s has no effect under FLOW_ROUTING FV
+    WARN_DW_OPTION_UNDER_FV     = 106, ///< %s is a dynamic wave option and does not apply under FLOW_ROUTING FV
 };
 
 // ============================================================================

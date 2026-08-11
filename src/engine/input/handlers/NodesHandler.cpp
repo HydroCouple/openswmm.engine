@@ -35,8 +35,10 @@
 
 #include "../Tokenizer.hpp"
 #include "../SectionParser.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/NodeData.hpp"
+#include "../../data/StorageGeometry.hpp"
 
 #include "../InputParseUtils.hpp"
 
@@ -87,6 +89,38 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 }
 
 // ============================================================================
+// handle_virtual_junctions()
+// ============================================================================
+
+void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    for (const auto& pl : parse_section(lines)) {
+        auto tok = Tokenizer::tokenize(pl.data);
+        if (tok.size() < 2) continue;
+
+        const std::string& name = tok[0];
+
+        // Name + invert elevation only — everything else is derived from the
+        // two attached conduits, so extra tokens are an error (keeps the
+        // format extensible without ambiguity).
+        if (tok.size() > 2) {
+            ctx.errors.push_back(format_error(ERR_VJ_EXTRA_TOKENS, name));
+            continue;
+        }
+
+        int idx = ctx.node_names.find(name);
+        if (idx < 0) idx = ctx.node_names.add(name);
+
+        ensure_node_capacity(ctx, idx);
+
+        ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
+        ctx.nodes.is_virtual[static_cast<std::size_t>(idx)] = 1;
+        ctx.nodes.invert_elev[idx] = to_double(tok[1]);
+        if (!pl.comment.empty())
+            ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
+    }
+}
+
+// ============================================================================
 // handle_outfalls()
 // ============================================================================
 
@@ -114,23 +148,46 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
         else if (otype == "TIDAL")      O.bc_type[orow] = OutfallType::TIDAL;
         else if (otype == "TIMESERIES") O.bc_type[orow] = OutfallType::TIMESERIES;
 
-        // Stage or curve reference
-        if (tok.size() > 3) {
-            // For FIXED: numeric stage; for TIDAL/TIMESERIES: curve/tseries name → resolve later
+        // Canonical column layout (legacy outfall_readParams):
+        //   name elev FIXED      stage    (gated) (routeTo)
+        //   name elev TIDAL      curveID  (gated) (routeTo)
+        //   name elev TIMESERIES tseriesID (gated) (routeTo)
+        //   name elev FREE|NORMAL         (gated) (routeTo)
+        // FREE/NORMAL carry no stage-data field, so the gate/routeTo columns
+        // shift left by one for those types.
+        const bool has_stage_field = (O.bc_type[orow] == OutfallType::FIXED  ||
+                                      O.bc_type[orow] == OutfallType::TIDAL  ||
+                                      O.bc_type[orow] == OutfallType::TIMESERIES);
+        std::size_t next = 3;
+
+        // FREE/NORMAL have no stage data, but the EPA GUI still emits the column
+        // as a "*" placeholder (e.g. "OUT1 98.0 FREE * NO"). Skip it so the gate
+        // and route-to columns stay aligned for both layouts.
+        if (!has_stage_field && tok.size() > next && tok[next] == "*")
+            ++next;
+
+        if (has_stage_field && tok.size() > next) {
             if (O.bc_type[orow] == OutfallType::FIXED) {
-                O.param[orow] = to_double(tok[3]);
+                O.param[orow] = to_double(tok[next]);
+            } else {
+                // TIDAL / TIMESERIES: keep the name; PostParseResolver turns it
+                // into a table index once [CURVES]/[TIMESERIES] have been read.
+                // -1 (not 0) marks "unresolved" — 0 is a valid table index.
+                O.param_name[orow] = tok[next];
+                O.param[orow]      = -1.0;
             }
-            // For TIDAL / TIMESERIES, the name resolution is deferred to a post-parse pass
+            ++next;
         }
 
         // Gated (YES/NO)
-        if (tok.size() > 4) {
-            O.has_flap_gate[orow] = Tokenizer::parse_boolean(tok[4]);
+        if (tok.size() > next) {
+            O.has_flap_gate[orow] = Tokenizer::parse_boolean(tok[next]);
+            ++next;
         }
 
         // Route-to subcatchment (optional last field)
-        if (tok.size() > 5 && !tok[5].empty() && tok[5] != "*") {
-            int sc = ctx.subcatch_names.find(tok[5]);
+        if (tok.size() > next && !tok[next].empty() && tok[next] != "*") {
+            int sc = ctx.subcatch_names.find(tok[next]);
             O.route_to[orow] = sc;  // may be -1 if not yet parsed
         }
         if (!pl.comment.empty())
@@ -229,20 +286,43 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         }
         const std::string shape = Tokenizer::to_upper(tok[4]);
 
-        if (shape == "TABULAR") {
+        // Unknown keyword ⇒ leave the row at its FUNCTIONAL default, matching how
+        // every other handler here treats an unrecognised keyword (e.g. LinksHandler's
+        // SHAPE_MAP miss): these handlers have no error channel to report into.
+        StorageShape sshape = StorageShape::FUNCTIONAL;
+        storage_shape_from_keyword(shape, sshape);
+        S.shape[srow] = sshape;
+
+        if (sshape == StorageShape::TABULAR) {
             // Next token is curve name — resolve to index in post-parse pass
             S.curve[srow] = -1;
             if (tok.size() > 5)
                 S.curve_name[srow] = tok[5];
-        } else if (shape == "FUNCTIONAL") {
+        } else if (sshape == StorageShape::FUNCTIONAL) {
             // A1, A2, A0
             if (tok.size() > 5) S.a[srow] = to_double(tok[5]);
             if (tok.size() > 6) S.b[srow] = to_double(tok[6]);
             if (tok.size() > 7) S.c[srow] = to_double(tok[7]);
+        } else {
+            // CYLINDRICAL / CONICAL / PARABOLIC / PYRAMIDAL — three raw dimensions
+            // (L, W, Z). Keep them verbatim for lossless round-trip AND derive the
+            // quadratic area coefficients the solver evaluates (legacy discards the
+            // raw values at this point; we don't).
+            if (tok.size() > 5) S.p1[srow] = to_double(tok[5]);
+            if (tok.size() > 6) S.p2[srow] = to_double(tok[6]);
+            if (tok.size() > 7) S.p3[srow] = to_double(tok[7]);
+            double a = 0.0, b = 0.0, c = 0.0;
+            if (storage_shape_coeffs(sshape, S.p1[srow], S.p2[srow], S.p3[srow], a, b, c)) {
+                S.a[srow] = a;
+                S.b[srow] = b;
+                S.c[srow] = c;
+            }
+            S.curve[srow] = -1;
         }
 
-        // Optional: SurDepth, Fevap, Seep
-        const int param_offset = (shape == "TABULAR") ? 6 : 8;
+        // Optional: SurDepth, Fevap, Seep — TABULAR consumes one token for the curve
+        // name, every other shape consumes three numeric params.
+        const int param_offset = (sshape == StorageShape::TABULAR) ? 6 : 8;
         if (static_cast<int>(tok.size()) > param_offset)
             ctx.nodes.sur_depth[idx] = to_double(tok[param_offset]);
         if (static_cast<int>(tok.size()) > param_offset + 1)

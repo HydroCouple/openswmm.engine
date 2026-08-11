@@ -229,8 +229,12 @@ void RunoffSolver::init(SimulationContext& ctx) {
                 break;
             case 4:
                 infil_models_[ui] = InfilModel::CURVE_NUM;
+                // Drying time is p3 — the third [INFILTRATION] column, matching
+                // legacy curvenum_setParams(), which reads p[2]. Reading p4 here
+                // left regen at 0 for every file-loaded CN subcatchment, so the
+                // soil store never recovered between events.
                 infil::curvenum_init(curvenum_states_[ui],
-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p4[ui]);
+                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p3[ui]);
                 break;
         }
     }
@@ -252,17 +256,26 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
     // ----- Step 1: Rainfall → net precip (ft/sec) -----
     // Matches legacy getNetPrecip(): all subareas get same precipitation rate.
-    // Any subcatchment rainfall forcing resolves here (OVERRIDE replaces the
+    //
+    // The rain/snow split runs for EVERY subcatchment, not just those with a
+    // snow pack — legacy gage_getPrecip() is called unconditionally from
+    // getNetPrecip() (subcatch.c:772), and for a snowpack-less subcatchment
+    // netPrecip is then rainfall + snowfall (subcatch.c:793). Since snowfall
+    // carries the gage snow catch factor, omitting the split here made
+    // snowpack-less subcatchments diverge from legacy whenever SCF != 1.0.
+    //
+    // splitPrecip() also applies the subcatchment rain/snow scale factors.
+    // Any subcatchment rainfall forcing resolves on top (OVERRIDE replaces the
     // gage value, ADD augments it) so it cannot be clobbered by the gage
     // re-read — same pattern as the PET forcing below.
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        int gi = ctx.subcatches.gage[ui];
-        double rain_inhr = 0.0;
-        if (gi >= 0 && gi < ctx.n_gages())
-            rain_inhr = ctx.gages.rainfall[static_cast<std::size_t>(gi)];
+        gage::PrecipSplit p = gage::splitPrecip(ctx, ui);  // ft/sec
+        double rain_inhr = p.rainfall * ucf::UCF(ucf::RAINFALL, ctx.options);
         rain_inhr = ctx.forcing.effective_rainfall(ui, rain_inhr);
-        precip_[ui] = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
+        double rain = rain_inhr / ucf::UCF(ucf::RAINFALL, ctx.options);
+        double snow = ctx.forcing.effective_snowfall(ui, p.snowfall);
+        precip_[ui] = rain + snow;
         ctx.subcatches.rainfall[ui] = precip_[ui];  // ft/sec (internal units)
     }
 
@@ -507,7 +520,11 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // controls the inflow for each subarea call.
         double precip_imperv = precip;
         double precip_perv   = precip;
-        if (ctx.subcatches.snowpack[ui] >= 0) {
+        // IGNORE_SNOWMELT: fall back to raw gage precip for both subareas
+        // (legacy subcatch.c:784 `Subcatch[j].snowpack && !IgnoreSnowmelt`).
+        // Pairs with the snow-block skip in SWMMEngine::stepRunoff so the now
+        // stale snow_net_* arrays are never read.
+        if (ctx.subcatches.snowpack[ui] >= 0 && !ctx.options.ignore_snow_melt) {
             double sni = ctx.subcatches.snow_net_imperv[ui];
             double snp = ctx.subcatches.snow_net_perv[ui];
             if (sni >= 0.0) precip_imperv = sni;

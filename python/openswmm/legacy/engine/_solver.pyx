@@ -285,6 +285,8 @@ class SWMMSubcatchmentProperties(Enum):
     SNOW_FW = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_FW
     SNOW_ATI = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_ATI
     SNOW_COLDC = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_COLDC
+    RAIN_SCALE_FACTOR = swmm_SubcatchProperty.swmm_SUBCATCH_RAIN_SCALE_FACTOR
+    SNOW_SCALE_FACTOR = swmm_SubcatchProperty.swmm_SUBCATCH_SNOW_SCALE_FACTOR
 
 class SWMMNodeProperties(Enum):
     """Enumeration of SWMM node properties.

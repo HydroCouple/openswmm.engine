@@ -10,16 +10,15 @@ Covers the new pieces introduced by the Pythonic-bindings v1 plan:
 * DateTime round-trip across the C API datetime module.
 
 The exception-hierarchy tests are pure-Python and run without the compiled
-engine. The collection tests reuse ``conftest.py`` fixtures and require a
+engine. The collection tests use the solver lifecycle helpers and require a
 real Solver, so they will be skipped automatically if the engine extension
 can't be imported.
 """
 
 from __future__ import annotations
 
+import unittest
 from datetime import datetime, timedelta
-
-import pytest
 
 from openswmm.engine._enums import ErrorCode
 from openswmm.engine._exceptions import (
@@ -44,24 +43,23 @@ from openswmm.engine._exceptions import (
 # ---------------------------------------------------------------------------
 
 
-class TestEngineErrorHierarchy:
+class TestEngineErrorHierarchy(unittest.TestCase):
     """Each subclass must inherit from EngineError *and* the right stdlib base."""
 
     def test_engine_error_attributes(self):
         err = EngineError(99, "something went wrong")
-        assert err.code == 99
-        assert err.code_enum is ErrorCode.INTERNAL
-        assert err.message == "something went wrong"
-        assert "something went wrong" in repr(err)
+        self.assertEqual(err.code, 99)
+        self.assertIs(err.code_enum, ErrorCode.INTERNAL)
+        self.assertEqual(err.message, "something went wrong")
+        self.assertIn("something went wrong", repr(err))
 
     def test_unknown_code_falls_back_to_internal(self):
         err = EngineError(-12345)
-        assert err.code == -12345
-        assert err.code_enum is ErrorCode.INTERNAL
+        self.assertEqual(err.code, -12345)
+        self.assertIs(err.code_enum, ErrorCode.INTERNAL)
 
-    @pytest.mark.parametrize(
-        "cls, stdlib_base",
-        [
+    def test_subclass_inherits_from_stdlib(self):
+        for cls, stdlib_base in [
             (BadIndexError, IndexError),
             (BadParamError, ValueError),
             (LifecycleError, RuntimeError),
@@ -73,12 +71,11 @@ class TestEngineErrorHierarchy:
             (NumericalError, RuntimeError),
             (CRSError, ValueError),
             (DependencyError, RuntimeError),
-        ],
-    )
-    def test_subclass_inherits_from_stdlib(self, cls, stdlib_base):
-        err = cls(0, "msg")
-        assert isinstance(err, EngineError)
-        assert isinstance(err, stdlib_base)
+        ]:
+            with self.subTest(cls=cls, stdlib_base=stdlib_base):
+                err = cls(0, "msg")
+                self.assertIsInstance(err, EngineError)
+                self.assertIsInstance(err, stdlib_base)
 
 
 # ---------------------------------------------------------------------------
@@ -86,15 +83,14 @@ class TestEngineErrorHierarchy:
 # ---------------------------------------------------------------------------
 
 
-class TestRaiseForCode:
+class TestRaiseForCode(unittest.TestCase):
     """Every documented error code maps to the expected exception class."""
 
     def test_zero_is_noop(self):
         raise_for_code(0)  # must not raise
 
-    @pytest.mark.parametrize(
-        "code, expected_cls",
-        [
+    def test_code_maps_to_subclass(self):
+        for code, expected_cls in [
             (ErrorCode.INPFILE.value,    FileError),
             (ErrorCode.RPTFILE.value,    FileError),
             (ErrorCode.OUTFILE.value,    FileError),
@@ -110,25 +106,24 @@ class TestRaiseForCode:
             (ErrorCode.NUMERICAL.value,  NumericalError),
             (ErrorCode.DEPENDENCY.value, DependencyError),
             (ErrorCode.INTERNAL.value,   EngineError),
-        ],
-    )
-    def test_code_maps_to_subclass(self, code, expected_cls):
-        with pytest.raises(expected_cls) as exc_info:
-            raise_for_code(code, "boom")
-        assert exc_info.value.code == code
-        assert exc_info.value.message == "boom"
+        ]:
+            with self.subTest(code=code, expected_cls=expected_cls):
+                with self.assertRaises(expected_cls) as exc_info:
+                    raise_for_code(code, "boom")
+                self.assertEqual(exc_info.exception.code, code)
+                self.assertEqual(exc_info.exception.message, "boom")
 
     def test_index_error_handler_catches_bad_index(self):
         """Stdlib base classes let callers use plain ``except``."""
-        with pytest.raises(IndexError):
+        with self.assertRaises(IndexError):
             raise_for_code(ErrorCode.BADINDEX.value)
 
     def test_value_error_handler_catches_bad_param(self):
-        with pytest.raises(ValueError):
+        with self.assertRaises(ValueError):
             raise_for_code(ErrorCode.BADPARAM.value)
 
     def test_io_error_handler_catches_file_errors(self):
-        with pytest.raises(IOError):
+        with self.assertRaises(IOError):
             raise_for_code(ErrorCode.INPFILE.value)
 
 
@@ -137,7 +132,7 @@ class TestRaiseForCode:
 # ---------------------------------------------------------------------------
 
 
-class TestDateTimeRoundTrip:
+class TestDateTimeRoundTrip(unittest.TestCase):
     """The Python helpers + C API encode/decode produce stable round trips."""
 
     def test_whole_second_round_trip(self):
@@ -146,28 +141,28 @@ class TestDateTimeRoundTrip:
         try:
             from openswmm.engine import datetime_to_oadate, oadate_to_datetime
         except ImportError:
-            pytest.skip("compiled openswmm.engine extensions not built")
+            self.skipTest("compiled openswmm.engine extensions not built")
         dt = datetime(2024, 6, 15, 13, 30, 45)
         back = oadate_to_datetime(datetime_to_oadate(dt))
-        assert back == dt
+        self.assertEqual(back, dt)
 
     def test_microsecond_precision(self):
         try:
             from openswmm.engine import datetime_to_oadate, oadate_to_datetime
         except ImportError:
-            pytest.skip("compiled openswmm.engine extensions not built")
+            self.skipTest("compiled openswmm.engine extensions not built")
         dt = datetime(2024, 6, 15, 13, 30, 45, 123_456)
         back = oadate_to_datetime(datetime_to_oadate(dt))
         # Bound: 1 microsecond — see scripts/verify_dates_python.py.
-        assert abs((back - dt).total_seconds()) * 1e6 <= 1.0
+        self.assertLessEqual(abs((back - dt).total_seconds()) * 1e6, 1.0)
 
     def test_epoch_is_zero(self):
         try:
             from openswmm.engine import datetime_to_oadate, oadate_to_datetime
         except ImportError:
-            pytest.skip("compiled openswmm.engine extensions not built")
-        assert datetime_to_oadate(datetime(1899, 12, 30)) == 0.0
-        assert oadate_to_datetime(0.0) == datetime(1899, 12, 30)
+            self.skipTest("compiled openswmm.engine extensions not built")
+        self.assertEqual(datetime_to_oadate(datetime(1899, 12, 30)), 0.0)
+        self.assertEqual(oadate_to_datetime(0.0), datetime(1899, 12, 30))
 
 
 # ---------------------------------------------------------------------------
@@ -181,35 +176,48 @@ class TestDateTimeRoundTrip:
 
 try:
     from openswmm.engine import Nodes, Links, Subcatchments, Gages
+    from tests.engine._solver_cases import EngineSolverCase
     _ENGINE_AVAILABLE = True
 except ImportError:
     _ENGINE_AVAILABLE = False
+    EngineSolverCase = unittest.TestCase  # fallback so classes below still load
 
-engine_only = pytest.mark.skipif(
+engine_only = unittest.skipIf(
     not _ENGINE_AVAILABLE,
-    reason="compiled openswmm.engine extensions not built",
+    "compiled openswmm.engine extensions not built",
 )
 
 
 @engine_only
-class TestIndexResolution:
+class TestIndexResolution(EngineSolverCase):
     """``coll.get_X(0)`` and ``coll.get_X("ID")`` must agree."""
 
-    def test_node_int_and_str_agree(self, nodes):
+    def nodes(self):
+        """A Nodes instance bound to a running solver."""
+        return Nodes(self.running_solver())
+
+    def links(self):
+        """A Links instance bound to a running solver."""
+        return Links(self.running_solver())
+
+    def test_node_int_and_str_agree(self):
+        nodes = self.nodes()
         zero_id = nodes.get_id(0)
-        assert zero_id, "Test model has no nodes"
-        assert nodes[0].depth == nodes[zero_id].depth
+        self.assertTrue(zero_id, "Test model has no nodes")
+        self.assertEqual(nodes[0].depth, nodes[zero_id].depth)
 
-    def test_link_int_and_str_agree(self, links):
+    def test_link_int_and_str_agree(self):
+        links = self.links()
         zero_id = links.get_id(0)
-        assert zero_id, "Test model has no links"
-        assert links[0].flow == links[zero_id].flow
+        self.assertTrue(zero_id, "Test model has no links")
+        self.assertEqual(links[0].flow, links[zero_id].flow)
 
-    def test_unknown_id_raises_keyerror(self, nodes):
-        with pytest.raises(KeyError):
+    def test_unknown_id_raises_keyerror(self):
+        nodes = self.nodes()
+        with self.assertRaises(KeyError):
             nodes["NO_SUCH_NODE_xyz"]
 
-    def test_negative_index_handled(self, nodes):
+    def test_negative_index_handled(self):
         # Current behaviour: a negative int reaches the C layer and either
         # returns BADINDEX (preferred) or silently returns garbage. P0 doesn't
         # change the underlying _resolve calls in _nodes.pyx yet, so this test
@@ -218,16 +226,17 @@ class TestIndexResolution:
 
 
 @engine_only
-class TestErrorCodeMapping:
+class TestErrorCodeMapping(EngineSolverCase):
     """Force the engine to return BADINDEX and confirm the Python side maps it."""
 
-    def test_bad_index_node_raises_index_error(self, nodes):
+    def test_bad_index_node_raises_index_error(self):
         # Bypass the Python-side _resolve helper to get a real BADINDEX from C.
         # The current _resolve in _nodes.pyx checks bounds in Python, so the
         # only way to exercise the C path today is via the bulk array setters.
         # When P2 lands and _resolve is unified, this test will use the helper
         # directly; for now we just confirm that calling with an obviously
         # out-of-range int raises *something* IndexError-compatible.
+        nodes = Nodes(self.running_solver())
         n = len(nodes)
-        with pytest.raises((IndexError, EngineError)):
+        with self.assertRaises((IndexError, EngineError)):
             nodes[n + 9999]

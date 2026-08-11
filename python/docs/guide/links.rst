@@ -263,6 +263,20 @@ all five fields by assigning a tuple:
 The shape is a :class:`XSectShape` enum; the four ``g`` parameters are
 shape-specific (diameter, width, height, depth, …).
 
+Two companions save you from decoding the ``g`` values by hand.
+``x.info()`` (or :meth:`Links.get_xsect_info`) labels them, and
+``x.geometry()`` returns an :class:`XSectionGeometry` that can answer
+hydraulic questions about the section:
+
+.. code-block:: python
+
+    c1.xsect.info().geom_labels     # {'diameter': 1.0}
+
+    g = c1.xsect.geometry()
+    g.area(0.5), g.full_area, g.is_open
+
+See :doc:`xsect_geometry` for the full geometry surface.
+
 ----
 
 Type-specific sub-views
@@ -342,6 +356,8 @@ See also
 
 * :doc:`solver` — where ``s.links`` comes from.
 * :doc:`nodes` — :attr:`Link.from_node` / :attr:`Link.to_node` return :class:`Node` wrappers.
+* :doc:`xsect_geometry` — ``link.xsect.geometry()`` and standalone
+  cross-section geometry.
 * :doc:`controls` — runtime control of link ``control_setting`` and
   ``target_setting``.
 * :doc:`error_handling` — every exception type referenced on this page.

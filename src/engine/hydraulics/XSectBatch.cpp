@@ -19,6 +19,7 @@
 
 #include "XSectBatch.hpp"
 #include "xsect_tables.hpp"
+#include "XSectKernels.hpp"   // xsect::shape — the shared analytic formulas
 #include "XSectLookup.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../math/SIMD.hpp"
@@ -215,7 +216,10 @@ void area_rect(
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // Trivially vectorisable: area = depth * w_max — use explicit SIMD multiply.
+    // shape::rectAofY is `y * w_max`, and an element-wise IEEE multiply is what
+    // _mm256_mul_pd / vmulq_f64 do, so the intrinsic path is bit-identical to
+    // calling the shared leaf per element and is kept for the vector width.
+    // XSectSharedFormulas.RectAreaMatchesSimdPath pins that equivalence.
     openswmm::simd::multiply(depth, w_max, area, static_cast<std::size_t>(count));
 }
 
@@ -226,12 +230,9 @@ void area_trapezoidal(
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // area = (y_bot + s_bot * depth) * depth
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        double d = depth[k];
-        area[k] = (y_bot[k] + s_bot[k] * d) * d;
-    }
+    for (int k = 0; k < count; ++k)
+        area[k] = xsect::shape::trapezAofY(depth[k], y_bot[k], s_bot[k]);
 }
 
 void area_triangular(
@@ -240,12 +241,9 @@ void area_triangular(
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // area = s_bot * depth^2
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        double d = depth[k];
-        area[k] = s_bot[k] * d * d;
-    }
+    for (int k = 0; k < count; ++k)
+        area[k] = xsect::shape::triangAofY(depth[k], s_bot[k]);
 }
 
 void area_parabolic(
@@ -254,13 +252,9 @@ void area_parabolic(
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // area = (4/3) * r_bot * depth^(3/2) — auto-vectorizable with ivdep
-    constexpr double four_thirds = 4.0 / 3.0;
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        double d = depth[k];
-        area[k] = four_thirds * r_bot[k] * d * std::sqrt(d);
-    }
+    for (int k = 0; k < count; ++k)
+        area[k] = xsect::shape::parabAofY(depth[k], r_bot[k]);
 }
 
 void area_powerfunc(
@@ -270,10 +264,8 @@ void area_powerfunc(
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
-    // area = r_bot * depth^(s_bot+1)
-    for (int k = 0; k < count; ++k) {
-        area[k] = r_bot[k] * std::pow(depth[k], s_bot[k] + 1.0);
-    }
+    for (int k = 0; k < count; ++k)
+        area[k] = xsect::shape::powerfuncAofY(depth[k], s_bot[k], r_bot[k]);
 }
 
 void area_tabulated(
@@ -455,15 +447,10 @@ void hydrad_trapezoidal(
     double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
-    // R = A / P = (y_bot + s_bot*d)*d / (y_bot + d*r_bot)
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        double d = depth[k];
-        if (d <= 0.0) { hydrad[k] = 0.0; continue; }
-        double a = (y_bot[k] + s_bot[k] * d) * d;
-        double p = y_bot[k] + d * r_bot[k];
-        hydrad[k] = a / p;
-    }
+    for (int k = 0; k < count; ++k)
+        hydrad[k] = xsect::shape::trapezRofY(depth[k], y_bot[k], s_bot[k],
+                                             r_bot[k]);
 }
 
 void hydrad_triangular(
@@ -473,11 +460,9 @@ void hydrad_triangular(
     double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
-    // R = (s_bot*y) / (2*r_bot)
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        hydrad[k] = (s_bot[k] * depth[k]) / (2.0 * r_bot[k]);
-    }
+    for (int k = 0; k < count; ++k)
+        hydrad[k] = xsect::shape::triangRofY(depth[k], s_bot[k], r_bot[k]);
 }
 
 void hydrad_rect(
@@ -487,6 +472,11 @@ void hydrad_rect(
     int count
 ) {
     // R = (w*d) / (w + 2*d)
+    // NOT routed onto shape::rectOpenRofA: that spells the perimeter
+    // `w + 2.0*a/w` with a = w*d, and (w*d)/w is not exactly d, so the two
+    // differ in the last ulp. This kernel has no callers (dead since the
+    // dispatcher moved to hydrad_rect_closed/hydrad_rect_open), so it is left
+    // exactly as it was rather than migrated on a formula that isn't its own.
     OPENSWMM_IVDEP
     for (int k = 0; k < count; ++k) {
         double d = depth[k];
@@ -505,18 +495,10 @@ void hydrad_rect_closed(
     double*       OPENSWMM_RESTRICT hydrad,
     int count
 ) {
-    constexpr double ALFMAX = 0.97;
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        double d = depth[k];
-        if (d <= 0.0) { hydrad[k] = 0.0; continue; }
-        double w = w_max[k];
-        double a = w * d;
-        double p = w + 2.0 * a / w;
-        double alpha = a / a_full[k];
-        if (alpha > ALFMAX) p += (alpha - ALFMAX) / (1.0 - ALFMAX) * w;
-        hydrad[k] = a / p;
-    }
+    for (int k = 0; k < count; ++k)
+        hydrad[k] = xsect::shape::rectClosedRofA(
+            xsect::shape::rectAofY(depth[k], w_max[k]), w_max[k], a_full[k]);
 }
 
 // RECT_OPEN hydraulic radius — matches legacy rect_open getRofA, honouring the
@@ -529,13 +511,9 @@ void hydrad_rect_open(
     int count
 ) {
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        double d = depth[k];
-        if (d <= 0.0) { hydrad[k] = 0.0; continue; }
-        double w = w_max[k];
-        double a = w * d;
-        hydrad[k] = a / (w + (2.0 - s_bot[k]) * a / w);
-    }
+    for (int k = 0; k < count; ++k)
+        hydrad[k] = xsect::shape::rectOpenRofA(
+            xsect::shape::rectAofY(depth[k], w_max[k]), w_max[k], s_bot[k]);
 }
 
 // RECT_CLOSED top width — w everywhere except the closed crown (y == y_full),
@@ -547,14 +525,12 @@ void width_rect_closed(
     double*       OPENSWMM_RESTRICT width,
     int count
 ) {
-    // Legacy getWofY RECT_CLOSED: 0 exactly at the crown (yNorm == 1.0), else
-    // wMax. In the bit-exact default norm_x DIVIDES (y == yFull -> yNorm == 1.0
+    // In the bit-exact default norm_x DIVIDES (y == yFull -> yNorm == 1.0
     // exactly); the fast reciprocal form can round just off 1.0 (accepted in §6).
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        double y_norm = norm_x(depth[k], nrm[k]);
-        width[k] = (y_norm == 1.0) ? 0.0 : w_max[k];
-    }
+    for (int k = 0; k < count; ++k)
+        width[k] = xsect::shape::rectClosedWofY(norm_x(depth[k], nrm[k]),
+                                                w_max[k]);
 }
 
 void hydrad_tabulated(
@@ -599,11 +575,9 @@ void width_trapezoidal(
     double*       OPENSWMM_RESTRICT width,
     int count
 ) {
-    // W = y_bot + 2*s_bot*depth
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        width[k] = y_bot[k] + 2.0 * s_bot[k] * depth[k];
-    }
+    for (int k = 0; k < count; ++k)
+        width[k] = xsect::shape::trapezWofY(depth[k], y_bot[k], s_bot[k]);
 }
 
 void width_triangular(
@@ -612,11 +586,9 @@ void width_triangular(
     double*       OPENSWMM_RESTRICT width,
     int count
 ) {
-    // W = 2*s_bot*depth
     OPENSWMM_IVDEP
-    for (int k = 0; k < count; ++k) {
-        width[k] = 2.0 * s_bot[k] * depth[k];
-    }
+    for (int k = 0; k < count; ++k)
+        width[k] = xsect::shape::triangWofY(depth[k], s_bot[k]);
 }
 
 void width_rect(

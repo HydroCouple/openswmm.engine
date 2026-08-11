@@ -1,0 +1,67 @@
+[TITLE]
+Precip scaling — WARM rain-scale model.
+Single subcatchment, no snow pack ('*' placeholder at token 8), rainfall scale
+factor 0.5 at token 9. Air temperature pinned to 50 F so every drop is rain and
+the rainfall scale factor is the only active lever. Used by
+test_subcatch_scale_factors (mid-run setter effect + runoff continuity) and by
+the legacy-vs-C++ regression suite (see tests/regression/data/).
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+INFILTRATION         HORTON
+START_DATE           01/01/2026
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2026
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2026
+END_TIME             02:00:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         0:00:30
+
+[RAINGAGES]
+;;Name Format Interval SCF Source
+RG1  INTENSITY 1:00 1.0 TIMESERIES TS1
+
+[SUBCATCHMENTS]
+;;Name RainGage Outlet Area %Imperv Width Slope Curblen SnowPack RainScale SnowScale
+S1  RG1  J1  10.0  100  500  0.5  0  *  0.5
+
+[SUBAREAS]
+;;Subcatch Nimp Nperv Simp Sperv PctZero RouteTo
+S1  0.01  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+;;Subcatch MaxRate MinRate Decay DryTime MaxInfil
+S1  3.0  0.5  4.0  7  0
+
+[TIMESERIES]
+;;Name Date Time Value
+TS1  01/01/2026 00:00 2.0
+TS1  01/01/2026 01:00 2.0
+TS1  01/01/2026 02:00 0.0
+
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded
+J1  100.0  10.0  0.0  0.0  0.0
+
+[OUTFALLS]
+;;Name Elev Type
+O1  95.0  FREE
+
+[CONDUITS]
+;;Name From To Length N InOff OutOff
+C1  J1  O1  400.0  0.013  0  0
+
+[XSECTIONS]
+;;Link Shape Geom1 Geom2 Geom3 Geom4 Barrels
+C1  CIRCULAR  1.5  0  0  0  1
+
+[TEMPERATURE]
+TIMESERIES TEMPTS
+
+[TIMESERIES]
+TEMPTS  01/01/2026 00:00 50
+TEMPTS  01/01/2026 12:00 50

@@ -161,6 +161,15 @@ GIL.
    * - ``get_vertex_heads()``
      - bulk
      - Heads reconstructed at vertices (``n_vertices``).
+   * - ``get_vertex_render_depths()``
+     - bulk
+     - Render-oriented signed water depths at all vertices
+       (``n_vertices``): the wet-masked, depth-weighted free-surface
+       reconstruction ``eta_v - z_v`` (m). Unlike ``get_vertex_heads()``,
+       dry-cell bed elevations never contribute; the value is negative
+       over the dry side of a partially wet cell and ``0`` where no
+       incident cell is wet. This is the field GUIs should interpolate
+       for water-surface rendering and profiles.
    * - ``get_edge_flux_bulk()``
      - bulk
      - Normal flux on every triangle edge.
