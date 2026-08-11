@@ -120,8 +120,7 @@ TEST(GpkgExternalContentWriter, TimeseriesFilePopulatesProvenance) {
     plantMinimalModel(db.get(), sim);
 
     SimulationContext ctx;
-    int t = ctx.table_names.add("RAIN_X");
-    ctx.tables.add("RAIN_X", TableType::TIMESERIES);
+    int t = ctx.tables.add("RAIN_X", TableType::TIMESERIES);
     ctx.tables[t].file_path = src.string();   // pre-resolved (.original) only
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
@@ -152,8 +151,7 @@ TEST(GpkgExternalContentWriter, TimeseriesWithColumnSuffixCapturesColumn) {
     plantMinimalModel(db.get(), sim);
 
     SimulationContext ctx;
-    int t = ctx.table_names.add("RAIN_X");
-    ctx.tables.add("RAIN_X", TableType::TIMESERIES);
+    int t = ctx.tables.add("RAIN_X", TableType::TIMESERIES);
     ctx.tables[t].file_path = src.string() + ":East_Gage";
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));

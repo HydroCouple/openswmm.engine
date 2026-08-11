@@ -1286,7 +1286,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 k++;
                 if (k >= static_cast<int>(toks.size()))
                     return fail("CURVE action is missing its curve name");
-                int ci = ctx.table_names.find(toks[static_cast<size_t>(k)]);
+                int ci = ctx.find_curve(toks[static_cast<size_t>(k)]);
                 if (ci < 0)
                     return fail("no curve named '" + toks[static_cast<size_t>(k)] +
                                 "' exists in the model");
@@ -1297,7 +1297,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 k++;
                 if (k >= static_cast<int>(toks.size()))
                     return fail("TIMESERIES action is missing its series name");
-                int ti = ctx.table_names.find(toks[static_cast<size_t>(k)]);
+                int ti = ctx.find_timeseries(toks[static_cast<size_t>(k)]);
                 if (ti < 0)
                     return fail("no time series named '" +
                                 toks[static_cast<size_t>(k)] +

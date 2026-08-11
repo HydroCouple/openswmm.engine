@@ -847,7 +847,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.gages.ts_index[ug] < 0 &&
             ctx.gages.source[ug] == RainSource::TIMESERIES &&
             !ctx.gages.ts_name[ug].empty()) {
-            ctx.gages.ts_index[ug] = ctx.table_names.find(ctx.gages.ts_name[ug]);
+            ctx.gages.ts_index[ug] = ctx.find_timeseries(ctx.gages.ts_name[ug]);
         }
     }
 
@@ -966,7 +966,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         auto& S = ctx.node_subtypes.storages;
         const auto ur = static_cast<std::size_t>(r);
         if (S.curve[ur] < 0 && !S.curve_name[ur].empty()) {
-            S.curve[ur] = ctx.table_names.find(S.curve_name[ur]);
+            S.curve[ur] = ctx.find_curve(S.curve_name[ur]);
             if (S.curve[ur] < 0)
                 ctx.errors.push_back(format_error(ERR_NAME, S.curve_name[ur]));
         }
@@ -992,7 +992,9 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (O.param[ur] >= 0.0) continue;              // already resolved (e.g. via API)
 
         const std::string& nm = O.param_name[ur];
-        const int t = nm.empty() ? -1 : ctx.table_names.find(nm);
+        const int t = nm.empty() ? -1
+                                 : (is_tidal ? ctx.find_curve(nm)
+                                             : ctx.find_timeseries(nm));
         if (t < 0) {
             ctx.errors.push_back(format_error(ERR_NAME, nm));
             continue;
@@ -1023,7 +1025,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         // store the raw name.
         if (ctx.links.pump_curve_name[uj].empty() ||
             ctx.links.pump_curve_name[uj] == "*") continue;
-        ctx.link_subtypes.pumps.curve[upr] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+        ctx.link_subtypes.pumps.curve[upr] = ctx.find_curve(ctx.links.pump_curve_name[uj]);
         if (ctx.link_subtypes.pumps.curve[upr] < 0)
             ctx.errors.push_back(format_error(ERR_NAME, ctx.links.pump_curve_name[uj]));
     }
@@ -1040,7 +1042,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (outlet_type < 2) continue; // FUNCTIONAL — no curve needed
         if (ctx.link_subtypes.outlets.curve[uolr] >= 0) continue; // already resolved
         if (ctx.links.pump_curve_name[uj].empty()) continue;
-        ctx.link_subtypes.outlets.curve[uolr] = ctx.table_names.find(ctx.links.pump_curve_name[uj]);
+        ctx.link_subtypes.outlets.curve[uolr] = ctx.find_curve(ctx.links.pump_curve_name[uj]);
         if (ctx.link_subtypes.outlets.curve[uolr] < 0)
             ctx.errors.push_back(format_error(ERR_NAME, ctx.links.pump_curve_name[uj]));
     }
@@ -1086,7 +1088,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     for (int i = 0; i < ctx.ext_inflows.count(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (!ctx.ext_inflows.ts_name[ui].empty()) {
-            int ts_idx = ctx.table_names.find(ctx.ext_inflows.ts_name[ui]);
+            int ts_idx = ctx.find_timeseries(ctx.ext_inflows.ts_name[ui]);
             // Store resolved index - the inflow solver uses ts_name for lookup,
             // but we can cache the index for performance
             (void)ts_idx; // ts_name is used directly by InflowSolver
@@ -1172,7 +1174,7 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         // Re-resolve diversion curve name → index (TABULAR dividers)
         if (D.curve[ur] < 0 && !D.curve_name[ur].empty())
-            D.curve[ur] = ctx.table_names.find(D.curve_name[ur]);
+            D.curve[ur] = ctx.find_curve(D.curve_name[ur]);
     }
 
     // -------------------------------------------------------------------------
@@ -1197,7 +1199,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Evaporation timeseries resolution
     // -------------------------------------------------------------------------
     if (ctx.options.evap_type == 2 && !ctx.options.evap_ts_name.empty()) {
-        int ts_idx = ctx.table_names.find(ctx.options.evap_ts_name);
+        int ts_idx = ctx.find_timeseries(ctx.options.evap_ts_name);
         (void)ts_idx; // stored by name, resolved at runtime
     }
 
@@ -1335,7 +1337,8 @@ void resolve_cross_references(SimulationContext& ctx) {
             const auto& tname = ctx.links.pump_curve_name[uj];
             if (!tname.empty()) {
                 for (int t = 0; t < nt; ++t) {
-                    if (ctx.transects.names[static_cast<std::size_t>(t)] == tname) {
+                    if (ieq(ctx.transects.names[static_cast<std::size_t>(t)],
+                            tname)) {
                         ctx.links.xsect_curve[uj] = t;
                         break;
                     }
@@ -1369,7 +1372,7 @@ void resolve_cross_references(SimulationContext& ctx) {
             if (cname.empty()) continue;
 
             // Find curve by name in tables
-            int ci = ctx.table_names.find(cname);
+            int ci = ctx.find_curve(cname);
             if (ci >= 0 && ci < n_tables) {
                 ctx.links.xsect_curve[uj] = ci;
 
@@ -1436,7 +1439,10 @@ void resolve_cross_references(SimulationContext& ctx) {
 
             int si = -1;
             for (int s = 0; s < ctx.streets.count(); ++s) {
-                if (ctx.streets.names[static_cast<std::size_t>(s)] == sname) { si = s; break; }
+                if (ieq(ctx.streets.names[static_cast<std::size_t>(s)], sname)) {
+                    si = s;
+                    break;
+                }
             }
             if (si < 0) continue;
             auto su = static_cast<std::size_t>(si);

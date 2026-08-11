@@ -210,7 +210,7 @@ SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine,
 
     // Throwaway ControlEngine: parseRuleText mutates only its own rules_ /
     // pid_states_ vectors. Name resolution reads ctx.link_names /
-    // ctx.table_names (find() is non-mutating). The live engine's rule list
+    // ctx.tables (find is non-mutating). The live engine's rule list
     // and PID state are untouched.
     auto& ctx = to_engine(engine)->context();
     openswmm::controls::ControlEngine sandbox;

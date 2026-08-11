@@ -189,7 +189,7 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
         // Subcatchment pattern assignments: N-PERV, DSTORE, INFIL
         else if (keyword == "N-PERV" && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.table_names.find(tok[2]);
+            const int pi = ctx.find_table_any(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_n_perv_pattern.size())
@@ -199,7 +199,7 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
         }
         else if (keyword == "DSTORE" && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.table_names.find(tok[2]);
+            const int pi = ctx.find_table_any(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_d_store_pattern.size())
@@ -209,7 +209,7 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
         }
         else if (keyword == "INFIL" && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.table_names.find(tok[2]);
+            const int pi = ctx.find_table_any(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_infil_pattern.size())

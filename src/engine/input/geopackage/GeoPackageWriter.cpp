@@ -693,8 +693,8 @@ static void write_rain_gages(sqlite3* db, const SimulationContext& ctx,
         bind_int(stmt.get(), 7, static_cast<int>(safe_get(ctx.gages.source, (size_t)i, RainSource::TIMESERIES)));
 
         int ts = safe_int(ctx.gages.ts_index, i);
-        if (ts >= 0 && ts < ctx.table_names.size())
-            bind_text(stmt.get(), 8, ctx.table_names.name_of(ts));
+        if (ts >= 0 && ts < ctx.n_tables())
+            bind_text(stmt.get(), 8, ctx.tables[ts].id);
         else
             bind_null(stmt.get(), 8);
 
@@ -764,13 +764,12 @@ static void write_curves(sqlite3* db, const SimulationContext& ctx,
         "INSERT INTO curves (simulation_id, curve_id, curve_type, x_value, y_value, ordinal) "
         "VALUES (?,?,?,?,?,?)");
 
-    int n = ctx.table_names.size();
+    int n = ctx.n_tables();
     for (int i = 0; i < n; ++i) {
-        if (i >= (int)ctx.tables.count()) break;
         const auto& tbl = ctx.tables[i];
         if (tbl.type == TableType::TIMESERIES) continue;
 
-        const auto& name = ctx.table_names.name_of(i);
+        const auto& name = tbl.id;
         std::string ctype = std::to_string(static_cast<int>(tbl.type));
 
         for (int j = 0; j < (int)tbl.x.size(); ++j) {
@@ -793,13 +792,12 @@ static void write_timeseries(sqlite3* db, const SimulationContext& ctx,
         "INSERT INTO input_timeseries (simulation_id, series_id, timestamp, value, ordinal) "
         "VALUES (?,?,?,?,?)");
 
-    int n = ctx.table_names.size();
+    int n = ctx.n_tables();
     for (int i = 0; i < n; ++i) {
-        if (i >= (int)ctx.tables.count()) break;
         const auto& tbl = ctx.tables[i];
         if (tbl.type != TableType::TIMESERIES) continue;
 
-        const auto& name = ctx.table_names.name_of(i);
+        const auto& name = tbl.id;
 
         for (int j = 0; j < (int)tbl.x.size(); ++j) {
             sqlite3_reset(stmt.get());
@@ -992,7 +990,7 @@ static void write_adjustments(sqlite3* db, const SimulationContext& ctx,
                 bind_text(stmt.get(), 1, sim_id);
                 bind_text(stmt.get(), 2, ctx.subcatch_names.name_of(static_cast<int>(i)));
                 bind_text(stmt.get(), 3, atype);
-                bind_text(stmt.get(), 4, ctx.table_names.name_of(pats[i]));
+                bind_text(stmt.get(), 4, ctx.tables[pats[i]].id);
                 sqlite3_step(stmt.get());
             }
         };

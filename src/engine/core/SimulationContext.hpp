@@ -18,7 +18,7 @@
  * | `Subcatch[]`, `Nsubcatch` | `ctx.subcatches` (SubcatchData) + `ctx.subcatch_names` |
  * | `Gage[]`, `Ngages` | `ctx.gages` (GageData) + `ctx.gage_names` |
  * | `Pollut[]`, `Npolluts` + quality state | `ctx.pollutants` (PollutantData) |
- * | `Tseries[]` / `Curve[]` | `ctx.tables` (TableData) + `ctx.table_names` |
+ * | `Tseries[]` / `Curve[]` | `ctx.tables` (TableData; kind-aware find_curve/find_timeseries) |
  * | `Coord[]` | `ctx.spatial` (SpatialFrame) |
  * | — (new) | `ctx.user_flags` (UserFlags) |
  *
@@ -505,11 +505,11 @@ struct SimulationContext {
      */
     NameIndex pollutant_names;
 
-    /**
-     * @brief Time series / curve name → table index.
-     * @see Legacy: project_findObject(TIMESERIES, name) in project.c
-     */
-    NameIndex table_names;
+    // NOTE: there is deliberately NO shared name registry for tables.
+    // Legacy keeps TSERIES and CURVE in separate hash tables, so a curve and
+    // a timeseries may legally share one name; ctx.tables is the authority
+    // (each row stores id + type) and lookups are kind-aware via
+    // find_timeseries() / find_curve() below.
 
     // =========================================================================
     // Quality data (landuse, buildup, washoff, treatment)
@@ -591,7 +591,7 @@ struct SimulationContext {
 
     /**
      * @brief Per-subcatchment pattern indices for N-PERV, DSTORE, INFIL adjustments.
-     * @details Index into ctx.table_names / pattern tables. -1 = no pattern.
+     * @details Index into ctx.tables / pattern tables. -1 = no pattern.
      * @see Legacy: Subcatch[i].nPervPattern, dStorePattern, infilPattern
      */
     std::vector<int> subcatch_n_perv_pattern;
@@ -1298,7 +1298,6 @@ struct SimulationContext {
         subcatch_names.clear();
         gage_names.clear();
         pollutant_names.clear();
-        table_names.clear();
 
         // Clear inflow-related stores that aren't reset by their owning solvers
         rdii_decay = RDIIDecayData{};
@@ -1451,7 +1450,42 @@ struct SimulationContext {
     int n_landuses()   const noexcept { return landuse_names.size(); }
 
     /** @brief Number of tables (time series + curves). */
-    int n_tables()     const noexcept { return table_names.size(); }
+    int n_tables()     const noexcept { return static_cast<int>(tables.count()); }
+
+    // =========================================================================
+    // Kind-aware table lookups (case-insensitive, legacy hash.c parity).
+    // Legacy keeps TSERIES and CURVE in separate hash tables, so the same
+    // name may denote both a curve and a timeseries; every consumer knows
+    // which kind it wants.
+    // =========================================================================
+
+    /** @brief Find a timeseries table by name; -1 if none. */
+    int find_timeseries(std::string_view name) const noexcept {
+        for (int i = 0; i < n_tables(); ++i)
+            if (tables[i].type == TableType::TIMESERIES && ieq(tables[i].id, name))
+                return i;
+        return -1;
+    }
+
+    /** @brief Find a curve table (any CURVE_* type) by name; -1 if none. */
+    int find_curve(std::string_view name) const noexcept {
+        for (int i = 0; i < n_tables(); ++i)
+            if (tables[i].type != TableType::TIMESERIES && ieq(tables[i].id, name))
+                return i;
+        return -1;
+    }
+
+    /**
+     * @brief Find a table of either kind by name; -1 if none.
+     * @details Timeseries win ties with a same-named curve (row order breaks
+     *          exact ties). Only for callers with no kind context (e.g. the
+     *          generic swmm_table_index C API).
+     */
+    int find_table_any(std::string_view name) const noexcept {
+        const int ts = find_timeseries(name);
+        if (ts >= 0) return ts;
+        return find_curve(name);
+    }
 };
 
 } /* namespace openswmm */

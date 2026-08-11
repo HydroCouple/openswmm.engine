@@ -373,8 +373,7 @@ void writeTimeseriesSlots(sqlite3* db, const SimulationContext& ctx,
         std::vector<formats::TimeseriesRow> rows;
         auto r = formats::parseTimeseriesText(path, rows);
         if (!r.ok) throw GpkgError("timeseries parse failed: " + r.error);
-        const std::string series_id =
-            ctx.table_names.name_of(static_cast<int>(t));
+        const std::string series_id = ctx.tables[static_cast<int>(t)].id;
         insert_input_timeseries(db, sim, series_id, basenameOf(path),
                                   column, rows);
     }

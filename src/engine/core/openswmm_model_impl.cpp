@@ -433,7 +433,7 @@ openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
         }
         case SWMM_FILE_TIMESERIES_DATA: {
             if (!owner) return nullptr;
-            int idx = ctx.table_names.find(owner);
+            int idx = ctx.find_timeseries(owner);
             if (idx < 0 || idx >= static_cast<int>(ctx.tables.tables.size()))
                 return nullptr;
             return &ctx.tables.tables[static_cast<std::size_t>(idx)].file_path;

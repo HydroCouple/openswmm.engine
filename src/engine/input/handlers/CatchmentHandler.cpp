@@ -281,7 +281,7 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         if (src == "TIMESERIES" && tok.size() > 5) {
             ctx.gages.source[idx]   = RainSource::TIMESERIES;
             ctx.gages.ts_name[idx]  = tok[5]; // Store name for deferred resolution
-            ctx.gages.ts_index[idx] = ctx.table_names.find(tok[5]);
+            ctx.gages.ts_index[idx] = ctx.find_timeseries(tok[5]);
             // ts_index may be -1 if TIMESERIES section appears after RAINGAGES
 
             // Optional trailing rainfall scaling factor (legacy gage.c readGageSeriesFormat tok[6])

@@ -294,7 +294,7 @@ private:
     double last_t_ = 0.0;
 
     /// One-shot guard: resolve deferred boundary timeseries/curve NAMES to
-    /// registry indices on the first advance (ctx.table_names is populated by
+    /// registry indices on the first advance (ctx.tables is populated by
     /// then), not at parse time.
     bool boundary_names_resolved_ = false;
 
