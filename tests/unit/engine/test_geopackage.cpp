@@ -1299,7 +1299,7 @@ TEST(GeoPackagePluginInfoTest, Metadata) {
     EXPECT_EQ(info.version(), "1.0.0");
     EXPECT_EQ(info.vendor(), "HydroCouple");
     EXPECT_FALSE(info.url().empty());
-    EXPECT_EQ(info.license_type(), "MIT");
+    EXPECT_EQ(info.license_type(), "Apache-2.0");
     EXPECT_FALSE(info.license_text().empty());
     EXPECT_TRUE(info.has_input());
     EXPECT_TRUE(info.has_output());
