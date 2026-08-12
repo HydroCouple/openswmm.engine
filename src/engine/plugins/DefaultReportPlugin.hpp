@@ -72,7 +72,6 @@ private:
     std::string rpt_path_;
     PluginState state_      = PluginState::UNLOADED;
     std::string last_error_;
-    std::time_t wall_start_ = 0;  ///< Wall-clock time when prepare() was called
 
     // Progressive write state
     std::FILE*  file_             = nullptr; ///< Persistent file handle (opened in prepare)
@@ -86,7 +85,7 @@ private:
     void write_results(std::FILE* f, const SimulationContext& ctx);
 
     /** @brief Write analysis timing section. */
-    void write_timing(std::FILE* f);
+    void write_timing(std::FILE* f, const SimulationContext& ctx);
 };
 
 } /* namespace openswmm */

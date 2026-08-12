@@ -57,6 +57,7 @@
 #endif
 
 #include <cstring>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -142,6 +143,14 @@ int SWMMEngine::open(const char* inp_path,
 
     // Reset context for a fresh run
     ctx_.reset();
+
+    // Stamp the report wall clock before any parsing work. Legacy takes this
+    // timestamp in report_writeLogo(), which swmm_open() calls before
+    // project_readInput(), so its "Total elapsed time" covers parse +
+    // validate + init. Stamping here keeps the reported elapsed time
+    // comparable with legacy/PCSWMM instead of excluding the (potentially
+    // very long, on large models) initialization window.
+    std::time(&ctx_.wall_start);
 
     rpt_path_ = rpt_path ? rpt_path : "";
     out_path_ = out_path ? out_path : "";
