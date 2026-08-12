@@ -29,6 +29,7 @@
 #include "../core/Constants.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/PathResolver.hpp"
+#include "../core/PerfTimers.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
@@ -822,6 +823,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Timeseries with FILE references (e.g., rainfall .dat files) need to be
     // loaded into memory before any date offset or gage resolution.
+    const auto _pt_extfiles0 = perf::now();
     load_external_timeseries_files(ctx, inp_dir);
 
     // -------------------------------------------------------------------------
@@ -830,6 +832,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // options parsing (needs the simulation window to bound retained records).
     // -------------------------------------------------------------------------
     load_external_rain_files(ctx);
+    perf::sec_res_extfiles += perf::since(_pt_extfiles0);
 
     // -------------------------------------------------------------------------
     // Timeseries date offset resolution
@@ -856,6 +859,10 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Gage timeseries re-resolution
     // -------------------------------------------------------------------------
+    // Start of the name-binding region: gage/co-gage, subcatchment outlet and
+    // gage, storage and outfall and pump curves, external-inflow series. These
+    // are the find_timeseries/find_curve callers.
+    const auto _pt_tables0 = perf::now();
     // If RAINGAGES section appeared before TIMESERIES, ts_index will be -1.
     // Re-resolve using the stored ts_name.
     for (int g = 0; g < n_gages; ++g) {
@@ -1110,6 +1117,7 @@ void resolve_cross_references(SimulationContext& ctx) {
             (void)ts_idx; // ts_name is used directly by InflowSolver
         }
     }
+    perf::sec_res_tables += perf::since(_pt_tables0);
 
     // -------------------------------------------------------------------------
     // [INFLOWS] / [DWF] / [RDII] node re-resolution
@@ -1306,6 +1314,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Build transect geometry tables for IRREGULAR cross-sections.
     // Each TransectStore entry → TransectData with precomputed area/width/hrad tables.
     {
+        perf::ScopedTimer _pt_transects(perf::sec_res_transects);
         int nt = ctx.transects.count();
         ctx.transect_tables.resize(static_cast<std::size_t>(nt));
         for (int t = 0; t < nt; ++t) {
@@ -1375,6 +1384,12 @@ void resolve_cross_references(SimulationContext& ctx) {
             }
         }
     }
+
+    // Per-link named cross-section resolution (CUSTOM shape curves, then
+    // STREET) followed by the full-flow xsect parameter loop. This is the
+    // region the per-link linear scans and per-link TransectData builds live
+    // in — see plan items 1.3 and 1.4.
+    const auto _pt_xsect0 = perf::now();
 
     // Resolve CUSTOM shape curves — these use [CURVES] Shape type entries
     // that define normalized (depth/yFull, width/wMax) relationships.
@@ -1631,6 +1646,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.links.xsect_yw_max[uj] = yw_max;
     }
 
+    perf::sec_res_xsect += perf::since(_pt_xsect0);
+
     // -------------------------------------------------------------------------
     // Conduit slope computation (matches legacy conduit_getSlope in link.c)
     // -------------------------------------------------------------------------
@@ -1837,7 +1854,10 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Release excess vector capacity accumulated during parsing
     // -------------------------------------------------------------------------
-    ctx.shrink_all_to_fit();
+    {
+        perf::ScopedTimer _pt(perf::sec_res_shrink);
+        ctx.shrink_all_to_fit();
+    }
 
     // Relational refactor (Phase 4): the side-table rows were populated directly
     // by the parse/resolution writers above; this only re-derives the base→row
