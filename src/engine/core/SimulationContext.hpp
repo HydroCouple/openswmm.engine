@@ -77,6 +77,7 @@
 #define OPENSWMM_ENGINE_SIMULATION_CONTEXT_HPP
 
 #include <cmath>
+#include <ctime>
 #include <functional>
 #include "FilePathPair.hpp"
 #include "../data/GageData.hpp"
@@ -314,6 +315,19 @@ struct SimulationContext {
 
     /** @brief Current lifecycle state of the engine. */
     EngineState state = EngineState::CREATED;
+
+    /**
+     * @brief Wall-clock time stamped at the start of SWMMEngine::open().
+     *
+     * @details Reported as "Analysis begun on:" and used as the origin for
+     *          "Total elapsed time:" in the .rpt. Stamped before input
+     *          parsing so that parse + cross-reference resolution +
+     *          validation + module initialization are all included in the
+     *          reported elapsed time. This matches legacy, which takes its
+     *          timestamp in report_writeLogo() before project_readInput()
+     *          (see legacy/engine/report.c). Zero until open() runs.
+     */
+    std::time_t wall_start = 0;
 
     // =========================================================================
     // Project title / notes

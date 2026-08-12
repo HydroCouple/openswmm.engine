@@ -169,8 +169,6 @@ int DefaultReportPlugin::validate(const SimulationContext& /*ctx*/) {
 }
 
 int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
-    std::time(&wall_start_);
-
     // Open the report file early and write preamble (title, input summaries,
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
@@ -238,7 +236,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     write_results(f, ctx);
 
     // Write analysis timing and close
-    write_timing(f);
+    write_timing(f, ctx);
 
     std::fclose(f);
     file_ = nullptr;
@@ -2274,25 +2272,36 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 // write_timing — analysis timing section
 // ---------------------------------------------------------------------------
 
-void DefaultReportPlugin::write_timing(std::FILE* f) {
+void DefaultReportPlugin::write_timing(std::FILE* f, const SimulationContext& ctx) {
     // =====================================================================
-    // Analysis Timing — matches legacy report_writeRunTime()
+    // Analysis Timing — matches legacy report_writeSysTime()
+    //
+    // The start of the window is ctx.wall_start, stamped by
+    // SWMMEngine::open() before input parsing, mirroring legacy where
+    // report_writeLogo() takes SysTime ahead of project_readInput(). Elapsed
+    // time therefore covers parse + validation + initialization + routing,
+    // not just routing.
     // =====================================================================
     {
         char begin_str[64] = "";
         char end_str[64] = "";
 
-        if (wall_start_ != 0) {
-            const char* ct = std::ctime(&wall_start_);
+        std::time_t wall_end;
+        std::time(&wall_end);
+
+        // A zero wall_start means open() never ran (e.g. the plugin was
+        // driven directly). Fall back to the end time so the section reports
+        // "< 1 sec" rather than seconds-since-the-epoch.
+        std::time_t wall_start = (ctx.wall_start != 0) ? ctx.wall_start : wall_end;
+
+        {
+            const char* ct = std::ctime(&wall_start);
             if (ct) {
                 std::strncpy(begin_str, ct, sizeof(begin_str) - 1);
                 char* nl = std::strchr(begin_str, '\n');
                 if (nl) *nl = '\0';
             }
         }
-
-        std::time_t wall_end;
-        std::time(&wall_end);
         {
             const char* ct = std::ctime(&wall_end);
             if (ct) {
@@ -2306,12 +2315,17 @@ void DefaultReportPlugin::write_timing(std::FILE* f) {
         std::fprintf(f, "\n  Analysis ended on:  %s", end_str);
         std::fprintf(f, "\n  Total elapsed time: ");
 
-        double elapsed_secs = std::difftime(wall_end, wall_start_);
+        double elapsed_secs = std::difftime(wall_end, wall_start);
         if (elapsed_secs < 1.0) {
             std::fprintf(f, "< 1 sec");
         } else {
-            int es = static_cast<int>(elapsed_secs);
-            std::fprintf(f, "%02d:%02d:%02d", es / 3600, (es % 3600) / 60, es % 60);
+            // Legacy rolls whole days into a "d." prefix ahead of hh:mm:ss.
+            long es = static_cast<long>(elapsed_secs);
+            long days = es / 86400L;
+            long rem  = es % 86400L;
+            if (days > 0) std::fprintf(f, "%ld.", days);
+            std::fprintf(f, "%02ld:%02ld:%02ld",
+                         rem / 3600L, (rem % 3600L) / 60L, rem % 60L);
         }
         std::fprintf(f, "\n");
     }
