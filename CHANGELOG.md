@@ -21,6 +21,21 @@ retroactive.
 
 ## [Unreleased]
 
+### Changed
+
+- **Relicensed from MIT to the Apache License, Version 2.0** (#123, #122). The
+  `LICENSE` file now carries the full Apache 2.0 text, retaining the addendum
+  that acknowledges the USEPA SWMM material residing in the public domain under
+  17 USC § 105 — the Apache grant covers only the OpenSWMM authors' original
+  contributions and places no restriction on that public domain material. A new
+  `NOTICE` file records the required attribution and SWMM provenance. All
+  first-party source headers now carry the Apache 2.0 boilerplate and an
+  `SPDX-License-Identifier: Apache-2.0` tag in place of the previous MIT tags.
+  `CLA.md` (v1.1), `CONTRIBUTING.md`, `CITATION.cff`, `README.md`, the Python
+  bindings' `pyproject.toml` and the Sphinx license page were updated to match.
+  Built-in plugin metadata (`IPluginComponentInfo::license_type`) now reports
+  `"Apache-2.0"`.
+
 ### Added
 
 - **Per-triangle 2D initial conditions in the Python bindings.**

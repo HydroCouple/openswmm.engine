@@ -1,0 +1,40 @@
+OpenSWMM Engine
+Copyright 2026 Caleb Buahin
+
+This product includes software developed by the OpenSWMM authors
+(https://github.com/HydroCouple/openswmm.engine).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full license text.
+
+--------------------------------------------------------------------------------
+PUBLIC DOMAIN MATERIAL
+--------------------------------------------------------------------------------
+
+Portions of this product are derived from the Storm Water Management Model
+(SWMM) developed and released by the United States Environmental Protection
+Agency (USEPA) over the course of several decades. That material was prepared
+by or for the United States Government and resides in the public domain:
+domestic copyright protection is not available for it under 17 USC § 105, and
+no copyright is claimed over it by the OpenSWMM authors.
+
+The Apache License, Version 2.0 applies to the original contributions of the
+OpenSWMM authors. It does not extend copyright to, and places no restriction
+on, the public domain material described above. Recipients retain all rights
+they already hold in that material independently of this License.
+
+Files derived in whole or in part from USEPA SWMM sources are, where
+practical, marked as such in their file headers. The EPA SWMM 5.x sources are
+available from https://www.epa.gov/water-research/storm-water-management-model-swmm.
+
+The USEPA does not endorse this product, and the names "EPA", "USEPA", and
+"SWMM" are used solely to describe the origin of the public domain material.
+
+--------------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+--------------------------------------------------------------------------------
+
+This product depends on and, in some distribution formats, bundles third-party
+libraries that are licensed separately by their respective copyright holders.
+Dependencies are declared in vcpkg.json. Each such component remains subject to
+its own license terms, which accompany the component in its own distribution.

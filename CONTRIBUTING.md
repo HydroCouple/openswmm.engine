@@ -65,7 +65,7 @@ The Technical Manager role is a single point of authority, which must be protect
 
 ## 4. Licensing, Intellectual Property & CLA
 
-openswmm.engine is released under the **MIT License**.
+openswmm.engine is released under the **Apache License, Version 2.0**. Attribution requirements are recorded in [NOTICE](./NOTICE), which also documents the USEPA SWMM material that resides in the public domain under 17 USC § 105.
 
 All contributors must sign the project **Contributor License Agreement (CLA)** before their pull request can be merged. The CLA is detailed in [CLA.md](./CLA.md). Key points:
 
@@ -83,9 +83,9 @@ The project uses [CLA Assistant](https://cla-assistant.io). When you open your f
 
 Once signed, the CLA covers all future contributions. You do not need to sign again.
 
-If your contribution includes third-party code or data, you are responsible for ensuring that the third-party license is compatible with MIT and that proper attribution is included in your submission.
+If your contribution includes third-party code or data, you are responsible for ensuring that the third-party license is compatible with the Apache License, Version 2.0 and that proper attribution is added to [NOTICE](./NOTICE).
 
-The full license text is available in [LICENSE](./LICENSE).
+The full license text is available in [LICENSE](./LICENSE), and required attribution notices in [NOTICE](./NOTICE).
 
 ---
 
@@ -417,7 +417,7 @@ Adding a third-party dependency increases the maintenance burden and risk surfac
 
 | Criterion                | Requirement                                                                                      |
 |--------------------------|--------------------------------------------------------------------------------------------------|
-| **License compatibility**| The dependency's license must be compatible with MIT (e.g., MIT, BSD, Apache 2.0). Copyleft licenses such as GPL are not permitted. |
+| **License compatibility**| The dependency's license must be compatible with the Apache License, Version 2.0 (e.g., Apache-2.0, MIT, BSD). Copyleft licenses such as GPL, and licenses incompatible with Apache-2.0 such as GPLv2-only, are not permitted. |
 | **Maintenance status**   | The dependency must be actively maintained with a responsive upstream community.                 |
 | **Stability**            | The dependency must have a stable, versioned API. Unpinned or volatile dependencies are not acceptable. |
 | **Binary footprint**     | Dependencies that substantially increase compiled binary size must be justified by proportional benefit. |

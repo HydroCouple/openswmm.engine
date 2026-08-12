@@ -33,7 +33,7 @@
 # extensions compile against numpy 2.x and the produced wheels run on any
 # numpy >= 1.21 (since we use only the numpy 1.7+ stable ABI surface).
 requires = [
-    "scikit-build-core >= 0.10",
+    "scikit-build-core >= 0.11",
     "cython >= 3.0.12",
     "numpy >= 1.21",
 ]
@@ -48,7 +48,8 @@ version = "6.0.0a3"
 description = "Python bindings for the OpenSWMM stormwater modelling engine."
 requires-python = ">=3.10"
 readme = { file = "README.md", content-type = "text/markdown" }
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors     = [{ name = "Caleb Buahin", email = "caleb.buahin@gmail.com" }]
 maintainers = [{ name = "Caleb Buahin", email = "caleb.buahin@gmail.com" }]
 keywords = [
@@ -148,6 +149,7 @@ editable.verbose = false
 # sdist: include everything needed to build from scratch on a clean
 # machine, but exclude all build artefacts.
 sdist.include = [
+    "NOTICE",
     "openswmm/**/*.pyi",
     "openswmm/**/*.pxd",
     "openswmm/legacy/**/*.c",

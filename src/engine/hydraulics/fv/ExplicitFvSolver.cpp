@@ -1106,9 +1106,17 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
         }
     }
 
+    // measure_only asks for the reconstructed BED only — it is pass 1 of
+    // computeFaceFlux, whose sole output is z* = max(z_L, z_R). Every z_side
+    // branch above is arithmetic on stored bed values (cell_zb, the second-order
+    // dzdx extrapolation, face_zb, or the pass-through far cell's bed), so the
+    // geometry below is not needed: leaving it here cost two virtual
+    // getAofY/getRofY-class evaluations per face side whose result the probe
+    // pass discarded (its i1 out-param is written twice and never read).
+    if (measure_only) { i1_raw = 0.0; out = k::FaceState{}; return; }
+
     i1_raw = (h_raw > k::kDryDepth)
                  ? k::i1OfDepth(*g, h_raw, k::areaOfDepth(*g, h_raw)) : 0.0;
-    if (measure_only) { out = k::FaceState{}; return; }
 
     const double h_star = std::max(0.0, eta - zstar);
     if (h_star <= k::kDryDepth) {
