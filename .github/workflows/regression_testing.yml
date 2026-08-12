@@ -1,5 +1,8 @@
 name: Regression Testing
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]

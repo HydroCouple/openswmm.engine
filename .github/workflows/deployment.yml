@@ -1,5 +1,8 @@
 name: Deployment
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -30,7 +33,6 @@ jobs:
     name: "Build (${{ matrix.alias }})"
     permissions:
       contents: read
-      actions: write   # x-gha vcpkg binary cache + actions/cache
     strategy:
       fail-fast: false
       matrix:
@@ -215,7 +217,6 @@ jobs:
     # not block all wheels. (Previously `needs: build` coupled them.)
     permissions:
       contents: read
-      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -299,7 +300,6 @@ jobs:
     name: "GPU-omp wheels (${{ matrix.os }})"
     permissions:
       contents: read
-      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -494,7 +494,6 @@ jobs:
     name: "C++ unit tests (release gate)"
     permissions:
       contents: read
-      actions: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
