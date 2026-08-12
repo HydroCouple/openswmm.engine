@@ -144,6 +144,10 @@ int SWMMEngine::open(const char* inp_path,
     // Reset context for a fresh run
     ctx_.reset();
 
+    // Zero the load-phase accumulators so a process that opens several models
+    // reports each one separately (see core/PerfTimers.hpp).
+    perf::reset_load();
+
     // Stamp the report wall clock before any parsing work. Legacy takes this
     // timestamp in report_writeLogo(), which swmm_open() calls before
     // project_readInput(), so its "Total elapsed time" covers parse +
@@ -197,12 +201,16 @@ int SWMMEngine::open(const char* inp_path,
     // the mesh is already SI. The external-mesh path runs its own prescan
     // below and overrides this if both files carry the header.
     if (inp_path && inp_path[0] != '\0') {
+        perf::ScopedTimer _pt(perf::sec_open_prescan2d);
         twoD::prescan2DUnitsHeader(inp_path, surface_router_.options());
     }
 #endif
 
-    if (input_plugin->read(inp_path ? inp_path : "", ctx_) != 0) {
-        return ctx_.error_code != 0 ? ctx_.error_code : SWMM_ERR_PARSE;
+    {
+        perf::ScopedTimer _pt(perf::sec_open_read);
+        if (input_plugin->read(inp_path ? inp_path : "", ctx_) != 0) {
+            return ctx_.error_code != 0 ? ctx_.error_code : SWMM_ERR_PARSE;
+        }
     }
 
 #ifdef OPENSWMM_HAS_2D
@@ -251,12 +259,18 @@ int SWMMEngine::open(const char* inp_path,
     }
 
     // Resolve cross-references (forward refs, final array sizing, head init)
-    input::resolve_cross_references(ctx_);
+    {
+        perf::ScopedTimer _pt(perf::sec_open_resolve);
+        input::resolve_cross_references(ctx_);
+    }
 
     // Project-level sanity checks + step-clamp warnings (legacy project_validate:
     // WARNING 01/06/07). Must run before the fatal gate below so any warnings it
     // records reach the report.
-    validate_project();
+    {
+        perf::ScopedTimer _pt(perf::sec_open_validate);
+        validate_project();
+    }
 
     // Post-parse validation errors accumulated during resolution (e.g.
     // ERR_TRANSECT_MANNING 227 for a zero channel Manning's n) are fatal:
@@ -400,6 +414,11 @@ int SWMMEngine::initialize() noexcept {
                   "swmm_engine_initialize: must call open() first");
         return SWMM_ERR_WRONG_STATE;
     }
+
+    // Everything from here to init_modules() is the "state seeding" phase —
+    // per-node/per-link loops over ctx_. Closed out just before init_modules(),
+    // which is broken into its own four legs.
+    const auto _pt_state0 = perf::now();
 
     // Apply initial depths/flows from input (all defaults already in NodeData etc.)
     // reset_state() applies init_depth to depth/old_depth/head but volumes need
@@ -724,6 +743,8 @@ int SWMMEngine::initialize() noexcept {
     // Legacy swmm5.c:721 — ReportTime = 1000 * (double)ReportStep
     ctx_.next_report_ms      = 1000.0 * ctx_.options.report_step;
 
+    perf::sec_init_state += perf::since(_pt_state0);
+
     // Initialize all computational modules (batch SoA setup)
     init_modules();
 
@@ -808,6 +829,10 @@ int SWMMEngine::start(int save_results) noexcept {
     // routing-step-size coarsening, and the outfall interface write are all
     // gated on this in step()/postOutputSnapshot().
     do_routing_ = (ctx_.n_nodes() > 0 && !ctx_.options.ignore_routing);
+
+    // Everything up to prepare_all() is interface-file work ([FILES] inflows /
+    // outflows / hotstart / RDII / rainfall).
+    const auto _pt_iface0 = perf::now();
 
     // Open routing interface files ([FILES] USE INFLOWS / SAVE OUTFLOWS) and
     // process headers eagerly — matching legacy routing_open() →
@@ -928,8 +953,11 @@ int SWMMEngine::start(int save_results) noexcept {
                                   "supported by this engine and was ignored");
     }
 
+    perf::sec_start_iface += perf::since(_pt_iface0);
+
     // Phase 4: call prepare() on all plugins (opens output files/headers)
     if (!plugins_.empty()) {
+        perf::ScopedTimer _pt(perf::sec_start_plugins);
         const int rc = plugins_.prepare_all(ctx_);
         if (rc != 0) {
             set_error(SWMM_ERR_PLUGIN, "swmm_engine_start: plugin prepare() failed");
@@ -4212,6 +4240,11 @@ int SWMMEngine::report() noexcept {
 // ============================================================================
 
 int SWMMEngine::close() noexcept {
+    // Load-phase breakdown. Emitted here rather than from end() so it reports
+    // for a bare open()+close() too — the benchmark harness times open alone,
+    // open+initialize, and the full sequence. (See core/PerfTimers.hpp.)
+    if (perf::enabled()) perf::dump_load();
+
     // Stop IO thread if still running (safe to call even if already stopped)
     io_thread_.stop();
 
@@ -4560,10 +4593,10 @@ void SWMMEngine::emit_progress() noexcept {
 // ============================================================================
 
 void SWMMEngine::init_modules() noexcept {
-    initHydraulics();
-    initHydrology();
-    initQuality();
-    initGeometry();
+    { perf::ScopedTimer _pt(perf::sec_init_hydraulics); initHydraulics(); }
+    { perf::ScopedTimer _pt(perf::sec_init_hydrology);  initHydrology();  }
+    { perf::ScopedTimer _pt(perf::sec_init_quality);    initQuality();    }
+    { perf::ScopedTimer _pt(perf::sec_init_geometry);   initGeometry();   }
     initMassBalance();
 
     // Allocate forcing arrays to match object counts
