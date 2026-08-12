@@ -1,5 +1,8 @@
 name: Unit Testing Python
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, develop]
@@ -29,7 +32,6 @@ jobs:
     name: "Python (${{ matrix.os }})"
     permissions:
       contents: read
-      actions: write
     strategy:
       fail-fast: false
       matrix:

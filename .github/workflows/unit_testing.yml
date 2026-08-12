@@ -1,5 +1,8 @@
 name: Unit Testing
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, develop]
@@ -23,7 +26,6 @@ jobs:
     name: "C++ Engine (${{ matrix.alias }})"
     permissions:
       contents: read
-      actions: write
     strategy:
       fail-fast: false
       matrix:
