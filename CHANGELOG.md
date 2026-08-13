@@ -21,6 +21,46 @@ retroactive.
 
 ## [Unreleased]
 
+### Performance
+
+- **Model load and initialization: up to 17× faster, and the wall-clock window
+  before the first routing step cut on every model size.** A user reported 25
+  minutes between clicking Run and the analysis starting on a large model; that
+  window is `open()` + `initialize()` + `start()`, and none of it was
+  instrumented. See `plans/MODEL_LOAD_OPTIMIZATION_RESULTS_2026-08-13.md` for
+  the full measured breakdown, including the four plan predictions that
+  measurement disproved.
+
+  Measured in Release, medians of 5, one process per model:
+
+  | Model | before | after |
+  |---|---:|---:|
+  | 100k-conduit FV model, `open+initialize` | 8047 ms | 466 ms (**17.3×**) |
+  | 500 timeseries × 10k rows, `open` | 7213 ms | 2571 ms (**2.81×**) |
+  | 10k rain gages, `open` | 335 ms | 49 ms (**6.90×**) |
+  | 50k STREET conduits, `open` | 448 ms | 159 ms (**2.83×**) |
+  | 100k nodes + inflows with `REPORT INPUT YES`, full | 2550 ms | 897 ms (**2.84×**) |
+  | 500k nodes/links with geometry, `open` | 3553 ms | 2482 ms (**1.43×**) |
+
+  Peak RSS also falls: −35% on the STREET model, −17% on the 500k model.
+
+  The individual fixes: a case-insensitive hash index over the timeseries/curve
+  store (it was a linear scan called once per data row while parsing
+  `[TIMESERIES]`/`[CURVES]`); memoized STREET/CUSTOM transect tabulation (one
+  ~1.3 KB table per street instead of one per link); a one-pass node-inflow
+  prepass in the `REPORT INPUT YES` summary (was O(nodes × inflow rows));
+  memoized finite-volume per-conduit geometry tabulation (~5,000 closure
+  evaluations per conduit, for a result that depends only on the cross-section);
+  reserved SoA capacity and token vectors during parsing; an allocation-free
+  `;; UNITS:` prescan; a 1 MB buffer on the binary `.out` stream; and
+  file-size-derived reserves for external FILE-backed timeseries in place of a
+  flat 100,000-row allocation each.
+
+  All of it is bit-identical: every change was gated on a parity check
+  comparing the `.rpt` (timing lines masked), the `.out` byte for byte, and the
+  written-back `.inp`, across six models covering STREET, IRREGULAR, FV,
+  storage and quality.
+
 ### Changed
 
 - **Relicensed from MIT to the Apache License, Version 2.0** (#123, #122). The
@@ -37,6 +77,18 @@ retroactive.
   `"Apache-2.0"`.
 
 ### Added
+
+- **Model-load benchmark harness and parity gate.**
+  `OPENSWMM_PERF=1` now emits a `[PERF-LOAD]` line attributing the whole
+  open/initialize/start window across 20 phases (including a `read.scan` vs
+  `read.dispatch` split of parsing).
+  `tests/benchmarks/scripts/gen_load_bench.py` generates a deterministic
+  scaling corpus up to 500k elements (not committed — 500 MB — but reproducible
+  from the committed generator); `bench_model_load` times three cuts per model
+  and reports peak RSS; `parity_probe` + `tests/benchmarks/scripts/load_parity.sh`
+  compare `.rpt`/`.out`/write-back `.inp` between two builds. Two new ctest
+  gates run under `ctest -L unit`: `load_parity_selfcheck` (engine output is
+  deterministic) and `bench_corpus_generator_smoke`.
 
 - **Per-triangle 2D initial conditions in the Python bindings.**
   `Surface2D.get_triangle_init_depth` / `set_triangle_init_depth` and
