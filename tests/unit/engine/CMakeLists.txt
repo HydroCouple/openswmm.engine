@@ -107,6 +107,14 @@ add_gtest_unit(test_engine_section_order_parity   test_section_order_parity.cpp)
 add_gtest_unit(test_engine_capi_file_paths        test_capi_file_paths.cpp)
 add_gtest_unit(test_engine_events_section         test_events_section.cpp)
 add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
+# Legacy parity for the .rpt analysis-timing block: the wall clock starts at
+# open() (before parsing) as in report_writeLogo(), and elapsed time rolls
+# whole days into a "d." prefix as in report_writeSysTime().
+add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
+# In-place rename for snow packs / aquifers / inlets / streets / LID controls.
+# Without these APIs the GUI registries flushed a renamed object as a NEW one,
+# duplicating it in the engine and orphaning the original.
+add_gtest_unit(test_engine_object_rename          test_object_rename.cpp)
 add_gtest_unit(test_engine_options_api_units      test_options_api_units.cpp)
 add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
@@ -123,6 +131,10 @@ target_compile_definitions(test_engine_xsection PRIVATE
 )
 # STREET cross-section end-to-end (parse → street transect → routing).
 add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
+# ctx.transect_tables must keep cached element pointers valid as it grows —
+# XSectBatch and Link cache raw double* into its elements at initialize() and
+# swmm_link_set_xsect can append afterwards. Guards the deque choice.
+add_gtest_unit(test_engine_transect_table_stability test_transect_table_stability.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.

@@ -172,6 +172,15 @@ void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
 
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                // These are raw pointers INTO a vector element. They stay
+                // valid only because every API that can append to
+                // ctx.transect_tables is gated to BUILDING/OPENED
+                // (CHECK_GEOMETRY / CHECK_TOPOLOGY), so nothing can grow the
+                // store once this capture has happened. Pinned by
+                // test_engine_transect_table_stability. Relaxing that gate
+                // requires giving transect_tables stable element addresses
+                // first — std::deque is a drop-in, nothing indexes it
+                // contiguously.
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
                 g.area_tables[uk]  = td.area_tbl;
                 g.hrad_tables[uk]  = td.hrad_tbl;
