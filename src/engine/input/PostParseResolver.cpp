@@ -43,8 +43,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 
@@ -158,9 +160,22 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
             if (!fp) continue; // Skip silently — legacy also reports ERROR 361
         }
 
-        // Reserve estimated capacity (large files can be millions of lines)
-        tbl.x.reserve(100000);
-        tbl.y.reserve(100000);
+        // Reserve from the file's actual size rather than a flat 100k rows.
+        // The old constant committed 1.6 MB per FILE-backed series before
+        // reading a byte — on a model with hundreds of small rain files that
+        // is hundreds of megabytes of untouched pages, and on a genuinely
+        // large file it was too small anyway. ~24 bytes per "date time value"
+        // row is a deliberate under-estimate: geometric growth handles the
+        // remainder, whereas over-reserving cannot be given back.
+        {
+            std::error_code ec;
+            const auto bytes = std::filesystem::file_size(file_path, ec);
+            std::size_t rows = ec ? std::size_t{1024}
+                                  : static_cast<std::size_t>(bytes) / 24u + 16u;
+            rows = std::min<std::size_t>(rows, 2000000u);
+            tbl.x.reserve(rows);
+            tbl.y.reserve(rows);
+        }
 
         char line[256];
         while (std::fgets(line, sizeof(line), fp)) {

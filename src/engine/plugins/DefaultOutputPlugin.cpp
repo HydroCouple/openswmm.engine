@@ -65,6 +65,13 @@ int DefaultOutputPlugin::validate(const SimulationContext& /*ctx*/) {
     return 0;
 }
 
+namespace {
+/// Output-stream buffer size. 1 MB: large enough that a 500k-element
+/// header is a handful of writes, small enough to be irrelevant next to
+/// the model itself.
+constexpr std::size_t kOutputBufferBytes = 1u << 20;
+}  // namespace
+
 int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // Open binary output file
     out_file_ = std::fopen(out_path_.c_str(), "w+b");
@@ -72,6 +79,17 @@ int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
         last_error_ = "Cannot open output file: " + out_path_;
         return -1;
     }
+
+    // Every scalar in the header and in every report period is its own fwrite —
+    // writeInt4/writeReal4/writeReal8 below — so a 500k-element model issues
+    // millions of calls, each taking the FILE lock and testing the buffer. The
+    // default buffer is a few kilobytes; a 1 MB one cuts the flush count by
+    // orders of magnitude for the cost of one allocation. Must be set before
+    // any I/O on the stream, which is why it sits immediately after fopen.
+    //
+    // Failure is not an error: setvbuf declining just leaves the default
+    // buffer, and the file is still perfectly writable.
+    std::setvbuf(out_file_, nullptr, _IOFBF, kOutputBufferBytes);
 
     // Per-timestep results arrive pre-converted to display units (engine
     // boundary). Only the static-object header below is written from the
