@@ -44,6 +44,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace openswmm::input {
@@ -880,19 +881,21 @@ void resolve_cross_references(SimulationContext& ctx) {
     // When two or more gages share the same TIMESERIES source and ts_index, the
     // secondary gages should copy rainfall from the primary (lowest-index gage)
     // rather than querying the timeseries independently.  Matches legacy coGage.
-    for (int gj = 0; gj < n_gages; ++gj) {
-        auto ugj = static_cast<std::size_t>(gj);
-        ctx.gages.co_gage_index[ugj] = -1;
-        if (ctx.gages.source[ugj] != RainSource::TIMESERIES) continue;
-        int ts_j = ctx.gages.ts_index[ugj];
-        if (ts_j < 0) continue;
-        for (int gi = 0; gi < gj; ++gi) {
-            auto ugi = static_cast<std::size_t>(gi);
-            if (ctx.gages.source[ugi] == RainSource::TIMESERIES &&
-                ctx.gages.ts_index[ugi] == ts_j) {
-                ctx.gages.co_gage_index[ugj] = gi;
-                break;
-            }
+    // Single pass: remember the first gage seen on each timeseries and point
+    // every later one at it. The inner scan this replaces was O(n_gages^2) and
+    // broke at its first hit, i.e. the LOWEST-indexed earlier gage — which is
+    // exactly the value first_on_ts holds, so the assignment is unchanged.
+    {
+        std::unordered_map<int, int> first_on_ts;   // ts index -> first gage
+        first_on_ts.reserve(static_cast<std::size_t>(n_gages));
+        for (int gj = 0; gj < n_gages; ++gj) {
+            auto ugj = static_cast<std::size_t>(gj);
+            ctx.gages.co_gage_index[ugj] = -1;
+            if (ctx.gages.source[ugj] != RainSource::TIMESERIES) continue;
+            const int ts_j = ctx.gages.ts_index[ugj];
+            if (ts_j < 0) continue;
+            const auto ins = first_on_ts.emplace(ts_j, gj);
+            if (!ins.second) ctx.gages.co_gage_index[ugj] = ins.first->second;
         }
     }
 
@@ -1104,19 +1107,10 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.nodes.depth[i] = ctx.nodes.init_depth[i];
     }
 
-    // -------------------------------------------------------------------------
-    // External inflow timeseries resolution
-    // -------------------------------------------------------------------------
-    // Resolve timeseries name → table index for all external inflows
-    for (int i = 0; i < ctx.ext_inflows.count(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (!ctx.ext_inflows.ts_name[ui].empty()) {
-            int ts_idx = ctx.find_timeseries(ctx.ext_inflows.ts_name[ui]);
-            // Store resolved index - the inflow solver uses ts_name for lookup,
-            // but we can cache the index for performance
-            (void)ts_idx; // ts_name is used directly by InflowSolver
-        }
-    }
+    // No external-inflow timeseries resolution here: ExtInflowData carries no
+    // index field, only ts_name, and InflowSolver::init resolves the name
+    // itself (hydrology/Inflow.cpp). This used to run find_timeseries() once
+    // per external inflow and discard the result.
     perf::sec_res_tables += perf::since(_pt_tables0);
 
     // -------------------------------------------------------------------------
@@ -1222,10 +1216,9 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Evaporation timeseries resolution
     // -------------------------------------------------------------------------
-    if (ctx.options.evap_type == 2 && !ctx.options.evap_ts_name.empty()) {
-        int ts_idx = ctx.find_timeseries(ctx.options.evap_ts_name);
-        (void)ts_idx; // stored by name, resolved at runtime
-    }
+    // Nothing to do: SWMMEngine::initHydrology resolves evap_ts_name into
+    // climate_state.evap_ts_index. The lookup that used to sit here discarded
+    // its result.
 
     // -------------------------------------------------------------------------
     // Link cross-section derived properties
