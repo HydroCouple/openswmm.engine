@@ -42,9 +42,11 @@
 #include <version.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <cmath>
+#include <vector>
 #include <cstring>
 
 namespace openswmm {
@@ -389,6 +391,20 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         std::fprintf(f,
             "\n  -------------------------------------------------------------------------------");
 
+        // Which nodes carry an inflow, resolved in one pass over the inflow
+        // rows instead of a scan of both row sets per node. The old form was
+        // O(n_nodes x n_inflow_rows) — around 10^10 comparisons on a model
+        // with 100k nodes and 100k inflows, all of it inside the report.
+        std::vector<std::uint8_t> has_inflow(
+            static_cast<std::size_t>(ctx.n_nodes()), 0u);
+        auto mark = [&](const std::vector<int>& node_idx) {
+            for (const int n : node_idx)
+                if (n >= 0 && n < ctx.n_nodes())
+                    has_inflow[static_cast<std::size_t>(n)] = 1u;
+        };
+        mark(ctx.ext_inflows.node_idx);
+        mark(ctx.dwf_inflows.node_idx);
+
         for (int i = 0; i < ctx.n_nodes(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             int nt = static_cast<int>(ctx.nodes.type[ui]);
@@ -398,13 +414,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 ctx.nodes.invert_elev[ui],
                 ctx.nodes.full_depth[ui],
                 ctx.nodes.ponded_area[ui]);
-            // Check for external inflow
-            bool has_ext = false;
-            for (std::size_t k = 0; k < ctx.ext_inflows.node_idx.size(); ++k)
-                if (ctx.ext_inflows.node_idx[k] == i) { has_ext = true; break; }
-            for (std::size_t k = 0; !has_ext && k < ctx.dwf_inflows.node_idx.size(); ++k)
-                if (ctx.dwf_inflows.node_idx[k] == i) { has_ext = true; break; }
-            if (has_ext) std::fprintf(f, "    Yes");
+            if (has_inflow[ui] != 0u) std::fprintf(f, "    Yes");
         }
         WRITE(f, "");
         WRITE(f, "");
