@@ -27,8 +27,10 @@ namespace openswmm::twoD {
 
 namespace {
 
-// Case-insensitive string comparison
-bool iequals(const std::string& a, const std::string& b) {
+// Case-insensitive string comparison. Takes views so callers on the
+// allocation-free scan paths (prescan2DUnitsHeader) need no temporaries;
+// std::string arguments still convert implicitly.
+bool iequals(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i) {
         if (std::toupper(static_cast<unsigned char>(a[i]))
@@ -797,19 +799,31 @@ void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
     std::ifstream in(inp_path);
     if (!in) return;  // file missing — caller will surface the error
 
-    auto trim = [](std::string s) {
+    // Views, not strings. This pass reads the ENTIRE .inp — see the note below
+    // on why it cannot stop early — so on a large model it visits millions of
+    // lines. The previous by-value `trim(std::string)` allocated twice per
+    // line (the parameter copy and the substr result) for a scan that almost
+    // always finds nothing.
+    const auto trim = [](std::string_view s) noexcept {
         const auto issp = [](unsigned char c) { return std::isspace(c) != 0; };
-        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))   s.pop_back();
-        std::size_t i = 0;
-        while (i < s.size() && issp(static_cast<unsigned char>(s[i]))) ++i;
-        return s.substr(i);
+        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))
+            s.remove_suffix(1);
+        while (!s.empty() && issp(static_cast<unsigned char>(s.front())))
+            s.remove_prefix(1);
+        return s;
     };
 
+    // NB: this deliberately scans to EOF rather than stopping at the first
+    // "[SECTION]" header. The header is not always in the pre-section prefix —
+    // InpWriter emits `;; UNITS: SI (m)` underneath [2D_VERTICES] (InpWriter.cpp
+    // writeMesh2D), so every .inp the engine itself writes carries it mid-file.
+    // Stopping early would silently drop SI mesh scaling on round-trip.
+    // Last match wins, matching the previous behaviour.
     std::string line;
     while (std::getline(in, line)) {
-        const std::string t = trim(line);
+        const std::string_view t = trim(line);
         if (t.size() < 2 || t[0] != ';' || t[1] != ';') continue;
-        std::string rest = trim(t.substr(2));
+        std::string_view rest = trim(t.substr(2));
         // Match "UNITS:" prefix case-insensitively.
         constexpr std::string_view kKey = "UNITS:";
         if (rest.size() < kKey.size()) continue;
@@ -820,7 +834,7 @@ void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
             }
         }
         if (!match) continue;
-        const std::string value = trim(rest.substr(kKey.size()));
+        const std::string_view value = trim(rest.substr(kKey.size()));
         // Recognised metric markers.  Anything else (including absent /
         // unknown / explicit "ft") leaves the flag at its current value.
         const bool si =
