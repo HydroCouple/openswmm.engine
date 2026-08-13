@@ -49,6 +49,7 @@
 #define OPENSWMM_ENGINE_TABLE_DATA_HPP
 
 #include "../core/FilePathPair.hpp"
+#include "../core/StringCase.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -674,6 +675,26 @@ inline double table_getMaxY(const Table& tbl) noexcept {
 struct TableData {
     std::vector<Table> tables;  ///< All tables in index order
 
+    /**
+     * @brief Case-insensitive name → table indices, ascending.
+     *
+     * @details Replaces the linear `ieq` scan that find_timeseries() /
+     *          find_curve() used to run over every table. That scan was the
+     *          load path's worst complexity defect: `[TIMESERIES]` and
+     *          `[CURVES]` rows repeat their object's name on every row in
+     *          standard SWMM files, so parsing a model with many long series
+     *          cost O(total_rows x n_tables) string compares before anything
+     *          else happened.
+     *
+     *          A name maps to a *list* because legacy keeps TSERIES and CURVE
+     *          in separate hash tables, so one name may legitimately denote
+     *          both a timeseries and a curve. Lists are in ascending index
+     *          order (add() only appends), which is what makes a hash hit
+     *          return the same winner the old first-match scan did — the
+     *          duplicate-name parity the name-case tests pin.
+     */
+    std::unordered_map<std::string, std::vector<int>, CiHash, CiEqual> by_name;
+
     std::size_t count() const noexcept { return tables.size(); }
 
     Table&       operator[](int idx)       { return tables[static_cast<std::size_t>(idx)]; }
@@ -685,7 +706,38 @@ struct TableData {
      */
     int add(const std::string& id, TableType type) {
         tables.push_back({id, type, {}, {}, {}});
-        return static_cast<int>(tables.size()) - 1;
+        const int idx = static_cast<int>(tables.size()) - 1;
+        by_name[id].push_back(idx);
+        return idx;
+    }
+
+    /**
+     * @brief Rebuilds by_name from `tables`.
+     * @details Required after any structural change that is not an append —
+     *          in practice only ObjectDeleter's erase-and-renumber, which is
+     *          already O(n). Anything that mutates `tables` directly without
+     *          calling this leaves lookups stale.
+     */
+    void rebuild_index() {
+        by_name.clear();
+        by_name.reserve(tables.size());
+        for (std::size_t i = 0; i < tables.size(); ++i)
+            by_name[tables[i].id].push_back(static_cast<int>(i));
+    }
+
+    /**
+     * @brief Lowest-indexed table with this name and kind; -1 if none.
+     * @param want_timeseries true for TIMESERIES, false for any CURVE_*.
+     */
+    int find_by_kind(std::string_view name, bool want_timeseries) const noexcept {
+        const auto it = by_name.find(name);
+        if (it == by_name.end()) return -1;
+        for (const int i : it->second) {
+            const bool is_ts =
+                tables[static_cast<std::size_t>(i)].type == TableType::TIMESERIES;
+            if (is_ts == want_timeseries) return i;
+        }
+        return -1;
     }
 
     /**

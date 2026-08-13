@@ -818,6 +818,10 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
 
     // --- Step 2: erase the table entry ---
     ctx.tables.tables.erase(ctx.tables.tables.begin() + static_cast<std::ptrdiff_t>(table_idx));
+    // Every index at or past table_idx just shifted down by one, so the
+    // name→index map is stale. Erase is the only non-append mutation of the
+    // table store, and it is already O(n) from the renumbering below.
+    ctx.tables.rebuild_index();
 
     // Subcatchment adjustment patterns index ctx.tables (see InpWriter tN)
     auto clear_adj = [&](std::vector<int>& v, const char* field) {

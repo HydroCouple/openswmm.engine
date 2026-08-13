@@ -369,10 +369,16 @@ MODELS = {
     "grid_50k":        (lambda: gen_grid(50_000), "50k junctions/conduits"),
     "grid_100k":       (lambda: gen_grid(100_000), "100k junctions/conduits"),
     "grid_250k":       (lambda: gen_grid(250_000), "250k junctions/conduits"),
+    # 500k is above the plan's table. Added because the reported problem is a
+    # large 1D collection network, not a 2D mesh: the O(n^2)/O(n*m) items only
+    # separate from the constant-factor ones once n is big enough for the
+    # quadratic term to dominate, and 250k was not clearly past that knee.
+    "grid_500k":       (lambda: gen_grid(500_000), "500k junctions/conduits"),
     "grid_10k_geo":    (lambda: gen_grid(10_000, geometry=True), "10k + geometry"),
     "grid_50k_geo":    (lambda: gen_grid(50_000, geometry=True), "50k + geometry"),
     "grid_100k_geo":   (lambda: gen_grid(100_000, geometry=True), "100k + geometry"),
     "grid_250k_geo":   (lambda: gen_grid(250_000, geometry=True), "250k + geometry"),
+    "grid_500k_geo":   (lambda: gen_grid(500_000, geometry=True), "500k + geometry"),
     "ts_heavy":        (gen_ts_heavy, "500 series x 10k rows + 2k curves"),
     "gage_heavy":      (gen_gage_heavy, "10k gages bound to series"),
     "street_heavy":    (gen_street_heavy, "50k STREET conduits over 20 streets"),
@@ -390,10 +396,12 @@ SMOKE_OVERRIDES = {
     "grid_50k":        lambda: gen_grid(500),
     "grid_100k":       lambda: gen_grid(500),
     "grid_250k":       lambda: gen_grid(500),
+    "grid_500k":       lambda: gen_grid(500),
     "grid_10k_geo":    lambda: gen_grid(500, geometry=True),
     "grid_50k_geo":    lambda: gen_grid(500, geometry=True),
     "grid_100k_geo":   lambda: gen_grid(500, geometry=True),
     "grid_250k_geo":   lambda: gen_grid(500, geometry=True),
+    "grid_500k_geo":   lambda: gen_grid(500, geometry=True),
     "ts_heavy":        lambda: gen_ts_heavy(20, 200, 50),
     "gage_heavy":      lambda: gen_gage_heavy(200),
     "street_heavy":    lambda: gen_street_heavy(500, 8),

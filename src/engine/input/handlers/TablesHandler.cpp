@@ -87,7 +87,11 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
         // First column: name (non-empty) or continuation (empty — same name)
         const std::string& maybe_name = tok[0];
         bool is_new_table = false;
-        if (!maybe_name.empty()) {
+        // Standard SWMM repeats the series name on every row, so the common
+        // case is "same table as the previous row". Skipping the lookup then
+        // keeps the whole section at one lookup per DISTINCT series.
+        if (!maybe_name.empty() &&
+            !(current_idx >= 0 && ieq(maybe_name, current_name))) {
             current_name = maybe_name;
             // Ensure table exists (kind-scoped: a curve with the same name
             // is a DIFFERENT object, matching legacy's separate hash tables)
@@ -230,7 +234,13 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
 
         const std::string& maybe_name = tok[0];
         bool is_new_table = false;
-        if (!maybe_name.empty()) {
+        // As in [TIMESERIES]: curve rows repeat the curve name, so skip the
+        // lookup when this row names the table we are already on. Only the
+        // lookup is skipped — the data-column handling below still runs, and
+        // current_name's spelling never reaches output (it feeds only the
+        // lookup and the add).
+        if (!maybe_name.empty() &&
+            !(current_idx >= 0 && ieq(maybe_name, current_name))) {
             current_name = maybe_name;
             // Kind-scoped: a timeseries with the same name is a DIFFERENT
             // object, matching legacy's separate hash tables.

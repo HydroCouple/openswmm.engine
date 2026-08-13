@@ -1489,20 +1489,18 @@ struct SimulationContext {
     // which kind it wants.
     // =========================================================================
 
-    /** @brief Find a timeseries table by name; -1 if none. */
+    /**
+     * @brief Find a timeseries table by name; -1 if none.
+     * @details O(1) via TableData::by_name. Returns the lowest matching index,
+     *          exactly as the previous linear scan did.
+     */
     int find_timeseries(std::string_view name) const noexcept {
-        for (int i = 0; i < n_tables(); ++i)
-            if (tables[i].type == TableType::TIMESERIES && ieq(tables[i].id, name))
-                return i;
-        return -1;
+        return tables.find_by_kind(name, /*want_timeseries=*/true);
     }
 
     /** @brief Find a curve table (any CURVE_* type) by name; -1 if none. */
     int find_curve(std::string_view name) const noexcept {
-        for (int i = 0; i < n_tables(); ++i)
-            if (tables[i].type != TableType::TIMESERIES && ieq(tables[i].id, name))
-                return i;
-        return -1;
+        return tables.find_by_kind(name, /*want_timeseries=*/false);
     }
 
     /**
