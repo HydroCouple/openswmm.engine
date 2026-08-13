@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <tuple>
 
 #include "FvKernels.hpp"
 #include "../Culvert.hpp"
@@ -227,6 +229,34 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
     rep.min_dx = 1.0e30;
 
+    // Tabulation memo. buildGeometry() runs ~2,200 areaOfDepth evaluations plus
+    // 127 bracketed root solves per call, and its result depends only on
+    // (cross-section, open/closed, slot celerity, barrels) — slot celerity
+    // being constant across this loop. Real models have tens of distinct
+    // sections and can have hundreds of thousands of conduits, so without a
+    // memo this dominates initialize().
+    //
+    // The key is an explicit tuple of every XSectParams field rather than the
+    // struct's bytes: the struct has padding, whose contents are unspecified,
+    // so memcmp would report spurious mismatches. The three table pointers are
+    // part of the key — same pointer means the same transect table, and two
+    // identical tables at different addresses merely miss the memo, which is
+    // safe. (After the STREET/CUSTOM memoization in the resolver, links sharing
+    // a street already share one table address, so they hit.)
+    using GeomKey = std::tuple<int, int, int,
+                               double, double, double, double, double, double,
+                               double, double, double, double, double,
+                               const double*, const double*, const double*,
+                               int, int, bool>;
+    const auto geom_key = [](const XSectParams& x, int barrels, bool is_open) {
+        return GeomKey{x.type, x.culvert_code, x.transect,
+                       x.y_full, x.w_max, x.yw_max, x.a_full, x.r_full,
+                       x.s_full, x.s_max, x.y_bot, x.a_bot, x.s_bot, x.r_bot,
+                       x.area_tbl, x.hrad_tbl, x.width_tbl,
+                       x.transect_tbl_size, barrels, is_open};
+    };
+    std::map<GeomKey, int> geom_memo;   // key -> conduit row already tabulated
+
     for (int r = 0; r < n_cond; ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int j = CD.link_idx[ur];
@@ -246,8 +276,17 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         }
 
         auto& g = mesh.geom[ur];
-        buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
-                      CD.barrels[ur]);
+        const bool is_open = xsect::isOpen(xs.type);
+        if (const auto hit = geom_memo.find(geom_key(xs, CD.barrels[ur], is_open));
+            hit != geom_memo.end()) {
+            // Copy the already-tabulated geometry wholesale. The per-conduit
+            // scalars below are assigned after this point in both branches, so
+            // the result is identical to re-running buildGeometry.
+            g = mesh.geom[static_cast<std::size_t>(hit->second)];
+        } else {
+            buildGeometry(xs, is_open, opts.slot_celerity, g, CD.barrels[ur]);
+            geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), r);
+        }
         g.roughness    = CD.roughness[ur];
         g.rough_factor = CD.rough_factor[ur];
         g.loss_inlet   = CD.loss_inlet[ur];

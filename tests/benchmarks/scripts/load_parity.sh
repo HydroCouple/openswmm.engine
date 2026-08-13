@@ -65,6 +65,10 @@ default_models() {
         "tests/unit/engine/data/street_xsect.inp"
         # IRREGULAR cross-sections, for the transect name-resolution path.
         "tests/benchmarks/generated/transect_heavy.inp"
+        # FLOW_ROUTING FV, so the finite-volume mesh build (per-conduit
+        # geometry tabulation) is inside the gate rather than covered only
+        # by the unit suites.
+        "tests/benchmarks/generated/fv_small.inp"
     )
     local m
     for m in "${candidates[@]}"; do
