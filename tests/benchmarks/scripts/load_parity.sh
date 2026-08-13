@@ -59,6 +59,12 @@ default_models() {
         "tests/regression/data/Example1.inp"
         "tests/regression/data/cn_regen_parity.inp"
         "tests/unit/engine/data/warnerr_base.inp"
+        # STREET cross-sections: the three decks above carry none, so without
+        # this the gate silently skipped the per-link transect build that the
+        # STREET/CUSTOM memoization changes.
+        "tests/unit/engine/data/street_xsect.inp"
+        # IRREGULAR cross-sections, for the transect name-resolution path.
+        "tests/benchmarks/generated/transect_heavy.inp"
     )
     local m
     for m in "${candidates[@]}"; do

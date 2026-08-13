@@ -43,6 +43,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -1347,20 +1348,24 @@ void resolve_cross_references(SimulationContext& ctx) {
             td.x_right_bank = (ctx.transects.x_right_bank[ut] / t_ucf) * xFactor;
             transect::buildTables(td);
         }
-        // Resolve IRREGULAR link transect names → indices, then set properties
+        // Resolve IRREGULAR link transect names → indices, then set properties.
+        // The name→index map replaces a linear ieq scan per IRREGULAR link.
+        // emplace keeps the FIRST index for a duplicated name, which is what
+        // the scan returned (it broke at its first hit).
+        std::unordered_map<std::string, int, CiHash, CiEqual> transect_by_name;
+        transect_by_name.reserve(static_cast<std::size_t>(nt));
+        for (int t = 0; t < nt; ++t)
+            transect_by_name.emplace(ctx.transects.names[static_cast<std::size_t>(t)], t);
+
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.xsect_shape[uj] != XsectShape::IRREGULAR) continue;
             // Resolve transect name (stored in pump_curve_name as temp field)
             const auto& tname = ctx.links.pump_curve_name[uj];
             if (!tname.empty()) {
-                for (int t = 0; t < nt; ++t) {
-                    if (ieq(ctx.transects.names[static_cast<std::size_t>(t)],
-                            tname)) {
-                        ctx.links.xsect_curve[uj] = t;
-                        break;
-                    }
-                }
+                const auto hit = transect_by_name.find(tname);
+                if (hit != transect_by_name.end())
+                    ctx.links.xsect_curve[uj] = hit->second;
             }
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && ci < nt) {
@@ -1388,6 +1393,11 @@ void resolve_cross_references(SimulationContext& ctx) {
     // that define normalized (depth/yFull, width/wMax) relationships.
     {
         int n_tables = static_cast<int>(ctx.tables.tables.size());
+        // A CUSTOM table is fully determined by (shape curve, y_full): every
+        // link sharing both gets a byte-identical ~1.2 KB TransectData. Build
+        // one per distinct pair instead of one per link. Exact double equality
+        // is the right test here — identical inputs, identical tabulation.
+        std::map<std::pair<int, double>, int> custom_memo;
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.xsect_shape[uj] != XsectShape::CUSTOM) continue;
@@ -1407,6 +1417,21 @@ void resolve_cross_references(SimulationContext& ctx) {
                 const auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ci)];
                 double y_full = ctx.links.xsect_y_full[uj];
                 if (y_full <= 0.0 || tbl.x.size() < 2) continue;
+
+                // Already built for this (curve, y_full)? Point at it and skip
+                // the tabulation entirely.
+                {
+                    const auto memo = custom_memo.find({ci, y_full});
+                    if (memo != custom_memo.end()) {
+                        const auto& shared = ctx.transect_tables[
+                            static_cast<std::size_t>(memo->second)];
+                        ctx.links.xsect_a_full[uj] = shared.a_full;
+                        ctx.links.xsect_r_full[uj] = shared.r_full;
+                        ctx.links.xsect_w_max[uj]  = shared.w_max;
+                        ctx.links.xsect_curve[uj]  = memo->second;
+                        continue;
+                    }
+                }
 
                 // Find max width from curve (typically at y_norm ~0.5)
                 double w_max_norm = 0.0;
@@ -1444,6 +1469,7 @@ void resolve_cross_references(SimulationContext& ctx) {
                 int custom_idx = static_cast<int>(ctx.transect_tables.size());
                 ctx.transect_tables.push_back(std::move(ctd));
                 ctx.links.xsect_curve[uj] = custom_idx;
+                custom_memo.emplace(std::pair<int, double>{ci, y_full}, custom_idx);
             }
         }
     }
@@ -1455,6 +1481,23 @@ void resolve_cross_references(SimulationContext& ctx) {
     {
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         const double inv_len = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
+        // StreetParams derives entirely from the street index (inv_len is
+        // constant across links), so every link on a street produces the same
+        // ~1.2 KB table. N links over S streets used to allocate and tabulate
+        // N of them; now it is S. TransectData::name is write-only for these
+        // entries — nothing reads it back — so sharing one is safe even when
+        // two links spell the street name with different case.
+        std::unordered_map<int, int> street_memo;
+        // Same treatment as transects: one map instead of a linear ieq scan
+        // per STREET link, first index wins on a duplicated name. Also hoists
+        // the ctx.streets.count() that the old inner loop re-read every pass.
+        std::unordered_map<std::string, int, CiHash, CiEqual> street_by_name;
+        {
+            const int n_streets = ctx.streets.count();
+            street_by_name.reserve(static_cast<std::size_t>(n_streets));
+            for (int s = 0; s < n_streets; ++s)
+                street_by_name.emplace(ctx.streets.names[static_cast<std::size_t>(s)], s);
+        }
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) continue;
@@ -1462,14 +1505,23 @@ void resolve_cross_references(SimulationContext& ctx) {
             if (sname.empty()) continue;
 
             int si = -1;
-            for (int s = 0; s < ctx.streets.count(); ++s) {
-                if (ieq(ctx.streets.names[static_cast<std::size_t>(s)], sname)) {
-                    si = s;
-                    break;
-                }
-            }
+            if (const auto hit = street_by_name.find(sname);
+                hit != street_by_name.end())
+                si = hit->second;
             if (si < 0) continue;
             auto su = static_cast<std::size_t>(si);
+
+            if (const auto memo = street_memo.find(si);
+                memo != street_memo.end()) {
+                const auto& shared = ctx.transect_tables[
+                    static_cast<std::size_t>(memo->second)];
+                ctx.links.xsect_curve[uj]  = memo->second;
+                ctx.links.xsect_y_full[uj] = shared.y_full;
+                ctx.links.xsect_a_full[uj] = shared.a_full;
+                ctx.links.xsect_r_full[uj] = shared.r_full;
+                ctx.links.xsect_w_max[uj]  = shared.w_max;
+                continue;
+            }
 
             street::StreetParams sp;
             sp.width             = ctx.streets.t_crown[su]       * inv_len;
@@ -1489,6 +1541,7 @@ void resolve_cross_references(SimulationContext& ctx) {
 
             int idx_tbl = static_cast<int>(ctx.transect_tables.size());
             ctx.transect_tables.push_back(std::move(td));
+            street_memo.emplace(si, idx_tbl);
             const auto& built = ctx.transect_tables[static_cast<std::size_t>(idx_tbl)];
             ctx.links.xsect_curve[uj]  = idx_tbl;
             ctx.links.xsect_y_full[uj] = built.y_full;
