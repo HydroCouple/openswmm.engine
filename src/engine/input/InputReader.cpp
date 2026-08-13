@@ -29,6 +29,7 @@
 #include "InputReader.hpp"
 #include "Tokenizer.hpp"
 #include "../core/ErrorCodes.hpp"
+#include "../core/PerfTimers.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -76,6 +77,7 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
 
     auto flush_section = [&]() {
         if (!current_tag.empty()) {
+            perf::ScopedTimer _pt(perf::sec_read_dispatch);
             dispatch_section(current_tag, section_lines, ctx);
             section_lines.clear();
         }

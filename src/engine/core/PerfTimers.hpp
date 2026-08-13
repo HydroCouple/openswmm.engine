@@ -27,6 +27,10 @@ inline double sec_1d_step    = 0.0;  // 1D routing (router_.step)
 
 inline double sec_open_prescan2d = 0.0;  // twoD::prescan2DUnitsHeader (whole-file pass)
 inline double sec_open_read      = 0.0;  // input_plugin->read (tokenize + handlers)
+// open.read split: the line scan (getline, trim, section_lines assembly) is
+// everything in read() that is not a section handler. Dispatch is measured and
+// scan is derived as the remainder, so the two always sum to open.read.
+inline double sec_read_dispatch  = 0.0;  // SectionRegistry handler execution
 inline double sec_open_resolve   = 0.0;  // input::resolve_cross_references
 inline double sec_open_validate  = 0.0;  // validate_project
 
@@ -64,6 +68,7 @@ inline bool enabled() noexcept {
 /** @brief Zeroes the load-phase accumulators. Called from open(). */
 inline void reset_load() noexcept {
     sec_open_prescan2d = sec_open_read = sec_open_resolve = sec_open_validate = 0.0;
+    sec_read_dispatch = 0.0;
     sec_res_extfiles = sec_res_tables = sec_res_transects = 0.0;
     sec_res_xsect = sec_res_shrink = 0.0;
     sec_init_state = sec_init_hydraulics = sec_init_hydrology = 0.0;
@@ -86,6 +91,7 @@ inline void dump_load() noexcept {
     const double start_total = sec_start_iface + sec_start_plugins;
     std::fprintf(stderr,
         "[PERF-LOAD] open=%.4f open.prescan2d=%.4f open.read=%.4f "
+        "read.scan=%.4f read.dispatch=%.4f "
         "open.resolve=%.4f open.validate=%.4f "
         "res.extfiles=%.4f res.tables=%.4f res.transects=%.4f res.xsect=%.4f "
         "res.shrink=%.4f "
@@ -93,6 +99,7 @@ inline void dump_load() noexcept {
         "init.quality=%.4f init.geometry=%.4f "
         "start=%.4f start.iface=%.4f start.plugins=%.4f\n",
         open_total, sec_open_prescan2d, sec_open_read,
+        sec_open_read - sec_read_dispatch, sec_read_dispatch,
         sec_open_resolve, sec_open_validate,
         sec_res_extfiles, sec_res_tables, sec_res_transects, sec_res_xsect,
         sec_res_shrink,

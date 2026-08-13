@@ -116,6 +116,10 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Pre-reserve from the section's row count (an upper bound: some rows
+    // are comments or duplicates). Capacity only — see reserve_to().
+    ctx.subcatches.reserve_to(ctx.subcatches.count() + static_cast<int>(lines.size()));
+    ctx.subcatch_names.reserve(static_cast<std::size_t>(ctx.subcatch_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;

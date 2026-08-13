@@ -740,6 +740,46 @@ struct NodeData {
     }
 
     /**
+     * @brief Reserve capacity for `n` nodes without changing count().
+     *
+     * @details Parsing grows these arrays one row at a time via grow_to(),
+     *          so each of the ~60 parallel vectors reallocates and copies
+     *          O(log n) times over a section — the dominant memory traffic in
+     *          handler dispatch on a large model.
+     *
+     *          This reserves capacity only. It deliberately does NOT resize:
+     *          count() is the vector size, and PostParseResolver compares it
+     *          against the final name count and calls resize() when they
+     *          differ — a call with destructive assign semantics. Growing the
+     *          SIZE speculatively here would trip that path and wipe parsed
+     *          data. Capacity is invisible to all of it.
+     *
+     *          Over-reserving is harmless, so callers pass the section's row
+     *          count as an upper bound.
+     */
+    void reserve_to(int n) {
+        if (n <= 0) return;
+        const auto un = static_cast<std::size_t>(n);
+        if (type.capacity() >= un) return;
+        auto r = [&](auto& vec) { vec.reserve(un); };
+        r(type); r(invert_elev); r(full_depth); r(init_depth);
+        r(sur_depth); r(ponded_area); r(is_virtual); r(depth);
+        r(head); r(volume); r(lat_flow); r(user_lat_flow);
+        r(runoff_inflow); r(gw_inflow); r(ext_inflow); r(dwf_inflow);
+        r(rdii_inflow); r(iface_inflow); r(coupling_inflow); r(coupling_volume);
+        r(coupling_queue); r(inflow); r(outflow); r(overflow);
+        r(losses); r(crown_elev); r(degree); r(old_net_inflow);
+        r(full_volume); r(old_depth); r(old_volume); r(old_lat_flow);
+        r(old_inflow); r(rpt_flag); r(stat_vol_flooded); r(stat_time_flooded);
+        r(stat_max_depth); r(stat_max_overflow); r(stat_max_overflow_date); r(stat_sum_depth);
+        r(stat_sum_volume); r(stat_max_depth_date); r(stat_max_rpt_depth); r(stat_max_inflow_date);
+        r(stat_time_surcharged); r(stat_max_surcharge_height); r(stat_max_lat_inflow); r(stat_max_total_inflow);
+        r(stat_lat_inflow_vol); r(stat_total_inflow_vol); r(stat_total_outflow_vol); r(stat_outfall_avg_flow);
+        r(stat_outfall_max_flow); r(stat_outfall_periods); r(stat_non_converged_count); r(stat_time_courant_critical);
+        r(qual_vol_in); r(lid_drain_qual_vol); r(comments); r(tags);
+    }
+
+    /**
      * @brief Erase the node at index `idx` from every parallel array.
      *
      * @details Removes the element at `idx` from every SoA vector. For flat-2D

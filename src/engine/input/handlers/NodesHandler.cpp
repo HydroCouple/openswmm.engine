@@ -81,6 +81,10 @@ static void ensure_spatial_capacity(SimulationContext& ctx, int n_nodes) {
 // ============================================================================
 
 void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Pre-reserve from the section's row count (an upper bound: some rows
+    // are comments or duplicates). Capacity only — see reserve_to().
+    ctx.nodes.reserve_to(ctx.nodes.count() + static_cast<int>(lines.size()));
+    ctx.node_names.reserve(static_cast<std::size_t>(ctx.node_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 2) continue;
@@ -141,6 +145,10 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
 // ============================================================================
 
 void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Pre-reserve from the section's row count (an upper bound: some rows
+    // are comments or duplicates). Capacity only — see reserve_to().
+    ctx.nodes.reserve_to(ctx.nodes.count() + static_cast<int>(lines.size()));
+    ctx.node_names.reserve(static_cast<std::size_t>(ctx.node_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
@@ -357,8 +365,19 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
 void handle_coordinates(SimulationContext& ctx, const std::vector<std::string>& lines) {
     ensure_spatial_capacity(ctx, ctx.node_names.size());
 
+    // One row per node — hoist the token buffer so the loop allocates nothing
+    // after the first row. Quoted node names fall back to the owned tokenizer,
+    // which tokenize_views_into cannot handle; same result, more allocation.
+    std::vector<std::string_view> tok;
+    std::vector<std::string>      quoted;
+
     for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+        if (line.find('"') == std::string::npos) {
+            Tokenizer::tokenize_views_into(line, tok);
+        } else {
+            quoted = Tokenizer::tokenize(line);
+            tok.assign(quoted.begin(), quoted.end());
+        }
         if (tok.size() < 3) continue;
 
         const int idx = ctx.node_names.find(tok[0]);

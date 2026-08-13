@@ -122,6 +122,21 @@ public:
      */
     static std::vector<std::string_view> tokenize_views(std::string_view line);
 
+    /**
+     * @brief tokenize_views into a caller-owned buffer.
+     *
+     * @details Hoist the buffer out of a per-row loop and this allocates
+     *          nothing at all after the first row — clear() keeps capacity.
+     *          That matters in the geometry sections, which are the row-count
+     *          leaders in a large model ([VERTICES] alone is three rows per
+     *          link).
+     *
+     *          Like tokenize_views(), quoted tokens are NOT supported; callers
+     *          that may see them must fall back to tokenize().
+     */
+    static void tokenize_views_into(std::string_view line,
+                                    std::vector<std::string_view>& out);
+
     // -----------------------------------------------------------------------
     // Utilities
     // -----------------------------------------------------------------------

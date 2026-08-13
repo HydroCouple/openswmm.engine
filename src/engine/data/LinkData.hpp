@@ -676,6 +676,48 @@ struct LinkData {
     }
 
     /**
+     * @brief Reserve capacity for `n` links without changing count().
+     *
+     * @details Parsing grows these arrays one row at a time via grow_to(),
+     *          so each of the ~65 parallel vectors reallocates and copies
+     *          O(log n) times over a section — the dominant memory traffic in
+     *          handler dispatch on a large model.
+     *
+     *          This reserves capacity only. It deliberately does NOT resize:
+     *          count() is the vector size, and PostParseResolver compares it
+     *          against the final name count and calls resize() when they
+     *          differ — a call with destructive assign semantics. Growing the
+     *          SIZE speculatively here would trip that path and wipe parsed
+     *          data. Capacity is invisible to all of it.
+     *
+     *          Over-reserving is harmless, so callers pass the section's row
+     *          count as an upper bound.
+     */
+    void reserve_to(int n) {
+        if (n <= 0) return;
+        const auto un = static_cast<std::size_t>(n);
+        if (type.capacity() >= un) return;
+        auto r = [&](auto& vec) { vec.reserve(un); };
+        r(type); r(node1); r(node2); r(offset1);
+        r(offset2); r(q0); r(q_limit); r(xsect_shape);
+        r(xsect_y_full); r(xsect_a_full); r(xsect_w_max); r(xsect_geom1);
+        r(xsect_geom2); r(xsect_geom3); r(xsect_geom4); r(xsect_curve);
+        r(xsect_r_full); r(xsect_s_full); r(xsect_s_max); r(xsect_y_bot);
+        r(xsect_a_bot); r(xsect_s_bot); r(xsect_r_bot); r(xsect_yw_max);
+        r(xsect_batch_shape); r(setting); r(target_setting); r(time_last_set);
+        r(direction); r(has_flap_gate); r(dqdh); r(flow);
+        r(depth); r(volume); r(froude); r(flow_class);
+        r(is_closed); r(old_flow); r(old_depth); r(old_volume);
+        r(rpt_flag); r(stat_vol_flow); r(stat_max_flow); r(stat_max_veloc);
+        r(stat_max_filling); r(stat_time_surcharged); r(stat_max_flow_date); r(stat_time_full_upstream);
+        r(stat_time_full_dnstream); r(stat_time_full_both); r(stat_time_capacity_limited); r(stat_pump_cycles);
+        r(stat_pump_on_time); r(stat_pump_volume); r(stat_pump_energy); r(stat_pump_was_on);
+        r(stat_flow_turns); r(stat_flow_turn_sign); r(stat_time_courant_critical); r(stat_norm_ltd);
+        r(stat_inlet_ctrl); r(pump_curve_name); r(comments); r(tags);
+        r(stat_flow_class);
+    }
+
+    /**
      * @brief Erase the link at index `idx` from every parallel array.
      *
      * @details Removes the element at `idx` from every SoA vector. Flat-2D
