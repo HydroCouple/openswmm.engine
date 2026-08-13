@@ -62,6 +62,11 @@ std::vector<std::string> Tokenizer::tokenize(std::string_view line) {
     std::string_view stripped = strip_comment(line);
 
     std::vector<std::string> tokens;
+    // Rows in every .inp section are a handful of columns; without this the
+    // vector reallocates two or three times per row, and there are millions of
+    // rows in a large model. 8 covers the overwhelming majority in one
+    // allocation (longer rows still grow normally).
+    tokens.reserve(8);
     std::size_t i = 0;
     const std::size_t n = stripped.size();
 
@@ -118,9 +123,17 @@ std::vector<std::string> Tokenizer::tokenize(std::string_view line) {
 // ============================================================================
 
 std::vector<std::string_view> Tokenizer::tokenize_views(std::string_view line) {
+    std::vector<std::string_view> tokens;
+    tokenize_views_into(line, tokens);
+    return tokens;
+}
+
+void Tokenizer::tokenize_views_into(std::string_view line,
+                                    std::vector<std::string_view>& tokens) {
     std::string_view stripped = strip_comment(line);
 
-    std::vector<std::string_view> tokens;
+    tokens.clear();
+    if (tokens.capacity() < 8) tokens.reserve(8);
     std::size_t i = 0;
     const std::size_t n = stripped.size();
 
@@ -142,8 +155,6 @@ std::vector<std::string_view> Tokenizer::tokenize_views(std::string_view line) {
         }
         if (i < n && stripped[i] == ',') ++i;
     }
-
-    return tokens;
 }
 
 // ============================================================================

@@ -701,6 +701,50 @@ struct SubcatchData {
     }
 
     /**
+     * @brief Reserve capacity for `n` subcatchments without changing count().
+     *
+     * @details Parsing grows these arrays one row at a time via grow_to(),
+     *          so each of the ~76 parallel vectors reallocates and copies
+     *          O(log n) times over a section — the dominant memory traffic in
+     *          handler dispatch on a large model.
+     *
+     *          This reserves capacity only. It deliberately does NOT resize:
+     *          count() is the vector size, and PostParseResolver compares it
+     *          against the final name count and calls resize() when they
+     *          differ — a call with destructive assign semantics. Growing the
+     *          SIZE speculatively here would trip that path and wipe parsed
+     *          data. Capacity is invisible to all of it.
+     *
+     *          Over-reserving is harmless, so callers pass the section's row
+     *          count as an upper bound.
+     */
+    void reserve_to(int n) {
+        if (n <= 0) return;
+        const auto un = static_cast<std::size_t>(n);
+        if (outlet_node.capacity() >= un) return;
+        auto r = [&](auto& vec) { vec.reserve(un); };
+        r(outlet_node); r(outlet_subcatch); r(gage); r(area);
+        r(width); r(slope); r(curb_length); r(rain_scale_factor);
+        r(snow_scale_factor); r(frac_imperv); r(frac_imperv_no_store); r(n_imperv);
+        r(n_perv); r(ds_imperv); r(ds_perv); r(subarea_routing);
+        r(pct_routed); r(infil_model); r(infil_p1); r(infil_p2);
+        r(infil_p3); r(infil_p4); r(infil_p5); r(runoff);
+        r(rainfall); r(evap_loss); r(infil_loss); r(ponded_depth);
+        r(gw_flow); r(old_runoff); r(old_gw_flow); r(runon_inflow);
+        r(old_runon_inflow); r(gw_sw_head); r(gw_node_avail_flow); r(gw_max_infil_vol);
+        r(outfall_runon_vol); r(rpt_flag); r(stat_precip_vol); r(stat_evap_vol);
+        r(stat_infil_vol); r(stat_imperv_vol); r(stat_perv_vol); r(stat_runoff_vol);
+        r(stat_max_runoff); r(stat_gw_infil_vol); r(stat_gw_upper_evap_vol); r(stat_gw_lower_evap_vol);
+        r(stat_gw_deep_perc_vol); r(stat_gw_flow_vol); r(stat_gw_max_flow); r(stat_gw_sum_theta);
+        r(stat_gw_sum_depth); r(stat_gw_final_theta); r(stat_gw_final_depth); r(gw_aquifer);
+        r(gw_node); r(gw_surf_elev); r(gw_a1); r(gw_b1);
+        r(gw_a2); r(gw_b2); r(gw_a3); r(gw_tw);
+        r(gw_hstar); r(snowpack); r(snow_net_imperv); r(snow_net_perv);
+        r(total_lid_area_ft2); r(lid_return_to_perv_cfs); r(lid_drain_runon_cfs); r(outlet_name);
+        r(gage_name); r(comments); r(tags); r(stat_gw_steps);
+    }
+
+    /**
      * @brief Erase the subcatchment at index `idx` from every parallel array.
      *
      * @details Removes element `idx` from every SoA vector. Flat-2D arrays

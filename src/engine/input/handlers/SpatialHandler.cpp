@@ -99,12 +99,29 @@ void handle_vertices(SimulationContext& ctx, const std::vector<std::string>& lin
     if (ctx.spatial.link_vertices_x.size() < nl) ctx.spatial.link_vertices_x.resize(nl);
     if (ctx.spatial.link_vertices_y.size() < nl) ctx.spatial.link_vertices_y.resize(nl);
 
+    // Geometry sections are the row-count leaders in a large model, so the
+    // per-row token vector is hoisted and reused: after the first row this
+    // allocates nothing. tokenize_views_into cannot handle quoted tokens, so
+    // a line containing a quote falls back to the owned tokenizer — behaviour
+    // is identical either way, only the allocation differs.
+    std::vector<std::string_view> tok;
+    std::vector<std::string>      quoted;
+    auto split = [&](const std::string& line) -> const std::vector<std::string_view>& {
+        if (line.find('"') == std::string::npos) {
+            Tokenizer::tokenize_views_into(line, tok);
+        } else {
+            quoted = Tokenizer::tokenize(line);
+            tok.assign(quoted.begin(), quoted.end());
+        }
+        return tok;
+    };
+
     // Rebuild from section contents to preserve deterministic per-link order.
     for (auto& xs : ctx.spatial.link_vertices_x) xs.clear();
     for (auto& ys : ctx.spatial.link_vertices_y) ys.clear();
 
     for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+        const auto& tok = split(line);
         if (tok.size() < 3) continue;
 
         const int idx = ctx.link_names.find(tok[0]);
@@ -130,12 +147,29 @@ void handle_polygons(SimulationContext& ctx, const std::vector<std::string>& lin
     if (ctx.spatial.subcatch_polygon_x.size() < ns) ctx.spatial.subcatch_polygon_x.resize(ns);
     if (ctx.spatial.subcatch_polygon_y.size() < ns) ctx.spatial.subcatch_polygon_y.resize(ns);
 
+    // Geometry sections are the row-count leaders in a large model, so the
+    // per-row token vector is hoisted and reused: after the first row this
+    // allocates nothing. tokenize_views_into cannot handle quoted tokens, so
+    // a line containing a quote falls back to the owned tokenizer — behaviour
+    // is identical either way, only the allocation differs.
+    std::vector<std::string_view> tok;
+    std::vector<std::string>      quoted;
+    auto split = [&](const std::string& line) -> const std::vector<std::string_view>& {
+        if (line.find('"') == std::string::npos) {
+            Tokenizer::tokenize_views_into(line, tok);
+        } else {
+            quoted = Tokenizer::tokenize(line);
+            tok.assign(quoted.begin(), quoted.end());
+        }
+        return tok;
+    };
+
     // Rebuild from section contents to preserve deterministic per-subcatch order.
     for (auto& xs : ctx.spatial.subcatch_polygon_x) xs.clear();
     for (auto& ys : ctx.spatial.subcatch_polygon_y) ys.clear();
 
     for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+        const auto& tok = split(line);
         if (tok.size() < 3) continue;
 
         const int idx = ctx.subcatch_names.find(tok[0]);

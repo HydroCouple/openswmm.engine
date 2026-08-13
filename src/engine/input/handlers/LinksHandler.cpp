@@ -63,6 +63,10 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Pre-reserve from the section's row count (an upper bound: some rows
+    // are comments or duplicates). Capacity only — see reserve_to().
+    ctx.links.reserve_to(ctx.links.count() + static_cast<int>(lines.size()));
+    ctx.link_names.reserve(static_cast<std::size_t>(ctx.link_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;  // Name Node1 Node2 Length Roughness In Out required
