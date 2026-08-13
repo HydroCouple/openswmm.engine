@@ -78,7 +78,28 @@ add_custom_command(TARGET bench_model_load POST_BUILD
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:bench_model_load>
 )
 
-# parity_probe and the two load-optimization ctest gates are defined in
-# tests/CMakeLists.txt, not here: they need no Google Benchmark, and this
-# directory is only added when OPENSWMM_BUILD_BENCHMARKS is ON — a build that
-# has enable_testing() off, where add_test() registers nothing.
+# The two load-optimization ctest gates are registered in tests/CMakeLists.txt,
+# not here: they need no Google Benchmark, and this directory is only added
+# when OPENSWMM_BUILD_BENCHMARKS is ON — a build that has enable_testing() off,
+# where add_test() would register nothing.
+#
+# parity_probe itself is still wanted here. A benchmarks-only build is the
+# RELEASE configuration the numbers come from, and parity must be checked in
+# the same configuration it was recorded in — comparing a Release reference
+# against a Debug run would flag optimizer-level FP differences as parity
+# failures. The guard keeps the two definitions from colliding in a build that
+# has both flags on.
+if(NOT TARGET parity_probe)
+    add_executable(parity_probe parity_probe.cpp)
+    target_link_libraries(parity_probe PRIVATE openswmm_engine)
+    target_include_directories(parity_probe PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    set_target_properties(parity_probe PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    add_custom_command(TARGET parity_probe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+            $<TARGET_FILE:parity_probe>
+            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:parity_probe>
+    )
+endif()

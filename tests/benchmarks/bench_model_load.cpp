@@ -125,6 +125,21 @@ void bm_load(benchmark::State& state, std::string inp, std::string stem,
     state.SetLabel(stem);
 }
 
+/**
+ * @brief Repetition count, from OPENSWMM_BENCH_REPS (default 5).
+ * @details Not --benchmark_repetitions: Google Benchmark only consults that
+ *          flag when the benchmark itself requested 0 repetitions, so a
+ *          registered Repetitions(n) silently wins over the command line. An
+ *          env var keeps the knob honest. Minimum 2, because single-repetition
+ *          runs emit no _median aggregate row for the capture script to read.
+ */
+int repetitions_from_env() {
+    const char* s = std::getenv("OPENSWMM_BENCH_REPS");
+    if (s == nullptr) return 5;
+    const int n = std::atoi(s);
+    return n >= 2 ? n : 2;
+}
+
 const char* cut_suffix(Cut c) {
     switch (c) {
         case Cut::Open:     return "open";
@@ -170,6 +185,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const int reps = repetitions_from_env();
+
     for (const auto& m : models) {
         const std::string stem = m.stem().string();
         const std::string inp  = m.string();
@@ -184,7 +201,7 @@ int main(int argc, char** argv) {
                 ->Unit(benchmark::kMillisecond)
                 ->UseRealTime()
                 ->MinTime(0.5)
-                ->Repetitions(5)
+                ->Repetitions(reps)
                 ->ReportAggregatesOnly(true);
         }
     }
