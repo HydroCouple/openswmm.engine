@@ -387,6 +387,9 @@ MODELS = {
     "inflow_heavy_rpt": (lambda: gen_inflow_heavy(100_000, rpt_input=True),
                          "inflow_heavy with REPORT INPUT YES"),
     "fv_variant":      (gen_fv_variant, "grid_100k with FLOW_ROUTING FV"),
+    # Small FV deck for the parity gate — the gate runs a full simulation
+    # per model, so it needs an FV case it can afford to route.
+    "fv_small":        (lambda: gen_fv_variant(300), "300-conduit FV deck for the parity gate"),
 }
 
 #: Small stand-ins used by the ctest smoke target — same code paths, seconds
@@ -409,6 +412,7 @@ SMOKE_OVERRIDES = {
     "inflow_heavy":    lambda: gen_inflow_heavy(500),
     "inflow_heavy_rpt": lambda: gen_inflow_heavy(500, rpt_input=True),
     "fv_variant":      lambda: gen_fv_variant(500),
+    "fv_small":        lambda: gen_fv_variant(300),
 }
 
 
