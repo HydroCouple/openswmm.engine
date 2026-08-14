@@ -43,7 +43,7 @@ openswmm.engine is a community-driven open source project. All contributors are 
 
 The Technical Manager is responsible for:
 
-- Maintaining the integrity and health of the `main`, `dev`, and `experimental` branches.
+- Maintaining the integrity and health of the `main`, `develop`, and `experimental` branches.
 - Setting and enforcing coding standards, testing requirements, and documentation guidelines.
 - Triaging issues and pull requests in a timely manner.
 - Making final decisions on merges, releases, and branch management.
@@ -179,11 +179,11 @@ Experimental APIs (clearly marked as such) carry no backward compatibility guara
 | Branch                    | Purpose                                                                                    |
 |---------------------------|--------------------------------------------------------------------------------------------|
 | `main`                    | Stable, production-ready code. Only receives merges from release candidates.              |
-| `dev`                     | Integration branch for ongoing development. All feature and bug-fix branches target here. |
+| `develop`                     | Integration branch for ongoing development. All feature and bug-fix branches target here. |
 | `experimental/<name>`     | Sandboxed branches for exploratory or major formulation changes. See Section 15.          |
-| `bugfix/<issue-id>-desc`  | Short-lived branches forked from `dev` to address specific bug reports.                   |
-| `feature/<name>`          | Short-lived branches for minor feature additions, forked from `dev`.                       |
-| `release/<version>`       | Release preparation branches (alpha → beta → rc) cut from `dev`.                          |
+| `bugfix/<issue-id>-desc`  | Short-lived branches forked from `develop` to address specific bug reports.                   |
+| `feature/<name>`          | Short-lived branches for minor feature additions, forked from `develop`.                       |
+| `release/<version>`       | Release preparation branches (alpha → beta → rc) cut from `develop`.                          |
 
 ---
 
@@ -192,13 +192,13 @@ Experimental APIs (clearly marked as such) carry no backward compatibility guara
 For small, well-scoped bug fixes and minor improvements, follow this workflow:
 
 1. **Open or reference an issue.** Verify the bug is reproducible and link the relevant issue number in all subsequent commits and pull requests.
-2. **Fork the `dev` branch.** Name your branch `bugfix/<issue-id>-short-description` (e.g., `bugfix/42-overflow-in-routing`).
+2. **Fork the `develop` branch.** Name your branch `bugfix/<issue-id>-short-description` (e.g., `bugfix/42-overflow-in-routing`).
 3. **Write a failing unit test first.** The test must demonstrate the defect before the fix is applied.
 4. **Implement the minimal fix.** Touch only the code necessary to resolve the issue. Do not refactor adjacent code.
 5. **Ensure all regression tests pass.** If a regression test fails as a result of your change, you must either:
    - Fix the regression, **or**
    - Provide a written, technically justified explanation for why the regression failure is acceptable (included in the pull request description).
-6. **Submit a pull request** against `dev` following the process described in Section 11.
+6. **Submit a pull request** against `develop` following the process described in Section 11.
 
 ---
 
@@ -222,7 +222,7 @@ Self-approvals are not permitted. The PR author may not count toward the communi
 
 Before requesting review, confirm that your PR:
 
-- [ ] Targets the correct branch (`dev` for bug fixes and features; see Section 15 for experimental work)
+- [ ] Targets the correct branch (`develop` for bug fixes and features; see Section 15 for experimental work)
 - [ ] CLA signed — first-time contributors must sign the [CLA](./CLA.md) before the PR can be merged
 - [ ] Includes a clear description of what was changed and why
 - [ ] References any related issues (e.g., `Closes #42`)
@@ -235,8 +235,8 @@ Before requesting review, confirm that your PR:
 ### Merge Policy
 
 - Merges into `main` are performed exclusively by the Technical Manager at release time.
-- Squash merging is preferred for `bugfix` and `feature` branches to keep the `dev` history clean.
-- Merge commits are used when integrating `dev` into a `release` branch to preserve the full history.
+- Squash merging is preferred for `bugfix` and `feature` branches to keep the `develop` history clean.
+- Merge commits are used when integrating `develop` into a `release` branch to preserve the full history.
 
 ---
 
@@ -325,7 +325,7 @@ Accepted proposals are implemented in a dedicated `experimental/<name>` branch. 
 
 - Rigorous **unit tests** covering the new formulation's behavior across the expected parameter space.
 - **Regression tests** as described in Section 17.
-- Code must compile cleanly and not break the existing test suite on the `dev` branch.
+- Code must compile cleanly and not break the existing test suite on the `develop` branch.
 - Implementation notes and algorithm descriptions must be maintained in Doxygen-compatible documentation.
 
 ### Step 4 — Peer Review (Strongly Encouraged)
@@ -342,7 +342,7 @@ See Section 17 for full details. At minimum, the experimental implementation mus
 
 ### Step 6 — Documentation & References
 
-Before a major formulation change can be merged into `dev`, the following documentation must be complete:
+Before a major formulation change can be merged into `develop`, the following documentation must be complete:
 
 - **Doxygen comments** on all new and modified public APIs, structs, and functions.
 - **Inline citations** linking to peer-reviewed references where the formulation is derived from published work.
