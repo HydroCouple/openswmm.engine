@@ -215,6 +215,48 @@ struct NetworkMeshData {
     std::vector<int>    face_cr;      ///< right cell (-1 ⇒ node on the right)
     std::vector<int>    face_node;    ///< coupled node (-1 for interior faces)
 
+    /// Cross-section (index into `geom`) that this face reconstructs BOTH of
+    /// its sides in. Almost always the adjacent cells' own section, which
+    /// leaves the scheme untouched.
+    ///
+    /// It differs only where two conduits of DIFFERENT section meet at a
+    /// clean degree-2 node, and there it is the section-averaged pair. Without
+    /// it, such an interface is evaluated twice in two different geometries —
+    /// each conduit's end face reconstructs the neighbour's state in its OWN
+    /// section — so the wall the width step physically presents to the flow
+    /// exerts no force. That missing wall-pressure term is the measured
+    /// pseudo-2D defect (SWASHES §3.5): depths run too deep wherever the
+    /// channel contracts and too shallow wherever it expands, antisymmetric in
+    /// dB/dx and independent of Δx. Reconstructing both sides in one shared
+    /// section makes the pair a single well-posed Riemann problem, and the
+    /// hydrostatic-reconstruction correction already applied per side,
+    /// g·(I₁(cell section, h) − I₁(face section, h*)), becomes exactly the
+    /// discrete wall-pressure (I₂) source — consistently discretized with the
+    /// flux it has to balance, which is what every additive closure got wrong.
+    std::vector<int>    face_geom;    ///< index into `geom`
+
+    /// Give every face the section of its adjacent cell, sizing `face_geom` if
+    /// a caller never populated it. This reproduces the behaviour that
+    /// preceded `face_geom` exactly, so it is always safe; NetworkMeshBuilder
+    /// calls it and then overrides the entries at width-step junctions.
+    /// Idempotent, and a no-op once `face_geom` is already the right size.
+    ///
+    /// It exists because `face_geom` is the one face array a hand-built mesh
+    /// can silently omit: the unit-test fixtures assemble NetworkMeshData
+    /// field by field without a SimulationContext, and an omission there is an
+    /// empty vector that `faceSide` would index straight into a null page.
+    void deriveFaceGeom() {
+        if (face_geom.size() == static_cast<std::size_t>(n_faces())) return;
+        face_geom.assign(static_cast<std::size_t>(n_faces()), 0);
+        for (int f = 0; f < n_faces(); ++f) {
+            const auto uf = static_cast<std::size_t>(f);
+            const int c = (face_cl[uf] >= 0) ? face_cl[uf] : face_cr[uf];
+            face_geom[uf] = (c >= 0 &&
+                             static_cast<std::size_t>(c) < cell_geom.size())
+                ? cell_geom[static_cast<std::size_t>(c)] : 0;
+        }
+    }
+
     /// Flap-gate mask on a boundary face: bit 0 blocks a POSITIVE mass flux,
     /// bit 1 blocks a NEGATIVE one, 0 leaves the face open. A gate is a check
     /// valve, so a blocked face behaves as a wall only while the flux would run
@@ -370,6 +412,7 @@ struct NetworkMeshData {
         cell_face0.clear(); cell_face1.clear();
         cell_side0.clear(); cell_side1.clear();
         face_cl.clear(); face_cr.clear(); face_node.clear(); face_gate.clear();
+        face_geom.clear();
         face_culvert.clear();
         face_zb.clear(); face_dx.clear(); face_virtual.clear();
         face_dir_l.clear(); face_dir_r.clear();
