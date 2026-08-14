@@ -70,6 +70,10 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     // indexing short vectors: no ponding, no surcharge depth.
     if (mesh.node_sur_depth.size() < nn) mesh.node_sur_depth.resize(nn, 0.0);
     if (mesh.node_can_pond.size() < nn)  mesh.node_can_pond.resize(nn, 0);
+    // Same reason: faceSide indexes face_geom unconditionally, so a mesh that
+    // never went through NetworkMeshBuilder must get the per-cell fallback
+    // here rather than reading an empty vector. No-op for a built mesh.
+    mesh.deriveFaceGeom();
     if (mesh.face_gate.size() < nf)      mesh.face_gate.resize(nf, 0);
     if (mesh.face_culvert.size() < nf)   mesh.face_culvert.resize(nf, -1);
 
@@ -1021,6 +1025,14 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     double eta = 0.0, h_raw = 0.0, u = 0.0;
     z_side = 0.0;
 
+    // The section this FACE reconstructs in — the same one for both sides, so
+    // the Riemann problem is posed between states in a single geometry. It is
+    // the cells' own section everywhere except at a width step between two
+    // conduits (mesh.face_geom), where using each side's own section would
+    // leave the step's wall exerting no force on the flow.
+    const FvGeometry* gf =
+        &mesh_->geom[static_cast<std::size_t>(mesh_->face_geom[uf])];
+
     if (cell >= 0) {
         const auto uc = static_cast<std::size_t>(cell);
         g     = &mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
@@ -1115,6 +1127,9 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // pass discarded (its i1 out-param is written twice and never read).
     if (measure_only) { i1_raw = 0.0; out = k::FaceState{}; return; }
 
+    // i1_raw stays in the CELL's own section — it is the cell's true
+    // hydrostatic moment, and the difference from the reconstructed one is the
+    // correction that puts the balance back (computeFaceFlux).
     i1_raw = (h_raw > k::kDryDepth)
                  ? k::i1OfDepth(*g, h_raw, k::areaOfDepth(*g, h_raw)) : 0.0;
 
@@ -1123,11 +1138,14 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
         out = k::FaceState{};
         return;
     }
-    out.a  = k::areaOfDepth(*g, h_star);
+    // …while the reconstructed state is evaluated in the FACE's section, which
+    // both sides share. Where they are the same section (every prismatic face)
+    // this is the identical computation.
+    out.a  = k::areaOfDepth(*gf, h_star);
     out.u  = u;
     out.q  = out.a * u;
-    out.c  = k::celerity(out.a, k::widthOfDepth(*g, h_star));
-    out.i1 = k::i1OfDepth(*g, h_star, out.a);
+    out.c  = k::celerity(out.a, k::widthOfDepth(*gf, h_star));
+    out.i1 = k::i1OfDepth(*gf, h_star, out.a);
 }
 
 void ExplicitFvSolver::computeFluxes() {
@@ -1209,6 +1227,22 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
         faceSide(f, cr, nd, zstar, mesh_->face_dir_r[uf], u_int, R, i1r, zdummy, false);
 
         k::FaceFlux fl = k::riemannFlux(L, R);
+
+        // Non-prismatic pass-through junction — RESOLVED 2026-08-13 by giving
+        // the face its own section (mesh.face_geom, see faceSide). Both sides
+        // of a width step are now reconstructed in ONE shared section, so the
+        // pair poses a single well-posed Riemann problem and the per-side
+        // hydrostatic correction below IS the wall-pressure term.
+        //
+        // The earlier additive closures failed because they were bolted onto a
+        // flux that was ill-posed to begin with: each side was reconstructed in
+        // its OWN geometry, so no added term could fix it and each one
+        // double-counted (p2d-sub-short nx=20: splice-only l1 0.186, plus
+        // convective ½Q̂²Δ(1/A) → 0.313, plus wall-pressure ½gΔI1(h̄) → 0.286).
+        // With the shared face section instead, the SWASHES §3.5 family goes
+        // from l1 5.4-16.5% to 0.17-0.60% and the jump on p2d-jump-long lands
+        // within half a cell (7.50 m → 0.50 m). Prismatic decks are
+        // bit-identical: there the face section IS the cells' section.
 
         // Flap gate. A check valve, not a wall: the face stays open while the
         // flux runs the permitted way and closes the instant it would reverse.
@@ -1399,9 +1433,7 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
         const int b = mesh_->node_face_ptr[un];
         const int e = mesh_->node_face_ptr[un + 1];
 
-        const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un]
-                                                   : 0.0) +
-                             node_qstruct_[un];
+        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
         const double invert  = mesh_->node_invert[un];
         const double h_start = state_->node_head[un];
         const double v_start =
@@ -1616,6 +1648,12 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
         double a_new = a_old + dt * dA * inv_dx;
         double q_new = state_->cell_q[uc] + dt * dQ * inv_dx;
 
+        // Diverted junction lateral inflow (refreshStructFlows): mass only,
+        // zero momentum, added BEFORE the scalar divide so clean inflow
+        // dilutes the advected species.
+        if (!cell_qlat_.empty() && cell_qlat_[uc] != 0.0)
+            a_new += dt * cell_qlat_[uc] * inv_dx;
+
         // ---- advected scalars, on the SAME divergence -----------------------
         // Updating m = A·φ with the same face MASS fluxes and dividing by the
         // hydrodynamic a_new is what makes a uniform field exactly invariant:
@@ -1776,8 +1814,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     const int e = mesh_->node_face_ptr[un + 1];
     const double invert = mesh_->node_invert[un];
     const double q_ext =
-        (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
-        node_qstruct_[un] + node_carry_[un] / dt;
+        nodeLateral(forcing, un) + node_qstruct_[un] + node_carry_[un] / dt;
 
     // Fallback for a degree-1 node whose head solve clamps at the ceiling
     // with inflow still unpassed: continuity fixes the answer — the one face
@@ -1992,14 +2029,42 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
     }
     // Dynamic half of the pass-through test, refreshed with the forcing: a
     // degree-2 junction is a pure interface only while nothing is injected at
-    // it. A lateral or structure flow needs a head the fluxes respond to, so
-    // the node falls back to the flux-balance solve for that routing step.
-    for (std::size_t un = 0; un < nn; ++un)
-        node_pass_[un] =
-            (node_pass_static_[un] && node_qstruct_[un] == 0.0 &&
-             node_carry_[un] == 0.0 &&
-             (!forcing.node_lateral || forcing.node_lateral[un] == 0.0))
-                ? 1 : 0;
+    // it. A structure flow (or unbled carry) needs a head the fluxes respond
+    // to, so the node falls back to the flux-balance solve for that step.
+    //
+    // A LATERAL inflow does not: it carries no directed momentum (a manhole
+    // pour), so a clean degree-2 junction keeps the pass-through splice and
+    // the inflow is DIVERTED into the two incident cells, half each, as a
+    // zero-momentum area source integrated by updateCells/fireCells.
+    // Dropping to the head solve instead costs the split-Riemann ~1 mm of
+    // head per junction (see faceSide) — with rain on every junction of a
+    // 400-conduit channel that integrated into an 18-25% deep bias with
+    // exact q (SWASHES §3.3 benchmark finding, 2026-08-12).
+    if (cell_qlat_.size() != static_cast<std::size_t>(mesh_->n_cells()))
+        cell_qlat_.assign(static_cast<std::size_t>(mesh_->n_cells()), 0.0);
+    else
+        std::fill(cell_qlat_.begin(), cell_qlat_.end(), 0.0);
+    if (node_lat_div_.size() != nn) node_lat_div_.assign(nn, 0);
+    else std::fill(node_lat_div_.begin(), node_lat_div_.end(), 0);
+    for (std::size_t un = 0; un < nn; ++un) {
+        const bool clean = node_pass_static_[un] &&
+                           node_qstruct_[un] == 0.0 && node_carry_[un] == 0.0;
+        const double lat =
+            forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
+        if (clean && lat != 0.0) {
+            node_lat_div_[un] = 1;
+            for (int p = mesh_->node_face_ptr[un];
+                 p < mesh_->node_face_ptr[un + 1]; ++p) {
+                const auto uf = static_cast<std::size_t>(
+                    mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+                const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                        : mesh_->face_cr[uf];
+                if (c >= 0)
+                    cell_qlat_[static_cast<std::size_t>(c)] += 0.5 * lat;
+            }
+        }
+        node_pass_[un] = (clean && (lat == 0.0 || node_lat_div_[un])) ? 1 : 0;
+    }
 }
 
 void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
@@ -2034,8 +2099,7 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
             continue;
         }
 
-        const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
-                             node_qstruct_[un];
+        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
 
         if (algebraicActive(n)) {
             settleAlgebraicNode(n, node_carry_[un] + dt * (sum_faces + q_lat));
@@ -2091,6 +2155,50 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
             state_->node_volume[un] = 0.0;
             return;
         }
+    }
+    // PASS-THROUGH node: no solve will ever bleed this carry back, and a
+    // nonzero carry REVOKES the splice at the next forcing refresh (the
+    // clean test) — which is exactly how every width-varying junction
+    // silently fell back to the lossy head solve at steady state (the two
+    // prismatic views of a spliced non-prismatic face legitimately disagree
+    // by O(ΔB) in mass flux each step; SWASHES §3.5 finding, 2026-08-13).
+    // Dispose the residual as VOLUME in the incident cells instead — they
+    // are where an interface junction's water physically stands — split
+    // evenly, zero momentum. Anything a near-dry cell cannot absorb stays
+    // in the carry and demotes the node next step (conservative fallback).
+    if (!node_pass_.empty() && node_pass_[un] && carry != 0.0) {
+        double left = carry;
+        const int b = mesh_->node_face_ptr[un];
+        const int e = mesh_->node_face_ptr[un + 1];
+        const int deg = (e > b) ? (e - b) : 1;
+        for (int p = b; p < e; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                    : mesh_->face_cr[uf];
+            if (c < 0) continue;
+            const auto uc = static_cast<std::size_t>(c);
+            const double dx = mesh_->cell_dx[uc];
+            double a_new = state_->cell_a[uc] +
+                           (carry / static_cast<double>(deg)) / dx;
+            if (a_new < 0.0) a_new = 0.0;
+            left -= (a_new - state_->cell_a[uc]) * dx;
+            const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(
+                mesh_->cell_geom[uc])];
+            const double h_new = k::depthOfArea(g, a_new);
+            state_->cell_a[uc] = a_new;
+            state_->cell_h[uc] = h_new;
+            cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
+            if (h_new <= k::kDryDepth) {
+                state_->cell_q[uc] = 0.0;
+                cell_u_[uc]        = 0.0;
+            } else {
+                cell_u_[uc] = state_->cell_q[uc] / a_new;
+            }
+        }
+        node_carry_[un] = (std::fabs(left) > 1.0e-12) ? left : 0.0;
+        state_->node_volume[un] = std::max(0.0, node_carry_[un]);
+        return;
     }
     // Published volume is the REAL water the node holds — the carry ledger
     // and nothing else. An algebraic junction is an interface: the water at
@@ -2843,6 +2951,11 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         acc_a_[uc] = 0.0;
         acc_q_[uc] = 0.0;
 
+        // Diverted junction lateral inflow over this cell's LTS window
+        // (mirrors updateCells; dt here is the tier window span).
+        if (!cell_qlat_.empty() && cell_qlat_[uc] != 0.0)
+            a_new += dt * cell_qlat_[uc] * inv_dx;
+
         if (forcing.conduit_loss) {
             const int cr = mesh_->cell_conduit[uc];
             if (cr >= 0) a_new -= dt * forcing.conduit_loss[cr];
@@ -2881,8 +2994,7 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
             continue;
         }
 
-        const double q_lat = (forcing.node_lateral ? forcing.node_lateral[un] : 0.0) +
-                             node_qstruct_[un];
+        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
 
         if (algebraicActive(n)) {
             // Head was set by the flux-balance solve at face-firing time; the

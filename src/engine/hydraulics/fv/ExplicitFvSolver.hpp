@@ -187,6 +187,21 @@ private:
     /// tolerance and any cell-side positivity scaling land here and are bled
     /// back into the next solve's forcing. ≈0 in a converged steady state.
     std::vector<double> node_carry_;
+    /// Lateral inflow diverted from a clean degree-2 junction into its two
+    /// incident cells (half each) as a zero-momentum area source, so the node
+    /// KEEPS the pass-through splice. Head-solving such junctions costs the
+    /// split-Riemann ~1 mm of head per junction that pass-through exists to
+    /// avoid — with rain on every junction of a 400-conduit channel that
+    /// integrated into an 18-25% deep bias with exact q (SWASHES §3.3).
+    /// cell_qlat_ is m³/s per cell; node_lat_div_ flags the nodes whose
+    /// forcing.node_lateral must read as zero on every node path.
+    std::vector<double> cell_qlat_;
+    std::vector<std::uint8_t> node_lat_div_;
+    double nodeLateral(const FvStepForcing& forcing,
+                       std::size_t un) const noexcept {
+        if (!node_lat_div_.empty() && node_lat_div_[un]) return 0.0;
+        return forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
+    }
     /// Cached V(full_depth) per node, for the ponding demote test.
     std::vector<double> node_vfull_;
 

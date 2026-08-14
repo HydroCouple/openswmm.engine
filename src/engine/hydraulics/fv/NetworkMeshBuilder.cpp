@@ -532,6 +532,85 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     }
 
     // -----------------------------------------------------------------------
+    // Face sections. Every face reconstructs BOTH sides in ONE section, so the
+    // Riemann problem it poses is well posed. That is already true everywhere
+    // the two sides share a conduit section — which is every face in a
+    // prismatic network, so this pass is a no-op there and the scheme is
+    // bit-identical.
+    //
+    // It is NOT true where two conduits of different section meet at a clean
+    // degree-2 node: each conduit's end face reconstructs its neighbour's
+    // state in its OWN section (ExplicitFvSolver::faceSide takes the geometry
+    // from the surviving cell), so the same physical interface is solved twice
+    // in two different geometries and the wall the width step presents exerts
+    // no force. Give both faces of such a pair one section-averaged geometry
+    // and the per-side hydrostatic correction becomes the wall-pressure term.
+    // -----------------------------------------------------------------------
+    mesh.face_geom.clear();
+    mesh.deriveFaceGeom();
+    {
+        // Averaged sections are memoized on the ordered conduit pair, so a
+        // 400-conduit variable-width chain adds ~400 entries, not one per face.
+        std::map<std::pair<int, int>, int> pair_geom;
+        for (int i = 0; i < n_nodes; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const int nb = mesh.node_face_ptr[ui];
+            const int ne = mesh.node_face_ptr[ui + 1];
+            if (ne - nb != 2) continue;              // only clean degree-2
+            const int f0 = mesh.node_face_idx[static_cast<std::size_t>(nb)];
+            const int f1 = mesh.node_face_idx[static_cast<std::size_t>(nb + 1)];
+            const int g0 = mesh.face_geom[static_cast<std::size_t>(f0)];
+            const int g1 = mesh.face_geom[static_cast<std::size_t>(f1)];
+            if (g0 < 0 || g1 < 0 || g0 == g1) continue;   // same section: no-op
+            const auto& a = mesh.geom[static_cast<std::size_t>(g0)];
+            const auto& b = mesh.geom[static_cast<std::size_t>(g1)];
+            // Only average like with like. Different shape types, transect
+            // tables (IRREGULAR/CUSTOM/STREET) and differing barrel counts have
+            // no meaningful average; those faces keep their own section, which
+            // is still well balanced (the C-property holds for ANY consistent
+            // choice) and merely first order in the step.
+            if (a.xs.type != b.xs.type || a.barrels != b.barrels ||
+                a.xs.transect >= 0 || b.xs.transect >= 0 ||
+                a.xs.area_tbl != nullptr || b.xs.area_tbl != nullptr)
+                continue;
+            const auto key = std::make_pair(std::min(g0, g1), std::max(g0, g1));
+            int gf;
+            if (const auto hit = pair_geom.find(key); hit != pair_geom.end()) {
+                gf = hit->second;
+            } else {
+                XSectParams xs = a.xs;               // shape, tables, culvert
+                const XSectParams& xb = b.xs;
+                const auto mid = [](double p, double q) { return 0.5 * (p + q); };
+                xs.y_full = mid(a.xs.y_full, xb.y_full);
+                xs.w_max  = mid(a.xs.w_max,  xb.w_max);
+                xs.yw_max = mid(a.xs.yw_max, xb.yw_max);
+                xs.a_full = mid(a.xs.a_full, xb.a_full);
+                xs.r_full = mid(a.xs.r_full, xb.r_full);
+                xs.s_full = mid(a.xs.s_full, xb.s_full);
+                xs.s_max  = mid(a.xs.s_max,  xb.s_max);
+                xs.y_bot  = mid(a.xs.y_bot,  xb.y_bot);
+                xs.a_bot  = mid(a.xs.a_bot,  xb.a_bot);
+                xs.s_bot  = mid(a.xs.s_bot,  xb.s_bot);
+                xs.r_bot  = mid(a.xs.r_bot,  xb.r_bot);
+                FvGeometry g{};
+                buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
+                              a.barrels);
+                // Friction/loss scalars are never read through the face
+                // section (faceSide uses only A, W and I₁ from it), but carry
+                // the average so nothing downstream sees an unset field.
+                g.roughness    = 0.5 * (a.roughness + b.roughness);
+                g.rough_factor = 0.5 * (a.rough_factor + b.rough_factor);
+                g.slope        = 0.5 * (a.slope + b.slope);
+                gf = static_cast<int>(mesh.geom.size());
+                mesh.geom.push_back(g);
+                pair_geom.emplace(key, gf);
+            }
+            mesh.face_geom[static_cast<std::size_t>(f0)] = gf;
+            mesh.face_geom[static_cast<std::size_t>(f1)] = gf;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Cell → face back-references. Every cell is bounded by exactly two faces
     // (interior, spliced, or node-coupling), so this is a fixed-width map and
     // the cell update needs no scatter.
