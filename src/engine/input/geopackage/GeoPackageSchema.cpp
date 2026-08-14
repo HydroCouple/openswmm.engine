@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS nodes (
     surcharge_depth REAL,
     ponded_area     REAL,
     tag             TEXT,
+    -- Virtual junctions are JUNCTION-typed (node_type stays "JUNCTION"), so
+    -- the flag needs its own column or a round-trip demotes them to plain
+    -- junctions. rim_depth is the rendering-only ground depth that goes with
+    -- it (the optional [VIRTUAL_JUNCTIONS] MaxDepth); both are NULL in files
+    -- written before they existed and the reader treats that as 0.
+    is_virtual      INTEGER,
+    rim_depth       REAL,
     UNIQUE(simulation_id, node_id)
 );
 

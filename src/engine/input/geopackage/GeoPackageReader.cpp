@@ -314,10 +314,21 @@ static bool column_exists(sqlite3* db, const std::string& table,
 static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     // --- base nodes (common columns + discriminator + geometry) ---
     {
+        // is_virtual / rim_depth were appended after the schema shipped; an
+        // older .gpkg does not have the columns at all (SELECTing them fails
+        // outright, and the db is opened READONLY so we cannot ALTER it), so
+        // probe first. Absent means "no virtual junctions", which is exactly
+        // how such a file behaved before.
+        const bool has_virtual = column_exists(db, "nodes", "is_virtual") &&
+                                 column_exists(db, "nodes", "rim_depth");
         auto stmt = prepare(db,
-            "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
-            "surcharge_depth, ponded_area, tag "
-            "FROM nodes WHERE simulation_id = ? ORDER BY fid");
+            has_virtual
+                ? "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
+                  "surcharge_depth, ponded_area, tag, is_virtual, rim_depth "
+                  "FROM nodes WHERE simulation_id = ? ORDER BY fid"
+                : "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
+                  "surcharge_depth, ponded_area, tag "
+                  "FROM nodes WHERE simulation_id = ? ORDER BY fid");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             std::string name = column_text(stmt.get(), 0);
@@ -341,6 +352,13 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
                 const auto u = static_cast<std::size_t>(idx);
                 if (u >= ctx.nodes.tags.size()) ctx.nodes.tags.resize(u + 1);
                 ctx.nodes.tags[u] = column_text(stmt.get(), 8);
+            }
+            if (has_virtual) {
+                const auto u = static_cast<std::size_t>(idx);
+                ctx.nodes.is_virtual[u] =
+                    (!column_is_null(stmt.get(), 9) && column_int(stmt.get(), 9) != 0) ? 1 : 0;
+                if (!column_is_null(stmt.get(), 10))
+                    ctx.nodes.rim_depth[u] = column_double(stmt.get(), 10);
             }
         }
     }

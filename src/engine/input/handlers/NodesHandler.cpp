@@ -24,6 +24,15 @@
  * J1           0.0    5.0       0.0        0.0       0.0
  * ```
  *
+ * ### [VIRTUAL_JUNCTIONS] format (refactored engine only)
+ * ```
+ * ;; Name      Elev   [MaxDepth]
+ * VJ1          9.0
+ * VJ2          9.0    4.5
+ * ```
+ * MaxDepth is optional and RENDERING ONLY — it is the rim/ground depth a
+ * viewer draws the surface at. The solver always uses the derived pipe crown.
+ *
  * ### [OUTFALLS] format
  * ```
  * ;; Name      Elev   Type      Stage/Tseries  Gated  RouteTo
@@ -58,6 +67,7 @@
 
 #include "../InputParseUtils.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <string>
 #include <string_view>
@@ -119,10 +129,11 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
 
         const std::string& name = tok[0];
 
-        // Name + invert elevation only — everything else is derived from the
-        // two attached conduits, so extra tokens are an error (keeps the
-        // format extensible without ambiguity).
-        if (tok.size() > 2) {
+        // Name, invert elevation and an OPTIONAL rendering-only max depth.
+        // Everything the solver uses is derived from the two attached
+        // conduits, so a fourth token is still an error (keeps the format
+        // extensible without ambiguity).
+        if (tok.size() > 3) {
             ctx.errors.push_back(format_error(ERR_VJ_EXTRA_TOKENS, name));
             continue;
         }
@@ -135,6 +146,12 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
         ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
         ctx.nodes.is_virtual[static_cast<std::size_t>(idx)] = 1;
         ctx.nodes.invert_elev[idx] = to_double(tok[1]);
+        // MaxDepth: rim/ground elevation for drawings only — never read by the
+        // solver, which uses the derived pipe crown (NodeData::rim_depth).
+        // Negatives and unparseable text collapse to 0 = unset.
+        if (tok.size() > 2)
+            ctx.nodes.rim_depth[static_cast<std::size_t>(idx)] =
+                std::max(0.0, to_double(tok[2]));
         if (!pl.comment.empty())
             ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

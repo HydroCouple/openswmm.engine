@@ -947,16 +947,29 @@ meant to serve: two collinear conduits of identical cross-section
 meeting at a grade break.
 
 Virtual junctions are declared in a dedicated `[VIRTUAL_JUNCTIONS]`
-input section whose entries carry only a name and an invert elevation:
+input section whose entries carry a name, an invert elevation and an
+optional maximum depth:
 
     [VIRTUAL_JUNCTIONS]
-    ;;Name           Elev
+    ;;Name           Elev        MaxDepth
     VJ1              101.25
+    VJ2              100.80      4.50
 
-All remaining geometry is derived: the maximum depth equals the shared
-pipe's full depth, and the surcharge depth and ponded area are zero.
-In reports and output files a virtual junction appears as an ordinary
-junction whose stored volume is identically zero.
+All hydraulic geometry is derived: the maximum depth used by the solver
+equals the shared pipe's full depth, and the surcharge depth and ponded
+area are zero. In reports and output files a virtual junction appears as
+an ordinary junction whose stored volume is identically zero.
+
+The optional third entry, `MaxDepth`, is a **drawing property only**. A
+virtual junction's derived maximum depth is the pipe crown, so a profile
+or section view that draws the ground surface at `invert + maximum depth`
+would sink the terrain to the crown at every break point. Supplying
+`MaxDepth` gives such views the real ground elevation to draw instead. No
+part of the solver, the routing, the reporting or the binary output file
+reads it, so a model produces identical results whether or not it is
+supplied; when it is omitted, viewers fall back to the pipe crown. A
+virtual junction created by splitting a conduit inherits a `MaxDepth`
+interpolated between the two end nodes' ground elevations.
 
 A node is eligible to be a virtual junction only if it satisfies all of
 the following, which are enforced when the input file is processed:

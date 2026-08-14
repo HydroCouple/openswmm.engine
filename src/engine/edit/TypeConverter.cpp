@@ -25,6 +25,7 @@
 
 #include "TypeConverter.hpp"
 #include "../core/TypeHelpers.hpp"
+#include "VirtualJunctionOps.hpp"
 
 namespace openswmm::edit {
 
@@ -117,8 +118,10 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
 
     // Converting a virtual junction to any other type clears the virtual
     // flag (the zero-storage contract only exists for JUNCTION-typed nodes).
+    // vj_clear_virtual also promotes the rendering rim depth back to the real
+    // full depth, so the converted node keeps the surface it was drawn at.
     if (ui < nd.is_virtual.size() && nd.is_virtual[ui]) {
-        nd.is_virtual[ui] = 0;
+        vj_clear_virtual(ctx, idx);
         result.cleared_fields.push_back("is_virtual");
     }
 

@@ -304,8 +304,9 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
     // node_id); the base row is inserted first each iteration so the FK resolves.
     auto stmt = prepare(db,
         "INSERT INTO nodes (simulation_id, node_id, node_type, geom, "
-        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)");
+        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag, "
+        "is_virtual, rim_depth) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
     auto st_stmt = prepare(db,
         "INSERT INTO storages (simulation_id, node_id, curve_name, shape, a, b, c, "
         "p1, p2, p3, seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
@@ -352,6 +353,13 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 10, ctx.nodes.tags[utag]);
         else
             bind_null(stmt.get(), 10);
+
+        // Virtual-junction flag + its rendering-only rim depth. node_type says
+        // JUNCTION for both kinds, so without these two the round-trip loses
+        // the virtual junction entirely.
+        bind_int(stmt.get(), 11,
+                 (utag < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[utag]) ? 1 : 0);
+        bind_double(stmt.get(), 12, safe_dbl(ctx.nodes.rim_depth, i));
 
         sqlite3_step(stmt.get());
 

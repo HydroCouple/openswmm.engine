@@ -86,6 +86,7 @@ class Node:
     # Geometry
     invert_elev: float
     max_depth: float
+    rim_depth: float
     surcharge_depth: float
     ponded_area: float
     initial_depth: float
