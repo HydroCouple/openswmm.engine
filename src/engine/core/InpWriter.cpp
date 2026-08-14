@@ -199,6 +199,14 @@ static bool hasVirtualJunction(const SimulationContext& c) {
     for(int j=0;j<c.n_nodes();++j) if(isVirtualNode(c,static_cast<size_t>(j))) return true;
     return false;
 }
+// True when any virtual junction carries a rendering rim depth, which is what
+// widens [VIRTUAL_JUNCTIONS] to its optional third column. Models without one
+// keep writing the two-column section byte-for-byte.
+static bool hasVirtualJunctionRim(const SimulationContext& c) {
+    for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
+        if(isVirtualNode(c,u) && u<c.nodes.rim_depth.size() && c.nodes.rim_depth[u]>0.0) return true;}
+    return false;
+}
 static bool hasLT(const SimulationContext& c, LinkType t) {
     for(int j=0;j<c.n_links();++j) if(c.links.type[static_cast<size_t>(j)]==t) return true; return false;
 }
@@ -1217,14 +1225,25 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],ctx.nodes.sur_depth[u],ctx.nodes.ponded_area[u]);
     }}
 
-    // [VIRTUAL_JUNCTIONS] — name + invert elevation; all other geometry is
+    // [VIRTUAL_JUNCTIONS] — name + invert elevation, plus an optional MaxDepth
+    // that is used ONLY to draw the ground surface. All solver geometry is
     // derived from the attached conduits at load time (refactored engine only).
     if(hasVirtualJunction(ctx)){sec(f,"VIRTUAL_JUNCTIONS");
-    std::fprintf(f,";;%-16s %-12s\n","Name","Elev");
-    std::fprintf(f,";;%-16s %-12s\n","----------------","------------");
+    const bool anyRim = hasVirtualJunctionRim(ctx);
+    if(anyRim){
+        std::fprintf(f,";;%-16s %-12s %-12s\n","Name","Elev","MaxDepth");
+        std::fprintf(f,";;%-16s %-12s %-12s\n","----------------","------------","------------");
+    } else {
+        std::fprintf(f,";;%-16s %-12s\n","Name","Elev");
+        std::fprintf(f,";;%-16s %-12s\n","----------------","------------");
+    }
     for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(!isVirtualNode(ctx,u))continue;
     write_obj_comment(f, ctx.nodes.comments, u);
-    std::fprintf(f,"%-16s %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u]);
+    const double rim = (u<ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0;
+    if(rim>0.0)
+        std::fprintf(f,"%-16s %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],rim);
+    else
+        std::fprintf(f,"%-16s %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u]);
     }}
 
     // [OUTFALLS]

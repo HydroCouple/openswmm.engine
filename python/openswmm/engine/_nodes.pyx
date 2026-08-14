@@ -519,6 +519,28 @@ cdef class Node:
         _check(swmm_node_set_max_depth(_h(self._solver), self._index, value))
 
     @property
+    def rim_depth(self) -> float:
+        """Rendering-only rim (ground) depth above the invert; 0 = unset.
+
+        No hydraulics, routing, reporting or output-file path reads this, so
+        setting it can never change a result. It exists for virtual junctions,
+        whose L{max_depth} is derived (always the shared pipe crown): without
+        it a drawn ground line collapses to the crown at every break point.
+        It is the optional third token of an INP C{[VIRTUAL_JUNCTIONS]} row.
+
+        When 0, a renderer should fall back to L{max_depth}.
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_rim_depth(_h(self._solver), self._index, &v))
+        return v
+
+    @rim_depth.setter
+    def rim_depth(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_rim_depth(_h(self._solver), self._index, value))
+
+    @property
     def surcharge_depth(self) -> float:
         _check_fresh(self)
         cdef double v = 0.0

@@ -177,6 +177,22 @@ struct NodeData {
      */
     std::vector<uint8_t>    is_virtual;
 
+    /**
+     * @brief Rendering-only rim (ground) depth above the invert, project
+     *        length units. 0 = unset.
+     *
+     * @details Optional third token of a [VIRTUAL_JUNCTIONS] row. A virtual
+     *          junction's `full_depth` is derived — it is always the shared
+     *          pipe crown — which makes every ground/terrain line a viewer
+     *          draws collapse to the crown at the break point. This field
+     *          carries the surface elevation for those drawings and nothing
+     *          else: it is written by the input and edit paths and read only
+     *          by renderers. No hydraulics, routing, reporting or output-file
+     *          code may read it, so a model produces bit-identical results
+     *          whether or not it is supplied.
+     */
+    std::vector<double>     rim_depth;
+
     // -----------------------------------------------------------------------
     // Node subtype properties (storage / outfall / divider)
     // -----------------------------------------------------------------------
@@ -628,6 +644,7 @@ struct NodeData {
         sur_depth.assign(un, 0.0);
         ponded_area.assign(un, 0.0);
         is_virtual.assign(un, 0);
+        rim_depth.assign(un, 0.0);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.assign(un, 0.0);
@@ -706,6 +723,7 @@ struct NodeData {
         g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
         g(sur_depth, 0.0); g(ponded_area, 0.0);
         g(is_virtual, static_cast<uint8_t>(0));
+        g(rim_depth, 0.0);
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         g(depth, 0.0); g(head, 0.0); g(volume, 0.0);
         g(lat_flow, 0.0); g(user_lat_flow, 0.0);
@@ -763,7 +781,7 @@ struct NodeData {
         if (type.capacity() >= un) return;
         auto r = [&](auto& vec) { vec.reserve(un); };
         r(type); r(invert_elev); r(full_depth); r(init_depth);
-        r(sur_depth); r(ponded_area); r(is_virtual); r(depth);
+        r(sur_depth); r(ponded_area); r(is_virtual); r(rim_depth); r(depth);
         r(head); r(volume); r(lat_flow); r(user_lat_flow);
         r(runoff_inflow); r(gw_inflow); r(ext_inflow); r(dwf_inflow);
         r(rdii_inflow); r(iface_inflow); r(coupling_inflow); r(coupling_volume);
@@ -793,7 +811,7 @@ struct NodeData {
         auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
 
         e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
-        e(is_virtual);
+        e(is_virtual); e(rim_depth);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables;
         // its rows are erased/renumbered by NodeSubtypes::erase_node (called by the
@@ -888,6 +906,7 @@ struct NodeData {
         sur_depth.shrink_to_fit();
         ponded_area.shrink_to_fit();
         is_virtual.shrink_to_fit();
+        rim_depth.shrink_to_fit();
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         depth.shrink_to_fit();

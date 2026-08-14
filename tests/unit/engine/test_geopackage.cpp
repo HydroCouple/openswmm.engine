@@ -488,6 +488,59 @@ TEST_F(GeoPackageTest, JunctionsRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.nodes.full_depth[j1], 6.0);
 }
 
+// Virtual junctions are JUNCTION-typed, so without dedicated columns a .gpkg
+// round-trip silently demoted them to plain junctions. The rendering-only rim
+// depth (the optional [VIRTUAL_JUNCTIONS] MaxDepth) rides along with the flag.
+TEST_F(GeoPackageTest, VirtualJunctionFlagAndRimRoundTrip) {
+    auto ctx_out = build_test_context();
+    const int j2 = ctx_out.node_names.find("J2");
+    ASSERT_GE(j2, 0);
+    const auto u2 = static_cast<std::size_t>(j2);
+    const auto n = static_cast<std::size_t>(ctx_out.node_names.size());
+    ctx_out.nodes.is_virtual.resize(n, 0);
+    ctx_out.nodes.rim_depth.resize(n, 0.0);
+    ctx_out.nodes.is_virtual[u2] = 1;
+    ctx_out.nodes.rim_depth[u2]  = 4.25;
+
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    const int in2 = ctx_in.node_names.find("J2");
+    ASSERT_GE(in2, 0);
+    const auto ui2 = static_cast<std::size_t>(in2);
+    EXPECT_EQ(ctx_in.nodes.is_virtual[ui2], 1);
+    EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[ui2], 4.25);
+
+    const int in1 = ctx_in.node_names.find("J1");
+    ASSERT_GE(in1, 0);
+    EXPECT_EQ(ctx_in.nodes.is_virtual[static_cast<std::size_t>(in1)], 0);
+    EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[static_cast<std::size_t>(in1)], 0.0);
+}
+
+// A .gpkg written before those two columns existed must still open, with no
+// virtual junctions and no rim depths — exactly how it behaved before.
+TEST_F(GeoPackageTest, LegacyGpkgWithoutVirtualColumnsOpens) {
+    using namespace openswmm::gpkg;
+
+    auto ctx_out = build_test_context();
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "legacy"), 0);
+    {
+        DbPtr db = open_database(db_path_);
+        for (const char* col : {"is_virtual", "rim_depth"})
+            exec(db.get(), std::string("ALTER TABLE nodes DROP COLUMN ") + col);
+    }
+
+    SimulationContext in{};
+    ASSERT_EQ(read_from_file(db_path_, in, "legacy"), 0)
+        << "reader must tolerate a .gpkg that predates the virtual-junction columns";
+    const int j2 = in.node_names.find("J2");
+    ASSERT_GE(j2, 0);
+    EXPECT_EQ(in.nodes.is_virtual[static_cast<std::size_t>(j2)], 0);
+    EXPECT_DOUBLE_EQ(in.nodes.rim_depth[static_cast<std::size_t>(j2)], 0.0);
+}
+
 TEST_F(GeoPackageTest, OutfallRoundTrip) {
     auto ctx_out = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);

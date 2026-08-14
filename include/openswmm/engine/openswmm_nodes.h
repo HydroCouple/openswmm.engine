@@ -180,6 +180,27 @@ SWMM_ENGINE_API int swmm_node_set_pond_area(SWMM_Engine engine, int idx, double 
  */
 SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, double depth);
 
+/**
+ * @brief Set a node's rendering-only rim (ground) depth above the invert.
+ *
+ * @details RENDERING ONLY — no hydraulics, routing, reporting or output-file
+ *          code reads this value, so setting it can never change a result.
+ *          It exists for virtual junctions, whose max depth is derived (always
+ *          the shared pipe crown): without it every viewer drawing a ground
+ *          line collapses the surface to the crown at each break point. It is
+ *          the optional third token of a [VIRTUAL_JUNCTIONS] row.
+ *
+ *          On other node types the value is simply carried; renderers use the
+ *          real max depth there. Pass 0 to clear it ("unset" — renderers fall
+ *          back to the max depth). Negative values are clamped to 0.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based node index.
+ * @param depth   Rim depth above the invert in project length units.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_set_rim_depth(SWMM_Engine engine, int idx, double depth);
+
 /* =========================================================================
  * Geometry getters
  * ========================================================================= */
@@ -264,6 +285,20 @@ SWMM_ENGINE_API int swmm_node_get_invert_elev(SWMM_Engine engine, int idx, doubl
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_node_get_max_depth(SWMM_Engine engine, int idx, double* depth);
+
+/**
+ * @brief Get a node's rendering-only rim (ground) depth above the invert.
+ *
+ * @details See swmm_node_set_rim_depth(). 0 means unset: a renderer drawing a
+ *          ground line should fall back to swmm_node_get_max_depth(), which
+ *          for a virtual junction is the pipe crown.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Zero-based node index.
+ * @param[out] depth  Receives the rim depth in project length units, or 0.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_node_get_rim_depth(SWMM_Engine engine, int idx, double* depth);
 
 /* =========================================================================
  * Hydraulic state getters/setters

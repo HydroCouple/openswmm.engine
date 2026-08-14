@@ -189,6 +189,18 @@ SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, dou
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_set_rim_depth(SWMM_Engine engine, int idx, double depth) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    // Rendering-only (see header): stored like any other length, read by no
+    // solver path. Negative input means "unset".
+    const double d = (depth > 0.0) ? to_internal(ctx, openswmm::ucf::LENGTH, depth) : 0.0; // units
+    ctx.nodes.rim_depth[static_cast<std::size_t>(idx)] = d;
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Geometry getters
 // ============================================================================
@@ -245,6 +257,14 @@ SWMM_ENGINE_API int swmm_node_get_max_depth(SWMM_Engine engine, int idx, double*
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (depth) *depth = to_display(ctx, openswmm::ucf::LENGTH, ctx.nodes.full_depth[static_cast<std::size_t>(idx)]); // units
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_rim_depth(SWMM_Engine engine, int idx, double* depth) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (depth) *depth = to_display(ctx, openswmm::ucf::LENGTH, ctx.nodes.rim_depth[static_cast<std::size_t>(idx)]); // units
     return SWMM_OK;
 }
 
