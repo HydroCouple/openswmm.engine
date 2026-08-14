@@ -1021,22 +1021,32 @@ momentum equations across the break. When flow runs in the pair's
 forward direction, the downstream conduit's upstream-weighted area and
 hydraulic radius (Equations 3-19 and 3-20) take the upstream conduit's
 mid-reach values as their upwind state, carrying the advected momentum
-state across the node instead of restarting it. When the
-`VIRTUAL_JUNCTION_MOMENTUM` option is set to `FULL` (the default is
-`BASIC`), an additional cross-junction convective correction is added
-to the \f$\Delta Q_{inertia}\f$ term of both conduits:
+state across the node instead of restarting it. This upwinding of the
+advected state is the whole of the momentum treatment: a virtual
+junction transmits **no** cross-junction convective momentum flux.
+
+**Retired option.** The `VIRTUAL_JUNCTION_MOMENTUM FULL` setting formerly
+added the cross-junction convective correction of Equation 3-43 to the
+\f$\Delta Q_{inertia}\f$ term of both conduits:
 
 | | | | |
 |---|---|---|---|
 | \f[\Delta Q_{j} = \mathrm{\Delta}t\,\sigma_{j}\frac{\left( \overline{U}^{2}\overline{A} \right)_{dn} - \left( \overline{U}^{2}\overline{A} \right)_{up}}{\Lambda}, \qquad \Lambda = \frac{L_{up} + L_{dn}}{2}\f] | | (3-43) | |
 
-which represents the convective flux difference across a control volume
-spanning the two half-conduits. Here *σ*<sub>j</sub> is a damping factor of the
-form of Equation 3-18 evaluated from the through-flow Froude number at
-the junction, so the correction is silenced near critical flow just as
-the per-conduit inertial terms are, and the correction vanishes
-whenever the two conduits do not carry flow the same way through the
-node. Pairs in a sag or peak orientation (both conduits pointing into,
+It is retired as of 2026-08-14. For steady discharge
+\f$\Delta\left( U^{2}A \right) = - U^{2}\Delta A\f$, so this correction
+carries the *opposite* sign to the per-conduit convective term it was
+meant to supplement, and adding it to both adjacent conduits applied it
+roughly three times over. On the SWASHES `macdonald-periodic` benchmark
+it destroyed 224–325 % of the routed volume; negating it restored mass
+conservation but still left a profile error of 5.24 % against 0.163 %
+for `BASIC` and 0.141 % for ordinary junctions. The keyword is still
+accepted, issues a warning, and is treated as `BASIC`. Models that need
+genuine momentum transport through a subdivided reach should use the
+finite-volume solver, which on the same benchmark is roughly 60× more
+accurate and 2.6× faster.
+
+Pairs in a sag or peak orientation (both conduits pointing into,
 or out of, the node) receive the zero-storage continuity treatment but
 not the directional momentum coupling. The two conduits of a pair are
 also always solved together: neither is frozen by the converged-node

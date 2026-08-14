@@ -727,8 +727,9 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n",  "NODE_CONTINUITY","SEMI_IMPLICIT");
     if (o.anderson_accel)
         std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
-    if (o.virtual_junction_momentum == 1)
-        std::fprintf(f,"%-20s %s\n",  "VIRTUAL_JUNCTION_MOMENTUM", "FULL");
+    // VIRTUAL_JUNCTION_MOMENTUM is not emitted: FULL is retired (see
+    // SimulationOptions.hpp) and virtual_junction_momentum is now always 0,
+    // so writing the key could only ever re-emit the retired value.
 
     // Explicit finite-volume solver knobs. Emitted only under FLOW_ROUTING FV
     // so a DW model's [OPTIONS] block stays legacy-clean; the keys are inert

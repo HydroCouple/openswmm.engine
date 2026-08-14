@@ -889,6 +889,23 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
             const double aMd = std::max(area_mid_[ud], FUDGE);
             const double vu = qU / aMu;
             const double vd = qD / aMd;
+            // MEASURED DEFECT (2026-08-14, epaswmm5_qa suites/swashes
+            // runs/_fv_vj_probe/vj_full_sign_test.py). This term is
+            // SIGN-INVERTED relative to the per-link convective term it
+            // supplements. At constant Q, Δ(v²A) = Q²Δ(1/A) = −v²ΔA, whereas
+            // the per-link dq4 = σ·v²·(A₂−A₁)/L below is the correct
+            // non-conservative EXTRAN form (d(v²A)/dx = −v²dA/dx at constant
+            // Q is exactly what makes gA·dH/dx = v²dA/dx − gA·Sf reproduce
+            // the steady momentum equation at σ=1). Negating dq4j on
+            // macdonald-periodic restores mass conservation outright at
+            // dx=10 (−224.2 % → 0.000 %) and moves the depth bias from +0.629
+            // to +0.135 velocity heads. It does NOT make FULL useful: even
+            // sign-corrected it is l1 5.24 % against BASIC's 0.163 % and
+            // plain DW's 0.141 %, because dq4j is also added to BOTH adjacent
+            // links (2485/2503) on top of each link's own full-length dq4, so
+            // the convective term is applied ~3x. Attributing it to one side
+            // instead is worse still (l1 86-103 %). No term-level correction
+            // salvages this; see plans/VJ_MOMENTUM_SCOPE.md Phase 3.
             p.dq4j = dt * p.sigma_j * (vd * vd * aMd - vu * vu * aMu) / p.lambda;
         }
     }
@@ -2485,6 +2502,13 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                 if (vj_m4) vj_dq4 += p.dq4j;
             }
         }
+        // NOTE (2026-08-14): each interface's dq4j spans midpoint-to-midpoint
+        // (Λ = ½(L_a+L_b)) and is added HERE as well as at r1 above, so an
+        // interior link picks up two of them on top of its own full-length
+        // dq4. Attributing each interface to a single link instead was
+        // measured and is far worse (l1 86-103 % vs 4-9 %), so the
+        // duplication is not the primary defect — the sign inversion noted at
+        // vjPrepareIteration is. See plans/VJ_MOMENTUM_SCOPE.md Phase 3.
         if (r2 >= 0) {
             const VJuncPair& p = vjunc_[static_cast<std::size_t>(r2)];
             if (p.active && vj_m4) vj_dq4 += p.dq4j;

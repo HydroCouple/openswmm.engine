@@ -264,13 +264,18 @@ struct SimulationOptions {
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
 
-    /** @brief Virtual-junction momentum treatment: 0=BASIC, 1=FULL.
+    /** @brief Virtual-junction momentum treatment. Always 0 (BASIC).
      *  @details BASIC applies zero storage, the shared junction sigma and
-     *           cross-junction upwinding; FULL adds the cross-junction
-     *           convective flux correction (dq4_j). Refactored engine only.
+     *           cross-junction upwinding of area/hydraulic radius; it
+     *           transmits no cross-junction convective momentum. FULL, which
+     *           added the dq4_j correction, is RETIRED (2026-08-14): the term
+     *           was sign-inverted relative to the per-link convective term and
+     *           applied to both adjacent links, destroying 224-325 % of the
+     *           routed volume on SWASHES macdonald-periodic. The keyword is
+     *           still parsed, warns, and is treated as BASIC; the field is
+     *           kept only so existing writers/readers keep their layout.
      *  @code
-     *  VIRTUAL_JUNCTION_MOMENTUM  BASIC  ;; default
-     *  VIRTUAL_JUNCTION_MOMENTUM  FULL
+     *  VIRTUAL_JUNCTION_MOMENTUM  BASIC  ;; default; FULL warns and maps here
      *  @endcode
      */
     int virtual_junction_momentum = 0;
