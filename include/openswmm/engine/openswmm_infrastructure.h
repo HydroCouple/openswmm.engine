@@ -304,6 +304,25 @@ SWMM_ENGINE_API int swmm_transect_remove(SWMM_Engine engine, int idx);
 SWMM_ENGINE_API int swmm_street_add(SWMM_Engine engine, const char* id);
 
 /**
+ * @brief Rename a street cross-section in place.
+ *
+ * @details Unlike the other named infrastructure objects, a street is
+ *          referenced BY NAME after parsing: STREET_XSECT links carry it in
+ *          their named cross-section slot, which @ref swmm_link_get_xsect
+ *          resolves and the .inp writer emits as [XSECTIONS] Geom1. This call
+ *          rewrites every such reference, so renaming cannot leave a link
+ *          pointing at a street that no longer exists.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Street index.
+ * @param new_id  New unique name (non-empty), compared case-insensitively
+ *                against the other streets. A pure case-respelling of this
+ *                same street is allowed.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ */
+SWMM_ENGINE_API int swmm_street_rename(SWMM_Engine engine, int idx, const char* new_id);
+
+/**
  * @brief Set the geometric parameters for a street cross-section.
  *
  * @param engine         Engine handle.
@@ -386,6 +405,21 @@ SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const char* type);
+
+/**
+ * @brief Rename an inlet design in place.
+ *
+ * @details [INLET_USAGE] rows hold an inlet INDEX, not a name, so usages
+ *          follow automatically.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Inlet index.
+ * @param new_id  New unique name (non-empty), compared case-insensitively
+ *                against the other inlets. A pure case-respelling of this
+ *                same inlet is allowed.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ */
+SWMM_ENGINE_API int swmm_inlet_rename(SWMM_Engine engine, int idx, const char* new_id);
 
 /**
  * @brief Set the geometric parameters for an inlet.
@@ -476,6 +510,24 @@ SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, 
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
+
+/**
+ * @brief Rename an LID control in place.
+ *
+ * @details Updates both the name vector (read by swmm_lid_id() and the
+ *          [LID_CONTROLS] writer) and the name registry (read by
+ *          swmm_lid_index() and the [LID_USAGE] writer). Usage rows hold an
+ *          LID INDEX, so subcatchment deployments follow automatically.
+ *          Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param idx     LID control index.
+ * @param new_id  New unique name (non-empty). A pure case-respelling of this
+ *                same control is allowed.
+ * @returns SWMM_OK, SWMM_ERR_LIFECYCLE outside BUILDING/OPENED, or
+ *          SWMM_ERR_BADPARAM on an empty or duplicate name.
+ */
+SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new_id);
 
 /**
  * @brief Set the surface layer properties for a LID control.

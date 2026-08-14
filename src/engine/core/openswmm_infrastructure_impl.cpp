@@ -321,6 +321,44 @@ SWMM_ENGINE_API int swmm_street_add(SWMM_Engine engine, const char* id) {
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_street_rename(SWMM_Engine engine, int idx, const char* new_id) {
+    CHECK_HANDLE(engine);
+    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    auto& st  = ctx.streets;
+    CHECK_INDEX(idx >= 0 && idx < st.count());
+    const auto ui = static_cast<std::size_t>(idx);
+
+    // Same-name (case-sensitive) is a no-op.
+    if (st.names[ui] == new_id) return SWMM_OK;
+
+    // Streets have no NameIndex — lookups are linear ieq scans — so do the
+    // collision check the same way.
+    const std::string newName(new_id);
+    for (std::size_t i = 0; i < st.names.size(); ++i) {
+        if (i == ui) continue;
+        if (openswmm::ieq(st.names[i], newName)) return SWMM_ERR_BADPARAM;
+    }
+
+    const std::string prev = st.names[ui];
+    st.names[ui] = newName;
+
+    // Unlike the other four, a street IS referenced by name after parsing:
+    // STREET_XSECT links keep it in links.pump_curve_name (that field is
+    // overloaded for named cross-section references). InpWriter emits it as
+    // [XSECTIONS] Geom1 and swmm_link_get_xsect resolves the street back by
+    // name, so skipping this fixup would write a dangling reference.
+    for (std::size_t i = 0; i < ctx.links.pump_curve_name.size(); ++i) {
+        if (i < ctx.links.xsect_shape.size() &&
+            ctx.links.xsect_shape[i] != openswmm::XsectShape::STREET_XSECT)
+            continue;
+        if (openswmm::ieq(ctx.links.pump_curve_name[i], prev))
+            ctx.links.pump_curve_name[i] = newName;
+    }
+
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_street_set_params(SWMM_Engine engine, int idx,
                                              double t_crown, double h_curb, double sx, double n_road,
                                              double gutter_depres, double gutter_width, int sides,
@@ -408,6 +446,29 @@ SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const cha
     inl.open_area.push_back(0.0);
     inl.splash_veloc.push_back(0.0);
 
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_rename(SWMM_Engine engine, int idx, const char* new_id) {
+    CHECK_HANDLE(engine);
+    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& inl = to_engine(engine)->context().inlets;
+    CHECK_INDEX(idx >= 0 && idx < inl.count());
+    const auto ui = static_cast<std::size_t>(idx);
+
+    if (inl.names[ui] == new_id) return SWMM_OK;
+
+    // No NameIndex for inlets — swmm_inlet_index scans with ieq, so the
+    // collision check must match.
+    const std::string newName(new_id);
+    for (std::size_t i = 0; i < inl.names.size(); ++i) {
+        if (i == ui) continue;
+        if (openswmm::ieq(inl.names[i], newName)) return SWMM_ERR_BADPARAM;
+    }
+
+    inl.names[ui] = newName;
+    // [INLET_USAGE] rows hold inlet_usages.design_index, not a name string, so
+    // there is nothing further to fix up.
     return SWMM_OK;
 }
 
@@ -536,6 +597,25 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
     lid.removals.push_back({});
 
     ctx.lid_names.add(id);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new_id) {
+    CHECK_HANDLE(engine);
+    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+
+    // Both stores are read: lid_controls.names backs swmm_lid_id and the
+    // [LID_CONTROLS] writer, the NameIndex backs swmm_lid_index and the
+    // [LID_USAGE] writer. NameIndex::rename arbitrates the collision.
+    if (!ctx.lid_names.rename(idx, new_id)) return SWMM_ERR_BADPARAM;
+    ctx.lid_controls.names[static_cast<std::size_t>(idx)] = new_id;
+
+    // lid_usage rows carry lid_index, not a name string — nothing else to fix.
     return SWMM_OK;
 }
 
