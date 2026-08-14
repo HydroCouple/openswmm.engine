@@ -443,9 +443,29 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else if (nc == "SEMI_IMPLICIT") opt.node_continuity = NodeContinuity::SEMI_IMPLICIT;
 
         } else if (key == "VIRTUAL_JUNCTION_MOMENTUM") {
+            // RETIRED 2026-08-14. FULL is accepted and warned for one release,
+            // then the keyword goes the way of FV_NODE_CELL_COUPLING above.
+            // It was measured to be defective, not merely inaccurate: its
+            // cross-junction term dq4j is sign-inverted with respect to the
+            // per-link convective term it supplements (at constant Q,
+            // Δ(v²A) = −v²ΔA), and it is applied to BOTH adjacent links on top
+            // of each link's own full-length dq4. On SWASHES macdonald-periodic
+            // it destroyed 224-325 % of the routed volume; negating the term
+            // restores mass conservation but still leaves l1 5.24 % against
+            // BASIC's 0.163 % and plain DW's 0.141 %, so there is no
+            // term-level correction worth keeping. Evidence:
+            // epaswmm5_qa suites/swashes plans/VJ_MOMENTUM_SCOPE.md Phase 3.
             const std::string vm = norm(val);
-            if      (vm == "BASIC") opt.virtual_junction_momentum = 0;
-            else if (vm == "FULL")  opt.virtual_junction_momentum = 1;
+            opt.virtual_junction_momentum = 0;
+            if (vm == "FULL") {
+                ctx.warnings.push_back(
+                    "WARNING: VIRTUAL_JUNCTION_MOMENTUM FULL is retired and "
+                    "will be treated as BASIC - the cross-junction momentum "
+                    "term was not mass conserving.");
+                if (ctx.warning_code == 0) {
+                    ctx.warning_code = 101;  // SWMM_WARN_UNKNOWN_OPTION
+                }
+            }
 
         } else if (key == "ANDERSON_ACCEL") {
             const std::string av = norm(val);

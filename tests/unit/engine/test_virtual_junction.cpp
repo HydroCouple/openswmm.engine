@@ -516,10 +516,38 @@ TEST(VirtualJunction, SteadyEquivalenceSemiImplicit) {
     steadyEquivalence("semi", "NODE_CONTINUITY      SEMI_IMPLICIT\n");
 }
 
-TEST(VirtualJunction, SteadyEquivalenceFullMomentum) {
+// VIRTUAL_JUNCTION_MOMENTUM FULL is RETIRED (2026-08-14). It must still parse
+// — existing project files keep working — but it must now behave EXACTLY as
+// BASIC. The term it used to add was sign-inverted with respect to the
+// per-link convective term and was applied to both adjacent links, destroying
+// 224-325 % of the routed volume on SWASHES macdonald-periodic; negating it
+// restored mass but still left l1 5.24 % against BASIC's 0.163 %. See
+// epaswmm5_qa suites/swashes plans/VJ_MOMENTUM_SCOPE.md Phase 3.
+TEST(VirtualJunction, SteadyEquivalenceFullMomentumRetired) {
     steadyEquivalence("full",
         "VIRTUAL_JUNCTION_MOMENTUM  FULL\n"
         "NODE_CONTINUITY      SEMI_IMPLICIT\n");
+}
+
+TEST(VirtualJunction, FullMomentumRetiredMatchesBasic) {
+    const std::string semi = "NODE_CONTINUITY      SEMI_IMPLICIT\n";
+    SWMM_Engine basic = openModel("vj_retired_basic",
+                                  splitModel(true, semi), true);
+    RunProbe pb = runModel(basic, "C_DN", "MID");
+    destroy(basic);
+
+    SWMM_Engine full = openModel(
+        "vj_retired_full",
+        splitModel(true, "VIRTUAL_JUNCTION_MOMENTUM  FULL\n" + semi), true);
+    RunProbe pf = runModel(full, "C_DN", "MID");
+    destroy(full);
+
+    ASSERT_TRUE(pb.ran && pf.ran);
+    // Bit-equality, not a tolerance: FULL now selects the same code path.
+    EXPECT_EQ(pf.final_flow, pb.final_flow)
+        << "VIRTUAL_JUNCTION_MOMENTUM FULL is retired and must be inert";
+    EXPECT_EQ(pf.max_probe_volume, pb.max_probe_volume);
+    EXPECT_EQ(pf.max_probe_overflow, pb.max_probe_overflow);
 }
 
 TEST(VirtualJunction, SteadyEquivalenceAnderson) {
