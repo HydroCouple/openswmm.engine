@@ -64,7 +64,7 @@ struct SurchargeAttenuationConfig {
     /// over-prediction into a near-total collapse of the band (measured
     /// width ratio ~0 against the checklist's own [0.3,3] floor -- see
     /// VALIDATION.md, PR H5). 0.05 is the calibrated value: small enough that
-    /// free-surface behavor (alpha=1) and the original 50-190x defect stay
+    /// free-surface behavior (alpha=1) and the original 50-190x defect stay
     /// fixed, large enough that the residual pressurized-friction sensitivity
     /// survives in the band the MC actually shows.
     double alpha_floor = 0.05;
