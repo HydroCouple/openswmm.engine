@@ -41,6 +41,7 @@
 namespace openswmm {
 
 struct SimulationContext;
+struct Table;
 
 namespace gage {
 
@@ -95,6 +96,62 @@ struct GageState {
  * @returns Rainfall intensity (project units/sec).
  */
 double convertRainfall(double raw_value, GageState& state);
+
+// ---------------------------------------------------------------------------
+// Shared rainfall resolution
+// ---------------------------------------------------------------------------
+//
+// The sequence "pick the gage's series -> apply the rain-type transform ->
+// apply units factor -> apply scale factor" is needed by the routing update,
+// by report rainfall, and by the swmm_gage_get_rainfall_series C API. Three
+// private copies would drift, so the pieces that are genuinely common live
+// here. (getReportRainfall deliberately does NOT apply the CUMULATIVE delta —
+// see its comment — so it composes these itself rather than calling
+// convertGageValue.)
+
+/**
+ * @brief The rainfall table a gage actually reads.
+ *
+ * @details A FILE_RAIN gage reads its own resolved `rain_series`, built at load
+ *          by load_external_rain_files; every other gage reads the shared table
+ *          pool. Deliberately kept out of `ctx.tables` so an INP round-trip
+ *          still emits FILE.
+ * @returns nullptr when the gage has no usable series (unresolvable file, or a
+ *          rain-file format the loader does not support).
+ */
+const Table* gageRainSeries(const SimulationContext& ctx, int gage_idx);
+
+/**
+ * @brief The units factor the engine applies to a gage's raw values.
+ *
+ * @details 25.40 (MMperINCH) for a STANDARD rain-file gage in an SI project,
+ *          because that loader stores float-quantized INCHES for legacy
+ *          bit-parity; 1.0 for everything else.
+ *
+ *          Scoped to STAN_PRCP on purpose. USER_CSV data is stored in the
+ *          project's own rain units, exactly like a [TIMESERIES] gage, so it
+ *          must not be rescaled — and pinning the factor to the format keeps
+ *          the legacy standard-file path byte-identical.
+ */
+double gageUnitsFactor(const SimulationContext& ctx, int gage_idx);
+
+/**
+ * @brief Apply the rain-type transform, units factor and scale factor.
+ *
+ * @details The exact arithmetic updateAllGages performs, factored out so the
+ *          read-back API cannot drift from what the run actually applies.
+ *          Operand order is load-bearing for legacy parity: `raw / interval *
+ *          3600.0` as one divide then one multiply, and units factor BEFORE
+ *          scale factor.
+ *
+ * @param cumul_accum [in/out] Running total for CUMULATIVE gages; a decrease is
+ *                    read as a counter reset. Ignored for other rain types, but
+ *                    callers walking a whole series must carry it entry to
+ *                    entry or the deltas are wrong.
+ */
+double convertGageValue(double raw, int rain_type, double interval_sec,
+                        double& cumul_accum, double units_factor,
+                        double scale_factor);
 
 /**
  * @brief Result of splitting a gage's precipitation for one subcatchment.

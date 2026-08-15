@@ -306,6 +306,80 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall_bulk(SWMM_Engine engine, double* buf,
  *  idx is out of range. */
 SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* newId);
 
+/* =========================================================================
+ * Resolved rainfall series
+ * ========================================================================= */
+
+/**
+ * @brief Number of entries in a gage's resolved rainfall series.
+ *
+ * @details Works for both data sources: a TIMESERIES gage reports its table's
+ *          length, a FILE gage the length of the series loaded from disk at
+ *          open. A FILE gage reports 0 when its file could not be read or its
+ *          format is not one the engine loads — in which case that gage also
+ *          contributes no rainfall to the run.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based gage index.
+ * @param[out] count Receives the entry count.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series_count(SWMM_Engine engine, int idx,
+                                                        int* count);
+
+/**
+ * @brief Copy a gage's resolved rainfall series.
+ *
+ * @details Returns the rainfall the engine will ACTUALLY apply, so a caller
+ *          never has to know how a gage stores its data. The rain-type
+ *          transform, the rain-file units factor, and the gage scale factor
+ *          are all applied, using the same conversion the routing update runs
+ *          — so a series read back here and replayed through a TIMESERIES gage
+ *          of type INTENSITY reproduces the original gage.
+ *
+ *          Each entry is the intensity that applies from its own time stamp
+ *          until the recording interval elapses or the next entry begins,
+ *          whichever comes first; rainfall is zero in between. Pair this with
+ *          swmm_gage_get_rain_interval() to reconstruct that behaviour.
+ *
+ * @note A FILE gage's series is windowed to the [OPTIONS] simulation dates
+ *       (± one day) and reflects the file as it was read at open. Call
+ *       swmm_gage_reload_rain_files() first if the path, station, units, or
+ *       simulation dates have changed since.
+ *
+ * @param engine      Engine handle.
+ * @param idx         Zero-based gage index.
+ * @param[out] times  Receives entry times as SWMM DateTime (decimal days),
+ *                    matching swmm_table_get_point(). May be NULL.
+ * @param[out] values Receives rainfall INTENSITY in the project's rain units
+ *                    per hour (in/hr for US flow units, mm/hr for SI).
+ *                    May be NULL.
+ * @param count       Capacity of each output array; at most this many entries
+ *                    are written.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series(SWMM_Engine engine, int idx,
+                                                  double* times, double* values,
+                                                  int count);
+
+/**
+ * @brief Re-read every FILE-source rain gage's data from disk.
+ *
+ * @details Rain files are loaded once, during open(). Nothing re-runs that
+ *          afterwards, so changing a gage's path, station id, or rain units —
+ *          or the simulation dates the data is windowed to — has no effect
+ *          until the model is reopened, and readers keep seeing the previous
+ *          file's contents. Call this after such an edit.
+ *
+ *          Rebuilds the resolved series and the rainfall-file summary
+ *          statistics for every FILE gage. Requires the model to be editable
+ *          (BUILDING or OPENED); it is not valid mid-run.
+ *
+ * @param engine Engine handle.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_reload_rain_files(SWMM_Engine engine);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

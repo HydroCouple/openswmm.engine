@@ -61,6 +61,21 @@ namespace openswmm::input {
 void resolve_cross_references(SimulationContext& ctx);
 
 /**
+ * @brief (Re)load every FILE-source rain gage's data from disk.
+ *
+ * @details Runs as part of resolve_cross_references() during open(). Exposed
+ *          separately so an editing host can pick up a changed file path,
+ *          station, or units without reopening the model — nothing else
+ *          re-runs it, so `swmm_file_path_set` on a rain gage would otherwise
+ *          have no effect until the next open and callers would silently keep
+ *          reading the previous file's data.
+ *
+ *          Rebuilds `ctx.gages.rain_series` and the rainfall-file summary
+ *          statistics, windowed to the current [OPTIONS] simulation dates.
+ */
+void load_external_rain_files(SimulationContext& ctx);
+
+/**
  * @brief Convert the input fields the reader scaled to internal units back to
  *        display units (matching @c ctx.options.flow_units).
  *
