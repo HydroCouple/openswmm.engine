@@ -230,7 +230,174 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
 // `rain_series` Table so the runtime reuses the same step-function lookup as
 // an inline [TIMESERIES] gage without polluting ctx.tables.
 // -------------------------------------------------------------------------
-static void load_external_rain_files(SimulationContext& ctx) {
+// -------------------------------------------------------------------------
+// USER_CSV rain files
+// -------------------------------------------------------------------------
+// `FILE "rain.csv:COLUMN"` — a header row, comma-separated, with the value
+// taken from the column whose header matches COLUMN. Column 1 carries a full
+// date-time. Values are in the PROJECT's rain units and are stored verbatim:
+// unlike the standard format there is no legacy interface file to be
+// bit-compatible with, so the read side interprets them per the gage's
+// declared Format exactly as it does for an inline [TIMESERIES] gage. See
+// gage::gageUnitsFactor, which is scoped to STAN_PRCP for this reason.
+// -------------------------------------------------------------------------
+
+/// Trim ASCII whitespace and surrounding double quotes.
+static std::string csv_trim(const std::string& s) {
+    std::size_t a = 0, b = s.size();
+    auto space = [](char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    };
+    while (a < b && space(s[a])) ++a;
+    while (b > a && space(s[b - 1])) --b;
+    if (b - a >= 2 && s[a] == '"' && s[b - 1] == '"') { ++a; --b; }
+    return s.substr(a, b - a);
+}
+
+static std::vector<std::string> csv_split(const std::string& line) {
+    std::vector<std::string> out;
+    std::string cur;
+    bool in_quotes = false;
+    for (const char c : line) {
+        if (c == '"') { in_quotes = !in_quotes; cur.push_back(c); }
+        else if (c == ',' && !in_quotes) { out.push_back(csv_trim(cur)); cur.clear(); }
+        else cur.push_back(c);
+    }
+    out.push_back(csv_trim(cur));
+    return out;
+}
+
+static bool csv_iequals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i]))
+            != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+    return true;
+}
+
+/// Parse a full date-time cell: ISO-8601 or MM/DD/YYYY, with optional clock.
+static bool csv_parse_datetime(const std::string& cell, double& out) {
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+    const char* c = cell.c_str();
+
+    // ISO-8601: YYYY-MM-DD[ T]HH:MM[:SS]
+    int n = std::sscanf(c, "%d-%d-%d%*[ T]%d:%d:%d", &y, &mo, &d, &h, &mi, &s);
+    if (n >= 3) {
+        if (n < 4) { h = mi = s = 0; }
+        else if (n < 6) { s = 0; }
+        out = datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
+        return true;
+    }
+
+    // US: MM/DD/YYYY[ ]HH:MM[:SS]
+    n = std::sscanf(c, "%d/%d/%d %d:%d:%d", &mo, &d, &y, &h, &mi, &s);
+    if (n >= 3) {
+        if (n < 5) { h = mi = s = 0; }
+        else if (n < 6) { s = 0; }
+        out = datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
+        return true;
+    }
+    return false;
+}
+
+static void load_rain_file_user_csv(SimulationContext& ctx, int g,
+                                    const std::string& path,
+                                    double win_lo, double win_hi) {
+    const auto ug = static_cast<std::size_t>(g);
+
+    FILE* fp = std::fopen(path.c_str(), "r");
+    if (!fp) {
+        fp = std::fopen(ctx.gages.file_path[ug].c_str(), "r");
+        if (!fp) {
+            ctx.errors.push_back(format_error(openswmm::ERR_RAIN_FILE_OPEN, path));
+            return;
+        }
+    }
+
+    char line[4096];
+    if (!std::fgets(line, sizeof(line), fp)) {
+        std::fclose(fp);
+        ctx.errors.push_back(format_error(openswmm::ERR_RAIN_FILE_FORMAT, path));
+        return;
+    }
+
+    const std::vector<std::string> headers = csv_split(line);
+    const std::string& want = ctx.gages.col_name[ug];
+    int col = -1;
+    for (std::size_t i = 0; i < headers.size(); ++i)
+        if (csv_iequals(headers[i], want)) { col = static_cast<int>(i); break; }
+
+    if (col <= 0) {
+        // col 0 is the time stamp, so a match there is as wrong as no match.
+        std::fclose(fp);
+        ctx.errors.push_back(format_error(openswmm::ERR_RAIN_FILE_FORMAT,
+                                          path + " (column \"" + want + "\")"));
+        return;
+    }
+
+    Table series;
+    series.type = TableType::TIMESERIES;
+    series.id   = ctx.gage_names.name_of(g);
+
+    double first_date = 0.0, last_date = 0.0;
+    long   periods_precip = 0;
+    long   unparsed_rows  = 0;
+
+    while (std::fgets(line, sizeof(line), fp)) {
+        if (line[0] == ';' || line[0] == '#' || line[0] == '\n' || line[0] == '\r')
+            continue;
+        const std::vector<std::string> cells = csv_split(line);
+        if (static_cast<int>(cells.size()) <= col) continue;
+
+        double dt = 0.0;
+        if (!csv_parse_datetime(cells[0], dt)) { ++unparsed_rows; continue; }
+
+        char* endp = nullptr;
+        const double val = std::strtod(cells[static_cast<std::size_t>(col)].c_str(), &endp);
+        if (endp == cells[static_cast<std::size_t>(col)].c_str()) { ++unparsed_rows; continue; }
+
+        if (first_date == 0.0 || dt < first_date) first_date = dt;
+        if (dt > last_date) last_date = dt;
+        if (val > 0.0) ++periods_precip;
+
+        if (dt < win_lo || dt > win_hi) continue;
+        series.x.push_back(dt);
+        series.y.push_back(val);
+    }
+    std::fclose(fp);
+
+    if (unparsed_rows > 0) {
+        // One warning per gage, not per row: a mis-specified file would
+        // otherwise bury the report under thousands of identical lines.
+        ctx.warnings.push_back(
+            format_warning(openswmm::WARN_RAIN_CSV_ROWS_SKIPPED,
+                           ctx.gage_names.name_of(g),
+                           std::to_string(unparsed_rows) + " row(s), " + path));
+    }
+
+    if (!std::is_sorted(series.x.begin(), series.x.end())) {
+        std::vector<std::size_t> order(series.x.size());
+        for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::sort(order.begin(), order.end(),
+                  [&](std::size_t a, std::size_t b){ return series.x[a] < series.x[b]; });
+        std::vector<double> sx(series.x.size()), sy(series.y.size());
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            sx[i] = series.x[order[i]];
+            sy[i] = series.y[order[i]];
+        }
+        series.x.swap(sx);
+        series.y.swap(sy);
+    }
+    series.x.shrink_to_fit();
+    series.y.shrink_to_fit();
+
+    ctx.gages.file_first_date[ug]     = first_date;
+    ctx.gages.file_last_date[ug]      = last_date;
+    ctx.gages.file_periods_precip[ug] = periods_precip;
+    ctx.gages.rain_series[ug]         = std::move(series);
+}
+
+void load_external_rain_files(SimulationContext& ctx) {
     const int n_gages = ctx.gages.count();
     if (n_gages == 0) return;
 
@@ -245,11 +412,16 @@ static void load_external_rain_files(SimulationContext& ctx) {
     for (int g = 0; g < n_gages; ++g) {
         const auto ug = static_cast<std::size_t>(g);
         if (ctx.gages.source[ug] != RainSource::FILE_RAIN) continue;
-        if (ctx.gages.file_format[ug] != RainFileFormat::STAN_PRCP) continue;
+
+        const bool is_csv = ctx.gages.file_format[ug] == RainFileFormat::USER_CSV;
+        if (!is_csv && ctx.gages.file_format[ug] != RainFileFormat::STAN_PRCP) continue;
 
         std::string path = !ctx.gages.file_path[ug].absolute.empty()
                              ? ctx.gages.file_path[ug].absolute
                              : ctx.gages.file_path[ug].str();
+
+        if (is_csv) { load_rain_file_user_csv(ctx, g, path, win_lo, win_hi); continue; }
+
         FILE* fp = std::fopen(path.c_str(), "r");
         if (!fp) {
             fp = std::fopen(ctx.gages.file_path[ug].c_str(), "r");

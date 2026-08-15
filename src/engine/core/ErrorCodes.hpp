@@ -265,6 +265,7 @@ enum WarnCode : int {
     WARN_2D_OPTION_RETIRED      = 104, ///< [2D_OPTIONS] %s retired with CVODE/ARKODE and was ignored
     WARN_FV_OPTION_INERT        = 105, ///< %s has no effect under FLOW_ROUTING FV
     WARN_DW_OPTION_UNDER_FV     = 106, ///< %s is a dynamic wave option and does not apply under FLOW_ROUTING FV
+    WARN_RAIN_CSV_ROWS_SKIPPED  = 107, ///< unreadable row(s) skipped in rainfall CSV for Rain Gage %s
 };
 
 // ============================================================================

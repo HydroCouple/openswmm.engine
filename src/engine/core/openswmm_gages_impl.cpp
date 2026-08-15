@@ -29,6 +29,9 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_gages.h"
 
+#include "../hydrology/Gage.hpp"
+#include "../input/PostParseResolver.hpp"
+
 extern "C" {
 
 // ============================================================================
@@ -308,6 +311,63 @@ SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* ne
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     return ctx.gage_names.rename(idx, newId) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+// ============================================================================
+// Resolved rainfall series
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series_count(SWMM_Engine engine, int idx,
+                                                        int* count) {
+    CHECK_HANDLE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+
+    const openswmm::Table* tbl = openswmm::gage::gageRainSeries(ctx, idx);
+    *count = tbl ? static_cast<int>(tbl->x.size()) : 0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series(SWMM_Engine engine, int idx,
+                                                  double* times, double* values,
+                                                  int count) {
+    CHECK_HANDLE(engine);
+    if (count < 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+
+    const openswmm::Table* tbl = openswmm::gage::gageRainSeries(ctx, idx);
+    if (!tbl) return SWMM_OK;   // no series: nothing to write, not an error
+
+    const auto ug = static_cast<std::size_t>(idx);
+    const int  rain_type    = ctx.gages.rain_type[ug];
+    const double interval   = ctx.gages.interval_sec[ug];
+    const double units_fac  = openswmm::gage::gageUnitsFactor(ctx, idx);
+    const double scale_fac  = ctx.gages.scale_factor[ug];
+
+    // The CUMULATIVE accumulator is stateful across entries, so the series must
+    // be walked in order from a fresh accumulator — reusing the live one would
+    // both corrupt the run and make this call order-dependent.
+    double cumul_accum = 0.0;
+
+    const int n = std::min(count, static_cast<int>(tbl->x.size()));
+    for (int k = 0; k < n; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        if (times) times[k] = tbl->x[uk];
+        const double v = openswmm::gage::convertGageValue(
+            tbl->y[uk], rain_type, interval, cumul_accum, units_fac, scale_fac);
+        if (values) values[k] = v;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_reload_rain_files(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    openswmm::input::load_external_rain_files(ctx);
+    return SWMM_OK;
 }
 
 } /* extern "C" */

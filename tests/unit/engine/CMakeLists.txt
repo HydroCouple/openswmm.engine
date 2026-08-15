@@ -175,6 +175,11 @@ add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)
 add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cpp)
 add_gtest_unit(test_engine_gage_attributes  test_gage_attributes.cpp)
 add_gtest_unit(test_engine_gage_file_roundtrip test_gage_file_roundtrip.cpp)
+
+# USER_CSV rain-file loading (documented in the manual, previously never read —
+# such a gage contributed zero rainfall silently) plus the guard that the
+# resolved-series API cannot drift from what updateAllGages applies.
+add_gtest_unit(test_engine_gage_rain_series test_gage_rain_series.cpp)
 add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_lid              test_lid.cpp)
 target_compile_definitions(test_engine_lid PRIVATE
