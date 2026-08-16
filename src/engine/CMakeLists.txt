@@ -40,6 +40,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     output/*.cpp
     plugins/*.cpp
     math/*.cpp
+    transport/*.cpp
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
@@ -56,6 +57,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     output/*.hpp
     plugins/*.hpp
     math/*.hpp
+    transport/*.hpp
 )
 list(FILTER OPENSWMM_ENGINE_HEADERS EXCLUDE REGEX "input/geopackage/.*")
 
