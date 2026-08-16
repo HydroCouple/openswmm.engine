@@ -2944,9 +2944,35 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         inlet_.adjustQualInflows(ctx_, dt_routing);
     }
 
-    // B5. Water quality routing (P8-G13: fill stub bodies)
+    // B5. Water quality routing (P8-G13: fill stub bodies).
+    //     QUALITY_SOLVER EULERIAN_ARD (master plan D-UT6, phase E1): the
+    //     external-load assembly is shared with the legacy path; the CSTR
+    //     transport stages are replaced by the ARD engine on the FV cell
+    //     mesh. Lazy first-step init because the transport mesh needs
+    //     Router::init's mod_length/rough_factor. Init failure falls back
+    //     to LEGACY with a warning — never a silent no-quality run.
     if (ctx_.n_pollutants() > 0 && !ctx_.options.ignore_quality) {
-        quality_.execute(ctx_, dt_routing);
+        if (ctx_.options.quality_solver == QualitySolverKind::EULERIAN_ARD) {
+            if (!ard_init_attempted_) {
+                ard_init_attempted_ = true;
+                const bool ok = ard_.init(ctx_);
+                for (const auto& w : ard_.warnings())
+                    ctx_.warnings.push_back(w);
+                if (!ok)
+                    ctx_.warnings.push_back(
+                        "QUALITY_SOLVER EULERIAN_ARD: transport mesh "
+                        "unavailable — falling back to LEGACY quality "
+                        "routing.");
+            }
+            if (ard_.initialized()) {
+                quality_.assembleExternalLoads(ctx_, dt_routing);
+                ard_.step(ctx_, dt_routing);
+            } else {
+                quality_.execute(ctx_, dt_routing);
+            }
+        } else {
+            quality_.execute(ctx_, dt_routing);
+        }
     }
 }
 

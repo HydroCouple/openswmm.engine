@@ -111,6 +111,7 @@ add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 # open() (before parsing) as in report_writeLogo(), and elapsed time rolls
 # whole days into a "d." prefix as in report_writeSysTime().
 add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
+add_gtest_unit(test_engine_ard_transport          test_ard_transport.cpp)
 # In-place rename for snow packs / aquifers / inlets / streets / LID controls.
 # Without these APIs the GUI registries flushed a renamed object as a NEW one,
 # duplicating it in the engine and orphaning the original.

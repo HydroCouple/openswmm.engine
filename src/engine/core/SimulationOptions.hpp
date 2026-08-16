@@ -80,6 +80,15 @@ enum class RoutingModel : int {
 };
 
 /**
+ * @brief Water-quality engine (`[OPTIONS] QUALITY_SOLVER`, master plan D-UT6).
+ */
+enum class QualitySolverKind : int {
+    LEGACY       = 0,  ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
+    EULERIAN_ARD = 1   ///< Eulerian ARD on the FV cell mesh (all routing models)
+    // LAGRANGIAN reserved — plans/LAGRANGIAN_QUALITY_STRATEGY.md (phase T5)
+};
+
+/**
  * @brief Infiltration methods.
  * @see Legacy: InfilModelType in enums.h
  */
@@ -210,6 +219,18 @@ struct SimulationOptions {
 
     /** @brief Routing method. Legacy default: DYNWAVE. */
     RoutingModel routing_model = RoutingModel::DYNWAVE;
+
+    /**
+     * @brief Water-quality engine selection (`[OPTIONS] QUALITY_SOLVER`).
+     *
+     * @details LEGACY = the legacy-parity CSTR QualitySolver (default,
+     *          bit-identical behavior). EULERIAN_ARD = the solver-agnostic
+     *          Eulerian ARD engine on the FV cell mesh
+     *          (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md rev. 2;
+     *          master plan D-UT6). LAGRANGIAN is reserved (parses to a
+     *          warning until LARD lands, plan phase T5).
+     */
+    QualitySolverKind quality_solver = QualitySolverKind::LEGACY;
 
     /**
      * @brief Knobs for FLOW_ROUTING FV, grouped rather than spread across this
