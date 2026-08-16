@@ -43,6 +43,8 @@
 #include <string_view>
 #include <vector>
 
+#include "ReactionTokens.hpp"
+
 namespace openswmm {
 
 enum class ReactionSolverKind : int { EUL = 0, RK5 = 1, ROS2 = 2, BDF2 = 3 };
@@ -89,6 +91,13 @@ struct ReactionData {
     // ---- [REACTION_QUALITY] GLOBAL initial values (R1 scope; NODE/LINK
     //      scopes land with R-later phases) ----------------------------------
     std::vector<double> init_global;         ///< size n_species
+
+    // ---- Compiled bytecode (R2 — D-L3 flat pool; spans index token_pool) ----
+    std::vector<RxToken>    token_pool;      ///< hot: one contiguous pool
+    std::vector<RxExprSpan> term_expr;       ///< per term, in-order evaluation
+    std::vector<RxExprSpan> pipe_expr;       ///< per species (len 0 ⇒ none)
+    std::vector<RxExprSpan> tank_expr;       ///< per species
+    bool compiled = false;                   ///< R2 compile pass succeeded
 
     bool configured = false;                 ///< a reactions component applied
 

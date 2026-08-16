@@ -30,6 +30,7 @@
 #include "../../../core/SimulationContext.hpp"
 #include "../../../input/Tokenizer.hpp"
 #include "../../../plugins/ProcessComponentRegistry.hpp"
+#include "ReactionExpression.hpp"
 
 namespace openswmm::transport {
 
@@ -128,17 +129,17 @@ void parseSpecies(SimulationContext& ctx, const std::vector<std::string>& lines,
             errors.push_back("[REACTION_SPECIES] duplicate species '" + name + "'.");
             continue;
         }
-        // Register — collision with pollutant (or reserved) names is refused
-        // by the registry: species names are globally unique (master plan §4.1).
-        const int reg = ctx.species_registry.add(
-            name, is_wall ? SpeciesKind::MSX_WALL : SpeciesKind::MSX_BULK, tok[2]);
-        if (reg < 0) {
+        // Collision with pollutant (or reserved) names is refused — species
+        // names are globally unique (master plan §4.1). STAGED ONLY: the
+        // registry commit happens after the whole config validates and
+        // compiles (R2 transactional rule — a rejected file must leave no
+        // registry entries behind, R1 validation finding).
+        if (ctx.species_registry.find(name) >= 0) {
             errors.push_back("[REACTION_SPECIES] '" + name +
                              "' collides with an existing pollutant or "
                              "species name.");
             continue;
         }
-        if (rx.registry_base < 0) rx.registry_base = reg;
         rx.species_name.push_back(name);
         rx.species_is_wall.push_back(is_wall ? 1 : 0);
         rx.species_units.push_back(tok[2]);
@@ -378,7 +379,67 @@ void applyReactionSections(SimulationContext& ctx,
                              "'.");
     }
 
-    if (errors.empty()) ctx.reactions.configured = true;
+    if (!errors.empty()) {
+        // Transactional: a rejected config leaves NOTHING behind — neither
+        // reaction state nor registry entries (nothing was committed yet).
+        ctx.reactions.clear();
+        return;
+    }
+
+    // ---- R2: compile every expression into the flat token pool. --------
+    auto& rx2 = ctx.reactions;
+    rx2.token_pool.clear();
+    rx2.term_expr.assign(rx2.term_name.size(), RxExprSpan{});
+    rx2.pipe_expr.assign(static_cast<std::size_t>(rx2.n_species()), RxExprSpan{});
+    rx2.tank_expr.assign(static_cast<std::size_t>(rx2.n_species()), RxExprSpan{});
+
+    RxSymbols sym;
+    sym.species = &rx2.species_name;
+    sym.coefs   = &rx2.coef_name;
+    sym.terms   = &rx2.term_name;
+
+    auto compile_one = [&](const std::string& src_expr, RxExprSpan& span,
+                           const std::string& where) {
+        int col = 0;
+        const std::string err = compileReactionExpression(
+            src_expr, sym, rx2.token_pool, span, col);
+        if (!err.empty())
+            errors.push_back(where + " (col " + std::to_string(col) +
+                             "): " + err + ".");
+    };
+
+    for (std::size_t i = 0; i < rx2.term_name.size(); ++i) {
+        sym.max_term = static_cast<int>(i);   // forward-only rule
+        compile_one(rx2.term_expr_src[i], rx2.term_expr[i],
+                    "[REACTION_TERMS] '" + rx2.term_name[i] + "'");
+    }
+    sym.max_term = static_cast<int>(rx2.term_name.size());
+    for (int sidx = 0; sidx < rx2.n_species(); ++sidx) {
+        const auto us = static_cast<std::size_t>(sidx);
+        if (rx2.pipe_form[us] != ReactionExprForm::NONE)
+            compile_one(rx2.pipe_expr_src[us], rx2.pipe_expr[us],
+                        "[REACTION_PIPES] '" + rx2.species_name[us] + "'");
+        if (rx2.tank_form[us] != ReactionExprForm::NONE)
+            compile_one(rx2.tank_expr_src[us], rx2.tank_expr[us],
+                        "[REACTION_TANKS] '" + rx2.species_name[us] + "'");
+    }
+    if (!errors.empty()) {
+        ctx.reactions.clear();
+        return;
+    }
+
+    // ---- Commit: registry entries only now, after full success. --------
+    for (int sidx = 0; sidx < rx2.n_species(); ++sidx) {
+        const auto us = static_cast<std::size_t>(sidx);
+        const int reg = ctx.species_registry.add(
+            rx2.species_name[us],
+            rx2.species_is_wall[us] ? SpeciesKind::MSX_WALL
+                                    : SpeciesKind::MSX_BULK,
+            rx2.species_units[us]);
+        if (rx2.registry_base < 0) rx2.registry_base = reg;
+    }
+    rx2.compiled   = true;
+    rx2.configured = true;
 }
 
 void applyEmbeddedReactionSections(SimulationContext& ctx,
