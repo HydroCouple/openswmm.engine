@@ -2131,6 +2131,23 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"\n");
     }}
 
+    // Embedded component sections ([REACTION_*] today) are NOT serialized —
+    // there is no per-component saveData() until IO3, and the intended layout
+    // is an external config file anyway. Say so rather than dropping
+    // user-authored model data silently: whether they were applied or
+    // overridden by an external file, they are gone from the deck we just
+    // wrote.
+    if(warnings && !ctx.embedded_component_sections.empty()){
+    std::string tags;
+    for(const auto&es:ctx.embedded_component_sections){
+    if(!tags.empty())tags+=", ";tags+="["+es.first+"]";}
+    warnings->push_back(
+    "Embedded component sections are NOT written back to the .inp and are "
+    "lost from this save: "+tags+". Move them to an external component "
+    "config file registered in [PROCESS_COMPONENTS] (config=\"model.rxn\") "
+    "to keep them — per-component serialization arrives with plan phase IO3.");
+    }
+
     // [2D_*] — 2D surface-routing model definition (no-op for 1D models
     // and for engine builds without the 2D module).
     write2DSections(f, ctx, dst_dir, force_abs_paths, warnings);
