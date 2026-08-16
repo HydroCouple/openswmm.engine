@@ -68,6 +68,7 @@
 #include "../hydrology/RunoffInterface.hpp"
 #include "../hydrology/RdiiInterface.hpp"
 #include "../quality/QualityRouting.hpp"
+#include "../transport/components/EulerianArdComponent/ArdEngine.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
 #include "../hydraulics/Exfiltration.hpp"
@@ -378,6 +379,8 @@ private:
     groundwater::GWSolver        groundwater_;  ///< Groundwater (batch ODE per subcatchment)
     lid::LIDSolver               lid_;          ///< LID (batch by type group)
     quality::QualitySolver       quality_;      ///< Quality routing (batch link-load + mixing)
+    transport::ArdEngine         ard_;          ///< QUALITY_SOLVER EULERIAN_ARD engine (phase E1)
+    bool                         ard_init_attempted_ = false;  ///< lazy init after Router::init
     landuse::LanduseSolver       landuse_solver_; ///< Buildup/washoff computation
     landuse::SurfaceQualitySoA   surface_quality_; ///< Per-subcatch surface quality state
     controls::ControlEngine      controls_;     ///< Control rule evaluation

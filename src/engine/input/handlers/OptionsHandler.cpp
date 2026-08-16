@@ -169,6 +169,17 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else if (rv == "NONE" || rv == "NO_ROUTING") opt.ignore_routing = true;
             else opt.ext_options[key] = val;
 
+        } else if (key == "QUALITY_SOLVER") {
+            // Unified Transport suite, master plan D-UT6. LAGRANGIAN is a
+            // recognised-but-unimplemented value (plan phase T5): fall back to
+            // LEGACY rather than erroring so the file stays portable, and let
+            // the ext_options record surface it for diagnostics.
+            const std::string qv = norm(val);
+            if      (qv == "LEGACY")       opt.quality_solver = QualitySolverKind::LEGACY;
+            else if (qv == "EULERIAN_ARD" || qv == "ARD")
+                opt.quality_solver = QualitySolverKind::EULERIAN_ARD;
+            else opt.ext_options[key] = val;
+
         // -----------------------------------------------------------------
         // Timesteps
         // -----------------------------------------------------------------
