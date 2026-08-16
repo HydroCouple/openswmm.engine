@@ -4472,28 +4472,16 @@ void SWMMEngine::applyForcings(double dt) noexcept {
         // mixing during the same routing step.
 
         // ---- Persistent user quality mass flux (user_conc_mass_flux) ----
-        // Applied as additive mass source each step, analogous to user_lat_flow.
-        // mass_rate is in mass/sec; converted to concentration delta via volume.
-        if (!ctx_.nodes.user_conc_mass_flux.empty()) {
-            for (int i = 0; i < ctx_.n_nodes(); ++i) {
-                auto ui = static_cast<std::size_t>(i);
-                double vol = ctx_.nodes.volume[ui];
-                for (int p = 0; p < np; ++p) {
-                    auto flat = ui * static_cast<std::size_t>(np)
-                              + static_cast<std::size_t>(p);
-                    double mass_rate = ctx_.nodes.user_conc_mass_flux[flat];
-                    if (mass_rate == 0.0) continue;
-
-                    // Convert mass flux to concentration: C += (mass_rate * dt) / volume
-                    if (vol > 0.0) {
-                        ctx_.nodes.conc[flat] += mass_rate * dt / vol;
-                    }
-                    // Track cumulative forced quality mass (mass = rate * dt)
-                    ctx_.mass_balance.routing_forcing_qual_inflow[
-                        static_cast<std::size_t>(p)] += mass_rate * dt;
-                }
-            }
-        }
+        // NOT applied here. It used to be a post-quality concentration bump
+        // (C += mass_rate*dt/volume), which the next routing step's mixing
+        // overwrote, so the forced mass was booked in the ledger but never
+        // actually entered the system. It is delivered in the loader stage
+        // instead — QualitySolver::addExtInflowLoads() — exactly as legacy
+        // addExternalInflows() does it (routing.c: Node[j].newQual[p] += w;
+        // massbal_addInflowQual(EXTERNAL_INFLOW, p, w)). That is also the
+        // only place that reaches BOTH the legacy CSTR mixing and the ARD
+        // node stores. This mirrors the forced-lateral-inflow treatment,
+        // which likewise counts as external inflow (issue #113).
     }
 }
 

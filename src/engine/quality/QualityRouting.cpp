@@ -139,6 +139,38 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
                 ctx.mass_balance.qual_routing_ex_in[pi] += mass_rate * dt;
         }
     }
+
+    // Runtime-API forced quality mass (swmm_node_set_quality_mass_flux), a
+    // mass RATE like the loads above. Legacy addExternalInflows() delivers it
+    // in exactly this stage and books it as EXTERNAL_INFLOW, positive only
+    // (routing.c: w = Node[j].apiExtQualMassFlux[p]; if (w > 0.0) {
+    // Node[j].newQual[p] += w; massbal_addInflowQual(EXTERNAL_INFLOW, p, w); }).
+    //
+    // It carries no water of its own, so nothing is added to qual_vol_in — the
+    // mixing denominator stays the node's actual inflow, as in legacy.
+    // routing_forcing_qual_inflow remains a diagnostic SUBSET of the external
+    // total (never added to it twice), mirroring routing_forcing_inflow on the
+    // flow side.
+    if (!nodes.user_conc_mass_flux.empty()) {
+        for (int i = 0; i < ctx.n_nodes(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            for (int p = 0; p < np; ++p) {
+                auto nd_idx = ui * static_cast<std::size_t>(np) +
+                              static_cast<std::size_t>(p);
+                if (nd_idx >= nodes.user_conc_mass_flux.size()) continue;
+                const double w = nodes.user_conc_mass_flux[nd_idx];
+                if (w <= 0.0) continue;
+                if (nd_idx < nodes.qual_mass_in.size())
+                    nodes.qual_mass_in[nd_idx] += w;
+
+                auto pi = static_cast<std::size_t>(p);
+                if (pi < ctx.mass_balance.qual_routing_ex_in.size())
+                    ctx.mass_balance.qual_routing_ex_in[pi] += w * dt;
+                if (pi < ctx.mass_balance.routing_forcing_qual_inflow.size())
+                    ctx.mass_balance.routing_forcing_qual_inflow[pi] += w * dt;
+            }
+        }
+    }
 }
 
 void QualitySolver::execute(SimulationContext& ctx, double dt) {
