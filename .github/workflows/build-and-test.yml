@@ -103,6 +103,17 @@ jobs:
         with:
           arch: x64
 
+      - name: Re-pin VCPKG_ROOT (Windows)
+        # vcvars64 (VS 2022 17.6+) exports VCPKG_ROOT pointing at Visual
+        # Studio's bundled vcpkg (…\VC\vcpkg — a bare vcpkg.exe, no bootstrap
+        # scripts, no ports checkout), and msvc-dev-cmd forwards it to every
+        # later step, where it overrides the job-level env. Without this
+        # re-pin, the bootstrap step cd's into VS's copy and
+        # ".\bootstrap-vcpkg.bat" does not exist there.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
+
       - name: Bootstrap vcpkg (Windows)
         if: runner.os == 'Windows'
         working-directory: ${{ env.VCPKG_ROOT }}
