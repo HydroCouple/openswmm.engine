@@ -73,6 +73,32 @@ public:
     void execute(SimulationContext& ctx, double dt);
 
     /**
+     * @brief Stage 1 of execute() only: reset the assembly arrays and run the
+     *        five external-load adders (washoff, RDII, DWF, GW, iface) into
+     *        nodes.qual_mass_in / qual_vol_in — no mixing, decay, or link
+     *        update.
+     *
+     * @details Split out (behavior-preserving refactor) so the Eulerian ARD
+     *          engine (QUALITY_SOLVER EULERIAN_ARD) can consume the same
+     *          source loads while replacing the CSTR transport stages —
+     *          master plan §4.3 source-attribution seam.
+     */
+    void assembleExternalLoads(SimulationContext& ctx, double dt);
+
+    /**
+     * @brief Add direct external inflow (`[INFLOWS]` CONCEN/MASS) pollutant
+     *        loads, and the direct inflow's water, to the node assembly arrays.
+     *
+     * @details The mass rates were evaluated by the inflow solver into
+     *          nodes.ext_qual_mass (CONCEN rows already multiplied by the
+     *          node's flow). This also folds the direct inflow volume into
+     *          qual_vol_in, which is the mixing denominator — legacy divides
+     *          by Node[j].inflow, a total that includes lateral inflow.
+     * @see Legacy: routing.c addExternalInflows() pollutant portion
+     */
+    void addExtInflowLoads(SimulationContext& ctx, double dt);
+
+    /**
      * @brief Add subcatchment washoff quality loads to node inflows.
      *
      * @details For each subcatchment with runoff, adds the washoff
