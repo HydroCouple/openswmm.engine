@@ -44,6 +44,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 
+#include "core/InpWriter.hpp"
 #include "core/SWMMEngine.hpp"
 
 namespace {
@@ -274,6 +275,39 @@ TEST_F(ReactionsConfigTest, EmbeddedFallbackAppliesAndExternalWins) {
     }
     std::remove("_rx_both.inp");
     std::remove("_rx_ext.rxn");
+}
+
+// ---------------------------------------------------------------------------
+// Embedded [REACTION_*] sections are dropped by InpWriter (no per-component
+// serialization until IO3) — the save must SAY so rather than destroying
+// user-authored model data silently. Falsifier: remove the writer warning and
+// this fails; the sections themselves are expected to be absent either way.
+// ---------------------------------------------------------------------------
+TEST_F(ReactionsConfigTest, EmbeddedSectionsLostOnSaveAreReported) {
+    write_deck("_rx_save.inp", "", "[REACTION_SPECIES]\nBULK EMB_A MG\n\n");
+    ASSERT_EQ(open_deck("_rx_save.inp", "_rx_save.rpt", "_rx_save.out"),
+              SWMM_OK);
+    const auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_TRUE(ctx.reactions.configured);
+
+    std::vector<std::string> warnings;
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, "_rx_saved.inp",
+                                                 &warnings), 0);
+    EXPECT_TRUE(contains(warnings, "NOT written back"))
+        << "InpWriter dropped the embedded sections without a word";
+    EXPECT_TRUE(contains(warnings, "[REACTION_SPECIES]"))
+        << "the warning must name what was lost";
+
+    // The data really is gone — the warning is the whole mitigation.
+    std::ifstream in("_rx_saved.inp");
+    std::string line;
+    bool found = false;
+    while (std::getline(in, line))
+        if (line.rfind("[REACTION", 0) == 0) found = true;
+    EXPECT_FALSE(found);
+
+    std::remove("_rx_save.inp");
+    std::remove("_rx_saved.inp");
 }
 
 }  // namespace
