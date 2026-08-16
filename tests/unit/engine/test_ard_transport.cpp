@@ -43,10 +43,13 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <cmath>
 #include <fstream>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_massbalance.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -117,16 +120,30 @@ protected:
     void TearDown() override {
         if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
     }
-    void run(const char* inp, const char* rpt, const char* out) {
+    /// @param forced_mass_rate  if > 0, applied once via
+    ///        swmm_node_set_quality_mass_flux at node 0 / pollutant 0 after
+    ///        start() — the persistent runtime-API forcing path.
+    void run(const char* inp, const char* rpt, const char* out,
+             double forced_mass_rate = 0.0) {
         ASSERT_EQ(swmm_engine_open(engine_, inp, rpt, out, nullptr), SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
         ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
+        if (forced_mass_rate > 0.0)
+            ASSERT_EQ(swmm_node_set_quality_mass_flux(engine_, 0, 0,
+                                                      forced_mass_rate),
+                      SWMM_OK);
         double elapsed_days = 0.0;
         int guard = 0;
         do {
             ASSERT_EQ(swmm_engine_step(engine_, &elapsed_days), SWMM_OK);
         } while (elapsed_days > 0.0 && ++guard < 200000);
         ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
+    }
+    /// Fresh engine handle, so one TEST_F can run several simulations.
+    void restart() {
+        swmm_engine_destroy(engine_);
+        engine_ = swmm_engine_create();
+        ASSERT_NE(engine_, nullptr);
     }
     SWMM_Engine engine_ = nullptr;
 };
@@ -328,6 +345,59 @@ TEST_F(ArdTransportTest, CstrLimitTracksLegacy) {
             << "CSTR-limit divergence beyond the documented band, link " << l;
     std::remove("_ard_cstr_legacy.inp");
     std::remove("_ard_cstr.inp");
+}
+
+// ---------------------------------------------------------------------------
+// Gate 6 — persistent runtime-API quality mass flux must actually ROUTE, under
+// BOTH quality engines, and must close continuity.
+//
+// This gate exists because the failure it guards is silent in both directions.
+// The forcing used to be applied as a post-quality `conc +=` bump, which the
+// next step's mixing (LEGACY) or the next ARD publish overwrote: the mass was
+// booked in the ledger and never entered the system, so a forced run produced
+// byte-identical loads to an unforced one while the report looked healthy.
+// Delivering it without booking it is the mirror failure — a large negative
+// continuity error. Assert both halves: the mass arrives downstream AND the
+// ledger still closes. Legacy reference: routing.c addExternalInflows(),
+// apiExtQualMassFlux → Node[j].newQual[p] + massbal EXTERNAL_INFLOW.
+// ---------------------------------------------------------------------------
+TEST_F(ArdTransportTest, ForcedQualityMassFluxRoutesUnderBothEngines) {
+    struct Case { const char* name; const char* solver_line; };
+    const Case cases[] = {
+        {"LEGACY",       ""},
+        {"EULERIAN_ARD", "QUALITY_SOLVER       EULERIAN_ARD\n"},
+    };
+
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+
+        // Baseline: same deck, no forcing.
+        write_deck("_ard_force_base.inp", c.solver_line, kC0, 0.0);
+        restart();
+        run("_ard_force_base.inp", "_ard_force_base.rpt", "_ard_force_base.out");
+        const double base_c0 = as_cpp_engine(engine_).context().links.conc[0];
+
+        // Same deck with a persistent forced mass rate equal to the deck's own
+        // feed rate (1 cfs x kC0), so a working path roughly doubles the
+        // in-system concentration and a broken one changes nothing at all.
+        write_deck("_ard_force.inp", c.solver_line, kC0, 0.0);
+        restart();
+        run("_ard_force.inp", "_ard_force.rpt", "_ard_force.out", kC0);
+        const auto& ctx = as_cpp_engine(engine_).context();
+        const double forced_c0 = ctx.links.conc[0];
+
+        EXPECT_GT(forced_c0, 1.5 * base_c0)
+            << "forced quality mass never reached the network (base "
+            << base_c0 << " -> forced " << forced_c0 << ")";
+
+        // ...and it must be booked, or the mass shows up as a continuity hole.
+        double err = 0.0;
+        ASSERT_EQ(swmm_get_quality_continuity_error(engine_, 0, &err), SWMM_OK);
+        EXPECT_LT(std::fabs(err), 0.05)
+            << "forced mass routed but is missing from the ledger, error " << err;
+    }
+    std::remove("_ard_force_base.inp");
+    std::remove("_ard_force.inp");
 }
 
 }  // namespace

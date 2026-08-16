@@ -408,16 +408,10 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 0.0, dt_sub *
                          ctx.nodes.qual_mass_in[und * uns +
                                                 static_cast<std::size_t>(s)]);
-            // E2: persistent user quality mass flux (forcing API,
-            // nodes.user_conc_mass_flux, mass/sec) enters the store directly
-            // — the engine-side post-quality conc bump (SWMMEngine persistent
-            // forcing) is overwritten by the next publish under this engine,
-            // so without this the forced mass never reached the store.
-            if (!ctx.nodes.user_conc_mass_flux.empty())
-                node_mass_[und * uns + static_cast<std::size_t>(s)] +=
-                    dt_sub *
-                    ctx.nodes.user_conc_mass_flux[und * uns +
-                                                  static_cast<std::size_t>(s)];
+            // Persistent user quality mass flux is NOT added here: it is folded
+            // into qual_mass_in by QualitySolver::addExtInflowLoads(), the same
+            // loader stage legacy uses, so the line above already carries it.
+            // Adding it a second time here would double the forced mass.
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
                 std::max(0.0, node_mass_[und * uns +
                                          static_cast<std::size_t>(s)]);
