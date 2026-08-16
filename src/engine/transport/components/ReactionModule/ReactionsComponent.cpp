@@ -1,0 +1,421 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @file ReactionsComponent.cpp
+ * @brief Reactions process component — phase R1 body.
+ *
+ * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license  Apache-2.0
+ */
+
+#include "ReactionsComponent.hpp"
+
+#include <cstdlib>
+
+#include "../../../core/SimulationContext.hpp"
+#include "../../../input/Tokenizer.hpp"
+#include "../../../plugins/ProcessComponentRegistry.hpp"
+
+namespace openswmm::transport {
+
+namespace {
+
+using input::Tokenizer;
+
+constexpr const char* kComponentId = "org.hydrocouple.openswmm.reactions";
+
+/// Rejoin tokens [from, end) with single spaces — expression bodies span the
+/// rest of their row.
+std::string rejoin(const std::vector<std::string>& tok, std::size_t from) {
+    std::string s;
+    for (std::size_t i = from; i < tok.size(); ++i) {
+        if (!s.empty()) s += ' ';
+        s += tok[i];
+    }
+    return s;
+}
+
+bool to_num(const std::string& s, double& out) {
+    char* end = nullptr;
+    out = std::strtod(s.c_str(), &end);
+    return end != nullptr && *end == '\0' && end != s.c_str();
+}
+
+void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
+                  std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.size() < 2) continue;
+        const std::string key = Tokenizer::to_upper(tok[0]);
+        const std::string val = Tokenizer::to_upper(tok[1]);
+        double num = 0.0;
+        if (key == "SOLVER") {
+            if      (val == "EUL")  rx.solver = ReactionSolverKind::EUL;
+            else if (val == "RK5")  rx.solver = ReactionSolverKind::RK5;
+            else if (val == "ROS2") rx.solver = ReactionSolverKind::ROS2;
+            else if (val == "BDF2") rx.solver = ReactionSolverKind::BDF2;
+            else errors.push_back("[REACTION_OPTIONS] unknown SOLVER '" +
+                                  tok[1] + "' (EUL|RK5|ROS2|BDF2).");
+        } else if (key == "COUPLING") {
+            if      (val == "NONE") rx.coupling = ReactionCoupling::NONE;
+            else if (val == "FULL") rx.coupling = ReactionCoupling::FULL;
+            else errors.push_back("[REACTION_OPTIONS] unknown COUPLING '" +
+                                  tok[1] + "' (NONE|FULL).");
+        } else if (key == "RATE_UNITS") {
+            if      (val == "SEC") rx.rate_units = ReactionRateUnits::SEC;
+            else if (val == "MIN") rx.rate_units = ReactionRateUnits::MIN;
+            else if (val == "HR")  rx.rate_units = ReactionRateUnits::HR;
+            else if (val == "DAY") rx.rate_units = ReactionRateUnits::DAY;
+            else errors.push_back("[REACTION_OPTIONS] unknown RATE_UNITS '" +
+                                  tok[1] + "' (SEC|MIN|HR|DAY).");
+        } else if (key == "AREA_UNITS") {
+            if      (val == "FT2") rx.area_units = ReactionAreaUnits::FT2;
+            else if (val == "M2")  rx.area_units = ReactionAreaUnits::M2;
+            else if (val == "CM2") rx.area_units = ReactionAreaUnits::CM2;
+            else errors.push_back("[REACTION_OPTIONS] unknown AREA_UNITS '" +
+                                  tok[1] + "' (FT2|M2|CM2).");
+        } else if (key == "TIMESTEP") {
+            if (to_num(tok[1], num) && num >= 0.0) rx.timestep = num;
+            else errors.push_back("[REACTION_OPTIONS] bad TIMESTEP '" + tok[1] + "'.");
+        } else if (key == "ATOL") {
+            if (to_num(tok[1], num) && num > 0.0) rx.atol = num;
+            else errors.push_back("[REACTION_OPTIONS] bad ATOL '" + tok[1] + "'.");
+        } else if (key == "RTOL") {
+            if (to_num(tok[1], num) && num > 0.0) rx.rtol = num;
+            else errors.push_back("[REACTION_OPTIONS] bad RTOL '" + tok[1] + "'.");
+        } else {
+            errors.push_back("[REACTION_OPTIONS] unknown option '" + tok[0] + "'.");
+        }
+    }
+}
+
+void parseSpecies(SimulationContext& ctx, const std::vector<std::string>& lines,
+                  std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 3) {
+            errors.push_back("[REACTION_SPECIES] row needs BULK|WALL name "
+                             "units [atol rtol]: '" + line + "'.");
+            continue;
+        }
+        const std::string kind = Tokenizer::to_upper(tok[0]);
+        const bool is_wall = (kind == "WALL");
+        if (!is_wall && kind != "BULK") {
+            errors.push_back("[REACTION_SPECIES] kind must be BULK or WALL: '" +
+                             tok[0] + "'.");
+            continue;
+        }
+        const std::string& name = tok[1];
+        if (rx.find_species(name) >= 0) {
+            errors.push_back("[REACTION_SPECIES] duplicate species '" + name + "'.");
+            continue;
+        }
+        // Register — collision with pollutant (or reserved) names is refused
+        // by the registry: species names are globally unique (master plan §4.1).
+        const int reg = ctx.species_registry.add(
+            name, is_wall ? SpeciesKind::MSX_WALL : SpeciesKind::MSX_BULK, tok[2]);
+        if (reg < 0) {
+            errors.push_back("[REACTION_SPECIES] '" + name +
+                             "' collides with an existing pollutant or "
+                             "species name.");
+            continue;
+        }
+        if (rx.registry_base < 0) rx.registry_base = reg;
+        rx.species_name.push_back(name);
+        rx.species_is_wall.push_back(is_wall ? 1 : 0);
+        rx.species_units.push_back(tok[2]);
+        double atol = 0.0, rtol = 0.0;
+        if (tok.size() > 3 && !to_num(tok[3], atol))
+            errors.push_back("[REACTION_SPECIES] bad atol for '" + name + "'.");
+        if (tok.size() > 4 && !to_num(tok[4], rtol))
+            errors.push_back("[REACTION_SPECIES] bad rtol for '" + name + "'.");
+        rx.species_atol.push_back(atol);
+        rx.species_rtol.push_back(rtol);
+    }
+}
+
+void parseCoefficients(SimulationContext& ctx,
+                       const std::vector<std::string>& lines,
+                       std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 3) {
+            errors.push_back("[REACTION_COEFFICIENTS] row needs "
+                             "PARAMETER|CONSTANT name value: '" + line + "'.");
+            continue;
+        }
+        const std::string kind = Tokenizer::to_upper(tok[0]);
+        if (kind != "PARAMETER" && kind != "CONSTANT") {
+            errors.push_back("[REACTION_COEFFICIENTS] kind must be PARAMETER "
+                             "or CONSTANT: '" + tok[0] + "'.");
+            continue;
+        }
+        if (rx.find_coef(tok[1]) >= 0 || rx.find_species(tok[1]) >= 0) {
+            errors.push_back("[REACTION_COEFFICIENTS] name '" + tok[1] +
+                             "' duplicates a coefficient or species.");
+            continue;
+        }
+        double v = 0.0;
+        if (!to_num(tok[2], v)) {
+            errors.push_back("[REACTION_COEFFICIENTS] bad value for '" +
+                             tok[1] + "'.");
+            continue;
+        }
+        rx.coef_name.push_back(tok[1]);
+        rx.coef_is_param.push_back(kind == "PARAMETER" ? 1 : 0);
+        rx.coef_value.push_back(v);
+    }
+}
+
+void parseTerms(SimulationContext& ctx, const std::vector<std::string>& lines,
+                std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 2) {
+            errors.push_back("[REACTION_TERMS] row needs name expression: '" +
+                             line + "'.");
+            continue;
+        }
+        if (rx.find_term(tok[0]) >= 0 || rx.find_species(tok[0]) >= 0 ||
+            rx.find_coef(tok[0]) >= 0) {
+            errors.push_back("[REACTION_TERMS] name '" + tok[0] +
+                             "' duplicates a term, species, or coefficient.");
+            continue;
+        }
+        rx.term_name.push_back(tok[0]);
+        rx.term_expr_src.push_back(rejoin(tok, 1));
+    }
+}
+
+void parseExpressions(SimulationContext& ctx,
+                      const std::vector<std::string>& lines, bool tanks,
+                      std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    const char* sec = tanks ? "[REACTION_TANKS]" : "[REACTION_PIPES]";
+    auto& forms = tanks ? rx.tank_form : rx.pipe_form;
+    auto& srcs  = tanks ? rx.tank_expr_src : rx.pipe_expr_src;
+    forms.resize(static_cast<std::size_t>(rx.n_species()), ReactionExprForm::NONE);
+    srcs.resize(static_cast<std::size_t>(rx.n_species()));
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 3) {
+            errors.push_back(std::string(sec) +
+                             " row needs RATE|EQUIL|FORMULA species "
+                             "expression: '" + line + "'.");
+            continue;
+        }
+        const std::string form = Tokenizer::to_upper(tok[0]);
+        ReactionExprForm f = ReactionExprForm::NONE;
+        if      (form == "RATE")    f = ReactionExprForm::RATE;
+        else if (form == "EQUIL")   f = ReactionExprForm::EQUIL;
+        else if (form == "FORMULA") f = ReactionExprForm::FORMULA;
+        else {
+            errors.push_back(std::string(sec) + " unknown form '" + tok[0] +
+                             "' (RATE|EQUIL|FORMULA).");
+            continue;
+        }
+        const int s = rx.find_species(tok[1]);
+        if (s < 0) {
+            errors.push_back(std::string(sec) + " undeclared species '" +
+                             tok[1] + "' — declare it in [REACTION_SPECIES].");
+            continue;
+        }
+        const auto us = static_cast<std::size_t>(s);
+        if (forms[us] != ReactionExprForm::NONE) {
+            errors.push_back(std::string(sec) + " species '" + tok[1] +
+                             "' already has an expression in this scope.");
+            continue;
+        }
+        forms[us] = f;
+        srcs[us]  = rejoin(tok, 2);
+    }
+}
+
+void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
+                  std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    rx.init_global.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        const std::string scope = Tokenizer::to_upper(tok[0]);
+        if (scope != "GLOBAL") {
+            errors.push_back("[REACTION_QUALITY] scope '" + tok[0] +
+                             "' is not available yet — NODE/LINK initial "
+                             "values arrive with a later reactions phase; "
+                             "GLOBAL only in R1.");
+            continue;
+        }
+        if (tok.size() < 3) {
+            errors.push_back("[REACTION_QUALITY] row needs GLOBAL species "
+                             "value: '" + line + "'.");
+            continue;
+        }
+        const int s = rx.find_species(tok[1]);
+        if (s < 0) {
+            errors.push_back("[REACTION_QUALITY] undeclared species '" +
+                             tok[1] + "'.");
+            continue;
+        }
+        double v = 0.0;
+        if (!to_num(tok[2], v) || v < 0.0) {
+            errors.push_back("[REACTION_QUALITY] bad value for '" + tok[1] + "'.");
+            continue;
+        }
+        rx.init_global[static_cast<std::size_t>(s)] = v;
+    }
+}
+
+}  // namespace
+
+const std::vector<std::string>& reactionSectionTags() {
+    static const std::vector<std::string> tags = {
+        "REACTION_OPTIONS",       "REACTION_SPECIES",
+        "REACTION_COEFFICIENTS",  "REACTION_TERMS",
+        "REACTION_PIPES",         "REACTION_TANKS",
+        "REACTION_SOURCES",       "REACTION_QUALITY",
+        "REACTION_PARAMETERS",    "REACTION_PATTERNS",
+        "REACTION_REPORT",        "REACTION_SUBCATCHMENTS"};
+    return tags;
+}
+
+void applyReactionSections(SimulationContext& ctx,
+                           const components::ComponentConfigSections& config,
+                           std::vector<std::string>& errors) {
+    if (ctx.reactions.configured) {
+        errors.push_back(
+            "Reactions system configured twice — duplicate registration or "
+            "embedded sections alongside an external component file.");
+        return;
+    }
+    ctx.reactions.clear();
+
+    // Order matters: species before coefficients/terms/expressions so
+    // references validate. Sections may appear in any file order.
+    const auto* s = config.find("REACTION_OPTIONS");
+    if (s) parseOptions(ctx, *s, errors);
+    s = config.find("REACTION_SPECIES");
+    if (s) parseSpecies(ctx, *s, errors);
+    if (ctx.reactions.n_species() == 0) {
+        errors.push_back("Reactions config declares no [REACTION_SPECIES] — "
+                         "at least one species is required.");
+        return;
+    }
+    s = config.find("REACTION_COEFFICIENTS");
+    if (s) parseCoefficients(ctx, *s, errors);
+    s = config.find("REACTION_TERMS");
+    if (s) parseTerms(ctx, *s, errors);
+    s = config.find("REACTION_PIPES");
+    if (s) parseExpressions(ctx, *s, /*tanks=*/false, errors);
+    else {
+        ctx.reactions.pipe_form.assign(
+            static_cast<std::size_t>(ctx.reactions.n_species()),
+            ReactionExprForm::NONE);
+        ctx.reactions.pipe_expr_src.resize(
+            static_cast<std::size_t>(ctx.reactions.n_species()));
+    }
+    s = config.find("REACTION_TANKS");
+    if (s) parseExpressions(ctx, *s, /*tanks=*/true, errors);
+    else {
+        ctx.reactions.tank_form.assign(
+            static_cast<std::size_t>(ctx.reactions.n_species()),
+            ReactionExprForm::NONE);
+        ctx.reactions.tank_expr_src.resize(
+            static_cast<std::size_t>(ctx.reactions.n_species()));
+    }
+    s = config.find("REACTION_QUALITY");
+    if (s) parseQuality(ctx, *s, errors);
+    else
+        ctx.reactions.init_global.assign(
+            static_cast<std::size_t>(ctx.reactions.n_species()), 0.0);
+
+    // Later-phase sections: defined behavior, never silent acceptance.
+    const struct { const char* tag; const char* phase; } later[] = {
+        {"REACTION_SOURCES",       "R-sources (post-R3)"},
+        {"REACTION_PARAMETERS",    "R-parameters (post-R3)"},
+        {"REACTION_PATTERNS",      "R-sources (post-R3)"},
+        {"REACTION_REPORT",        "R5"},
+        {"REACTION_SUBCATCHMENTS", "R6"},
+    };
+    for (const auto& l : later) {
+        if (config.find(l.tag) != nullptr)
+            errors.push_back(std::string("[") + l.tag +
+                             "] is recognized but not yet supported — "
+                             "arrives with plan phase " + l.phase + ".");
+    }
+
+    // Unknown REACTION_* sections in the file are typos worth failing on.
+    for (const auto& sect : config.sections) {
+        bool known = false;
+        for (const auto& t : reactionSectionTags())
+            if (sect.first == t) { known = true; break; }
+        if (!known)
+            errors.push_back("Unknown section [" + sect.first +
+                             "] in reactions config '" + config.source_path +
+                             "'.");
+    }
+
+    if (errors.empty()) ctx.reactions.configured = true;
+}
+
+void applyEmbeddedReactionSections(SimulationContext& ctx,
+                                   bool external_component_registered,
+                                   std::vector<std::string>& errors) {
+    if (ctx.embedded_component_sections.empty()) return;
+
+    if (external_component_registered) {
+        ctx.warnings.push_back(
+            "Embedded [REACTION_*] sections in the .inp are IGNORED because "
+            "an external reactions component is registered in "
+            "[PROCESS_COMPONENTS] — the external config file wins "
+            "(TRANSPORT_IO_PLUGIN_CONFIG_PLAN §3.2).");
+        return;
+    }
+
+    ctx.warnings.push_back(
+        "Embedded [REACTION_*] sections found in the .inp. This works, but "
+        "the clean layout is an external component config file registered "
+        "via [PROCESS_COMPONENTS] (config=\"model.rxn\") — see "
+        "TRANSPORT_IO_PLUGIN_CONFIG_PLAN.md (style warning, D-UT8).");
+
+    components::ComponentConfigSections synth;
+    synth.source_path = "(embedded in .inp)";
+    synth.sections    = ctx.embedded_component_sections;
+    applyReactionSections(ctx, synth, errors);
+}
+
+void registerReactionsComponent() {
+    components::ProcessComponentRegistry::instance().register_component(
+        kComponentId,
+        "Multispecies reaction system (EPANET-MSX conventions)",
+        [](SimulationContext& ctx, const ProcessComponentSpec& /*spec*/,
+           const components::ComponentConfigSections& config,
+           std::vector<std::string>& errors) {
+            applyReactionSections(ctx, config, errors);
+        });
+}
+
+}  // namespace openswmm::transport

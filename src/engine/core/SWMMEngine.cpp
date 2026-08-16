@@ -45,6 +45,7 @@
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/ProcessComponentRegistry.hpp"
+#include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "HotStartManager.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
@@ -249,18 +250,42 @@ int SWMMEngine::open(const char* inp_path,
     }
 #endif
 
+    // Species registry (master plan §4.1, phase T0a): pollutants occupy the
+    // first slots, index-aligned with the legacy pollutant index. MSX
+    // species (reactions component, below) and reserved species (age A1,
+    // temperature H1) append after. Rebuilt on every open.
+    ctx_.species_registry.clear();
+    for (int p = 0; p < ctx_.n_pollutants(); ++p)
+        ctx_.species_registry.add(ctx_.pollutant_names.name_of(p),
+                                  SpeciesKind::POLLUTANT, std::string{});
+
     // Resolve [PROCESS_COMPONENTS] registrations (Unified Transport suite
     // D-UT8, phase IO1): look up each id, read its external config file
     // (relative to the .inp, [2D_MESH_FILE] path rules), and deliver the
     // parsed sections to the component's apply hook. Mirrors the external
     // 2D mesh handling directly above: fatal on strict open, recorded and
-    // survivable on lenient (editor) open.
-    if (!ctx_.process_component_specs.empty()) {
+    // survivable on lenient (editor) open. Implemented components register
+    // first (idempotent — overwrites the planned-id placeholder).
+    transport::registerReactionsComponent();
+    {
         std::string base_dir;
         if (inp_path && inp_path[0] != '\0')
             base_dir = std::filesystem::path(inp_path).parent_path().string();
-        const auto errs =
-            components::resolve_process_components(ctx_, base_dir);
+
+        std::vector<std::string> errs;
+        if (!ctx_.process_component_specs.empty())
+            errs = components::resolve_process_components(ctx_, base_dir);
+
+        // Embedded [REACTION_*] fallback (D-UT8): honored with a style
+        // warning when no external reactions component is registered; the
+        // external file wins wholesale otherwise.
+        bool reactions_registered = false;
+        for (const auto& spec : ctx_.process_component_specs)
+            if (spec.id == "org.hydrocouple.openswmm.reactions")
+                reactions_registered = true;
+        transport::applyEmbeddedReactionSections(ctx_, reactions_registered,
+                                                 errs);
+
         if (!errs.empty()) {
             for (const auto& e : errs) ctx_.errors.push_back(e);
             if (!lenient_open_) {
