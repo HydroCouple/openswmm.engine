@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: 2026.07.29
           path: vcpkg
 
       - name: Install Ninja
