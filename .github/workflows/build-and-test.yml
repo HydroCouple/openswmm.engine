@@ -70,10 +70,15 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Checkout vcpkg
+        # NOTE: keep this ref reasonably current. The 2025.02.14 pin failed on
+        # Windows (2026-08): its gtest port acquired an MSYS2 pkgconf/runtime
+        # snapshot that MSYS2 has since purged from every mirror (404s in
+        # vcpkg_acquire_msys). openswmm.engine's regression_testing.yml pins the
+        # same stale ref and will eventually hit the same wall.
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: 2026.07.29
           path: vcpkg
 
       - name: Install OpenMP (macOS)
@@ -86,6 +91,17 @@ jobs:
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Set up MSVC dev environment (Windows)
+        # The Windows preset uses the "Ninja Multi-Config" generator, which
+        # needs cl.exe (and ninja) on PATH — unlike a Visual Studio generator,
+        # nothing locates the toolchain automatically. vcpkg's own port builds
+        # find VS by themselves, so a missing dev shell fails only at the OUTER
+        # configure ("CMAKE_C_COMPILER not set").
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Bootstrap vcpkg (Windows)
         if: runner.os == 'Windows'
