@@ -279,8 +279,16 @@ std::string compileReactionExpression(const std::string& src,
             case LexKind::OP: {
                 if (expect_operand) {
                     if (lx.op == '-') {           // unary minus
+                        // D-R8 (decided 2026-08-16): unary minus binds BELOW
+                        // '^' — Python/Fortran/MATLAB convention, -2^2 = -4.
+                        // Precedence 2 (== '*'): '^' stacks above NEG
+                        // (2 < 3 ⇒ no pop), while '*' and '+'/'-' pop it
+                        // first — every case then matches sympy, which the
+                        // R5 authoring path round-trips through. The R2
+                        // validator proved legacy mathexpr.c cannot
+                        // arbitrate (returns 0 for both spellings).
                         OpEntry e{};
-                        e.op = RxToken::NEG; e.prec = 4; e.right_assoc = true;
+                        e.op = RxToken::NEG; e.prec = 2; e.right_assoc = true;
                         e.col = lx.col;
                         ops.push_back(e);
                         break;
@@ -401,6 +409,11 @@ std::string compileReactionExpression(const std::string& src,
 double evalReactionExpression(const std::vector<RxToken>& pool,
                               const RxExprSpan& span,
                               const RxEvalEnv& env) noexcept {
+    // D-R9: len == 0 is the documented "no expression" encoding — it must
+    // be safe regardless of caller discipline (the R2 validator caught the
+    // uninitialized-read alternative). Callers may ALSO skip empty spans;
+    // this branch is the contract, their skip is the optimization.
+    if (span.len <= 0) return 0.0;
     double st[kRxMaxStackDepth];
     int sp = 0;
     const RxToken* t   = pool.data() + span.begin;
