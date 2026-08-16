@@ -48,6 +48,10 @@
 #include "INetworkSolver.hpp"
 #include "NetworkMeshData.hpp"
 
+namespace openswmm::transport::fvkernels {
+struct SpeciesKernelView;  // transport/fvkernels/SpeciesTransportKernels.hpp
+}
+
 namespace openswmm::fv {
 
 class ExplicitFvSolver : public INetworkSolver {
@@ -136,9 +140,11 @@ private:
     double censusDt() const;
     void   reconstructState();
     void   computeFaceFlux(int face);
+    /// Species transport forwarders (phase E0): the reconstruction / FCT /
+    /// dispersion bodies live in transport/fvkernels/SpeciesTransportKernels
+    /// and consume this solver's members through the view below.
     void   reconstructScalars(double dt);
-    void   limitSpeciesFluxes(int species, double dt);
-    kernels::FaceFlux adjustedFlux(int face) const;
+    transport::fvkernels::SpeciesKernelView speciesKernelView();
     void   computeFluxes();
     void   limitPositivity(double dt);
 
