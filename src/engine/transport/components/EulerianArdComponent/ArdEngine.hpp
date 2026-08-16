@@ -29,13 +29,17 @@
  *          same face fluxes, and results publish back into the legacy
  *          links.conc / nodes.conc arrays so reporting is unchanged.
  *
- *          E1 scope (enforced; see the validation handoff): conservative
- *          transport only — kdecay/treatment/reactions arrive with the
- *          shared reaction module (E4); dispersion arrives with E3; direct
- *          consumption of the FV solver's own cell state (instead of the
- *          projection) arrives with E2. A model that requests EULERIAN_ARD
- *          with kdecay or treatment configured gets a warning that those are
- *          not yet applied under this engine.
+ *          Scope as of E2 (see the validation handoffs): conservative
+ *          transport with structures (pumps/orifices/weirs/outlets) as
+ *          zero-volume passthrough of the donor node store and persistent
+ *          user quality-mass-flux forcing included. Still pending:
+ *          kdecay/treatment/reactions (shared reaction module, E4);
+ *          dispersion (E3); direct consumption of the FV solver's own cell
+ *          state instead of the projection (E2b); storage mixing models
+ *          beyond CMSTR (E2b, shared with LARD); mass-balance ledger rows
+ *          (E5). A model that requests EULERIAN_ARD with kdecay or
+ *          treatment configured gets a warning that those are not yet
+ *          applied under this engine.
  *
  * @ingroup engine_transport
  *
@@ -125,6 +129,7 @@ private:
 
     std::vector<std::string> warnings_;
     bool initialized_ = false;
+    bool warned_cfl_clamp_ = false;  ///< E2: once-per-run loud subcycle clamp
 };
 
 }  // namespace openswmm::transport

@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
@@ -137,13 +138,9 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 node_vol_[und];
     }
 
-    // E1 scope warnings (see header): structures + decay/treatment.
-    if (!mesh_.struct_link.empty())
-        warnings_.push_back(
-            "QUALITY_SOLVER EULERIAN_ARD (E1): pumps/orifices/weirs/outlets "
-            "are not yet transported through (zero-volume passthrough arrives "
-            "with plan phase E2) — constituents will not cross structure "
-            "links under this engine yet.");
+    // E2: structures (pumps/orifices/weirs/outlets) transport as zero-volume
+    // passthrough of the donor node store (plan §2.1, element coverage) — no
+    // warning needed any more.
 
     bool has_decay = false;
     for (int s = 0; s < ns; ++s)
@@ -411,10 +408,57 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 0.0, dt_sub *
                          ctx.nodes.qual_mass_in[und * uns +
                                                 static_cast<std::size_t>(s)]);
+            // E2: persistent user quality mass flux (forcing API,
+            // nodes.user_conc_mass_flux, mass/sec) enters the store directly
+            // — the engine-side post-quality conc bump (SWMMEngine persistent
+            // forcing) is overwritten by the next publish under this engine,
+            // so without this the forced mass never reached the store.
+            if (!ctx.nodes.user_conc_mass_flux.empty())
+                node_mass_[und * uns + static_cast<std::size_t>(s)] +=
+                    dt_sub *
+                    ctx.nodes.user_conc_mass_flux[und * uns +
+                                                  static_cast<std::size_t>(s)];
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
                 std::max(0.0, node_mass_[und * uns +
                                          static_cast<std::size_t>(s)]);
         }
+    }
+
+    // 5. Structures (E2): pumps/orifices/weirs/outlets are zero-volume
+    //    passthrough elements (plan §2.1 element coverage; same table as
+    //    LARD §2). Water the hydraulic solver moves through a structure
+    //    carries the DONOR node store's concentration; both stores update
+    //    volume and mass symmetrically. Donor below the store-empty
+    //    threshold moves water but no mass (consistent with the boundary
+    //    donor guard above). Mass is capped at what the donor holds so a
+    //    large q*dt_sub cannot go negative.
+    const int n_struct = static_cast<int>(mesh_.struct_link.size());
+    for (int i = 0; i < n_struct; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const int link = mesh_.struct_link[ui];
+        if (link < 0 || link >= ctx.n_links()) continue;
+        const double q = ctx.links.flow[static_cast<std::size_t>(link)];
+        if (q == 0.0) continue;
+        const int donor_n    = (q >= 0.0) ? mesh_.struct_n1[ui] : mesh_.struct_n2[ui];
+        const int receiver_n = (q >= 0.0) ? mesh_.struct_n2[ui] : mesh_.struct_n1[ui];
+        if (donor_n < 0 || receiver_n < 0 || donor_n >= nn || receiver_n >= nn)
+            continue;
+        const auto ud = static_cast<std::size_t>(donor_n);
+        const auto ur = static_cast<std::size_t>(receiver_n);
+        const double dv = std::fabs(q) * dt_sub;
+        const double donor_vol = node_vol_[ud];
+        if (donor_vol > kMinStoreVol) {
+            for (int s = 0; s < ns; ++s) {
+                const auto sb = static_cast<std::size_t>(s);
+                const double c_donor = node_mass_[ud * uns + sb] / donor_vol;
+                const double dm = std::min(dv * c_donor,
+                                           node_mass_[ud * uns + sb]);
+                node_mass_[ud * uns + sb] -= dm;
+                node_mass_[ur * uns + sb] += dm;
+            }
+        }
+        node_vol_[ud] = std::max(0.0, node_vol_[ud] - dv);
+        node_vol_[ur] += dv;
     }
 }
 
@@ -473,7 +517,22 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
             dt_cfl = std::min(dt_cfl, kCfl * mesh_.cell_dx[uc] / u);
     }
     int nsub = static_cast<int>(std::ceil(dt / std::max(dt_cfl, 1.0e-12)));
-    nsub = std::clamp(nsub, 1, kMaxSubsteps);
+    if (nsub > kMaxSubsteps) {
+        // E2 (validation note 5.3): the clamp must be LOUD — a silently
+        // clamped run violates CFL and the max principle can leak. Warn once
+        // per run with the achieved ratio so the user can shorten
+        // ROUTING_STEP or coarsen FV_CELL_LENGTH.
+        if (!warned_cfl_clamp_) {
+            warned_cfl_clamp_ = true;
+            ctx.warnings.push_back(
+                "QUALITY_SOLVER EULERIAN_ARD: transport subcycling clamped at " +
+                std::to_string(kMaxSubsteps) + " substeps (needed " +
+                std::to_string(nsub) +
+                ") — effective CFL exceeds the stability target; shorten "
+                "ROUTING_STEP or increase FV_CELL_LENGTH.");
+        }
+        nsub = kMaxSubsteps;
+    }
     const double dt_sub = dt / static_cast<double>(nsub);
     const double load_frac = 1.0 / static_cast<double>(nsub);
 
@@ -521,6 +580,24 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 (vol > 1.0e-12)
                     ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
                     : 0.0;
+    }
+
+    // Structure links (E2) report the donor node's published concentration —
+    // the zero-volume passthrough convention (matches legacy, which sets a
+    // structure's quality from its upstream node).
+    const int n_struct = static_cast<int>(mesh_.struct_link.size());
+    for (int i = 0; i < n_struct; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const int link = mesh_.struct_link[ui];
+        if (link < 0 || link >= ctx.n_links()) continue;
+        const double q = ctx.links.flow[static_cast<std::size_t>(link)];
+        const int donor_n = (q >= 0.0) ? mesh_.struct_n1[ui] : mesh_.struct_n2[ui];
+        if (donor_n < 0 || donor_n >= nn) continue;
+        const auto ud = static_cast<std::size_t>(donor_n);
+        for (int s = 0; s < ns; ++s)
+            ctx.links.conc[static_cast<std::size_t>(link) * uns +
+                           static_cast<std::size_t>(s)] =
+                ctx.nodes.conc[ud * uns + static_cast<std::size_t>(s)];
     }
 }
 
