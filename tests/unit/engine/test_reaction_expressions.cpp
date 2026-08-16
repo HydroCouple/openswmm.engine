@@ -101,17 +101,24 @@ TEST_F(RxVmTest, PrecedenceAndAssociativityGoldens) {
     EXPECT_DOUBLE_EQ(compile_eval("STEP(-2) + STEP(3) + SGN(-9)", env), 0.0);
     EXPECT_DOUBLE_EQ(compile_eval("SQRT(ABS(-16))", env), 4.0);
 
-    // Unary minus vs '^'. This compiler binds unary minus TIGHTER than '^',
-    // so -2^2 is (-2)^2 = +4 — the Excel convention, opposite to
-    // Python/Fortran/Matlab, where -2^2 = -(2^2) = -4. Pinned deliberately:
-    // the engine's own legacy parser (src/legacy/engine/mathexpr.c, which
-    // EPANET-MSX shares) cannot arbitrate — it returns 0 for BOTH "-2^2" and
-    // "(-2)^2" while getting "0-2^2" and "-(2^2)" right, so there is no
-    // MSX-conventional answer to inherit. Note -2^3 agrees either way (odd
-    // exponent), which is exactly why this needs an EVEN-exponent golden.
-    EXPECT_DOUBLE_EQ(compile_eval("-2 ^ 2", env), 4.0);
+    // Unary minus vs '^'. HISTORY (R2 validation finding): R2 shipped the
+    // Excel convention ((-2)^2 = +4) unpinned; the engine's own legacy
+    // parser (src/legacy/engine/mathexpr.c, which EPANET-MSX shares) cannot
+    // arbitrate — it returns 0 for BOTH "-2^2" and "(-2)^2" while getting
+    // "0-2^2" and "-(2^2)" right, so there is no MSX-conventional answer to
+    // inherit. RESOLUTION (D-R8, 2026-08-16): unary minus binds BELOW '^' —
+    // the Python/Fortran/MATLAB convention, -2^2 = -(2^2) = -4 — because
+    // the R5 authoring path round-trips through sympy, which parses -k**2
+    // as -(k**2); any other choice makes Python-authored kinetics silently
+    // disagree with the same text in model.rxn. Note -2^3 agrees either
+    // way (odd exponent), which is exactly why these need EVEN-exponent
+    // goldens on both spellings.
+    EXPECT_DOUBLE_EQ(compile_eval("-2 ^ 2", env), -4.0);     // D-R8
+    EXPECT_DOUBLE_EQ(compile_eval("(-2) ^ 2", env), 4.0);    // explicit parens
     EXPECT_DOUBLE_EQ(compile_eval("-2 ^ 3", env), -8.0);
+    EXPECT_DOUBLE_EQ(compile_eval("2 ^ -2", env), 0.25);     // NEG above '^' rhs
     EXPECT_DOUBLE_EQ(compile_eval("0 - 2 ^ 2", env), -4.0);  // binary minus
+    EXPECT_DOUBLE_EQ(compile_eval("-2 * 3", env), -6.0);     // unchanged by D-R8
 }
 
 TEST_F(RxVmTest, KineticsWithResolvedOperandsEvaluateExactly) {
@@ -138,6 +145,16 @@ TEST_F(RxVmTest, UndefinedIdentifierReportsNameAndColumn) {
         compileReactionExpression("kb * zzz + 1", sym, pool, span, col);
     EXPECT_NE(err.find("undefined identifier 'zzz'"), std::string::npos) << err;
     EXPECT_EQ(col, 6);   // 1-based column of 'zzz'
+}
+
+TEST_F(RxVmTest, EmptySpanEvaluatesToZeroByContract) {
+    // D-R9: len == 0 is the documented "no expression" encoding. Falsifier:
+    // remove the guard in evalReactionExpression — this read becomes an
+    // uninitialized stack slot (and fails under sanitizers deterministically
+    // rather than "returning 0.0 by luck", the R2 validator's phrase).
+    RxExprSpan empty{};
+    RxEvalEnv env{};
+    EXPECT_DOUBLE_EQ(evalReactionExpression(pool, empty, env), 0.0);
 }
 
 TEST_F(RxVmTest, DepthGuardRejectsTooDeepExpressions) {
