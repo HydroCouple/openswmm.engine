@@ -203,6 +203,7 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
         ch.mesh.face_dir_l.push_back(dl);
         ch.mesh.face_dir_r.push_back(dr);
         ch.mesh.face_virtual.push_back(vj ? uint8_t{1} : uint8_t{0});
+        ch.mesh.face_vj_node.push_back(-1);
     };
 
     add_face(-1, 0, bed(0.0), 0.5 * dx, 1, 1, false);                 // wall
