@@ -88,7 +88,7 @@ void QualitySolver::init(int n_nodes, int n_links, int n_pollutants) {
     (void)n_links;
 }
 
-void QualitySolver::execute(SimulationContext& ctx, double dt) {
+void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     if (n_pollutants_ <= 0) return;
 
     // Reset quality assembly arrays on NodeData
@@ -100,6 +100,51 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     addDwfLoads(ctx, dt);          // Dry weather pollutant loads → nodes
     addGwLoads(ctx, dt);           // Groundwater inflow pollutant loads → nodes
     addIfaceLoads(ctx, dt);        // Routing interface file loads → nodes
+    addExtInflowLoads(ctx, dt);    // Direct [INFLOWS] CONCEN/MASS loads → nodes
+}
+
+// ============================================================================
+// Add direct external inflow ([INFLOWS] CONCEN/MASS) pollutant loads.
+// Matches legacy routing.c addExternalInflows() pollutant portion:
+//   w = inflow value; if CONCEN, w *= node flow; Node[j].newQual[p] += w
+// ============================================================================
+
+void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (np <= 0) return;
+    auto& nodes = ctx.nodes;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+
+        // The direct inflow's own water joins the mixing denominator, matching
+        // legacy findNodeQual(), which divides the accumulated mass rate by
+        // Node[j].inflow — a total that includes the external lateral inflow.
+        double q = nodes.ext_inflow[ui];
+        if (q > 0.0) nodes.qual_vol_in[ui] += q * dt;
+
+        if (nodes.ext_qual_mass.empty()) continue;
+        for (int p = 0; p < np; ++p) {
+            auto nd_idx = ui * static_cast<std::size_t>(np) +
+                          static_cast<std::size_t>(p);
+            if (nd_idx >= nodes.ext_qual_mass.size()) continue;
+            double mass_rate = nodes.ext_qual_mass[nd_idx];
+            if (mass_rate == 0.0) continue;
+            if (nd_idx < nodes.qual_mass_in.size())
+                nodes.qual_mass_in[nd_idx] += mass_rate;
+
+            // Legacy lumps direct and interface-file loads into EXTERNAL_INFLOW.
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_ex_in.size())
+                ctx.mass_balance.qual_routing_ex_in[pi] += mass_rate * dt;
+        }
+    }
+}
+
+void QualitySolver::execute(SimulationContext& ctx, double dt) {
+    if (n_pollutants_ <= 0) return;
+
+    assembleExternalLoads(ctx, dt);
     accumulateLinkLoads(ctx, dt);
     mixAtNodes(ctx, dt);
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
@@ -144,6 +189,14 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
             if (mass_rate > 0.0 && nd_idx < ctx.nodes.qual_mass_in.size()) {
                 ctx.nodes.qual_mass_in[nd_idx] += mass_rate;
             }
+
+            // Mass balance: wet weather quality inflow is attributed HERE, from
+            // the subcatchment's own washoff load — matching legacy
+            // addWetWeatherInflows(): massbal_addInflowQual(WET_WEATHER_INFLOW,
+            // p, q * Subcatch[i].newQual[p]).
+            auto pi = static_cast<std::size_t>(p);
+            if (mass_rate > 0.0 && pi < ctx.mass_balance.qual_routing_wet.size())
+                ctx.mass_balance.qual_routing_wet[pi] += mass_rate * dt;
         }
     }
 
@@ -166,6 +219,12 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
                           ? ctx.nodes.lid_drain_qual_load[nd_idx] : 0.0;
             if (load > 0.0 && nd_idx < ctx.nodes.qual_mass_in.size())
                 ctx.nodes.qual_mass_in[nd_idx] += load;
+
+            // Legacy lid_addDrainInflow() / lid_addDrainRunon() also book drain
+            // loads as WET_WEATHER_INFLOW.
+            auto pi = static_cast<std::size_t>(p);
+            if (load > 0.0 && pi < ctx.mass_balance.qual_routing_wet.size())
+                ctx.mass_balance.qual_routing_wet[pi] += load * dt;
         }
     }
 }

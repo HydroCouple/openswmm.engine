@@ -55,6 +55,15 @@ constexpr int WEEKEND_PATTERN = 3;
 // Per-node external inflow definition (SoA)
 // ============================================================================
 
+/// `[INFLOWS]` row kind. A row is either the node's direct flow hydrograph or
+/// a pollutant load riding on it — the two must not be summed together.
+/// @see Legacy: FLOW_INFLOW / CONCEN_INFLOW / MASS_INFLOW in enums.h
+enum class ExtInflowKind : int {
+    FLOW   = 0,  ///< Volumetric inflow (constituent FLOW)
+    CONCEN = 1,  ///< Pollutant concentration; mass rate = value * node flow
+    MASS   = 2   ///< Pollutant mass rate directly
+};
+
 struct ExtInflowSoA {
     int count = 0;
     std::vector<int>    node_idx;       ///< Which node this inflow applies to
@@ -63,6 +72,12 @@ struct ExtInflowSoA {
     std::vector<double> baseline;       ///< Constant baseline value
     std::vector<double> scale_factor;   ///< Timeseries scaling factor
     std::vector<double> conv_factor;    ///< Units conversion factor
+    /// Row kind (see ExtInflowKind). Without this every row — including
+    /// pollutant rows — was added to the node's flow, injecting phantom water.
+    std::vector<int>    kind;
+    /// Pollutant index for CONCEN/MASS rows; -1 for FLOW rows (and for a
+    /// constituent name that matches no declared pollutant).
+    std::vector<int>    pollut_idx;
 
     void resize(int n);
 };

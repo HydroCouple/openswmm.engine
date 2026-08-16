@@ -344,6 +344,20 @@ struct NodeData {
     std::vector<double>     iface_qual_mass;
 
     /**
+     * @brief Direct external inflow quality mass rate per (node, pollutant)
+     *        (mass/sec).
+     * @details Written by inflow::InflowSolver::evaluate() each routing step
+     *          from the `[INFLOWS]` CONCEN/MASS rows (cleared in
+     *          clearInflowSources()); read by
+     *          QualitySolver::addExtInflowLoads() → added to qual_mass_in.
+     *          Flat 2D: [node * n_pollutants + pollutant]. CONCEN rows are
+     *          already multiplied by the node's external flow inflow, so this
+     *          is a mass rate for either row type.
+     * @see Legacy: routing.c addExternalInflows() pollutant portion
+     */
+    std::vector<double>     ext_qual_mass;
+
+    /**
      * @brief LID drain quality mass rate per (node, pollutant) (mass/sec).
      * @details Set once per runoff step (cleared at runoff step start); read
      *          each routing step by addWetWeatherLoads() → added to qual_mass_in.
@@ -663,6 +677,7 @@ struct NodeData {
         coupling_queue.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
+        ext_qual_mass.clear();
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
         lid_drain_qual_vol.assign(un, 0.0);
@@ -846,6 +861,7 @@ struct NodeData {
             };
             erase2d(conc); erase2d(conc_old);
             erase2d(qual_mass_in); erase2d(iface_qual_mass);
+            erase2d(ext_qual_mass);
             erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
             if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
         }
@@ -887,6 +903,7 @@ struct NodeData {
             user_conc_mass_flux.assign(total, 0.0);
             qual_mass_in.assign(total, 0.0);
             iface_qual_mass.assign(total, 0.0);
+            ext_qual_mass.assign(total, 0.0);
             lid_drain_qual_load.assign(total, 0.0);
         }
     }
@@ -925,6 +942,7 @@ struct NodeData {
         coupling_queue.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
+        ext_qual_mass.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
@@ -1040,6 +1058,7 @@ struct NodeData {
         std::fill(rdii_inflow.begin(),   rdii_inflow.end(),   0.0);
         std::fill(iface_inflow.begin(),  iface_inflow.end(),  0.0);
         std::fill(iface_qual_mass.begin(), iface_qual_mass.end(), 0.0);
+        std::fill(ext_qual_mass.begin(),   ext_qual_mass.end(),   0.0);
         std::fill(qual_mass_in.begin(),  qual_mass_in.end(),  0.0);
         std::fill(qual_vol_in.begin(),   qual_vol_in.end(),   0.0);
     }

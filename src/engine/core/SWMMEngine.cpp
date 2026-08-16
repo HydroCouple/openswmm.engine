@@ -3401,18 +3401,15 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         for (int j = 0; j < ctx_.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
 
-            // Wet weather quality inflow: lateral flow × concentration
-            if (ctx_.nodes.lat_flow[uj] > 0.0) {
-                for (int p = 0; p < np; ++p) {
-                    auto qi = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
-                    if (qi < ctx_.nodes.conc.size()) {
-                        double load = ctx_.nodes.lat_flow[uj] *
-                                      ctx_.nodes.conc[qi] * dt_routing;
-                        if (load > 0.0)
-                            ctx_.mass_balance.qual_routing_wet[static_cast<std::size_t>(p)] += load;
-                    }
-                }
-            }
+            // Wet weather quality inflow is NOT booked here. This used to add
+            // lat_flow * node concentration for every node with lateral flow,
+            // which is wrong twice over: the node's resulting concentration is
+            // not the source's, and lat_flow lumps runoff together with DWF,
+            // GW, RDII and direct [INFLOWS] — so each of those was counted a
+            // second time as "wet weather". It read 0.000 only for as long as
+            // direct pollutant inflows delivered no mass at all. Each source
+            // now books its own load in its own QualitySolver adder, matching
+            // legacy massbal_addInflowQual() call sites.
 
             // Quality outflow at outfalls: inflow × concentration
             if (ctx_.nodes.type[uj] == NodeType::OUTFALL && ctx_.nodes.inflow[uj] > 0.0) {
@@ -3472,6 +3469,33 @@ void SWMMEngine::computeFinalStorage() noexcept {
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         ctx_.mass_balance.routing_final_storage += ctx_.links.volume[uj];
+    }
+
+    // B8a. Final stored pollutant mass — the closing term of the quality
+    //      ledger, mirroring the opening term recorded in initMassBalance().
+    //      Without it every quality continuity error was reported as the whole
+    //      of the mass still in the system (~51 % on a steady feed).
+    //      Legacy: massbal_getStoredMass().
+    {
+        const int np = ctx_.n_pollutants();
+        for (int p = 0; p < np; ++p) {
+            const auto up = static_cast<std::size_t>(p);
+            if (up >= ctx_.mass_balance.qual_routing_final.size()) break;
+            double m = 0.0;
+            for (int j = 0; j < ctx_.n_nodes(); ++j) {
+                const auto idx = static_cast<std::size_t>(j) *
+                                 static_cast<std::size_t>(np) + up;
+                if (idx < ctx_.nodes.conc.size())
+                    m += ctx_.nodes.conc[idx] * reportedNodeVolume(j);
+            }
+            for (int j = 0; j < ctx_.n_links(); ++j) {
+                const auto uj  = static_cast<std::size_t>(j);
+                const auto idx = uj * static_cast<std::size_t>(np) + up;
+                if (idx < ctx_.links.conc.size())
+                    m += ctx_.links.conc[idx] * ctx_.links.volume[uj];
+            }
+            ctx_.mass_balance.qual_routing_final[up] = m;
+        }
     }
 }
 
@@ -5310,6 +5334,48 @@ void SWMMEngine::initQuality() noexcept {
     // 7. Quality solver
     quality_.init(ctx_.n_nodes(), ctx_.n_links(), ctx_.n_pollutants());
 
+    // Seed initial concentrations from [POLLUTANTS] Cinit. A wet node/link
+    // starts at the pollutant's initial concentration, a dry one at zero —
+    // legacy qualrout.c qualrout_init(), called from routing_open() at the
+    // same point in the sequence (after the router has set initial depths).
+    // Without this every run started clean and "Initial Stored Mass" was
+    // always 0.
+    {
+        const int np = ctx_.n_pollutants();
+        if (np > 0) {
+            // Legacy qualrout.c: static const double ZeroDepth = 0.003281 (1 mm).
+            constexpr double zero_depth = 0.003281;
+            for (int i = 0; i < ctx_.n_nodes(); ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const bool wet = ctx_.nodes.depth[ui] > zero_depth;
+                for (int p = 0; p < np; ++p) {
+                    const auto idx = ui * static_cast<std::size_t>(np) +
+                                     static_cast<std::size_t>(p);
+                    if (idx >= ctx_.nodes.conc.size()) continue;
+                    const double c = wet
+                        ? ctx_.pollutants.init_conc[static_cast<std::size_t>(p)]
+                        : 0.0;
+                    ctx_.nodes.conc[idx]     = c;
+                    ctx_.nodes.conc_old[idx] = c;
+                }
+            }
+            for (int j = 0; j < ctx_.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                const bool wet = ctx_.links.depth[uj] > zero_depth;
+                for (int p = 0; p < np; ++p) {
+                    const auto idx = uj * static_cast<std::size_t>(np) +
+                                     static_cast<std::size_t>(p);
+                    if (idx >= ctx_.links.conc.size()) continue;
+                    const double c = wet
+                        ? ctx_.pollutants.init_conc[static_cast<std::size_t>(p)]
+                        : 0.0;
+                    ctx_.links.conc[idx]     = c;
+                    ctx_.links.conc_old[idx] = c;
+                }
+            }
+        }
+    }
+
     // 10. Treatment: resize for nodes x pollutants + compile expressions
     if (ctx_.n_pollutants() > 0 && ctx_.n_nodes() > 0) {
         if (ctx_.treatment.n_nodes == 0) {
@@ -5910,6 +5976,32 @@ void SWMMEngine::initMassBalance() noexcept {
     for (int j = 0; j < ctx_.n_links(); ++j) {
         ctx_.mass_balance.routing_init_storage +=
             ctx_.links.volume[static_cast<std::size_t>(j)];
+    }
+
+    // Initial stored pollutant mass, from the concentrations initQuality()
+    // seeded out of [POLLUTANTS] Cinit. Legacy: massbal_open() sums
+    // Node[j].newQual[p] * Node[j].newVolume + Link[j].newQual[p] * link volume
+    // into QualTotals[p].initStorage.
+    {
+        const int np = ctx_.n_pollutants();
+        for (int p = 0; p < np; ++p) {
+            const auto up = static_cast<std::size_t>(p);
+            if (up >= ctx_.mass_balance.qual_routing_init.size()) break;
+            double m = 0.0;
+            for (int j = 0; j < ctx_.n_nodes(); ++j) {
+                const auto idx = static_cast<std::size_t>(j) *
+                                 static_cast<std::size_t>(np) + up;
+                if (idx < ctx_.nodes.conc.size())
+                    m += ctx_.nodes.conc[idx] * reportedNodeVolume(j);
+            }
+            for (int j = 0; j < ctx_.n_links(); ++j) {
+                const auto uj  = static_cast<std::size_t>(j);
+                const auto idx = uj * static_cast<std::size_t>(np) + up;
+                if (idx < ctx_.links.conc.size())
+                    m += ctx_.links.conc[idx] * ctx_.links.volume[uj];
+            }
+            ctx_.mass_balance.qual_routing_init[up] = m;
+        }
     }
 
     // Record initial runoff storage

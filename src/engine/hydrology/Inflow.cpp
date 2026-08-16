@@ -50,6 +50,8 @@ void ExtInflowSoA::resize(int n) {
     baseline.assign(un, 0.0);
     scale_factor.assign(un, 1.0);
     conv_factor.assign(un, 1.0);
+    kind.assign(un, static_cast<int>(ExtInflowKind::FLOW));
+    pollut_idx.assign(un, -1);
 }
 
 void DwfInflowSoA::resize(int n) {
@@ -128,9 +130,31 @@ void InflowSolver::init(SimulationContext& ctx) {
         // metric (CMS/LPS/MLD) direct inflows were applied ~35x too small.
         double cf = ctx.ext_inflows.m_factor[ui];
         const auto& cons = ctx.ext_inflows.constituent[ui];
-        if (cons == "FLOW" || cons == "flow" || cons == "Flow") {
+        // Classify the row. A constituent of FLOW is the node's hydrograph; any
+        // other constituent names a pollutant and carries a load, NOT water.
+        // Legacy: inflow_readExtInflow() / routing.c addExternalInflows().
+        auto upper = [](std::string s) {
+            for (auto& ch : s) ch = static_cast<char>(std::toupper(
+                static_cast<unsigned char>(ch)));
+            return s;
+        };
+        const std::string cons_u = upper(cons);
+        if (cons_u == "FLOW") {
+            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::FLOW);
+            ext_inflows_.pollut_idx[ui] = -1;
             int fu = static_cast<int>(ctx.options.flow_units);
             if (fu >= 0 && fu < 6) cf /= ucf::Qcf[fu];
+        } else {
+            const std::string type_u = upper(ctx.ext_inflows.inflow_type[ui]);
+            const bool is_mass = (type_u == "MASS");
+            ext_inflows_.kind[ui] = static_cast<int>(
+                is_mass ? ExtInflowKind::MASS : ExtInflowKind::CONCEN);
+            ext_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(cons);
+            // Internal quality unit is ft3 x mg/L, so a user-supplied MASS rate
+            // divides by the liters-per-ft3 factor exactly as legacy does
+            // (inflow.c: "if ( type == MASS_INFLOW ) cf /= LperFT3").
+            constexpr double L_PER_FT3 = 28.317;   // legacy consts.h LperFT3
+            if (is_mass) cf /= L_PER_FT3;
         }
         ext_inflows_.conv_factor[ui]  = cf;
 
@@ -228,10 +252,14 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     int month = datetime::monthOfYear(current_date) - 1;
 
     // ---- Batch external inflows (gather + multiply + scatter-add) ----
-    for (int i = 0; i < ext_inflows_.count; ++i) {
-        auto ui = static_cast<std::size_t>(i);
+    // Two passes, matching legacy routing.c addExternalInflows(): the FLOW rows
+    // establish each node's direct inflow first, because a CONCEN row's mass
+    // rate is that flow times the concentration.
+    const int np = ctx.n_pollutants();
 
-        // Baseline value, optionally modulated by a time pattern
+    // Value of one [INFLOWS] row at the current date: cf * (tsv + blv), as in
+    // legacy inflow_getExtInflow().
+    auto row_value = [&](std::size_t ui) {
         double base = ext_inflows_.baseline[ui];
         int bp = ext_inflows_.base_pat_idx[ui];
         if (bp >= 0) {
@@ -247,15 +275,44 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
             ts_val = table_tseries_lookup_cursor(ctx.tables[ts], current_date);
             ts_val *= ext_inflows_.scale_factor[ui];
         }
+        return ext_inflows_.conv_factor[ui] * (ts_val + base);
+    };
 
-        // Combined inflow: cf * (tsv + blv)
-        // Matches legacy: cf * (tsv + blv) in inflow_getExtInflow
-        double q = ext_inflows_.conv_factor[ui] * (ts_val + base);
+    // Pass 1 — FLOW rows only.
+    for (int i = 0; i < ext_inflows_.count; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ext_inflows_.kind[ui] != static_cast<int>(ExtInflowKind::FLOW))
+            continue;
+
+        const double q = row_value(ui);
 
         // Write to decomposed external inflow array (assembled into lat_flow later)
         int ni = ext_inflows_.node_idx[ui];
         if (ni >= 0 && ni < static_cast<int>(ctx.nodes.ext_inflow.size())) {
             ctx.nodes.ext_inflow[static_cast<std::size_t>(ni)] += q;
+        }
+    }
+
+    // Pass 2 — pollutant rows: a mass rate into ext_qual_mass, never into the
+    // flow. QualitySolver::addExtInflowLoads() folds these into qual_mass_in.
+    if (np > 0 && !ctx.nodes.ext_qual_mass.empty()) {
+        for (int i = 0; i < ext_inflows_.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            const int kind = ext_inflows_.kind[ui];
+            if (kind == static_cast<int>(ExtInflowKind::FLOW)) continue;
+            const int p  = ext_inflows_.pollut_idx[ui];
+            const int ni = ext_inflows_.node_idx[ui];
+            if (p < 0 || p >= np || ni < 0 || ni >= ctx.n_nodes()) continue;
+
+            double w = row_value(ui);
+            if (kind == static_cast<int>(ExtInflowKind::CONCEN))
+                w *= ctx.nodes.ext_inflow[static_cast<std::size_t>(ni)];
+
+            const auto idx = static_cast<std::size_t>(ni) *
+                             static_cast<std::size_t>(np) +
+                             static_cast<std::size_t>(p);
+            if (idx < ctx.nodes.ext_qual_mass.size())
+                ctx.nodes.ext_qual_mass[idx] += w;
         }
     }
 
