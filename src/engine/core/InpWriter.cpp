@@ -2117,6 +2117,15 @@ int writeInpFile(const SimulationContext& ctx_internal,
     for(const auto&a:ps.init_args)std::fprintf(f," %s",a.c_str());std::fprintf(f,"\n");
     }}
 
+    // [PROCESS_COMPONENTS] — Unified Transport suite D-UT8 (round-trip; the
+    // component config FILES are each component's own to write, never ours).
+    if(!ctx.process_component_specs.empty()){sec(f,"PROCESS_COMPONENTS");
+    for(const auto&pc:ctx.process_component_specs){std::fprintf(f,"%s",pc.id.c_str());
+    if(!pc.config_path.empty())std::fprintf(f," config=\"%s\"",pc.config_path.c_str());
+    for(const auto&a:pc.args)std::fprintf(f," %s=\"%s\"",a.first.c_str(),a.second.c_str());
+    std::fprintf(f,"\n");
+    }}
+
     // [2D_*] — 2D surface-routing model definition (no-op for 1D models
     // and for engine builds without the 2D module).
     write2DSections(f, ctx, dst_dir, force_abs_paths, warnings);

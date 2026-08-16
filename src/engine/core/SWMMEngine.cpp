@@ -44,6 +44,7 @@
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
+#include "../plugins/ProcessComponentRegistry.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "HotStartManager.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
@@ -53,8 +54,8 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
 #include "../2d/output/Default2DOutputPlugin.hpp"
-#include <filesystem>
 #endif
+#include <filesystem>  // 2D mesh file + [PROCESS_COMPONENTS] path resolution
 
 #include <cstring>
 #include <ctime>
@@ -247,6 +248,29 @@ int SWMMEngine::open(const char* inp_path,
         }
     }
 #endif
+
+    // Resolve [PROCESS_COMPONENTS] registrations (Unified Transport suite
+    // D-UT8, phase IO1): look up each id, read its external config file
+    // (relative to the .inp, [2D_MESH_FILE] path rules), and deliver the
+    // parsed sections to the component's apply hook. Mirrors the external
+    // 2D mesh handling directly above: fatal on strict open, recorded and
+    // survivable on lenient (editor) open.
+    if (!ctx_.process_component_specs.empty()) {
+        std::string base_dir;
+        if (inp_path && inp_path[0] != '\0')
+            base_dir = std::filesystem::path(inp_path).parent_path().string();
+        const auto errs =
+            components::resolve_process_components(ctx_, base_dir);
+        if (!errs.empty()) {
+            for (const auto& e : errs) ctx_.errors.push_back(e);
+            if (!lenient_open_) {
+                ctx_.error_code    = SWMM_ERR_PARSE;
+                ctx_.error_message = errs.front();
+                write_open_failure_report();
+                return SWMM_ERR_PARSE;
+            }
+        }
+    }
 
     // Warn about unknown/skipped sections. Route through push_report_warning so
     // the warning reaches the .rpt (legacy report_writeWarningMsg), not just the
