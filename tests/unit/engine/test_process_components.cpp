@@ -244,4 +244,68 @@ TEST_F(ProcessComponentsTest, MissingConfigAndNestingAreFatal) {
     std::remove("_pc_nested.cfg");
 }
 
+// ---------------------------------------------------------------------------
+// Slice IO-4 — an absolute config="…" is rebased against the destination
+// directory on save, like every other external-file path slot. A GUI that
+// hands the engine an absolute path (or an API-built model) must not have it
+// frozen into the .inp: the saved deck has to stay portable AND reopenable.
+// ---------------------------------------------------------------------------
+TEST_F(ProcessComponentsTest, AbsoluteConfigPathIsRebasedOnWrite) {
+    namespace fs = std::filesystem;
+    openswmm::components::ProcessComponentRegistry::instance()
+        .register_component(
+            "org.test.iogate3", "Slice IO-4 rebase test component",
+            [](openswmm::SimulationContext&,
+               const openswmm::ProcessComponentSpec&,
+               const openswmm::components::ComponentConfigSections&,
+               std::vector<std::string>&) {});
+
+    fs::create_directories("_pc_abs");
+    { std::ofstream c("_pc_abs/_pc_abs.cfg"); c << "[ALPHA_OPTIONS]\nKEY1 V\n"; }
+    write_deck("_pc_abs/_pc_abs.inp",
+               "org.test.iogate3      config=\"_pc_abs.cfg\"");
+    ASSERT_EQ(open_deck("_pc_abs/_pc_abs.inp", "_pc_abs/_pc_abs.rpt",
+                        "_pc_abs/_pc_abs.out"), SWMM_OK);
+
+    const fs::path abs_cfg = fs::absolute("_pc_abs/_pc_abs.cfg");
+    auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_EQ(ctx.process_component_specs.size(), 1u);
+    ctx.process_component_specs[0].config_path = abs_cfg.string();
+
+    const fs::path out_inp = fs::absolute("_pc_abs") / "_pc_abs_rt.inp";
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, out_inp.string()), 0);
+
+    // The emitted row must carry the rebased token, not the absolute one.
+    std::string row;
+    {
+        std::ifstream in(out_inp);
+        std::string line;
+        bool in_section = false;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line[0] == '[') {
+                in_section = line.rfind("[PROCESS_COMPONENTS]", 0) == 0;
+                continue;
+            }
+            if (in_section && !line.empty() && line[0] != ';') { row = line; break; }
+        }
+    }
+    ASSERT_FALSE(row.empty()) << "[PROCESS_COMPONENTS] row was not emitted";
+    EXPECT_EQ(row.find(abs_cfg.parent_path().string()), std::string::npos)
+        << "absolute config path written verbatim, bypassing the Slice IO-4 "
+           "rebase every other external-file slot honors: " << row;
+    EXPECT_NE(row.find("config=\"_pc_abs.cfg\""), std::string::npos)
+        << "expected the path rebased against the destination directory, got: "
+        << row;
+
+    // …and the rebased reference must still resolve on reopen.
+    swmm_engine_destroy(engine_);
+    engine_ = swmm_engine_create();
+    ASSERT_NE(engine_, nullptr);
+    EXPECT_EQ(open_deck(out_inp.string().c_str(), "_pc_abs/_pc_abs_rt.rpt",
+                        "_pc_abs/_pc_abs_rt.out"), SWMM_OK);
+
+    std::error_code ec;
+    fs::remove_all("_pc_abs", ec);
+}
+
 }  // namespace

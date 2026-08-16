@@ -2119,9 +2119,14 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     // [PROCESS_COMPONENTS] — Unified Transport suite D-UT8 (round-trip; the
     // component config FILES are each component's own to write, never ours).
+    // The config= reference is an external-file slot like any other, so it
+    // goes through emit_path_token (Slice IO-4): an absolute path is rebased
+    // against the destination directory, a relative one passes through.
     if(!ctx.process_component_specs.empty()){sec(f,"PROCESS_COMPONENTS");
     for(const auto&pc:ctx.process_component_specs){std::fprintf(f,"%s",pc.id.c_str());
-    if(!pc.config_path.empty())std::fprintf(f," config=\"%s\"",pc.config_path.c_str());
+    if(!pc.config_path.empty()){const std::string cfg=
+    emit_path_token(pc.config_path,dst_dir,force_abs_paths,warnings);
+    std::fprintf(f," config=\"%s\"",cfg.c_str());}
     for(const auto&a:pc.args)std::fprintf(f," %s=\"%s\"",a.first.c_str(),a.second.c_str());
     std::fprintf(f,"\n");
     }}
