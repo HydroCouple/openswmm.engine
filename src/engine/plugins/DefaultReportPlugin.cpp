@@ -1024,12 +1024,20 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double reacted = (up < mb.qual_routing_reacted.size())   ? mb.qual_routing_reacted[up]  : 0.0;
             double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
             double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
+            // User-forced quality mass (swmm_node_set_quality_mass_flux). Booked
+            // since the forcing API landed but consumed by nothing, so once the
+            // ARD engine actually delivered it to the node stores the whole
+            // forced amount read as a continuity error (−7.7 % on a 1 mass/s
+            // feed). It is a real inflow; report and count it as one.
+            double forced  = (up < mb.routing_forcing_qual_inflow.size())
+                                 ? mb.routing_forcing_qual_inflow[up] : 0.0;
 
             qrow("Dry Weather Inflow .......", dwf);
             qrow("Wet Weather Inflow .......", wet);
             qrow("Groundwater Inflow .......", gw);
             qrow("RDII Inflow ..............", rdii);
             qrow("External Inflow ..........", ext);
+            if (forced != 0.0) qrow("User Forced Inflow .......", forced);
             qrow("External Outflow .........", outflow);
             qrow("Flooding Loss ............", flood);
             qrow("Exfiltration Loss ........", seep);
@@ -1037,7 +1045,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             qrow("Initial Stored Mass ......", init);
             qrow("Final Stored Mass ........", final_);
 
-            double total_in  = wet + rdii + dwf + gw + ext + init;
+            double total_in  = wet + rdii + dwf + gw + ext + init + forced;
             double total_out = outflow + flood + reacted + seep + final_;
             double err_pct = (total_in > 0.0) ? (total_in - total_out) / total_in * 100.0 : 0.0;
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);

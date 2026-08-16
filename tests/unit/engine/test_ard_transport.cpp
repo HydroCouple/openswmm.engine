@@ -60,14 +60,17 @@ openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
 
 /// Three conduits in series, constant 1 cfs inflow at J0 with pollutant TSS
 /// at concentration `c_in`; initial TSS everywhere = `c_init`.
+/// `extra_options` appends raw [OPTIONS] lines (E2: FV_MIN_CELLS etc.).
 void write_deck(const char* path, const char* quality_solver_line,
-                double c_in, double c_init) {
+                double c_in, double c_init,
+                const char* extra_options = "") {
     std::ofstream f(path);
     f << "[TITLE]\nE1 ARD transport gate deck\n\n"
       << "[OPTIONS]\n"
       << "FLOW_UNITS           CFS\n"
       << "FLOW_ROUTING         DYNWAVE\n"
       << quality_solver_line
+      << extra_options
       << "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
       << "END_DATE             01/01/2026\nEND_TIME             06:00:00\n"
       << "REPORT_START_DATE    01/01/2026\nREPORT_START_TIME    00:00:00\n"
@@ -217,6 +220,114 @@ TEST_F(ArdTransportTest, LegacyDefaultAndSteadyStateAgreement) {
     }
     std::remove("_ard_legacy.inp");
     std::remove("_ard_steady.inp");
+}
+
+// ---------------------------------------------------------------------------
+// Gate 4 (E2) — constituents cross a structure (orifice) as zero-volume
+// passthrough of the donor node store.
+// ---------------------------------------------------------------------------
+
+/// J0 →C1→ J1 →O1(orifice)→ J2 →C2→ OUT, constant inflow at concentration c0.
+void write_orifice_deck(const char* path, double c_in) {
+    std::ofstream f(path);
+    f << "[TITLE]\nE2 structure passthrough gate deck\n\n"
+      << "[OPTIONS]\n"
+      << "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
+      << "QUALITY_SOLVER       EULERIAN_ARD\n"
+      << "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+      << "END_DATE             01/01/2026\nEND_TIME             06:00:00\n"
+      << "REPORT_START_DATE    01/01/2026\nREPORT_START_TIME    00:00:00\n"
+      << "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n"
+      << "WET_STEP             00:05:00\nDRY_STEP             00:05:00\n\n"
+      << "[JUNCTIONS]\n"
+      << ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+      << "J0      10.0  10        0.5        0         0\n"
+      << "J1      9.0   10        0.5        0         0\n"
+      << "J2      8.5   10        0.5        0         0\n\n"
+      << "[OUTFALLS]\n;;Name  Elev  Type  StageData  Gated\n"
+      << "OUT     7.0   FREE              NO\n\n"
+      << "[CONDUITS]\n"
+      << ";;Name  From  To   Length  N      Zin  Zout  Q0\n"
+      << "C1      J0    J1   400     0.013  0    0     0\n"
+      << "C2      J2    OUT  400     0.013  0    0     0\n\n"
+      << "[ORIFICES]\n"
+      << ";;Name  From  To   Type  Offset  Cd    Gated  CloseTime\n"
+      << "O1      J1    J2   SIDE  0.0     0.65  NO     0\n\n"
+      << "[XSECTIONS]\n"
+      << ";;Link  Shape       G1   G2 G3 G4\n"
+      << "C1      CIRCULAR    1.5  0  0  0\n"
+      << "C2      CIRCULAR    1.5  0  0  0\n"
+      << "O1      CIRCULAR    1.0  0  0  0\n\n"
+      << "[POLLUTANTS]\n"
+      << ";;Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  "
+         "CoFrac  Cdwf  Cinit\n"
+      << "TSS     MG/L   0.0    0.0  0.0    0.0     NO        *         "
+         "0.0     0.0   0.0\n\n"
+      << "[INFLOWS]\n"
+      << ";;Node  Constituent  Timeseries  Type    Mfactor  Sfactor  "
+         "Baseline  Pattern\n"
+      << "J0      FLOW         \"\"          FLOW    1.0      1.0      1.0\n"
+      << "J0      TSS          \"\"          CONCEN  1.0      1.0      "
+      << c_in << "\n\n"
+      << "[REPORT]\nINPUT NO\nCONTINUITY YES\nFLOWSTATS NO\n";
+}
+
+TEST_F(ArdTransportTest, StructurePassthroughCarriesMass) {
+    write_orifice_deck("_ard_orifice.inp", kC0);
+    run("_ard_orifice.inp", "_ard_orifice.rpt", "_ard_orifice.out");
+
+    const auto& ctx = as_cpp_engine(engine_).context();
+    bool fell_back = false;
+    for (const auto& w : ctx.warnings)
+        if (w.find("falling back to LEGACY") != std::string::npos)
+            fell_back = true;
+    ASSERT_FALSE(fell_back);
+
+    const double tol = 1.0e-9 * kC0;
+    // Downstream of the orifice (link index order: C1=0, C2=1, O1=structure):
+    // by 6 h the feed must have crossed the structure — the E1 behavior this
+    // gate exists to kill was C2 pinned at exactly zero forever.
+    double c2 = -1.0;
+    for (int l = 0; l < ctx.n_links(); ++l) {
+        const double c = ctx.links.conc[static_cast<std::size_t>(l)];
+        EXPECT_GE(c, -tol) << "link " << l;
+        EXPECT_LE(c, kC0 + tol) << "link " << l;   // max principle across the structure
+    }
+    c2 = ctx.links.conc[1];
+    EXPECT_GT(c2, 0.5 * kC0)
+        << "constituent did not cross the orifice (E2 passthrough)";
+    std::remove("_ard_orifice.inp");
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5 (E2) — CSTR limit: 1 cell/conduit + UPWIND vs the LEGACY engine.
+// Loose band by design: the two models share the steady limit and the same
+// storage topology at this resolution but differ in mixing order.
+// ---------------------------------------------------------------------------
+TEST_F(ArdTransportTest, CstrLimitTracksLegacy) {
+    const char* kCstrOpts =
+        "FV_MIN_CELLS         1\nFV_SCALAR_SCHEME     UPWIND\n";
+    write_deck("_ard_cstr_legacy.inp", "", kC0, 0.0);
+    run("_ard_cstr_legacy.inp", "_ard_cstr_legacy.rpt", "_ard_cstr_legacy.out");
+    std::vector<double> legacy_conc;
+    {
+        const auto& ctx = as_cpp_engine(engine_).context();
+        legacy_conc = ctx.links.conc;
+    }
+    swmm_engine_destroy(engine_);
+    engine_ = swmm_engine_create();
+    ASSERT_NE(engine_, nullptr);
+
+    write_deck("_ard_cstr.inp", "QUALITY_SOLVER       EULERIAN_ARD\n",
+               kC0, 0.0, kCstrOpts);
+    run("_ard_cstr.inp", "_ard_cstr.rpt", "_ard_cstr.out");
+    const auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_EQ(legacy_conc.size(), ctx.links.conc.size());
+    for (std::size_t l = 0; l < legacy_conc.size(); ++l)
+        EXPECT_NEAR(ctx.links.conc[l], legacy_conc[l], 0.20 * kC0)
+            << "CSTR-limit divergence beyond the documented band, link " << l;
+    std::remove("_ard_cstr_legacy.inp");
+    std::remove("_ard_cstr.inp");
 }
 
 }  // namespace
