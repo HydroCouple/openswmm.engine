@@ -2754,6 +2754,17 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 std::max(ctx_.nodes.head[ui] - rom1d_invert_buf_[uai], 0.0);
         }
 
+        // PR H5: per-node surcharge attenuation for the Manning-sensitivity
+        // channel only (VALIDATION.md: 50-190x band-width over-prediction in
+        // surcharged regime). Recomputed every step -- head moves, crown_elev/
+        // invert_elev don't; both are guaranteed populated by now (initGeometry()
+        // ran during initialize(), long before stepRouting() executes).
+        uncertainty::computeSurchargeAlpha(
+            n_active, rom1d_active_map_.data(),
+            ctx_.nodes.crown_elev.data(), ctx_.nodes.invert_elev.data(),
+            ctx_.nodes.head.data(), ctx_.n_nodes(), rom1d_surcharge_cfg_,
+            rom1d_alpha_buf_.data());
+
         // Per-node dh/dt forcing from the just-completed DynWave step. Under
         // the deviation form its projection enters only scaled by
         // (runoff_mult - 1), so with the engine default runoff_pert = 0 it
@@ -2769,9 +2780,24 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             }
         }
 
+        // PR H11: per-member phase coordinate. T̄ is refreshed on its own
+        // interval cadence (default 60s, same order as the Lanczos basis
+        // update interval) rather than every step -- it depends only on the
+        // conduit velocity field, which does not need per-30s-step
+        // resolution. setTravelTime() itself only reconfigures (and thus
+        // resets) the history ring on its FIRST call; every refresh after
+        // that updates the T̄ values in place and leaves accumulated history
+        // untouched (see SpectralROM1D::setTravelTime()'s doc comment for
+        // why -- resetting on every refresh would destroy exactly the
+        // lookback history the phase channel needs).
+        if (rom1d_phase_cfg_.enabled &&
+            ctx_.current_time - rom1d_tbar_last_refresh_ >= rom1d_tbar_refresh_interval_) {
+            refreshRom1dTravelTime();
+        }
+
         rom1d_->advance(dt_routing, K1d, rom1d_h_buf_.data(),
                         rom1d_dh_buf_.empty() ? nullptr : rom1d_dh_buf_.data(),
-                        rom1d_sens_buf_.data());
+                        rom1d_sens_buf_.data(), rom1d_alpha_buf_.data());
         // computeQuantiles() is called only at report boundaries (postOutputSnapshot)
     }
 #endif
@@ -5986,12 +6012,33 @@ void SWMMEngine::buildROM1D() noexcept {
 
     rom1d_->initialize();
 
+    // PR H11: propagate the engine's phase-coordinate dials (settable via
+    // rom1dPhaseConfig() in the open()->initialize() window, same pattern as
+    // surfaceRouter2D().options()) into the ROM's own copy -- computeQuantiles()
+    // and setTravelTime() read phase_cfg directly off the ROM object, not off
+    // the engine, so without this copy a caller tuning dials before
+    // initialize() would have no effect (the ROM would silently keep its own
+    // struct defaults).
+    rom1d_->phase_cfg = rom1d_phase_cfg_;
+
     // Store active map + per-step buffers for head extraction in stepRouting
     rom1d_active_map_ = active_map;
     rom1d_dh_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     rom1d_h_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     rom1d_invert_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
     rom1d_sens_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    // PR H5: alpha defaults to 1.0 (unattenuated) until the first per-step
+    // fill below; ctx_.nodes.crown_elev isn't populated yet at this point
+    // (buildROM1D() runs inside initHydraulics(), before initGeometry() —
+    // same ordering hazard buildRom1dThresholds() documents above), so this
+    // buffer must only ever be filled per-step, never here at build time.
+    rom1d_alpha_buf_.assign(static_cast<std::size_t>(n_active), 1.0);
+    // PR H11: same ordering hazard -- T̄ depends on conduit flow/velocity,
+    // which doesn't exist before the first routing step either. Left at 0
+    // (no phase effect) until refreshRom1dTravelTime() runs from
+    // stepRouting(); NEVER call it here (see that method's own doc comment).
+    rom1d_tbar_buf_.assign(static_cast<std::size_t>(n_active), 0.0);
+    rom1d_tbar_last_refresh_ = -1.0e9;
     for (int ai = 0; ai < n_active; ++ai) {
         auto ui = static_cast<std::size_t>(active_map[static_cast<std::size_t>(ai)]);
         rom1d_invert_buf_[static_cast<std::size_t>(ai)] = ctx_.nodes.invert_elev[ui];
@@ -6228,6 +6275,70 @@ double SWMMEngine::computeK1d() noexcept {
         ++cnt;
     }
     return cnt > 0 ? sum_k / cnt : 1e-4;
+}
+
+// ============================================================================
+// refreshRom1dTravelTime() — PR H11 per-member phase coordinate
+// ============================================================================
+
+void SWMMEngine::refreshRom1dTravelTime() noexcept {
+    // MUST only be called from stepRouting(), never from buildROM1D():
+    // buildROM1D() runs inside initHydraulics(), before any routing step has
+    // produced real conduit flow/velocity -- calling this there would
+    // silently give T̄ ≡ 0 everywhere and never be revisited except through
+    // this same per-step path (same init-ordering hazard as H10's own
+    // crown_elev bug; see buildRom1dThresholds()'s doc comment).
+    if (!rom1d_ || !rom1d_->is_ready()) return;
+
+    const int n_links_full = ctx_.n_links();
+    const int n_nodes_full = ctx_.n_nodes();
+    std::vector<int>    n1(static_cast<std::size_t>(n_links_full));
+    std::vector<int>    n2(static_cast<std::size_t>(n_links_full));
+    std::vector<double> len(static_cast<std::size_t>(n_links_full), 0.0);
+    std::vector<double> vel(static_cast<std::size_t>(n_links_full), 0.0);
+    int n_edges = 0;
+
+    ensureXspCache();
+    for (int j = 0; j < n_links_full; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+        // Phase 6: conduit config lives in the conduits side-table, not the
+        // wide LinkData arrays (same accessor pattern as computeK1d()).
+        const int cr = ctx_.link_subtypes.conduit_row(j);
+        if (cr < 0) continue;
+        const auto ucr = static_cast<std::size_t>(cr);
+        const double L = ctx_.link_subtypes.conduits.mod_length[ucr] > 0.0
+                              ? ctx_.link_subtypes.conduits.mod_length[ucr]
+                              : ctx_.link_subtypes.conduits.length[ucr];
+        if (L <= 0.0) continue;
+        const int nb = ctx_.link_subtypes.conduits.barrels[ucr];
+        // Signed velocity: link::getVelocity divides flow (signed, +ve =
+        // node1->node2) by a positive cross-sectional area, so the sign is
+        // preserved -- exactly the orientation convention computeTravelTime
+        // expects.
+        const double v = link::getVelocity(xsp_cache_[uj], ctx_.links.flow[uj],
+                                            ctx_.links.depth[uj], nb);
+        const auto ue = static_cast<std::size_t>(n_edges);
+        n1[ue]  = ctx_.links.node1[uj];
+        n2[ue]  = ctx_.links.node2[uj];
+        len[ue] = L;
+        vel[ue] = v;
+        ++n_edges;
+    }
+
+    std::vector<double> tbar_full(static_cast<std::size_t>(n_nodes_full), 0.0);
+    uncertainty::computeTravelTime(n_edges, n1.data(), n2.data(), len.data(),
+                                    vel.data(), n_nodes_full, rom1d_phase_cfg_,
+                                    tbar_full.data());
+
+    const int n_active = static_cast<int>(rom1d_active_map_.size());
+    for (int ai = 0; ai < n_active; ++ai) {
+        const auto uai = static_cast<std::size_t>(ai);
+        const auto ui  = static_cast<std::size_t>(rom1d_active_map_[uai]);
+        rom1d_tbar_buf_[uai] = tbar_full[ui];
+    }
+    rom1d_->setTravelTime(rom1d_tbar_buf_.data());
+    rom1d_tbar_last_refresh_ = ctx_.current_time;
 }
 #endif // OPENSWMM_HAS_2D
 

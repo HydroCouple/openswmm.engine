@@ -29,6 +29,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
@@ -754,4 +755,281 @@ TEST(SwmmEngine1DRomLifecycle, RomThresholdCsvAbsentWhenRomNotBuilt) {
     swmm_engine_destroy(r.eng);
 
     EXPECT_FALSE(fs::exists(dir / "rom_threshold_none.rom_threshold.csv"));
+}
+
+// ============================================================================
+// PR H5 — surcharged-regime sensitivity attenuation, engine-level plumbing.
+// This is a WIRING check (does crown_elev/invert_elev/head reach
+// computeSurchargeAlpha() correctly through the real engine, in the right
+// order relative to initGeometry() -- the same ordering hazard H10's
+// RomThresholdCsvIsWellFormedAndOnReportCadence test documents above), not a
+// restatement of the pure-function ramp math (test_rom_surcharge_attenuation.
+// cpp) or a numerical validation of band widths (the MC coverage fixture in
+// tests/regression/test_rom_coverage.cpp is the real gate for that).
+// ============================================================================
+
+namespace {
+
+/// Deliberately undersized pipes (0.5 ft, vs. the 3.0 ft used elsewhere in
+/// this file) on the same 5-junction chain shape, so a modest 5 CFS inflow
+/// at J1 vastly exceeds conduit capacity and J1 surcharges hard within the
+/// run -- unlike the rest of this file's fixtures, which stay free-surface.
+/// InitDepth is dropped to 0.1 ft (crown is only invert+0.5 ft above invert)
+/// so every node starts well BELOW its own crown, giving the alpha ramp a
+/// real 1 -> 0 transition to cross, not a fixture that's already surcharged
+/// at t=0.
+std::string buildSmallCapacityChainModel(const std::string& extra_sections) {
+    return
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:20:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         5\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      10.0  8.0       0.1        0         0\n"
+        "J2       8.0  8.0       0.1        0         0\n"
+        "J3       6.0  8.0       0.1        0         0\n"
+        "J4       4.0  8.0       0.1        0         0\n"
+        "J5       2.0  8.0       0.1        0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O1      0.0   FREE  NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    J2  200.0   0.013      0         0          0.0\n"
+        "C2      J2    J3  200.0   0.013      0         0          0.0\n"
+        "C3      J3    J4  200.0   0.013      0         0          0.0\n"
+        "C4      J4    J5  200.0   0.013      0         0          0.0\n"
+        "C5      J5    O1  200.0   0.013      0         0          0.0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  0.5    0      0      0      1\n"
+        "C2      CIRCULAR  0.5    0      0      0      1\n"
+        "C3      CIRCULAR  0.5    0      0      0      1\n"
+        "C4      CIRCULAR  0.5    0      0      0      1\n"
+        "C5      CIRCULAR  0.5    0      0      0      1\n"
+        "\n"
+        "[INFLOWS]\n"
+        ";;Node  Constituent  TimeSeries  Type   Mfactor  Sfactor  Baseline  Pattern\n"
+        "J1      FLOW         \"\"          FLOW   1.0      1.0      5.0\n"
+        + extra_sections;
+}
+
+}  // namespace
+
+TEST(SwmmEngine1DRomLifecycle, SurchargeAlphaDropsAsNodeSurcharges) {
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    const fs::path inp = dir / "surcharge_alpha.inp";
+    const fs::path rpt = dir / "surcharge_alpha.rpt";
+    {
+        std::ofstream f(inp);
+        f << buildSmallCapacityChainModel("\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n");
+    }
+
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
+
+    auto* impl = static_cast<openswmm::SWMMEngine*>(eng);
+    ASSERT_NE(impl->rom1d(), nullptr)
+        << "5 active junctions (>=4) must be enough for the ROM to build";
+
+    // Track the minimum alpha across all active nodes at each step -- J1
+    // (the inflow point, furthest from the undersized outfall chain) should
+    // dominate the minimum once surcharge develops, without this test having
+    // to assume which active index J1 landed at.
+    bool   have_first = false;
+    double first_min_alpha = -1.0;
+    double last_min_alpha  = -1.0;
+
+    double elapsed = 0.0;
+    int n_steps = 0;
+    while (swmm_engine_step(eng, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        if (++n_steps > 2000) break;   // safety valve
+
+        const auto& alpha = impl->rom1dAlphaBuffer();
+        if (alpha.empty()) continue;
+        double min_alpha = 1.0;
+        for (double a : alpha) min_alpha = std::min(min_alpha, a);
+
+        if (!have_first) { first_min_alpha = min_alpha; have_first = true; }
+        last_min_alpha = min_alpha;
+    }
+    swmm_engine_end(eng);
+
+    ASSERT_TRUE(have_first) << "rom1dAlphaBuffer() must be populated by the "
+                                "first step once the ROM is built and ready";
+    EXPECT_GT(first_min_alpha, 0.9)
+        << "every node starts at InitDepth=0.1 ft, well below its own crown "
+           "(invert+0.5 ft) -- alpha must start effectively unattenuated";
+    EXPECT_LT(last_min_alpha, 0.1)
+        << "J1's 5 CFS inflow vastly exceeds the undersized 0.5 ft conduits' "
+           "capacity, so by the end of a 20-minute run at least one node "
+           "must be clearly surcharged (alpha near 0)";
+    EXPECT_LT(last_min_alpha, first_min_alpha)
+        << "alpha must have actually moved, not stayed pinned at its "
+           "starting value";
+
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+}
+
+// ============================================================================
+// PR H11 — per-member phase coordinate: engine-level T̄ velocity plumbing.
+// The pure computeTravelTime() closed forms are covered by
+// test_rom_phase_coordinate.cpp; the SpectralROM1D-level h_ref selection is
+// covered by the PhaseCoordinate suite in test_spectral_rom1d.cpp. These are
+// the plumbing guard: does the engine's own conduit flow/velocity state,
+// read through refreshRom1dTravelTime(), actually produce a sane T̄(x).
+// ============================================================================
+
+TEST(SwmmEngine1DRomLifecycle, TravelTimeBufferNonNegativeAndAccumulatesDownstream) {
+    // The same sloping 5-junction chain used throughout this file, with a
+    // steady positive InitFlow driving J1->J2->...->J5->O1 downstream. T̄
+    // must be non-negative everywhere, zero at the source (J1), and
+    // non-decreasing along the flow path (each additional conduit can only
+    // add travel time, never subtract it, under the max-relaxation in
+    // computeTravelTime()).
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+
+    auto r = driveRun(dir, "phase_travel_time_downstream",
+                      "\n[UNCERTAINTY]\n1D MANNINGS_N 0.20\n");
+    ASSERT_NE(r.eng, nullptr);
+    auto* impl = static_cast<openswmm::SWMMEngine*>(r.eng);
+    ASSERT_NE(impl->rom1d(), nullptr);
+    ASSERT_TRUE(impl->rom1d()->is_ready());
+
+    const auto& tbar = impl->rom1dTravelTimeBuffer();
+    ASSERT_FALSE(tbar.empty())
+        << "T̄ should have been refreshed by the first stepRouting() call "
+           "(the refresh-interval guard always fires on its first call)";
+
+    const auto& full_to_active = impl->rom1d()->full_to_active;
+    const auto& ctx = impl->context();
+    const char* names[5] = {"J1", "J2", "J3", "J4", "J5"};
+    std::vector<double> tbar_by_name(5, -1.0);
+    for (int ui = 0; ui < ctx.n_nodes(); ++ui) {
+        const std::string nm = ctx.node_names.name_of(ui);
+        for (int k = 0; k < 5; ++k) {
+            if (nm != names[k]) continue;
+            ASSERT_LT(static_cast<std::size_t>(ui), full_to_active.size());
+            const int ai = full_to_active[static_cast<std::size_t>(ui)];
+            ASSERT_GE(ai, 0) << names[k] << " should be an active ROM node";
+            tbar_by_name[static_cast<std::size_t>(k)] = tbar[static_cast<std::size_t>(ai)];
+        }
+    }
+    for (int k = 0; k < 5; ++k)
+        ASSERT_GE(tbar_by_name[static_cast<std::size_t>(k)], 0.0) << "node " << names[k];
+
+    EXPECT_NEAR(tbar_by_name[0], 0.0, 1e-9)
+        << "J1 is the source of downstream flow -- zero cumulative travel time";
+    for (int k = 1; k < 5; ++k) {
+        EXPECT_GE(tbar_by_name[static_cast<std::size_t>(k)],
+                  tbar_by_name[static_cast<std::size_t>(k - 1)] - 1e-9)
+            << names[k] << " should not have LESS travel time than " << names[k - 1];
+    }
+    EXPECT_GT(tbar_by_name[4], tbar_by_name[0])
+        << "J5 (farthest downstream) should have strictly more travel time "
+           "than the source J1";
+
+    swmm_engine_close(r.eng);
+    swmm_engine_destroy(r.eng);
+}
+
+TEST(SwmmEngine1DRomLifecycle, StillNetworkGivesZeroTravelTime) {
+    // Reuses the genuinely-flat fixture (all inverts equal, matching
+    // initial/stage depths -> zero head gradient -> zero flow by
+    // construction, NOT a sloping chain with InitFlow=0, which develops
+    // real flow from the very first step -- see
+    // HSnapshotFroudeIsZeroInStillWater's own note above) with
+    // [UNCERTAINTY] added. Zero flow -> every conduit's velocity is below
+    // u_min -> every edge stagnant -> T̄ ≡ 0 everywhere, per
+    // RomPhaseCoordinate.hpp's deliberate answer to u->0 (zero, not a
+    // large/undefined value).
+    const fs::path dir = fs::current_path() / "1d_rom_lifecycle_out";
+    fs::create_directories(dir);
+    const std::string still_model_with_unc =
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:20:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         5\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded\n"
+        "J1      0.0   8.0       1.0        0         0\n"
+        "J2       0.0  8.0       1.0        0         0\n"
+        "J3       0.0  8.0       1.0        0         0\n"
+        "J4       0.0  8.0       1.0        0         0\n"
+        "J5       0.0  8.0       1.0        0         0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Stage  Gated\n"
+        "O1      0.0   FIXED 1.0   NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow\n"
+        "C1      J1    J2  200.0   0.013      0         0          0.0\n"
+        "C2      J2    J3  200.0   0.013      0         0          0.0\n"
+        "C3      J3    J4  200.0   0.013      0         0          0.0\n"
+        "C4      J4    J5  200.0   0.013      0         0          0.0\n"
+        "C5      J5    O1  200.0   0.013      0         0          0.0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels\n"
+        "C1      CIRCULAR  3.0    0      0      0      1\n"
+        "C2      CIRCULAR  3.0    0      0      0      1\n"
+        "C3      CIRCULAR  3.0    0      0      0      1\n"
+        "C4      CIRCULAR  3.0    0      0      0      1\n"
+        "C5      CIRCULAR  3.0    0      0      0      1\n"
+        "\n"
+        "[UNCERTAINTY]\n"
+        "1D MANNINGS_N 0.20\n";
+
+    const fs::path inp = dir / "phase_travel_time_still.inp";
+    const fs::path rpt = dir / "phase_travel_time_still.rpt";
+    { std::ofstream f(inp); f << still_model_with_unc; }
+
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                               nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
+
+    double elapsed = 0.0;
+    int n_steps = 0;
+    while (swmm_engine_step(eng, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        if (++n_steps > 500) break;
+    }
+    swmm_engine_end(eng);
+
+    auto* impl = static_cast<openswmm::SWMMEngine*>(eng);
+    ASSERT_NE(impl->rom1d(), nullptr);
+    ASSERT_TRUE(impl->rom1d()->is_ready());
+
+    const auto& tbar = impl->rom1dTravelTimeBuffer();
+    ASSERT_FALSE(tbar.empty());
+    for (std::size_t ai = 0; ai < tbar.size(); ++ai)
+        EXPECT_NEAR(tbar[ai], 0.0, 1e-9) << "active node " << ai;
+
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
 }

@@ -67,12 +67,16 @@ fix, the width-ratio median moved 14.7 → 1.25.
    conveyance-based sensitivity still scales with (large) depth. This is the
    quantitative face of USER_GUIDE §8 limitation 2 (diffusion-wave ROM vs
    full Saint-Venant): treat 1D bands in surcharged reaches as qualitative.
-3. **Front-arrival timing spread is not captured.** In the same surcharged
-   variant, a filling front's arrival time varied ~minutes across MC members,
-   producing transient 2–4 m empirical widths at front passage that the ROM
-   (an amplitude-sensitivity method anchored to the deterministic trajectory)
-   does not represent. Phase/timing uncertainty is out of scope for the
-   current formulation.
+3. **Front-arrival timing spread is not captured by the amplitude channel
+   alone.** In the same surcharged variant, a filling front's arrival time
+   varied ~minutes across MC members, producing transient 2–4 m empirical
+   widths at front passage that a pure amplitude-sensitivity method (anchored
+   to the deterministic trajectory) does not represent. **PR H11's per-member
+   phase coordinate closes most of this gap** — see the "Per-member phase
+   coordinate (PR H11)" section below for the measured recovery on a
+   dedicated front-passage fixture (median width ratio 0.009 → 1.354).
+   H11 is 1D only; the 2D counterpart (drain-to-pond, `H11b`) is unaffected
+   and remains open — see §4 of the 2D marcher-compatibility section above.
 4. **Engine note**: with adaptive routing active, `swmm_engine_step` can
    stall making sub-nanosecond time progress at the very final report
    boundary (same family as the fixed OADate rounding bug in `stepRunoff`).
@@ -556,3 +560,326 @@ ever suspected there.
     # Bellinge per-solver-mode rerun (validation-only, not a ctest target,
     # ~400 s for all 4 cells): scratch harness pattern, compile against the
     # engine dylib per the W3 calibration convention in .memory/current.md.
+
+---
+
+# Surcharged-regime sensitivity attenuation (PR H5)
+
+Measured 2026-08-06. `tests/regression/test_rom_coverage.cpp`, new
+`RomCoverageSurcharged` suite (2 tests, one per `NODE_CONTINUITY` mode),
+alongside the pre-existing `RomCoverage` (free-surface, still deliberately
+red per its own header, unrelated to and unaffected by H5).
+
+## 1. Experiment
+
+**Problem**: in surcharged regime the pre-H5 ROM over-predicted band widths
+50–190× (PR-10's documented limit). Mechanism: the modal Manning-sensitivity
+source term `-λ·K1d·(1/mm-1)·b_j` encodes free-surface conveyance sensitivity
+(`K ~ h^(5/3)/n`), which no longer governs once a pipe runs full and heads are
+set by mass balance/backwater instead.
+
+**Fix** (`src/engine/uncertainty/RomSurchargeAttenuation.hpp`, PR H5's F
+design decision): a per-active-node factor `alpha_n` folds into the
+sensitivity reference *before* projection (`b_j = Pᵀ(alpha ⊙ bref)`),
+damping only the Manning-sensitivity channel — the forcing-sensitivity
+channel (runoff/soft-rain, projected separately) is untouched. `alpha_n` is a
+smooth ramp of `ratio_n = (head-invert)/(crown_elev-invert)` over
+`[ramp_lo, ramp_hi] = [0.9, 1.1]`, floored at `alpha_floor` rather than
+ramping to a hard 0 — see §2 for why the floor exists and how it was
+calibrated. One amendment to the checklist's literal candidate ("fraction of
+incident conduits free-surface, per-conduit ramp"): the engine exposes crown
+data as a per-*node* scalar (the same quantity `HSnapshot::node_surcharged`
+already uses), not per-conduit, so `alpha_n` ramps that same node-level
+quantity rather than inventing new per-conduit geometry plumbing for a value
+that would immediately re-aggregate to a node scalar anyway.
+
+**Fixture** (`fixtureInpSurcharged()`): same 5-junction chain as the
+free-surface test, but C1–C4 stay at a generous 1.0 m diameter and C5 (into
+the outfall) is undersized to 0.3 m — a single, localized bottleneck rather
+than a uniformly undersized chain. DWF at J1 raised to 0.40 CMS. This
+specific design **replaced an earlier, abandoned attempt** — see §3(a) for
+why the obvious "just raise inflow past chain-wide capacity" approach isn't a
+validatable fixture at all. Same 21-member brute-force MC design as PR-10
+(LHS strata of the checklist's ±20% Manning prior), run once per
+`NODE_CONTINUITY` mode, MC members and the ROM in the same mode per cell (the
+P4 compat-matrix pattern).
+
+## 2. Results (measured)
+
+| NODE_CONTINUITY | Coverage | Width ratio min/med/max | Surcharged frac | Verdict |
+|---|---|---|---|---|
+| EXPLICIT | 0.997 | 0.016 / **0.034** / 1.866 | 1.000 | **FAILS** ratio_med ≥ 0.3 |
+| SEMI_IMPLICIT | 0.990 | 0.021 / **1.031** / 2.799 | 1.000 | **passes** |
+
+Both cells clear coverage ≥ 0.90 and surcharged_frac ≥ 0.50 comfortably. The
+alpha floor (see below) was calibrated against this exact fixture, so
+SEMI_IMPLICIT's ratio_med landing almost exactly at 1.0 is a genuine
+calibration result, not a coincidence — but the same floor leaves EXPLICIT's
+median an order of magnitude below the checklist's own 0.3 floor. Both
+findings are explained in §3, not adjusted away.
+
+**Calibration record** (`RomSurchargeAttenuation.hpp`,
+`SurchargeAttenuationConfig::alpha_floor`): the checklist's literal candidate
+ramps `alpha_n` to a hard 0 deep in surcharge. Validated against this
+fixture, that collapsed the SEMI_IMPLICIT band to ratio_med ≈ 0 (measured,
+not estimated) — an over-correction from "50–190× too wide" to "collapsed to
+near-nothing," because a pressurized pipe still loses head to friction, and
+that loss still depends on n (just not through the free-surface `h^(5/3)/n`
+law the un-attenuated ROM assumes). `alpha_floor = 0.05` was chosen as the
+value that lands SEMI_IMPLICIT's median closest to the ideal 1.0 while
+keeping its max under the checklist's 3.0 ceiling; `alpha_floor = 0.15` was
+also measured (SEMI_IMPLICIT ratio_med 1.031 → 0.565, non-monotonic — see
+§3(c) — while EXPLICIT's median moved only 0.034 → 0.061, nowhere near 0.3)
+and rejected as strictly worse on both counts.
+
+## 3. Findings and scope
+
+**(a) A fixture-design trap specific to this PR, found and fixed by
+redesign, not by threshold tuning.** The first fixture attempt uniformly
+undersized *every* conduit and pushed DWF well past the whole chain's
+capacity (mirroring PR-10's/P4's own topology-reuse habit). Scratch-harness
+measurement (2026-08-06) found this was not a validatable regime at all: at a
+fixed DWF, the ±20% Manning prior alone flipped the network between "stays
+below crown" (rough_mult 0.83, never surcharges) and ">36 m over crown"
+(rough_mult 1.17) — a near-bifurcation in capacity-vs-demand, not a graded
+response. MC members landing on opposite sides of that split don't have a
+comparable band to measure a ROM against. Separately, pushing DWF far enough
+past capacity to guarantee *every* member surcharges was found to hit an
+apparent flooding ceiling (identical settled head regardless of DWF or
+roughness once deep enough over capacity — confirmed via a MaxDepth sweep
+that the *node* values, not a diagnostic bug, genuinely saturate). Localizing
+the bottleneck to a single conduit (C5) turned the chain-wide compounding
+into a single-stage, continuously-graded response (§1's measured 90–95%
+surcharged fraction across the same roughness range, monotonic, no jump) —
+this *is* a working fixture. Recorded in full in `history_decisions.md`.
+
+**(b) EXPLICIT's discrete surcharge branch shows steeper Manning sensitivity
+at a chokepoint than SEMI_IMPLICIT's unified formula — root-caused, not
+assumed.** Per-node breakdown (scratch diagnostic, 2026-08-06) of the
+EXPLICIT cell's failure: J1 (never attenuated, alpha≈1) has ratio ≈ 1.87,
+comfortably in-band — the ROM's ordinary free-surface behavior is intact.
+J4/J5 (downstream of the C5 bottleneck, alpha at the floor) have ratio ≈
+0.02, and the brute-force MC's *own* q05–q95 width there is ≈28 m: the same
+±20% Manning prior that gave EXPLICIT's settled backwater depths of ~19 m
+(rough_mult 0.83) to ~47 m (rough_mult 1.17) at nominal DWF (§1's design
+measurement) reproduces almost exactly as the MC width at the nearest-rank
+5th/95th-percentile members. This is a real, steep, physical sensitivity of
+single-conduit pressurized backwater to conveyance near a chokepoint under
+EXPLICIT's discrete branch — bridging it would need `alpha_floor` in the
+range of 0.7–0.8 (measured by direct trial), which would erase most of the
+attenuation this PR exists to add, and is not compatible with keeping
+SEMI_IMPLICIT's max under the checklist's 3.0 ceiling (see (c)). **Left RED**
+rather than loosening the checklist's [0.3, 3.0]/≥0.90 acceptance bounds
+(hard rule 2) — see `tests/regression/test_rom_coverage.cpp`'s own
+`@warning` block on `RomCoverageSurcharged.ExplicitContinuity` for the same
+finding recorded next to the failing assertion.
+
+**(c) `alpha_floor` response is not monotonic across both cells
+simultaneously — a genuine model-parameter finding, not noise.** Raising the
+floor 0.05 → 0.15 (3×) moved EXPLICIT's median only 0.034 → 0.061 (≈1.8×,
+not 3×) and *decreased* SEMI_IMPLICIT's median (1.031 → 0.565) while also
+decreasing its max (2.799 → 1.853). A larger `alpha_floor` raises
+`b_coarse[j]` for every attenuated node, which can cross `mode_drop_
+threshold` and activate previously-inactive modes (`by_manning` in
+`SpectralROM1D::advance()`'s Step 3) whose own sign/contribution isn't
+predictable from the floor's magnitude alone — a single global scalar
+does not respond linearly once mode activation is in play. This rules out
+further blind grid-search over `alpha_floor` as a productive path to close
+(b): the mechanism that would need to change is not "the floor is too
+small," it is something structurally different between how EXPLICIT and
+SEMI_IMPLICIT drive `b_coarse[j]` near a chokepoint.
+
+**(d) Resolved 2026-08-09: the gap is not fixture-severity-dependent, so it
+is accepted and documented rather than chased further.** Before deciding
+between "try a different mechanism" and "document as a limitation," checked
+the cheap alternative first: does a *milder* surcharge (smaller excess
+inflow over the C5 bottleneck's capacity) narrow EXPLICIT's dynamic range
+enough to pass without changing `alpha_floor`? Swept DWF from 0.25–0.40 CMS
+(vs. the fixture's own 0.40) and measured settled head-crown across the same
+rough_mult ∈ {0.83, 1.0, 1.17}. Result: it does not help, and can make the
+*ratio* of extremes worse — near the threshold the low-roughness member's
+settled depth over crown shrinks toward zero (e.g. DWF=0.30 gives
+3.0/12.9/23.0 m across the three strata, a **7.5×** spread vs. the fixture's
+own 2.4× at DWF=0.40), because the ratio's denominator is what's shrinking,
+not the physical spread narrowing. DWF=0.40 (the shipped fixture) is in fact
+the best-behaved point measured in this sweep, not an unlucky choice.
+**Conclusion**: EXPLICIT's chokepoint sensitivity is a property of the
+regime (discrete surcharge branch near a single restrictive conduit), not an
+artifact of how severely this particular fixture forces surcharge — a
+different mechanism (e.g. a flow/Froude-keyed attenuation signal instead of
+a pure depth-ratio one, reusing PR H3's existing `link_froude` machinery)
+remains a real option but is its own formulation R&D effort, not a quick
+follow-up, and the floor-response was already shown non-monotonic (finding
+(c) above) so further constant-tuning is not it either. **Decision: accepted
+as a documented limitation of the source-side-attenuation formulation
+specifically under `NODE_CONTINUITY EXPLICIT`.** Recorded in
+`docs/uncertainty/HOW_IT_WORKS.md` §8 and `USER_GUIDE.md` limitation 10,
+both recommending `SEMI_IMPLICIT` when validated surcharged bands are
+needed. `RomCoverageSurcharged.ExplicitContinuity` stays registered and
+deliberately red — a live regression guard against this getting *worse*,
+and a ready-made gate if a future session takes on the flow-keyed-signal
+option above.
+
+## 4. Reproduction
+
+    # Both NODE_CONTINUITY cells (SEMI_IMPLICIT passes, EXPLICIT deliberately red):
+    ctest --test-dir build/<dir> -R regression_rom_coverage
+
+    # Isolate one cell:
+    build/<dir>/tests/regression/test_rom_coverage --gtest_filter='RomCoverageSurcharged.*'
+
+    # Pure-function ramp/floor unit tests (independent of the MC fixture):
+    ctest --test-dir build/<dir> -R test_engine_rom_surcharge_attenuation
+
+---
+
+# Per-member phase coordinate (PR H11)
+
+Measured 2026-08-10. `tests/regression/test_rom_coverage.cpp`, new
+`RomCoverageFront` suite (2 tests: the gated `PhaseCoordinate` case and the
+ungated `AmplitudeOnlyBaseline` "before" measurement), alongside the
+pre-existing `RomCoverage`/`RomCoverageSurcharged` suites (unaffected —
+numbers reproduced bit-identically before and after this PR, see §3).
+
+## 1. Experiment
+
+**Problem**: the 1D sidecar is an *amplitude* method — member `i` carries
+`δa_i = Pᵀ(h_i − h_det)`, a deviation on a fixed spatial basis evolved by a
+dissipative operator. A filling front's *arrival time* is a phase error, not
+an amplitude one: it neither decays nor is expressible as a deviation on a
+fixed basis. PR-10's original validation (§4 item 3 above) measured a 2–4 m
+transient width at front passage the amplitude channel does not represent at
+all.
+
+**Fix** (`src/engine/uncertainty/RomPhaseCoordinate.hpp`): a per-member phase
+offset `τ_i(x) = (mm_i − 1)·T̄(x)`, the same `(mm−1)` structure as the
+already-validated amplitude fixed point `δa_ss = (mm−1)·b_j` — both are the
+first-order response of a `1/n` conveyance law. `T̄(x)` is a **path integral**
+over the deterministic flow graph (`t_e = L_e/((5/3)|u_e|)` per edge, oriented
+by flow sign, accumulated downstream by a bounded max-relaxation), refreshed
+every 60 s from the engine's own conduit velocity state
+(`SWMMEngine::refreshRom1dTravelTime()`) — **not** a solved travel-time field.
+Reconstruction in `computeQuantiles()` becomes
+`h_i(x,t) = H(t − τ_i) + P·δa_i`, where `H(·)` samples a bounded ring buffer
+of `h_det` planes (`DetHistoryRing`), with a past-anchored reflection
+`h_ref = 2H(t) − H(t−|τ|)` for faster members (`τ<0`, a query into the future
+no history buffer holds). A stagnant edge (`|u_e| < u_min`) contributes
+**exactly zero** travel time, not a large/undefined value — the deliberate
+answer to the `u→0` regime that broke the 2D W3 drain-to-pond fixture (H11b,
+still open, out of scope here). Full design rationale, including the two
+non-obvious calls (stagnation → zero not infinity; negative τ → reflection not
+clamp-to-now) is in the H11 design plan
+(`~/.claude/plans/please-plan-h11-implementation-woolly-pearl.md`, kept as the
+O48 design record per the checklist's own routing — no separate normative doc
+was written since the plan already fixes every formulation decision).
+
+**Invariant preserved**: `τ_i = 0` exactly at `mm_i = 1` for any `T̄`
+(`phaseOffset(1.0, ·) ≡ 0.0`), so every pre-H11 `DeviationForm.*`/
+`SurchargeAttenuation.*` test in `test_spectral_rom1d.cpp` passes **unchanged**
+— `SpectralROM1D` defaults to unphased (`setTravelTime()` never called) and
+`computeQuantiles()`'s phase branch is bit-identical to the pre-H11 code path
+in that state (`PhaseCoordinate.NoTravelTimeIsBitIdentical`,
+`PhaseCoordinate.ZeroPerturbationExactWithPhase`). On a *steady* `h_det`
+(`dh_det/dt ≈ 0`, the regime the existing saturated-window gates measure in)
+the phase channel adds **exactly zero** extra width by construction
+(`PhaseCoordinate.SteadyDetTrajectoryPhaseAddsNothing`) — the reason §3 below
+confirms the pre-existing fixtures' numbers did not move.
+
+**Fixture** (`fixtureInpFront()`): same 5-junction chain topology as the
+free-surface fixture, but **800 m conduits** (vs. 100 m) so a filling front's
+arrival time is spread over multiple minutes — resolvable at
+`REPORT_STEP=60s` — instead of arriving within a single routing step;
+`InitDepth=0` (a genuine dry start, not the free-surface fixture's 0.10 m) so
+there is an actual front to pass; a single generous 1.0 m CIRCULAR conduit
+everywhere keeps the whole run free-surface (H5's `alpha≈1` throughout),
+isolating the phase channel from the attenuation channel H5 already validates
+separately. **Verified by scratch probe before trusting it** (this project's
+standing practice after several abandoned fixture designs elsewhere in this
+file): at DWF=0.15 CMS, measured front-arrival time (`t_half`, the first
+report time crossing the midpoint of a node's own `[min,max]` range) at
+`rough_mult ∈ {0.8, 1.0, 1.2}`:
+
+| node | t_half (s) at 0.8 / 1.0 / 1.2 | spread | report steps (60 s) |
+|---|---|---|---|
+| J4 | 1350.5 / 1590.5 / 1800.5 | 450 s | 7.5 |
+| J5 | 1830.5 / 2160.5 / 2430.5 | 600 s | 10.0 |
+
+comfortably clearing the design's own "≥2 report steps" bar. Head stayed
+2.5–2.7 ft below crown at every node throughout the 2-hour window at every
+`rough_mult` tried — never surcharges, confirming the fixture isolates the
+phase channel from H5's attenuation channel as intended. Same 21-member
+brute-force MC design as PR-10 (LHS strata of the ±20% Manning prior).
+
+**Sample selection**: per node, from the ROM run's own deterministic
+trajectory, `t_50` = first report time crossing the midpoint of that node's
+`[min,max]` head range over the window; compared samples are every report
+time within `±3·REPORT_STEP` of `t_50` (`frontWindowIndices()`). This targets
+the actual transient instead of the whole 2-hour window, most of which is
+either pre-front (flat) or fully settled (also flat, and already covered by
+the saturated-regime gates above).
+
+## 2. Results (measured)
+
+| Cell | Coverage | Width ratio min/med/max | Samples | Verdict |
+|---|---|---|---|---|
+| `AmplitudeOnlyBaseline` (phase disabled) | 1.000 | 0.000 / **0.009** / 0.025 | 34 | *not gated — "before" measurement* |
+| `PhaseCoordinate` (phase enabled) | 1.000 | 0.000 / **1.354** / 2.554 | 34 | **passes** (coverage ≥ 0.90, ratio_med ∈ [0.5, 2.0]) |
+
+**H11 recovers essentially the whole front-passage width gap**: median width
+ratio goes from **0.009** (≈150× too narrow — the amplitude channel alone
+barely registers the transient at all) to **1.354** (comfortably inside the
+checklist's `[0.5, 2.0]` acceptance band), on the **first run of the fixture,
+with no calibration of the acceptance bounds** — the physical dials
+(`celerity_factor=5/3`, `u_min`, `tau_edge_max`, `tau_total_max`) were left at
+their design-time defaults (`RomPhaseCoordinate.hpp`) and never tuned against
+this MC result. Both cells' `min` ratio is 0.000 at the same (J1, upstream)
+sample: J1 sits at the DWF source with `T̄=0` by construction (zero cumulative
+travel time), so the phase channel contributes nothing there in either cell —
+expected, not a defect (see the invariant note in §1: `tbar_t=0` ⇒ every
+member's reference is `h_det` regardless of `mm_i`).
+
+## 3. Findings and scope
+
+- **Zero drift on the pre-existing fixtures.** `RomCoverage.BandsBracket
+  BruteForceMonteCarlo` (coverage 0.993, ratio_med 0.102) and
+  `RomCoverageSurcharged.{Explicit,SemiImplicit}Continuity` (ratio_med 0.033 /
+  1.031) reproduce **bit-identically** before and after this PR — confirming
+  the §1 saturated-regime invariant empirically, not just analytically.
+- **No escalation needed.** Per the checklist's hard rule 2 ("any coverage
+  failure returns to design, not to threshold tuning") and this PR's own §5
+  escalation note: the front-passage gate passed on the design's first
+  implementation, at the design's own default physical dials, against the
+  checklist's own unmodified bounds. There was no tolerance tuning, fixture
+  reshaping to force green, or bound loosening at any point.
+- **`AmplitudeOnlyBaseline` is deliberately ungated** (asserts only that the
+  run completed) — it exists purely to state, honestly, how much of the gap
+  H11 recovers, matching PR-10's own "before/after" reporting style for the
+  `computeK1d` PHI fix.
+- **Scope boundary**: 1D only. The 2D counterpart (`H11b`, a travel-time
+  *field* rather than a path integral) remains open, with the W3
+  drain-to-pond fixture (coverage 0.55–0.60, §4 of the 2D marcher-
+  compatibility section above) as its ready-made failing gate — not attempted
+  in this PR.
+- **Coupling path untouched.** `reconstructHead()` (the 2D↔1D coupling read
+  path) stays unphased by design — coupling is an instantaneous per-step
+  exchange anchored on the deterministic booked flux (the W2 median-drift
+  fix), and a time shift there was judged to desynchronize it for no measured
+  benefit. Not measured against MC in this PR; a candidate follow-up if 2D
+  coupling ever needs front-passage timing fidelity.
+
+## 4. Reproduction
+
+    # Front-passage gate + baseline, alongside the unaffected pre-existing suites:
+    ctest --test-dir build/<dir> -R regression_rom_coverage
+
+    # Isolate the H11 cells:
+    build/<dir>/tests/regression/test_rom_coverage --gtest_filter='RomCoverageFront.*'
+
+    # Pure-function travel-time/history-ring unit tests (independent of the MC fixture):
+    ctest --test-dir build/<dir> -R test_engine_rom_phase_coordinate
+
+    # SpectralROM1D-level h_ref selection + bit-identity invariants:
+    build/<dir>/bin/Debug/test_engine_spectral_rom1d --gtest_filter='PhaseCoordinate.*'
+
+    # Engine-level T̄ plumbing (real conduit velocity -> travel time):
+    build/<dir>/bin/Debug/test_engine_1d_rom_lifecycle --gtest_filter='*TravelTime*'

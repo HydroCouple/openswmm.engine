@@ -544,6 +544,27 @@ signal: once a reach surcharges, velocities collapse toward zero (Fr → 0)
 and the symmetric surrogate becomes *more* accurate again, not less — so a
 high surcharge fraction is not itself a trust concern.
 
+**Surcharged bands are attenuated, and that attenuation is validated for
+`NODE_CONTINUITY SEMI_IMPLICIT` only.** Once a pipe runs full, the
+free-surface conveyance law (`K ~ h^(5/3)/n`) the ROM's Manning-sensitivity
+term assumes no longer holds — heads are set by mass balance and backwater
+instead, and left uncorrected this used to over-predict band widths by
+50–190× (PR H5). The sidecar now damps that source term smoothly as a node
+crosses its crown (never to exactly zero — a pressurized pipe still loses
+head to friction depending on n, just not via the free-surface law). This
+was validated against brute-force Monte Carlo separately under each
+`NODE_CONTINUITY` mode: it lands cleanly under `SEMI_IMPLICIT`. Under
+`EXPLICIT`, near a single-conduit chokepoint the discrete surcharge branch
+was measured to produce a genuinely steeper backwater-vs-roughness response
+than the attenuated ROM can track, and this was root-caused to be a real
+property of the regime rather than a fixable calibration constant (confirmed
+across a range of surcharge severities — the gap doesn't narrow with a
+gentler fixture). **If you expect appreciable, sustained surcharge and want
+validated band widths, run with `NODE_CONTINUITY SEMI_IMPLICIT`.** Under
+`EXPLICIT`, surcharged-regime bands may still be too narrow near a severe
+local restriction; `surcharge_frac` (above) tells you when you're in that
+regime at all, but not which continuity mode you're running.
+
 > **Historical note**: an earlier version of this section also warned that
 > the band reflected uncertainty "since the last recalibration" — the ROM
 > periodically re-anchored its ensemble to the deterministic solution,
@@ -558,6 +579,40 @@ high surcharge fraction is not itself a trust concern.
 > member's deviation resets to zero at that moment — but that only happens on
 > genuine domain growth, not on a periodic timer, and it does not affect the
 > median (which tracks the deterministic answer regardless).
+
+**A filling front's arrival TIME used to be invisible to the band — this is
+now substantially fixed in 1D.** Everything in §4 tracks an *amplitude*: how
+far a member's head deviates from the deterministic run at the SAME instant
+in time. A front arriving a few minutes early or late is a different kind of
+uncertainty — a shift along the time axis, not a shift in value — and no
+amount of amplitude spread can represent it. Validation measured this
+directly: at front passage, the pre-H11 amplitude-only band was roughly
+150× too narrow (median width ratio 0.009) against brute-force Monte Carlo,
+which naturally captures timing spread because every member is a genuinely
+separate simulation. The fix (PR H11) gives each ensemble member its own
+small time offset, `τ_i = (mm_i − 1)·T̄(x)`: a member with a larger Manning's
+n conveys more slowly, so its signal at any given point arrives later by an
+amount proportional to how much slower it is and how far that point is from
+the source (`T̄(x)`, the deterministic travel time, computed from the
+network's own current flow velocities — not assumed or hand-tuned).
+Reconstructing that member's head then samples the deterministic run's own
+history a little earlier or later instead of at "now." Re-measured against
+the same brute-force MC design on a dedicated front-passage fixture: median
+width ratio went from 0.009 to 1.354, comfortably inside the same acceptance
+band H5 and PR-10 use — with the underlying physical constants left at their
+design-time defaults, no calibration against this specific result. Two
+properties worth trusting rather than taking on faith: (1) a member with
+`mm_i = 1` (the nominal member) always has zero time offset, so the median
+still tracks the deterministic run exactly, exactly as everywhere else in
+this document; (2) once a network settles into steady state, every member's
+time-shifted reference converges to the SAME value the unshifted reference
+would have given, so this mechanism adds width only during an actual
+transient — it does not silently widen every band forever. **Scope**: 1D
+only. The 2D surface has the identical timing gap — measured separately as
+the drain-to-pond limitation in `docs/uncertainty/VALIDATION.md`'s 2D
+solver-mode-compatibility section (coverage 0.55–0.60) — and remains open. A
+travel-time *field* rather than a single deterministic path would be needed
+there, which is more involved than the 1D path-integral approach used above.
 
 ---
 
