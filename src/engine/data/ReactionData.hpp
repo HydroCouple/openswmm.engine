@@ -55,7 +55,34 @@ enum class ReactionExprForm : int { NONE = 0, RATE = 1, EQUIL = 2, FORMULA = 3 }
 
 struct ReactionData {
     // ---- [REACTION_OPTIONS] ------------------------------------------------
-    ReactionSolverKind solver      = ReactionSolverKind::ROS2;
+    /**
+     * @brief Default integrator.
+     *
+     * @details RK5, not an implicit solver. Measured substeps for one
+     *          routing step, at the shipping tolerances below and at
+     *          1e-10/1e-8:
+     *
+     *          | case                        | RK5   | ROS2   | BDF2   |
+     *          |-----------------------------|-------|--------|--------|
+     *          | first-order decay, default  |     5 |    134 |    197 |
+     *          | stiff (λ ratio 1e6), default|  2682 |    281 |    408 |
+     *          | stiff, atol 1e-10           |  2744 |  26938 |  39693 |
+     *
+     *          RK5 wins the common case by ~27x. It loses the stiff case at
+     *          loose tolerance by ~10x but still COMPLETES, with the slow
+     *          mode exact. At tight tolerance it beats both implicit solvers
+     *          on the stiff problem, because RK5's step is STABILITY-limited
+     *          (nearly flat in tolerance) while the Rosenbrock/BDF pairs are
+     *          ACCURACY-limited and scale as sqrt(tol).
+     *
+     *          The cliff: RK5 costs about lambda_fast*dt/3.3 substeps, so
+     *          past lambda_fast*dt ~ 3e5 it hits kMaxSubsteps and fails.
+     *          That failure is loud and names ROS2/BDF2 as the remedy
+     *          (ReactionIntegrator's substep-cap message) — a slow default
+     *          that fails legibly beats an implicit default that is slower
+     *          everywhere except the stiff-and-loose corner.
+     */
+    ReactionSolverKind solver      = ReactionSolverKind::RK5;
     ReactionCoupling   coupling    = ReactionCoupling::NONE;
     ReactionRateUnits  rate_units  = ReactionRateUnits::HR;
     ReactionAreaUnits  area_units  = ReactionAreaUnits::FT2;

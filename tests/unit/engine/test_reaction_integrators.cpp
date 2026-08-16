@@ -201,6 +201,55 @@ TEST(RxIntegrators, NonlinearDecayMatchesClosedFormWithCachedJacobian) {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 1c — the DEFAULT integrator is RK5, and a config that omits SOLVER
+// gets it. Pinned because the choice is evidence-based and easy to flip back
+// by accident: RK5 costs ~27x fewer substeps than ROS2 on ordinary
+// (non-stiff) kinetics and, being stability- rather than accuracy-limited,
+// also beats both implicit solvers on STIFF systems once tolerances tighten.
+// See the table on ReactionData::solver. The trade is the cliff that gate 1d
+// covers.
+// ---------------------------------------------------------------------------
+TEST(RxIntegrators, DefaultSolverIsExplicitRK5) {
+    SWMM_Engine e = open_with_rxn(
+        "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"        // no SOLVER row
+        "[REACTION_SPECIES]\nBULK A MG\n"
+        "[REACTION_TANKS]\nRATE A -0.25 * A\n");
+    const auto& rx = as_cpp_engine(e).context().reactions;
+    ASSERT_TRUE(rx.compiled);
+    EXPECT_EQ(static_cast<int>(rx.solver),
+              static_cast<int>(openswmm::ReactionSolverKind::RK5));
+
+    // …and it is cheap on the ordinary case at the shipping tolerances.
+    double species[1] = {5.0};
+    const auto rep = run_step(rx, 10.0, species);
+    ASSERT_TRUE(rep.ok) << rep.error;
+    EXPECT_NEAR(species[0], 5.0 * std::exp(-2.5), 1e-4 * 5.0 * std::exp(-2.5));
+    EXPECT_LT(rep.substeps, 50) << "default-tolerance cost regressed";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 1d — the cliff an explicit default buys, and its diagnostic. Past
+// roughly lambda_fast*dt/3.3 substeps RK5 hits the cap. That is acceptable
+// ONLY because it fails loudly AND names the remedy; "exceeded the substep
+// cap" alone leaves the user with no action.
+// ---------------------------------------------------------------------------
+TEST(RxIntegrators, ExplicitDefaultOnStiffKineticsFailsWithActionableMessage) {
+    SWMM_Engine e = open_with_rxn(
+        "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"        // default solver
+        "[REACTION_SPECIES]\nBULK A MG\n"
+        "[REACTION_TANKS]\nRATE A -1000000.0 * A\n"); // lambda*dt = 1e7
+    const auto& rx = as_cpp_engine(e).context().reactions;
+    ASSERT_TRUE(rx.compiled);
+    double species[1] = {1.0};
+    const auto rep = run_step(rx, 10.0, species);
+    EXPECT_FALSE(rep.ok) << "stiffness beyond the explicit solver must fail";
+    EXPECT_NE(rep.error.find("SOLVER to ROS2 or BDF2"), std::string::npos)
+        << "the failure must name the remedy, got: " << rep.error;
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
 // Gate 2 — coupled chain A -> B (COUPLING FULL) vs the analytic solution.
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, CoupledChainMatchesAnalyticSolution) {
