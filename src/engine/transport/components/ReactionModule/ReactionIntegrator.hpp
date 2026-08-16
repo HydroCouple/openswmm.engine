@@ -115,7 +115,8 @@ public:
      * @param ws      Workspace initialized against `rx`.
      */
     static RxStepReport step(const ReactionData& rx, bool tank, double dt,
-                             double* species, double* hydvar, RxWorkspace& ws);
+                             double* species, double* hydvar, RxWorkspace& ws,
+                             const double* pollutants = nullptr);
 };
 
 }  // namespace openswmm::transport

@@ -60,6 +60,7 @@ struct RxToken {
         PUSH_COEF,      ///< idx = coefficient slot
         PUSH_TERM,      ///< idx = term slot (evaluated earlier in-order)
         PUSH_HYDVAR,    ///< idx = RxHydVar
+        PUSH_POLLUT,    ///< idx = pollutant index (READ-ONLY coupling, R4)
         ADD, SUB, MUL, DIV, POW, NEG,
         F_EXP, F_LOG, F_LOG10, F_SQRT, F_ABS, F_SGN, F_STEP,
         F_SIN, F_COS, F_TAN,

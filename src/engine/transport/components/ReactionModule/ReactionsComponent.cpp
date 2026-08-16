@@ -240,8 +240,18 @@ void parseExpressions(SimulationContext& ctx,
         }
         const int s = rx.find_species(tok[1]);
         if (s < 0) {
-            errors.push_back(std::string(sec) + " undeclared species '" +
-                             tok[1] + "' — declare it in [REACTION_SPECIES].");
+            if (ctx.species_registry.find(tok[1]) >= 0) {
+                errors.push_back(std::string(sec) + " '" + tok[1] +
+                                 "' is a pollutant — pollutant kinetics "
+                                 "(RATE/EQUIL/FORMULA on a pollutant) arrive "
+                                 "with plan phase E4/R6; pollutants may be "
+                                 "REFERENCED read-only in MSX expressions "
+                                 "today.");
+            } else {
+                errors.push_back(std::string(sec) + " undeclared species '" +
+                                 tok[1] +
+                                 "' — declare it in [REACTION_SPECIES].");
+            }
             continue;
         }
         const auto us = static_cast<std::size_t>(s);
@@ -393,10 +403,18 @@ void applyReactionSections(SimulationContext& ctx,
     rx2.pipe_expr.assign(static_cast<std::size_t>(rx2.n_species()), RxExprSpan{});
     rx2.tank_expr.assign(static_cast<std::size_t>(rx2.n_species()), RxExprSpan{});
 
+    // R4: pollutants are referencable (read-only) in expressions. Build the
+    // name list in registry order (pollutants occupy the first registry
+    // slots; PUSH_POLLUT idx == pollutant index).
+    std::vector<std::string> pollutant_names;
+    for (int p2 = 0; p2 < ctx.species_registry.pollutant_count(); ++p2)
+        pollutant_names.push_back(ctx.species_registry.name(p2));
+
     RxSymbols sym;
-    sym.species = &rx2.species_name;
-    sym.coefs   = &rx2.coef_name;
-    sym.terms   = &rx2.term_name;
+    sym.species    = &rx2.species_name;
+    sym.coefs      = &rx2.coef_name;
+    sym.terms      = &rx2.term_name;
+    sym.pollutants = &pollutant_names;
 
     auto compile_one = [&](const std::string& src_expr, RxExprSpan& span,
                            const std::string& where) {

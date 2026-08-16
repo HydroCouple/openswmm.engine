@@ -45,6 +45,7 @@
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/ProcessComponentRegistry.hpp"
+#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "HotStartManager.hpp"
@@ -295,6 +296,10 @@ int SWMMEngine::open(const char* inp_path,
                 return SWMM_ERR_PARSE;
             }
         }
+
+        // A configured reactions component that no engine will run is a
+        // silent no-result run unless we say so (R4).
+        transport::warnIfLegacyBindingBypassed(ctx_);
     }
 
     // Warn about unknown/skipped sections. Route through push_report_warning so
@@ -3030,7 +3035,15 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //     mesh. Lazy first-step init because the transport mesh needs
     //     Router::init's mod_length/rough_factor. Init failure falls back
     //     to LEGACY with a warning — never a silent no-quality run.
-    if (ctx_.n_pollutants() > 0 && !ctx_.options.ignore_quality) {
+    //
+    //     R4: a reactions component keeps the stage alive with zero
+    //     pollutants — an MSX-only model has species to react but no
+    //     [POLLUTANTS] row to gate on. Bypasses that DO skip it
+    //     (EULERIAN_ARD, IGNORE_QUALITY) warn at open rather than running
+    //     silently; see transport::warnIfLegacyBindingBypassed.
+    if ((ctx_.n_pollutants() > 0 ||
+         transport::legacyReactionsActive(ctx_)) &&
+        !ctx_.options.ignore_quality) {
         if (ctx_.options.quality_solver == QualitySolverKind::EULERIAN_ARD) {
             if (!ard_init_attempted_) {
                 ard_init_attempted_ = true;
