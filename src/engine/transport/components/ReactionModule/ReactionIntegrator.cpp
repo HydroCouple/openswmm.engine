@@ -50,6 +50,10 @@ constexpr int    kMaxSubsteps    = 100000;
 constexpr int    kNewtonMax      = 50;
 constexpr double kMinStepFrac    = 1.0e-8;   ///< dt_sub floor = dt * frac
 constexpr double kFdEps          = 1.0e-7;
+/// Accepted substeps a cached FD Jacobian may serve before being re-derived.
+/// Bounds how far y can drift from the point J was taken at; rejections and
+/// Newton failures invalidate it earlier.
+constexpr int    kJacMaxAge      = 20;
 
 double unitFactor(ReactionRateUnits u) {
     switch (u) {
@@ -208,6 +212,23 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
         }
     }
 
+    // Build and factor I - scale*J into ws.lu_, reusing the existing
+    // factorization when both the Jacobian and `scale` are unchanged. A
+    // lambda rather than a free function: the workspace scratch is private
+    // to RxWorkspace, and step() is its friend.
+    auto factorIterationMatrix = [&ws](int nn, double scale) -> bool {
+        if (ws.lu_valid_ && ws.lu_scale_ == scale) return true;
+        for (int r = 0; r < nn; ++r)
+            for (int c = 0; c < nn; ++c)
+                ws.lu_[static_cast<std::size_t>(r * nn + c)] =
+                    ((r == c) ? 1.0 : 0.0) -
+                    scale * ws.jac_[static_cast<std::size_t>(r * nn + c)];
+        if (!luFactor(ws.lu_, ws.piv_, nn)) { ws.lu_valid_ = false; return false; }
+        ws.lu_valid_ = true;
+        ws.lu_scale_ = scale;
+        return true;
+    };
+
     // ---- 1. RATE integration -------------------------------------------
     const auto& ridx = ws.rate_idx_;
     const std::size_t nr = ridx.size();
@@ -241,6 +262,9 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
             const std::size_t gb = coupled ? 0 : g;
             const std::size_t gn = coupled ? nr : 1;
 
+            // The cache is keyed to this group's state and index view.
+            ws.jac_valid_ = false;
+            ws.lu_valid_  = false;
             double t = 0.0;
             double h = dt;
             double h_prev = 0.0;          ///< last ACCEPTED step (BDF2 history)
@@ -343,20 +367,51 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
                     }
                     case ReactionSolverKind::ROS2:
                     case ReactionSolverKind::BDF2: {
-                        // Shared implicit machinery: FD Jacobian at y.
+                        // Shared implicit machinery. The FD Jacobian costs gn
+                        // extra RHS evaluations — the dominant per-substep
+                        // cost — so it is REUSED across substeps and only
+                        // refreshed when it is likely stale: first substep of
+                        // a group, after a rejected step or a Newton failure
+                        // (both invalidate below), or after kJacMaxAge
+                        // accepted substeps as a bound on drift in y.
+                        // Safety differs by solver, and it matters:
+                        //  - BDF2 iterates to a residual tolerance, so an
+                        //    inexact J is a modified-Newton chord step. It
+                        //    changes the convergence RATE, never the answer.
+                        //  - ROS2 has no corrector, so a stale J does move
+                        //    the result. It stays second order (ROS2 is a
+                        //    W-method), and the embedded controller sees any
+                        //    extra error and shortens h — but that is why the
+                        //    age bound exists rather than caching forever.
                         const int gni = static_cast<int>(gn);
                         double* y = ws.y_.data();
                         fg(y, ws.k1_.data());               // f(y)
-                        for (int c = 0; c < gni; ++c) {
-                            const double save = y[c];
-                            const double dy = kFdEps * std::max(1.0, std::fabs(save));
-                            y[c] = save + dy;
-                            fg(y, ws.k2_.data());
-                            y[c] = save;
-                            for (int r = 0; r < gni; ++r)
-                                ws.jac_[static_cast<std::size_t>(r * gni + c)] =
-                                    (ws.k2_[static_cast<std::size_t>(r)] -
-                                     ws.k1_[static_cast<std::size_t>(r)]) / dy;
+                        const bool refresh_jac =
+                            !ws.jac_valid_ || ws.jac_age_ >= kJacMaxAge;
+                        if (refresh_jac) {
+                            for (int c = 0; c < gni; ++c) {
+                                const double save = y[c];
+                                const double dy = kFdEps * std::max(1.0, std::fabs(save));
+                                y[c] = save + dy;
+                                fg(y, ws.k2_.data());
+                                y[c] = save;
+                                for (int r = 0; r < gni; ++r)
+                                    ws.jac_[static_cast<std::size_t>(r * gni + c)] =
+                                        (ws.k2_[static_cast<std::size_t>(r)] -
+                                         ws.k1_[static_cast<std::size_t>(r)]) / dy;
+                            }
+                            ws.jac_valid_ = true;
+                            ws.jac_age_   = 0;
+                            ws.lu_valid_  = false;   // matrix built from jac_
+                            // The FD sweep left `species` holding the last
+                            // perturbed column. Restore it directly rather
+                            // than through fg(), which would cost the RHS
+                            // evaluation this cache exists to avoid. (k1_
+                            // was computed before the sweep and is intact.)
+                            for (std::size_t k = 0; k < gn; ++k)
+                                species[ridx[gb + k]] = y[k];
+                            freeze_others(coupled ? static_cast<std::size_t>(-1)
+                                                  : gb);
                         }
 
                         if (rx.solver == ReactionSolverKind::ROS2) {
@@ -371,14 +426,8 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
                             // +1.707) gives y⁺ → y − 2.414 h f — the R3
                             // validator's step-size collapse.
                             const double g2 = 1.0 - 1.0 / std::sqrt(2.0);
-                            for (int r = 0; r < gni; ++r)
-                                for (int c = 0; c < gni; ++c)
-                                    ws.lu_[static_cast<std::size_t>(r * gni + c)] =
-                                        ((r == c) ? 1.0 : 0.0) -
-                                        g2 * h *
-                                        ws.jac_[static_cast<std::size_t>(r * gni + c)];
-                            if (!luFactor(ws.lu_, ws.piv_, gni)) {
-                                h *= 0.5; break;
+                            if (!factorIterationMatrix(gni, g2 * h)) {
+                                h *= 0.5; ws.jac_valid_ = false; break;
                             }
                             luSolve(ws.lu_, ws.piv_, gni, ws.k1_.data(),
                                     ws.k3_.data());                 // k1 solved
@@ -435,7 +484,17 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
                                 ws.ytmp_[k] = y[k];         // Newton seed
                             const double beta = have_hist
                                 ? (1.0 + r) / (1.0 + 2.0 * r) : 1.0;
+                            // The iteration matrix I - beta*h*J is constant
+                            // across the Newton loop (J is held at y, beta*h
+                            // is fixed), so it is factored ONCE here. It was
+                            // previously rebuilt and re-factored on every
+                            // iteration.
                             bool newton_ok = false;
+                            if (!factorIterationMatrix(gni, beta * h)) {
+                                h *= 0.5;
+                                ws.jac_valid_ = false;
+                                break;
+                            }
                             for (int it = 0; it < kNewtonMax; ++it) {
                                 ++rep.newton_iters;
                                 fg(ws.ytmp_.data(), ws.k2_.data());
@@ -450,22 +509,15 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
                                 for (std::size_t k = 0; k < gn; ++k)
                                     rn = std::max(rn, std::fabs(ws.res_[k]));
                                 if (rn < rx.atol) { newton_ok = true; break; }
-                                for (int r = 0; r < static_cast<int>(gn); ++r)
-                                    for (int c = 0; c < static_cast<int>(gn); ++c)
-                                        ws.lu_[static_cast<std::size_t>(
-                                            r * static_cast<int>(gn) + c)] =
-                                            ((r == c) ? 1.0 : 0.0) -
-                                            beta * h *
-                                            ws.jac_[static_cast<std::size_t>(
-                                                r * static_cast<int>(gn) + c)];
-                                if (!luFactor(ws.lu_, ws.piv_,
-                                              static_cast<int>(gn)))
-                                    break;
-                                luSolve(ws.lu_, ws.piv_, static_cast<int>(gn),
+                                luSolve(ws.lu_, ws.piv_, gni,
                                         ws.res_.data(), ws.dy_.data());
                                 for (std::size_t k = 0; k < gn; ++k)
                                     ws.ytmp_[k] -= ws.dy_[k];
                             }
+                            // A chord step that fails to converge is the
+                            // classic stale-Jacobian symptom: drop the cache
+                            // so the retry re-derives it.
+                            if (!newton_ok) ws.jac_valid_ = false;
                             if (newton_ok &&
                                 finiteAll(ws.ytmp_.data(), gn)) {
                                 // Error control. Without it BDF2 took ONE
@@ -510,6 +562,11 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
                     h_prev = h;          // …the controller's proposal
                     h      = h_next;
                     ++rep.substeps;
+                    ++ws.jac_age_;
+                } else {
+                    // A rejected step is evidence the linearization no longer
+                    // describes the local behavior — re-derive it.
+                    ws.jac_valid_ = false;
                     if (!finiteAll(ws.y_.data(), gn)) {
                         rep.ok = false;
                         rep.error = "non-finite species state during "

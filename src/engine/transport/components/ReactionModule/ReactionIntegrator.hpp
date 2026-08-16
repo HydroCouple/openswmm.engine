@@ -88,6 +88,17 @@ private:
     std::vector<int>    rate_idx_, equil_idx_, formula_idx_;
     std::vector<double> res_, res2_, dy_;               ///< Newton
     std::vector<double> grp_out_;     ///< staged per-group RATE results
+
+    // FD-Jacobian / LU reuse across substeps. The Jacobian costs `gn` extra
+    // RHS evaluations, each of which re-evaluates every term and rate
+    // expression — the dominant per-substep cost once a system has more than
+    // a species or two. J depends on y (not on h), so it survives a step-size
+    // change; the FACTORED matrix I - c*h*J does not, hence the separate
+    // scale key.
+    bool   jac_valid_ = false;   ///< jac_ holds a usable Jacobian
+    int    jac_age_   = 0;       ///< accepted substeps on the current jac_
+    bool   lu_valid_  = false;   ///< lu_/piv_ factored and reusable
+    double lu_scale_  = 0.0;     ///< the c*h that lu_ was factored at
 };
 
 class ReactionIntegrator {
