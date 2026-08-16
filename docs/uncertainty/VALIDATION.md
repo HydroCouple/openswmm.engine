@@ -966,17 +966,24 @@ not available anywhere in this repository** — checked for a committed `.inp`,
 a fixture, and a generator script; none exist (it was evidently an
 external/local file used only in an earlier session, per `.memory`
 references to "StormCity real-network benchmark," never committed).
-Substituted with a synthetic 8,000-node chain of comparable scale — an
-honest substitution, documented here rather than silently presented as the
-named network.
+**Corrected to Bellinge** (real 1020-node sewer network, already the
+established production baseline for PR-10/H5/H11's own MC coverage
+validation — `tests/regression/test_rom_coverage_bellinge.cpp` — rather than
+a synthetic stand-in; an initial pass of this benchmark used a synthetic
+8,000-node chain before this correction, which is why the node count below
+differs from the checklist's literal "8k"). Driven through the real engine
+exactly as `test_rom_coverage_bellinge.cpp` does (same `[UNCERTAINTY] 1D
+MANNINGS_N 0.20` injection, same `REPORT_START_TIME`/rainfall-path fixes),
+stepped 1 simulated hour to reach a real, non-trivial ensemble state, then
+`computeQuantiles()` timed directly off the engine's own live `rom1d()`.
 
 | Case | N | M | k | naive computeQuantiles() | GEMM computeQuantiles() | Speedup |
 |---|---|---|---|---|---|---|
-| 1D (synthetic chain, StormCity substitute) | 8,000 nodes | 50 | 30 | 54.2–54.7 ms | 4.34–4.35 ms | **12.5–12.6×** |
+| 1D (Bellinge, real network) | 1,011 active nodes | 50 | 20 | 4.67–4.70 ms | 0.443–0.454 ms | **10.3–10.6×** |
 | 2D (CL-2a reference mesh) | 9,800 triangles | 50 | 20 | 109.4–111.8 ms | 15.5–15.7 ms | **7.0–7.1×** |
 
 Each row is two independent runs of the same benchmark binary (not a single
-sample) — both cases reproduced within ~2% run-to-run. Both comfortably
+sample) — both cases reproduced within ~3% run-to-run. Both comfortably
 clear the checklist's own ≥3× gate on the quantile phase, with no tuning:
 these are the numbers `RomQuantileGemm.hpp`'s first working version produced.
 
