@@ -266,6 +266,7 @@ enum WarnCode : int {
     WARN_FV_OPTION_INERT        = 105, ///< %s has no effect under FLOW_ROUTING FV
     WARN_DW_OPTION_UNDER_FV     = 106, ///< %s is a dynamic wave option and does not apply under FLOW_ROUTING FV
     WARN_RAIN_CSV_ROWS_SKIPPED  = 107, ///< unreadable row(s) skipped in rainfall CSV for Rain Gage %s
+    WARN_FV_SLOT_CAP            = 108, ///< slot width cap (5% of top width) overrides FV_SLOT_CELERITY for %s
 };
 
 // ============================================================================

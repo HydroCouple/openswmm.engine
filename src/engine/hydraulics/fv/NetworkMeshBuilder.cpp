@@ -10,10 +10,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <tuple>
 
 #include "FvKernels.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../Culvert.hpp"
 #include "../Link.hpp"
 #include "../Node.hpp"
@@ -257,6 +259,13 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     };
     std::map<GeomKey, int> geom_memo;   // key -> conduit row already tabulated
 
+    // Slot-cap transparency tally (surfaced once after the loop): where
+    // g·A_full/c² exceeds the 5%-of-top-width cap, the cap sets the slot and
+    // the requested FV_SLOT_CELERITY is inert for that conduit — its
+    // effective celerity is the cap-implied √(g·A_full/T_cap).
+    int n_closed = 0, n_capped = 0;
+    double c_implied_max = 0.0;
+
     for (int r = 0; r < n_cond; ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int j = CD.link_idx[ur];
@@ -286,6 +295,18 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         } else {
             buildGeometry(xs, is_open, opts.slot_celerity, g, CD.barrels[ur]);
             geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), r);
+        }
+        if (!g.is_open) {
+            const double c_req = std::max(opts.slot_celerity, 1.0);
+            const double uncapped = kernels::kGravity * g.a_full / (c_req * c_req);
+            const double cap = 0.05 * ((g.w_max > 0.0) ? g.w_max : 1.0);
+            ++n_closed;
+            if (uncapped > cap && g.t_slot > 0.0) {
+                ++n_capped;
+                c_implied_max = std::max(
+                    c_implied_max,
+                    std::sqrt(kernels::kGravity * g.a_full / g.t_slot));
+            }
         }
         g.roughness    = CD.roughness[ur];
         g.rough_factor = CD.rough_factor[ur];
@@ -344,6 +365,14 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     if (!rep.errors.empty()) return rep;
     if (rep.min_dx > 1.0e29) rep.min_dx = 0.0;
 
+    if (n_capped > 0) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "%d of %d closed conduits (cap-implied celerity up to "
+                      "%.0f ft/s)", n_capped, n_closed, c_implied_max);
+        rep.warnings.push_back(format_warning(WARN_FV_SLOT_CAP, buf));
+    }
+
     // -----------------------------------------------------------------------
     // Interior faces inside each conduit chain
     // -----------------------------------------------------------------------
@@ -357,6 +386,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         mesh.face_dir_l.push_back(dl);
         mesh.face_dir_r.push_back(dr);
         mesh.face_virtual.push_back(is_vj ? uint8_t{1} : uint8_t{0});
+        mesh.face_vj_node.push_back(-1);
         mesh.face_gate.push_back(0);
         mesh.face_culvert.push_back(-1);
     };
@@ -481,6 +511,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             const double dxr = mesh.cell_dx[static_cast<std::size_t>(cr)];
             add_face(cl, cr, -1, mesh.node_invert[ui], 0.5 * (dxl + dxr),
                      dl, dr, true);
+            mesh.face_vj_node.back() = i;
             ++rep.n_virtual;
             continue;
         }

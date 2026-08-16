@@ -749,3 +749,145 @@ TEST(VirtualJunction, RuntimeLateralInflowRejected) {
     swmm_engine_end(e);
     destroy(e);
 }
+
+// ---------------------------------------------------------------------------
+// FV reporting of virtual-junction heads (Routing.cpp publishFv)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Chain J_IN → C_UP → VJ_A → C_FLAT → VJ_B → C_DN → O_OUT under FV routing.
+// VJ_A and VJ_B share a bit-identical invert. The retired invert-matching
+// join sent both spliced faces to the first matching node and left VJ_B
+// permanently unreported (depth 0 for the whole run); the mesh now carries
+// the face → node association directly (face_vj_node).
+std::string fvCollidingInvertModel() {
+    return options("FV") +
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth\n"
+        "J_IN    11.0  5.0\n"
+        "\n"
+        "[VIRTUAL_JUNCTIONS]\n"
+        ";;Name  Elev\n"
+        "VJ_A    9.0\n"
+        "VJ_B    9.0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O_OUT   8.0   FREE  NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name    From   To     Length  N      Z1  Z2\n"
+        "C_UP      J_IN   VJ_A   100.0   0.013  0   0\n"
+        "C_FLAT    VJ_A   VJ_B   100.0   0.013  0   0\n"
+        "C_DN      VJ_B   O_OUT  100.0   0.013  0   0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+        "C_UP      CIRCULAR  1.0  0   0   0   1\n"
+        "C_FLAT    CIRCULAR  1.0  0   0   0   1\n"
+        "C_DN      CIRCULAR  1.0  0   0   0   1\n"
+        "\n"
+        "[DWF]\n"
+        ";;Node  Param  Value\n"
+        "J_IN    FLOW   0.75\n"
+        "\n"
+        "[COORDINATES]\n"
+        ";;Node  X      Y\n"
+        "J_IN    0.0    0.0\n"
+        "VJ_A    100.0  0.0\n"
+        "VJ_B    200.0  0.0\n"
+        "O_OUT   300.0  0.0\n";
+}
+
+// J_IN → C_SUP → VJ_S → C_SDN → O_OUT on 10 % slopes, with the downhill
+// conduit listed FIRST so the spliced face's LEFT cell is the downhill one.
+// The retired one-sided reconstruction read that cell's centre-datum WSE and
+// clamped the virtual junction to zero whenever the flow depth was below half
+// the conduit drop (5 ft here).
+std::string fvSteepVJModel() {
+    return options("FV") +
+        "[JUNCTIONS]\n"
+        ";;Name  Elev  MaxDepth\n"
+        "J_IN    20.0  5.0\n"
+        "\n"
+        "[VIRTUAL_JUNCTIONS]\n"
+        ";;Name  Elev\n"
+        "VJ_S    10.0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O_OUT   0.0   FREE  NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        ";;Name    From   To     Length  N      Z1  Z2\n"
+        "C_SDN     VJ_S   O_OUT  100.0   0.013  0   0\n"
+        "C_SUP     J_IN   VJ_S   100.0   0.013  0   0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+        "C_SDN     CIRCULAR  1.0  0   0   0   1\n"
+        "C_SUP     CIRCULAR  1.0  0   0   0   1\n"
+        "\n"
+        "[DWF]\n"
+        ";;Node  Param  Value\n"
+        "J_IN    FLOW   0.75\n"
+        "\n"
+        "[COORDINATES]\n"
+        ";;Node  X      Y\n"
+        "J_IN    0.0    0.0\n"
+        "VJ_S    100.0  0.0\n"
+        "O_OUT   200.0  0.0\n";
+}
+
+// Step to completion WITHOUT swmm_engine_end so node state is still readable.
+void stepToEnd(SWMM_Engine e) {
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0);
+}
+
+double nodeDepth(SWMM_Engine e, const char* name) {
+    const int n = swmm_node_index(e, name);
+    EXPECT_GE(n, 0) << "missing node " << name;
+    double d = -1.0;
+    if (n >= 0) swmm_node_get_depth(e, n, &d);
+    return d;
+}
+
+} // namespace
+
+TEST(VirtualJunction, FvReportsBothCollidingInvertVJs) {
+    SWMM_Engine e = openModel("vj_fv_invert_collision",
+                              fvCollidingInvertModel(), true);
+    stepToEnd(e);
+
+    // Steady 0.75 cfs through the whole chain: both virtual junctions are
+    // wet, and BOTH must report it — not just the first one sharing the
+    // invert.
+    EXPECT_GT(nodeDepth(e, "VJ_A"), 0.02);
+    EXPECT_GT(nodeDepth(e, "VJ_B"), 0.02);
+
+    swmm_engine_end(e);
+    destroy(e);
+}
+
+TEST(VirtualJunction, FvSteepVJDepthTracksFlow) {
+    SWMM_Engine e = openModel("vj_fv_steep_datum", fvSteepVJModel(), true);
+    stepToEnd(e);
+
+    // Shallow supercritical flow through the junction: the reported depth
+    // must be a flow depth (order of the conduits'), neither clamped to zero
+    // by the downhill cell's centre datum nor inflated by half the 10 ft
+    // conduit drop from the uphill cell's.
+    const double d = nodeDepth(e, "VJ_S");
+    EXPECT_GT(d, 0.02);
+    EXPECT_LT(d, 2.0);
+
+    swmm_engine_end(e);
+    destroy(e);
+}

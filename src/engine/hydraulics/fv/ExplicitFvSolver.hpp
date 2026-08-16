@@ -96,6 +96,16 @@ public:
         return flood_vol_;
     }
 
+    /// Pass-through classification (clean degree-2 junctions whose faces
+    /// present the neighbouring cells to each other directly; refreshed with
+    /// the structure flows). The publish path reads it to reconstruct those
+    /// nodes' REPORTED heads face-consistently — the solver-internal head
+    /// stays the stable wet-mean, which also serves as the ghost boundary
+    /// state under LTS tier holds.
+    const std::vector<std::uint8_t>& node_passthrough() const noexcept {
+        return node_pass_;
+    }
+
     /// Time-integrated cell discharge (ft³) over the last advance(), used to
     /// publish a routing-step MEAN link flow rather than an end-of-step
     /// snapshot — the snapshot aliases badly when a routing step spans many

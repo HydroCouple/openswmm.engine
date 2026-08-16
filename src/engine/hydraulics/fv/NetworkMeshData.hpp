@@ -290,6 +290,14 @@ struct NetworkMeshData {
     /// equivalence test and the reporting path read it.
     std::vector<uint8_t> face_virtual;
 
+    /// Node index of the virtual junction a spliced face replaced (-1 for
+    /// every other face). face_node must stay -1 for spliced faces — they are
+    /// interior to the solver — so the reporting path carries the association
+    /// here instead of re-deriving it (matching inverts collides when two
+    /// virtual junctions share a bit-identical invert, leaving the loser
+    /// permanently unreported).
+    std::vector<int> face_vj_node;
+
     // -----------------------------------------------------------------------
     // Conduit → cell map. Cells of a conduit are CONTIGUOUS by construction,
     // so a begin/count pair is a complete (and cheaper) CSR.
@@ -415,6 +423,7 @@ struct NetworkMeshData {
         face_geom.clear();
         face_culvert.clear();
         face_zb.clear(); face_dx.clear(); face_virtual.clear();
+        face_vj_node.clear();
         face_dir_l.clear(); face_dir_r.clear();
         conduit_cell_begin.clear(); conduit_cell_count.clear(); conduit_link.clear();
         chain_ptr.clear(); chain_cells.clear(); chain_dir.clear();

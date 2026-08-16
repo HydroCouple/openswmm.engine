@@ -222,6 +222,9 @@ static const std::unordered_map<int, const char*>& warning_table() {
               "FLOW_ROUTING FV."},
         {107, "unreadable row(s) were skipped in the rainfall CSV for Rain "
               "Gage %s."},
+        {108, "the Preissmann slot width cap (5% of the section top width) "
+              "overrides the requested FV_SLOT_CELERITY for %s; celerities "
+              "below the cap-implied value have no effect there."},
     };
     return table;
 }

@@ -1251,9 +1251,42 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             // has a sensible head in the .out file.
             continue;
         }
-        const double depth = fv_state_.node_head[un] - fv_mesh_.node_invert[un];
+        double head = fv_state_.node_head[un];
+        // Pass-through junctions: publish the face-consistent stage — the
+        // same reconstruction the virtual-junction loop below uses — instead
+        // of the solver's wet-mean of cell-centre etas, which sits ~S0·dx/2
+        // above the face stage on steep COARSE chains and steps against the
+        // VJ rule at every pass-through/VJ pair in the plotted HGL
+        // (HGL_STEP_ATTRIBUTION.md, mechanism B). REPORTING only, on
+        // purpose: changing the solver-internal head instead destabilized
+        // the lake-at-rest diameter-change case through the LTS-hold ghost
+        // channel (70 cfs standing oscillation from a 0.007 cfs residual).
+        // A dry cell's vote is bare ground, so only wet neighbours vote; the
+        // all-dry case keeps the solver's lowest-adjacent-bed contract.
+        if (impl && un < impl->node_passthrough().size() &&
+            impl->node_passthrough()[un]) {
+            const int b0 = fv_mesh_.node_face_ptr[un];
+            const int e0 = fv_mesh_.node_face_ptr[un + 1];
+            double eta = -1.0e30;
+            bool wet = false;
+            for (int p = b0; p < e0; ++p) {
+                const auto uf = static_cast<std::size_t>(
+                    fv_mesh_.node_face_idx[static_cast<std::size_t>(p)]);
+                const int c = (fv_mesh_.face_cl[uf] >= 0) ? fv_mesh_.face_cl[uf]
+                                                          : fv_mesh_.face_cr[uf];
+                if (c < 0) continue;
+                const auto uc = static_cast<std::size_t>(c);
+                if (fv_state_.cell_h[uc] <= fv::kernels::kDryDepth) continue;
+                eta = std::max(eta, std::min(fv_mesh_.cell_zb[uc],
+                                             fv_mesh_.face_zb[uf]) +
+                                    fv_state_.cell_h[uc]);
+                wet = true;
+            }
+            if (wet) head = eta;
+        }
+        const double depth = head - fv_mesh_.node_invert[un];
         ctx.nodes.depth[un] = std::max(0.0, depth);
-        ctx.nodes.head[un]  = fv_state_.node_head[un];
+        ctx.nodes.head[un]  = head;
         // Volume through the ENGINE's own storage relation, not the solver's
         // flattened table, so the reported mass balance stays on one authority.
         //
@@ -1330,26 +1363,38 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         else         { ctx.nodes.inflow[u1]  -= q;  ctx.nodes.outflow[u2] -= q; }
     }
 
-    // Virtual junctions take the head of the cell on either side of their
-    // spliced face, which is what "the shared face state" means for reporting.
+    // Virtual junctions take the head at their spliced face, reconstructed
+    // from BOTH adjacent cells. The face→node association comes from the mesh
+    // (face_vj_node, recorded at build); re-deriving it by matching inverts
+    // collided whenever two virtual junctions shared a bit-identical invert,
+    // leaving the loser permanently unreported (depth 0 for the whole run).
+    //
+    // Each cell's WSE extrapolated to the face is bracketed by its two
+    // first-order models: flat water surface (cell_zb + h — exact when the
+    // reach is ponded or pressurized) and uniform depth along the bed
+    // (face_zb + h — exact in steep shallow flow, where the flat-surface
+    // form from the downhill cell reads below the invert and used to clamp
+    // the reported depth to zero). Taking the per-cell MIN of the bracket and
+    // the MAX across the two cells reproduces the correct head in all three
+    // regimes: the uphill cell's uniform-depth vote carries shallow flow, the
+    // downhill cell's flat-surface vote carries ponding and surcharge.
     for (int f = 0; f < fv_mesh_.n_faces(); ++f) {
         const auto uf = static_cast<std::size_t>(f);
         if (!fv_mesh_.face_virtual[uf]) continue;
-        const int cl = fv_mesh_.face_cl[uf];
-        if (cl < 0) continue;
-        const auto ucl = static_cast<std::size_t>(cl);
-        // Find the virtual node this face replaced by matching its invert.
-        for (int n = 0; n < ctx.n_nodes(); ++n) {
-            const auto un = static_cast<std::size_t>(n);
-            if (fv_mesh_.node_kind[un] != fv::kNodeVirtual) continue;
-            if (std::fabs(fv_mesh_.node_invert[un] - fv_mesh_.face_zb[uf]) > 1.0e-9)
-                continue;
-            const double eta = fv_mesh_.cell_zb[ucl] + fv_state_.cell_h[ucl];
-            ctx.nodes.head[un]  = eta;
-            ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
-            ctx.nodes.volume[un] = 0.0;   // zero-storage by construction
-            break;
+        const int n = fv_mesh_.face_vj_node[uf];
+        if (n < 0) continue;
+        const auto un = static_cast<std::size_t>(n);
+        const double zf = fv_mesh_.face_zb[uf];
+        double eta = zf;                    // both sides dry ⇒ dry node
+        for (const int c : {fv_mesh_.face_cl[uf], fv_mesh_.face_cr[uf]}) {
+            if (c < 0) continue;
+            const auto uc = static_cast<std::size_t>(c);
+            eta = std::max(eta, std::min(fv_mesh_.cell_zb[uc], zf) +
+                                fv_state_.cell_h[uc]);
         }
+        ctx.nodes.head[un]  = eta;
+        ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
+        ctx.nodes.volume[un] = 0.0;   // zero-storage by construction
     }
 }
 
