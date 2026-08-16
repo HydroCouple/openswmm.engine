@@ -17,7 +17,7 @@ env:
   OMP_NUM_THREADS: 1
   # Single source of truth for the vcpkg ref (used by every checkout + the
   # in-container clone in pyproject's linux before-all via environment-pass).
-  VCPKG_REF: "2025.02.14"
+  VCPKG_REF: "2026.07.29"
   # macOS minimum target. Set globally so the engine build job AND vcpkg's
   # dependency builds (SUNDIALS/HDF5/sqlite3) compile at this floor; ignored on
   # Linux/Windows. The Python wheels set the same value via cibuildwheel
@@ -132,6 +132,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: amd64
+
+      - name: Re-pin VCPKG_ROOT (Windows)
+        # vcvars64 (VS 2022 17.6+) exports VCPKG_ROOT pointing at Visual
+        # Studio's bundled vcpkg, and msvc-dev-cmd forwards it to every later
+        # step, overriding the job-level env — so configure would silently
+        # build against VS's port snapshot instead of the pinned checkout.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
 
       - name: Configure (Release)
         # Release packaging skips the test/benchmark targets so vcpkg pulls only
