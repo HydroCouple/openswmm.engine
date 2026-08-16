@@ -291,7 +291,22 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
             while (t < dt && rep.ok) {
                 if (++guard > kMaxSubsteps) {
                     rep.ok = false;
-                    rep.error = "reaction step exceeded the substep cap";
+                    // Name the remedy. RK5 is the default and is
+                    // stability-limited at roughly lambda_fast*dt/3.3
+                    // substeps, so this is the cap an explicit solver hits
+                    // on stiff kinetics — the one case where the default is
+                    // the wrong choice, and the user cannot know that from
+                    // "exceeded the substep cap" alone.
+                    rep.error =
+                        rx.solver == ReactionSolverKind::RK5 ||
+                        rx.solver == ReactionSolverKind::EUL
+                        ? "reaction step exceeded the substep cap: the "
+                          "explicit solver is resolving kinetics too stiff "
+                          "for it. Set [REACTION_OPTIONS] SOLVER to ROS2 or "
+                          "BDF2, or declare the fast species EQUIL."
+                        : "reaction step exceeded the substep cap "
+                          "(stiffness beyond the solver — see the D-R7 "
+                          "escape hatch)";
                     break;
                 }
                 if (h < h_min) {
