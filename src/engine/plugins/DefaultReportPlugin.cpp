@@ -689,7 +689,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
 
+        if (mb.runoff_init_store > 0.0)
+            row("Initial Storage ..........", mb.runoff_init_store);
         row("Total Precipitation ......", mb.runoff_rainfall);
+        if (mb.runoff_runon > 0.0)
+            row("Outfall Runon ............", mb.runoff_runon);
         row("Evaporation Loss .........", mb.runoff_evap);
         row("Infiltration Loss ........", mb.runoff_infil);
         row("Surface Runoff ...........", mb.runoff_runoff);
