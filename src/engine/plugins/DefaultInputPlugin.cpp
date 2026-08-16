@@ -43,6 +43,7 @@
 #include "../input/handlers/UserFlagsHandler.hpp"
 #include "../input/handlers/UserFlagValuesHandler.hpp"
 #include "../input/handlers/PluginsHandler.hpp"
+#include "../input/handlers/ProcessComponentsHandler.hpp"
 #include "../input/handlers/FilesHandler.hpp"
 #include "../input/handlers/InflowsHandler.hpp"
 #include "../input/handlers/QualityHandler.hpp"
@@ -151,6 +152,8 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("USER_FLAGS",       input::handle_user_flags);
     registry_.register_builtin("USER_FLAG_VALUES", input::handle_user_flag_values);
     registry_.register_builtin("PLUGINS",          input::handle_plugins);
+    registry_.register_builtin("PROCESS_COMPONENTS",
+                               input::handle_process_components);
 }
 
 // ============================================================================

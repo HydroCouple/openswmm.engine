@@ -127,6 +127,29 @@ struct PluginSpec {
 };
 
 // ============================================================================
+// [PROCESS_COMPONENTS] section spec — process-component registrations
+// ============================================================================
+
+/**
+ * @brief One row of [PROCESS_COMPONENTS] (Unified Transport suite, D-UT8).
+ *
+ * @details `id` is a registered component id
+ *          (e.g. `org.hydrocouple.openswmm.reactions`) or — reserved for the
+ *          HC2 phase — a shared-library path exporting
+ *          `hydrocouple_component_info()`. `config_path` is the component's
+ *          external configuration file (the `config="…"` argument), resolved
+ *          relative to the parent .inp per the [2D_MESH_FILE] rules. `args`
+ *          holds any further key="value" pairs verbatim.
+ *
+ * @see plans/transport/TRANSPORT_IO_PLUGIN_CONFIG_PLAN.md §2
+ */
+struct ProcessComponentSpec {
+    std::string id;           ///< Component id (or library path — HC2)
+    std::string config_path;  ///< config="…" argument (may be empty)
+    std::vector<std::pair<std::string, std::string>> args;  ///< other key/value args
+};
+
+// ============================================================================
 // [FILES] section spec — secondary file references
 // ============================================================================
 
@@ -699,6 +722,15 @@ struct SimulationContext {
      *          New in 6.0.0 — no legacy equivalent.
      */
     std::vector<PluginSpec> plugin_specs;
+
+    /**
+     * @brief Process-component registrations parsed from [PROCESS_COMPONENTS].
+     * @details Resolved against the ProcessComponentRegistry during open()
+     *          (after the input read, mirroring the external 2D mesh file);
+     *          each resolved component's config file is parsed and delivered
+     *          to its apply hook. Unified Transport suite D-UT8.
+     */
+    std::vector<ProcessComponentSpec> process_component_specs;
 
     /**
      * @brief Secondary file references parsed from [FILES].
