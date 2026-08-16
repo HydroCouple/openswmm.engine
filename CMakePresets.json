@@ -1,0 +1,180 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+                "SWMM_WITH_OPENMP": "ON"
+            }
+        },
+        {
+            "name": "Windows",
+            "inherits": "default",
+            "description": "Windows Release (Ninja Multi-Config, MSVC). FP policy: /fp:precise (IEEE-754, no FMA contraction) — matches openswmm.engine so 5.2.4 vs 5.3.0 vs v6 differences are attributable to engine changes, not compiler math. Upstream EPA used /fp:fast; see src/solver/CMakeLists.txt.",
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/build/windows",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "/fp:precise /W4",
+                "CMAKE_CXX_FLAGS": "/fp:precise /W4",
+                "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_MODULE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_C_FLAGS_RELEASE": "/O2 /GL /Gy /Gw",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /Gy /Gw",
+                "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /DDEBUG"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "Windows-debug",
+            "inherits": "Windows",
+            "description": "Windows Debug (Ninja Multi-Config, MSVC). Same FP policy as the Windows preset.",
+            "binaryDir": "${sourceDir}/build/windows-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
+                "CMAKE_SHARED_LINKER_FLAGS": "/DEBUG",
+                "CMAKE_MODULE_LINKER_FLAGS": "/DEBUG"
+            }
+        },
+        {
+            "name": "Windows-tests",
+            "inherits": "Windows",
+            "description": "Windows Release with GoogleTest component tests.",
+            "binaryDir": "${sourceDir}/build/windows-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "BUILD_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Linux",
+            "inherits": "default",
+            "description": "Linux Release (Ninja, GCC). FP policy: -fno-fast-math -ffp-contract=off -fexcess-precision=standard (no FMA fusion, no excess precision) — mirrors openswmm.engine.",
+            "binaryDir": "${sourceDir}/build/linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -fdata-sections -ffunction-sections",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2 -fdata-sections -ffunction-sections",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "Linux-debug",
+            "inherits": "Linux",
+            "description": "Linux Debug (Ninja). Same FP policy as the Linux preset.",
+            "binaryDir": "${sourceDir}/build/linux-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Linux-tests",
+            "inherits": "Linux",
+            "description": "Linux Release with GoogleTest component tests.",
+            "binaryDir": "${sourceDir}/build/linux-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "BUILD_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Darwin",
+            "inherits": "default",
+            "description": "macOS Release (Ninja, clang). FP policy: -fno-fast-math -ffp-contract=off. -fexcess-precision is omitted (clang ignores it on x86_64/arm64). Arch is NOT pinned here: it defaults to the host arch and CI passes -DCMAKE_OSX_ARCHITECTURES per matrix leg. OpenMP comes from Homebrew libomp via cmake/FindOpenMP.cmake (copied verbatim from openswmm.engine; included by full path on APPLE only, never via CMAKE_MODULE_PATH).",
+            "binaryDir": "${sourceDir}/build/darwin",
+            "environment": {
+                "CC": "clang",
+                "CXX": "clang++"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+                "CMAKE_C_FLAGS_RELEASE": "-O3 -fdata-sections -ffunction-sections",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O3 -fdata-sections -ffunction-sections",
+                "CMAKE_C_FLAGS_DEBUG": "-O0 -g -DDEBUG",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -DDEBUG"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "Darwin-debug",
+            "inherits": "Darwin",
+            "description": "macOS Debug (Ninja, clang). Same FP policy as the Darwin preset.",
+            "binaryDir": "${sourceDir}/build/darwin-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Darwin-tests",
+            "inherits": "Darwin",
+            "description": "macOS Release with GoogleTest component tests.",
+            "binaryDir": "${sourceDir}/build/darwin-tests",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_FEATURES": "tests",
+                "BUILD_TESTS": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "Windows",        "configurePreset": "Windows",        "configuration": "Release" },
+        { "name": "Windows-debug",  "configurePreset": "Windows-debug",  "configuration": "Debug" },
+        { "name": "Windows-tests",  "configurePreset": "Windows-tests",  "configuration": "Release" },
+        { "name": "Linux",          "configurePreset": "Linux" },
+        { "name": "Linux-debug",    "configurePreset": "Linux-debug" },
+        { "name": "Linux-tests",    "configurePreset": "Linux-tests" },
+        { "name": "Darwin",         "configurePreset": "Darwin" },
+        { "name": "Darwin-debug",   "configurePreset": "Darwin-debug" },
+        { "name": "Darwin-tests",   "configurePreset": "Darwin-tests" }
+    ],
+    "testPresets": [
+        {
+            "name": "Windows-tests",
+            "configurePreset": "Windows-tests",
+            "configuration": "Release",
+            "output": { "outputOnFailure": true }
+        },
+        {
+            "name": "Linux-tests",
+            "configurePreset": "Linux-tests",
+            "output": { "outputOnFailure": true }
+        },
+        {
+            "name": "Darwin-tests",
+            "configurePreset": "Darwin-tests",
+            "output": { "outputOnFailure": true }
+        }
+    ]
+}
