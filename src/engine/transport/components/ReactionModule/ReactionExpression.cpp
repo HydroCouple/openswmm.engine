@@ -264,6 +264,14 @@ std::string compileReactionExpression(const std::string& src,
                             break;
                         }
                 }
+                if (idx < 0 && symbols.pollutants) {
+                    for (std::size_t k = 0; k < symbols.pollutants->size(); ++k)
+                        if ((*symbols.pollutants)[k] == lx.ident) {
+                            idx = static_cast<int>(k);
+                            t.op = RxToken::PUSH_POLLUT;
+                            break;
+                        }
+                }
                 if (idx < 0) {
                     const int hv = findHydVar(lx.ident);
                     if (hv >= 0) { idx = hv; t.op = RxToken::PUSH_HYDVAR; }
@@ -378,7 +386,7 @@ std::string compileReactionExpression(const std::string& src,
         switch (t.op) {
             case RxToken::PUSH_NUM: case RxToken::PUSH_SPECIES:
             case RxToken::PUSH_COEF: case RxToken::PUSH_TERM:
-            case RxToken::PUSH_HYDVAR:
+            case RxToken::PUSH_HYDVAR: case RxToken::PUSH_POLLUT:
                 ++depth; break;
             case RxToken::NEG: case RxToken::F_EXP: case RxToken::F_LOG:
             case RxToken::F_LOG10: case RxToken::F_SQRT: case RxToken::F_ABS:
@@ -425,6 +433,7 @@ double evalReactionExpression(const std::vector<RxToken>& pool,
             case RxToken::PUSH_COEF:    st[sp++] = env.coefs[t->idx]; break;
             case RxToken::PUSH_TERM:    st[sp++] = env.terms[t->idx]; break;
             case RxToken::PUSH_HYDVAR:  st[sp++] = env.hydvar[t->idx]; break;
+            case RxToken::PUSH_POLLUT:  st[sp++] = env.pollutants[t->idx]; break;
             case RxToken::ADD: --sp; st[sp - 1] += st[sp]; break;
             case RxToken::SUB: --sp; st[sp - 1] -= st[sp]; break;
             case RxToken::MUL: --sp; st[sp - 1] *= st[sp]; break;

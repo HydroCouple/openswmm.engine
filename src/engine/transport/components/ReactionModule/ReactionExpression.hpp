@@ -69,6 +69,11 @@ struct RxSymbols {
     const std::vector<std::string>* species = nullptr;  ///< local slots
     const std::vector<std::string>* coefs   = nullptr;
     const std::vector<std::string>* terms   = nullptr;  ///< only [0, max_term) resolvable
+    /// R4: pollutant names, resolved AFTER terms and BEFORE hydraulic
+    /// variables (a pollutant named "D" shadows the depth variable —
+    /// user-defined beats builtin; documented in the DSL reference).
+    /// Pollutants are READ-ONLY in expressions.
+    const std::vector<std::string>* pollutants = nullptr;
     int max_term = 0;   ///< forward-only rule: terms below this index only
 };
 
@@ -78,6 +83,7 @@ struct RxEvalEnv {
     const double* coefs   = nullptr;  ///< coefficient values
     const double* terms   = nullptr;  ///< term values (evaluated in-order)
     const double* hydvar  = nullptr;  ///< RxHydVar::COUNT_ entries
+    const double* pollutants = nullptr;  ///< element pollutant conc (R4, read-only)
 };
 
 /**

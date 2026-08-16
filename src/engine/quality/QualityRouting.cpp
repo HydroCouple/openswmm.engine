@@ -29,6 +29,8 @@
  */
 
 #include "QualityRouting.hpp"
+
+#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "Treatment.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -174,14 +176,33 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
 }
 
 void QualitySolver::execute(SimulationContext& ctx, double dt) {
-    if (n_pollutants_ <= 0) return;
+    // R4: an MSX-only model (a reactions component and no [POLLUTANTS]) is a
+    // legitimate shape — EPANET-MSX decks routinely declare no legacy
+    // pollutant. Every stage below is a no-op at np == 0, so letting it
+    // through costs nothing and is the only way reactLegacyNodes/Links run
+    // for such a model. Without a reactions component the early return is
+    // unchanged, so parity is preserved by construction.
+    if (n_pollutants_ <= 0 && !transport::legacyReactionsActive(ctx)) return;
 
     assembleExternalLoads(ctx, dt);
     accumulateLinkLoads(ctx, dt);
     mixAtNodes(ctx, dt);
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
-    applyDecay(ctx, dt);
+    // R4: with a reactions component configured, pollutant decay upgrades to
+    // the exact exponential and MSX species react per element via the shared
+    // integrator (ReactionLegacyBinding). Nodes react here (where applyDecay
+    // ran); links react AFTER updateLinkQuality so the mixing pass does not
+    // overwrite them (its internal linear decay is zeroed below). Without a
+    // reactions component the legacy path runs untouched — bit-parity
+    // (G-UT1).
+    if (transport::legacyReactionsActive(ctx)) {
+        transport::reactLegacyNodes(ctx, dt);
+    } else {
+        applyDecay(ctx, dt);
+    }
     updateLinkQuality(ctx, dt);
+    if (transport::legacyReactionsActive(ctx))
+        transport::reactLegacyLinks(ctx, dt);
     applyLinkQualityForcing(ctx, n_pollutants_, dt);
 }
 
@@ -618,6 +639,10 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
 
             double k = (static_cast<size_t>(p) < poll.k_decay.size())
                 ? poll.k_decay[static_cast<size_t>(p)] : 0.0;
+            // R4: reactions-active runs decay links exactly in
+            // reactLegacyLinks AFTER this mixing pass; the in-mix linear
+            // decay must not double-apply.
+            if (transport::legacyReactionsActive(ctx)) k = 0.0;
 
             double c_new;
 

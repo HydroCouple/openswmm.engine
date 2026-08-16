@@ -126,6 +126,15 @@ struct ReactionData {
     std::vector<RxExprSpan> tank_expr;       ///< per species
     bool compiled = false;                   ///< R2 compile pass succeeded
 
+    // ---- R4: MSX species element state under QUALITY_SOLVER LEGACY --------
+    // [element * n_species + s]; sized lazily by the legacy binding. MSX
+    // species react per element but are NOT yet transported between elements
+    // under LEGACY (R4b) — warned once per run.
+    std::vector<double> msx_node_conc;
+    std::vector<double> msx_link_conc;
+    bool warned_msx_not_transported = false;
+    bool warned_react_failure       = false;
+
     bool configured = false;                 ///< a reactions component applied
 
     int n_species() const noexcept {
