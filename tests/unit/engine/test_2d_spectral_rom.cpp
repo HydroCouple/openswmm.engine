@@ -1778,3 +1778,135 @@ TEST(FiedlerDiagnostic, CouplingAnnotation2DSide) {
     const int low_cell_idx = fd.rank[static_cast<std::size_t>(f.basis.n_triangles - 1)];
     EXPECT_LE(fd.grad[static_cast<std::size_t>(low_cell_idx)], bottleneck_score);
 }
+
+// ============================================================================
+// PR H4 — quantile-reconstruction GEMM. computeQuantiles()'s reconstruction
+// (recon_buf_ fill) now goes through reconstructEnsembleGemm()
+// (RomQuantileGemm.hpp, cblas_dgemm or a portable fallback) by default, with
+// three independent std::nth_element selections replacing the full sort --
+// unlike the 1D ROM, nothing here needs the whole per-cell member row in
+// sorted order (parametric_tails sums over all M values regardless of
+// order), so 2D gets the full nth_element speedup. rom_quantile_naive=true
+// keeps the original hand-rolled loop + full sort available for comparison.
+// ============================================================================
+
+namespace {
+void expectRelClose2D(double a, double b, double rel_tol, const char* what) {
+    const double scale = std::max({std::fabs(a), std::fabs(b), 1.0});
+    EXPECT_NEAR(a, b, rel_tol * scale) << what;
+}
+}  // namespace
+
+TEST(QuantileGemm2D, NaiveMatchesGemm) {
+    // N=6 -> 72 triangles, enough modes requested to exercise a real
+    // active/inactive mode split.
+    Fixture f(/*N=*/6, /*k=*/10, /*M=*/30, /*m_pert=*/0.25, /*r_pert=*/0.25);
+    const int n = f.rom.n_tri;
+
+    std::vector<double> h0(static_cast<std::size_t>(n));
+    for (int t = 0; t < n; ++t)
+        h0[static_cast<std::size_t>(t)] = 0.08 + 0.004 * (t % 17);
+    f.rom.seed(h0.data());
+
+    std::vector<double> rain(static_cast<std::size_t>(n));
+    std::vector<double> h_det = h0;
+    for (int step = 0; step < 40; ++step) {
+        const double phase = 0.08 * step;
+        for (int t = 0; t < n; ++t)
+            rain[static_cast<std::size_t>(t)] =
+                1.0e-5 * (1.0 + std::sin(phase + 0.3 * t));
+        f.rom.advance(30.0, 6.0, rain.data(), nullptr, h_det.data());
+    }
+
+    // Deliberately deactivate a couple of modes with a frozen nonzero
+    // coefficient left behind -- same edge case as the 1D equivalence test
+    // (RomQuantileGemm.hpp's active-mode compaction must exclude it).
+    ASSERT_GE(f.rom.n_kept, 4);
+    f.rom.mode_active[1] = false;
+    f.rom.mode_active[2] = false;
+    for (int i = 0; i < f.rom.n_ensemble; ++i)
+        f.rom.a_ensemble[static_cast<std::size_t>(i) * static_cast<std::size_t>(f.rom.n_kept) + 1] =
+            0.0021 * (i + 1);
+
+    for (bool parametric : {false, true}) {
+        f.rom.rom_quantile_naive = true;
+        f.rom.computeQuantiles(h_det.data(), parametric);
+        const std::vector<double> q05_naive = f.rom.q05;
+        const std::vector<double> q50_naive = f.rom.q50;
+        const std::vector<double> q95_naive = f.rom.q95;
+
+        f.rom.rom_quantile_naive = false;
+        f.rom.computeQuantiles(h_det.data(), parametric);
+
+        // q05/q50 are always plain sort-/nth_element-selected values -- an
+        // exact selection with no arithmetic on top, so GEMM's different
+        // summation order (checklist: "1e-12 relative, not bit-exact")
+        // survives untouched into them. q95 under parametric_tails routes
+        // through log()/exp() over all M members first, which measurably
+        // (~4-5x observed) amplifies that same tiny reconstruction-level
+        // difference -- a real, expected property of the nonlinear formula,
+        // not a GEMM defect, so it gets its own looser (still tight) bound.
+        for (int t = 0; t < n; ++t) {
+            const auto ut = static_cast<std::size_t>(t);
+            SCOPED_TRACE(::testing::Message()
+                        << "cell " << t << " parametric_tails=" << parametric);
+            expectRelClose2D(f.rom.q05[ut], q05_naive[ut], 1e-12, "q05");
+            expectRelClose2D(f.rom.q50[ut], q50_naive[ut], 1e-12, "q50");
+            expectRelClose2D(f.rom.q95[ut], q95_naive[ut], parametric ? 1e-9 : 1e-12, "q95");
+        }
+    }
+}
+
+TEST(QuantileGemm2D, GemmIsRunToRunDeterministic) {
+    // Same concern as the 1D companion test: cblas_dgemm via Accelerate must
+    // give bit-identical output across repeated calls on the same input, not
+    // just "close" -- no thread-scheduling nondeterminism in the reduction.
+    Fixture f(/*N=*/5, /*k=*/8, /*M=*/25);
+    ASSERT_FALSE(f.rom.rom_quantile_naive);
+    const int n = f.rom.n_tri;
+
+    std::vector<double> h0(static_cast<std::size_t>(n));
+    for (int t = 0; t < n; ++t) h0[static_cast<std::size_t>(t)] = 0.06 + 0.003 * (t % 13);
+    f.rom.seed(h0.data());
+    std::vector<double> rain(static_cast<std::size_t>(n), 1.0e-5);
+    std::vector<double> h_det = h0;
+    for (int step = 0; step < 15; ++step)
+        f.rom.advance(30.0, 5.0, rain.data(), nullptr, h_det.data());
+
+    f.rom.computeQuantiles(h_det.data());
+    const std::vector<double> q05_1 = f.rom.q05, q50_1 = f.rom.q50, q95_1 = f.rom.q95;
+
+    for (int rep = 0; rep < 5; ++rep) {
+        f.rom.computeQuantiles(h_det.data());
+        for (int t = 0; t < n; ++t) {
+            const auto ut = static_cast<std::size_t>(t);
+            EXPECT_EQ(f.rom.q05[ut], q05_1[ut]) << "rep " << rep << " cell " << t << " q05";
+            EXPECT_EQ(f.rom.q50[ut], q50_1[ut]) << "rep " << rep << " cell " << t << " q50";
+            EXPECT_EQ(f.rom.q95[ut], q95_1[ut]) << "rep " << rep << " cell " << t << " q95";
+        }
+    }
+}
+
+TEST(QuantileGemm2D, GemmIsDefaultAndOrderPreserved) {
+    // Sanity companion to the equivalence test above: with no flag set,
+    // computeQuantiles() must already be on the GEMM path, and quantile
+    // ordering must hold regardless.
+    Fixture f;
+    ASSERT_FALSE(f.rom.rom_quantile_naive) << "GEMM must be the default path";
+    const int n = f.rom.n_tri;
+
+    std::vector<double> h(static_cast<std::size_t>(n));
+    for (int t = 0; t < n; ++t) h[static_cast<std::size_t>(t)] = 0.1 + 0.01 * t;
+    f.rom.seed(h.data());
+
+    std::vector<double> rain(static_cast<std::size_t>(n), 1e-5);
+    for (int step = 0; step < 10; ++step)
+        f.rom.advance(30.0, 5.0, rain.data(), nullptr, h.data());
+    f.rom.computeQuantiles(h.data());
+
+    for (int t = 0; t < n; ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        EXPECT_LE(f.rom.q05[ut], f.rom.q50[ut]) << "cell " << t;
+        EXPECT_LE(f.rom.q50[ut], f.rom.q95[ut]) << "cell " << t;
+    }
+}

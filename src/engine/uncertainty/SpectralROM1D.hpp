@@ -39,6 +39,7 @@
 #include "UncertaintyTypes.hpp"
 #include "SoftSpatialField.hpp"
 #include "RomPhaseCoordinate.hpp"
+#include "RomQuantileGemm.hpp"
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -110,6 +111,17 @@ struct SpectralROM1D {
     // bit-identical to before this PR.
     // -------------------------------------------------------------------------
     PhaseConfig phase_cfg;
+
+    // -------------------------------------------------------------------------
+    // PR H4 — quantile-reconstruction GEMM. Debug/equivalence-testing knob:
+    // when true, computeQuantiles() uses the original hand-rolled O(N*M*k)
+    // reconstruction loop instead of reconstructEnsembleGemm() (RomQuantileGemm.hpp).
+    // Both paths are always compiled in; this never disables the mode-active
+    // masking or the sort/quantile-extraction step, which are unaffected by
+    // this flag and identical either way. Default false = GEMM path (or the
+    // portable fallback where OPENSWMM_HAVE_CBLAS is not defined).
+    // -------------------------------------------------------------------------
+    bool rom_quantile_naive = false;
 
     // -------------------------------------------------------------------------
     // State (set by initialize() and seed())
@@ -566,6 +578,11 @@ private:
 
     // PR 5 — vectorized computeQuantiles scratch buffer (node-major: nn × M)
     std::vector<double> recon_buf_;
+
+    // PR H4 — GEMM reconstruction scratch (RomQuantileGemm.hpp); resized to
+    // k_active*n_nodes / n_ensemble*k_active internally, reused across calls.
+    std::vector<double> gemm_P_active_;
+    std::vector<double> gemm_A_active_;
 
     // PR H11 — per-member phase coordinate
     /// Per-active-node travel time T̄(x) (s), length n_nodes; empty when

@@ -712,6 +712,7 @@ void SpectralROM::computeQuantiles(const double* h_det, bool parametric_tails) {
 
     auto nt = static_cast<std::size_t>(n_tri);
     auto nk = static_cast<std::size_t>(n_kept);
+    auto M_sz = static_cast<std::size_t>(n_ensemble);
 
     // Compute quantile indices (into sorted n_ensemble values)
     // For M members, the p-th quantile index = floor(p * (M-1) + 0.5) (nearest rank)
@@ -720,52 +721,94 @@ void SpectralROM::computeQuantiles(const double* h_det, bool parametric_tails) {
     int idx50 = static_cast<int>(0.50 * (M - 1.0) + 0.5);
     int idx95 = std::min(n_ensemble - 1, static_cast<int>(0.95 * (M - 1.0) + 0.5));
 
-    for (std::size_t t = 0; t < nt; ++t) {
-        const double h_det_t = h_det[t];
-        // Reconstruct depth at cell t for all members: h_det + P·δa, floored at 0.
-        for (int i = 0; i < n_ensemble; ++i) {
-            const double* ai = &a_ensemble[static_cast<std::size_t>(i) * nk];
-            double h = h_det_t;
-            for (std::size_t j = 0; j < nk; ++j) {
-                if (!mode_active[j]) continue;
-                h += basis->P[j * nt + t] * ai[j];
+    // Log-normal parametric upper tail helper (order-independent: a plain
+    // sum over all M values, so it works identically whether the row is
+    // fully sorted, nth_element-selected, or in raw reconstruction order).
+    auto applyParametricTail = [&](const double* row, std::size_t t) {
+        constexpr double DRY_THRESH = 1.0e-4;
+        double sum_log = 0.0, sum_log2 = 0.0;
+        int n_wet = 0;
+        for (std::size_t i = 0; i < M_sz; ++i) {
+            double h = row[i];
+            if (h > DRY_THRESH) {
+                double lh = std::log(h);
+                sum_log  += lh;
+                sum_log2 += lh * lh;
+                ++n_wet;
             }
-            sort_buf_[static_cast<std::size_t>(i)] = std::max(h, 0.0);
         }
+        if (n_wet >= 4) {
+            double mu    = sum_log / n_wet;
+            double var   = std::max(sum_log2 / n_wet - mu * mu, 0.0);
+            double sigma = std::sqrt(var);
+            if (sigma > 1.0e-10) {
+                constexpr double Z95 = 1.6449;
+                q95[t] = std::exp(mu + Z95 * sigma);
+            }
+        }
+    };
 
-        // Sort to extract quantiles
-        std::sort(sort_buf_.begin(), sort_buf_.end());
-
-        q05[t] = sort_buf_[static_cast<std::size_t>(idx05)];
-        q50[t] = sort_buf_[static_cast<std::size_t>(idx50)];
-        q95[t] = sort_buf_[static_cast<std::size_t>(idx95)];
-
-        // Log-normal parametric upper tail: uses all M members to estimate
-        // distribution, reducing sensitivity to the single observed maximum
-        // when M is small.  Only replaces q95; q05/q50 remain sort-based.
-        if (parametric_tails) {
-            constexpr double DRY_THRESH = 1.0e-4;
-            double sum_log = 0.0, sum_log2 = 0.0;
-            int n_wet = 0;
+    if (rom_quantile_naive) {
+        for (std::size_t t = 0; t < nt; ++t) {
+            const double h_det_t = h_det[t];
+            // Reconstruct depth at cell t for all members: h_det + P·δa, floored at 0.
             for (int i = 0; i < n_ensemble; ++i) {
-                double h = sort_buf_[static_cast<std::size_t>(i)];
-                if (h > DRY_THRESH) {
-                    double lh = std::log(h);
-                    sum_log  += lh;
-                    sum_log2 += lh * lh;
-                    ++n_wet;
+                const double* ai = &a_ensemble[static_cast<std::size_t>(i) * nk];
+                double h = h_det_t;
+                for (std::size_t j = 0; j < nk; ++j) {
+                    if (!mode_active[j]) continue;
+                    h += basis->P[j * nt + t] * ai[j];
                 }
+                sort_buf_[static_cast<std::size_t>(i)] = std::max(h, 0.0);
             }
-            if (n_wet >= 4) {
-                double mu    = sum_log / n_wet;
-                double var   = std::max(sum_log2 / n_wet - mu * mu, 0.0);
-                double sigma = std::sqrt(var);
-                if (sigma > 1.0e-10) {
-                    constexpr double Z95 = 1.6449;
-                    q95[t] = std::exp(mu + Z95 * sigma);
-                }
-            }
+
+            // Sort to extract quantiles
+            std::sort(sort_buf_.begin(), sort_buf_.end());
+
+            q05[t] = sort_buf_[static_cast<std::size_t>(idx05)];
+            q50[t] = sort_buf_[static_cast<std::size_t>(idx50)];
+            q95[t] = sort_buf_[static_cast<std::size_t>(idx95)];
+
+            // Log-normal parametric upper tail: uses all M members to estimate
+            // distribution, reducing sensitivity to the single observed maximum
+            // when M is small.  Only replaces q95; q05/q50 remain sort-based.
+            if (parametric_tails) applyParametricTail(sort_buf_.data(), t);
         }
+        return;
+    }
+
+    // PR H4: GEMM reconstruction (RomQuantileGemm.hpp) fills recon_buf_ with
+    // the raw modal delta Σ_j P[j,t]·a[i,j] (active modes only, same masking
+    // as the naive loop above) for every (cell, member) pair in one call,
+    // instead of the O(nt*M*nk) hand-rolled loop. h_det + floor-at-0 is
+    // applied per element below, matching the naive path's clamp exactly.
+    recon_buf_.assign(nt * M_sz, 0.0);
+    openswmm::uncertainty::reconstructEnsembleGemm(
+        basis->P.data(), a_ensemble.data(), mode_active,
+        n_tri, n_kept, n_ensemble, recon_buf_.data(),
+        gemm_P_active_, gemm_A_active_);
+
+    for (std::size_t t = 0; t < nt; ++t) {
+        double* row = &recon_buf_[t * M_sz];
+        const double h_det_t = h_det[t];
+        for (std::size_t i = 0; i < M_sz; ++i)
+            row[i] = std::max(h_det_t + row[i], 0.0);
+
+        // Three independent std::nth_element selections instead of a full
+        // sort: no downstream consumer needs the whole row in sorted order
+        // (unlike SpectralROM1D::computeQuantiles(), whose sortedMemberValues()
+        // feeds PR H10's threshold/modality machinery -- see RomQuantileGemm.hpp
+        // and SpectralROM1D.cpp for that distinction). Each call's result is
+        // correct regardless of what the previous calls left the rest of the
+        // row looking like.
+        std::nth_element(row, row + idx05, row + M_sz);
+        q05[t] = row[static_cast<std::size_t>(idx05)];
+        std::nth_element(row, row + idx50, row + M_sz);
+        q50[t] = row[static_cast<std::size_t>(idx50)];
+        std::nth_element(row, row + idx95, row + M_sz);
+        q95[t] = row[static_cast<std::size_t>(idx95)];
+
+        if (parametric_tails) applyParametricTail(row, t);
     }
 }
 

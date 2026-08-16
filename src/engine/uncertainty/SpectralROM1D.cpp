@@ -590,19 +590,32 @@ void SpectralROM1D::computeQuantiles(const double* h_det_active,
                          static_cast<int>(0.95 * (static_cast<double>(M) - 1.0) + 0.5));
 
     // Recon buffer: H[node, member] = h_det[node] + Σ_j P[j,node]·δa[member,j]
-    // (nn × M). Computed as one node-major pass per active mode; intermediate
-    // storage is recon_buf_ (row-major: row = node).
+    // (nn × M), row-major: row = node. PR H4: the reconstruction (this
+    // buffer's fill) is the O(N·M·k) term that dominates at large N; below
+    // is either the original hand-rolled loop (rom_quantile_naive == true,
+    // kept byte-for-byte as the equivalence-test baseline) or
+    // reconstructEnsembleGemm() (RomQuantileGemm.hpp), which computes the
+    // identical active-mode-masked sum via cblas_dgemm (or a portable
+    // fallback) in one call. Everything after this block -- phase
+    // reference selection, sort, quantile extraction -- is unchanged by
+    // and unaware of which path filled recon_buf_.
     recon_buf_.assign(nn * M, 0.0);
 
-    for (std::size_t j = 0; j < nk; ++j) {
-        if (!mode_active[j]) continue;
-        const double* Pj = &basis->P[j * nn];       // P[:,j]: length nn
-        for (std::size_t t = 0; t < nn; ++t) {
-            double pjt = Pj[t];
-            double* row = &recon_buf_[t * M];        // H[t,:]: length M
-            for (std::size_t i = 0; i < M; ++i)
-                row[i] += pjt * a_ensemble[i * nk + j];
+    if (rom_quantile_naive) {
+        for (std::size_t j = 0; j < nk; ++j) {
+            if (!mode_active[j]) continue;
+            const double* Pj = &basis->P[j * nn];       // P[:,j]: length nn
+            for (std::size_t t = 0; t < nn; ++t) {
+                double pjt = Pj[t];
+                double* row = &recon_buf_[t * M];        // H[t,:]: length M
+                for (std::size_t i = 0; i < M; ++i)
+                    row[i] += pjt * a_ensemble[i * nk + j];
+            }
         }
+    } else {
+        reconstructEnsembleGemm(basis->P.data(), a_ensemble.data(), mode_active,
+                                n_nodes, n_kept, n_ensemble, recon_buf_.data(),
+                                gemm_P_active_, gemm_A_active_);
     }
 
     // PR H11: per-member phase coordinate. Active only when a travel-time

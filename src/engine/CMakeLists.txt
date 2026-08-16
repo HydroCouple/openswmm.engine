@@ -181,6 +181,26 @@ elseif(APPLE)
     # dl is part of libSystem on macOS
 endif()
 
+# ---- CBLAS (PR H4 — quantile-reconstruction GEMM) ----
+# Apple's Accelerate framework ships a full CBLAS implementation as part of
+# the base OS (zero new deps, per the H4 spec) and is the only platform this
+# PR wires up directly. Elsewhere, SpectralROM1D/SpectralROM fall back to a
+# portable triple-loop GEMM (OPENSWMM_HAVE_CBLAS undefined) -- correct
+# everywhere, just not BLAS-accelerated off Apple. Adding a system BLAS
+# (OpenBLAS/MKL) dependency for Linux/Windows is explicitly out of scope here.
+if(APPLE)
+    find_library(ACCELERATE_FRAMEWORK Accelerate)
+    if(ACCELERATE_FRAMEWORK)
+        target_link_libraries(openswmm_engine PRIVATE ${ACCELERATE_FRAMEWORK})
+        target_compile_definitions(openswmm_engine PRIVATE OPENSWMM_HAVE_CBLAS)
+        message(STATUS "OpenSWMM Engine: CBLAS via Accelerate framework enabled (quantile-reconstruction GEMM)")
+    else()
+        message(STATUS "OpenSWMM Engine: Accelerate framework not found — quantile reconstruction uses the portable fallback")
+    endif()
+else()
+    message(STATUS "OpenSWMM Engine: no CBLAS wired on this platform — quantile reconstruction uses the portable fallback")
+endif()
+
 # ---- SIMD compiler flags ----
 option(OPENSWMM_FORCE_SCALAR "Disable SIMD intrinsics; use scalar fallback only" OFF)
 
