@@ -167,6 +167,40 @@ TEST(RxIntegrators, FirstOrderDecayMatchesClosedForm) {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 1b — NONLINEAR reference: second-order decay A' = -k A², whose exact
+// solution is A(t) = A0 / (1 + k A0 t).
+//
+// This gate exists for the cached FD Jacobian. Every other analytic gate here
+// is LINEAR, and for a linear system a cached Jacobian is exactly equal to a
+// freshly computed one — so they cannot detect a stale-Jacobian defect at
+// all. Here J = -2kA genuinely varies along the trajectory: BDF2 iterates to
+// a residual tolerance so a stale J may only cost iterations, but ROS2 has no
+// corrector and a stale J moves its answer. Falsifier: raise kJacMaxAge far
+// enough (or drop the rejection/Newton-failure invalidation) and ROS2 drifts
+// off this reference.
+// ---------------------------------------------------------------------------
+TEST(RxIntegrators, NonlinearDecayMatchesClosedFormWithCachedJacobian) {
+    const double k = 0.5, dt = 20.0, a0 = 3.0;
+    const double exact = a0 / (1.0 + k * a0 * dt);
+    for (const char* solver : {"ROS2", "BDF2", "RK5"}) {
+        SWMM_Engine e = open_with_rxn(
+            std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
+            "\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
+            "[REACTION_SPECIES]\nBULK A MG\n"
+            "[REACTION_TANKS]\nRATE A -0.5 * A * A\n");
+        const auto& rx = as_cpp_engine(e).context().reactions;
+        ASSERT_TRUE(rx.compiled) << solver;
+        double species[1] = {a0};
+        const auto rep = run_step(rx, dt, species);
+        EXPECT_TRUE(rep.ok) << solver << ": " << rep.error;
+        if (rep.ok)
+            EXPECT_NEAR(species[0], exact, 1e-5 * exact)
+                << solver << " vs exact " << exact;
+        swmm_engine_destroy(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 2 — coupled chain A -> B (COUPLING FULL) vs the analytic solution.
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, CoupledChainMatchesAnalyticSolution) {
