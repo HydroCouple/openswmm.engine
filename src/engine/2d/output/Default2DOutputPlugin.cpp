@@ -122,6 +122,23 @@ void Default2DOutputPlugin::writeFaceEnvelope(hid_t ds, const double* data) {
     H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
 }
 
+void Default2DOutputPlugin::ensureRomQuantileDatasets() {
+    if (ds_face_rom_q50_ != H5I_INVALID_HID) return;  // created once, on first use
+    hsize_t zero2[2]      = { 0, n_faces_ };
+    hsize_t face_chunk[2] = { 1, n_faces_ };
+    auto make = [&](const char* name, const char* long_name) -> hid_t {
+        hid_t ds = createUnlimitedDataset(name, 2, zero2, face_chunk);
+        writeStringAttr(ds, "long_name", long_name);
+        writeStringAttr(ds, "units", "m");
+        writeStringAttr(ds, "mesh", "Mesh2");
+        writeStringAttr(ds, "location", "face");
+        return ds;
+    };
+    ds_face_rom_q05_ = make("Mesh2_face_rom_q05", "5th-percentile overland depth (2D uncertainty ROM)");
+    ds_face_rom_q50_ = make("Mesh2_face_rom_q50", "median overland depth (2D uncertainty ROM)");
+    ds_face_rom_q95_ = make("Mesh2_face_rom_q95", "95th-percentile overland depth (2D uncertainty ROM)");
+}
+
 // ============================================================================
 // Lifecycle
 // ============================================================================
@@ -518,6 +535,18 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         writeFaceEnvelope(ds_face_max_continuity_err_,
                           snap.surface_stat_max_cont_err.data());
 
+    // Optional per-face 2D ROM uncertainty quantiles (present only when a 2D
+    // ROM ran). Lazily create the datasets the first time they appear so a
+    // run without a ROM writes a byte-identical file.
+    if (snap.surface_rom_q50.size() == n_faces_ &&
+        snap.surface_rom_q05.size() == n_faces_ &&
+        snap.surface_rom_q95.size() == n_faces_) {
+        ensureRomQuantileDatasets();
+        extendAndWrite2D(ds_face_rom_q05_, snap.surface_rom_q05.data(), n_faces_);
+        extendAndWrite2D(ds_face_rom_q50_, snap.surface_rom_q50.data(), n_faces_);
+        extendAndWrite2D(ds_face_rom_q95_, snap.surface_rom_q95.data(), n_faces_);
+    }
+
     ++n_steps_;
     return 0;
 }
@@ -576,6 +605,9 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_edge_flux_);
     closeDS(ds_node_head_);
     closeDS(ds_node_depth_);
+    closeDS(ds_face_rom_q05_);
+    closeDS(ds_face_rom_q50_);
+    closeDS(ds_face_rom_q95_);
     closeDS(ds_face_max_depth_);
     closeDS(ds_face_max_velocity_);
     closeDS(ds_face_max_continuity_err_);

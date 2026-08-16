@@ -23,6 +23,14 @@ retroactive.
 
 ### Added
 
+- **Per-cell 2D uncertainty quantiles in the HDF5 output.** When a 2D uncertainty ROM is active
+  (`[2D_ROM]`/`[UNCERTAINTY]`), `Default2DOutputPlugin` now writes three per-face datasets
+  `Mesh2_face_rom_q05`, `Mesh2_face_rom_q50`, `Mesh2_face_rom_q95` (overland depth, m) alongside the
+  deterministic fields, sourced from `SpectralROM::computeQuantiles()` via new
+  `SimulationSnapshot::surface_rom_q05/q50/q95` fields filled in `fillSurfaceSnapshot()`. The
+  datasets are created lazily on the first snapshot that carries them, so runs without a 2D ROM
+  produce a byte-identical file. `q50` tracks the deterministic depth by construction, so no
+  deterministic output field or mass balance is affected.
 - **Decoupled 1D/2D timesteps with conservative per-step exchange booking.** `COUPLING_INTERVAL` is
   mapped to a physical time window and the old step-count gating is retired, so the 2D advance
   cadence no longer follows 1D variable-step shrinkage. Junction exchange is accumulated per 1D step
