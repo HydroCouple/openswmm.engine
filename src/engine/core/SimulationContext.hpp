@@ -848,6 +848,7 @@ struct SimulationContext {
     struct MassBalance {
         // Runoff totals
         double runoff_rainfall   = 0.0;  ///< Total rainfall volume (ft3)
+        double runoff_runon      = 0.0;  ///< Outfall-routed runon volume (ft3), legacy RUNOFF_RUNON
         double runoff_evap       = 0.0;  ///< Total evaporation volume (ft3)
         double runoff_infil      = 0.0;  ///< Total infiltration volume (ft3)
         double runoff_runoff     = 0.0;  ///< Total surface runoff volume (ft3)
@@ -1006,7 +1007,7 @@ struct SimulationContext {
 
         /// Runoff continuity error (fraction).
         double runoff_error() const {
-            double total_in = runoff_rainfall + runoff_init_store;
+            double total_in = runoff_rainfall + runoff_runon + runoff_init_store;
             double total_out = runoff_evap + runoff_infil + runoff_runoff + runoff_final_store;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }

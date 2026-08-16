@@ -156,8 +156,8 @@ struct LIDGroupSoA {
     // Outputs (per unit)
     std::vector<double> surface_runoff;
     std::vector<double> drain_flow;
-    std::vector<double> evap_loss;
-    std::vector<double> infil_loss;
+    std::vector<double> evap_loss;   ///< Evaporation loss this step (ft of depth)
+    std::vector<double> infil_loss;  ///< Native infiltration loss this step (ft)
 
     // Pollutant drain removal fractions: drain_rmvl[unit * n_pollutants + pollutant]
     std::vector<double> drain_rmvl;  ///< Removal fraction per unit per pollutant
@@ -194,6 +194,10 @@ public:
     LIDGroupSoA& group(int type_index) { return groups_[static_cast<size_t>(type_index)]; }
     const LIDGroupSoA& group(int type_index) const { return groups_[static_cast<size_t>(type_index)]; }
     int numGroups() const { return static_cast<int>(groups_.size()); }
+
+    /// Total water volume currently stored in all LID units (ft³), for the
+    /// runoff mass balance (legacy lid_getStoredVolume()).
+    double storedVolume() const;
 
     /**
      * @brief Compute LID performance for all units (batch by type).
