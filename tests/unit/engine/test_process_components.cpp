@@ -110,15 +110,20 @@ TEST_F(ProcessComponentsTest, UnknownIdFailsStrictOpen) {
 
 // ---------------------------------------------------------------------------
 // IO1 — planned-but-unimplemented id gives the phase-specific diagnostic.
+//
+// The id here must be one whose component has NOT landed yet: R1 registered
+// the real reactions component, so that id now takes the implemented path.
+// Heat (phase H1) is the stand-in until H1 lands, at which point move this to
+// whichever id is still planned.
 // ---------------------------------------------------------------------------
 TEST_F(ProcessComponentsTest, PlannedIdReportsPendingPhase) {
     write_deck("_pc_planned.inp",
-               "org.hydrocouple.openswmm.reactions   config=\"model.rxn\"");
+               "org.hydrocouple.openswmm.heat   config=\"model.heat\"");
     EXPECT_NE(open_deck("_pc_planned.inp", "_pc_planned.rpt",
                         "_pc_planned.out"), SWMM_OK);
     const auto& ctx = as_cpp_engine(engine_).context();
     EXPECT_TRUE(errors_contain(ctx, "recognized but not yet implemented"));
-    EXPECT_TRUE(errors_contain(ctx, "R1"));
+    EXPECT_TRUE(errors_contain(ctx, "H1"));
     std::remove("_pc_planned.inp");
 }
 

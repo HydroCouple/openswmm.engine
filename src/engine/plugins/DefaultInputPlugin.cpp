@@ -44,6 +44,7 @@
 #include "../input/handlers/UserFlagValuesHandler.hpp"
 #include "../input/handlers/PluginsHandler.hpp"
 #include "../input/handlers/ProcessComponentsHandler.hpp"
+#include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../input/handlers/FilesHandler.hpp"
 #include "../input/handlers/InflowsHandler.hpp"
 #include "../input/handlers/QualityHandler.hpp"
@@ -154,6 +155,17 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("PLUGINS",          input::handle_plugins);
     registry_.register_builtin("PROCESS_COMPONENTS",
                                input::handle_process_components);
+
+    // Embedded component sections (D-UT8 fallback): [REACTION_*] in the
+    // legacy .inp are captured verbatim and consumed after component
+    // resolution (style warning; external config file wins on conflict).
+    for (const auto& tag : transport::reactionSectionTags()) {
+        registry_.register_builtin(tag,
+            [tag](SimulationContext& ctx,
+                  const std::vector<std::string>& lines) {
+                ctx.embedded_component_sections.emplace_back(tag, lines);
+            });
+    }
 }
 
 // ============================================================================

@@ -87,6 +87,8 @@
 #include "../data/NodeSubtypes.hpp"
 #include "../data/LinkSubtypes.hpp"
 #include "../data/PollutantData.hpp"
+#include "../data/ReactionData.hpp"
+#include "../data/SpeciesRegistry.hpp"
 #include "../data/SubcatchData.hpp"
 #include "../data/TableData.hpp"
 #include "SimulationOptions.hpp"
@@ -519,6 +521,24 @@ struct SimulationContext {
     PollutantData pollutants;
 
     /**
+     * @brief Species registry — the single source of truth for transported
+     *        constituents (master plan §4.1, phase T0a). Pollutants occupy
+     *        the first slots (index-aligned with the legacy pollutant
+     *        index); MSX species append via the reactions component (R1);
+     *        reserved age/temperature species append with phases A1/H1.
+     *        Rebuilt at each open().
+     */
+    SpeciesRegistry species_registry;
+
+    /**
+     * @brief Multispecies reaction system (EPANET-MSX conventions), parsed
+     *        from the reactions component's config file or embedded
+     *        [REACTION_*] sections (phase R1). Compiled bytecode arrives
+     *        with phase R2.
+     */
+    ReactionData reactions;
+
+    /**
      * @brief All time series and rating curves.
      * @see Legacy: Tseries[], Curve[] in globals.h + TTable in objects.h
      */
@@ -731,6 +751,16 @@ struct SimulationContext {
      *          to its apply hook. Unified Transport suite D-UT8.
      */
     std::vector<ProcessComponentSpec> process_component_specs;
+
+    /**
+     * @brief Embedded component sections found in the legacy .inp
+     *        ([REACTION_*] today; other component families as they land) —
+     *        the D-UT8 embedded-fallback path. (tag, lines) pairs in file
+     *        order; consumed after component resolution with a style
+     *        warning, or reported ignored when the external file wins.
+     */
+    std::vector<std::pair<std::string, std::vector<std::string>>>
+        embedded_component_sections;
 
     /**
      * @brief Secondary file references parsed from [FILES].

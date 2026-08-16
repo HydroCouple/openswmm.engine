@@ -179,6 +179,24 @@ std::vector<std::string> resolve_process_components(SimulationContext& ctx,
     std::vector<std::string> errors;
     auto& reg = ProcessComponentRegistry::instance();
 
+    // Duplicate registrations are refused (IO1 validation finding, resolved
+    // per the R1 proposal): two rows for one id would run apply() twice with
+    // undefined precedence.
+    {
+        std::vector<std::string> seen;
+        for (const auto& spec : ctx.process_component_specs) {
+            for (const auto& s0 : seen)
+                if (s0 == spec.id) {
+                    errors.push_back(
+                        "[PROCESS_COMPONENTS] duplicate registration of '" +
+                        spec.id + "' — each component id may appear once.");
+                    break;
+                }
+            seen.push_back(spec.id);
+        }
+        if (!errors.empty()) return errors;
+    }
+
     for (const auto& spec : ctx.process_component_specs) {
         if (looks_like_library(spec.id)) {
             errors.push_back(
