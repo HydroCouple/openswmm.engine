@@ -65,6 +65,7 @@ class OutputReader:
     node_ids: List[str]
     link_ids: List[str]
     subcatchment_ids: List[str]
+    pollutant_ids: List[str]
 
     # Time axis
     period_times: NDArray[Any]  # dtype = datetime64[s]
