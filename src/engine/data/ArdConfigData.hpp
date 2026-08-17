@@ -53,9 +53,30 @@
 #ifndef OPENSWMM_ENGINE_DATA_ARD_CONFIG_DATA_HPP
 #define OPENSWMM_ENGINE_DATA_ARD_CONFIG_DATA_HPP
 
+#include <string>
 #include <vector>
 
 namespace openswmm {
+
+/**
+ * @brief One raw [TRANSPORT_BOUNDARIES] or [TRANSPORT_SOURCES] row (E5a).
+ *
+ * @details Stored UNRESOLVED at component-apply time: the rows name MSX
+ *          species, and the reactions component may apply before or after
+ *          transport.ard in [PROCESS_COMPONENTS] file order. Resolution to
+ *          indices happens once, after all components applied
+ *          (transport::resolveArdTransportRows, called from
+ *          SWMMEngine::open) — failures are fatal there with the row's own
+ *          text in the diagnostic.
+ */
+struct ArdTransportRow {
+    std::string element;   ///< node name (boundary) / conduit name (source)
+    std::string species;   ///< MSX species name (pollutants refused in E5a)
+    bool        is_ts = false;
+    double      value = 0.0;   ///< VALUE mode: conc (BC, species units) or
+                               ///< mass rate (source, species mass units/s)
+    std::string ts_name;       ///< TIMESERIES mode
+};
 
 /// Global dispersion coefficient model ([TRANSPORT_OPTIONS] DISPERSION).
 enum class ArdDispersionMode : int {
@@ -88,11 +109,39 @@ struct ArdConfigData {
     std::vector<int>    conduit_disp_link;
     std::vector<double> conduit_disp_value;
 
+    // ---- E5a: raw boundary/source rows (cold; see ArdTransportRow) -------
+    std::vector<ArdTransportRow> boundary_rows;
+    std::vector<ArdTransportRow> source_rows;
+
+    // ---- E5a: resolved rows (hot; filled by resolveArdTransportRows) -----
+    // Boundaries: the node's EXTERNAL INFLOW water carries the MSX species
+    // at the given concentration (species units — internal store mass is
+    // conc·ft³, so no conversion). Sources: distributed over the conduit's
+    // cells, INTERNAL units conc·ft³/s (converted from species-mass/s by
+    // dividing by kLitersPerFt3 at resolution).
+    std::vector<int>    bc_node;    ///< node index
+    std::vector<int>    bc_msx;     ///< ReactionData species index
+    std::vector<double> bc_value;   ///< VALUE-mode concentration
+    std::vector<int>    bc_ts;      ///< timeseries table index, -1 ⇒ VALUE
+    std::vector<int>    src_link;   ///< link index (conduit)
+    std::vector<int>    src_msx;
+    std::vector<double> src_value;  ///< VALUE-mode rate, internal conc·ft³/s
+    std::vector<int>    src_ts;     ///< ts index, -1 ⇒ VALUE (ts values are
+                                    ///< species-mass/s; engine converts)
+    bool transport_rows_resolved = false;
+
     bool any_dispersion() const noexcept {
         return dispersion_mode != ArdDispersionMode::OFF ||
                !conduit_disp_link.empty();
     }
+    bool any_transport_rows() const noexcept {
+        return !boundary_rows.empty() || !source_rows.empty();
+    }
 };
+
+/// Litres per cubic foot — the species-mass/s → internal conc·ft³/s source
+/// conversion (internal MSX store mass is concentration (mass/L) × ft³).
+inline constexpr double kLitersPerFt3 = 28.316846592;
 
 }  // namespace openswmm
 

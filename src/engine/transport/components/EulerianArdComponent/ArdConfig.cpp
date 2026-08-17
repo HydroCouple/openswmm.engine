@@ -112,17 +112,58 @@ void applyArdSections(SimulationContext& ctx,
                             ArdDispersionMode::VALUE;
                         ctx.ard_config.dispersion_value = d;
                     }
-                } else if (key == "SCALAR_SCHEME" || key == "LIMITER" ||
-                           key == "TARGET_DX") {
+                } else if (key == "SCALAR_SCHEME") {
+                    // E5a: aliases of the internal FV transport config
+                    // (plan §4). model.ard wins over [OPTIONS] FV_* — the
+                    // component applies after the options parse.
+                    if (toks.size() != 2) {
+                        errors.push_back(
+                            "[TRANSPORT_OPTIONS] SCALAR_SCHEME expects "
+                            "UPWIND | MUSCL | QUICKEST_ULTIMATE.");
+                        continue;
+                    }
+                    const std::string v = upper(toks[1]);
+                    if (v == "UPWIND")
+                        ctx.options.fv.scalar_scheme = fv::ScalarScheme::UPWIND;
+                    else if (v == "MUSCL")
+                        ctx.options.fv.scalar_scheme = fv::ScalarScheme::MUSCL;
+                    else if (v == "QUICKEST_ULTIMATE")
+                        ctx.options.fv.scalar_scheme =
+                            fv::ScalarScheme::QUICKEST_ULTIMATE;
+                    else
+                        errors.push_back(
+                            "[TRANSPORT_OPTIONS] SCALAR_SCHEME '" + toks[1] +
+                            "' is not UPWIND, MUSCL, or QUICKEST_ULTIMATE.");
+                } else if (key == "LIMITER") {
+                    if (toks.size() != 2) {
+                        errors.push_back(
+                            "[TRANSPORT_OPTIONS] LIMITER expects MINMOD | "
+                            "VANLEER | SUPERBEE.");
+                        continue;
+                    }
+                    const std::string v = upper(toks[1]);
+                    if (v == "MINMOD")
+                        ctx.options.fv.limiter = fv::Limiter::MINMOD;
+                    else if (v == "VANLEER")
+                        ctx.options.fv.limiter = fv::Limiter::VANLEER;
+                    else if (v == "SUPERBEE")
+                        ctx.options.fv.limiter = fv::Limiter::SUPERBEE;
+                    else
+                        errors.push_back(
+                            "[TRANSPORT_OPTIONS] LIMITER '" + toks[1] +
+                            "' is not MINMOD, VANLEER, or SUPERBEE.");
+                } else if (key == "TARGET_DX") {
                     errors.push_back(
-                        "[TRANSPORT_OPTIONS] " + key +
-                        " in model.ard arrives with plan phase E5 — until "
-                        "then the [OPTIONS] FV_SCALAR_SCHEME / FV_LIMITER "
-                        "keys configure the ARD engine's scheme.");
+                        "[TRANSPORT_OPTIONS] TARGET_DX is an open item "
+                        "(Eulerian ARD plan §8 — transport-mesh Δx default "
+                        "under non-FV hydraulics) and arrives with E5b; "
+                        "FV_CELL_LENGTH rules mesh the transport grid "
+                        "today.");
                 } else {
                     errors.push_back(
                         "[TRANSPORT_OPTIONS] unknown key '" + toks[0] +
-                        "' (E3 recognizes: DISPERSION).");
+                        "' (E5a recognizes: DISPERSION, SCALAR_SCHEME, "
+                        "LIMITER).");
                 }
             }
         } else if (tag == "CONDUIT_DISPERSION") {
@@ -170,9 +211,47 @@ void applyArdSections(SimulationContext& ctx,
             }
         } else if (tag == "TRANSPORT_BOUNDARIES" ||
                    tag == "TRANSPORT_SOURCES") {
-            errors.push_back(
-                "[" + tag + "] arrives with plan phase E5 (Eulerian ARD "
-                "plan) — not yet implemented.");
+            // E5a. Rows are stored RAW — species are resolved after every
+            // component has applied (order-independence w.r.t. the reactions
+            // component; see resolveArdTransportRows). Syntax and numerics
+            // are validated here, where the row text is at hand.
+            const bool is_bc = (tag == "TRANSPORT_BOUNDARIES");
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                if (toks.size() != 4) {
+                    errors.push_back(
+                        "[" + tag + "] expects '<" +
+                        std::string(is_bc ? "node" : "conduit") +
+                        "> <species> VALUE <v> | TIMESERIES <name>': '" +
+                        line + "'.");
+                    continue;
+                }
+                ArdTransportRow row;
+                row.element = toks[0];
+                row.species = toks[1];
+                const std::string mode = upper(toks[2]);
+                if (mode == "VALUE") {
+                    double v = 0.0;
+                    if (!parse_value(toks[3], v) || v < 0.0) {
+                        errors.push_back(
+                            "[" + tag + "] '" + toks[0] + "': VALUE '" +
+                            toks[3] + "' is not a non-negative number.");
+                        continue;
+                    }
+                    row.value = v;
+                } else if (mode == "TIMESERIES") {
+                    row.is_ts   = true;
+                    row.ts_name = toks[3];
+                } else {
+                    errors.push_back(
+                        "[" + tag + "] '" + toks[0] + "': mode '" + toks[2] +
+                        "' is not VALUE or TIMESERIES.");
+                    continue;
+                }
+                (is_bc ? ctx.ard_config.boundary_rows
+                       : ctx.ard_config.source_rows)
+                    .push_back(std::move(row));
+            }
         } else if (tag == "STORAGE_MIXING") {
             errors.push_back(
                 "[STORAGE_MIXING] arrives with plan phase E2b (Eulerian ARD "
@@ -180,8 +259,9 @@ void applyArdSections(SimulationContext& ctx,
         } else {
             errors.push_back(
                 "model.ard: unknown section [" + tag +
-                "] (E3 recognizes: [TRANSPORT_OPTIONS] "
-                "[CONDUIT_DISPERSION]).");
+                "] (E5a recognizes: [TRANSPORT_OPTIONS] "
+                "[CONDUIT_DISPERSION] [TRANSPORT_BOUNDARIES] "
+                "[TRANSPORT_SOURCES]).");
         }
     }
 
@@ -192,22 +272,25 @@ void applyArdSections(SimulationContext& ctx,
     ctx.ard_config.configured = true;
 
     // Silent-bypass enumeration (R4 validation lesson): every configuration
-    // under which this file parses but its dispersion reaches nothing warns
-    // at open, naming the remedy.
-    if (ctx.ard_config.any_dispersion()) {
+    // under which this file parses but its content reaches nothing warns at
+    // open, naming the remedy. E5a: boundaries/sources count as content.
+    if (ctx.ard_config.any_dispersion() ||
+        ctx.ard_config.any_transport_rows()) {
         if (ctx.options.ignore_quality) {
             ctx.warnings.push_back(
                 "A transport.ard component is configured but IGNORE_QUALITY "
-                "is YES — the quality stage does not run, so no dispersion "
-                "applies this simulation.");
+                "is YES — the quality stage does not run, so none of its "
+                "dispersion/boundary/source configuration applies this "
+                "simulation.");
         } else if (ctx.options.quality_solver !=
                    QualitySolverKind::EULERIAN_ARD) {
             ctx.warnings.push_back(
                 "A transport.ard component is configured but QUALITY_SOLVER "
-                "is not EULERIAN_ARD — its dispersion configuration is inert "
-                "under the LEGACY engine. Set [OPTIONS] QUALITY_SOLVER "
-                "EULERIAN_ARD to activate it.");
-        } else if (ctx.n_pollutants() == 0) {
+                "is not EULERIAN_ARD — its dispersion/boundary/source "
+                "configuration is inert under the LEGACY engine. Set "
+                "[OPTIONS] QUALITY_SOLVER EULERIAN_ARD to activate it.");
+        } else if (ctx.n_pollutants() == 0 &&
+                   ctx.ard_config.any_dispersion()) {
             // E4/R6: MSX species now transport (and disperse) under the ARD
             // engine, so an MSX-only model is no longer a bypass. The
             // reactions component may apply before OR after this hook, so
@@ -238,6 +321,123 @@ void warnIfFvDispersionKeyIgnored(SimulationContext& ctx) {
         "(model.ard: [TRANSPORT_OPTIONS] DISPERSION OFF|FISCHER|<value> and "
         "[CONDUIT_DISPERSION] rows). No dispersion is applied from this key. "
         "Unifying the FV_*/ARD_* option surface arrives with plan phase E5.");
+}
+
+bool ardBoundariesNeedExternalVolumes(const SimulationContext& ctx) {
+    return ctx.options.quality_solver == QualitySolverKind::EULERIAN_ARD &&
+           !ctx.options.ignore_quality &&
+           !ctx.ard_config.bc_node.empty();
+}
+
+void resolveArdTransportRows(SimulationContext& ctx,
+                             std::vector<std::string>& errors) {
+    auto& cfg = ctx.ard_config;
+    cfg.bc_node.clear();  cfg.bc_msx.clear();
+    cfg.bc_value.clear(); cfg.bc_ts.clear();
+    cfg.src_link.clear(); cfg.src_msx.clear();
+    cfg.src_value.clear(); cfg.src_ts.clear();
+    cfg.transport_rows_resolved = false;
+    if (!cfg.configured || !cfg.any_transport_rows()) {
+        cfg.transport_rows_resolved = true;
+        return;
+    }
+
+    // Species must be MSX: pollutants keep their full legacy loading
+    // surface ([INFLOWS] CONCEN/MASS, DWF, RDII, washoff) and allowing them
+    // here would create a silent double-count question E5a refuses to have.
+    const auto resolve_species = [&](const ArdTransportRow& row,
+                                     const char* sec) -> int {
+        const int s = ctx.reactions.find_species(row.species);
+        if (s >= 0) return s;
+        if (ctx.species_registry.find(row.species) >= 0) {
+            errors.push_back(
+                std::string("[") + sec + "] '" + row.element + "': '" +
+                row.species + "' is a pollutant — pollutant loading uses "
+                "the legacy pathways ([INFLOWS], DWF, washoff); transport "
+                "boundaries/sources apply to MSX species only (E5a).");
+        } else {
+            errors.push_back(
+                std::string("[") + sec + "] '" + row.element +
+                "': unknown species '" + row.species +
+                "' — declare it in the reactions component's "
+                "[REACTION_SPECIES].");
+        }
+        return -1;
+    };
+    const auto resolve_ts = [&](const ArdTransportRow& row,
+                                const char* sec) -> int {
+        const int t = ctx.tables.find_by_kind(row.ts_name, true);
+        if (t < 0)
+            errors.push_back(std::string("[") + sec + "] '" + row.element +
+                             "': unknown timeseries '" + row.ts_name + "'.");
+        return t;
+    };
+
+    for (const auto& row : cfg.boundary_rows) {
+        const int nd = ctx.node_names.find(row.element);
+        if (nd < 0) {
+            errors.push_back("[TRANSPORT_BOUNDARIES] unknown node '" +
+                             row.element + "'.");
+            continue;
+        }
+        const int s = resolve_species(row, "TRANSPORT_BOUNDARIES");
+        if (s < 0) continue;
+        int ts = -1;
+        if (row.is_ts &&
+            (ts = resolve_ts(row, "TRANSPORT_BOUNDARIES")) < 0)
+            continue;
+        bool dup = false;
+        for (std::size_t i = 0; i < cfg.bc_node.size(); ++i)
+            if (cfg.bc_node[i] == nd && cfg.bc_msx[i] == s) {
+                errors.push_back(
+                    "[TRANSPORT_BOUNDARIES] duplicate row for node '" +
+                    row.element + "' species '" + row.species + "'.");
+                dup = true;
+                break;
+            }
+        if (dup) continue;
+        cfg.bc_node.push_back(nd);
+        cfg.bc_msx.push_back(s);
+        cfg.bc_value.push_back(row.value);
+        cfg.bc_ts.push_back(row.is_ts ? ts : -1);
+    }
+
+    for (const auto& row : cfg.source_rows) {
+        const int link = ctx.link_names.find(row.element);
+        if (link < 0 || ctx.link_subtypes.conduit_row(link) < 0) {
+            errors.push_back(
+                "[TRANSPORT_SOURCES] '" + row.element +
+                "' is not a conduit — distributed sources apply to "
+                "conduits.");
+            continue;
+        }
+        const int s = resolve_species(row, "TRANSPORT_SOURCES");
+        if (s < 0) continue;
+        int ts = -1;
+        if (row.is_ts && (ts = resolve_ts(row, "TRANSPORT_SOURCES")) < 0)
+            continue;
+        bool dup = false;
+        for (std::size_t i = 0; i < cfg.src_link.size(); ++i)
+            if (cfg.src_link[i] == link && cfg.src_msx[i] == s) {
+                errors.push_back(
+                    "[TRANSPORT_SOURCES] duplicate row for conduit '" +
+                    row.element + "' species '" + row.species + "'.");
+                dup = true;
+                break;
+            }
+        if (dup) continue;
+        cfg.src_link.push_back(link);
+        cfg.src_msx.push_back(s);
+        // VALUE rates arrive in species mass units per second; internal MSX
+        // store mass is conc(mass/L)·ft³, so divide by L/ft³ once here.
+        // TIMESERIES values get the same conversion at evaluation time.
+        cfg.src_value.push_back(row.value / kLitersPerFt3);
+        cfg.src_ts.push_back(row.is_ts ? ts : -1);
+    }
+
+    // Resolution ran; fatality of any errors pushed above is the caller's
+    // decision (the strict-vs-lenient open path).
+    cfg.transport_rows_resolved = true;
 }
 
 void registerArdComponent() {

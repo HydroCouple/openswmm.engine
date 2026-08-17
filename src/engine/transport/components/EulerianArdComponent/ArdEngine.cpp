@@ -215,8 +215,74 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // E4: kdecay is applied by the reaction stage (exact exponential) — the
     // E1 "not yet applied" warning is retired.
 
+    // E5a: boundary/source rows onto the mesh. The rows were resolved to
+    // indices at open (resolveArdTransportRows); here they map to species
+    // ROWS (np + msx) and, for sources, to mesh conduit rows + lengths.
+    bc_node_.clear(); bc_srow_.clear(); bc_ts_.clear();
+    bc_value_.clear(); bc_now_.clear();
+    src_crow_.clear(); src_srow_.clear(); src_ts_.clear();
+    src_value_.clear(); src_len_.clear(); src_now_.clear();
+    if (nm > 0) {
+        const auto& cfg = ctx.ard_config;
+        for (std::size_t i = 0; i < cfg.bc_node.size(); ++i) {
+            if (cfg.bc_msx[i] < 0 || cfg.bc_msx[i] >= nm) continue;
+            if (cfg.bc_node[i] < 0 || cfg.bc_node[i] >= nn) continue;
+            bc_node_.push_back(cfg.bc_node[i]);
+            bc_srow_.push_back(np + cfg.bc_msx[i]);
+            bc_value_.push_back(cfg.bc_value[i]);
+            bc_ts_.push_back(cfg.bc_ts[i]);
+        }
+        bc_now_.assign(bc_node_.size(), 0.0);
+        for (std::size_t i = 0; i < cfg.src_link.size(); ++i) {
+            if (cfg.src_msx[i] < 0 || cfg.src_msx[i] >= nm) continue;
+            // Find the mesh conduit row carrying this link.
+            int crow = -1;
+            for (std::size_t r2 = 0; r2 < mesh_.conduit_link.size(); ++r2)
+                if (mesh_.conduit_link[r2] == cfg.src_link[i]) {
+                    crow = static_cast<int>(r2);
+                    break;
+                }
+            if (crow < 0) continue;
+            double length = 0.0;
+            const int b2 = mesh_.conduit_cell_begin[static_cast<std::size_t>(crow)];
+            const int n2 = mesh_.conduit_cell_count[static_cast<std::size_t>(crow)];
+            for (int i2 = 0; i2 < n2; ++i2)
+                length += mesh_.cell_dx[static_cast<std::size_t>(b2 + i2)];
+            src_crow_.push_back(crow);
+            src_srow_.push_back(np + cfg.src_msx[i]);
+            src_value_.push_back(cfg.src_value[i]);
+            src_ts_.push_back(cfg.src_ts[i]);
+            src_len_.push_back(std::max(length, 1.0e-6));
+        }
+        src_now_.assign(src_crow_.size(), 0.0);
+    }
+
     initialized_ = true;
     return true;
+}
+
+// ===========================================================================
+// updateTransportRows — per-routing-step BC/source evaluation (E5a)
+// ===========================================================================
+
+void ArdEngine::updateTransportRows(SimulationContext& ctx) {
+    for (std::size_t i = 0; i < bc_node_.size(); ++i) {
+        double c = bc_value_[i];
+        const int ts = bc_ts_[i];
+        if (ts >= 0 && ts < static_cast<int>(ctx.tables.count()))
+            c = table_tseries_lookup_cursor(ctx.tables[ts],
+                                            ctx.current_date);
+        bc_now_[i] = std::max(0.0, c);
+    }
+    for (std::size_t i = 0; i < src_crow_.size(); ++i) {
+        double r = src_value_[i];   // already internal conc·ft³/s
+        const int ts = src_ts_[i];
+        if (ts >= 0 && ts < static_cast<int>(ctx.tables.count()))
+            r = table_tseries_lookup_cursor(ctx.tables[ts],
+                                            ctx.current_date) /
+                kLitersPerFt3;      // ts values are species mass/s
+        src_now_[i] = std::max(0.0, r);
+    }
 }
 
 // ===========================================================================
@@ -597,6 +663,42 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         node_vol_[ur] += dv;
     }
 
+    // 5b. E5a transport boundaries: the node's external inflow water (the
+    //     same qual_vol_in the pollutant loaders integrated) carries each
+    //     boundary MSX species at its current concentration — internal
+    //     store mass is conc·ft³, so vol·conc needs no conversion. Rows on
+    //     dry-inflow nodes add nothing (vol_ext = 0).
+    for (std::size_t i = 0; i < bc_node_.size(); ++i) {
+        const auto und = static_cast<std::size_t>(bc_node_[i]);
+        if (static_cast<int>(und) >= nn) continue;
+        const double vol_ext = load_frac * ctx.nodes.qual_vol_in[und];
+        if (vol_ext > 0.0 && bc_now_[i] > 0.0)
+            node_mass_[und * uns + static_cast<std::size_t>(bc_srow_[i])] +=
+                vol_ext * bc_now_[i];
+    }
+
+    // 5c. E5a distributed sources: internal rate r (conc·ft³/s) spread over
+    //     the conduit's cells ∝ dx ⇒ Δconc per cell = r·dt/(L·a) — dx
+    //     cancels. Dry cells are skipped and their share is NOT delivered
+    //     (a source into a dry conduit has no water to dissolve into);
+    //     documented, and the mass-balance ledger (E5b) will book the
+    //     undelivered remainder explicitly.
+    for (std::size_t i = 0; i < src_crow_.size(); ++i) {
+        const double r = src_now_[i];
+        if (r <= 0.0) continue;
+        const auto ucrow = static_cast<std::size_t>(src_crow_[i]);
+        const int b2 = mesh_.conduit_cell_begin[ucrow];
+        const int n2 = mesh_.conduit_cell_count[ucrow];
+        const auto sb = static_cast<std::size_t>(src_srow_[i]);
+        for (int i2 = 0; i2 < n2; ++i2) {
+            const auto uc = static_cast<std::size_t>(b2 + i2);
+            const double a = state_.cell_a[uc];
+            if (a <= k::kDryArea) continue;
+            state_.cell_phi[sb * unc + uc] +=
+                dt_sub * r / (src_len_[i] * a);
+        }
+    }
+
     // 6. Dispersion (E3): implicit per-chain Thomas solve over the updated
     //    cells — sequential (Lie) operator split, advection → dispersion
     //    (plan §2). One full step of each, so the splitting error is O(dt),
@@ -626,6 +728,7 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
 
     projectHydraulics(ctx, dt);
     if (disp_active_) updateDispersion(ctx);
+    if (!bc_node_.empty() || !src_crow_.empty()) updateTransportRows(ctx);
 
     // Node volumes resync to the solver's each routing step (the store keeps
     // its own between substeps only).

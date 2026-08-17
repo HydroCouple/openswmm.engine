@@ -30,6 +30,7 @@
 
 #include "QualityRouting.hpp"
 
+#include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "Treatment.hpp"
 #include "../core/SimulationContext.hpp"
@@ -52,6 +53,18 @@ namespace quality {
 // ZERO_VOLUME defined in QualityRouting.hpp
 
 namespace {
+
+/// The external-load loaders below do two jobs: they accumulate per-pollutant
+/// MASS into qual_mass_in, and they accumulate the node's total external
+/// inflow VOLUME into qual_vol_in. Only the first is pollutant-shaped. E5a's
+/// [TRANSPORT_BOUNDARIES] injects `qual_vol_in * concentration`, so an
+/// MSX-only model (no [POLLUTANTS] — the nh2cl shape) needs the volume half
+/// to run even at np == 0, where every mass loop is already a no-op.
+/// Measured before this: a boundary on an MSX-only deck delivered exactly
+/// 0.0 while the same deck with one inert pollutant row delivered 8.0.
+bool loadersNeeded(int np, const SimulationContext& ctx) {
+    return np > 0 || transport::ardBoundariesNeedExternalVolumes(ctx);
+}
 
 void applyLinkQualityForcing(SimulationContext& ctx, int n_pollutants, double dt) {
     if (n_pollutants <= 0) return;
@@ -91,7 +104,7 @@ void QualitySolver::init(int n_nodes, int n_links, int n_pollutants) {
 }
 
 void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
-    if (n_pollutants_ <= 0) return;
+    if (!loadersNeeded(n_pollutants_, ctx)) return;
 
     // Reset quality assembly arrays on NodeData
     std::fill(ctx.nodes.qual_mass_in.begin(), ctx.nodes.qual_mass_in.end(), 0.0);
@@ -113,7 +126,7 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
 
 void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
-    if (np <= 0) return;
+    if (!loadersNeeded(np, ctx)) return;
     auto& nodes = ctx.nodes;
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
@@ -289,7 +302,7 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
 
 void QualitySolver::addRdiiLoads(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
-    if (np <= 0) return;
+    if (!loadersNeeded(np, ctx)) return;
     auto& nodes = ctx.nodes;
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
@@ -332,7 +345,7 @@ void QualitySolver::addRdiiLoads(SimulationContext& ctx, double dt) {
 
 void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
-    if (np <= 0) return;
+    if (!loadersNeeded(np, ctx)) return;
     auto& nodes = ctx.nodes;
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
@@ -375,7 +388,7 @@ void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
 
 void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
-    if (np <= 0) return;
+    if (!loadersNeeded(np, ctx)) return;
     auto& nodes = ctx.nodes;
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
@@ -418,7 +431,7 @@ void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
 
 void QualitySolver::addIfaceLoads(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
-    if (np <= 0) return;
+    if (!loadersNeeded(np, ctx)) return;
     auto& nodes = ctx.nodes;
     if (nodes.iface_qual_mass.empty()) return;
 

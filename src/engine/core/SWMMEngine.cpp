@@ -289,6 +289,14 @@ int SWMMEngine::open(const char* inp_path,
         transport::applyEmbeddedReactionSections(ctx_, reactions_registered,
                                                  errs);
 
+        // E5a: [TRANSPORT_BOUNDARIES]/[TRANSPORT_SOURCES] rows reference MSX
+        // species by NAME, and the reactions component may apply before OR
+        // after transport.ard in file order — so the rows are stored raw at
+        // apply and resolved HERE, after every component (and the embedded
+        // fallback) has run. Resolution failures are fatal like any other
+        // component config error.
+        transport::resolveArdTransportRows(ctx_, errs);
+
         if (!errs.empty()) {
             for (const auto& e : errs) ctx_.errors.push_back(e);
             if (!lenient_open_) {
