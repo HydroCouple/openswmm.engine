@@ -112,6 +112,14 @@ public:
     /// Public for testing.
     void updateLinkQuality(SimulationContext& ctx, double dt);
 
+    /// Apply treatment expressions at nodes with treatment defined. Public
+    /// since E5b: the ARD engine reuses this exact evaluator for treatment
+    /// interop — it runs on the PUBLISHED nodes.conc after the ARD step and
+    /// the engine absorbs the treated concentrations back into its node
+    /// stores (ArdEngine::absorbTreatedNodeConc). Books its own
+    /// qual_routing_reacted losses.
+    void applyTreatment(SimulationContext& ctx, double dt);
+
 private:
     int n_pollutants_ = 0;
 
@@ -136,9 +144,6 @@ private:
 
     /// Batch complete mixing at all nodes.
     void mixAtNodes(SimulationContext& ctx, double dt);
-
-    /// Apply treatment expressions at nodes with treatment defined.
-    void applyTreatment(SimulationContext& ctx, double dt);
 
     /// Batch first-order decay.
     void applyDecay(SimulationContext& ctx, double dt);

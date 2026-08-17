@@ -85,10 +85,9 @@ bool ardHasWallSpecies(const SimulationContext& ctx) {
 }
 
 void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
-                   const double* cell_a, int n_cells, double* node_mass,
-                   const double* node_vol, int n_nodes, int n_pollut,
-                   int ns_total, double min_store_vol) {
-    (void)cell_a;  // dry cells react too — see the header rationale
+                   const double* cell_a, const double* cell_dx, int n_cells,
+                   double* node_mass, const double* node_vol, int n_nodes,
+                   int n_pollut, int ns_total, double min_store_vol) {
     if (dt <= 0.0) return;
 
     const auto unc = static_cast<std::size_t>(n_cells);
@@ -97,23 +96,37 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
     // ---- 1. Pollutant kdecay: exact exponential (closed form of the
     //         first-order implicit RATE; plan E4 "kdecay-as-RATE"). Applied
     //         to cell CONCENTRATIONS and store MASSES — both scale by the
-    //         same factor, so store concentration follows. ----------------
+    //         same factor, so store concentration follows. E5b: the removed
+    //         mass books into the qual_routing_reacted ledger row (cells:
+    //         a·dx·Δconc; stores: Δmass), closing the continuity gap the
+    //         report would otherwise show as unexplained loss. ------------
     for (int p = 0; p < n_pollut; ++p) {
         const double k = ctx.pollutants.k_decay[static_cast<std::size_t>(p)];
         if (k == 0.0) continue;
         const double f = std::exp(-k * dt);
+        const double loss_frac = 1.0 - f;
+        double removed = 0.0;
         const auto row = static_cast<std::size_t>(p) * unc;
         for (int c = 0; c < n_cells; ++c) {
             const auto uc = row + static_cast<std::size_t>(c);
+            const auto ucc = static_cast<std::size_t>(c);
+            if (cell_phi[uc] > 0.0)
+                removed += cell_a[ucc] * cell_dx[ucc] * cell_phi[uc] *
+                           loss_frac;
             cell_phi[uc] *= f;
             if (cell_phi[uc] < 0.0) cell_phi[uc] = 0.0;
         }
         for (int nd = 0; nd < n_nodes; ++nd) {
             const auto ui =
                 static_cast<std::size_t>(nd) * uns + static_cast<std::size_t>(p);
+            if (node_mass[ui] > 0.0) removed += node_mass[ui] * loss_frac;
             node_mass[ui] *= f;
             if (node_mass[ui] < 0.0) node_mass[ui] = 0.0;
         }
+        if (static_cast<std::size_t>(p) <
+            ctx.mass_balance.qual_routing_reacted.size())
+            ctx.mass_balance.qual_routing_reacted[static_cast<std::size_t>(p)] +=
+                removed;
     }
 
     // ---- 2. MSX species: per-cell pipe scope, per-store tank scope. -----

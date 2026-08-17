@@ -130,12 +130,29 @@ struct ArdConfigData {
                                     ///< species-mass/s; engine converts)
     bool transport_rows_resolved = false;
 
+    // ---- E5b ------------------------------------------------------------
+    /// [TRANSPORT_OPTIONS] TARGET_DX: transport-mesh cell length under
+    /// non-FV hydraulics (display length units; 0 ⇒ FV_CELL_LENGTH rules).
+    /// Ignored with a warning under FLOW_ROUTING FV (the solver mesh
+    /// governs) — the plan §8 open item resolved.
+    double target_dx = 0.0;
+    /// [TRANSPORT_OPTIONS] DETAILED_OUTPUT: per-cell CSV sidecar path,
+    /// resolved at apply against the CONFIG file's directory (empty ⇒ off).
+    std::string detailed_output_path;
+
     bool any_dispersion() const noexcept {
         return dispersion_mode != ArdDispersionMode::OFF ||
                !conduit_disp_link.empty();
     }
     bool any_transport_rows() const noexcept {
         return !boundary_rows.empty() || !source_rows.empty();
+    }
+    /// Anything in this config that only the ARD engine can honour — the
+    /// bypass-warning predicate (lesson 10: silence is misleading whenever
+    /// ANY of it is configured but the engine will not run).
+    bool any_engine_content() const noexcept {
+        return any_dispersion() || any_transport_rows() ||
+               !detailed_output_path.empty() || target_dx > 0.0;
     }
 };
 

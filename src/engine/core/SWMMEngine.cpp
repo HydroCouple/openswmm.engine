@@ -3077,6 +3077,17 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             if (ard_.initialized()) {
                 quality_.assembleExternalLoads(ctx_, dt_routing);
                 ard_.step(ctx_, dt_routing);
+                // E5b treatment interop: the legacy evaluator runs on the
+                // PUBLISHED node concentrations (same expressions, same
+                // process variables, books its own reacted losses); the
+                // engine then absorbs the treated concentrations back into
+                // its node stores. Ordering note (documented decision):
+                // under ARD treatment applies AFTER the reaction stage at
+                // end of step, where legacy applies it before decay.
+                if (ctx_.treatment.hasAny()) {
+                    quality_.applyTreatment(ctx_, dt_routing);
+                    ard_.absorbTreatedNodeConc(ctx_);
+                }
             } else {
                 quality_.execute(ctx_, dt_routing);
             }
