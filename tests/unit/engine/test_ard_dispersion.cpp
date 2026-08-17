@@ -435,7 +435,17 @@ TEST_F(ArdDispersionEngineTest, SiUnitsDeckActivatesDispersion) {
     // CMS deck, DISPERSION 10 (m²/s → 107.6 ft²/s internally). The gate
     // asserts activation only; the CONVERSION MAGNITUDE is the validator's
     // falsifier probe (drop the ucf² division → this deck's measured
-    // separation shrinks ~10.8×; record both values in §5).
+    // separation shrinks ~10.6×).
+    //
+    // The floor is 0.2%, not the 1% this gate shipped with. The 1% was
+    // calibrated while the ARD node store was diverging on this deck: the
+    // base signal integrated to 856626, and the "separation" it was 1% of
+    // was the difference between two blown-up runs. With the store fixed
+    // the base integrates to 2224.8 — the same order as the US deck's
+    // 1685 — and the true separation is 14.608 (0.657%) against 1.384
+    // (0.062%) with the conversion falsified. 0.2% is the geometric mean
+    // of those two, so the gate keeps a 3.3x margin in BOTH directions;
+    // it discriminates better now than it did at 1%.
     write_chain_deck("_e3_si_base.inp", "", "", "CMS");
     write_chain_deck(
         "_e3_si_disp.inp",
@@ -451,7 +461,7 @@ TEST_F(ArdDispersionEngineTest, SiUnitsDeckActivatesDispersion) {
     const double sep  = integratedAbsDiff(base[kC5], disp[kC5]);
     const double norm = integrated(base[kC5]);
     ASSERT_GT(norm, 0.0);
-    EXPECT_GT(sep, 0.01 * norm);
+    EXPECT_GT(sep, 0.002 * norm);
 }
 
 TEST_F(ArdDispersionEngineTest, PerConduitOverrideStaysInItsConduit) {
