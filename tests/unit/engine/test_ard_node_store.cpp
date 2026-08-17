@@ -229,4 +229,77 @@ TEST(ArdNodeStoreTest, StoreStaysBoundedWhenThroughputDwarfsStoreVolume) {
     EXPECT_LE(ard.peak_link, kCin * (1.0 + 1.0e-9));
 }
 
+// ---------------------------------------------------------------------------
+// Gate 4 — the regime the mix-before-discharge argument does NOT cover.
+// ---------------------------------------------------------------------------
+TEST(ArdNodeStoreTest, DrainingStorageNodeNeverExceedsItsInitialConcentration) {
+    // Mixing first guarantees the donor is a weighted average, and therefore
+    // bounded, only while Qin >= Qout. A storage node emptying with NO
+    // inflow is the case that assumption excludes: there the outflow demand
+    // can exceed what the store holds and the fix falls back on the floors.
+    //
+    // So gate the property that still holds there — the maximum principle —
+    // rather than the mass-balance ledger, which does NOT close on this deck
+    // in EITHER engine (measured: ARD -2.4% at rs 60 to +13.1% at rs 1;
+    // LEGACY -27.2% to -7.5%; and it does not converge under refinement in
+    // either, the signature of ledger terms that are never written rather
+    // than a discretization error). That is a separate pre-existing defect;
+    // asserting on it here would gate this suite on someone else's bug.
+    const char* kInp = "_ns_drain.inp";
+    for (const int rs : {1, 5, 20, 60}) {
+        std::ofstream f(kInp);
+        f << "[TITLE]\nDraining storage node\n\n[OPTIONS]\n"
+             "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
+             "QUALITY_SOLVER EULERIAN_ARD\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+             "END_DATE 01/01/2026\nEND_TIME 02:00:00\n"
+             "ROUTING_STEP " << rs << "\nREPORT_STEP 00:01:00\n\n"
+             // InitDepth must be NON-ZERO or initQuality discards Cinit and
+             // the deck holds no pollutant at all — the E3 lesson.
+             "[STORAGE]\nS1 5.0 12.0 8.0 FUNCTIONAL 1000 0 0\n\n"
+             "[JUNCTIONS]\nJ1 4.0 10 0 0 0\n\n"
+             "[OUTFALLS]\nOUT 0.0 FREE NO\n\n"
+             "[CONDUITS]\nC1 S1 J1 200 0.013 0 0 0\n"
+             "C2 J1 OUT 200 0.013 0 0 0\n\n"
+             "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n"
+             "C2 CIRCULAR 3.0 0 0 0\n\n"
+             "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 " << kCin << "\n\n"
+             "[REPORT]\nINPUT NO\n";
+        f.close();
+
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        ASSERT_EQ(swmm_engine_open(e, kInp, "_ns_drain.rpt", "_ns_drain.out",
+                                   nullptr), SWMM_OK) << "rs=" << rs;
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << "rs=" << rs;
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << "rs=" << rs;
+        auto& ctx = as_cpp_engine(e).context();
+        const int np = ctx.n_pollutants();
+        // The deck must actually hold pollutant, or every bound below is
+        // satisfied by zeros.
+        double peak = 0.0;
+        double elapsed = 0.0;
+        int guard = 0;
+        do {
+            ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << "rs=" << rs;
+            for (int l = 0; l < ctx.n_links(); ++l)
+                peak = std::max(peak,
+                                ctx.links.conc[static_cast<std::size_t>(l * np)]);
+            for (int j = 0; j < ctx.n_nodes(); ++j)
+                peak = std::max(peak,
+                                ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+        } while (elapsed > 0.0 && ++guard < 200000);
+        swmm_engine_end(e);
+        swmm_engine_destroy(e);
+
+        EXPECT_GT(peak, 0.5 * kCin)
+            << "rs=" << rs << ": the deck never carried pollutant, so the "
+               "bound below is vacuous (check the storage InitDepth)";
+        EXPECT_LE(peak, kCin * (1.0 + 1.0e-9))
+            << "rs=" << rs << ": a draining storage node produced "
+            << peak << " mg/L from an initial " << kCin
+            << " — concentration manufactured with no inflow to blame";
+    }
+}
+
 }  // namespace
