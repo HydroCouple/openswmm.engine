@@ -563,6 +563,28 @@ struct SimulationContext {
     WaterAgeState      water_age_state;
 
     /**
+     * @brief Species names as REPORTED (phase A2b): the pollutant names,
+     *        then `__WATER_AGE__` when `[OPTIONS] WATER_AGE` is on.
+     *
+     * @details The `.out` format has exactly one per-species column block,
+     *          so age reports as a trailing pseudo-pollutant column. This
+     *          vector is the single naming truth the output writers and the
+     *          snapshot's `pollut_names` pointer share — built once at open
+     *          so the pointer stays valid for the run. `n_reported_species()`
+     *          is its length and is what the writers must stride by; plain
+     *          `n_pollutants()` remains the TRANSPORT stride for
+     *          `nodes.conc` etc. Keeping the two counts distinct and named
+     *          is deliberate: conflating them is the stride-slip family
+     *          (roadmap lessons 14/15).
+     */
+    std::vector<std::string> reported_species_names;
+
+    /// Length of reported_species_names (pollutants + age when enabled).
+    int n_reported_species() const noexcept {
+        return static_cast<int>(reported_species_names.size());
+    }
+
+    /**
      * @brief All time series and rating curves.
      * @see Legacy: Tseries[], Curve[] in globals.h + TTable in objects.h
      */

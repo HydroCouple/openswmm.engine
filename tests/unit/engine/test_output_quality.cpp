@@ -66,7 +66,13 @@ constexpr double kCinit = 42.0;  ///< distinctive: not 0, not 1, not 10
 /// whole run, so the EXPECTED reported value is exactly kCinit — no
 /// transport physics enters the assertion. `extra_options` appends to
 /// [OPTIONS].
-void write_deck(const char* path, const std::string& extra_options = "") {
+void write_file(const char* path, const std::string& body) {
+    std::ofstream c(path);
+    c << body;
+}
+
+void write_deck(const char* path, const std::string& extra_options = "",
+                const std::string& pc_lines = "") {
     std::ofstream f(path);
     f << "[TITLE]\nsnapshot quality gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -87,8 +93,39 @@ void write_deck(const char* path, const std::string& extra_options = "") {
       << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
          "Cdwf Cinit\n"
       << "TSS    MG/L  0     0   0     0      NO       *        0      0    "
-      << kCinit << "\n\n"
-      << "[REPORT]\nINPUT NO\n";
+      << kCinit << "\n\n";
+    if (!pc_lines.empty())
+        f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
+    f << "[REPORT]\nINPUT NO\n";
+}
+
+/// The species IDs the .out header carries, read from the bytes.
+///
+/// Not gratuitous: `swmm_output_*` and `OutputReader` expose pollut_count()
+/// but NO pollutant-ID accessor (only subcatch/node/link IDs are parsed), so
+/// the header NAMES — the thing an age column must be told apart by, since
+/// it shares MG_PER_L's unit code — are unreachable through the reader. A
+/// gate that checks values by index alone passes happily while the header
+/// names them in the opposite order.
+///
+/// Layout (DefaultOutputPlugin::writeHeader): 7 ints, then one
+/// (int len, chars) ID per subcatch/node/link/species, then the unit codes.
+std::vector<std::string> read_species_ids(const char* path) {
+    std::vector<std::string> ids;
+    std::ifstream f(path, std::ios::binary);
+    int hdr[7] = {0};
+    f.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+    if (!f) return ids;
+    const int n_ids = hdr[3] + hdr[4] + hdr[5] + hdr[6];
+    for (int i = 0; i < n_ids && f; ++i) {
+        int len = 0;
+        f.read(reinterpret_cast<char*>(&len), sizeof(len));
+        if (!f || len < 0) return ids;
+        std::string s(static_cast<std::size_t>(len), '\0');
+        if (len > 0) f.read(s.data(), len);
+        if (i >= n_ids - hdr[6]) ids.push_back(s);
+    }
+    return ids;
 }
 
 bool run_deck(const char* inp, const char* rpt, const char* out) {
@@ -170,6 +207,68 @@ TEST(OutputQualityTest, IgnoreQualityWritesNoPollutantColumns) {
         << "IGNORE_QUALITY still advertised pollutant columns — the "
            "population block must stay gated on it (an ungated fill would "
            "write into columns the header says do not exist).";
+    swmm_output_close(h);
+}
+
+// ---------------------------------------------------------------------------
+// A2b — water age reports as a trailing pseudo-pollutant column, in HOURS.
+// ---------------------------------------------------------------------------
+TEST(OutputQualityTest, WaterAgeReportsAsATrailingColumnInHours) {
+    // Level pool + WATER_AGE ON + INITIAL_STATE 2 h. Zero flow, so at the
+    // last report the age is exactly 2 h + elapsed — an ANALYTIC target in
+    // the reported unit, which is also the units razor: a seconds/hours slip
+    // is a 3600x miss, and reading the pollutant column instead of the age
+    // column returns 42.
+    write_file("_oq_age.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
+    write_deck("_oq_age.inp",
+               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+               "org.hydrocouple.openswmm.waterage config=\"_oq_age.age\"");
+    ASSERT_TRUE(run_deck("_oq_age.inp", "_oq_age.rpt", "_oq_age.out"));
+
+    SWMM_Output h = swmm_output_open("_oq_age.out");
+    ASSERT_NE(h, nullptr);
+
+    // The header must advertise TWO species columns: TSS then __WATER_AGE__.
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 2)
+        << "the age pseudo-column is missing from the header (the writer "
+           "strided by n_pollutants() instead of the reported count)";
+
+    // ...and must NAME them in the order the data is written. Checking the
+    // values by index cannot see a names/data swap: reordering only the name
+    // list leaves every value assertion below satisfied while every consumer
+    // that keys on the name (the .out's only way to tell HOURS from a
+    // concentration — both carry unit code 0) reads the wrong column.
+    const auto ids = read_species_ids("_oq_age.out");
+    ASSERT_EQ(ids.size(), 2u) << "header species ID block is malformed";
+    EXPECT_EQ(ids[0], "TSS");
+    EXPECT_EQ(ids[1], "__WATER_AGE__")
+        << "the age column must be named LAST, matching where the snapshot "
+           "writes it";
+
+    const int n_periods = swmm_output_get_period_count(h);
+    ASSERT_GT(n_periods, 1);
+    const int period = n_periods - 1;
+
+    std::vector<float> v(32, -1.0f);
+    int count = 0;
+    ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(), &count),
+              0);
+    ASSERT_GE(count, 8) << "node record lacks the second species column";
+
+    // [6] = TSS (unchanged by age's presence — the stride razor), [7] = age.
+    EXPECT_NEAR(v[6], static_cast<float>(kCinit), 1.0e-3f)
+        << "the pollutant column moved or was overwritten when the age "
+           "column was added (reported-vs-transport stride slip)";
+
+    // END_TIME 00:10:00; the last report is at 10 min = 0.1667 h, so the
+    // expected age is 2 h + ~0.1667 h. Band covers report-instant placement.
+    EXPECT_GT(v[7], 2.0f)
+        << "age column reads " << v[7]
+        << " h — below the 2 h INITIAL_STATE, so it is not the age column "
+           "(or the seeding never reached the report)";
+    EXPECT_LT(v[7], 2.5f)
+        << "age column reads " << v[7]
+        << " h — a seconds-for-hours slip would read ~7210";
     swmm_output_close(h);
 }
 

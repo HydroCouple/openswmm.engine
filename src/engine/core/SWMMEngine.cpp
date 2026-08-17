@@ -321,9 +321,18 @@ int SWMMEngine::open(const char* inp_path,
         // mesh row / LEGACY CSTR mirror) — the A1b bypass warning is
         // retired; IGNORE_QUALITY remains the only bypass and warns via
         // the waterage component.
+        // A2b: the REPORTED species list — pollutants, then the age
+        // pseudo-column. Built once here so the snapshot's pollut_names
+        // pointer stays valid for the whole run.
+        ctx_.reported_species_names.clear();
+        for (int p = 0; p < ctx_.n_pollutants(); ++p)
+            ctx_.reported_species_names.push_back(
+                ctx_.pollutant_names.name_of(p));
+
         if (ctx_.options.water_age) {
             ctx_.species_registry.add("__WATER_AGE__",
                                       SpeciesKind::RESERVED_AGE, "hours");
+            ctx_.reported_species_names.push_back("__WATER_AGE__");
             if (ctx_.options.ignore_quality)
                 ctx_.warnings.push_back(
                     "[OPTIONS] WATER_AGE ON but IGNORE_QUALITY is YES — the "
@@ -3812,7 +3821,9 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.link_count       = ctx_.n_links();
             snap.subcatch_count   = ctx_.n_subcatches();
             snap.gage_count       = ctx_.n_gages();
-            snap.pollut_count     = ctx_.n_pollutants();
+            // A2b: the reported species block is pollutants + the water-age
+            // pseudo-column, so consumers stride by the REPORTED count.
+            snap.pollut_count     = ctx_.n_reported_species();
             snap.flow_units_code  = static_cast<int>(ctx_.options.flow_units);
 
             // Legacy-parity interpolation weight at the report instant
@@ -4167,46 +4178,75 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // Concentrations are already in user units (no UCF applies).
             // IGNORE_QUALITY leaves the vectors EMPTY, which is also what
             // the writer wants (it sets n_polluts_ = 0 in that mode).
-            if (!ctx_.options.ignore_quality && ctx_.n_pollutants() > 0) {
+            //
+            // A2b: the reported block is (pollutants, then water age when
+            // enabled) — see ctx_.reported_species_names. TWO strides are in
+            // play and must not be confused (lessons 14/15): the SOURCE
+            // arrays are np-strided (nodes.conc etc.), the REPORTED arrays
+            // are nr-strided. Age converts SECONDS → HOURS here, the unit
+            // the plan reports it in (§1).
+            if (!ctx_.options.ignore_quality &&
+                ctx_.n_reported_species() > 0) {
                 const auto np_s = static_cast<std::size_t>(ctx_.n_pollutants());
+                const auto nr_s =
+                    static_cast<std::size_t>(ctx_.n_reported_species());
                 const auto nN_s = static_cast<std::size_t>(ctx_.n_nodes());
                 const auto nL_s = static_cast<std::size_t>(ctx_.n_links());
                 const auto nS_s = static_cast<std::size_t>(ctx_.n_subcatches());
+                const bool age_col = ctx_.options.water_age && nr_s > np_s;
+                constexpr double kSecPerHour = 3600.0;
 
-                snap.node_quality.assign(nN_s * np_s, 0.0);
-                for (std::size_t i = 0; i < nN_s * np_s; ++i)
-                    snap.node_quality[i] =
-                        (i < ctx_.nodes.conc.size() &&
-                         i < ctx_.nodes.conc_old.size())
-                            ? f1_rt * ctx_.nodes.conc_old[i] +
-                                  f_rt * ctx_.nodes.conc[i]
-                            : 0.0;
+                snap.node_quality.assign(nN_s * nr_s, 0.0);
+                for (std::size_t n = 0; n < nN_s; ++n) {
+                    for (std::size_t p = 0; p < np_s; ++p) {
+                        const std::size_t src = n * np_s + p;
+                        if (src < ctx_.nodes.conc.size() &&
+                            src < ctx_.nodes.conc_old.size())
+                            snap.node_quality[n * nr_s + p] =
+                                f1_rt * ctx_.nodes.conc_old[src] +
+                                f_rt * ctx_.nodes.conc[src];
+                    }
+                    // Age is a published state (already the step's value),
+                    // so it takes no old/new interpolation — there is no
+                    // node_age_old to weight against.
+                    if (age_col && n < ctx_.water_age_state.node_age.size())
+                        snap.node_quality[n * nr_s + np_s] =
+                            ctx_.water_age_state.node_age[n] / kSecPerHour;
+                }
 
-                snap.link_quality.assign(nL_s * np_s, 0.0);
-                for (std::size_t i = 0; i < nL_s * np_s; ++i)
-                    snap.link_quality[i] =
-                        (i < ctx_.links.conc.size() &&
-                         i < ctx_.links.conc_old.size())
-                            ? f1_rt * ctx_.links.conc_old[i] +
-                                  f_rt * ctx_.links.conc[i]
-                            : 0.0;
+                snap.link_quality.assign(nL_s * nr_s, 0.0);
+                for (std::size_t l = 0; l < nL_s; ++l) {
+                    for (std::size_t p = 0; p < np_s; ++p) {
+                        const std::size_t src = l * np_s + p;
+                        if (src < ctx_.links.conc.size() &&
+                            src < ctx_.links.conc_old.size())
+                            snap.link_quality[l * nr_s + p] =
+                                f1_rt * ctx_.links.conc_old[src] +
+                                f_rt * ctx_.links.conc[src];
+                    }
+                    if (age_col && l < ctx_.water_age_state.link_age.size())
+                        snap.link_quality[l * nr_s + np_s] =
+                            ctx_.water_age_state.link_age[l] / kSecPerHour;
+                }
 
                 // Subcatchment washoff carries legacy's runoff gate: a
                 // subcatchment with no runoff reports 0, not its residual
-                // concentration (subcatch.c:929).
-                snap.subcatch_quality.assign(nS_s * np_s, 0.0);
+                // concentration (subcatch.c:929). Subcatchment AGE is plan
+                // phase A3 (watershed age states), so its column stays 0
+                // here rather than reporting a value it does not track.
+                snap.subcatch_quality.assign(nS_s * nr_s, 0.0);
                 for (std::size_t s = 0; s < nS_s; ++s) {
                     const bool has_runoff =
                         (s < ctx_.subcatches.runoff.size() &&
                          ctx_.subcatches.runoff[s] != 0.0);
                     if (!has_runoff) continue;
                     for (std::size_t p = 0; p < np_s; ++p) {
-                        const std::size_t i = s * np_s + p;
-                        if (i < ctx_.subcatches.conc.size() &&
-                            i < ctx_.subcatches.conc_old.size())
-                            snap.subcatch_quality[i] =
-                                f1_rt * ctx_.subcatches.conc_old[i] +
-                                f_rt * ctx_.subcatches.conc[i];
+                        const std::size_t src = s * np_s + p;
+                        if (src < ctx_.subcatches.conc.size() &&
+                            src < ctx_.subcatches.conc_old.size())
+                            snap.subcatch_quality[s * nr_s + p] =
+                                f1_rt * ctx_.subcatches.conc_old[src] +
+                                f_rt * ctx_.subcatches.conc[src];
                     }
                 }
             }
@@ -4216,7 +4256,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.link_ids     = &ctx_.link_names.names();
             snap.subcatch_ids = &ctx_.subcatch_names.names();
             snap.gage_ids     = &ctx_.gage_names.names();
-            snap.pollut_names = &ctx_.pollutant_names.names();
+            snap.pollut_names = &ctx_.reported_species_names;
 
             io_thread_.post(std::move(snap));
         }
