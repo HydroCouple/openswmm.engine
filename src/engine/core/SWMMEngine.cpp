@@ -4147,6 +4147,70 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
             }
 
+            // ---------------------------------------------------------------
+            // Pollutant concentrations.
+            //
+            // These three vectors are what DefaultOutputPlugin (binary .out)
+            // and GeoPackageOutputPlugin write into their pollutant columns.
+            // NOTHING populated them: both readers guard with
+            // `qi < size()` and fall back to 0.0, so every pollutant column
+            // in every .out file was written as ZERO while the header
+            // advertised the column count and unit codes. The engine's own
+            // state was correct throughout (nodes.conc / links.conc carry
+            // the routed values, which is why the transport gates — all of
+            // which read the arrays directly — never saw it).
+            //
+            // Interpolation matches the neighbouring fields AND legacy:
+            //   node.c:502    z = f1*oldQual[p] + wt*newQual[p]
+            //   link.c:724    c = f1*oldQual[p] + f *newQual[p]
+            //   subcatch.c:929-930  runoff == 0 ? 0 : f1*old + wt*new
+            // Concentrations are already in user units (no UCF applies).
+            // IGNORE_QUALITY leaves the vectors EMPTY, which is also what
+            // the writer wants (it sets n_polluts_ = 0 in that mode).
+            if (!ctx_.options.ignore_quality && ctx_.n_pollutants() > 0) {
+                const auto np_s = static_cast<std::size_t>(ctx_.n_pollutants());
+                const auto nN_s = static_cast<std::size_t>(ctx_.n_nodes());
+                const auto nL_s = static_cast<std::size_t>(ctx_.n_links());
+                const auto nS_s = static_cast<std::size_t>(ctx_.n_subcatches());
+
+                snap.node_quality.assign(nN_s * np_s, 0.0);
+                for (std::size_t i = 0; i < nN_s * np_s; ++i)
+                    snap.node_quality[i] =
+                        (i < ctx_.nodes.conc.size() &&
+                         i < ctx_.nodes.conc_old.size())
+                            ? f1_rt * ctx_.nodes.conc_old[i] +
+                                  f_rt * ctx_.nodes.conc[i]
+                            : 0.0;
+
+                snap.link_quality.assign(nL_s * np_s, 0.0);
+                for (std::size_t i = 0; i < nL_s * np_s; ++i)
+                    snap.link_quality[i] =
+                        (i < ctx_.links.conc.size() &&
+                         i < ctx_.links.conc_old.size())
+                            ? f1_rt * ctx_.links.conc_old[i] +
+                                  f_rt * ctx_.links.conc[i]
+                            : 0.0;
+
+                // Subcatchment washoff carries legacy's runoff gate: a
+                // subcatchment with no runoff reports 0, not its residual
+                // concentration (subcatch.c:929).
+                snap.subcatch_quality.assign(nS_s * np_s, 0.0);
+                for (std::size_t s = 0; s < nS_s; ++s) {
+                    const bool has_runoff =
+                        (s < ctx_.subcatches.runoff.size() &&
+                         ctx_.subcatches.runoff[s] != 0.0);
+                    if (!has_runoff) continue;
+                    for (std::size_t p = 0; p < np_s; ++p) {
+                        const std::size_t i = s * np_s + p;
+                        if (i < ctx_.subcatches.conc.size() &&
+                            i < ctx_.subcatches.conc_old.size())
+                            snap.subcatch_quality[i] =
+                                f1_rt * ctx_.subcatches.conc_old[i] +
+                                f_rt * ctx_.subcatches.conc[i];
+                    }
+                }
+            }
+
             // Attach name table pointers (valid for lifetime of ctx_)
             snap.node_ids     = &ctx_.node_names.names();
             snap.link_ids     = &ctx_.link_names.names();
