@@ -331,6 +331,51 @@ void write_chain_deck(const char* path, const std::string& pc_lines,
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/// The EXACT metric transcription of write_chain_deck's CFS geometry: the
+/// same physical system described in SI. Every factor below is a finite
+/// decimal (1 ft = 0.3048 m exactly, 1 ft3 = 0.028316846592 m3 exactly), so
+/// the two decks are the same model to the last digit the parser reads —
+/// which is what lets a gate assert they must produce the SAME answer
+/// instead of asserting a magnitude.
+///
+/// NOTE this is NOT write_chain_deck(..., "CMS"): that flips FLOW_UNITS and
+/// leaves the numbers alone, so it describes a 500 m chain carrying 5 m3/s
+/// — a different, much larger system. Useful for exercising the SI code
+/// path, useless for comparing against anything.
+void write_chain_deck_si(const char* path, const std::string& pc_lines) {
+    std::ofstream f(path);
+    f << "[TITLE]\nE3 dispersion gate deck (SI transcription)\n\n[OPTIONS]\n"
+      << "FLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+      << "QUALITY_SOLVER EULERIAN_ARD\n"
+      << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+      << "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+      << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n\n"
+      << "[JUNCTIONS]\n"                  // ft x 0.3048
+      << "J0 3.048   3.048 0.4572 0 0\n"   // 10.0 / 10 / 1.5
+      << "J1 2.86512 3.048 0.4572 0 0\n"   //  9.4
+      << "J2 2.68224 3.048 0.4572 0 0\n"   //  8.8
+      << "J3 2.49936 3.048 0.4572 0 0\n"   //  8.2
+      << "J4 2.31648 3.048 0.4572 0 0\n\n" //  7.6
+      << "[OUTFALLS]\nOUT 2.1336 FREE  NO\n\n"   // 7.0
+      << "[CONDUITS]\n"                   // 500 ft = 152.4 m
+      << "C1 J0 J1 152.4 0.013 0 0 0\n"
+      << "C2 J1 J2 152.4 0.013 0 0 0\n"
+      << "C3 J2 J3 152.4 0.013 0 0 0\n"
+      << "C4 J3 J4 152.4 0.013 0 0 0\n"
+      << "C5 J4 OUT 152.4 0.013 0 0 0\n\n"
+      << "[XSECTIONS]\n"                  // 2.0 ft = 0.6096 m
+      << "C1 CIRCULAR 0.6096 0 0 0\nC2 CIRCULAR 0.6096 0 0 0\n"
+      << "C3 CIRCULAR 0.6096 0 0 0\nC4 CIRCULAR 0.6096 0 0 0\n"
+      << "C5 CIRCULAR 0.6096 0 0 0\n\n"
+      << "[INFLOWS]\n"                    // 5 cfs = 0.14158423296 m3/s
+      << "J0 FLOW \"\" FLOW 1.0 1.0 0.14158423296\n\n"
+      << "[POLLUTANTS]\n"                 // mg/L is unit-system independent
+      << "TSS    MG/L  0     0   0     0      NO       *        0      0    10\n\n";
+    if (!pc_lines.empty())
+        f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
+    f << "[REPORT]\nINPUT NO\n";
+}
+
 void write_ard(const char* path, const std::string& body) {
     std::ofstream c(path);
     c << body;
@@ -389,6 +434,15 @@ protected:
         for (std::size_t i = 0; i < n; ++i) s += std::fabs(a[i] - b[i]);
         return s;
     }
+    /// Worst per-link, per-step disagreement between two recordings.
+    static double worstAbsDiff(const std::vector<std::vector<double>>& a,
+                               const std::vector<std::vector<double>>& b) {
+        double worst = 0.0;
+        for (std::size_t l = 0; l < std::min(a.size(), b.size()); ++l)
+            for (std::size_t t = 0; t < std::min(a[l].size(), b[l].size()); ++t)
+                worst = std::max(worst, std::fabs(a[l][t] - b[l][t]));
+        return worst;
+    }
     static double integrated(const std::vector<double>& a) {
         double s = 0.0;
         for (const double x : a) s += x;
@@ -431,37 +485,77 @@ TEST_F(ArdDispersionEngineTest, GlobalValueDispersionIsObservableAndBounded) {
             EXPECT_LE(c, 10.0 * (1.0 + 1.0e-6));
 }
 
-TEST_F(ArdDispersionEngineTest, SiUnitsDeckActivatesDispersion) {
-    // CMS deck, DISPERSION 10 (m²/s → 107.6 ft²/s internally). The gate
-    // asserts activation only; the CONVERSION MAGNITUDE is the validator's
-    // falsifier probe (drop the ucf² division → this deck's measured
-    // separation shrinks ~10.6×).
+TEST_F(ArdDispersionEngineTest, SiDeckMatchesItsUsEquivalent) {
+    // What this gate claims is that DISPERSION in m²/s means the same
+    // physics as the equivalent number in ft²/s. So it asserts exactly
+    // that, as an INVARIANCE between two descriptions of one system,
+    // rather than as "the trajectory moved by at least X".
     //
-    // The floor is 0.2%, not the 1% this gate shipped with. The 1% was
-    // calibrated while the ARD node store was diverging on this deck: the
-    // base signal integrated to 856626, and the "separation" it was 1% of
-    // was the difference between two blown-up runs. With the store fixed
-    // the base integrates to 2224.8 — the same order as the US deck's
-    // 1685 — and the true separation is 14.608 (0.657%) against 1.384
-    // (0.062%) with the conversion falsified. 0.2% is the geometric mean
-    // of those two, so the gate keeps a 3.3x margin in BOTH directions;
-    // it discriminates better now than it did at 1%.
-    write_chain_deck("_e3_si_base.inp", "", "", "CMS");
-    write_chain_deck(
-        "_e3_si_disp.inp",
-        "org.hydrocouple.openswmm.transport.ard config=\"_e3_si.ard\"", "",
-        "CMS");
-    write_ard("_e3_si.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 10\n");
+    // The magnitude form is what this gate used to be, and it rotted: the
+    // 1%-of-base-signal floor had been calibrated while the ARD node store
+    // was diverging on the CMS deck (base signal 856626; 2224.8 once the
+    // store was fixed). The bar was 1% of a blown-up number, so repairing
+    // an unrelated defect "broke" the gate and invited someone to re-pick
+    // the constant from whatever the code happened to produce next.
+    //
+    // Every bound below is instead derived from THIS run: the acceptance
+    // bar is the deck pair's own unit-transcription round-off, measured
+    // with dispersion off, and the discrimination bar is a multiple of the
+    // same quantity. There is no number here taken from observed output.
+    const char* kUsArd = "org.hydrocouple.openswmm.transport.ard "
+                         "config=\"_e3_us_eq.ard\"";
+    const char* kSiArd = "org.hydrocouple.openswmm.transport.ard "
+                         "config=\"_e3_si_eq.ard\"";
 
-    std::vector<std::vector<double>> base, disp;
-    ASSERT_TRUE(run_recording("_e3_si_base.inp", "_e3_si_base.rpt",
-                              "_e3_si_base.out", base));
-    ASSERT_TRUE(run_recording("_e3_si_disp.inp", "_e3_si_disp.rpt",
-                              "_e3_si_disp.out", disp));
-    const double sep  = integratedAbsDiff(base[kC5], disp[kC5]);
-    const double norm = integrated(base[kC5]);
-    ASSERT_GT(norm, 0.0);
-    EXPECT_GT(sep, 0.002 * norm);
+    // 1. The floor: the same model in two unit systems, dispersion OFF.
+    //    Whatever these two disagree by is the cost of transcribing the
+    //    deck, and no dispersion assertion can be sharper than it.
+    write_chain_deck("_e3_us_nd.inp", "");
+    write_chain_deck_si("_e3_si_nd.inp", "");
+    std::vector<std::vector<double>> us_nd, si_nd;
+    ASSERT_TRUE(run_recording("_e3_us_nd.inp", "_e3_us_nd.rpt",
+                              "_e3_us_nd.out", us_nd));
+    ASSERT_TRUE(run_recording("_e3_si_nd.inp", "_e3_si_nd.rpt",
+                              "_e3_si_nd.out", si_nd));
+    const double floor_diff = worstAbsDiff(us_nd, si_nd);
+    ASSERT_GT(floor_diff, 0.0)
+        << "the two unit systems agreed EXACTLY with dispersion off — the "
+           "SI deck is probably not being read as SI at all, which would "
+           "make every comparison below vacuous";
+
+    // 2. 100 ft²/s and 9.290304 m²/s are the same coefficient
+    //    (1 ft² = 0.09290304 m² exactly) on decks that are the same model,
+    //    so turning dispersion on must not widen the gap.
+    write_chain_deck("_e3_us_eq.inp", kUsArd);
+    write_ard("_e3_us_eq.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 100\n");
+    write_chain_deck_si("_e3_si_eq.inp", kSiArd);
+    write_ard("_e3_si_eq.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 9.290304\n");
+    std::vector<std::vector<double>> us_d, si_d;
+    ASSERT_TRUE(run_recording("_e3_us_eq.inp", "_e3_us_eq.rpt",
+                              "_e3_us_eq.out", us_d));
+    ASSERT_TRUE(run_recording("_e3_si_eq.inp", "_e3_si_eq.rpt",
+                              "_e3_si_eq.out", si_d));
+    const double disp_diff = worstAbsDiff(us_d, si_d);
+    EXPECT_LT(disp_diff, 1.5 * floor_diff)
+        << "dispersion added " << disp_diff / floor_diff
+        << "x the deck pair's transcription round-off (" << floor_diff
+        << " mg/L) — DISPERSION is not converting as ft²/s per m²/s";
+
+    // 3. And the pair must be ABLE to see a bad conversion: feed the SI
+    //    side the unconverted number — what the engine would use if the
+    //    ucf² division were dropped — and require it to miss by far more
+    //    than the floor. Without this, a deck on which dispersion happened
+    //    to do nothing would satisfy step 2 for the wrong reason.
+    write_ard("_e3_si_eq.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 100\n");
+    std::vector<std::vector<double>> si_wrong;
+    ASSERT_TRUE(run_recording("_e3_si_eq.inp", "_e3_si_eq.rpt",
+                              "_e3_si_eq.out", si_wrong));
+    const double wrong_diff = worstAbsDiff(us_d, si_wrong);
+    EXPECT_GT(wrong_diff, 10.0 * floor_diff)
+        << "a deliberately mis-converted DISPERSION landed within "
+        << wrong_diff / floor_diff << "x the transcription floor of the "
+           "correct run — this deck pair cannot observe the conversion, so "
+           "the assertion above proves nothing";
 }
 
 TEST_F(ArdDispersionEngineTest, PerConduitOverrideStaysInItsConduit) {
