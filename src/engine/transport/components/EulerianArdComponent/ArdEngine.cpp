@@ -174,6 +174,30 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // stride audit); MSX rows (s >= np) from the component's GLOBAL initial
     // values, matching R4's element-state seeding.
     const auto unp = static_cast<std::size_t>(np);
+
+    // A2a: hotstart-loaded ages win over INITIAL_STATE. Snapshot them
+    // BEFORE the resize below wipes the arrays, and consume the flag.
+    std::vector<double> hs_node_age, hs_link_age;
+    bool age_from_hs = false;
+    if (age_row_ >= 0 && ctx.water_age_state.hotstart_loaded) {
+        age_from_hs = true;
+        hs_node_age = ctx.water_age_state.node_age;
+        hs_link_age = ctx.water_age_state.link_age;
+    }
+    const auto age_seed_link = [&](int link) {
+        return (age_from_hs &&
+                static_cast<std::size_t>(link) < hs_link_age.size())
+                   ? hs_link_age[static_cast<std::size_t>(link)]
+                   : ctx.water_age_config.global_age[static_cast<int>(
+                         WaterAgeSource::INITIAL_STATE)];
+    };
+    const auto age_seed_node = [&](std::size_t nd) {
+        return (age_from_hs && nd < hs_node_age.size())
+                   ? hs_node_age[nd]
+                   : ctx.water_age_config.global_age[static_cast<int>(
+                         WaterAgeSource::INITIAL_STATE)];
+    };
+
     const int n_links = ctx.n_links();
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
@@ -200,8 +224,7 @@ bool ArdEngine::init(SimulationContext& ctx) {
             }
             if (age_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(age_row_) * unc + uc] =
-                    ctx.water_age_config.global_age[static_cast<int>(
-                        WaterAgeSource::INITIAL_STATE)];
+                    age_seed_link(link);
         }
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
@@ -217,12 +240,12 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 node_vol_[und];
         if (age_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(age_row_)] =
-                ctx.water_age_config.global_age[static_cast<int>(
-                    WaterAgeSource::INITIAL_STATE)] *
-                node_vol_[und];
+                age_seed_node(und) * node_vol_[und];
     }
     if (age_row_ >= 0)
         ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links());
+    // (resize consumed hotstart_loaded — the loaded ages now live in the
+    // mesh state and republish on the first step.)
 
     // E2: structures (pumps/orifices/weirs/outlets) transport as zero-volume
     // passthrough of the donor node store (plan §2.1, element coverage) — no

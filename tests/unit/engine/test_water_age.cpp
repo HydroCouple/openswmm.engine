@@ -62,6 +62,7 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_hotstart.h>
 
 #include "core/InpWriter.hpp"
 #include "core/SWMMEngine.hpp"
@@ -501,6 +502,186 @@ TEST(WaterAgeTest, LegacyAgeLeavesPollutantsBitwise) {
                 << "link " << l << " step " << t
                 << ": WATER_AGE ON changed a LEGACY pollutant trajectory";
     }
+}
+
+// ---------------------------------------------------------------------------
+// A2a — hotstart persistence: save/load round trip + restart continuity.
+// ---------------------------------------------------------------------------
+namespace {
+/// Run a deck, save a V3 hotstart at end, and return the final ages.
+struct HsRun {
+    std::vector<double> node_age, link_age;
+    bool ok = false;
+};
+HsRun run_and_save(const char* inp, const char* hs_path) {
+    HsRun out;
+    SWMM_Engine e = swmm_engine_create();
+    if (e == nullptr) { ADD_FAILURE() << "create"; return out; }
+    bool ok = swmm_engine_open(e, inp, "_a2_hs.rpt", "_a2_hs.out", nullptr) ==
+                  SWMM_OK &&
+              swmm_engine_initialize(e) == SWMM_OK &&
+              swmm_engine_start(e, 1) == SWMM_OK;
+    if (ok) {
+        double elapsed = 0.0;
+        int guard = 0;
+        do {
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK) { ok = false; break; }
+        } while (elapsed > 0.0 && ++guard < 20000);
+        if (ok) {
+            swmm_engine_end(e);
+            ok = swmm_hotstart_save(e, hs_path) == SWMM_OK;
+            out.node_age = as_cpp_engine(e).context().water_age_state.node_age;
+            out.link_age = as_cpp_engine(e).context().water_age_state.link_age;
+        }
+    }
+    if (!ok) ADD_FAILURE() << "run_and_save failed for " << inp;
+    swmm_engine_destroy(e);
+    out.ok = ok;
+    return out;
+}
+}  // namespace
+
+TEST(WaterAgeTest, HotstartRoundTripsAgeAcrossBothEngines) {
+    // INITIAL_STATE is a DISCRIMINATOR here, not decoration: 100 h. If the
+    // restart seeded from INITIAL_STATE instead of the loaded state, ages
+    // jump to 360000 s; the loaded ages are O(10²–10³) s. The same deck
+    // shape runs under both engines.
+    write_file("_a2_hs.age",
+               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 100.0\n");
+    const std::string pc =
+        "org.hydrocouple.openswmm.waterage config=\"_a2_hs.age\"";
+
+    for (const bool legacy : {false, true}) {
+        const char* inp = legacy ? "_a2_hs_leg.inp" : "_a2_hs_ard.inp";
+        const char* hsf = legacy ? "_a2_hs_leg.bin" : "_a2_hs_ard.bin";
+        write_deck(inp, pc, true, false, false,
+                   legacy ? "QUALITY_SOLVER LEGACY\n" : "");
+        const auto saved = run_and_save(inp, hsf);
+        ASSERT_TRUE(saved.ok);
+        ASSERT_FALSE(saved.node_age.empty());
+        // The run started from INITIAL_STATE 100 h and flushed for an hour;
+        // the saved outfall-adjacent ages must be FAR below 360000 (flushed)
+        // and above 0 (liveness) or the discriminator has no teeth.
+        ASSERT_GT(saved.link_age[kC5], 0.0);
+        ASSERT_LT(saved.link_age[kC5], 200000.0)
+            << (legacy ? "LEGACY" : "ARD")
+            << ": the run never flushed the 100-h initial age — the "
+               "discriminator is dead on this deck";
+
+        // Round trip: open a FRESH engine on the same deck, apply the file,
+        // and compare the restored state BIT-FOR-BIT (double → double).
+        SWMM_Engine e2 = swmm_engine_create();
+        ASSERT_NE(e2, nullptr);
+        ASSERT_EQ(swmm_engine_open(e2, inp, "_a2_hs2.rpt", "_a2_hs2.out",
+                                   nullptr),
+                  SWMM_OK);
+        // swmm_hotstart_apply requires EngineState::INITIALIZED — it
+        // returns SWMM_ERR_LIFECYCLE from OPENED. initialize() must
+        // therefore run BEFORE the apply, not after, and the apply's
+        // writes are what survive into the run. (Delivered as
+        // open -> apply -> initialize, which returned 6 and made both
+        // hotstart gates exit before a single age assertion.)
+        ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
+        SWMM_HotStart hs = nullptr;
+        ASSERT_EQ(swmm_hotstart_open(hsf, &hs), SWMM_OK);
+        ASSERT_EQ(swmm_hotstart_apply(e2, hs), SWMM_OK);
+        swmm_hotstart_close(hs);
+        {
+            const auto& ws = as_cpp_engine(e2).context().water_age_state;
+            ASSERT_EQ(ws.node_age.size(), saved.node_age.size());
+            for (std::size_t i = 0; i < saved.node_age.size(); ++i)
+                ASSERT_EQ(ws.node_age[i], saved.node_age[i])
+                    << "node " << i << " age did not round-trip bitwise";
+            for (std::size_t i = 0; i < saved.link_age.size(); ++i)
+                ASSERT_EQ(ws.link_age[i], saved.link_age[i])
+                    << "link " << i << " age did not round-trip bitwise";
+        }
+
+        // Restart continuity: one routing step after the load, the age must
+        // CONTINUE from the loaded value — not reset to 0, not jump to the
+        // 100-h INITIAL_STATE.
+        ASSERT_EQ(swmm_engine_start(e2, 1), SWMM_OK);
+        double elapsed = 0.0;
+        ASSERT_EQ(swmm_engine_step(e2, &elapsed), SWMM_OK);
+        const auto& ws2 = as_cpp_engine(e2).context().water_age_state;
+        const double a = ws2.link_age[kC5];
+        // A band of (0.25*saved, 200000) separates "loaded" from "reset to
+        // zero" and from "re-seeded at 360000" and nothing else — it would
+        // pass a restart that restored a quarter of the state. Measured
+        // continuity is much tighter: ARD 876.447 -> 837.909 (-4.4%) and
+        // LEGACY 964.078 -> 948.457 (-1.6%) one step after the load.
+        //
+        // ARD's larger drop is structural and expected: the hotstart record
+        // carries ONE age per link while the ARD mesh carries one per CELL,
+        // so a save collapses the within-link age profile and the load
+        // re-uniformizes it. 10% leaves 2.3x headroom over that without
+        // admitting a partially restored state.
+        EXPECT_NEAR(a, saved.link_age[kC5], 0.10 * saved.link_age[kC5])
+            << (legacy ? "LEGACY" : "ARD")
+            << ": one step after the restart the age is " << a
+            << " against a loaded " << saved.link_age[kC5]
+            << ". Near zero means the restart lost the state; near 360000 "
+               "means it re-seeded from INITIAL_STATE.";
+        swmm_engine_destroy(e2);
+    }
+}
+
+TEST(WaterAgeTest, PreV3HotstartFallsBackToInitialState) {
+    // A file saved WITHOUT water age (V1/V2) applied to a WATER_AGE ON
+    // model: the -1 sentinel must fall through to INITIAL_STATE seeding —
+    // no crash, and the 100-h seed must be VISIBLE after one step.
+    write_deck("_a2_v2.inp", "", /*water_age=*/false);
+    const auto v2 = run_and_save("_a2_v2.inp", "_a2_v2.bin");
+    ASSERT_TRUE(v2.ok);
+
+    write_file("_a2_v2on.age",
+               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 100.0\n");
+    write_deck("_a2_v2on.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_a2_v2on.age\"");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_a2_v2on.inp", "_a2_v2on.rpt",
+                               "_a2_v2on.out", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);   // apply needs INITIALIZED
+    SWMM_HotStart hs = nullptr;
+    ASSERT_EQ(swmm_hotstart_open("_a2_v2.bin", &hs), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_apply(e, hs), SWMM_OK);
+    swmm_hotstart_close(hs);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+    const auto& ws = as_cpp_engine(e).context().water_age_state;
+    ASSERT_FALSE(ws.link_age.empty());
+    EXPECT_GT(ws.link_age[kC3], 300000.0)
+        << "a pre-V3 file suppressed INITIAL_STATE seeding (the -1 "
+           "sentinel path is broken)";
+    swmm_engine_destroy(e);
+
+    // The LEGACY mirror reaches INITIAL_STATE by a DIFFERENT route — apply()
+    // leaves legacy_seeded false so routeLegacyAge fills on its first step,
+    // where the ARD engine seeds in init(). One leg cannot cover both.
+    write_deck("_a2_v2on_leg.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_a2_v2on.age\"",
+               true, false, false, "QUALITY_SOLVER LEGACY\n");
+    SWMM_Engine el = swmm_engine_create();
+    ASSERT_NE(el, nullptr);
+    ASSERT_EQ(swmm_engine_open(el, "_a2_v2on_leg.inp", "_a2_v2on_leg.rpt",
+                               "_a2_v2on_leg.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(el), SWMM_OK);
+    SWMM_HotStart hs2 = nullptr;
+    ASSERT_EQ(swmm_hotstart_open("_a2_v2.bin", &hs2), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_apply(el, hs2), SWMM_OK);
+    swmm_hotstart_close(hs2);
+    ASSERT_EQ(swmm_engine_start(el, 1), SWMM_OK);
+    double el2 = 0.0;
+    ASSERT_EQ(swmm_engine_step(el, &el2), SWMM_OK);
+    const auto& wl = as_cpp_engine(el).context().water_age_state;
+    ASSERT_FALSE(wl.link_age.empty());
+    EXPECT_GT(wl.link_age[kC3], 300000.0)
+        << "pre-V3 file under LEGACY suppressed INITIAL_STATE seeding — "
+           "apply() must leave legacy_seeded false when no age was loaded";
+    swmm_engine_destroy(el);
 }
 
 // ---------------------------------------------------------------------------
