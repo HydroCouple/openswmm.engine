@@ -689,10 +689,30 @@ synthetic gages + radar → BME posterior → HDF5 grid file → engine run →
 uncertainty band plot.
 
 **MIXED family**: when a grid file declares `family=MIXED`, each cell carries
-its own distribution family via a `/family_code` uint8 plane. The ROM uses
-the NORMAL coefficient `z_i` for all cells as a v1 approximation; UNIFORM
-cells have their spread pre-scaled by the coefficient range ratio. Exact
-per-cell per-member dispatch is the design's deferred cold path.
+its own distribution family via a `/family_code` uint8 plane. The ROM accepts
+**one spread plane per family** (PR H7): the caller splits the source by
+`/family_code` — family A's cells in one plane with zeros elsewhere, family B's
+in a second plane with zeros elsewhere — and `advance()` projects both, giving
+each plane its own per-member coefficient:
+
+    g_ij  +=  c_i · (Pᵀ·spread_A)_j  +  c_i^B · (Pᵀ·spread_B)_j
+
+so every cell keeps its own family's marginal shape. Both coefficient columns
+are drawn from the same `u_i` stream, so one rank per member still holds across
+families — comonotone coherence is preserved by construction, not by a
+convention that could drift. This replaces the earlier v1 approximation, which
+used the NORMAL coefficient for every cell and pre-scaled UNIFORM cells' spread
+by the coefficient range ratio (≈3.0) to match band *width* while distorting
+the marginal *shape*.
+
+Two caveats. First, per-family planes are a `COHERENCE FULL` feature:
+`COHERENCE CORR_LEN` carries one family per source by construction, so
+CORR_LEN × MIXED is refused with an explanatory error rather than approximated
+(see `VALIDATION.md`, "True per-family coefficient planes"). Second, on this
+branch the *ROM* accepts two planes but the grid `/spread` → ROM wiring that
+would supply them has not been ported to the marcher line yet — only the
+deterministic `/location` plane is read. See VALIDATION.md §5 of that section
+for what a future port should call.
 
 **Deprecation note**: the scalar `RAINFALL` parameter in `[UNCERTAINTY]`
 (which applies a single multiplier to all rainfall) is superseded by soft
