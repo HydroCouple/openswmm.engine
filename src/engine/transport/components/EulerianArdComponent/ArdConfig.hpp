@@ -42,6 +42,9 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_ARD_CONFIG_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_ARD_CONFIG_HPP
 
+#include <string>
+#include <vector>
+
 namespace openswmm {
 struct SimulationContext;
 }
@@ -61,6 +64,25 @@ void registerArdComponent();
 /// under FLOW_ROUTING FV, and nothing says it under DYNWAVE), so E3's
 /// arrival is what makes the silence misleading rather than merely inert.
 void warnIfFvDispersionKeyIgnored(SimulationContext& ctx);
+
+/// E5a: resolve the raw [TRANSPORT_BOUNDARIES]/[TRANSPORT_SOURCES] rows to
+/// node/link/species/timeseries indices. Called from SWMMEngine::open AFTER
+/// all process components (and the embedded reactions fallback) have
+/// applied, because the rows name MSX species and the reactions component
+/// may apply before or after transport.ard in file order. Pushes fatal
+/// diagnostics into `errors`; pollutant species are refused (their loading
+/// surface is the legacy pathways). Source VALUE rates convert from species
+/// mass/s to internal conc·ft³/s here (kLitersPerFt3).
+void resolveArdTransportRows(SimulationContext& ctx,
+                             std::vector<std::string>& errors);
+
+/// True when the external-load loaders must run even though the model has
+/// no pollutants: a [TRANSPORT_BOUNDARIES] row injects
+/// `qual_vol_in * concentration`, and `qual_vol_in` is accumulated by those
+/// loaders. Without this an MSX-ONLY model — the nh2cl shape, and the one
+/// E5a exists to enable — assembles no inflow volume and its boundary
+/// delivers exactly nothing.
+bool ardBoundariesNeedExternalVolumes(const SimulationContext& ctx);
 
 }  // namespace openswmm::transport
 

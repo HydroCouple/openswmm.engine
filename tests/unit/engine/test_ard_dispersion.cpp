@@ -542,13 +542,19 @@ TEST_F(ArdDispersionEngineTest, ConfigErrorsArePreciseAndNeverHalfApply) {
         const char* needle;
     };
     const Case cases[] = {
+        // E5a implements SCALAR_SCHEME/LIMITER and [TRANSPORT_BOUNDARIES],
+        // so the two E5-deferral cases that used to live here are gone.
+        // Retargeted rather than deleted: both still need to be ERROR cases
+        // with a good row parsed BEFORE them, which is what gives the
+        // never-half-apply assertions below their teeth. Semantic coverage
+        // of the new sections lives in test_ard_transport_bcs.cpp.
         {"_e3_err_scheme",
-         "[TRANSPORT_OPTIONS]\nSCALAR_SCHEME MUSCL\nDISPERSION 5\n",
-         "arrives with plan phase E5"},
+         "[TRANSPORT_OPTIONS]\nDISPERSION 5\nSCALAR_SCHEME BOGUS\n",
+         "is not UPWIND, MUSCL, or QUICKEST_ULTIMATE"},
         {"_e3_err_bc",
          "[TRANSPORT_OPTIONS]\nDISPERSION 5\n[TRANSPORT_BOUNDARIES]\nOUT "
-         "TSS VALUE 0\n",
-         "plan phase E5"},
+         "TSS VALUE\n",
+         "[TRANSPORT_BOUNDARIES] expects"},
         {"_e3_err_mix",
          "[STORAGE_MIXING]\nS1 FIFO\n",
          "plan phase E2b"},

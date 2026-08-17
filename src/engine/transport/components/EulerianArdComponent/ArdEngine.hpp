@@ -143,6 +143,16 @@ private:
     std::vector<char> cell_active_;
     std::vector<int>  active_faces_;
 
+    // E5a: transport boundaries/sources resolved onto the mesh at init.
+    // Boundaries: the node's external inflow water carries the species at
+    // bc_now_ (evaluated once per routing step: VALUE or timeseries).
+    // Sources: internal-rate mass distributed over the conduit's wet cells.
+    void updateTransportRows(SimulationContext& ctx);
+    std::vector<int>    bc_node_, bc_srow_, bc_ts_;
+    std::vector<double> bc_value_, bc_now_;
+    std::vector<int>    src_crow_, src_srow_, src_ts_;
+    std::vector<double> src_value_, src_len_, src_now_;
+
     // E3 dispersion state. disp_active_ gates the whole path: when false the
     // substep passes no per-cell array and dispersionSolve early-outs — the
     // pre-E3 behavior, bit-identical for existing ARD decks.
