@@ -69,10 +69,11 @@ void reactLegacyNodes(SimulationContext& ctx, double dt);
 void reactLegacyLinks(SimulationContext& ctx, double dt);
 
 /// Warn (once, at open) when a reactions component is configured but no
-/// engine will run it this simulation: QUALITY_SOLVER EULERIAN_ARD routes
-/// around the LEGACY binding (its own binding is plan phase R6), and
-/// IGNORE_QUALITY skips the quality stage outright. Without this a user who
-/// wrote a .rxn file gets a run in which nothing reacted and nothing said so.
+/// engine will run it this simulation. As of E4/R6 the only remaining
+/// bypass is IGNORE_QUALITY — EULERIAN_ARD now runs its own binding
+/// (ReactionArdBinding) with MSX species transported on the mesh. Without
+/// this a user who wrote a .rxn file gets a run in which nothing reacted
+/// and nothing said so.
 void warnIfLegacyBindingBypassed(SimulationContext& ctx);
 
 }  // namespace openswmm::transport
