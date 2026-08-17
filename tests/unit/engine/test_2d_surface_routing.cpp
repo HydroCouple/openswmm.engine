@@ -1438,6 +1438,79 @@ TEST(EdgeConveyance, ParserSkipsEmptyTokenList) {
 
 #ifdef OPENSWMM_HAS_2D
 
+TEST(Default2DOutputPlugin, WritesRomQuantileFacesWhenPresent) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const int n_tri = mesh.n_triangles();
+    ASSERT_EQ(n_tri, 2);
+
+    openswmm::SimulationSnapshot snap;
+    snap.sim_time            = 0.0;
+    snap.surface_tri_count   = n_tri;
+    snap.surface_vert_count  = mesh.n_vertices();
+    snap.surface_depth         = {0.05, 0.10};
+    snap.surface_head          = {0.05, 0.10};
+    snap.surface_grad_hx       = {0.0,  0.0};
+    snap.surface_grad_hy       = {0.0,  0.0};
+    snap.surface_grad_hx_lim   = {0.0,  0.0};
+    snap.surface_grad_hy_lim   = {0.0,  0.0};
+    snap.surface_rainfall      = {0.0,  0.0};
+    snap.surface_coupling_flux = {0.0,  0.0};
+    snap.surface_net_source    = {0.0,  0.0};
+    snap.surface_face_vx       = {0.0,  0.0};
+    snap.surface_face_vy       = {0.0,  0.0};
+    snap.surface_continuity_err = {0.0,  0.0};
+    snap.surface_edge_flux     = {0.0, 0.0, 0.0,  0.0, 0.0, 0.0};
+    snap.surface_vert_head     = {0.0, 0.0, 0.0,  0.0};
+    // The three optional 2D ROM quantile faces (monotone q05 <= q50 <= q95).
+    snap.surface_rom_q05 = {0.02, 0.06};
+    snap.surface_rom_q50 = {0.05, 0.10};
+    snap.surface_rom_q95 = {0.09, 0.15};
+
+    const fs::path h5_path = fs::temp_directory_path() /
+                              "openswmm_test_2d_rom_output.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+    openswmm::SimulationContext ctx{};
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx),  0);
+    plugin.prepareMeshAndDatasets(mesh);
+    ASSERT_EQ(plugin.update(snap), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    ASSERT_TRUE(fs::exists(h5_path));
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+    auto exists = [file_id](const char* name) {
+        return H5Lexists(file_id, name, H5P_DEFAULT) > 0;
+    };
+    EXPECT_TRUE(exists("Mesh2_face_rom_q05"));
+    EXPECT_TRUE(exists("Mesh2_face_rom_q50"));
+    EXPECT_TRUE(exists("Mesh2_face_rom_q95"));
+
+    // q95 face is [1, n_tri] and carries exactly the values we supplied.
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_rom_q95", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        hsize_t dims[2] = {0, 0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], 1u);
+        EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        std::vector<double> vals(n_tri, 0.0);
+        H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, vals.data());
+        EXPECT_NEAR(vals[0], 0.09, 1e-12);
+        EXPECT_NEAR(vals[1], 0.15, 1e-12);
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
 TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     namespace fs = std::filesystem;
 
@@ -1526,6 +1599,11 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_face_max_depth"));
     EXPECT_TRUE(exists("Mesh2_face_max_velocity"));
     EXPECT_TRUE(exists("Mesh2_face_max_continuity_err"));
+    // No 2D ROM ran in this case, so the optional quantile faces are absent
+    // (the additive datasets must not perturb a plain 2D output file).
+    EXPECT_FALSE(exists("Mesh2_face_rom_q05"));
+    EXPECT_FALSE(exists("Mesh2_face_rom_q50"));
+    EXPECT_FALSE(exists("Mesh2_face_rom_q95"));
     EXPECT_TRUE(exists("mass_balance_2d"));
     EXPECT_TRUE(exists("time"));
 

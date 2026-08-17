@@ -247,6 +247,15 @@ struct SimulationSnapshot {
     std::vector<double> surface_stat_max_depth;    ///< Max overland depth ψ_o (m), per face
     std::vector<double> surface_stat_max_velocity; ///< Max cell speed |v| (m/s), per face
     std::vector<double> surface_stat_max_cont_err; ///< Max |continuity residual| (m³/s), per face
+
+    // Optional per-face uncertainty quantiles from the 2D spectral ROM
+    // ([2D_ROM]/[UNCERTAINTY]). Empty when no 2D ROM is active; otherwise sized
+    // `surface_tri_count` and refreshed at report cadence. q50 tracks the
+    // deterministic depth by construction (nominal member is zero-deviation),
+    // so these are purely additive and change no deterministic output field.
+    std::vector<double> surface_rom_q05; ///< 5th-percentile overland depth (m), per face
+    std::vector<double> surface_rom_q50; ///< Median overland depth (m), per face
+    std::vector<double> surface_rom_q95; ///< 95th-percentile overland depth (m), per face
 };
 
 } /* namespace openswmm */
