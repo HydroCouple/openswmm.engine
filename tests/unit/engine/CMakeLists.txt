@@ -256,6 +256,13 @@ if(OPENSWMM_BUILD_2D)
     # quantile-reconstruction equivalence tests -- found dormant, registered.
     add_gtest_unit(test_engine_2d_spectral_rom test_2d_spectral_rom.cpp)
 
+    # Soft-forcing (SR-3a) API on BOTH ROMs -- 1D and 2D in one binary, which
+    # is why it lives in the 2D-gated block rather than next to
+    # test_engine_spectral_rom1d. Same dormant-file story as the line above:
+    # on disk since the mechanical port, never registered until PR H7 needed
+    # a home for its per-family-coefficient-plane tests.
+    add_gtest_unit(test_engine_soft_forcing_rom test_soft_forcing_rom.cpp)
+
     # SurfaceRouter2D's wiring of the calibrated reduced operator: production
     # default vs rom_legacy_operator fallback, and open-boundary grounding
     # reachable through the router's own boundary_ (not just at the

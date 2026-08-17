@@ -572,3 +572,610 @@ TEST(SoftForcingCorrelated2D, ComonotoneFieldMatchesScalarPath) {
 
 } // anonymous namespace
 
+
+// ===========================================================================
+// PR H7 — true per-family coefficient planes (MIXED + multi-gage)
+//
+// Before H7 the ROM carried ONE (spread, family) channel, so a MIXED source
+// had to borrow a single family's coefficient column for every cell/gage and
+// range-match the others by pre-scaling their spread (the SR-4b ~3.0x hack) or
+// fall back to the first family outright (SR-1b). H7 adds a second, nullable
+// (spread_b, family_b) channel: two projections per advance, each carrying its
+// OWN family's per-member coefficient,
+//
+//     g_ij  +=  c_i * (P^T spread)_j  +  c_i^B * (P^T spread_b)_j
+//
+// with both coefficient columns drawn from the SAME u_i stream
+// (shuffledStrata(M, sample_seed+4)) so comonotone coherence -- one rank per
+// member everywhere, the COHERENCE FULL contract -- is preserved across
+// families by construction.
+//
+// NOTE ON WHAT IS AND IS NOT TESTABLE PER CELL. The spec's phrasing ("UNIFORM
+// cells' member values uniform ... not z-shaped") cannot be asserted on a
+// reconstructed per-CELL value: the ROM's eigenmodes are GLOBAL, so every mode
+// sees both planes and every cell's reconstruction is a linear combination of
+// both coefficients. That mixing is a property of the spectral ROM itself, not
+// something per-family planes can or should remove. The claim that IS exactly
+// true -- and is what H7 actually fixes -- is per SOURCE PLANE: each plane's
+// modal forcing carries its own family's coefficient column. The marginal-shape
+// tests below therefore use spread planes aligned with ORTHOGONAL eigenmodes,
+// which isolates one plane per mode and makes the marginal claim exact rather
+// than approximate, and the checkerboard fixture then verifies the full
+// two-plane decomposition end to end against an independent analytic
+// per-member reference.
+// ===========================================================================
+
+// Analytic single-step modal solution from a zero initial deviation:
+//   d(da)/dt = -rate*da + g,  da(0) = 0  =>  da(dt) = (g/rate)*(1-exp(-rate*dt))
+// (Euler below the rate floor). Used as an independent reference so the tests
+// do not merely re-derive the ROM's own arithmetic.
+static double analyticStepFromZero(double g, double rate, double dt) {
+    if (rate > 1.0e-12)
+        return (g / rate) * (1.0 - std::exp(-rate * dt));
+    return g * dt;
+}
+
+// Spearman-style check: two coefficient columns are comonotone when sorting
+// members by one also sorts them by the other (identical rank permutation).
+static bool sameRankOrder(const std::vector<double>& a,
+                          const std::vector<double>& b) {
+    const std::size_t M = a.size();
+    if (b.size() != M) return false;
+    std::vector<std::size_t> ia(M), ib(M);
+    for (std::size_t i = 0; i < M; ++i) { ia[i] = i; ib[i] = i; }
+    std::sort(ia.begin(), ia.end(), [&](std::size_t p, std::size_t q) { return a[p] < a[q]; });
+    std::sort(ib.begin(), ib.end(), [&](std::size_t p, std::size_t q) { return b[p] < b[q]; });
+    return ia == ib;
+}
+
+// ---------------------------------------------------------------------------
+// Coefficient-column contract
+// ---------------------------------------------------------------------------
+
+TEST(SoftForcingFamilyPlanes, BothChannelsShareOneRankPerMember) {
+    CsrGraph L = make_chain_laplacian(8);
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 4));
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = 21;            // odd -> one member sits exactly at u = 0.5
+    rom.mannings_pert = 0.0;
+    rom.runoff_pert = 0.0;
+    rom.initialize();
+
+    const auto nn = static_cast<std::size_t>(basis.n_nodes);
+    std::vector<double> h_det(nn, 0.0), spread_a(nn), spread_b(nn);
+    const double* mode0 = &basis.P[0];
+    const double* mode1 = &basis.P[nn];
+    for (std::size_t t = 0; t < nn; ++t) {
+        spread_a[t] = 0.5 * mode0[t];
+        spread_b[t] = 0.5 * mode1[t];
+    }
+
+    rom.seed(h_det.data());
+    rom.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL, nullptr,
+                       spread_b.data(), DistType::UNIFORM);
+
+    ASSERT_TRUE(rom.softPlanesError().empty()) << rom.softPlanesError();
+    ASSERT_EQ(static_cast<int>(rom.softCoeffB().size()), rom.n_ensemble);
+
+    // COHERENCE FULL contract: one rank per member across families.
+    EXPECT_TRUE(sameRankOrder(rom.softCoeff(), rom.softCoeffB()));
+
+    // Both columns are zero-mean, so neither channel shifts the median.
+    double mean_a = 0.0, mean_b = 0.0;
+    for (int i = 0; i < rom.n_ensemble; ++i) {
+        mean_a += rom.softCoeff()[static_cast<std::size_t>(i)];
+        mean_b += rom.softCoeffB()[static_cast<std::size_t>(i)];
+    }
+    EXPECT_NEAR(mean_a / rom.n_ensemble, 0.0, 1.0e-12);
+    EXPECT_NEAR(mean_b / rom.n_ensemble, 0.0, 1.0e-12);
+
+    // The nominal member is nominal in BOTH channels simultaneously -- the
+    // property that makes the deviation-form invariant survive two families.
+    int nominal = -1;
+    for (int i = 0; i < rom.n_ensemble; ++i)
+        if (std::abs(rom.softCoeffB()[static_cast<std::size_t>(i)]) < 1.0e-15)
+            nominal = i;
+    ASSERT_GE(nominal, 0) << "odd M must place one member exactly at u = 0.5";
+    EXPECT_NEAR(rom.softCoeff()[static_cast<std::size_t>(nominal)], 0.0, 1.0e-12);
+
+    rom.advance(1.0, 0.5, h_det.data(), nullptr, h_det.data());
+    const auto nk = static_cast<std::size_t>(rom.n_kept);
+    for (std::size_t j = 0; j < nk; ++j)
+        EXPECT_NEAR(rom.a_ensemble[static_cast<std::size_t>(nominal) * nk + j],
+                    0.0, 1.0e-15) << "nominal member mode " << j;
+}
+
+// ---------------------------------------------------------------------------
+// The marginal-shape claim, made exact by aligning each plane with its own
+// eigenmode: mode 0 is fed only by the NORMAL plane, mode 1 only by the
+// UNIFORM plane, so each mode's member values must follow that family's
+// quantiles -- and, decisively, NOT the other's. Under the pre-H7 hack both
+// modes would have carried the NORMAL column.
+// ---------------------------------------------------------------------------
+
+TEST(SoftForcingFamilyPlanes, EachPlaneKeepsItsOwnMarginalShape) {
+    CsrGraph L = make_chain_laplacian(10);
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 4));
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = 25;
+    rom.mannings_pert = 0.0;
+    rom.runoff_pert = 0.0;
+    rom.mode_drop_threshold = 0.0;   // keep every mode active; isolate the test
+    rom.initialize();
+
+    const auto nn = static_cast<std::size_t>(basis.n_nodes);
+    std::vector<double> h_det(nn, 0.0), spread_a(nn), spread_b(nn);
+    const double* mode0 = &basis.P[0];
+    const double* mode1 = &basis.P[nn];
+    for (std::size_t t = 0; t < nn; ++t) {
+        spread_a[t] = 0.7 * mode0[t];   // -> R_A = (0.7, 0, 0, ...)
+        spread_b[t] = 0.7 * mode1[t];   // -> R_B = (0, 0.7, 0, ...)
+    }
+
+    rom.seed(h_det.data());
+    rom.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL, nullptr,
+                       spread_b.data(), DistType::UNIFORM);
+    ASSERT_TRUE(rom.softPlanesError().empty());
+    rom.advance(1.0, 0.5, h_det.data(), nullptr, h_det.data());
+
+    const auto nk = static_cast<std::size_t>(rom.n_kept);
+    const int   M = rom.n_ensemble;
+    ASSERT_GE(rom.n_kept, 2);
+
+    // Orthonormal basis => the two planes land on disjoint modes.
+    EXPECT_NEAR(rom.soft_r_spread_[0],   0.7, 1.0e-12);
+    EXPECT_NEAR(rom.soft_r_spread_[1],   0.0, 1.0e-12);
+    EXPECT_NEAR(rom.soft_r_spread_b_[0], 0.0, 1.0e-12);
+    EXPECT_NEAR(rom.soft_r_spread_b_[1], 0.7, 1.0e-12);
+
+    // Mode 0 must be proportional to z_i (NORMAL) and mode 1 to (2u_i - 1)
+    // (UNIFORM). Fit each mode's scale off a single member, then require every
+    // other member to match that family's quantile to machine precision.
+    auto shapeMisfit = [&](std::size_t mode, const std::vector<double>& coeff) {
+        std::size_t ref = 0;
+        for (int i = 0; i < M; ++i)
+            if (std::abs(coeff[static_cast<std::size_t>(i)]) >
+                std::abs(coeff[ref])) ref = static_cast<std::size_t>(i);
+        const double scale = rom.a_ensemble[ref * nk + mode] / coeff[ref];
+        double worst = 0.0;
+        for (int i = 0; i < M; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const double predicted = scale * coeff[ui];
+            worst = std::max(worst,
+                std::abs(rom.a_ensemble[ui * nk + mode] - predicted));
+        }
+        return worst / std::abs(scale);   // relative to the fitted amplitude
+    };
+
+    // Each mode fits its OWN family essentially exactly ...
+    EXPECT_LT(shapeMisfit(0, rom.softCoeff()),  1.0e-12);
+    EXPECT_LT(shapeMisfit(1, rom.softCoeffB()), 1.0e-12);
+    // ... and is a poor fit to the other family, which is precisely the defect
+    // the pre-H7 single-column hack had: a UNIFORM source rendered z-shaped.
+    // Measured cross-family misfit on this fixture: 0.460 (mode 1 against the
+    // NORMAL column) and 0.215 (mode 0 against the UNIFORM column), i.e. 20-46x
+    // the 1e-2 bar below -- a wide margin, not a tuned threshold.
+    EXPECT_GT(shapeMisfit(1, rom.softCoeff()),  1.0e-2);
+    EXPECT_GT(shapeMisfit(0, rom.softCoeffB()), 1.0e-2);
+}
+
+// ---------------------------------------------------------------------------
+// Regression lock: a caller that supplies no second plane -- or supplies one
+// that is identically zero -- must be bit-identical to the single-family path.
+// This is the "single-family paths bit-identical before/after" gate; the 14
+// pre-existing SR-3a/CL-1b tests in this file are its companion (they exercise
+// the single-family path exclusively and are unchanged by H7).
+// ---------------------------------------------------------------------------
+
+TEST(SoftForcingFamilyPlanes, NullAndZeroSecondPlaneAreBitIdentical) {
+    CsrGraph L = make_chain_laplacian(8);
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 4));
+
+    const auto nn = static_cast<std::size_t>(basis.n_nodes);
+    std::vector<double> h_det(nn, 0.0), loc(nn), spread(nn);
+    std::vector<double> zero_plane(nn, 0.0);
+    const double* mode0 = &basis.P[0];
+    const double* mode1 = &basis.P[nn];
+    for (std::size_t t = 0; t < nn; ++t) {
+        loc[t]    = mode0[t];
+        spread[t] = 0.4 * mode0[t] + 0.25 * mode1[t];
+    }
+
+    auto run = [&](const double* second) {
+        SpectralROM1D rom;
+        rom.basis = &basis;
+        rom.n_ensemble = 11;
+        rom.mannings_pert = 0.0;
+        rom.runoff_pert = 0.0;
+        rom.initialize();
+        rom.seed(h_det.data());
+        rom.setSoftForcing(loc.data(), spread.data(), DistType::NORMAL,
+                           nullptr, second, DistType::UNIFORM);
+        rom.advance(1.0, 0.5, h_det.data(), nullptr, h_det.data());
+        rom.computeQuantiles(h_det.data(), nullptr);
+        return rom;
+    };
+
+    SpectralROM1D none = run(nullptr);
+    SpectralROM1D zero = run(zero_plane.data());
+
+    ASSERT_EQ(none.n_modes_active, zero.n_modes_active);
+    for (std::size_t i = 0; i < none.a_ensemble.size(); ++i)
+        EXPECT_EQ(none.a_ensemble[i], zero.a_ensemble[i])   // EQ, not NEAR
+            << "member/mode flat index " << i;
+    for (std::size_t t = 0; t < nn; ++t) {
+        EXPECT_EQ(none.q05[t], zero.q05[t]);
+        EXPECT_EQ(none.q50[t], zero.q50[t]);
+        EXPECT_EQ(none.q95[t], zero.q95[t]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Superposition: the two-plane result equals the sum of the two single-plane
+// results (each run with ITS OWN family), because the modal ODE is linear in
+// the forcing and every run starts from an identical zero deviation. This is
+// the structural statement that "two projections, one coefficient each" is
+// what actually got implemented -- not a range-matched single column.
+// ---------------------------------------------------------------------------
+
+TEST(SoftForcingFamilyPlanes, TwoPlanesSuperposeTheirSingleFamilyRuns) {
+    CsrGraph L = make_chain_laplacian(9);
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 4));
+
+    const auto nn = static_cast<std::size_t>(basis.n_nodes);
+    std::vector<double> h_det(nn, 0.0), spread_a(nn), spread_b(nn);
+    const double* mode0 = &basis.P[0];
+    const double* mode1 = &basis.P[nn];
+    const double* mode2 = &basis.P[2 * nn];
+    for (std::size_t t = 0; t < nn; ++t) {
+        // Deliberately NOT mode-aligned: both planes excite several modes, so
+        // the superposition claim is tested on genuinely overlapping forcing.
+        spread_a[t] = 0.5 * mode0[t] + 0.2 * mode2[t];
+        spread_b[t] = 0.3 * mode1[t] + 0.4 * mode2[t];
+    }
+
+    auto run = [&](const double* sa, DistType fa,
+                   const double* sb, DistType fb) {
+        SpectralROM1D rom;
+        rom.basis = &basis;
+        rom.n_ensemble = 15;
+        rom.mannings_pert = 0.0;
+        rom.runoff_pert = 0.0;
+        rom.mode_drop_threshold = 0.0;   // all modes active in every run
+        rom.initialize();
+        rom.seed(h_det.data());
+        rom.setSoftForcing(nullptr, sa, fa, nullptr, sb, fb);
+        rom.advance(2.0, 0.5, h_det.data(), nullptr, h_det.data());
+        return rom;
+    };
+
+    SpectralROM1D both = run(spread_a.data(), DistType::NORMAL,
+                             spread_b.data(), DistType::UNIFORM);
+    SpectralROM1D only_a = run(spread_a.data(), DistType::NORMAL, nullptr,
+                               DistType::UNIFORM);
+    SpectralROM1D only_b = run(spread_b.data(), DistType::UNIFORM, nullptr,
+                               DistType::UNIFORM);
+
+    for (std::size_t i = 0; i < both.a_ensemble.size(); ++i)
+        EXPECT_NEAR(both.a_ensemble[i],
+                    only_a.a_ensemble[i] + only_b.a_ensemble[i], 1.0e-14)
+            << "member/mode flat index " << i;
+
+    // And against a fully independent closed form, so the test is not just the
+    // ROM agreeing with itself.
+    const auto nk = static_cast<std::size_t>(both.n_kept);
+    for (int i = 0; i < both.n_ensemble; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        for (std::size_t j = 0; j < nk; ++j) {
+            const double g = both.softCoeff()[ui]  * both.soft_r_spread_[j]
+                           + both.softCoeffB()[ui] * both.soft_r_spread_b_[j];
+            const double rate = basis.eigenvalues[j] * 0.5;   // lambda * K1d, mm = 1
+            EXPECT_NEAR(both.a_ensemble[ui * nk + j],
+                        analyticStepFromZero(g, rate, 2.0), 1.0e-13)
+                << "member " << i << " mode " << j;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-gage mixed families (SR-1b's fallback, removed): two disjoint node
+// groups carrying different families both contribute a real band, with no
+// first-family fallback and no warning.
+// ---------------------------------------------------------------------------
+
+TEST(SoftForcingFamilyPlanes, TwoGageMixedFamiliesBothContributeNoFallback) {
+    CsrGraph L = make_chain_laplacian(10);
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 4));
+
+    const auto nn = static_cast<std::size_t>(basis.n_nodes);
+    std::vector<double> h_det(nn, 0.0);
+    // Gage A serves the upstream half (NORMAL), gage B the downstream half
+    // (UNIFORM) -- disjoint supports, exactly how a multi-gage source splits.
+    // Unequal spreads on purpose: with EQUAL spreads the two complementary
+    // halves project onto every (zero-mean) eigenmode with exactly opposite
+    // signs, so the fallback reference below would collapse to a degenerate
+    // zero band and the comparison would prove less than it appears.
+    std::vector<double> spread_a(nn, 0.0), spread_b(nn, 0.0);
+    for (std::size_t t = 0; t < nn; ++t) {
+        if (t < nn / 2) spread_a[t] = 0.60;
+        else            spread_b[t] = 0.35;
+    }
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = 21;
+    rom.mannings_pert = 0.0;
+    rom.runoff_pert = 0.0;
+    rom.initialize();
+    rom.seed(h_det.data());
+    rom.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL, nullptr,
+                       spread_b.data(), DistType::UNIFORM);
+
+    // No fallback: the second family is honoured, not collapsed onto the first.
+    EXPECT_TRUE(rom.softPlanesError().empty()) << rom.softPlanesError();
+    ASSERT_EQ(static_cast<int>(rom.softCoeffB().size()), rom.n_ensemble);
+
+    rom.advance(1.0, 0.5, h_det.data(), nullptr, h_det.data());
+    rom.computeQuantiles(h_det.data(), nullptr);
+
+    // Both gages' spreads reach the modal forcing.
+    double abs_a = 0.0, abs_b = 0.0;
+    for (int j = 0; j < rom.n_kept; ++j) {
+        abs_a = std::max(abs_a, std::abs(rom.soft_r_spread_[static_cast<std::size_t>(j)]));
+        abs_b = std::max(abs_b, std::abs(rom.soft_r_spread_b_[static_cast<std::size_t>(j)]));
+    }
+    EXPECT_GT(abs_a, 1.0e-6);
+    EXPECT_GT(abs_b, 1.0e-6);
+
+    // A real band forms, and the median still tracks the deterministic run.
+    double widest = 0.0;
+    for (std::size_t t = 0; t < nn; ++t)
+        widest = std::max(widest, rom.q95[t] - rom.q05[t]);
+    EXPECT_GT(widest, 1.0e-6);
+    for (std::size_t t = 0; t < nn; ++t)
+        EXPECT_NEAR(rom.q50[t], 0.0, 1.0e-12) << "node " << t;
+
+    // The decisive comparison: reproduce SR-1b's REMOVED first-family fallback
+    // -- every gage forced onto gage A's family, i.e. one NORMAL plane over the
+    // summed spread -- and require the per-family answer to differ materially
+    // from it. This is what "no longer falls back to the first family" means
+    // operationally.
+    //
+    // NOTE (real property, not a defect): the per-family band here is NARROWER
+    // than the fallback's, not wider. Comonotone coherence gives every member
+    // the same rank in both families, and two gages on complementary parts of
+    // the network project onto the shared eigenmodes with opposing signs, so
+    // their contributions partially cancel. Adding a second family plane is
+    // therefore not monotone in band width -- asserting "wider" would be
+    // asserting a coincidence of the fixture.
+    std::vector<double> spread_sum(nn, 0.0);
+    for (std::size_t t = 0; t < nn; ++t)
+        spread_sum[t] = spread_a[t] + spread_b[t];
+
+    SpectralROM1D fallback;
+    fallback.basis = &basis;
+    fallback.n_ensemble = 21;
+    fallback.mannings_pert = 0.0;
+    fallback.runoff_pert = 0.0;
+    fallback.initialize();
+    fallback.seed(h_det.data());
+    fallback.setSoftForcing(nullptr, spread_sum.data(), DistType::NORMAL);
+    fallback.advance(1.0, 0.5, h_det.data(), nullptr, h_det.data());
+    fallback.computeQuantiles(h_det.data(), nullptr);
+
+    double widest_fb = 0.0;
+    for (std::size_t t = 0; t < nn; ++t)
+        widest_fb = std::max(widest_fb, fallback.q95[t] - fallback.q05[t]);
+    EXPECT_GT(widest_fb, 1.0e-6);
+
+    // Materially different -- gage B's UNIFORM marginal is genuinely in play,
+    // not absorbed into gage A's NORMAL column.
+    EXPECT_GT(std::abs(widest - widest_fb) / widest_fb, 0.05)
+        << "per-family band " << widest << " vs first-family fallback "
+        << widest_fb;
+}
+
+// ---------------------------------------------------------------------------
+// Scope guard: CORR_LEN x MIXED is refused with a clear message, and the ROM
+// stays in a valid single-family CORR_LEN state rather than half-configured.
+// ---------------------------------------------------------------------------
+
+TEST(SoftForcingFamilyPlanes, CorrLenTimesMixedIsRefusedNotSilentlyMixed) {
+    CsrGraph L = make_chain_laplacian(8);
+    GraphEigenBasis basis;
+    ASSERT_TRUE(basis.build(L, 4));
+
+    const auto nn = static_cast<std::size_t>(basis.n_nodes);
+    std::vector<double> h_det(nn, 0.0), spread_a(nn), spread_b(nn);
+    const double* mode0 = &basis.P[0];
+    const double* mode1 = &basis.P[nn];
+    for (std::size_t t = 0; t < nn; ++t) {
+        spread_a[t] = 0.5 * mode0[t];
+        spread_b[t] = 0.5 * mode1[t];
+    }
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = 11;
+    rom.mannings_pert = 0.0;
+    rom.runoff_pert = 0.0;
+    rom.initialize();
+    rom.seed(h_det.data());
+
+    // Populate soft_coeff_ so the constant-row field can be built, then arm
+    // CORR_LEN and a second family plane together.
+    rom.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL);
+    SoftSpatialField field = makeConstantRowField(rom, basis.n_nodes);
+    rom.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL, &field,
+                       spread_b.data(), DistType::UNIFORM);
+
+    EXPECT_FALSE(rom.softPlanesError().empty());
+    EXPECT_NE(rom.softPlanesError().find("CORR_LEN"), std::string::npos);
+    EXPECT_TRUE(rom.softCoeffB().empty());
+
+    // Behaviour is exactly the single-family CORR_LEN run, not a half-applied
+    // second plane.
+    rom.advance(1.0, 0.5, h_det.data(), nullptr, h_det.data());
+
+    SpectralROM1D ref;
+    ref.basis = &basis;
+    ref.n_ensemble = 11;
+    ref.mannings_pert = 0.0;
+    ref.runoff_pert = 0.0;
+    ref.initialize();
+    ref.seed(h_det.data());
+    ref.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL);
+    SoftSpatialField ref_field = makeConstantRowField(ref, basis.n_nodes);
+    ref.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL, &ref_field);
+    ref.advance(1.0, 0.5, h_det.data(), nullptr, h_det.data());
+
+    for (std::size_t i = 0; i < ref.a_ensemble.size(); ++i)
+        EXPECT_EQ(rom.a_ensemble[i], ref.a_ensemble[i]) << "flat index " << i;
+
+    // A later single-family call clears the error -- it is per-call state.
+    rom.setSoftForcing(nullptr, spread_a.data(), DistType::NORMAL);
+    EXPECT_TRUE(rom.softPlanesError().empty());
+}
+
+// ---------------------------------------------------------------------------
+// 2D: the checkerboard MIXED grid the SR-4b hack was written for. Cells
+// alternate NORMAL/UNIFORM family; each family's cells go into their own plane
+// (zero elsewhere), and the result is checked against an independent analytic
+// per-member reference built from the two coefficient columns.
+// ---------------------------------------------------------------------------
+
+TEST(SoftForcingFamilyPlanes2D, CheckerboardMixedGridUsesBothFamilies) {
+    MeshData mesh = makeStructuredMesh(4, 4.0);
+    MeshEigenBasis basis;
+    ASSERT_TRUE(basis.build(mesh, 6));
+
+    const int nt = basis.n_triangles;
+    const auto unt = static_cast<std::size_t>(nt);
+    std::vector<double> h_det(unt, 0.0);
+    std::vector<double> spread_norm(unt, 0.0), spread_unif(unt, 0.0);
+
+    // /family_code checkerboard: even cells NORMAL, odd cells UNIFORM. Each
+    // plane holds only its own cells' spread; the two are disjoint and sum to
+    // the full spread field, which is exactly the split H7 introduces.
+    const double* mode0 = &basis.P[0];
+    for (int t = 0; t < nt; ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        const double sp = 0.05 + 0.2 * std::abs(mode0[t]);
+        if (t % 2 == 0) spread_norm[ut] = sp;
+        else            spread_unif[ut] = sp;
+    }
+
+    SpectralROM rom;
+    rom.basis = &basis;
+    rom.n_ensemble = 21;
+    rom.mannings_pert = 0.0;
+    rom.rainfall_pert = 0.0;
+    rom.mode_drop_threshold = 0.0;
+    rom.initialize();
+    rom.seed(h_det.data());
+    rom.setSoftForcing(nullptr, spread_norm.data(), DistType::NORMAL, nullptr,
+                       spread_unif.data(), DistType::UNIFORM);
+
+    ASSERT_TRUE(rom.softPlanesError().empty()) << rom.softPlanesError();
+    ASSERT_EQ(static_cast<int>(rom.softCoeffB().size()), rom.n_ensemble);
+    EXPECT_TRUE(sameRankOrder(rom.softCoeff(), rom.softCoeffB()));
+
+    const double dt = 1.0;
+    rom.advance(dt, 0.0, nullptr, nullptr, h_det.data());
+    rom.computeQuantiles(h_det.data());
+
+    // Independent reference: project each plane by hand off the basis and
+    // integrate the modal ODE in closed form, per member.
+    const auto nk = static_cast<std::size_t>(rom.n_kept);
+    std::vector<double> RA(nk, 0.0), RB(nk, 0.0);
+    for (std::size_t j = 0; j < nk; ++j) {
+        const double* Pj = &basis.P[j * unt];
+        for (std::size_t t = 0; t < unt; ++t) {
+            RA[j] += Pj[t] * spread_norm[t];
+            RB[j] += Pj[t] * spread_unif[t];
+        }
+    }
+    // Both families genuinely reach the modal forcing.
+    double maxA = 0.0, maxB = 0.0;
+    for (std::size_t j = 0; j < nk; ++j) {
+        maxA = std::max(maxA, std::abs(RA[j]));
+        maxB = std::max(maxB, std::abs(RB[j]));
+    }
+    EXPECT_GT(maxA, 1.0e-6);
+    EXPECT_GT(maxB, 1.0e-6);
+
+    for (int i = 0; i < rom.n_ensemble; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const double cA = rom.softCoeff()[ui];
+        const double cB = rom.softCoeffB()[ui];
+        for (std::size_t j = 0; j < nk; ++j) {
+            // K_eff = 0 here (no Manning channel), so rate = 0 -> Euler branch.
+            const double expected = analyticStepFromZero(cA * RA[j] + cB * RB[j],
+                                                         0.0, dt);
+            EXPECT_NEAR(rom.a_ensemble[ui * nk + j], expected, 1.0e-13)
+                << "member " << i << " mode " << j;
+        }
+    }
+
+    // A real band, and the median still tracks the deterministic field.
+    double widest = 0.0;
+    for (std::size_t t = 0; t < unt; ++t)
+        widest = std::max(widest, rom.q95[t] - rom.q05[t]);
+    EXPECT_GT(widest, 1.0e-6);
+    for (std::size_t t = 0; t < unt; ++t)
+        EXPECT_NEAR(rom.q50[t], 0.0, 1.0e-12) << "cell " << t;
+}
+
+// 2D regression lock, mirroring the 1D one.
+TEST(SoftForcingFamilyPlanes2D, NullAndZeroSecondPlaneAreBitIdentical) {
+    MeshData mesh = makeStructuredMesh();
+    MeshEigenBasis basis;
+    ASSERT_TRUE(basis.build(mesh, 6));
+
+    const int nt = basis.n_triangles;
+    const auto unt = static_cast<std::size_t>(nt);
+    std::vector<double> h_det(unt, 0.0), loc(unt), spread(unt);
+    std::vector<double> zero_plane(unt, 0.0);
+    const double* mode0 = &basis.P[0];
+    const double* mode1 = &basis.P[unt];
+    for (std::size_t t = 0; t < unt; ++t) {
+        loc[t]    = mode0[t];
+        spread[t] = 0.3 * mode0[t] + 0.2 * mode1[t];
+    }
+
+    auto run = [&](const double* second) {
+        SpectralROM rom;
+        rom.basis = &basis;
+        rom.n_ensemble = 11;
+        rom.mannings_pert = 0.0;
+        rom.rainfall_pert = 0.0;
+        rom.initialize();
+        rom.seed(h_det.data());
+        rom.setSoftForcing(loc.data(), spread.data(), DistType::NORMAL,
+                           nullptr, second, DistType::UNIFORM);
+        rom.advance(1.0, 0.0, nullptr, nullptr, h_det.data());
+        rom.computeQuantiles(h_det.data());
+        return rom;
+    };
+
+    SpectralROM none = run(nullptr);
+    SpectralROM zero = run(zero_plane.data());
+
+    ASSERT_EQ(none.n_modes_active, zero.n_modes_active);
+    for (std::size_t i = 0; i < none.a_ensemble.size(); ++i)
+        EXPECT_EQ(none.a_ensemble[i], zero.a_ensemble[i]) << "flat index " << i;
+    for (std::size_t t = 0; t < unt; ++t) {
+        EXPECT_EQ(none.q05[t], zero.q05[t]);
+        EXPECT_EQ(none.q50[t], zero.q50[t]);
+        EXPECT_EQ(none.q95[t], zero.q95[t]);
+    }
+}

@@ -42,6 +42,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 // Forward declaration — avoids pulling 1D uncertainty headers into 2D solver.
 namespace openswmm::uncertainty { struct SpectralROM1D; }
@@ -373,11 +374,39 @@ struct SpectralROM {
      *        equal n_ensemble; its per-cell column mean over members must equal
      *        mean_i(c_i) so q50 still tracks the deterministic answer (checked
      *        by assertion in debug builds).
+     *
+     * @param spread_b Optional SECOND spread plane carrying a DIFFERENT
+     *        distribution family (PR H7). Null (default) leaves the ROM
+     *        single-family and bit-identical to the pre-H7 behaviour. When
+     *        non-null the member forcing sensitivity becomes
+     *
+     *            c_i·(Pᵀ·spread)_j  +  c_i^B·(Pᵀ·spread_b)_j
+     *
+     *        i.e. two projections per advance, one per family. This is what a
+     *        MIXED grid (`/family_code`) needs: cells of family A go in
+     *        @p spread with zeros elsewhere, family B's cells in @p spread_b
+     *        with zeros elsewhere, so every cell keeps its OWN marginal shape
+     *        instead of borrowing one family's coefficient with a range-matched
+     *        spread. NON-OWNING, same lifetime contract as @p spread.
+     * @param family_b Family selecting c_i^B. Both coefficients derive from the
+     *        SAME `u_i = shuffledStrata(M, sample_seed+4)` stream, so one rank
+     *        per member holds across families — the COHERENCE FULL contract —
+     *        and the nominal member is nominal in both channels simultaneously.
+     *
+     * @note Scope guard (PR H7): a second plane is REFUSED when @p soft_field
+     *       is spatial (`COHERENCE CORR_LEN`), because the correlated path
+     *       carries one coefficient family per source by construction. The call
+     *       still succeeds as a single-family call and softPlanesError()
+     *       returns a non-empty explanation; CORR_LEN × MIXED is additive
+     *       future work.
      */
     void setSoftForcing(const double* loc, const double* spread,
                         openswmm::uncertainty::DistType family
                             = openswmm::uncertainty::DistType::NORMAL,
-                        const SpatialUncertaintyField* soft_field = nullptr) noexcept;
+                        const SpatialUncertaintyField* soft_field = nullptr,
+                        const double* spread_b = nullptr,
+                        openswmm::uncertainty::DistType family_b
+                            = openswmm::uncertainty::DistType::UNIFORM) noexcept;
 
     /// Clear the soft forcing path and revert to the legacy forcing inputs.
     void clearSoftForcing() noexcept;
@@ -401,6 +430,11 @@ struct SpectralROM {
      * @p psi_modes (K_s × n_tri row-major) and @p a_coeffs (n_ensemble × K_s
      * row-major) are NON-OWNING and must outlive the ROM (or be cleared). Takes
      * precedence over any `soft_field` set via setSoftForcing.
+     *
+     * @note Single-family only (PR H7 scope guard): this call clears any second
+     *       family plane previously armed via setSoftForcing's `spread_b`, for
+     *       the same reason CORR_LEN × MIXED is refused there — the modal
+     *       coefficients `a_im` fold in one family's `c_i` by construction.
      */
     void setSoftForcingReduced(const double* loc, const double* spread,
                                openswmm::uncertainty::DistType family,
@@ -411,6 +445,16 @@ struct SpectralROM {
     /// setSoftForcing). Empty until setSoftForcing() has been called. Used by
     /// the engine to seed the CL-1c correlated coefficient field.
     const std::vector<double>& softCoeff() const noexcept { return soft_coeff_; }
+
+    /// Per-member coefficient c_i^B of the second family plane (PR H7). Empty
+    /// until a setSoftForcing() call supplied a non-null `spread_b`.
+    const std::vector<double>& softCoeffB() const noexcept { return soft_coeff_b_; }
+
+    /// Empty when the last setSoftForcing() call was honoured in full;
+    /// non-empty when a requested second family plane was REFUSED (currently
+    /// only the CORR_LEN × MIXED combination — see setSoftForcing()). The ROM
+    /// stays in a valid single-family state either way.
+    const std::string& softPlanesError() const noexcept { return soft_planes_error_; }
 
     /**
      * @brief Register an additional uncertain parameter column (PR 9b).
@@ -509,6 +553,18 @@ private:
     std::vector<double> soft_z_;             ///< probit(u_i) — normal/lognormal coefficient.
     std::vector<double> soft_coeff_;         ///< Active per-member coefficient c_i (family-selected).
     double soft_max_abs_coeff_ = 0.0;        ///< max_i |c_i| for mode activation.
+
+    // PR H7 — second per-family coefficient plane. Null unless a caller
+    // supplied a (spread_b, family_b) channel; when null every expression
+    // that reads it adds an exact 0.0, so the single-family path is
+    // bit-identical.
+    const double* soft_spread_field_b_ = nullptr;
+    std::vector<double> soft_r_spread_b_;    ///< (P^T spread_b)_j.
+    std::vector<double> soft_coeff_b_;       ///< Per-member c_i^B (family_b-selected, same u_i).
+    double soft_max_abs_coeff_b_ = 0.0;      ///< max_i |c_i^B| for mode activation.
+    /// Empty on success; set when a second plane was REFUSED (see
+    /// softPlanesError()). Never throws — setSoftForcing is noexcept.
+    std::string soft_planes_error_;
 
     /// CL-1c correlated-coherence (`COHERENCE CORR_LEN`) spatial field. When
     /// non-null and spatial, replaces the scalar `c_i · (P^T spread)_j` term

@@ -1690,10 +1690,17 @@ INFLOWS node_grid.h5  CENTROID  FORCE_LOCATION  NODES  nodes.txt
   location parameter and the file supplies spread only.
 - `/spread` is required: `0` at a pixel/time means hard (no uncertainty) there.
 - `/family_code` (MIXED only): per-cell distribution family
-  (0=NORMAL, 1=LOGNORMAL, 2=UNIFORM). The ROM uses the NORMAL coefficient `z_i`
-  for all cells as a v1 approximation; UNIFORM cells have their spread
-  pre-scaled by the coefficient range ratio. Exact per-cell per-member dispatch
-  is the design's deferred cold path.
+  (0=NORMAL, 1=LOGNORMAL, 2=UNIFORM). The ROM carries **one spread plane per
+  family** (PR H7), so each cell keeps its own family's marginal shape rather
+  than borrowing the NORMAL coefficient with a range-matched spread as the
+  earlier v1 approximation did. Both coefficient columns come from the same
+  member-rank stream, so comonotone coherence still holds across families.
+  Restrictions: per-family planes require `COHERENCE FULL` (CORR_LEN × MIXED is
+  refused with an explanatory error — see `VALIDATION.md`, "True per-family
+  coefficient planes"), and two families per file are supported today. Note
+  also that on this branch the grid `/spread` → ROM path itself is not yet
+  wired (only `/location` is read); the per-family capability lives in the ROM
+  ahead of that wiring.
 
 ### 11.4 pybme Round-Trip Example
 
