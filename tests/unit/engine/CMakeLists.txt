@@ -117,6 +117,7 @@ add_gtest_unit(test_engine_reactions_config       test_reactions_config.cpp)
 add_gtest_unit(test_engine_reaction_expressions   test_reaction_expressions.cpp)
 add_gtest_unit(test_engine_reaction_integrators   test_reaction_integrators.cpp)
 add_gtest_unit(test_engine_reaction_legacy_binding test_reaction_legacy_binding.cpp)
+add_gtest_unit(test_engine_ard_dispersion         test_ard_dispersion.cpp)
 # In-place rename for snow packs / aquifers / inlets / streets / LID controls.
 # Without these APIs the GUI registries flushed a renamed object as a NEW one,
 # duplicating it in the engine and orphaning the original.

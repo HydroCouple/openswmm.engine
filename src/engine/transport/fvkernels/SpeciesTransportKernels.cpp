@@ -361,7 +361,23 @@ void dispersionSolve(const SpeciesKernelView& v, double dt) {
     NetworkStateData*      state_ = v.state;
 
     const int ns = state_->n_species;
-    if (ns <= 0 || v.dispersion <= 0.0) return;
+    if (ns <= 0) return;
+    // Per-cell coefficients (E3) take precedence; the scalar early-out is
+    // the pre-E3 condition, untouched when no per-cell array is supplied.
+    const std::vector<double>* cd = v.cell_dispersion;
+    if (cd == nullptr && v.dispersion <= 0.0) return;
+
+    /// Cell coefficient under either model. E3 bitwise-preservation note:
+    /// each face uses 0.5*(D_i + D_j). With cd == nullptr both operands are
+    /// v.dispersion, and 0.5*(D + D) == D EXACTLY in binary floating point
+    /// (the ×2 and ×0.5 are exponent shifts), so the face coefficient — and
+    /// therefore every downstream product in the same evaluation order — is
+    /// bit-identical to the pre-E3 `v.dispersion * …` expression. The FV
+    /// solver passes cd == nullptr and keeps its bitwise contract (E0 gate).
+    const auto cellD = [&](int c) {
+        return (cd != nullptr) ? (*cd)[static_cast<std::size_t>(c)]
+                               : v.dispersion;
+    };
 
     const int nc = mesh_->n_cells();
     static thread_local std::vector<double> aa, bb, ccv, rr, xx;
@@ -389,18 +405,21 @@ void dispersionSolve(const SpeciesKernelView& v, double dt) {
                 const auto uc = static_cast<std::size_t>(c);
                 const double dx = mesh_->cell_dx[uc];
                 const double a  = std::max(state_->cell_a[uc], k::kDryArea);
+                const double dc = cellD(c);
                 double lo = 0.0, hi = 0.0;
                 if (i > 0) {
                     const int cm = mesh_->chain_cells[static_cast<std::size_t>(b + i - 1)];
                     const double am = std::max(
                         state_->cell_a[static_cast<std::size_t>(cm)], k::kDryArea);
-                    lo = v.dispersion * 0.5 * (a + am) * dt / (dx * dx * a);
+                    lo = 0.5 * (dc + cellD(cm)) * 0.5 * (a + am) * dt /
+                         (dx * dx * a);
                 }
                 if (i < m - 1) {
                     const int cp = mesh_->chain_cells[static_cast<std::size_t>(b + i + 1)];
                     const double ap = std::max(
                         state_->cell_a[static_cast<std::size_t>(cp)], k::kDryArea);
-                    hi = v.dispersion * 0.5 * (a + ap) * dt / (dx * dx * a);
+                    hi = 0.5 * (dc + cellD(cp)) * 0.5 * (a + ap) * dt /
+                         (dx * dx * a);
                 }
                 aa[static_cast<std::size_t>(i)]  = -lo;
                 ccv[static_cast<std::size_t>(i)] = -hi;

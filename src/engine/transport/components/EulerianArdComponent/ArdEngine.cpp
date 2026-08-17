@@ -30,6 +30,7 @@
 #include <string>
 
 #include "../../../core/SimulationContext.hpp"
+#include "../../../core/UnitConversion.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
 #include "../../fvkernels/SpeciesTransportKernels.hpp"
 
@@ -47,6 +48,18 @@ constexpr int kMaxSubsteps = 512;
 /// Below this store volume (ft3) a node holds no meaningful concentration —
 /// used to decide when a store has emptied rather than merely shrunk.
 constexpr double kMinStoreVol = 1.0e-9;
+
+// --- E3 Fischer auto-computation guards (all internal ft units) -------------
+/// g (ft/s²) for the shear velocity U* = √(g·Y·S).
+constexpr double kGravity = 32.174;
+/// Slope floor: a dead-flat conduit has S = 0 and the formula divides by
+/// U* — the same reason legacy SWMM floors conduit slopes. Physics below
+/// this floor is dominated by mixing the formula does not model anyway.
+constexpr double kMinSlope = 1.0e-5;
+/// Depth floor (ft): below this the conduit is effectively dry; v² in the
+/// numerator vanishes faster than Y·U* in the denominator, so D → 0 is the
+/// physical limit and also the numerically safe one.
+constexpr double kMinFischerDepth = 0.01;
 }  // namespace
 
 // ===========================================================================
@@ -141,6 +154,33 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // E2: structures (pumps/orifices/weirs/outlets) transport as zero-volume
     // passthrough of the donor node store (plan §2.1, element coverage) — no
     // warning needed any more.
+
+    // E3: dispersion configuration from the transport.ard component. Values
+    // arrive in project display units (len²/s); convert to internal ft²/s
+    // exactly the way Router::initFv converts FV_DISPERSION.
+    disp_active_    = false;
+    disp_mode_      = static_cast<int>(ArdDispersionMode::OFF);
+    disp_global_ft_ = 0.0;
+    conduit_disp_ft_.assign(mesh_.conduit_link.size(), -1.0);
+    cell_disp_.assign(unc, 0.0);
+    if (ctx.ard_config.configured && ctx.ard_config.any_dispersion()) {
+        const double ucf_len = ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(
+            static_cast<int>(ctx.options.flow_units))];
+        disp_mode_      = static_cast<int>(ctx.ard_config.dispersion_mode);
+        disp_global_ft_ =
+            ctx.ard_config.dispersion_value / (ucf_len * ucf_len);
+        // Overrides are keyed by LINK index; invert mesh conduit_link so
+        // each mesh conduit row learns its override (if any).
+        for (std::size_t i = 0; i < ctx.ard_config.conduit_disp_link.size();
+             ++i) {
+            const int link = ctx.ard_config.conduit_disp_link[i];
+            const double d_ft =
+                ctx.ard_config.conduit_disp_value[i] / (ucf_len * ucf_len);
+            for (std::size_t r = 0; r < mesh_.conduit_link.size(); ++r)
+                if (mesh_.conduit_link[r] == link) conduit_disp_ft_[r] = d_ft;
+        }
+        disp_active_ = true;
+    }
 
     bool has_decay = false;
     for (int s = 0; s < ns; ++s)
@@ -267,6 +307,63 @@ void ArdEngine::projectHydraulics(SimulationContext& ctx, double dt) {
 }
 
 // ===========================================================================
+// updateDispersion — per-cell coefficients for this routing step (E3)
+// ===========================================================================
+
+void ArdEngine::updateDispersion(SimulationContext& ctx) {
+    const auto mode = static_cast<ArdDispersionMode>(disp_mode_);
+    for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        double d = 0.0;
+        if (conduit_disp_ft_[ur] >= 0.0) {
+            d = conduit_disp_ft_[ur];        // user override always wins
+        } else if (mode == ArdDispersionMode::VALUE) {
+            d = disp_global_ft_;
+        } else if (mode == ArdDispersionMode::FISCHER) {
+            // Fischer et al. (1979): D = 0.011 v²B²/(Y·U*), U* = √(g·Y·S) —
+            // the CSH §4.2 coefficient model without the numerical-dispersion
+            // correction (plan §2). Link-mean quantities, internal ft units:
+            //   A = V/L, v = |Q|/A, Y = midpoint depth, B = A/Y (mean width),
+            //   S = |conduit slope| floored.
+            // A dry or stagnant conduit gets D = 0 (the physical limit).
+            // Note D is unbounded above as Y → floor with v finite; that is
+            // safe here because the implicit solve is unconditionally stable
+            // and monotone — the worst case is over-mixing toward uniform,
+            // never an overshoot.
+            const int link = mesh_.conduit_link[ur];
+            const int cr2  = (link >= 0)
+                                 ? ctx.link_subtypes.conduit_row(link)
+                                 : -1;
+            if (link >= 0 && cr2 >= 0) {
+                const auto ul   = static_cast<std::size_t>(link);
+                const auto ucr  = static_cast<std::size_t>(cr2);
+                const double len =
+                    ctx.link_subtypes.conduits.length[ucr];
+                const double vol = ctx.links.volume[ul];
+                const double y   = ctx.links.depth[ul];
+                const double a   =
+                    (len > 0.0) ? vol / len : 0.0;
+                if (a > k::kDryArea && y > kMinFischerDepth) {
+                    const double vel = std::fabs(ctx.links.flow[ul]) / a;
+                    if (vel > 0.0) {
+                        const double b_w = a / y;
+                        const double s = std::max(
+                            std::fabs(ctx.link_subtypes.conduits.slope[ucr]),
+                            kMinSlope);
+                        const double ustar = std::sqrt(kGravity * y * s);
+                        d = 0.011 * vel * vel * b_w * b_w / (y * ustar);
+                    }
+                }
+            }
+        }
+        const int b = mesh_.conduit_cell_begin[ur];
+        const int n = mesh_.conduit_cell_count[ur];
+        for (int i = 0; i < n; ++i)
+            cell_disp_[static_cast<std::size_t>(b + i)] = d;
+    }
+}
+
+// ===========================================================================
 // substep — advection + node mixing over dt_sub
 // ===========================================================================
 
@@ -285,7 +382,8 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     v.state         = &state_;
     v.scalar_scheme = ctx.options.fv.scalar_scheme;
     v.limiter       = ctx.options.fv.limiter;
-    v.dispersion    = 0.0;   // E1: dispersion arrives with plan phase E3
+    v.dispersion    = 0.0;   // scalar path unused; per-cell array below (E3)
+    v.cell_dispersion = disp_active_ ? &cell_disp_ : nullptr;
     v.hllc          = true;  // sstar = flux sign (projected path)
     v.f_mass        = &f_mass_;
     v.f_sstar       = &f_sstar_;
@@ -454,6 +552,21 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         node_vol_[ud] = std::max(0.0, node_vol_[ud] - dv);
         node_vol_[ur] += dv;
     }
+
+    // 6. Dispersion (E3): implicit per-chain Thomas solve over the updated
+    //    cells — sequential (Lie) operator split, advection → dispersion
+    //    (plan §2). One full step of each, so the splitting error is O(dt),
+    //    not the O(dt²) a symmetric Strang split would give; the substep is
+    //    already Courant-limited by advection, and the dispersion half is
+    //    unconditionally stable, so the first-order split is the cheap
+    //    choice rather than an accuracy claim. Symmetrizing it is an E5
+    //    option, not a defect. The kernel
+    //    early-outs when v.cell_dispersion is null (disp_active_ false), so
+    //    the pre-E3 substep is bit-identical. Node stores do not disperse:
+    //    the solve spans conduit chains (including splice virtual
+    //    junctions), matching the FV solver's D-FV1 behavior; junction
+    //    mixing remains the CSTR exchange above.
+    fvk::dispersionSolve(v, dt_sub);
 }
 
 // ===========================================================================
@@ -468,6 +581,7 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
     ctx.nodes.conc_old = ctx.nodes.conc;
 
     projectHydraulics(ctx, dt);
+    if (disp_active_) updateDispersion(ctx);
 
     // Node volumes resync to the solver's each routing step (the store keeps
     // its own between substeps only).

@@ -103,6 +103,14 @@ struct SpeciesKernelView {
     double       dispersion    = 0.0;
     bool         hllc          = true;
 
+    /// Per-cell dispersion coefficients [n_cells], ft²/s (phase E3:
+    /// per-conduit user overrides + FISCHER auto-computation). When null,
+    /// the scalar `dispersion` above applies uniformly — the pre-E3 path,
+    /// bitwise-unchanged (see the exactness note in dispersionSolve). When
+    /// set, `dispersion` is ignored and each interior face uses the
+    /// arithmetic mean of its two cells' coefficients.
+    const std::vector<double>* cell_dispersion = nullptr;
+
     // Hydrodynamic face records of the current substep (read-only).
     const std::vector<double>* f_mass  = nullptr;  ///< positivity-scaled mass flux
     const std::vector<double>* f_sstar = nullptr;  ///< HLLC contact speed
@@ -140,7 +148,8 @@ void limitSpeciesFluxes(const SpeciesKernelView& v, int species, double dt);
 
 /// Implicit longitudinal dispersion (decision D-FV1): one Thomas tridiagonal
 /// solve per cell chain per species; unconditionally stable, removes the
-/// Δx²/(2·D_L) explicit constraint.
+/// Δx²/(2·D_L) explicit constraint. E3: honours `v.cell_dispersion` when set
+/// (per-conduit / FISCHER coefficients); scalar `v.dispersion` otherwise.
 void dispersionSolve(const SpeciesKernelView& v, double dt);
 
 }  // namespace openswmm::transport::fvkernels
