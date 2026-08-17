@@ -255,7 +255,7 @@ TEST_F(ReactionLegacyBindingTest, MsxFormulaReadsPollutant) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4 — pollutant kinetics rows are a defined E4/R6 deferral error.
+// Gate 4 — pollutant kinetics rows are a defined R4b deferral error.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, PollutantKineticsRowErrors) {
     write_rxn("_r4_pk.rxn",
@@ -417,9 +417,14 @@ TEST_F(ReactionLegacyBindingTest, BypassedBindingIsAnnounced) {
     write_deck("_r4_byp_ard.inp", pc, "QUALITY_SOLVER EULERIAN_ARD\n");
     ASSERT_EQ(swmm_engine_open(engine_, "_r4_byp_ard.inp", "_r4_byp_ard.rpt",
                                "_r4_byp_ard.out", nullptr), SWMM_OK);
-    EXPECT_TRUE(warned(as_cpp_engine(engine_).context(),
-                       "does not yet run reactions"))
-        << "EULERIAN_ARD bypasses the LEGACY binding without a word";
+    // E4/R6: EULERIAN_ARD is no longer a bypass — the ARD engine runs its
+    // own reaction binding with MSX species transported on the mesh, so the
+    // R4-era "does not yet run reactions" warning must be GONE. The
+    // positive coverage (reactions actually running under ARD) lives in
+    // test_reaction_ard_binding.cpp.
+    EXPECT_FALSE(warned(as_cpp_engine(engine_).context(),
+                        "does not yet run reactions"))
+        << "the retired R4-era EULERIAN_ARD bypass warning still fires";
 
     // A second engine — the fixture's is already open on the ARD deck.
     SWMM_Engine e2 = swmm_engine_create();

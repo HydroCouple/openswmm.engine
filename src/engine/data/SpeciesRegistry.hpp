@@ -26,12 +26,12 @@
  *          Reserved species (water age A1, temperature H1) append with
  *          their reserved kinds when those phases land.
  *
- *          Engine consumption note (recorded honestly): as of T0a the
- *          transport engines still size their state from
- *          `n_pollutants()` — the registry's `transported_count()` equals
- *          the pollutant count until MSX species transport lands with
- *          R6/E4, at which point the engines re-point here and the E1
- *          shim is fully retired.
+ *          Engine consumption note: as of E4/R6 the ARD engine carries
+ *          pollutants + MSX_BULK species on its mesh (it sizes from
+ *          n_pollutants() + ReactionData::n_species(), refusing WALL);
+ *          `transported_count()` counts POLLUTANT + MSX_BULK to match.
+ *          The LEGACY engine still transports pollutants only (MSX
+ *          transport under LEGACY is plan phase R4b).
  *
  * @ingroup engine_data
  *
@@ -88,9 +88,16 @@ public:
     int count() const noexcept { return static_cast<int>(name_.size()); }
     int pollutant_count() const noexcept { return n_pollutants_; }
 
-    /// Species the transport engines carry. Until R6/E4 this equals the
-    /// pollutant count (see the header note).
-    int transported_count() const noexcept { return n_pollutants_; }
+    /// Species the ARD engine carries on its mesh: POLLUTANT + MSX_BULK
+    /// (E4/R6). WALL species are element-local; reserved kinds join with
+    /// their phases (A1/H1).
+    int transported_count() const noexcept {
+        int n = 0;
+        for (const auto k : kind_)
+            if (k == SpeciesKind::POLLUTANT || k == SpeciesKind::MSX_BULK)
+                ++n;
+        return n;
+    }
 
     const std::string& name(int i) const { return name_[static_cast<std::size_t>(i)]; }
     SpeciesKind kind(int i) const { return kind_[static_cast<std::size_t>(i)]; }

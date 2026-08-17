@@ -29,21 +29,24 @@
  *          same face fluxes, and results publish back into the legacy
  *          links.conc / nodes.conc arrays so reporting is unchanged.
  *
- *          Scope as of E3 (see the validation handoffs): conservative
+ *          Scope as of E4/R6 (see the validation handoffs): conservative
  *          transport with structures (pumps/orifices/weirs/outlets) as
  *          zero-volume passthrough of the donor node store, persistent
- *          user quality-mass-flux forcing, and longitudinal dispersion
- *          (per-conduit user coefficients and/or the Fischer et al. 1979
- *          auto-computation, configured through the transport.ard process
- *          component — see data/ArdConfigData.hpp) via the shared implicit
- *          per-chain dispersionSolve kernel, sequentially split after
- *          advection each substep. Still pending: kdecay/treatment/reactions (shared
- *          reaction module, E4); direct consumption of the FV solver's own
- *          cell state instead of the projection (E2b); storage mixing
- *          models beyond CMSTR (E2b, shared with LARD); mass-balance
- *          ledger rows (E5). A model that requests EULERIAN_ARD with
- *          kdecay or treatment configured gets a warning that those are
- *          not yet applied under this engine.
+ *          user quality-mass-flux forcing, longitudinal dispersion
+ *          (per-conduit user coefficients and/or Fischer et al. 1979 via
+ *          the transport.ard component, E3) sequentially split after
+ *          advection each substep, and REACTIONS (E4/R6, Lie-split per
+ *          routing step): exact-exponential kdecay plus MSX species
+ *          integration per cell (pipe scope) and node store (tank scope)
+ *          through the shared reaction module. MSX species are TRANSPORTED
+ *          on the mesh under this engine — the state carries pollutant
+ *          rows first (np-aligned) then the MSX rows; the R4b
+ *          element-local limitation is LEGACY-only. WALL species fall
+ *          back to LEGACY with a warning. Still pending: treatment
+ *          interop, sources/BCs, and mass-balance ledger rows (E5);
+ *          direct consumption of the FV solver's own cell state instead
+ *          of the projection (E2b); storage mixing models beyond CMSTR
+ *          (E2b, shared with LARD).
  *
  * @ingroup engine_transport
  *

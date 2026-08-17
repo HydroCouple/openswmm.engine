@@ -208,11 +208,21 @@ void applyArdSections(SimulationContext& ctx,
                 "under the LEGACY engine. Set [OPTIONS] QUALITY_SOLVER "
                 "EULERIAN_ARD to activate it.");
         } else if (ctx.n_pollutants() == 0) {
-            ctx.warnings.push_back(
-                "A transport.ard component configures dispersion but the "
-                "model has no [POLLUTANTS] — the ARD engine transports "
-                "pollutants only until plan phase E4/R6, so nothing "
-                "disperses this simulation.");
+            // E4/R6: MSX species now transport (and disperse) under the ARD
+            // engine, so an MSX-only model is no longer a bypass. The
+            // reactions component may apply before OR after this hook, so
+            // test the [PROCESS_COMPONENTS] registrations, which are
+            // order-independent, rather than ctx.reactions.
+            bool has_reactions_component = false;
+            for (const auto& spec : ctx.process_component_specs)
+                if (spec.id == "org.hydrocouple.openswmm.reactions")
+                    has_reactions_component = true;
+            if (!has_reactions_component)
+                ctx.warnings.push_back(
+                    "A transport.ard component configures dispersion but the "
+                    "model has no [POLLUTANTS] and no reactions component — "
+                    "there are no transported species, so nothing disperses "
+                    "this simulation.");
         }
     }
 }

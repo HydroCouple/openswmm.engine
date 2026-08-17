@@ -190,15 +190,10 @@ void warnIfLegacyBindingBypassed(SimulationContext& ctx) {
             "A reactions component is configured but IGNORE_QUALITY is YES — "
             "the quality stage does not run, so no species react and no "
             "pollutant decays this simulation.");
-        return;
     }
-    if (ctx.options.quality_solver == QualitySolverKind::EULERIAN_ARD) {
-        ctx.warnings.push_back(
-            "A reactions component is configured but QUALITY_SOLVER is "
-            "EULERIAN_ARD, which does not yet run reactions (its binding "
-            "arrives with plan phase R6) — no MSX species react this "
-            "simulation. Use QUALITY_SOLVER LEGACY to run them today.");
-    }
+    // EULERIAN_ARD is no longer a bypass: the ARD engine runs its own
+    // reaction binding as of E4/R6 (ReactionArdBinding), with MSX species
+    // transported on the mesh. The R4-era warning is retired.
 }
 
 }  // namespace openswmm::transport

@@ -244,9 +244,10 @@ void parseExpressions(SimulationContext& ctx,
                 errors.push_back(std::string(sec) + " '" + tok[1] +
                                  "' is a pollutant — pollutant kinetics "
                                  "(RATE/EQUIL/FORMULA on a pollutant) arrive "
-                                 "with plan phase E4/R6; pollutants may be "
+                                 "with plan phase R4b; pollutants may be "
                                  "REFERENCED read-only in MSX expressions "
-                                 "today.");
+                                 "today, and kdecay applies under every "
+                                 "engine.");
             } else {
                 errors.push_back(std::string(sec) + " undeclared species '" +
                                  tok[1] +

@@ -33,6 +33,7 @@
 #include "../../../core/UnitConversion.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
 #include "../../fvkernels/SpeciesTransportKernels.hpp"
+#include "../ReactionModule/ReactionArdBinding.hpp"
 
 namespace openswmm::transport {
 
@@ -70,7 +71,25 @@ bool ArdEngine::init(SimulationContext& ctx) {
     warnings_.clear();
     initialized_ = false;
 
-    const int ns = ctx.n_pollutants();
+    // E4/R6: the mesh state carries pollutants (rows 0..np-1, index-aligned
+    // with the legacy pollutant index) plus the MSX species (rows np..) when
+    // a reactions component is active — MSX species are TRANSPORTED under
+    // this engine, retiring the R4b element-local limitation here. WALL
+    // species have no transport semantics yet: fall back to LEGACY (whose
+    // R4 binding runs them element-locally) with a precise warning.
+    const int np = ctx.n_pollutants();
+    int nm = 0;
+    if (transport::ardReactionsActive(ctx)) {
+        if (transport::ardHasWallSpecies(ctx)) {
+            warnings_.push_back(
+                "QUALITY_SOLVER EULERIAN_ARD: WALL species have no transport "
+                "semantics under this engine yet — falling back to LEGACY, "
+                "which runs them per element (R4).");
+            return false;
+        }
+        nm = ctx.reactions.n_species();
+    }
+    const int ns = np + nm;
     if (ns <= 0) return false;
 
     const auto report = fv::buildNetworkMesh(ctx, ctx.options.fv, mesh_);
@@ -118,8 +137,11 @@ bool ArdEngine::init(SimulationContext& ctx) {
     node_vol_.assign(static_cast<std::size_t>(nn), 0.0);
 
     // Initial state: cell areas from link volume spread uniformly over the
-    // conduit; concentrations from the link's initial quality; node stores
-    // from the node's initial quality and current volume.
+    // conduit; pollutant rows (s < np) from the link's/node's initial
+    // quality — the legacy arrays are np-STRIDED, not ns-strided (E4/R6
+    // stride audit); MSX rows (s >= np) from the component's GLOBAL initial
+    // values, matching R4's element-state seeding.
+    const auto unp = static_cast<std::size_t>(np);
     const int n_links = ctx.n_links();
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
@@ -135,19 +157,27 @@ bool ArdEngine::init(SimulationContext& ctx) {
         for (int i = 0; i < n; ++i) {
             const auto uc = static_cast<std::size_t>(b + i);
             state_.cell_a[uc] = a0;
-            for (int s = 0; s < ns; ++s) {
+            for (int s = 0; s < np; ++s) {
                 state_.cell_phi[static_cast<std::size_t>(s) * unc + uc] =
-                    ctx.links.conc[static_cast<std::size_t>(link) * uns +
+                    ctx.links.conc[static_cast<std::size_t>(link) * unp +
                                    static_cast<std::size_t>(s)];
+            }
+            for (int m = 0; m < nm; ++m) {
+                state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
+                    ctx.reactions.init_global[static_cast<std::size_t>(m)];
             }
         }
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         node_vol_[und] = ctx.nodes.volume[und];
-        for (int s = 0; s < ns; ++s)
+        for (int s = 0; s < np; ++s)
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
-                ctx.nodes.conc[und * uns + static_cast<std::size_t>(s)] *
+                ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] *
+                node_vol_[und];
+        for (int m = 0; m < nm; ++m)
+            node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
+                ctx.reactions.init_global[static_cast<std::size_t>(m)] *
                 node_vol_[und];
     }
 
@@ -182,15 +212,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
         disp_active_ = true;
     }
 
-    bool has_decay = false;
-    for (int s = 0; s < ns; ++s)
-        if (ctx.pollutants.k_decay[static_cast<std::size_t>(s)] != 0.0)
-            has_decay = true;
-    if (has_decay)
-        warnings_.push_back(
-            "QUALITY_SOLVER EULERIAN_ARD (E1): first-order decay (kdecay) is "
-            "not yet applied under this engine — arrives with the shared "
-            "reaction module (plan phase E4).");
+    // E4: kdecay is applied by the reaction stage (exact exponential) — the
+    // E1 "not yet applied" warning is retired.
 
     initialized_ = true;
     return true;
@@ -500,20 +523,41 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         // mixAtNodes, which multiplies it by dt), so it integrates over dt_sub.
         // Prorating the rate instead of integrating it made every external
         // load land a factor of dt_step too small.
+        //
+        // E4/R6 stride audit: qual_mass_in is a POLLUTANT array
+        // ([node * np + p]) — only the pollutant rows receive external
+        // loads. MSX species have no loading pathway until [TRANSPORT_
+        // SOURCES]/[TRANSPORT_BOUNDARIES] land (E5): inflow water carries
+        // ZERO MSX concentration, so sustained inflow dilutes MSX stores —
+        // the documented default, and the transport observable the R6 gate
+        // rides on.
         node_vol_[und] += load_frac * ctx.nodes.qual_vol_in[und];
-        for (int s = 0; s < ns; ++s) {
+        const int np_l = ctx.n_pollutants();
+        const auto unp_l = static_cast<std::size_t>(np_l);
+        for (int s = 0; s < np_l; ++s) {
             node_mass_[und * uns + static_cast<std::size_t>(s)] += std::max(
                 0.0, dt_sub *
-                         ctx.nodes.qual_mass_in[und * uns +
+                         ctx.nodes.qual_mass_in[und * unp_l +
                                                 static_cast<std::size_t>(s)]);
             // Persistent user quality mass flux is NOT added here: it is folded
             // into qual_mass_in by QualitySolver::addExtInflowLoads(), the same
             // loader stage legacy uses, so the line above already carries it.
             // Adding it a second time here would double the forced mass.
+        }
+        // The non-negativity floor is a property of a STORE, not of a
+        // pollutant, so it runs over every row — including the MSX rows the
+        // load loop above deliberately skips. Narrowing this clamp along
+        // with the load stride left MSX store masses unfloored: a node that
+        // repeatedly empties (the junction just upstream of an outfall)
+        // accumulated a large oscillating NEGATIVE mass, which the node
+        // boundary-face override then donated into the first cell of the
+        // adjoining conduit. Symptom was a 0.67 mg/L divergence confined to
+        // the outfall-adjacent conduit's MSX rows while every pollutant row
+        // stayed bit-identical.
+        for (int s = 0; s < ns; ++s)
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
                 std::max(0.0, node_mass_[und * uns +
                                          static_cast<std::size_t>(s)]);
-        }
     }
 
     // 5. Structures (E2): pumps/orifices/weirs/outlets are zero-volume
@@ -646,6 +690,17 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
 
     for (int i = 0; i < nsub; ++i) substep(ctx, dt_sub, load_frac);
 
+    // E4: reaction stage over the full routing step, Lie-split after the
+    // advection–dispersion subcycle (roadmap lesson 13 — first-order
+    // splitting, documented; the integrator substeps adaptively inside):
+    // exact-exponential kdecay on pollutant rows + MSX integration per cell
+    // (pipe scope) and per node store (tank scope).
+    transport::reactArdStage(
+        ctx, dt, state_.cell_phi.data(), state_.cell_a.data(),
+        mesh_.n_cells(), node_mass_.data(), node_vol_.data(),
+        static_cast<int>(node_vol_.size()), ctx.n_pollutants(),
+        state_.n_species, kMinStoreVol);
+
     publish(ctx);
 }
 
@@ -655,8 +710,26 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
 
 void ArdEngine::publish(SimulationContext& ctx) {
     const int ns = state_.n_species;
+    const int np = ctx.n_pollutants();
+    const int nm = ns - np;   // MSX rows (0 when no reactions component)
     const auto uns = static_cast<std::size_t>(ns);
+    const auto unp = static_cast<std::size_t>(np);
+    const auto unm = static_cast<std::size_t>(nm > 0 ? nm : 0);
     const auto unc = static_cast<std::size_t>(mesh_.n_cells());
+
+    // E4/R6: MSX rows publish into the R4 element-state arrays
+    // ([element * nm + m]) so reporting and the C API read one place under
+    // either engine. Sized here (NOT via the legacy binding's ensure, whose
+    // R4b warning does not apply — species ARE transported under ARD).
+    auto& rx = ctx.reactions;
+    if (nm > 0) {
+        const auto want_l = static_cast<std::size_t>(ctx.n_links()) * unm;
+        const auto want_n = static_cast<std::size_t>(ctx.n_nodes()) * unm;
+        if (rx.msx_link_conc.size() != want_l)
+            rx.msx_link_conc.assign(want_l, 0.0);
+        if (rx.msx_node_conc.size() != want_n)
+            rx.msx_node_conc.assign(want_n, 0.0);
+    }
 
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
@@ -673,8 +746,13 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 m   += dv * state_.cell_phi[sb * unc + uc];
                 vol += dv;
             }
-            ctx.links.conc[static_cast<std::size_t>(link) * uns + sb] =
-                (vol > 1.0e-12) ? m / vol : 0.0;
+            const double conc = (vol > 1.0e-12) ? m / vol : 0.0;
+            if (s < np)
+                ctx.links.conc[static_cast<std::size_t>(link) * unp + sb] =
+                    conc;
+            else
+                rx.msx_link_conc[static_cast<std::size_t>(link) * unm +
+                                 static_cast<std::size_t>(s - np)] = conc;
         }
     }
 
@@ -683,16 +761,22 @@ void ArdEngine::publish(SimulationContext& ctx) {
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double vol = node_vol_[und];
-        for (int s = 0; s < ns; ++s)
-            ctx.nodes.conc[und * uns + static_cast<std::size_t>(s)] =
+        for (int s = 0; s < ns; ++s) {
+            const double conc =
                 (vol > 1.0e-12)
                     ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
                     : 0.0;
+            if (s < np)
+                ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] = conc;
+            else
+                rx.msx_node_conc[und * unm +
+                                 static_cast<std::size_t>(s - np)] = conc;
+        }
     }
 
     // Structure links (E2) report the donor node's published concentration —
     // the zero-volume passthrough convention (matches legacy, which sets a
-    // structure's quality from its upstream node).
+    // structure's quality from its upstream node). E4/R6: MSX rows too.
     const int n_struct = static_cast<int>(mesh_.struct_link.size());
     for (int i = 0; i < n_struct; ++i) {
         const auto ui = static_cast<std::size_t>(i);
@@ -702,10 +786,14 @@ void ArdEngine::publish(SimulationContext& ctx) {
         const int donor_n = (q >= 0.0) ? mesh_.struct_n1[ui] : mesh_.struct_n2[ui];
         if (donor_n < 0 || donor_n >= nn) continue;
         const auto ud = static_cast<std::size_t>(donor_n);
-        for (int s = 0; s < ns; ++s)
-            ctx.links.conc[static_cast<std::size_t>(link) * uns +
+        for (int s = 0; s < np; ++s)
+            ctx.links.conc[static_cast<std::size_t>(link) * unp +
                            static_cast<std::size_t>(s)] =
-                ctx.nodes.conc[ud * uns + static_cast<std::size_t>(s)];
+                ctx.nodes.conc[ud * unp + static_cast<std::size_t>(s)];
+        for (int m2 = 0; m2 < nm; ++m2)
+            rx.msx_link_conc[static_cast<std::size_t>(link) * unm +
+                             static_cast<std::size_t>(m2)] =
+                rx.msx_node_conc[ud * unm + static_cast<std::size_t>(m2)];
     }
 }
 
