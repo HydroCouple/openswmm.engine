@@ -137,7 +137,15 @@ SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const ch
     // station_id (not the CSV column-name slot used by the "path:col" form).
     ctx.gages.file_path[uidx]   = path;
     ctx.gages.station_id[uidx]  = station_id ? station_id : "";
-    ctx.gages.file_format[uidx] = openswmm::RainFileFormat::STAN_PRCP;
+    // B1 fix: do NOT unconditionally force STAN_PRCP — that destroyed a
+    // USER_CSV gage's column binding when the GUI edited the path. Preserve
+    // an existing USER_CSV format; otherwise auto-detect (a non-empty
+    // col_name implies the multi-column "path:col" form).
+    if (ctx.gages.file_format[uidx] != openswmm::RainFileFormat::USER_CSV) {
+        ctx.gages.file_format[uidx] = !ctx.gages.col_name[uidx].empty()
+                                        ? openswmm::RainFileFormat::USER_CSV
+                                        : openswmm::RainFileFormat::STAN_PRCP;
+    }
     ctx.gages.source[uidx]      = openswmm::RainSource::FILE_RAIN;
     return SWMM_OK;
 }
@@ -148,8 +156,49 @@ SWMM_ENGINE_API int swmm_gage_set_station_id(SWMM_Engine engine, int idx, const 
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     auto uidx = static_cast<std::size_t>(idx);
+    // B1 fix: only the station id changes here. Forcing file_format to
+    // STAN_PRCP silently corrupted USER_CSV gages when a host edited the
+    // Station ID field.
     ctx.gages.station_id[uidx]  = station_id ? station_id : "";
-    ctx.gages.file_format[uidx] = openswmm::RainFileFormat::STAN_PRCP;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_set_file_column(SWMM_Engine engine, int idx, const char* column) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    auto uidx = static_cast<std::size_t>(idx);
+    ctx.gages.col_name[uidx] = column ? column : "";
+    // A named column only exists in the multi-column "path:col" form, so a
+    // non-empty selector implies USER_CSV. Clearing it leaves the format
+    // alone: an empty column on a USER_CSV gage means "first data column".
+    if (!ctx.gages.col_name[uidx].empty())
+        ctx.gages.file_format[uidx] = openswmm::RainFileFormat::USER_CSV;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_set_file_format(SWMM_Engine engine, int idx, int format) {
+    CHECK_HANDLE(engine);
+    // Validate against RainFileFormat (GageData.hpp): UNKNOWN(-1)..USER_CSV(6).
+    if (format < static_cast<int>(openswmm::RainFileFormat::UNKNOWN) ||
+        format > static_cast<int>(openswmm::RainFileFormat::USER_CSV))
+        return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    auto uidx = static_cast<std::size_t>(idx);
+    const auto fmt = static_cast<openswmm::RainFileFormat>(format);
+    ctx.gages.file_format[uidx] = fmt;
+    // The row selectors are mutually exclusive — a standard rain file picks
+    // rows by station id and has no columns; a multi-column file picks a
+    // column and has no station column. Clearing the inapplicable one keeps
+    // the gage in a state InpWriter can express, and gives a host an explicit
+    // way OUT of USER_CSV (set_filename/set_file_column both preserve it).
+    if (fmt == openswmm::RainFileFormat::USER_CSV)
+        ctx.gages.station_id[uidx].clear();
+    else
+        ctx.gages.col_name[uidx].clear();
     return SWMM_OK;
 }
 
@@ -259,6 +308,24 @@ SWMM_ENGINE_API int swmm_gage_get_station_id(SWMM_Engine engine, int idx, char* 
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     gage_fill_buf(buf, buflen, ctx.gages.station_id[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_get_file_column(SWMM_Engine engine, int idx, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    gage_fill_buf(buf, buflen, ctx.gages.col_name[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gage_get_file_format(SWMM_Engine engine, int idx, int* format) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    if (format)
+        *format = static_cast<int>(ctx.gages.file_format[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 

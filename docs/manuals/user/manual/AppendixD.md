@@ -264,7 +264,7 @@ Remarks:
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file.
 The station name and depth units entries are only required when using a user-prepared formatted rainfall file.
 
-**New in OpenSWMM v6:** A multi-column CSV rain file can be referenced by appending a colon and column name to the file path, e.g. `FILE "rain.csv:EAST_GAGE"`. The engine opens the CSV, locates the column whose header matches the given name, and reads the rainfall values from that column. This allows a single CSV file to supply data for multiple rain gages.
+**New in OpenSWMM v6:** A multi-column rain file can be referenced by appending a colon and column name to the file path, e.g. `FILE "rain.csv:EAST_GAGE"`. The engine opens the file, locates the column whose header matches the given name (case-insensitive), and reads the rainfall values from that column; an empty column name selects the first data column. Comma- and tab-delimited files with a header row are supported, as is the PCSWMM `.tsf` format (tab-delimited, `IDs:` header row, 12-hour AM/PM date-times) — the format is detected automatically from the file's contents. This allows a single file to supply data for multiple rain gages (and named time series — see the [TIMESERIES] section); each such file is read from disk only once per model open, regardless of how many gages or series reference it.
 
  
 ### Section: [EVAPORATION]
@@ -1613,6 +1613,8 @@ There are two options for supplying the data for a time series:
     through an external data file named with the third format.
 When direct data entry is used, multiple date-time-value or time-value entries can appear on a line. If more than one line is needed, the table's name must be repeated as the first entry on subsequent lines.
 When an external file is used, each line in the file must use the same formats listed above, except that only one date-time-value (or time-value) entry is allowed per line. Any line that begins with a semicolon is considered a comment line and is ignored. Blank lines are also permitted. Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
+
+**New in OpenSWMM v6:** The external file may also be a multi-column series file — a comma- or tab-delimited file with a header row whose first column holds a full date-time, or a PCSWMM `.tsf` file (tab-delimited with an `IDs:` header and 12-hour AM/PM date-times). Select a column by appending a colon and the column's header name to the file path, e.g. `TS_EAST FILE "rain_2024.csv:EAST_GAGE"`. Without a column name the first data column is used. A single multi-column file can supply any number of time series and rain gages and is read from disk only once per model open. The format (CSV/TSV/TSF) is detected automatically from the file's contents.
 
 There are two options for describing the occurrence time of time series data:  
     as calendar date plus time of day (which requires that at least one date, at the start of the series, be entered)  

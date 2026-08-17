@@ -26,6 +26,7 @@
  */
 
 #include "PostParseResolver.hpp"
+#include "MultiColumnSeriesFile.hpp"
 #include "../core/Constants.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/PathResolver.hpp"
@@ -70,6 +71,10 @@ using openswmm::WARN_MAX_DEPTH_INCREASED;
 //   MM/DD/YYYY  H:MM  value
 //   ...
 // Fields may be tab or space delimited.
+//
+// Multi-column files (CSV/TSV/TSF, optionally referenced as "path:column")
+// are routed through the shared MultiColumnSeriesFile parse-once cache
+// instead — see load_external_timeseries_files below.
 // -------------------------------------------------------------------------
 // -------------------------------------------------------------------------
 // Slice IO-3: resolve every external-file slot's `original` token against
@@ -117,7 +122,8 @@ void resolve_external_file_slots(SimulationContext& ctx,
     }
 }
 
-static void load_external_timeseries_files(SimulationContext& ctx, const std::string& inp_dir) {
+static void load_external_timeseries_files(SimulationContext& ctx, const std::string& inp_dir,
+                                           MultiColumnFileCache& file_cache) {
     for (std::size_t t = 0; t < ctx.tables.tables.size(); ++t) {
         auto& tbl = ctx.tables.tables[t];
         if (tbl.type != TableType::TIMESERIES) continue;
@@ -132,23 +138,90 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
         // the cached resolution; fall back to inline resolution for
         // callers that built the model programmatically and never ran
         // the resolver pass.
-        std::string file_path = !tbl.file_path.absolute.empty()
-                                  ? tbl.file_path.absolute
-                                  : tbl.file_path.str();
-
-        // Strip optional :column suffix (e.g. "path.dat:ColName")
-        auto colon_pos = file_path.rfind(':');
-        // Only strip if it's not a drive letter (e.g. "C:\path")
-        if (colon_pos != std::string::npos && colon_pos > 1) {
-            file_path = file_path.substr(0, colon_pos);
+        std::string file_path;
+        if (!tbl.file_path.absolute.empty()) {
+            file_path = tbl.file_path.absolute;  // already anchored to the .inp dir
+        } else {
+            file_path = tbl.file_path.str();
+            // Resolve relative paths against INP file directory (legacy
+            // fallback path — kept so a fresh programmatic Table still loads
+            // even without the resolver pass). Applies only to the verbatim
+            // token: .absolute is already anchored, and prepending inp_dir a
+            // second time broke cwd-relative opens.
+            if (!file_path.empty() && file_path[0] != '/' && file_path[0] != '\\') {
+                if (!inp_dir.empty())
+                    file_path = inp_dir + "/" + file_path;
+            }
         }
 
-        // Resolve relative paths against INP file directory (legacy
-        // fallback path — kept so a fresh programmatic Table still loads
-        // even without the resolver pass).
-        if (!file_path.empty() && file_path[0] != '/' && file_path[0] != '\\') {
-            if (!inp_dir.empty())
-                file_path = inp_dir + "/" + file_path;
+        // Split the optional :column suffix (e.g. "path.csv:ColName") with the
+        // SHARED rule the gage reader uses (MultiColumnSeriesFile.hpp): last
+        // colon, ignoring a drive letter and any colon that belongs to a
+        // directory name. Both consumers must derive the same path or they key
+        // the cache differently and the file is read twice.
+        std::string col_name;
+        {
+            std::string path_only;
+            split_series_file_token(file_path, path_only, col_name);
+            file_path = path_only;
+        }
+
+        // Multi-column route: an explicit `:column` selector, or a file
+        // whose first content line reads as a header (CSV/TSV/TSF), goes
+        // through the shared parse-once cache so a file referenced by many
+        // series — and by rain gages — is read from disk exactly once per
+        // resolve pass. Plain `date time value` files keep the legacy
+        // whitespace path below.
+        if (!col_name.empty() || looks_like_multicolumn_series_file(file_path)) {
+            std::vector<std::string> file_errors;
+            SeriesFileStatus st = SeriesFileStatus::OK;
+            const ParsedSeriesFile* pf =
+                file_cache.get_or_parse(file_path, file_errors, &st);
+            if (!pf && st == SeriesFileStatus::OPEN_FAILED) {
+                // Same final fallback the legacy fopen chain had: the
+                // verbatim token (minus any :column suffix) relative to the
+                // current working directory.
+                std::string verbatim, vcol;
+                split_series_file_token(tbl.file_path.str(), verbatim, vcol);
+                if (verbatim != file_path)
+                    pf = file_cache.get_or_parse(verbatim, file_errors, &st);
+            }
+            if (!pf) {
+                // Loud, not silent: an unreadable FILE series previously
+                // loaded as empty and read 0.0 at every lookup.
+                ctx.errors.push_back(format_error(
+                    st == SeriesFileStatus::OPEN_FAILED
+                        ? openswmm::ERR_TABLE_FILE_OPEN
+                        : openswmm::ERR_TABLE_FILE_READ,
+                    tbl.id));
+                continue;
+            }
+            const int col = col_name.empty() ? pf->first_data_column()
+                                             : pf->find_column(col_name);
+            if (col < 0) {
+                ctx.errors.push_back(format_error(
+                    openswmm::ERR_TABLE_FILE_READ, tbl.id,
+                    "column \"" + col_name + "\" not found in " + file_path));
+                continue;
+            }
+            const auto& vals = pf->columns[static_cast<std::size_t>(col)];
+            tbl.x.reserve(pf->dates.size());
+            tbl.y.reserve(pf->dates.size());
+            for (std::size_t i = 0; i < pf->dates.size(); ++i) {
+                if (std::isnan(vals[i])) continue;  // missing/unreadable cell
+                tbl.x.push_back(pf->dates[i]);
+                tbl.y.push_back(vals[i]);
+            }
+            if (tbl.x.empty()) {
+                ctx.errors.push_back(format_error(
+                    openswmm::ERR_TABLE_FILE_READ, tbl.id, file_path));
+                continue;
+            }
+            tbl.x.shrink_to_fit();
+            tbl.y.shrink_to_fit();
+            // file_path is intentionally retained (see the note at the end
+            // of the legacy path below).
+            continue;
         }
 
         // Open the file
@@ -157,7 +230,14 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
             // Try the verbatim token as a final fallback (covers absolute
             // paths and same-cwd cases when inp_dir was empty).
             fp = std::fopen(tbl.file_path.c_str(), "r");
-            if (!fp) continue; // Skip silently — legacy also reports ERROR 361
+            if (!fp) {
+                // Was a silent skip; legacy reports ERROR 361 and fails the
+                // open, so match it — an unloadable series otherwise reads
+                // as 0.0 everywhere with a clean-looking report.
+                ctx.errors.push_back(
+                    format_error(openswmm::ERR_TABLE_FILE_OPEN, tbl.id));
+                continue;
+            }
         }
 
         // Reserve from the file's actual size rather than a flat 100k rows.
@@ -208,6 +288,15 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
         }
         std::fclose(fp);
 
+        // Loud, not silent: a file that opened but yielded no parseable
+        // rows (wrong delimiter, wrong format) previously produced an
+        // empty series that read as 0.0 at every lookup.
+        if (tbl.x.empty()) {
+            ctx.errors.push_back(
+                format_error(openswmm::ERR_TABLE_FILE_READ, tbl.id, file_path));
+            continue;
+        }
+
         // Shrink to fit
         tbl.x.shrink_to_fit();
         tbl.y.shrink_to_fit();
@@ -231,141 +320,74 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
 // an inline [TIMESERIES] gage without polluting ctx.tables.
 // -------------------------------------------------------------------------
 // -------------------------------------------------------------------------
-// USER_CSV rain files
+// USER_CSV rain files (multi-column CSV / TSV / PCSWMM TSF)
 // -------------------------------------------------------------------------
-// `FILE "rain.csv:COLUMN"` — a header row, comma-separated, with the value
-// taken from the column whose header matches COLUMN. Column 1 carries a full
-// date-time. Values are in the PROJECT's rain units and are stored verbatim:
-// unlike the standard format there is no legacy interface file to be
-// bit-compatible with, so the read side interprets them per the gage's
-// declared Format exactly as it does for an inline [TIMESERIES] gage. See
-// gage::gageUnitsFactor, which is scoped to STAN_PRCP for this reason.
+// `FILE "rain.csv:COLUMN"` — a header row, with the value taken from the
+// column whose header matches COLUMN (empty column = first data column).
+// Column 0 carries a full date-time. The delimiter and TSF header form are
+// auto-detected by MultiColumnSeriesFile. Values are in the PROJECT's rain
+// units and are stored verbatim: unlike the standard format there is no
+// legacy interface file to be bit-compatible with, so the read side
+// interprets them per the gage's declared Format exactly as it does for an
+// inline [TIMESERIES] gage. See gage::gageUnitsFactor, which is scoped to
+// STAN_PRCP for this reason.
 // -------------------------------------------------------------------------
-
-/// Trim ASCII whitespace and surrounding double quotes.
-static std::string csv_trim(const std::string& s) {
-    std::size_t a = 0, b = s.size();
-    auto space = [](char c) {
-        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-    };
-    while (a < b && space(s[a])) ++a;
-    while (b > a && space(s[b - 1])) --b;
-    if (b - a >= 2 && s[a] == '"' && s[b - 1] == '"') { ++a; --b; }
-    return s.substr(a, b - a);
-}
-
-static std::vector<std::string> csv_split(const std::string& line) {
-    std::vector<std::string> out;
-    std::string cur;
-    bool in_quotes = false;
-    for (const char c : line) {
-        if (c == '"') { in_quotes = !in_quotes; cur.push_back(c); }
-        else if (c == ',' && !in_quotes) { out.push_back(csv_trim(cur)); cur.clear(); }
-        else cur.push_back(c);
-    }
-    out.push_back(csv_trim(cur));
-    return out;
-}
-
-static bool csv_iequals(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) return false;
-    for (std::size_t i = 0; i < a.size(); ++i)
-        if (std::tolower(static_cast<unsigned char>(a[i]))
-            != std::tolower(static_cast<unsigned char>(b[i]))) return false;
-    return true;
-}
-
-/// Parse a full date-time cell: ISO-8601 or MM/DD/YYYY, with optional clock.
-static bool csv_parse_datetime(const std::string& cell, double& out) {
-    int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
-    const char* c = cell.c_str();
-
-    // ISO-8601: YYYY-MM-DD[ T]HH:MM[:SS]
-    int n = std::sscanf(c, "%d-%d-%d%*[ T]%d:%d:%d", &y, &mo, &d, &h, &mi, &s);
-    if (n >= 3) {
-        if (n < 4) { h = mi = s = 0; }
-        else if (n < 6) { s = 0; }
-        out = datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
-        return true;
-    }
-
-    // US: MM/DD/YYYY[ ]HH:MM[:SS]
-    n = std::sscanf(c, "%d/%d/%d %d:%d:%d", &mo, &d, &y, &h, &mi, &s);
-    if (n >= 3) {
-        if (n < 5) { h = mi = s = 0; }
-        else if (n < 6) { s = 0; }
-        out = datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
-        return true;
-    }
-    return false;
-}
 
 static void load_rain_file_user_csv(SimulationContext& ctx, int g,
                                     const std::string& path,
-                                    double win_lo, double win_hi) {
+                                    double win_lo, double win_hi,
+                                    MultiColumnFileCache& file_cache) {
     const auto ug = static_cast<std::size_t>(g);
 
-    FILE* fp = std::fopen(path.c_str(), "r");
-    if (!fp) {
-        fp = std::fopen(ctx.gages.file_path[ug].c_str(), "r");
-        if (!fp) {
-            ctx.errors.push_back(format_error(openswmm::ERR_RAIN_FILE_OPEN, path));
-            return;
-        }
+    // Parse-once: the shared cache reads the file on first request; every
+    // other gage (and FILE timeseries) on the same file copies out of the
+    // same ParsedSeriesFile. CSV/TSV/TSF are auto-detected by content, so
+    // USER_CSV now means "multi-column text file" generally.
+    std::vector<std::string> file_errors;
+    SeriesFileStatus st = SeriesFileStatus::OK;
+    const ParsedSeriesFile* pf = file_cache.get_or_parse(path, file_errors, &st);
+    if (!pf && st == SeriesFileStatus::OPEN_FAILED &&
+        ctx.gages.file_path[ug].str() != path) {
+        // Same fallback the direct fopen had: try the verbatim token.
+        pf = file_cache.get_or_parse(ctx.gages.file_path[ug].str(), file_errors, &st);
     }
-
-    char line[4096];
-    if (!std::fgets(line, sizeof(line), fp)) {
-        std::fclose(fp);
-        ctx.errors.push_back(format_error(openswmm::ERR_RAIN_FILE_FORMAT, path));
+    if (!pf) {
+        ctx.errors.push_back(format_error(
+            st == SeriesFileStatus::OPEN_FAILED ? openswmm::ERR_RAIN_FILE_OPEN
+                                                : openswmm::ERR_RAIN_FILE_FORMAT,
+            path));
         return;
     }
 
-    const std::vector<std::string> headers = csv_split(line);
     const std::string& want = ctx.gages.col_name[ug];
-    int col = -1;
-    for (std::size_t i = 0; i < headers.size(); ++i)
-        if (csv_iequals(headers[i], want)) { col = static_cast<int>(i); break; }
-
-    if (col <= 0) {
-        // col 0 is the time stamp, so a match there is as wrong as no match.
-        std::fclose(fp);
+    // B2 fix: an empty column name selects the first data column, matching
+    // the documented default (GageData.hpp col_name) instead of erroring.
+    const int col = want.empty() ? pf->first_data_column()
+                                 : pf->find_column(want);
+    if (col < 0) {
         ctx.errors.push_back(format_error(openswmm::ERR_RAIN_FILE_FORMAT,
                                           path + " (column \"" + want + "\")"));
         return;
     }
+    const auto uc = static_cast<std::size_t>(col);
 
     Table series;
     series.type = TableType::TIMESERIES;
     series.id   = ctx.gage_names.name_of(g);
 
-    double first_date = 0.0, last_date = 0.0;
-    long   periods_precip = 0;
-    long   unparsed_rows  = 0;
-
-    while (std::fgets(line, sizeof(line), fp)) {
-        if (line[0] == ';' || line[0] == '#' || line[0] == '\n' || line[0] == '\r')
-            continue;
-        const std::vector<std::string> cells = csv_split(line);
-        if (static_cast<int>(cells.size()) <= col) continue;
-
-        double dt = 0.0;
-        if (!csv_parse_datetime(cells[0], dt)) { ++unparsed_rows; continue; }
-
-        char* endp = nullptr;
-        const double val = std::strtod(cells[static_cast<std::size_t>(col)].c_str(), &endp);
-        if (endp == cells[static_cast<std::size_t>(col)].c_str()) { ++unparsed_rows; continue; }
-
-        if (first_date == 0.0 || dt < first_date) first_date = dt;
-        if (dt > last_date) last_date = dt;
-        if (val > 0.0) ++periods_precip;
-
+    // Retain only the records needed to route the simulation window; the
+    // cache rows are already sorted ascending, so the copy stays sorted.
+    const auto& vals = pf->columns[uc];
+    for (std::size_t i = 0; i < pf->dates.size(); ++i) {
+        const double val = vals[i];
+        if (std::isnan(val)) continue;  // missing/unreadable cell
+        const double dt = pf->dates[i];
         if (dt < win_lo || dt > win_hi) continue;
         series.x.push_back(dt);
         series.y.push_back(val);
     }
-    std::fclose(fp);
 
+    const long unparsed_rows = pf->unparsed_rows + pf->col_unparsed_cells[uc];
     if (unparsed_rows > 0) {
         // One warning per gage, not per row: a mis-specified file would
         // otherwise bury the report under thousands of identical lines.
@@ -375,29 +397,18 @@ static void load_rain_file_user_csv(SimulationContext& ctx, int g,
                            std::to_string(unparsed_rows) + " row(s), " + path));
     }
 
-    if (!std::is_sorted(series.x.begin(), series.x.end())) {
-        std::vector<std::size_t> order(series.x.size());
-        for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
-        std::sort(order.begin(), order.end(),
-                  [&](std::size_t a, std::size_t b){ return series.x[a] < series.x[b]; });
-        std::vector<double> sx(series.x.size()), sy(series.y.size());
-        for (std::size_t i = 0; i < order.size(); ++i) {
-            sx[i] = series.x[order[i]];
-            sy[i] = series.y[order[i]];
-        }
-        series.x.swap(sx);
-        series.y.swap(sy);
-    }
     series.x.shrink_to_fit();
     series.y.shrink_to_fit();
 
-    ctx.gages.file_first_date[ug]     = first_date;
-    ctx.gages.file_last_date[ug]      = last_date;
-    ctx.gages.file_periods_precip[ug] = periods_precip;
+    // Whole-file, per-column statistics for the "Rainfall File Summary".
+    ctx.gages.file_first_date[ug]     = pf->col_first_date[uc];
+    ctx.gages.file_last_date[ug]      = pf->col_last_date[uc];
+    ctx.gages.file_periods_precip[ug] = pf->col_periods_precip[uc];
     ctx.gages.rain_series[ug]         = std::move(series);
 }
 
-void load_external_rain_files(SimulationContext& ctx) {
+static void load_external_rain_files_impl(SimulationContext& ctx,
+                                          MultiColumnFileCache& file_cache) {
     const int n_gages = ctx.gages.count();
     if (n_gages == 0) return;
 
@@ -413,14 +424,33 @@ void load_external_rain_files(SimulationContext& ctx) {
         const auto ug = static_cast<std::size_t>(g);
         if (ctx.gages.source[ug] != RainSource::FILE_RAIN) continue;
 
-        const bool is_csv = ctx.gages.file_format[ug] == RainFileFormat::USER_CSV;
+        bool is_csv = ctx.gages.file_format[ug] == RainFileFormat::USER_CSV;
         if (!is_csv && ctx.gages.file_format[ug] != RainFileFormat::STAN_PRCP) continue;
 
         std::string path = !ctx.gages.file_path[ug].absolute.empty()
                              ? ctx.gages.file_path[ug].absolute
                              : ctx.gages.file_path[ug].str();
 
-        if (is_csv) { load_rain_file_user_csv(ctx, g, path, win_lo, win_hi); continue; }
+        // A USER_CSV gage whose column is empty (= "first data column") is
+        // written as a bare `FILE "path"` token, because `FILE "path:"` is
+        // malformed for EPA SWMM / PCSWMM. That token re-parses as STAN_PRCP,
+        // so recover the format here, where the path is resolved and the file
+        // can be inspected: an empty station id plus multi-column CONTENT can
+        // only mean the compact form. The STAN_PRCP reader would otherwise
+        // fail every sscanf and hand back a silently empty series — the exact
+        // failure mode this change set exists to remove. Gated on an empty
+        // station id and on content, so a whitespace station file (which the
+        // sniff rejects) and any gage that names a station are untouched.
+        if (!is_csv && ctx.gages.station_id[ug].empty() &&
+            looks_like_multicolumn_series_file(path)) {
+            ctx.gages.file_format[ug] = RainFileFormat::USER_CSV;
+            is_csv = true;
+        }
+
+        if (is_csv) {
+            load_rain_file_user_csv(ctx, g, path, win_lo, win_hi, file_cache);
+            continue;
+        }
 
         FILE* fp = std::fopen(path.c_str(), "r");
         if (!fp) {
@@ -535,6 +565,15 @@ void load_external_rain_files(SimulationContext& ctx) {
         ctx.gages.file_periods_precip[ug] = periods_precip;
         ctx.gages.rain_series[ug]         = std::move(series);
     }
+}
+
+void load_external_rain_files(SimulationContext& ctx) {
+    // Standalone entry point (swmm_gage_reload_rain_files): a fresh cache
+    // per call still guarantees one parse per unique file within the call.
+    // The resolve pass instead shares one cache with the timeseries loader
+    // (see resolve_cross_references).
+    MultiColumnFileCache file_cache;
+    load_external_rain_files_impl(ctx, file_cache);
 }
 
 void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
@@ -1015,14 +1054,24 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Timeseries with FILE references (e.g., rainfall .dat files) need to be
     // loaded into memory before any date offset or gage resolution.
     const auto _pt_extfiles0 = perf::now();
-    load_external_timeseries_files(ctx, inp_dir);
+    {
+        // One parse-once cache shared by BOTH external-file loaders: a
+        // multi-column file referenced by any number of timeseries and rain
+        // gages is read from disk exactly once per resolve pass (plan
+        // MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17 §5). Freed at the end of
+        // this scope — every consumer has copied its column into its own
+        // x/y arrays by then.
+        MultiColumnFileCache series_file_cache;
+        load_external_timeseries_files(ctx, inp_dir, series_file_cache);
 
-    // -------------------------------------------------------------------------
-    // Load external FILE-source rain-gage data (standard SWMM rain files).
-    // Must run after resolve_external_file_slots (for absolute paths) and after
-    // options parsing (needs the simulation window to bound retained records).
-    // -------------------------------------------------------------------------
-    load_external_rain_files(ctx);
+        // ---------------------------------------------------------------------
+        // Load external FILE-source rain-gage data (standard SWMM rain files).
+        // Must run after resolve_external_file_slots (for absolute paths) and
+        // after options parsing (needs the simulation window to bound retained
+        // records).
+        // ---------------------------------------------------------------------
+        load_external_rain_files_impl(ctx, series_file_cache);
+    }
     perf::sec_res_extfiles += perf::since(_pt_extfiles0);
 
     // -------------------------------------------------------------------------

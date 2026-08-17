@@ -30,6 +30,10 @@
 #include "openswmm/engine/openswmm_gages.h"
 #include "openswmm/engine/openswmm_datetime.h"
 
+// Engine-internal test hook for the single-read assertion (plan
+// MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17 §5). Not part of the C API.
+#include "input/MultiColumnSeriesFile.hpp"
+
 namespace {
 
 // Working directory is tests/unit/engine/data/ (see that CMakeLists).
@@ -40,9 +44,13 @@ protected:
     SWMM_Engine engine_ = nullptr;
 
     void openModel(const char* rpt, const char* out) {
+        openModelAt(kInp, rpt, out);
+    }
+
+    void openModelAt(const char* inp, const char* rpt, const char* out) {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, kInp, rpt, out, nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(engine_, inp, rpt, out, nullptr), SWMM_OK);
     }
 
     void TearDown() override {
@@ -132,6 +140,118 @@ TEST_F(GageRainSeries, UserCsvGageProducesRainfallAtRuntime) {
     }
     swmm_engine_end(engine_);
     EXPECT_GT(peak, 0.0) << "a USER_CSV gage must actually rain";
+}
+
+// ---------------------------------------------------------------------------
+// Single-read guarantee: N gages + M FILE timeseries on ONE file ⇒ one parse
+// ---------------------------------------------------------------------------
+
+TEST_F(GageRainSeries, SharedFileIsParsedExactlyOnce) {
+    const long before = openswmm::input::multicolumn_parse_count_total();
+    // rain_shared.inp: 4 USER_CSV gages + 2 FILE timeseries, all on
+    // rain_multi.csv.
+    openModelAt("rain_series/rain_shared.inp",
+                "_rain_shared.rpt", "_rain_shared.out");
+    const long after = openswmm::input::multicolumn_parse_count_total();
+    EXPECT_EQ(after - before, 1)
+        << "six consumers of one file must trigger exactly one parse";
+
+    // And every consumer actually got its data.
+    for (const char* id : {"CSV_EAST", "CSV_WEST", "CSV_DEFAULT", "CSV_BARE"}) {
+        const int g = gageIndex(id);
+        ASSERT_GE(g, 0) << id;
+        int n = 0;
+        ASSERT_EQ(swmm_gage_get_rainfall_series_count(engine_, g, &n), SWMM_OK);
+        EXPECT_EQ(n, 4) << id;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B2 — empty column selector defaults to the FIRST data column
+// ---------------------------------------------------------------------------
+
+TEST_F(GageRainSeries, EmptyColumnNameLoadsFirstDataColumn) {
+    openModelAt("rain_series/rain_shared.inp",
+                "_rain_shared_b2.rpt", "_rain_shared_b2.out");
+
+    // CSV_DEFAULT is declared FILE "rain_multi.csv:" (empty column). The
+    // first data column is EAST_GAGE, so its series must equal CSV_EAST's
+    // (identical SCFs and no scale factors in this fixture).
+    const std::vector<double> east = seriesValues(gageIndex("CSV_EAST"));
+    const std::vector<double> dflt = seriesValues(gageIndex("CSV_DEFAULT"));
+    ASSERT_EQ(east.size(), 4u);
+    ASSERT_EQ(dflt.size(), 4u);
+    for (std::size_t i = 0; i < east.size(); ++i)
+        EXPECT_NEAR(dflt[i], east[i], 1e-12) << "row " << i;
+    EXPECT_GT(dflt[1], 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// The writer's empty-column form (a BARE path) must reload as USER_CSV
+// ---------------------------------------------------------------------------
+
+TEST_F(GageRainSeries, BarePathUserCsvGageLoadsFirstColumn) {
+    openModelAt("rain_series/rain_shared.inp",
+                "_rain_shared_bare.rpt", "_rain_shared_bare.out");
+
+    // CSV_BARE is declared FILE "rain_multi.csv" — no colon, no station/units
+    // tokens, which is what InpWriter emits for a USER_CSV gage with an empty
+    // column. The [RAINGAGES] grammar cannot distinguish that from STAN_PRCP,
+    // so the loader recovers the format from the file's content. Getting this
+    // wrong is silent: the STAN_PRCP reader fails every sscanf on a CSV and
+    // hands back an empty series that reads 0.0 forever.
+    const int bare = gageIndex("CSV_BARE");
+    ASSERT_GE(bare, 0);
+
+    int fmt = -1;
+    ASSERT_EQ(swmm_gage_get_file_format(engine_, bare, &fmt), SWMM_OK);
+    EXPECT_EQ(fmt, 6) << "a bare multi-column path must resolve to USER_CSV";
+
+    const std::vector<double> east = seriesValues(gageIndex("CSV_EAST"));
+    const std::vector<double> vals = seriesValues(bare);
+    ASSERT_EQ(vals.size(), 4u) << "bare path yielded an empty series";
+    ASSERT_EQ(east.size(), 4u);
+    for (std::size_t i = 0; i < vals.size(); ++i)
+        EXPECT_NEAR(vals[i], east[i], 1e-12) << "row " << i;
+    EXPECT_GT(vals[1], 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// P4 — PCSWMM TSF gage end-to-end (AM/PM datetimes, IDs: header)
+// ---------------------------------------------------------------------------
+
+TEST_F(GageRainSeries, TsfGageLoadsItsColumnWith24HourTimes) {
+    openModelAt("rain_series/rain_tsf.inp",
+                "_rain_tsf.rpt", "_rain_tsf.out");
+
+    const int g1 = gageIndex("TSF_G1");
+    const int g2 = gageIndex("TSF_G2");
+    ASSERT_GE(g1, 0);
+    ASSERT_GE(g2, 0);
+
+    int n = 0;
+    ASSERT_EQ(swmm_gage_get_rainfall_series_count(engine_, g1, &n), SWMM_OK);
+    ASSERT_EQ(n, 4) << "the TSF parameter/units header rows must be skipped";
+
+    std::vector<double> t1(4), v1(4);
+    ASSERT_EQ(swmm_gage_get_rainfall_series(engine_, g1, t1.data(), v1.data(), 4),
+              SWMM_OK);
+    const std::vector<double> v2 = seriesValues(g2);
+    ASSERT_EQ(v2.size(), 4u);
+
+    // SENSOR1 is exactly 2x SENSOR2 in the fixture — the wrong column (or a
+    // shifted index) breaks the ratio immediately.
+    for (int i = 1; i < 4; ++i) {
+        ASSERT_GT(v2[static_cast<std::size_t>(i)], 0.0);
+        EXPECT_NEAR(v1[static_cast<std::size_t>(i)] / v2[static_cast<std::size_t>(i)],
+                    2.0, 1e-9) << "row " << i;
+    }
+
+    // AM/PM decoding: 12:00:00 AM = midnight, 11:45:00 PM = 23:45 — the
+    // last record lies 23.75 h after the first.
+    EXPECT_NEAR((t1[3] - t1[0]) * 24.0, 23.75, 1e-9);
+    // 01:30:00 PM = 13:30.
+    EXPECT_NEAR((t1[2] - t1[0]) * 24.0, 13.5, 1e-9);
 }
 
 // ---------------------------------------------------------------------------

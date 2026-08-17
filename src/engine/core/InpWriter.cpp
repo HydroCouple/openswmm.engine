@@ -1031,12 +1031,16 @@ int writeInpFile(const SimulationContext& ctx_internal,
         const std::string tok = emit_path_token(ctx.gages.file_path[u],
                                                  dst_dir, force_abs_paths, warnings);
         if(ctx.gages.file_format[u]==RainFileFormat::USER_CSV){
-            // Compact openswmm extension — the reader expects one "path:col" token.
-            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s:%s\"",
+            // Compact openswmm extension — the reader expects one "path:col"
+            // token. An EMPTY column is a legal state (it means "first data
+            // column"), so emit the bare path rather than a dangling
+            // "path:" that reads as malformed to EPA SWMM / PCSWMM.
+            const std::string& col = ctx.gages.col_name[u];
+            const std::string src = col.empty() ? tok : tok + ":" + col;
+            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\"",
                           ctx.gage_names.name_of(j).c_str(),fmt,h,m,
                           ctx.gages.snow_factor[u],
-                          tok.c_str(),
-                          ctx.gages.col_name[u].c_str());
+                          src.c_str());
             if(sf!=1.0)std::fprintf(f," %.4g",sf);
         }else{
             // Legacy FILE grammar: Fname Station Units [StartDate] [SF] — the

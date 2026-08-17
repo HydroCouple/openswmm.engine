@@ -413,6 +413,15 @@ TableValidation validate_table(Table& tbl) {
 // ============================================================================
 // table_open_file
 // ============================================================================
+// NOTE (2026-08-17): this streaming, sliding-cache reader (and its
+// column_ids/column_map/table_lookup_column/table_step_column companions)
+// has no callers. The multi-column series feature was implemented with an
+// eager parse-once cache instead — see src/engine/input/MultiColumnSeriesFile
+// and plans/MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17.md (decision D1):
+// runtime consumers copy their column into their own x/y arrays, so wiring
+// this streaming path would have changed every lookup call site for no
+// footprint win at current model sizes. Left in place per repo guidelines
+// (do not delete pre-existing dead code).
 
 bool table_open_file(Table& tbl, std::size_t boundary_rows) {
     if (tbl.file_path.empty()) return false;
