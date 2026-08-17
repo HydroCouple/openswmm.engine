@@ -44,7 +44,8 @@
  *          - SchemeKeysConfigureTheEngine: [TRANSPORT_OPTIONS]
  *            SCALAR_SCHEME UPWIND must change the receding-front trajectory
  *            vs the MUSCL default (UPWIND is measurably more diffusive) and
- *            must no longer be a deferral error; TARGET_DX still defers.
+ *            must no longer be a deferral error; TARGET_DX opens since E5b
+ *            (its positive coverage lives in the E5b suite).
  *          - LegacyBypassWarnsForBoundaries: boundaries-only model.ard
  *            under QUALITY_SOLVER LEGACY warns (the E3/R4 bypass-warning
  *            surface extended beyond dispersion).
@@ -402,16 +403,20 @@ TEST(ArdTransportBcsTest, SchemeKeysConfigureTheEngine) {
         << "LIMITER SUPERBEE left the trajectory identical to the default — "
            "the model.ard key does not reach the engine.";
 
-    // TARGET_DX remains an open-item deferral.
+    // E5b FLIP (lesson 21, applied in the retiring changeset this time):
+    // TARGET_DX is no longer a deferral — it sets the transport-mesh cell
+    // length under non-FV hydraulics. Positive coverage (the mesh actually
+    // coarsens/refines) lives in the E5b suite; here the former error case
+    // must simply OPEN.
     write_file("_e5_dx.ard", "[TRANSPORT_OPTIONS]\nTARGET_DX 25\n");
     write_deck("_e5_dx.inp",
                "org.hydrocouple.openswmm.transport.ard config=\"_e5_dx.ard\"");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    EXPECT_NE(swmm_engine_open(e, "_e5_dx.inp", "_e5_dx.rpt", "_e5_dx.out",
+    EXPECT_EQ(swmm_engine_open(e, "_e5_dx.inp", "_e5_dx.rpt", "_e5_dx.out",
                                nullptr),
-              SWMM_OK);
-    EXPECT_TRUE(has_needle(as_cpp_engine(e).context().errors, "TARGET_DX"));
+              SWMM_OK)
+        << "the retired TARGET_DX deferral error still fires";
     swmm_engine_destroy(e);
 }
 

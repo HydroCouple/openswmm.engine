@@ -150,6 +150,12 @@ struct ProcessComponentSpec {
     std::string id;           ///< Component id (or library path — HC2)
     std::string config_path;  ///< config="…" argument (may be empty)
     std::vector<std::pair<std::string, std::string>> args;  ///< other key/value args
+
+    /// Effective path the config was READ from (set by
+    /// resolve_process_components; empty until then). IO3 uses it to copy
+    /// the config file alongside a save-as so relative references never
+    /// dangle in the destination directory.
+    std::string resolved_config_path;
 };
 
 // ============================================================================

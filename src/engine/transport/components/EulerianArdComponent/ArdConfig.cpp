@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -153,17 +154,42 @@ void applyArdSections(SimulationContext& ctx,
                             "[TRANSPORT_OPTIONS] LIMITER '" + toks[1] +
                             "' is not MINMOD, VANLEER, or SUPERBEE.");
                 } else if (key == "TARGET_DX") {
-                    errors.push_back(
-                        "[TRANSPORT_OPTIONS] TARGET_DX is an open item "
-                        "(Eulerian ARD plan §8 — transport-mesh Δx default "
-                        "under non-FV hydraulics) and arrives with E5b; "
-                        "FV_CELL_LENGTH rules mesh the transport grid "
-                        "today.");
+                    // E5b: the plan §8 open item resolved — transport-mesh
+                    // cell length under non-FV hydraulics (display units).
+                    // Under FLOW_ROUTING FV the engine warns and ignores it
+                    // (the solver mesh governs).
+                    double v = 0.0;
+                    if (toks.size() != 2 || !parse_value(toks[1], v) ||
+                        v <= 0.0) {
+                        errors.push_back(
+                            "[TRANSPORT_OPTIONS] TARGET_DX expects a "
+                            "positive cell length (display length units).");
+                        continue;
+                    }
+                    ctx.ard_config.target_dx = v;
+                } else if (key == "DETAILED_OUTPUT") {
+                    if (toks.size() != 2) {
+                        errors.push_back(
+                            "[TRANSPORT_OPTIONS] DETAILED_OUTPUT expects "
+                            "one path argument.");
+                        continue;
+                    }
+                    // Relative paths resolve against the CONFIG file's own
+                    // directory (component-file locality, like the config
+                    // itself resolves against the .inp).
+                    namespace fsys = std::filesystem;
+                    fsys::path p(toks[1]);
+                    if (p.is_relative()) {
+                        const fsys::path base =
+                            fsys::path(config.source_path).parent_path();
+                        if (!base.empty()) p = base / p;
+                    }
+                    ctx.ard_config.detailed_output_path = p.string();
                 } else {
                     errors.push_back(
                         "[TRANSPORT_OPTIONS] unknown key '" + toks[0] +
-                        "' (E5a recognizes: DISPERSION, SCALAR_SCHEME, "
-                        "LIMITER).");
+                        "' (E5b recognizes: DISPERSION, SCALAR_SCHEME, "
+                        "LIMITER, TARGET_DX, DETAILED_OUTPUT).");
                 }
             }
         } else if (tag == "CONDUIT_DISPERSION") {
@@ -273,9 +299,9 @@ void applyArdSections(SimulationContext& ctx,
 
     // Silent-bypass enumeration (R4 validation lesson): every configuration
     // under which this file parses but its content reaches nothing warns at
-    // open, naming the remedy. E5a: boundaries/sources count as content.
-    if (ctx.ard_config.any_dispersion() ||
-        ctx.ard_config.any_transport_rows()) {
+    // open, naming the remedy. E5b: TARGET_DX and DETAILED_OUTPUT count as
+    // engine content too (any_engine_content).
+    if (ctx.ard_config.any_engine_content()) {
         if (ctx.options.ignore_quality) {
             ctx.warnings.push_back(
                 "A transport.ard component is configured but IGNORE_QUALITY "

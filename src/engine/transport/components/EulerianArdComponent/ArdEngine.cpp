@@ -92,7 +92,33 @@ bool ArdEngine::init(SimulationContext& ctx) {
     const int ns = np + nm;
     if (ns <= 0) return false;
 
-    const auto report = fv::buildNetworkMesh(ctx, ctx.options.fv, mesh_);
+    // Mesh options are entered in DISPLAY units and must convert to internal
+    // feet before meshing — exactly what Router::initFv does for the FV
+    // solver. E1 passed ctx.options.fv RAW, a latent SI defect (an explicit
+    // FV_CELL_LENGTH in metres meshed as feet; invisible to every CFS gate —
+    // the lesson-20 shape). Fixed here alongside E5b's TARGET_DX, which sets
+    // the transport-mesh cell length under non-FV hydraulics (plan §8
+    // resolved); under FLOW_ROUTING FV the solver mesh governs and the key
+    // warns.
+    fv::FvOptions mesh_opts = ctx.options.fv;
+    {
+        const double ucf_len0 = ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(
+            static_cast<int>(ctx.options.flow_units))];
+        mesh_opts.cell_length   /= ucf_len0;
+        mesh_opts.slot_celerity /= ucf_len0;
+        mesh_opts.dispersion    /= ucf_len0 * ucf_len0;
+        if (ctx.ard_config.configured && ctx.ard_config.target_dx > 0.0) {
+            if (ctx.options.routing_model == RoutingModel::FV) {
+                warnings_.push_back(
+                    "[TRANSPORT_OPTIONS] TARGET_DX is ignored under "
+                    "FLOW_ROUTING FV — the hydraulic solver's mesh governs "
+                    "transport (FV_CELL_LENGTH).");
+            } else {
+                mesh_opts.cell_length = ctx.ard_config.target_dx / ucf_len0;
+            }
+        }
+    }
+    const auto report = fv::buildNetworkMesh(ctx, mesh_opts, mesh_);
     for (const auto& w : report.warnings) warnings_.push_back(w);
     if (!report.errors.empty()) {
         for (const auto& e : report.errors)
@@ -255,6 +281,26 @@ bool ArdEngine::init(SimulationContext& ctx) {
             src_len_.push_back(std::max(length, 1.0e-6));
         }
         src_now_.assign(src_crow_.size(), 0.0);
+    }
+
+    // E5b: per-cell CSV sidecar. Failure to open is a WARNING (the run
+    // proceeds without detail output), never fatal.
+    detail_active_ = false;
+    detail_time_s_ = 0.0;
+    if (detail_out_.is_open()) detail_out_.close();
+    if (ctx.ard_config.configured &&
+        !ctx.ard_config.detailed_output_path.empty()) {
+        detail_out_.open(ctx.ard_config.detailed_output_path,
+                         std::ios::out | std::ios::trunc);
+        if (detail_out_.is_open()) {
+            detail_out_ << "time_s,element,kind,cell,species,conc\n";
+            detail_active_ = true;
+        } else {
+            warnings_.push_back(
+                "[TRANSPORT_OPTIONS] DETAILED_OUTPUT: could not open '" +
+                ctx.ard_config.detailed_output_path +
+                "' for writing — detail output disabled this run.");
+        }
     }
 
     initialized_ = true;
@@ -800,11 +846,90 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
     // (pipe scope) and per node store (tank scope).
     transport::reactArdStage(
         ctx, dt, state_.cell_phi.data(), state_.cell_a.data(),
-        mesh_.n_cells(), node_mass_.data(), node_vol_.data(),
-        static_cast<int>(node_vol_.size()), ctx.n_pollutants(),
-        state_.n_species, kMinStoreVol);
+        mesh_.cell_dx.data(), mesh_.n_cells(), node_mass_.data(),
+        node_vol_.data(), static_cast<int>(node_vol_.size()),
+        ctx.n_pollutants(), state_.n_species, kMinStoreVol);
 
     publish(ctx);
+
+    // E5b: per-cell sidecar rows (every routing step — see the header note).
+    if (detail_active_) {
+        detail_time_s_ += dt;
+        writeDetailRows(ctx);
+    }
+}
+
+// ===========================================================================
+// absorbTreatedNodeConc — E5b treatment interop (see the header)
+// ===========================================================================
+
+void ArdEngine::absorbTreatedNodeConc(SimulationContext& ctx) {
+    if (!initialized_) return;
+    const int np = ctx.n_pollutants();
+    if (np <= 0 || !ctx.treatment.hasAny()) return;
+    const int ns = state_.n_species;
+    const auto uns = static_cast<std::size_t>(ns);
+    const auto unp = static_cast<std::size_t>(np);
+    const int nn = std::min(ctx.n_nodes(),
+                            static_cast<int>(node_vol_.size()));
+    for (int nd = 0; nd < nn; ++nd) {
+        const auto und = static_cast<std::size_t>(nd);
+        if (!ctx.treatment.has_treatment[und]) continue;
+        const double vol = node_vol_[und];
+        if (vol <= kMinStoreVol) continue;
+        for (int p = 0; p < np; ++p)
+            node_mass_[und * uns + static_cast<std::size_t>(p)] =
+                ctx.nodes.conc[und * unp + static_cast<std::size_t>(p)] * vol;
+    }
+}
+
+// ===========================================================================
+// writeDetailRows — E5b per-cell CSV sidecar
+// ===========================================================================
+
+void ArdEngine::writeDetailRows(SimulationContext& ctx) {
+    const int ns  = state_.n_species;
+    const int np  = ctx.n_pollutants();
+    const auto unc = static_cast<std::size_t>(mesh_.n_cells());
+    const auto uns = static_cast<std::size_t>(ns);
+    const auto species_name = [&](int s) -> std::string {
+        return (s < np)
+                   ? std::string(ctx.pollutant_names.name_of(s))
+                   : ctx.reactions.species_name[static_cast<std::size_t>(s - np)];
+    };
+    for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const int link = mesh_.conduit_link[ur];
+        if (link < 0 || link >= ctx.n_links()) continue;
+        const std::string& lname =
+            ctx.link_names.names()[static_cast<std::size_t>(link)];
+        const int b = mesh_.conduit_cell_begin[ur];
+        const int n = mesh_.conduit_cell_count[ur];
+        for (int i = 0; i < n; ++i) {
+            const auto uc = static_cast<std::size_t>(b + i);
+            for (int s = 0; s < ns; ++s)
+                detail_out_ << detail_time_s_ << ',' << lname << ",L," << i
+                            << ',' << species_name(s) << ','
+                            << state_.cell_phi[static_cast<std::size_t>(s) *
+                                                   unc + uc]
+                            << '\n';
+        }
+    }
+    const int nn = std::min(ctx.n_nodes(),
+                            static_cast<int>(node_vol_.size()));
+    for (int nd = 0; nd < nn; ++nd) {
+        const auto und = static_cast<std::size_t>(nd);
+        const double vol = node_vol_[und];
+        const std::string& nname = ctx.node_names.names()[und];
+        for (int s = 0; s < ns; ++s) {
+            const double c =
+                (vol > kMinStoreVol)
+                    ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
+                    : 0.0;
+            detail_out_ << detail_time_s_ << ',' << nname << ",N,0,"
+                        << species_name(s) << ',' << c << '\n';
+        }
+    }
 }
 
 // ===========================================================================

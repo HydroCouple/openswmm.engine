@@ -84,6 +84,10 @@ bool ardHasWallSpecies(const SimulationContext& ctx);
  * @param cell_a    Cell areas (read-only; dry cells still react — their
  *                  carried concentration evolves like LEGACY's, and holds
  *                  negligible mass).
+ * @param cell_dx   Cell lengths (read-only; E5b — with cell_a they give the
+ *                  water volume each kdecay concentration change acts on,
+ *                  so the removed pollutant mass books into the
+ *                  qual_routing_reacted ledger row).
  * @param node_mass Node-store species MASS [nd * ns_total + s].
  * @param node_vol  Node-store water volume [nd].
  * @param n_pollut  Pollutant row count (may be 0 — MSX-only model).
@@ -94,9 +98,9 @@ bool ardHasWallSpecies(const SimulationContext& ctx);
  *                  (mass-form kdecay still applies).
  */
 void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
-                   const double* cell_a, int n_cells, double* node_mass,
-                   const double* node_vol, int n_nodes, int n_pollut,
-                   int ns_total, double min_store_vol);
+                   const double* cell_a, const double* cell_dx, int n_cells,
+                   double* node_mass, const double* node_vol, int n_nodes,
+                   int n_pollut, int ns_total, double min_store_vol);
 
 }  // namespace openswmm::transport
 

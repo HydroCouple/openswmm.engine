@@ -58,6 +58,7 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_ARD_ENGINE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_ARD_ENGINE_HPP
 
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,19 @@ public:
 
     bool initialized() const noexcept { return initialized_; }
     const std::vector<std::string>& warnings() const noexcept { return warnings_; }
+
+    /**
+     * @brief E5b treatment interop: absorb treated node concentrations back
+     *        into the node stores.
+     *
+     * @details Called by SWMMEngine AFTER QualitySolver::applyTreatment ran
+     *          on the PUBLISHED nodes.conc. Only nodes with treatment
+     *          defined are touched — untreated nodes keep their store mass
+     *          bit-identical (a conc→mass→conc round trip is NOT exact in
+     *          floating point, so a blanket absorb would break the
+     *          no-treatment parity).
+     */
+    void absorbTreatedNodeConc(SimulationContext& ctx);
 
     /// Total species mass currently held (cells + node stores), one entry per
     /// species — the conservation ledger the unit gates check.
@@ -161,6 +175,16 @@ private:
     double disp_global_ft_ = 0.0;   ///< VALUE-mode coefficient, ft²/s
     std::vector<double> conduit_disp_ft_;  ///< per mesh-conduit override, ft²/s (<0 ⇒ none)
     std::vector<double> cell_disp_;        ///< per-cell D handed to the kernel
+
+    // E5b: per-cell CSV sidecar ([TRANSPORT_OPTIONS] DETAILED_OUTPUT).
+    // Written every routing step (documented decision — a detail feature
+    // for short diagnostic runs; cadence control can come later if sizes
+    // demand it). Columns: time_s, element, kind (L link cell / N node
+    // store), cell index, species name, concentration.
+    void writeDetailRows(SimulationContext& ctx);
+    std::ofstream detail_out_;
+    bool   detail_active_ = false;
+    double detail_time_s_ = 0.0;
 
     std::vector<std::string> warnings_;
     bool initialized_ = false;

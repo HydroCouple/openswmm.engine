@@ -65,6 +65,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -2126,7 +2127,51 @@ int writeInpFile(const SimulationContext& ctx_internal,
     for(const auto&pc:ctx.process_component_specs){std::fprintf(f,"%s",pc.id.c_str());
     if(!pc.config_path.empty()){const std::string cfg=
     emit_path_token(pc.config_path,dst_dir,force_abs_paths,warnings);
-    std::fprintf(f," config=\"%s\"",cfg.c_str());}
+    std::fprintf(f," config=\"%s\"",cfg.c_str());
+
+    // IO3 carry-alongside: a RELATIVE config= reference resolves against
+    // the .inp's own directory, so saving the deck somewhere else would
+    // leave it dangling. Copy the file the model was actually read from
+    // (resolved_config_path, set at open) next to the written .inp when
+    // the destination differs. Absolute references were rebased by
+    // emit_path_token above and need no copy. Failures WARN, never fail
+    // the save — the deck text itself is intact.
+    namespace fsys=std::filesystem;
+    if(!pc.resolved_config_path.empty()){
+    fsys::path src(pc.resolved_config_path);
+    fsys::path rel(pc.config_path);
+    if(rel.is_relative()&&!dst_dir.empty()){
+    std::error_code ec;
+    fsys::path dst=fsys::path(dst_dir)/rel;
+    if(fsys::exists(src,ec)&&
+    !fsys::equivalent(src,dst,ec)){
+    // Overwriting is REQUIRED for the feature to be correct: re-saving a
+    // model into a folder that already holds last save's copy must refresh
+    // it, or the deck ships with a stale config. But an existing file with
+    // DIFFERENT content may belong to another model in that folder, and
+    // destroying it silently is not something a save should do. Measured
+    // before this guard: a save-as replaced an unrelated model.rxn and
+    // reported nothing.
+    bool replacing_different=false;
+    if(fsys::exists(dst,ec)){
+    std::ifstream a(src,std::ios::binary),b(dst,std::ios::binary);
+    const std::string sa((std::istreambuf_iterator<char>(a)),
+    std::istreambuf_iterator<char>());
+    const std::string sb((std::istreambuf_iterator<char>(b)),
+    std::istreambuf_iterator<char>());
+    replacing_different=(sa!=sb);
+    }
+    if(dst.has_parent_path())fsys::create_directories(dst.parent_path(),ec);
+    fsys::copy_file(src,dst,fsys::copy_options::overwrite_existing,ec);
+    if(ec&&warnings)warnings->push_back(
+    "Could not copy component config '"+pc.resolved_config_path+
+    "' alongside the saved model ("+ec.message()+") — the written "
+    "config=\""+pc.config_path+"\" reference may dangle.");
+    else if(replacing_different&&warnings)warnings->push_back(
+    "Saving this model replaced an existing, different '"+pc.config_path+
+    "' in the destination folder with the copy this model uses.");
+    }}}
+    }
     for(const auto&a:pc.args)std::fprintf(f," %s=\"%s\"",a.first.c_str(),a.second.c_str());
     std::fprintf(f,"\n");
     }}

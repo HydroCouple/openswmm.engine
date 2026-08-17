@@ -197,7 +197,7 @@ std::vector<std::string> resolve_process_components(SimulationContext& ctx,
         if (!errors.empty()) return errors;
     }
 
-    for (const auto& spec : ctx.process_component_specs) {
+    for (auto& spec : ctx.process_component_specs) {
         if (looks_like_library(spec.id)) {
             errors.push_back(
                 "[PROCESS_COMPONENTS] '" + spec.id +
@@ -235,6 +235,9 @@ std::vector<std::string> resolve_process_components(SimulationContext& ctx,
             errors.push_back(err);
             continue;
         }
+        // IO3: remember where the config was actually read from so a
+        // save-as can copy the file alongside the written .inp.
+        spec.resolved_config_path = config.source_path;
         entry->apply(ctx, spec, config, errors);
     }
     return errors;
