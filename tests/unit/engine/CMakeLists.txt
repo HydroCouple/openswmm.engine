@@ -194,6 +194,13 @@ add_gtest_unit(test_engine_gage_file_roundtrip test_gage_file_roundtrip.cpp)
 # such a gage contributed zero rainfall silently) plus the guard that the
 # resolved-series API cannot drift from what updateAllGages applies.
 add_gtest_unit(test_engine_gage_rain_series test_gage_rain_series.cpp)
+# Parse-once multi-column series files (CSV/TSV/PCSWMM TSF) — wide rows,
+# AM/PM datetimes, delimiter sniff, single-read cache. See
+# plans/MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17.md.
+add_gtest_unit(test_engine_multicolumn_series_file test_multicolumn_series_file.cpp)
+# B1 regression: set_station_id / set_filename must not corrupt a USER_CSV
+# gage's file format or column binding; new file-column accessors.
+add_gtest_unit(test_engine_gage_format_preservation test_gage_format_preservation.cpp)
 add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_lid              test_lid.cpp)
 target_compile_definitions(test_engine_lid PRIVATE

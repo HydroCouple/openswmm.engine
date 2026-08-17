@@ -476,9 +476,9 @@ At every output time step the engine passes a read-only **SimulationSnapshot** t
 
 See the headers in `include/openswmm/plugin_sdk/` for full details. The engine-side loader, lifecycle dispatcher, and the built-in default plugins live in `src/engine/plugins/` (`PluginFactory.cpp`, `DefaultInputPlugin.cpp`, `DefaultOutputPlugin.cpp`, `DefaultReportPlugin.cpp`, `DefaultStateIOPlugin.cpp`).
 
-## 13.9 CSV Rain-File Inputs {#user_manual_chapter_13_csv}
+## 13.9 Multi-Column Series-File Inputs (CSV/TSV/TSF) {#user_manual_chapter_13_csv}
 
-A new rain-file format, **USER_CSV**, allows rain gage data to be read from multi-column CSV files. A single CSV file can serve multiple rain gages by specifying a column name after the file path:
+A new rain-file format, **USER_CSV**, allows rain gage data to be read from multi-column series files. A single file can serve multiple rain gages by specifying a column name after the file path:
 
 ```ini
 [RAINGAGES]
@@ -488,7 +488,19 @@ RG2      VOLUME   0:15      1.0   FILE "rain.csv:EAST_GAGE"
 RG3      VOLUME   0:15      1.0   FILE "rain.csv:WEST_GAGE"
 ```
 
-The syntax `"filename.csv:COLUMN_NAME"` tells the engine to open `filename.csv` and read the column whose header matches `COLUMN_NAME`. The CSV file is expected to have a header row; columns are separated by commas.
+The syntax `"filename.csv:COLUMN_NAME"` tells the engine to open `filename.csv` and read the column whose header matches `COLUMN_NAME` (case-insensitive). An empty column name selects the file's first data column. The file is expected to have a header row whose first column holds a full date-time; the remaining columns hold values.
+
+Three file layouts are recognised, detected automatically from the file's contents (the extension does not matter):
+
+- **CSV** — comma-separated, header row, e.g. `DateTime,EAST_GAGE,WEST_GAGE`.
+- **TSV** — the same layout, tab-separated.
+- **PCSWMM TSF** — tab-separated with a three-row header: an `IDs:` row naming the columns, a parameter row, and a units row. Date-times use the 12-hour `MM/DD/YYYY hh:mm:ss AM/PM` form.
+
+Date-times in CSV/TSV files may be ISO-8601 (`YYYY-MM-DD HH:MM[:SS]`) or US (`MM/DD/YYYY HH:MM[:SS]`), with an optional trailing AM/PM token for 12-hour clocks.
+
+The same `"path:COLUMN_NAME"` reference works for **named time series**: `[TIMESERIES] TS_E FILE "rain.csv:EAST_GAGE"` binds the series `TS_E` to that column, so inflows, outfall stages, and other objects that reference a time series by name can depend on one column of a shared file.
+
+Each multi-column file is parsed **once** per model open (or per `swmm_gage_reload_rain_files()` call), no matter how many rain gages and time series reference it, and there is no limit on the number of columns or the width of a row. A referenced file that cannot be opened, or that yields no readable rows, fails the model open with an explicit error rather than silently supplying zero values.
 
 The `RainFileFormat` enumeration now includes:
 

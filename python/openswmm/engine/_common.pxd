@@ -437,6 +437,7 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int         swmm_aquifer_set_param(SWMM_Engine e, int idx, int param, double value)
     cdef int         swmm_aquifer_get_evap_pattern(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int         swmm_aquifer_set_evap_pattern(SWMM_Engine e, int idx, const char* name)
+    cdef int         swmm_aquifer_rename(SWMM_Engine e, int idx, const char* new_id)
     cdef int         swmm_snowpack_count(SWMM_Engine e)
     cdef int         swmm_snowpack_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_snowpack_id(SWMM_Engine e, int idx)
@@ -451,6 +452,7 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int         swmm_snowpack_get_removal(SWMM_Engine e, int idx, double* dsnow, double* fout, double* fimp, double* fperv, double* fimelt, double* fsubcatch)
     cdef int         swmm_snowpack_set_removal_subcatch(SWMM_Engine e, int idx, const char* name)
     cdef int         swmm_snowpack_get_removal_subcatch(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int         swmm_snowpack_rename(SWMM_Engine e, int idx, const char* new_id)
     # Property setters
     cdef int swmm_subcatch_set_outlet(SWMM_Engine e, int idx, int node_idx)
     cdef int swmm_subcatch_set_area(SWMM_Engine e, int idx, double area)
@@ -568,6 +570,8 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_set_timeseries(SWMM_Engine e, int idx, const char* ts_id)
     cdef int swmm_gage_set_filename(SWMM_Engine e, int idx, const char* path, const char* station_id)
     cdef int swmm_gage_set_station_id(SWMM_Engine e, int idx, const char* station_id)
+    cdef int swmm_gage_set_file_column(SWMM_Engine e, int idx, const char* column)
+    cdef int swmm_gage_set_file_format(SWMM_Engine e, int idx, int format)
     cdef int swmm_gage_set_snow_factor(SWMM_Engine e, int idx, double factor)
     cdef int swmm_gage_set_rain_units(SWMM_Engine e, int idx, int units)
     cdef int swmm_gage_set_scale_factor(SWMM_Engine e, int idx, double factor)
@@ -579,6 +583,8 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_get_snow_factor(SWMM_Engine e, int idx, double* factor)
     cdef int swmm_gage_get_timeseries(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_gage_get_station_id(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_gage_get_file_column(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_gage_get_file_format(SWMM_Engine e, int idx, int* format)
     cdef int swmm_gage_get_rain_units(SWMM_Engine e, int idx, int* units)
     # State
     cdef int swmm_gage_get_rainfall(SWMM_Engine e, int idx, double* rainfall)
@@ -587,6 +593,12 @@ cdef extern from "openswmm_gages.h":
     cdef int swmm_gage_get_rainfall_bulk(SWMM_Engine e, double* buf, int count) nogil
     # Rename
     cdef int swmm_gage_rename(SWMM_Engine e, int idx, const char* newId)
+    # Resolved rainfall series
+    cdef int swmm_gage_get_rainfall_series_count(SWMM_Engine e, int idx, int* count)
+    cdef int swmm_gage_get_rainfall_series(SWMM_Engine e, int idx,
+                                           double* times, double* values,
+                                           int count)
+    cdef int swmm_gage_reload_rain_files(SWMM_Engine e)
 
 cdef extern from "openswmm_massbalance.h":
     cdef int swmm_get_runoff_continuity_error(SWMM_Engine e, double* error)
@@ -835,6 +847,10 @@ cdef extern from "openswmm_infrastructure.h":
     cdef const char* swmm_inlet_id(SWMM_Engine e, int idx)
     cdef int         swmm_lid_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_lid_id(SWMM_Engine e, int idx)
+    # Renames (reference-updating)
+    cdef int         swmm_street_rename(SWMM_Engine e, int idx, const char* new_id)
+    cdef int         swmm_inlet_rename(SWMM_Engine e, int idx, const char* new_id)
+    cdef int         swmm_lid_rename(SWMM_Engine e, int idx, const char* new_id)
     # Transect detail getters / mutation
     cdef int swmm_transect_get_roughness(SWMM_Engine e, int idx, double* n_left, double* n_right, double* n_channel)
     cdef int swmm_transect_set_bank_stations(SWMM_Engine e, int idx, double left, double right)
@@ -958,6 +974,7 @@ cdef extern from "openswmm_output.h":
     cdef const char* swmm_output_get_subcatch_id(SWMM_Output handle, int index)
     cdef const char* swmm_output_get_node_id(SWMM_Output handle, int index)
     cdef const char* swmm_output_get_link_id(SWMM_Output handle, int index)
+    cdef const char* swmm_output_get_pollut_id(SWMM_Output handle, int index)
     # Per-period results — disk-backed read into caller's float buffer.
     # nogil: pure C I/O, no Python objects touched.
     cdef int swmm_output_get_subcatch_result(SWMM_Output handle, int period, int var, float* values) nogil

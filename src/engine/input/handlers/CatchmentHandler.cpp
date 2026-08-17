@@ -55,6 +55,7 @@
 
 #include "../Tokenizer.hpp"
 #include "../SectionParser.hpp"
+#include "../MultiColumnSeriesFile.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/GageData.hpp"
@@ -312,24 +313,21 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         } else if (src == "FILE" && tok.size() > 5) {
             ctx.gages.source[idx] = RainSource::FILE_RAIN;
 
-            // tok[5] already has quotes stripped by the tokenizer
-            // Check for "path:COLUMN" syntax (R08)
-            const std::string& file_tok = tok[5];
-            const auto colon = file_tok.rfind(':');
-
-            // On Windows, drive letters look like "C:\path" — skip the first char
-            const auto search_start = (file_tok.size() > 1 && file_tok[1] == ':') ? 2 : 0;
-            const auto col_sep = file_tok.find(':', search_start);
-
-            if (col_sep != std::string::npos) {
-                ctx.gages.file_path[idx] = file_tok.substr(0, col_sep);
-                ctx.gages.col_name[idx]  = file_tok.substr(col_sep + 1);
+            // tok[5] already has quotes stripped by the tokenizer.
+            // Check for "path:COLUMN" syntax (R08) using the SHARED split
+            // rule (MultiColumnSeriesFile.hpp) — the timeseries loader used
+            // to split differently, so a path containing a colon produced two
+            // different cache keys for one file and defeated the single-read
+            // guarantee.
+            std::string file_only, file_col;
+            if (split_series_file_token(tok[5], file_only, file_col)) {
+                ctx.gages.file_path[idx]   = file_only;
+                ctx.gages.col_name[idx]    = file_col;
                 ctx.gages.file_format[idx] = RainFileFormat::USER_CSV;
             } else {
-                ctx.gages.file_path[idx]  = file_tok;
+                ctx.gages.file_path[idx]   = file_only;
                 ctx.gages.file_format[idx] = RainFileFormat::STAN_PRCP;
             }
-            (void)colon; // suppress warning
 
             // Standard SWMM FILE grammar (legacy gage.c gage_readParams):
             //   Name Format Interval SCF FILE Fname Station Units [StartDate] [SCF]

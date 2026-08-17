@@ -1,0 +1,58 @@
+[TITLE]
+;;Fixture for PCSWMM .tsf rain-gage loading (test_gage_rain_series).
+;;
+;;Two USER_CSV-format gages read the SENSOR1 / SENSOR2 columns of a tab
+;;delimited TSF file with a 3-row "IDs:" header and 12-hour AM/PM
+;;datetimes. SENSOR1 is exactly 2x SENSOR2 in the data.
+
+[OPTIONS]
+FLOW_UNITS          	CFS
+INFILTRATION        	HORTON
+FLOW_ROUTING        	DYNWAVE
+START_DATE          	01/01/2020
+START_TIME          	00:00:00
+END_DATE            	01/01/2020
+END_TIME            	02:00:00
+REPORT_STEP         	00:15:00
+WET_STEP            	00:05:00
+DRY_STEP            	01:00:00
+ROUTING_STEP        	0:00:20
+
+[EVAPORATION]
+CONSTANT        	0.0
+DRY_ONLY        	NO
+
+[RAINGAGES]
+;;Name          	Format   	Interval	SCF     	Source
+TSF_G1          	VOLUME   	0:15    	1.0     	FILE      	"rain_ampm.tsf:SENSOR1"
+TSF_G2          	VOLUME   	0:15    	1.0     	FILE      	"rain_ampm.tsf:SENSOR2"
+
+[SUBCATCHMENTS]
+;;Name          	Rain Gage       	Outlet          	Area    	%Imperv 	Width   	%Slope  	CurbLen
+S_1             	TSF_G1          	OUT1            	5       	25      	500     	0.5     	0
+S_2             	TSF_G2          	OUT1            	5       	25      	500     	0.5     	0
+
+[SUBAREAS]
+;;Subcatchment  	N-Imperv  	N-Perv    	S-Imperv  	S-Perv    	PctZero   	RouteTo
+S_1             	0.01      	0.1       	0.05      	0.05      	25        	OUTLET
+S_2             	0.01      	0.1       	0.05      	0.05      	25        	OUTLET
+
+[INFILTRATION]
+S_1             	3.0       	0.5       	4         	7         	0
+S_2             	3.0       	0.5       	4         	7         	0
+
+[OUTFALLS]
+;;Name          	Elevation 	Type      	Stage Data      	Gated
+OUT1            	0         	FREE      	                	NO
+
+[REPORT]
+SUBCATCHMENTS	ALL
+NODES	ALL
+LINKS	ALL
+
+[MAP]
+DIMENSIONS	0.000	0.000	1000.000	1000.000
+Units     	None
+
+[COORDINATES]
+OUT1            	500.000           	0.000
