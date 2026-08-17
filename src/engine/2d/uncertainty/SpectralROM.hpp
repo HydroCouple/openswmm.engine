@@ -38,6 +38,7 @@
 #include "../coupling/NodeCoupling.hpp"
 #include "SpatialUncertaintyField.hpp"
 #include "uncertainty/UncertaintyTypes.hpp"
+#include "uncertainty/RomQuantileGemm.hpp"
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -83,6 +84,16 @@ struct SpectralROM {
     uint64_t sample_seed = 42;
 
     double mode_drop_threshold = 1.0e-10; ///< Drop mode j when E_j < threshold AND rain forcing < threshold.
+
+    // -------------------------------------------------------------------------
+    // PR H4 — quantile-reconstruction GEMM. Debug/equivalence-testing knob:
+    // when true, computeQuantiles() uses the original hand-rolled per-cell
+    // reconstruction + full sort instead of reconstructEnsembleGemm()
+    // (RomQuantileGemm.hpp) + std::nth_element selection. Both paths always
+    // compiled in. Default false = GEMM + nth_element (or the portable
+    // fallback where OPENSWMM_HAVE_CBLAS is not defined).
+    // -------------------------------------------------------------------------
+    bool rom_quantile_naive = false;
 
     // -------------------------------------------------------------------------
     // State (set by initialize() and seed())
@@ -472,7 +483,15 @@ private:
 
     std::vector<double> h_work_;      ///< n_tri: scratch for reconstruction.
     std::vector<double> h_det_last_;  ///< n_tri: deterministic depth from the last advance()/seed().
-    std::vector<double> sort_buf_;    ///< n_ensemble: per-cell sort workspace.
+    std::vector<double> sort_buf_;    ///< n_ensemble: per-cell sort/selection workspace.
+
+    // PR H4 — GEMM reconstruction (RomQuantileGemm.hpp). recon_buf_ is
+    // n_tri*n_ensemble, cell-major (recon_buf_[t*M+i]); gemm_*_active_ are
+    // resized internally to k_active*n_tri / n_ensemble*k_active, reused
+    // across calls.
+    std::vector<double> recon_buf_;
+    std::vector<double> gemm_P_active_;
+    std::vector<double> gemm_A_active_;
     std::vector<double> keff_modes_;  ///< n_kept: per-mode K_eff (Rayleigh quotient, scalar path).
     std::vector<double> mode_energy_; ///< n_kept: E_j = mean_i(a²_{i,j}), recomputed each advance().
     std::vector<double> h_weight_;    ///< n_tri: depth-based cell weights (h/h̄)^(5/3) for keff.

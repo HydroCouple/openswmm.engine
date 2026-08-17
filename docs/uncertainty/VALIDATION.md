@@ -883,3 +883,123 @@ member's reference is `h_det` regardless of `mm_i`).
 
     # Engine-level T̄ plumbing (real conduit velocity -> travel time):
     build/<dir>/bin/Debug/test_engine_1d_rom_lifecycle --gtest_filter='*TravelTime*'
+
+---
+
+# Quantile-reconstruction GEMM (PR H4)
+
+Measured 2026-08-16. Scratch benchmark (compiled standalone against the
+engine dylib, per this project's established calibration-sweep pattern —
+not a permanent `bench_*` target; the numbers below are the full record).
+`test_spectral_rom1d.cpp`'s new `QuantileGemm` suite and
+`test_2d_spectral_rom.cpp`'s new `QuantileGemm2D` suite (the latter newly
+registered in `tests/unit/engine/CMakeLists.txt` — found dormant, see §3)
+carry the correctness/equivalence/determinism assertions this section's
+numbers rest on.
+
+## 1. Problem
+
+`computeQuantiles()`'s ensemble reconstruction (`ΔH[t,i] = Σ_j P[j,t]·a[i,j]`
+over active modes, for every node/member pair) is an O(N·M·k) hand-rolled
+triple loop — the dominant ROM cost at large N (the roadmap's own perf
+table; CL-2d recorded it as the ~19% cap on that PR's own speedup).
+
+## 2. Fix
+
+`src/engine/uncertainty/RomQuantileGemm.hpp` (new, shared between the 1D and
+2D ROMs — the matrix layouts are identical): `reconstructEnsembleGemm()`
+compacts `P`/`a_ensemble` down to active-mode rows/columns only (preserving
+the exact masking semantics the hand-rolled loop had — including a mode that
+was active in the past and has since deactivated, which can still hold a
+small nonzero "frozen" coefficient that must stay excluded, not just an
+all-zero column), then computes the whole `[N × M]` reconstruction in one
+`cblas_dgemm` call (Apple's Accelerate framework — zero new dependency, per
+the checklist's own framing) or a portable compacted triple-loop fallback
+everywhere else (`OPENSWMM_HAVE_CBLAS`, set by CMake only when the Accelerate
+framework is found). Both `SpectralROM1D::computeQuantiles()` and 2D
+`SpectralROM::computeQuantiles()` gained a `rom_quantile_naive` config field
+(default `false`): when `true`, the original hand-rolled loop runs instead,
+kept byte-for-byte, for equivalence testing — both paths are always compiled
+in, never behind a build flag that would leave one of them untested.
+
+**1D kept its full `std::sort`; 2D switched to three `std::nth_element`
+selections — a deliberate, load-bearing difference, not an oversight.** PR
+H10's `sortedMemberValues()` hands PR H10's `exceedanceFraction()`/
+`gapModality()` the *whole* per-node row in ascending order — `gapModality()`
+specifically needs the gap between *every* pair of consecutive order
+statistics, which has no correct formulation without a full sort. The 2D ROM
+has no equivalent consumer (`parametric_tails`'s log-normal tail fit sums
+over all M members regardless of order — verified by reading the actual
+implementation, not assumed), so nth_element's full O(M) → 3×O(M) saving
+applies there cleanly. Implementing the checklist's literal "replace the
+per-node full sort with three nth_element selections" for 1D as well would
+have silently broken H10's shipped, tested modality flag — left as the naive
+path's `std::sort`, unaffected by `rom_quantile_naive` either way.
+
+## 3. Side finding: `test_2d_spectral_rom.cpp` was dormant
+
+49 tests (`SpectralROM`, `UncertaintyEnsemble`, `SpectralROMSpatial`,
+`DeviationForm2D`, `FiedlerDiagnostic` suites), present on disk since an
+early mechanical-port pass, never registered in
+`tests/unit/engine/CMakeLists.txt` — the exact same class of gap as PR-10's
+own coverage harness before P4, `test_spectral_rom1d.cpp` before H1, and
+(found the same session as this PR, on a different branch) PR11's
+final-boundary-stall tests. Registered it, since it's the natural home for
+this PR's 2D equivalence tests; **all 49 pre-existing tests passed
+immediately** against the current codebase with zero fixes needed — a strong
+independent correctness signal for the GEMM path (it now runs by default,
+so passing `DeviationForm2D.*`/`SpectralROMSpatial.*`/coupling-spread tests
+means GEMM reproduces the ROM's already-validated spread/median/coupling
+invariants, not just the new equivalence tests written for this PR
+specifically).
+
+## 4. Benchmark (measured, not a permanent target)
+
+**2D**: `test_corr_len_profile.cpp`'s own reference scale (N=70 structured
+mesh → 9,800 triangles — that file's own documented reason for 9.8k over the
+checklist's literal "≥20k": the Lanczos eigensolve at 20k/k=20 takes minutes
+on this machine, and the O(quantile) cost this PR targets scales linearly in
+N regardless of which N it's measured at).
+
+**1D**: the checklist names StormCity (8k nodes) explicitly. **StormCity is
+not available anywhere in this repository** — checked for a committed `.inp`,
+a fixture, and a generator script; none exist (it was evidently an
+external/local file used only in an earlier session, per `.memory`
+references to "StormCity real-network benchmark," never committed).
+**Corrected to Bellinge** (real 1020-node sewer network, already the
+established production baseline for PR-10/H5/H11's own MC coverage
+validation — `tests/regression/test_rom_coverage_bellinge.cpp` — rather than
+a synthetic stand-in; an initial pass of this benchmark used a synthetic
+8,000-node chain before this correction, which is why the node count below
+differs from the checklist's literal "8k"). Driven through the real engine
+exactly as `test_rom_coverage_bellinge.cpp` does (same `[UNCERTAINTY] 1D
+MANNINGS_N 0.20` injection, same `REPORT_START_TIME`/rainfall-path fixes),
+stepped 1 simulated hour to reach a real, non-trivial ensemble state, then
+`computeQuantiles()` timed directly off the engine's own live `rom1d()`.
+
+| Case | N | M | k | naive computeQuantiles() | GEMM computeQuantiles() | Speedup |
+|---|---|---|---|---|---|---|
+| 1D (Bellinge, real network) | 1,011 active nodes | 50 | 20 | 4.67–4.70 ms | 0.443–0.454 ms | **10.3–10.6×** |
+| 2D (CL-2a reference mesh) | 9,800 triangles | 50 | 20 | 109.4–111.8 ms | 15.5–15.7 ms | **7.0–7.1×** |
+
+Each row is two independent runs of the same benchmark binary (not a single
+sample) — both cases reproduced within ~3% run-to-run. Both comfortably
+clear the checklist's own ≥3× gate on the quantile phase, with no tuning:
+these are the numbers `RomQuantileGemm.hpp`'s first working version produced.
+
+## 5. Reproduction
+
+    # Correctness: naive-vs-GEMM equivalence, mode-masking edge cases,
+    # invert-clamp interaction, run-to-run determinism (1D):
+    build/<dir>/bin/Debug/test_engine_spectral_rom1d --gtest_filter='QuantileGemm.*'
+
+    # Same, 2D (also exercises the newly-registered dormant suite, 49 tests):
+    ctest --test-dir build/<dir> -R test_engine_2d_spectral_rom
+
+    # H10's sortedMemberValues() full-sort contract, explicitly guarded under GEMM:
+    build/<dir>/bin/Debug/test_engine_spectral_rom1d \
+        --gtest_filter='QuantileGemm.SortedMemberValuesStaysFullySortedUnderGemm'
+
+The benchmark itself is not a checked-in target (compiled standalone per
+this project's calibration-sweep pattern); the numbers in §4 are the full
+record of what was measured.
