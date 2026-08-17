@@ -557,11 +557,138 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     v.rminus        = &rminus_;
     fvk::reconstructScalars(v, dt_sub);
 
+    const int nn = static_cast<int>(node_mass_.size() / std::max<std::size_t>(uns, 1));
+
+    // 1b. External loads (washoff, DWF, RDII, GW, iface, direct inflows) are
+    //     mixed into the store BEFORE the faces read it — "mix, then
+    //     discharge". This ordering is the whole ballgame for a junction,
+    //     whose own volume is small next to what passes through it.
+    //
+    //     Discharging first and mixing afterwards, as this did, meant the
+    //     water leaving a node in a given step carried the concentration
+    //     the node held BEFORE that step's inflow arrived — a full-step lag
+    //     that got worse as ROUTING_STEP grew, and it broke in both
+    //     directions:
+    //
+    //       * The face debit could exceed the store, and the max(0.0, ...)
+    //         floor on volume swallowed the excess as a silent sink while
+    //         the mass debit stood in full. A steady 5 cfs / 100 mg/L
+    //         inflow published 70.6 mg/L at ROUTING_STEP 5.
+    //       * Above ROUTING_STEP ~10 the mass debit itself exceeded the
+    //         store's mass, the floor clamped the store at zero, and the
+    //         receiving cell had already been handed the full oversized
+    //         flux — mass created from nothing, 7730 mg/L out of a 100 mg/L
+    //         inflow at ROUTING_STEP 20.
+    //
+    //     Mixing first makes a zero-volume junction behave the way legacy's
+    //     findNodeQual does — what enters in a step leaves in that step at
+    //     the mixed concentration — and makes the store's outflow
+    //     self-limiting, because the volume the faces draw is the volume
+    //     the inflow just delivered. LEGACY reads 100.000 at every routing
+    //     step on that deck; so does this now.
+    //
+    //     NOTE the load asymmetry, which is not a typo: qual_vol_in is an
+    //     AMOUNT already integrated over the routing step (the loaders add
+    //     q*dt), so it is prorated by load_frac; qual_mass_in is a RATE
+    //     (mass/sec — see mixAtNodes, which multiplies it by dt), so it
+    //     integrates over dt_sub. Prorating the rate instead of integrating
+    //     it made every external load land a factor of dt_step too small.
+    //
+    //     E4/R6 stride audit: qual_mass_in is a POLLUTANT array
+    //     ([node * np + p]) — only the pollutant rows receive external
+    //     loads. MSX species have no loading pathway until [TRANSPORT_
+    //     SOURCES]/[TRANSPORT_BOUNDARIES] land (E5): inflow water carries
+    //     ZERO MSX concentration, so sustained inflow dilutes MSX stores —
+    //     the documented default, and the transport observable the R6 gate
+    //     rides on.
+    {
+        const int np_l = ctx.n_pollutants();
+        const auto unp_l = static_cast<std::size_t>(np_l);
+        for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
+            const auto und = static_cast<std::size_t>(nd);
+            node_vol_[und] += load_frac * ctx.nodes.qual_vol_in[und];
+            for (int s = 0; s < np_l; ++s)
+                node_mass_[und * uns + static_cast<std::size_t>(s)] += std::max(
+                    0.0, dt_sub *
+                             ctx.nodes.qual_mass_in[und * unp_l +
+                                                    static_cast<std::size_t>(s)]);
+            // Persistent user quality mass flux is NOT added here: it is
+            // folded into qual_mass_in by QualitySolver::addExtInflowLoads(),
+            // the same loader stage legacy uses, so the line above already
+            // carries it. Adding it a second time here would double the mass.
+            //
+            // A1a: age-volume load — a RATE like qual_mass_in (the loaders
+            // add q · age_source per pathway), so it integrates over dt_sub.
+            if (age_row_ >= 0 &&
+                und < ctx.water_age_state.node_age_vol_in.size())
+                node_mass_[und * uns + static_cast<std::size_t>(age_row_)] +=
+                    dt_sub * ctx.water_age_state.node_age_vol_in[und];
+        }
+    }
+
+    // 1b(ii). E5a transport boundaries ride the SAME external inflow water
+    //     stage 1b just credited (the qual_vol_in the pollutant loaders
+    //     integrated), each boundary species at its current concentration —
+    //     internal store mass is conc·ft³, so vol·conc needs no conversion.
+    //     Rows on dry-inflow nodes add nothing (vol_ext = 0).
+    //
+    //     This must stay beside the volume it rides on. It used to run
+    //     after the outflow faces, which was consistent while the volume
+    //     did too; once the volume moved ahead of the donor read and this
+    //     did not, each substep read a store holding the boundary WATER but
+    //     not yet its MASS. The donor came out diluted, less left than
+    //     arrived, and the store climbed past the boundary value it was
+    //     supposed to hold — 8.0128 against a boundary of 8.0.
+    for (std::size_t i = 0; i < bc_node_.size(); ++i) {
+        const auto und = static_cast<std::size_t>(bc_node_[i]);
+        if (static_cast<int>(und) >= nn) continue;
+        const double vol_ext = load_frac * ctx.nodes.qual_vol_in[und];
+        if (vol_ext > 0.0 && bc_now_[i] > 0.0)
+            node_mass_[und * uns + static_cast<std::size_t>(bc_srow_[i])] +=
+                vol_ext * bc_now_[i];
+    }
+
+    // 1c. Face INFLOWS are mixed in before the donor is read, for the same
+    //     reason the external loads are (stage 1b) — a store must mix what
+    //     arrives this substep before it decides what leaves. Applying the
+    //     inflow afterwards made the store a forward-Euler CSTR, and a
+    //     junction's own volume is far smaller than what passes through it:
+    //     at ROUTING_STEP 20 on a plain 5 cfs chain the store's residence
+    //     time is 3.2 s against a 20 s step, so dt*q/V = 6.25 — an explicit
+    //     integration run at six times its stability bound. It oscillated
+    //     and diverged, compounding link by link (C1 exact, C2 3-4x, C3
+    //     8-12x) and manufacturing mass wherever the floor at zero clipped
+    //     the negative half of the oscillation.
+    //
+    //     Mixing first makes the donor a weighted AVERAGE of what the store
+    //     held and what just arrived, so it can never exceed the larger of
+    //     the two: the maximum principle holds at any step size, with no
+    //     extra substeps. It also cannot drive the store negative — the
+    //     outflow demand dt*Qout*M/(V0 + Qin*dt) stays below M whenever
+    //     Qin >= Qout, which is every junction that is not draining its own
+    //     storage; the floors below still cover the ones that are.
+    for (int nd = 0; nd < nn; ++nd) {
+        const auto und = static_cast<std::size_t>(nd);
+        const int b = mesh_.node_face_ptr[und];
+        const int e = mesh_.node_face_ptr[und + 1];
+        for (int p = b; p < e; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_.node_face_idx[static_cast<std::size_t>(p)]);
+            const double sign = mesh_.node_face_sign[static_cast<std::size_t>(p)];
+            const double fq = face_q_[uf];
+            if (sign * fq <= 0.0) continue;   // into the CELL — stage 4
+            node_vol_[und] += dt_sub * sign * fq;
+            for (int s = 0; s < ns; ++s)
+                node_mass_[und * uns + static_cast<std::size_t>(s)] +=
+                    dt_sub * sign *
+                    f_phi_flux_[static_cast<std::size_t>(s) * unf + uf];
+        }
+    }
+
     // 2. Node boundary faces: replace the kernels' zero-gradient ghost with
     //    the node store as the inflow donor (fixes the FV plan's "no node
     //    concentration" gap for this engine). Outflow (cell → node) keeps
     //    the cell donor value the kernels already assembled.
-    const int nn = static_cast<int>(node_mass_.size() / std::max<std::size_t>(uns, 1));
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const int b = mesh_.node_face_ptr[und];
@@ -624,9 +751,9 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         state_.cell_a[uc] = a_new;
     }
 
-    // 4. Node stores: face exchange + the prorated external loads
-    //    (qual_mass_in / qual_vol_in were assembled for the WHOLE routing
-    //    step by the QualitySolver loaders; load_frac = dt_sub / dt_step).
+    // 4. Node stores: the OUTFLOW half of the face exchange. Inflow faces
+    //    (stage 1c) and external loads (stage 1b) were mixed in before the
+    //    donor concentration was read, so only the debit is left here.
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const int b = mesh_.node_face_ptr[und];
@@ -637,6 +764,7 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 mesh_.node_face_idx[static_cast<std::size_t>(p)]);
             const double sign = mesh_.node_face_sign[static_cast<std::size_t>(p)];
             const double fq = face_q_[uf];
+            if (sign * fq > 0.0) continue;   // into the NODE — stage 1c
             dvol += sign * fq;
             for (int s = 0; s < ns; ++s) {
                 node_mass_[und * uns + static_cast<std::size_t>(s)] +=
@@ -644,41 +772,11 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                     f_phi_flux_[static_cast<std::size_t>(s) * unf + uf];
             }
         }
+        // Volume after the outflow faces. The inflows and the external load
+        // were already credited, so this floor now only catches a store the
+        // outflow genuinely drained — it is no longer sitting between the
+        // debit and the credit, where it silently ate the difference.
         node_vol_[und] = std::max(0.0, node_vol_[und] + dt_sub * dvol);
-        // External loads (washoff, DWF, RDII, GW, iface, direct inflows).
-        // NOTE the asymmetry, which is not a typo: qual_vol_in is an AMOUNT
-        // already integrated over the routing step (the loaders add q*dt), so
-        // it is prorated by load_frac; qual_mass_in is a RATE (mass/sec — see
-        // mixAtNodes, which multiplies it by dt), so it integrates over dt_sub.
-        // Prorating the rate instead of integrating it made every external
-        // load land a factor of dt_step too small.
-        //
-        // E4/R6 stride audit: qual_mass_in is a POLLUTANT array
-        // ([node * np + p]) — only the pollutant rows receive external
-        // loads. MSX species have no loading pathway until [TRANSPORT_
-        // SOURCES]/[TRANSPORT_BOUNDARIES] land (E5): inflow water carries
-        // ZERO MSX concentration, so sustained inflow dilutes MSX stores —
-        // the documented default, and the transport observable the R6 gate
-        // rides on.
-        node_vol_[und] += load_frac * ctx.nodes.qual_vol_in[und];
-        const int np_l = ctx.n_pollutants();
-        const auto unp_l = static_cast<std::size_t>(np_l);
-        for (int s = 0; s < np_l; ++s) {
-            node_mass_[und * uns + static_cast<std::size_t>(s)] += std::max(
-                0.0, dt_sub *
-                         ctx.nodes.qual_mass_in[und * unp_l +
-                                                static_cast<std::size_t>(s)]);
-            // Persistent user quality mass flux is NOT added here: it is folded
-            // into qual_mass_in by QualitySolver::addExtInflowLoads(), the same
-            // loader stage legacy uses, so the line above already carries it.
-            // Adding it a second time here would double the forced mass.
-        }
-        // A1a: age-volume load — a RATE like qual_mass_in (the loaders add
-        // q · age_source per pathway), so it integrates over dt_sub.
-        if (age_row_ >= 0 &&
-            und < ctx.water_age_state.node_age_vol_in.size())
-            node_mass_[und * uns + static_cast<std::size_t>(age_row_)] +=
-                dt_sub * ctx.water_age_state.node_age_vol_in[und];
         // The non-negativity floor is a property of a STORE, not of a
         // pollutant, so it runs over every row — including the MSX rows the
         // load loop above deliberately skips. Narrowing this clamp along
@@ -730,20 +828,6 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         }
         node_vol_[ud] = std::max(0.0, node_vol_[ud] - dv);
         node_vol_[ur] += dv;
-    }
-
-    // 5b. E5a transport boundaries: the node's external inflow water (the
-    //     same qual_vol_in the pollutant loaders integrated) carries each
-    //     boundary MSX species at its current concentration — internal
-    //     store mass is conc·ft³, so vol·conc needs no conversion. Rows on
-    //     dry-inflow nodes add nothing (vol_ext = 0).
-    for (std::size_t i = 0; i < bc_node_.size(); ++i) {
-        const auto und = static_cast<std::size_t>(bc_node_[i]);
-        if (static_cast<int>(und) >= nn) continue;
-        const double vol_ext = load_frac * ctx.nodes.qual_vol_in[und];
-        if (vol_ext > 0.0 && bc_now_[i] > 0.0)
-            node_mass_[und * uns + static_cast<std::size_t>(bc_srow_[i])] +=
-                vol_ext * bc_now_[i];
     }
 
     // 5c. E5a distributed sources: internal rate r (conc·ft³/s) spread over
