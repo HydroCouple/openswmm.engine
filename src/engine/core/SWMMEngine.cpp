@@ -3987,6 +3987,16 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_stat_max_depth    = st.stat_max_depth;
     snap.surface_stat_max_velocity = st.stat_max_velocity;
     snap.surface_stat_max_cont_err = st.stat_max_cont_err;
+    // Optional 2D ROM uncertainty quantiles — copied only when a 2D ROM is
+    // active and has produced per-face quantiles (refreshed at report cadence).
+    // Additive: q50 tracks the deterministic depth by construction, so this
+    // leaves every deterministic output field and the mass balance untouched.
+    if (const auto* rom = surface_router_.rom();
+        rom && rom->q05.size() == static_cast<std::size_t>(snap.surface_tri_count)) {
+        snap.surface_rom_q05 = rom->q05;
+        snap.surface_rom_q50 = rom->q50;
+        snap.surface_rom_q95 = rom->q95;
+    }
 #else
     (void)snap;
 #endif

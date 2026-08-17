@@ -147,6 +147,13 @@ private:
     hid_t ds_node_head_            = H5I_INVALID_HID;
     hid_t ds_node_depth_           = H5I_INVALID_HID;
 
+    // Optional per-face 2D ROM uncertainty quantiles. Created lazily on the
+    // first update() that carries them, so a run without a 2D ROM produces a
+    // byte-identical file (these three datasets simply do not appear).
+    hid_t ds_face_rom_q05_         = H5I_INVALID_HID;
+    hid_t ds_face_rom_q50_         = H5I_INVALID_HID;
+    hid_t ds_face_rom_q95_         = H5I_INVALID_HID;
+
     // Cumulative envelopes — fixed [nFace], overwritten in place each update()
     hid_t ds_face_max_depth_          = H5I_INVALID_HID;
     hid_t ds_face_max_velocity_       = H5I_INVALID_HID;
@@ -170,6 +177,8 @@ private:
                                     const char* units);
     /// Overwrite a fixed [nFace] dataset in place with the latest envelope.
     void writeFaceEnvelope(hid_t ds, const double* data);
+    /// Create the three optional per-face 2D ROM quantile datasets on demand.
+    void ensureRomQuantileDatasets();
 };
 
 } // namespace openswmm::twoD
