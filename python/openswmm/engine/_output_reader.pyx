@@ -79,6 +79,7 @@ cdef class OutputReader:
     cdef object _node_ids       # cached list[str]
     cdef object _link_ids
     cdef object _subcatch_ids
+    cdef object _pollutant_ids
     cdef object _period_times   # cached np.ndarray[datetime64[s]]
 
     def __init__(self, path):
@@ -92,6 +93,7 @@ cdef class OutputReader:
         self._node_ids = None
         self._link_ids = None
         self._subcatch_ids = None
+        self._pollutant_ids = None
         self._period_times = None
 
     # ------------------------------------------------------------------
@@ -188,6 +190,19 @@ cdef class OutputReader:
             self._subcatch_ids = self._read_subcatch_ids()
         return list(self._subcatch_ids)
 
+    @property
+    def pollutant_ids(self) -> List[str]:
+        """Species (pollutant) column names, in column order.
+
+        Reading these names is the only way to identify what a species column
+        holds: the per-column unit field is a three-value concentration enum,
+        so the water-age column (``__WATER_AGE__``, reported in HOURS) reuses
+        a concentration code. Key on the name, not on the unit code.
+        """
+        if self._pollutant_ids is None:
+            self._pollutant_ids = self._read_pollutant_ids()
+        return list(self._pollutant_ids)
+
     cdef list _read_node_ids(self):
         cdef int n = swmm_output_get_node_count(self._handle)
         cdef const char* raw
@@ -212,6 +227,15 @@ cdef class OutputReader:
         out = []
         for i in range(n):
             raw = swmm_output_get_subcatch_id(self._handle, i)
+            out.append(raw.decode('utf-8') if raw != NULL else "")
+        return out
+
+    cdef list _read_pollutant_ids(self):
+        cdef int n = swmm_output_get_pollut_count(self._handle)
+        cdef const char* raw
+        out = []
+        for i in range(n):
+            raw = swmm_output_get_pollut_id(self._handle, i)
             out.append(raw.decode('utf-8') if raw != NULL else "")
         return out
 

@@ -173,12 +173,13 @@ def check_output_reader() -> None:
         fu: FlowUnits = out.flow_units
         nc: int = out.node_count
         ni: List[str] = out.node_ids
+        pi: List[str] = out.pollutant_ids
         pt: np.ndarray = out.period_times
         depths: np.ndarray = out.node_series("J1", OutNodeVar.DEPTH)
         attrs: Dict[OutNodeVar | int, float] = out.node_attributes("J1", 0)
         stats = out.node_stats("J1")
         md: float = stats.max_depth
-        _ = (sd, rs, fu, nc, ni, pt, depths, attrs, md)
+        _ = (sd, rs, fu, nc, ni, pi, pt, depths, attrs, md)
 
 
 def check_exceptions(s: Solver) -> None:
