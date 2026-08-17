@@ -253,7 +253,13 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     for (const auto& f : link_rpt_flag_) if (f) ++n_links_;
     // IGNORE_QUALITY: drop all pollutant columns from the binary .out file so
     // OutputReader reads zero pollutants (legacy output.c:150 NumPolluts = 0).
-    n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_pollutants();
+    // A2b: the pollutant column block reports pollutants AND, when
+    // [OPTIONS] WATER_AGE is on, a trailing __WATER_AGE__ pseudo-column.
+    // ctx.reported_species_names is the single naming/count truth shared
+    // with the snapshot builder (which strides its quality vectors by the
+    // same number) — striding by n_pollutants() here would truncate the
+    // block and misalign every consumer.
+    n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_reported_species();
 
     n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
     n_node_vars_ = 6 + n_polluts_;      // depth..overflow + pollutants
@@ -286,11 +292,25 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
             writeID(ctx.link_names.name_of(j).c_str());
     }
     for (int p = 0; p < n_polluts_; ++p)
-        writeID(ctx.pollutant_names.name_of(p).c_str());
+        writeID(ctx.reported_species_names[static_cast<std::size_t>(p)]
+                    .c_str());
 
     // Pollutant concentration unit codes
     for (int p = 0; p < n_polluts_; ++p) {
-        writeInt4(static_cast<int>(ctx.pollutants.units[static_cast<std::size_t>(p)]));
+        // The age pseudo-column has no MassUnits member (it is HOURS, not a
+        // concentration). The .out unit field is a 3-value enum with no slot
+        // for it, so the age column writes MG_PER_L's code and readers must
+        // key on the NAME (__WATER_AGE__), not the unit code. Recorded as a
+        // format decision rather than widening the enum, which would break
+        // every existing reader.
+        const bool is_age =
+            (static_cast<std::size_t>(p) < ctx.reported_species_names.size() &&
+             ctx.reported_species_names[static_cast<std::size_t>(p)] ==
+                 "__WATER_AGE__");
+        writeInt4(is_age
+                      ? 0
+                      : static_cast<int>(
+                            ctx.pollutants.units[static_cast<std::size_t>(p)]));
     }
 
     // Input data start
