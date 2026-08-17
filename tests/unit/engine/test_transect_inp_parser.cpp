@@ -246,4 +246,114 @@ TEST_F(TransectInpParserTest, NegativeChannelManningIsError) {
     EXPECT_FALSE(loadWithTransects(block));
 }
 
+// ---------------------------------------------------------------------------
+// Issue #132 — a zero NC component means "unchanged from the preceding NC
+// record" (EPA SWMM 5.2.4), not "zero". A continuation record of all zeros
+// must leave the active roughness triple intact instead of wiping it (which
+// previously tripped Error 227 on input EPA SWMM accepts).
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectInpParserTest, ZeroNcComponentsInheritPrecedingValues) {
+    const std::string block =
+        "NC 0.04 0.05 0.03\n"
+        "X1 TI1              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n"
+        "NC 0 0 0\n"
+        "X1 TI2              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n";
+    ASSERT_TRUE(loadWithTransects(block));
+
+    const int idx = swmm_transect_index(eng, "TI2");
+    ASSERT_GE(idx, 0);
+
+    double nL = -1, nR = -1, nC = -1;
+    ASSERT_EQ(swmm_transect_get_roughness(eng, idx, &nL, &nR, &nC), SWMM_OK);
+    EXPECT_DOUBLE_EQ(nL, 0.04);
+    EXPECT_DOUBLE_EQ(nR, 0.05);
+    EXPECT_DOUBLE_EQ(nC, 0.03);
+}
+
+// ---------------------------------------------------------------------------
+// Inheritance is per-component: only the positive entries of a continuation
+// record overwrite the active values.
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectInpParserTest, PositiveNcComponentsOverwriteInheritedOnes) {
+    const std::string block =
+        "NC 0.04 0.05 0.03\n"
+        "X1 TP1              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n"
+        "NC 0 0 0.02\n"
+        "X1 TP2              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n";
+    ASSERT_TRUE(loadWithTransects(block));
+
+    const int idx = swmm_transect_index(eng, "TP2");
+    ASSERT_GE(idx, 0);
+
+    double nL = -1, nR = -1, nC = -1;
+    ASSERT_EQ(swmm_transect_get_roughness(eng, idx, &nL, &nR, &nC), SWMM_OK);
+    EXPECT_DOUBLE_EQ(nL, 0.04);   // inherited
+    EXPECT_DOUBLE_EQ(nR, 0.05);   // inherited
+    EXPECT_DOUBLE_EQ(nC, 0.02);   // overwritten
+}
+
+// ---------------------------------------------------------------------------
+// A zero overbank value with no earlier positive one defaults to the channel
+// roughness, as legacy transect.c::setManning does.
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectInpParserTest, ZeroOverbankRoughnessDefaultsToChannel) {
+    const std::string block =
+        "NC 0 0 0.03\n"
+        "X1 TOB              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n";
+    ASSERT_TRUE(loadWithTransects(block));
+
+    const int idx = swmm_transect_index(eng, "TOB");
+    ASSERT_GE(idx, 0);
+
+    double nL = -1, nR = -1, nC = -1;
+    ASSERT_EQ(swmm_transect_get_roughness(eng, idx, &nL, &nR, &nC), SWMM_OK);
+    EXPECT_DOUBLE_EQ(nL, 0.03);
+    EXPECT_DOUBLE_EQ(nR, 0.03);
+    EXPECT_DOUBLE_EQ(nC, 0.03);
+}
+
+// ---------------------------------------------------------------------------
+// Error 227 must still fire when a zero channel component has no positive
+// predecessor to inherit from — inheritance must not paper over genuinely
+// missing roughness.
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectInpParserTest, ZeroNcWithNoPredecessorIsStillError227) {
+    const std::string block =
+        "NC 0 0 0\n"
+        "X1 TNP              3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n";
+    EXPECT_FALSE(loadWithTransects(block));
+
+    const char* msg = swmm_get_last_error_msg(eng);
+    ASSERT_NE(msg, nullptr);
+    EXPECT_NE(std::string(msg).find("227"), std::string::npos)
+        << "Expected Error 227 when no channel roughness was ever set, got: "
+        << msg;
+}
+
+// ---------------------------------------------------------------------------
+// A negative component is bad input, not an inheritance request — it must be
+// rejected even when a valid roughness triple is already active.
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectInpParserTest, NegativeNcComponentRejectedDespiteActiveValues) {
+    const std::string block =
+        "NC 0.04 0.05 0.03\n"
+        "X1 TNG1             3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n"
+        "NC -0.01 0 0\n"
+        "X1 TNG2             3       1.0 9.0 0 0 0 0 0\n"
+        "GR 100 0  90 5  100 10\n";
+    EXPECT_FALSE(loadWithTransects(block));
+}
+
 } // namespace
