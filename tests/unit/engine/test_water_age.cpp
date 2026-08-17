@@ -79,7 +79,8 @@ constexpr double kQ = 5.0;  ///< steady inflow, cfs
 void write_deck(const char* path, const std::string& pc_lines,
                 bool water_age = true, bool pollutants = false,
                 bool stagnant = false,
-                const std::string& extra_options = "") {
+                const std::string& extra_options = "",
+                int routing_step = 5) {
     std::ofstream f(path);
     f << "[TITLE]\nA1a water age gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -88,16 +89,17 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME "
       << (stagnant ? "00:02:00" : "01:00:00") << "\n"
-      // ROUTING_STEP 1 is load-bearing, not a leftover. The ARD engine
-      // loses external-inflow mass above ROUTING_STEP 2 on this deck shape
-      // — a PRE-EXISTING defect, measured identically with WATER_AGE OFF
-      // and absent under QUALITY_SOLVER LEGACY (a CONCEN 100 mg/L inflow
-      // reads 100.000 at rs<=2, 70.594 at rs=5, and 7730 at rs=20). At
-      // rs=5 it dragged gate 2's 6-hour shift down to 15246 s and made the
-      // age row look broken when it was faithfully tracking the pollutant
-      // path. At rs<=2 the transport is exact and these gates measure the
-      // age row alone. See §5 of the A1a handoff.
-      << "ROUTING_STEP 1\nREPORT_STEP 00:01:00\n"
+      // A1a pinned this at 1 s because the ARD node store lost
+      // external-inflow mass above ROUTING_STEP 2, which dragged gate 2's
+      // 6-hour shift down to 15246 s and made the age row look broken when
+      // it was faithfully tracking a broken carrier. That defect was fixed
+      // in 7b2dfaae (the store now mixes before it discharges), so the pin
+      // is retired and these decks run at an ordinary step. Re-measured
+      // across rs 1/2/5/10/20/60 after the fix: the ARD shift is
+      // 21599.998 -> 21599.9999 and the level pool is 3720.0000 at every
+      // step, so nothing here depends on the choice any more.
+      << "ROUTING_STEP " << routing_step
+      << "\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n";
     if (stagnant) {
         f << "[JUNCTIONS]\n"
@@ -410,29 +412,235 @@ TEST(WaterAgeTest, BypassConfigurationsWarn) {
             << "waterage component with WATER_AGE OFF ran without a word";
         swmm_engine_destroy(e);
     }
-    {   // option ON, engine LEGACY — the A1b deferral must be LOUD, and the
-        // deck must RUN. WATER_AGE ON is a third way into stepRouting's
-        // quality branch, so a LEGACY deck with no [POLLUTANTS] now reaches
-        // QualitySolver::execute at np == 0 where it never could before.
-        // Opening alone cannot see that; this leg simulates to the end.
+    {   // A1b FLIP (lesson 21, in the retiring changeset): LEGACY now runs
+        // its own age mirror, so the deferral warning must be GONE and the
+        // pure-age LEGACY deck must TRACK — the positive coverage this leg
+        // used to defer to.
         write_deck("_a1_leg.inp", "", /*water_age=*/true, /*pollutants=*/false,
                    false, "QUALITY_SOLVER LEGACY\n");
         const auto rec = run_recording("_a1_leg.inp", "_a1_leg.rpt",
                                        "_a1_leg.out");
         ASSERT_TRUE(rec.ok) << "WATER_AGE ON under LEGACY with no pollutants "
                                "did not survive a full run";
-        EXPECT_TRUE(has_needle(rec.warnings, "arrives with plan phase A1b"))
-            << "WATER_AGE ON under LEGACY tracked nothing silently";
-        // And the warning must be TRUE. Only ArdEngine::init sizes the age
-        // state, so under LEGACY every recorded value is run_recording's
-        // -1 "unsized" sentinel; a POSITIVE age would mean something ran
-        // and the deferral warning lied.
-        for (const auto& per_link : rec.age_link)
-            for (const double a : per_link)
-                EXPECT_LE(a, 0.0)
-                    << "LEGACY published a real age while warning that age "
-                       "tracking arrives with A1b";
+        EXPECT_FALSE(has_needle(rec.warnings, "arrives with plan phase A1b"))
+            << "the retired A1b deferral warning still fires";
+        ASSERT_FALSE(rec.age_link.empty());
+        ASSERT_FALSE(rec.age_link[kC5].empty());
+        EXPECT_GT(rec.age_link[kC5].back(), 0.0)
+            << "LEGACY age mirror is dead on the pure-age deck (the A1b "
+               "motivating configuration)";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gates 8–10 — A1b: the LEGACY CSTR age mirror.
+// ---------------------------------------------------------------------------
+TEST(WaterAgeTest, LegacySourceAgeShiftsEffluentExactly) {
+    // The mixing algebra is linear under the CSTR mirror too: an
+    // EXTERNAL_INFLOW age of 6 h shifts the steady effluent age by exactly
+    // 21600 s (same reasoning as gate 2, LEGACY engine).
+    write_deck("_a1b_base.inp", "", true, false, false,
+               "QUALITY_SOLVER LEGACY\n");
+    write_file("_a1b_src.age",
+               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
+    write_deck("_a1b_src.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_a1b_src.age\"",
+               true, false, false, "QUALITY_SOLVER LEGACY\n");
+    const auto base = run_recording("_a1b_base.inp", "_a1b_base.rpt",
+                                    "_a1b_base.out");
+    const auto src  = run_recording("_a1b_src.inp", "_a1b_src.rpt",
+                                    "_a1b_src.out");
+    ASSERT_TRUE(base.ok);
+    ASSERT_TRUE(src.ok);
+    ASSERT_FALSE(base.age_link[kC5].empty());
+    const double shift =
+        src.age_link[kC5].back() - base.age_link[kC5].back();
+    EXPECT_NEAR(shift, 21600.0, 0.05 * 21600.0)
+        << "the LEGACY mirror's per-source wiring is wrong or dead";
+}
+
+TEST(WaterAgeTest, LegacyLevelPoolAgingIsExact) {
+    write_file("_a1b_lp.age",
+               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 1.0\n");
+    write_deck("_a1b_lp.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_a1b_lp.age\"",
+               true, false, /*stagnant=*/true, "QUALITY_SOLVER LEGACY\n");
+    const auto rec = run_recording("_a1b_lp.inp", "_a1b_lp.rpt",
+                                   "_a1b_lp.out");
+    ASSERT_TRUE(rec.ok);
+    ASSERT_FALSE(rec.age_link[kC3].empty());
+    // Symmetric with ARD's gate 3: INITIAL_STATE seeds on the mirror's
+    // first step, then aging is the exact +dt integral and mixing of
+    // equal ages is the identity.
+    const double expected = 3600.0 + 120.0;
+    EXPECT_NEAR(rec.age_link[kC3].back(), expected, 1.0e-3 * expected)
+        << "LEGACY aging is not the exact +dt integral";
+    ASSERT_FALSE(rec.age_node_final.empty());
+    EXPECT_NEAR(rec.age_node_final[1], expected, 1.0e-3 * expected);
+}
+
+TEST(WaterAgeTest, LegacyAgeLeavesPollutantsBitwise) {
+    // The mirror reads pollutant-side arrays and writes only
+    // water_age_state: WATER_AGE ON must leave TSS trajectories
+    // bit-identical under LEGACY.
+    write_deck("_a1b_bw_off.inp", "", /*water_age=*/false,
+               /*pollutants=*/true, false, "QUALITY_SOLVER LEGACY\n");
+    write_deck("_a1b_bw_on.inp", "", /*water_age=*/true,
+               /*pollutants=*/true, false, "QUALITY_SOLVER LEGACY\n");
+    const auto off = run_recording("_a1b_bw_off.inp", "_a1b_bw_off.rpt",
+                                   "_a1b_bw_off.out");
+    const auto on  = run_recording("_a1b_bw_on.inp", "_a1b_bw_on.rpt",
+                                   "_a1b_bw_on.out");
+    ASSERT_TRUE(off.ok);
+    ASSERT_TRUE(on.ok);
+    for (int l = 0; l < 5; ++l) {
+        const auto ul = static_cast<std::size_t>(l);
+        ASSERT_EQ(off.tss_link[ul].size(), on.tss_link[ul].size());
+        for (std::size_t t = 0; t < off.tss_link[ul].size(); ++t)
+            ASSERT_EQ(off.tss_link[ul][t], on.tss_link[ul][t])
+                << "link " << l << " step " << t
+                << ": WATER_AGE ON changed a LEGACY pollutant trajectory";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Gates 11-12 — what the delivered A1b gates cannot see.
+// ---------------------------------------------------------------------------
+TEST(WaterAgeTest, LegacySourceShiftIsRoutingStepInvariant) {
+    // The A1b mirror is a STORE-based scheme, which is the family the ARD
+    // node store belonged to when it discharged at a concentration read
+    // before the step's inflow mixed in (fixed in 7b2dfaae). That defect's
+    // signature is loss of step invariance: it read exactly right at small
+    // steps and sagged as the step grew, so a gate at ONE routing step
+    // cannot see it. Gate 8 checks the 6-hour shift at the deck's step
+    // only; this sweeps it.
+    //
+    // Linearity makes the shift exactly 21600 s regardless of step size,
+    // even though the ABSOLUTE age is step-dependent under this scheme
+    // (measured: the outfall age carries a clean O(dt) splitting bias of
+    // one dt per element crossed). The shift cancels that bias, which is
+    // what makes it the right invariant to gate.
+    write_file("_a1b_inv.age",
+               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
+    for (const int rs : {1, 5, 20}) {
+        write_deck("_a1b_inv_b.inp", "", true, false, false,
+                   "QUALITY_SOLVER LEGACY\n", rs);
+        write_deck("_a1b_inv_s.inp",
+                   "org.hydrocouple.openswmm.waterage config=\"_a1b_inv.age\"",
+                   true, false, false, "QUALITY_SOLVER LEGACY\n", rs);
+        const auto b = run_recording("_a1b_inv_b.inp", "_a1b_inv_b.rpt",
+                                     "_a1b_inv_b.out");
+        const auto s2 = run_recording("_a1b_inv_s.inp", "_a1b_inv_s.rpt",
+                                      "_a1b_inv_s.out");
+        ASSERT_TRUE(b.ok) << "rs=" << rs;
+        ASSERT_TRUE(s2.ok) << "rs=" << rs;
+        ASSERT_FALSE(b.age_link[kC5].empty()) << "rs=" << rs;
+        const double shift = s2.age_link[kC5].back() - b.age_link[kC5].back();
+        EXPECT_NEAR(shift, 21600.0, 10.0)
+            << "ROUTING_STEP " << rs << ": the 6-hour source shift came out "
+            << shift << " s. Linearity makes it step-independent, so a shift "
+               "that moves with the step means the mirror's ordering has "
+               "come apart the way the ARD store's did.";
+    }
+}
+
+TEST(WaterAgeTest, LegacyOutfallAgeConvergesToResidenceTime) {
+    // The strongest correctness claim available for a steady system: the
+    // mean age of water LEAVING it is exactly V/Q. No gate asserted this
+    // for the mirror, and it is the one that says the scheme is RIGHT
+    // rather than merely self-consistent.
+    //
+    // The outfall NODE is the common quantity across schemes. A LINK's
+    // published age is not: LEGACY's fully-mixed tank publishes its outlet
+    // value while ARD publishes the volume-weighted mean over the link's
+    // cells, so the two differ by definition and comparing them measures
+    // nothing (measured 6.5% apart on this deck, which is that definitional
+    // gap, not an error in either).
+    //
+    // Measured deviation from V/Q under LEGACY: +4.504 s at ROUTING_STEP 1
+    // and +24.504 at 5 — exactly 5*dt - 0.5, i.e. one spurious dt per
+    // element a parcel crosses. It extrapolates to zero, so the mirror is
+    // EXACT in the limit and carries a clean O(dt) operator-splitting bias
+    // (age-then-mix at every element). The band below is set from that law
+    // rather than from a single observation.
+    write_deck("_a1b_rt.inp", "", true, false, false,
+               "QUALITY_SOLVER LEGACY\n", 1);
+    const auto rec = run_recording("_a1b_rt.inp", "_a1b_rt.rpt",
+                                   "_a1b_rt.out");
+    ASSERT_TRUE(rec.ok);
+    ASSERT_FALSE(rec.age_node_final.empty());
+    const double outfall  = rec.age_node_final.back();
+    const double residence = rec.system_volume_final / kQ;
+    ASSERT_GT(residence, 0.0);
+    ASSERT_GT(outfall, 0.0) << "the outfall never aged — mirror dead";
+    // At ROUTING_STEP 1 the splitting bias is ~5 s on a ~930 s residence
+    // time. 3% leaves room for it and for the deck's hydraulics without
+    // admitting a scheme that has lost the theorem.
+    EXPECT_NEAR(outfall, residence, 0.03 * residence)
+        << "LEGACY outfall age " << outfall << " s vs V/Q " << residence
+        << " s — a steady system's outflow age IS its residence time; this "
+           "much deviation means the mirror is not conserving age-volume.";
+}
+
+TEST(WaterAgeTest, LegacySplittingBiasIsOneStepPerElement) {
+    // The lesson-32 gate. The mirror ages an element by dt and then mixes,
+    // so a parcel crossing N elements picks up an O(dt) splitting bias.
+    // Measured on this 5-conduit chain the outfall age is exactly
+    // V/Q + 5*dt - 0.5: one routing step per element, extrapolating to the
+    // residence-time theorem at dt -> 0.
+    //
+    // The ARD node store's defect was reading its donor BEFORE mixing in
+    // what arrived that step. Written into this mirror (take the link's
+    // upstream age from the PRE-mixing node value) the bias becomes exactly
+    // 10*dt — two steps per element instead of one — while every other
+    // gate stays green: the 6-hour SHIFT cancels the bias, which is exactly
+    // what makes the shift the right invariant elsewhere and blind here.
+    // Only the slope of the absolute bias separates the two orderings.
+    double bias[2];
+    const int steps[2] = {1, 5};
+    for (int k = 0; k < 2; ++k) {
+        write_deck("_a1b_sl.inp", "", true, false, false,
+                   "QUALITY_SOLVER LEGACY\n", steps[k]);
+        const auto rec = run_recording("_a1b_sl.inp", "_a1b_sl.rpt",
+                                       "_a1b_sl.out");
+        ASSERT_TRUE(rec.ok) << "rs=" << steps[k];
+        ASSERT_FALSE(rec.age_node_final.empty());
+        ASSERT_GT(rec.system_volume_final, 0.0);
+        bias[k] = rec.age_node_final.back() - rec.system_volume_final / kQ;
+    }
+    // Per routing step, per element crossed. Five conduits on this deck.
+    const double per_element =
+        (bias[1] - bias[0]) / (steps[1] - steps[0]) / 5.0;
+    EXPECT_GT(per_element, 0.5)
+        << "the splitting bias vanished (" << per_element
+        << " dt/element) — aging is not running at all, or the outfall is "
+           "not being written";
+    EXPECT_LT(per_element, 1.5)
+        << "the splitting bias is " << per_element
+        << " routing steps per element, not one. Two per element is the "
+           "signature of the link stage reading its upstream node age "
+           "BEFORE that node mixed in this step's inflow — the ARD node "
+           "store's defect (7b2dfaae) written into the mirror.";
+}
+
+TEST(WaterAgeTest, IgnoreQualityWarnsWithoutAWaterageComponent) {
+    // A1b MOVED this warning: it used to live in the waterage component's
+    // apply hook, so it could only fire for decks that configured one. It
+    // now fires engine-level, which is the point of the move — WATER_AGE ON
+    // needs no component. Nothing observed it, and a warning that changes
+    // homes is exactly when one goes missing.
+    write_deck("_a1b_iq.inp", "", /*water_age=*/true, /*pollutants=*/true,
+               false, "IGNORE_QUALITY YES\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_a1b_iq.inp", "_a1b_iq.rpt",
+                               "_a1b_iq.out", nullptr), SWMM_OK);
+    EXPECT_TRUE(has_needle(as_cpp_engine(e).context().warnings,
+                           "IGNORE_QUALITY is YES"))
+        << "WATER_AGE ON with IGNORE_QUALITY YES and no waterage component "
+           "tracked nothing without a word — the engine-level move lost the "
+           "warning the component used to carry";
+    swmm_engine_destroy(e);
 }
 
 // ---------------------------------------------------------------------------

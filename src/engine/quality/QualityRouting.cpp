@@ -32,6 +32,7 @@
 
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "../transport/components/WaterAgeModule/WaterAgeLegacy.hpp"
 #include "Treatment.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -223,9 +224,13 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     // legitimate shape — EPANET-MSX decks routinely declare no legacy
     // pollutant. Every stage below is a no-op at np == 0, so letting it
     // through costs nothing and is the only way reactLegacyNodes/Links run
-    // for such a model. Without a reactions component the early return is
+    // for such a model. A1b: the pure-age LEGACY model is the same shape —
+    // the age mirror needs the volume accumulation these stages perform.
+    // Without a reactions component or WATER_AGE the early return is
     // unchanged, so parity is preserved by construction.
-    if (n_pollutants_ <= 0 && !transport::legacyReactionsActive(ctx)) return;
+    if (n_pollutants_ <= 0 && !transport::legacyReactionsActive(ctx) &&
+        !ctx.options.water_age)
+        return;
 
     assembleExternalLoads(ctx, dt);
     accumulateLinkLoads(ctx, dt);
@@ -247,6 +252,11 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     if (transport::legacyReactionsActive(ctx))
         transport::reactLegacyLinks(ctx, dt);
     applyLinkQualityForcing(ctx, n_pollutants_, dt);
+
+    // A1b: the LEGACY age mirror runs LAST — it reads the fully accumulated
+    // qual_vol_in as its mixing denominator and writes only water_age_state,
+    // so WATER_AGE ON leaves every pollutant trajectory bit-identical.
+    transport::routeLegacyAge(ctx, dt);
 }
 
 // ============================================================================
