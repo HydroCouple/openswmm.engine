@@ -1525,7 +1525,7 @@ For a pure 1D sewer network with N=10,000 active nodes, M=50 members, k=20 modes
 |---|---|---|
 | Lanczos eigensolver (one-time at `initialize()`) | ~15 ms | O(N·k) sparse mat-vec; paid once regardless of simulation length |
 | ROM `advance()` per routing step | < 1 μs | M×k = 1,000 scalar exponentials |
-| `computeQuantiles()` per routing step | ~2 ms | M×N = 500,000 reconstructions + per-node sort |
+| `computeQuantiles()` per routing step | **~4.4 ms** (was ~46 ms before PR H4) — scaled to N=10,000 | M×N reconstruction now one `cblas_dgemm` call (or a portable fallback) instead of a hand-rolled triple loop. Reconstruction is O(N·M·k), so this row is the *measured* Bellinge result (N=1,011/M=50/k=20: 4.7 ms → 0.45 ms, **10.3–10.6× faster**) scaled linearly by N to match this table's N=10,000; see below for the real measurement |
 | Per-step overhead vs deterministic DYNWAVE | < 1% | DYNWAVE Newton solve dominates at ≫ 1 ms/step |
 
 For a 6-hour storm at 30-second routing intervals (720 steps):
@@ -1535,10 +1535,20 @@ For a 6-hour storm at 30-second routing intervals (720 steps):
 | Total overhead | ~50× baseline runtime | ~0.5% of baseline |
 | Typical wall time | hours | seconds |
 
-**Quantile reconstruction** (M×N per step) is the dominant 1D ROM cost for large networks.
-For N=10,000 and M=50, each step reconstructs 500,000 head values. At 30 s routing intervals
-this amounts to roughly 700 ms of quantile work per simulated hour. To reduce it: lower M,
-increase the routing interval, or compute quantiles only on output steps rather than every step.
+**Quantile reconstruction** (M×N per step) was the dominant 1D ROM cost for large networks;
+**PR H4** replaced the hand-rolled reconstruction loop with a GEMM call (`RomQuantileGemm.hpp`
+— Apple's Accelerate framework, zero new dependency, with a portable fallback elsewhere) and
+switched the 2D ROM's quantile *selection* from a full sort to three `std::nth_element` calls
+(1D kept the full sort — PR H10's threshold/modality diagnostics need the whole per-node row in
+sorted order, not just the three quantile points). The speedup itself is measured, not estimated
+(see `docs/uncertainty/VALIDATION.md`, "Quantile-reconstruction GEMM (PR H4)," for the full
+numbers) — directly, at the N each benchmark actually ran at, not at the N=10,000 this section
+assumes: **10.3–10.6× faster** on Bellinge (1D, a real network — N=1,011 active nodes/M=50/k=20,
+4.7 ms → 0.45 ms per call) and **7.0–7.1× faster** at 9,800 triangles/M=50/k=20 (2D, 111 ms →
+15.6 ms per call). The table row above scales the Bellinge result linearly by N (reconstruction
+is O(N·M·k)) to match this section's stated N=10,000 — the *ratio* is measured, the *N=10,000
+absolute number* is not. To reduce the remaining cost further: lower M, increase the routing
+interval, or compute quantiles only on output steps rather than every step.
 
 **Lanczos build** requires n_active ≥ 4 conduit-endpoint nodes (outfalls excluded). Build time
 scales as O(N·k·iters) where iters ≈ 3k for typical Lanczos convergence. At N=10,000 and k=20

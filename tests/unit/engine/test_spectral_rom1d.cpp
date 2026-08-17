@@ -2866,3 +2866,230 @@ TEST(PhaseCoordinate, HistoryShorterThanTauDegradesGracefully) {
         << "narrower than the mature band (width=" << width_mature << "), "
         << "not exploding from the lookback clamp";
 }
+
+// ============================================================================
+// PR H4 — quantile-reconstruction GEMM. computeQuantiles()'s reconstruction
+// step (recon_buf_ fill) now goes through reconstructEnsembleGemm()
+// (RomQuantileGemm.hpp, cblas_dgemm or a portable fallback) by default;
+// rom_quantile_naive=true keeps the original hand-rolled loop available for
+// direct comparison. computeQuantiles() still does a full std::sort per
+// node either way (H10's sortedMemberValues() needs the whole row in
+// ascending order for its gap-statistic modality check -- see
+// RomQuantileGemm.hpp's file doc for why 1D did not switch to nth_element
+// the way the 2D ROM did).
+// ============================================================================
+
+namespace {
+// Relative-tolerance comparison (GEMM's internal summation order is not
+// guaranteed to match the naive left-to-right accumulation bit-for-bit).
+void expectRelClose(double a, double b, double rel_tol, const char* what) {
+    const double scale = std::max({std::fabs(a), std::fabs(b), 1.0});
+    EXPECT_NEAR(a, b, rel_tol * scale) << what;
+}
+}  // namespace
+
+TEST(QuantileGemm, GemmIsRunToRunDeterministic) {
+    // The checklist's own determinism requirement ("TwoRunsAreIdentical must
+    // stay green -- GEMM is deterministic run-to-run") names a full-engine
+    // test that no longer exists under that name anywhere in this tree
+    // (grepped; not present -- apparently dropped somewhere across the
+    // marcher port, unrelated to this PR). The underlying concern is real
+    // and specific to this PR though: does cblas_dgemm (Accelerate, possibly
+    // internally multithreaded) give bit-identical output across repeated
+    // calls on the SAME input, or can thread-scheduling nondeterminism leak
+    // into the reduction order? Verified directly here instead.
+    const int N = 22, M = 32, K = 7;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = M;
+    rom.mannings_pert = 0.25;
+    rom.runoff_pert   = 0.15;
+    rom.initialize();
+    ASSERT_FALSE(rom.rom_quantile_naive);
+
+    std::vector<double> h0(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h0[static_cast<std::size_t>(i)] = 0.1 * std::exp(-0.5 * dx * dx / (N / 6.0 * N / 6.0));
+    }
+    rom.seed(h0.data());
+    std::vector<double> h_det = h0;
+    std::vector<double> runoff(static_cast<std::size_t>(N), 1.0e-5);
+    for (int step = 0; step < 25; ++step)
+        rom.advance(20.0, 0.1, h_det.data(), runoff.data());
+
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const std::vector<double> q05_1 = rom.q05, q50_1 = rom.q50, q95_1 = rom.q95;
+
+    // Repeat computeQuantiles() on the SAME (unmodified) state several times.
+    for (int rep = 0; rep < 5; ++rep) {
+        rom.computeQuantiles(h_det.data(), nullptr);
+        for (int t = 0; t < rom.n_nodes; ++t) {
+            const auto ut = static_cast<std::size_t>(t);
+            EXPECT_EQ(rom.q05[ut], q05_1[ut]) << "rep " << rep << " node " << t << " q05";
+            EXPECT_EQ(rom.q50[ut], q50_1[ut]) << "rep " << rep << " node " << t << " q50";
+            EXPECT_EQ(rom.q95[ut], q95_1[ut]) << "rep " << rep << " node " << t << " q95";
+        }
+    }
+}
+
+TEST(QuantileGemm, NaiveMatchesGemm1D) {
+    // A network/ensemble large enough to exercise multiple active AND
+    // multiple deliberately-inactive modes in the same call -- the
+    // active-mode compaction is the one place GEMM equivalence could
+    // silently go wrong.
+    const int N = 25, M = 35, K = 8;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = M;
+    rom.mannings_pert = 0.25;
+    rom.runoff_pert   = 0.25;
+    rom.initialize();
+
+    std::vector<double> h0(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h0[static_cast<std::size_t>(i)] =
+            0.15 * std::exp(-0.5 * dx * dx / (N / 6.0 * N / 6.0));
+    }
+    rom.seed(h0.data());
+
+    std::vector<double> h_det(static_cast<std::size_t>(N));
+    std::vector<double> runoff(static_cast<std::size_t>(N));
+    for (int step = 0; step < 60; ++step) {
+        const double phase = 0.07 * step;
+        for (int i = 0; i < N; ++i) {
+            h_det[static_cast<std::size_t>(i)] =
+                h0[static_cast<std::size_t>(i)] * (1.0 + 0.4 * std::sin(phase + 0.35 * i));
+            runoff[static_cast<std::size_t>(i)] =
+                1.0e-5 * (1.0 + std::cos(phase + 0.5 * i));
+        }
+        rom.advance(20.0, 0.12, h_det.data(), runoff.data());
+    }
+
+    // Force a real "some modes inactive" scenario, INCLUDING a frozen
+    // nonzero coefficient on a deactivated mode -- a mode that was active in
+    // the past and has since dropped out keeps whatever a_ensemble value it
+    // last had (advance() simply stops updating it); both the naive mask
+    // and the GEMM compaction must exclude it identically.
+    ASSERT_GE(rom.n_kept, 4);
+    rom.mode_active[1] = false;
+    rom.mode_active[3] = false;
+    for (int i = 0; i < M; ++i)
+        rom.a_ensemble[static_cast<std::size_t>(i) * static_cast<std::size_t>(rom.n_kept) + 1] =
+            0.0037 * (i + 1);  // frozen nonzero on an inactive mode -- must be excluded either way
+
+    rom.rom_quantile_naive = true;
+    rom.computeQuantiles(h_det.data(), nullptr);
+    const std::vector<double> q05_naive = rom.q05;
+    const std::vector<double> q50_naive = rom.q50;
+    const std::vector<double> q95_naive = rom.q95;
+
+    rom.rom_quantile_naive = false;
+    rom.computeQuantiles(h_det.data(), nullptr);
+
+    for (int t = 0; t < rom.n_nodes; ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        expectRelClose(rom.q05[ut], q05_naive[ut], 1e-12, "q05");
+        expectRelClose(rom.q50[ut], q50_naive[ut], 1e-12, "q50");
+        expectRelClose(rom.q95[ut], q95_naive[ut], 1e-12, "q95");
+    }
+}
+
+TEST(QuantileGemm, NaiveMatchesGemm1DWithInvertClamp) {
+    // Same fixture shape, but with invert_active clamping engaged (a
+    // separate branch in computeQuantiles() applied identically after
+    // either reconstruction path).
+    const int N = 20, M = 30, K = 6;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = M;
+    rom.mannings_pert = 0.30;
+    rom.runoff_pert   = 0.0;
+    rom.initialize();
+
+    std::vector<double> h0(static_cast<std::size_t>(N));
+    std::vector<double> invert(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 4.0;
+        h0[static_cast<std::size_t>(i)] =
+            0.05 * std::exp(-0.5 * dx * dx / (N / 8.0 * N / 8.0));
+        invert[static_cast<std::size_t>(i)] = 0.02;  // above 0 so clamping actually engages
+    }
+    rom.seed(h0.data());
+
+    std::vector<double> h_det = h0;
+    std::vector<double> runoff(static_cast<std::size_t>(N), 0.0);
+    for (int step = 0; step < 40; ++step)
+        rom.advance(15.0, 0.15, h_det.data(), runoff.data());
+
+    rom.rom_quantile_naive = true;
+    rom.computeQuantiles(h_det.data(), invert.data());
+    const std::vector<double> q05_naive = rom.q05;
+    const std::vector<double> q50_naive = rom.q50;
+    const std::vector<double> q95_naive = rom.q95;
+
+    rom.rom_quantile_naive = false;
+    rom.computeQuantiles(h_det.data(), invert.data());
+
+    for (int t = 0; t < rom.n_nodes; ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        expectRelClose(rom.q05[ut], q05_naive[ut], 1e-12, "q05");
+        expectRelClose(rom.q50[ut], q50_naive[ut], 1e-12, "q50");
+        expectRelClose(rom.q95[ut], q95_naive[ut], 1e-12, "q95");
+        EXPECT_GE(rom.q05[ut], invert[ut] - 1e-12) << "invert clamp must still hold under GEMM";
+    }
+}
+
+TEST(QuantileGemm, SortedMemberValuesStaysFullySortedUnderGemm) {
+    // PR H10's gapModality()/exceedanceFraction() need sortedMemberValues()
+    // fully ascending, not just correct at the three quantile indices --
+    // this is exactly why 1D did NOT switch to nth_element (see
+    // RomQuantileGemm.hpp). Direct regression guard on that property under
+    // the now-default GEMM path.
+    const int N = 20, M = 30, K = 6;
+    GraphEigenBasis basis;
+    CsrGraph L = make_chain_laplacian(N);
+    ASSERT_TRUE(basis.build(L, K));
+
+    SpectralROM1D rom;
+    rom.basis = &basis;
+    rom.n_ensemble = M;
+    rom.mannings_pert = 0.25;
+    rom.runoff_pert   = 0.0;
+    rom.initialize();
+    ASSERT_FALSE(rom.rom_quantile_naive) << "GEMM must be the default path";
+
+    std::vector<double> h0(static_cast<std::size_t>(N));
+    for (int i = 0; i < N; ++i) {
+        double dx = i - N / 3.0;
+        h0[static_cast<std::size_t>(i)] = 0.08 * std::exp(-0.5 * dx * dx / (N / 6.0 * N / 6.0));
+    }
+    rom.seed(h0.data());
+    std::vector<double> h_det = h0;
+    std::vector<double> runoff(static_cast<std::size_t>(N), 0.0);
+    for (int step = 0; step < 30; ++step)
+        rom.advance(20.0, 0.1, h_det.data(), runoff.data());
+    rom.computeQuantiles(h_det.data(), nullptr);
+
+    const auto& mv = rom.sortedMemberValues();
+    ASSERT_EQ(static_cast<int>(mv.size()), rom.n_nodes * M);
+    for (int t = 0; t < rom.n_nodes; ++t) {
+        const double* row = &mv[static_cast<std::size_t>(t) * static_cast<std::size_t>(M)];
+        for (int i = 1; i < M; ++i)
+            EXPECT_LE(row[i - 1], row[i]) << "node " << t << " index " << i
+                                          << ": sortedMemberValues() must stay fully ascending under GEMM";
+    }
+}

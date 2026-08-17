@@ -250,6 +250,12 @@ if(OPENSWMM_BUILD_2D)
     # bit-identical with the ensemble on or off.
     add_gtest_unit(test_engine_2d_rom_nonintrusive test_2d_rom_nonintrusive.cpp)
 
+    # Unit tests for the 2D SpectralROM itself (linear ensemble ROM math).
+    # Present on disk since an early mechanical-port pass but never wired
+    # into this file until PR H4 needed a home for its GEMM-vs-naive
+    # quantile-reconstruction equivalence tests -- found dormant, registered.
+    add_gtest_unit(test_engine_2d_spectral_rom test_2d_spectral_rom.cpp)
+
     # SurfaceRouter2D's wiring of the calibrated reduced operator: production
     # default vs rom_legacy_operator fallback, and open-boundary grounding
     # reachable through the router's own boundary_ (not just at the
