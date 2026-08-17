@@ -45,6 +45,7 @@
 #include "../input/PostParseResolver.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/ProcessComponentRegistry.hpp"
+#include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
@@ -268,6 +269,7 @@ int SWMMEngine::open(const char* inp_path,
     // survivable on lenient (editor) open. Implemented components register
     // first (idempotent — overwrites the planned-id placeholder).
     transport::registerReactionsComponent();
+    transport::registerArdComponent();
     {
         std::string base_dir;
         if (inp_path && inp_path[0] != '\0')
@@ -300,6 +302,9 @@ int SWMMEngine::open(const char* inp_path,
         // A configured reactions component that no engine will run is a
         // silent no-result run unless we say so (R4).
         transport::warnIfLegacyBindingBypassed(ctx_);
+        // The mirror case for E3: dispersion spelled the FV way while the
+        // ARD engine reads it from model.ard.
+        transport::warnIfFvDispersionKeyIgnored(ctx_);
     }
 
     // Warn about unknown/skipped sections. Route through push_report_warning so
@@ -3052,9 +3057,14 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                     ctx_.warnings.push_back(w);
                 if (!ok)
                     ctx_.warnings.push_back(
-                        "QUALITY_SOLVER EULERIAN_ARD: transport mesh "
-                        "unavailable — falling back to LEGACY quality "
-                        "routing.");
+                        std::string(
+                            "QUALITY_SOLVER EULERIAN_ARD: transport mesh "
+                            "unavailable — falling back to LEGACY quality "
+                            "routing.") +
+                        (ctx_.ard_config.any_dispersion()
+                             ? " The transport.ard dispersion configuration "
+                               "does not apply under the LEGACY engine."
+                             : ""));
             }
             if (ard_.initialized()) {
                 quality_.assembleExternalLoads(ctx_, dt_routing);

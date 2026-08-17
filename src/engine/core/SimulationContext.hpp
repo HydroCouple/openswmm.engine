@@ -80,6 +80,7 @@
 #include <ctime>
 #include <functional>
 #include "FilePathPair.hpp"
+#include "../data/ArdConfigData.hpp"
 #include "../data/GageData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
@@ -537,6 +538,14 @@ struct SimulationContext {
      *        with phase R2.
      */
     ReactionData reactions;
+
+    /**
+     * @brief Eulerian ARD transport component configuration, parsed from the
+     *        `model.ard` config file registered via [PROCESS_COMPONENTS]
+     *        (phase E3: the dispersion subset — global mode + per-conduit
+     *        overrides). @see data/ArdConfigData.hpp.
+     */
+    ArdConfigData ard_config;
 
     /**
      * @brief All time series and rating curves.
@@ -1394,6 +1403,11 @@ struct SimulationContext {
 
         // Clear inflow-related stores that aren't reset by their owning solvers
         rdii_decay = RDIIDecayData{};
+
+        // E3: transport.ard component config — its apply hook resets it, but
+        // a reopen WITHOUT the component would otherwise inherit the previous
+        // model's dispersion.
+        ard_config = ArdConfigData{};
 
         // Virtual-junction diagnostics
         vj_diag.clear();
