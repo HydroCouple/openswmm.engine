@@ -180,6 +180,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.quality_solver = QualitySolverKind::EULERIAN_ARD;
             else opt.ext_options[key] = val;
 
+        } else if (key == "WATER_AGE") {
+            // Water age plan §1 (phase A1a): transported age tracking.
+            opt.water_age = (norm(val) == "ON" || norm(val) == "YES");
+
         // -----------------------------------------------------------------
         // Timesteps
         // -----------------------------------------------------------------

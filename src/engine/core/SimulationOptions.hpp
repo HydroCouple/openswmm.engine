@@ -233,6 +233,18 @@ struct SimulationOptions {
     QualitySolverKind quality_solver = QualitySolverKind::LEGACY;
 
     /**
+     * @brief `[OPTIONS] WATER_AGE ON|OFF` — transported water-age tracking
+     *        (water age plan §1, reserved species __WATER_AGE__).
+     *
+     * @details A1a scope: the age species rides the EULERIAN_ARD mesh
+     *          (unit zero-order aging + volume-weighted mixing); per-source
+     *          initial ages come from the waterage component's
+     *          [WATER_AGE_SOURCES]. LEGACY-engine age arrives with A1b and
+     *          warns until then.
+     */
+    bool water_age = false;
+
+    /**
      * @brief Knobs for FLOW_ROUTING FV, grouped rather than spread across this
      *        struct (plan §4.2 — first-class [OPTIONS] keys, no new section).
      *

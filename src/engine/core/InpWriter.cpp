@@ -666,6 +666,17 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // models keep a legacy-clean [OPTIONS] block.
     if (o.ignore_2d)
         std::fprintf(f,"%-20s %s\n",  "IGNORE_2D",         "YES");
+    // Same rule for the two transport engine-selection keys. Both were
+    // dropped on save: a EULERIAN_ARD model came back LEGACY and a
+    // WATER_AGE model came back with age tracking off, silently. They are
+    // written TOGETHER because either alone is worse than neither — a deck
+    // carrying WATER_AGE ON without its EULERIAN_ARD line opens with the
+    // "no age is tracked this simulation" warning instead of the model the
+    // user saved.
+    if (o.quality_solver == QualitySolverKind::EULERIAN_ARD)
+        std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "EULERIAN_ARD");
+    if (o.water_age)
+        std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
     std::fprintf(f,"\n");
 
     // --- Group 3: Date / time options (START_DATE .. RULE_STEP) ---

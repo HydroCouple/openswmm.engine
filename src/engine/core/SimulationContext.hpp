@@ -82,6 +82,7 @@
 #include "FilePathPair.hpp"
 #include "../data/ArdConfigData.hpp"
 #include "../data/GageData.hpp"
+#include "../data/WaterAgeData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
 #include "../data/NodeData.hpp"
@@ -552,6 +553,14 @@ struct SimulationContext {
      *        overrides). @see data/ArdConfigData.hpp.
      */
     ArdConfigData ard_config;
+
+    /**
+     * @brief Water-age tracking (phase A1a): per-source initial ages parsed
+     *        from the waterage component (`model.age`) + the runtime age
+     *        state the engines and loaders share. @see data/WaterAgeData.hpp.
+     */
+    WaterAgeConfigData water_age_config;
+    WaterAgeState      water_age_state;
 
     /**
      * @brief All time series and rating curves.
@@ -1414,6 +1423,10 @@ struct SimulationContext {
         // a reopen WITHOUT the component would otherwise inherit the previous
         // model's dispersion.
         ard_config = ArdConfigData{};
+
+        // A1a: same stale-on-reopen hygiene for water age.
+        water_age_config = WaterAgeConfigData{};
+        water_age_state.clear();
 
         // Virtual-junction diagnostics
         vj_diag.clear();

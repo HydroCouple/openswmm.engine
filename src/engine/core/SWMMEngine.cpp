@@ -48,6 +48,7 @@
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
+#include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "HotStartManager.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
@@ -270,6 +271,7 @@ int SWMMEngine::open(const char* inp_path,
     // first (idempotent — overwrites the planned-id placeholder).
     transport::registerReactionsComponent();
     transport::registerArdComponent();
+    transport::registerWaterAgeComponent();
     {
         std::string base_dir;
         if (inp_path && inp_path[0] != '\0')
@@ -313,6 +315,21 @@ int SWMMEngine::open(const char* inp_path,
         // The mirror case for E3: dispersion spelled the FV way while the
         // ARD engine reads it from model.ard.
         transport::warnIfFvDispersionKeyIgnored(ctx_);
+
+        // A1a: age transport rides the ARD mesh only for now — WATER_AGE ON
+        // under LEGACY would track nothing, and the reserved species
+        // registers so downstream consumers see the registry truth.
+        if (ctx_.options.water_age) {
+            ctx_.species_registry.add("__WATER_AGE__",
+                                      SpeciesKind::RESERVED_AGE, "hours");
+            if (!ctx_.options.ignore_quality &&
+                ctx_.options.quality_solver != QualitySolverKind::EULERIAN_ARD)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] WATER_AGE ON under QUALITY_SOLVER LEGACY: "
+                    "the LEGACY age mirror arrives with plan phase A1b — no "
+                    "age is tracked this simulation. Set QUALITY_SOLVER "
+                    "EULERIAN_ARD to track age today.");
+        }
     }
 
     // Warn about unknown/skipped sections. Route through push_report_warning so
@@ -3055,7 +3072,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //     (EULERIAN_ARD, IGNORE_QUALITY) warn at open rather than running
     //     silently; see transport::warnIfLegacyBindingBypassed.
     if ((ctx_.n_pollutants() > 0 ||
-         transport::legacyReactionsActive(ctx_)) &&
+         transport::legacyReactionsActive(ctx_) ||
+         ctx_.options.water_age) &&
         !ctx_.options.ignore_quality) {
         if (ctx_.options.quality_solver == QualitySolverKind::EULERIAN_ARD) {
             if (!ard_init_attempted_) {
