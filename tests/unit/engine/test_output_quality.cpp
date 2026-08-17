@@ -72,7 +72,7 @@ void write_file(const char* path, const std::string& body) {
 }
 
 void write_deck(const char* path, const std::string& extra_options = "",
-                const std::string& pc_lines = "") {
+                const std::string& pc_lines = "", bool dry = false) {
     std::ofstream f(path);
     f << "[TITLE]\nsnapshot quality gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -81,8 +81,13 @@ void write_deck(const char* path, const std::string& extra_options = "",
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n"
       << "[JUNCTIONS]\n"
-      << "J0 10.0 10 1.5 0 0\nJ1 10.0 10 1.5 0 0\nJ2 10.0 10 1.5 0 0\n\n"
-      << "[OUTFALLS]\nOUT 10.0 FIXED 11.5 NO\n\n"
+      // `dry` = InitDepth 0 and a FREE outfall: nothing anywhere holds
+      // water, which is the configuration that exposed dry-element age
+      // reporting (links published 6.000000 h on water that never existed).
+      << (dry ? "J0 10.0 10 0 0 0\nJ1 10.0 10 0 0 0\nJ2 10.0 10 0 0 0\n\n"
+              : "J0 10.0 10 1.5 0 0\nJ1 10.0 10 1.5 0 0\nJ2 10.0 10 1.5 0 0\n\n")
+      << (dry ? "[OUTFALLS]\nOUT 10.0 FREE  NO\n\n"
+              : "[OUTFALLS]\nOUT 10.0 FIXED 11.5 NO\n\n")
       << "[CONDUITS]\n"
       << "C1 J0 J1 500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n"
       << "C3 J2 OUT 500 0.013 0 0 0\n\n"
@@ -332,6 +337,185 @@ TEST(OutputQualityTest, SpeciesIdsReadableWithoutWaterAge) {
     const char* s0 = swmm_output_get_pollut_id(h, 0);
     ASSERT_NE(s0, nullptr);
     EXPECT_STREQ(s0, "TSS");
+    swmm_output_close(h);
+}
+
+// ---------------------------------------------------------------------------
+// A dry element reports NO age (A2b carry c).
+//
+// The state must keep aging — a refilling pipe would otherwise jump, and a
+// hotstart would lose the age it exists to restore — so the mask lives at
+// the report boundary, keyed on the element's own reported depth. Validation
+// of A2b observed links publishing exactly 6.000000 h of age on water that
+// never existed; this is that observation as an assertion.
+// ---------------------------------------------------------------------------
+TEST(OutputQualityTest, DryElementsReportNoAge) {
+    // INITIAL_STATE 6 h is the discriminator: unmasked, a dry link would
+    // report ~6.167 h after the 10-minute run (6 h seed + elapsed). Masked,
+    // it reports exactly 0.
+    write_file("_oq_dry.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 6.0\n");
+    write_deck("_oq_dry.inp",
+               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+               "org.hydrocouple.openswmm.waterage config=\"_oq_dry.age\"",
+               /*dry=*/true);
+    ASSERT_TRUE(run_deck("_oq_dry.inp", "_oq_dry.rpt", "_oq_dry.out"));
+
+    SWMM_Output h = swmm_output_open("_oq_dry.out");
+    ASSERT_NE(h, nullptr);
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 2);
+    const int period = swmm_output_get_period_count(h) - 1;
+    ASSERT_GE(period, 0);
+
+    // Every link on a bone-dry network: depth ~0, so age must read 0.
+    for (int l = 0; l < 3; ++l) {
+        std::vector<float> v(32, -1.0f);
+        int count = 0;
+        ASSERT_EQ(swmm_output_get_link_attribute(h, l, period, v.data(),
+                                                 &count),
+                  0);
+        ASSERT_GE(count, 7);
+        // Liveness: the deck must actually BE dry, or the gate proves
+        // nothing about the mask.
+        //
+        // Asserted on VOLUME, not depth. A dry conduit does not report
+        // depth 0 — the dynamic-wave router floors it at FUDGE (1e-4 ft) —
+        // so a depth-based liveness test is unsatisfiable and a depth-based
+        // MASK never fires. Volume is the field that actually goes to ~0:
+        // 0.0107 ft3 here against 1263.5 ft3 on the wet deck. The bound is
+        // quality::ZERO_VOLUME (1 litre), the same constant the mask uses.
+        EXPECT_NEAR(v[1], 1.0e-4f, 1.0e-5f)
+            << "link " << l << " reports depth " << v[1]
+            << " — expected the router's dry floor; if this moved, the "
+               "mask's premise needs rechecking";
+        ASSERT_LT(v[3], 0.0353147f)
+            << "link " << l << " holds " << v[3]
+            << " ft3 — the deck is not dry, so this gate cannot observe "
+               "the mask";
+        EXPECT_FLOAT_EQ(v[6], 0.0f)
+            << "link " << l << " reports age " << v[6]
+            << " h on an element holding no water (unmasked would be ~6.167)";
+    }
+
+    // ...and every NODE. The node mask is a separate branch from the link
+    // mask and needs its own observation: with only the loop above, removing
+    // the node guard entirely leaves this gate green.
+    for (int n = 0; n < 4; ++n) {
+        std::vector<float> v(32, -1.0f);
+        int count = 0;
+        ASSERT_EQ(swmm_output_get_node_attribute(h, n, period, v.data(),
+                                                 &count),
+                  0);
+        ASSERT_GE(count, 8);
+        ASSERT_FLOAT_EQ(v[0], 0.0f)
+            << "node " << n << " reports depth " << v[0]
+            << " — not dry, so this leg cannot observe the mask";
+        EXPECT_FLOAT_EQ(v[7], 0.0f)
+            << "node " << n << " reports age " << v[7]
+            << " h while holding no water (unmasked would be ~6.167)";
+    }
+    swmm_output_close(h);
+}
+
+TEST(OutputQualityTest, WetElementsStillReportAgeAfterTheMask) {
+    // The mask must not over-apply: the wet level pool still reports its age
+    // (this is WaterAgeReportsAsATrailingColumnInHours' deck, asserted here
+    // as the mask's negative control).
+    write_file("_oq_wet.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
+    write_deck("_oq_wet.inp",
+               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+               "org.hydrocouple.openswmm.waterage config=\"_oq_wet.age\"");
+    ASSERT_TRUE(run_deck("_oq_wet.inp", "_oq_wet.rpt", "_oq_wet.out"));
+    SWMM_Output h = swmm_output_open("_oq_wet.out");
+    ASSERT_NE(h, nullptr);
+    const int period = swmm_output_get_period_count(h) - 1;
+    std::vector<float> v(32, -1.0f);
+    int count = 0;
+    ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(), &count), 0);
+    ASSERT_GE(count, 8);
+    EXPECT_GT(v[7], 2.0f)
+        << "the wet deck's node age was masked to " << v[7]
+        << " — the mask is over-applying (junction reported VOLUME is 0 by "
+           "legacy convention, which is why the mask keys on DEPTH)";
+
+    // A LINK full of standing water, too. This deck's conduits hold 1263 ft3
+    // at zero flow, so they are the only case that exercises the link
+    // predicate's HOLDS leg on its own — without this, a flow-only predicate
+    // blanks the age of every stagnant pipe in the model and no gate notices.
+    ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, v.data(), &count), 0);
+    ASSERT_GE(count, 7);
+    ASSERT_GT(v[3], 1.0f) << "link 0 holds " << v[3]
+                          << " ft3 — expected standing water";
+    ASSERT_NEAR(v[0], 0.0f, 1.0e-6f)
+        << "link 0 carries flow " << v[0]
+        << " — this leg must test HOLDS with no help from CONVEYS";
+    EXPECT_GT(v[6], 2.0f)
+        << "a full but motionless conduit reported age " << v[6]
+        << " — standing water has an age";
+    swmm_output_close(h);
+}
+
+// ---------------------------------------------------------------------------
+// A link that STORES nothing but CONVEYS water keeps its age.
+//
+// The second half of the mask's trap, with the fields exchanged. Nodes had
+// to key on depth because a junction's reported volume is 0 by convention;
+// links have to key on volume because the router floors a dry conduit's
+// depth at FUDGE. But a pump stores nothing at all — volume 0 AND depth 0 —
+// while carrying full flow, and its link_age is its upstream node's age: a
+// real number. A volume-only test (or any depth-only test) blanks the age of
+// every pump, orifice and weir in the model.
+//
+// So the predicate is holds-water OR conveys-water, and both legs are
+// load-bearing: this deck's pump has no volume, and the wet level-pool deck
+// above has no flow.
+// ---------------------------------------------------------------------------
+TEST(OutputQualityTest, FlowingRegulatorsKeepTheirAge) {
+    write_file("_oq_reg.age",
+               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 0.0\n");
+    {
+        std::ofstream f("_oq_reg.inp");
+        f << "[TITLE]\nregulator age gate\n\n[OPTIONS]\n"
+          << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
+          << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+          << "END_DATE 01/01/2026\nEND_TIME 02:00:00\n"
+          << "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n"
+          << "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n\n"
+          << "[JUNCTIONS]\nJ0 10.0 10 3.0 0 0\nJ1 9.0 10 3.0 0 0\n\n"
+          << "[OUTFALLS]\nOUT 6.0 FREE NO\n\n"
+          << "[CONDUITS]\nC1 J0 J1 300 0.013 0 0 0\n\n"
+          << "[PUMPS]\nP1 J1 OUT PC1 ON 0 0\n\n"
+          << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
+          << "[CURVES]\nPC1 PUMP4 0 5\nPC1 10 5\n\n"
+          << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 5.0\n\n"
+          << "[PROCESS_COMPONENTS]\n"
+          << "org.hydrocouple.openswmm.waterage config=\"_oq_reg.age\"\n\n"
+          << "[REPORT]\nINPUT NO\n";
+    }
+    ASSERT_TRUE(run_deck("_oq_reg.inp", "_oq_reg.rpt", "_oq_reg.out"));
+
+    SWMM_Output h = swmm_output_open("_oq_reg.out");
+    ASSERT_NE(h, nullptr);
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 1);
+    const int period = swmm_output_get_period_count(h) - 1;
+    ASSERT_GE(period, 0);
+
+    // Link 1 is the pump: flow, depth, velocity, volume, capacity, then age.
+    std::vector<float> v(32, -1.0f);
+    int count = 0;
+    ASSERT_EQ(swmm_output_get_link_attribute(h, 1, period, v.data(), &count), 0);
+    ASSERT_GE(count, 6);
+
+    // Liveness, both halves: the pump really does store nothing, and it
+    // really is running. Without these the gate could pass on a deck where
+    // the pump happens to look like a conduit.
+    ASSERT_LT(v[3], 1.0e-9f) << "pump reports volume " << v[3]
+                             << " — expected a storage-free element";
+    ASSERT_GT(v[0], 1.0f) << "pump is not running (flow " << v[0]
+                          << "), so this gate cannot observe the mask";
+
+    EXPECT_GT(v[5], 0.0f)
+        << "the running pump's age was masked to 0 — a storage-free link that "
+           "is conveying water has a real age (its upstream node's)";
     swmm_output_close(h);
 }
 

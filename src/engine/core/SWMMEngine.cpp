@@ -4195,6 +4195,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 const auto nS_s = static_cast<std::size_t>(ctx_.n_subcatches());
                 const bool age_col = ctx_.options.water_age && nr_s > np_s;
                 constexpr double kSecPerHour = 3600.0;
+                // Reported-depth threshold for "this element holds water".
+                // Deliberately tiny: the intent is to exclude elements the
+                // report itself shows as empty, not to impose a physical
+                // wetting depth.
+                constexpr double kDryReportDepth = 1.0e-9;
 
                 snap.node_quality.assign(nN_s * nr_s, 0.0);
                 for (std::size_t n = 0; n < nN_s; ++n) {
@@ -4209,9 +4214,32 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     // Age is a published state (already the step's value),
                     // so it takes no old/new interpolation — there is no
                     // node_age_old to weight against.
-                    if (age_col && n < ctx_.water_age_state.node_age.size())
+                    //
+                    // DRY-ELEMENT MASK (A2b carry c). An element with no
+                    // water still ages in the STATE — it has to, or a
+                    // refilling pipe would jump discontinuously and a
+                    // hotstart would lose the age it must restore — but
+                    // REPORTING that age is nonsense: validation saw links
+                    // publish exactly 6.000000 h of age on water that never
+                    // existed. The mask lives at the report boundary only,
+                    // keyed on the element's own REPORTED depth, so the
+                    // record is internally consistent (a reader seeing
+                    // depth 0 sees age 0) and the state is untouched. Same
+                    // shape as legacy's washoff runoff gate
+                    // (subcatch.c:929), which reports 0 rather than a
+                    // residual concentration.
+                    //
+                    // Keyed on DEPTH, not reported volume: legacy maps a
+                    // junction's reported volume to 0 by convention, so a
+                    // volume test would mask every junction age in the
+                    // model.
+                    if (age_col && n < ctx_.water_age_state.node_age.size()) {
+                        const bool wet = (n < snap.nodes.depth.size() &&
+                                          snap.nodes.depth[n] > kDryReportDepth);
                         snap.node_quality[n * nr_s + np_s] =
-                            ctx_.water_age_state.node_age[n] / kSecPerHour;
+                            wet ? ctx_.water_age_state.node_age[n] / kSecPerHour
+                                : 0.0;
+                    }
                 }
 
                 snap.link_quality.assign(nL_s * nr_s, 0.0);
@@ -4224,9 +4252,45 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                                 f1_rt * ctx_.links.conc_old[src] +
                                 f_rt * ctx_.links.conc[src];
                     }
-                    if (age_col && l < ctx_.water_age_state.link_age.size())
+                    // Dry-element mask — see the node comment above, but note
+                    // the test differs, and has to. A node reports depth 0
+                    // when empty; a LINK never does, because the dynamic-wave
+                    // router floors a dry conduit at FUDGE (1e-4 ft). That is
+                    // 1e5 times any "tiny" depth threshold, so a depth test
+                    // cannot fire on the very case this mask exists for —
+                    // measured on the bone-dry gate deck: depth
+                    // 9.99999975e-05 and age 6.166667 h, the original defect
+                    // untouched.
+                    //
+                    // Links therefore key on VOLUME (the field that IS
+                    // meaningful for them — the inverse of the node trap),
+                    // against the volume the quality subsystem itself calls
+                    // empty. Read from INTERNAL state so the comparison is
+                    // unit-safe: snap volumes are in user units, ZERO_VOLUME
+                    // is ft3. Using the transport's own criterion means the
+                    // age is reported exactly when the age was routed.
+                    //
+                    // ...OR the link is CONVEYING water. A pump, orifice or
+                    // weir stores nothing — volume is 0 by construction — but
+                    // it carries flow, and its link_age is its upstream
+                    // node's age, which is a real number a user wants
+                    // (measured: pump 0.124060 h against node J1's 0.124060).
+                    // A volume-only test would blank the age of every
+                    // regulator in every model, which is the node trap again
+                    // with the fields exchanged. An idle regulator has
+                    // neither volume nor flow and is still masked.
+                    if (age_col && l < ctx_.water_age_state.link_age.size()) {
+                        const bool holds =
+                            (l < ctx_.links.volume.size() &&
+                             ctx_.links.volume[l] > quality::ZERO_VOLUME);
+                        const bool conveys =
+                            (l < ctx_.links.flow.size() &&
+                             std::fabs(ctx_.links.flow[l]) > constants::TINY);
+                        const bool wet = holds || conveys;
                         snap.link_quality[l * nr_s + np_s] =
-                            ctx_.water_age_state.link_age[l] / kSecPerHour;
+                            wet ? ctx_.water_age_state.link_age[l] / kSecPerHour
+                                : 0.0;
+                    }
                 }
 
                 // Subcatchment washoff carries legacy's runoff gate: a
