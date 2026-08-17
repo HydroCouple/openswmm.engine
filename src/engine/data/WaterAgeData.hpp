@@ -106,11 +106,17 @@ struct WaterAgeState {
     /// (the ARD engine seeds at its own init instead).
     bool legacy_seeded = false;
 
+    /// A2a: set by HotStartManager::apply when a V3 file restored ages —
+    /// both engines then seed from node_age/link_age instead of
+    /// INITIAL_STATE (the ARD engine consumes and clears it at init).
+    bool hotstart_loaded = false;
+
     void resize(int n_nodes, int n_links) {
         node_age_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_age.assign(static_cast<std::size_t>(n_nodes), 0.0);
         link_age.assign(static_cast<std::size_t>(n_links), 0.0);
-        legacy_seeded = false;
+        legacy_seeded   = false;
+        hotstart_loaded = false;
     }
     void clear() { *this = WaterAgeState{}; }
 };

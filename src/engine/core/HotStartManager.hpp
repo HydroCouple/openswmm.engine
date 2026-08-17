@@ -100,6 +100,8 @@ struct HotStartNodeRecord {
     double      depth  = 0.0;
     double      head   = 0.0;
     double      volume = 0.0;
+    /// A2a (V3): water age (seconds); -1 = not tracked / pre-V3 file.
+    double      age    = -1.0;
 };
 
 /** @brief Link hydraulic state at hot-start save time. */
@@ -108,6 +110,8 @@ struct HotStartLinkRecord {
     double      flow   = 0.0;
     double      depth  = 0.0;
     double      volume = 0.0;
+    /// A2a (V3): water age (seconds); -1 = not tracked / pre-V3 file.
+    double      age    = -1.0;
 };
 
 /** @brief Subcatchment state at hot-start save time. */
