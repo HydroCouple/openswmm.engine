@@ -210,14 +210,12 @@ void applyWaterAgeSections(SimulationContext& ctx,
 
     // Silent-bypass enumeration (lessons 10/20): every configuration in
     // which this table reaches nothing says so.
+    // (The ON + IGNORE_QUALITY case warns engine-level in SWMMEngine::open
+    // — it applies with or without this component.)
     if (!ctx.options.water_age) {
         ctx.warnings.push_back(
             "A waterage component is configured but [OPTIONS] WATER_AGE is "
             "OFF — no age is tracked this simulation. Set WATER_AGE ON.");
-    } else if (ctx.options.ignore_quality) {
-        ctx.warnings.push_back(
-            "WATER_AGE is ON but IGNORE_QUALITY is YES — the quality stage "
-            "does not run, so no age is tracked this simulation.");
     }
 }
 

@@ -316,19 +316,19 @@ int SWMMEngine::open(const char* inp_path,
         // ARD engine reads it from model.ard.
         transport::warnIfFvDispersionKeyIgnored(ctx_);
 
-        // A1a: age transport rides the ARD mesh only for now — WATER_AGE ON
-        // under LEGACY would track nothing, and the reserved species
-        // registers so downstream consumers see the registry truth.
+        // A1a/A1b: the reserved species registers so downstream consumers
+        // see the registry truth. Age now tracks under BOTH engines (ARD
+        // mesh row / LEGACY CSTR mirror) — the A1b bypass warning is
+        // retired; IGNORE_QUALITY remains the only bypass and warns via
+        // the waterage component.
         if (ctx_.options.water_age) {
             ctx_.species_registry.add("__WATER_AGE__",
                                       SpeciesKind::RESERVED_AGE, "hours");
-            if (!ctx_.options.ignore_quality &&
-                ctx_.options.quality_solver != QualitySolverKind::EULERIAN_ARD)
+            if (ctx_.options.ignore_quality)
                 ctx_.warnings.push_back(
-                    "[OPTIONS] WATER_AGE ON under QUALITY_SOLVER LEGACY: "
-                    "the LEGACY age mirror arrives with plan phase A1b — no "
-                    "age is tracked this simulation. Set QUALITY_SOLVER "
-                    "EULERIAN_ARD to track age today.");
+                    "[OPTIONS] WATER_AGE ON but IGNORE_QUALITY is YES — the "
+                    "quality stage does not run, so no age is tracked this "
+                    "simulation.");
         }
     }
 
