@@ -111,6 +111,12 @@ const char* OutputReader::link_id(int index) const {
     return link_ids_[static_cast<std::size_t>(index)].c_str();
 }
 
+const char* OutputReader::pollut_id(int index) const {
+    if (index < 0 || static_cast<std::size_t>(index) >= pollut_ids_.size())
+        return nullptr;
+    return pollut_ids_[static_cast<std::size_t>(index)].c_str();
+}
+
 // ============================================================================
 // Per-period results (all objects, one variable, one period)
 // ============================================================================
@@ -364,6 +370,9 @@ bool OutputReader::readIDs() {
     if (!readIDList(n_subcatch_, subcatch_ids_)) return false;
     if (!readIDList(n_nodes_, node_ids_))        return false;
     if (!readIDList(n_links_, link_ids_))        return false;
+    // The species (pollutant) ID list — emitted by the writer immediately
+    // after the link IDs since the format's inception, but never read.
+    if (!readIDList(n_polluts_, pollut_ids_))    return false;
 
     return true;
 }
