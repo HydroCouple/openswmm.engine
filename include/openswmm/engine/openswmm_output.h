@@ -274,6 +274,23 @@ SWMM_ENGINE_API const char* swmm_output_get_node_id(SWMM_Output handle,
 SWMM_ENGINE_API const char* swmm_output_get_link_id(SWMM_Output handle,
                                                       int index);
 
+/**
+ * @brief Get the string ID of a species (pollutant) column by index.
+ *
+ * @details The `.out` header carries one name per species column. Reading
+ *          it is the ONLY way to identify a column's meaning: the per-column
+ *          unit field is a three-value concentration enum, so the water-age
+ *          column (`__WATER_AGE__`, reported in HOURS) necessarily reuses a
+ *          concentration code. Consumers plotting or converting a species
+ *          column must key on this name, not on the unit code.
+ *
+ * @param handle  Output reader handle.
+ * @param index   Zero-based species index (0 .. pollut_count-1).
+ * @returns  Null-terminated string owned by the reader, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_output_get_pollut_id(SWMM_Output handle,
+                                                        int index);
+
 /* =========================================================================
  * Per-period result retrieval (all objects, one variable, one period)
  * ========================================================================= */

@@ -138,6 +138,12 @@ SWMM_ENGINE_API const char* swmm_output_get_link_id(SWMM_Output handle,
     return to_reader(handle)->link_id(index);
 }
 
+SWMM_ENGINE_API const char* swmm_output_get_pollut_id(SWMM_Output handle,
+                                                       int index) {
+    if (!handle) return nullptr;
+    return to_reader(handle)->pollut_id(index);
+}
+
 /* =========================================================================
  * Per-period result retrieval
  * ========================================================================= */

@@ -99,6 +99,21 @@ public:
     const char* node_id(int index)     const;
     const char* link_id(int index)     const;
 
+    /**
+     * @brief Species (pollutant) ID at a column index, or nullptr.
+     *
+     * @details The writer has always emitted a fourth ID list after the
+     *          link IDs — the species names, one per pollutant column —
+     *          but the reader stopped after three and no public entry
+     *          point exposed them. Water age reports as a trailing
+     *          `__WATER_AGE__` column whose unit field necessarily reuses
+     *          a concentration code (the `.out` unit enum has no HOURS
+     *          slot), so the NAME is the only way a consumer can tell
+     *          hours from mg/L. That made this reader a prerequisite for
+     *          water age being usable at all, not a convenience.
+     */
+    const char* pollut_id(int index)   const;
+
     // -- Per-period results (all objects, one variable) --------------------
 
     /** @brief Read one subcatch variable for all subcatchments at a period.
@@ -201,6 +216,7 @@ private:
     std::vector<std::string> subcatch_ids_;
     std::vector<std::string> node_ids_;
     std::vector<std::string> link_ids_;
+    std::vector<std::string> pollut_ids_;
 
     // -- Helpers ----------------------------------------------------------
 

@@ -272,4 +272,67 @@ TEST(OutputQualityTest, WaterAgeReportsAsATrailingColumnInHours) {
     swmm_output_close(h);
 }
 
+// ---------------------------------------------------------------------------
+// The species-ID reader: the API that makes the age column identifiable.
+//
+// A2b gave the age column a CONCENTRATION unit code (the .out unit enum has
+// no HOURS slot) and declared the NAME the only way to tell hours from
+// mg/L — then no public entry point could read a species name. The writer
+// had always emitted the list; the reader stopped after subcatch/node/link
+// IDs. So the field the format decision rested on was unreachable, and
+// A2b's own gate read columns by fixed INDEX and asserted no name, which is
+// why reordering just the name list passed the whole suite.
+//
+// These two gates close both halves: the reader returns the names, and the
+// ORDER is asserted so a header/data mismatch cannot pass.
+// ---------------------------------------------------------------------------
+TEST(OutputQualityTest, SpeciesIdsAreReadableAndOrdered) {
+    write_file("_oq_id.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
+    write_deck("_oq_id.inp",
+               "WATER_AGE ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+               "org.hydrocouple.openswmm.waterage config=\"_oq_id.age\"");
+    ASSERT_TRUE(run_deck("_oq_id.inp", "_oq_id.rpt", "_oq_id.out"));
+
+    SWMM_Output h = swmm_output_open("_oq_id.out");
+    ASSERT_NE(h, nullptr);
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 2);
+
+    // Names must be READABLE at all — nullptr here means the reader never
+    // parsed the list the writer emits.
+    const char* s0 = swmm_output_get_pollut_id(h, 0);
+    const char* s1 = swmm_output_get_pollut_id(h, 1);
+    ASSERT_NE(s0, nullptr) << "species 0 name unreadable";
+    ASSERT_NE(s1, nullptr) << "species 1 name unreadable";
+
+    // And in the ORDER the data columns use. This is the assertion A2b
+    // lacked: swapping only the name list must fail here even though every
+    // VALUE still reads correctly at its index.
+    EXPECT_STREQ(s0, "TSS")
+        << "species 0 is '" << s0
+        << "' — the header's name order disagrees with the data column "
+           "order, so a consumer keying on the name reads the wrong series.";
+    EXPECT_STREQ(s1, "__WATER_AGE__")
+        << "species 1 is '" << s1 << "', expected __WATER_AGE__";
+
+    // Out-of-range indices return nullptr rather than reading past the end.
+    EXPECT_EQ(swmm_output_get_pollut_id(h, 2), nullptr);
+    EXPECT_EQ(swmm_output_get_pollut_id(h, -1), nullptr);
+    swmm_output_close(h);
+}
+
+TEST(OutputQualityTest, SpeciesIdsReadableWithoutWaterAge) {
+    // The reader change must not depend on age being on: a plain pollutant
+    // deck must also return its name (this list was never parsed before, so
+    // the no-age path is new coverage too, not a regression check).
+    write_deck("_oq_id2.inp");
+    ASSERT_TRUE(run_deck("_oq_id2.inp", "_oq_id2.rpt", "_oq_id2.out"));
+    SWMM_Output h = swmm_output_open("_oq_id2.out");
+    ASSERT_NE(h, nullptr);
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 1);
+    const char* s0 = swmm_output_get_pollut_id(h, 0);
+    ASSERT_NE(s0, nullptr);
+    EXPECT_STREQ(s0, "TSS");
+    swmm_output_close(h);
+}
+
 }  // namespace
