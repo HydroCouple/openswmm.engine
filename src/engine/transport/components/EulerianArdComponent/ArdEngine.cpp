@@ -89,7 +89,13 @@ bool ArdEngine::init(SimulationContext& ctx) {
         }
         nm = ctx.reactions.n_species();
     }
-    const int ns = np + nm;
+    // A1a: the reserved __WATER_AGE__ species rides the mesh as the LAST
+    // row (after pollutants and MSX): zero-order aging + volume-weighted
+    // mixing come free from the shared kernels; loaders deliver per-source
+    // age-volume like a pollutant load.
+    const int na = ctx.options.water_age ? 1 : 0;
+    const int ns = np + nm + na;
+    age_row_ = (na > 0) ? np + nm : -1;
     if (ns <= 0) return false;
 
     // Mesh options are entered in DISPLAY units and must convert to internal
@@ -192,6 +198,10 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
                     ctx.reactions.init_global[static_cast<std::size_t>(m)];
             }
+            if (age_row_ >= 0)
+                state_.cell_phi[static_cast<std::size_t>(age_row_) * unc + uc] =
+                    ctx.water_age_config.global_age[static_cast<int>(
+                        WaterAgeSource::INITIAL_STATE)];
         }
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
@@ -205,7 +215,14 @@ bool ArdEngine::init(SimulationContext& ctx) {
             node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
                 ctx.reactions.init_global[static_cast<std::size_t>(m)] *
                 node_vol_[und];
+        if (age_row_ >= 0)
+            node_mass_[und * uns + static_cast<std::size_t>(age_row_)] =
+                ctx.water_age_config.global_age[static_cast<int>(
+                    WaterAgeSource::INITIAL_STATE)] *
+                node_vol_[und];
     }
+    if (age_row_ >= 0)
+        ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links());
 
     // E2: structures (pumps/orifices/weirs/outlets) transport as zero-volume
     // passthrough of the donor node store (plan §2.1, element coverage) — no
@@ -656,6 +673,12 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             // loader stage legacy uses, so the line above already carries it.
             // Adding it a second time here would double the forced mass.
         }
+        // A1a: age-volume load — a RATE like qual_mass_in (the loaders add
+        // q · age_source per pathway), so it integrates over dt_sub.
+        if (age_row_ >= 0 &&
+            und < ctx.water_age_state.node_age_vol_in.size())
+            node_mass_[und * uns + static_cast<std::size_t>(age_row_)] +=
+                dt_sub * ctx.water_age_state.node_age_vol_in[und];
         // The non-negativity floor is a property of a STORE, not of a
         // pollutant, so it runs over every row — including the MSX rows the
         // load loop above deliberately skips. Narrowing this clamp along
@@ -839,6 +862,20 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
 
     for (int i = 0; i < nsub; ++i) substep(ctx, dt_sub, load_frac);
 
+    // A1a: aging — the exact integral of d(age)/dt = 1 over the routing
+    // step. Cells carry age as a concentration-like mean (+= dt); stores
+    // carry age-VOLUME (mass += dt·vol keeps the mean advancing by dt at
+    // constant volume). Lie-split like every other stage.
+    if (age_row_ >= 0) {
+        const auto ar  = static_cast<std::size_t>(age_row_);
+        const auto unc0 = static_cast<std::size_t>(mesh_.n_cells());
+        for (std::size_t c = 0; c < unc0; ++c)
+            state_.cell_phi[ar * unc0 + c] += dt;
+        const auto uns0 = static_cast<std::size_t>(state_.n_species);
+        for (std::size_t nd2 = 0; nd2 < node_vol_.size(); ++nd2)
+            node_mass_[nd2 * uns0 + ar] += dt * node_vol_[nd2];
+    }
+
     // E4: reaction stage over the full routing step, Lie-split after the
     // advection–dispersion subcycle (roadmap lesson 13 — first-order
     // splitting, documented; the integrator substeps adaptively inside):
@@ -893,6 +930,7 @@ void ArdEngine::writeDetailRows(SimulationContext& ctx) {
     const auto unc = static_cast<std::size_t>(mesh_.n_cells());
     const auto uns = static_cast<std::size_t>(ns);
     const auto species_name = [&](int s) -> std::string {
+        if (s == age_row_) return "__WATER_AGE__";
         return (s < np)
                    ? std::string(ctx.pollutant_names.name_of(s))
                    : ctx.reactions.species_name[static_cast<std::size_t>(s - np)];
@@ -939,7 +977,8 @@ void ArdEngine::writeDetailRows(SimulationContext& ctx) {
 void ArdEngine::publish(SimulationContext& ctx) {
     const int ns = state_.n_species;
     const int np = ctx.n_pollutants();
-    const int nm = ns - np;   // MSX rows (0 when no reactions component)
+    const int na = (age_row_ >= 0) ? 1 : 0;
+    const int nm = ns - np - na;  // MSX rows (0 when no reactions component)
     const auto uns = static_cast<std::size_t>(ns);
     const auto unp = static_cast<std::size_t>(np);
     const auto unm = static_cast<std::size_t>(nm > 0 ? nm : 0);
@@ -975,12 +1014,18 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 vol += dv;
             }
             const double conc = (vol > 1.0e-12) ? m / vol : 0.0;
-            if (s < np)
+            if (s == age_row_) {
+                if (static_cast<std::size_t>(link) <
+                    ctx.water_age_state.link_age.size())
+                    ctx.water_age_state.link_age[static_cast<std::size_t>(
+                        link)] = conc;
+            } else if (s < np) {
                 ctx.links.conc[static_cast<std::size_t>(link) * unp + sb] =
                     conc;
-            else
+            } else {
                 rx.msx_link_conc[static_cast<std::size_t>(link) * unm +
                                  static_cast<std::size_t>(s - np)] = conc;
+            }
         }
     }
 
@@ -994,11 +1039,15 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 (vol > 1.0e-12)
                     ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
                     : 0.0;
-            if (s < np)
+            if (s == age_row_) {
+                if (und < ctx.water_age_state.node_age.size())
+                    ctx.water_age_state.node_age[und] = conc;
+            } else if (s < np) {
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] = conc;
-            else
+            } else {
                 rx.msx_node_conc[und * unm +
                                  static_cast<std::size_t>(s - np)] = conc;
+            }
         }
     }
 
@@ -1022,6 +1071,12 @@ void ArdEngine::publish(SimulationContext& ctx) {
             rx.msx_link_conc[static_cast<std::size_t>(link) * unm +
                              static_cast<std::size_t>(m2)] =
                 rx.msx_node_conc[ud * unm + static_cast<std::size_t>(m2)];
+        if (age_row_ >= 0 &&
+            static_cast<std::size_t>(link) <
+                ctx.water_age_state.link_age.size() &&
+            ud < ctx.water_age_state.node_age.size())
+            ctx.water_age_state.link_age[static_cast<std::size_t>(link)] =
+                ctx.water_age_state.node_age[ud];
     }
 }
 

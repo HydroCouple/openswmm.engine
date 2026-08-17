@@ -133,7 +133,12 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
     if (!ardReactionsActive(ctx)) return;
     auto& rx = ctx.reactions;
     const int nm = rx.n_species();
-    if (nm == 0 || ns_total != n_pollut + nm) return;
+    // A1a: ns_total may exceed np + nm by the reserved __WATER_AGE__ row
+    // (which reacts with nothing) — the MSX block still occupies rows
+    // [np, np + nm). The old equality guard would have SILENTLY skipped
+    // every reaction the moment the age row appeared (the lesson-14 shape:
+    // a consistency check about one layout blocking another).
+    if (nm == 0 || ns_total < n_pollut + nm) return;
 
     auto& sc = scratch();
     sc.ensure(rx, n_pollut);

@@ -63,7 +63,24 @@ namespace {
 /// Measured before this: a boundary on an MSX-only deck delivered exactly
 /// 0.0 while the same deck with one inert pollutant row delivered 8.0.
 bool loadersNeeded(int np, const SimulationContext& ctx) {
-    return np > 0 || transport::ardBoundariesNeedExternalVolumes(ctx);
+    // A1a: water age needs the volume half (and the per-loader age-volume
+    // contributions) even on a deck with no [POLLUTANTS] — the pure-age
+    // model is A1a's motivating configuration (lesson 20).
+    return np > 0 || transport::ardBoundariesNeedExternalVolumes(ctx) ||
+           ctx.options.water_age;
+}
+
+/// A1a: one loader's age-volume contribution — `q · age_source` (a RATE,
+/// age·ft³/s, the age analogue of qual_mass_in). No-op when WATER_AGE is
+/// off or the state is unsized (the ARD engine sizes it at init; the
+/// assemble stage zeroes it each step).
+inline void addAgeVolume(SimulationContext& ctx, int node, double q,
+                         WaterAgeSource src) {
+    if (!ctx.options.water_age) return;
+    auto& s = ctx.water_age_state.node_age_vol_in;
+    const auto un = static_cast<std::size_t>(node);
+    if (un >= s.size()) return;
+    s[un] += q * ctx.water_age_config.source_age(src, node);
 }
 
 void applyLinkQualityForcing(SimulationContext& ctx, int n_pollutants, double dt) {
@@ -108,6 +125,16 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
 
     // Reset quality assembly arrays on NodeData
     std::fill(ctx.nodes.qual_mass_in.begin(), ctx.nodes.qual_mass_in.end(), 0.0);
+
+    // A1a: size + zero the age-volume accumulator alongside the pollutant
+    // loads (same lifecycle: assembled per routing step by the loaders).
+    if (ctx.options.water_age) {
+        auto& ws = ctx.water_age_state;
+        if (ws.node_age_vol_in.size() !=
+            static_cast<std::size_t>(ctx.n_nodes()))
+            ws.resize(ctx.n_nodes(), ctx.n_links());
+        std::fill(ws.node_age_vol_in.begin(), ws.node_age_vol_in.end(), 0.0);
+    }
     std::fill(ctx.nodes.qual_vol_in.begin(),  ctx.nodes.qual_vol_in.end(),  0.0);
 
     addWetWeatherLoads(ctx, dt);   // Subcatchment washoff → nodes
@@ -136,7 +163,10 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
         // legacy findNodeQual(), which divides the accumulated mass rate by
         // Node[j].inflow — a total that includes the external lateral inflow.
         double q = nodes.ext_inflow[ui];
-        if (q > 0.0) nodes.qual_vol_in[ui] += q * dt;
+        if (q > 0.0) {
+            nodes.qual_vol_in[ui] += q * dt;
+            addAgeVolume(ctx, i, q, WaterAgeSource::EXTERNAL_INFLOW);
+        }
 
         if (nodes.ext_qual_mass.empty()) continue;
         for (int p = 0; p < np; ++p) {
@@ -240,6 +270,7 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         if (q <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[ud] += q * dt;
+        addAgeVolume(ctx, out_node, q, WaterAgeSource::RAINFALL);
 
         for (int p = 0; p < np; ++p) {
             auto sc_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
@@ -278,6 +309,9 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         if (drain_vol_rate <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[uj] += drain_vol_rate * dt;
+        // LID drain water counts as RAINFALL-age until per-layer LID age
+        // states land (plan phase A4).
+        addAgeVolume(ctx, j, drain_vol_rate, WaterAgeSource::RAINFALL);
 
         for (int p = 0; p < np; ++p) {
             auto nd_idx = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
@@ -312,6 +346,7 @@ void QualitySolver::addRdiiLoads(SimulationContext& ctx, double dt) {
 
         // Add volume inflow from RDII
         nodes.qual_vol_in[ui] += q * dt;
+        addAgeVolume(ctx, i, q, WaterAgeSource::RDII);
 
         // Add pollutant mass loads: mass_rate = q * c_rdii[p]
         // Matching legacy: w = q * Pollut[p].rdiiConcen
@@ -357,6 +392,7 @@ void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
         // which includes DWF, as the mixing denominator). Without this the
         // mass added below is discarded by mixAtNodes when v_in == 0.
         nodes.qual_vol_in[ui] += q * dt;
+        addAgeVolume(ctx, i, q, WaterAgeSource::DWF);
 
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
@@ -399,6 +435,7 @@ void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
         // Add volume inflow from groundwater (see addDwfLoads: the mass below
         // is discarded by mixAtNodes unless its carrier volume is counted).
         nodes.qual_vol_in[ui] += q * dt;
+        addAgeVolume(ctx, i, q, WaterAgeSource::GW);
 
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
@@ -442,6 +479,7 @@ void QualitySolver::addIfaceLoads(SimulationContext& ctx, double dt) {
 
         // Add volume inflow from the interface file
         nodes.qual_vol_in[ui] += q * dt;
+        addAgeVolume(ctx, i, q, WaterAgeSource::IFACE);
 
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {

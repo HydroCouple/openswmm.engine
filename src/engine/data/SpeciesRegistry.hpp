@@ -89,12 +89,13 @@ public:
     int pollutant_count() const noexcept { return n_pollutants_; }
 
     /// Species the ARD engine carries on its mesh: POLLUTANT + MSX_BULK
-    /// (E4/R6). WALL species are element-local; reserved kinds join with
-    /// their phases (A1/H1).
+    /// (E4/R6) + RESERVED_AGE (A1a). WALL species are element-local;
+    /// RESERVED_TEMPERATURE joins with phase H1.
     int transported_count() const noexcept {
         int n = 0;
         for (const auto k : kind_)
-            if (k == SpeciesKind::POLLUTANT || k == SpeciesKind::MSX_BULK)
+            if (k == SpeciesKind::POLLUTANT || k == SpeciesKind::MSX_BULK ||
+                k == SpeciesKind::RESERVED_AGE)
                 ++n;
         return n;
     }

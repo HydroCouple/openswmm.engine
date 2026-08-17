@@ -186,6 +186,10 @@ private:
     bool   detail_active_ = false;
     double detail_time_s_ = 0.0;
 
+    /// A1a: state row of the reserved __WATER_AGE__ species (last row,
+    /// after pollutants and MSX); -1 when WATER_AGE is off.
+    int age_row_ = -1;
+
     std::vector<std::string> warnings_;
     bool initialized_ = false;
     bool warned_cfl_clamp_ = false;  ///< E2: once-per-run loud subcycle clamp
