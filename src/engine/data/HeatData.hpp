@@ -86,8 +86,33 @@ enum class HeatSource : int {
  *          so a gate (and a user) can tell a deliberate 0 °C from a
  *          default.
  */
+/**
+ * @brief `[RADIATIVE_FLUXES]` parameters (heat plan §2.2, phase H3).
+ *
+ * @details Defaults are RHEComponent's (`rhemodel.cpp:43-47`) except where
+ *          noted. GLOBAL scope only in H3; per-element ranges are RHE's
+ *          `[RADIATIVE_FLUXES]` semantics and refuse until a later phase.
+ */
+struct RadiativeConfig {
+    double shortwave_wm2   = 0.0;   ///< Incoming solar Jin, W/m² (0 = night)
+    double albedo          = 0.0;   ///< Rs, reference default
+    double shade_factor    = 0.0;   ///< fs, 0 = unshaded
+    double sky_view        = 1.0;   ///< fsky, 1 = open sky
+    double emiss_water     = 0.97;  ///< εw
+    double emiss_landcover = 0.97;  ///< εlc
+    double atm_emiss_coeff = 0.5;   ///< Brunt Aa
+    double lw_reflection   = 0.03;  ///< RL
+};
+
 struct HeatConfigData {
     bool configured = false;
+
+    /// `[HEAT_FLUXES] RADIATIVE_EXCHANGE ON` (plan §2.2, phase H3).
+    /// Defaults OFF for the same reason SurfaceExchange does.
+    bool radiative_exchange = false;
+
+    /// Parameters for the module above.
+    RadiativeConfig radiative;
 
     /**
      * @brief `[HEAT_FLUXES] SURFACE_EXCHANGE ON` — latent + sensible

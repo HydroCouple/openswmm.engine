@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "../../../core/SimulationContext.hpp"
+#include "../HeatFluxModules/RadiativeExchange.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 
 namespace openswmm::transport {
@@ -98,6 +99,7 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     //         H2 delivers SurfaceExchange; H3/H4 add radiative and
     //         sediment terms at this same point. ------------------------
     heat::applySurfaceExchange(ctx, dt);
+    heat::applyRadiativeExchange(ctx, dt);
 
     for (int i = 0; i < nn; ++i)
         sc.node_old[static_cast<std::size_t>(i)] =

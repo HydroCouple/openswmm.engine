@@ -356,17 +356,22 @@ TEST(HeatSurfaceExchangeTest, HumidityReachesTheClimateState) {
 // Gate 7 — the flux-module toggles: deferrals name their phase.
 // ---------------------------------------------------------------------------
 TEST(HeatSurfaceExchangeTest, FluxModuleTogglesParseAndDefer) {
-    write_file("_hx_h3.heat",
+    // This leg asserted that RADIATIVE_EXCHANGE refuses, which was right
+    // until H3 implemented it. Retiring a deferral has to flip the gate that
+    // asserted it, in the same changeset — H3's own gate covers its side, and
+    // this is the other one. SEDIMENT_EXCHANGE (H4) is now the deferral still
+    // owed, so the leg moves there rather than being deleted.
+    write_file("_hx_h4.heat",
                "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n");
-    write_deck("_hx_h3.inp", "", "org.hydrocouple.openswmm.heat "
-                                 "config=\"_hx_h3.heat\"");
+               "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n");
+    write_deck("_hx_h4.inp", "", "org.hydrocouple.openswmm.heat "
+                                 "config=\"_hx_h4.heat\"");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    EXPECT_NE(swmm_engine_open(e, "_hx_h3.inp", "_hx_h3.rpt", "_hx_h3.out",
+    EXPECT_NE(swmm_engine_open(e, "_hx_h4.inp", "_hx_h4.rpt", "_hx_h4.out",
                                nullptr),
               SWMM_OK)
-        << "RADIATIVE_EXCHANGE is H3 and must refuse, not silently do nothing";
+        << "SEDIMENT_EXCHANGE is H4 and must refuse, not silently do nothing";
     swmm_engine_destroy(e);
 
     write_file("_hx_bad.heat",
