@@ -97,6 +97,56 @@ void applyHeatSections(SimulationContext& ctx,
 
     for (const auto& sec : config.sections) {
         // H2: [HEAT_FLUXES] toggles the plan §2 modules, one row per module.
+        // H3: [RADIATIVE_FLUXES] carries the plan §2.2 parameters. GLOBAL
+        // scope only; RHE's per-element ranges are a later phase.
+        if (sec.first == "RADIATIVE_FLUXES") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                if (toks.size() < 3 || upper(toks[1]) != "GLOBAL") {
+                    errors.push_back(
+                        "[RADIATIVE_FLUXES] expects '<param> GLOBAL <value>' "
+                        "(per-element ranges arrive with a later heat "
+                        "phase): '" + line + "'.");
+                    continue;
+                }
+                double v = 0.0;
+                char* end = nullptr;
+                v = std::strtod(toks[2].c_str(), &end);
+                if (end == nullptr || *end != '\0' ||
+                    end == toks[2].c_str()) {
+                    errors.push_back("[RADIATIVE_FLUXES] '" + toks[0] +
+                                     "': '" + toks[2] + "' is not a number.");
+                    continue;
+                }
+                auto& rc = ctx.heat_config.radiative;
+                const std::string k = upper(toks[0]);
+                // Fractions are refused outside [0,1] rather than clamped: a
+                // 97 typed for an emissivity of 0.97 would otherwise scale
+                // every longwave term by a hundred, silently.
+                auto frac = [&](double& dst) {
+                    if (v < 0.0 || v > 1.0)
+                        errors.push_back("[RADIATIVE_FLUXES] '" + toks[0] +
+                                         "' must be a fraction in [0,1], got "
+                                         + toks[2] + ".");
+                    else dst = v;
+                };
+                if      (k == "SHORTWAVE")         { if (v < 0.0)
+                        errors.push_back("[RADIATIVE_FLUXES] SHORTWAVE must "
+                                         "be >= 0 W/m2.");
+                    else rc.shortwave_wm2 = v; }
+                else if (k == "ALBEDO")            frac(rc.albedo);
+                else if (k == "SHADE_FACTOR")      frac(rc.shade_factor);
+                else if (k == "SKY_VIEW")          frac(rc.sky_view);
+                else if (k == "EMISS_WATER")       frac(rc.emiss_water);
+                else if (k == "EMISS_LANDCOVER")   frac(rc.emiss_landcover);
+                else if (k == "ATM_EMISS_COEFF")   frac(rc.atm_emiss_coeff);
+                else if (k == "ATM_LW_REFLECTION") frac(rc.lw_reflection);
+                else
+                    errors.push_back("[RADIATIVE_FLUXES] unknown parameter '" +
+                                     toks[0] + "'.");
+            }
+            continue;
+        }
         if (sec.first == "HEAT_FLUXES") {
             for (const auto& line : sec.second) {
                 const auto toks = tokenize(line);
@@ -119,9 +169,7 @@ void applyHeatSections(SimulationContext& ctx,
                 if (mod == "SURFACE_EXCHANGE") {
                     ctx.heat_config.surface_exchange = on;
                 } else if (mod == "RADIATIVE_EXCHANGE") {
-                    errors.push_back(
-                        "[HEAT_FLUXES] RADIATIVE_EXCHANGE arrives with plan "
-                        "phase H3.");
+                    ctx.heat_config.radiative_exchange = on;
                 } else if (mod == "SEDIMENT_EXCHANGE") {
                     errors.push_back(
                         "[HEAT_FLUXES] SEDIMENT_EXCHANGE arrives with plan "
@@ -137,8 +185,8 @@ void applyHeatSections(SimulationContext& ctx,
         if (sec.first != "HEAT_SOURCES") {
             errors.push_back(
                 "model.heat: unknown section [" + sec.first +
-                "] (H1/H2 recognize: [HEAT_SOURCES], [HEAT_FLUXES]). "
-                "Radiative and sediment flux sections arrive with H3-H4.");
+                "] (recognized: [HEAT_SOURCES], [HEAT_FLUXES], "
+                "[RADIATIVE_FLUXES]). Sediment sections arrive with H4.");
             continue;
         }
         for (const auto& line : sec.second) {
