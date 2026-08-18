@@ -40,6 +40,12 @@
 #include "../hydraulics/Street.hpp"
 #include "../hydraulics/ForceMain.hpp"
 #include "../edit/VirtualJunctionOps.hpp"
+
+#ifdef OPENSWMM_HAS_2D
+// SolverOptions2D is only forward-declared in SimulationContext.hpp; the full
+// definition is needed to resolve its mesh_file / output_file slots.
+#include "../2d/data/SolverOptions2D.hpp"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -120,6 +126,21 @@ void resolve_external_file_slots(SimulationContext& ctx,
         if (tbl.type != TableType::TIMESERIES) continue;
         resolve(tbl.file_path);
     }
+
+    for (auto& rpt : ctx.lid_usage.rpt_file) resolve(rpt);
+
+    // 2D slots live behind a non-owning pointer wired by SWMMEngine's
+    // constructor, so it is non-null well before parsing — but a
+    // SimulationContext built standalone (unit tests, programmatic models)
+    // leaves it null. Without these two the external mesh reference could not
+    // be re-anchored on Save-As: the writer only ever saw a bare relative
+    // token with no way to tell what it was relative TO.
+#ifdef OPENSWMM_HAS_2D
+    if (ctx.twod_io.options) {
+        resolve(ctx.twod_io.options->mesh_file);
+        resolve(ctx.twod_io.options->output_file);
+    }
+#endif
 }
 
 static void load_external_timeseries_files(SimulationContext& ctx, const std::string& inp_dir,

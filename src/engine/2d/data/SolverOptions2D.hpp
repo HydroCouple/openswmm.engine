@@ -32,6 +32,8 @@
 #include <cstdint>
 #include <string>
 
+#include "../../core/FilePathPair.hpp"
+
 namespace openswmm::twoD {
 
 /**
@@ -223,12 +225,17 @@ struct SolverOptions2D {
     bool   coupling_area_auto = false;
 
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
-    std::string mesh_file;
+    /// `.absolute` is filled by resolve_external_file_slots() against the source
+    /// .inp directory, which is what lets the writer re-anchor a RELATIVE token
+    /// when saving to a different folder (without it, a Save-As left the .2dm
+    /// reference pointing at the old directory).
+    openswmm::FilePathPair mesh_file;
 
     /// HDF5 output file path from [2D_OPTIONS] OUTPUT_FILE token. Empty =
     /// no 2D output is written. Resolved relative to the parent .inp directory
-    /// by the section handler.
-    std::string output_file;
+    /// at the point of use (SWMMEngine::open) and re-anchored on save from
+    /// `.absolute`, same as mesh_file.
+    openswmm::FilePathPair output_file;
 
     // -----------------------------------------------------------------------
     // Unit-system coupling factors — NOT parsed from input. Computed once in

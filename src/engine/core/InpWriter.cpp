@@ -352,18 +352,44 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                  o.advection ? "YES" : "NO");
     std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
                  o.coupling_area_auto ? "AUTO" : "DEFAULT");
-    if (!o.output_file.empty())
-        std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", o.output_file.c_str());
+    if (!o.output_file.empty()) {
+        const std::string of_tok =
+            emit_path_token(o.output_file, dst_dir, force_abs_paths, warnings);
+        if (!of_tok.empty())
+            std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", of_tok.c_str());
+    }
 
     // ---- [2D_MESH_FILE] — keep the reference, refresh the sidecar ----------
     if (external) {
-        std::string tok = o.mesh_file;
-        if (!force_abs_paths && !dst_dir.empty() && io::isAbsolutePath(tok)) {
-            auto r = io::makeRelative(tok, dst_dir);
-            if (warnings && r.classification != io::PathClass::Relative
-                && !r.warning.empty())
-                warnings->push_back(r.warning);
-            tok = r.path;
+        // TWO regimes, and the difference matters on Save-As:
+        //
+        //  * has_mesh — the mesh is in memory, so the sidecar below is REWRITTEN
+        //    at the token's destination-resolved location. The mesh therefore
+        //    TRAVELS with the .inp and the stored token stays correct as-is
+        //    (only an absolute token needs rebasing, so the model does not carry
+        //    a machine-specific path). Re-anchoring here would be actively
+        //    wrong: it would point the reference back at the source folder AND
+        //    make Save-As overwrite the original .2dm.
+        //
+        //  * !has_mesh — nothing is written (the external mesh failed to load,
+        //    or the model was opened leniently). A bare relative token then
+        //    silently starts resolving against the NEW directory, where no mesh
+        //    exists, and the saved model opens 1D-only with no diagnostic. Here
+        //    the reference must be re-anchored against `.absolute` — which
+        //    resolve_external_file_slots filled from the SOURCE .inp dir — so it
+        //    keeps pointing at the file that actually holds the mesh.
+        std::string tok;
+        if (has_mesh) {
+            tok = o.mesh_file.original;
+            if (!force_abs_paths && !dst_dir.empty() && io::isAbsolutePath(tok)) {
+                auto r = io::makeRelative(tok, dst_dir);
+                if (warnings && r.classification != io::PathClass::Relative
+                    && !r.warning.empty())
+                    warnings->push_back(r.warning);
+                tok = r.path;
+            }
+        } else {
+            tok = emit_path_token(o.mesh_file, dst_dir, force_abs_paths, warnings);
         }
         sec(f, "2D_MESH_FILE");
         std::fprintf(f, "FILE %s\n", tok.c_str());
@@ -1223,10 +1249,12 @@ int writeInpFile(const SimulationContext& ctx_internal,
                          ctx.lid_usage.init_sat[uj],
                          ctx.lid_usage.from_imperv[uj],
                          ctx.lid_usage.to_perv[uj]);
-            if (uj < ctx.lid_usage.rpt_file.size() && !ctx.lid_usage.rpt_file[uj].empty())
-                std::fprintf(f," %s", ctx.lid_usage.rpt_file[uj].c_str());
-            else
-                std::fprintf(f," *");
+            const std::string rpt_tok =
+                (uj < ctx.lid_usage.rpt_file.size())
+                    ? emit_path_token(ctx.lid_usage.rpt_file[uj], dst_dir,
+                                      force_abs_paths, warnings)
+                    : std::string{};
+            std::fprintf(f," %s", rpt_tok.empty() ? "*" : rpt_tok.c_str());
             if (uj < ctx.lid_usage.drain_to.size() && !ctx.lid_usage.drain_to[uj].empty())
                 std::fprintf(f," %s", ctx.lid_usage.drain_to[uj].c_str());
             else

@@ -325,8 +325,17 @@ typedef enum SWMM_FilePathRole {
                                        *  `owner` is decimal index "0".."N-1" */
     SWMM_FILE_RAINGAGE_DATA     = 9,  /**< ctx.gages.file_path[i],
                                        *  `owner` is the gage id     */
-    SWMM_FILE_TIMESERIES_DATA   = 10  /**< ctx.tables.tables[i].file_path,
+    SWMM_FILE_TIMESERIES_DATA   = 10, /**< ctx.tables.tables[i].file_path,
                                        *  `owner` is the series id   */
+
+    /* Scalar slots — `owner` ignored. Unavailable (SWMM_ERR_BADPARAM) in
+     * builds without 2D support. */
+    SWMM_FILE_MESH_2D           = 11, /**< [2D_MESH_FILE] external .2dm   */
+    SWMM_FILE_OUTPUT_2D         = 12, /**< [2D_OPTIONS] OUTPUT_FILE .h5   */
+
+    /* Vector slot — `owner` selects the entry. */
+    SWMM_FILE_LID_REPORT        = 13  /**< ctx.lid_usage.rpt_file[i],
+                                       *  `owner` is decimal index "0".."N-1" */
 } SWMM_FilePathRole;
 
 /**

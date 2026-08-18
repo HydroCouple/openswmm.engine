@@ -78,6 +78,13 @@ retroactive.
 
 ### Added
 
+- **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
+  roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —
+  let a host read the resolved and authored form of the 2D mesh reference, the 2D
+  output file, and per-unit LID report files through the same
+  `swmm_file_path_get` / `swmm_file_path_set` pair as every other slot. The 2D
+  roles return `SWMM_ERR_BADPARAM` in builds without 2D support.
+
 - **Model-load benchmark harness and parity gate.**
   `OPENSWMM_PERF=1` now emits a `[PERF-LOAD]` line attributing the whole
   open/initialize/start window across 20 phases (including a `read.scan` vs
@@ -275,6 +282,41 @@ retroactive.
   bit-identity claim, until now only a comment, into a gate.
 
 ### Fixed
+
+- **Four external-file slots were written to the `.inp` verbatim.** The writer
+  rebases every external reference against the destination directory, but the
+  external `.2dm` mesh, the 2D `OUTPUT_FILE` and per-unit LID report files never
+  went through that path. `SolverOptions2D::mesh_file`, `::output_file` and
+  `LidUsageStore::rpt_file` are now `FilePathPair`s registered with
+  `resolve_external_file_slots`, and all three emit through `emit_path_token`
+  like every other slot. `[PLUGINS]` paths remain absolute by design — they name
+  installed shared libraries, not model data.
+
+- **A `[2D_MESH_FILE]` reference dangled after Save As when the mesh had not
+  loaded.** External mode normally writes the in-memory mesh to a `.2dm` beside
+  the destination `.inp`, so the reference stays local and the mesh travels with
+  the model. When there was no mesh in memory — a missing or unreadable `.2dm`,
+  or a lenient (editor) open — nothing was written, yet the token was still
+  copied through unchanged, so it re-resolved against the *new* directory and the
+  saved model opened 1D-only with no diagnostic. That case now re-anchors against
+  the resolved source path. The loaded case is unchanged, and a new test pins
+  both halves, including that Save As never writes back over the source `.2dm`.
+
+- **`[TEMPERATURE]` climate file was opened against the process working
+  directory.** `SWMMEngine::initialize` passed `temp_file.original` — the token
+  as authored — to `ClimateFileReader::open`, so a relative reference resolved
+  against the CWD rather than the `.inp` directory. `open()` returns `false` on
+  failure and the return value was discarded, so the run continued with no
+  climate data: a clean-looking result with silently missing temperature and
+  evaporation. It now opens the resolved `.absolute` path and pushes a warning
+  when the file cannot be read or its format is not recognised.
+
+- **`swmm_options_set_ext(engine, "WRITE_ABSOLUTE_PATHS", …)` did not set the
+  option.** The key fell through to `ext_options`, where the writer never looks,
+  so the save still emitted relative paths — while re-emitting
+  `WRITE_ABSOLUTE_PATHS YES` into `[OPTIONS]`, meaning the deck reopened with the
+  opt-out armed and behaved differently from the save that produced it. The key
+  now writes `SimulationOptions::write_absolute_paths` directly.
 
 - **`MIN_SURFAREA` was a project option the junction storage convention never
   read.** Legacy keeps no junction storage at all (`node_getVolume` returns
