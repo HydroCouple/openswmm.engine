@@ -78,6 +78,18 @@ private:
     void flush_buffer();
     int lookup_variable(const std::string& name, const std::string& obj_type);
 
+    /**
+     * @brief Register the run's reported species in the `variables` table.
+     * @details `populate_default_variables()` carries a fixed list of
+     *          hydraulic variables only; species names are model-dependent
+     *          and so cannot live there. Without this, every
+     *          `lookup_variable(species_name, ...)` in update() returns −1
+     *          and EVERY species row is silently dropped — pollutants
+     *          included, not just water age.
+     * @returns 0 on success, −1 on a name collision (see the .cpp).
+     */
+    int register_species_variables(const SimulationContext& ctx);
+
     // Per-timestep results arrive pre-converted to display units (engine
     // boundary), so no plugin-side unit-conversion factors are required.
 

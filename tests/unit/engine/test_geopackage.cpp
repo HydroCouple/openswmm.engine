@@ -1780,3 +1780,194 @@ TEST_F(GeoPackageCApiTest, QueryHelpers) {
 
     swmm_gpkg_close(gpkg);
 }
+
+// ============================================================================
+// Species variables — quality results reaching the GeoPackage
+//
+// `populate_default_variables()` carries a FIXED list of hydraulic variables.
+// Species names are model-dependent and so cannot live there, and nothing
+// registered them: every `lookup_variable(species_name, ...)` in update()
+// returned −1 and every species row was dropped on the floor. Not just water
+// age — POLLUTANTS TOO. A user reading a .gpkg saw a complete hydraulic
+// record and no quality at all, with no error anywhere.
+//
+// Observation paths (each falsifiable on its own):
+//  - SpeciesAreRegisteredAsVariables: the registration itself, per object
+//    type, with the age row's units read back (the .out cannot express HOURS;
+//    the GeoPackage's free-text units column can, so it must).
+//  - SpeciesRowsReachResultTimeseries: the DEFECT gate — a species value put
+//    into a snapshot must come back out of result_timeseries. Reads through
+//    the join a consumer would use, not through the plugin's own cache.
+//  - IgnoreQualityRegistersNoSpecies: the bypass leg.
+//  - SpeciesCollidingWithHydraulicVariableFailsPrepare: the trap. `variables`
+//    is UNIQUE(name, object_type), so a pollutant named "depth" would resolve
+//    to the HYDRAULIC depth variable and write concentrations into its
+//    series. The gate asserts the failure AND that the hydraulic row is
+//    untouched.
+// ============================================================================
+
+namespace {
+
+/// One `variables` row, or `found == false`.
+struct SpeciesVarRow {
+    bool found = false;
+    std::string category;
+    std::string units;
+};
+
+SpeciesVarRow query_species_variable(const std::string& path,
+                                     const std::string& name,
+                                     const std::string& obj_type) {
+    SpeciesVarRow row;
+    auto db = open_database(path);
+    auto stmt = prepare(db.get(),
+        "SELECT category, units FROM variables WHERE name = ? AND object_type = ?");
+    bind_text(stmt.get(), 1, name);
+    bind_text(stmt.get(), 2, obj_type);
+    if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        row.found = true;
+        row.category = column_text(stmt.get(), 0);
+        row.units = column_text(stmt.get(), 1);
+    }
+    return row;
+}
+
+int count_quality_variables(const std::string& path) {
+    auto db = open_database(path);
+    auto stmt = prepare(db.get(),
+        "SELECT count(*) FROM variables WHERE category = 'QUALITY'");
+    return sqlite3_step(stmt.get()) == SQLITE_ROW ? column_int(stmt.get(), 0) : -1;
+}
+
+}  // namespace
+
+TEST_F(GeoPackageTest, SpeciesAreRegisteredAsVariables) {
+    SimulationContext ctx = build_test_context();
+    // What SWMMEngine::open() builds: pollutants, then the reserved age row.
+    ctx.reported_species_names = {"TSS", "__WATER_AGE__"};
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_species"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    // 2 species x 3 object types. Asserted as a COUNT first so a partial
+    // registration reads as "3 of 6" rather than as a confusing miss below.
+    EXPECT_EQ(count_quality_variables(db_path_), 6);
+
+    for (const char* obj : {"NODE", "LINK", "SUBCATCH"}) {
+        auto tss = query_species_variable(db_path_, "TSS", obj);
+        EXPECT_TRUE(tss.found) << "TSS unregistered for " << obj
+                               << " — every " << obj << " TSS row will be dropped";
+        EXPECT_EQ(tss.category, "QUALITY");
+        EXPECT_EQ(tss.units, "mg/L");
+
+        auto age = query_species_variable(db_path_, "__WATER_AGE__", obj);
+        EXPECT_TRUE(age.found) << "water age unregistered for " << obj;
+        // The units razor. The binary .out has no HOURS slot in its 3-value
+        // concentration enum, which is why the NAME carries the meaning
+        // there. Here the column is free text, so hours can simply be said.
+        EXPECT_EQ(age.units, "hours")
+            << "the age variable reports '" << age.units
+            << "' — a consumer would read hours as a concentration";
+    }
+}
+
+TEST_F(GeoPackageTest, SpeciesRowsReachResultTimeseries) {
+    SimulationContext ctx = build_test_context();
+    ctx.reported_species_names = {"TSS", "__WATER_AGE__"};
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_species"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+
+    // A snapshot carrying ONLY quality: update()'s hydraulic writes are each
+    // size-guarded, so leaving those vectors empty keeps the gate pointed at
+    // the species path alone.
+    const int nN = ctx.node_names.size();
+    ASSERT_GT(nN, 0);
+    const std::vector<std::string>& node_ids = ctx.node_names.names();
+
+    SimulationSnapshot snap{};
+    snap.sim_time = 60.0;
+    snap.node_count = nN;
+    snap.pollut_count = 2;                  // the REPORTED stride
+    snap.node_ids = &node_ids;
+    snap.pollut_names = &ctx.reported_species_names;
+    snap.node_quality.assign(static_cast<std::size_t>(nN) * 2, 0.0);
+    snap.node_quality[0] = 42.0;            // node 0, TSS
+    snap.node_quality[1] = 2.5;             // node 0, age (hours)
+
+    ASSERT_EQ(plugin.update(snap), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    // Read back the way a consumer does: join result_timeseries to variables
+    // BY NAME. Before species were registered this query returned no rows.
+    auto db = open_database(db_path_);
+    auto stmt = prepare(db.get(),
+        "SELECT rt.value FROM result_timeseries rt "
+        "JOIN variables v ON v.variable_id = rt.variable_id "
+        "WHERE v.name = ? AND v.object_type = 'NODE' AND rt.object_id = ?");
+    bind_text(stmt.get(), 1, std::string("TSS"));
+    bind_text(stmt.get(), 2, node_ids[0]);
+    ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW)
+        << "no TSS row for " << node_ids[0]
+        << " — the species timeseries never reached the GeoPackage";
+    EXPECT_DOUBLE_EQ(sqlite3_column_double(stmt.get(), 0), 42.0);
+
+    auto stmt2 = prepare(db.get(),
+        "SELECT rt.value FROM result_timeseries rt "
+        "JOIN variables v ON v.variable_id = rt.variable_id "
+        "WHERE v.name = ? AND v.object_type = 'NODE' AND rt.object_id = ?");
+    bind_text(stmt2.get(), 1, std::string("__WATER_AGE__"));
+    bind_text(stmt2.get(), 2, node_ids[0]);
+    ASSERT_EQ(sqlite3_step(stmt2.get()), SQLITE_ROW) << "no water-age row";
+    EXPECT_DOUBLE_EQ(sqlite3_column_double(stmt2.get(), 0), 2.5);
+}
+
+TEST_F(GeoPackageTest, IgnoreQualityRegistersNoSpeciesVariables) {
+    SimulationContext ctx = build_test_context();
+    ctx.reported_species_names = {"TSS", "__WATER_AGE__"};
+    ctx.options.ignore_quality = true;   // mirrors DefaultOutputPlugin's bypass
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_ignore"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    EXPECT_EQ(count_quality_variables(db_path_), 0);
+}
+
+TEST_F(GeoPackageTest, SpeciesCollidingWithHydraulicVariableFailsPrepare) {
+    SimulationContext ctx = build_test_context();
+    // "depth" is a built-in NODE/LINK variable. UNIQUE(name, object_type)
+    // means an ignored insert would leave lookup_variable("depth", "NODE")
+    // pointing at the HYDRAULIC row, and concentrations would be written into
+    // the depth series — a corrupted result rather than a missing one.
+    ctx.reported_species_names = {"depth"};
+
+    GeoPackageOutputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({db_path_, "run_collide"}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    EXPECT_EQ(plugin.prepare(ctx), -1)
+        << "a species colliding with a built-in variable must not be accepted";
+    EXPECT_NE(std::string(plugin.last_error_message()).find("depth"), std::string::npos)
+        << "the error must name the colliding species: "
+        << plugin.last_error_message();
+
+    // And the hydraulic variable it collided with must be untouched.
+    //
+    // Why this refuses rather than skipping the species: measured under a
+    // tolerate-the-collision build, a species value of 99999.0 came back out
+    // of result_timeseries joined to the variable whose category is STATE —
+    // i.e. into the node DEPTH series a consumer reads. The corruption is
+    // real, not theoretical. It cannot be asserted here (prepare() fails, so
+    // update() never runs), which is exactly why the number is recorded.
+    auto depth = query_species_variable(db_path_, "depth", "NODE");
+    ASSERT_TRUE(depth.found);
+    EXPECT_EQ(depth.category, "STATE")
+        << "the built-in depth variable was overwritten by the species";
+}
