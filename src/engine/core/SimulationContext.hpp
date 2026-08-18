@@ -82,6 +82,7 @@
 #include "FilePathPair.hpp"
 #include "../data/ArdConfigData.hpp"
 #include "../data/GageData.hpp"
+#include "../data/HeatData.hpp"
 #include "../data/WaterAgeData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
@@ -561,6 +562,15 @@ struct SimulationContext {
      */
     WaterAgeConfigData water_age_config;
     WaterAgeState      water_age_state;
+
+    /**
+     * @brief Heat transport (phase H1): per-source inlet temperatures parsed
+     *        from the heat component (`model.heat`) + the runtime
+     *        temperature state the engines and loaders share.
+     *        @see data/HeatData.hpp.
+     */
+    HeatConfigData heat_config;
+    HeatState      heat_state;
 
     /**
      * @brief Species names as REPORTED (phase A2b): the pollutant names,
@@ -1449,6 +1459,10 @@ struct SimulationContext {
         // A1a: same stale-on-reopen hygiene for water age.
         water_age_config = WaterAgeConfigData{};
         water_age_state.clear();
+
+        // H1: and for heat.
+        heat_config = HeatConfigData{};
+        heat_state.clear();
 
         // Virtual-junction diagnostics
         vj_diag.clear();

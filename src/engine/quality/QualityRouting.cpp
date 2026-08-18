@@ -32,6 +32,7 @@
 
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "../transport/components/HeatModule/HeatLegacy.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeLegacy.hpp"
 #include "Treatment.hpp"
 #include "../core/SimulationContext.hpp"
@@ -67,8 +68,11 @@ bool loadersNeeded(int np, const SimulationContext& ctx) {
     // A1a: water age needs the volume half (and the per-loader age-volume
     // contributions) even on a deck with no [POLLUTANTS] — the pure-age
     // model is A1a's motivating configuration (lesson 20).
+    // H1: heat needs the volume half for the same reason age does — a
+    // temperature-only deck (no [POLLUTANTS]) is a supported configuration
+    // and every mass loop is already a no-op at np == 0.
     return np > 0 || transport::ardBoundariesNeedExternalVolumes(ctx) ||
-           ctx.options.water_age;
+           ctx.options.water_age || ctx.options.heat_transport;
 }
 
 /// A1a: one loader's age-volume contribution — `q · age_source` (a RATE,
@@ -82,6 +86,20 @@ inline void addAgeVolume(SimulationContext& ctx, int node, double q,
     const auto un = static_cast<std::size_t>(node);
     if (un >= s.size()) return;
     s[un] += q * ctx.water_age_config.source_age(src, node);
+}
+
+/// H1: one loader's temperature-volume contribution — `q · T_source` (a
+/// RATE, °C·ft³/s), the heat analogue of the age channel above and the
+/// same seam (master plan §4.3 / D-UT10). Carries temperature-volume
+/// rather than Joules because ρw·cp cancel identically until H2 brings the
+/// energy fluxes that make them load-bearing — see HeatData.hpp.
+inline void addTempVolume(SimulationContext& ctx, int node, double q,
+                          HeatSource src) {
+    if (!ctx.options.heat_transport) return;
+    auto& s = ctx.heat_state.node_temp_vol_in;
+    const auto un = static_cast<std::size_t>(node);
+    if (un >= s.size()) return;
+    s[un] += q * ctx.heat_config.source_temp(src, node);
 }
 
 void applyLinkQualityForcing(SimulationContext& ctx, int n_pollutants, double dt) {
@@ -136,6 +154,16 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
             ws.resize(ctx.n_nodes(), ctx.n_links());
         std::fill(ws.node_age_vol_in.begin(), ws.node_age_vol_in.end(), 0.0);
     }
+    // H1: same lifecycle for the temperature-volume accumulator.
+    if (ctx.options.heat_transport) {
+        auto& hs = ctx.heat_state;
+        if (hs.node_temp_vol_in.size() !=
+            static_cast<std::size_t>(ctx.n_nodes()))
+            hs.resize(ctx.n_nodes(), ctx.n_links(),
+                      ctx.heat_config.global_temp[
+                          static_cast<int>(HeatSource::INITIAL_STATE)]);
+        std::fill(hs.node_temp_vol_in.begin(), hs.node_temp_vol_in.end(), 0.0);
+    }
     std::fill(ctx.nodes.qual_vol_in.begin(),  ctx.nodes.qual_vol_in.end(),  0.0);
 
     addWetWeatherLoads(ctx, dt);   // Subcatchment washoff → nodes
@@ -167,6 +195,7 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
         if (q > 0.0) {
             nodes.qual_vol_in[ui] += q * dt;
             addAgeVolume(ctx, i, q, WaterAgeSource::EXTERNAL_INFLOW);
+            addTempVolume(ctx, i, q, HeatSource::EXTERNAL_INFLOW);
         }
 
         if (nodes.ext_qual_mass.empty()) continue;
@@ -228,8 +257,12 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     // the age mirror needs the volume accumulation these stages perform.
     // Without a reactions component or WATER_AGE the early return is
     // unchanged, so parity is preserved by construction.
+    // H1: and the temperature-only model is that same shape once more. This
+    // is the SECOND guard of this family on the path — the routing-step
+    // guard in SWMMEngine::stepRouting is the first — and a feature has to
+    // clear both to run at np == 0.
     if (n_pollutants_ <= 0 && !transport::legacyReactionsActive(ctx) &&
-        !ctx.options.water_age)
+        !ctx.options.water_age && !ctx.options.heat_transport)
         return;
 
     assembleExternalLoads(ctx, dt);
@@ -257,6 +290,12 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     // qual_vol_in as its mixing denominator and writes only water_age_state,
     // so WATER_AGE ON leaves every pollutant trajectory bit-identical.
     transport::routeLegacyAge(ctx, dt);
+
+    // H1: the LEGACY temperature mirror runs beside the age mirror, on the
+    // same fully accumulated qual_vol_in denominator, and writes only
+    // heat_state — so HEAT_TRANSPORT ON leaves both the pollutant and the
+    // water-age trajectories bit-identical under LEGACY.
+    transport::routeLegacyHeat(ctx, dt);
 }
 
 // ============================================================================
@@ -281,6 +320,7 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
 
         ctx.nodes.qual_vol_in[ud] += q * dt;
         addAgeVolume(ctx, out_node, q, WaterAgeSource::RAINFALL);
+        addTempVolume(ctx, out_node, q, HeatSource::RAINFALL);
 
         for (int p = 0; p < np; ++p) {
             auto sc_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
@@ -322,6 +362,7 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         // LID drain water counts as RAINFALL-age until per-layer LID age
         // states land (plan phase A4).
         addAgeVolume(ctx, j, drain_vol_rate, WaterAgeSource::RAINFALL);
+        addTempVolume(ctx, j, drain_vol_rate, HeatSource::RAINFALL);
 
         for (int p = 0; p < np; ++p) {
             auto nd_idx = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
@@ -357,6 +398,7 @@ void QualitySolver::addRdiiLoads(SimulationContext& ctx, double dt) {
         // Add volume inflow from RDII
         nodes.qual_vol_in[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::RDII);
+        addTempVolume(ctx, i, q, HeatSource::RDII);
 
         // Add pollutant mass loads: mass_rate = q * c_rdii[p]
         // Matching legacy: w = q * Pollut[p].rdiiConcen
@@ -403,6 +445,7 @@ void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
         // mass added below is discarded by mixAtNodes when v_in == 0.
         nodes.qual_vol_in[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::DWF);
+        addTempVolume(ctx, i, q, HeatSource::DWF);
 
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
@@ -446,6 +489,7 @@ void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
         // is discarded by mixAtNodes unless its carrier volume is counted).
         nodes.qual_vol_in[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::GW);
+        addTempVolume(ctx, i, q, HeatSource::GW);
 
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
@@ -490,6 +534,7 @@ void QualitySolver::addIfaceLoads(SimulationContext& ctx, double dt) {
         // Add volume inflow from the interface file
         nodes.qual_vol_in[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::IFACE);
+        addTempVolume(ctx, i, q, HeatSource::IFACE);
 
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
