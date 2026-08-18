@@ -151,7 +151,9 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
         auto& ws = ctx.water_age_state;
         if (ws.node_age_vol_in.size() !=
             static_cast<std::size_t>(ctx.n_nodes()))
-            ws.resize(ctx.n_nodes(), ctx.n_links());
+            // A3: pass the subcatchment count — the 2-arg form defaults it
+            // to 0 and would WIPE subarea_age on any re-size.
+            ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
         std::fill(ws.node_age_vol_in.begin(), ws.node_age_vol_in.end(), 0.0);
     }
     // H1: same lifecycle for the temperature-volume accumulator.
@@ -319,7 +321,25 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         if (q <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[ud] += q * dt;
-        addAgeVolume(ctx, out_node, q, WaterAgeSource::RAINFALL);
+        // A3: runoff arrives at the age the SUBCATCHMENT computed, not at the
+        // configured RAINFALL age. The rainfall age is what enters the
+        // subareas; by the time water leaves it has aged on the surface and
+        // mixed with whatever was already ponded, and that is the number the
+        // node must receive. Falls back to the configured source age when the
+        // watershed state is unsized (WATER_AGE on, runoff never stepped).
+        {
+            const bool have_sc = ctx.options.water_age &&
+                                 ui < ctx.water_age_state
+                                          .subcatch_runoff_age.size();
+            if (have_sc) {
+                auto& acc = ctx.water_age_state.node_age_vol_in;
+                if (ud < acc.size())
+                    acc[ud] += q * ctx.water_age_state
+                                       .subcatch_runoff_age[ui];
+            } else {
+                addAgeVolume(ctx, out_node, q, WaterAgeSource::RAINFALL);
+            }
+        }
         addTempVolume(ctx, out_node, q, HeatSource::RAINFALL);
 
         for (int p = 0; p < np; ++p) {
