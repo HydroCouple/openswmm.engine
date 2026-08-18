@@ -454,6 +454,30 @@ openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
                 return nullptr;
             return &ctx.tables.tables[static_cast<std::size_t>(idx)].file_path;
         }
+
+        case SWMM_FILE_MESH_2D:
+#ifdef OPENSWMM_HAS_2D
+            return ctx.twod_io.options ? &ctx.twod_io.options->mesh_file
+                                       : nullptr;
+#else
+            return nullptr;
+#endif
+        case SWMM_FILE_OUTPUT_2D:
+#ifdef OPENSWMM_HAS_2D
+            return ctx.twod_io.options ? &ctx.twod_io.options->output_file
+                                       : nullptr;
+#else
+            return nullptr;
+#endif
+        case SWMM_FILE_LID_REPORT: {
+            if (!owner) return nullptr;
+            int idx = 0;
+            try { idx = std::stoi(owner); } catch (...) { return nullptr; }
+            if (idx < 0 ||
+                static_cast<std::size_t>(idx) >= ctx.lid_usage.rpt_file.size())
+                return nullptr;
+            return &ctx.lid_usage.rpt_file[static_cast<std::size_t>(idx)];
+        }
     }
     return nullptr;
 }
@@ -1372,6 +1396,18 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
     if (!key || !value) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
+
+    // WRITE_ABSOLUTE_PATHS is a first-class SimulationOptions field, not an
+    // extension key. Letting it fall through to ext_options produced a
+    // round-trip asymmetry: the save itself still wrote RELATIVE paths (the
+    // writer reads the bool, which stayed false), but the emitted deck carried
+    // WRITE_ABSOLUTE_PATHS YES and so re-opened with the opt-out armed.
+    if (upper_key(key) == "WRITE_ABSOLUTE_PATHS") {
+        ctx.options.write_absolute_paths =
+            openswmm::input::Tokenizer::parse_boolean(value);
+        ctx.options.ext_options.erase(key);
+        return SWMM_OK;
+    }
 
 #ifdef OPENSWMM_HAS_2D
     // [2D_MESH_FILE] reference: route to the live SolverOptions2D::mesh_file
