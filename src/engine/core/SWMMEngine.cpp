@@ -357,13 +357,12 @@ int SWMMEngine::open(const char* inp_path,
                     "[OPTIONS] HEAT_TRANSPORT ON but IGNORE_QUALITY is YES — "
                     "the quality stage does not run, so no temperature is "
                     "tracked this simulation.");
-            if (ctx_.options.quality_solver == QualitySolverKind::EULERIAN_ARD)
-                ctx_.warnings.push_back(
-                    "[OPTIONS] HEAT_TRANSPORT ON with QUALITY_SOLVER "
-                    "EULERIAN_ARD — H1 implements temperature transport in "
-                    "the LEGACY engine only; the ARD mesh binding arrives "
-                    "with plan phase H4. No temperature is tracked this "
-                    "simulation.");
+            // H4 retired H1's "ARD tracks no temperature" warning: the
+            // reserved row now rides the mesh under EULERIAN_ARD, with
+            // advection, dispersion, node mixing and per-cell surface
+            // fluxes. Retiring a deferral means flipping its gate in the
+            // same changeset (lesson 21) — see
+            // test_heat_transport.cpp's ARD gate, now inverted.
         }
     }
 

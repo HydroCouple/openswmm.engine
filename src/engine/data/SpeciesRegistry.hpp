@@ -89,13 +89,20 @@ public:
     int pollutant_count() const noexcept { return n_pollutants_; }
 
     /// Species the ARD engine carries on its mesh: POLLUTANT + MSX_BULK
-    /// (E4/R6) + RESERVED_AGE (A1a). WALL species are element-local;
-    /// RESERVED_TEMPERATURE joins with phase H1.
+    /// (E4/R6) + RESERVED_AGE (A1a) + RESERVED_TEMPERATURE (H4). WALL
+    /// species are element-local and stay off the mesh.
+    ///
+    /// @note This is a KIND whitelist, the shape lesson 51 warns about: it
+    ///       had to be edited when temperature joined, and will again for
+    ///       the next reserved kind. It currently has no callers in `src/`,
+    ///       so a stale entry here is latent rather than live — which is
+    ///       exactly why it was still wrong when H4 arrived.
     int transported_count() const noexcept {
         int n = 0;
         for (const auto k : kind_)
             if (k == SpeciesKind::POLLUTANT || k == SpeciesKind::MSX_BULK ||
-                k == SpeciesKind::RESERVED_AGE)
+                k == SpeciesKind::RESERVED_AGE ||
+                k == SpeciesKind::RESERVED_TEMPERATURE)
                 ++n;
         return n;
     }
