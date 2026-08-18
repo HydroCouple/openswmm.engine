@@ -97,6 +97,16 @@ struct WaterAgeConfigData {
  *          engine integrates it over its substeps. `node_age`/`link_age`
  *          are the PUBLISHED mean ages (seconds) the API and gates read.
  */
+/// A3: subarea index within a subcatchment. Matches the RunoffSolver's
+/// three ponded depths (`depth_imperv0/1/perv`, `Runoff.hpp:86-88`) so the
+/// age array can be indexed the same way the water is.
+enum class SubArea : int {
+    IMPERV0 = 0,  ///< impervious, no depression storage
+    IMPERV1 = 1,  ///< impervious with depression storage
+    PERV    = 2,
+    COUNT_  = 3
+};
+
 struct WaterAgeState {
     std::vector<double> node_age_vol_in;  ///< [node], age·ft³/s
     std::vector<double> node_age;         ///< [node], seconds
@@ -106,15 +116,54 @@ struct WaterAgeState {
     /// (the ARD engine seeds at its own init instead).
     bool legacy_seeded = false;
 
+    // --- A3: watershed age -------------------------------------------
+    /// [subcatch*3 + subarea] mean age of the water ponded on each subarea,
+    /// SECONDS. Per-subarea rather than per-subcatchment (user decision,
+    /// 2026-08-17): impervious water is systematically younger than
+    /// pervious, and the three depths already exist separately.
+    std::vector<double> subarea_age;
+
+    /// [subcatch*3 + subarea] the previous step's stored volume (ft³) —
+    /// the mixing denominator. Kept here rather than recomputed because
+    /// the RunoffSolver overwrites its depths in place.
+    std::vector<double> subarea_vol_prev;
+
+    /// [subcatch] age of the water LEAVING as runoff, SECONDS — the
+    /// volume-weighted mean of the contributing subareas. This is what the
+    /// wet-weather loader delivers to the outlet node, and what run-on
+    /// carries to a downstream subcatchment.
+    std::vector<double> subcatch_runoff_age;
+
+    /// [subcatch] age·ft³/s arriving as RUN-ON from upstream subcatchments,
+    /// the watershed analogue of node_age_vol_in. Without this, run-on
+    /// water arrived with no age at all — the flow path adds q_runon while
+    /// the quality path never did.
+    std::vector<double> subcatch_runon_age_vol_in;
+
     /// A2a: set by HotStartManager::apply when a V3 file restored ages —
     /// both engines then seed from node_age/link_age instead of
     /// INITIAL_STATE (the ARD engine consumes and clears it at init).
     bool hotstart_loaded = false;
 
-    void resize(int n_nodes, int n_links) {
+    /// @note `n_subcatch` is deliberately NOT defaulted. A default would
+    ///       let a two-argument call compile and silently empty the
+    ///       watershed arrays at runtime — and every one of the five call
+    ///       sites is guarded by a size mismatch, so the wipe would be
+    ///       repaired by the next `routeSubcatchmentAge` and never show up
+    ///       in any assertion. Requiring the argument moves the trap from
+    ///       runtime to the compiler, which is the only observer that can
+    ///       actually see it.
+    void resize(int n_nodes, int n_links, int n_subcatch) {
         node_age_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_age.assign(static_cast<std::size_t>(n_nodes), 0.0);
         link_age.assign(static_cast<std::size_t>(n_links), 0.0);
+        const auto ns3 = static_cast<std::size_t>(n_subcatch) *
+                         static_cast<std::size_t>(SubArea::COUNT_);
+        subarea_age.assign(ns3, 0.0);
+        subarea_vol_prev.assign(ns3, 0.0);
+        subcatch_runoff_age.assign(static_cast<std::size_t>(n_subcatch), 0.0);
+        subcatch_runon_age_vol_in.assign(
+            static_cast<std::size_t>(n_subcatch), 0.0);
         legacy_seeded   = false;
         hotstart_loaded = false;
     }

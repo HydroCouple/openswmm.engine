@@ -71,7 +71,7 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
     const int nn = ctx.n_nodes();
     const int nl = ctx.n_links();
     if (ws.node_age.size() != static_cast<std::size_t>(nn))
-        ws.resize(nn, nl);
+        ws.resize(nn, nl, ctx.n_subcatches());  // A3: keep watershed rows
 
     auto& sc = scratch();
     sc.ensure(nn, nl);

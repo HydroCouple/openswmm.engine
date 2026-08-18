@@ -588,7 +588,7 @@ int HotStartManager::apply(HotStartFile& hs,
             auto& ws = ctx.water_age_state;
             if (ws.node_age.size() !=
                 static_cast<std::size_t>(ctx.n_nodes()))
-                ws.resize(ctx.n_nodes(), ctx.n_links());
+                ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
             ws.node_age[i]     = rec.age;
             ws.hotstart_loaded = true;
             ws.legacy_seeded   = true;
@@ -610,7 +610,7 @@ int HotStartManager::apply(HotStartFile& hs,
             auto& ws = ctx.water_age_state;
             if (ws.link_age.size() !=
                 static_cast<std::size_t>(ctx.n_links()))
-                ws.resize(ctx.n_nodes(), ctx.n_links());
+                ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
             ws.link_age[i]     = rec.age;
             ws.hotstart_loaded = true;
             ws.legacy_seeded   = true;

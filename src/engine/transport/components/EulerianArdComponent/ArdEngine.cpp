@@ -266,7 +266,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 temp_seed * node_vol_[und];
     }
     if (age_row_ >= 0)
-        ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links());
+        ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links(),
+                                   ctx.n_subcatches());  // A3: keep watershed rows
     if (temp_row_ >= 0)
         ctx.heat_state.resize(ctx.n_nodes(), ctx.n_links(), temp_seed);
     // (resize consumed hotstart_loaded — the loaded ages now live in the

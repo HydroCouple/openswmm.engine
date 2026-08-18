@@ -50,6 +50,7 @@
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../transport/components/HeatModule/HeatComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
+#include "../transport/components/WaterAgeModule/WaterAgeWatershed.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "HotStartManager.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
@@ -1639,6 +1640,11 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //     Routing picks it up via Phase 2 interpolation → nodes.runoff_inflow[].
         runoff_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
                         ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon);
+
+        // A3: subcatchment surface age, immediately after the depths this
+        // step produced. Reads the solver's own SoA because
+        // ctx.subcatches.ponded_depth is declared but written by NOBODY.
+        transport::routeSubcatchmentAge(ctx_, runoff_.soa(), dt_runoff);
 
         // Update persistent state flags for the NEXT step's timestep selection
         // (legacy runoff.c sets HasRunoff/HasSnow here, after computing runoff,
@@ -4357,9 +4363,10 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
                 // Subcatchment washoff carries legacy's runoff gate: a
                 // subcatchment with no runoff reports 0, not its residual
-                // concentration (subcatch.c:929). Subcatchment AGE is plan
-                // phase A3 (watershed age states), so its column stays 0
-                // here rather than reporting a value it does not track.
+                // concentration (subcatch.c:929). A3 landed the watershed
+                // age states, so the age column below now reports the age of
+                // the water being shed rather than the placeholder 0 this
+                // comment used to promise.
                 snap.subcatch_quality.assign(nS_s * nr_s, 0.0);
                 for (std::size_t s = 0; s < nS_s; ++s) {
                     const bool has_runoff =
@@ -4374,6 +4381,17 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                                 f1_rt * ctx_.subcatches.conc_old[src] +
                                 f_rt * ctx_.subcatches.conc[src];
                     }
+                    // A3 retires the placeholder that reported 0 here: the
+                    // subcatchment now publishes the age of the water it is
+                    // shedding, in HOURS like every other age column. Gated
+                    // on has_runoff above, which is legacy's own washoff
+                    // convention — a subcatchment producing nothing reports
+                    // nothing rather than the age of a puddle it is keeping.
+                    if (age_col && s < ctx_.water_age_state
+                                           .subcatch_runoff_age.size())
+                        snap.subcatch_quality[s * nr_s + np_s] =
+                            ctx_.water_age_state.subcatch_runoff_age[s] /
+                            kSecPerHour;
                 }
             }
 
@@ -6109,6 +6127,12 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
         if (out_sc >= 0 && out_sc < ctx_.n_subcatches()) {
             auto usc = static_cast<std::size_t>(out_sc);
             ctx_.subcatches.runon_inflow[usc] += ctx_.subcatches.runoff[ui];
+            // A3: run-on carries the donor's runoff age. Without this the
+            // FLOW path adds q_runon while the age path adds nothing, and a
+            // two-subcatchment cascade — the plan's own A3 criterion —
+            // delivers water with no upstream age attached.
+            transport::addRunonAge(ctx_, i, out_sc,
+                                   ctx_.subcatches.runoff[ui]);
         }
     }
 
