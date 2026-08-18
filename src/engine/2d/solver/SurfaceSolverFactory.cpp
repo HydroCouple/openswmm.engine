@@ -229,7 +229,7 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
         return dflt;
     };
     const long dev_floor = floor_for("OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE", 10000);
-    const long omp_floor = floor_for("OPENSWMM_2D_MIN_PARALLEL_CELLS", 200000);
+    const long omp_floor = floor_for("OPENSWMM_2D_MIN_PARALLEL_CELLS", 50000);
 
     if (n_cells <= 0 || n_cells >= dev_floor)
         for (const char* b : {"cuda", "hip", "sycl"})
