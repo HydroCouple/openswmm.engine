@@ -96,11 +96,49 @@ void applyHeatSections(SimulationContext& ctx,
     const std::size_t errors_before = errors.size();
 
     for (const auto& sec : config.sections) {
+        // H2: [HEAT_FLUXES] toggles the plan §2 modules, one row per module.
+        if (sec.first == "HEAT_FLUXES") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                if (toks.size() != 2) {
+                    errors.push_back(
+                        "[HEAT_FLUXES] expects '<module> ON|OFF': '" + line +
+                        "'.");
+                    continue;
+                }
+                const std::string mod = upper(toks[0]);
+                const std::string val = upper(toks[1]);
+                if (val != "ON" && val != "OFF" && val != "YES" &&
+                    val != "NO") {
+                    errors.push_back(
+                        "[HEAT_FLUXES] '" + toks[0] + "': '" + toks[1] +
+                        "' is not ON or OFF.");
+                    continue;
+                }
+                const bool on = (val == "ON" || val == "YES");
+                if (mod == "SURFACE_EXCHANGE") {
+                    ctx.heat_config.surface_exchange = on;
+                } else if (mod == "RADIATIVE_EXCHANGE") {
+                    errors.push_back(
+                        "[HEAT_FLUXES] RADIATIVE_EXCHANGE arrives with plan "
+                        "phase H3.");
+                } else if (mod == "SEDIMENT_EXCHANGE") {
+                    errors.push_back(
+                        "[HEAT_FLUXES] SEDIMENT_EXCHANGE arrives with plan "
+                        "phase H4 (HTS two-layer storage).");
+                } else {
+                    errors.push_back(
+                        "[HEAT_FLUXES] unknown module '" + toks[0] +
+                        "' (SURFACE_EXCHANGE in H2).");
+                }
+            }
+            continue;
+        }
         if (sec.first != "HEAT_SOURCES") {
             errors.push_back(
                 "model.heat: unknown section [" + sec.first +
-                "] (H1 recognizes: [HEAT_SOURCES]). Surface, radiative and "
-                "sediment flux sections arrive with plan phases H2-H4.");
+                "] (H1/H2 recognize: [HEAT_SOURCES], [HEAT_FLUXES]). "
+                "Radiative and sediment flux sections arrive with H3-H4.");
             continue;
         }
         for (const auto& line : sec.second) {

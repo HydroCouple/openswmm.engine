@@ -89,6 +89,18 @@ enum class HeatSource : int {
 struct HeatConfigData {
     bool configured = false;
 
+    /**
+     * @brief `[HEAT_FLUXES] SURFACE_EXCHANGE ON` — latent + sensible
+     *        exchange at the free surface (plan §2.1, phase H2).
+     *
+     * @details Defaults OFF so H1's pure-transport behaviour is what a deck
+     *          gets unless it asks for physics, and so every existing
+     *          `.out` stays byte-identical. Each flux module of plan §2 is
+     *          independently toggleable; radiative and sediment exchange
+     *          arrive with H3/H4 and their keys refuse until then.
+     */
+    bool surface_exchange = false;
+
     /// Default inlet temperature when a source has no row (°C).
     static constexpr double kDefaultTemp = 20.0;
 
