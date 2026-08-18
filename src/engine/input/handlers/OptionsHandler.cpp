@@ -184,6 +184,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             // Water age plan §1 (phase A1a): transported age tracking.
             opt.water_age = (norm(val) == "ON" || norm(val) == "YES");
 
+        } else if (key == "HEAT_TRANSPORT") {
+            // Heat plan §1 (phase H1): transported temperature.
+            opt.heat_transport = (norm(val) == "ON" || norm(val) == "YES");
+
         // -----------------------------------------------------------------
         // Timesteps
         // -----------------------------------------------------------------

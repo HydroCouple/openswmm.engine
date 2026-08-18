@@ -48,6 +48,7 @@
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
+#include "../transport/components/HeatModule/HeatComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "HotStartManager.hpp"
@@ -272,6 +273,7 @@ int SWMMEngine::open(const char* inp_path,
     transport::registerReactionsComponent();
     transport::registerArdComponent();
     transport::registerWaterAgeComponent();
+    transport::registerHeatComponent();
     {
         std::string base_dir;
         if (inp_path && inp_path[0] != '\0')
@@ -337,6 +339,30 @@ int SWMMEngine::open(const char* inp_path,
                 ctx_.warnings.push_back(
                     "[OPTIONS] WATER_AGE ON but IGNORE_QUALITY is YES — the "
                     "quality stage does not run, so no age is tracked this "
+                    "simulation.");
+        }
+
+        // H1: temperature is the LAST reported column — after age — so a
+        // deck that adds heat to an existing water-age model does not move
+        // the age column a consumer already keys on by index. The NAME is
+        // the contract either way (lesson 40), which is what
+        // swmm_output_get_pollut_id exists to expose.
+        if (ctx_.options.heat_transport) {
+            ctx_.species_registry.add("__TEMPERATURE__",
+                                      SpeciesKind::RESERVED_TEMPERATURE,
+                                      "degC");
+            ctx_.reported_species_names.push_back("__TEMPERATURE__");
+            if (ctx_.options.ignore_quality)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] HEAT_TRANSPORT ON but IGNORE_QUALITY is YES — "
+                    "the quality stage does not run, so no temperature is "
+                    "tracked this simulation.");
+            if (ctx_.options.quality_solver == QualitySolverKind::EULERIAN_ARD)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] HEAT_TRANSPORT ON with QUALITY_SOLVER "
+                    "EULERIAN_ARD — H1 implements temperature transport in "
+                    "the LEGACY engine only; the ARD mesh binding arrives "
+                    "with plan phase H4. No temperature is tracked this "
                     "simulation.");
         }
     }
@@ -3080,9 +3106,14 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //     [POLLUTANTS] row to gate on. Bypasses that DO skip it
     //     (EULERIAN_ARD, IGNORE_QUALITY) warn at open rather than running
     //     silently; see transport::warnIfLegacyBindingBypassed.
+    //     H1: HEAT_TRANSPORT joins the same list for the same reason — a
+    //     temperature-only deck has no [POLLUTANTS] row to gate on, and
+    //     without this the quality stage never runs, so heat_state is never
+    //     sized and routeLegacyHeat never fires.
     if ((ctx_.n_pollutants() > 0 ||
          transport::legacyReactionsActive(ctx_) ||
-         ctx_.options.water_age) &&
+         ctx_.options.water_age ||
+         ctx_.options.heat_transport) &&
         !ctx_.options.ignore_quality) {
         if (ctx_.options.quality_solver == QualitySolverKind::EULERIAN_ARD) {
             if (!ard_init_attempted_) {
@@ -4194,6 +4225,12 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 const auto nL_s = static_cast<std::size_t>(ctx_.n_links());
                 const auto nS_s = static_cast<std::size_t>(ctx_.n_subcatches());
                 const bool age_col = ctx_.options.water_age && nr_s > np_s;
+                // H1: temperature is the trailing column, after age when
+                // both are on. Its index is derived from the SAME toggle
+                // that built reported_species_names, so the two cannot
+                // disagree without the species-name gate catching it.
+                const bool temp_col = ctx_.options.heat_transport;
+                const std::size_t temp_i = np_s + (ctx_.options.water_age ? 1u : 0u);
                 constexpr double kSecPerHour = 3600.0;
                 // Reported-depth threshold for "this element holds water".
                 // Deliberately tiny: the intent is to exclude elements the
@@ -4240,6 +4277,20 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                             wet ? ctx_.water_age_state.node_age[n] / kSecPerHour
                                 : 0.0;
                     }
+                    // H1 temperature. NOTE THE OPPOSITE CALL from age above,
+                    // and it is deliberate: there is NO dry-element mask on
+                    // temperature. The age mask can write 0 because zero age
+                    // is unambiguous — no water has ever been 0 h old and
+                    // present. Zero DEGREES is an ordinary temperature, so a
+                    // mask here would publish "freezing" for "empty" and a
+                    // reader could not tell the two apart. Reporting the
+                    // carried state is the lesser of the two wrongs; it is
+                    // recorded as a convention rather than defended as
+                    // correct, and the honest fix is a per-column no-data
+                    // convention the .out format does not currently have.
+                    if (temp_col && n < ctx_.heat_state.node_temp.size())
+                        snap.node_quality[n * nr_s + temp_i] =
+                            ctx_.heat_state.node_temp[n];
                 }
 
                 snap.link_quality.assign(nL_s * nr_s, 0.0);
@@ -4291,6 +4342,12 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                             wet ? ctx_.water_age_state.link_age[l] / kSecPerHour
                                 : 0.0;
                     }
+                    // H1 temperature — unmasked, for the reason given in the
+                    // node loop (0 degC is a real temperature, so it cannot
+                    // double as "no water").
+                    if (temp_col && l < ctx_.heat_state.link_temp.size())
+                        snap.link_quality[l * nr_s + temp_i] =
+                            ctx_.heat_state.link_temp[l];
                 }
 
                 // Subcatchment washoff carries legacy's runoff gate: a
@@ -5488,13 +5545,28 @@ void SWMMEngine::initHydrology() noexcept {
             }
         }
 
-        // Open climate file if temperature or evaporation uses FILE source
+        // Open climate file if temperature or evaporation uses FILE source.
+        // Use the RESOLVED path: `.original` is the token as authored, so a
+        // relative one fopen()s against the process cwd rather than the .inp
+        // directory — and ClimateFileReader::open just returns false, which
+        // nothing here checks, so the run silently proceeds with no climate
+        // data. `.absolute` is filled by resolve_external_file_slots; fall back
+        // to the token for programmatic models where the resolver never ran.
         if ((ctx_.options.temp_source == 2 || evap_type == 4) &&
             !ctx_.options.temp_file.empty()) {
             int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
-            climate_file_.open(ctx_.options.temp_file,
-                               ctx_.options.temp_file_start, us,
-                               ctx_.options.temp_units);
+            const std::string& climate_path =
+                !ctx_.options.temp_file.absolute.empty()
+                    ? ctx_.options.temp_file.absolute
+                    : ctx_.options.temp_file.original;
+            if (!climate_file_.open(climate_path,
+                                    ctx_.options.temp_file_start, us,
+                                    ctx_.options.temp_units)) {
+                ctx_.warnings.push_back(
+                    "[TEMPERATURE] climate file '" + climate_path +
+                    "' could not be opened or its format was not recognised — "
+                    "no climate data will be applied");
+            }
         }
     }
 

@@ -245,6 +245,20 @@ struct SimulationOptions {
     bool water_age = false;
 
     /**
+     * @brief `[OPTIONS] HEAT_TRANSPORT ON|OFF` — transported temperature
+     *        (heat plan §1, reserved species __TEMPERATURE__).
+     *
+     * @details H1 scope: TRANSPORT ONLY. Temperature is advected and mixed
+     *          as a conservative tracer under the LEGACY CSTR engine and
+     *          reported as a trailing species column; per-source inlet
+     *          temperatures come from the heat component's [HEAT_SOURCES].
+     *          The surface/radiative/sediment flux modules of plan §2 —
+     *          the terms that make temperature change rather than merely
+     *          move — arrive with H2–H4.
+     */
+    bool heat_transport = false;
+
+    /**
      * @brief Knobs for FLOW_ROUTING FV, grouped rather than spread across this
      *        struct (plan §4.2 — first-class [OPTIONS] keys, no new section).
      *

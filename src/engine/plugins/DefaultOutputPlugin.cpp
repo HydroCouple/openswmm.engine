@@ -297,17 +297,23 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
 
     // Pollutant concentration unit codes
     for (int p = 0; p < n_polluts_; ++p) {
-        // The age pseudo-column has no MassUnits member (it is HOURS, not a
-        // concentration). The .out unit field is a 3-value enum with no slot
-        // for it, so the age column writes MG_PER_L's code and readers must
-        // key on the NAME (__WATER_AGE__), not the unit code. Recorded as a
-        // format decision rather than widening the enum, which would break
-        // every existing reader.
-        const bool is_age =
-            (static_cast<std::size_t>(p) < ctx.reported_species_names.size() &&
-             ctx.reported_species_names[static_cast<std::size_t>(p)] ==
-                 "__WATER_AGE__");
-        writeInt4(is_age
+        // A RESERVED pseudo-column has no MassUnits member: water age is
+        // HOURS, temperature is degC, and the .out unit field is a 3-value
+        // concentration enum with no slot for either. Those columns write
+        // MG_PER_L's code and readers key on the NAME
+        // (swmm_output_get_pollut_id), not the unit code — a format decision
+        // rather than widening the enum, which would break every existing
+        // reader.
+        //
+        // Keyed on the INDEX, not on the name. reported_species_names is
+        // pollutants first, then the reserved rows, so anything at or past
+        // n_pollutants() has no entry in ctx.pollutants.units. Testing for
+        // "__WATER_AGE__" by name got this right only while age was the sole
+        // reserved species: adding __TEMPERATURE__ sent the unit lookup off
+        // the end of an EMPTY units vector on a heat-only deck (no
+        // [POLLUTANTS]) and segfaulted the writer.
+        const bool is_reserved = (p >= ctx.n_pollutants());
+        writeInt4(is_reserved
                       ? 0
                       : static_cast<int>(
                             ctx.pollutants.units[static_cast<std::size_t>(p)]));

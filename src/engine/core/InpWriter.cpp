@@ -677,6 +677,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "EULERIAN_ARD");
     if (o.water_age)
         std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
+    // H1: same rule, same reason — a save-as that dropped this reopened as a
+    // model with no temperature tracking, silently (the A1a defect).
+    if (o.heat_transport)
+        std::fprintf(f,"%-20s %s\n",  "HEAT_TRANSPORT",    "ON");
     std::fprintf(f,"\n");
 
     // --- Group 3: Date / time options (START_DATE .. RULE_STEP) ---
