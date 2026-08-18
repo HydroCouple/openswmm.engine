@@ -188,6 +188,24 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             // Heat plan §1 (phase H1): transported temperature.
             opt.heat_transport = (norm(val) == "ON" || norm(val) == "YES");
 
+        // Heat plan §1/§2.1 (phase H2) — energy bookkeeping and the
+        // SurfaceExchange coefficients, CSH Table 4.1 names and defaults.
+        } else if (key == "WATER_DENSITY") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.water_density);
+        } else if (key == "WATER_SPECIFIC_HEAT_CAPACITY") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.water_specific_heat);
+        } else if (key == "WIND_FUNC_COEFF_A") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.wind_func_coeff_a);
+        } else if (key == "WIND_FUNC_COEFF_B") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.wind_func_coeff_b);
+        } else if (key == "PRESSURE_RATIO") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.pressure_ratio);
+
         // -----------------------------------------------------------------
         // Timesteps
         // -----------------------------------------------------------------

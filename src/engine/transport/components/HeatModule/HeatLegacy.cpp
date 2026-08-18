@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "../../../core/SimulationContext.hpp"
+#include "../HeatFluxModules/SurfaceExchange.hpp"
 
 namespace openswmm::transport {
 
@@ -89,9 +90,15 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
         hs.legacy_seeded = true;
     }
 
-    // ---- 1. Old state. NO aging term: age advances 1 s/s, temperature
-    //         does not change on its own. H2–H4's flux modules add their
-    //         W/m² terms at exactly this stage. ------------------------
+    // ---- 1. Source terms, then old state. Age advances 1 s/s here;
+    //         temperature changes only by exchange with its surroundings,
+    //         so this is where plan §2's flux modules act — BEFORE the
+    //         old-state snapshot, so the step's advective mixing sees the
+    //         post-flux temperature exactly as it sees the post-aging age.
+    //         H2 delivers SurfaceExchange; H3/H4 add radiative and
+    //         sediment terms at this same point. ------------------------
+    heat::applySurfaceExchange(ctx, dt);
+
     for (int i = 0; i < nn; ++i)
         sc.node_old[static_cast<std::size_t>(i)] =
             hs.node_temp[static_cast<std::size_t>(i)];

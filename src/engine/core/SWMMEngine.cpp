@@ -1417,6 +1417,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         ctx_.climate_state.wind_speed =
             ctx_.forcing.effective_wind(ctx_.climate_state.wind_speed_src);
 
+        // A2c''. H2: relative humidity, the same monthly lookup wind takes.
+        // ClimateState::humidity has carried a 50 % default since before the
+        // transport program with NO writer anywhere; SurfaceExchange is its
+        // first consumer, so this is where it starts being real.
+        ctx_.climate_state.humidity = ctx_.options.humidity[mon];
+
         // A2d. Monthly adjustment factors
         ctx_.climate_state.infil_factor = ctx_.adjust_hydcon[mon];
 

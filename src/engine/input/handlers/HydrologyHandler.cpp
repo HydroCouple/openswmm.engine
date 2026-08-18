@@ -240,6 +240,21 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
                 ctx.options.wind_type = 1;
             }
         }
+        // H2: relative humidity, % — the met input SurfaceExchange needs and
+        // the first thing ever to write ClimateState::humidity, which has
+        // carried a 50 % default with no writer. Monthly like WINDSPEED; a
+        // single value fills all twelve months so a constant-RH deck is one
+        // token.
+        else if (key == "HUMIDITY" && tok.size() >= 2) {
+            const std::string htype = Tokenizer::to_upper(tok[1]);
+            if (htype == "MONTHLY" && tok.size() >= 14) {
+                for (int i = 0; i < 12; ++i)
+                    ctx.options.humidity[i] = to_double(tok[2 + i]);
+            } else {
+                const double h = to_double(tok[1]);
+                for (int i = 0; i < 12; ++i) ctx.options.humidity[i] = h;
+            }
+        }
         else if (key == "SNOWMELT" && tok.size() >= 7) {
             // Legacy [TEMPERATURE] SNOWMELT format (9 tokens):
             //   SNOWMELT divT ATIwt nrgRatio elev lat dtlong minMelt maxMelt

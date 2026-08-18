@@ -259,6 +259,40 @@ struct SimulationOptions {
     bool heat_transport = false;
 
     /**
+     * @brief Monthly relative humidity, % (`[TEMPERATURE] HUMIDITY`).
+     *
+     * @details H2. `ClimateState::humidity` has existed with a 50 % default
+     *          since before this program and **nothing ever wrote to it** —
+     *          the GeoPackage climate format reads a humidity column that
+     *          never reached the running state. Surface heat exchange is the
+     *          first consumer, so the deck key arrives with it. Monthly like
+     *          `WINDSPEED`; a single value fills all twelve months.
+     */
+    double humidity[12] = {50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50};
+
+    /**
+     * @brief Water density, kg/m³ (`[OPTIONS] WATER_DENSITY`; CSH Table 4.1).
+     * @details H2. Load-bearing from this phase on: it sets the weight of a
+     *          surface flux against advected heat. H1 deliberately shipped
+     *          without it because with no fluxes it cancelled identically
+     *          and no gate could observe its value.
+     */
+    double water_density = 1000.0;
+
+    /// Water specific heat capacity, J/kg/°C (`WATER_SPECIFIC_HEAT_CAPACITY`).
+    double water_specific_heat = 4184.0;
+
+    /**
+     * @brief Wind-function coefficients (`WIND_FUNC_COEFF_A` / `_B`), CSH
+     *        Table 4.1 — `f(w) = a + b·w`, Dunne & Leopold (1978) defaults.
+     */
+    double wind_func_coeff_a = 1.505e-8;
+    double wind_func_coeff_b = 1.6e-8;
+
+    /// Pa/P elevation correction in the Bowen ratio (`PRESSURE_RATIO`).
+    double pressure_ratio = 1.0;
+
+    /**
      * @brief Knobs for FLOW_ROUTING FV, grouped rather than spread across this
      *        struct (plan §4.2 — first-class [OPTIONS] keys, no new section).
      *
