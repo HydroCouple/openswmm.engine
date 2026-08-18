@@ -204,31 +204,44 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
     const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
     if (mode == "cpu") return serial_marcher();
 
-    // Mesh-size gate: a Kokkos plugin pays a per-kernel launch overhead on
-    // EVERY marcher substep, and the built-in marcher is itself OpenMP-
-    // threaded — the plugin only pays off when per-cell work amortizes the
-    // launches. Measured on a 25k-cell coupled model (Bellinge, 48 h storm)
-    // the omp plugin ran 15–20× SLOWER than the built-in marcher (238 s vs
-    // >20× that pace), so the auto crossover sits far above the old 20k
-    // default. Below the threshold, stay serial unless the backend was
-    // requested explicitly (OPENSWMM_2D_BACKEND=omp|cuda|... bypasses it).
-    // Env-tunable (OPENSWMM_2D_MIN_PARALLEL_CELLS); 0 cells = unknown ⇒ no gate.
-    const bool gated = (mode.empty() || mode == "auto") && [&] {
-        if (n_cells <= 0) return false;
-        long min_par = 200000;
-        if (const char* s = std::getenv("OPENSWMM_2D_MIN_PARALLEL_CELLS"))
-            min_par = std::atol(s);
-        return n_cells < min_par;
-    }();
-    if (!gated) {
-        if (mode.empty() || mode == "auto") {
-            for (const char* b : {"cuda", "hip", "sycl", "omp"})
-                if (auto s = try_plugin(b, chosen)) return s;
-        } else if (mode == "omp" || mode == "cuda" || mode == "hip" ||
-                   mode == "sycl") {
-            if (auto s = try_plugin(mode, chosen)) return s;
-        }
+    // Explicit backend request bypasses every mesh-size gate — the operator
+    // asked for it by name (OPENSWMM_2D_BACKEND=omp|cuda|hip|sycl).
+    if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
+        if (auto s = try_plugin(mode, chosen)) return s;
+        std::fprintf(stderr,
+            "[openswmm 2D] backend '%s' requested but no usable plugin/device "
+            "found; falling back to the CPU marcher.\n", mode.c_str());
+        return serial_marcher();
     }
+
+    // auto / empty: the two plugin classes have very different economics, so
+    // they get separate mesh-size floors (env-tunable; n_cells<=0 unknown = no
+    // gate).
+    //   * DEVICE backends (cuda/hip/sycl) offload to a SEPARATE accelerator, so
+    //     the launch/transfer overhead amortizes far earlier — a low floor.
+    //     Previously they shared the omp floor below and so a discrete GPU sat
+    //     idle for every sub-200k mesh (the reported "CUDA not utilized").
+    //   * The OMP host plugin competes with the already-OMP-threaded serial
+    //     marcher (measured 15-20x SLOWER at 25k cells on Bellinge), so it
+    //     keeps a high floor.
+    auto floor_for = [](const char* var, long dflt) -> long {
+        if (const char* s = std::getenv(var)) return std::atol(s);
+        return dflt;
+    };
+    const long dev_floor = floor_for("OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE", 10000);
+    const long omp_floor = floor_for("OPENSWMM_2D_MIN_PARALLEL_CELLS", 200000);
+
+    if (n_cells <= 0 || n_cells >= dev_floor)
+        for (const char* b : {"cuda", "hip", "sycl"})
+            if (auto s = try_plugin(b, chosen)) return s;
+    if (n_cells <= 0 || n_cells >= omp_floor)
+        if (auto s = try_plugin("omp", chosen)) return s;
+
+    std::fprintf(stderr,
+        "[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=%d, "
+        "device floor=%ld cells). Set OPENSWMM_2D_BACKEND=cuda to force the "
+        "GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.\n",
+        n_cells, dev_floor);
     return serial_marcher();
 }
 
