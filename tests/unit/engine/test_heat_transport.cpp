@@ -373,29 +373,44 @@ TEST(HeatTransportTest, HeatOffAddsNoColumnAndNoState) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 6 — the EULERIAN_ARD bypass warns rather than silently tracking
-// nothing (lessons 10/20: every configuration this feature cannot serve
-// says so).
+// Gate 6 — H4 RETIRED this deferral: EULERIAN_ARD now transports temperature.
+//
+// H1 shipped a warning saying the ARD binding was owed to phase H4, and this
+// gate asserted it. H4 lands the binding, so the gate INVERTS in the same
+// changeset (lesson 21): the warning must be gone AND the feature must
+// actually work under ARD. Asserting only the warning's absence would pass
+// for a deck where nothing ran at all.
 // ---------------------------------------------------------------------------
-TEST(HeatTransportTest, HeatUnderArdWarnsThatH4IsOwed) {
+TEST(HeatTransportTest, ArdTransportsTemperatureAndTheH4WarningIsRetired) {
     write_file("_ht_ard.heat", heat_cfg());
     write_deck("_ht_ard.inp",
                "HEAT_TRANSPORT ON\nQUALITY_SOLVER EULERIAN_ARD\n",
                "org.hydrocouple.openswmm.heat config=\"_ht_ard.heat\"");
-    SWMM_Engine e = swmm_engine_create();
+    SWMM_Engine e = run_and_hold("_ht_ard.inp", "_ht_ard.rpt", "_ht_ard.out");
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_ht_ard.inp", "_ht_ard.rpt", "_ht_ard.out",
-                               nullptr),
-              SWMM_OK);
-    const auto& w = as_cpp_engine(e).context().warnings;
-    const bool named = std::any_of(
+    const auto& ctx = as_cpp_engine(e).context();
+
+    const auto& w = ctx.warnings;
+    const bool still_deferred = std::any_of(
         w.begin(), w.end(), [](const std::string& s) {
             return s.find("EULERIAN_ARD") != std::string::npos &&
                    s.find("H4") != std::string::npos;
         });
-    EXPECT_TRUE(named)
-        << "HEAT_TRANSPORT under EULERIAN_ARD tracks nothing in H1 and must "
-           "say so, naming the phase that fixes it.";
+    EXPECT_FALSE(still_deferred)
+        << "the H1 warning that ARD tracks no temperature is still emitted, "
+           "but H4 implements the mesh binding — a retired deferral must "
+           "lose its message in the changeset that retires it.";
+
+    // And the feature works: the ARD mesh must publish into heat_state, the
+    // same place the snapshot reads regardless of engine.
+    ASSERT_FALSE(ctx.heat_state.node_temp.empty())
+        << "heat_state was never sized under ARD — the row is not on the mesh";
+    EXPECT_NEAR(ctx.heat_state.node_temp[0], kTMixed, 1.0)
+        << "under EULERIAN_ARD J0 settles at " << ctx.heat_state.node_temp[0]
+        << " degC; the flow-weighted mean of the two loader pathways is "
+        << kTMixed << ". Reading the 3 degC INITIAL_STATE means the mesh row "
+           "exists but no loader reached it; reading 20 means the config "
+           "table never arrived.";
     swmm_engine_destroy(e);
 }
 

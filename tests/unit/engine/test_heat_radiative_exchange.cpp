@@ -280,7 +280,7 @@ TEST(HeatRadiativeExchangeTest, ConfigRefusesOutOfRangeAndUnknown) {
     EXPECT_NE(swmm_engine_open(e2, "_hr_unk.inp", "_hr_unk.rpt", "_hr_unk.out",
                                nullptr),
               SWMM_OK)
-        << "EXTINCTION is the H4 sediment split and must not be silently "
+        << "EXTINCTION is the H6 sediment split and must not be silently "
            "ignored";
     swmm_engine_destroy(e2);
 }
@@ -288,7 +288,7 @@ TEST(HeatRadiativeExchangeTest, ConfigRefusesOutOfRangeAndUnknown) {
 // ---------------------------------------------------------------------------
 // Gate 7 — RADIATIVE_EXCHANGE is no longer deferred, and SEDIMENT still is.
 // ---------------------------------------------------------------------------
-TEST(HeatRadiativeExchangeTest, TheH3DeferralIsRetiredAndH4IsNot) {
+TEST(HeatRadiativeExchangeTest, TheH3DeferralIsRetiredAndH6IsNot) {
     // H2 shipped a "RADIATIVE_EXCHANGE arrives with phase H3" error. Landing
     // H3 must flip that toggle to real — retiring a deferral means flipping
     // its gate in the same changeset (lesson 21).
@@ -315,6 +315,6 @@ TEST(HeatRadiativeExchangeTest, TheH3DeferralIsRetiredAndH4IsNot) {
     EXPECT_NE(swmm_engine_open(e2, "_hr_sed.inp", "_hr_sed.rpt", "_hr_sed.out",
                                nullptr),
               SWMM_OK)
-        << "SEDIMENT_EXCHANGE is H4 and must still refuse";
+        << "SEDIMENT_EXCHANGE is H6 and must still refuse";
     swmm_engine_destroy(e2);
 }

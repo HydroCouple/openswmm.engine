@@ -186,9 +186,19 @@ private:
     bool   detail_active_ = false;
     double detail_time_s_ = 0.0;
 
-    /// A1a: state row of the reserved __WATER_AGE__ species (last row,
-    /// after pollutants and MSX); -1 when WATER_AGE is off.
+    /// A1a: state row of the reserved __WATER_AGE__ species (after
+    /// pollutants and MSX); -1 when WATER_AGE is off.
     int age_row_ = -1;
+
+    /// H4: per-cell surface heat exchange (plan §1's source term), the
+    /// mesh twin of the LEGACY mirror's whole-link application.
+    void applyHeatFluxes(SimulationContext& ctx, double dt);
+
+    /// H4: state row of the reserved __TEMPERATURE__ species — the LAST
+    /// row, after age, matching the REPORTED column order fixed in H1 so a
+    /// deck that adds heat to an age model does not move the age column.
+    /// -1 when HEAT_TRANSPORT is off.
+    int temp_row_ = -1;
 
     std::vector<std::string> warnings_;
     bool initialized_ = false;

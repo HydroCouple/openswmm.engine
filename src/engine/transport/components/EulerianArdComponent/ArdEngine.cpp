@@ -31,7 +31,11 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
+#include "../../../hydraulics/Node.hpp"
+#include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
+#include "../HeatFluxModules/RadiativeExchange.hpp"
+#include "../HeatFluxModules/SurfaceExchange.hpp"
 #include "../../fvkernels/SpeciesTransportKernels.hpp"
 #include "../ReactionModule/ReactionArdBinding.hpp"
 
@@ -94,8 +98,15 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // mixing come free from the shared kernels; loaders deliver per-source
     // age-volume like a pollutant load.
     const int na = ctx.options.water_age ? 1 : 0;
-    const int ns = np + nm + na;
-    age_row_ = (na > 0) ? np + nm : -1;
+    // H4: __TEMPERATURE__ takes the row AFTER age, so the mesh row order
+    // matches the reported column order H1 fixed (pollutants, MSX, age,
+    // temperature). Advection, FCT, node mixing, structure passthrough and
+    // dispersion are all generic over `ns` — the row gets every one of them
+    // for free, at the same dispersion coefficient as a solute.
+    const int nt = ctx.options.heat_transport ? 1 : 0;
+    const int ns = np + nm + na + nt;
+    age_row_  = (na > 0) ? np + nm : -1;
+    temp_row_ = (nt > 0) ? np + nm + na : -1;
     if (ns <= 0) return false;
 
     // Mesh options are entered in DISPLAY units and must convert to internal
@@ -191,6 +202,12 @@ bool ArdEngine::init(SimulationContext& ctx) {
                    : ctx.water_age_config.global_age[static_cast<int>(
                          WaterAgeSource::INITIAL_STATE)];
     };
+    // H4: temperature's INITIAL_STATE. Unlike age (whose default is 0, so
+    // an unseeded row merely looks plausible) HeatConfigData's defaults are
+    // deliberately NON-zero — 0 degC is an ordinary temperature — so the
+    // seed must come from the config, never from a zeroed array.
+    const double temp_seed = ctx.heat_config.global_temp[static_cast<int>(
+        HeatSource::INITIAL_STATE)];
     const auto age_seed_node = [&](std::size_t nd) {
         return (age_from_hs && nd < hs_node_age.size())
                    ? hs_node_age[nd]
@@ -225,6 +242,9 @@ bool ArdEngine::init(SimulationContext& ctx) {
             if (age_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(age_row_) * unc + uc] =
                     age_seed_link(link);
+            if (temp_row_ >= 0)
+                state_.cell_phi[static_cast<std::size_t>(temp_row_) * unc + uc] =
+                    temp_seed;
         }
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
@@ -241,9 +261,14 @@ bool ArdEngine::init(SimulationContext& ctx) {
         if (age_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(age_row_)] =
                 age_seed_node(und) * node_vol_[und];
+        if (temp_row_ >= 0)
+            node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] =
+                temp_seed * node_vol_[und];
     }
     if (age_row_ >= 0)
         ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links());
+    if (temp_row_ >= 0)
+        ctx.heat_state.resize(ctx.n_nodes(), ctx.n_links(), temp_seed);
     // (resize consumed hotstart_loaded — the loaded ages now live in the
     // mesh state and republish on the first step.)
 
@@ -646,6 +671,13 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 und < ctx.water_age_state.node_age_vol_in.size())
                 node_mass_[und * uns + static_cast<std::size_t>(age_row_)] +=
                     dt_sub * ctx.water_age_state.node_age_vol_in[und];
+            // H4: the heat channel is the same shape (degC·ft3/s), filled at
+            // the same seven loader pathways per D-UT10, so it integrates
+            // over the substep identically.
+            if (temp_row_ >= 0 &&
+                und < ctx.heat_state.node_temp_vol_in.size())
+                node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] +=
+                    dt_sub * ctx.heat_state.node_temp_vol_in[und];
         }
     }
 
@@ -983,6 +1015,12 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
             node_mass_[nd2 * uns0 + ar] += dt * node_vol_[nd2];
     }
 
+    // H4: surface heat fluxes, the same Lie-split slot aging occupies —
+    // this is plan §1's `Sum(J)/Y - (Je + Jc)/Y` source term, applied PER
+    // CELL rather than per link, which is the whole point of binding heat
+    // to the mesh instead of leaving it on the LEGACY mirror.
+    applyHeatFluxes(ctx, dt);
+
     // E4: reaction stage over the full routing step, Lie-split after the
     // advection–dispersion subcycle (roadmap lesson 13 — first-order
     // splitting, documented; the integrator substeps adaptively inside):
@@ -1037,7 +1075,8 @@ void ArdEngine::writeDetailRows(SimulationContext& ctx) {
     const auto unc = static_cast<std::size_t>(mesh_.n_cells());
     const auto uns = static_cast<std::size_t>(ns);
     const auto species_name = [&](int s) -> std::string {
-        if (s == age_row_) return "__WATER_AGE__";
+        if (s == age_row_)  return "__WATER_AGE__";
+        if (s == temp_row_) return "__TEMPERATURE__";
         return (s < np)
                    ? std::string(ctx.pollutant_names.name_of(s))
                    : ctx.reactions.species_name[static_cast<std::size_t>(s - np)];
@@ -1078,6 +1117,116 @@ void ArdEngine::writeDetailRows(SimulationContext& ctx) {
 }
 
 // ===========================================================================
+// applyHeatFluxes — H4: per-cell surface exchange on the transport mesh
+// ===========================================================================
+
+/// @details The LEGACY mirror applies H2/H3's fluxes once per LINK, on a
+///          single lumped temperature. On the mesh a conduit is many cells
+///          with their own temperatures, so the flux is evaluated per cell
+///          against that cell's own state — which is what makes an advected
+///          thermal wave possible at all, and is the reason plan §6 H4 asks
+///          for the ARD binding rather than treating it as a refinement.
+///
+///          Free surface per cell: `top width(depth) x cell_dx`. The area
+///          identity with the LEGACY path is deliberate — evaporation, H2
+///          and H3 all use `top width x length`; here `length` is the cell's
+///          share of it. Gated on `FvGeometry::is_open` exactly as the
+///          LEGACY path gates on `xsect::isOpen`, which also sidesteps the
+///          Preissmann slot: a closed conduit never exchanges, so the slot
+///          width can never be mistaken for a free surface.
+///
+///          Node STORES take the same treatment as under LEGACY: only
+///          storage nodes have a free surface (`kNodeStorage`), and their
+///          state is a mass, so the flux converts to a mass change.
+void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
+    if (temp_row_ < 0 || !(dt > 0.0)) return;
+    const bool any = ctx.heat_config.surface_exchange ||
+                     ctx.heat_config.radiative_exchange;
+    if (!any) return;
+
+    constexpr double kSqFtToSqM = 0.09290304;
+    constexpr double kCuFtToCuM = 0.028316846592;
+    constexpr double kMphToMs   = 0.44704;
+
+    const double t_air   = (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
+    const double rh      = ctx.climate_state.humidity;
+    const double wind_ms = ctx.climate_state.wind_speed * kMphToMs;
+    const double rho     = ctx.options.water_density;
+    const double cp      = ctx.options.water_specific_heat;
+    const double a_wf    = ctx.options.wind_func_coeff_a;
+    const double b_wf    = ctx.options.wind_func_coeff_b;
+    const double p_ratio = ctx.options.pressure_ratio;
+
+    /// Net flux OUT of the water, W/m2 — the two modules summed under one
+    /// sign convention (both return positive-out).
+    const auto flux_out = [&](double t_w) {
+        double j = 0.0;
+        if (ctx.heat_config.surface_exchange) {
+            const double je = heat::latentFlux(t_w, t_air, rh, wind_ms, a_wf,
+                                               b_wf, rho);
+            j += je + heat::sensibleFlux(
+                          je, heat::bowenRatio(t_w, t_air, rh, p_ratio));
+        }
+        if (ctx.heat_config.radiative_exchange)
+            j += heat::netRadiativeFluxOut(t_w, t_air, rh,
+                                           ctx.heat_config.radiative);
+        return j;
+    };
+
+    // ---- Cells ----------------------------------------------------------
+    const auto tr  = static_cast<std::size_t>(temp_row_);
+    const auto unc = static_cast<std::size_t>(mesh_.n_cells());
+    for (std::size_t c = 0; c < unc; ++c) {
+        const auto gi = static_cast<std::size_t>(mesh_.cell_geom[c]);
+        if (gi >= mesh_.geom.size()) continue;
+        const auto& g = mesh_.geom[gi];
+        if (!g.is_open) continue;              // no free surface, no exchange
+        const double area_x = state_.cell_a[c];
+        if (!(area_x > 0.0)) continue;
+        const double vol_ft3 = area_x * mesh_.cell_dx[c];
+        if (!(vol_ft3 > 0.0)) continue;
+
+        const double h = fv::kernels::depthOfArea(g, area_x);
+        if (!(h > 0.0)) continue;
+        const double width = fv::kernels::widthOfDepth(g, h);
+        if (!(width > 0.0)) continue;
+        const double surf_m2 = width * mesh_.cell_dx[c] * kSqFtToSqM;
+
+        const double t_w = state_.cell_phi[tr * unc + c];
+        const double hc  = rho * cp * vol_ft3 * kCuFtToCuM;
+        if (hc > 0.0)
+            state_.cell_phi[tr * unc + c] +=
+                -flux_out(t_w) * surf_m2 * dt / hc;
+    }
+
+    // ---- Node stores ----------------------------------------------------
+    const int unit_sys =
+        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const auto uns = static_cast<std::size_t>(state_.n_species);
+    const int nn = std::min(ctx.n_nodes(),
+                            static_cast<int>(node_vol_.size()));
+    for (int nd = 0; nd < nn; ++nd) {
+        const auto und = static_cast<std::size_t>(nd);
+        const double vol_ft3 = node_vol_[und];
+        if (!(vol_ft3 > 0.0)) continue;
+        const double area_ft2 = node::getSurfArea(
+            ctx.nodes, nd, ctx.nodes.depth[und], &ctx.tables, unit_sys,
+            &ctx.node_subtypes);
+        if (!(area_ft2 > 0.0)) continue;       // junctions have none
+
+        const double t_w = node_mass_[und * uns + tr] / vol_ft3;
+        const double hc  = rho * cp * vol_ft3 * kCuFtToCuM;
+        if (hc > 0.0) {
+            const double dT =
+                -flux_out(t_w) * area_ft2 * kSqFtToSqM * dt / hc;
+            // The store carries MASS (conc x volume), so a temperature
+            // change of dT is a mass change of dT x volume.
+            node_mass_[und * uns + tr] += dT * vol_ft3;
+        }
+    }
+}
+
+// ===========================================================================
 // publish — cell state → legacy link/node arrays
 // ===========================================================================
 
@@ -1085,7 +1234,11 @@ void ArdEngine::publish(SimulationContext& ctx) {
     const int ns = state_.n_species;
     const int np = ctx.n_pollutants();
     const int na = (age_row_ >= 0) ? 1 : 0;
-    const int nm = ns - np - na;  // MSX rows (0 when no reactions component)
+    const int nt = (temp_row_ >= 0) ? 1 : 0;
+    // MSX rows (0 when no reactions component). BOTH reserved rows must be
+    // subtracted: with only `- na`, a heat deck would report one MSX row too
+    // many and the else-branches below would index msx_*_conc out of range.
+    const int nm = ns - np - na - nt;
     const auto uns = static_cast<std::size_t>(ns);
     const auto unp = static_cast<std::size_t>(np);
     const auto unm = static_cast<std::size_t>(nm > 0 ? nm : 0);
@@ -1126,6 +1279,16 @@ void ArdEngine::publish(SimulationContext& ctx) {
                     ctx.water_age_state.link_age.size())
                     ctx.water_age_state.link_age[static_cast<std::size_t>(
                         link)] = conc;
+            } else if (s == temp_row_) {
+                // H4: temperature publishes into heat_state, which is where
+                // the snapshot builder reads it from REGARDLESS of engine —
+                // so the .out column is fed by whichever engine is active.
+                // Without this branch the row would fall through to the MSX
+                // else and write past msx_link_conc.
+                if (static_cast<std::size_t>(link) <
+                    ctx.heat_state.link_temp.size())
+                    ctx.heat_state.link_temp[static_cast<std::size_t>(link)] =
+                        conc;
             } else if (s < np) {
                 ctx.links.conc[static_cast<std::size_t>(link) * unp + sb] =
                     conc;
@@ -1149,6 +1312,9 @@ void ArdEngine::publish(SimulationContext& ctx) {
             if (s == age_row_) {
                 if (und < ctx.water_age_state.node_age.size())
                     ctx.water_age_state.node_age[und] = conc;
+            } else if (s == temp_row_) {
+                if (und < ctx.heat_state.node_temp.size())
+                    ctx.heat_state.node_temp[und] = conc;
             } else if (s < np) {
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] = conc;
             } else {
@@ -1184,6 +1350,14 @@ void ArdEngine::publish(SimulationContext& ctx) {
             ud < ctx.water_age_state.node_age.size())
             ctx.water_age_state.link_age[static_cast<std::size_t>(link)] =
                 ctx.water_age_state.node_age[ud];
+        // H4: a regulator carries its donor node's temperature for the same
+        // reason it carries its age — it stores nothing, so there is no
+        // mixed value of its own.
+        if (temp_row_ >= 0 &&
+            static_cast<std::size_t>(link) < ctx.heat_state.link_temp.size() &&
+            ud < ctx.heat_state.node_temp.size())
+            ctx.heat_state.link_temp[static_cast<std::size_t>(link)] =
+                ctx.heat_state.node_temp[ud];
     }
 }
 

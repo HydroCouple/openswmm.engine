@@ -173,7 +173,8 @@ void applyHeatSections(SimulationContext& ctx,
                 } else if (mod == "SEDIMENT_EXCHANGE") {
                     errors.push_back(
                         "[HEAT_FLUXES] SEDIMENT_EXCHANGE arrives with plan "
-                        "phase H4 (HTS two-layer storage).");
+                        "phase H6 (HTS two-layer storage). H4 is the ARD "
+                        "mesh binding.");
                 } else {
                     errors.push_back(
                         "[HEAT_FLUXES] unknown module '" + toks[0] +
