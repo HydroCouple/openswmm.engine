@@ -174,6 +174,11 @@ if(OPENSWMM_FAST_XSECT_LOOKUP)
     target_compile_definitions(test_engine_xsect_kernels_parity
                                PRIVATE SWMM_XSECT_FAST_LOOKUP)
 endif()
+# Exact circular-arc/line boundary primitives (Green's theorem area/moment,
+# height queries, evalExact, and the polyline/bulge construction). Build-time
+# geometry compiler input for POLYGON sections — no FvGeometry/XsectEval
+# dependency, so it is a standalone target.
+add_gtest_unit(test_engine_xsect_boundary    test_xsect_boundary.cpp)
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
