@@ -1003,3 +1003,139 @@ these are the numbers `RomQuantileGemm.hpp`'s first working version produced.
 The benchmark itself is not a checked-in target (compiled standalone per
 this project's calibration-sweep pattern); the numbers in §4 are the full
 record of what was measured.
+
+---
+
+# True per-family coefficient planes (PR H7)
+
+## 1. Problem
+
+Two v1 approximations from the soft-rainfall (SR) arc shared one root cause:
+the ROM carried exactly **one** `(spread, family)` soft-forcing channel, so a
+source whose cells or gages did not all share a distribution family had to be
+squeezed into a single per-member coefficient column.
+
+- **SR-4b (MIXED grids)** used the NORMAL coefficient `z_i` for *every* cell
+  and pre-scaled UNIFORM cells' spread by `max|z| / max|2u−1| ≈ 3.0` so the
+  band width came out comparable. That matches the *range* but distorts the
+  *marginal shape*: a UNIFORM cell's ensemble came out z-shaped (dense near
+  the median, sparse in the tails) rather than evenly spaced.
+- **SR-1b (multi-gage)** did not even range-match: mixed families across gages
+  fell back to the first gage's family with a one-shot warning.
+
+## 2. Fix
+
+`SpectralROM1D::setSoftForcing()` and 2D `SpectralROM::setSoftForcing()` gained
+two trailing, defaulted parameters — a second spread plane and its own family:
+
+    setSoftForcing(loc, spread, family, soft_field,
+                   spread_b /* = nullptr */, family_b /* = UNIFORM */)
+
+`advance()` projects **both** planes (two `k·n` projections instead of one) and
+each member's modal forcing becomes
+
+    g_ij  +=  c_i · (Pᵀ·spread)_j  +  c_i^B · (Pᵀ·spread_b)_j
+
+so each source plane keeps its own family's marginal. The caller splits a MIXED
+source by family: family A's cells/gages carry their spread in `spread` with
+zeros elsewhere, family B's in `spread_b` with zeros elsewhere; the two planes
+are disjoint and sum to the original spread field. The SR-4b `×3.0` pre-scale
+and the SR-1b first-family fallback both become unnecessary — there is no
+longer a single column to squeeze onto.
+
+**Coherence is preserved by construction, not by convention.** Both `c_i` and
+`c_i^B` are drawn from the *same* `u_i = shuffledStrata(M, sample_seed + 4)`
+stream — `c_i = probit(u_i)` for NORMAL/LOGNORMAL, `c_i = 2u_i − 1` for
+UNIFORM. One rank per member therefore holds across families (the
+`COHERENCE FULL` contract), and because the strata midpoints `(k+0.5)/M` are
+symmetric about `0.5`, both columns are zero-mean and the nominal member is
+nominal in *both* channels simultaneously — the deviation-form invariant
+survives the second family without a special case.
+
+**Bit-identity.** A null second plane leaves every expression adding an exact
+`0.0`: the projection loop is skipped, the activation metric gains `|0|·0`, and
+the per-member forcing gains `c^B·0`. Single-family callers are unchanged.
+
+## 3. Scope guard — CORR_LEN × MIXED is refused, not approximated
+
+The correlated-coherence paths (CL-1b/CL-1c materialized field, CL-2c reduced
+basis) fold **one** family's `c_i` into the per-member projection `W_i[t]` /
+`a_im` by construction; there is nowhere for a second family's coefficient to
+enter without redefining that field. Rather than silently mixing families,
+`setSoftForcing()` **refuses** the second plane when a spatial field is active,
+leaves the ROM in a valid single-family CORR_LEN state, and reports why via the
+new `softPlanesError()` accessor (empty on success). `setSoftForcingReduced()`
+is single-family for the same reason and clears any previously armed second
+plane. CORR_LEN × MIXED is additive future work and the error string says so.
+
+## 4. Findings (measured)
+
+**Marginal shapes are exact per plane, and materially different from each
+other.** With the two planes aligned to orthogonal eigenmodes (plane A ∝ mode
+0, plane B ∝ mode 1), each mode is fed by exactly one plane, so the marginal
+claim is exact rather than approximate. Fitting each mode's member values to a
+single amplitude:
+
+| Mode | Fed by | Misfit to its own family | Misfit to the other family |
+|---|---|---|---|
+| 0 | NORMAL plane | < 1e-12 | **0.215** |
+| 1 | UNIFORM plane | < 1e-12 | **0.460** |
+
+Misfit is relative to the fitted amplitude. The cross-family figures are 20–46×
+the 1e-2 assertion bar — the shape difference the pre-H7 hack was papering over
+is large, not marginal.
+
+**What a per-cell test cannot show, and why.** The spec phrased this as
+"UNIFORM cells' member values uniform, not z-shaped". That cannot be asserted
+on a reconstructed per-*cell* value: the ROM's eigenmodes are **global**, so
+every mode sees both planes and every cell's reconstruction is a linear
+combination of both coefficients. That mixing is a property of the spectral ROM
+itself, not something per-family planes can or should remove. The claim that is
+exactly true — and is what H7 actually fixes — is per *source plane*. The tests
+assert it there, and separately verify the full two-plane decomposition against
+an independent closed-form per-member reference on a realistic checkerboard
+MIXED grid.
+
+**Adding a second family plane is NOT monotone in band width — expected, not a
+defect.** On a two-gage fixture where the gages cover complementary halves of
+the network, the per-family band came out *narrower* than the first-family
+fallback's (0.415 vs 1.000 at the widest node with equal spreads; a 58%
+difference with unequal spreads). Cause: comonotone coherence gives every
+member the same rank in both families, and two gages on complementary parts of
+the network project onto the shared zero-mean eigenmodes with **opposing
+signs**, so their contributions partially cancel. With *equal* spreads the two
+projections are exactly `R_B = −R_A` on every mode and the first-family
+fallback — one column over the summed spread — collapses to a near-zero band
+entirely. This is a concrete demonstration of how badly the removed fallback
+could misreport a multi-gage source, and the reason the regression test uses
+unequal spreads (an equal-spread fixture would prove less than it appears).
+
+## 5. Port status — the ROM half is live, the caller half is not on this line
+
+The `port/v2-on-marcher` line deliberately ported the ROM-side soft-forcing API
+but **not** the SR-1a/SR-1b gage consumption or the SR-4b/CL-1c grid `/spread`
+→ ROM path (see `.memory/current.md`, the 2026-08-03 SR-2c entry: only the
+deterministic `/location` plane is read; `SimulationContext::soft_rain` does not
+exist here). The two call sites the checklist asks to *delete* —
+`SurfaceRouter2D::updateRainfall()`'s `sp *= 3.0` and `SWMMEngine`'s
+"uses the first family" warning — therefore live only on the frozen pre-port
+`origin/feature/uncertainty-sidecar` branch and are not present to remove.
+
+**Consequence for whoever ports SR-1b/SR-4b onto this line**: port them against
+the two-plane API, not the v1 hacks. Concretely, `updateRainfall()` should fill
+two spread buffers keyed on `GridFileReader::family_code_now()` and pass both to
+`setSoftForcing()`, instead of writing one buffer with a `×3.0` correction; and
+the gage path should group gages by family into the same two planes instead of
+warning and collapsing onto the first. Grids with more than two distinct
+families in one file still need a third plane — the API extends the same way,
+and nothing about the current shape blocks it.
+
+## 6. Reproduction
+
+    # All 8 H7 tests (6 in 1D, 2 in 2D), plus the 14 pre-existing SR-3a/CL-1b
+    # soft-forcing tests in the same newly-registered binary:
+    ctest --test-dir build/<dir> -R test_engine_soft_forcing_rom
+
+    # Marginal-shape and coherence contracts only:
+    build/<dir>/bin/Debug/test_engine_soft_forcing_rom \
+        --gtest_filter='SoftForcingFamilyPlanes*'
