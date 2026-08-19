@@ -340,7 +340,25 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
                 addAgeVolume(ctx, out_node, q, WaterAgeSource::RAINFALL);
             }
         }
-        addTempVolume(ctx, out_node, q, HeatSource::RAINFALL);
+        // H5a: the temperature mirror of the block above. Runoff reaches the
+        // node at the SUBCATCHMENT's computed temperature, not the configured
+        // RAINFALL temperature — rain is what enters the subareas; by the
+        // time water leaves it has exchanged with the atmosphere and mixed
+        // with whatever was ponded. Falls back to the configured source when
+        // the watershed state is unsized (HEAT_TRANSPORT on, runoff never
+        // stepped).
+        {
+            const bool have_sc = ctx.options.heat_transport &&
+                                 ui < ctx.heat_state
+                                          .subcatch_runoff_temp.size();
+            if (have_sc) {
+                auto& acc = ctx.heat_state.node_temp_vol_in;
+                if (ud < acc.size())
+                    acc[ud] += q * ctx.heat_state.subcatch_runoff_temp[ui];
+            } else {
+                addTempVolume(ctx, out_node, q, HeatSource::RAINFALL);
+            }
+        }
 
         for (int p = 0; p < np; ++p) {
             auto sc_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);

@@ -74,18 +74,39 @@ enum class HeatSource : int {
     COUNT_          = 7
 };
 
+/// H5a: which subarea of a subcatchment a ponded temperature belongs to.
+/// Deliberately a SEPARATE enum from `openswmm::SubArea` (A3's), even though
+/// the members coincide today: nothing guarantees the age and heat tracks
+/// keep the same subarea decomposition, and a shared enum would make a
+/// future divergence a silent index error rather than a compile error.
+enum class HeatSubArea : int {
+    IMPERV0 = 0,
+    IMPERV1 = 1,
+    PERV    = 2,
+    COUNT_  = 3
+};
+
 /**
- * @brief Parsed `model.heat` state (heat component, phase H1).
+ * @brief What a dry or absent element reports (plan D-H5c, user 2026-08-19).
  *
- * @details Mirrors WaterAgeConfigData, with one difference that matters:
- *          the default is **not** zero. An unset source temperature means
- *          "not configured", and 0 °C is a perfectly ordinary temperature,
- *          so a defaulted-to-zero table would silently chill every model.
- *          `kDefaultTemp` is the documented default inlet temperature and
- *          `configured_source[]` records which rows the user actually set,
- *          so a gate (and a user) can tell a deliberate 0 °C from a
- *          default.
+ * @details A4 zeroes a LID layer holding no water — "no water, no age" — and
+ *          that is right for age and wrong for temperature, because 0 °C is
+ *          a real temperature. The three defensible answers serve different
+ *          studies, so the deck picks one rather than the engine deciding.
  */
+enum class DryTempPolicy : int {
+    /// Freeze the last wet value; rewetting mixes against it. Invents no
+    /// number and needs no forcing series, which is why it is the default.
+    HOLD    = 0,
+    /// Track air temperature — the physical answer for an exposed dry
+    /// surface. Costs a dependency on the met forcing.
+    AIR     = 1,
+    /// Fall to `HeatConfigData::kDefaultTemp`. Reproducible, but it invents
+    /// a number that then looks like data.
+    DEFAULT = 2
+};
+
+
 /**
  * @brief `[RADIATIVE_FLUXES]` parameters (heat plan §2.2, phase H3).
  *
@@ -104,6 +125,18 @@ struct RadiativeConfig {
     double lw_reflection   = 0.03;  ///< RL
 };
 
+/**
+ * @brief Parsed `model.heat` state (heat component, phase H1).
+ *
+ * @details Mirrors WaterAgeConfigData, with one difference that matters:
+ *          the default is **not** zero. An unset source temperature means
+ *          "not configured", and 0 °C is a perfectly ordinary temperature,
+ *          so a defaulted-to-zero table would silently chill every model.
+ *          `kDefaultTemp` is the documented default inlet temperature and
+ *          `configured_source[]` records which rows the user actually set,
+ *          so a gate (and a user) can tell a deliberate 0 °C from a
+ *          default.
+ */
 struct HeatConfigData {
     bool configured = false;
 
@@ -125,6 +158,9 @@ struct HeatConfigData {
      *          arrive with H3/H4 and their keys refuse until then.
      */
     bool surface_exchange = false;
+
+    /// `[HEAT_FLUXES] DRY_ELEMENT_TEMPERATURE HOLD|AIR|DEFAULT` (D-H5c).
+    DryTempPolicy dry_temp_policy = DryTempPolicy::HOLD;
 
     /// Default inlet temperature when a source has no row (°C).
     static constexpr double kDefaultTemp = 20.0;
@@ -168,12 +204,81 @@ struct HeatState {
     /// The LEGACY mirror seeds INITIAL_STATE on its first step.
     bool legacy_seeded = false;
 
+    // ---- H5a watershed rows. Sized by `resizeWatershed`, NOT by `resize`.
+    //      Kept a separate call deliberately: A3 widened `WaterAgeState::
+    //      resize` with a defaulted third parameter, four existing two-
+    //      argument call sites then silently emptied the new arrays at
+    //      runtime, and the validator had to remove the default to move the
+    //      failure back to the compiler. A second function cannot be called
+    //      short, so the hazard is unrepresentable rather than observed.
+
+    /// [subcatch * kNSubArea + subarea], °C — ponded surface temperature.
+    std::vector<double> subarea_temp;
+    /// [subcatch * kNSubArea + subarea], ft³ — that subarea's stored water at
+    /// the END of the previous step. The solver overwrites its depths in
+    /// place, so the old volume is otherwise gone by the time this runs.
+    std::vector<double> subarea_vol_prev;
+    /// [subcatch], °C — temperature the subcatchment's runoff leaves at.
+    std::vector<double> subcatch_runoff_temp;
+    /// [subcatch], °C·ft³/s — per-step RATE accumulator for arriving run-on,
+    /// following the `node_temp_vol_in` convention: donors accumulate
+    /// `q · T`, and it is zeroed once consumed.
+    std::vector<double> subcatch_runon_temp_vol_in;
+
+    /// [subcatch], ft³/s — the run-on rate whose temperature is KNOWN, i.e.
+    /// the flow actually represented in `subcatch_runon_temp_vol_in`.
+    ///
+    /// @details This is the pair that keeps A3's defect from recurring.
+    ///          `subcatches.runon_inflow` has THREE contributors (the
+    ///          subcatchment cascade, the LID underdrain return, and the
+    ///          outfall return); A3 filled its age numerator from one of
+    ///          them and divided by all three, so the arriving age was
+    ///          dragged toward zero — measured at 3.834 h under a 4 h rain,
+    ///          younger than anything entering the model.
+    ///
+    ///          Carrying the rate alongside the numerator makes the ratio a
+    ///          true mean of whatever was counted, whether that is one
+    ///          contributor or three. **H5a counts the cascade and the
+    ///          outfall return; the LID underdrain arrives with H5b**,
+    ///          because a drain's temperature is a per-layer quantity that
+    ///          does not exist until the LID layer species row does. Until
+    ///          then the omission biases nothing — it simply averages over
+    ///          less water, which is the difference between an incomplete
+    ///          answer and a wrong one.
+    std::vector<double> subcatch_runon_temp_rate;
+
+    /// [subcatch], °C·ft³ — outfall-return temperature-volume, accumulated on
+    /// the ROUTING clock beside `subcatches.outfall_runon_vol` and consumed
+    /// on the RUNOFF clock. A volume, not a rate, for exactly the reason its
+    /// age counterpart is: the two clocks differ, so the producer cannot
+    /// know the interval the consumer will divide by.
+    std::vector<double> subcatch_outfall_temp_vol;
+
+    static constexpr int kNSubArea = static_cast<int>(HeatSubArea::COUNT_);
+
     void resize(int n_nodes, int n_links, double initial_temp) {
         node_temp_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_temp.assign(static_cast<std::size_t>(n_nodes), initial_temp);
         link_temp.assign(static_cast<std::size_t>(n_links), initial_temp);
         legacy_seeded = false;
     }
+
+    void resizeWatershed(int n_subcatch, double initial_temp) {
+        const auto n = static_cast<std::size_t>(n_subcatch);
+        subarea_temp.assign(n * static_cast<std::size_t>(kNSubArea),
+                            initial_temp);
+        subarea_vol_prev.assign(n * static_cast<std::size_t>(kNSubArea), 0.0);
+        subcatch_runoff_temp.assign(n, initial_temp);
+        subcatch_runon_temp_vol_in.assign(n, 0.0);
+        subcatch_runon_temp_rate.assign(n, 0.0);
+        subcatch_outfall_temp_vol.assign(n, 0.0);
+    }
+
+    bool watershedSized(int n_subcatch) const noexcept {
+        return subarea_temp.size() == static_cast<std::size_t>(n_subcatch) *
+                                          static_cast<std::size_t>(kNSubArea);
+    }
+
     void clear() { *this = HeatState{}; }
 };
 

@@ -158,6 +158,27 @@ void applyHeatSections(SimulationContext& ctx,
                 }
                 const std::string mod = upper(toks[0]);
                 const std::string val = upper(toks[1]);
+
+                // H5a/D-H5c. Checked BEFORE the ON|OFF validation because it
+                // is the one key in this section whose value is a named mode
+                // rather than a toggle; leaving it below would have it
+                // rejected as "not ON or OFF" before its own branch ran.
+                // Ladder shape follows ArdConfig.cpp:116-137 (SCALAR_SCHEME).
+                if (mod == "DRY_ELEMENT_TEMPERATURE") {
+                    if (val == "HOLD")
+                        ctx.heat_config.dry_temp_policy = DryTempPolicy::HOLD;
+                    else if (val == "AIR")
+                        ctx.heat_config.dry_temp_policy = DryTempPolicy::AIR;
+                    else if (val == "DEFAULT")
+                        ctx.heat_config.dry_temp_policy =
+                            DryTempPolicy::DEFAULT;
+                    else
+                        errors.push_back(
+                            "[HEAT_FLUXES] DRY_ELEMENT_TEMPERATURE '" +
+                            toks[1] + "' is not HOLD, AIR, or DEFAULT.");
+                    continue;
+                }
+
                 if (val != "ON" && val != "OFF" && val != "YES" &&
                     val != "NO") {
                     errors.push_back(
@@ -178,7 +199,8 @@ void applyHeatSections(SimulationContext& ctx,
                 } else {
                     errors.push_back(
                         "[HEAT_FLUXES] unknown module '" + toks[0] +
-                        "' (SURFACE_EXCHANGE in H2).");
+                        "' (SURFACE_EXCHANGE in H2, RADIATIVE_EXCHANGE in "
+                        "H3, DRY_ELEMENT_TEMPERATURE in H5a).");
                 }
             }
             continue;

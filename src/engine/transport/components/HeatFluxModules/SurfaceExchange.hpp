@@ -106,6 +106,30 @@ double bowenRatio(double t_water_c, double t_air_c, double humidity_pct,
 /// Sensible heat flux [W/m²], POSITIVE out of the water.
 double sensibleFlux(double latent_flux, double bowen_ratio) noexcept;
 
+/// Air temperature in °C. `ClimateState` carries °F (a legacy convention);
+/// every formulation in this program is Celsius. Exported at H5a so the
+/// watershed binding cannot acquire a second, drifting copy of the
+/// conversion — there is exactly one place that knows the units.
+double airTempCelsius(const SimulationContext& ctx) noexcept;
+
+/// One element's temperature change from a net surface flux [°C].
+///
+/// `dT = −(Je + Jc) · A · dt / (ρw cp V)`, SI throughout. Returns 0 for a
+/// volume-less element rather than dividing by it: a film of water has no
+/// thermal mass and would otherwise take an unbounded excursion in one step.
+/// Exported at H5a — the subarea binding needs the same energy-to-ΔT
+/// conversion the node and link bindings use, and a second copy of it is
+/// exactly the kind of duplication that drifts.
+double deltaT(double je, double jc, double area_m2, double vol_m3, double dt,
+              double rho, double cp) noexcept;
+
+/// ft² → m². Exported with `deltaT`, which is useless without it.
+inline constexpr double kSqFtToSqM = 0.09290304;
+/// ft³ → m³.
+inline constexpr double kCuFtToCuM = 0.028316846592;
+/// mph → m/s. `ClimateState::wind_speed` is mph.
+inline constexpr double kMphToMs = 0.44704;
+
 /**
  * @brief Apply one step of surface exchange to every exchanging element.
  *

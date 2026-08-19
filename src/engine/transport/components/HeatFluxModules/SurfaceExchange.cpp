@@ -37,16 +37,6 @@ namespace openswmm::transport::heat {
 
 namespace {
 
-constexpr double kSqFtToSqM = 0.09290304;
-constexpr double kCuFtToCuM = 0.028316846592;
-constexpr double kMphToMs   = 0.44704;
-
-/// Air temperature is carried in °F by ClimateState (a legacy convention);
-/// every formulation here is Celsius.
-double airTempCelsius(const SimulationContext& ctx) noexcept {
-    return (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
-}
-
 /// Cross-section parameters for a link. Mirrors `Routing.cpp:54`'s local
 /// helper — the same one the non-DYNWAVE evaporation path uses, so an open
 /// conduit's exchange area is built exactly the way its evaporation area is.
@@ -67,19 +57,18 @@ XSectParams buildXsp(const LinkData& links, std::size_t uk) {
     return xs;
 }
 
-/// One element's temperature change from a net surface flux.
-///
-/// `dT = −(Je + Jc) · A · dt / (ρw cp V)`. Returns 0 for a volume-less
-/// element rather than dividing by it: a film of water has no thermal mass
-/// and would otherwise take an unbounded excursion in one step.
+}  // namespace
+
+double airTempCelsius(const SimulationContext& ctx) noexcept {
+    return (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
+}
+
 double deltaT(double je, double jc, double area_m2, double vol_m3, double dt,
               double rho, double cp) noexcept {
     const double heat_capacity = rho * cp * vol_m3;
     if (!(heat_capacity > 0.0) || !(area_m2 > 0.0)) return 0.0;
     return -(je + jc) * area_m2 * dt / heat_capacity;
 }
-
-}  // namespace
 
 double saturationVapourPressure(double t_c) noexcept {
     return 0.61275 * std::exp(17.27 * t_c / (237.3 + t_c));
