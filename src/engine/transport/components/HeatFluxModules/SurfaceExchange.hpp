@@ -112,18 +112,67 @@ double sensibleFlux(double latent_flux, double bowen_ratio) noexcept;
 /// conversion — there is exactly one place that knows the units.
 double airTempCelsius(const SimulationContext& ctx) noexcept;
 
-/// One element's temperature change from a net surface flux [°C].
-///
-/// `dT = −(Je + Jc) · A · dt / (ρw cp V)`, SI throughout. Returns 0 for a
-/// volume-less element rather than dividing by it: a film of water has no
-/// thermal mass and would otherwise take an unbounded excursion in one step.
-/// Exported at H5a — the subarea binding needs the same energy-to-ΔT
-/// conversion the node and link bindings use, and a second copy of it is
-/// exactly the kind of duplication that drifts.
-double deltaT(double je, double jc, double area_m2, double vol_m3, double dt,
-              double rho, double cp) noexcept;
+/// Probe offset for the flux derivative, °C. Small enough that `J′` is the
+/// local slope, large enough that the difference is not float noise.
+inline constexpr double kProbeC = 1.0e-3;
 
-/// ft² → m². Exported with `deltaT`, which is useless without it.
+/**
+ * @brief One element's temperature change, integrated SEMI-IMPLICITLY [°C].
+ *
+ * @details Plan D-H5d. The energy balance `ρ cp V dT/dt = −A·J(T)` is
+ *          linearized about the current temperature and the resulting linear
+ *          ODE is integrated exactly:
+ *
+ *          ```
+ *          k    = A·J′ / (ρ cp V)        [1/s]
+ *          T_eq = T₀ − J₀/J′
+ *          ΔT   = (J₀/J′)·expm1(−k·dt)
+ *          ```
+ *
+ *          **This replaces a forward-Euler step that diverged to NaN.** Heat
+ *          capacity is `ρ cp V`, so a thin film has almost none: a 0.52 ft³
+ *          film over 27,226 ft² took a +862 °C step in 60 s and the sequence
+ *          ran `5 → 182 → −1.8e4 → −3.9e9 → inf → NaN`. The explicit form had
+ *          simply stopped representing the ODE.
+ *
+ *          Three properties earned this scheme its place, and each is gated:
+ *          - **`|ΔT| ≤ |T_eq − T₀|` always** — the step cannot overshoot
+ *            equilibrium, whatever `dt` is. That is an assertion needing no
+ *            reference value, so no deck or timestep change can stale it.
+ *          - **No iteration**, hence no cap to tune and no failure mode when
+ *            the cap is reached.
+ *          - **Degrades to forward Euler as `dt → 0`** (`expm1(−x) ≈ −x`),
+ *            so every small-step answer is unchanged from H2/H3.
+ *
+ *          The flux FORMULATIONS of H2 and H3 were never wrong; only the
+ *          stepping was. CSH runs these same formulas at a 1e-4 s timestep
+ *          with a selectable ODE solver — we took its physics and not its
+ *          integrator.
+ *
+ * @param j0      Net flux OUT of the water at `T₀`, W/m² (sum of every
+ *                enabled module: `Je + Jc` from here, `Jr` from
+ *                RadiativeExchange — all signed positive out, so they add).
+ * @param j1      The same sum re-evaluated at `T₀ + h`.
+ * @param h       The probe offset used for `j1`; `kProbeC` unless testing.
+ * @param area_m2 Exchange area.
+ * @param vol_m3  Element volume — the thermal mass, and the reason this
+ *                function exists.
+ *
+ * @return ΔT in °C. Zero for a volume-less or area-less element. Falls back
+ *         to the explicit step when `J′ ≤ 0` (anti-damping: the linearized
+ *         system has no fixed point to relax onto, so there is nothing to be
+ *         stable about).
+ */
+double relaxT(double j0, double j1, double h, double area_m2, double vol_m3,
+              double dt, double rho, double cp) noexcept;
+
+/// The equilibrium temperature the linearization relaxes toward, °C —
+/// `T₀ − J₀/J′`. Exported so a gate can assert the no-overshoot property
+/// against it directly rather than recomputing the slope by hand.
+/// Returns `t0_c` when `J′ ≤ 0`, matching `relaxT`'s fallback.
+double equilibriumT(double t0_c, double j0, double j1, double h) noexcept;
+
+/// ft² → m². Exported with `relaxT`, which is useless without it.
 inline constexpr double kSqFtToSqM = 0.09290304;
 /// ft³ → m³.
 inline constexpr double kCuFtToCuM = 0.028316846592;

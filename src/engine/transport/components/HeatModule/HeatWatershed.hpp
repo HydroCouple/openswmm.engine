@@ -56,8 +56,9 @@
  *      the ponded volume ledger collapsing from 27342 ft³ to 0.78 ft³.
  *
  *      Note what does NOT go wrong: a temperature is intensive, and the
- *      exchange area cancels exactly against the thermal mass in `deltaT`
- *      (`a_ft2 / v_old ≡ 1 / depth_prev`), so the flux term alone cannot
+ *      exchange area cancels exactly against the thermal mass in `relaxT`
+ *      (it enters only through `k = A·J′/(ρ cp V)`, and `A / V ≡ 1 /
+ *      depth_prev`), so the flux term alone cannot
  *      see the substitution. It survives only through
  *      `runon_depth_rate = runon_rate / area`, which converts a run-on flow
  *      into the depth rate that weights it against rainfall. That is the

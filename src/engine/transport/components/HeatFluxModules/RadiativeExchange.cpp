@@ -144,11 +144,15 @@ void applyRadiativeExchange(SimulationContext& ctx, double dt) {
             &ctx.node_subtypes);
         if (!(area_ft2 > 0.0)) continue;
 
-        const double j_out = netRadiativeFluxOut(hs.node_temp[ui], t_air, rh,
-                                                 cfg);
-        const double hc = rho * cp * vol_ft3 * kCuFtToCuM;
-        if (hc > 0.0)
-            hs.node_temp[ui] += -j_out * area_ft2 * kSqFtToSqM * dt / hc;
+        // D-H5d: the same semi-implicit step SurfaceExchange takes. This
+        // binding had its own hand-inlined explicit conversion, which is why
+        // it carried the identical divergence — a shared hazard reached
+        // through two spellings gets fixed once and missed once.
+        const double t_w = hs.node_temp[ui];
+        hs.node_temp[ui] += relaxT(
+            netRadiativeFluxOut(t_w, t_air, rh, cfg),
+            netRadiativeFluxOut(t_w + kProbeC, t_air, rh, cfg),
+            kProbeC, area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM, dt, rho, cp);
     }
 
     const int nl = ctx.n_links();
@@ -186,11 +190,11 @@ void applyRadiativeExchange(SimulationContext& ctx, double dt) {
         if (!(top_width > 0.0)) continue;
 
         const double area_ft2 = top_width * length * CD.barrels[ucr];
-        const double j_out = netRadiativeFluxOut(hs.link_temp[uj], t_air, rh,
-                                                 cfg);
-        const double hc = rho * cp * vol_ft3 * kCuFtToCuM;
-        if (hc > 0.0)
-            hs.link_temp[uj] += -j_out * area_ft2 * kSqFtToSqM * dt / hc;
+        const double t_w = hs.link_temp[uj];
+        hs.link_temp[uj] += relaxT(
+            netRadiativeFluxOut(t_w, t_air, rh, cfg),
+            netRadiativeFluxOut(t_w + kProbeC, t_air, rh, cfg),
+            kProbeC, area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM, dt, rho, cp);
     }
 }
 
