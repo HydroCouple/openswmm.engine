@@ -114,8 +114,8 @@ bool reportMentions(const std::string &inpPath, const std::string &needle) {
     return false;
 }
 
-void cleanup(const std::string &inpPath) {
-    swmm_close();
+void cleanup(const std::string &inpPath, bool closeSolver = true) {
+    if (closeSolver) swmm_close();
     std::remove(inpPath.c_str());
     std::remove((inpPath + ".rpt").c_str());
     std::remove((inpPath + ".out").c_str());
