@@ -168,6 +168,150 @@ int clipBelow(const BElem& e, double y, BElem out[2]) noexcept;
 ExactProps evalExact(const BElem* elems, int n, double y);
 
 // ===========================================================================
+// Critical heights (Morse / Newton-Puiseux analysis)
+// ===========================================================================
+
+/**
+ * @brief One height at which A(y), B(y) or P(y) loses smoothness, tagged with
+ *        the coordinate-map exponent on each side.
+ * @details A piece `[y_i, y_{i+1}]` of the compiled section takes `exp_lo` from
+ *          `crit[i].exp_above` and `exp_hi` from `crit[i+1].exp_below`.
+ *
+ * **What `exp_above`/`exp_below` actually encode — read this before using
+ * them as if they were leading exponents.** The value is a *map selector*: it
+ * answers "is A analytic on this side, or does it carry a half-integer branch
+ * point?", NOT "what is the leading power of A here". Only two values are
+ * emitted:
+ *
+ *   - `1.0` — A is ANALYTIC on that side; the Chebyshev fit needs no
+ *     coordinate change (identity map).
+ *   - `1.5` — A ~ |Δy|^{3/2}; a square-root branch point, so the piece needs
+ *     the stretch that makes A analytic in the mapped variable.
+ *
+ * The two-value encoding is deliberately coarser than a true Puiseux exponent,
+ * and the spec's 1.0/1.5 dichotomy is genuinely incomplete — reported here as
+ * the design document asks rather than silently forced:
+ *
+ *   - A **V-notch invert** (two straight segments meeting at a point) has
+ *     A = z·y², a true leading exponent of **2.0**, not 1.0.
+ *   - A **pointed / gothic crown** likewise has A_full − A ~ δ².
+ *
+ * Both are nevertheless tagged `1.0`, and that is the CORRECT action, because
+ * every integer exponent is analytic and therefore wants the identity map. Only
+ * the half-integer case needs a different coordinate. Tagging by "analytic vs.
+ * √-branch" is what the map table is really keyed on; recording 2.0 would add
+ * information no consumer can use and would fall outside the table's rows.
+ *
+ * @warning The design document's blanket claim that "a closed conduit's crown
+ *          has exp_below = 1.5; its invert has exp_above = 1.5" holds only for
+ *          a SMOOTH (horizontally tangent) crown/invert. A pointed crown
+ *          (GOTHIC) and a V-notch or flat invert are analytic and get 1.0.
+ *          This function computes the tag rather than assuming it.
+ */
+struct CriticalHeight {
+    double y         = 0.0;  ///< height above the invert (ft)
+    double exp_above = 1.0;  ///< map selector for A just ABOVE this height
+    double exp_below = 1.0;  ///< map selector for A just BELOW this height
+};
+
+/**
+ * @brief Locate every height at which A(y), B(y) or P(y) loses smoothness.
+ *
+ * @details This is the Morse / Newton-Puiseux step: it is what lets the
+ *          spectral fit downstream converge geometrically instead of
+ *          algebraically. Splitting the depth range at these heights leaves A
+ *          analytic on the interior of every piece; the exponent tags then say
+ *          which pieces additionally need a coordinate change at their ends.
+ *
+ *          Two sources are enumerated, and together they are exhaustive:
+ *
+ *          1. **Every element endpoint height** (`y0`, `y1` of each element).
+ *             This covers corners, tangential joints, and the ends of
+ *             horizontal segments — every place where the boundary's own
+ *             parameterisation changes.
+ *          2. **Every arc horizontal tangency** — angles congruent to ±π/2
+ *             within the arc's sweep, i.e. the arc's own lowest (`cy − r`) and
+ *             highest (`cy + r`) points.
+ *
+ *          `0` and `y_full` are always included. Heights are returned sorted
+ *          ascending and deduplicated to `1e-12 · y_full`; where duplicates
+ *          merge, the exponent tags are unioned by MAX, so a `1.5` claim from
+ *          any contributing feature survives.
+ *
+ *          **The tagging rule reduces to one sentence:** a `1.5` tag arises
+ *          only from a smooth horizontal tangency, and it lands on the side of
+ *          that height where the tangent arc actually lies — above its lowest
+ *          point, below its highest point. Everything else is `1.0`.
+ *
+ *          That single rule is what makes this robust. A tangency is where two
+ *          boundary crossings are born or annihilate (a fold), and a fold is
+ *          the only way a crossing abscissa can pick up a √|Δy| term, which is
+ *          in turn the only way A acquires a half-integer power. A corner —
+ *          however sharp, and whichever direction it points — never produces
+ *          one: each incident element contributes an abscissa that is analytic
+ *          on its own side of the joint, so A is analytic on each side too.
+ *          The function therefore never has to classify "corner vs. smooth
+ *          joint", which would be the fragile part.
+ *
+ * @param elems boundary chain, closed and CCW, with `min(y) == 0` — i.e. as
+ *              produced by fromPolyline()/fromArcSpec(). Heights are reported
+ *              in that shifted frame.
+ * @param n     element count.
+ * @param[out] out sorted, deduplicated critical heights. Cleared on entry;
+ *              left empty if @p n <= 0 or the chain has zero height.
+ *
+ * @note **Cases the design document leaves open, and what is done about each.**
+ *
+ *       - *Two arcs meeting tangentially (non-horizontal tangent) — corner or
+ *         smooth point?* Operationally neither. It IS a critical height and
+ *         must be split at: the curvature jumps, so A is C¹ but not C², and a
+ *         Chebyshev fit spanning it converges only algebraically. But the tag
+ *         is `1.0` on both sides, because A is analytic on each side
+ *         separately with nonzero slope. `1.0` means "analytic, identity map",
+ *         NOT "corner" — the split and the tag are independent decisions.
+ *
+ *       - *An exactly horizontal segment.* Critical, `1.0`/`1.0`. The design
+ *         document's "infinite dA/dy over a finite span" is imprecise:
+ *         dA/dy = B does not blow up, it JUMPS by the segment's width, so A
+ *         stays continuous with a slope kink and is analytic on each side.
+ *         Identity map both sides is right, and reproducing that jump exactly
+ *         is what makes a bench's top-width discontinuity come out correct.
+ *
+ *       - *An arc extremum within `1e-9 · y_full` of an element endpoint.* The
+ *         tangency height is SNAPPED onto the endpoint and the two exponent
+ *         claims are unioned (so `1.5` survives). This deliberately overrides
+ *         the general `1e-12` dedupe for this one pairing. Rationale: a piece
+ *         narrower than `1e-9 · y_full` carries no resolvable information, its
+ *         Chebyshev fit is numerically meaningless, and it burns one of the 24
+ *         piece slots — whereas the merged height with the stronger tag
+ *         describes the local behaviour correctly.
+ *
+ *       - *A cusp where two arcs meet with opposite curvature.* If the shared
+ *         tangent is HORIZONTAL, each arc contributes a half-power on its own
+ *         side and the height is tagged `1.5`/`1.5` — this is exactly the
+ *         two-sided map case, and it falls out of the tagging rule with no
+ *         special handling (the arc below claims `exp_below`, the arc above
+ *         claims `exp_above`). If the shared tangent is NOT horizontal, the
+ *         enclosed spike has width O(δ²), which is analytic, so `1.0`/`1.0`.
+ *
+ *       - *Three or more components merging at the same height.* One critical
+ *         height is emitted; the claims union by MAX. Each merge contributes
+ *         the same leading power, so the tag is unaffected by how many coincide
+ *         — only the component count changes, and that is evalExact()'s
+ *         business, not the exponent's. No special case is needed.
+ *
+ * @note Merge and split heights need no separate search pass. A merge requires
+ *       two crossings to collide, which requires either a smooth horizontal
+ *       tangency (source 2) or a vertex that is a local extremum of height
+ *       (source 1). Both are already enumerated, so scanning for component
+ *       merges independently would only rediscover heights already found.
+ *
+ * @see evalExact
+ */
+void findCriticalHeights(const BElem* elems, int n,
+                         std::vector<CriticalHeight>& out);
+
+// ===========================================================================
 // Construction
 // ===========================================================================
 
