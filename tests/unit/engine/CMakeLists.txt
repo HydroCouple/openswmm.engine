@@ -762,3 +762,73 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     set_tests_properties(test_engine_geopackage_external_content_reader
         PROPERTIES LABELS "unit")
 endif()
+
+# ===========================================================================
+# DORMANT-TEST SWEEP (2026-08-18)
+#
+# Every test source under tests/unit/engine/ that was present on disk but
+# referenced by no CMakeLists -- i.e. had never run under ctest on this line.
+# Four such files had already been found one at a time (PR-10's coverage
+# harness before P4, test_spectral_rom1d.cpp before H1, test_2d_spectral_rom.cpp
+# before H4, test_soft_forcing_rom.cpp before H7), each passing immediately once
+# switched on. This block is the deliberate sweep for the rest of them rather
+# than waiting to trip over the next one.
+#
+# Files that genuinely cannot build on this base (they reference APIs the R0
+# port deliberately left behind) are listed at the bottom of this block, NOT
+# registered, with the reason -- so the gap stays visible instead of silently
+# reverting to "present on disk, never run".
+# ===========================================================================
+
+add_gtest_unit(test_engine_2d_spatial_field       test_2d_spatial_field.cpp)
+add_gtest_unit(test_engine_1d_rom_integration     test_engine_1d_rom_integration.cpp)
+add_gtest_unit(test_engine_final_boundary_stall2  test_engine_final_boundary_stall.cpp)
+add_gtest_unit(test_engine_final_boundary_stall   test_final_boundary_stall.cpp)
+add_gtest_unit(test_engine_grid_mapping_weights   test_grid_mapping_weights.cpp)
+# RunoffEnsemble.cpp and SpdeSpatialBasis.cpp are NOT in the engine library --
+# src/engine/CMakeLists.txt lists uncertainty/*.cpp explicitly "as each lands",
+# and these two have no ported consumer yet. Compile them straight into their
+# own test target (the same pattern test_engine_spectral_rom1d used before its
+# source was wired) so the code is exercised without pre-empting the port
+# decision about whether to link them into the engine.
+add_gtest_unit(test_engine_runoff_ensemble        test_runoff_ensemble.cpp)
+target_sources(test_engine_runoff_ensemble PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/RunoffEnsemble.cpp)
+add_gtest_unit(test_engine_site_drainage_model    test_site_drainage_model.cpp)
+add_gtest_unit(test_engine_soft_rain_grid_parser  test_soft_rain_grid_parser.cpp)
+add_gtest_unit(test_engine_spde_spatial_basis     test_spde_spatial_basis.cpp)
+target_sources(test_engine_spde_spatial_basis PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpdeSpatialBasis.cpp)
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_2d_rom_integration test_engine_2d_rom_integration.cpp)
+endif()
+
+# ---- Deliberately NOT registered: these do not build on this base ----------
+# Each was compile-checked during the 2026-08-18 sweep; the blocker is a
+# genuinely un-ported feature, not a broken test.
+#
+#   test_engine_wq_uncertainty.cpp  -- needs SWMMEngine::wq_unc_active /
+#       wq_conc_prev_ (post-reform PR 13b, the WQ QUALITY uncertainty layer).
+#       Never ported to this line.
+#
+#   test_soft_rain_parser.cpp       -- needs SimulationContext::soft_rain and
+#       parseSoftRaingagesLine (SR-1a/SR-1b gage-level soft rainfall). The R0
+#       port deliberately excluded both; see the note at the removal site in
+#       src/engine/uncertainty/QualityUncertaintyHandler.cpp.
+#
+#   test_soft_rain_gage_engine.cpp  -- COMPILES and RUNS on this base, but all
+#       6 tests fail for one reason: they write a [SOFT_RAINGAGES] section into
+#       a .inp and drive the engine end to end, and that section has no
+#       registered parser here, so it is silently ignored and no gage spread
+#       ever reaches the ROM. Left unregistered on purpose: this is a
+#       feature-ABSENT red, not a defect red, and a permanently red target
+#       would erode what a red gate means on this line (contrast
+#       regression_rom_coverage, which is deliberately red over a real
+#       NUMERICAL question and must stay registered). It is a ready-made
+#       acceptance gate for the SR-1a/SR-1b port -- turn it on then.
+#
+#   test_spectral_correction.cpp    -- needs hydraulics/SpectralCoarse.cpp,
+#       which src/engine/CMakeLists.txt EXCLUDES on purpose (the DW
+#       spectral_accel scaffolding is unported and the feature itself was
+#       closed as unsafe for large networks -- see .memory/current.md).
+#       Registering this would mean un-excluding closed code; leave it off.

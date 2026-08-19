@@ -173,4 +173,39 @@ if(OPENSWMM_BUILD_2D)
     add_test(NAME regression_rom_coverage_bellinge COMMAND $<TARGET_FILE:test_rom_coverage_bellinge>)
     set_tests_properties(regression_rom_coverage_bellinge PROPERTIES LABELS "regression")
     openswmm_stage_test_runtime_deps(test_rom_coverage_bellinge)
+    # ---- CL-2a: correlation-length profile of the reduced spatial basis ----
+    # Found dormant in the 2026-08-18 sweep: on disk since the mechanical port,
+    # never registered. Drives the ROM's setSoftForcing() directly (no
+    # [SOFT_RAINGAGES] parser dependency), so unlike its two SR-5 siblings it
+    # runs on this base as-is.
+    add_executable(test_corr_len_profile test_corr_len_profile.cpp
+        ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpdeSpatialBasis.cpp)
+    target_link_libraries(test_corr_len_profile
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            openswmm_engine
+    )
+    target_include_directories(test_corr_len_profile
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_corr_len_profile PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    add_test(NAME regression_corr_len_profile COMMAND $<TARGET_FILE:test_corr_len_profile>)
+    set_tests_properties(regression_corr_len_profile PROPERTIES
+        LABELS "regression"
+        ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
+    openswmm_stage_test_runtime_deps(test_corr_len_profile)
+
+    # ---- Deliberately NOT registered (2026-08-18 sweep) --------------------
+    # test_soft_rain_coverage.cpp and test_soft_rain_corr_coverage.cpp (SR-5)
+    # both write a [SOFT_RAINGAGES] section into a .inp and drive the engine
+    # end to end. That parser was deliberately not ported to this base (see
+    # src/engine/uncertainty/QualityUncertaintyHandler.cpp), so the section is
+    # silently ignored, no gage spread reaches the ROM, and every assertion
+    # fails for that one reason. They are ready-made acceptance gates for
+    # whoever ports SR-1a/SR-1b -- register them then, not before.
 endif()
