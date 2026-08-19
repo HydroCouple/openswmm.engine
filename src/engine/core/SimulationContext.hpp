@@ -753,6 +753,24 @@ struct SimulationContext {
     LidUsageStore    lid_usage;
 
     // =========================================================================
+    // Transient deferred-resolution capture lists (input loading only)
+    // =========================================================================
+    // Sections whose referenced objects may be defined later in the .inp store
+    // the raw name here so PostParseResolver can re-resolve after every section
+    // has been parsed. Cleared by the resolver; empty outside input loading, so
+    // they can never desync with the editing APIs.
+
+    /// [GROUNDWATER] receiving-node names (subcatch index -> node name).
+    /// [GROUNDWATER] normally precedes [JUNCTIONS] in EPA SWMM output.
+    std::vector<std::pair<int, std::string>> pending_gw_nodes;
+
+    /// Link end-node names (link index -> {from-node name, to-node name}).
+    /// Legacy parsing is order-independent, so [CONDUITS] may precede the node
+    /// sections; without this the link loads silently orphaned (node1/node2 -1).
+    std::vector<std::pair<int, std::pair<std::string, std::string>>>
+        pending_link_nodes;
+
+    // =========================================================================
     // Spatial data
     // =========================================================================
 
@@ -1440,6 +1458,8 @@ struct SimulationContext {
         errors.clear();
         title_notes.clear();
         deferred_section_rows.clear();
+        pending_gw_nodes.clear();
+        pending_link_nodes.clear();
 
         // Clear SoA stores
         nodes      = NodeData{};

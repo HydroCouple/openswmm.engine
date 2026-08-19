@@ -392,6 +392,9 @@ void handle_groundwater(SimulationContext& ctx, const std::vector<std::string>& 
 
         ctx.subcatches.gw_aquifer[idx]   = ctx.aquifer_names.find(tok[1]);
         ctx.subcatches.gw_node[idx]      = ctx.node_names.find(tok[2]);
+        // [GROUNDWATER] normally precedes [JUNCTIONS], so the find() above
+        // returns -1 for a forward reference. Defer to PostParseResolver.
+        ctx.pending_gw_nodes.emplace_back(idx, tok[2]);
         ctx.subcatches.gw_surf_elev[idx] = to_double(tok[3]);
         ctx.subcatches.gw_a1[idx]        = to_double(tok[4]);
         ctx.subcatches.gw_b1[idx]        = to_double(tok[5]);

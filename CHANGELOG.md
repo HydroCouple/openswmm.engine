@@ -283,6 +283,49 @@ retroactive.
 
 ### Fixed
 
+- **Groundwater was silently lost on every save.** `[AQUIFERS]`, `[GROUNDWATER]`
+  and `[GWF]` were parsed but had no writer, so a model that used groundwater
+  came back from a round trip with none of it. All three now round-trip.
+  `[GWF]` expressions are stored in `options.ext_options` under
+  `"GWF:<subcatch>:<type>"` and were being re-emitted through the `[OPTIONS]`
+  passthrough, which uppercased the key (breaking the lookup that reads them
+  back) and kept only the first value token (truncating any real expression);
+  those keys are now excluded from the passthrough and written as a real
+  `[GWF]` section.
+
+- **A `[GROUNDWATER]` receiving node declared later in the file never
+  resolved.** `[GROUNDWATER]` normally precedes `[JUNCTIONS]`, and
+  `handle_groundwater()` resolved the node eagerly with no deferred pass, so
+  the index stayed `-1`. This was a live runtime bug as well as a write bug:
+  groundwater fell back to the subcatchment's outlet node instead of the one
+  the model specified. The name is now captured for `PostParseResolver`.
+
+- **Links declared before the node sections loaded silently orphaned.** Legacy
+  parsing is order-independent, but `[CONDUITS]`/`[PUMPS]`/`[ORIFICES]`/
+  `[WEIRS]`/`[OUTLETS]` resolved their end nodes eagerly, kept no name, and
+  were never retried — so an `.inp` whose link sections came first loaded with
+  `node1`/`node2` at `-1` and **no error at all**, and then saved with `*` in
+  the FromNode/ToNode columns. End-node names are now re-resolved after every
+  section is parsed. An end node that still will not resolve is a fatal
+  `ERROR 209`, matching legacy `link_readParams()`; such a model previously
+  loaded quietly and ran wrong.
+
+- **`[INLET_USAGE]` was parsed but never written.** Every inlet-to-link
+  assignment was lost on save, leaving the surviving `[STREETS]` and
+  `[INLETS]` definitions inert.
+
+- **Five writers emitted `*` where the name was known, three of them fatally.**
+  A subcatchment that drains to another subcatchment (or to itself) has no
+  outlet *node*, and the writer only ever consulted the node index — so the
+  Outlet column saved as `*` and the model would not reload
+  (`ERROR 209: undefined object *`). The RainGage column had the same defect
+  against a retained gage name, and a rain gage with neither a resolved series
+  index nor a file path wrote **no row at all**, which made the subcatchments
+  naming it fail to reload. Non-fatally, the Snowpack column dropped a retained
+  pack name, and `[PUMPS]` ignored `pump_curve_name` and wrote `*` — silently
+  downgrading a curved pump to IDEAL. Each of these now falls back to the
+  retained name before giving up.
+
 - **Four external-file slots were written to the `.inp` verbatim.** The writer
   rebases every external reference against the destination directory, but the
   external `.2dm` mesh, the 2D `OUTPUT_FILE` and per-unit LID report files never

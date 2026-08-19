@@ -1200,6 +1200,23 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // Subcatchment groundwater receiving-node re-resolution
+    // -------------------------------------------------------------------------
+    // [GROUNDWATER] normally precedes [JUNCTIONS], so handle_groundwater()
+    // resolved the node against an empty name index and stored -1. The raw name
+    // was captured in ctx.pending_gw_nodes for exactly this pass. A name that
+    // still fails to resolve is left at -1: the runtime falls back to the
+    // subcatchment outlet node (Groundwater.cpp), and the [GROUNDWATER] writer
+    // skips the row rather than emitting '*'.
+    for (const auto& [si, nm] : ctx.pending_gw_nodes) {
+        if (si < 0 || si >= n_subcatch) continue;
+        auto us = static_cast<std::size_t>(si);
+        if (us < ctx.subcatches.gw_node.size() && ctx.subcatches.gw_node[us] < 0)
+            ctx.subcatches.gw_node[us] = ctx.node_names.find(nm);
+    }
+    ctx.pending_gw_nodes.clear();
+
+    // -------------------------------------------------------------------------
     // Subcatchment snow pack resolution
     // -------------------------------------------------------------------------
     // SUBCATCHMENTS is normally parsed before SNOWPACKS, so the snowpack index
@@ -1404,6 +1421,31 @@ void resolve_cross_references(SimulationContext& ctx) {
                           ctx.dwf_inflows.node_name);
         resolve_node_rows(ctx.rdii_assigns, ctx.rdii_assigns.node_idx,
                           ctx.rdii_assigns.node_name);
+    }
+
+    // -------------------------------------------------------------------------
+    // Link end-node re-resolution
+    // -------------------------------------------------------------------------
+    // Legacy parsing is order-independent, so [CONDUITS]/[PUMPS]/[ORIFICES]/
+    // [WEIRS]/[OUTLETS] may precede the node sections. The handlers resolve
+    // eagerly (yielding -1) and record the raw names in ctx.pending_link_nodes;
+    // re-resolve them here. A name that still fails to resolve is a fatal
+    // ERR_NAME, matching legacy link_readParams(). Previously such a link was
+    // loaded silently orphaned and then written back out with '*' end nodes.
+    // Runs before any consumer of links.node1/node2 further down this function.
+    {
+        auto resolve_end = [&ctx, n_nodes](int& idx, const std::string& name) {
+            if (idx >= 0 && idx < n_nodes) return;
+            idx = ctx.node_names.find(name);
+            if (idx < 0) ctx.errors.push_back(format_error(ERR_NAME, name));
+        };
+        for (const auto& [li, names] : ctx.pending_link_nodes) {
+            if (li < 0 || li >= ctx.links.count()) continue;
+            auto ul = static_cast<std::size_t>(li);
+            resolve_end(ctx.links.node1[ul], names.first);
+            resolve_end(ctx.links.node2[ul], names.second);
+        }
+        ctx.pending_link_nodes.clear();
     }
 
     // -------------------------------------------------------------------------

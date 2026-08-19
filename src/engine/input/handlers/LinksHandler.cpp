@@ -59,6 +59,18 @@ static void ensure_link_capacity(SimulationContext& ctx, int idx) {
     ctx.links.grow_to(idx + 1);
 }
 
+// Resolve a link's end nodes and record the raw names for deferred
+// re-resolution. Legacy parsing is order-independent, so a link section may
+// precede [JUNCTIONS]/[OUTFALLS]/etc.; without the deferred pass the link is
+// loaded silently orphaned (node1/node2 == -1) and the .inp writer then emits
+// '*' in the FromNode/ToNode columns.
+static void set_link_nodes(SimulationContext& ctx, int idx,
+                           const std::string& n1, const std::string& n2) {
+    ctx.links.node1[idx] = ctx.node_names.find(n1);
+    ctx.links.node2[idx] = ctx.node_names.find(n2);
+    ctx.pending_link_nodes.emplace_back(idx, std::make_pair(n1, n2));
+}
+
 // ============================================================================
 // handle_conduits()
 // ============================================================================
@@ -81,9 +93,7 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
         const int cr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::CONDUIT);
         const auto ucr = static_cast<std::size_t>(cr);
 
-        // Resolve node indices — nodes must be parsed before conduits
-        ctx.links.node1[idx]     = ctx.node_names.find(tok[1]);
-        ctx.links.node2[idx]     = ctx.node_names.find(tok[2]);
+        set_link_nodes(ctx, idx, tok[1], tok[2]);
         ctx.link_subtypes.conduits.length[ucr]    = to_double(tok[3]);
         ctx.link_subtypes.conduits.roughness[ucr] = to_double(tok[4]);
         ctx.links.offset1[idx]   = to_double(tok[5]);
@@ -112,8 +122,7 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
 
         const int pr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::PUMP);
         const auto upr = static_cast<std::size_t>(pr);
-        ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
-        ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
+        set_link_nodes(ctx, idx, tok[1], tok[2]);
         // tok[3]: pump curve name — store for deferred resolution.
         // "*" is the ideal-pump placeholder (legacy pump_readParams,
         // link.c:1437), not a curve name: leave curve at -1 so the pump is
@@ -159,8 +168,7 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
 
         const int orr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::ORIFICE);
         const auto uorr = static_cast<std::size_t>(orr);
-        ctx.links.node1[idx]        = ctx.node_names.find(tok[1]);
-        ctx.links.node2[idx]        = ctx.node_names.find(tok[2]);
+        set_link_nodes(ctx, idx, tok[1], tok[2]);
         // tok[3]: SIDE or BOTTOM → orifice_type (0=BOTTOM, 1=SIDE)
         if (tok.size() > 3)
             ctx.link_subtypes.orifices.orifice_type[uorr] =
@@ -195,8 +203,7 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
 
         const int wr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::WEIR);
         const auto uwr = static_cast<std::size_t>(wr);
-        ctx.links.node1[idx] = ctx.node_names.find(tok[1]);
-        ctx.links.node2[idx] = ctx.node_names.find(tok[2]);
+        set_link_nodes(ctx, idx, tok[1], tok[2]);
         // tok[3]: weir type (TRANSVERSE=0, SIDEFLOW=1, V-NOTCH=2, TRAPEZOIDAL=3)
         if (tok.size() > 3) {
             std::string wtype = Tokenizer::to_upper(tok[3]);
@@ -243,8 +250,7 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
 
         const int olr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::OUTLET);
         const auto uolr = static_cast<std::size_t>(olr);
-        ctx.links.node1[idx]        = ctx.node_names.find(tok[1]);
-        ctx.links.node2[idx]        = ctx.node_names.find(tok[2]);
+        set_link_nodes(ctx, idx, tok[1], tok[2]);
         if (tok.size() > 3)
             ctx.link_subtypes.outlets.crest_height[uolr] = to_double(tok[3]);
         // tok[4]: type string (TABULAR/HEAD, TABULAR/DEPTH, FUNCTIONAL/HEAD, FUNCTIONAL/DEPTH)

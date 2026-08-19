@@ -27,8 +27,10 @@
  *   TITLE, OPTIONS, EVAPORATION, TEMPERATURE, SNOWPACKS, ADJUSTMENTS,
  *   EVENTS,
  *   RAINGAGES, SUBCATCHMENTS, SUBAREAS, INFILTRATION,
+ *   AQUIFERS, GROUNDWATER, GWF,
  *   JUNCTIONS, OUTFALLS, DIVIDERS, STORAGE, CONDUITS, PUMPS, ORIFICES,
  *   WEIRS, OUTLETS, XSECTIONS, LOSSES, TRANSECTS, STREETS, INLETS,
+ *   INLET_USAGE,
  *   CONTROLS, REPORT, POLLUTANTS, LANDUSES, COVERAGES, BUILDUP, WASHOFF,
  *   LOADINGS, TREATMENT,
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES,
@@ -155,17 +157,56 @@ static const std::unordered_map<int, const char*> CURVE_TYPE_LABEL = {
 static const char* nN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_nodes()) ? c.node_names.name_of(i).c_str() : "*";
 }
-static const char* gN(const SimulationContext& c, int i) {
-    return (i>=0 && i<c.n_gages()) ? c.gage_names.name_of(i).c_str() : "*";
-}
 static const char* tN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_tables()) ? c.tables[i].id.c_str() : "*";
 }
-static const char* spN(const SimulationContext& c, int i) {
-    return (i>=0 && i<static_cast<int>(c.snowpack_names.size())) ? c.snowpack_names.name_of(i).c_str() : "*";
-}
 static const char* pN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_pollutants()) ? c.pollutant_names.name_of(i).c_str() : "*";
+}
+
+// ---------------------------------------------------------------------------
+// Index-or-name accessors.
+//
+// Several model fields keep BOTH a resolved index and the raw name parsed from
+// the .inp (for deferred resolution). Writing the index alone emits '*' when it
+// is -1, which either fails reload with ERR_NAME (209) or silently drops the
+// reference. These helpers fall back to the retained name before giving up.
+// All returned pointers alias stable members of the context.
+// ---------------------------------------------------------------------------
+
+// [SUBCATCHMENTS] Outlet: a node, another subcatchment, or the raw name.
+// A subcatch draining to another subcatch (or itself) has outlet_node == -1,
+// so nN() alone would emit '*' and fail reload with ERR_NAME (209).
+static const char* oN(const SimulationContext& c, size_t u) {
+    const int n = c.subcatches.outlet_node[u];
+    if (n>=0 && n<c.n_nodes())      return c.node_names.name_of(n).c_str();
+    const int s = c.subcatches.outlet_subcatch[u];
+    if (s>=0 && s<c.n_subcatches()) return c.subcatch_names.name_of(s).c_str();
+    const std::string& nm = c.subcatches.outlet_name[u];
+    return nm.empty() ? "*" : nm.c_str();
+}
+
+// [SUBCATCHMENTS] RainGage: gage index, else the retained gage name.
+// An unresolved gage is also a fatal ERR_NAME (209) on reload.
+static const char* sgN(const SimulationContext& c, size_t u) {
+    const int g = c.subcatches.gage[u];
+    if (g>=0 && g<c.n_gages()) return c.gage_names.name_of(g).c_str();
+    if (u < c.subcatches.gage_name.size() && !c.subcatches.gage_name[u].empty())
+        return c.subcatches.gage_name[u].c_str();
+    return "*";
+}
+
+// [SUBCATCHMENTS] Snowpack: pack index, else the retained pack name.
+// '*' is a legal positional placeholder here (CatchmentHandler), so an
+// unresolved name is data loss rather than a reload failure.
+static const char* sspN(const SimulationContext& c, size_t u) {
+    const int s = c.subcatches.snowpack[u];
+    if (s>=0 && s<static_cast<int>(c.snowpack_names.size()))
+        return c.snowpack_names.name_of(s).c_str();
+    if (u < c.subcatches.snowpack_name.size() &&
+        !c.subcatches.snowpack_name[u].empty())
+        return c.subcatches.snowpack_name[u].c_str();
+    return "*";
 }
 
 static const char* xsName(int s) {
@@ -819,8 +860,14 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());
     if (o.write_absolute_paths)
         std::fprintf(f,"%-20s %s\n",  "WRITE_ABSOLUTE_PATHS", "YES");
-    for (const auto& kv : o.ext_options)
+    for (const auto& kv : o.ext_options) {
+        // "GWF:<subcatch>:<type>" entries are the parsed [GWF] section, not real
+        // options — they are re-emitted by the [GWF] writer. Round-tripping them
+        // through here corrupts them: handle_options() uppercases the key and
+        // keeps only the first value token.
+        if (kv.first.rfind("GWF:", 0) == 0) continue;
         std::fprintf(f,"%-20s %s\n",  kv.first.c_str(), kv.second.c_str());
+    }
     }
 
     // [EVAPORATION]
@@ -1092,6 +1139,23 @@ int writeInpFile(const SimulationContext& ctx_internal,
         }
         std::fprintf(f,"\n");
     }
+    else{
+        // Neither a resolved series index nor a file path. Dropping the row
+        // entirely would delete the gage while [SUBCATCHMENTS] still names it,
+        // which fails reload with a fatal ERR_NAME (209) on the subcatchment.
+        // Emit the retained series name (or the '*' placeholder, which the gage
+        // resolver tolerates) so the gage definition always survives.
+        const std::string& tsn = ctx.gages.ts_name[u];
+        if(tsn.empty() && warnings)
+            warnings->push_back("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+
+                                "\": no rainfall source set; wrote 'TIMESERIES *'");
+        std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s",
+                      ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+                      ctx.gages.snow_factor[u],
+                      tsn.empty() ? "*" : tsn.c_str());
+        if(sf!=1.0)std::fprintf(f," %.4g",sf);
+        std::fprintf(f,"\n");
+    }
     }}
 
     // [SUBCATCHMENTS]
@@ -1108,13 +1172,14 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-12s %-10s %-10s %-16s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","------------","----------","----------","----------------","----------","----------");
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
     write_obj_comment(f, ctx.subcatches.comments, u);
-    const int  sp = ctx.subcatches.snowpack[u];
+    const char* spname = sspN(ctx,u);          // index, else retained name, else "*"
+    const bool  has_sp = std::strcmp(spname,"*")!=0;
     const double rsf = ctx.subcatches.rain_scale_factor[u];
     const double ssf = ctx.subcatches.snow_scale_factor[u];
     const bool need_scale = (rsf!=1.0 || ssf!=1.0);
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f",ctx.subcatch_names.name_of(j).c_str(),gN(ctx,ctx.subcatches.gage[u]),nN(ctx,ctx.subcatches.outlet_node[u]),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
+    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f",ctx.subcatch_names.name_of(j).c_str(),sgN(ctx,u),oN(ctx,u),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
     // Token 8 must be present to reach tokens 9/10 positionally.
-    if(sp>=0 || need_scale) std::fprintf(f," %-16s",spN(ctx,sp));
+    if(has_sp || need_scale) std::fprintf(f," %-16s",spname);
     if(need_scale){
         // RainScale must be written even when 1.0 if SnowScale is not, to hold
         // the position of token 10.
@@ -1152,6 +1217,83 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.subcatches.infil_p1[u],ctx.subcatches.infil_p2[u],
         ctx.subcatches.infil_p3[u],ctx.subcatches.infil_p4[u],
         ctx.subcatches.infil_p5[u],mn);
+    }}
+
+    // [AQUIFERS]
+    // Grammar: Name Por WP FC Ksat Kslope Tslope ETu ETs Seep Ebot Egw Umc [ETupat]
+    // %.10g preserves full double precision without scientific notation for the
+    // magnitudes seen in elevations and conductivities.
+    if(ctx.aquifers.count()>0){sec(f,"AQUIFERS");
+    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-16s\n","Name","Porosity","WiltPoint","FieldCap","Ksat","Kslope","Tslope","ETu","ETs","Seepage","Ebot","Egw","Umc","ETupat");
+    std::fprintf(f,";;%-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-16s\n","----------------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------","----------------");
+    for(int j=0;j<ctx.aquifers.count();++j){auto u=static_cast<size_t>(j);
+    std::fprintf(f,"%-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g",
+        ctx.aquifers.names[u].c_str(),
+        ctx.aquifers.porosity[u],ctx.aquifers.wilting_point[u],ctx.aquifers.field_capacity[u],
+        ctx.aquifers.conductivity[u],ctx.aquifers.conduct_slope[u],ctx.aquifers.tension_slope[u],
+        ctx.aquifers.upper_evap[u],ctx.aquifers.lower_evap[u],ctx.aquifers.lower_loss[u],
+        ctx.aquifers.bottom_elev[u],ctx.aquifers.water_table_elev[u],ctx.aquifers.upper_moist[u]);
+    if(!ctx.aquifers.upper_evap_pat[u].empty())
+        std::fprintf(f," %-16s",ctx.aquifers.upper_evap_pat[u].c_str());
+    std::fprintf(f,"\n");
+    }}
+
+    // [GROUNDWATER]
+    // Grammar: Subcatch Aquifer Node SurfElev A1 B1 A2 B2 A3 Twgr Hstar
+    // A subcatchment carries a groundwater row iff gw_aquifer >= 0. gw_node is
+    // resolved by PostParseResolver (the section normally precedes [JUNCTIONS]);
+    // a row whose node still will not resolve is skipped with a warning rather
+    // than written with '*', which would fail reload with ERR_NAME (209).
+    // The gw_* vectors are grown per-row by the parser (ensure_subcatch_gw_capacity),
+    // so they can be SHORTER than the subcatchment count — bound the loop by them.
+    {size_t nGw=static_cast<size_t>(ctx.n_subcatches());
+    if(ctx.subcatches.gw_aquifer.size()<nGw) nGw=ctx.subcatches.gw_aquifer.size();
+    if(ctx.subcatches.gw_node.size()   <nGw) nGw=ctx.subcatches.gw_node.size();
+    bool anyGw=false;
+    for(size_t us=0;us<nGw;++us){
+        const int a=ctx.subcatches.gw_aquifer[us];
+        if(a>=0 && a<ctx.aquifers.count() && ctx.subcatches.gw_node[us]>=0){anyGw=true;break;}}
+    if(anyGw){sec(f,"GROUNDWATER");
+    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n","Subcatchment","Aquifer","Node","SurfElev","A1","B1","A2","B2","A3","Tw","Hstar");
+    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------","----------","----------","----------","----------","----------","----------","----------");
+    for(size_t u=0;u<nGw;++u){const int s=static_cast<int>(u);
+    const int aq=ctx.subcatches.gw_aquifer[u];
+    if(aq<0 || aq>=ctx.aquifers.count()) continue;
+    if(ctx.subcatches.gw_node[u]<0){
+        if(warnings)
+            warnings->push_back("[GROUNDWATER] subcatchment \""+ctx.subcatch_names.name_of(s)+
+                                "\": receiving node unresolved; row omitted");
+        continue;
+    }
+    std::fprintf(f,"%-16s %-16s %-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g\n",
+        ctx.subcatch_names.name_of(s).c_str(),
+        ctx.aquifers.names[static_cast<size_t>(aq)].c_str(),
+        nN(ctx,ctx.subcatches.gw_node[u]),
+        ctx.subcatches.gw_surf_elev[u],ctx.subcatches.gw_a1[u],ctx.subcatches.gw_b1[u],
+        ctx.subcatches.gw_a2[u],ctx.subcatches.gw_b2[u],ctx.subcatches.gw_a3[u],
+        ctx.subcatches.gw_tw[u],ctx.subcatches.gw_hstar[u]);
+    }}}
+
+    // [GWF]
+    // Grammar: Subcatch LATERAL|DEEP <expression>
+    // handle_gwf() stores these in options.ext_options under "GWF:<sub>:<type>"
+    // (SWMMEngine reads them back from there). They must NOT be emitted through
+    // the [OPTIONS] ext_options passthrough: handle_options() uppercases the key
+    // and keeps only the first value token, which mangles the key case and
+    // truncates any multi-token expression. Iterate subcatchments (not the
+    // unordered_map) so the output order is deterministic.
+    {bool wroteGwf=false;
+    static const char* kGwfTypes[]={"LATERAL","DEEP"};
+    for(int s=0;s<ctx.n_subcatches();++s){
+        const std::string& scn = ctx.subcatch_names.name_of(s);
+        for(const char* ty : kGwfTypes){
+            auto it = ctx.options.ext_options.find("GWF:"+scn+":"+ty);
+            if(it==ctx.options.ext_options.end() || it->second.empty()) continue;
+            if(!wroteGwf){sec(f,"GWF");
+                std::fprintf(f,";;%-16s %-10s %s\n","Subcatchment","Type","Expression");
+                wroteGwf=true;}
+            std::fprintf(f,"%-16s %-10s %s\n",scn.c_str(),ty,it->second.c_str());
+        }
     }}
 
     // [LID_CONTROLS]
@@ -1446,7 +1588,15 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // on/off. Dropping them makes every pump run unconditionally on re-read,
     // changing the pumping regime and downstream flooding/continuity.
     const char* pstat=(pr>=0)?(PD.init_state[static_cast<size_t>(pr)]?"ON":"OFF"):(ctx.links.setting[u]>0?"ON":"OFF");
-    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s %.10g %.10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),tN(ctx,(pr>=0)?PD.curve[static_cast<size_t>(pr)]:-1),pstat,(pr>=0)?PD.startup[static_cast<size_t>(pr)]:0.0,(pr>=0)?PD.shutoff[static_cast<size_t>(pr)]:0.0);
+    // Pump curve: prefer the resolved index, then the retained curve name (the
+    // [OUTLETS] writer already does this). Writing tN() alone silently
+    // downgraded a curved pump to IDEAL whenever only the name was known.
+    // '*' is the legal IDEAL placeholder, so an empty name is not an error.
+    const int pcurve=(pr>=0)?PD.curve[static_cast<size_t>(pr)]:-1;
+    const char* pcname=(pcurve>=0)?tN(ctx,pcurve)
+                      :(ctx.links.pump_curve_name[u].empty()?"*"
+                        :ctx.links.pump_curve_name[u].c_str());
+    std::fprintf(f,"%-16s %-16s %-16s %-16s %-10s %.10g %.10g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),pcname,pstat,(pr>=0)?PD.startup[static_cast<size_t>(pr)]:0.0,(pr>=0)?PD.shutoff[static_cast<size_t>(pr)]:0.0);
     }}
 
     // [ORIFICES]
@@ -1629,6 +1779,41 @@ int writeInpFile(const SimulationContext& ctx_internal,
     if(ctx.inlets.splash_veloc[u]>0)
         std::fprintf(f," %g",ctx.inlets.splash_veloc[u]);
     std::fprintf(f,"\n");
+    }}
+
+    // [INLET_USAGE]
+    // Grammar: Link Inlet Node #Inlets %Clog Qmax aLocal wLocal Placement
+    // Parsed into ctx.inlet_usages but previously never written, so every
+    // inlet-to-link assignment was lost on save and [STREETS]/[INLETS] became
+    // inert. clog_factor is stored as 1 - pctClogged/100 (InfraHandler).
+    if(ctx.inlet_usages.count()>0){sec(f,"INLET_USAGE");
+    std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","Link","Inlet","Node","#Inlets","%Clog","Qmax","aLocal","wLocal","Placement");
+    std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------------","--------","--------","----------","----------","----------","----------");
+    static const char* kPlacement[]={"AUTOMATIC","ON_GRADE","ON_SAG"};
+    for(int j=0;j<ctx.inlet_usages.count();++j){auto u=static_cast<size_t>(j);
+    const int li=ctx.inlet_usages.link_index[u];
+    const int di=ctx.inlet_usages.design_index[u];
+    const int ni=ctx.inlet_usages.node_index[u];
+    // The reader drops rows naming an unknown link/inlet/node, so a stale index
+    // here would be silently discarded on reload — skip it with a warning
+    // instead of writing '*'.
+    if(li<0||li>=ctx.n_links()||di<0||di>=ctx.inlets.count()||ni<0||ni>=ctx.n_nodes()){
+        if(warnings)
+            warnings->push_back("[INLET_USAGE] row "+std::to_string(j)+
+                                ": unresolved link/inlet/node; row omitted");
+        continue;
+    }
+    int pl=ctx.inlet_usages.placement[u]; if(pl<0||pl>2)pl=0;
+    std::fprintf(f,"%-16s %-16s %-16s %8d %8.4g %10.4g %10.4g %10.4g %-10s\n",
+        ctx.link_names.name_of(li).c_str(),
+        ctx.inlets.names[static_cast<size_t>(di)].c_str(),
+        ctx.node_names.name_of(ni).c_str(),
+        ctx.inlet_usages.num_inlets[u],
+        (1.0-ctx.inlet_usages.clog_factor[u])*100.0,
+        ctx.inlet_usages.flow_limit[u],
+        ctx.inlet_usages.local_depress[u],
+        ctx.inlet_usages.local_width[u],
+        kPlacement[pl]);
     }}
 
     // [CONTROLS]
