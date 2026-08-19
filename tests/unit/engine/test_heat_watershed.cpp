@@ -658,7 +658,7 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     //     LID-excluded; `ctx.subcatches.area` is the deck's USER area units,
     //     so reaching for the obvious one is a 43560x error here and not the
     //     LID-footprint double-count it reads as. A temperature is intensive
-    //     and the area cancels inside `deltaT`, so the flux cannot see it —
+    //     and the area cancels inside `relaxT`, so the flux cannot see it —
     //     the ledger can. Five acres under three hours of 2 in/hr rain hold
     //     far more than a cubic foot; under the substitution the whole
     //     subcatchment ledgers 0.78 ft3.

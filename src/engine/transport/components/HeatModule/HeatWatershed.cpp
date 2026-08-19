@@ -42,11 +42,11 @@ namespace {
 constexpr int    kNSub    = HeatState::kNSubArea;
 constexpr double kTinyVol = 1.0e-12;  ///< ft³
 
-/// Largest surface-balance step this explicit form is allowed to take, °C.
-/// See the block at the call site: this bounds a forward-Euler excursion on
-/// a ponded film, and separates a resolved step (1e-2 - 1 °C/min) from an
-/// unresolved one (1e2 - 1e3) by five orders of magnitude.
-constexpr double kMaxStepC = 5.0;
+// `kMaxStepC` lived here: the refuse-above-5-°C bound H5a used to stop the
+// forward-Euler divergence. D-H5d removed it with the divergence — a
+// relaxation step cannot overshoot equilibrium, so there is nothing left to
+// refuse, and keeping a threshold nothing can reach would be a constant that
+// no gate could observe being wrong (lesson 39).
 
 /// What a subarea holding no water reports (plan D-H5c).
 ///
@@ -138,7 +138,7 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
         // deck's USER area units (acres here — Runoff.cpp:197 divides by
         // ucf_area before subtracting the LID footprint), so substituting it
         // is a 43560x error, not the footprint double-count it looks like.
-        // See the header: the exchange area cancels in `deltaT`, so only the
+        // See the header: the exchange area cancels in `relaxT`, so only the
         // run-on depth conversion below can see this.
         const double area = soa.area[ui];
         const double fi   = soa.imperv_pct[ui];
@@ -217,58 +217,42 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             //    Applying it to the post-mix volume instead would let a
             //    step's rain be heated before it had arrived.
             if (v_old > kTinyVol && (do_surface || do_radiative)) {
-                double je = 0.0, jc = 0.0, jr = 0.0;
-                if (do_surface) {
-                    je = heat::latentFlux(t, t_air, rh, wind_ms, wa, wb, rho);
-                    jc = heat::sensibleFlux(
-                        je, heat::bowenRatio(t, t_air, rh, p_ratio));
-                }
-                if (do_radiative)
-                    jr = heat::netRadiativeFluxOut(t, t_air, rh,
-                                                   ctx.heat_config.radiative);
-                // Both flux families are signed POSITIVE OUT of the water,
-                // so they add before the single conversion to a ΔT. There is
-                // exactly one sign flip in this program and it lives inside
-                // `deltaT`; a second one here would silently cancel it.
-                const double dT = heat::deltaT(je + jr, jc,
-                                               a_ft2 * heat::kSqFtToSqM,
-                                               v_old * heat::kCuFtToCuM,
-                                               dt, rho, cp);
-                // A ponded film has almost no thermal mass per unit of
-                // exchanging area, and this is a FORWARD EULER step with no
-                // stability limit: measured, a 0.52 ft3 film over 27226 ft2
-                // moves 862 C in one 60 s step, the flux is re-evaluated at
-                // 182 C, and the sequence diverges 5 -> 182 -> -1.8e4 ->
-                // -3.9e9 -> ... -> inf -> NaN, which then travels out
-                // through subcatch_runoff_temp into the node temperatures
-                // and the report.
+                // The module's net outward flux at a given temperature.
+                // `relaxT` needs it at T and at T + kProbeC, and evaluating
+                // the two through one lambda is what keeps the probe
+                // measuring the same function that is being stepped.
+                const auto net_out = [&](double tw) {
+                    double j = 0.0;
+                    if (do_surface) {
+                        const double je =
+                            heat::latentFlux(tw, t_air, rh, wind_ms, wa, wb,
+                                             rho);
+                        j += je + heat::sensibleFlux(
+                                 je, heat::bowenRatio(tw, t_air, rh, p_ratio));
+                    }
+                    if (do_radiative)
+                        j += heat::netRadiativeFluxOut(
+                            tw, t_air, rh, ctx.heat_config.radiative);
+                    return j;
+                };
+                // Both flux families are signed POSITIVE OUT of the water, so
+                // they add. There is exactly one sign flip in this program
+                // and it lives inside `relaxT`; a second one here would
+                // silently cancel it.
                 //
-                // `deltaT`'s own contract already names this hazard ("a film
-                // of water has no thermal mass and would otherwise take an
-                // unbounded excursion in one step") but its guard only
-                // catches an exactly-zero heat capacity.
-                //
-                // A step this large is not a wrong answer, it is NO answer:
-                // the explicit form has stopped representing the ODE. So the
-                // step is refused rather than clamped — clamping to a
-                // driving temperature would either freeze the surface at the
-                // air temperature or oscillate between the clamp and a
-                // re-diverging excursion, and both look like physics.
-                // kMaxStepC is a numerical resolution limit, not a physical
-                // parameter: a resolved pond moves ~0.01-1 C per minute and
-                // an unresolved film moves 1e2-1e3, so nothing sits near the
-                // threshold and its exact value does not enter any answer.
-                //
-                // @note This makes an unresolved film carry its mixed inflow
-                //       temperature instead of exchanging. That is an
-                //       UNDER-estimate of exchange, bounded in the quantity
-                //       that leaves the subcatchment (a thin film carries
-                //       little volume, and the published runoff temperature
-                //       is volume-weighted). Resolving it properly needs a
-                //       sub-stepped or implicit integrator, which is a
-                //       design decision of the same kind as D-H5a/b/c and is
-                //       recorded for the user rather than taken here.
-                if (std::isfinite(dT) && std::fabs(dT) <= kMaxStepC) t += dT;
+                // D-H5d: SEMI-IMPLICIT. H5a shipped a forward-Euler step and
+                // a refuse-above-5 C bound, because a ponded film has almost
+                // no thermal mass per unit exchanging area: a 0.52 ft3 film
+                // over 27226 ft2 moved 862 C in one 60 s step and the
+                // sequence diverged 5 -> 182 -> -1.8e4 -> -3.9e9 -> inf ->
+                // NaN. The bound stopped the divergence but made an
+                // unresolved film carry its inflow temperature instead of
+                // exchanging at all. Relaxation removes both problems: the
+                // step cannot overshoot the equilibrium temperature however
+                // thin the film, so there is nothing left to refuse.
+                t += heat::relaxT(net_out(t), net_out(t + heat::kProbeC),
+                                  heat::kProbeC, a_ft2 * heat::kSqFtToSqM,
+                                  v_old * heat::kCuFtToCuM, dt, rho, cp);
             }
 
             // 2. What arrived mixes in by GROSS inflow volume — never the

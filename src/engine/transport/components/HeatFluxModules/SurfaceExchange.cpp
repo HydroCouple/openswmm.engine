@@ -37,6 +37,17 @@ namespace openswmm::transport::heat {
 
 namespace {
 
+/// The module's own net outward flux at a given water temperature, W/m².
+/// Written once because `relaxT` needs it evaluated TWICE per element — at
+/// `T` and at `T + kProbeC` — and two hand-inlined copies of a three-call
+/// expression is how a probe silently comes to measure a different function
+/// than the one being stepped.
+double netFluxOut(double t_w, double t_air, double rh, double wind_ms,
+                  double a, double b, double rho, double p_ratio) noexcept {
+    const double je = latentFlux(t_w, t_air, rh, wind_ms, a, b, rho);
+    return je + sensibleFlux(je, bowenRatio(t_w, t_air, rh, p_ratio));
+}
+
 /// Cross-section parameters for a link. Mirrors `Routing.cpp:54`'s local
 /// helper — the same one the non-DYNWAVE evaporation path uses, so an open
 /// conduit's exchange area is built exactly the way its evaporation area is.
@@ -63,11 +74,39 @@ double airTempCelsius(const SimulationContext& ctx) noexcept {
     return (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
 }
 
-double deltaT(double je, double jc, double area_m2, double vol_m3, double dt,
-              double rho, double cp) noexcept {
+double relaxT(double j0, double j1, double h, double area_m2, double vol_m3,
+              double dt, double rho, double cp) noexcept {
     const double heat_capacity = rho * cp * vol_m3;
-    if (!(heat_capacity > 0.0) || !(area_m2 > 0.0)) return 0.0;
-    return -(je + jc) * area_m2 * dt / heat_capacity;
+    if (!(heat_capacity > 0.0) || !(area_m2 > 0.0) || !(dt > 0.0)) return 0.0;
+
+    // The explicit step, kept as the fallback and as the small-dt limit this
+    // must agree with. It is deliberately NOT exported: it is the form that
+    // diverged, and the only safe place to reach it is from inside here.
+    const double explicit_dT = -j0 * area_m2 * dt / heat_capacity;
+    if (!(h > 0.0)) return explicit_dT;
+
+    const double djdt = (j1 - j0) / h;                 // W/m²/°C
+    // J′ ≤ 0 means the outward flux does not grow with temperature, so the
+    // linearized system has no fixed point to relax onto. There is nothing
+    // to be stable about, so take the explicit step and let the caller's
+    // finiteness check catch it.
+    if (!(djdt > 0.0)) return explicit_dT;
+
+    const double k = area_m2 * djdt / heat_capacity;   // 1/s
+    if (!(k > 0.0)) return explicit_dT;
+
+    // ΔT = (J₀/J′)·expm1(−k·dt). expm1 rather than exp(x)−1 so the small-dt
+    // limit is accurate to full precision instead of cancelling to noise —
+    // that limit is what makes this agree with H2/H3's existing answers.
+    const double dT = (j0 / djdt) * std::expm1(-k * dt);
+    return std::isfinite(dT) ? dT : explicit_dT;
+}
+
+double equilibriumT(double t0_c, double j0, double j1, double h) noexcept {
+    if (!(h > 0.0)) return t0_c;
+    const double djdt = (j1 - j0) / h;
+    if (!(djdt > 0.0)) return t0_c;
+    return t0_c - j0 / djdt;
 }
 
 double saturationVapourPressure(double t_c) noexcept {
@@ -150,9 +189,11 @@ void applySurfaceExchange(SimulationContext& ctx, double dt) {
         if (!(area_ft2 > 0.0)) continue;
 
         const double t_w = hs.node_temp[ui];
-        const double je  = latentFlux(t_w, t_air, rh, wind_ms, a, b, rho);
-        const double jc  = sensibleFlux(je, bowenRatio(t_w, t_air, rh, p_ratio));
-        hs.node_temp[ui] += deltaT(je, jc, area_ft2 * kSqFtToSqM,
+        hs.node_temp[ui] += relaxT(netFluxOut(t_w, t_air, rh, wind_ms, a, b,
+                                              rho, p_ratio),
+                                   netFluxOut(t_w + kProbeC, t_air, rh,
+                                              wind_ms, a, b, rho, p_ratio),
+                                   kProbeC, area_ft2 * kSqFtToSqM,
                                    vol_ft3 * kCuFtToCuM, dt, rho, cp);
     }
 
@@ -183,9 +224,11 @@ void applySurfaceExchange(SimulationContext& ctx, double dt) {
         const double area_ft2 = top_width * length * CD.barrels[ucr];
 
         const double t_w = hs.link_temp[uj];
-        const double je  = latentFlux(t_w, t_air, rh, wind_ms, a, b, rho);
-        const double jc  = sensibleFlux(je, bowenRatio(t_w, t_air, rh, p_ratio));
-        hs.link_temp[uj] += deltaT(je, jc, area_ft2 * kSqFtToSqM,
+        hs.link_temp[uj] += relaxT(netFluxOut(t_w, t_air, rh, wind_ms, a, b,
+                                              rho, p_ratio),
+                                   netFluxOut(t_w + kProbeC, t_air, rh,
+                                              wind_ms, a, b, rho, p_ratio),
+                                   kProbeC, area_ft2 * kSqFtToSqM,
                                    vol_ft3 * kCuFtToCuM, dt, rho, cp);
     }
 }
