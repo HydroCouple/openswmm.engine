@@ -275,6 +275,191 @@ TEST(XSectBoundary, ClockwiseInputIsReorientedCCW) {
     EXPECT_NEAR(area, 15.0, 1.0e-12);
 }
 
+// ---------------------------------------------------------------------------
+// Critical heights + Puiseux/map exponents (Phase 3)
+// ---------------------------------------------------------------------------
+//
+// The tag is a MAP SELECTOR, not a faithful leading exponent: 1.5 means "A has
+// a sqrt branch point here, stretch the coordinate", 1.0 means "A is analytic,
+// use the identity". Several tests below pin cases where the true leading
+// exponent is 2.0 but 1.0 is nevertheless the right tag.
+
+namespace {
+
+const CriticalHeight* critAt(const std::vector<CriticalHeight>& v, double y,
+                             double tol = 1.0e-9) {
+    for (const CriticalHeight& c : v) {
+        if (std::fabs(c.y - y) <= tol) return &c;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST(XSectBoundary, CriticalHeightsAreSortedUniqueAndSpanTheDomain) {
+    const auto rect = rectangle(3.0, 5.0);
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(rect.data(), static_cast<int>(rect.size()), crit);
+
+    ASSERT_GE(crit.size(), 2u);
+    EXPECT_DOUBLE_EQ(crit.front().y, 0.0);
+    EXPECT_DOUBLE_EQ(crit.back().y, 5.0);
+    for (std::size_t i = 1; i < crit.size(); ++i) {
+        EXPECT_GT(crit[i].y, crit[i - 1].y) << "not strictly sorted at " << i;
+    }
+}
+
+TEST(XSectBoundary, CircularPipeGetsFifteenAtBothInvertAndCrown) {
+    // The case the two-sided coordinate map exists for: a smooth round invert
+    // AND a smooth round crown, so the piece spanning them is 1.5 at both ends.
+    const double r = 1.5;
+    const std::vector<BElem> circle = {makeArc(0.0, r, r, -0.5 * kPi, 1.5 * kPi)};
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(circle.data(), 1, crit);
+
+    ASSERT_EQ(crit.size(), 2u);
+    EXPECT_DOUBLE_EQ(crit[0].y, 0.0);
+    EXPECT_DOUBLE_EQ(crit[1].y, 2.0 * r);
+    EXPECT_DOUBLE_EQ(crit[0].exp_above, 1.5) << "smooth round invert";
+    EXPECT_DOUBLE_EQ(crit[1].exp_below, 1.5) << "smooth round crown";
+}
+
+TEST(XSectBoundary, RectangleIsAnalyticEverywhere) {
+    const auto rect = rectangle(3.0, 5.0);
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(rect.data(), static_cast<int>(rect.size()), crit);
+
+    ASSERT_EQ(crit.size(), 2u);
+    for (const CriticalHeight& c : crit) {
+        EXPECT_DOUBLE_EQ(c.exp_above, 1.0);
+        EXPECT_DOUBLE_EQ(c.exp_below, 1.0);
+    }
+}
+
+TEST(XSectBoundary, VNotchInvertIsTaggedAnalyticDespiteTrueExponentTwo) {
+    // A triangular invert has A = z*y^2 — a TRUE Puiseux exponent of 2.0, which
+    // the 1.0/1.5 dichotomy cannot express. 1.0 is still the correct tag,
+    // because the map only asks "analytic or sqrt-branch?" and y^2 is analytic.
+    // If this ever reads 1.5 the compiler would stretch a polynomial and lose
+    // its exactness.
+    const double x[3] = {0.0, 2.0, -2.0};
+    const double y[3] = {0.0, 3.0, 3.0};
+    std::vector<BElem> tri;
+    ASSERT_EQ(fromPolyline(x, y, 3, tri), 0);
+
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(tri.data(), static_cast<int>(tri.size()), crit);
+    ASSERT_EQ(crit.size(), 2u);
+    EXPECT_DOUBLE_EQ(crit[0].y, 0.0);
+    EXPECT_DOUBLE_EQ(crit[0].exp_above, 1.0) << "V-notch invert is analytic";
+}
+
+TEST(XSectBoundary, PointedArchCrownIsAnalyticNotFifteen) {
+    // Corrects the design document's blanket "a closed conduit's crown has
+    // exp_below = 1.5". A GOTHIC-style pointed arch is two arcs meeting at a
+    // CORNER: neither arc reaches its own horizontal tangent, the crown width
+    // closes linearly, A_full - A ~ delta^2, and the crown is analytic.
+    // Tagging it 1.5 would stretch a coordinate around a non-existent branch
+    // point and degrade the fit.
+    const double a = 1.0, R = 2.0;
+    const double apex = std::sqrt(3.0) * a;
+    const std::vector<BElem> arch = {
+        makeSeg(-a, 0.0, a, 0.0),
+        makeArc(-a, 0.0, R, 0.0, kPi / 3.0),          // springing -> apex
+        makeArc(a, 0.0, R, 2.0 * kPi / 3.0, kPi),     // apex -> springing
+    };
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(arch.data(), static_cast<int>(arch.size()), crit);
+
+    ASSERT_EQ(crit.size(), 2u);
+    EXPECT_NEAR(crit.back().y, apex, 1.0e-12) << "y_full must be the apex, not cy+r";
+    EXPECT_DOUBLE_EQ(crit.back().exp_below, 1.0) << "pointed crown is analytic";
+}
+
+TEST(XSectBoundary, RoundInvertUnderABoxSplitsAtTheSpringingLine) {
+    // Round low-flow invert joined to vertical walls: 1.5 at the invert, and a
+    // plain analytic split where the arc meets the walls (curvature jumps, so
+    // it must still be a piece boundary even though the tag is 1.0).
+    const double r = 1.0, H = 4.0;
+    const std::vector<BElem> sect = {
+        makeArc(0.0, r, r, kPi, 2.0 * kPi),
+        makeSeg(r, r, r, H),
+        makeSeg(r, H, -r, H),
+        makeSeg(-r, H, -r, r),
+    };
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(sect.data(), static_cast<int>(sect.size()), crit);
+
+    ASSERT_EQ(crit.size(), 3u);
+    EXPECT_DOUBLE_EQ(crit[0].y, 0.0);
+    EXPECT_DOUBLE_EQ(crit[0].exp_above, 1.5) << "smooth round invert";
+    EXPECT_NEAR(crit[1].y, r, 1.0e-12) << "springing line must be a critical height";
+    EXPECT_DOUBLE_EQ(crit[1].exp_above, 1.0);
+    EXPECT_DOUBLE_EQ(crit[1].exp_below, 1.0);
+    EXPECT_DOUBLE_EQ(crit[2].y, H);
+}
+
+TEST(XSectBoundary, HorizontalBenchIsACriticalHeightAndStaysAnalytic) {
+    // A bench makes the TOP WIDTH jump discontinuously, but A only gains a
+    // slope kink and stays analytic on each side — so it must be split at, yet
+    // tagged 1.0/1.0. (dA/dy does not blow up here; it steps by the bench
+    // width.)
+    const double w1 = 1.0, w2 = 3.0, h1 = 2.0, h2 = 5.0;
+    const double x[8] = {-w1, w1, w1, w2, w2, -w2, -w2, -w1};
+    const double y[8] = {0.0, 0.0, h1, h1, h2, h2, h1, h1};
+    std::vector<BElem> sect;
+    ASSERT_EQ(fromPolyline(x, y, 8, sect), 0);
+
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(sect.data(), static_cast<int>(sect.size()), crit);
+
+    const CriticalHeight* bench = critAt(crit, h1);
+    ASSERT_NE(bench, nullptr) << "bench height was not reported as critical";
+    EXPECT_DOUBLE_EQ(bench->exp_above, 1.0);
+    EXPECT_DOUBLE_EQ(bench->exp_below, 1.0);
+}
+
+TEST(XSectBoundary, OppositeCurvatureHorizontalTangencyIsFifteenOnBothSides) {
+    // Two arcs meeting with a shared HORIZONTAL tangent and opposite curvature.
+    // Height is monotone through the joint (no local extremum), but the
+    // crossing abscissa picks up a sqrt on BOTH sides, so A is non-analytic
+    // above and below. Falls out of the tagging rule with no special case: the
+    // lower arc claims exp_below from its top, the upper claims exp_above from
+    // its bottom.
+    //
+    // An OPEN two-element chain on purpose — this isolates the exponent rule
+    // from any closed-boundary bookkeeping.
+    const std::vector<BElem> s_curve = {
+        makeArc(0.0, 0.0, 1.0, 0.25 * kPi, 0.5 * kPi),    // ends at ITS top, y=1
+        makeArc(0.0, 2.0, 1.0, -0.5 * kPi, -0.25 * kPi),  // starts at ITS bottom, y=1
+    };
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(s_curve.data(), 2, crit);
+
+    const CriticalHeight* joint = critAt(crit, 1.0);
+    ASSERT_NE(joint, nullptr);
+    EXPECT_DOUBLE_EQ(joint->exp_above, 1.5);
+    EXPECT_DOUBLE_EQ(joint->exp_below, 1.5);
+}
+
+TEST(XSectBoundary, TangencyWithinSnapDistanceOfAnEndpointMergesKeepingFifteen) {
+    // An arc extremum a hair off an element endpoint must NOT leave a sliver
+    // piece behind it; it snaps onto the endpoint and the 1.5 claim survives
+    // the merge. Without the snap this reports three criticals (0, d, y_full)
+    // with a piece of width 5e-10.
+    const double d = 5.0e-10;
+    const std::vector<BElem> chain = {
+        makeArc(0.0, 1.0 + d, 1.0, kPi, 2.0 * kPi),   // bottom tangency at y = d
+        makeSeg(0.0, 0.0, 1.0, 0.0),                  // endpoint at y = 0
+    };
+    std::vector<CriticalHeight> crit;
+    findCriticalHeights(chain.data(), 2, crit);
+
+    ASSERT_EQ(crit.size(), 2u) << "tangency did not snap onto the endpoint";
+    EXPECT_DOUBLE_EQ(crit[0].y, 0.0);
+    EXPECT_DOUBLE_EQ(crit[0].exp_above, 1.5) << "snap must not drop the 1.5 tag";
+}
+
 TEST(XSectBoundary, ShiftsMinYToZeroIncludingArcInterior) {
     // A small triangle up high, (-1,5)-(1,5)-(0,6), with the base replaced by
     // a semicircle bulge (b=1) that dips DOWN to y=4 at its midpoint — below
