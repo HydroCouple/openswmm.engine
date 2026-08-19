@@ -50,6 +50,7 @@
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../transport/components/HeatModule/HeatComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
+#include "../transport/components/HeatModule/HeatWatershed.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeWatershed.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeLid.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
@@ -1652,6 +1653,14 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // step produced. Reads the solver's own SoA because
         // ctx.subcatches.ponded_depth is declared but written by NOBODY.
         transport::routeSubcatchmentAge(ctx_, runoff_.soa(), dt_runoff);
+
+        // H5a: the temperature mirror, on the same clock and reading the
+        // same SoA. It carries the surface energy balance (D-H5a), so it
+        // must see dt_runoff — H2's node/link bindings run on the ROUTING
+        // clock and pass their own dt; handing either the other's interval
+        // would scale every flux wrongly.
+        transport::routeSubcatchmentTemperature(ctx_, runoff_.soa(),
+                                                dt_runoff);
 
         // Update persistent state flags for the NEXT step's timestep selection
         // (legacy runoff.c sets HasRunoff/HasSnow here, after computing runoff,
@@ -3620,6 +3629,12 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                         uj < ctx_.water_age_state.node_age.size())
                         wo[usc] += q_in * dt_routing *
                                    ctx_.water_age_state.node_age[uj];
+                    // H5a: and that node's temperature, at the same seam.
+                    auto& ho = ctx_.heat_state.subcatch_outfall_temp_vol;
+                    if (ctx_.options.heat_transport && usc < ho.size() &&
+                        uj < ctx_.heat_state.node_temp.size())
+                        ho[usc] += q_in * dt_routing *
+                                   ctx_.heat_state.node_temp[uj];
                 }
             }
         }
@@ -6215,6 +6230,9 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
             // delivers water with no upstream age attached.
             transport::addRunonAge(ctx_, i, out_sc,
                                    ctx_.subcatches.runoff[ui]);
+            // H5a: the same seam for temperature.
+            transport::addRunonTemperature(ctx_, i, out_sc,
+                                           ctx_.subcatches.runoff[ui]);
         }
     }
 
@@ -6250,6 +6268,15 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
                     ctx_.water_age_state.subcatch_runon_age_vol_in[ui] +=
                         wo[ui] / dt_runoff;
                     wo[ui] = 0.0;
+                }
+                // H5a: the temperature of that returning water. Goes through
+                // addRunonTemperatureAt so the numerator and the rate move
+                // together — see HeatData.hpp on why they are a pair.
+                auto& ho = ctx_.heat_state.subcatch_outfall_temp_vol;
+                if (ctx_.options.heat_transport && ui < ho.size()) {
+                    transport::addRunonTemperatureAt(
+                        ctx_, i, vol / dt_runoff, ho[ui] / vol);
+                    ho[ui] = 0.0;
                 }
                 // Water re-entering the runoff system from an outfall is new
                 // inflow to its mass balance (legacy runoff.c:520

@@ -43,12 +43,12 @@ namespace openswmm::transport::heat {
 
 namespace {
 
-constexpr double kSqFtToSqM = 0.09290304;
-constexpr double kCuFtToCuM = 0.028316846592;
-
-double airTempCelsius(const SimulationContext& ctx) noexcept {
-    return (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
-}
+// `kSqFtToSqM`, `kCuFtToCuM` and `airTempCelsius` were duplicated here and
+// in SurfaceExchange.cpp. H5a exported them from SurfaceExchange.hpp (which
+// this file already includes) because a third copy would have been needed
+// for the watershed binding; the local copies are removed rather than left
+// to shadow, since unqualified lookup would find both and neither the
+// ambiguity nor a future divergence is something a test would catch.
 
 /// T⁴ in Kelvin, written once so the offset cannot drift between terms.
 double kelvin4(double t_c) noexcept {
