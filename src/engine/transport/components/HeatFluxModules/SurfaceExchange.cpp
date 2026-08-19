@@ -16,7 +16,14 @@
 
 /**
  * @file SurfaceExchange.cpp
- * @brief Phase H2 body — latent/sensible surface exchange and its binding.
+ * @brief Phase H2 body — latent/sensible surface exchange.
+ *
+ * @details D-H5e moved the node and link BINDING out of this file into
+ *          HeatFluxes.cpp. What remains is the formulation plus one
+ *          evaluator, `surfaceFluxOut`, which is this module's contribution
+ *          to a single net flux. Owning a binding of its own is what let
+ *          this module and RadiativeExchange each relax separately toward
+ *          their own equilibrium.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
@@ -29,9 +36,6 @@
 #include <cmath>
 
 #include "../../../core/SimulationContext.hpp"
-#include "../../../core/UnitConversion.hpp"
-#include "../../../hydraulics/Node.hpp"
-#include "../../../hydraulics/XSectBatch.hpp"
 
 namespace openswmm::transport::heat {
 
@@ -46,26 +50,6 @@ double netFluxOut(double t_w, double t_air, double rh, double wind_ms,
                   double a, double b, double rho, double p_ratio) noexcept {
     const double je = latentFlux(t_w, t_air, rh, wind_ms, a, b, rho);
     return je + sensibleFlux(je, bowenRatio(t_w, t_air, rh, p_ratio));
-}
-
-/// Cross-section parameters for a link. Mirrors `Routing.cpp:54`'s local
-/// helper — the same one the non-DYNWAVE evaporation path uses, so an open
-/// conduit's exchange area is built exactly the way its evaporation area is.
-XSectParams buildXsp(const LinkData& links, std::size_t uk) {
-    XSectParams xs{};
-    const auto ls = links.xsect_shape[uk];
-    xs.type   = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
-    xs.y_full = links.xsect_y_full[uk];
-    xs.a_full = links.xsect_a_full[uk];
-    xs.w_max  = links.xsect_w_max[uk];
-    xs.r_full = links.xsect_r_full[uk];
-    xs.s_full = links.xsect_s_full[uk];
-    xs.s_max  = links.xsect_s_max[uk];
-    xs.y_bot  = links.xsect_y_bot[uk];
-    xs.a_bot  = links.xsect_a_bot[uk];
-    xs.s_bot  = links.xsect_s_bot[uk];
-    xs.r_bot  = links.xsect_r_bot[uk];
-    return xs;
 }
 
 }  // namespace
@@ -155,82 +139,15 @@ double sensibleFlux(double latent_flux, double bowen_ratio) noexcept {
     return bowen_ratio * latent_flux;
 }
 
-void applySurfaceExchange(SimulationContext& ctx, double dt) {
+double surfaceFluxOut(const SimulationContext& ctx, double t_w) noexcept {
     if (!ctx.options.heat_transport || !ctx.heat_config.surface_exchange)
-        return;
-    if (!(dt > 0.0)) return;
-
-    auto& hs = ctx.heat_state;
-    const double t_air    = airTempCelsius(ctx);
-    const double rh       = ctx.climate_state.humidity;
-    const double wind_ms  = ctx.climate_state.wind_speed * kMphToMs;
-    const double a        = ctx.options.wind_func_coeff_a;
-    const double b        = ctx.options.wind_func_coeff_b;
-    const double rho      = ctx.options.water_density;
-    const double cp       = ctx.options.water_specific_heat;
-    const double p_ratio  = ctx.options.pressure_ratio;
-    const int unit_sys =
-        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-
-    // ---- Nodes. Only STORAGE nodes have a free surface: node::getSurfArea
-    //      returns 0 for JUNCTION/OUTFALL/DIVIDER, which is legacy's own
-    //      convention and the same one its evaporation obeys. A manhole is
-    //      closed; it does not exchange with the atmosphere. ---------------
-    const int nn = ctx.n_nodes();
-    for (int i = 0; i < nn; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        if (ui >= hs.node_temp.size()) break;
-        const double vol_ft3 = ctx.nodes.volume[ui];
-        if (!(vol_ft3 > 0.0)) continue;
-
-        const double area_ft2 = node::getSurfArea(
-            ctx.nodes, i, ctx.nodes.depth[ui], &ctx.tables, unit_sys,
-            &ctx.node_subtypes);
-        if (!(area_ft2 > 0.0)) continue;
-
-        const double t_w = hs.node_temp[ui];
-        hs.node_temp[ui] += relaxT(netFluxOut(t_w, t_air, rh, wind_ms, a, b,
-                                              rho, p_ratio),
-                                   netFluxOut(t_w + kProbeC, t_air, rh,
-                                              wind_ms, a, b, rho, p_ratio),
-                                   kProbeC, area_ft2 * kSqFtToSqM,
-                                   vol_ft3 * kCuFtToCuM, dt, rho, cp);
-    }
-
-    // ---- Links. Open conduits only, area = top width x length x barrels,
-    //      exactly the expression Routing.cpp:597 uses for evaporation. ----
-    const int nl = ctx.n_links();
-    for (int j = 0; j < nl; ++j) {
-        const auto uj = static_cast<std::size_t>(j);
-        if (uj >= hs.link_temp.size()) break;
-        const double vol_ft3 = ctx.links.volume[uj];
-        if (!(vol_ft3 > 0.0)) continue;
-
-        const int cr = ctx.link_subtypes.conduit_row(j);
-        if (cr < 0) continue;                       // regulators have no surface
-        const auto ucr = static_cast<std::size_t>(cr);
-        if (!xsect::isOpen(ctx.links.xsect_batch_shape[uj])) continue;
-
-        const auto& CD = ctx.link_subtypes.conduits;
-        double length = CD.length[ucr];
-        if (!(length > 0.0)) length = CD.mod_length[ucr];
-        if (!(length > 0.0)) continue;
-
-        const double depth = ctx.links.depth[uj];
-        if (!(depth > 0.0)) continue;
-        const auto xs = buildXsp(ctx.links, uj);
-        const double top_width = xsect::getWofY(xs, depth);
-        if (!(top_width > 0.0)) continue;
-        const double area_ft2 = top_width * length * CD.barrels[ucr];
-
-        const double t_w = hs.link_temp[uj];
-        hs.link_temp[uj] += relaxT(netFluxOut(t_w, t_air, rh, wind_ms, a, b,
-                                              rho, p_ratio),
-                                   netFluxOut(t_w + kProbeC, t_air, rh,
-                                              wind_ms, a, b, rho, p_ratio),
-                                   kProbeC, area_ft2 * kSqFtToSqM,
-                                   vol_ft3 * kCuFtToCuM, dt, rho, cp);
-    }
+        return 0.0;
+    return netFluxOut(t_w, airTempCelsius(ctx), ctx.climate_state.humidity,
+                      ctx.climate_state.wind_speed * kMphToMs,
+                      ctx.options.wind_func_coeff_a,
+                      ctx.options.wind_func_coeff_b,
+                      ctx.options.water_density,
+                      ctx.options.pressure_ratio);
 }
 
 }  // namespace openswmm::transport::heat

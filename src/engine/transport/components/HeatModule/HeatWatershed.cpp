@@ -32,7 +32,7 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../hydrology/Runoff.hpp"
-#include "../HeatFluxModules/RadiativeExchange.hpp"
+#include "../HeatFluxModules/HeatFluxes.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 
 namespace openswmm::transport {
@@ -119,14 +119,14 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
     // (air), :1424 (wind) and :1431 (humidity), all BEFORE runoff_.execute
     // at :1648 — so they are current here, which is the fact that made the
     // runoff-clock binding possible at all.
-    const double t_air   = heat::airTempCelsius(ctx);
-    const double rh      = ctx.climate_state.humidity;
-    const double wind_ms = ctx.climate_state.wind_speed * heat::kMphToMs;
-    const double wa      = ctx.options.wind_func_coeff_a;
-    const double wb      = ctx.options.wind_func_coeff_b;
-    const double rho     = ctx.options.water_density;
-    const double cp      = ctx.options.water_specific_heat;
-    const double p_ratio = ctx.options.pressure_ratio;
+    // Air temperature is still read here — the DRY-element policy needs it
+    // (D-H5c). The humidity, wind and wind-function coefficients that used
+    // to be extracted alongside it moved inside the shared flux evaluators
+    // with D-H5e, so this function no longer knows which parameters a flux
+    // family reads.
+    const double t_air = heat::airTempCelsius(ctx);
+    const double rho   = ctx.options.water_density;
+    const double cp    = ctx.options.water_specific_heat;
 
     const bool do_surface   = ctx.heat_config.surface_exchange;
     const bool do_radiative = ctx.heat_config.radiative_exchange;
@@ -217,23 +217,13 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             //    Applying it to the post-mix volume instead would let a
             //    step's rain be heated before it had arrived.
             if (v_old > kTinyVol && (do_surface || do_radiative)) {
-                // The module's net outward flux at a given temperature.
-                // `relaxT` needs it at T and at T + kProbeC, and evaluating
-                // the two through one lambda is what keeps the probe
-                // measuring the same function that is being stepped.
+                // Net outward flux, via the shared composition (D-H5e).
+                // This was a hand-rolled sum of the two modules — the fourth
+                // such copy in the program, and copies of exactly this sum
+                // are how the LEGACY node/link path ended up relaxing each
+                // module separately toward a different equilibrium.
                 const auto net_out = [&](double tw) {
-                    double j = 0.0;
-                    if (do_surface) {
-                        const double je =
-                            heat::latentFlux(tw, t_air, rh, wind_ms, wa, wb,
-                                             rho);
-                        j += je + heat::sensibleFlux(
-                                 je, heat::bowenRatio(tw, t_air, rh, p_ratio));
-                    }
-                    if (do_radiative)
-                        j += heat::netRadiativeFluxOut(
-                            tw, t_air, rh, ctx.heat_config.radiative);
-                    return j;
+                    return heat::netFluxOut(ctx, tw);
                 };
                 // Both flux families are signed POSITIVE OUT of the water, so
                 // they add. There is exactly one sign flip in this program
