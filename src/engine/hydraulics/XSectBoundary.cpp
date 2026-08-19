@@ -75,24 +75,35 @@ int arcCrossingAngles(const BElem& e, double y, double theta_out[2]) noexcept {
     return count;
 }
 
+/// True when some angle congruent to @p base (mod 2*pi) lies within the arc's
+/// sweep. Shared by elemMinY/elemMaxY and the tangency scan in
+/// findCriticalHeights, and using the same k-range convention as
+/// arcCrossingAngles so all four agree about what "within the sweep" means.
+bool sweepHits(const BElem& e, double base) noexcept {
+    const double lo = std::min(e.a0, e.a1);
+    const double hi = std::max(e.a0, e.a1);
+    const double kmin = std::ceil((lo - base) / kTwoPi - 1.0e-12);
+    const double kmax = std::floor((hi - base) / kTwoPi + 1.0e-12);
+    return kmin <= kmax;
+}
+
 /// True minimum y over the whole element, including an arc's interior low
 /// point (theta == -pi/2 mod 2*pi) when that angle falls within its sweep —
 /// not just its two endpoints.
 double elemMinY(const BElem& e) noexcept {
     if (e.radius == 0.0) return std::min(e.y0, e.y1);
-    double m = std::min(e.y0, e.y1);
-    const double lo = std::min(e.a0, e.a1);
-    const double hi = std::max(e.a0, e.a1);
-    const double base = -0.5 * M_PI;
-    const auto kmin = static_cast<long>(std::floor((lo - base) / kTwoPi)) - 1;
-    const auto kmax = static_cast<long>(std::ceil((hi - base) / kTwoPi)) + 1;
-    for (long k = kmin; k <= kmax; ++k) {
-        const double theta = base + static_cast<double>(k) * kTwoPi;
-        if (theta >= lo - 1.0e-12 && theta <= hi + 1.0e-12) {
-            m = std::min(m, e.cy - e.radius);
-        }
-    }
-    return m;
+    const double m = std::min(e.y0, e.y1);
+    return sweepHits(e, -0.5 * M_PI) ? std::min(m, e.cy - e.radius) : m;
+}
+
+/// True maximum y over the whole element — the mirror of elemMinY, counting an
+/// arc's interior high point (theta == +pi/2 mod 2*pi) only when the sweep
+/// actually reaches it. A pointed arch, whose arcs stop short of their own
+/// crowns, must report its apex height rather than cy + r.
+double elemMaxY(const BElem& e) noexcept {
+    if (e.radius == 0.0) return std::max(e.y0, e.y1);
+    const double m = std::max(e.y0, e.y1);
+    return sweepHits(e, 0.5 * M_PI) ? std::max(m, e.cy + e.radius) : m;
 }
 
 int orientation(double ax, double ay, double bx, double by,
@@ -331,6 +342,97 @@ ExactProps evalExact(const BElem* elems, int n, double y) {
     out.i1    = area * (y - out.ybar);
     out.ncomp = static_cast<int>(xs.size() / 2);
     return out;
+}
+
+// ===========================================================================
+// Critical heights
+// ===========================================================================
+
+void findCriticalHeights(const BElem* elems, int n,
+                         std::vector<CriticalHeight>& out) {
+    out.clear();
+    if (n <= 0) return;
+
+    double y_full = 0.0;
+    for (int i = 0; i < n; ++i) y_full = std::max(y_full, elemMaxY(elems[i]));
+    if (!(y_full > 0.0)) return;
+
+    // Clamp rather than discard: a tangency computed as cy - r can land an ulp
+    // below 0 (or cy + r an ulp above y_full) after the invert shift, and
+    // dropping it would silently lose the 1.5 tag on a round invert or crown —
+    // exactly the tag that matters most.
+    auto clampY = [y_full](double y) { return std::clamp(y, 0.0, y_full); };
+
+    // Source 1 — element endpoints: corners, tangential joints, and the ends
+    // of horizontal segments. Plus both domain ends, unconditionally.
+    std::vector<double> endpoints;
+    endpoints.reserve(static_cast<std::size_t>(2 * n + 2));
+    for (int i = 0; i < n; ++i) {
+        endpoints.push_back(clampY(elems[i].y0));
+        endpoints.push_back(clampY(elems[i].y1));
+    }
+    endpoints.push_back(0.0);
+    endpoints.push_back(y_full);
+
+    std::vector<CriticalHeight> claims;
+    claims.reserve(endpoints.size() + static_cast<std::size_t>(2 * n));
+    for (const double y : endpoints) claims.push_back(CriticalHeight{y, 1.0, 1.0});
+
+    // Source 2 — arc horizontal tangencies, the ONLY source of a 1.5 tag. An
+    // arc lies ABOVE its own lowest point and BELOW its own highest one, so
+    // that is the side the half-power lands on. This holds whether the
+    // tangency is interior to the sweep or sits at one of its ends, which is
+    // why no interior/endpoint distinction is needed.
+    const double snap = 1.0e-9 * y_full;
+    for (int i = 0; i < n; ++i) {
+        const BElem& e = elems[i];
+        if (e.radius == 0.0) continue;
+        for (int top = 0; top < 2; ++top) {
+            const double base = (top != 0) ? 0.5 * M_PI : -0.5 * M_PI;
+            if (!sweepHits(e, base)) continue;
+
+            double y_t = clampY((top != 0) ? (e.cy + e.radius)
+                                           : (e.cy - e.radius));
+            // Snap onto the NEAREST endpoint within range instead of leaving a
+            // sub-1e-9 sliver piece behind it (see the @note on
+            // findCriticalHeights). Nearest rather than first-found so the
+            // result cannot depend on element ordering.
+            const double y_raw = y_t;
+            double best = snap;
+            for (const double ye : endpoints) {
+                const double d = std::fabs(ye - y_raw);
+                if (d <= best) { best = d; y_t = ye; }
+            }
+
+            CriticalHeight c{y_t, 1.0, 1.0};
+            if (top != 0) c.exp_below = 1.5;
+            else          c.exp_above = 1.5;
+            claims.push_back(c);
+        }
+    }
+
+    std::sort(claims.begin(), claims.end(),
+              [](const CriticalHeight& a, const CriticalHeight& b) {
+                  return a.y < b.y;
+              });
+
+    // Dedupe, unioning the tags by MAX so a 1.5 claim from any contributing
+    // feature survives the merge. This is also what makes three-or-more
+    // simultaneous component merges need no special case.
+    const double tol = 1.0e-12 * y_full;
+    for (const CriticalHeight& c : claims) {
+        if (!out.empty() && c.y - out.back().y <= tol) {
+            out.back().exp_above = std::max(out.back().exp_above, c.exp_above);
+            out.back().exp_below = std::max(out.back().exp_below, c.exp_below);
+            continue;
+        }
+        out.push_back(c);
+    }
+
+    // Pin the domain ends exactly — downstream piece construction indexes off
+    // these two values, so they must be 0 and y_full to the bit.
+    out.front().y = 0.0;
+    out.back().y  = y_full;
 }
 
 // ===========================================================================
