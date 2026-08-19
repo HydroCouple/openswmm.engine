@@ -216,6 +216,53 @@ OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
 }
 
 /**
+ * @brief Evaluate the full closure at one depth in a single pass.
+ * @details Performs the crown clamp and the slot-taper branch ONCE and returns
+ *          all four closure quantities. Semantically identical to calling
+ *          areaOfDepth/widthOfDepth/hydRadOfDepth/i1OfDepth separately at the
+ *          same `h` — this is a fusion optimization, not a change of
+ *          formulation. `I1` reuses the `A` this call already computed rather
+ *          than recomputing it, exactly as every existing i1OfDepth call site
+ *          already does by hand.
+ * @param g  conduit closure
+ * @param h  depth above invert (ft)
+ * @param[out] A  flow area, including the tapered slot (ft²)
+ * @param[out] W  top width, including the tapered slot (ft)
+ * @param[out] R  hydraulic radius (ft)
+ * @param[out] I1 hydrostatic first moment ∫₀ʰ A(η)dη (ft³)
+ * @note Bit-identical results to the unfused path are REQUIRED. See test F1.
+ */
+OPENSWMM_KERNEL_FN void closureAll(const FvGeometry& g, double h,
+                                   double* A, double* W, double* R,
+                                   double* I1) noexcept {
+    if (h <= 0.0) {
+        *A = 0.0; *W = 0.0; *R = 0.0; *I1 = 0.0;
+        return;
+    }
+    if (h >= g.y_full) {
+        const double d = h - g.y_full;
+        *A  = g.a_crown + g.t_slot * d;
+        *W  = g.t_slot;
+        *R  = g.r_full;
+        *I1 = g.i1_crown + g.a_crown * d + 0.5 * g.t_slot * d * d;
+        return;
+    }
+    const double ax = g.barrel_scale * g.eval->getAofY(g.xs, h);
+    const double wx = g.barrel_scale * g.eval->getWofY(g.xs, h);
+    const double band = g.y_full - g.y_crown;
+    if (band <= 0.0) {
+        *A = ax;
+        *W = wx;
+    } else {
+        const double s = (h - g.y_crown) / band;
+        *A = ax + g.t_slot * band * slotRampIntegral(s);
+        *W = wx + g.t_slot * slotRamp(s);
+    }
+    *R  = g.eval->getRofY(g.xs, h);
+    *I1 = i1OfDepth(g, h, *A);
+}
+
+/**
  * @brief Invert A → h — the EXACT inverse of areaOfDepth above.
  *
  * @details This must be a true inverse, not merely an accurate one. The solver

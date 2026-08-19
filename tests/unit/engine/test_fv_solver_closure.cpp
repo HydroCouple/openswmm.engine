@@ -222,3 +222,54 @@ TEST(FvClosure, OpenSectionsGetNoSlotAndExtendVertically) {
     for (double h : {1.0, 3.9, 4.0, 4.5, 12.0})
         EXPECT_NEAR(k::areaOfDepth(g, h), 10.0 * h, 1.0e-9);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1 — fused closure (test F1)
+// ---------------------------------------------------------------------------
+//
+// closureAll() must be a pure fusion of areaOfDepth/widthOfDepth/
+// hydRadOfDepth/i1OfDepth: same inputs in, bit-identical outputs, for every
+// depth regime (dry, below crown, inside the taper band, at the crown exactly,
+// and deep in the slot) and for both tabulated (CIRCULAR) and analytic
+// (RECT_OPEN) sections.
+
+namespace {
+
+void expectClosureAllMatchesUnfused(const FvGeometry& g, double h) {
+    const double a_ref  = k::areaOfDepth(g, h);
+    const double w_ref  = k::widthOfDepth(g, h);
+    const double r_ref  = k::hydRadOfDepth(g, h);
+    const double i1_ref = k::i1OfDepth(g, h, a_ref);
+
+    double a, w, r, i1;
+    k::closureAll(g, h, &a, &w, &r, &i1);
+
+    EXPECT_EQ(a, a_ref)   << "A mismatch at h=" << h;
+    EXPECT_EQ(w, w_ref)   << "W mismatch at h=" << h;
+    EXPECT_EQ(r, r_ref)   << "R mismatch at h=" << h;
+    EXPECT_EQ(i1, i1_ref) << "I1 mismatch at h=" << h;
+}
+
+} // namespace
+
+TEST(FvClosure, F1_ClosureAllIsBitIdenticalToUnfusedPath_Circular) {
+    const FvGeometry g = makeCircular(3.0);
+    expectClosureAllMatchesUnfused(g, 0.0);
+    expectClosureAllMatchesUnfused(g, -1.0);       // dry, negative depth
+    for (int i = 0; i <= 4000; ++i) {
+        const double h = g.y_full * 2.0 * static_cast<double>(i) / 4000.0;
+        expectClosureAllMatchesUnfused(g, h);
+    }
+    expectClosureAllMatchesUnfused(g, g.y_crown);   // exactly at the taper start
+    expectClosureAllMatchesUnfused(g, g.y_full);    // exactly at the crown
+}
+
+TEST(FvClosure, F1_ClosureAllIsBitIdenticalToUnfusedPath_OpenRect) {
+    const FvGeometry g = makeRect(10.0, 4.0);
+    expectClosureAllMatchesUnfused(g, 0.0);
+    for (int i = 0; i <= 4000; ++i) {
+        const double h = g.y_full * 3.0 * static_cast<double>(i) / 4000.0;
+        expectClosureAllMatchesUnfused(g, h);
+    }
+    expectClosureAllMatchesUnfused(g, g.y_full);
+}
