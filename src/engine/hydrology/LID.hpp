@@ -163,6 +163,24 @@ struct LIDGroupSoA {
     std::vector<double> drain_rmvl;  ///< Removal fraction per unit per pollutant
     int n_pollutants = 0;            ///< Number of pollutants (for indexing drain_rmvl)
 
+    // ---- A4: per-layer INFLOW rates (ft/sec of water per unit area) ----
+    // Each layer receives from exactly one place: the layer above it in the
+    // present stack, or externally for the topmost present layer. Every
+    // batch*Flux routine already computes these as locals (soil_infil,
+    // soil_perc, pavePerc, storageInflow, ...); they are published here
+    // because a complete-mix age needs the INFLOW and nothing else — the
+    // outflow leaves at the layer's own age.
+    //
+    // These are NOT the `f_old_*` below. Those are the Modified Puls
+    // time-weighting term: `f_old_surf` is the NET dx/dt of the surface
+    // layer, and the other three are never written at all. A net rate of
+    // change is exactly the quantity that made phase A3 report elapsed time
+    // instead of age.
+    std::vector<double> in_surf;      ///< External inflow onto the surface
+    std::vector<double> in_pave;      ///< Surface → pavement
+    std::vector<double> in_soil;      ///< Layer above → soil
+    std::vector<double> in_stor;      ///< Layer above → storage
+
     // Previous flux rates (for Modified Puls time weighting)
     std::vector<double> f_old_surf;   ///< Previous surface flux rate
     std::vector<double> f_old_soil;   ///< Previous soil flux rate

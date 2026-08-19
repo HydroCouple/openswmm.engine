@@ -51,6 +51,7 @@
 #include "../transport/components/HeatModule/HeatComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeWatershed.hpp"
+#include "../transport/components/WaterAgeModule/WaterAgeLid.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "HotStartManager.hpp"
 #include "../../../include/openswmm/plugin_sdk/IPluginComponentInfo.hpp"
@@ -1299,11 +1300,17 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         // Gap #26: clear LID drain quality node accumulators each runoff step.
         // They are repopulated in A6b and consumed each routing step by addWetWeatherLoads().
-        if (ctx_.n_pollutants() > 0) {
+        // A4: water age keeps this alive at zero pollutants. The drain
+        // volume accumulator is the age's mixing denominator, so the two
+        // must be cleared and refilled on the same cadence.
+        if (ctx_.n_pollutants() > 0 || ctx_.options.water_age) {
             std::fill(ctx_.nodes.lid_drain_qual_load.begin(),
                       ctx_.nodes.lid_drain_qual_load.end(), 0.0);
             std::fill(ctx_.nodes.lid_drain_qual_vol.begin(),
                       ctx_.nodes.lid_drain_qual_vol.end(), 0.0);
+            std::fill(ctx_.water_age_state.node_lid_drain_age_vol_in.begin(),
+                      ctx_.water_age_state.node_lid_drain_age_vol_in.end(),
+                      0.0);
         }
 
         // Current-step rainfall flag (legacy IsRaining): set BEFORE the timestep
@@ -1735,10 +1742,28 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                             ctx_.subcatches.total_lid_area_ft2[usc];
                 }
                 g.inflow[uu] = rain + q_from_sc;
+                // A4: the age of that inflow, weighted by the same four
+                // rates. This is the only place they exist together, which
+                // is why the age is assembled here rather than in the
+                // transport module.
+                transport::setLidInflowAge(
+                    ctx_, t, u, sc, rain,
+                    q_imperv * g.from_imperv[uu], q_perv * g.from_perv[uu],
+                    (rsoa.area[usc] <= 0.0 &&
+                     usc < ctx_.subcatches.total_lid_area_ft2.size() &&
+                     ctx_.subcatches.total_lid_area_ft2[usc] > 0.0)
+                        ? ctx_.subcatches.runon_inflow[usc]
+                        : 0.0,
+                    lid_area);
             }
         }
 
         lid_.execute(ctx_, dt_runoff, 0.0, ctx_.climate_state.evap_rate);
+
+        // A4: LID layer ages, immediately after the depths this step
+        // produced — the same slot A3's watershed update occupies relative
+        // to the runoff solver.
+        transport::routeLidLayerAge(ctx_, lid_, dt_runoff);
 
         // A6b. Route LID outputs back to subcatchment runoff totals
         for (int t = 0; t < lid_.numGroups(); ++t) {
@@ -1778,8 +1803,25 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                     ? g.drain_subcatch[uu] : sc;
                     auto utsc = static_cast<std::size_t>(target_sc);
                     if (utsc < ctx_.subcatches.lid_drain_runon_cfs.size()) {
-                        ctx_.subcatches.lid_drain_runon_cfs[utsc] +=
-                            g.drain_flow[uu] * lid_area;  // CFS
+                        const double q_dr = g.drain_flow[uu] * lid_area;
+                        ctx_.subcatches.lid_drain_runon_cfs[utsc] += q_dr;
+                        // A4: and its age, so assembleRunon can hand the
+                        // rate and the q·age together.
+                        auto& wsr = ctx_.water_age_state
+                                        .subcatch_lid_drain_age_cfs;
+                        const auto& lst = ctx_.lid_layer_state;
+                        const auto uts2 = static_cast<std::size_t>(t);
+                        if (ctx_.options.water_age && lst.active() &&
+                            utsc < wsr.size() &&
+                            uts2 + 1 < lst.group_offset.size()) {
+                            const int fl = lst.group_offset[uts2] + u;
+                            if (fl >= 0 && fl < lst.n_units)
+                                wsr[utsc] += q_dr * lst.drain_value[
+                                    static_cast<std::size_t>(fl) *
+                                        static_cast<std::size_t>(
+                                            lst.n_species) +
+                                    static_cast<std::size_t>(LidSpecies::AGE)];
+                        }
                     }
                 }
 
@@ -1795,7 +1837,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     int np_lid = g.n_pollutants;
                     int np_use = std::min(np_ctx, np_lid);
                     // IGNORE_QUALITY: no LID drain pollutant loads (runoff.c:274).
-                    if (np_use > 0 && g.drain_flow[uu] > 0.0
+                    // A4: water age joins the guard. Gated on np_use alone,
+                    // a pure-age model never accumulated the drain volume at
+                    // all, so neither the water nor its age reached the node
+                    // — the np-guard family once more.
+                    if ((np_use > 0 || ctx_.options.water_age)
+                        && g.drain_flow[uu] > 0.0
                         && !ctx_.options.ignore_quality) {
                         double drain_cfs = g.drain_flow[uu] * lid_area;
                         // Determine destination node index
@@ -1813,6 +1860,30 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                             // Add drain volume to node quality vol accumulator
                             if (udn < ctx_.nodes.lid_drain_qual_vol.size())
                                 ctx_.nodes.lid_drain_qual_vol[udn] += drain_cfs;
+                            // A4: and its age, as the usual q·age rate. The
+                            // drain draws from the storage layer (decision
+                            // 2026-08-18), which is what drain_value holds.
+                            if (ctx_.options.water_age) {
+                                const auto& lst = ctx_.lid_layer_state;
+                                const auto uts = static_cast<std::size_t>(t);
+                                if (lst.active() &&
+                                    uts + 1 < lst.group_offset.size()) {
+                                    const int flat = lst.group_offset[uts] + u;
+                                    const auto ai =
+                                        static_cast<std::size_t>(flat) *
+                                            static_cast<std::size_t>(
+                                                lst.n_species) +
+                                        static_cast<std::size_t>(
+                                            LidSpecies::AGE);
+                                    if (flat >= 0 && flat < lst.n_units &&
+                                        udn < ctx_.water_age_state
+                                                  .node_lid_drain_age_vol_in
+                                                  .size())
+                                        ctx_.water_age_state
+                                            .node_lid_drain_age_vol_in[udn] +=
+                                            drain_cfs * lst.drain_value[ai];
+                                }
+                            }
                             // Add drain mass load per pollutant
                             for (int p = 0; p < np_use; ++p) {
                                 auto rmvl_idx = static_cast<std::size_t>(u * np_lid + p);
@@ -3541,6 +3612,14 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 if (sc >= 0 && sc < ctx_.n_subcatches() && q_in > 0.0) {
                     auto usc = static_cast<std::size_t>(sc);
                     ctx_.subcatches.outfall_runon_vol[usc] += q_in * dt_routing;
+                    // A4: water returning from an outfall carries that
+                    // node's age. Without it the run-on age is divided by a
+                    // rate this volume contributed to but its age did not.
+                    auto& wo = ctx_.water_age_state.subcatch_outfall_age_vol;
+                    if (ctx_.options.water_age && usc < wo.size() &&
+                        uj < ctx_.water_age_state.node_age.size())
+                        wo[usc] += q_in * dt_routing *
+                                   ctx_.water_age_state.node_age[uj];
                 }
             }
         }
@@ -5372,6 +5451,9 @@ void SWMMEngine::initHydrology() noexcept {
     //    no-op, and the LID footprint's rainfall is counted twice
     //    (issue #131).
     lid_.init(ctx_);
+    // A4: size the per-layer species block against the units the manager
+    // just built, and seed whatever they already hold.
+    transport::initLidLayerAge(ctx_, lid_);
 
     // 2. Runoff solver: populate RunoffSoA from subcatchment properties
     runoff_.init(ctx_);
@@ -6145,6 +6227,12 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
         if (q > 0.0) {
             ctx_.subcatches.runon_inflow[ui] += q;
             ctx_.subcatches.lid_drain_runon_cfs[ui] = 0.0;
+            auto& wsr = ctx_.water_age_state.subcatch_lid_drain_age_cfs;
+            if (ctx_.options.water_age && ui < wsr.size() &&
+                ui < ctx_.water_age_state.subcatch_runon_age_vol_in.size()) {
+                ctx_.water_age_state.subcatch_runon_age_vol_in[ui] += wsr[ui];
+                wsr[ui] = 0.0;
+            }
         }
     }
 
@@ -6156,6 +6244,13 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
             double vol = ctx_.subcatches.outfall_runon_vol[ui];
             if (vol > 0.0) {
                 ctx_.subcatches.runon_inflow[ui] += vol / dt_runoff;
+                auto& wo = ctx_.water_age_state.subcatch_outfall_age_vol;
+                if (ctx_.options.water_age && ui < wo.size() &&
+                    ui < ctx_.water_age_state.subcatch_runon_age_vol_in.size()) {
+                    ctx_.water_age_state.subcatch_runon_age_vol_in[ui] +=
+                        wo[ui] / dt_runoff;
+                    wo[ui] = 0.0;
+                }
                 // Water re-entering the runoff system from an outfall is new
                 // inflow to its mass balance (legacy runoff.c:520
                 // RUNOFF_RUNON) — without this, LID or subarea uptake of the

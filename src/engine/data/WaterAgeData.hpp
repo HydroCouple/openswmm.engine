@@ -140,6 +140,29 @@ struct WaterAgeState {
     /// the quality path never did.
     std::vector<double> subcatch_runon_age_vol_in;
 
+    /// A4: [node] age·ft³/s arriving through LID underdrains, accumulated in
+    /// A6b beside the drain volume and consumed by the wet-weather loader.
+    /// Separate from `node_age_vol_in` because the drain volume has its own
+    /// per-runoff-step lifecycle (`nodes.lid_drain_qual_vol`), and the age
+    /// has to be zeroed and consumed on exactly that cadence or it would be
+    /// counted against a volume from a different step.
+    std::vector<double> node_lid_drain_age_vol_in;
+
+    /// A4: [subcatch] age·ft³ (LID drain) and age·ft³ (outfall) waiting to be
+    /// handed to `subcatch_runon_age_vol_in` when `assembleRunon` converts the
+    /// matching volumes into run-on rates.
+    ///
+    /// A3 filled `subcatch_runon_age_vol_in` from the subcatchment cascade
+    /// ALONE, then divided it by `runon_inflow` — a denominator that also
+    /// carries LID drain water and outfall return flow. A numerator missing
+    /// terms the denominator has does not merely lose precision: it produced
+    /// a run-on age BELOW every source age in the model (3.834 h of arriving
+    /// water under a 4 h rain, with nothing younger than 4 h anywhere). The
+    /// flow path knew about all three contributors; the age path knew about
+    /// one.
+    std::vector<double> subcatch_lid_drain_age_cfs;
+    std::vector<double> subcatch_outfall_age_vol;
+
     /// A2a: set by HotStartManager::apply when a V3 file restored ages —
     /// both engines then seed from node_age/link_age instead of
     /// INITIAL_STATE (the ARD engine consumes and clears it at init).
@@ -157,12 +180,17 @@ struct WaterAgeState {
         node_age_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_age.assign(static_cast<std::size_t>(n_nodes), 0.0);
         link_age.assign(static_cast<std::size_t>(n_links), 0.0);
+        node_lid_drain_age_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         const auto ns3 = static_cast<std::size_t>(n_subcatch) *
                          static_cast<std::size_t>(SubArea::COUNT_);
         subarea_age.assign(ns3, 0.0);
         subarea_vol_prev.assign(ns3, 0.0);
         subcatch_runoff_age.assign(static_cast<std::size_t>(n_subcatch), 0.0);
         subcatch_runon_age_vol_in.assign(
+            static_cast<std::size_t>(n_subcatch), 0.0);
+        subcatch_lid_drain_age_cfs.assign(
+            static_cast<std::size_t>(n_subcatch), 0.0);
+        subcatch_outfall_age_vol.assign(
             static_cast<std::size_t>(n_subcatch), 0.0);
         legacy_seeded   = false;
         hotstart_loaded = false;

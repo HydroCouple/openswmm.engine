@@ -84,6 +84,7 @@
 #include "../data/GageData.hpp"
 #include "../data/HeatData.hpp"
 #include "../data/WaterAgeData.hpp"
+#include "../data/LidLayerSpeciesData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
 #include "../data/NodeData.hpp"
@@ -562,6 +563,13 @@ struct SimulationContext {
      */
     WaterAgeConfigData water_age_config;
     WaterAgeState      water_age_state;
+
+    /**
+     * @brief A4: per-(LID unit, layer, species) transported state.
+     * @see data/LidLayerSpeciesData.hpp — generic over species so H5's
+     *      temperature is a row rather than a second array.
+     */
+    LidLayerSpeciesState lid_layer_state;
 
     /**
      * @brief Heat transport (phase H1): per-source inlet temperatures parsed
@@ -1463,6 +1471,7 @@ struct SimulationContext {
         // H1: and for heat.
         heat_config = HeatConfigData{};
         heat_state.clear();
+        lid_layer_state.clear();
 
         // Virtual-junction diagnostics
         vj_diag.clear();

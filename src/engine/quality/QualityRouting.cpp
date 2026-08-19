@@ -379,9 +379,20 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         if (drain_vol_rate <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[uj] += drain_vol_rate * dt;
-        // LID drain water counts as RAINFALL-age until per-layer LID age
-        // states land (plan phase A4).
-        addAgeVolume(ctx, j, drain_vol_rate, WaterAgeSource::RAINFALL);
+        // A4 RETIRES the RAINFALL stand-in here: the drain now arrives at the
+        // age of the LID storage layer it was drawn from, accumulated as a
+        // q·age rate in A6b beside this very volume. Falls back to the
+        // configured source age only when the layer block is unsized (WATER_AGE
+        // on but the LID manager built no units).
+        if (ctx.options.water_age &&
+            uj < ctx.water_age_state.node_lid_drain_age_vol_in.size() &&
+            ctx.lid_layer_state.active()) {
+            auto& acc = ctx.water_age_state.node_age_vol_in;
+            if (uj < acc.size())
+                acc[uj] += ctx.water_age_state.node_lid_drain_age_vol_in[uj];
+        } else {
+            addAgeVolume(ctx, j, drain_vol_rate, WaterAgeSource::RAINFALL);
+        }
         addTempVolume(ctx, j, drain_vol_rate, HeatSource::RAINFALL);
 
         for (int p = 0; p < np; ++p) {
