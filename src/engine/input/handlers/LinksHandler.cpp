@@ -43,6 +43,7 @@
 #include "../Tokenizer.hpp"
 #include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../data/LinkData.hpp"
 #include "../../data/InfraData.hpp"
 
@@ -450,9 +451,36 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
 
         if (keyword == "NC") {
             // NC  nLeft  nRight  nChannel
-            if (tok.size() > 1) nc_left    = to_double(tok[1]);
-            if (tok.size() > 2) nc_right   = to_double(tok[2]);
-            if (tok.size() > 3) nc_channel = to_double(tok[3]);
+            //
+            // A zero component means "unchanged from the preceding NC
+            // record" (EPA SWMM 5.2.4; legacy transect.c::setManning), so
+            // only positive values overwrite the active roughness. Zeroing
+            // the stored values here wiped a previously declared channel
+            // roughness and tripped ERR_TRANSECT_MANNING (227) during
+            // validation for input EPA SWMM accepts.
+            const double n_left    = (tok.size() > 1) ? to_double(tok[1]) : 0.0;
+            const double n_right   = (tok.size() > 2) ? to_double(tok[2]) : 0.0;
+            const double n_channel = (tok.size() > 3) ? to_double(tok[3]) : 0.0;
+            // A negative component is invalid input, not an inheritance
+            // request (legacy setManning returns ERR_NUMBER for it).
+            if (n_left < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[1]));
+                continue;
+            }
+            if (n_right < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[2]));
+                continue;
+            }
+            if (n_channel < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[3]));
+                continue;
+            }
+            if (n_left    > 0.0) nc_left    = n_left;
+            if (n_right   > 0.0) nc_right   = n_right;
+            if (n_channel > 0.0) nc_channel = n_channel;
+            // overbank roughness defaults to the channel value, as in legacy
+            if (nc_left  == 0.0) nc_left  = nc_channel;
+            if (nc_right == 0.0) nc_right = nc_channel;
         }
         else if (keyword == "X1") {
             // Per EPA SWMM 5 (transect.c::setParams) the X1 layout is:
