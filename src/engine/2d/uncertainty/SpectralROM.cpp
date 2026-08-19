@@ -64,10 +64,13 @@ void SpectralROM::clearEnsembleRainfall() {
 
 void SpectralROM::setSoftForcing(const double* loc, const double* spread,
                                 openswmm::uncertainty::DistType family,
-                                const SpatialUncertaintyField* soft_field) noexcept {
+                                const SpatialUncertaintyField* soft_field,
+                                const double* spread_b,
+                                openswmm::uncertainty::DistType family_b) noexcept {
     soft_loc_field_ = loc;
     soft_spread_field_ = spread;
     soft_field_ = soft_field;
+    soft_planes_error_.clear();
     // Switching to the scalar/materialized path must retire any previously
     // configured reduced basis, otherwise advance() would keep taking the
     // reduced path and dereference now-stale pointers. setSoftForcingReduced()
@@ -83,6 +86,42 @@ void SpectralROM::setSoftForcing(const double* loc, const double* spread,
             : soft_z_[ui];
         soft_coeff_[ui] = c;
         soft_max_abs_coeff_ = std::max(soft_max_abs_coeff_, std::abs(c));
+    }
+
+    // ---- PR H7: second per-family coefficient plane -------------------------
+    // Scope guard: the correlated-coherence paths (CL-1c materialized field,
+    // CL-2c reduced basis) carry ONE coefficient family per source by
+    // construction -- W_i[t] / a_im already fold a single family's c_i into
+    // the per-member projection, so there is nowhere for a second family's
+    // coefficient to enter without redefining that field. Refuse the second
+    // plane rather than silently mixing families, and say so.
+    const bool corr_len_active = (soft_field_ != nullptr) && soft_field_->is_spatial();
+    if (spread_b != nullptr && corr_len_active) {
+        soft_planes_error_ =
+            "per-family coefficient planes (MIXED) are not supported together "
+            "with COHERENCE CORR_LEN: the correlated field carries one "
+            "coefficient family per source. Use COHERENCE FULL for MIXED "
+            "grids, or a single family with CORR_LEN. (CORR_LEN x MIXED is "
+            "additive future work -- PR H7 scope guard.)";
+        spread_b = nullptr;
+    }
+    soft_spread_field_b_ = spread_b;
+    soft_max_abs_coeff_b_ = 0.0;
+    if (soft_spread_field_b_ != nullptr) {
+        // Same u_i stream as channel A -- comonotone coherence across families
+        // holds by construction (one rank per member everywhere), and the
+        // nominal member (u_i closest to 0.5) is nominal in BOTH channels.
+        soft_coeff_b_.assign(static_cast<std::size_t>(n_ensemble), 0.0);
+        for (int i = 0; i < n_ensemble; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const double c = (family_b == openswmm::uncertainty::DistType::UNIFORM)
+                ? (2.0 * soft_u_[ui] - 1.0)
+                : soft_z_[ui];
+            soft_coeff_b_[ui] = c;
+            soft_max_abs_coeff_b_ = std::max(soft_max_abs_coeff_b_, std::abs(c));
+        }
+    } else {
+        soft_coeff_b_.clear();
     }
 
     // CL-1c: a supplied spatial field must be dimensionally consistent and its
@@ -115,6 +154,10 @@ void SpectralROM::clearSoftForcing() noexcept {
     soft_reduced_psi_ = nullptr;
     soft_reduced_a_ = nullptr;
     soft_reduced_ks_ = 0;
+    soft_spread_field_b_ = nullptr;
+    soft_coeff_b_.clear();
+    soft_max_abs_coeff_b_ = 0.0;
+    soft_planes_error_.clear();
 }
 
 void SpectralROM::setSoftForcingReduced(const double* loc, const double* spread,
@@ -197,6 +240,7 @@ void SpectralROM::initialize() {
     mode_energy_.assign(static_cast<std::size_t>(n_kept), 0.0);
     h_weight_.assign(static_cast<std::size_t>(n_tri), 1.0);
     soft_r_spread_.assign(static_cast<std::size_t>(n_kept), 0.0);
+    soft_r_spread_b_.assign(static_cast<std::size_t>(n_kept), 0.0);
     soft_spatial_absmax_.assign(static_cast<std::size_t>(n_kept), 0.0);
 
     // All modes start active; mode_active is updated at the start of each advance().
@@ -331,6 +375,22 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         }
     } else {
         std::fill(soft_r_spread_.begin(), soft_r_spread_.end(), 0.0);
+    }
+    // PR H7: the second family plane's own projection (P^T spread_b)_j. This is
+    // the "two projections per advance" of the per-family design -- the two
+    // planes are disjoint by construction (each cell contributes to exactly
+    // one, per /family_code), so their sum reconstructs the full spread field
+    // while each cell keeps its own family's coefficient.
+    if (soft_spread_field_b_) {
+        for (std::size_t j = 0; j < nk; ++j) {
+            const double* Pj = &basis->P[j * nt];
+            double dot = 0.0;
+            for (std::size_t t = 0; t < nt; ++t)
+                dot += Pj[t] * soft_spread_field_b_[t];
+            soft_r_spread_b_[j] = dot;
+        }
+    } else {
+        std::fill(soft_r_spread_b_.begin(), soft_r_spread_b_.end(), 0.0);
     }
     // CL-1c: correlated-coherence per-member projection. When a spatial field
     // is active, the comonotone factorization c_i·(Pᵀspread)_j no longer holds;
@@ -528,6 +588,11 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                                ? (use_soft_rij ? std::abs(dt)
                                                : std::abs(dt) * soft_max_abs_coeff_)
                                : 0.0;
+    // PR H7: channel B's own activation scale. Zero when no second plane is
+    // configured, so every expression below reduces to the pre-H7 one exactly.
+    const double soft_scale_b = (soft_spread_field_b_ != nullptr)
+                               ? std::abs(dt) * soft_max_abs_coeff_b_
+                               : 0.0;
 
     n_modes_active = 0;
     for (std::size_t j = 0; j < nk; ++j) {
@@ -538,10 +603,17 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
         bool by_manning = mann_scale > 0.0 &&
                           lam * keff_modes_[j] * std::abs(b_coarse[j]) * mann_scale
                               >= mode_drop_threshold;
-        bool by_soft    = soft_scale > 0.0 &&
-                          (use_soft_rij ? soft_spatial_absmax_[j]
-                                        : std::abs(soft_r_spread_[j])) * soft_scale
-                              >= mode_drop_threshold;
+        // PR H7: sum the two channels' first-order magnitudes rather than
+        // OR-ing two independent tests -- a mode whose per-channel terms are
+        // each just under the threshold but whose combined forcing clears it
+        // must stay active. With no second plane the added term is exactly
+        // 0.0 and the test is the pre-H7 one bit-for-bit.
+        const double soft_metric =
+            (use_soft_rij ? soft_spatial_absmax_[j]
+                          : std::abs(soft_r_spread_[j])) * soft_scale
+            + std::abs(soft_r_spread_b_[j]) * soft_scale_b;
+        bool by_soft    = (soft_scale > 0.0 || soft_scale_b > 0.0) &&
+                          soft_metric >= mode_drop_threshold;
         bool by_vector  = false;
         for (const auto& ep : extra_params_) {
             if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR &&
@@ -610,6 +682,9 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                     else
                         g += soft_coeff_[ui] * soft_r_spread_[j];
                 }
+                // PR H7: second family plane, its own coefficient.
+                if (soft_spread_field_b_)
+                    g += soft_coeff_b_[ui] * soft_r_spread_b_[j];
                 if (has_extra) {
                     for (const auto& ep : extra_params_)
                         if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR)
@@ -684,6 +759,12 @@ void SpectralROM::advance(double dt, double K_eff, const double* rainfall,
                 else
                     g += soft_coeff_[ui] * soft_r_spread_[j];
             }
+            // PR H7: second family plane, its own coefficient. Both c_i and
+            // c_i^B come from the same u_i, so member i sits at the same rank
+            // in both families -- comonotone coherence, and a zero-coefficient
+            // (nominal) member contributes exactly zero to both.
+            if (soft_spread_field_b_)
+                g += soft_coeff_b_[ui] * soft_r_spread_b_[j];
             if (has_extra) {
                 for (const auto& ep : extra_params_)
                     if (ep.entry == openswmm::uncertainty::ParamEntry::FORCING_VECTOR)
