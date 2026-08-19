@@ -1,0 +1,133 @@
+[TITLE]
+InpWriter round-trip fixture: self-draining subcatchment
+Defect 1's extreme form - S3 drains to S3. A subcatchment that outlets to
+itself has no outlet node at all, so the writer has only the name to work with.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:00:30
+ALLOW_PONDING        NO
+MIN_SLOPE            0
+
+[EVAPORATION]
+CONSTANT   0.0
+DRY_ONLY   NO
+
+[RAINGAGES]
+;;Name           Format     Interval SCF      Source
+RG1              INTENSITY  1:00     1.0      TIMESERIES TS1
+
+[SNOWPACKS]
+;;Name           Surface    Cmin  Cmax  Tbase  FWF   SD0   FW0   SNN/SD100
+SP1              PLOWABLE   0.001 0.001 32.0   0.10  0.0   0.0   0.0
+SP1              IMPERVIOUS 0.001 0.001 32.0   0.10  0.0   0.0   0.0
+SP1              PERVIOUS   0.001 0.001 32.0   0.10  0.0   0.0   0.0
+SP1              REMOVAL    1.0   0.0   0.0    0.0   0.0   0.0
+
+[SUBCATCHMENTS]
+;;Name  RainGage  Outlet  Area  %Imperv  Width  %Slope  CurbLen  Snowpack
+;; S1 drains to another subcatchment (outlet_subcatch, NOT outlet_node) — this
+;; is the case that used to round-trip to '*' and fail reload with ERROR 209.
+S1      RG1       S2      2.0   25.0     400.0  1.0     0        SP1
+S2      RG1       J1      3.0   40.0     500.0  1.0     0
+S3      RG1       S3      1.5   10.0     300.0  1.0     0
+
+[SUBAREAS]
+;;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  %ZeroImp  RouteTo
+S1          0.01      0.10    0.05      0.05    25        OUTLET
+S2          0.01      0.10    0.05      0.05    25        OUTLET
+S3          0.01      0.10    0.05      0.05    25        OUTLET
+
+[INFILTRATION]
+;;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil
+S1          3.0      0.5      4.0    7        0
+S2          3.0      0.5      4.0    7        0
+S3          3.0      0.5      4.0    7        0
+
+[AQUIFERS]
+;;Name  Por  WP    FC    Ksat  Kslope  Tslope  ETu   ETs  Seep    Ebot  Egw   Umc   ETupat
+AQ1     0.5  0.15  0.30  5.0   10.0    15.0    0.35  0.0  0.002   0.0   10.0  0.30  MPAT
+AQ2     0.4  0.12  0.25  2.5   8.0     12.0    0.30  0.0  0.001   1.0   11.0  0.25
+
+[GROUNDWATER]
+;; J2 is defined AFTER this section — the receiving node is a forward reference.
+;;Subcatch  Aquifer  Node  SurfElev  A1     B1   A2   B2   A3   Tw   Hstar
+S1          AQ1      J2    12.0      0.001  1.0  0.0  0.0  0.0  0.0  0.0
+S2          AQ2      J1    12.0      0.002  1.0  0.0  0.0  0.0  0.0  0.0
+
+[GWF]
+;; Multi-token expression — the [OPTIONS] ext_options passthrough used to
+;; truncate this to its first token.
+S1   LATERAL   0.001 * (Hgw - 10.0)
+S1   DEEP      0.0005 * Hgw
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       10.0  5.0       0          0         0
+J2       9.0   5.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       8.0   FREE  *          NO
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       Curve/Params
+ST1      9.5   10.0      0          FUNCTIONAL  1000  0  0
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+C1       J1        ST1     400.0   0.013      0         0
+C2       J2        O1      400.0   0.013      0         0
+
+[PUMPS]
+;;Name  FromNode  ToNode  PumpCurve  Status  Startup  Shutoff
+P1       ST1       J2      PC1        ON      0        0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1       CIRCULAR  1.5    0      0      0      1
+C2       CIRCULAR  1.5    0      0      0      1
+
+[CURVES]
+;;Name  Type   X-Value  Y-Value
+PC1      PUMP4  0        0
+PC1             5.0      2.0
+
+[TIMESERIES]
+;;Name  Date        Time   Value
+TS1      01/01/2020  00:00  0.0
+TS1      01/01/2020  01:00  0.5
+TS1      01/01/2020  02:00  0.0
+
+[PATTERNS]
+;;Name  Type     Factors
+MPAT     MONTHLY  1.0 1.0 1.0 1.0 1.0 1.0
+MPAT              1.0 1.0 1.0 1.0 1.0 1.0
+
+[REPORT]
+INPUT       NO
+CONTROLS    NO
+SUBCATCHMENTS ALL
+NODES       ALL
+LINKS       ALL
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J1       0.0      0.0
+J2       500.0    0.0
+ST1      0.0      500.0
+O1       1000.0   0.0
