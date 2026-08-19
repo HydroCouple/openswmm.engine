@@ -433,8 +433,16 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
             const double n_channel = (tok.size() > 3) ? to_double(tok[3]) : 0.0;
             // A negative component is invalid input, not an inheritance
             // request (legacy setManning returns ERR_NUMBER for it).
-            if (n_left < 0.0 || n_right < 0.0 || n_channel < 0.0) {
-                ctx.errors.push_back(format_error(ERR_NUMBER, line));
+            if (n_left < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[1]));
+                continue;
+            }
+            if (n_right < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[2]));
+                continue;
+            }
+            if (n_channel < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[3]));
                 continue;
             }
             if (n_left    > 0.0) nc_left    = n_left;
