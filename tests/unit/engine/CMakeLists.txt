@@ -780,10 +780,25 @@ endif()
 # reverting to "present on disk, never run".
 # ===========================================================================
 
-add_gtest_unit(test_engine_2d_spatial_field       test_2d_spatial_field.cpp)
-add_gtest_unit(test_engine_1d_rom_integration     test_engine_1d_rom_integration.cpp)
-add_gtest_unit(test_engine_final_boundary_stall2  test_engine_final_boundary_stall.cpp)
-add_gtest_unit(test_engine_final_boundary_stall   test_final_boundary_stall.cpp)
+if(OPENSWMM_BUILD_2D)
+    # Depends on 2d/uncertainty/CorrelatedFieldGenerator.cpp, which
+    # src/engine/CMakeLists.txt only compiles into OPENSWMM_2D_SOURCES --
+    # undefined-reference at link time with -DOPENSWMM_BUILD_2D=OFF otherwise.
+    add_gtest_unit(test_engine_2d_spatial_field   test_2d_spatial_field.cpp)
+endif()
+if(OPENSWMM_BUILD_2D)
+    # SWMMEngine::rom1d() is itself declared inside #ifdef OPENSWMM_HAS_2D in
+    # SWMMEngine.hpp (a pre-existing quirk -- the 1D ROM member is unconditional,
+    # only its accessor is gated), so this test cannot build without 2D.
+    add_gtest_unit(test_engine_1d_rom_integration test_engine_1d_rom_integration.cpp)
+endif()
+# Two independently-written PR 11 regression tests for the same fix, same
+# subject, different fixtures -- kept as two targets rather than merged.
+# Named after each file's own stem (not the usual test_engine_<x> <- test_<x>.cpp
+# convention) because that convention collides here: stripping "test_" from
+# both stems and re-prefixing would make both targets "test_engine_final_boundary_stall".
+add_gtest_unit(test_engine_final_boundary_stall   test_engine_final_boundary_stall.cpp)
+add_gtest_unit(test_final_boundary_stall          test_final_boundary_stall.cpp)
 add_gtest_unit(test_engine_grid_mapping_weights   test_grid_mapping_weights.cpp)
 # RunoffEnsemble.cpp and SpdeSpatialBasis.cpp are NOT in the engine library --
 # src/engine/CMakeLists.txt lists uncertainty/*.cpp explicitly "as each lands",
@@ -795,7 +810,12 @@ add_gtest_unit(test_engine_runoff_ensemble        test_runoff_ensemble.cpp)
 target_sources(test_engine_runoff_ensemble PRIVATE
     ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/RunoffEnsemble.cpp)
 add_gtest_unit(test_engine_site_drainage_model    test_site_drainage_model.cpp)
-add_gtest_unit(test_engine_soft_rain_grid_parser  test_soft_rain_grid_parser.cpp)
+if(OPENSWMM_BUILD_2D)
+    # parseSoftRainfallGridLine is defined in uncertainty/QualityUncertaintyHandler.cpp,
+    # which src/engine/CMakeLists.txt only compiles into OPENSWMM_2D_SOURCES --
+    # undefined-reference at link time with -DOPENSWMM_BUILD_2D=OFF otherwise.
+    add_gtest_unit(test_engine_soft_rain_grid_parser test_soft_rain_grid_parser.cpp)
+endif()
 add_gtest_unit(test_engine_spde_spatial_basis     test_spde_spatial_basis.cpp)
 target_sources(test_engine_spde_spatial_basis PRIVATE
     ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/SpdeSpatialBasis.cpp)
