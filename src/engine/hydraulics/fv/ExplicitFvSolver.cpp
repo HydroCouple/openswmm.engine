@@ -488,10 +488,11 @@ double ExplicitFvSolver::censusDt() const {
                 const double hg = state_->node_head[static_cast<std::size_t>(nd)] -
                                   mesh_->face_zb[uf];
                 if (hg > k::kDryDepth) {
-                    const double ag = k::areaOfDepth(g, hg);
+                    double ag, wg, rg, i1g;
+                    k::closureAll(g, hg, &ag, &wg, &rg, &i1g);
                     speed = std::max(speed,
                                      std::fabs(cell_u_[uo]) +
-                                         k::celerity(ag, k::widthOfDepth(g, hg)));
+                                         k::celerity(ag, wg));
                 }
             }
         }
@@ -876,8 +877,12 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // i1_raw stays in the CELL's own section — it is the cell's true
     // hydrostatic moment, and the difference from the reconstructed one is the
     // correction that puts the balance back (computeFaceFlux).
-    i1_raw = (h_raw > k::kDryDepth)
-                 ? k::i1OfDepth(*g, h_raw, k::areaOfDepth(*g, h_raw)) : 0.0;
+    if (h_raw > k::kDryDepth) {
+        double a_raw, w_raw, r_raw;
+        k::closureAll(*g, h_raw, &a_raw, &w_raw, &r_raw, &i1_raw);
+    } else {
+        i1_raw = 0.0;
+    }
 
     const double h_star = std::max(0.0, eta - zstar);
     if (h_star <= k::kDryDepth) {
@@ -887,11 +892,11 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // …while the reconstructed state is evaluated in the FACE's section, which
     // both sides share. Where they are the same section (every prismatic face)
     // this is the identical computation.
-    out.a  = k::areaOfDepth(*gf, h_star);
+    double w_star, r_star;
+    k::closureAll(*gf, h_star, &out.a, &w_star, &r_star, &out.i1);
     out.u  = u;
     out.q  = out.a * u;
-    out.c  = k::celerity(out.a, k::widthOfDepth(*gf, h_star));
-    out.i1 = k::i1OfDepth(*gf, h_star, out.a);
+    out.c  = k::celerity(out.a, w_star);
 }
 
 void ExplicitFvSolver::computeFluxes() {
@@ -1215,8 +1220,8 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
                     mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
                 const double hg = h_k - mesh_->face_zb[uf];
                 if (hg <= k::kDryDepth) continue;
-                const double ag = k::areaOfDepth(g, hg);
-                const double tg = k::widthOfDepth(g, hg);
+                double ag, tg, rg, i1g;
+                k::closureAll(g, hg, &ag, &tg, &rg, &i1g);
                 if (ag <= k::kDryArea || tg <= 0.0) continue;
                 resist += std::sqrt(k::kGravity * ag * tg);
             }
@@ -1289,8 +1294,8 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
                     mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
                 const double hg = h_k - mesh_->face_zb[uf];
                 if (hg <= k::kDryDepth) continue;
-                const double ag = k::areaOfDepth(g, hg);
-                const double tg = k::widthOfDepth(g, hg);
+                double ag, tg, rg, i1g;
+                k::closureAll(g, hg, &ag, &tg, &rg, &i1g);
                 if (ag <= k::kDryArea || tg <= 0.0) continue;
                 // β = −sign·√(gAT): the node on a face's LEFT exports on a
                 // positive flux, the node on its RIGHT imports, and raising the
@@ -1385,8 +1390,15 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
             const double eta_c = cell_eta_[uc];
             const double hp = std::max(0.0, eta_c - zp);
             const double hm = std::max(0.0, eta_c - zm);
-            const double i1p = (hp > 0.0) ? k::i1OfDepth(g, hp, k::areaOfDepth(g, hp)) : 0.0;
-            const double i1m = (hm > 0.0) ? k::i1OfDepth(g, hm, k::areaOfDepth(g, hm)) : 0.0;
+            double i1p = 0.0, i1m = 0.0;
+            if (hp > 0.0) {
+                double ap, wp, rp;
+                k::closureAll(g, hp, &ap, &wp, &rp, &i1p);
+            }
+            if (hm > 0.0) {
+                double am, wm, rm;
+                k::closureAll(g, hm, &am, &wm, &rm, &i1m);
+            }
             dQ += k::kGravity * (i1p - i1m);
         }
 
@@ -1643,8 +1655,8 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
                 mesh_->cell_geom[static_cast<std::size_t>(cell)])];
             const double hg = h - mesh_->face_zb[uf];
             if (hg <= k::kDryDepth) continue;
-            const double ag = k::areaOfDepth(g, hg);
-            const double tg = k::widthOfDepth(g, hg);
+            double ag, tg, rg, i1g;
+            k::closureAll(g, hg, &ag, &tg, &rg, &i1g);
             if (ag <= k::kDryArea || tg <= 0.0) continue;
             resist += std::sqrt(k::kGravity * ag * tg);
         }
@@ -2180,9 +2192,9 @@ double ExplicitFvSolver::cellStableDt(int c) const {
         const double hg = state_->node_head[static_cast<std::size_t>(nd)] -
                           mesh_->face_zb[uf];
         if (hg <= k::kDryDepth) continue;
-        speed = std::max(speed, std::fabs(cell_u_[uc]) +
-                                    k::celerity(k::areaOfDepth(g, hg),
-                                                k::widthOfDepth(g, hg)));
+        double ag, wg, rg, i1g;
+        k::closureAll(g, hg, &ag, &wg, &rg, &i1g);
+        speed = std::max(speed, std::fabs(cell_u_[uc]) + k::celerity(ag, wg));
     }
 
     return (speed > 1.0e-12) ? opts_.cfl * dx / speed : 1.0e30;
@@ -2612,8 +2624,15 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
             const double eta_c = cell_eta_[uc];
             const double hp = std::max(0.0, eta_c - zp);
             const double hm = std::max(0.0, eta_c - zm);
-            const double i1p = (hp > 0.0) ? k::i1OfDepth(g, hp, k::areaOfDepth(g, hp)) : 0.0;
-            const double i1m = (hm > 0.0) ? k::i1OfDepth(g, hm, k::areaOfDepth(g, hm)) : 0.0;
+            double i1p = 0.0, i1m = 0.0;
+            if (hp > 0.0) {
+                double ap, wp, rp;
+                k::closureAll(g, hp, &ap, &wp, &rp, &i1p);
+            }
+            if (hm > 0.0) {
+                double am, wm, rm;
+                k::closureAll(g, hm, &am, &wm, &rm, &i1m);
+            }
             dQ_src = k::kGravity * (i1p - i1m) * dt;
         }
 
