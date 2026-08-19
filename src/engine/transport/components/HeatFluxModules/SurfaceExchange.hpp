@@ -36,7 +36,7 @@
  * @par Sign convention
  *      `Je` and `Jc` are positive when heat LEAVES the water — evaporation
  *      cools. The governing equation (plan §1) carries them as
- *      `− (Je + Jc) / Y`, and `applySurfaceExchange` applies that sign, so a
+ *      `− (Je + Jc) / Y`, and `relaxT` applies that sign, so a
  *      caller never has to remember it.
  *
  * @par Which surfaces exchange, and why that question has a precedent
@@ -180,15 +180,22 @@ inline constexpr double kCuFtToCuM = 0.028316846592;
 inline constexpr double kMphToMs = 0.44704;
 
 /**
- * @brief Apply one step of surface exchange to every exchanging element.
+ * @brief This module's contribution to the net outward flux at `t_w` [W/m²].
  *
- * @details Called from `routeLegacyHeat` at the stage where the water-age
- *          mirror ages its cells — the source-term stage of plan §1's
- *          governing equation. Modifies `ctx.heat_state.node_temp` and
- *          `link_temp` in place. No-op unless HEAT_TRANSPORT is on AND the
- *          module is enabled in `[HEAT_FLUXES]`.
+ * @details Returns 0 unless HEAT_TRANSPORT is on AND `[HEAT_FLUXES]
+ *          SURFACE_EXCHANGE` is enabled, so a caller sums it
+ *          unconditionally and the toggle stays this module's business.
+ *
+ * @par Why this module no longer has a binding of its own (D-H5e)
+ *      It did, and so did RadiativeExchange, and each relaxed FULLY toward
+ *      its own equilibrium. Under forward Euler the two increments were
+ *      linear and added exactly; under relaxation they do NOT commute, so
+ *      with both modules on the pair overshot the true combined equilibrium
+ *      and the answer depended on module order — at large `k·dt` it landed
+ *      on whichever module ran last. Every flux family now sums into one
+ *      `J(T)` before a single relaxation, in `HeatFluxes.cpp`.
  */
-void applySurfaceExchange(SimulationContext& ctx, double dt);
+double surfaceFluxOut(const SimulationContext& ctx, double t_w) noexcept;
 
 }  // namespace openswmm::transport::heat
 

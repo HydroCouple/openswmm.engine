@@ -34,7 +34,7 @@
 #include "../../../hydraulics/Node.hpp"
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
-#include "../HeatFluxModules/RadiativeExchange.hpp"
+#include "../HeatFluxModules/HeatFluxes.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 #include "../../fvkernels/SpeciesTransportKernels.hpp"
 #include "../ReactionModule/ReactionArdBinding.hpp"
@@ -1147,31 +1147,21 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
 
     constexpr double kSqFtToSqM = 0.09290304;
     constexpr double kCuFtToCuM = 0.028316846592;
-    constexpr double kMphToMs   = 0.44704;
 
-    const double t_air   = (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
-    const double rh      = ctx.climate_state.humidity;
-    const double wind_ms = ctx.climate_state.wind_speed * kMphToMs;
-    const double rho     = ctx.options.water_density;
-    const double cp      = ctx.options.water_specific_heat;
-    const double a_wf    = ctx.options.wind_func_coeff_a;
-    const double b_wf    = ctx.options.wind_func_coeff_b;
-    const double p_ratio = ctx.options.pressure_ratio;
+    const double rho = ctx.options.water_density;
+    const double cp  = ctx.options.water_specific_heat;
 
-    /// Net flux OUT of the water, W/m2 — the two modules summed under one
-    /// sign convention (both return positive-out).
+    // The met forcing and wind-function coefficients that used to be
+    // extracted here moved inside the shared evaluators with D-H5e; this
+    // function no longer needs to know which parameters a flux family reads.
+
+    /// Net flux OUT of the water, W/m2. Delegates to the shared
+    /// composition (D-H5e) rather than re-summing the modules here: a
+    /// hand-rolled copy is how the LEGACY node/link path came to relax each
+    /// module separately, and a fifth flux family must not need editing in
+    /// four places.
     const auto flux_out = [&](double t_w) {
-        double j = 0.0;
-        if (ctx.heat_config.surface_exchange) {
-            const double je = heat::latentFlux(t_w, t_air, rh, wind_ms, a_wf,
-                                               b_wf, rho);
-            j += je + heat::sensibleFlux(
-                          je, heat::bowenRatio(t_w, t_air, rh, p_ratio));
-        }
-        if (ctx.heat_config.radiative_exchange)
-            j += heat::netRadiativeFluxOut(t_w, t_air, rh,
-                                           ctx.heat_config.radiative);
-        return j;
+        return heat::netFluxOut(ctx, t_w);
     };
 
     // ---- Cells ----------------------------------------------------------

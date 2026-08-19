@@ -16,7 +16,8 @@
 
 /**
  * @file test_heat_integrator.cpp
- * @brief D-H5d gates — the semi-implicit surface-balance step.
+ * @brief D-H5d/D-H5e gates — the semi-implicit surface-balance step and
+ *        the single-relaxation composition of the flux families.
  *
  * @details H5a's validation found the surface energy balance diverging to
  *          NaN. The step was forward Euler with no stability limit, and heat
@@ -33,7 +34,7 @@
  *
  *          Gate 2 is the one that would have caught the original defect.
  *
- * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6.2 D-H5d
+ * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6.2 D-H5d, §6.3 D-H5e
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  * @license  Apache-2.0
@@ -42,6 +43,15 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <fstream>
+#include <iterator>
+#include <string>
+
+#include <openswmm/engine/openswmm_engine.h>
+
+#include "core/SWMMEngine.hpp"
+#include "transport/components/HeatFluxModules/HeatFluxes.hpp"
+#include "transport/components/HeatFluxModules/RadiativeExchange.hpp"
 #include <initializer_list>
 
 #include "transport/components/HeatFluxModules/SurfaceExchange.hpp"
@@ -273,4 +283,251 @@ TEST(HeatIntegratorTest, AnElementAtEquilibriumDoesNotMove) {
         EXPECT_NEAR(se::relaxT(j0, j1, se::kProbeC, kFilmAreaM2, kFilmVolM3,
                                dt, kRho, kCp), 0.0, 1.0e-12)
             << "dt=" << dt << ": a zero flux produced a temperature change";
+}
+
+// ---------------------------------------------------------------------------
+// Gate 7 — D-H5e. Two flux families must compose into ONE relaxation.
+//          This is the gate that fails on the code D-H5e replaces.
+// ---------------------------------------------------------------------------
+TEST(HeatIntegratorTest, TwoFluxFamiliesRelaxToTheirCombinedEquilibrium) {
+    // Two equal-slope families with equilibria at 30 C and 10 C. Their SUM
+    // has slope 2s and equilibrium 20 C — the physically correct fixed
+    // point, and a number that is neither module's own.
+    constexpr double kS = 7.0, kT0 = 5.0;
+    constexpr double kEq1 = 30.0, kEq2 = 10.0, kEqBoth = 20.0;
+    const auto f1   = [](double t) { return kS * (t - kEq1); };
+    const auto f2   = [](double t) { return kS * (t - kEq2); };
+    const auto both = [&](double t) { return f1(t) + f2(t); };
+
+    // SETUP: the summed flux really does vanish at 20 C, or the gate is
+    // asserting against an equilibrium the fluxes do not have.
+    ASSERT_NEAR(both(kEqBoth), 0.0, 1.0e-12);
+
+    for (double dt : {1.0e-3, 0.1, 10.0}) {
+        // How the SPLIT bindings behaved: relax against one family, then
+        // relax the RESULT against the other. Each sub-step relaxes fully
+        // toward its own module's equilibrium.
+        double seq = kT0;
+        seq += se::relaxT(f1(seq), f1(seq + se::kProbeC), se::kProbeC,
+                          kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
+        seq += se::relaxT(f2(seq), f2(seq + se::kProbeC), se::kProbeC,
+                          kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
+
+        // How the merged binding behaves: sum first, relax once.
+        const double comb =
+            kT0 + se::relaxT(both(kT0), both(kT0 + se::kProbeC), se::kProbeC,
+                             kFilmAreaM2, kFilmVolM3, dt, kRho, kCp);
+
+        // The combined step can never pass the combined equilibrium. No
+        // reference value: 20 C is where the summed flux vanishes.
+        EXPECT_GE(comb, kT0 - 1.0e-9) << "dt=" << dt;
+        EXPECT_LE(comb, kEqBoth + 1.0e-9)
+            << "dt=" << dt << ": the merged step reached " << comb
+            << " C, past the combined equilibrium " << kEqBoth << " C";
+
+        // And at small k*dt the two agree, which is why this was invisible
+        // until D-H5d: under forward Euler the increments were LINEAR and
+        // added exactly, so splitting cost nothing.
+        if (dt <= 1.0e-3) {
+            EXPECT_NEAR(seq, comb, 1.0e-5)
+                << "dt=" << dt << ": the split and merged forms disagree "
+                   "even in the linear regime, which means the discrepancy "
+                   "is not the operator split";
+        }
+    }
+
+    // The failure the merge exists to prevent, stated as a number: at large
+    // k*dt the sequential form lands well short, dragged to the LAST
+    // module's equilibrium (measured 11.05 C against a true 19.95 C).
+    constexpr double kBigDt = 10.0;
+    double seq = kT0;
+    seq += se::relaxT(f1(seq), f1(seq + se::kProbeC), se::kProbeC,
+                      kFilmAreaM2, kFilmVolM3, kBigDt, kRho, kCp);
+    seq += se::relaxT(f2(seq), f2(seq + se::kProbeC), se::kProbeC,
+                      kFilmAreaM2, kFilmVolM3, kBigDt, kRho, kCp);
+    const double comb =
+        kT0 + se::relaxT(both(kT0), both(kT0 + se::kProbeC), se::kProbeC,
+                         kFilmAreaM2, kFilmVolM3, kBigDt, kRho, kCp);
+    ASSERT_GT(comb - seq, 5.0)
+        << "the split and merged forms differ by only " << (comb - seq)
+        << " C at k*dt ~ 5.7, so this configuration does not reach the "
+           "regime where operator order matters and the gate proves nothing";
+}
+
+// ---------------------------------------------------------------------------
+// Gate 8 — D-H5e AT THE BINDING. Gate 7 proves the arithmetic; this proves
+//          `applyHeatFluxes` uses it.
+//
+// The handoff predicted this gate could not be built, on the strength of
+// D-H5d's round finding that a 1D node cannot be driven to a large `k*dt`.
+// That finding was measured with RADIATIVE ALONE, where J' ~ 5.5 W/m2/C and
+// the depth required sits under the router's 1e-4 ft floor. Summing the
+// surface family in raises J' to ~46 (20 mph wind, 20% RH), so the depth
+// needed rises by the same factor: measured k*dt = 1.80 at 2e-4 ft, which is
+// twice the floor and entirely ordinary for a storage node.
+//
+// The assertion needs no reference value. A node whose depth never changes
+// and whose temperature has settled is at steady state, and at steady state
+// the SUMMED outward flux must vanish. Relaxing the two families separately
+// settles somewhere else entirely — each step drives fully to its own
+// family's equilibrium, so the pair parks where neither flux is zero:
+//
+//     k*dt   split      merged     (combined equilibrium -0.3942 C)
+//     0.18   -0.6176    -0.3939
+//     0.72   -1.3212    -0.3942
+//     1.80   -2.8384    -0.3942
+//
+// Expressed as the residual flux divided by its own slope, the split sits
+// 2.44 C from where the summed flux vanishes; the merged form sits at 0.
+// ---------------------------------------------------------------------------
+TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
+    {
+        std::ofstream f("_hi8.heat");
+        f << "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+          << "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\nRADIATIVE_EXCHANGE ON\n";
+    }
+    {
+        std::ofstream f("_hi8.inp");
+        f << "[TITLE]\nD-H5e composition gate deck\n\n[OPTIONS]\n"
+          << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT ON\n"
+          << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+          << "END_DATE 01/01/2026\nEND_TIME 00:10:00\n"
+          << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
+          // 20 mph wind and 20% humidity: the latent term carries most of
+          // J', and J' is what puts this deck in the regime the gate is
+          // about. Weakening either drops k*dt below 0.4 and the two
+          // compositions converge -- see the SETUP assertion below.
+          << "[TEMPERATURE]\nTIMESERIES air_ts\n"
+          << "WINDSPEED MONTHLY 20 20 20 20 20 20 20 20 20 20 20 20\n"
+          << "HUMIDITY 20 20 20 20 20 20 20 20 20 20 20 20\n\n"
+          << "[TIMESERIES]\nair_ts 01/01/2026 00:00 50.0\n"
+          << "air_ts 01/02/2026 00:00 50.0\n\n"
+          // A 2e-4 ft sheet over a million square feet: tiny thermal mass
+          // per unit of exchanging surface, which is what makes k*dt large.
+          << "[STORAGE]\nS1 10.0 12 0.0002 FUNCTIONAL 0 0 1000000\n\n"
+          << "[JUNCTIONS]\nJ1 9.0 10 0 0 0\n\n"
+          << "[OUTFALLS]\nOUT 8.0 FREE  NO\n\n"
+          << "[CONDUITS]\nC1 S1 J1 500 0.013 0 0 0\n"
+          << "C2 J1 OUT 500 0.013 0 0 0\n\n"
+          << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\nC2 CIRCULAR 3.0 0 0 0\n\n"
+          << "[PROCESS_COMPONENTS]\n"
+          << "org.hydrocouple.openswmm.heat config=\"_hi8.heat\"\n\n"
+          << "[REPORT]\nINPUT NO\n";
+    }
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_hi8.inp", "_hi8.rpt", "_hi8.out", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+    } while (elapsed > 0.0 && ++guard < 20000);
+    swmm_engine_end(e);
+
+    const auto& ctx =
+        static_cast<openswmm::SWMMEngine*>(e)->context();
+    ASSERT_TRUE(ctx.heat_config.surface_exchange);
+    ASSERT_TRUE(ctx.heat_config.radiative_exchange)
+        << "both families must be enabled or there is no composition to test";
+
+    // Find the storage node: the only one with a free surface.
+    int n = -1;
+    for (int i = 0; i < ctx.n_nodes(); ++i)
+        if (ctx.nodes.volume[static_cast<std::size_t>(i)] > 0.0 &&
+            ctx.nodes.depth[static_cast<std::size_t>(i)] > 0.0) { n = i; break; }
+    ASSERT_GE(n, 0) << "no node holds water — nothing exchanged";
+    const auto un = static_cast<std::size_t>(n);
+
+    const double t_w  = ctx.heat_state.node_temp[un];
+    const double j0   = se::netFluxOut(ctx, t_w);
+    const double j1   = se::netFluxOut(ctx, t_w + se::kProbeC);
+    const double jp   = (j1 - j0) / se::kProbeC;
+    ASSERT_GT(jp, 0.0);
+
+    // SETUP: the deck must actually be in the stiff regime. Below k*dt ~ 0.4
+    // the split and the merged forms agree and this gate proves nothing
+    // about either (lesson 56).
+    const double depth_m = ctx.nodes.depth[un] * 0.3048;
+    const double k = jp / (ctx.options.water_density *
+                           ctx.options.water_specific_heat * depth_m);
+    EXPECT_GT(k * 10.0, 0.4)
+        << "k*dt is only " << (k * 10.0) << " on this deck (J' = " << jp
+        << " W/m2/C, depth = " << ctx.nodes.depth[un] << " ft). Sequential "
+           "and summed relaxation agree in the linear regime, so the gate "
+           "would pass without observing anything.";
+
+    // THE ASSERTION. Residual flux over its own slope is the distance, in
+    // degrees, from where the summed flux vanishes.
+    const double implied_offset_c = std::fabs(j0) / jp;
+    EXPECT_LT(implied_offset_c, 0.05)
+        << "the node settled at " << t_w << " C, which is "
+        << implied_offset_c << " C away from where the SUMMED outward flux "
+           "is zero (residual " << j0 << " W/m2). A steady element must sit "
+           "at the equilibrium of every enabled family taken together. "
+           "Relaxing each family separately parks it at neither — measured "
+           "2.44 C away on this deck.";
+    swmm_engine_destroy(e);
+
+    // ---- And the other half of the contract: each evaluator must honour
+    //      its OWN toggle, because `netFluxOut` sums unconditionally. With
+    //      SURFACE_EXCHANGE off and RADIATIVE_EXCHANGE on, the node must
+    //      settle where the RADIATIVE flux alone vanishes.
+    //
+    //      Nothing else in the suite observes this. `applyHeatFluxes`
+    //      returns early when both toggles are off, so an all-off deck never
+    //      reaches the evaluators, and the only mixed-toggle deck elsewhere
+    //      (H3's pool) asserts a DIRECTION — sun warms, night cools — which
+    //      a spurious latent term does not reverse.
+    {
+        std::ofstream f("_hi8b.heat");
+        f << "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+          << "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE ON\n";
+    }
+    std::string deck;
+    {
+        std::ifstream in("_hi8.inp");
+        deck.assign(std::istreambuf_iterator<char>(in),
+                    std::istreambuf_iterator<char>());
+        const auto at = deck.find("_hi8.heat");
+        ASSERT_NE(at, std::string::npos);
+        deck.replace(at, std::string("_hi8.heat").size(), "_hi8b.heat");
+        std::ofstream out("_hi8b.inp");
+        out << deck;
+    }
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_NE(e2, nullptr);
+    ASSERT_EQ(swmm_engine_open(e2, "_hi8b.inp", "_hi8b.rpt", "_hi8b.out",
+                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e2, 1), SWMM_OK);
+    elapsed = 0.0;
+    guard = 0;
+    do {
+        if (swmm_engine_step(e2, &elapsed) != SWMM_OK) break;
+    } while (elapsed > 0.0 && ++guard < 20000);
+    swmm_engine_end(e2);
+
+    const auto& c2 = static_cast<openswmm::SWMMEngine*>(e2)->context();
+    ASSERT_FALSE(c2.heat_config.surface_exchange);
+    ASSERT_TRUE(c2.heat_config.radiative_exchange);
+    const double t2 = c2.heat_state.node_temp[un];
+    const double r0 = se::radiativeFluxOut(c2, t2);
+    const double r1 = se::radiativeFluxOut(c2, t2 + se::kProbeC);
+    const double rp = (r1 - r0) / se::kProbeC;
+    ASSERT_GT(rp, 0.0);
+    // SETUP: the two answers must be far apart, or the assertion cannot tell
+    // a leaking surface term from none.
+    EXPECT_GT(std::fabs(t2 - t_w), 1.0)
+        << "radiative-only settled at " << t2 << " C against " << t_w
+        << " C with both families — too close to discriminate";
+    EXPECT_LT(std::fabs(r0) / rp, 0.05)
+        << "with SURFACE_EXCHANGE off the node settled at " << t2
+        << " C, which is " << (std::fabs(r0) / rp) << " C from where the "
+           "RADIATIVE flux alone vanishes (residual " << r0 << " W/m2). A "
+           "disabled family is still contributing to netFluxOut.";
+    swmm_engine_destroy(e2);
 }
