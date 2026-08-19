@@ -1,0 +1,83 @@
+[TITLE]
+InpWriter round-trip fixture: dangling name references
+Exercises defects 6, 7 and 8 in the only state that reaches them: the referenced
+object does not exist, so the resolved index stays -1 while the parser's retained
+name is all the writer has. A strict open rejects this model; the GUI opens for
+editing with swmm_engine_set_lenient_open, which is exactly how a model in this
+state reaches Save. Writing the index alone emitted '*' for the gage (fatal
+ERROR 209 on reload) and the pump curve (a silent downgrade to IDEAL), and
+dropped the snowpack column entirely.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:00:30
+MIN_SLOPE            0
+
+[EVAPORATION]
+CONSTANT   0.0
+DRY_ONLY   NO
+
+[SUBCATCHMENTS]
+;; RGX and SPX are never defined: gage / snowpack indices stay -1.
+;;Name  RainGage  Outlet  Area  %Imperv  Width  %Slope  CurbLen  Snowpack
+S1      RGX       J1      2.0   25.0     400.0  1.0     0        SPX
+
+[SUBAREAS]
+;;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  %ZeroImp  RouteTo
+S1          0.01      0.10    0.05      0.05    25        OUTLET
+
+[INFILTRATION]
+;;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil
+S1          3.0      0.5      4.0    7        0
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       10.0  5.0       0          0         0
+J2       9.0   5.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       8.0   FREE  *          NO
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       Curve/Params
+ST1      9.5   10.0      0          FUNCTIONAL  1000  0  0
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+C1       J1        ST1     400.0   0.013      0         0
+C2       J2        O1      400.0   0.013      0         0
+
+[PUMPS]
+;; PCX is never defined: the curve index stays -1. '*' here is the legal IDEAL
+;; placeholder, so writing it loses the assignment without any diagnostic.
+;;Name  FromNode  ToNode  PumpCurve  Status  Startup  Shutoff
+P1       ST1       J2      PCX        ON      0        0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1       CIRCULAR  1.5    0      0      0      1
+C2       CIRCULAR  1.5    0      0      0      1
+
+[REPORT]
+INPUT       NO
+CONTROLS    NO
+SUBCATCHMENTS ALL
+NODES       ALL
+LINKS       ALL
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J1       0.0      0.0
+J2       500.0    0.0
+ST1      0.0      500.0
+O1       1000.0   0.0

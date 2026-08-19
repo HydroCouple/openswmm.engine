@@ -94,6 +94,7 @@ add_gtest_unit(test_engine_warning_error_parity test_warning_error_parity.cpp)
 add_gtest_unit(test_engine_outfall_stage_data test_outfall_stage_data.cpp)
 add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
 add_gtest_unit(test_engine_inp_writer_saveas_paths test_inp_writer_saveas_paths.cpp)
+add_gtest_unit(test_engine_inp_writer_roundtrip test_inp_writer_roundtrip.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
