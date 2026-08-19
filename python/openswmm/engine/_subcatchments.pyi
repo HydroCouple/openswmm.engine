@@ -171,6 +171,7 @@ class Subcatchments:
 class Aquifers:
     """Name-keyed collection of C{[AQUIFERS]} entries (C{solver.aquifers})."""
 
+    def rename(self, key: _Key, new_id: str) -> None: ...
     def get_param(self, aquifer: _Key, param: Union[AquiferParam, int]) -> float: ...
     def set_param(
         self, aquifer: _Key, param: Union[AquiferParam, int], value: float
@@ -182,6 +183,7 @@ class Aquifers:
 class Snowpacks:
     """Name-keyed collection of C{[SNOWPACKS]} entries (C{solver.snowpacks})."""
 
+    def rename(self, key: _Key, new_id: str) -> None: ...
     def set_plowable(
         self, snowpack: _Key, *,
         cmin: float, cmax: float, tbase: float, fwfrac: float,

@@ -81,7 +81,7 @@ void write_deck(const char* path, const std::string& pc_lines,
                 bool water_age = true, bool pollutants = false,
                 bool stagnant = false,
                 const std::string& extra_options = "",
-                int routing_step = 5) {
+                int routing_step = 5, bool dry = false) {
     std::ofstream f(path);
     f << "[TITLE]\nA1a water age gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -108,6 +108,15 @@ void write_deck(const char* path, const std::string& pc_lines,
           << "J2 10.0 10 1.5 0 0\nJ3 10.0 10 1.5 0 0\n"
           << "J4 10.0 10 1.5 0 0\n\n"
           << "[OUTFALLS]\nOUT 10.0 FIXED 11.5 NO\n\n";
+    } else if (dry) {
+        // Bone dry: InitDepth 0 everywhere, FREE outfall, and no inflow
+        // below. The age STATE still advances here (cells are seeded and
+        // aged regardless of wetness), which is precisely what makes this
+        // deck the observer for the state/report separation.
+        f << "[JUNCTIONS]\n"
+          << "J0 10.0 10 0 0 0\nJ1 9.4  10 0 0 0\nJ2 8.8  10 0 0 0\n"
+          << "J3 8.2  10 0 0 0\nJ4 7.6  10 0 0 0\n\n"
+          << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n";
     } else {
         f << "[JUNCTIONS]\n"
           << "J0 10.0 10 1.5 0 0\nJ1 9.4  10 1.5 0 0\nJ2 8.8  10 1.5 0 0\n"
@@ -122,7 +131,7 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "C1 CIRCULAR 2.0 0 0 0\nC2 CIRCULAR 2.0 0 0 0\n"
       << "C3 CIRCULAR 2.0 0 0 0\nC4 CIRCULAR 2.0 0 0 0\n"
       << "C5 CIRCULAR 2.0 0 0 0\n\n";
-    if (!stagnant)
+    if (!stagnant && !dry)
         f << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n\n";
     if (pollutants)
         f << "[POLLUTANTS]\n"
@@ -859,6 +868,68 @@ TEST(WaterAgeTest, SaveKeepsWaterAgeAndQualitySolver) {
     // which is what a half-written pair produces.
     EXPECT_FALSE(has_needle(as_cpp_engine(e2).context().warnings,
                             "arrives with plan phase A1b"));
+    swmm_engine_destroy(e2);
+}
+
+// ---------------------------------------------------------------------------
+// The state/report separation, observed at last.
+//
+// `584d1065` masks the REPORTED age of a dry element to 0 while leaving the
+// aged value in `water_age_state`. Its validation found that masking the
+// STATE instead passes the entire suite — 140/141, identical to clean — so
+// the separation was a design claim with no observer.
+//
+// Only ONE consequence of the separation is real (the "refilling pipe would
+// jump" half of the original rationale does not survive: the stale state
+// occupies 0.0107 ft³ against 1263 ft³ arriving, ~1e-5 influence). That
+// consequence is HOTSTART FIDELITY: a save taken while an element is dry
+// must carry the aged value forward, because the restart may refill it.
+//
+// So: run a bone-dry deck, save, and assert the SAVED state is non-zero and
+// round-trips. Masking the state instead of the report zeroes the saved
+// value and fails here.
+// ---------------------------------------------------------------------------
+TEST(WaterAgeTest, DryElementHotstartCarriesTheAgedState) {
+    write_file("_a2_dry.age",
+               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 6.0\n");
+    write_deck("_a2_dry.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_a2_dry.age\"",
+               /*water_age=*/true, /*pollutants=*/false, /*stagnant=*/false,
+               /*extra_options=*/"", /*routing_step=*/5, /*dry=*/true);
+
+    const auto saved = run_and_save("_a2_dry.inp", "_a2_dry.bin");
+    ASSERT_TRUE(saved.ok);
+    ASSERT_FALSE(saved.link_age.empty());
+
+    // The discriminator. INITIAL_STATE 6 h = 21600 s, plus an hour of
+    // aging: the STATE must hold ~25200 s even though every element is dry
+    // and the .out column reports 0. If the state were masked instead of
+    // the report, this reads 0 and the gate fails — which is the whole
+    // point of the gate.
+    EXPECT_GT(saved.link_age[kC5], 21600.0)
+        << "a dry link's SAVED age is " << saved.link_age[kC5]
+        << " s — the aged state was not carried, so a restart would lose "
+           "it. (The .out column reporting 0 for this element is correct "
+           "and separate.)";
+
+    // And it must survive the round trip, like any other age (A2a).
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_NE(e2, nullptr);
+    ASSERT_EQ(swmm_engine_open(e2, "_a2_dry.inp", "_a2_dry2.rpt",
+                               "_a2_dry2.out", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
+    SWMM_HotStart hs = nullptr;
+    ASSERT_EQ(swmm_hotstart_open("_a2_dry.bin", &hs), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_apply(e2, hs), SWMM_OK);
+    swmm_hotstart_close(hs);
+    {
+        const auto& ws = as_cpp_engine(e2).context().water_age_state;
+        ASSERT_EQ(ws.link_age.size(), saved.link_age.size());
+        for (std::size_t i = 0; i < saved.link_age.size(); ++i)
+            EXPECT_EQ(ws.link_age[i], saved.link_age[i])
+                << "dry link " << i << " age did not round-trip";
+    }
     swmm_engine_destroy(e2);
 }
 

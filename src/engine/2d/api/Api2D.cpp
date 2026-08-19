@@ -44,6 +44,25 @@
     if ((idx) < 0 || (idx) >= router2d.mesh().n_vertices()) \
         return SWMM_ERR_BADINDEX
 
+namespace {
+
+/// Report a coupling's node index the same way whether the coupling was
+/// authored or set through the API.
+///
+/// The API setters resolve the node name eagerly, but a coupling parsed from
+/// `[2D_VERTEX_NODE_MAP]` / `[2D_TRIANGLE_NODE_MAP]` carries only the NAME
+/// until SurfaceRouter2D::initialize() resolves it — section order means the
+/// node table may not exist yet at parse time. Readers therefore fall back to
+/// a name lookup so both paths agree in the OPENED state; the stored index is
+/// left untouched, and -1 still means genuinely unresolvable.
+int coupledNodeIndex(openswmm::SWMMEngine* eng, int stored,
+                     const std::string& node_name) {
+    if (stored >= 0 || node_name.empty()) return stored;
+    return eng->context().node_names.find(node_name);
+}
+
+}  // namespace
+
 extern "C" {
 
 // ============================================================================
@@ -287,13 +306,14 @@ int swmm_2d_triangle_get_neighbours(SWMM_Engine engine, int idx,
 
 int swmm_2d_vertex_coupling_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     if (!count) return SWMM_ERR_BADPARAM;
 
     int n = 0;
     auto& m = router2d.mesh();
     for (int i = 0; i < m.n_vertices(); ++i) {
-        if (m.vert_coupled_node[i] >= 0) ++n;
+        if (coupledNodeIndex(eng, m.vert_coupled_node[i],
+                             m.vert_coupled_node_name[i]) >= 0) ++n;
     }
     *count = n;
     return SWMM_OK;
@@ -301,13 +321,14 @@ int swmm_2d_vertex_coupling_count(SWMM_Engine engine, int* count) {
 
 int swmm_2d_triangle_coupling_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     if (!count) return SWMM_ERR_BADPARAM;
 
     int n = 0;
     auto& m = router2d.mesh();
     for (int i = 0; i < m.n_triangles(); ++i) {
-        if (m.tri_coupled_node[i] >= 0) ++n;
+        if (coupledNodeIndex(eng, m.tri_coupled_node[i],
+                             m.tri_coupled_node_name[i]) >= 0) ++n;
     }
     *count = n;
     return SWMM_OK;
@@ -316,22 +337,26 @@ int swmm_2d_triangle_coupling_count(SWMM_Engine engine, int* count) {
 int swmm_2d_vertex_get_coupled_node(SWMM_Engine engine, int vertex_idx,
                                       int* node_idx) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_VERT_IDX(vertex_idx, router2d);
     if (!node_idx) return SWMM_ERR_BADPARAM;
 
-    *node_idx = router2d.mesh().vert_coupled_node[vertex_idx];
+    const auto& m = router2d.mesh();
+    *node_idx = coupledNodeIndex(eng, m.vert_coupled_node[vertex_idx],
+                                 m.vert_coupled_node_name[vertex_idx]);
     return SWMM_OK;
 }
 
 int swmm_2d_triangle_get_coupled_node(SWMM_Engine engine, int tri_idx,
                                         int* node_idx) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (!node_idx) return SWMM_ERR_BADPARAM;
 
-    *node_idx = router2d.mesh().tri_coupled_node[tri_idx];
+    const auto& m = router2d.mesh();
+    *node_idx = coupledNodeIndex(eng, m.tri_coupled_node[tri_idx],
+                                 m.tri_coupled_node_name[tri_idx]);
     return SWMM_OK;
 }
 
@@ -420,7 +445,7 @@ int swmm_2d_get_triangle_coupling_row(SWMM_Engine engine, int row_idx,
 
     const auto& r = rows[static_cast<std::size_t>(row_idx)];
     *tri_idx  = r.tri;
-    *node_idx = r.node;
+    *node_idx = coupledNodeIndex(eng, r.node, r.node_name);
     *cd       = r.cd;
     *area     = r.area;
     return SWMM_OK;
