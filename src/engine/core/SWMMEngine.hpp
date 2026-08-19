@@ -218,6 +218,11 @@ public:
     SimulationContext&       context()       noexcept { return ctx_; }
     const SimulationContext& context() const noexcept { return ctx_; }
 
+    /// A4: LID solver access. The per-layer age block is keyed on a FLAT unit
+    /// index while the units themselves live in per-type groups, so anything
+    /// reading that block needs the manager to resolve the two.
+    const lid::LIDSolver& lid() const noexcept { return lid_; }
+
     /// Groundwater solver access (for C API state injection).
     groundwater::GWSolver&       gwSolver()       noexcept { return groundwater_; }
     const groundwater::GWSolver& gwSolver() const noexcept { return groundwater_; }

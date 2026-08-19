@@ -555,3 +555,102 @@ TEST(WaterAgeWatershedTest, SubcatchmentAgeReachesTheOutByName) {
            "source age and a computed shed age of " << shed_h
         << " h — non-zero, but not the age.";
 }
+
+// ---------------------------------------------------------------------------
+// Gate 8 — every subcatchment age stays at or above the youngest thing
+// entering the model, on a deck whose run-on comes from a LID underdrain and
+// a returning outfall.
+//
+// This gate exists because of a defect it would have caught. `runon_inflow`
+// has THREE contributors — the subcatchment cascade, LID underdrain return
+// (`lid_drain_runon_cfs`) and outfall return (`outfall_runon_vol`) — and A3
+// filled the run-on age accumulator from the cascade alone, then divided it
+// by all three. Every A3 deck had only a cascade, so the arithmetic was
+// exercised in the one configuration where its numerator was complete
+// (lesson 59, at the level of a whole contributor rather than a branch).
+//
+// The signature is what makes this checkable without a reference value:
+// nothing in the model is younger than the RAINFALL source age, so an
+// arriving age below it is IMPOSSIBLE, not merely inaccurate. Measured on
+// the defect: 3.834 h of shed water under a 4 h rain, with subarea ages of
+// 3.644 / 3.653 / 3.883 h. A missing contributor announces itself.
+// ---------------------------------------------------------------------------
+TEST(WaterAgeWatershedTest, RunonFromEveryContributorKeepsAgesAboveTheSource) {
+    constexpr double kRainH = 4.0;
+    write_file("_a3l.age", age_cfg(kRainH));
+    {
+        // S1 drains to J1 and hosts a bioretention cell whose underdrain
+        // returns to S1 as run-on; OUT routes its discharge back to S1 too.
+        // LID layer parameters are in FEET and FEET/SECOND — see the warning
+        // in test_water_age_lid.cpp: the engine does not unit-convert them.
+        std::ofstream f("_a3l.inp");
+        f << "[TITLE]\nA3 run-on contributors deck\n\n[OPTIONS]\n"
+          << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nWATER_AGE ON\n"
+          << "INFILTRATION HORTON\n"
+          << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+          << "END_DATE 01/01/2026\nEND_TIME 03:00:00\n"
+          << "WET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
+          << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
+          << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
+          << "[TIMESERIES]\n";
+        for (int m = 0; m <= 185; m += 5) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf),
+                          "rain_ts 01/01/2026 %02d:%02d 2.0\n", m / 60, m % 60);
+            f << buf;
+        }
+        f << "\n[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
+          << "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
+          << "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+          << "[LID_CONTROLS]\n"
+          << "BC1 BC\n"
+          << "BC1 SURFACE  0.05   0.0  0.1  1.0  5\n"
+          << "BC1 SOIL     0.25   0.5  0.2  0.1  2.0e-5 10.0 0.3\n"
+          << "BC1 STORAGE  1.0    0.75 0.0  0\n"
+          << "BC1 DRAIN    1.0e-3 0.5  0    0\n\n"
+          << "[LID_USAGE]\nS1 BC1 1 43560 500 50 100 0\n\n"
+          << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
+          // The trailing S1 is the RouteTo column: this outfall's discharge
+          // re-enters the runoff system as run-on.
+          << "[OUTFALLS]\nOUT 9.0 FREE  NO  S1\n\n"
+          << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
+          << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
+          << "[PROCESS_COMPONENTS]\n"
+          << "org.hydrocouple.openswmm.waterage config=\"_a3l.age\"\n\n"
+          << "[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = run_and_hold("_a3l.inp", "_a3l.rpt", "_a3l.out");
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& ws  = ctx.water_age_state;
+
+    // SETUP: both extra contributors must actually be returning water, or
+    // this is just the cascade deck again under another name.
+    ASSERT_GE(ctx.n_subcatches(), 1);
+    ASSERT_GT(ctx.subcatches.runon_inflow[0], 0.0)
+        << "no run-on reached S1 at the final step — neither the underdrain "
+           "nor the outfall returned anything, so the arithmetic this gate "
+           "guards was never exercised";
+    ASSERT_TRUE(ctx.lid_layer_state.active())
+        << "no LID unit was built, so the underdrain contributor is absent";
+    ASSERT_EQ(ctx.node_subtypes.outfalls.route_to[0], 0)
+        << "the outfall does not route back to S1 — the RouteTo column did "
+           "not parse, so the outfall contributor is absent";
+
+    const double floor_s = kRainH * 3600.0;
+    for (std::size_t i = 0; i < ws.subarea_age.size(); ++i) {
+        if (ws.subarea_vol_prev[i] <= 0.0) continue;  // holds no water
+        EXPECT_GE(ws.subarea_age[i], floor_s * 0.999)
+            << "subarea " << i << " holds water aged " << (ws.subarea_age[i]
+               / 3600.0) << " h, younger than the " << kRainH
+            << " h RAINFALL source — and nothing in this model is younger "
+               "than that. An age below the floor means run-on volume is "
+               "being divided into an age accumulator that some contributor "
+               "never wrote to.";
+    }
+    ASSERT_FALSE(ws.subcatch_runoff_age.empty());
+    EXPECT_GE(ws.subcatch_runoff_age[0], floor_s * 0.999)
+        << "S1 sheds water at " << (ws.subcatch_runoff_age[0] / 3600.0)
+        << " h against a " << kRainH << " h floor.";
+    swmm_engine_destroy(e);
+}
