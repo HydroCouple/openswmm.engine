@@ -1144,6 +1144,9 @@ cdef class _NamedObjects:
     cdef int _add(self, bytes b) except -1:
         raise NotImplementedError
 
+    cdef int _rename(self, int idx, bytes b) except -1:
+        raise NotImplementedError
+
     def __len__(self) -> int:
         return self._count()
 
@@ -1192,6 +1195,17 @@ cdef class _NamedObjects:
         self._solver._bump_generation()
         return self._count() - 1
 
+    def rename(self, key, str new_id) -> None:
+        """Rename an object, updating stored references to it.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        self._rename(idx, b)
+        self._solver._bump_generation()
+
 
 cdef class Aquifers(_NamedObjects):
     """C{solver.aquifers} — name-keyed collection of C{[AQUIFERS]} entries."""
@@ -1207,6 +1221,10 @@ cdef class Aquifers(_NamedObjects):
 
     cdef int _add(self, bytes b) except -1:
         _check(swmm_aquifer_add(_h(self._solver), b))
+        return 0
+
+    cdef int _rename(self, int idx, bytes b) except -1:
+        _check(swmm_aquifer_rename(_h(self._solver), idx, b))
         return 0
 
     def get_param(self, aquifer, param) -> float:
@@ -1283,6 +1301,10 @@ cdef class Snowpacks(_NamedObjects):
 
     cdef int _add(self, bytes b) except -1:
         _check(swmm_snowpack_add(_h(self._solver), b))
+        return 0
+
+    cdef int _rename(self, int idx, bytes b) except -1:
+        _check(swmm_snowpack_rename(_h(self._solver), idx, b))
         return 0
 
     # ---- Surface parameters (pre-start-only) -----------------------

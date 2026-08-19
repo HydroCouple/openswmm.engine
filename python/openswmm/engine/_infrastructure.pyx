@@ -368,6 +368,18 @@ class Streets:
                 return False
         return 0 <= int(key) < len(self)
 
+    def rename(self, key, str new_id) -> None:
+        """Rename a street cross-section, updating stored references.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_street_rename(h, idx, b))
+        self._solver._bump_generation()
+
 
 # ---- Inlets ---------------------------------------------------------
 
@@ -474,6 +486,18 @@ class Inlets:
                 return False
         return 0 <= int(key) < len(self)
 
+    def rename(self, key, str new_id) -> None:
+        """Rename an inlet design, updating stored references.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_inlet_rename(h, idx, b))
+        self._solver._bump_generation()
+
 
 # ---- LID controls + usage ------------------------------------------
 
@@ -541,6 +565,18 @@ class LIDs:
             except KeyError:
                 return False
         return 0 <= int(key) < len(self)
+
+    def rename(self, key, str new_id) -> None:
+        """Rename an LID control, updating stored ``[LID_USAGE]`` references.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_lid_rename(h, idx, b))
+        self._solver._bump_generation()
 
     def set_surface(self, int idx, *,
                     double storage, double roughness, double slope) -> None:
