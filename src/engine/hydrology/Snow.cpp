@@ -28,6 +28,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include <cmath>
+#include <vector>
 #include <algorithm>
 
 namespace openswmm {
@@ -198,11 +199,18 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
     // Packs thinner than this are melted instantly (matching legacy).
     // -----------------------------------------------------------------------
     constexpr double MIN_PACK_FT = 0.001 / 12.0;
+    // S3: held aside rather than written into `imelt`. Steps 4 and 5 ASSIGN
+    // `imelt` unconditionally, so the old `imelt +=` here was overwritten,
+    // and step 5 then zeroed it because `wsnow` is 0 by that point — the
+    // water of an instantly-melted thin pack was silently discarded. It is
+    // added back after the routing loop, where nothing reassigns it.
+    std::vector<double> instant_melt(static_cast<std::size_t>(total), 0.0);
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double ws = soa_.wsnow[ui];
         if (ws > 0.0 && ws <= MIN_PACK_FT) {
-            soa_.imelt[ui]  += (ws + soa_.fw[ui]) / dt;
+            instant_melt[ui] = (ws + soa_.fw[ui]) / dt;
+            soa_.imelt[ui]   = 0.0;
             soa_.wsnow[ui]   = 0.0;
             soa_.fw[ui]      = 0.0;
             soa_.coldc[ui]   = 0.0;
@@ -304,32 +312,58 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
     }
 
     // -----------------------------------------------------------------------
-    // Step 6: Free water routing — excess drains as output melt.
+    // Step 6: Route melt through the free-water store, and update SWE.
+    //
+    // S3 — this is legacy `routeSnowmelt` (snow.c) in its own order, and the
+    // order is the whole point. The previous form split this across two
+    // loops and diverged three ways:
+    //
+    //   (A) SWE was reduced by the DRAINED EXCESS, not by the melt, because
+    //       step 6 overwrote `imelt` with the excess before step 7 read it.
+    //       Snow that melted but stayed within the free-water capacity was
+    //       therefore counted TWICE — still snow, and also free water — and
+    //       a pack whose melt never exceeded its capacity never depleted.
+    //   (B) Rain falling on the snow-COVERED fraction was dropped entirely.
+    //       It is excluded from what reaches the ground (`snow_net` carries
+    //       `rain·(1 − asc)`), and it was never added to the pack either, so
+    //       it left the water balance altogether.
+    //   (C) The free-water capacity was taken from the PRE-melt SWE.
+    //
+    // All three were unreachable until `274b6506` gave `setMeltCoeffs` its
+    // caller: with `dhm` at zero there was no degree-day melt to mis-account.
     // -----------------------------------------------------------------------
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (soa_.wsnow[ui] <= 0.0) continue;
 
-        double fw_cap = soa_.fwfrac[ui] * soa_.wsnow[ui];
-        soa_.fw[ui]  += soa_.imelt[ui] * dt;
+        // (A) SWE falls by the MELT, before any free-water bookkeeping.
+        double vmelt = std::min(soa_.imelt[ui] * dt, soa_.wsnow[ui]);
+        soa_.wsnow[ui] -= vmelt;
 
-        if (soa_.fw[ui] > fw_cap) {
-            double excess   = soa_.fw[ui] - fw_cap;
-            soa_.fw[ui]     = fw_cap;
-            soa_.imelt[ui]  = excess / dt;
-        } else {
-            soa_.imelt[ui]  = 0.0;
-        }
+        // (B) The melt AND the rain that fell on the covered fraction both
+        //     enter the free-water store.
+        const double rain_on_snow =
+            rainfall[static_cast<std::size_t>(i / N_SUBAREAS)] * dt *
+            soa_.asc[ui];
+        soa_.fw[ui] += vmelt + rain_on_snow;
+
+        // (C) Capacity is measured against the SWE that is left.
+        double excess = soa_.fw[ui] - soa_.fwfrac[ui] * soa_.wsnow[ui];
+        excess        = std::max(excess, 0.0);
+        soa_.fw[ui]  -= excess;
+        soa_.imelt[ui] = excess / dt;
     }
 
     // -----------------------------------------------------------------------
-    // Step 7: Update SWE.
+    // Step 7: Non-negativity, and the instant-melt water added back.
     // -----------------------------------------------------------------------
     for (int i = 0; i < total; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        soa_.wsnow[ui] -= soa_.imelt[ui] * dt;
-        soa_.wsnow[ui]  = std::max(soa_.wsnow[ui], 0.0);
-        soa_.fw[ui]     = std::min(soa_.fw[ui], soa_.wsnow[ui]);
+        soa_.wsnow[ui] = std::max(soa_.wsnow[ui], 0.0);
+        soa_.fw[ui]    = std::max(soa_.fw[ui], 0.0);
+        // Step 0's water. Nothing below reassigns `imelt`, which is exactly
+        // what the previous placement got wrong.
+        soa_.imelt[ui] += instant_melt[ui];
     }
 }
 

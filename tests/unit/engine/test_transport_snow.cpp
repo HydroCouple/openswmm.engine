@@ -95,6 +95,11 @@ struct Opts {
     double air_f     = 50.0;   ///< above tbase, so the pack melts
     double sd0       = 6.0;    ///< initial pack depth, deck units
     double fwfrac    = 0.10;   ///< free-water capacity, fraction of the pack
+    /// A RIPE pack starts with its free-water store full, so melt leaves
+    /// from the first step. Set false for a pack with capacity to SPARE —
+    /// which after S3 is the only way a pack can absorb rain rather than
+    /// transmit it, because a full store passes every drop straight through.
+    bool   ripe      = true;
     double rain_h    = 0.0;    ///< arriving water is AGE ZERO
     double init_h    = 0.0;
     double rain_c    = 0.0;    ///< arriving water is 0 °C
@@ -176,7 +181,7 @@ void write_files(const Opts& o) {
         // steadily and releases NOTHING, `snow_net_*` stay at 0.0, and every
         // gate below is unreachable. A ripe pack is also the physical state
         // this deck describes — one that is actively melting.
-        const double fw0 = o.fwfrac * o.sd0;
+        const double fw0 = o.ripe ? o.fwfrac * o.sd0 : 0.0;
         //          Name SURFACE     cmin cmax tbase fwfrac sd0  fw0 snn0
         f << "[SNOWPACKS]\n"
           << "SP1 PLOWABLE   0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0
@@ -497,6 +502,13 @@ TEST(TransportSnowTest, APackAbsorbingRainPublishesAGenuineZero) {
     o.water_age = true;
     o.air_f = 20.0;      // below tbase: nothing melts
     o.rain_inhr = 0.5;   // but it IS raining, so the gage rate is not zero
+    // NOT ripe. S3 routes rain that falls on the covered fraction into the
+    // free-water store, and a store already at capacity passes every drop
+    // straight back out as `imelt` — the pack transmits rather than absorbs,
+    // and `snow_net` is then the whole gage rate rather than zero. That is
+    // correct physics for a ripe pack, and it is not what this gate is
+    // about. An unripe pack at 20 F is also the physical state here.
+    o.ripe = false;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
@@ -737,6 +749,242 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
         EXPECT_LE(f, 1.0) << "subarea " << k
             << ": more water melted than arrived, which is what a mismatched "
                "pair of area blends produces";
+    }
+    swmm_engine_destroy(e);
+}
+
+// ===========================================================================
+// S3 — the snowpack water balance. Four divergences from legacy
+// `routeSnowmelt`, all of them unreachable until `274b6506` gave
+// `setMeltCoeffs` its caller.
+//
+// Every gate below is a CONSERVATION statement, so none needs a reference
+// value. That matters more here than usual: the correct magnitudes depend on
+// melt coefficients, cover and timestep, and a gate pinned to one deck's
+// numbers would rot the moment any of them changed.
+// ===========================================================================
+
+namespace {
+
+/// Total water the pack holds on one snow surface, ft: snow plus the liquid
+/// held in its pores. Both stores, because the divergence S3 fixes was
+/// precisely water moving between them without being debited from the first.
+double packWater(const openswmm::snow::SnowSoA& s, std::size_t idx) {
+    return s.wsnow[idx] + s.fw[idx];
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Gate 12 — A SLOWLY MELTING PACK DEPLETES. The gate that fails on the
+//           pre-S3 form.
+//
+//           SWE used to be reduced by the DRAINED EXCESS rather than by the
+//           melt, so snow that melted but stayed within the free-water
+//           capacity was counted twice — still snow, and also free water.
+//           A pack melting slower than its capacity never lost any SWE at
+//           all.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, ASlowlyMeltingPackLosesSnowWaterEquivalent) {
+    Opts o{};
+    o.water_age = true;
+    o.fwfrac = 0.90;      // a large store: melt stays inside it for a long
+    o.air_f  = 40.0;      // time, which is the regime the defect lived in
+    o.end_min = 60;
+    // ...and the store must have ROOM. A ripe pack starts at capacity, so
+    // every drop of melt drains the instant it appears and "SWE minus the
+    // melt" and "SWE minus the drained excess" are the SAME NUMBER — the
+    // defect is arithmetically invisible. Measured: with the shared writer's
+    // ripe default this gate passes with F2 fully restored.
+    o.ripe = false;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    ASSERT_GE(ctx.n_subcatches(), 1);
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack on this deck";
+
+    const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
+    const double sd0_ft = o.sd0 / 12.0;
+    // Everything the pack was ever given: the SWE *and* the free water it
+    // starts ripe with. Comparing against the SWE alone reads a 0.90
+    // capacity as mass creation.
+    const double given = sd0_ft + (o.ripe ? o.fwfrac * sd0_ft : 0.0);
+
+    // SETUP: the pack must have been melting. If nothing melted, "it did not
+    // deplete" proves nothing (lesson 96 — assert the whole predicate).
+    ASSERT_LT(packWater(s, perv), given + 1.0e-9)
+        << "the pack holds MORE water than it started with and nothing was "
+           "added — that is the mass-creation signature, in its purest form";
+
+    EXPECT_LT(s.wsnow[perv], sd0_ft - 1.0e-9)
+        << "SWE is still " << s.wsnow[perv] << " ft against an initial "
+        << sd0_ft << " ft after an hour of melt. A pack melting slower than "
+           "its free-water capacity is not losing snow: SWE is being reduced "
+           "by the drained excess instead of by the melt, so the melted water "
+           "is counted as snow AND as free water";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 13 — RAIN ON A COVERED PACK IS NOT LOST. Under full cover no rain
+//           reaches the ground (`snow_net` carries `rain·(1 − asc)`), so if
+//           it also never enters the pack it has left the model.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, RainFallingOnACoveredPackEntersTheFreeWaterStore) {
+    Opts o{};
+    o.water_age = true;
+    o.rain_inhr = 0.20;    // well above the rain-on-snow threshold
+    // BELOW tbase, so the pack is not melting. At 40 F the free-water store
+    // fills with MELTWATER whether or not the rain reaches it, and `fw > 0`
+    // below says nothing about the rain — measured: this gate passes with F3
+    // fully restored. Cold content absorbs the rain-on-snow term, so the
+    // only thing that can put water in the store is the rain itself.
+    o.air_f     = 20.0;
+    o.fwfrac    = 0.90;    // capacity large enough to HOLD the rain, so this
+    o.end_min   = 30;      // gate observes storage rather than drainage
+    // Empty to start with, or `fw > 0` below is satisfied by the pack's
+    // INITIAL free water and says nothing about the rain. Measured: with the
+    // ripe default this gate passes with F3 fully restored.
+    o.ripe      = false;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0);
+
+    const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
+
+    // SETUP: full cover, so every drop landed on snow and none of it is in
+    // `snow_net`. Without this the gate cannot tell "entered the pack" from
+    // "fell on bare ground".
+    ASSERT_NEAR(s.asc[perv], 1.0, 1.0e-9)
+        << "areal cover is " << s.asc[perv] << ", not 1 — some rain reached "
+           "the ground directly and this gate cannot attribute the water";
+    // SETUP: and nothing melted, or the store fills from the snow instead.
+    ASSERT_NEAR(s.wsnow[perv], o.sd0 / 12.0, 1.0e-9)
+        << "SWE moved from " << (o.sd0 / 12.0) << " to " << s.wsnow[perv]
+        << " ft, so the pack IS melting and the free water below could have "
+           "come from the snow rather than from the rain";
+
+    EXPECT_GT(s.fw[perv], 0.0)
+        << "the free-water store is empty after 30 minutes of rain onto a "
+           "fully-covered pack. That rain is excluded from snow_net by "
+           "construction, so if it is not here it is nowhere";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 14 — AN INSTANTLY-MELTED THIN PACK DELIVERS ITS WATER. Step 0 melts
+//           packs under 0.001 in outright; steps 4 and 5 used to overwrite
+//           the `imelt` it wrote, discarding the water.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, AnInstantlyMeltedThinPackDeliversItsWater) {
+    Opts o{};
+    o.water_age = true;
+    o.sd0    = 0.0005;    // BELOW the 0.001-inch instant-melt threshold
+    o.air_f  = 40.0;
+    o.end_min = 15;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack was built";
+
+    const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
+
+    // SETUP: the pack must be GONE — that is what "instantly melted" means,
+    // and it is what distinguishes this branch from ordinary melt.
+    ASSERT_NEAR(packWater(s, perv), 0.0, 1.0e-12)
+        << "the pack still holds " << packWater(s, perv)
+        << " ft, so the sub-threshold branch never fired and this gate is "
+           "about a pack that melted normally";
+
+    EXPECT_GT(ctx.subcatches.stat_runoff_vol[0], 0.0)
+        << "a pack was melted instantly and the subcatchment produced no "
+           "runoff at all. The water went nowhere: step 0 wrote it into "
+           "imelt and steps 4-5 assigned over it";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 15 — the pack never holds more than it was given. The blunt
+//           conservation ceiling, and the one assertion here that no change
+//           to melt physics can invalidate.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, ThePackNeverGainsWaterItWasNotGiven) {
+    Opts o{};
+    o.water_age = true;
+    o.rain_inhr = 0.0;     // NOTHING is added: no rain, no snowfall
+    o.air_f     = 40.0;
+    o.fwfrac    = 0.90;
+    o.end_min   = 60;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0);
+    ASSERT_DOUBLE_EQ(ctx.subcatches.rainfall[0], 0.0)
+        << "something is falling on this deck, so the pack CAN legitimately "
+           "gain water and the ceiling below is not a conservation statement";
+
+    const double sd0_ft = o.sd0 / 12.0;
+    const double fw0_ft = o.fwfrac * sd0_ft;
+    const double given  = sd0_ft + fw0_ft;
+
+    for (int k = 0; k < openswmm::snow::N_SUBAREAS; ++k) {
+        const auto idx = static_cast<std::size_t>(k);
+        EXPECT_LE(packWater(s, idx), given + 1.0e-9)
+            << "snow surface " << k << " holds " << packWater(s, idx)
+            << " ft against " << given << " ft ever put into it, with no "
+               "precipitation on this deck. Water is being created";
+    }
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 15b — the free-water store never exceeds its CURRENT capacity.
+//
+//            The capacity is `fwfrac · wsnow`, and `wsnow` shrinks as the
+//            pack melts, so a shrinking pack has to give up stored water as
+//            well as its melt. Measuring the capacity against the PRE-melt
+//            SWE instead leaves the store one step's worth above the line
+//            every step — the pack holds water it no longer has the snow to
+//            hold. Measured on this deck: 2148.145 ft3 of runoff against
+//            2125.994 with the capacity taken pre-melt, a 1.0 % retiming.
+//
+//            Numbered 15b so S4's gates 16 and 17 keep the numbers its
+//            handoff assigned them.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, TheFreeWaterStoreNeverExceedsItsCurrentCapacity) {
+    Opts o{};
+    o.water_age = true;
+    o.rain_inhr = 0.0;     // nothing added, so every change is the melt
+    o.air_f     = 40.0;
+    o.fwfrac    = 0.90;
+    o.ripe      = true;    // AT capacity, which is where the threshold bites
+    o.end_min   = 60;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0);
+
+    const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
+    // SETUP: the pack must be melting, or the capacity never moves and the
+    // pre-melt and post-melt forms agree.
+    ASSERT_LT(s.wsnow[perv], o.sd0 / 12.0 - 1.0e-9)
+        << "SWE did not fall, so the capacity never shrank and this gate "
+           "cannot distinguish the two ways of measuring it";
+
+    for (int k = 0; k < openswmm::snow::N_SUBAREAS; ++k) {
+        const auto idx = static_cast<std::size_t>(k);
+        if (s.wsnow[idx] <= 0.0) continue;
+        EXPECT_LE(s.fw[idx], s.fwfrac[idx] * s.wsnow[idx] + 1.0e-12)
+            << "snow surface " << k << " holds " << s.fw[idx]
+            << " ft of free water against a capacity of "
+            << (s.fwfrac[idx] * s.wsnow[idx]) << " ft. The capacity is being "
+               "measured against the SWE the pack had BEFORE it melted";
     }
     swmm_engine_destroy(e);
 }
