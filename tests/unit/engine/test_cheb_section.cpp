@@ -156,7 +156,9 @@ TEST(ChebSection, CircularPipeCompilesToAFewCoefficientsAtTheDesignTolerance) {
     ChebSection s;
     ASSERT_EQ(compile(s, circ.data(), static_cast<int>(circ.size())), 0);
 
-    EXPECT_LE(s.n_pieces, 3);
+    // Pieces are cheap and the normalization below deliberately spends them;
+    // what matters is that the section stays compact, not that it is one piece.
+    EXPECT_LE(s.n_pieces, 8);
     EXPECT_NEAR(s.y_full, 4.0, 1e-12);
     EXPECT_NEAR(s.a_full, kPiL * 4.0, 20.0 * kFitTol * kPiL * 4.0);
 
@@ -173,7 +175,7 @@ TEST(ChebSection, CircularPipeCompilesToAFewCoefficientsAtTheDesignTolerance) {
                 s.n_pieces, totalCoeffs(s), err);
 }
 
-TEST(ChebSection, TwoSidedStretchBeatsIdentityByOrders_TrapSetter) {
+TEST(ChebSection, StretchedCoordinateBeatsIdentityByOrders_TrapSetter) {
     // Test 7. A circle is tangent to horizontal at BOTH invert and crown. Fit
     // the same field over the same interval with the identity map and the
     // accuracy must collapse — if this ever stops failing, the coordinate
@@ -233,6 +235,30 @@ TEST(ChebSection, BenchedSectionNeedsTheCriticalHeightSplit_TrapSetter) {
                 "unsplit = %.3e\n",
                 split_err, totalCoeffs(s), s.n_pieces, one_err);
     EXPECT_GT(one_err, 1e-4) << "un-split fit was suspiciously good";
+}
+
+TEST(ChebSection, NoCompiledPieceIsSingularAtBothEnds_Invariant) {
+    // THE NORMALIZATION INVARIANT. A piece singular at both ends can only be
+    // straightened by u = acos(1-2s)/pi, and that inverse trig call dominates
+    // evaluation cost — about 90% of it, against a polynomial evaluation that
+    // is nearly free. Splitting at any interior point leaves each half with at
+    // most one singular end, where a hardware sqrt suffices.
+    //
+    // Holding this invariant is what collapsed the circular pipe from 2.9x
+    // slower than the legacy table to parity, while IMPROVING its accuracy.
+    // If it is ever violated, the acos returns and the regression comes with
+    // it — silently, since results stay correct.
+    for (const auto& b : {circleOf(3.0), circleOf(0.75), benchedOf(6.0, 4.0, 1.0)}) {
+        ChebSection s;
+        ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
+        for (int p = 0; p < s.n_pieces; ++p) {
+            const bool lo_singular = s.piece[p].exp_lo > kExpSplit;
+            const bool hi_singular = s.piece[p].exp_hi > kExpSplit;
+            EXPECT_FALSE(lo_singular && hi_singular)
+                << "piece " << p << " of " << s.n_pieces
+                << " is singular at both ends — the acos map is back";
+        }
+    }
 }
 
 TEST(ChebSection, ExactDerivativeAgreesWithTheFittedWidth) {
