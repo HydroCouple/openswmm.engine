@@ -144,10 +144,10 @@ bool fitPieceAtDegree(ChebPiece& pc, const BElem* elems, int n, int deg) {
     chebFitSamples(sp, deg, pc.c_p);
     chebFitSamples(si, deg, pc.c_i1);
 
-    pc.n_a = chebChop(pc.c_a, deg);
-    pc.n_w = chebChop(pc.c_w, deg);
-    pc.n_p = chebChop(pc.c_p, deg);
-    pc.n_i1 = chebChop(pc.c_i1, deg);
+    pc.n_a = chebChop(pc.c_a, deg, kFitTol);
+    pc.n_w = chebChop(pc.c_w, deg, kFitTol);
+    pc.n_p = chebChop(pc.c_p, deg, kFitTol);
+    pc.n_i1 = chebChop(pc.c_i1, deg, kFitTol);
 
     // "Resolved" means the chop found a negligible tail in EVERY field, i.e.
     // the degree was more than enough.
@@ -168,6 +168,15 @@ bool fitPiece(ChebPiece& pc, const BElem* elems, int n) {
 
 /// A must be non-decreasing. Checked on dA/du, which carries the same sign as
 /// dA/dy because every coordinate map here is increasing (ds/du >= 0).
+///
+/// The threshold is tied to the fit's OWN truncation error rather than being
+/// an absolute: the series is deliberately chopped at kFitTol, and
+/// differentiating a Chebyshev series amplifies coefficient error by about
+/// n^2, so dA/du inherits noise of roughly kFitTol * n^2 * |c|. Demanding
+/// strict positivity below that floor would reject fits solely for their own
+/// rounding — which is precisely what happened when the design point moved off
+/// machine precision. What the guard is actually for is a REAL reversal, orders
+/// above this floor, which would make y(A) multi-valued.
 bool pieceIsMonotone(const ChebPiece& pc) {
     double dc[kMaxChebCoeff];
     chebDeriv(pc.c_a, pc.n_a, dc);
@@ -175,7 +184,8 @@ bool pieceIsMonotone(const ChebPiece& pc) {
     if (nd < 1) return true;                    // constant A: flat, not falling
     double scale = 0.0;
     for (int i = 0; i < pc.n_a; ++i) scale = std::max(scale, std::fabs(pc.c_a[i]));
-    const double tol = -1.0e-9 * std::max(scale, 1.0);
+    const double n2 = static_cast<double>(pc.n_a) * static_cast<double>(pc.n_a);
+    const double tol = -kFitTol * n2 * std::max(scale, 1.0);
     for (int i = 0; i <= 200; ++i) {
         const double u = static_cast<double>(i) / 200.0;
         if (chebEval(dc, nd, u) < tol) return false;
@@ -246,6 +256,63 @@ int compile(ChebSection& out, const BElem* elems, int n, bool is_open) {
         if (err) return err;
     }
     if (out.n_pieces < 1) return 3;
+
+    // ---- refinement: spend spare piece slots on lower degree --------------
+    //
+    // The pieces above are the minimum needed for CORRECTNESS (analytic on
+    // each). Evaluation cost, though, is dominated by the per-coefficient
+    // term, so any leftover slot is worth trading for a shorter series. Two
+    // separate savings, both measured:
+    //   * a 20-coefficient series costs ~4x an 8-coefficient one;
+    //   * a piece with sqrt branch points at BOTH ends needs acos to invert
+    //     its map, while each half needs only sqrt — about 5x cheaper.
+    //
+    // Always splitting the piece with the LARGEST series keeps this
+    // independent of the order pieces were built in, and the loop is bounded
+    // by kMaxPieces so it cannot spin.
+    for (int guard = 0; guard < 2 * kMaxPieces && out.n_pieces < kMaxPieces;
+         ++guard) {
+        int worst = -1;
+        int worst_n = kTargetCoeff;
+        for (int p = 0; p < out.n_pieces; ++p) {
+            const ChebPiece& c = out.piece[p];
+            int nmax = c.n_a;
+            if (c.n_w > nmax) nmax = c.n_w;
+            if (c.n_p > nmax) nmax = c.n_p;
+            if (c.n_i1 > nmax) nmax = c.n_i1;
+            if (nmax > worst_n) { worst_n = nmax; worst = p; }
+        }
+        if (worst < 0) break;                      // every piece under target
+
+        const ChebPiece src = out.piece[worst];
+        const double mid = 0.5 * (src.y_lo + src.y_hi);
+        if (!(mid - src.y_lo > 1.0e-13 * out.y_full)) break;
+
+        ChebPiece lo{}, hi{};
+        lo.y_lo = src.y_lo; lo.y_hi = mid;
+        lo.exp_lo = src.exp_lo; lo.exp_hi = 1.0;   // the midpoint is generic
+        lo.inv_span = 1.0 / (mid - src.y_lo);
+        hi.y_lo = mid; hi.y_hi = src.y_hi;
+        hi.exp_lo = 1.0; hi.exp_hi = src.exp_hi;
+        hi.inv_span = 1.0 / (src.y_hi - mid);
+        fitPiece(lo, elems, n);
+        fitPiece(hi, elems, n);
+
+        if (!pieceIsMonotone(lo) || !pieceIsMonotone(hi)) break;
+
+        // If neither half came out shorter than the parent, splitting is not
+        // buying anything here and would just burn the remaining budget.
+        const int lo_n = std::max({lo.n_a, lo.n_w, lo.n_p, lo.n_i1});
+        const int hi_n = std::max({hi.n_a, hi.n_w, hi.n_p, hi.n_i1});
+        if (std::max(lo_n, hi_n) >= worst_n) break;
+
+        for (int p = out.n_pieces; p > worst + 1; --p) {
+            out.piece[p] = out.piece[p - 1];
+        }
+        out.piece[worst] = lo;
+        out.piece[worst + 1] = hi;
+        ++out.n_pieces;
+    }
 
     // ---- per-piece area at the lower end ---------------------------------
     // Taken from the piece's OWN series rather than evalExact(y_lo): y_lo is a

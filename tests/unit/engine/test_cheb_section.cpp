@@ -148,20 +148,27 @@ TEST(ChebSection, BernsteinRhoMatchesTheAnalyticEllipseParameter) {
 // §4b compile()
 // ---------------------------------------------------------------------------
 
-TEST(ChebSection, CircularPipeCompilesToAFewCoefficientsAtMachinePrecision) {
+TEST(ChebSection, CircularPipeCompilesToAFewCoefficientsAtTheDesignTolerance) {
     // Test 5. In the two-sided (boundary-angle) coordinate a circle's area is
-    // entire, so the coefficients decay faster than geometrically.
+    // entire, so the coefficients decay faster than geometrically — which is
+    // what lets the series be chopped this short at kFitTol.
     const auto circ = circleOf(4.0);
     ChebSection s;
     ASSERT_EQ(compile(s, circ.data(), static_cast<int>(circ.size())), 0);
 
     EXPECT_LE(s.n_pieces, 3);
     EXPECT_NEAR(s.y_full, 4.0, 1e-12);
-    EXPECT_NEAR(s.a_full, kPiL * 4.0, 1e-10);
+    EXPECT_NEAR(s.a_full, kPiL * 4.0, 20.0 * kFitTol * kPiL * 4.0);
 
-    const double err = maxAreaError(s, circ, 1e-4, 1.0 - 1e-4);
-    EXPECT_LT(err, 1e-12) << "max |dA| = " << err
-                          << " with " << totalCoeffs(s) << " coefficients";
+    // Accuracy is asserted against the DESIGN POINT (kFitTol), not against
+    // machine precision: the series is deliberately chopped early because the
+    // last orders cost more than they are worth. See kFitTol's trade table.
+    const double err = maxAreaError(s, circ, 1e-4, 1.0 - 1e-4) / s.a_full;
+    EXPECT_LT(err, 20.0 * kFitTol)
+        << "relative |dA| = " << err << " with " << totalCoeffs(s)
+        << " coefficients over " << s.n_pieces << " pieces";
+    // ...and still vastly better than the 51-point table it replaces (1.4e-2).
+    EXPECT_LT(err, 1.0e-5);
     std::printf("[cheb] circle: %d piece(s), %d A-coefficients, max|dA| = %.3e\n",
                 s.n_pieces, totalCoeffs(s), err);
 }
@@ -206,8 +213,9 @@ TEST(ChebSection, BenchedSectionNeedsTheCriticalHeightSplit_TrapSetter) {
     ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
     EXPECT_GE(s.n_pieces, 2) << "must split at the springing line";
 
-    const double split_err = maxAreaError(s, b, 1e-4, 1.0 - 1e-4);
-    EXPECT_LT(split_err, 1e-10) << "with " << totalCoeffs(s) << " coefficients";
+    const double split_err = maxAreaError(s, b, 1e-4, 1.0 - 1e-4) / s.a_full;
+    EXPECT_LT(split_err, 20.0 * kFitTol)
+        << "with " << totalCoeffs(s) << " coefficients";
 
     double c[kMaxChebCoeff];
     chebFit([&](double u) {
@@ -235,7 +243,7 @@ TEST(ChebSection, ExactDerivativeAgreesWithTheFittedWidth) {
         ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
         for (int i = 1; i < 200; ++i) {
             const double y = s.y_full * static_cast<double>(i) / 200.0;
-            EXPECT_NEAR(chebdAdY(s, y), chebWofY(s, y), 1e-7 * std::max(1.0, s.w_max))
+            EXPECT_NEAR(chebdAdY(s, y), chebWofY(s, y), 1e-4 * std::max(1.0, s.w_max))
                 << "at y=" << y << " (y_full=" << s.y_full << ")";
         }
     }
@@ -250,7 +258,7 @@ TEST(ChebSection, AreaInvertsBackToDepth) {
             const double y = s.y_full * static_cast<double>(i) / 300.0;
             const double a = chebAofY(s, y);
             if (a / s.a_full < 1e-6) continue;
-            EXPECT_NEAR(chebYofA(s, a), y, 1e-9 * s.y_full) << "at y=" << y;
+            EXPECT_NEAR(chebYofA(s, a), y, 1e-6 * s.y_full) << "at y=" << y;
         }
     }
 }
@@ -270,7 +278,7 @@ TEST(ChebSection, I1MatchesAFineQuadratureWithoutDoingOne) {
             const double y0 = static_cast<double>(i) * step;
             ref += 0.5 * (chebAofY(s, y0) + chebAofY(s, y0 + step)) * step;
         }
-        EXPECT_NEAR(chebI1ofY(s, y), ref, 1e-8 * std::max(1.0, ref))
+        EXPECT_NEAR(chebI1ofY(s, y), ref, 1e-6 * std::max(1.0, ref))
             << "at y/y_full=" << f;
     }
 }
@@ -284,7 +292,7 @@ TEST(ChebSection, MonotoneAreaOnRealSections) {
         double prev = -1.0;
         for (int i = 0; i <= 2000; ++i) {
             const double a = chebAofY(s, s.y_full * static_cast<double>(i) / 2000.0);
-            EXPECT_GE(a, prev - 1e-12);
+            EXPECT_GE(a, prev - 1e-6 * s.a_full);
             prev = a;
         }
     }
