@@ -26,6 +26,8 @@
 
 #include "HeatWatershed.hpp"
 
+#include "../WatershedCommon.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -178,25 +180,36 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 ? hs.subcatch_runon_temp_vol_in[ui] / known_rate
                 : t_rain;
 
-        const double rain_rate = (ui < ctx.subcatches.rainfall.size())
-                                     ? ctx.subcatches.rainfall[ui]
-                                     : 0.0;
+        // Run-on spreads over the whole subcatchment, so its depth rate is
+        // the same for every subarea. The PRECIPITATION rate is not.
         const double runon_depth_rate = (area > 0.0) ? runon_rate / area : 0.0;
-        const double in_rate = rain_rate + runon_depth_rate;
-
-        // Arriving water is rain and run-on MIXED, flow-weighted. Rain
-        // routinely outweighs run-on by orders of magnitude, so treating
-        // the arrival as pure run-on wherever any exists would hand the
-        // whole inflow the donor's temperature.
-        const double t_in = (in_rate > 0.0)
-            ? (rain_rate * t_rain + runon_depth_rate * runon_temp) / in_rate
-            : t_rain;
 
         double out_num = 0.0, out_den = 0.0;
         for (int k = 0; k < kNSub; ++k) {
             const auto idx = ui * static_cast<std::size_t>(kNSub) +
                              static_cast<std::size_t>(k);
             if (idx >= hs.subarea_temp.size()) break;
+
+            // S1: the water that ACTUALLY reached THIS subarea — the gage
+            // rate on a bare subcatchment, `imelt + rain·(1 − asc)` under a
+            // snowpack, and different BETWEEN subareas in the second case.
+            // See WatershedCommon.hpp; A3's copy of this read had the same
+            // defect and is fixed in the same changeset.
+            const double rain_rate = arrivingPrecipRate(ctx, ui, k);
+            const double in_rate = rain_rate + runon_depth_rate;
+
+            // Arriving water is precipitation and run-on MIXED, flow-
+            // weighted. Rain routinely outweighs run-on by orders of
+            // magnitude, so treating the arrival as pure run-on wherever any
+            // exists would hand the whole inflow the donor's temperature.
+            //
+            // @note Under a pack, `t_rain` is the configured RAINFALL
+            //       temperature applied to MELTWATER, which is at 0 °C
+            //       essentially by definition. S1 fixes the VOLUME only;
+            //       S2 settles the value (user decision, 2026-08-20).
+            const double t_in = (in_rate > 0.0)
+                ? (rain_rate * t_rain + runon_depth_rate * runon_temp) / in_rate
+                : t_rain;
 
             const double v_new = depth[k] * frac[k] * area;
             const double v_old = hs.subarea_vol_prev[idx];
