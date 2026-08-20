@@ -198,18 +198,22 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             const double rain_rate = arrivingPrecipRate(ctx, ui, k);
             const double in_rate = rain_rate + runon_depth_rate;
 
+            // S2: the temperature of that precipitation. Under a pack it is
+            // NOT the configured RAINFALL value — the arriving water is part
+            // meltwater, which is at 0 °C essentially by definition, and
+            // part rain that reached the ground through the snow-free
+            // fraction. `arrivingPrecipTemperature` blends the two and
+            // returns the configured value unchanged wherever there is no
+            // pack, so a bare deck is untouched.
+            const double t_precip = arrivingPrecipTemperature(ctx, ui, k);
+
             // Arriving water is precipitation and run-on MIXED, flow-
             // weighted. Rain routinely outweighs run-on by orders of
             // magnitude, so treating the arrival as pure run-on wherever any
             // exists would hand the whole inflow the donor's temperature.
-            //
-            // @note Under a pack, `t_rain` is the configured RAINFALL
-            //       temperature applied to MELTWATER, which is at 0 °C
-            //       essentially by definition. S1 fixes the VOLUME only;
-            //       S2 settles the value (user decision, 2026-08-20).
             const double t_in = (in_rate > 0.0)
-                ? (rain_rate * t_rain + runon_depth_rate * runon_temp) / in_rate
-                : t_rain;
+                ? (rain_rate * t_precip + runon_depth_rate * runon_temp) / in_rate
+                : t_precip;
 
             const double v_new = depth[k] * frac[k] * area;
             const double v_old = hs.subarea_vol_prev[idx];

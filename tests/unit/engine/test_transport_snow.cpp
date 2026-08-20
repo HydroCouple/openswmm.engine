@@ -63,6 +63,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 
 #include "core/SWMMEngine.hpp"
+#include "hydrology/Snow.hpp"
 #include "transport/components/WatershedCommon.hpp"
 
 namespace tr = openswmm::transport;
@@ -100,6 +101,18 @@ struct Opts {
     double init_c    = 25.0;
     int    end_min   = 60;
     double rain_inhr = 0.0;    ///< gage intensity; 0 on every gate but 7
+    /// Areal snow cover, written as a flat `ADC` curve. The default curve is
+    /// all ones (`Snow.hpp:92`) and `si` is pinned to the INITIAL pack depth
+    /// (`SWMMEngine.cpp:5613`, the deck's SD100 field is not read), so
+    /// without this every deck here is at 100 % cover — and then
+    /// `rain·(1 − asc)` is identically zero and no rain ever reaches the
+    /// ground. A partial cover is the only way to get both waters at once.
+    double adc_cover = 1.0;
+    /// Plowable fraction of the impervious area (`snn0`, the 8th field of
+    /// the PLOWABLE row). Zero everywhere else, which makes `fPlow` zero and
+    /// the impervious area blend degenerate to its non-plowable term — so
+    /// without this no gate can see the blend at all.
+    double snn0 = 0.0;
     /// A SECOND subcatchment with no pack, on a project that HAS packs.
     /// Without this the only pack-less deck is a pack-less PROJECT, and
     /// `PostParseResolver.cpp:2199` forces IGNORE_SNOWMELT on there
@@ -136,8 +149,17 @@ void write_files(const Opts& o) {
       // elevation, latitude and the longitude correction. The melt
       // coefficients live on the pack rows, not here.
       << "[TEMPERATURE]\nTIMESERIES air_ts\n"
-      << "SNOWMELT 0.5 0.5 0.6 40.0 0.0 0.0\n"
-      << "WINDSPEED MONTHLY";
+      << "SNOWMELT 0.5 0.5 0.6 40.0 0.0 0.0\n";
+    if (o.adc_cover < 1.0) {
+        // Flat curve: this fraction of the surface is bare at every
+        // depletion index, so `rain·(1 − asc)` is a live term.
+        for (const char* surf : {"IMPERVIOUS", "PERVIOUS"}) {
+            f << "ADC " << surf;
+            for (int i = 0; i < 10; ++i) f << " " << o.adc_cover;
+            f << "\n";
+        }
+    }
+    f << "WINDSPEED MONTHLY";
     for (int m = 0; m < 12; ++m) f << " 5.0";
     f << "\n\n[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
       // Rainfall is IDENTICALLY ZERO on every gate but 7. Every drop that
@@ -158,7 +180,7 @@ void write_files(const Opts& o) {
         //          Name SURFACE     cmin cmax tbase fwfrac sd0  fw0 snn0
         f << "[SNOWPACKS]\n"
           << "SP1 PLOWABLE   0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0
-          << " " << fw0 << " 0.0\n"
+          << " " << fw0 << " " << o.snn0 << "\n"
           << "SP1 IMPERVIOUS 0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0
           << " " << fw0 << " 0.0\n"
           << "SP1 PERVIOUS   0.01 0.03 32.0 " << o.fwfrac << " " << o.sd0
@@ -508,5 +530,213 @@ TEST(TransportSnowTest, APackAbsorbingRainPublishesAGenuineZero) {
                     o.end_min * 60.0, 1.0)
             << "subarea " << k << " is younger than the run, so water was "
                "mixed into a surface the pack never let anything reach";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 8 — S2a. MELTWATER ARRIVES AT 0 °C, not at the configured RAINFALL
+//          temperature. This is the gate that fails on S1 alone.
+//
+//          The deck sets RAINFALL to 20 °C deliberately — NOT to 0 as the
+//          S1 gates do. With zero rain and a melting pack, every drop that
+//          arrives is meltwater, so S1's volume fix would carry it in at
+//          20 °C. Melting happens at the freezing point; 20 °C meltwater is
+//          not a small error on a winter deck, it is the difference between
+//          a snowmelt-fed stream and a rain-fed one.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, MeltwaterArrivesAtFreezingNotAtTheRainTemperature) {
+    Opts o{};
+    o.heat = true;
+    o.rain_c = 20.0;      // the S1-only answer, and the wrong one
+    o.init_c = 25.0;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    ASSERT_TRUE(MeltingWithNoRain(ctx));
+    ASSERT_FALSE(ctx.heat_config.surface_exchange)
+        << "a flux module is on, so cooling could come from the atmosphere";
+
+    // SETUP: with no rain, ALL arriving water is melt. If the fraction is
+    // not 1 the deck is not the configuration this gate is about.
+    for (int k = 0; k < kNSubAge; ++k) {
+        const double f = tr::arrivingMeltFraction(ctx, 0, k);
+        ASSERT_NEAR(f, 1.0, 1.0e-12)
+            << "subarea " << k << ": melt fraction is " << f
+            << " on a deck with zero rainfall — every drop arriving here "
+               "came out of the pack, so it must be 1";
+        EXPECT_DOUBLE_EQ(tr::arrivingPrecipTemperature(ctx, 0, k),
+                         tr::kMeltwaterTempC)
+            << "subarea " << k << ": pure meltwater is not arriving at the "
+               "freezing point";
+    }
+
+    const auto& hs = ctx.heat_state;
+    bool any_below_rain = false;
+    for (int k = 0; k < openswmm::HeatState::kNSubArea; ++k) {
+        const double t = hs.subarea_temp[static_cast<std::size_t>(k)];
+        EXPECT_TRUE(std::isfinite(t));
+        EXPECT_GE(t, tr::kMeltwaterTempC - 1.0e-6)
+            << "subarea " << k << " is colder than the meltwater feeding it";
+        if (t < o.rain_c - 1.0e-3) any_below_rain = true;
+    }
+    EXPECT_TRUE(any_below_rain)
+        << "every subarea settled at or above the configured RAINFALL "
+           "temperature (" << o.rain_c << " C). That is the S1-only answer: "
+           "the right VOLUME of water arriving at the wrong VALUE";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 9 — the BLEND, not the endpoint. With rain AND a pack, part of the
+//          arriving water is melt at 0 °C and part is rain that reached the
+//          ground through the snow-free fraction. The result must lie
+//          strictly between them — no reference value.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, RainThroughAndMeltBlendStrictlyBetweenTheirSources) {
+    Opts o{};
+    o.heat = true;
+    o.rain_c = 20.0;
+    o.init_c = 25.0;
+    // Half the surface bare, and enough rain that the two waters are of
+    // comparable size: measured f = 0.43, so the answer sits near the middle
+    // of its own range rather than a hair from an endpoint.
+    o.adc_cover = 0.5;
+    o.rain_inhr = 0.2;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    ASSERT_GE(ctx.n_subcatches(), 1);
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack on this deck";
+
+    bool any_blended = false;
+    for (int k = 0; k < kNSubAge; ++k) {
+        const double f = tr::arrivingMeltFraction(ctx, 0, k);
+        EXPECT_GE(f, 0.0) << "subarea " << k;
+        EXPECT_LE(f, 1.0) << "subarea " << k
+            << ": a melt fraction above 1 means more water melted than "
+               "arrived, so the two area blends have diverged";
+        const double t = tr::arrivingPrecipTemperature(ctx, 0, k);
+        // Bracketed by its own two sources, whatever the fraction is.
+        EXPECT_GE(t, std::min(tr::kMeltwaterTempC, o.rain_c) - 1.0e-9);
+        EXPECT_LE(t, std::max(tr::kMeltwaterTempC, o.rain_c) + 1.0e-9);
+        if (f > 1.0e-6 && f < 1.0 - 1.0e-6) {
+            any_blended = true;
+            // STRICTLY between, with room to spare. Bracketing alone is
+            // satisfied by either endpoint, which is precisely the answer a
+            // gate about a blend must not accept: returning `t_rain`
+            // unchanged (S1) or 0 for everything both pass a non-strict
+            // check.
+            EXPECT_GT(t, tr::kMeltwaterTempC + 1.0e-3)
+                << "subarea " << k << ": melt fraction is " << f
+                << ", so part of this water is rain at " << o.rain_c
+                << " C, but the arriving temperature is the melt endpoint";
+            EXPECT_LT(t, o.rain_c - 1.0e-3)
+                << "subarea " << k << ": melt fraction is " << f
+                << ", so part of this water is meltwater at "
+                << tr::kMeltwaterTempC
+                << " C, but the arriving temperature is the rain endpoint — "
+                   "that is the S1-only answer";
+        }
+    }
+    // SETUP, reported rather than asserted: a deck where the cover happens
+    // to be total or absent gives f == 1 or 0 everywhere, and then this gate
+    // has checked the endpoints again rather than the blend.
+    if (!any_blended)
+        GTEST_SKIP() << "no subarea saw a partial melt fraction on this "
+                        "deck — areal cover is total or absent, so the "
+                        "blend itself is untested here. Adjust the ADC "
+                        "curve or the rain intensity rather than deleting "
+                        "this gate";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 10 — no pack, no change. S2a must be inert everywhere a pack is not
+//           involved, or it has moved every existing heat deck.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, WithoutAPackTheArrivingTemperatureIsTheConfiguredOne) {
+    Opts o{};
+    o.heat = true;
+    o.pack = false;
+    o.rain_c = 20.0;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    ASSERT_LT(ctx.subcatches.snowpack[0], 0);
+
+    for (int k = 0; k < kNSubAge; ++k) {
+        EXPECT_DOUBLE_EQ(tr::arrivingMeltFraction(ctx, 0, k), 0.0)
+            << "subarea " << k << ": a pack-less subcatchment reported a "
+               "melt fraction";
+        EXPECT_DOUBLE_EQ(tr::arrivingPrecipTemperature(ctx, 0, k), o.rain_c)
+            << "subarea " << k << ": S2a moved the arriving temperature on a "
+               "deck with no snow anywhere";
+    }
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 11 — the published melt term carries the SAME plowable/non-plowable
+//           area blend as `snow_net_imperv`. If it did not, the melt fraction
+//           would be a ratio of two differently-weighted numbers and could
+//           exceed 1 on a plowed catchment.
+//
+//           Two things have to be true at once for this to be observable, and
+//           neither holds on any other deck here: `snn0 > 0`, so a plowable
+//           surface exists at all; and partial areal cover, because the
+//           plowable surface is never depleted (`Snow.cpp:100` returns 1.0
+//           for it) while the others are — which is what makes the two melt
+//           rates differ in the first place.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
+    Opts o{};
+    o.heat = true;
+    o.rain_c = 20.0;
+    o.adc_cover = 0.5;
+    o.rain_inhr = 0.2;
+    o.snn0 = 0.4;          // 40 % of the impervious area is plowable
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    auto& eng = as_cpp_engine(e);
+    const auto& ctx = eng.context();
+    const auto& sn = eng.snowSolver().state();
+    ASSERT_GE(ctx.n_subcatches(), 1);
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack on this deck";
+
+    const auto plow = static_cast<std::size_t>(openswmm::snow::SNOW_PLOWABLE);
+    const auto imp  = static_cast<std::size_t>(openswmm::snow::SNOW_IMPERV);
+
+    // SETUP: a plowable surface must exist, and its melt rate must differ
+    // from the non-plowable one, or an area blend and a raw read agree.
+    ASSERT_GT(sn.fArea[plow], 0.0)
+        << "the plowable fraction is zero, so the impervious blend is just "
+           "its non-plowable term and this gate cannot see the weighting";
+    ASSERT_GT(std::fabs(sn.imelt[plow] - sn.imelt[imp]), 1.0e-12)
+        << "the plowable and non-plowable surfaces are melting at the same "
+           "rate (" << sn.imelt[plow] << "), so any weighting of them gives "
+           "the same answer";
+
+    const double lo = std::min(sn.imelt[plow], sn.imelt[imp]);
+    const double hi = std::max(sn.imelt[plow], sn.imelt[imp]);
+    const double published = ctx.subcatches.snow_melt_imperv[0];
+
+    // STRICTLY between: a weighted mean of two distinct values with both
+    // weights positive cannot land on either endpoint, and reading one
+    // surface raw lands exactly on one.
+    EXPECT_GT(published, lo + 1.0e-15)
+        << "snow_melt_imperv is " << published << ", the lower of the two "
+           "surface rates — it was read raw rather than area-weighted";
+    EXPECT_LT(published, hi - 1.0e-15)
+        << "snow_melt_imperv is " << published << ", the higher of the two "
+           "surface rates — it was read raw rather than area-weighted";
+
+    // And the fraction it feeds stays a fraction.
+    for (int k = 0; k < kNSubAge; ++k) {
+        const double f = tr::arrivingMeltFraction(ctx, 0, k);
+        EXPECT_GE(f, 0.0) << "subarea " << k;
+        EXPECT_LE(f, 1.0) << "subarea " << k
+            << ": more water melted than arrived, which is what a mismatched "
+               "pair of area blends produces";
+    }
     swmm_engine_destroy(e);
 }
