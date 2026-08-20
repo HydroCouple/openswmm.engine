@@ -1383,6 +1383,19 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         climate::updateDailyClimate(ctx_.climate_state, doy, mon);
 
+        // A2b'. Seasonal snowmelt coefficients. Legacy recomputes these once
+        // a day, from setTemp in climate.c:1176-1180, and NOTHING in this
+        // engine called the modern equivalent: `dhm` stayed at its
+        // `assign(0.0)` value, so `imelt = dhm * (temp - tbase)` was
+        // identically zero and the degree-day melt term never fired on any
+        // deck. Only rain-on-snow melt could produce water. The unit suite
+        // did not catch it because every snow gate calls setMeltCoeffs
+        // itself before stepping the solver.
+        if (doy != last_melt_doy_) {
+            last_melt_doy_ = doy;
+            snow_.setMeltCoeffs(doy);
+        }
+
         // A2b. Evaporation from timeseries or climate file
         if (ctx_.climate_state.evap_method == climate::EvapMethod::TIMESERIES &&
             ctx_.climate_state.evap_ts_index >= 0) {
