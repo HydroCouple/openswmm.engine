@@ -642,17 +642,46 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     ASSERT_FALSE(ctx.heat_config.radiative_exchange);
     ASSERT_EQ(ctx.n_subcatches(), 2);
 
-    // SETUP, and the single most important line in this file: S1 must carry
-    // run-on whose temperature H5a does NOT know. If these two are equal the
-    // deck has collapsed back to a cascade, the divisor cannot be got wrong,
-    // and everything below passes for a reason unrelated to the fix.
-    ASSERT_GT(ctx.subcatches.runon_inflow[0], hs.subcatch_runon_temp_rate[0])
-        << "S1's run-on (" << ctx.subcatches.runon_inflow[0]
-        << " cfs) is fully accounted for by the known rate ("
-        << hs.subcatch_runon_temp_rate[0] << " cfs), so the LID underdrain "
-           "is not returning. Nothing here can tell the two divisors apart.";
+    // SETUP: both extra contributors must be returning water, or this is
+    // the cascade deck again under another name.
+    ASSERT_GT(ctx.subcatches.runon_inflow[0], 0.0)
+        << "no run-on reached S1 — the LID underdrain is not returning";
     ASSERT_GT(ctx.subcatches.runon_inflow[1], 0.0)
         << "no run-on reached S2 — the outfall RouteTo column did not parse";
+
+    // COMPLETENESS, and the single most important assertion in this file.
+    //
+    // It used to read the other way round. H5a could not supply a
+    // temperature for the LID underdrain — a drain's temperature is a
+    // per-layer quantity that did not exist until H5b — so this deck
+    // deliberately carried an UNCOUNTED contributor and the gate asserted
+    // that `runon_inflow` exceeded the known rate, to prove the two divisors
+    // could be told apart.
+    //
+    // H5b supplies it, so the two now coincide (measured 0.9797978893380731
+    // for both) and the old assertion fails. That is the phase doing its
+    // job, and the assertion inverts into the stronger claim it was always
+    // reaching for: **every cfs of run-on has a known temperature.** A
+    // fourth contributor added to `runon_inflow` without a matching
+    // `addRunonTemperatureAt` fires here, which is the failure A3 shipped
+    // and A4 found.
+    //
+    // Note what this costs: with every contributor counted, dividing by
+    // `subcatches.runon_inflow` instead of `subcatch_runon_temp_rate` is now
+    // arithmetically identical, so A3's defect is UNREPRESENTABLE in the
+    // heat track rather than merely absent. This assertion is what keeps it
+    // that way.
+    EXPECT_NEAR(hs.subcatch_runon_temp_rate[0], ctx.subcatches.runon_inflow[0],
+                1.0e-12)
+        << "S1 receives " << ctx.subcatches.runon_inflow[0] << " cfs of "
+           "run-on but only " << hs.subcatch_runon_temp_rate[0] << " cfs of "
+           "it has a temperature. Some contributor is adding to the flow "
+           "path without going through addRunonTemperatureAt.";
+    EXPECT_NEAR(hs.subcatch_runon_temp_rate[1], ctx.subcatches.runon_inflow[1],
+                1.0e-12)
+        << "S2 receives " << ctx.subcatches.runon_inflow[1] << " cfs of "
+           "run-on but only " << hs.subcatch_runon_temp_rate[1] << " cfs of "
+           "it has a temperature.";
 
     // (0) The volume ledger must be in ft3. `RunoffSoA::area` is ft2 and
     //     LID-excluded; `ctx.subcatches.area` is the deck's USER area units,
@@ -691,10 +720,13 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     //     rain temperature exactly.
     EXPECT_NEAR(hs.subcatch_runoff_temp[0], kFloorC, 1.0e-9)
         << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C. Its only "
-           "run-on is a LID underdrain whose temperature arrives with H5b, "
-           "so the known rate is zero and the fallback is the rain "
-           "temperature. A lower value means the run-on volume is being "
-           "divided into an accumulator that contributor never wrote to.";
+           "run-on is a LID underdrain, which since H5b leaves at its own "
+           "storage-layer temperature — and with no flux enabled the whole "
+           "column is still at the " << kFloorC << " C it was rained on "
+           "with. Before H5b this held for a different reason: the known "
+           "rate was zero and the fallback was the rain temperature. Both "
+           "answers are " << kFloorC << ", which is why the deck could not "
+           "tell them apart and the completeness assertion above exists.";
 
     // (3) S2's counted contributor must actually be carried. Without it the
     //     same fallback returns exactly the rain temperature, so this is a

@@ -162,9 +162,12 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
         // Divide by the rate whose temperature is KNOWN, not by the total
         // run-on. A3 divided by the total while filling the numerator from
         // one of three contributors, and the arriving age came out younger
-        // than anything entering the model. Here an uncounted contributor
-        // (the LID underdrain, until H5b) leaves the mean over less water
-        // rather than dragging it toward zero.
+        // than anything entering the model. Since H5b all three contributors
+        // — cascade, outfall return and LID underdrain — supply one, so the
+        // two rates coincide today; the pair is what keeps a FOURTH
+        // contributor from reintroducing the defect, and
+        // `EveryRunonContributorKeepsTemperaturesInsideTheSources` asserts
+        // they still match.
         const double known_rate =
             (ui < hs.subcatch_runon_temp_rate.size())
                 ? hs.subcatch_runon_temp_rate[ui]
