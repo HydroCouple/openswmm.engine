@@ -140,6 +140,20 @@ int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z) {
     return SWMM_OK;
 }
 
+int swmm_2d_set_vertex_z_bulk(SWMM_Engine engine, const double* z, int count) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!z) return SWMM_ERR_BADPARAM;
+
+    auto& m = router2d.mesh();
+    if (count != m.n_vertices()) return SWMM_ERR_BADPARAM;
+
+    std::memcpy(m.vz.data(), z, static_cast<std::size_t>(count) * sizeof(double));
+    // One pass over the triangles instead of one pass PER VERTEX.
+    openswmm::twoD::recomputeAllZDependents(m);
+    return SWMM_OK;
+}
+
 int swmm_2d_triangle_get_vertices(SWMM_Engine engine, int idx,
                                     int* v0, int* v1, int* v2) {
     GET_ENGINE(engine);

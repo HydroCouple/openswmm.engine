@@ -1510,6 +1510,45 @@ TEST(EdgeConveyance, ParserAcceptsValidRowAndStashesIt) {
     EXPECT_DOUBLE_EQ(pending[0].conveyance, 0.4);
 }
 
+// ============================================================================
+// recomputeAllZDependents — whole-mesh form must equal the per-vertex form
+// ============================================================================
+//
+// swmm_2d_set_vertex_z_bulk exists because the scalar setter rescans every
+// triangle per call, making a whole-mesh rewrite O(nVertices x nTriangles).
+// The bulk path is only a legitimate substitute if it lands on bitwise the
+// same derived geometry — hence EXPECT_EQ on the raw doubles, not EXPECT_NEAR.
+
+TEST(RecomputeAllZDependents, MatchesPerVertexFormBitwise) {
+    // Irregular Zs so cancellation/ordering differences would show up.
+    const std::vector<double> zs = {1.25, -3.5, 7.125, 0.0, 12.875, -0.375};
+
+    MeshData a = makeUnitSquareMesh();
+    ASSERT_GE(static_cast<std::size_t>(a.n_vertices()), 4u);
+
+    // Reference: assign every Z, then recompute vertex by vertex, exactly what
+    // a loop of swmm_2d_set_vertex_z does.
+    for (int v = 0; v < a.n_vertices(); ++v) {
+        a.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+        recomputeVertexZDependents(a, v);
+    }
+
+    // Candidate: same Zs, one whole-mesh pass.
+    MeshData b = makeUnitSquareMesh();
+    for (int v = 0; v < b.n_vertices(); ++v)
+        b.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+    recomputeAllZDependents(b);
+
+    ASSERT_EQ(a.n_triangles(), b.n_triangles());
+    for (int t = 0; t < a.n_triangles(); ++t) {
+        EXPECT_EQ(a.tri_cz[t], b.tri_cz[t])
+            << "tri_cz diverged at triangle " << t;
+        for (int e = 0; e < 3; ++e)
+            EXPECT_EQ(a.edge_mz[t * 3 + e], b.edge_mz[t * 3 + e])
+                << "edge_mz diverged at triangle " << t << " edge " << e;
+    }
+}
+
 TEST(EdgeConveyance, ParserRejectsOutOfRangeConveyance) {
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
     EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "-0.1"}, pending).empty());
