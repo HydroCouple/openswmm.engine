@@ -247,7 +247,8 @@ void routeLidLayerTemperature(SimulationContext& ctx,
             //         Donors are read from t_old, so a parcel cannot fall
             //         through the whole stack in one step (A4's finding).
             double tk[kNL];
-            bool   live[kNL];
+            bool   live[kNL];      ///< holds or receives WATER → advection
+            bool   mass[kNL];      ///< has THERMAL MASS → conduction, policy
             for (int k = 0; k < kNL; ++k) {
                 const auto vidx = uf * kNL + static_cast<std::size_t>(k);
                 const double v_old = st.vol_prev[vidx];
@@ -255,8 +256,32 @@ void routeLidLayerTemperature(SimulationContext& ctx,
 
                 live[k] = (donor[k] != kAbsent) &&
                           (v_old > kTinyVol || v_in > kTinyVol);
+
+                // "Holds water" and "has thermal mass" are NOT the same
+                // predicate, and the first draft used one for both. A buried
+                // layer is a matrix with water in its voids: dry, it still
+                // has `rho_s*cp_s` — the larger term — and it still conducts.
+                // A SURFACE layer is ponded water over a face, so dry it has
+                // nothing.
+                //
+                // Conflating them cost two things. The drying soil layer
+                // dropped out of the conduction system, leaving the wet
+                // surface conducting DIRECTLY into the wet storage layer
+                // across the gap that should insulate them. And it fell
+                // under the D-H5c dry policy, which then RESET a layer whose
+                // temperature is a real physical state governed by
+                // conduction. D-H5c answers "what does an element with no
+                // thermal mass report?" — a present soil matrix was never
+                // one of those.
+                mass[k] = (thick[k] > 0.0) &&
+                          ((k == kSurf) ? live[k] : donor[k] != kAbsent);
+
                 if (!live[k]) {
-                    tk[k] = dryTemperature(ctx, t_old[k], t_air);
+                    // No water to mix. If there is also no thermal mass, the
+                    // deck's policy decides; otherwise the value is carried
+                    // and the thermal solve below governs it.
+                    tk[k] = mass[k] ? t_old[k]
+                                    : dryTemperature(ctx, t_old[k], t_air);
                     st.vol_prev[vidx] = v_new[k];
                     continue;
                 }
@@ -298,9 +323,12 @@ void routeLidLayerTemperature(SimulationContext& ctx,
                 // is evaluated ONCE at the new time and applied equal and
                 // opposite, so the column conserves energy exactly. Only the
                 // atmospheric term enters or leaves.
+                // Membership is `mass[k]`, not `live[k]` — see the comment
+                // where it is computed. A layer conducts if it HAS thermal
+                // mass, not if it holds water.
                 int  idx[kNL], n = 0;
                 for (int k = 0; k < kNL; ++k)
-                    if (live[k] && thick[k] > 0.0) idx[n++] = k;
+                    if (mass[k]) idx[n++] = k;
 
                 if (n == 0) {
                     for (int k = 0; k < kNL; ++k)

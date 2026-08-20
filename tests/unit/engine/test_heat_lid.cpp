@@ -108,6 +108,12 @@ struct Opts {
     /// because most gates want the LID fed; OFF for the ledger, which needs
     /// the column to stop exchanging water with the rest of the model.
     bool   outfall_routes_back = true;
+    /// `[LID_USAGE]` FromImp — the percentage of the subcatchment's
+    /// impervious runoff routed onto the unit. At 0 the LID receives only
+    /// rain on its own footprint, so when the storm stops its inflow is
+    /// EXACTLY zero. At the default 100 the subcatchment trickles into it
+    /// indefinitely and no layer ever reaches the dry-but-present state.
+    int    from_imperv = 100;
     const char* dry_policy = nullptr;
 };
 
@@ -144,7 +150,7 @@ void write_deck(const char* path, const Opts& o) {
       << "BC1 SOIL     0.25   0.5  0.2  0.1  2.0e-5 10.0 0.3\n"
       << "BC1 STORAGE  1.0    0.75 0.0  0\n"
       << "BC1 DRAIN    " << o.drain_coeff << " 0.5  0    0\n\n"
-      << "[LID_USAGE]\nS1 BC1 1 43560 500 50 100 0\n\n"
+      << "[LID_USAGE]\nS1 BC1 1 43560 500 50 " << o.from_imperv << " 0\n\n"
       << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
       << "[OUTFALLS]\nOUT 9.0 FREE  NO"
       << (o.outfall_routes_back ? "  S1" : "") << "\n\n"
@@ -608,5 +614,139 @@ TEST(HeatLidTest, HeatOffLeavesTheTemperatureRowUntouched) {
                           u, static_cast<openswmm::LidLayer>(k), kTemp)], 0.0)
                 << "the temperature row was written on a deck with "
                    "HEAT_TRANSPORT off (lesson 52)";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 9 — a DRY-BUT-PRESENT layer still conducts, and is NOT reset by the
+//          dry policy. The gate for the `live[k]` / `mass[k]` conflation.
+//
+//          `live[k]` asks "does this layer hold water"; conduction and the
+//          D-H5c policy both need "does it have thermal mass". A buried
+//          layer is a matrix with water in its voids — drained, it still has
+//          rho_s*cp_s and still conducts.
+//
+// @par Reaching the state at all, which took three decks
+//      `live[k]` is `v_old > tiny || v_in > tiny` — depth OR INFLOW. A deck
+//      whose storage depth reads 0 is therefore not enough, and the first
+//      two attempts here both passed vacuously on that mistake:
+//
+//      * With the outfall routing its discharge back onto S1, storage never
+//        even emptied: 5.06e-4 ft after three hours.
+//      * With that closed, depth reached exactly 0 — but `in_stor` sat at
+//        9.9e-7, SIX ORDERS above the 1e-12 threshold, because the
+//        subcatchment keeps trickling into the unit long after the storm.
+//        Every falsifier was inert, and not because the assertions were
+//        weak: the branch was never entered.
+//
+//      `FromImp = 0` is what closes it. The unit then receives only rain on
+//      its own footprint, so when the storm stops every inflow is exactly
+//      zero, the soil settles to field capacity and storage reaches the
+//      dry-but-present state the fix is about. SETUP 2 asserts the whole
+//      predicate — depth AND inflow — so this cannot silently regress.
+// ---------------------------------------------------------------------------
+TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
+    auto build = [](int end_min) {
+        Opts o{};
+        o.conduction = true;
+        o.surface = true;        // drive the column, or nothing moves
+        o.dry_policy = "DEFAULT";
+        o.air_f = 104.0;         // 40 C — far from kDefaultTemp
+        o.rain_c = 4.0;
+        o.init_c = 34.0;
+        o.rain_stop_min = 10;
+        o.from_imperv = 0;       // see the note above: this is the whole trick
+        o.outfall_routes_back = false;
+        o.end_min = end_min;
+        return o;
+    };
+    SWMM_Engine e = run(build(180));
+    ASSERT_NE(e, nullptr);
+    const auto& ctx  = as_cpp_engine(e).context();
+    const auto& st   = ctx.lid_layer_state;
+    const auto& gsoa = as_cpp_engine(e).lid().group(0);
+    ASSERT_TRUE(HasLidUnit(ctx));
+    ASSERT_TRUE(ctx.heat_config.layer_conduction);
+    ASSERT_TRUE(ctx.heat_config.surface_exchange);
+
+    const int kStorI = static_cast<int>(openswmm::LidLayer::STORAGE);
+
+    // SETUP 1 — storage is PRESENT: it has a thickness, hence a matrix and a
+    // heat capacity, whatever water it holds.
+    ASSERT_GT(gsoa.stor_thick[0], 0.0);
+    ASSERT_GT(tr::lidLayerHeatCapacity(ctx, gsoa, 0, kStorI), 0.0)
+        << "the storage layer reports zero heat capacity despite having a "
+           "thickness — the capacity expression, not the index set, is wrong";
+
+    // SETUP 2 — and it is DRY by the predicate the code actually uses:
+    // no stored water AND no inflow. Asserting depth alone is what let two
+    // earlier versions of this gate pass without entering the branch.
+    ASSERT_LT(gsoa.stor_depth[0], 1.0e-9)
+        << "storage still holds " << gsoa.stor_depth[0] << " ft";
+    ASSERT_LT(gsoa.in_stor[0], 1.0e-12)
+        << "storage is still receiving " << gsoa.in_stor[0] << " ft/s of "
+           "inflow, so `live` is TRUE and the dry-but-present branch is "
+           "never entered. Depth alone is not the predicate — do NOT relax "
+           "this, close the inflow instead (FromImp = 0)";
+
+    const double storage = st.value[st.layer_index(
+        0, openswmm::LidLayer::STORAGE, kTemp)];
+    const double soil = st.value[st.layer_index(
+        0, openswmm::LidLayer::SOIL, kTemp)];
+    const double surface = st.value[st.layer_index(
+        0, openswmm::LidLayer::SURFACE, kTemp)];
+
+    // SETUP 3 — the neighbour must differ from the policy value, or "reset
+    // to 20" and "conducted to 20" coincide.
+    ASSERT_GT(std::fabs(soil - openswmm::HeatConfigData::kDefaultTemp), 0.5)
+        << "soil sits at " << soil << " C, within half a degree of "
+           "kDefaultTemp — a reset and a conduction result would be "
+           "indistinguishable here";
+
+    // (a) NOT RESET — the dry-policy half. Measured on the defect: 20.004
+    //     against 28.339.
+    //     NEAR, not EQUAL: the policy writes kDefaultTemp into the solve's
+    //     right-hand side, and the conduction step then pulls it partway
+    //     back within the same step, so the reset lands at 20.004 rather
+    //     than 20. An exact `EXPECT_NE` passes on that and did.
+    EXPECT_GT(std::fabs(storage - openswmm::HeatConfigData::kDefaultTemp), 0.5)
+        << "the drained storage layer sits at " << storage << " C, within "
+           "half a degree of kDefaultTemp. It has a matrix, a heat capacity "
+           "and a neighbour at " << soil << " C, so its temperature is a "
+           "physical state governed by conduction, not a D-H5c case — the "
+           "policy is resetting it every step";
+
+    // (b) STILL IN THE SOLVE — the conduction half, which (a) cannot see:
+    //     dropping the layer from the tridiagonal system leaves it FROZEN at
+    //     whatever it held when it went dry, which is not kDefaultTemp
+    //     either. A layer still being conducted with keeps moving; an
+    //     excluded one is bit-identical between two end times. Measured:
+    //     28.31646534 -> 28.33914633 coupled, and 28.30066495 -> 28.30066495
+    //     excluded.
+    SWMM_Engine e2 = run(build(120));
+    ASSERT_NE(e2, nullptr);
+    const auto& st2 = as_cpp_engine(e2).context().lid_layer_state;
+    const double storage_earlier = st2.value[st2.layer_index(
+        0, openswmm::LidLayer::STORAGE, kTemp)];
+    swmm_engine_destroy(e2);
+    EXPECT_NE(storage, storage_earlier)
+        << "the drained storage layer reads " << storage << " C at 180 min "
+           "and exactly the same at 120 min. A layer with thermal mass and a "
+           "neighbour at a different temperature must keep exchanging with "
+           "it; a frozen value means it was dropped from the coupled solve";
+
+    // (c) And the SURFACE layer keeps the WATER test (§4.2): dry, it is
+    //     ponded water over a face and genuinely has no thermal mass, so the
+    //     policy governs it. Making `mass[]` uniform gives it an invented
+    //     capacity and it equilibrates with the column instead — measured
+    //     29.54 against the policy's 20.
+    ASSERT_LT(gsoa.surf_depth[0], 1.0e-9)
+        << "the surface layer is not dry, so this leg is about nothing";
+    EXPECT_EQ(surface, openswmm::HeatConfigData::kDefaultTemp)
+        << "the dry surface layer reports " << surface << " C rather than "
+           "the policy value. It is ponded water over a face: dry it has no "
+           "matrix and no thermal mass, and giving it one lets a layer with "
+           "cap ~ 0 hit the solver's fallback and equilibrate instantly with "
+           "whatever is below it";
     swmm_engine_destroy(e);
 }
