@@ -381,6 +381,7 @@ private:
     runoff::RunoffSolver         runoff_;       ///< Subcatchment runoff (batch nonlinear reservoir)
     climate::ClimateFileReader   climate_file_; ///< Climate file reader (temp/evap/wind from file)
     snow::SnowSolver             snow_;         ///< Snowmelt (batch over subcatch×subareas)
+    int                          last_melt_doy_ = -1;  ///< Day the seasonal melt coeffs were last set (legacy climate.c LastDay)
     groundwater::GWSolver        groundwater_;  ///< Groundwater (batch ODE per subcatchment)
     lid::LIDSolver               lid_;          ///< LID (batch by type group)
     quality::QualitySolver       quality_;      ///< Quality routing (batch link-load + mixing)

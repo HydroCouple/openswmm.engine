@@ -16,9 +16,14 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstddef>
+#include <fstream>
 #include <numeric>
 
+#include <openswmm/engine/openswmm_engine.h>
+
 #include "hydrology/Snow.hpp"
+#include "core/SWMMEngine.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 
@@ -972,4 +977,83 @@ TEST(SnowColdContent, ColdContentDelaysMelt) {
     }
     EXPECT_LT(melt_cold, melt_warm)
         << "Cold content should reduce effective melt output";
+}
+
+// ============================================================================
+// Engine integration — the seasonal melt coefficients
+//
+// Every gate above sets `dhm` by calling setMeltCoeffs() itself, which is
+// exactly how the engine went without ever calling it: `dhm` stayed at its
+// `assign(0.0)` value, `imelt = dhm * (temp - tbase)` was identically zero,
+// and degree-day melt never fired on any deck. Legacy sets them once a day
+// from setTemp (climate.c:1176-1180). This gate runs a real deck.
+// ============================================================================
+
+TEST(SnowEngineIntegration, ADegreeDayPackMeltsWhenSteppedThroughTheEngine) {
+    {
+        std::ofstream f("_snowdd.inp");
+        f << "[TITLE]\ndegree-day melt through the engine\n\n[OPTIONS]\n"
+             "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nINFILTRATION HORTON\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+             "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+             "WET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 10\n"
+             "REPORT_STEP 00:05:00\n\n"
+             "[TEMPERATURE]\nTIMESERIES air_ts\n"
+             "SNOWMELT 0.5 0.5 0.6 40.0 0.0 0.0\n\n"
+             "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
+             "[TIMESERIES]\n"
+             "rain_ts 01/01/2026 00:00 0.0\nrain_ts 01/01/2026 01:05 0.0\n\n"
+             "air_ts 01/01/2026 00:00 50.0\nair_ts 01/01/2026 01:05 50.0\n\n"
+             // A RIPE pack: free water already at capacity, so melt leaves
+             // the pack in the first step instead of filling the free-water
+             // store for the first 98 minutes.
+             "[SNOWPACKS]\n"
+             "SP1 PLOWABLE   0.02 0.06 32.0 0.10 6 0.6 0.0\n"
+             "SP1 IMPERVIOUS 0.02 0.06 32.0 0.10 6 0.6 0.0\n"
+             "SP1 PERVIOUS   0.01 0.03 32.0 0.10 6 0.6 0.0\n"
+             "SP1 REMOVAL    0.0 0.0 0.0 0.0 0.0 0.0\n\n"
+             "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0 SP1\n\n"
+             "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
+             "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+             "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
+             "[OUTFALLS]\nOUT 9.0 FREE  NO\n\n"
+             "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
+             "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_snowdd.inp", "_snowdd.rpt", "_snowdd.out",
+                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+    } while (elapsed > 0.0 && ++guard < 40000);
+    swmm_engine_end(e);
+
+    auto& eng = *static_cast<SWMMEngine*>(e);
+    const auto& ctx = eng.context();
+    const auto& sn  = eng.snowSolver().state();
+    ASSERT_GE(ctx.n_subcatches(), 1);
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "the deck built no snowpack";
+
+    // The defect itself: nothing in the engine ever set these.
+    for (int k = SNOW_PLOWABLE; k <= SNOW_PERV; ++k)
+        EXPECT_GT(sn.dhm[static_cast<std::size_t>(k)], 0.0)
+            << "subarea " << k << ": the seasonal melt coefficient is zero "
+               "after a full run, so setMeltCoeffs() was never called and "
+               "imelt = dhm * (temp - tbase) can only ever be zero";
+
+    // And its consequence, on a deck 18 F above tbase for an hour.
+    EXPECT_GT(ctx.subcatches.snow_net_imperv[0], 0.0)
+        << "the pack published no net precipitation";
+    EXPECT_LT(sn.wsnow[SNOW_IMPERV], 0.5)
+        << "the impervious pack still holds its full 0.5 ft of water "
+           "equivalent, so nothing melted";
+    EXPECT_GT(ctx.subcatches.stat_runoff_vol[0], 0.0)
+        << "no runoff from an hour of melt";
+    swmm_engine_destroy(e);
 }
