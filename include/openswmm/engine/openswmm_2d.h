@@ -127,6 +127,32 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z);
 
+/** @brief Set EVERY vertex Z in one call.
+ *
+ *  Equivalent to calling ::swmm_2d_set_vertex_z for each vertex in turn — the
+ *  dependent geometry (`tri_cz`, `edge_mz`) ends up bitwise identical — but the
+ *  scalar setter rescans all triangles on every call, so doing that per vertex
+ *  is O(nVertices x nTriangles). This writes all Zs first and recomputes the
+ *  dependent geometry in a single pass, i.e. O(nVertices + nTriangles). On a
+ *  million-cell mesh that is the difference between minutes and milliseconds,
+ *  which is why editors that rewrite a whole mesh should prefer it.
+ *
+ *  XY-derived fields (`tri_area`, `tri_cx`, `tri_cy`, `edge_length`,
+ *  `edge_nx`, `edge_ny`, `edge_mx`, `edge_my`) are unaffected.
+ *
+ *  When called while the engine is RUNNING, the solver state (`head`,
+ *  `depth`) is intentionally **not** rewritten — `head` remains the value
+ *  the solver is integrating; the implied `depth = head - bed` therefore changes
+ *  by the same amount as bed. This is the expected physical semantics
+ *  ("raising the bed under water reduces water depth there").
+ *
+ *  @param z     Array of `count` new ground elevations (project vertical
+ *               units), indexed by vertex.
+ *  @param count Must equal ::swmm_2d_vertex_count, else SWMM_ERR_BADPARAM.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_z_bulk(SWMM_Engine engine,
+                                                const double* z, int count);
+
 /** @brief Get triangle connectivity (3 vertex indices).
  *  @param idx Triangle index (0-based).
  *  @param v0,v1,v2 Output vertex indices.
