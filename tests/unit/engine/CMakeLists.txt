@@ -179,6 +179,10 @@ endif()
 # geometry compiler input for POLYGON sections — no FvGeometry/XsectEval
 # dependency, so it is a standalone target.
 add_gtest_unit(test_engine_xsect_boundary    test_xsect_boundary.cpp)
+# Piecewise-Chebyshev compression of an exact boundary: the numerical routines,
+# the coordinate map, and the two trap-setters guarding the critical-height
+# split and the sqrt-end stretch.
+add_gtest_unit(test_engine_cheb_section      test_cheb_section.cpp)
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
