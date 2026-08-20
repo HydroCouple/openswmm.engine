@@ -94,6 +94,43 @@ constexpr int kSubPERV    = 2;
 double arrivingPrecipRate(const SimulationContext& ctx, std::size_t ui,
                           int subarea) noexcept;
 
+/**
+ * @brief Fraction of the arriving water that is MELTWATER, in [0, 1].
+ *
+ * @details Under a pack the arriving water is two different waters:
+ *          meltwater, and rain that reached the ground through the snow-free
+ *          fraction. `arrivingPrecipRate` returns their sum, and a sum
+ *          cannot say what either is worth — this is the split.
+ *
+ *          Returns **0** wherever there is no pack, `IGNORE_SNOWMELT` is on,
+ *          or nothing arrived, so a caller can blend unconditionally and a
+ *          bare deck is bit-identical to its pre-S2 behaviour.
+ */
+double arrivingMeltFraction(const SimulationContext& ctx, std::size_t ui,
+                            int subarea) noexcept;
+
+/**
+ * @brief Temperature of the water arriving at one subarea [°C] (S2).
+ *
+ * @details **Meltwater is at 0 °C essentially by definition** — that is what
+ *          melting means — so the arriving temperature is the melt fraction
+ *          blended against the configured `HeatSource::RAINFALL` value:
+ *
+ *          `T = (1 − f)·T_rain + f·0`
+ *
+ *          On a winter deck this is not a small approximation to make: it is
+ *          the difference between a stream fed by snowmelt and one fed by
+ *          rain. Unlike the age half, it needs **no pack state at all** —
+ *          the freezing point is not something the pack has to remember.
+ */
+double arrivingPrecipTemperature(const SimulationContext& ctx, std::size_t ui,
+                                 int subarea) noexcept;
+
+/// The temperature meltwater leaves a pack at, °C. Zero, and named rather
+/// than written as a literal so a gate can assert against the constant the
+/// code uses instead of against a number a reader hopes it uses.
+inline constexpr double kMeltwaterTempC = 0.0;
+
 }  // namespace openswmm::transport
 
 #endif  // OPENSWMM_ENGINE_TRANSPORT_WATERSHED_COMMON_HPP

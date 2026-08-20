@@ -65,4 +65,38 @@ double arrivingPrecipRate(const SimulationContext& ctx, std::size_t ui,
     return (net >= 0.0) ? net : gage;
 }
 
+double arrivingMeltFraction(const SimulationContext& ctx, std::size_t ui,
+                            int subarea) noexcept {
+    if (ctx.options.ignore_snow_melt) return 0.0;
+    if (ui >= ctx.subcatches.snowpack.size()) return 0.0;
+    if (ctx.subcatches.snowpack[ui] < 0) return 0.0;
+
+    const bool perv = (subarea == kSubPERV);
+    const auto& net_v  = perv ? ctx.subcatches.snow_net_perv
+                              : ctx.subcatches.snow_net_imperv;
+    const auto& melt_v = perv ? ctx.subcatches.snow_melt_perv
+                              : ctx.subcatches.snow_melt_imperv;
+    if (ui >= net_v.size() || ui >= melt_v.size()) return 0.0;
+
+    const double net  = net_v[ui];
+    const double melt = melt_v[ui];
+    // The -1.0 sentinel on either array means the pack published nothing.
+    if (!(net > 0.0) || !(melt >= 0.0)) return 0.0;
+    // Clamped rather than trusted: `net` and `melt` are blended through the
+    // same area weights, so melt <= net holds by construction — but a future
+    // change to one blend and not the other would otherwise hand a caller a
+    // fraction above 1 and silently invert a mixture.
+    const double f = melt / net;
+    return (f < 0.0) ? 0.0 : (f > 1.0 ? 1.0 : f);
+}
+
+double arrivingPrecipTemperature(const SimulationContext& ctx, std::size_t ui,
+                                 int subarea) noexcept {
+    const double t_rain = ctx.heat_config.global_temp[
+        static_cast<int>(HeatSource::RAINFALL)];
+    const double f = arrivingMeltFraction(ctx, ui, subarea);
+    if (f <= 0.0) return t_rain;
+    return (1.0 - f) * t_rain + f * kMeltwaterTempC;
+}
+
 }  // namespace openswmm::transport

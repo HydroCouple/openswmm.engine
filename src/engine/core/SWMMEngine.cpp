@@ -1623,6 +1623,19 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     ? (net_plow * fPlow + net_imperv * fImperv) / fTotalI
                     : net_plow;
                 ctx_.subcatches.snow_net_perv[ui] = net_perv;
+
+                // S2: the MELT-ONLY part, under the identical area blend.
+                // Arriving water under a pack is two different waters —
+                // meltwater at 0 C carrying the pack's age, and rain that
+                // reached the ground through the snow-free fraction — and
+                // their sum cannot say what either is worth. The split is a
+                // local here; publishing it follows A4's precedent rather
+                // than having transport reconstruct it.
+                ctx_.subcatches.snow_melt_imperv[ui] = (fTotalI > 0.0)
+                    ? (soa.imelt[plow_idx] * fPlow +
+                       soa.imelt[imperv_idx] * fImperv) / fTotalI
+                    : soa.imelt[plow_idx];
+                ctx_.subcatches.snow_melt_perv[ui] = soa.imelt[perv_idx];
             }
         }
 
