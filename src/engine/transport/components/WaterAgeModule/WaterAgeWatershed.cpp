@@ -25,6 +25,8 @@
 
 #include "WaterAgeWatershed.hpp"
 
+#include "../WatershedCommon.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -98,26 +100,10 @@ void routeSubcatchmentAge(SimulationContext& ctx,
                 ? ws.subcatch_runon_age_vol_in[ui] / runon_rate
                 : 0.0;
 
-        // The precipitation the solver ACTUALLY applied this step, as a
-        // depth rate over the subcatchment: rainfall (plus snowfall), which
-        // Runoff.cpp publishes to ctx.subcatches.rainfall at :295, plus the
-        // run-on it spreads over the whole area as extra precipitation at
-        // :331-333. This is the gross inflow, and it is the mixing volume —
-        // see the header on why the net gain is not.
-        const double rain_rate = (ui < ctx.subcatches.rainfall.size())
-                                     ? ctx.subcatches.rainfall[ui]
-                                     : 0.0;
+        // Run-on spreads over the whole subcatchment, so its depth rate is
+        // the same for every subarea. The PRECIPITATION rate is not — see
+        // below.
         const double runon_depth_rate = (area > 0.0) ? runon_rate / area : 0.0;
-        const double in_rate = rain_rate + runon_depth_rate;
-
-        // Arriving water is rain and run-on MIXED, flow-weighted. Rain
-        // routinely outweighs run-on by orders of magnitude — on the gate
-        // deck's cascade it is 10.08 cfs against 0.027 — so treating the
-        // arrival as pure run-on whenever any run-on exists would hand the
-        // whole inflow the donor's age.
-        const double a_in = (in_rate > 0.0)
-            ? (rain_rate * a_rain + runon_depth_rate * runon_age) / in_rate
-            : a_rain;
 
         double out_num = 0.0, out_den = 0.0;
         for (int k = 0; k < kNSub; ++k) {
@@ -125,6 +111,25 @@ void routeSubcatchmentAge(SimulationContext& ctx,
                              static_cast<std::size_t>(k);
             const double v_new = depth[k] * frac[k] * area;
             const double v_old = ws.subarea_vol_prev[idx];
+
+            // S1: the water that ACTUALLY reached THIS subarea. On a bare
+            // subcatchment that is the gage rate; under a snowpack it is
+            // `imelt + rain·(1 − asc)`, which differs BETWEEN subareas — the
+            // impervious value is an area-weighted blend over plowable and
+            // non-plowable fractions, the pervious one is not. This read used
+            // to sit outside the loop as a single scalar, which was wrong
+            // even where the total was right.
+            const double rain_rate = arrivingPrecipRate(ctx, ui, k);
+            const double in_rate = rain_rate + runon_depth_rate;
+
+            // Arriving water is precipitation and run-on MIXED, flow-
+            // weighted. Rain routinely outweighs run-on by orders of
+            // magnitude — on the gate deck's cascade it is 10.08 cfs against
+            // 0.027 — so treating the arrival as pure run-on whenever any
+            // run-on exists would hand the whole inflow the donor's age.
+            const double a_in = (in_rate > 0.0)
+                ? (rain_rate * a_rain + runon_depth_rate * runon_age) / in_rate
+                : a_rain;
 
             // 1. Age what was already there.
             double a = ws.subarea_age[idx] + dt;
