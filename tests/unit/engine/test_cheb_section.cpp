@@ -324,6 +324,61 @@ TEST(ChebSection, MonotoneAreaOnRealSections) {
     }
 }
 
+TEST(ChebSection, ChebAllAgreesWithTheIndividualAccessors) {
+    // chebAll() is documented as the hot-loop entry point and re-implements,
+    // rather than delegates to, each single-field accessor: the y >= y_full
+    // continuation, the W/P non-negativity clamps, the I1 linear extension
+    // above the crown, and a hand-unrolled forward T_k recurrence in place of
+    // chebEval's Clenshaw. Nothing enforced the two paths staying in sync — if
+    // one were edited and not the other, results would silently diverge. This
+    // sweeps depth across, at, and above y_full (chebAll's own branch there)
+    // and checks all four fields against chebAofY/chebWofY/chebPofY/chebI1ofY.
+    for (const auto& b : {circleOf(3.0), benchedOf(6.0, 4.0, 1.0)}) {
+        ChebSection s;
+        ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
+        for (int i = 0; i <= 450; ++i) {
+            const double y = s.y_full * 1.5 * static_cast<double>(i) / 450.0;
+            double A, W, P, I1;
+            chebAll(s, y, &A, &W, &P, &I1);
+            const double tol_a = 1e-12 * std::max(1.0, s.a_full);
+            const double tol_w = 1e-12 * std::max(1.0, s.w_max);
+            const double tol_i = 1e-12 * std::max(1.0, s.a_full * s.y_full);
+            EXPECT_NEAR(A, chebAofY(s, y), tol_a) << "A at y=" << y;
+            EXPECT_NEAR(W, chebWofY(s, y), tol_w) << "W at y=" << y;
+            EXPECT_NEAR(P, chebPofY(s, y), tol_w) << "P at y=" << y;
+            EXPECT_NEAR(I1, chebI1ofY(s, y), tol_i) << "I1 at y=" << y;
+        }
+    }
+}
+
+TEST(ChebSection, PerimeterAndHydraulicRadiusMatchTheExactBoundary) {
+    // chebPofY/chebRofY are otherwise reached only indirectly, through
+    // compile()'s own scalar scan for r_full/s_max — never asserted directly
+    // against the exact boundary the way area and I1 already are.
+    for (const auto& b : {circleOf(3.0), benchedOf(6.0, 4.0, 1.0)}) {
+        ChebSection s;
+        ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
+        for (int i = 1; i < 400; ++i) {
+            // Interior, generic depths only — evalExact() is not claimed exact
+            // at a critical height (see XSectBoundary.hpp), and this test is
+            // about chebPofY/chebRofY, not that documented scope limit.
+            const double f = 1e-4 + (1.0 - 2e-4) * static_cast<double>(i) / 400.0;
+            const double y = f * s.y_full;
+            const auto ref = evalExact(b.data(), static_cast<int>(b.size()), y);
+            if (ref.perim <= 0.0) continue;
+
+            EXPECT_NEAR(chebPofY(s, y), ref.perim,
+                       20.0 * kFitTol * std::max(1.0, ref.perim))
+                << "P at y=" << y;
+            // Independent of chebAofY/chebPofY's own division: reference R is
+            // computed straight from evalExact's area and perimeter.
+            EXPECT_NEAR(chebRofY(s, y), ref.area / ref.perim,
+                       1e-6 * std::max(1.0, ref.area / ref.perim))
+                << "R at y=" << y;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Budget
 // ---------------------------------------------------------------------------
