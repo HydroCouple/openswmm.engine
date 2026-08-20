@@ -64,7 +64,9 @@ namespace openswmm {
 /// Order is the storage index of HeatConfigData::global_temp, and matches
 /// WaterAgeSource one-for-one so the two tables read the same way.
 enum class HeatSource : int {
-    RAINFALL        = 0,  ///< washoff runoff (and LID drains until H5)
+    RAINFALL        = 0,  ///< washoff runoff. H5b retired this row's
+                          ///< second job: a LID drain now leaves at its
+                          ///< own storage-layer temperature, not the rain's.
     DWF             = 1,
     GW              = 2,
     RDII            = 3,
@@ -106,6 +108,32 @@ enum class DryTempPolicy : int {
     DEFAULT = 2
 };
 
+
+/**
+ * @brief Vertical conduction between LID layers (plan §6.1 D-H5b, H5b).
+ *
+ * @details **New physics with no in-engine precedent** — every
+ *          "conductivity" elsewhere in `src/engine/` is HYDRAULIC. Values
+ *          follow HydroCouple's `GWComponent`, a porous soil/gravel column
+ *          being the closest analogue to a bioretention or permeable-
+ *          pavement stack.
+ *
+ * @warning The values below are the ones GWComponent's CONSTRUCTOR sets
+ *          (`gwmodel.cpp:51-52`), **not** the in-class initializers in
+ *          `gwmodel.h:870-871`, which say 2650 kg/m³ and 880 J/kg/°C and are
+ *          dead — the member-init list overrides both. The two differ by a
+ *          factor of 2.3 in `ρ·cp`. The plan originally recorded the header
+ *          pair; that was lesson 69 (a declaration is not a value) landing
+ *          on the parameters the decision itself named.
+ *          `HTSComponent` uses 1670/1807 for STREAMBED sediment — a third
+ *          defensible pair, deliberately not taken here.
+ */
+struct ConductionConfig {
+    double water_conductivity = 0.606;   ///< W/m/K  (gwmodel.h:885)
+    double sed_conductivity   = 2.6;     ///< W/m/K  (gwmodel.h:886)
+    double sed_density        = 1970.0;  ///< kg/m³  (gwmodel.cpp:51)
+    double sed_specific_heat  = 2758.0;  ///< J/kg/K (gwmodel.cpp:52)
+};
 
 /**
  * @brief `[RADIATIVE_FLUXES]` parameters (heat plan §2.2, phase H3).
@@ -161,6 +189,14 @@ struct HeatConfigData {
 
     /// `[HEAT_FLUXES] DRY_ELEMENT_TEMPERATURE HOLD|AIR|DEFAULT` (D-H5c).
     DryTempPolicy dry_temp_policy = DryTempPolicy::HOLD;
+
+    /// `[HEAT_FLUXES] LAYER_CONDUCTION ON` — vertical conduction between
+    /// LID layers (plan §2, phase H5b, D-H5b). Defaults OFF like every other
+    /// flux module, so a deck gets pure transport unless it asks for physics.
+    bool layer_conduction = false;
+
+    /// Parameters for the module above.
+    ConductionConfig conduction;
 
     /// Default inlet temperature when a source has no row (°C).
     static constexpr double kDefaultTemp = 20.0;

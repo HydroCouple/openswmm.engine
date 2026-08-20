@@ -50,6 +50,7 @@
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../transport/components/HeatModule/HeatComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
+#include "../transport/components/HeatModule/HeatLid.hpp"
 #include "../transport/components/HeatModule/HeatWatershed.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeWatershed.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeLid.hpp"
@@ -1764,6 +1765,17 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                         ? ctx_.subcatches.runon_inflow[usc]
                         : 0.0,
                     lid_area);
+                // H5b: the temperature of that same inflow, weighted by the
+                // same four rates.
+                transport::setLidInflowTemperature(
+                    ctx_, t, u, sc, rain,
+                    q_imperv * g.from_imperv[uu], q_perv * g.from_perv[uu],
+                    (rsoa.area[usc] <= 0.0 &&
+                     usc < ctx_.subcatches.total_lid_area_ft2.size() &&
+                     ctx_.subcatches.total_lid_area_ft2[usc] > 0.0)
+                        ? ctx_.subcatches.runon_inflow[usc]
+                        : 0.0,
+                    lid_area);
             }
         }
 
@@ -1773,6 +1785,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // produced — the same slot A3's watershed update occupies relative
         // to the runoff solver.
         transport::routeLidLayerAge(ctx_, lid_, dt_runoff);
+        // H5b: and the temperature column, on the same clock. Separate
+        // entry point rather than a species loop inside one routine: the
+        // two tracks differ in their operators (no aging, no zero floor, a
+        // dry-layer policy, and a coupled conduction solve), not merely in
+        // which row they write.
+        transport::routeLidLayerTemperature(ctx_, lid_, dt_runoff);
 
         // A6b. Route LID outputs back to subcatchment runoff totals
         for (int t = 0; t < lid_.numGroups(); ++t) {
@@ -1830,6 +1848,25 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                         static_cast<std::size_t>(
                                             lst.n_species) +
                                     static_cast<std::size_t>(LidSpecies::AGE)];
+                        }
+                        // H5b: the same seam for temperature — and this is
+                        // the third run-on contributor H5a carried as owed,
+                        // because a drain's temperature is a per-layer
+                        // quantity that did not exist until now. It goes
+                        // through addRunonTemperatureAt so the numerator and
+                        // the rate move together (H5a's pair invariant).
+                        if (ctx_.options.heat_transport && lst.active() &&
+                            uts2 + 1 < lst.group_offset.size()) {
+                            const int fl = lst.group_offset[uts2] + u;
+                            if (fl >= 0 && fl < lst.n_units)
+                                transport::addRunonTemperatureAt(
+                                    ctx_, target_sc, q_dr,
+                                    lst.drain_value[
+                                        static_cast<std::size_t>(fl) *
+                                            static_cast<std::size_t>(
+                                                lst.n_species) +
+                                        static_cast<std::size_t>(
+                                            LidSpecies::TEMPERATURE)]);
                         }
                     }
                 }
@@ -5469,6 +5506,7 @@ void SWMMEngine::initHydrology() noexcept {
     // A4: size the per-layer species block against the units the manager
     // just built, and seed whatever they already hold.
     transport::initLidLayerAge(ctx_, lid_);
+    transport::initLidLayerTemperature(ctx_, lid_);
 
     // 2. Runoff solver: populate RunoffSoA from subcatchment properties
     runoff_.init(ctx_);
