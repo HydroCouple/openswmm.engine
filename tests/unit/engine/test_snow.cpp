@@ -624,7 +624,13 @@ TEST(SnowSeason, SeasonFactorMatchesSinFormula) {
     // Test multiple days match the expected sin formula
     for (int day = 1; day <= 365; day += 30) {
         solver.setMeltCoeffs(day);
-        double expected = std::sin(2.0 * 3.14159265358979 * (day - 81.0) / 365.0);
+        // Legacy's constant (climate.c:1176), not 2*pi/365. It is a
+        // calibration, not a mis-divided year: the period is exactly 364
+        // days, so with the day-81 equinox offset the peak lands exactly on
+        // day 172, the summer solstice. See the solstice gate in
+        // test_transport_snow.cpp, which asserts what it is calibrated TO
+        // rather than the formula itself.
+        double expected = std::sin(0.0172615 * (day - 81.0));
         EXPECT_NEAR(soa.season, expected, 1e-10)
             << "Season factor mismatch on day " << day;
     }
