@@ -118,6 +118,13 @@ struct Opts {
     /// the impervious area blend degenerate to its non-plowable term — so
     /// without this no gate can see the blend at all.
     double snn0 = 0.0;
+    /// `SD100` — the depth at which areal coverage reaches 100 %, the 7th
+    /// field of the IMPERVIOUS and PERVIOUS rows (the same slot that carries
+    /// `snn0` on PLOWABLE). **0 means "no areal depletion"**, which both this
+    /// engine and legacy treat as permanent full cover
+    /// (`Snow.cpp` getArealDepletion / `snow.c:520`), so it is the value
+    /// every gate but 16 wants.
+    double sd100 = 0.0;
     /// A SECOND subcatchment with no pack, on a project that HAS packs.
     /// Without this the only pack-less deck is a pack-less PROJECT, and
     /// `PostParseResolver.cpp:2199` forces IGNORE_SNOWMELT on there
@@ -187,9 +194,9 @@ void write_files(const Opts& o) {
           << "SP1 PLOWABLE   0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0
           << " " << fw0 << " " << o.snn0 << "\n"
           << "SP1 IMPERVIOUS 0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0
-          << " " << fw0 << " 0.0\n"
+          << " " << fw0 << " " << o.sd100 << "\n"
           << "SP1 PERVIOUS   0.01 0.03 32.0 " << o.fwfrac << " " << o.sd0
-          << " " << fw0 << " 0.0\n"
+          << " " << fw0 << " " << o.sd100 << "\n"
           << "SP1 REMOVAL    0.0 0.0 0.0 0.0 0.0 0.0\n\n";
     }
     // The 9th token is the snowpack name; "*" means none.
@@ -612,6 +619,11 @@ TEST(TransportSnowTest, RainThroughAndMeltBlendStrictlyBetweenTheirSources) {
     // Half the surface bare, and enough rain that the two waters are of
     // comparable size: measured f = 0.43, so the answer sits near the middle
     // of its own range rather than a hair from an endpoint.
+    // SD100 as well as the curve. Areal depletion needs BOTH: a curve that
+    // is not identically 1, and a positive `si` for `wsnow/si` to index it
+    // with. Before S4 `si` was pinned to the initial pack depth, so the ADC
+    // row alone was enough; now the deck owns both, as legacy does.
+    o.sd100 = 24.0;
     o.adc_cover = 0.5;
     o.rain_inhr = 0.2;
     SWMM_Engine e = run(o);
@@ -704,6 +716,11 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
     Opts o{};
     o.heat = true;
     o.rain_c = 20.0;
+    // SD100 as well as the curve. Areal depletion needs BOTH: a curve that
+    // is not identically 1, and a positive `si` for `wsnow/si` to index it
+    // with. Before S4 `si` was pinned to the initial pack depth, so the ADC
+    // row alone was enough; now the deck owns both, as legacy does.
+    o.sd100 = 24.0;
     o.adc_cover = 0.5;
     o.rain_inhr = 0.2;
     o.snn0 = 0.4;          // 40 % of the impervious area is plowable
@@ -987,4 +1004,95 @@ TEST(TransportSnowTest, TheFreeWaterStoreNeverExceedsItsCurrentCapacity) {
                "measured against the SWE the pack had BEFORE it melted";
     }
     swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 16 — F6. THE DECK'S `SD100` IS READ.
+//
+//           `si` used to be pinned to the INITIAL pack depth, which makes
+//           `wsnow >= si` true on the first step and every step after, so
+//           `getArealDepletion` returned 1.0 unconditionally: **every snow
+//           deck in this program sat at 100 % cover**, `rain·(1 − asc)` was
+//           identically zero, and no rain ever reached the ground under a
+//           pack. Legacy reads the field at `snow.c:352`.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, TheDecksSD100SetsTheHundredPercentCoverDepth) {
+    Opts o{};
+    o.water_age = true;
+    o.sd0    = 6.0;
+    o.sd100  = 24.0;   // FOUR TIMES the initial depth, so the pack starts
+    o.air_f  = 40.0;   // well below full cover and depletion is live
+    // ...and a curve to index. The DEFAULT ADC is all ones (`Snow.hpp:92`),
+    // which means "no depletion at any index", so SD100 alone changes
+    // nothing: `getArealSnowCover` returns 1 whatever `wsnow/si` is. Reading
+    // the field is necessary for depletion, not sufficient.
+    o.adc_cover = 0.5;
+    o.end_min = 30;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack on this deck";
+
+    const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
+    const double sd100_ft = o.sd100 / 12.0;
+    const double sd0_ft   = o.sd0 / 12.0;
+
+    // The field reached the solver at all.
+    EXPECT_NEAR(s.si[perv], sd100_ft, 1.0e-9)
+        << "si is " << s.si[perv] << " ft; the deck said SD100 = " << sd100_ft
+        << " ft and the initial depth was " << sd0_ft
+        << " ft. If si equals the initial depth, the 7th field is still "
+           "being ignored";
+
+    // SETUP: and the pack must be BELOW it, or depletion is off by the
+    // `wsnow >= si` branch and cover is legitimately 1.
+    ASSERT_LT(s.wsnow[perv], s.si[perv])
+        << "the pack is at or above SD100, so full cover is correct here and "
+           "this gate cannot observe depletion";
+
+    EXPECT_LT(s.asc[perv], 1.0)
+        << "areal cover is still exactly 1 on a pack below its SD100. That "
+           "is the signature of si being pinned to the pack depth: "
+           "wsnow >= si is then always true";
+    EXPECT_GT(s.asc[perv], 0.0);
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 17 — D1 RETRACTED. The seasonal melt factor peaks on the SOLSTICE.
+//
+//           The engine used `2π/365`, recorded as a correction to legacy's
+//           `0.0172615`. It is not one. Legacy's constant has a period of
+//           exactly 364 days, and with the day-81 offset that puts the peak
+//           on day 172 — the summer solstice — with an equinox-to-solstice
+//           quarter of a whole 91 days. `2π/365` peaks at day 172.25.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, TheSeasonalMeltFactorPeaksOnTheSolstice) {
+    openswmm::snow::SnowSolver solver;
+    solver.init(1);
+
+    // Day 172 = June 21: 31+28+31+30+31+21. The sine must be AT its maximum
+    // there, not merely near it — that is the whole content of the constant.
+    solver.setMeltCoeffs(172);
+    EXPECT_NEAR(solver.state().season, 1.0, 1.0e-6)
+        << "season at the summer solstice is " << solver.state().season
+        << ", not 1. With 2*pi/365 the peak sits at day 172.25 and this "
+           "reads 0.99999 — close, and off the solstice";
+
+    // Day 81 = the vernal equinox, where the cycle crosses zero.
+    solver.setMeltCoeffs(81);
+    EXPECT_NEAR(solver.state().season, 0.0, 1.0e-6);
+
+    // Day 172 + 182 = 354, the winter solstice half a period later.
+    solver.setMeltCoeffs(354);
+    EXPECT_NEAR(solver.state().season, -1.0, 1.0e-3)
+        << "season at the winter solstice is " << solver.state().season;
+
+    // And the quarter period is a WHOLE number of days — the property that
+    // makes 364 the right choice rather than an arithmetic slip.
+    solver.setMeltCoeffs(172 - 91);
+    EXPECT_NEAR(solver.state().season, 0.0, 1.0e-6)
+        << "day 81 is not exactly a quarter period before the peak, so the "
+           "equinox-to-solstice interval is not a whole number of days";
 }

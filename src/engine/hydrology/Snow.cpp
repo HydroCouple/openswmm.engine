@@ -43,7 +43,15 @@ void SnowSoA::resize(int n) {
     fw.assign(total, 0.0);
     coldc.assign(total, 0.0);
     ati.assign(total, 32.0);
-    awe.assign(total, 0.0);
+    // 1.0, matching legacy `snow_initSnowpack` (snow.c:199). The new-snow
+    // ADC index starts ABOVE any real pack, so `awesi < awe` sends the first
+    // depleting step to the regular curve. Initialising it to 0 makes
+    // `awesi >= awe` true instead and `getArealDepletion` returns full cover
+    // forever — which was invisible while `si` was pinned to the initial pack
+    // depth, because the `wsnow >= si` branch then fired on step 1 and set
+    // `awe = 1.0` itself. Reading SD100 (F6) is what exposes it: a pack that
+    // starts BELOW its SD100 never takes that branch.
+    awe.assign(total, 1.0);
     imelt.assign(total, 0.0);
     tbase.assign(total, 32.0);
     dhm.assign(total, 0.0);
@@ -375,8 +383,17 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
 void SnowSolver::setMeltCoeffs(int day_of_year) {
     // Compute seasonal factor: -1.0 at winter solstice (Dec 21, day ~355),
     // +1.0 at summer solstice (Jun 21, day ~172).
-    // season = sin(2*pi*(day - 81)/365)  where day 81 ~ Mar 22 = equinox
-    double season = std::sin(2.0 * 3.14159265358979 * (day_of_year - 81.0) / 365.0);
+    // season = sin(0.0172615 * (day - 81))   — legacy `climate.c:1176`.
+    //
+    // The constant is NOT a mis-divided year, and it was retracted from the
+    // divergence register once that was checked. It gives a period of
+    // exactly 364.000 days, and with the day-81 phase offset (the vernal
+    // equinox) the sine peaks at day 172.000 — the summer solstice, June 21.
+    // 364 = 4 x 91 is what makes the equinox-to-solstice quarter a whole
+    // number of days. Substituting 2*pi/365 moves the seasonal melt peak to
+    // day 172.25, off the solstice, and buys nothing.
+    constexpr double kSeasonRad = 0.0172615;   // rad/day; period 364.000 d
+    double season = std::sin(kSeasonRad * (day_of_year - 81.0));
     soa_.season = season;  // Store for reporting (matching legacy Snow.season)
 
     int total = soa_.n_subcatch * N_SUBAREAS;

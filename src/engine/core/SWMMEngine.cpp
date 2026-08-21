@@ -5610,9 +5610,21 @@ void SWMMEngine::initHydrology() noexcept {
                 soa.fwfrac[idx] = p[3];
                 soa.wsnow[idx]  = p[4] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
                 soa.fw[idx]     = p[5] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
-                soa.si[idx]     = soa.wsnow[idx]; // depth at 100% cover = initial depth
-                if (k == snow::SNOW_PLOWABLE)
+                // F6: the 7th field is SNN0 on the PLOWABLE row and SD100 —
+                // the depth at which areal coverage reaches 100 % — on the
+                // other two. Legacy splits it exactly this way
+                // (`snow.c:348-352`). Pinning `si` to the INITIAL pack depth
+                // instead made `asc` identically 1 on every deck, so
+                // `rain·(1 − asc)` was always zero and no rain ever reached
+                // the ground under a pack unless the deck wrote an explicit
+                // ADC row.
+                if (k == snow::SNOW_PLOWABLE) {
                     soa.snn[ui] = p[6];
+                    // The plowable surface has no SD100 of its own; legacy
+                    // leaves its `si` at the init value (0).
+                } else {
+                    soa.si[idx] = p[6] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
+                }
             }
 
             // Fractional area of each snow surface (legacy snow_initSnowpack,
