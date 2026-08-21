@@ -126,6 +126,7 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.boundary   = &surface_router_.boundary();
     ctx_.twod_io.pending_bc = &surface_router_.pendingBCRows();
     ctx_.twod_io.pending_ec = &surface_router_.pendingEdgeConveyanceRows();
+    ctx_.twod_io.infil      = &surface_router_.infil();
 }
 #endif
 
@@ -157,6 +158,7 @@ int SWMMEngine::open(const char* inp_path,
     // Zero the load-phase accumulators so a process that opens several models
     // reports each one separately (see core/PerfTimers.hpp).
     perf::reset_load();
+    perf::reset_fv();
 
     // Stamp the report wall clock before any parsing work. Legacy takes this
     // timestamp in report_writeLogo(), which swmm_open() calls before
@@ -235,6 +237,7 @@ int SWMMEngine::open(const char* inp_path,
                 surface_router_.mesh(), surface_router_.options(),
                 surface_router_.pendingBCRows(),
                 surface_router_.pendingEdgeConveyanceRows(),
+                &surface_router_.infil(),
                 mf, base_dir, &ctx_.warnings);
             if (!err.empty()) {
                 if (lenient_open_) {
@@ -4595,6 +4598,19 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_rainfall       = st.rainfall;
     snap.surface_coupling_flux  = st.coupling_flux;
     snap.surface_net_source     = st.net_source;
+    // Per-cell infiltration (plan §5.5.6). The held rate lives on the surface
+    // state; the cumulative depth comes from the ROUTER's applied-loss
+    // accumulator (SurfaceRouter2D::infilCumulative) rather than
+    // Infil2D::cumulative(), so sum(infil_cum * area) equals the ledger's
+    // infil_out exactly. It is empty when no [2D_INFILTRATION*] model
+    // resolved — publish zeros then, so both sidecar variables always carry
+    // one full [nFace] row per time step.
+    snap.surface_infil_rate     = st.infil_rate;
+    const auto& infil_cum = surface_router_.infilCumulative();
+    if (infil_cum.size() == st.infil_rate.size())
+        snap.surface_infil_cum = infil_cum;
+    else
+        snap.surface_infil_cum.assign(st.infil_rate.size(), 0.0);
     // Output sign convention: the integrator stores edge_flux and the face
     // velocity INFLOW-positive (a positive edge_flux raises the cell — see
     // SurfaceFluxCalculator), whereas the documented public/HDF5 convention
@@ -4724,6 +4740,34 @@ int SWMMEngine::end() noexcept {
     // Build routing time step histogram for report
     ctx_.routing_stats.build_histogram();
 
+    // Publish the FV solver's cumulative counters into the context so the
+    // report plugin can print them — IReportPlugin only ever sees a
+    // SimulationContext, never the Router. Exactly the 2D pattern
+    // (SurfaceRouter2D::finalize -> mass_balance_2d.solver_*), except the FV
+    // solver's counters survive finalize(), so ordering here is free.
+    // The nsteps > 0 test is load-bearing: INetworkSolver::run_stats() defaults
+    // to a ZEROED struct, so a backend carrying no counters returns nsteps == 0
+    // — not the -1 the report block treats as "skip me". Leaving the sentinel
+    // in place for that case is what keeps the block from printing a row of
+    // zeros, which reads as "the solver did nothing" instead of "nobody
+    // counted".
+    if (const auto* fv = router_.fvSolver();
+        fv != nullptr && fv->run_stats().nsteps > 0) {
+        const auto s = fv->run_stats();
+        auto& rs = ctx_.routing_stats;
+        rs.fv_nsteps      = s.nsteps;
+        rs.fv_nflux       = s.nflux;
+        rs.fv_avg_h       = s.avg_h;
+        rs.fv_last_h      = s.last_h;
+        rs.fv_min_h       = s.min_h;
+        rs.fv_active_min  = s.active_frac_min;
+        rs.fv_active_mean = s.active_frac_mean;
+        rs.fv_active_max  = s.active_frac_max;
+        rs.fv_n_tiers     = s.n_tiers;
+        for (int k = 0; k < s.n_tiers && k < 8; ++k)
+            rs.fv_tier_cells[k] = s.tier_cells[k];
+    }
+
     // Finalize per-element max stats for report (top-5 CFL-critical, flow turns,
     // non-convergence — matching legacy stats_findMaxStats)
 #ifdef OPENSWMM_HAS_2D
@@ -4841,6 +4885,10 @@ int SWMMEngine::close() noexcept {
     // for a bare open()+close() too — the benchmark harness times open alone,
     // open+initialize, and the full sequence. (See core/PerfTimers.hpp.)
     if (perf::enabled()) perf::dump_load();
+
+    // FV phase breakdown, only when the FV solver actually ran — an empty line
+    // on a DYNWAVE run would be noise the harness has to filter.
+    if (perf::enabled() && perf::n_fv_substep > 0) perf::dump_fv();
 
     // Stop IO thread if still running (safe to call even if already stopped)
     io_thread_.stop();

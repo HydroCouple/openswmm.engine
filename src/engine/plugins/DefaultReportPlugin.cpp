@@ -883,6 +883,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("Outfall Withdrawal .......", mb2.outfall_out);
         row2("Boundary Outflow .........", mb2.boundary_out);
         row2("Evaporation Loss .........", mb2.evap_out);
+        row2("Infiltration Loss ........", mb2.infil_out);
         row2("Final Stored Volume ......", mb2.final_storage);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
@@ -1222,6 +1223,66 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                         rs.step_intervals[i+1],
                         pct);
                 }
+            }
+        }
+    }
+
+    // =====================================================================
+    // FV Solver Statistics — cumulative explicit-integrator throughput, the
+    // 1D counterpart of the "2D Solver Statistics" block above. The Routing
+    // Time Step Summary reports the ROUTING step; this reports the substeps
+    // the FV solver filled it with, which is the number that actually sets
+    // the run time.
+    //
+    // Already inside the rpt_flowstats guard opened well above (the braces
+    // that close just before this comment are the anonymous scope holding the
+    // Routing Time Step Summary's `rs`, not the conditional) — so the FV block
+    // follows FLOWSTATS, whereas the 2D block above follows CONTINUITY. The
+    // two solver blocks answer to different report flags; that is inherited,
+    // not chosen here.
+    //
+    // Skipped on the -1 sentinel, which means "not an FV run".
+    // =====================================================================
+    if (ctx.routing_stats.fv_nsteps >= 0) {
+        const auto& rs = ctx.routing_stats;
+        WRITE(f, "");
+        WRITE(f, "");
+        WRITE(f, "*********************");
+        WRITE(f, "FV Solver Statistics");
+        WRITE(f, "*********************");
+        auto srow = [&](const char* label, long v) {
+            std::fprintf(f, "\n  %s%14ld", label, v);
+        };
+        srow("Explicit Substeps ........", rs.fv_nsteps);
+        srow("Face Flux Evaluations ....", rs.fv_nflux);
+        std::fprintf(f, "\n  Avg Substep (s) ..........%14.6f", rs.fv_avg_h);
+        std::fprintf(f, "\n  Min Substep (s) ..........%14.6f", rs.fv_min_h);
+        std::fprintf(f, "\n  Last Substep (s) .........%14.6f", rs.fv_last_h);
+
+        // Compaction telemetry: the share of faces on the active list at each
+        // rebuild. A mean near 1.0 means compaction is finding nothing to skip.
+        if (rs.fv_active_mean >= 0.0) {
+            std::fprintf(f,
+                "\n  Active Faces min/mean/max %8.1f /%5.1f /%5.1f  (%%)",
+                100.0 * rs.fv_active_min,
+                100.0 * rs.fv_active_mean,
+                100.0 * rs.fv_active_max);
+        }
+
+        // LTS tier occupancy. A run that quietly collapsed to one tier reads
+        // as n_tiers == 1 here rather than as a silently ordinary run — which
+        // is the difference between "tiering did not help" and "tiering never
+        // engaged", and they call for opposite responses.
+        if (rs.fv_n_tiers > 0) {
+            long total = 0;
+            for (int k = 0; k < rs.fv_n_tiers && k < 8; ++k)
+                total += rs.fv_tier_cells[k];
+            if (total > 0) {
+                for (int k = 0; k < rs.fv_n_tiers && k < 8; ++k)
+                    std::fprintf(f,
+                        "\n  LTS Tier %d Occupancy (%%) .%14.1f", k,
+                        100.0 * static_cast<double>(rs.fv_tier_cells[k])
+                              / static_cast<double>(total));
             }
         }
     }

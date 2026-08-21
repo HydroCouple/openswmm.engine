@@ -326,6 +326,7 @@ namespace twoD {
 struct MeshData;
 struct SolverOptions2D;
 struct BoundaryData;
+class  Infil2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 } // namespace twoD
@@ -890,6 +891,11 @@ struct SimulationContext {
         twoD::BoundaryData*                          boundary   = nullptr;
         std::vector<twoD::PendingBoundaryRow>*       pending_bc = nullptr;
         std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
+        /// Per-cell infiltration (track I, plan §5.5). Owned by
+        /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate
+        /// its defaults()/overrides()/options() and the InpWriter reads them
+        /// back. Null when the engine was built without 2D support.
+        twoD::Infil2D*                               infil      = nullptr;
     } twod_io;
 
     /**
@@ -1197,6 +1203,11 @@ struct SimulationContext {
         double boundary_in           = 0.0;  ///< Cumulative boundary inflow (m³)
         double boundary_out          = 0.0;  ///< Cumulative boundary outflow (m³)
         double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
+        /// Cumulative 2D per-cell infiltration loss (m³). Track I, plan §5.5.4.
+        /// Destination is LOST in this release (D-I4), so this is a true exit
+        /// from the modelled system and enters the continuity balance as a loss
+        /// term alongside evap_out.
+        double infil_out             = 0.0;
         bool   active                = false;///< True if the 2D module ran
 
         // Cumulative marcher statistics (published by SurfaceRouter2D at
@@ -1219,7 +1230,7 @@ struct SimulationContext {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
                                + boundary_in + init_storage;
             double total_out = coupling_2d_to_1d_out + outfall_out + boundary_out
-                               + evap_out + final_storage;
+                               + evap_out + infil_out + final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance_2d;
@@ -1323,6 +1334,27 @@ struct SimulationContext {
         double computed_avg_iterations() const {
             return (n_steps > 0) ? sum_iterations / static_cast<double>(n_steps) : 0.0;
         }
+
+        // ---------------------------------------------------------------
+        // FV 1D solver statistics (published by SWMMEngine::end() from
+        // INetworkSolver::run_stats, printed as the "FV Solver Statistics"
+        // report block). The 1D counterpart of mass_balance_2d.solver_*.
+        //
+        // -1 = not populated: the run was not FLOW_ROUTING FV, or a backend
+        // that carries no counters was selected. The report block is skipped
+        // on the sentinel rather than printing a row of zeros, which would
+        // read as "the solver did nothing" instead of "nobody counted".
+        // ---------------------------------------------------------------
+        long   fv_nsteps        = -1;   ///< explicit substeps over the run
+        long   fv_nflux         = 0;    ///< face flux evaluations
+        double fv_avg_h         = 0.0;  ///< mean substep (s)
+        double fv_last_h        = 0.0;  ///< last substep (s)
+        double fv_min_h         = 0.0;  ///< smallest substep taken (s)
+        double fv_active_min    = -1.0; ///< min active-face fraction
+        double fv_active_mean   = -1.0; ///< mean active-face fraction
+        double fv_active_max    = -1.0; ///< max active-face fraction
+        long   fv_tier_cells[8] = {0};  ///< rebuild-sampled cells per LTS tier
+        int    fv_n_tiers       = 0;    ///< populated tier count
     } routing_stats;
 
     // =========================================================================

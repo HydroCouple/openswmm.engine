@@ -109,7 +109,7 @@ deviation from the dynamic wave solver against cells per conduit:
 
 Four cells is a practical compromise rather than a converged result: it
 more than halves the one-cell error for about twice the cost, while
-further refinement improves accuracy more slowly than it adds cost. §8.10 gives the same comparison against \f$\Delta x\f$ targets. Set
+further refinement improves accuracy more slowly than it adds cost. Set
 `FV_CELL_LENGTH`, or raise `FV_MIN_CELLS`, whenever peak flows or
 in-conduit profiles matter.
 
@@ -1229,62 +1229,56 @@ file.
 
 ## 8.10 Choosing between dynamic wave and finite volume
 
-The following are measured on the EPA reference site drainage model
-(`Example1.inp`, 30 h, 5 s routing step), comparing each finite-volume
-configuration against the dynamic wave run of the same file.
+Measured on 2026-08-20 against commit `962fd48c`, on the EPA reference
+site drainage model (`Example1.inp`, 30 h, 5 s routing step) and on
+generated uniform and graded reaches. Reproduce with
+`tests/benchmarks/scripts/fv_perf_baseline.py`; the full tables, the
+per-phase split and the `.out` hashes are in
+`plans/FV1D_PERF_BASELINE_2026-08-20.md`.
 
-| | Dynamic wave | FV, 1 cell | FV, default (4 cells) | FV, \f$\Delta x\f$ = 50 ft | FV, \f$\Delta x\f$ = 20 ft |
-|---|---|---|---|---|---|
-| Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % | 0.000 % |
-| Mean absolute peak-flow deviation | — | 37.1 % | 15.3 % | 12.8 % | 7.2 % |
-| Wall-clock, relative | 1× | ~7× | ~15× | ~12× | ~34× |
+| | Dynamic wave | FV, 1 cell | FV, default (4 cells) |
+|---|---|---|---|
+| Routing continuity error | 0.026 % | 0.000 % | −0.000 % |
+| Wall-clock, relative | 1× | 5.3× | 14.9× |
+| Substeps per routing step | — | 1.03 | 2.05 |
 
 The same comparison across network size, on uniform and graded reaches
 of 50 / 500 / 2000 conduits, at the default mesh:
 
 | | 50 | 500 | 2000 |
 |---|---|---|---|
-| uniform reach, × dynamic wave | 117 | 252 | 189 |
-| graded reach, × dynamic wave | 39 | 69 | 49 |
-| routing continuity, finite volume | −0.000 % | −0.000 % | −0.000 % |
-| routing continuity, dynamic wave | −0.16 … −0.50 % | 0.09 / −0.19 % | 0.09 / −0.19 % |
-
-Two observations follow. First, the ratio does not improve with network
-size — it is flat to erratic, so the cost should not be expected to
-amortize on larger models. Second, the finite-volume solver closes on
-the dynamic wave solver where the latter struggles: the graded
-ratios are three to four times better, not because the explicit solver
-got faster (its times are unchanged between the two) but because the
-implicit solver's own step collapses there, from 5.00 s to 1.14 s. Steep,
-graded, stiff networks are where the trade is most favourable.
+| uniform reach, × dynamic wave | 11.3 | 17.3 | 17.5 |
+| graded reach, × dynamic wave | 15.6 | 33.5 | 29.2 |
+| routing continuity, finite volume | 0.000 % | −0.000 % | −0.000 % |
+| routing continuity, dynamic wave | −1.30 / −0.59 % | −0.51 / −0.80 % | −0.51 / −0.64 % |
 
 Three observations follow.
 
 **Conservation is delivered, and is independent of resolution.** The
-finite-volume solver closes continuity exactly on this model where the
-implicit solver does not. That is the property the conservation form
-guarantees.
+finite-volume solver closes continuity exactly on every deck and every
+mesh above, where the implicit solver does not — and the gap is widest
+on the plain reaches, where dynamic wave loses 0.5 % to 1.3 % of volume.
+That is the property the conservation form guarantees.
 
-**Accuracy requires a resolved mesh.** The convergence above is clean
-and monotone, which is what a consistent discretization must show — but
-an unresolved mesh is not a drop-in substitute for dynamic wave
-analysis. The mechanism is the artificial bed step of §8.3 rather than
-numerical diffusion, so second-order reconstruction does not remove it.
+**Accuracy requires a resolved mesh.** An unresolved mesh is not a
+drop-in substitute for dynamic wave analysis. The mechanism is the
+artificial bed step of §8.3 rather than numerical diffusion, so
+second-order reconstruction does not remove it.
 
-**It still costs several times more.** Even at one cell per conduit —
-the same element count the dynamic wave solver carries — the explicit
-method runs about seven times its wall-clock on this model, and the
-default mesh roughly doubles that again. The method should be selected
-for its conservation and shock-capturing properties rather than for
-speed.
+**It costs several times more, and the multiple grows with the
+network.** At one cell per conduit — the same element count dynamic
+wave carries — the explicit method runs about five times its wall clock
+on the reference model, and the default mesh roughly triples that
+again. On uniform reaches the ratio rises from 11× at 50 conduits to
+17× at 2000, so the cost should not be expected to amortize on larger
+models. Select the method for its conservation and shock-capturing
+properties, not for speed.
 
-Note also that the deviation column is a consistency check against the
-dynamic wave solver rather than a measure of error. Dynamic wave
-routing is not
-the reference truth here, and part of the 37 % at one cell is its own
-departure from the correct answer. Accuracy is instead established
-against closed-form solutions — Ritter, Stoker, and the still-water
-property.
+Note that the earlier editions of this section reported ratios of 39× to
+252× across the same reach sizes. Those numbers were measured on the
+bucket-junction solver that `265eb727` (2026-08-11) replaced with
+algebraic junctions, and they no longer describe this solver; the table
+above supersedes them.
 
 Practical guidance:
 

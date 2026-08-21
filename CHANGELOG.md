@@ -23,6 +23,55 @@ retroactive.
 
 ### Performance
 
+- **FV published node stages no longer stand above the conduits they connect.**
+  The face-consistent stage reconstruction covered only degree-2 pass-through
+  junctions -- the set the solver splices -- so on a branching network most
+  nodes published the solver's own head. Measured on `Example1.inp` under
+  `FLOW_ROUTING FV` at `FV_MIN_CELLS 1`, where a conduit is a single cell and
+  the comparison is exact, those nodes sat up to **0.91 ft above their own
+  adjacent cell**, falling ~first-order under refinement -- a datum term, not
+  physics. It survives on nodes with no lateral inflow at all, which rules out
+  "head needed to drive the inflow out".
+
+  The reconstruction now covers storage-less clean junctions at any degree.
+  Two guards make that safe: a face perched ABOVE the node's own water surface
+  is a free overfall and does not vote (without this, a conduit entering 4 ft
+  above the invert read its offset as node depth and drove one junction's
+  reported average from 0.28 ft to 4.11 ft), and a pondable junction demoted to
+  the bucket path above its rim keeps its volume-ledger head.
+
+  Culvert-inlet and flap-gate faces are excluded: those node heads are genuine
+  headwaters. Storage units, outfalls and structure-fed nodes are unchanged.
+
+  After: max +0.0002 ft and -0.0001 ft on the two affected classes. **Routing is
+  untouched** -- continuity identical and the Link Flow Summary byte-identical.
+  Reporting only, on purpose: solver-internal heads double as ghost boundary
+  states under LTS tier holds. Probe and full measurements in
+  `tests/manual/fv_node_stage/`.
+
+- **`FV_CFL_CENSUS_INTERVAL` now does what it says; it was inert for every
+  value.** The explicit FV solver conflated two quantities in one member: the
+  step the last accepted substep took, and the Courant bound the last census
+  returned. The substep tail wrote the taken step — clamped to the time
+  remaining in the routing step, so possibly a tiny fragment — into that
+  member and then zeroed the census countdown to undo the damage, which forced
+  a full face census on every substep no matter what the option was set to.
+
+  The two are now separate. The bound survives a skipped census, which is the
+  entire point of the option, and only a genuine invalidation resets the
+  countdown: a retry (the post-step census having proved the bound
+  inadmissible), a rebuild of the active face lists, a re-tier's accumulator
+  settle, and both macro-cycle exits. A clamp to the routing-step boundary
+  proves nothing about the Courant bound and is no longer written back.
+
+  At the default of 1 this is bit-identical — verified, not asserted:
+  `Example1.inp` under `FLOW_ROUTING FV` produces a byte-identical `.out` at
+  `OMP_NUM_THREADS` 1 and 8 against the same build with the change reverted.
+
+- **Dropped the write-only `f_scale_` face array from the explicit FV solver.**
+  Written at four sites (`initialize`, `computeFaceFlux`, `limitPositivity`,
+  `fireFaces`) and read nowhere in the repository.
+
 - **Model load and initialization: up to 17× faster, and the wall-clock window
   before the first routing step cut on every model size.** A user reported 25
   minutes between clicking Run and the analysis starting on a large model; that
@@ -77,6 +126,14 @@ retroactive.
   `"Apache-2.0"`.
 
 ### Added
+
+- **FV solver statistics in the report file, and `OPENSWMM_PERF` phase timers
+  for the FV step.** FV runs now emit an "FV Solver Statistics" block —
+  explicit substeps, face-flux evaluations, mean/min/last substep, active-face
+  occupancy and the LTS tier histogram. Setting `OPENSWMM_PERF=1` additionally
+  prints a `[PERF-FV]` line whose bracketed phases sum to `total`, beside the
+  whole-router `step`; the difference between them is unattributed time and is
+  meant to be read as a finding rather than smoothed away.
 
 - **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
   roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —
