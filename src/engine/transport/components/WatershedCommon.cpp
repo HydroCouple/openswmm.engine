@@ -99,4 +99,27 @@ double arrivingPrecipTemperature(const SimulationContext& ctx, std::size_t ui,
     return (1.0 - f) * t_rain + f * kMeltwaterTempC;
 }
 
+double arrivingPrecipAge(const SimulationContext& ctx, std::size_t ui,
+                         int subarea) noexcept {
+    const double a_rain = ctx.water_age_config.global_age[
+        static_cast<int>(WaterAgeSource::RAINFALL)];
+    // The SAME fraction the temperature blend uses. See the header.
+    const double f = arrivingMeltFraction(ctx, ui, subarea);
+    if (f <= 0.0) return a_rain;
+
+    const bool perv = (subarea == kSubPERV);
+    const auto& age_v = perv ? ctx.subcatches.snow_melt_age_perv
+                             : ctx.subcatches.snow_melt_age_imperv;
+    if (ui >= age_v.size()) return a_rain;
+    const double a_pack = age_v[ui];
+    // The -1.0 sentinel means the pack published no age. Falling back to the
+    // rain age rather than to 0 is deliberate: 0 is a REAL age -- the age of
+    // water that fell this instant -- so using it as a "missing" marker would
+    // make an unpublished pack look like the freshest water in the model.
+    // A4's dry-element column has the same shape and H1 left it open.
+    if (!(a_pack >= 0.0)) return a_rain;
+
+    return (1.0 - f) * a_rain + f * a_pack;
+}
+
 }  // namespace openswmm::transport
