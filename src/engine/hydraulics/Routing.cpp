@@ -1252,19 +1252,35 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             continue;
         }
         double head = fv_state_.node_head[un];
-        // Pass-through junctions: publish the face-consistent stage — the
-        // same reconstruction the virtual-junction loop below uses — instead
-        // of the solver's wet-mean of cell-centre etas, which sits ~S0·dx/2
-        // above the face stage on steep COARSE chains and steps against the
-        // VJ rule at every pass-through/VJ pair in the plotted HGL
-        // (HGL_STEP_ATTRIBUTION.md, mechanism B). REPORTING only, on
-        // purpose: changing the solver-internal head instead destabilized
-        // the lake-at-rest diameter-change case through the LTS-hold ghost
-        // channel (70 cfs standing oscillation from a 0.007 cfs residual).
+        // Storage-less clean junctions, ANY degree: publish the
+        // face-consistent stage — the same reconstruction the
+        // virtual-junction loop below uses — instead of the solver's own
+        // head, which sits ~S0·dx/2 above the face stage on steep COARSE
+        // chains and steps against the VJ rule in the plotted HGL
+        // (mechanism B).
+        //
+        // Originally this covered degree-2 pass-through junctions only,
+        // because that is the set the SOLVER splices. Measured on Example1
+        // under FLOW_ROUTING FV, that left two thirds of nodes publishing the
+        // raw head and standing up to 0.91 ft above their own adjacent cell
+        // at FV_MIN_CELLS 1 — falling ~first-order under refinement, so a
+        // datum term, not physics. Nodes inside the set never exceeded
+        // 0.0002 ft at any refinement, and the excess survives on nodes with
+        // NO lateral inflow, which rules out "head needed to drive the
+        // inflow out". See tests/manual/fv_node_stage/RESULTS.md.
+        //
+        // Culvert-inlet and flap-gate faces are excluded: those node heads
+        // are genuine headwaters that must not be reconstructed away. So are
+        // nodes carrying a structure flow or an unbled carry.
+        //
+        // REPORTING only, on purpose: changing the solver-internal head
+        // instead destabilized the lake-at-rest diameter-change case through
+        // the LTS-hold ghost channel (70 cfs standing oscillation from a
+        // 0.007 cfs residual).
         // A dry cell's vote is bare ground, so only wet neighbours vote; the
         // all-dry case keeps the solver's lowest-adjacent-bed contract.
-        if (impl && un < impl->node_passthrough().size() &&
-            impl->node_passthrough()[un]) {
+        if (impl && un < impl->node_publish_stage().size() &&
+            impl->node_publish_stage()[un]) {
             const int b0 = fv_mesh_.node_face_ptr[un];
             const int e0 = fv_mesh_.node_face_ptr[un + 1];
             double eta = -1.0e30;
@@ -1277,6 +1293,17 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
                 if (c < 0) continue;
                 const auto uc = static_cast<std::size_t>(c);
                 if (fv_state_.cell_h[uc] <= fv::kernels::kDryDepth) continue;
+                // A face perched ABOVE the node's own water surface is
+                // discharging as a free overfall (manual §8.6, ghost state
+                // 8-28: "a node standing below the face invert presents a dry
+                // ghost"). Its stage describes the pipe, not the node, and
+                // letting it vote reads the pipe's OFFSET as node depth --
+                // measured on Example1's J11, where conduit C2 enters 4 ft
+                // above the invert and an unguarded vote drove the reported
+                // average depth from 0.28 ft to 4.11 ft. The solver head is
+                // used only as the submergence THRESHOLD here, never as the
+                // published value, so its datum bias cannot leak back in.
+                if (fv_mesh_.face_zb[uf] > head) continue;
                 eta = std::max(eta, std::min(fv_mesh_.cell_zb[uc],
                                              fv_mesh_.face_zb[uf]) +
                                     fv_state_.cell_h[uc]);

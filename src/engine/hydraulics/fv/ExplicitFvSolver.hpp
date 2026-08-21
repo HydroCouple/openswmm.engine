@@ -110,6 +110,21 @@ public:
         return node_pass_;
     }
 
+    /// Nodes whose PUBLISHED stage should be reconstructed from the incident
+    /// wet cells rather than reported as the solver's own head. A superset of
+    /// node_passthrough(): the same cleanliness and structure/carry tests, but
+    /// at any degree, because the degree-2 restriction exists only for the
+    /// solver's direct-face bypass.
+    ///
+    /// Measured on Example1 under FLOW_ROUTING FV: nodes outside this set
+    /// published a stage up to 0.91 ft above their own adjacent cell at
+    /// FV_MIN_CELLS 1, falling ~first-order with refinement (a datum term),
+    /// while nodes inside it never exceeded 0.0002 ft at any refinement.
+    /// See tests/manual/fv_node_stage/RESULTS.md.
+    const std::vector<std::uint8_t>& node_publish_stage() const noexcept {
+        return node_pub_;
+    }
+
     /// Time-integrated cell discharge (ft³) over the last advance(), used to
     /// publish a routing-step MEAN link flow rather than an end-of-step
     /// snapshot — the snapshot aliases badly when a routing step spans many
@@ -199,6 +214,14 @@ private:
     /// other directly (faceSide/computeFaceFlux) — the direct spliced face —
     /// which transmits both momentum and depth across the interface exactly.
     std::vector<std::uint8_t> node_pass_;
+    /// Static/full halves of the PUBLISH-stage test — see
+    /// node_publish_stage(). Deliberately separate from node_pass_, which the
+    /// SOLVER reads: widening node_pass_ instead would change the direct-face
+    /// bypass and with it the routing, which this is explicitly not allowed to
+    /// do (solver-internal heads are load-bearing ghost states under LTS tier
+    /// holds).
+    std::vector<std::uint8_t> node_pub_static_;
+    std::vector<std::uint8_t> node_pub_;
     /// Residual-volume carry (ft³) for algebraic junctions: root-solve
     /// tolerance and any cell-side positivity scaling land here and are bled
     /// back into the next solve's forcing. ≈0 in a converged steady state.
@@ -387,7 +410,6 @@ private:
     // g·(I₁(h_K) − I₁(h*_K)) — per-cell, not per-face, which is why they are
     // stored separately from the shared flux.
     std::vector<double> f_mass_, f_mom_, f_sstar_, f_corr_l_, f_corr_r_;
-    std::vector<double> f_scale_;
 
     /// Reconstructed species values on each side of each face, species-major
     /// [s * n_faces + f]. Filled by reconstructScalars() — this is the
@@ -524,7 +546,21 @@ private:
     double active_min_   = -1.0;
     double active_max_   = -1.0;
     long   active_n_     = 0;
+
+    /// The step the last accepted substep actually TOOK. Published as
+    /// suggested_step() and therefore what Router::getAdaptiveStep offers the
+    /// engine as the next routing step.
     double dt_cache_     = 0.0;
+
+    /// The CFL bound the last census returned — deliberately distinct from
+    /// dt_cache_. `dt_cache_` is clamped to the time remaining in the routing
+    /// step, so caching it as the Courant bound would drag every later substep
+    /// down to whatever fragment closed the previous step. Only this one may be
+    /// carried across a skipped census (FV_CFL_CENSUS_INTERVAL > 1).
+    double dt_census_    = 0.0;
+
+    /// Substeps remaining before the next full Courant census. Reloaded from
+    /// FV_CFL_CENSUS_INTERVAL; zero forces a census on the next substep.
     int    census_count_ = 0;
 };
 

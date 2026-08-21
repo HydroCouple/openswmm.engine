@@ -245,7 +245,21 @@ struct FvOptions {
     int lts_max_tiers = 6;
 
     /// Recompute the global CFL min-reduction every k substeps instead of every
-    /// substep, with a safety margin. 1 = every substep (exact).
+    /// substep. 1 = every substep (exact).
+    ///
+    /// INERT BEFORE 2026-08-20. The accepted-substep tail wrote the step it had
+    /// just taken into the census cache and forced the countdown to zero, so
+    /// the pre-step census ran every substep for every value of k. The step
+    /// taken and the Courant bound are now separate quantities (`dt_cache_` vs
+    /// `dt_census_`) and the countdown survives; a retry — the post-step census
+    /// proving the bound inadmissible — still resets it. The default of 1 is
+    /// bit-identical across the change.
+    ///
+    /// NOT YET SWEPT. k > 1 throttles only the PRE-step census; the post-step
+    /// acceptance census still runs every substep and is the safety net that
+    /// makes skipping the pre-step one defensible at all. The ceiling on this
+    /// option is therefore ~2× on census cost, not k×. Measure before raising
+    /// the default (Phase 1, FV1D_PERF_PLAN_REVISED_2026-08-20.md).
     int cfl_census_interval = 1;
 
     /// Whether a node's explicit stability estimate enters the LTS base step.
