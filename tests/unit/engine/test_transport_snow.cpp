@@ -59,6 +59,7 @@
 #include <cstdio>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 
@@ -77,12 +78,18 @@ openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
 
 constexpr int kNSubAge = static_cast<int>(openswmm::SubArea::COUNT_);
 
-std::string series(const char* name, int last_min, double v) {
+/// `stop_min > 0` writes `v` up to that minute and ZERO after it, which is
+/// the only way this deck can put water of one age on the surface and then
+/// take the source away. Every gate but 2 leaves it at 0 and gets the flat
+/// series it always had.
+std::string series(const char* name, int last_min, double v,
+                   int stop_min = 0) {
     std::string s;
     char buf[80];
     for (int m = 0; m <= last_min; m += 5) {
+        const double x = (stop_min > 0 && m >= stop_min) ? 0.0 : v;
         std::snprintf(buf, sizeof(buf), "%s 01/01/2026 %02d:%02d %.4f\n",
-                      name, m / 60, m % 60, v);
+                      name, m / 60, m % 60, x);
         s += buf;
     }
     return s + "\n";
@@ -101,12 +108,24 @@ struct Opts {
     /// which after S3 is the only way a pack can absorb rain rather than
     /// transmit it, because a full store passes every drop straight through.
     bool   ripe      = true;
-    double rain_h    = 0.0;    ///< arriving water is AGE ZERO
+    /// `WaterAgeSource::RAINFALL` age, **in HOURS** — the `_h` is the unit,
+    /// not decoration. `[WATER_AGE_SOURCES]` is parsed as hours and stored as
+    /// seconds (`WaterAgeComponent.cpp:162`), so **every comparison against a
+    /// value read back out of the engine needs `* 3600.0`.** Both gates that
+    /// used a nonzero age got this wrong on their first writing, in opposite
+    /// directions: one wrote seconds into the field, the other compared the
+    /// field against seconds. Default 0.0, where the unit does not show.
+    double rain_h    = 0.0;
+    /// `WaterAgeSource::INITIAL_STATE` age, **in HOURS**. See `rain_h`.
     double init_h    = 0.0;
     double rain_c    = 0.0;    ///< arriving water is 0 °C
     double init_c    = 25.0;
     int    end_min   = 60;
     double rain_inhr = 0.0;    ///< gage intensity; 0 on every gate but 7
+    /// Minute at which the gage goes dry. 0 = never. Only gate 2 uses it,
+    /// and it needs it: see that gate for why a single-phase deck cannot
+    /// observe the mixing volume in the AGE channel at all.
+    int    rain_stop_min = 0;
     /// Areal snow cover, written as a flat `ADC` curve. The default curve is
     /// all ones (`Snow.hpp:92`) and `si` is pinned to the INITIAL pack depth
     /// (`SWMMEngine.cpp:5613`, the deck's SD100 field is not read), so
@@ -178,7 +197,8 @@ void write_files(const Opts& o) {
       // Rainfall is IDENTICALLY ZERO on every gate but 7. Every drop that
       // reaches the surface comes out of the pack, which is what makes the
       // defect visible.
-      << "[TIMESERIES]\n" << series("rain_ts", o.end_min + 5, o.rain_inhr)
+      << "[TIMESERIES]\n"
+      << series("rain_ts", o.end_min + 5, o.rain_inhr, o.rain_stop_min)
       << series("air_ts", o.end_min + 5, o.air_f);
     if (o.pack) {
         // The pack starts RIPE — `fw0` at the free-water capacity — and that
@@ -219,7 +239,13 @@ void write_files(const Opts& o) {
     f << "\n[REPORT]\nINPUT NO\n";
 }
 
-SWMM_Engine run(const Opts& o) {
+/// `age_at_stop` / `t_at_stop`, when given, capture `subarea_age` and the
+/// simulation clock at the FIRST step past `rain_stop_min`. A gate that has
+/// to show "the age moved on its own" needs the value it moved FROM, and on
+/// this deck that value is not computable in advance -- it is whatever the
+/// wet phase left behind. Both are optional and every other gate omits them.
+SWMM_Engine run(const Opts& o, std::vector<double>* age_at_stop = nullptr,
+                double* t_at_stop = nullptr) {
     write_files(o);
     SWMM_Engine e = swmm_engine_create();
     if (e == nullptr) return nullptr;
@@ -230,10 +256,21 @@ SWMM_Engine run(const Opts& o) {
         swmm_engine_destroy(e);
         return nullptr;
     }
+    // `swmm_engine_step` reports elapsed time in DAYS
+    // (SWMMEngine.cpp:1234, `current_time / SEC_PER_DAY`).
+    const double stop_days = o.rain_stop_min / 1440.0;
+    bool captured = false;
     double elapsed = 0.0;
     int guard = 0;
     do {
         if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (age_at_stop != nullptr && !captured && o.rain_stop_min > 0 &&
+            elapsed >= stop_days) {
+            *age_at_stop = as_cpp_engine(e).context().water_age_state
+                               .subarea_age;
+            if (t_at_stop != nullptr) *t_at_stop = elapsed * 86400.0;
+            captured = true;
+        }
     } while (elapsed > 0.0 && ++guard < 40000);
     swmm_engine_end(e);
     return e;
@@ -299,60 +336,99 @@ TEST(TransportSnowTest, AMeltingPackDeliversWaterWhileRainfallReadsZero) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2 — AGE. Meltwater arrives at age 0, so the surface must end YOUNGER
-//          than the elapsed run time. Under the defect the mixing volume is
-//          identically zero and the age is pure elapsed time.
+// Gate 2 — AGE. Meltwater arrives and MIXES, so the surface age must move
+//          off pure accrual. Under the defect the mixing volume is
+//          identically zero and the age is `start + elapsed` exactly.
+//
+// TWO PHASES, AND THE SECOND PHASE IS THE GATE. A single-phase deck cannot
+// observe this at all, and the reason is worth stating because two earlier
+// writings of this gate both passed while observing nothing:
+//
+//   the surface age and the pack age are BOTH pure elapsed time on a deck
+//   where each starts at zero, so mixing one into the other moves nothing
+//   and the correct code and the defect print the same number.
+//
+// Measured, on the single-phase deck this gate used to run: every subarea
+// read 3600.000000 s with the fix in place AND with the S1 defect restored
+// (`arrivingPrecipRate` returning the gage). The gate passed both times.
+//
+// `INITIAL_STATE` is not the lever either -- it seeds the network and the
+// LID layers, not `subarea_age` (WaterAgeWatershed.cpp has no seeding at
+// all), so a surface configured "old" still starts at zero. That is what
+// the previous writing assumed and it is why its ceiling sat 11x above the
+// value it was bounding.
+//
+// So the deck rains OLD water for an hour, then goes dry for an hour while
+// the pack melts. The wet phase gives the surface an age of its own; the
+// dry phase is the one under test, and the value the age must move off is
+// MEASURED at the changeover rather than assumed.
 // ---------------------------------------------------------------------------
 TEST(TransportSnowTest, MeltwaterMixesIntoTheSubareaAge) {
     Opts o{};
     o.water_age = true;
-    o.rain_h = 0.0;
-    // S2b RETIRES THIS GATE'S ORIGINAL PREMISE, and the fix is the deck.
-    //
-    // It ran with INITIAL_STATE at 0, so the surface and the pack both began
-    // at age 0 and the only discriminator was "did anything arrive at all".
-    // Under S2b meltwater no longer arrives at age 0 -- it carries the pack's
-    // residence time, which on this deck is the elapsed run time, so mixing
-    // it into a surface that is ALSO at the elapsed run time moves nothing
-    // and the old assertion would fail on correct behaviour.
-    //
-    // The surface now starts OLD and the pack starts young, so arriving
-    // meltwater still has to pull the surface down and the gate still fails
-    // if the mixing volume is read from `subcatches.rainfall`. Same shape as
-    // S3's fix to `APackAbsorbingRainPublishesAGenuineZero`: the premise was
-    // retired by a fix, not the assertion.
-    o.init_h = 10.0;   // HOURS — the config is parsed in hours
-                       // (WaterAgeComponent parse_hours), so writing
-                       // seconds here makes the surface 36000 h old
-    SWMM_Engine e = run(o);
+    o.rain_h        = 10.0;   // HOURS — old water, so the wet phase leaves
+                              // the surface far above the pack's own age
+    o.rain_inhr     = 1.0;
+    o.rain_stop_min = 60;     // dry from here on: the gage reads zero and
+                              // every drop that still arrives is melt
+    o.end_min       = 120;
+    // Partial cover, so the wet phase actually reaches the ground instead of
+    // being swallowed whole by the pack. `sd100` above `sd0` is what puts the
+    // pack below its 100 %-cover depth and lets the ADC curve apply at all
+    // (S4/F6 — with sd100 at 0 the pack is permanently at full cover).
+    o.adc_cover = 0.5;
+    o.sd100     = 12.0;
+
+    std::vector<double> at_stop;
+    double t_stop = 0.0;
+    SWMM_Engine e = run(o, &at_stop, &t_stop);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
     ASSERT_TRUE(MeltingWithNoRain(ctx));
+    ASSERT_EQ(static_cast<int>(at_stop.size()), kNSubAge)
+        << "the changeover was never reached, so there is no measured value "
+           "to compare against and nothing below this line means anything";
 
-    const double elapsed_s = o.end_min * 60.0;
-    const double unmixed_s = o.init_h + elapsed_s;
+    // The DRY phase's duration, from the clock rather than from `end_min`:
+    // the capture lands on the first step past the changeover, which
+    // overshoots by up to one routing step.
+    const double dry_s = o.end_min * 60.0 - t_stop;
+    ASSERT_GT(dry_s, 60.0) << "the dry phase is too short to observe";
+
     const auto& ws = ctx.water_age_state;
     ASSERT_GE(static_cast<int>(ws.subarea_age.size()), kNSubAge);
 
     bool any_mixed = false;
     for (int k = 0; k < kNSubAge; ++k) {
         const double age = ws.subarea_age[static_cast<std::size_t>(k)];
+        const double unmixed = at_stop[static_cast<std::size_t>(k)] + dry_s;
         EXPECT_TRUE(std::isfinite(age));
-        // No reference value. A surface that mixed in NOTHING reads its
-        // initial age plus the run: `init_h + elapsed`. Anything that
-        // arrived is younger than that, because the pack itself cannot be
-        // older than the run.
-        EXPECT_LE(age, unmixed_s + 1.0e-6)
-            << "subarea " << k << " is older than its own start age plus the "
-               "run, which nothing in this deck can produce";
-        if (age < unmixed_s - 1.0)
+        // No reference value, and none is needed. A surface that mixed in
+        // NOTHING during the dry phase reads exactly what it read at the
+        // changeover plus the time since. Anything that arrived came out of
+        // the pack, which is younger than the hour-old rain the surface is
+        // carrying, so it can only pull the age DOWN.
+        EXPECT_LE(age, unmixed + 1.0e-6)
+            << "subarea " << k << " aged FASTER than the clock, which "
+               "nothing in a dry phase can produce";
+        // Half the dry phase, and the bar is set from measurement rather
+        // than from taste. Pure accrual does NOT land exactly on `unmixed`:
+        // the age advances one WET step (60 s) at a time while `t_stop` is
+        // the routing clock, so the capture instant sits up to one step off
+        // and accrual alone reads ~59.5 s below the bound. Measured on this
+        // deck: accrual 3540.0 s of movement against a 3599.5 s window --
+        // 59.5 s -- and correct mixing 12 638.8 s, which is 3.5x the window.
+        // A 1-second band would therefore pass the defect; half the window
+        // is two orders of magnitude clear of the quantisation and seven
+        // times clear of the signal.
+        if (unmixed - age > 0.5 * dry_s)
             any_mixed = true;
     }
     EXPECT_TRUE(any_mixed)
-        << "every subarea age equals its start age plus the elapsed run "
-           "time, which is what a surface reads when NOTHING mixes into it. "
-           "Meltwater reached this subcatchment — the mixing volume is still "
-           "being read from subcatches.rainfall, which is zero on this deck";
+        << "no subarea age moved more than half the dry phase off pure "
+           "accrual, which is what a surface reads when NOTHING mixes into "
+           "it. Meltwater reached this subcatchment — the mixing volume is "
+           "still being read from subcatches.rainfall, which is zero here";
     swmm_engine_destroy(e);
 }
 
