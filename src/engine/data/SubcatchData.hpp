@@ -498,6 +498,24 @@ struct SubcatchData {
     std::vector<double> snow_melt_perv;
 
     /**
+     * @brief S2b — WATER AGE of the meltwater in `snow_melt_imperv` (sec).
+     *
+     * @details The pack's own residence time, area-blended over plowable and
+     *          non-plowable impervious with the **identical** weights
+     *          `snow_melt_imperv` uses. Reusing the blend is not tidiness:
+     *          the rate and the age it describes have to come from the same
+     *          weighting or a caller mixing by one and ageing by the other
+     *          gets a mixture that never existed.
+     *
+     *          -1.0 means no snowpack active, matching `snow_net_*` and
+     *          `snow_melt_*`. Only meaningful where `snow_melt_imperv > 0`.
+     */
+    std::vector<double> snow_melt_age_imperv;
+
+    /// S2b — water age of the meltwater in `snow_melt_perv` (sec). See above.
+    std::vector<double> snow_melt_age_perv;
+
+    /**
      * @brief Total LID area for this subcatchment (ft²).
      * @details Sum of all LID unit areas (ft²) that belong to this subcatchment.
      *          Set by LIDSolver::init(). Used by snow plowing and snow cover
@@ -667,6 +685,8 @@ struct SubcatchData {
         snow_net_perv.assign(un, -1.0);
         snow_melt_imperv.assign(un, -1.0);
         snow_melt_perv.assign(un, -1.0);
+        snow_melt_age_imperv.assign(un, -1.0);
+        snow_melt_age_perv.assign(un, -1.0);
         total_lid_area_ft2.assign(un, 0.0);
         lid_return_to_perv_cfs.assign(un, 0.0);
         lid_drain_runon_cfs.assign(un, 0.0);
@@ -721,6 +741,8 @@ struct SubcatchData {
         g(snow_net_perv,   -1.0);
         g(snow_melt_imperv, -1.0);
         g(snow_melt_perv,   -1.0);
+        g(snow_melt_age_imperv, -1.0);
+        g(snow_melt_age_perv,   -1.0);
         g(total_lid_area_ft2, 0.0);
         g(lid_return_to_perv_cfs, 0.0);
         g(lid_drain_runon_cfs, 0.0);
@@ -769,6 +791,7 @@ struct SubcatchData {
         r(gw_a2); r(gw_b2); r(gw_a3); r(gw_tw);
         r(gw_hstar); r(snowpack); r(snow_net_imperv); r(snow_net_perv);
         r(snow_melt_imperv); r(snow_melt_perv);
+        r(snow_melt_age_imperv); r(snow_melt_age_perv);
         r(total_lid_area_ft2); r(lid_return_to_perv_cfs); r(lid_drain_runon_cfs); r(outlet_name);
         r(gage_name); r(comments); r(tags); r(stat_gw_steps);
     }
@@ -810,6 +833,7 @@ struct SubcatchData {
         e(gw_a1); e(gw_b1); e(gw_a2); e(gw_b2); e(gw_a3); e(gw_tw); e(gw_hstar);
         e(snowpack); e(snow_net_imperv); e(snow_net_perv);
         e(snow_melt_imperv); e(snow_melt_perv);
+        e(snow_melt_age_imperv); e(snow_melt_age_perv);
         e(total_lid_area_ft2); e(lid_return_to_perv_cfs); e(lid_drain_runon_cfs);
 
         // Flat 2D quality arrays: [sc * np + p]
@@ -943,6 +967,8 @@ struct SubcatchData {
         snow_net_perv.shrink_to_fit();
         snow_melt_imperv.shrink_to_fit();
         snow_melt_perv.shrink_to_fit();
+        snow_melt_age_imperv.shrink_to_fit();
+        snow_melt_age_perv.shrink_to_fit();
 
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
@@ -966,6 +992,8 @@ struct SubcatchData {
         std::fill(snow_net_perv.begin(),   snow_net_perv.end(),   -1.0);
         std::fill(snow_melt_imperv.begin(), snow_melt_imperv.end(), -1.0);
         std::fill(snow_melt_perv.begin(),   snow_melt_perv.end(),   -1.0);
+        std::fill(snow_melt_age_imperv.begin(), snow_melt_age_imperv.end(), -1.0);
+        std::fill(snow_melt_age_perv.begin(),   snow_melt_age_perv.end(),   -1.0);
         std::fill(evap_loss.begin(),    evap_loss.end(),    0.0);
         std::fill(infil_loss.begin(),   infil_loss.end(),   0.0);
         std::fill(ponded_depth.begin(), ponded_depth.end(), 0.0);

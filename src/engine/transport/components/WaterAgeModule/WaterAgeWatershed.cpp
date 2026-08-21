@@ -120,6 +120,13 @@ void routeSubcatchmentAge(SimulationContext& ctx,
             // to sit outside the loop as a single scalar, which was wrong
             // even where the total was right.
             const double rain_rate = arrivingPrecipRate(ctx, ui, k);
+            // S2b: and the water that arrived is not all the same AGE. Under
+            // a pack it is meltwater carrying the pack's residence time plus
+            // rain through the snow-free fraction at the configured source
+            // age; `arrivingPrecipAge` blends them on the same fraction the
+            // heat track uses. On a bare subcatchment it returns `a_rain`
+            // exactly, so this is inert everywhere there is no pack.
+            const double a_precip = arrivingPrecipAge(ctx, ui, k);
             const double in_rate = rain_rate + runon_depth_rate;
 
             // Arriving water is precipitation and run-on MIXED, flow-
@@ -128,8 +135,8 @@ void routeSubcatchmentAge(SimulationContext& ctx,
             // 0.027 — so treating the arrival as pure run-on whenever any
             // run-on exists would hand the whole inflow the donor's age.
             const double a_in = (in_rate > 0.0)
-                ? (rain_rate * a_rain + runon_depth_rate * runon_age) / in_rate
-                : a_rain;
+                ? (rain_rate * a_precip + runon_depth_rate * runon_age) / in_rate
+                : a_precip;
 
             // 1. Age what was already there.
             double a = ws.subarea_age[idx] + dt;

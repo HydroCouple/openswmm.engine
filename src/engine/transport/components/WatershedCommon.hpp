@@ -126,6 +126,39 @@ double arrivingMeltFraction(const SimulationContext& ctx, std::size_t ui,
 double arrivingPrecipTemperature(const SimulationContext& ctx, std::size_t ui,
                                  int subarea) noexcept;
 
+/**
+ * @brief Water age of the water arriving at one subarea [seconds] (S2b).
+ *
+ * @details The age analogue of `arrivingPrecipTemperature`, and **it uses
+ *          the same `arrivingMeltFraction`** — not an equivalent expression,
+ *          the same call. Under a pack the arriving water is meltwater
+ *          carrying the pack's residence time plus rain that reached the
+ *          ground through the snow-free fraction carrying the configured
+ *          `WaterAgeSource::RAINFALL` age:
+ *
+ *          `a = (1 − f)·a_rain + f·a_pack`
+ *
+ *          If the two tracks ever computed `f` separately they could drift,
+ *          and the drift would be invisible: both answers stay inside their
+ *          brackets, and only a deck comparing arriving age against arriving
+ *          temperature could see it. One call is what makes that
+ *          unrepresentable.
+ *
+ * @par Where a_pack comes from
+ *      `snow_melt_age_*`, published beside `snow_melt_*` under the identical
+ *      area blend. **It is NOT the age of the water still in the pack** — a
+ *      pack that empties this step publishes the age its water HAD, which
+ *      the remaining-water age cannot express because there is none.
+ *
+ * @par The no-pack answer
+ *      Returns the configured RAINFALL age wherever there is no pack,
+ *      `IGNORE_SNOWMELT` is on, nothing arrived, or the pack published no
+ *      melt — so a caller blends unconditionally and a bare deck is
+ *      bit-identical to its pre-S2b behaviour.
+ */
+double arrivingPrecipAge(const SimulationContext& ctx, std::size_t ui,
+                         int subarea) noexcept;
+
 /// The temperature meltwater leaves a pack at, °C. Zero, and named rather
 /// than written as a literal so a gate can assert against the constant the
 /// code uses instead of against a number a reader hopes it uses.

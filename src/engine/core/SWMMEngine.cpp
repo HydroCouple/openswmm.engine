@@ -1592,6 +1592,18 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 snow_snow_[ui] = ctx_.forcing.effective_snowfall(ui, p.snowfall);
             }
 
+            // S2b — hand the snow solver what it needs to carry water age.
+            // A scalar in, nothing out: hydrology keeps no dependency on the
+            // transport layer, the same way `season` is handed in. Set
+            // BEFORE plowSnow, because plowSnow is where snowfall is mixed
+            // into the pack at its source age.
+            {
+                auto& snow_soa = snow_.state();
+                snow_soa.track_age  = ctx_.options.water_age;
+                snow_soa.precip_age = ctx_.water_age_config.global_age[
+                    static_cast<int>(WaterAgeSource::RAINFALL)];
+            }
+
             // Accumulation + plowing BEFORE melt (legacy runoff.c:254).
             snow_.plowSnow(ctx_, dt_runoff, snow_snow_.data());
 
@@ -1639,6 +1651,27 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                        soa.imelt[imperv_idx] * fImperv) / fTotalI
                     : soa.imelt[plow_idx];
                 ctx_.subcatches.snow_melt_perv[ui] = soa.imelt[perv_idx];
+
+                // S2b — the AGE of that meltwater, under the identical
+                // blend. Weighted by melt VOLUME rather than by area alone:
+                // the impervious value mixes plowable and non-plowable melt,
+                // and two surfaces contributing different rates do not
+                // contribute their ages equally. Weighting by area would be
+                // the same expression as the rate blend and would still be
+                // wrong, because an age is an intensive property of the
+                // water and the rate is not.
+                if (soa.track_age) {
+                    const double m_plow = soa.imelt[plow_idx] * fPlow;
+                    const double m_imp  = soa.imelt[imperv_idx] * fImperv;
+                    const double m_sum  = m_plow + m_imp;
+                    ctx_.subcatches.snow_melt_age_imperv[ui] =
+                        (m_sum > 0.0)
+                            ? (soa.out_age[plow_idx] * m_plow +
+                               soa.out_age[imperv_idx] * m_imp) / m_sum
+                            : soa.out_age[plow_idx];
+                    ctx_.subcatches.snow_melt_age_perv[ui] =
+                        soa.out_age[perv_idx];
+                }
             }
         }
 
