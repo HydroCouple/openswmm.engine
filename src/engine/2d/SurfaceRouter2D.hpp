@@ -44,6 +44,7 @@
 #include "data/BoundaryData.hpp"
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
+#include "infil/Infil2D.hpp"
 #include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
@@ -189,6 +190,32 @@ public:
     BoundaryData& boundary() noexcept { return boundary_; }
 
     /**
+     * @brief Access the per-cell infiltration model (plan §5.5, track I).
+     *
+     * Mutable so SWMMEngine can publish it on `ctx.twod_io.infil` — the
+     * [2D_INFILTRATION*] section handlers and the InpWriter reach it there.
+     * The router owns the object, resolves it against the mesh in
+     * initialize(), and drives its INFIL_STEP cadence in coAdvanceStep().
+     */
+    Infil2D& infil() noexcept { return infil_; }
+    const Infil2D& infil() const noexcept { return infil_; }
+
+    /**
+     * @brief Ledger-consistent cumulative infiltrated depth per cell (m).
+     *
+     * @details Accumulates the SAME depth-ramped `infilSink(...)` value the
+     *          marcher removes and `MassBalance2D::infil_out` books, so
+     *          `sum(infilCumulative()[i] * tri_area[i]) == infil_out` holds by
+     *          construction. Prefer this over `Infil2D::cumulative()`, which is
+     *          the unramped capacity the kernels offered and therefore exceeds
+     *          the applied loss on drying cells. Empty when no
+     *          `[2D_INFILTRATION*]` model resolved.
+     */
+    const std::vector<double>& infilCumulative() const noexcept {
+        return infil_cum_applied_;
+    }
+
+    /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
      *
      * V-E3. Populated by the input parser during reading (before the
@@ -248,6 +275,22 @@ private:
     SurfaceStateData state_;
     SolverOptions2D  options_;
     BoundaryData     boundary_;
+
+    /// §5.5 track I — per-cell infiltration parameters, kernel state and the
+    /// held rates published into state_.infil_rate. Inert (no allocation, no
+    /// per-step work) until a [2D_INFILTRATION*] section resolves a model.
+    Infil2D infil_;
+
+    /// Sim time since the last Infil2D::updateRates call (D-I1 INFIL_STEP
+    /// cadence). Advanced on the routing/co-advance cadence, NEVER per
+    /// marcher substep.
+    double infil_elapsed_ = 0.0;
+
+    /// Per-cell APPLIED cumulative infiltrated depth (m) — see
+    /// infilCumulative(). Filled in accumulateMassBalance() from the same
+    /// infilSink() value that feeds MassBalance2D::infil_out; empty when no
+    /// [2D_INFILTRATION*] model resolved.
+    std::vector<double> infil_cum_applied_;
 
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
     std::vector<PendingBoundaryRow> pending_bc_rows_;
@@ -356,7 +399,8 @@ private:
 
     /// Accumulate the global 2D mass-balance terms for one executed step
     /// into ctx.mass_balance_2d (rainfall, coupling, outfall, boundary,
-    /// latest storage) and the evaporation loss into state_.evap_loss_total.
+    /// infiltration, latest storage) and the evaporation loss into
+    /// state_.evap_loss_total.
     /// All terms in the 2D solver's SI internal units (m³).
     void accumulateMassBalance(SimulationContext& ctx, double dt);
 };

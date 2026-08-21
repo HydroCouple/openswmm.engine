@@ -680,6 +680,33 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     solver_->initialize(mesh_, state_, options_);
 #endif
 
+    // §5.5 track I — resolve the [2D_INFILTRATION*] rows against the mesh
+    // (D-I3: per-cell override > tag > '*' > none) now that tri_tag and the
+    // triangle count are final, and the solver has reconstructed the initial
+    // depths the kernels read. Validation failures (unsupported destination,
+    // out-of-range cell, bad parameters) are reported like the mesh ones.
+    // Cheap no-op with no sections present: resolve() drops straight back to
+    // the unconfigured fast path.
+    {
+        std::string infil_err;
+        if (!infil_.resolve(mesh_, ctx.options, infil_err))
+            throw std::runtime_error(infil_err);
+    }
+    infil_elapsed_ = 0.0;
+    if (infil_.active()) {
+        // Publish an initial held rate so the very first substep infiltrates
+        // instead of running a whole INFIL_STEP dry. The kernels are advanced
+        // by one cadence step here, matching how the runoff module evaluates
+        // at the start of a wet step.
+        infil_.updateRates(mesh_, state_, infil_.stepSeconds());
+        infil_cum_applied_.assign(
+            static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+    } else {
+        // Left EMPTY (not zero-filled) so consumers can distinguish "no model"
+        // exactly as they do for Infil2D::cumulative().
+        infil_cum_applied_.clear();
+    }
+
     active_ = true;
     sim_time_ = 0.0;
     pending_dt_ = 0.0;
@@ -780,6 +807,23 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         co_forcing_elapsed_ = 0.0;
         co_forcing_first_ = false;
     }
+
+    // §5.5.2 (D-I1) — infiltration is a HELD rate on its own INFIL_STEP
+    // cadence: recompute here (co-advance/routing cadence, after the rainfall
+    // the kernels read has been refreshed) and hold it constant in between.
+    // NEVER per marcher substep — that would be a different model and would
+    // drag infiltration into the LTS tiering. updateRates advances the kernel
+    // state of every model-carrying cell, active or not, so an inactive cell
+    // does not present full initial capacity when rain finally arrives.
+    // Entirely skipped (no loop, no allocation) when nothing resolved.
+    if (infil_.active()) {
+        infil_elapsed_ += dt;
+        if (infil_elapsed_ >= infil_.stepSeconds()) {
+            infil_.updateRates(mesh_, state_, infil_elapsed_);
+            infil_elapsed_ = 0.0;
+        }
+    }
+
     resolveBoundaryValues(ctx, t);
 
     // OPENSWMM_2D_HEAD_RAMP=1 (experimental, decoupling-viability study):
@@ -1184,6 +1228,32 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     }
     mb.evap_out += evap_vol * dt;
     state_.evap_loss_total += evap_vol * dt;
+
+    // Infiltration loss (m³) — plan §5.5.2 site 5 / §5.5.4. The same
+    // depth-limited sink the marcher integrates (D-I2: after evaporation),
+    // evaluated at the accepted end-of-step depths exactly like the
+    // evaporation term above. Destination is LOST in this release (D-I4), so
+    // it is a true exit from the modelled system. Skipped entirely when no
+    // [2D_INFILTRATION*] rows resolved.
+    //
+    // The per-cell APPLIED cumulative depth (m) is accumulated from the SAME
+    // infilSink() value in the same pass, which is what makes
+    // sum(infil_cum_applied_[i] * tri_area[i]) == mb.infil_out true by
+    // construction. Infil2D::cumulative() cannot serve here: it integrates the
+    // unramped capacity the kernel offered, which exceeds the applied loss
+    // whenever a cell is drying.
+    if (infil_.active()) {
+        double infil_vol = 0.0;
+        const bool track_cum =
+            infil_cum_applied_.size() == static_cast<std::size_t>(nt);
+        for (int i = 0; i < nt; ++i) {
+            const double applied = infilSink(state_.infil_rate[i], state_.depth[i],
+                                             options_.dry_depth);
+            infil_vol += applied * mesh_.tri_area[i];
+            if (track_cum) infil_cum_applied_[static_cast<std::size_t>(i)] += applied * dt;
+        }
+        mb.infil_out += infil_vol * dt;
+    }
 
     // Coupling and outfall exchange (m³, SI-native, already capped/clamped —
     // exactly what the 2D domain was asked to move). Outfall sign: + = pipe

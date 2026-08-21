@@ -103,7 +103,7 @@ private:
     // ---- device state -----------------------------------------------------
     DView d_volume_, d_head_, d_depth_;
     DView d_q_, d_faccL_, d_faccR_, d_qcx_, d_qcy_;
-    DView d_rain_, d_coup_, d_evap_;
+    DView d_rain_, d_coup_, d_evap_, d_infil_;
     DView d_edge_flux_;                ///< 3·nt flat slots (published)
     IView d_active_, d_pin_t0_, d_tier_, d_face_tier_;
     IView d_cells_compact_, d_edges_compact_;  ///< per-tier segments
