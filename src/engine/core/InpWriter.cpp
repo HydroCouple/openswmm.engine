@@ -1601,12 +1601,18 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     // [ORIFICES]
     if(hasLT(ctx,LinkType::ORIFICE)){sec(f,"ORIFICES");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s\n","Name","FromNode","ToNode","Type","Offset","Cd","Gated");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s\n","----------------","----------------","----------------","----------","----------","----------","--------");
+    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n","Name","FromNode","ToNode","Type","Offset","Cd","Gated","CloseTime");
+    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------------","----------------","----------","----------","----------","--------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::ORIFICE)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int orr=ctx.link_subtypes.orifice_row(j);
-    std::fprintf(f,"%-16s %-16s %-16s SIDE       %10.4f %10.4f NO\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(orr>=0)?ctx.link_subtypes.orifices.cd[static_cast<size_t>(orr)]:0.0);
+    const auto uorr=static_cast<size_t>(orr);
+    // orifice_type: 0 = BOTTOM, 1 = SIDE (LinkSubtypes.hpp). `orate` is stored
+    // as parsed — HOURS, converted at use (SWMMEngine.cpp:2927) — so it is
+    // emitted verbatim. All four were previously hardcoded/dropped, which
+    // destroyed the orientation, the flap gate and the close time on save.
+    const char* otype=(orr>=0&&ctx.link_subtypes.orifices.orifice_type[uorr]!=0.0)?"SIDE":"BOTTOM";
+    std::fprintf(f,"%-16s %-16s %-16s %-10s %10.4f %10.4f %-8s %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),otype,ctx.links.offset1[u],(orr>=0)?ctx.link_subtypes.orifices.cd[uorr]:0.0,ctx.links.has_flap_gate[u]?"YES":"NO",(orr>=0)?ctx.link_subtypes.orifices.orate[uorr]:0.0);
     }}
 
     // [WEIRS]

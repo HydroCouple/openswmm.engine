@@ -61,6 +61,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -588,6 +589,111 @@ TEST(InpWriterRoundTrip, AnUnresolvableLinkEndNodeIsFatal) {
 }
 
 // ===========================================================================
+// Flap gates on structure links
+//
+// Legacy funnels both flap-gate flavours through one predicate
+// (link.c:646 link_setFlapGate), and both flavours have to survive a save.
+// Two defects met here:
+//
+//   [ORIFICES]  the writer printed a literal `SIDE … NO` and dropped the
+//               open/close-time column outright, so saving a model destroyed
+//               the orientation, the flap gate and the close time.
+//   [OUTLETS]   the Gated column was written but never PARSED, so a save
+//               round-trip silently rewrote the user's YES as NO.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, OrificeRowKeepsItsTypeGateAndCloseTime) {
+    const auto g = gen1("flap_gates.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    // Columns: Name From To Type Offset Cd Gated CloseTime.
+    // Type and Gated are checked BEFORE the column count, so a writer that
+    // drops CloseTime still reports which of the other two it also got wrong
+    // rather than aborting the test on the size assertion alone.
+    const auto side = row(g.text, "ORIFICES", "O_SIDE");
+    ASSERT_GE(side.size(), 7u) << "row is not even the pre-fix width";
+    EXPECT_EQ(side.at(3), "SIDE");
+    EXPECT_EQ(side.at(6), "YES");
+
+    // The BOTTOM orifice is the one the hardcoded "SIDE" silently converted.
+    const auto bot = row(g.text, "ORIFICES", "O_BOT");
+    ASSERT_GE(bot.size(), 7u);
+    EXPECT_EQ(bot.at(3), "BOTTOM");
+    EXPECT_EQ(bot.at(6), "NO");
+
+    // The open/close time was dropped outright.
+    ASSERT_EQ(side.size(), 8u) << "the CloseTime column is missing entirely";
+    ASSERT_EQ(bot.size(), 8u);
+    EXPECT_NEAR(std::stod(side.at(7)), 1.5, 1e-6);
+    EXPECT_NEAR(std::stod(bot.at(7)), 2.25, 1e-6);
+}
+
+TEST(InpWriterRoundTrip, StructureFlapGatesSurviveAReopen) {
+    gen1("flap_gates.inp");
+    Reopened r("_flap_gates_rt1.inp");
+    ASSERT_NE(r.e, nullptr);
+
+    // Read back through the C API — the surface the GUI actually uses.
+    auto gated = [&](const char* name) {
+        const int j = swmm_link_index(r.e, name);
+        EXPECT_GE(j, 0) << name << " did not survive the round-trip at all";
+        int flag = -1;
+        EXPECT_EQ(swmm_link_get_flap_gate(r.e, j, &flag), SWMM_OK) << name;
+        return flag;
+    };
+
+    EXPECT_EQ(gated("C1"), 1)      << "[LOSSES] conduit gate";
+    EXPECT_EQ(gated("O_SIDE"), 1)  << "[ORIFICES] gate";
+    EXPECT_EQ(gated("O_BOT"), 0)   << "an ungated orifice must stay ungated";
+    EXPECT_EQ(gated("W1"), 1)      << "[WEIRS] gate";
+    // Both outlet rating layouts: the Gated column sits at a different token
+    // index in each, so a fix that reads one fixed index passes only half.
+    EXPECT_EQ(gated("L_TAB"), 1)   << "[OUTLETS] TABULAR gate";
+    EXPECT_EQ(gated("L_FUN"), 1)   << "[OUTLETS] FUNCTIONAL gate";
+
+    const int o1 = swmm_node_index(r.e, "O1");
+    ASSERT_GE(o1, 0);
+    int oflag = -1;
+    EXPECT_EQ(swmm_node_get_outfall_flap_gate(r.e, o1, &oflag), SWMM_OK);
+    EXPECT_EQ(oflag, 1) << "[OUTFALLS] gate";
+}
+
+// Gated YES is not the only spelling a deck can carry: Tokenizer::parse_boolean
+// accepts YES/TRUE/1, and [LOSSES] and [OUTFALLS] have always used it. The
+// orifice, weir and outlet sections instead tested a bare
+// to_upper(tok) == "YES", so the same word meant different things depending on
+// which section it appeared in. Every gate in this fixture is spelled TRUE or 1.
+TEST(InpWriterRoundTrip, AlternateBooleanSpellingsAreAcceptedForEveryGate) {
+    const auto g = gen1("flap_gate_spellings.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    // The writer normalises every accepted spelling to YES on the way out.
+    EXPECT_EQ(row(g.text, "ORIFICES", "OR1").at(6), "YES") << "[ORIFICES] TRUE";
+    EXPECT_EQ(row(g.text, "WEIRS",    "W1").at(6),  "YES") << "[WEIRS] 1";
+    EXPECT_EQ(row(g.text, "OUTLETS",  "L1").at(7),  "YES") << "[OUTLETS] TRUE";
+    EXPECT_EQ(row(g.text, "LOSSES",   "C1").at(4),  "YES") << "[LOSSES] TRUE";
+    // FREE outfalls carry no stage-data column, so Gated is the 4th token,
+    // not the 5th — the same left-shift the parser handles at NodesHandler.cpp.
+    EXPECT_EQ(row(g.text, "OUTFALLS", "O1").at(3),  "YES") << "[OUTFALLS] 1";
+
+    // And the flags really are set, not merely echoed as text.
+    Reopened r("_flap_gate_spellings_rt1.inp");
+    ASSERT_NE(r.e, nullptr);
+    for (const char* name : {"C1", "OR1", "W1", "L1"}) {
+        const int j = swmm_link_index(r.e, name);
+        ASSERT_GE(j, 0) << name;
+        int flag = -1;
+        EXPECT_EQ(swmm_link_get_flap_gate(r.e, j, &flag), SWMM_OK) << name;
+        EXPECT_EQ(flag, 1) << name << ": alternate spelling did not set the gate";
+    }
+    const int o1 = swmm_node_index(r.e, "O1");
+    ASSERT_GE(o1, 0);
+    int oflag = -1;
+    EXPECT_EQ(swmm_node_get_outfall_flap_gate(r.e, o1, &oflag), SWMM_OK);
+    EXPECT_EQ(oflag, 1) << "[OUTFALLS] gate from the '1' spelling";
+}
+
+// ===========================================================================
 // Idempotency
 //
 // The writer must converge: reading back what it wrote and writing again has
@@ -595,7 +701,8 @@ TEST(InpWriterRoundTrip, AnUnresolvableLinkEndNodeIsFatal) {
 // ===========================================================================
 
 TEST(InpWriterRoundTrip, TheWriterConvergesAtTheSecondGeneration) {
-    for (const char* fixture : {"hydrology.inp", "section_order.inp", "inlet_usage.inp"}) {
+    for (const char* fixture : {"hydrology.inp", "section_order.inp", "inlet_usage.inp",
+                                "flap_gates.inp", "flap_gate_spellings.inp"}) {
         const std::string stem(fixture, std::string(fixture).size() - 4);
         writeOnce(fixture, "_" + stem + "_rt1.inp");
         writeOnce("_" + stem + "_rt1.inp", "_" + stem + "_rt2.inp");

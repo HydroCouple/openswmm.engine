@@ -247,7 +247,7 @@ CREATE TABLE IF NOT EXISTS orifices (
     link_id         TEXT NOT NULL,
     orientation     TEXT,                -- SIDE | BOTTOM
     discharge_coeff REAL,
-    orate           REAL,                -- open/close rate (s)
+    orate           REAL,                -- open/close rate (HOURS, as parsed)
     PRIMARY KEY (simulation_id, link_id),
     FOREIGN KEY (simulation_id, link_id)
         REFERENCES links(simulation_id, link_id)
