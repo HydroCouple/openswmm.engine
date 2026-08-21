@@ -44,9 +44,30 @@ extern long g_trace_rstep_sn;
 
 namespace hydstruct {
 
+// PARITY link.c:646-673 link_setFlapGate. Both halves, in legacy's order.
+bool flapGateBlocks(const SimulationContext& ctx, int j, int n1, int n2, double q) {
+    const auto uj = static_cast<size_t>(j);
+
+    // --- reverse flow through the link's own flap gate
+    if (ctx.links.has_flap_gate[uj] &&
+        q * static_cast<double>(ctx.links.direction[uj]) < 0.0)
+        return true;
+
+    // --- gated OUTFALL on the INFLOW end of the link. q == 0 selects neither
+    //     end, matching legacy's `n = -1` initialisation.
+    int n = -1;
+    if (q < 0.0) n = n2;
+    if (q > 0.0) n = n1;
+    if (n < 0) return false;
+    if (ctx.nodes.type[static_cast<size_t>(n)] != NodeType::OUTFALL) return false;
+    const int ofr = ctx.node_subtypes.outfall_row(n);
+    return ofr >= 0 &&
+           ctx.node_subtypes.outfalls.has_flap_gate[static_cast<size_t>(ofr)] != 0;
+}
+
 void PumpGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); curve_type.resize(u,0); speed.resize(u,1.0); y_on.resize(u,0); y_off.resize(u,0); }
-void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); c_orifice.resize(u,0); c_weir.resize(u,0); h_crit.resize(u,0); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); }
-void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); can_surcharge.resize(u,1); }
+void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); c_orifice.resize(u,0); c_weir.resize(u,0); h_crit.resize(u,0); surf_area.resize(u,0); length_eff.resize(u,0); }
+void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); surf_area.resize(u,0); length_eff.resize(u,0); can_surcharge.resize(u,1); }
 void OutletGroup::resize(int n)  { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); q_coeff.resize(u,0); q_expon.resize(u,1); }
 
 void StructureSolver::init(SimulationContext& ctx) {
@@ -118,7 +139,6 @@ void StructureSolver::init(SimulationContext& ctx) {
             case LinkType::ORIFICE: {
                 auto uk = static_cast<size_t>(io);
                 orifices_.link_idx[uk] = j;
-                orifices_.has_flap[uk] = ctx.links.has_flap_gate[uj];
 
                 // Pre-compute orifice coefficients matching legacy orifice.c
                 // c_orifice = Cd * A_full * sqrt(2g)  (full orifice flow)
@@ -158,7 +178,6 @@ void StructureSolver::init(SimulationContext& ctx) {
                 weirs_.c_disch1[uk]   = W.cd[wr];   // RAW (see PARITY note above)
                 weirs_.c_disch2[uk]   = W.cd2[wr];  // RAW end-section coeff
                 weirs_.can_surcharge[uk] = W.can_surcharge[wr];
-                weirs_.has_flap[uk]   = ctx.links.has_flap_gate[uj];
                 weirs_.weir_type[uk]  = static_cast<int>(W.weir_type[wr]);
                 weirs_.end_con[uk]    = W.end_contractions[wr];
                 // V-notch / trapezoidal side slope comes from the cross-section,
@@ -567,8 +586,9 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
             return;
         }
 
-        // Flap gate: block reverse flow
-        if (links.has_flap_gate[uj] && dir < 0.0) {
+        // Flap gate: the link's own gate OR a gated outfall on the inflow end
+        // (legacy link.c:1895 passes `dir` to link_setFlapGate).
+        if (flapGateBlocks(ctx, j, n1, n2, dir)) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
@@ -730,9 +750,9 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
         double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
         double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
 
-        // Flap gate check — legacy link_setFlapGate: if forward flow blocked,
-        // zero flow. Our has_flap_gate flag matches the legacy sense.
-        if (links.has_flap_gate[uj] && dir < 0.0) {
+        // Flap gate check — legacy link_setFlapGate (link.c:2303 passes `dir`):
+        // the link's own gate OR a gated outfall on the inflow end.
+        if (flapGateBlocks(ctx, j, n1, n2, dir)) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
@@ -772,7 +792,10 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
         double cd2    = weirs_.c_disch2[uk];
         double length = links.xsect_w_max[uj];
         int    wt     = weirs_.weir_type[uk];
-        const bool flap = weirs_.has_flap[uk] != 0;
+        // The ARMCO head loss keys on the LINK's own gate only — legacy passes
+        // Link[j].hasFlapGate into weir_getFlow (link.c:2343) rather than
+        // calling link_setFlapGate, so an outfall gate must NOT trigger it.
+        const bool flap = links.has_flap_gate[uj] != 0;
         double q = 0.0;
 
         // PARITY link.c weir_getFlow (2323-2412): legacy evaluates the weir
@@ -1072,8 +1095,9 @@ void StructureSolver::computeOutletFlowK(SimulationContext& ctx, int k) {
         double head = depth_based
                         ? (h1 - hcrest)
                         : (h1 - std::max(h2, hcrest));
-        // Flap gate (closed against reverse flow)
-        bool blocked_by_flap = (links.has_flap_gate[uj] && dir < 0);
+        // Flap gate (closed against reverse flow) — the link's own gate OR a
+        // gated outfall on the inflow end (legacy link.c:2697 passes `dir`).
+        bool blocked_by_flap = flapGateBlocks(ctx, j, n1, n2, dir);
 
         if (head <= FUDGE_OUT || y1 <= FUDGE_OUT || blocked_by_flap) {
             links.flow[uj] = 0.0;
