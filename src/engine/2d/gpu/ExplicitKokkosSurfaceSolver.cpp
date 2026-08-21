@@ -88,6 +88,18 @@ KOKKOS_INLINE_FUNCTION double devEvapSink(double rate, double depth,
     return rate * t * t * (3.0 - 2.0 * t);
 }
 
+/// Device twin of SurfaceFluxCalculator.hpp infilSink (plan §5.5, D-I1) —
+/// same body as devEvapSink above, kept as its own function so the two sinks
+/// stay independently greppable and D-I2's ordering reads explicitly at the
+/// call sites.
+KOKKOS_INLINE_FUNCTION double devInfilSink(double rate, double depth,
+                                           double dry_depth) {
+    if (rate <= 0.0 || depth <= 0.0) return 0.0;
+    if (depth >= dry_depth) return rate;
+    const double t = depth / dry_depth;
+    return rate * t * t * (3.0 - 2.0 * t);
+}
+
 constexpr double kOrificeHEps = 0.02;   // == NodeCoupling.cpp ORIFICE_H_EPS
 
 KOKKOS_INLINE_FUNCTION double devOrificePhi(double a) {
@@ -192,6 +204,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_rain_ = DView("rain", nt);
     d_coup_ = DView("coup", nt);
     d_evap_ = DView("evap", nt);
+    d_infil_ = DView("infil", nt);
     d_edge_flux_ = DView("edge_flux", state.edge_flux.size());
     d_active_ = IView("active", nt);
     d_pin_t0_ = IView("pin_t0", nt);
@@ -412,7 +425,7 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
     if (dt_lazy <= 0.0) return;
     const int nt = mesh_->n_triangles();
     auto vol = d_volume_, head = d_head_, depth = d_depth_;
-    auto rain = d_rain_, coup = d_coup_, evap = d_evap_;
+    auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
     auto active = d_active_;
     auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
     auto v0 = d_tri_v0_, v1 = d_tri_v1_, v2 = d_tri_v2_;
@@ -423,8 +436,11 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
         "lazySources", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
             if (active(i)) return;
+            // D-I2 ordering: rainfall source → evaporation → infiltration
+            // against the remaining depth (== ExplicitInertialSolver).
             const double src = rain(i) + coup(i)
-                               - devEvapSink(evap(i), depth(i), dry);
+                               - devEvapSink(evap(i), depth(i), dry)
+                               - devInfilSink(infil(i), depth(i), dry);
             if (src == 0.0) return;
             double v = vol(i) + dt_lazy * src * area(i);
             vol(i) = (v > 0.0) ? v : 0.0;
@@ -752,7 +768,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
     auto faccL = d_faccL_, faccR = d_faccR_;
     auto ptr = d_cell_ptr_, edge = d_cell_edge_;
     auto sign = d_sign_;
-    auto rain = d_rain_, coup = d_coup_, evap = d_evap_;
+    auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
     auto qv = d_q_, xi = d_xi_, mx = d_mx_, my = d_my_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     auto area = d_tri_area_, cz = d_tri_cz_, cx = d_tri_cx_, cy = d_tri_cy_;
@@ -778,8 +794,11 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         faccR(e) = 0.0;
                     }
                 }
+                // D-I2 ordering: rainfall source → evaporation → infiltration
+                // against the remaining depth (== ExplicitInertialSolver).
                 const double src = rain(i) + coup(i)
-                                   - devEvapSink(evap(i), depth(i), dry);
+                                   - devEvapSink(evap(i), depth(i), dry)
+                                   - devInfilSink(infil(i), depth(i), dry);
                 double v = vol(i) + flux_m3 + dt_c * src * area(i);
                 vol(i) = (v > 0.0) ? v : 0.0;
                 double e2, d2;
@@ -1081,6 +1100,9 @@ void ExplicitKokkosSurfaceSolver::pushForcings() {
     devRefresh(d_rain_, state_->rainfall);
     devRefresh(d_coup_, state_->coupling_flux);
     devRefresh(d_evap_, state_->evap_rate);
+    // Held INFIL_STEP rate (plan §5.5, D-I1) — republished host-side by
+    // Infil2D::updateRates, so it uploads with the other held forcings.
+    devRefresh(d_infil_, state_->infil_rate);
 
     // Boundary values were resolved host-side for this batch.
     const int nbc = static_cast<int>(bc_cell_host_.size());

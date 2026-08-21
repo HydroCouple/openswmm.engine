@@ -111,6 +111,16 @@ struct SurfaceStateData {
     // Source/sink terms — per triangle
     std::vector<double> rainfall;       ///< Rainfall intensity (m/s)
     std::vector<double> evap_rate;      ///< Evaporation demand rate (m/s, >= 0)
+
+    /// Infiltration loss rate (m/s, >= 0) — a HELD rate (plan §5.5.2, D-I1):
+    /// Infil2D::updateRates republishes it on the INFIL_STEP cadence and it is
+    /// held constant in between, exactly as `rainfall` is. The marcher NEVER
+    /// evaluates an infiltration kernel per substep; it only consumes this
+    /// array through infilSink(), so infiltration has no interaction with the
+    /// LTS tiering or active set. All-zero when no [2D_INFILTRATION*] rows
+    /// resolved — the bitwise-regression fast path (gate I7).
+    std::vector<double> infil_rate;
+
     std::vector<double> coupling_flux;  ///< Exchange with SWMM node (m/s, + = into 2D)
     std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
 
@@ -180,6 +190,7 @@ struct SurfaceStateData {
         edge_flux.assign(n3, 0.0);
         rainfall.assign(nt, 0.0);
         evap_rate.assign(nt, 0.0);
+        infil_rate.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
         net_source.assign(nt, 0.0);
 

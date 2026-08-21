@@ -205,7 +205,9 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
         const double src =
             state_->rainfall[i] + state_->coupling_flux[i]
             - evapSink(state_->evap_rate[i], state_->depth[i],
-                       opts_->dry_depth);
+                       opts_->dry_depth)
+            - infilSink(state_->infil_rate[i], state_->depth[i],
+                        opts_->dry_depth);
         if (src == 0.0) continue;
         double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
         state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -229,7 +231,9 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             const double src =
                 state_->rainfall[i] + state_->coupling_flux[i]
                 - evapSink(state_->evap_rate[i], state_->depth[i],
-                           opts_->dry_depth);
+                           opts_->dry_depth)
+                - infilSink(state_->infil_rate[i], state_->depth[i],
+                            opts_->dry_depth);
             if (src == 0.0) continue;
             double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
             state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -468,7 +472,8 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         }
         const double src =
             state_->rainfall[i] + state_->coupling_flux[i]
-            - evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
+            - evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)
+            - infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth);
         double v = state_->volume[i] + flux_m3 +
                    dt_c * src * mesh_->tri_area[i];
 #ifndef NDEBUG
