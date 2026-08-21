@@ -119,9 +119,13 @@ inline void reset_fv() noexcept {
  * @brief One machine-scrapeable line for the FV phase split.
  * @details Same `[PERF-FV] key=value` contract as dump_load(); emitted from
  *          close() when OPENSWMM_PERF is set and the FV solver actually ran.
- *          `total` is the sum of the bracketed phases, NOT the router step —
- *          the difference between the two is unattributed time and is itself
- *          the useful signal when a phase is missing.
+ *          Each phase is SELF time: a phase that calls another timed phase is
+ *          charged only for its own work (see `nested_wall`), so the phases
+ *          partition the time rather than overlapping it. `total` is their sum,
+ *          NOT the router step — the difference between the two is unattributed
+ *          time and is itself the useful signal when a phase is missing. It
+ *          cannot be negative; if it ever is, a timer is nested inside a scope
+ *          that does not go through GatedTimer.
  */
 inline void dump_fv() noexcept {
     const double total = sec_fv_census + sec_fv_flux + sec_fv_nodesolve
@@ -245,16 +249,47 @@ struct ScopedTimer {
  *          static bool, so the gated form costs a predicted branch instead.
  *
  */
+/// Wall time booked by GatedTimers that opened and closed inside the one
+/// currently running on this thread. Read and reset by each timer so that what
+/// lands in the accumulator is SELF time.
+///
+/// Without this the phase split double-counts wherever one timed phase calls
+/// another, which it does in three places today: `restoreState` and
+/// `settleAccumulators` both call `refreshDepths`, and `runMacroCycle`'s
+/// boundary callback sits inside the settle window. The visible symptom was
+/// `total` exceeding the routing step it is a breakdown of — the LTS rows of
+/// the phase table reported between -7.9 % and -18.1 % "unattributed" time,
+/// which is not a quantity that can be negative. A breakdown whose parts can
+/// exceed the whole cannot rank optimization targets, which is the only reason
+/// these timers exist.
+///
+/// Thread-local because the accumulators are serial-path today but the flux
+/// sweep is slated to go parallel; a shared counter would then attribute one
+/// thread's children to another thread's parent. Nothing here is atomic and
+/// nothing needs to be: a timer only ever touches its own thread's tally.
+inline thread_local double nested_wall = 0.0;
+
 struct GatedTimer {
     double* acc = nullptr;
+    double  outer = 0.0;   ///< enclosing timer's tally, restored on close
     std::chrono::steady_clock::time_point t0;
     explicit GatedTimer(double& a) noexcept {
-        if (enabled()) { acc = &a; t0 = std::chrono::steady_clock::now(); }
+        if (enabled()) {
+            acc = &a;
+            outer = nested_wall;   // stash whatever our parent has collected
+            nested_wall = 0.0;     // ...and start a fresh tally for our own
+            t0 = std::chrono::steady_clock::now();
+        }
     }
     ~GatedTimer() noexcept {
-        if (acc)
-            *acc += std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - t0).count();
+        if (!acc) return;
+        const double wall = std::chrono::duration<double>(
+                                std::chrono::steady_clock::now() - t0).count();
+        // Ours is what the clock says minus what our children already claimed.
+        *acc += wall - nested_wall;
+        // Our FULL wall time is our parent's child time — the parent must not
+        // be charged for us twice, once through its own clock and once here.
+        nested_wall = outer + wall;
     }
     GatedTimer(const GatedTimer&) = delete;
     GatedTimer& operator=(const GatedTimer&) = delete;

@@ -110,7 +110,61 @@ retroactive.
   written-back `.inp`, across six models covering STREET, IRREGULAR, FV,
   storage and quality.
 
+### Fixed
+
+- **The `OPENSWMM_PERF` FV phase split double-counted, and its parts could
+  exceed the whole.** `perf::GatedTimer` accumulated wall time, so a timed
+  phase that called another timed phase booked the child twice — once in the
+  child's accumulator and once inside its own. Three nestings exist:
+  `settleAccumulators` and `restoreState` both call `refreshDepths`, and the
+  boundary-flow callback sits inside the settle window. Two of the three are
+  local-time-stepping only, which is why the symptom appeared only on LTS runs:
+  `total` came out **larger than the routing `step` it is a breakdown of**, for
+  an "unattributed" share of **−16.2 %** on Example1 and **−19.0 %** on a
+  500-conduit graded chain. That is not a quantity that can be negative, and a
+  breakdown whose parts exceed the whole cannot rank optimization targets —
+  the only reason the timers exist.
+
+  Timers now book **self** time: a thread-local tally collects the wall time of
+  timers opening and closing inside the running one, and each timer subtracts it
+  before accumulating. Unattributed time is now **+3.5 % to +6.2 %** across the
+  same four runs. No call site changed, and with `OPENSWMM_PERF` unset the
+  destructor still returns before touching anything.
+
+  The correction changes what the table recommends. `settle` read 2.255 s on the
+  graded chain — 18 % of the reported total — while its own work is 0.007 s;
+  effectively all of it was the two `refreshDepths()` calls already counted under
+  `refreshdepths`. `restore` was the same. The real target is `refreshDepths`, at
+  33 % of total on that deck, and it was not legible before. Evidence and
+  reproduction: `tests/manual/fv_phase_timers/RESULTS.md`.
+
 ### Changed
+
+- **Hydraulics Reference Manual §8.6 and §8.7 rewritten to describe the solver
+  that ships.** §8.6.1 documented junctions as `MIN_SURFAREA` linear reservoirs
+  integrated in time — the BUCKET model, removed when junctions became
+  interfaces. A plain junction has **no storage**: a clean degree-2 junction
+  passes its cells' states straight through, and every other storage-less
+  junction solves its head from an instantaneous flux balance, now written out
+  as equation (8-31). §8.6.5's step 3 and the option table still documented
+  `FV_NODE_CELL_COUPLING` and `FV_JUNCTION_MODEL`, both retired and
+  accept-and-ignore since the interface treatment landed. The node time-step
+  bound (8-32) is now stated to apply to bucket nodes only, which is what
+  `nodeStableDt` implements.
+
+  Two gaps are also closed. The chapter said junction momentum is not conserved
+  without saying what that costs — roughly a millimetre of head per junction
+  from splitting one Riemann problem into two, integrating to a 0.23 m backwater
+  over a 199-junction subcritical chain, which is why the pass-through splice
+  exists. And §8.7 now documents the published node stage (8-33), reconstructed
+  from the incident wet cells rather than read off the solver's head; that rule
+  changed in the previous release and was undocumented.
+
+  A new subsection also answers a recurring question directly: the node is not
+  given half of each connected link's volume, as dynamic wave does, because
+  under finite volume the end cells already hold that water as explicit state.
+  Booking it at the node too was measured twice and rejected twice, at ~0.3 % of
+  routing continuity and −0.005 % per junction.
 
 - **Relicensed from MIT to the Apache License, Version 2.0** (#123, #122). The
   `LICENSE` file now carries the full Apache 2.0 text, retaining the addendum
