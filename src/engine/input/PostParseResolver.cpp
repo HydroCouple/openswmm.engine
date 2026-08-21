@@ -1612,42 +1612,18 @@ void resolve_cross_references(SimulationContext& ctx) {
         perf::ScopedTimer _pt_transects(perf::sec_res_transects);
         int nt = ctx.transects.count();
         ctx.transect_tables.resize(static_cast<std::size_t>(nt));
+        // Copy-transform-build extracted to transect::buildFromStore so
+        // swmm_link_set_xsect (IRREGULAR) builds bit-identical tables; the
+        // parity notes on the legacy transforms live with the helper.
+        const int t_us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double t_ucf = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(t_us)];
         for (int t = 0; t < nt; ++t) {
             auto ut = static_cast<std::size_t>(t);
             auto& td = ctx.transect_tables[ut];
-            td.name      = ctx.transects.names[ut];
-            td.n_left    = ctx.transects.n_left[ut];
-            td.n_right   = ctx.transects.n_right[ut];
-            td.n_channel = ctx.transects.n_channel[ut];
-            if (td.n_channel <= 0.0) {
+            if (!transect::buildFromStore(ctx.transects, t, t_ucf, td)) {
                 ctx.errors.push_back(format_error(ERR_TRANSECT_MANNING, td.name));
                 continue;
             }
-            td.stations  = ctx.transects.stations[ut];
-            td.elevations = ctx.transects.elevations[ut];
-            td.length_factor = ctx.transects.length_factor[ut];
-            // PARITY: legacy transect setParams/addStation (transect.c:360-410)
-            // transform the raw [TRANSECTS] GR data BEFORE building the tables:
-            //   Station = x * Xfactor / UCF(LENGTH)          (mult, then divide)
-            //   Elev    = (y + Yfactor) / UCF(LENGTH),  Yfactor = x9 / UCF
-            //   Xbank   = (xbank / UCF) * Xfactor            (divide, then mult)
-            // The elevation OFFSET (x9, e.g. 799/798 in extran8a) is the load-
-            // bearing part: legacy builds every slice area/width/hrad at the
-            // real bed elevation (~800 ft), so `y - yhi` rounds at that
-            // magnitude. Building on the raw ~0-ft elevations rounds
-            // differently (~1e-13 per entry) and breaks bit-parity even though
-            // the geometry is offset-invariant in exact arithmetic. Applied to
-            // the td COPY only, so [TRANSECTS] round-trips the raw GR values.
-            const int t_us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-            const double t_ucf = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(t_us)];
-            double xFactor = ctx.transects.x_factor[ut];      // parse-time 0→1 default
-            if (xFactor == 0.0) xFactor = 1.0;
-            const double yFactor = ctx.transects.y_factor[ut] / t_ucf;   // x9 / UCF
-            for (auto& s : td.stations)   s = s * xFactor / t_ucf;
-            for (auto& e : td.elevations) e = (e + yFactor) / t_ucf;
-            td.x_left_bank  = (ctx.transects.x_left_bank[ut]  / t_ucf) * xFactor;
-            td.x_right_bank = (ctx.transects.x_right_bank[ut] / t_ucf) * xFactor;
-            transect::buildTables(td);
         }
         // Resolve IRREGULAR link transect names → indices, then set properties.
         // The name→index map replaces a linear ieq scan per IRREGULAR link.
@@ -1667,6 +1643,18 @@ void resolve_cross_references(SimulationContext& ctx) {
                 const auto hit = transect_by_name.find(tname);
                 if (hit != transect_by_name.end())
                     ctx.links.xsect_curve[uj] = hit->second;
+                else if (ctx.links.xsect_curve[uj] < 0)
+                    // Dangling reference: legacy raises fatal ERROR 209 here
+                    // (transect_validate). Leaving it silent let the link
+                    // degenerate to zero area with no diagnostic — the state a
+                    // corrupted save produced. Lenient opens still load for
+                    // repair; strict opens must fail loudly.
+                    ctx.errors.push_back(format_error(ERR_NAME, tname));
+            } else if (ctx.links.xsect_curve[uj] < 0) {
+                // No name and no resolved index: an IRREGULAR link with no
+                // transect at all is as dead as a dangling one.
+                ctx.errors.push_back(
+                    format_error(ERR_NAME, ctx.link_names.name_of(j)));
             }
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && ci < nt) {

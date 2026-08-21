@@ -1693,6 +1693,27 @@ int writeInpFile(const SimulationContext& ctx_internal,
             ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,xbarrels);
         continue;
     }
+    // IRREGULAR cross-sections reference a named [TRANSECTS] entry: Geom1 is
+    // the transect NAME, not a dimension. The parser retains it in
+    // pump_curve_name (and keeps xsect_geom1 at 0), so falling through to the
+    // numeric emission below wrote the resolver-derived y_full/w_max where the
+    // name belongs — on reload that numeric failed to resolve as a transect
+    // and the conduit silently degenerated to zero area. The trailing zeros
+    // land in w_max/y_bot/r_bot at reparse but the resolver re-derives all of
+    // them from the transect table; barrels stay in the tok[6] column. Legacy
+    // SWMM returns right after reading the name, so the tail is harmless there.
+    if(ctx.links.xsect_shape[u]==XsectShape::IRREGULAR){
+        const char* tname=ctx.links.pump_curve_name[u].c_str();
+        // API-built link that resolved a transect without retaining the name.
+        if(!*tname&&ctx.links.xsect_curve[u]>=0&&
+           ctx.links.xsect_curve[u]<ctx.transects.count())
+            tname=ctx.transects.names[static_cast<size_t>(ctx.links.xsect_curve[u])].c_str();
+        std::fprintf(f,"%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
+            ctx.link_names.name_of(j).c_str(),
+            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
+            tname,0.0,0.0,0.0,xbarrels);
+        continue;
+    }
     // CUSTOM cross-sections reference a named shape curve: Geom1 is the max
     // height and the Geom2 slot holds the curve NAME (not a dimension), barrels
     // stay in the Geom5 column. Emitting numeric geometry drops the curve name,
@@ -1754,9 +1775,12 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.transects.length_factor[ut],
         ctx.transects.x_factor[ut],
         ctx.transects.y_factor[ut]);
+    // Full precision on the GR pairs: they are token-parsed on both engines
+    // (column width is not load-bearing) and %.4f silently rounded >4-dp
+    // stations/elevations on every save. Matches the [XSECTIONS] precedent.
     for(int k=0;k<nsta;++k){auto uk=static_cast<size_t>(k);
     if(k%5==0)std::fprintf(f,"GR");
-    std::fprintf(f," %10.4f %10.4f",ctx.transects.elevations[ut][uk],ctx.transects.stations[ut][uk]);
+    std::fprintf(f," %10.15g %10.15g",ctx.transects.elevations[ut][uk],ctx.transects.stations[ut][uk]);
     if(k%5==4||k==nsta-1)std::fprintf(f,"\n");
     }}}
 

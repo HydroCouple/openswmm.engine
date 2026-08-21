@@ -30,6 +30,7 @@
 #include "../../../include/openswmm/engine/openswmm_links.h"
 #include "../input/PostParseResolver.hpp"
 #include "../hydraulics/Street.hpp"
+#include "../hydraulics/Transect.hpp"
 #include "TypeHelpers.hpp"
 #include "StringCase.hpp"
 
@@ -642,6 +643,55 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
         return SWMM_OK;
     }
 
+    // IRREGULAR cross-sections reference a [TRANSECTS] entry by index in
+    // geom1, mirroring STREET. geom1 is an index, not a length; without this
+    // branch it fell into the default arm below, which stored the index as
+    // y_full (feet) and left the transect reference dangling — the GUI's
+    // transect picker corrupted the link it assigned to.
+    if (xs == openswmm::XsectShape::IRREGULAR) {
+        const int si = static_cast<int>(std::llround(geom1));
+        if (si < 0 || si >= ctx.transects.count()) return SWMM_ERR_BADPARAM;
+        const auto su = static_cast<std::size_t>(si);
+        ctx.links.pump_curve_name[uidx] = ctx.transects.names[su];
+        // The parser deliberately does not retain raw geoms for IRREGULAR
+        // (the name in pump_curve_name IS the identity); keep that invariant
+        // so no numeric-fallback path ever sees an index as a dimension.
+        ctx.links.xsect_geom1[uidx] = 0.0;
+        ctx.links.xsect_geom2[uidx] = 0.0;
+        ctx.links.xsect_geom3[uidx] = 0.0;
+        ctx.links.xsect_geom4[uidx] = 0.0;
+
+        // After a deck open PostParseResolver builds ctx.transect_tables
+        // store-aligned, so row si usually already has its table — reuse it,
+        // matching the resolver's xsect_curve = store index. A transect added
+        // through the API after open has no table yet: build one from the
+        // store with the shared helper (bit-identical to the resolver) and
+        // push it. Push-back only — cached table pointers must stay stable
+        // (test_transect_table_stability).
+        int ti;
+        if (su < ctx.transect_tables.size() &&
+            ctx.transect_tables[su].name == ctx.transects.names[su]) {
+            ti = si;
+        } else {
+            const int t_us = openswmm::ucf::getUnitSystem(
+                static_cast<int>(ctx.options.flow_units));
+            const double t_ucf =
+                openswmm::ucf::Ucf[openswmm::ucf::LENGTH][static_cast<std::size_t>(t_us)];
+            openswmm::transect::TransectData td;
+            if (!openswmm::transect::buildFromStore(ctx.transects, si, t_ucf, td))
+                return SWMM_ERR_BADPARAM;   // no valid channel Manning's n
+            ti = static_cast<int>(ctx.transect_tables.size());
+            ctx.transect_tables.push_back(std::move(td));
+        }
+        const auto& built = ctx.transect_tables[static_cast<std::size_t>(ti)];
+        ctx.links.xsect_curve[uidx]  = ti;
+        ctx.links.xsect_y_full[uidx] = built.y_full;
+        ctx.links.xsect_a_full[uidx] = built.a_full;
+        ctx.links.xsect_r_full[uidx] = built.r_full;
+        ctx.links.xsect_w_max[uidx]  = built.w_max;
+        return SWMM_OK;
+    }
+
     // units: convert incoming DISPLAY geom values to INTERNAL (ft) following the
     // same shape-dependent field roles as PostParseResolver::convert_inputs_to_internal.
     //   geom1 (y_full / full depth or diameter): LENGTH for ALL shapes.
@@ -729,6 +779,33 @@ SWMM_ENGINE_API int swmm_link_get_xsect(SWMM_Engine engine, int idx,
                     break;
                 }
             }
+        }
+        if (geom1) *geom1 = static_cast<double>(si);
+        if (geom2) *geom2 = 0.0;
+        if (geom3) *geom3 = 0.0;
+        if (geom4) *geom4 = 0.0;
+        return SWMM_OK;
+    }
+
+    // IRREGULAR links report geom1 = transect index, mirroring STREET. The
+    // transect identity is the name retained in pump_curve_name (xsect_curve
+    // can point at a session-pushed table, not the store row). The old default
+    // path returned y_full here — a depth where a reference belongs — so any
+    // get→set cycle rewrote the reference as a number.
+    if (xs == openswmm::XsectShape::IRREGULAR) {
+        int si = -1;
+        const auto& nm = ctx.links.pump_curve_name[uidx];
+        if (!nm.empty()) {
+            for (int t = 0; t < ctx.transects.count(); ++t) {
+                if (openswmm::ieq(ctx.transects.names[static_cast<std::size_t>(t)],
+                                  nm)) {
+                    si = t;
+                    break;
+                }
+            }
+        } else if (ctx.links.xsect_curve[uidx] >= 0 &&
+                   ctx.links.xsect_curve[uidx] < ctx.transects.count()) {
+            si = ctx.links.xsect_curve[uidx];
         }
         if (geom1) *geom1 = static_cast<double>(si);
         if (geom2) *geom2 = 0.0;
