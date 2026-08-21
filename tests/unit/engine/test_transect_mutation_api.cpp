@@ -26,6 +26,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
+#include <openswmm/engine/openswmm_edit.h>
 
 // ---------------------------------------------------------------------------
 // Fixture — bare engine with one transect "T1" already added.
@@ -71,11 +72,14 @@ TEST_F(TransectMutationTest, AddSeedsDefaultsForAllNewFields) {
     EXPECT_DOUBLE_EQ(eL, 0.0);
     EXPECT_DOUBLE_EQ(eR, 0.0);
 
-    // Modifiers: x_factor=1.0, y_factor=1.0, length_factor=1.0.
-    double xF = 0, yF = 0, lF = 0;
+    // Modifiers: x_factor=1.0, y_factor=0.0, length_factor=1.0. y_factor is
+    // an ADDITIVE elevation offset (legacy transect.c:382), not a multiplier:
+    // 1.0 would silently raise every API-created transect one length unit, so
+    // the neutral default is 0.0 — matching the INP parser's default.
+    double xF = 0, yF = 99, lF = 0;
     EXPECT_EQ(swmm_transect_get_modifiers(engine, t1_idx, &xF, &yF, &lF), SWMM_OK);
     EXPECT_DOUBLE_EQ(xF, 1.0);
-    EXPECT_DOUBLE_EQ(yF, 1.0);
+    EXPECT_DOUBLE_EQ(yF, 0.0);
     EXPECT_DOUBLE_EQ(lF, 1.0);
 
     // Comments: empty string.
@@ -342,4 +346,49 @@ TEST_F(TransectMutationTest, OutOfRangeIndexReturnsBadIndex) {
     EXPECT_EQ(swmm_transect_clear_stations(engine, 99),                    SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_transect_rename(engine, 99, "X"),                       SWMM_ERR_BADINDEX);
     // remove() is intentionally a no-op for out-of-range (mirrors patterns).
+}
+
+// ---------------------------------------------------------------------------
+// Edit-API delete — TransectStore has 14 parallel arrays and delete_transect
+// must erase from EVERY one. It missed comments, both encroachment stations
+// and length_factor, so after a delete every transect past the deleted index
+// read its neighbour's values for those fields (and the writer then emitted
+// the wrong Lfactor for all of them). swmm_transect_remove was always
+// complete; this pins the swmm_transect_delete (ObjectDeleter) path.
+// ---------------------------------------------------------------------------
+
+TEST_F(TransectMutationTest, EditDeleteKeepsEveryParallelArrayInLockStep) {
+    ASSERT_EQ(swmm_transect_add(engine, "T2"), SWMM_OK);
+    ASSERT_EQ(swmm_transect_add(engine, "T3"), SWMM_OK);
+
+    const char* comments[] = {"first", "second", "third"};
+    for (int i = 0; i < 3; ++i) {
+        ASSERT_EQ(swmm_transect_set_comments(engine, i, comments[i]), SWMM_OK);
+        ASSERT_EQ(swmm_transect_set_encroachment_stations(engine, i,
+                                                          10.0 + i, 20.0 + i),
+                  SWMM_OK);
+        ASSERT_EQ(swmm_transect_set_modifiers(engine, i, 1.0, 0.25 * i,
+                                              1.0 + i), SWMM_OK);
+    }
+
+    ASSERT_EQ(swmm_transect_delete(engine, 1, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_transect_index(engine, "T3"), 1) << "T3 should shift down";
+
+    // Survivor 0 ("T1") keeps its own values; survivor 1 must report what was
+    // set on T3 — not the deleted T2's — in every once-missed array.
+    char buf[64];
+    double eL, eR, xF, yF, lF;
+
+    ASSERT_EQ(swmm_transect_get_comments(engine, 0, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "first");
+    ASSERT_EQ(swmm_transect_get_comments(engine, 1, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "third") << "comments array out of lock-step after delete";
+
+    ASSERT_EQ(swmm_transect_get_encroachment_stations(engine, 1, &eL, &eR), SWMM_OK);
+    EXPECT_DOUBLE_EQ(eL, 12.0) << "encroachment array out of lock-step after delete";
+    EXPECT_DOUBLE_EQ(eR, 22.0);
+
+    ASSERT_EQ(swmm_transect_get_modifiers(engine, 1, &xF, &yF, &lF), SWMM_OK);
+    EXPECT_DOUBLE_EQ(yF, 0.5);
+    EXPECT_DOUBLE_EQ(lF, 3.0) << "length_factor array out of lock-step after delete";
 }

@@ -16,8 +16,8 @@
 
 /**
  * @file test_inp_writer_roundtrip.cpp
- * @brief Ten `.inp` writer defects, three of them fatal on reload and the rest
- *        silent data loss. One test per defect.
+ * @brief Eleven `.inp` writer defects, three of them fatal on reload and the
+ *        rest silent data loss. One test per defect.
  *
  * @details Every defect here had the same shape: the writer consulted only a
  *          resolved index, and emitted `*` (or nothing at all) when that index
@@ -738,4 +738,233 @@ TEST(InpWriterRoundTrip, GenerationOneDiffersOnlyByTheTwoKnownPreExistingGaps) {
         EXPECT_TRUE(key == "SWEEP_END" || key == "Units")
             << "new generation-to-generation drift:\n  gen1: " << la << "\n  gen2: " << lb;
     }
+}
+
+// ===========================================================================
+// Defect 11 — [XSECTIONS] IRREGULAR transect name replaced by derived numerics
+//
+// The writer had name-emitting branches for STREET and CUSTOM but none for
+// IRREGULAR, so the fallback emitted the resolver-derived y_full/w_max where
+// the transect NAME belongs. On reload that numeric parsed as an undefined
+// transect name, the reference failed to resolve with no diagnostic, and the
+// conduit degenerated to zero area/depth — one Save silently killed every
+// transect conduit in the model.
+// ===========================================================================
+
+namespace {
+
+/// Internal-surface link lookup by name; the C API's get_xsect is itself part
+/// of the defect family (it returned y_full where the transect reference
+/// belongs), so these assertions read the context directly.
+int linkIndex(const SimulationContext& ctx, const std::string& name) {
+    for (int j = 0; j < ctx.n_links(); ++j)
+        if (ctx.link_names.name_of(j) == name) return j;
+    return -1;
+}
+
+/// All GR (elev, station) pairs belonging to `transect` in a written
+/// [TRANSECTS] section, in file order.
+std::vector<std::pair<double, double>> grPairs(const std::string& text,
+                                               const std::string& transect) {
+    std::vector<std::pair<double, double>> pairs;
+    bool inside = false;
+    for (const auto& r : section(text, "TRANSECTS")) {
+        auto c = cols(r);
+        if (c.empty()) continue;
+        if (c[0] == "X1") { inside = (c.size() > 1 && c[1] == transect); continue; }
+        if (c[0] == "NC") continue;
+        if (c[0] == "GR" && inside)
+            for (size_t i = 1; i + 1 < c.size(); i += 2)
+                pairs.emplace_back(std::stod(c[i]), std::stod(c[i + 1]));
+    }
+    return pairs;
+}
+
+}  // namespace
+
+TEST(InpWriterRoundTrip, IrregularXsectKeepsTheTransectName) {
+    const auto g = gen1("irregular_transect.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c1 = row(g.text, "XSECTIONS", "C1");
+    ASSERT_GE(c1.size(), 3u);
+    EXPECT_EQ(c1.at(1), "IRREGULAR");
+    EXPECT_EQ(c1.at(2), "TRAP_MAIN") << "transect name replaced by a numeric";
+
+    const auto c2 = row(g.text, "XSECTIONS", "C2");
+    ASSERT_GE(c2.size(), 3u);
+    EXPECT_EQ(c2.at(2), "CREEK_A");
+    EXPECT_EQ(c2.back(), "2") << "barrels lost from the IRREGULAR row";
+}
+
+TEST(InpWriterRoundTrip, IrregularXsectSurvivesReopen) {
+    SWMMEngine gen0;
+    ASSERT_EQ(gen0.open(data("irregular_transect.inp").c_str(),
+                        data("_irregular_transect.inp.rpt").c_str(), nullptr),
+              SWMM_OK);
+    const auto& c0 = gen0.context();
+
+    gen1("irregular_transect.inp");
+
+    SWMMEngine rt;
+    ASSERT_EQ(rt.open(data("_irregular_transect_rt1.inp").c_str(),
+                      data("_irregular_transect_rt1.inp.rpt").c_str(), nullptr),
+              SWMM_OK);
+    for (const auto& e : rt.context().errors) ADD_FAILURE() << "reopen: " << e;
+    const auto& c1 = rt.context();
+
+    for (const char* name : {"C1", "C2"}) {
+        const int j0 = linkIndex(c0, name);
+        const int j1 = linkIndex(c1, name);
+        ASSERT_GE(j0, 0);
+        ASSERT_GE(j1, 0);
+        const auto u0 = static_cast<size_t>(j0);
+        const auto u1 = static_cast<size_t>(j1);
+        EXPECT_GE(c1.links.xsect_curve[u1], 0)
+            << name << ": transect reference did not survive the round trip";
+        EXPECT_DOUBLE_EQ(c1.links.xsect_y_full[u1], c0.links.xsect_y_full[u0]) << name;
+        EXPECT_DOUBLE_EQ(c1.links.xsect_a_full[u1], c0.links.xsect_a_full[u0]) << name;
+        EXPECT_DOUBLE_EQ(c1.links.xsect_r_full[u1], c0.links.xsect_r_full[u0]) << name;
+        EXPECT_DOUBLE_EQ(c1.links.xsect_w_max[u1], c0.links.xsect_w_max[u0]) << name;
+    }
+}
+
+// [TRANSECTS] itself round-trips the RAW store (transforms are applied to a
+// copy at resolve time), so every X1 modifier and GR pair must come back
+// numerically identical — including CREEK_A's 6-decimal station, which the old
+// %10.4f GR format silently rounded on every save.
+TEST(InpWriterRoundTrip, TransectsRoundTripRawX1AndGRData) {
+    const auto g = gen1("irregular_transect.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    std::vector<std::string> x1;
+    for (const auto& r : section(g.text, "TRANSECTS")) {
+        auto c = cols(r);
+        if (!c.empty() && c[0] == "X1" && c.size() > 1 && c[1] == "TRAP_MAIN") x1 = c;
+    }
+    ASSERT_EQ(x1.size(), 10u) << "X1 line must carry all 10 legacy tokens";
+    EXPECT_DOUBLE_EQ(std::stod(x1.at(3)), 20.0) << "Xleft";
+    EXPECT_DOUBLE_EQ(std::stod(x1.at(4)), 80.0) << "Xright";
+    EXPECT_DOUBLE_EQ(std::stod(x1.at(7)), 1.5) << "Lfactor";
+    EXPECT_DOUBLE_EQ(std::stod(x1.at(8)), 2.0) << "Xfactor";
+    EXPECT_DOUBLE_EQ(std::stod(x1.at(9)), 0.5) << "Yfactor (additive elevation offset)";
+
+    const std::vector<std::pair<double, double>> trap = {
+        {10.0, 0.0}, {8.0, 20.0}, {6.0, 40.0}, {5.5, 50.0},
+        {6.0, 60.0}, {8.0, 80.0}, {10.0, 100.0}};
+    EXPECT_EQ(grPairs(g.text, "TRAP_MAIN"), trap);
+
+    const std::vector<std::pair<double, double>> creek = {
+        {5.0, 0.0}, {3.0, 10.0}, {2.0, 12.123456}, {2.0, 20.0},
+        {3.5, 30.0}, {5.0, 40.0}};
+    EXPECT_EQ(grPairs(g.text, "CREEK_A"), creek)
+        << "GR precision loss: 12.123456 must not round to 12.1235";
+}
+
+// A dangling transect reference (lenient open, the GUI's editing mode) must
+// still save as the NAME — the same contract defects 6-8 pin for gages, pump
+// curves and snowpacks.
+TEST(InpWriterRoundTrip, ADanglingTransectNameSurvivesSave) {
+    const auto g = writeOnceLenient("irregular_dangling.inp", "_irregular_dangling_rt1.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c1 = row(g.text, "XSECTIONS", "C1");
+    ASSERT_GE(c1.size(), 3u);
+    EXPECT_EQ(c1.at(1), "IRREGULAR");
+    EXPECT_EQ(c1.at(2), "TRX") << "unresolved transect name dropped on save";
+}
+
+// The deliberate behaviour change that came with the fix: an IRREGULAR link
+// whose transect does not exist previously loaded silently with a_full == 0
+// (a dead conduit) — exactly the state a corrupted save produced. It is now a
+// fatal ERR_NAME on a strict open, matching legacy transect_validate; the
+// lenient (GUI editing) open above still loads it for repair.
+TEST(InpWriterRoundTrip, AnUnresolvableTransectIsFatalOnAStrictOpen) {
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    EXPECT_NE(swmm_engine_open(e, data("irregular_dangling.inp").c_str(),
+                               data("_irregular_dangling.rpt").c_str(), nullptr, nullptr),
+              SWMM_OK)
+        << "an IRREGULAR link naming an undefined transect opened silently";
+
+    bool named = false;
+    for (int i = 0; i < swmm_get_error_count(e); ++i) {
+        const std::string msg = swmm_get_error_at(e, i);
+        if (msg.find("209") != std::string::npos &&
+            msg.find("TRX") != std::string::npos)
+            named = true;
+    }
+    EXPECT_TRUE(named) << "expected ERROR 209 naming TRX";
+
+    swmm_engine_destroy(e);
+}
+
+// The API half of the same defect family: swmm_link_set_xsect had a STREET
+// index→name branch but no IRREGULAR one, so the GUI's transect picker
+// (which passes geom1 = transect index) fell into the default arm — the index
+// was stored as y_full in feet and the reference left dangling. get_xsect
+// mirrored it by returning y_full where the index belongs, so any get→set
+// cycle rewrote the reference as a number.
+TEST(InpWriterRoundTrip, SetXsectIrregularBindsTheTransectByIndex) {
+    Reopened r("irregular_transect.inp");
+
+    // C1 currently references TRAP_MAIN (index 0); move it to CREEK_A (1).
+    int shape = -1;
+    double g1 = -99, g2 = -99, g3 = -99, g4 = -99;
+    ASSERT_EQ(swmm_link_get_xsect(r.e, 0, &shape, &g1, &g2, &g3, &g4), SWMM_OK);
+    EXPECT_EQ(g1, 0.0) << "get_xsect should report the transect index";
+    EXPECT_EQ(g2, 0.0);
+
+    ASSERT_EQ(swmm_link_set_xsect(r.e, 0, shape, 1.0, 0, 0, 0), SWMM_OK);
+    ASSERT_EQ(swmm_link_get_xsect(r.e, 0, &shape, &g1, &g2, &g3, &g4), SWMM_OK);
+    EXPECT_EQ(g1, 1.0) << "set→get is not a fixed point";
+
+    // A bad index must be rejected, not stored as a depth.
+    EXPECT_EQ(swmm_link_set_xsect(r.e, 0, shape, 99.0, 0, 0, 0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_link_set_xsect(r.e, 0, shape, -1.0, 0, 0, 0), SWMM_ERR_BADPARAM);
+}
+
+TEST(InpWriterRoundTrip, SetXsectIrregularGeometryMatchesTheResolver) {
+    // Binding C1 to CREEK_A through the API must produce exactly the geometry
+    // the resolver derives for C2 (which references CREEK_A in the deck) —
+    // the shared buildFromStore helper is what keeps the two bit-identical.
+    SWMMEngine eng;
+    ASSERT_EQ(eng.open(data("irregular_transect.inp").c_str(),
+                       data("_irregular_transect.inp.rpt").c_str(), nullptr),
+              SWMM_OK);
+    auto& ctx = eng.context();
+    const int c1 = linkIndex(ctx, "C1");
+    const int c2 = linkIndex(ctx, "C2");
+    ASSERT_GE(c1, 0);
+    ASSERT_GE(c2, 0);
+
+    ASSERT_EQ(swmm_link_set_xsect(reinterpret_cast<SWMM_Engine>(&eng), c1,
+                                  static_cast<int>(ctx.links.xsect_shape[static_cast<size_t>(c1)]),
+                                  1.0, 0, 0, 0),
+              SWMM_OK);
+
+    const auto u1 = static_cast<size_t>(c1);
+    const auto u2 = static_cast<size_t>(c2);
+    EXPECT_EQ(ctx.links.pump_curve_name[u1], "CREEK_A");
+    EXPECT_DOUBLE_EQ(ctx.links.xsect_y_full[u1], ctx.links.xsect_y_full[u2]);
+    EXPECT_DOUBLE_EQ(ctx.links.xsect_a_full[u1], ctx.links.xsect_a_full[u2]);
+    EXPECT_DOUBLE_EQ(ctx.links.xsect_r_full[u1], ctx.links.xsect_r_full[u2]);
+    EXPECT_DOUBLE_EQ(ctx.links.xsect_w_max[u1],  ctx.links.xsect_w_max[u2]);
+
+    // And the writer must now save C1 with the new transect's NAME.
+    std::vector<std::string> warnings;
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(
+                  ctx, data("_irregular_transect_api.inp"), &warnings), 0);
+    const auto text = slurp(data("_irregular_transect_api.inp"));
+    EXPECT_EQ(row(text, "XSECTIONS", "C1").at(2), "CREEK_A");
+}
+
+TEST(InpWriterRoundTrip, IrregularFixtureConvergesAtTheSecondGeneration) {
+    writeOnce("irregular_transect.inp", "_irregular_transect_rt1.inp");
+    writeOnce("_irregular_transect_rt1.inp", "_irregular_transect_rt2.inp");
+    writeOnce("_irregular_transect_rt2.inp", "_irregular_transect_rt3.inp");
+
+    EXPECT_EQ(slurp(data("_irregular_transect_rt2.inp")),
+              slurp(data("_irregular_transect_rt3.inp")))
+        << "irregular_transect.inp: writer does not converge";
 }

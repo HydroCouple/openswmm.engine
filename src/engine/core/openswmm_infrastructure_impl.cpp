@@ -60,7 +60,12 @@ SWMM_ENGINE_API int swmm_transect_add(SWMM_Engine engine, const char* id) {
     ts.x_left_encroachment.push_back(0.0);
     ts.x_right_encroachment.push_back(0.0);
     ts.x_factor.push_back(1.0);
-    ts.y_factor.push_back(1.0);
+    // y_factor is an ADDITIVE elevation offset (legacy transect.c:382:
+    // Yfactor = x9/UCF, applied as elev + Yfactor), not a multiplier — it gets
+    // no 0→1 normalization. 1.0 here silently shifted every API-created
+    // transect up one length unit; 0.0 is the neutral value and the INP
+    // parser's default.
+    ts.y_factor.push_back(0.0);
     ts.length_factor.push_back(1.0);
     ts.stations.push_back({});
     ts.elevations.push_back({});
