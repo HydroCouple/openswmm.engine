@@ -653,13 +653,13 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
         if (si < 0 || si >= ctx.transects.count()) return SWMM_ERR_BADPARAM;
         const auto su = static_cast<std::size_t>(si);
         ctx.links.pump_curve_name[uidx] = ctx.transects.names[su];
-        // The parser deliberately does not retain raw geoms for IRREGULAR
-        // (the name in pump_curve_name IS the identity); keep that invariant
-        // so no numeric-fallback path ever sees an index as a dimension.
+        // geom1 for IRREGULAR is the transect reference, whose identity is the
+        // NAME in pump_curve_name — never keep the numeric index in retained
+        // storage where a fallback path could read it as a dimension. geom2-4
+        // stay as plain retained storage (already set above): they are not
+        // part of the section's geometry, but the GUI's inline editors expect
+        // sibling values to survive a set/get cycle.
         ctx.links.xsect_geom1[uidx] = 0.0;
-        ctx.links.xsect_geom2[uidx] = 0.0;
-        ctx.links.xsect_geom3[uidx] = 0.0;
-        ctx.links.xsect_geom4[uidx] = 0.0;
 
         // After a deck open PostParseResolver builds ctx.transect_tables
         // store-aligned, so row si usually already has its table — reuse it,
@@ -808,9 +808,11 @@ SWMM_ENGINE_API int swmm_link_get_xsect(SWMM_Engine engine, int idx,
             si = ctx.links.xsect_curve[uidx];
         }
         if (geom1) *geom1 = static_cast<double>(si);
-        if (geom2) *geom2 = 0.0;
-        if (geom3) *geom3 = 0.0;
-        if (geom4) *geom4 = 0.0;
+        // geom2-4: plain retained storage (0 for parser-loaded links — the
+        // [XSECTIONS] handler retains nothing for IRREGULAR).
+        if (geom2) *geom2 = ctx.links.xsect_geom2[uidx];
+        if (geom3) *geom3 = ctx.links.xsect_geom3[uidx];
+        if (geom4) *geom4 = ctx.links.xsect_geom4[uidx];
         return SWMM_OK;
     }
 
