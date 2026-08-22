@@ -702,11 +702,64 @@ TEST(SnowRemoved, PlowingAccumulatesRemoved) {
 
     // Snow accumulated = 2e-4 * 3600 = 0.72 ft, > 0.5 threshold
     // removed = sfrac[0] * exc * fArea[plow] * area_ft2
-    //         = 0.25 * 0.72 * 0.3 * (10 * 43560)
+    //
+    // F9 — this line read `10.0 * 43560.0`. It is a US-only literal and it
+    // is not even the US number the engine uses: `subcatches.area` is in
+    // PROJECT land-area units and the conversion is `1 / UCF(LANDAREA)`,
+    // which is what legacy does too (`Subcatch.area` is parsed to ft² that
+    // way, `output.c:250` converts back the same way). `Ucf[LANDAREA][US]`
+    // is the rounded 2.2956e-5, so 1/UCF is 43561.596, not 43560 — the gate
+    // was 3.7e-5 off from the engine AND from legacy, and on SI it was off
+    // by the whole 2.471x hectare/acre ratio.
     double exc = snowfall * dt;
-    double expected_removed = 0.25 * exc * 0.3 * (10.0 * 43560.0);
+    double expected_removed =
+        0.25 * exc * 0.3 * (10.0 / ucf::UCF(ucf::LANDAREA, ctx.options));
     EXPECT_NEAR(soa.removed, expected_removed, 1e-3)
         << "Removed volume should match sfrac[0] * excess * plowArea * subcatchArea";
+}
+
+// F9's SI leg. The handoff predicted the defect was unobservable because
+// "no deck in any corpus is SI and snowy" — true of DECKS, and this gate
+// needs no deck. `plowSnow` takes the context directly, so the unit system
+// is a field, and the whole 2.471x is one assignment away.
+TEST(SnowRemoved, PlowingConvertsHectaresNotAcresUnderSI) {
+    auto removed_for = [](FlowUnits units) {
+        SnowSolver solver;
+        solver.init(1);
+        auto& soa = solver.state();
+        auto plow_idx = static_cast<std::size_t>(SNOW_PLOWABLE);
+        soa.fArea[plow_idx] = 0.3;
+        soa.fArea[static_cast<std::size_t>(SNOW_IMPERV)] = 0.3;
+        soa.fArea[static_cast<std::size_t>(SNOW_PERV)]   = 0.4;
+        soa.wsnow[plow_idx] = 0.0;
+        soa.weplow[0] = 0.5;
+        soa.sfrac[0]  = 0.25;
+        for (int i = 1; i < 5; ++i) soa.sfrac[static_cast<std::size_t>(i)] = 0.0;
+        SimulationContext ctx;
+        ctx.options.flow_units = units;
+        ctx.subcatches.area.push_back(10.0);   // 10 ACRES in US, 10 HECTARES in SI
+        solver.plowSnow(ctx, 3600.0, 2e-4);
+        return solver.state().removed;
+    };
+
+    const double us = removed_for(FlowUnits::CFS);
+    const double si = removed_for(FlowUnits::CMS);
+    ASSERT_GT(us, 0.0) << "nothing was ploughed, so neither leg means anything";
+
+    // 10 hectares is 2.471 times 10 acres, so the SI figure must be that
+    // much larger. Under the defect both legs multiplied by a hardcoded
+    // 43560 and this ratio was exactly 1.
+    const double expected = ucf::UCF(ucf::LANDAREA, [] {
+        SimulationContext c; c.options.flow_units = FlowUnits::CFS;
+        return c.options; }()) /
+        ucf::UCF(ucf::LANDAREA, [] {
+        SimulationContext c; c.options.flow_units = FlowUnits::CMS;
+        return c.options; }());
+    EXPECT_NEAR(si / us, expected, 1e-9)
+        << "SI removed " << si << " ft3 against US " << us
+        << " — a ratio of 1 means the area conversion is a hardcoded acre "
+           "factor and every SI snow deck under-reports its ploughed volume";
+    EXPECT_NEAR(expected, 2.4710, 1.0e-3) << "sanity: ha/ac is 2.471";
 }
 
 TEST(SnowRemoved, NoPlowingMeansNoRemoval) {

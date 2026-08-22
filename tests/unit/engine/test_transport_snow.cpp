@@ -145,6 +145,13 @@ struct Opts {
     /// (`Snow.cpp` getArealDepletion / `snow.c:520`), so it is the value
     /// every gate but 16 wants.
     double sd100 = 0.0;
+    /// F8 — `Dplow`, the depth at which ploughing begins, in deck units.
+    /// **0 (the default) disables ploughing entirely**, which is every gate
+    /// but 26 — so adding these fields moves no existing deck.
+    double weplow = 0.0;
+    /// F8 — the `REMOVAL` row's first fraction: snow ploughed OUT of the
+    /// system. This is the only sink `runoff_snowremov` measures.
+    double f_out  = 0.0;
     /// A SECOND subcatchment with no pack, on a project that HAS packs.
     /// Without this the only pack-less deck is a pack-less PROJECT, and
     /// `PostParseResolver.cpp:2199` forces IGNORE_SNOWMELT on there
@@ -218,7 +225,8 @@ void write_files(const Opts& o) {
           << " " << fw0 << " " << o.sd100 << "\n"
           << "SP1 PERVIOUS   0.01 0.03 32.0 " << o.fwfrac << " " << o.sd0
           << " " << fw0 << " " << o.sd100 << "\n"
-          << "SP1 REMOVAL    0.0 0.0 0.0 0.0 0.0 0.0\n\n";
+          << "SP1 REMOVAL    " << o.weplow << " " << o.f_out
+          << " 0.0 0.0 0.0 0.0\n\n";
     }
     // The 9th token is the snowpack name; "*" means none.
     f << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0 "
@@ -1478,4 +1486,145 @@ TEST(TransportSnowTest, APackThatMeltsOutDoesNotCarryItsAgeIntoNewSnow) {
     EXPECT_NEAR(st.age[perv], 0.0, 1.0e-9)
         << "a pack re-formed entirely from age-0 snowfall reads "
         << st.age[perv] << " s";
+}
+
+// ---------------------------------------------------------------------------
+// Gate 24 (F8) — THE LEDGER ACCOUNTS FOR A PACK THE DECK STARTS WITH.
+//
+//    A pack sitting below freezing with no precipitation: nothing arrives,
+//    nothing leaves, nothing melts. The runoff balance must close.
+//
+//    Under the defect it cannot. `runoff_init_snow` did not exist, so the
+//    pack the deck was GIVEN was never on the input side, and the same pack
+//    still standing at the end was never on the output side. The gate asserts
+//    the CLOSURE, not the row — a gate on the row would pass on a row that is
+//    populated and not used, which is half of what F8 was.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, TheRunoffLedgerClosesOnAPackThatJustSitsThere) {
+    Opts o{};
+    o.air_f = 10.0;        // well below tbase: no melt at all
+    // Rain, and it is not decoration. `runoff_error()` divides by `total_in`
+    // and returns 0.0 when that is zero -- so on a deck whose ONLY input is
+    // the pack, dropping `runoff_init_snow` from the input side does not
+    // produce a large error, it produces a vacuous zero and this gate passes.
+    // Measured: falsifier i escaped both ledger gates for exactly that
+    // reason. A second, snow-independent input is what makes the division
+    // real. At 10 degF the pack cannot melt and 0.2 in/hr for an hour is far
+    // inside its free-water capacity, so nothing leaves and the gate's
+    // premise is intact -- the pack now also absorbs, which the final-cover
+    // term has to carry.
+    o.rain_inhr = 0.2;
+    o.ripe = false;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& mb = ctx.mass_balance;
+
+    // SETUP, asserted term by term (lesson 96). If the deck has no pack, or
+    // the pack melted after all, the closure below is trivially satisfied by
+    // a balance with no snow in it — which is exactly the state the defect
+    // produced and this gate must not accept.
+    ASSERT_GE(ctx.n_subcatches(), 1);
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "S1 has no snowpack";
+    ASSERT_GT(mb.runoff_init_snow, 0.0)
+        << "the deck starts with no snow on the books at all, so this gate "
+           "cannot see the term it is about. Fix the deck; do NOT relax this";
+    ASSERT_GT(mb.runoff_final_snow, 0.0)
+        << "the pack did not survive a run held below freezing — check air_f "
+           "against tbase before touching anything else";
+    ASSERT_GT(mb.runoff_rainfall, 0.0)
+        << "no rain reached the books, so `total_in` is the pack alone and "
+           "runoff_error() returns its total_in == 0 fallback rather than a "
+           "measured balance — the gate would pass on a ledger with the "
+           "initial pack missing entirely";
+    ASSERT_DOUBLE_EQ(mb.runoff_runoff, 0.0)
+        << "water left the subcatchment on a deck held below freezing";
+
+    // The closure. No reference value: a balance either closes or it does not.
+    EXPECT_LT(std::fabs(mb.runoff_error()), 1.0e-3)
+        << "runoff continuity is " << mb.runoff_error() * 100.0
+        << " % on a deck where nothing arrived, nothing left and nothing "
+           "melted. The only water in the model is the pack, so an error "
+           "here IS the missing snow term";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 25 (F8) — AND IT STILL CLOSES WHEN THE PACK MELTS AND THE WATER LEAVES.
+//
+//    Gate 24's deck never moves any water, so it cannot tell a ledger that
+//    counts snow correctly from one that counts it twice on both sides. This
+//    one melts: initial snow becomes runoff and infiltration, final snow is
+//    smaller than initial, and the balance must still close.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, TheRunoffLedgerClosesWhileThePackIsMeltingAway) {
+    Opts o{};
+    o.air_f = 50.0;        // well above tbase
+    o.rain_inhr = 0.2;     // a snow-independent input — see gate 24 for why
+    o.ripe = true;         // melt leaves from the first step
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& mb = ctx.mass_balance;
+
+    ASSERT_GT(mb.runoff_init_snow, 0.0) << "no pack on the books";
+    // SETUP: the pack really did shed water. Without this, gate 25 is gate 24.
+    ASSERT_LT(mb.runoff_final_snow, mb.runoff_init_snow)
+        << "the pack did not shrink, so no snow-to-water conversion happened "
+           "and this gate is testing nothing gate 24 did not";
+    ASSERT_GT(mb.runoff_runoff + mb.runoff_infil, 0.0)
+        << "the pack shrank but no water reached the ground";
+    ASSERT_GT(mb.runoff_rainfall, 0.0)
+        << "no snow-independent input on the books — see gate 24";
+
+    EXPECT_LT(std::fabs(mb.runoff_error()), 1.0e-3)
+        << "runoff continuity is " << mb.runoff_error() * 100.0
+        << " % — initial snow " << mb.runoff_init_snow << " ft3, final "
+        << mb.runoff_final_snow << " ft3, runoff " << mb.runoff_runoff
+        << ", infil " << mb.runoff_infil;
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 26 (F8) — SNOW PLOUGHED OUT OF THE SYSTEM IS BOOKED AS REMOVED.
+//
+//    `runoff_snowremov` HAD NO WRITER ANYWHERE. It was declared, exposed
+//    through SWMM_RUNOFF_SNOWREMOV, returned by the mass-balance API and read
+//    by callers, while `SnowSoA::removed` accumulated the real figure with no
+//    consumer — the same shape as F1 and as the snapshot quality vectors.
+//
+//    The gate asserts the OBSERVABLE (the ledger figure) against the solver's
+//    own accumulator. Asserting only that the balance closes would not catch
+//    it: with `snowremov` at 0 the ploughed water is simply missing from both
+//    sides of a term that was itself missing.
+// ---------------------------------------------------------------------------
+TEST(TransportSnowTest, PloughedSnowIsBookedAsRemovedInTheLedger) {
+    Opts o{};
+    o.air_f = 10.0;        // no melt: the ONLY sink is the plough
+    o.rain_inhr = 0.0;
+    o.snn0 = 0.5;          // half the impervious area is plowable
+    o.weplow = 0.05;       // well below sd0, so the plough fires on step 1
+    o.f_out = 0.40;        // and 40 % of it leaves the system
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& mb = ctx.mass_balance;
+    const auto& soa = as_cpp_engine(e).snowSolver().state();
+
+    // SETUP: the plough actually fired. Everything below is vacuous otherwise.
+    ASSERT_GT(soa.removed, 0.0)
+        << "the solver's own accumulator is 0, so no snow was ploughed out — "
+           "check snn0, weplow and f_out in that order";
+
+    EXPECT_NEAR(mb.runoff_snowremov, soa.removed,
+                1.0e-9 * std::fabs(soa.removed) + 1.0e-12)
+        << "the ledger books " << mb.runoff_snowremov
+        << " ft3 of snow removal while the solver accumulated " << soa.removed
+        << ". The field is exposed through SWMM_RUNOFF_SNOWREMOV and read by "
+           "callers — if it is 0 here it has no writer, which is what F8 was";
+
+    EXPECT_LT(std::fabs(mb.runoff_error()), 1.0e-3)
+        << "runoff continuity is " << mb.runoff_error() * 100.0
+        << " % on a deck whose only sink is the plough";
+    swmm_engine_destroy(e);
 }

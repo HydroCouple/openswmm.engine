@@ -689,14 +689,36 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
 
+        // F8 — the three snow rows the ledger never had. Guarded on the
+        // project having snowpacks at all, matching legacy's
+        // `Nobjects[SNOWMELT] > 0` (report.c:519, 560) rather than on the
+        // values being nonzero: a deck WITH packs that shows 0.000 here is
+        // saying something, and a deck without them should not carry the
+        // rows at all. Row ORDER matches legacy exactly, because these
+        // tables are read side by side against EPA SWMM output.
+        //
+        // The existing "Initial Storage" label is LEFT ALONE even though
+        // legacy calls the same row "Initial LID Storage". Renaming it is not
+        // part of this defect, and the 14-deck corpus compares report bytes —
+        // a label change would move decks that have nothing to do with snow
+        // and buy nothing. Recorded here so the difference is a decision
+        // rather than an oversight.
+        const bool has_snow = ctx.snowpack_names.size() > 0;
+
         if (mb.runoff_init_store > 0.0)
             row("Initial Storage ..........", mb.runoff_init_store);
+        if (has_snow)
+            row("Initial Snow Cover .......", mb.runoff_init_snow);
         row("Total Precipitation ......", mb.runoff_rainfall);
         if (mb.runoff_runon > 0.0)
             row("Outfall Runon ............", mb.runoff_runon);
         row("Evaporation Loss .........", mb.runoff_evap);
         row("Infiltration Loss ........", mb.runoff_infil);
         row("Surface Runoff ...........", mb.runoff_runoff);
+        if (has_snow) {
+            row("Snow Removed .............", mb.runoff_snowremov);
+            row("Final Snow Cover .........", mb.runoff_final_snow);
+        }
         row("Final Storage ............", mb.runoff_final_store);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.runoff_error() * 100.0);

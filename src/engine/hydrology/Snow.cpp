@@ -553,7 +553,20 @@ void SnowSolver::plowSnow(SimulationContext& ctx, double dt, const double* snowf
         if (soa_.sfrac[sf + 0] > 0.0) {
             double lid_ft2 = (uj < ctx.subcatches.total_lid_area_ft2.size())
                              ? ctx.subcatches.total_lid_area_ft2[uj] : 0.0;
-            double area_ft2 = ctx.subcatches.area[uj] * 43560.0 // acres → ft2
+            // F9 — this read `* 43560.0` with the comment "acres -> ft2".
+            // `subcatches.area` is in PROJECT land-area units, which are
+            // acres only in US; in SI they are hectares, and the plough
+            // volume came out **2.471x too small** — the identical defect
+            // SWMMEngine.cpp's rainfall-volume site carries a comment about
+            // having already fixed once.
+            //
+            // Fixed HERE, in the ledger round rather than its own, and the
+            // reason is specific: `runoff_snowremov` had no writer until this
+            // round, so this number reached nobody. Wiring it up is what
+            // makes the error visible, and shipping a newly-visible wrong
+            // number is worse than shipping no number at all.
+            double area_ft2 = ctx.subcatches.area[uj] /
+                                  ucf::UCF(ucf::LANDAREA, ctx.options)
                               - lid_ft2;
             if (area_ft2 < 0.0) area_ft2 = 0.0;
             soa_.removed += soa_.sfrac[sf + 0] * exc *

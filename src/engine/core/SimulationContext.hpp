@@ -1005,6 +1005,20 @@ struct SimulationContext {
         double runoff_snowremov  = 0.0;  ///< Total snow removal volume (ft3)
         double runoff_init_store = 0.0;  ///< Initial surface storage (ft3)
         double runoff_final_store= 0.0;  ///< Final surface storage (ft3)
+        /// Snow water equivalent PLUS free water held in every pack at the
+        /// start of the run (ft3). Legacy `RunoffTotals.initSnowCover`,
+        /// summed from `snow_getSnowCover` (`snow.c:587`).
+        double runoff_init_snow  = 0.0;
+        /// The same quantity at the end of the run (ft3). Legacy
+        /// `RunoffTotals.finalSnowCover`.
+        ///
+        /// **These two, and `runoff_snowremov`, were the whole of F8.** The
+        /// ledger had no snow terms at all, so on any deck with a
+        /// `[SNOWPACKS]` section the starting pack was unaccounted INPUT and
+        /// the surviving pack unaccounted OUTPUT, and the printed continuity
+        /// percentage was not a meaningful number. Measured on the snow
+        /// parity deck: **-8.193 % before, +1.419 % after.**
+        double runoff_final_snow = 0.0;
 
         // Routing totals
         double routing_dry_weather   = 0.0;
@@ -1157,8 +1171,15 @@ struct SimulationContext {
 
         /// Runoff continuity error (fraction).
         double runoff_error() const {
-            double total_in = runoff_rainfall + runoff_runon + runoff_init_store;
-            double total_out = runoff_evap + runoff_infil + runoff_runoff + runoff_final_store;
+            // Snow is a STORE on both sides, and snow ploughed out of the
+            // system is a loss — matching legacy massbal.c:685-692. A pack
+            // present at the start is water the model was given; a pack still
+            // standing at the end is water it still holds.
+            double total_in = runoff_rainfall + runoff_runon + runoff_init_store +
+                              runoff_init_snow;
+            double total_out = runoff_evap + runoff_infil + runoff_runoff +
+                               runoff_final_store + runoff_snowremov +
+                               runoff_final_snow;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
 
