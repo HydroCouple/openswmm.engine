@@ -29,6 +29,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/SIMD.hpp"
+#include "Link.hpp"
 #include "Node.hpp"
 #include "XSectBatch.hpp"
 #include <cmath>
@@ -401,10 +402,14 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
 // Helper: build XSectParams from link SoA data
 // ============================================================================
 
-static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
+static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
-    auto ls = links.xsect_shape[uk];
-    xs.type = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    // link::translateShape is the canonical LinkData-enum -> batch-enum
+    // translation (Link.cpp) — POLYGON=26 was appended to both enums at the
+    // same numeric value, breaking the flat +1 offset every earlier shape
+    // follows, so this delegates rather than re-deriving the mapping here.
+    xs.type = link::translateShape(links.xsect_shape[uk]);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];
@@ -415,6 +420,11 @@ static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
     xs.a_bot  = links.xsect_a_bot[uk];
     xs.s_bot  = links.xsect_s_bot[uk];
     xs.r_bot  = links.xsect_r_bot[uk];
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
+    }
     return xs;
 }
 
@@ -496,7 +506,7 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
         }
 
         // Use xsect::getAofY for proper cross-section area at partial opening
-        XSectParams xs = buildXSP(links, uj);
+        XSectParams xs = buildXSP(ctx, uj);
         double a_eff = xsect::getAofY(xs, h_open);
         double f_area = a_eff * std::sqrt(2.0 * GRAVITY);
         double cOrif = cd_val * f_area;

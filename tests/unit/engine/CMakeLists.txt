@@ -183,6 +183,13 @@ add_gtest_unit(test_engine_xsect_boundary    test_xsect_boundary.cpp)
 # the coordinate map, and the two trap-setters guarding the critical-height
 # split and the sqrt-end stretch.
 add_gtest_unit(test_engine_cheb_section      test_cheb_section.cpp)
+# Built-in shapes (CIRCULAR/FORCE_MAIN as a true circle; the 10 classic
+# tabulated shapes from their own width table) reconstructed as an exact
+# boundary under XSECT_GEOMETRY EXACT — see the file header for the real bug
+# this suite exists to catch (a silently-declining boundary construction is
+# indistinguishable from LEGACY at full depth, invisible without a partial-
+# depth check or a full-network run).
+add_gtest_unit(test_engine_legacy_shape_boundary test_legacy_shape_boundary.cpp)
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)

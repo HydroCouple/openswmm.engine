@@ -62,6 +62,7 @@
 #include <cmath>
 
 #include "XSectLookup.hpp"
+#include "ChebSection.hpp"
 #include "../data/LinkData.hpp"
 
 // Portable kernel-function marker — same convention as FvKernels.hpp and
@@ -539,6 +540,23 @@ struct XsectEval {
         return dSdA * xs.s_full / xs.a_full;
     }
 
+    // S(A) = A * R^(2/3), so dS/dA = R^(2/3) + (2/3)*A*R^(-1/3)*dR/dA — algebraically
+    // the same closed form circ_getdSdA uses below (expand and it reduces to
+    // (5/3 - (2/3)*dPdA*R) * R^(2/3)), just reached via the chain rule instead of
+    // a direct dP/dA formula: dR/dA = 1/P - (A/P^2)*dP/dA, dP/dA = (dP/dy)/(dA/dy).
+    // Exact throughout — chebdAdY and chebdPdY are the fit's own derivative
+    // coefficients, not finite differences.
+    OPENSWMM_KERNEL_FN double cheb_getdSdA(const XSectParams& xs, double a) const {
+        if (a <= 0.0 || !xs.cheb) return 0.0;
+        const double y = chebsec::chebYofA(*xs.cheb, a);
+        const double w = chebsec::chebdAdY(*xs.cheb, y);   // dA/dy = W, exact
+        const double p = chebsec::chebPofY(*xs.cheb, y);
+        if (w <= 0.0 || p <= 0.0) return generic_getdSdA(xs, a);
+        const double r = a / p;
+        const double dPdA = chebsec::chebdPdY(*xs.cheb, y) / w;
+        return (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * std::pow(r, 2.0 / 3.0);
+    }
+
     // ============================================================================
     // Circular
     // ============================================================================
@@ -981,6 +999,11 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double getAofY(const XSectParams& xs, double y) const {
+        // A compiled Chebyshev boundary takes over ALL evaluation for this
+        // section regardless of xs.type — set unconditionally for POLYGON,
+        // and for any other shape once XSECT_GEOMETRY EXACT compiles it too.
+        // Every dispatcher below carries this same early return.
+        if (xs.cheb) return chebsec::chebAofY(*xs.cheb, y);
         if (y <= 0.0) return 0.0;
         // A section with no (or not-yet-set) full depth has no area. Guard the
         // division so a degenerate cross-section — e.g. a conduit finalized before
@@ -1038,6 +1061,7 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double getWofY(const XSectParams& xs, double y) const {
+        if (xs.cheb) return chebsec::chebWofY(*xs.cheb, y);
         double y_norm = y / xs.y_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
@@ -1094,6 +1118,7 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double getRofY(const XSectParams& xs, double y) const {
+        if (xs.cheb) return chebsec::chebRofY(*xs.cheb, y);
         double y_norm = y / xs.y_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
@@ -1141,6 +1166,7 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double getYofA(const XSectParams& xs, double a) const {
+        if (xs.cheb) return chebsec::chebYofA(*xs.cheb, a);
         if (a <= 0.0) return 0.0;
         double alpha = a / xs.a_full;
 
@@ -1193,6 +1219,16 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double getSofA(const XSectParams& xs, double a) const {
+        if (xs.cheb) {
+            // Same generic S = A*R^(2/3) formula the switch's own default:
+            // branch below uses — forced here because several shapes ahead
+            // of default: (CIRCULAR, EGGSHAPED, ...) have explicit
+            // table-lookup cases that would otherwise intercept first.
+            if (a == 0.0) return 0.0;
+            double r = getRofA(xs, a);   // redirects through xs.cheb itself
+            if (r < TINY) return 0.0;
+            return a * std::pow(r, 2.0 / 3.0);
+        }
         double alpha = a / xs.a_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
@@ -1231,6 +1267,7 @@ struct XsectEval {
 
     OPENSWMM_KERNEL_FN double getRofA(const XSectParams& xs, double a) const {
         if (a <= 0.0) return 0.0;
+        if (xs.cheb) return chebsec::chebRofY(*xs.cheb, chebsec::chebYofA(*xs.cheb, a));
         switch (static_cast<XSectShape>(xs.type)) {
             case XSectShape::HORIZ_ELLIPSE:
             case XSectShape::VERT_ELLIPSE:
@@ -1263,6 +1300,7 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double getdSdA(const XSectParams& xs, double a) const {
+        if (xs.cheb) return cheb_getdSdA(xs, a);
         switch (static_cast<XSectShape>(xs.type)) {
             case XSectShape::FORCE_MAIN:
             case XSectShape::CIRCULAR:     return circ_getdSdA(xs, a);
@@ -1295,10 +1333,40 @@ struct XsectEval {
     // getAofS — area from section factor
     // ============================================================================
 
+    // Newton-Raphson on S(a) = s, bracketed in [a1, a2] (legacy generic_getAofS).
+    // a2 = absolute area at max flow. PARITY: legacy xsect_getAmax (xsect.c:
+    // 711-713) returns aBot for BOTH IRREGULAR and CUSTOM (the physical area
+    // at the max section factor, set from the transect/shape tables); every
+    // other shape uses aFull * Amax-ratio. A compiled Chebyshev boundary
+    // (xs.cheb) always has an absolute a_max of its own — see getAmax, which
+    // returns it pre-divided back to the ratio this formula expects.
+    OPENSWMM_KERNEL_FN double generic_getAofS(const XSectParams& xs, double s) const {
+        double a1, a2;
+        const XSectShape sh = static_cast<XSectShape>(xs.type);
+        double a_max = (!xs.cheb && (sh == XSectShape::CUSTOM || sh == XSectShape::IRREGULAR))
+                           ? xs.a_bot
+                           : xs.a_full * getAmax(xs);
+        if ((s <= xs.s_max && s >= xs.s_full) && xs.s_max != xs.s_full) {
+            a1 = xs.a_full;   // sFull < sMax: root lies between aFull and aMax
+            a2 = a_max;
+        } else {
+            a1 = 0.0;
+            a2 = a_max;
+        }
+        double a = 0.5 * (a1 + a2);
+        double tol = 0.0001 * xs.a_full;
+        findroot_Newton(a1, a2, &a, tol, [&](double aa, double* f, double* df) {
+            *f = getSofA(xs, aa) - s;
+            *df = getdSdA(xs, aa);
+        });
+        return a;
+    }
+
     OPENSWMM_KERNEL_FN double getAofS(const XSectParams& xs, double s) const {
         double psi = s / xs.s_full;
         if (s <= 0.0) return 0.0;
         if (s > xs.s_max) s = xs.s_max;
+        if (xs.cheb) return generic_getAofS(xs, s);
 
         switch (static_cast<XSectShape>(xs.type)) {
             case XSectShape::DUMMY: return 0.0;
@@ -1318,33 +1386,8 @@ struct XsectEval {
                 return xs.a_full * invLookup(psi, tbl.S_BasketHandle, tbl.N_S_BasketHandle);
             case XSectShape::SEMICIRCULAR:
                 return xs.a_full * invLookup(psi, tbl.S_SemiCirc, tbl.N_S_SemiCirc);
-            default: {
-                // Newton-Raphson on S(a) = s, bracketed in [a1, a2] (legacy generic_getAofS).
-                // a2 = absolute area at max flow = xsect_getAmax.
-                // PARITY: legacy xsect_getAmax (xsect.c:711-713) returns aBot for
-                // BOTH IRREGULAR and CUSTOM (the physical area at the max section
-                // factor, set from the transect/shape tables); every other shape
-                // uses aFull * Amax-ratio.
-                double a1, a2;
-                const XSectShape sh = static_cast<XSectShape>(xs.type);
-                double a_max = (sh == XSectShape::CUSTOM || sh == XSectShape::IRREGULAR)
-                                   ? xs.a_bot
-                                   : xs.a_full * getAmax(xs);
-                if ((s <= xs.s_max && s >= xs.s_full) && xs.s_max != xs.s_full) {
-                    a1 = xs.a_full;   // sFull < sMax: root lies between aFull and aMax
-                    a2 = a_max;
-                } else {
-                    a1 = 0.0;
-                    a2 = a_max;
-                }
-                double a = 0.5 * (a1 + a2);
-                double tol = 0.0001 * xs.a_full;
-                findroot_Newton(a1, a2, &a, tol, [&](double aa, double* f, double* df) {
-                    *f = getSofA(xs, aa) - s;
-                    *df = getdSdA(xs, aa);
-                });
-                return a;
-            }
+            default:
+                return generic_getAofS(xs, s);
         }
     }
 
@@ -1353,6 +1396,16 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN double getAmax(const XSectParams& xs) const {
+        if (xs.cheb) {
+            // Unlike every tabulated shape, a compiled boundary's max-flow
+            // area is not a fixed ratio constant — it is measured per-
+            // instance by chebsec::compile() and stored as an ABSOLUTE area
+            // (ChebSection::a_max), mirroring how CUSTOM/IRREGULAR store an
+            // absolute xs.a_bot. Divide back to the ratio every caller of
+            // this function expects (they all multiply by xs.a_full).
+            if (xs.a_full <= 0.0) return 1.0;
+            return xs.cheb->a_max / xs.a_full;
+        }
         if (xs.type >= 0 && xs.type <= 25)
             return tbl.Amax[xs.type];
         return 1.0;
@@ -1362,10 +1415,82 @@ struct XsectEval {
     // getYcrit — critical depth for a given flow rate (legacy xsect_getYcrit)
     // ============================================================================
 
+    // Critical-depth solve shared by every shape with no closed-form Ycrit
+    // formula (legacy getYcritEnum/getYcritRidder) — extracted so a compiled
+    // Chebyshev boundary (xs.cheb) can force this path too, rather than a
+    // shape whose boundary is only an APPROXIMATION of its legacy closed-form
+    // curve (e.g. PARABOLIC/POWERFUNC reconstructed as a dense polyline under
+    // XSECT_GEOMETRY EXACT) mixing an exact formula with an approximate A/W.
+    OPENSWMM_KERNEL_FN double generic_getYcrit(const XSectParams& xs, double q, double q2g) const {
+        // Critical flow function Q_c(yc) - qTarget (legacy getQcritical).
+        auto qCritical = [&](double yc, double qTarget) -> double {
+            double a = getAofY(xs, yc);
+            double w = getWofY(xs, yc);
+            if (w > 0.0) return a * std::sqrt(GRAVITY * a / w) - qTarget;
+            return -qTarget;
+        };
+
+        // Initial estimate from equivalent circular conduit.
+        double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
+        if (y0 >= xs.y_full) y0 = 0.97 * xs.y_full;
+
+        // Ratio of conduit area to equivalent circular area.
+        double r = xs.a_full / (PI / 4.0 * xs.y_full * xs.y_full);
+
+        double y;
+        if (r >= 0.5 && r <= 2.0) {
+            // --- interval enumeration (legacy getYcritEnum), 25 increments
+            constexpr int N_INC = 25;
+            double dy = xs.y_full / N_INC;
+            int i1 = static_cast<int>(y0 / dy);
+            double q0 = qCritical(i1 * dy, 0.0);
+            if (q0 < q) {
+                y = xs.y_full;
+                for (int i = i1 + 1; i <= N_INC; ++i) {
+                    double qc = qCritical(i * dy, 0.0);
+                    if (qc >= q) {
+                        y = ((q - q0) / (qc - q0) + static_cast<double>(i - 1)) * dy;
+                        break;
+                    }
+                    q0 = qc;
+                }
+            } else {
+                y = 0.0;
+                for (int i = i1 - 1; i >= 0; --i) {
+                    double qc = qCritical(i * dy, 0.0);
+                    if (qc < q) {
+                        y = ((q - qc) / (q0 - qc) + static_cast<double>(i)) * dy;
+                        break;
+                    }
+                    q0 = qc;
+                }
+            }
+        } else {
+            // --- Ridder's method (legacy getYcritRidder)
+            double y1 = 0.0;
+            double y2 = 0.99 * xs.y_full;
+            double q2 = qCritical(y2, 0.0);
+            if (q2 < q) return xs.y_full;
+            double q0 = qCritical(y0, 0.0);
+            double q1 = qCritical(0.5 * xs.y_full, 0.0);
+            if (q0 > q) {
+                y2 = y0;
+                if (q1 < q) y1 = 0.5 * xs.y_full;
+            } else {
+                y1 = y0;
+                if (q1 > q) y2 = 0.5 * xs.y_full;
+            }
+            y = findroot_Ridder(y1, y2, 0.001,
+                                [&](double yc) { return qCritical(yc, q); });
+        }
+        return std::min(y, xs.y_full);
+    }
+
     OPENSWMM_KERNEL_FN double getYcrit(const XSectParams& xs, double q) const {
         if (q <= 0.0) return 0.0;
         double q2g = q * q / GRAVITY;
         if (q2g == 0.0) return 0.0;
+        if (xs.cheb) return generic_getYcrit(xs, q, q2g);
 
         double y;
         switch (static_cast<XSectShape>(xs.type)) {
@@ -1384,69 +1509,8 @@ struct XsectEval {
                 y = 1.0 / (2.0 * xs.s_bot + 3.0);
                 y = std::pow(q2g * (xs.s_bot + 1.0) / (xs.r_bot * xs.r_bot), y);
                 break;
-            default: {
-                // Critical flow function Q_c(yc) - qTarget (legacy getQcritical).
-                auto qCritical = [&](double yc, double qTarget) -> double {
-                    double a = getAofY(xs, yc);
-                    double w = getWofY(xs, yc);
-                    if (w > 0.0) return a * std::sqrt(GRAVITY * a / w) - qTarget;
-                    return -qTarget;
-                };
-
-                // Initial estimate from equivalent circular conduit.
-                double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
-                if (y0 >= xs.y_full) y0 = 0.97 * xs.y_full;
-
-                // Ratio of conduit area to equivalent circular area.
-                double r = xs.a_full / (PI / 4.0 * xs.y_full * xs.y_full);
-
-                if (r >= 0.5 && r <= 2.0) {
-                    // --- interval enumeration (legacy getYcritEnum), 25 increments
-                    constexpr int N_INC = 25;
-                    double dy = xs.y_full / N_INC;
-                    int i1 = static_cast<int>(y0 / dy);
-                    double q0 = qCritical(i1 * dy, 0.0);
-                    if (q0 < q) {
-                        y = xs.y_full;
-                        for (int i = i1 + 1; i <= N_INC; ++i) {
-                            double qc = qCritical(i * dy, 0.0);
-                            if (qc >= q) {
-                                y = ((q - q0) / (qc - q0) + static_cast<double>(i - 1)) * dy;
-                                break;
-                            }
-                            q0 = qc;
-                        }
-                    } else {
-                        y = 0.0;
-                        for (int i = i1 - 1; i >= 0; --i) {
-                            double qc = qCritical(i * dy, 0.0);
-                            if (qc < q) {
-                                y = ((q - qc) / (q0 - qc) + static_cast<double>(i)) * dy;
-                                break;
-                            }
-                            q0 = qc;
-                        }
-                    }
-                } else {
-                    // --- Ridder's method (legacy getYcritRidder)
-                    double y1 = 0.0;
-                    double y2 = 0.99 * xs.y_full;
-                    double q2 = qCritical(y2, 0.0);
-                    if (q2 < q) { y = xs.y_full; break; }
-                    double q0 = qCritical(y0, 0.0);
-                    double q1 = qCritical(0.5 * xs.y_full, 0.0);
-                    if (q0 > q) {
-                        y2 = y0;
-                        if (q1 < q) y1 = 0.5 * xs.y_full;
-                    } else {
-                        y1 = y0;
-                        if (q1 > q) y2 = 0.5 * xs.y_full;
-                    }
-                    y = findroot_Ridder(y1, y2, 0.001,
-                                        [&](double yc) { return qCritical(yc, q); });
-                }
-                break;
-            }
+            default:
+                return generic_getYcrit(xs, q, q2g);
         }
         return std::min(y, xs.y_full);
     }
@@ -1467,6 +1531,17 @@ struct XsectEval {
             default:
                 return false;
         }
+    }
+
+    /// Per-instance open/closed test — see the declaration in XSectBatch.hpp.
+    /// A compiled boundary's own ChebSection::is_open is authoritative
+    /// (POLYGON has no shape code that isOpen(int) could classify at all,
+    /// and RECT_OPEN/etc. under XSECT_GEOMETRY EXACT still resolve correctly
+    /// here because their boundary was compiled with the SAME is_open value
+    /// isOpen(int) would have returned — see PostParseResolver).
+    OPENSWMM_KERNEL_FN bool isOpen(const XSectParams& xs) const {
+        if (xs.cheb) return xs.cheb->is_open;
+        return isOpen(xs.type);
     }
 
 };

@@ -99,7 +99,9 @@ typedef enum SWMM_XSectShape {
     SWMM_XSECT_CUSTOM          = 22, /**< Custom shape (from a shape curve).    geom1=height, geom2=shape-curve index. */
     SWMM_XSECT_FORCE_MAIN      = 23, /**< Circular force main.                  geom1=diameter, geom2=roughness (H-W C or D-W eps). */
     SWMM_XSECT_STREET          = 24, /**< Street cross-section (from [STREETS]). geom1=street index. */
-    SWMM_XSECT_DUMMY           = 25  /**< Dummy — no geometry; all queries return 0. */
+    SWMM_XSECT_DUMMY           = 25, /**< Dummy — no geometry; all queries return 0. */
+    SWMM_XSECT_POLYGON         = 26  /**< Arc/line boundary from a [CURVES] XPOLYGON entry, compressed to a
+                                           piecewise-Chebyshev series. geom1=scale, geom2=open-channel flag (0/1). */
 } SWMM_XSectShape;
 
 /* =========================================================================

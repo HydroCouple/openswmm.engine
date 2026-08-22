@@ -30,6 +30,7 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
+#include "../../../hydraulics/Link.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../../hydraulics/XSectBatch.hpp"
 
@@ -40,10 +41,14 @@ namespace {
 /// Cross-section parameters for a link. Mirrors `Routing.cpp:54`'s local
 /// helper — the same one the non-DYNWAVE evaporation path uses, so an open
 /// conduit's exchange area is built exactly the way its evaporation area is.
-XSectParams buildXsp(const LinkData& links, std::size_t uk) {
+XSectParams buildXsp(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
-    const auto ls = links.xsect_shape[uk];
-    xs.type   = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    // link::translateShape is the canonical LinkData-enum -> batch-enum
+    // translation (Link.cpp) — POLYGON=26 was appended to both enums at the
+    // same numeric value, breaking the flat +1 offset every earlier shape
+    // follows, so this delegates rather than re-deriving the mapping here.
+    xs.type = link::translateShape(links.xsect_shape[uk]);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];
@@ -54,6 +59,11 @@ XSectParams buildXsp(const LinkData& links, std::size_t uk) {
     xs.a_bot  = links.xsect_a_bot[uk];
     xs.s_bot  = links.xsect_s_bot[uk];
     xs.r_bot  = links.xsect_r_bot[uk];
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
+    }
     return xs;
 }
 
@@ -177,7 +187,7 @@ void applySurfaceExchange(SimulationContext& ctx, double dt) {
 
         const double depth = ctx.links.depth[uj];
         if (!(depth > 0.0)) continue;
-        const auto xs = buildXsp(ctx.links, uj);
+        const auto xs = buildXsp(ctx, uj);
         const double top_width = xsect::getWofY(xs, depth);
         if (!(top_width > 0.0)) continue;
         const double area_ft2 = top_width * length * CD.barrels[ucr];

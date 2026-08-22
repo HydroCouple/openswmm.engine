@@ -360,8 +360,26 @@ int compile(ChebSection& out, const BElem* elems, int n, bool is_open) {
     // below it.
     const ChebPiece& top = out.piece[out.n_pieces - 1];
     out.a_full = chebEval(top.c_a, top.n_a, 1.0);
-    const double p_full = chebEval(top.c_p, top.n_p, 1.0);
-    out.r_full = (p_full > 0.0) ? out.a_full / p_full : 0.0;
+
+    // Perimeter at the crown: for a CLOSED shape this is NOT the fitted
+    // series extrapolated to u=1. That series was built from strictly
+    // interior samples and only ever captures the open-channel-below-crown
+    // limit; a flat/cornered crown (Puiseux exponent 1.0) has a real jump at
+    // y_full between that limit and the pressurized-full perimeter (every
+    // boundary element wetted). A smooth ROUND crown (exponent 1.5) has no
+    // such jump, which is why this was invisible to the circle-only test
+    // suite. Sum every input element's own arcLength instead — well-defined
+    // regardless of the crown's smoothness, since it needs no extrapolation
+    // at all. An OPEN shape has no crown to pressurize past, so the fitted
+    // limit remains correct there (matches legacy RECT_OPEN's own r_full,
+    // which likewise excludes the open top).
+    if (is_open) {
+        out.p_full = chebEval(top.c_p, top.n_p, 1.0);
+    } else {
+        out.p_full = 0.0;
+        for (int i = 0; i < n; ++i) out.p_full += xsboundary::arcLength(elems[i]);
+    }
+    out.r_full = (out.p_full > 0.0) ? out.a_full / out.p_full : 0.0;
     out.s_full = out.a_full * std::pow(std::max(out.r_full, 0.0), 2.0 / 3.0);
 
     constexpr int kScan = 1000;

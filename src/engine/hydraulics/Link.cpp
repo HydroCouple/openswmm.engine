@@ -63,6 +63,7 @@ int translateShape(XsectShape s) {
         case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
         case XsectShape::STREET_XSECT:    return static_cast<int>(XSectShape::STREET_XSECT);
         case XsectShape::DUMMY:           return static_cast<int>(XSectShape::DUMMY);
+        case XsectShape::POLYGON:         return static_cast<int>(XSectShape::POLYGON);
         default:                          return static_cast<int>(XSectShape::DUMMY);
     }
 }
@@ -89,7 +90,7 @@ double getFroude(const XSectParams& xs, double v, double y) {
     if (y <= constants::FUDGE) return 0.0;
 
     // For closed conduits: return 0 if full
-    if (!xsect::isOpen(xs.type) && (xs.y_full - y) <= constants::FUDGE)
+    if (!xsect::isOpen(xs) && (xs.y_full - y) <= constants::FUDGE)
         return 0.0;
 
     // Hydraulic depth D_h = A / T
@@ -163,7 +164,8 @@ double getHydPower(double flow, double head_upstream, double head_downstream) {
 
 XSectParams buildXSectParams(
     const LinkData& links, std::size_t uj,
-    const std::vector<transect::TransectData>* transects) {
+    const std::vector<transect::TransectData>* transects,
+    const std::deque<chebsec::ChebSection>* cheb_sections) {
     XSectParams xs{};
     xs.type   = links.xsect_batch_shape[uj];
     xs.y_full = links.xsect_y_full[uj];
@@ -196,6 +198,17 @@ XSectParams buildXSectParams(
             xs.width_tbl         = td.width_tbl;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
+    }
+
+    // Attach the compiled Chebyshev boundary. Independent of xsect_curve
+    // above — xsect_cheb_idx is set for every POLYGON link, and for any
+    // other shape once XSECT_GEOMETRY EXACT compiles it too (see
+    // PostParseResolver). Once attached, every XsectEval accessor takes this
+    // path regardless of xs.type.
+    if (cheb_sections) {
+        const int ci = links.xsect_cheb_idx[uj];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < cheb_sections->size())
+            xs.cheb = &(*cheb_sections)[static_cast<std::size_t>(ci)];
     }
     return xs;
 }

@@ -68,6 +68,8 @@ namespace openswmm {
 // Forward declaration
 struct SimulationContext;
 
+namespace chebsec { struct ChebSection; }
+
 // ============================================================================
 // Cross-section shape codes (matches legacy enums.h XsectType)
 // ============================================================================
@@ -98,7 +100,8 @@ enum class XSectShape : int {
     IRREGULAR          = 22,
     CUSTOM             = 23,
     FORCE_MAIN         = 24,
-    STREET_XSECT       = 25
+    STREET_XSECT       = 25,
+    POLYGON            = 26
 };
 
 // ============================================================================
@@ -133,6 +136,14 @@ struct XSectParams {
     const double* hrad_tbl  = nullptr;   ///< Normalized hyd-radius vs y/y_full
     const double* width_tbl = nullptr;   ///< Normalized width     vs y/y_full
     int    transect_tbl_size = 0;        ///< Entry count of the tables above
+
+    // Piecewise-Chebyshev boundary (POLYGON shapes ALWAYS; other shapes only
+    // under `[OPTIONS] XSECT_GEOMETRY EXACT`). When non-null, every accessor
+    // in XsectEval takes this path instead of its per-shape table/formula
+    // dispatch, regardless of @ref type — see the `xs.cheb` early-return at
+    // the top of each dispatcher in XSectKernels.hpp. Points into
+    // ctx.cheb_sections (a std::deque, so the address is stable for the run).
+    const chebsec::ChebSection* cheb = nullptr;
 };
 
 // ============================================================================
@@ -152,6 +163,12 @@ double getAofS(const XSectParams& xs, double s_factor);
 double getAmax(const XSectParams& xs);
 double getYcrit(const XSectParams& xs, double q);
 bool   isOpen(int type);
+/// Per-instance open/closed test. A POLYGON section (or any shape whose
+/// XSectParams::cheb is set under XSECT_GEOMETRY EXACT) cannot be classified
+/// from its shape code alone — open vs. closed is a property of the specific
+/// compiled boundary, recorded in ChebSection::is_open. Falls back to
+/// isOpen(int) for shapes with no compiled boundary.
+bool   isOpen(const XSectParams& xs);
 int    setParams(XSectParams& xs, int type, const double p[], double ucf);
 
 // Lookup table helpers (exposed for batch kernels and testing)
@@ -207,6 +224,12 @@ struct ShapeGroup {
     std::vector<const double*> width_tables;  ///< Per-link width table
     int transect_tbl_size = 0;                ///< Table size (same for all)
 
+    // Per-link compiled Chebyshev boundary (POLYGON group always; other
+    // groups only under XSECT_GEOMETRY EXACT — see attachChebSections()).
+    // Non-null entries here are what make the scalar per-element fallback
+    // (paramsAt()) route through the exact/Chebyshev path.
+    std::vector<const chebsec::ChebSection*> cheb;
+
     // Pre-allocated working buffers (avoids per-call allocation in hot loop)
     mutable std::vector<double> buf_d;   ///< Gather buffer for depths
     mutable std::vector<double> buf_r;   ///< Scatter buffer for results
@@ -255,6 +278,20 @@ public:
      * @param ctx  SimulationContext with transect_tables populated.
      */
     void attachTransectTables(const SimulationContext& ctx);
+
+    /**
+     * @brief Attach compiled Chebyshev boundaries to POLYGON (and, under
+     *        XSECT_GEOMETRY EXACT, any other) shape groups.
+     *
+     * @details Must be called after build() when POLYGON shapes exist, or
+     *          when EXACT mode compiled built-in shapes too. Mirrors
+     *          attachTransectTables() exactly, one array (cheb) instead of
+     *          three, keyed by LinkData::xsect_cheb_idx instead of
+     *          xsect_curve.
+     *
+     * @param ctx  SimulationContext with cheb_sections populated.
+     */
+    void attachChebSections(const SimulationContext& ctx);
 
     /**
      * @brief Build shape groups from an array of XSectParams.
