@@ -158,9 +158,9 @@ void write_deck(const char* path, const Opts& o) {
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
       << "[PROCESS_COMPONENTS]\n";
     if (o.heat)
-        f << "org.hydrocouple.openswmm.heat config=\"_h5b.heat\"\n";
+        f << "org.hydrocouple.openswmm.heat config=\"_h5lid.heat\"\n";
     if (o.water_age)
-        f << "org.hydrocouple.openswmm.waterage config=\"_h5b.age\"\n";
+        f << "org.hydrocouple.openswmm.waterage config=\"_h5lid.age\"\n";
     f << "\n[REPORT]\nINPUT NO\n";
 }
 
@@ -174,21 +174,21 @@ void write_cfg(const Opts& o) {
     s += std::string("LAYER_CONDUCTION ")   + (o.conduction? "ON" : "OFF") + "\n";
     if (o.dry_policy != nullptr)
         s += std::string("DRY_ELEMENT_TEMPERATURE ") + o.dry_policy + "\n";
-    write_file("_h5b.heat", s);
+    write_file("_h5lid.heat", s);
     // INITIAL_STATE is not decoration. `initLidLayerAge` seeds a wet layer
     // with it, so with no row the seed is 0 — and a wipe of a zero seed is
     // invisible. Gate 2's both-on leg exists to catch exactly that wipe.
-    write_file("_h5b.age",
+    write_file("_h5lid.age",
                "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL 1.0\n"
                "INITIAL_STATE GLOBAL 4.0\n");
 }
 
 SWMM_Engine run(const Opts& o) {
     write_cfg(o);
-    write_deck("_h5b.inp", o);
+    write_deck("_h5lid.inp", o);
     SWMM_Engine e = swmm_engine_create();
     if (e == nullptr) return nullptr;
-    if (swmm_engine_open(e, "_h5b.inp", "_h5b.rpt", "_h5b.out", nullptr)
+    if (swmm_engine_open(e, "_h5lid.inp", "_h5lid.rpt", "_h5lid.out", nullptr)
             != SWMM_OK ||
         swmm_engine_initialize(e) != SWMM_OK ||
         swmm_engine_start(e, 1) != SWMM_OK) {
