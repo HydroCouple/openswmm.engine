@@ -39,18 +39,28 @@ put where it can be relied on and given one runner instead of ten.
 
 Add a line to `MANIFEST`: the path from the repository root, a tab, and
 **why the deck is here** — which code path it reaches that no other deck
-reaches. The reason column is not decoration. Ten of the fifteen decks are FV
-routing variants (§4), and that happened because decks were added by whoever
-needed one, without anybody looking at the shape of the set.
+reaches. The reason column is not decoration. Ten of the eighteen decks are
+FV routing variants (§4), and that happened because decks were added by
+whoever needed one, without anybody looking at the shape of the set.
 
 Basenames must be unique. The runner refuses a duplicate: every deck writes
 its `.out` under its own basename, so two decks sharing one would overwrite
 each other and compare clean. That is the corpus-level form of the
 fixture-name collision fixed in `b85b802d`.
 
-Decks must be **self-contained** — no external rainfall or climate files. All
-fifteen currently are. A deck with an external dependency would compare fine
-on the machine that has the file and fail everywhere else.
+Decks must be **self-contained**: no external rainfall or climate files. A
+deck with an external dependency compares fine on the machine that has the
+file and fails everywhere else.
+
+**One exception, and it is narrow.** `heat_parity.inp` carries
+`heat_parity.heat`, a `[PROCESS_COMPONENTS]` config, because heat has no
+inline form — `[HEAT_SOURCES]` and `[HEAT_FLUXES]` are read only from a
+component file. The rule's purpose survives: that file is **tracked beside
+its deck**, and component configs resolve relative to the `.inp`
+(`SWMMEngine.cpp`: `base_dir = parent_path(inp_path)`), not to the working
+directory — so the runner's per-deck cwd cannot break it. **A companion file
+that travels with the deck in git is admissible; a reference to somewhere
+else on the machine is not.**
 
 ## 3. Why there are no stored baselines
 
@@ -64,11 +74,21 @@ If a result moved three rounds ago and nobody attributed it, a before/after
 run today is clean. It answers "did my changeset move this", not "is this
 still right".
 
-The snow deck is the exception and keeps a stored baseline with recorded
-provenance under `snow/baseline/` — commit, build directory, and the sha256
-of both the binary and the dylib. That deck is *expected* to move, so its
-movement needs attributing against a fixed reference. **That baseline is a
-separate mechanism and the runner does not touch it.**
+The snow deck is the partial exception: it keeps a stored baseline with
+recorded provenance under `snow/baseline/` — commit, build directory, and the
+sha256 of both the binary and the dylib. That deck is *expected* to move, so
+its movement needs attributing against a fixed reference. **That baseline is
+a separate mechanism and the runner does not touch it.**
+
+> **⚠ `snow/baseline/` is NOT tracked, and on a clean clone this section
+> describes something that is not there.** `d633c53e` tracked the deck, its
+> generator and its README, and deliberately left the baseline out — it is a
+> generated artefact, and §3 is an argument against stored baselines. The
+> consequence, stated rather than hidden: **the one mechanism in this
+> directory that could detect drift across rounds exists only in one working
+> tree**, which is the condition §1 exists to describe. Either regenerate it
+> from `gen_snow_parity.py` plus a recorded build, or accept that cross-round
+> drift is undetectable here and delete the claim. **Owed, not decided.**
 
 > **The provenance rule, learned the hard way twice.** A baseline is only
 > meaningful against the build it will be compared to. `snow/baseline/`
@@ -88,30 +108,39 @@ caveat in individual handoffs:
 |---|---|
 | FV | **10** |
 | DYNWAVE | 4 (2 of them `EULERIAN_ARD`) |
-| KINWAVE | 1 (the snow deck) |
+| KINWAVE | 4 (snow, and the three transport decks) |
 | STEADY | **0** |
 
 And by capability:
 
 | exercised by the corpus | decks |
 |---|---|
-| pollutant transport | 4 |
-| snowpacks | **1** (added 2026-08-22) |
-| water age (`__WATER_AGE__`) | **0** |
-| heat (`__TEMPERATURE__`) | **0** |
-| LID | via the SDM decks only |
+| pollutant transport | 5 |
+| snowpacks | 1 (added 2026-08-22) |
+| water age (`__WATER_AGE__`) | 3 (added 2026-08-22) |
+| heat (`__TEMPERATURE__`) | 1 (added 2026-08-22) |
+| `np + age + heat` stride | 1 (added 2026-08-22) |
+| LID | via the SDM decks only — **no age or heat through a LID**, blocked on issue #131 |
 | SI units | **0** |
+| STEADY routing | **0** |
 
-**Two thirds of the corpus is one router.** A clean run proves the pollutant
-and FV paths are undisturbed. Until the snow deck landed it proved nothing
-about any of the seven snow defects fixed behind it; it still proves nothing
-about water age, heat, or any land-area unit defect, because no deck reaches
-them. Those gaps are tracked in `plans/transport/SNOW_DIVERGENCE_REGISTER.md`
-(O6, the SI deck) and in `PROGRESS.md`.
+**Over half the corpus is still one router.** A clean run proves the
+pollutant and FV paths are undisturbed, and — since 2026-08-22 — that the
+snow, age and heat paths are too. It still proves nothing about a LID under
+either reserved species, about any land-area unit defect, or about steady
+routing, because no deck reaches them. Tracked in
+`plans/transport/SNOW_DIVERGENCE_REGISTER.md` (O6, the SI deck),
+`transport/README.md` §5, and `PROGRESS.md`.
+
+**Every capability line above was a zero until someone wrote the deck, and
+each of those zeros sat behind a green "N/N unchanged" for months.** The
+count is not the coverage.
 
 ## 5. Cost — MEASURED 2026-08-22, and it is not where anyone thought
 
 **One side of the corpus is ~49 s; a full before/after run is ~100 s.**
+The three transport decks added on 2026-08-22 cost **0.20 s between
+them** and do not change that.
 Per deck, Release, warm:
 
 | deck | s | | deck | s |
@@ -123,10 +152,11 @@ Per deck, Release, warm:
 | orif_legacy | 0.28 | | vj_fv_steep_datum | 0.22 |
 | vj_fv_invert_collision | 0.21 | | agree_pass | 0.16 |
 | force_ard | 0.15 | | force_legacy | 0.14 |
-| slot_uncapped | 0.13 | | | |
+| slot_uncapped | 0.13 | | age_ard | 0.08 |
+| age_legacy | 0.06 | | heat_parity | 0.06 |
 
 **Three Site-Drainage FV decks are 47.1 s of the 49.3 s — 96 %.** Everything
-else, all twelve of them, is two seconds together.
+else, all fifteen of them, is 2.2 seconds together.
 
 **The snow deck is 0.30 s.** Earlier drafts of this file and of `MANIFEST`
 called it "8,641 routing steps, ~15–24 s… the slowest deck here by an order

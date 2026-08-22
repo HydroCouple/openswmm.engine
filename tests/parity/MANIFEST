@@ -47,3 +47,20 @@ tests/parity/corpus/decks/sdm_struct_dw_ard.inp	Site Drainage Model, DYNWAVE + s
 # snow/README.md and was never measured on a CLI build; see README.md §5 for
 # the per-deck table.  The three sdm_fv_* decks are 96 % of the corpus.
 tests/parity/snow/snow_parity.inp	KINWAVE + [SNOWPACKS] -- the only deck with snow, water in a pack, or areal depletion
+
+# ---- Water age and heat (3) -----------------------------------------------
+# Added 2026-08-22.  README.md §4 recorded 0 water-age and 0 heat decks after
+# roughly fifteen rounds of building both, so "15/15 byte-identical" could
+# observe neither.  Same hole the snow deck closed for [SNOWPACKS], and that
+# deck found a real ledger defect on its first run.
+#
+# All three share one network -- S1 -> S2 -> J1 with S3 -> J1 direct -- so a
+# difference between them is the CAPABILITY and not the model.  The cascade is
+# there because run-on is where both age defects lived (A3, A4); S3 is the
+# no-run-on control.  Generated: tests/parity/transport/gen_transport_parity.py.
+#
+# EXPECT THESE TO MOVE on any age or heat change, exactly as the snow deck
+# moves on a snow change.  Attribute the movement; do not widen anything.
+tests/parity/transport/age_legacy.inp	WATER_AGE ON with np=0, default solver -- age through the LEGACY CSTR mirror (A1b)
+tests/parity/transport/age_ard.inp	the same body under QUALITY_SOLVER EULERIAN_ARD -- age as an ARD mesh row (A1a); the pair localises a movement to one engine
+tests/parity/transport/heat_parity.inp	pollutant + age + heat -- the only deck reaching the np+age+heat reported stride (D-UT10's seam); carries heat_parity.heat beside it
