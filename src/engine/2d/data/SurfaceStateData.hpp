@@ -145,6 +145,13 @@ struct SurfaceStateData {
     /// semantics the swmm_2d_force_* API documents.
     bool forcing_dirty = false;
 
+    /// Sticky companion to forcing_dirty: set by the forcing API the first
+    /// time any prescription is written, never cleared. clear_reset_forcings()
+    /// is called once per routing step and is O(n_cells); on a model that
+    /// never uses the forcing API (every deck without an external controller)
+    /// the whole sweep is dead work, and this flag skips it.
+    bool forcing_ever_set = false;
+
     // -----------------------------------------------------------------------
     // Previous step state
     // -----------------------------------------------------------------------
@@ -229,6 +236,7 @@ struct SurfaceStateData {
 
     /// Clear RESET forcings after each step
     void clear_reset_forcings() noexcept {
+        if (!forcing_ever_set) return;
         for (std::size_t i = 0; i < rainfall_forced.size(); ++i) {
             if (rainfall_persist[i] == 0 && rainfall_forced[i] != 0) {
                 rainfall_forced[i] = 0;

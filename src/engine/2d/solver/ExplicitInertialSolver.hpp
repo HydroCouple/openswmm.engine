@@ -90,11 +90,17 @@ private:
     void refreshDt0();
     // Fire one tier's faces over their Δt: inertial update + Froude cap +
     // face-cadence positivity share, booking ±ΔM into both side accumulators.
-    void fireFaces(const std::vector<int>& faces, double dt_f);
+    // global_step = every active cell fires at this same Δt (the window tail),
+    // so a face's exporter republishes its volume every time this face does
+    // and the positivity share is NOT divided down by a refire ratio.
+    void fireFaces(const std::vector<int>& faces, double dt_f,
+                   bool global_step = false);
     // Fire one tier's cells over their Δt: gather + clear own-side face
     // accumulators, apply sources, refresh closure + Perot vector; tier-0
     // firings also evaluate the availability-clamped boundary edges.
-    void fireCells(const std::vector<int>& cells, double dt_c);
+    // tier0 = this firing carries the tier-0 cadence work (boundary edges and
+    // the live junction exchange), which fires once per finest substep.
+    void fireCells(const std::vector<int>& cells, double dt_c, bool tier0);
     // One halving-order macro cycle of nsub base substeps: tier k fires every
     // 2^k substeps.
     void runMacroCycle(double dt0, int nsub);
@@ -108,6 +114,11 @@ private:
     std::vector<double>  qcx_, qcy_;    ///< Perot cell discharge vector (θ < 1)
     std::vector<uint8_t> cell_active_;
     std::vector<int>     active_cells_;
+    /// Every face with both sides active, ascending — the union of the face
+    /// tier lists, in the order the tier-0 list would have carried them after
+    /// a collapse. Rebuilt with the tier lists; fired as one list by the
+    /// window tail.
+    std::vector<int>     active_faces_;
     std::vector<uint8_t> pin_t0_;       ///< cells pinned active + tier 0
                                         ///< (boundary + live coupling)
 
@@ -117,10 +128,25 @@ private:
     // identical ±ΔM into facc_L_/facc_R_ (single writer per face); each cell
     // applies + clears its own side at its own firing — conservation across
     // tier interfaces is exact by construction.
+    /// Rebuild scratch, held as members so a rebuild allocates nothing:
+    /// the seed flags (n_triangles) and the per-active-cell CFL step.
+    std::vector<uint8_t> rebuild_seed_;
+    std::vector<double>  rebuild_dt_cell_;
+    /// Per-thread minima for the rebuild's CFL reduction (min is exact and
+    /// order-independent, so any partition gives the identical dt0).
+    std::vector<double>  rebuild_dt_partial_;
+
     std::vector<uint8_t> tier_;         ///< per-cell tier
     std::vector<uint8_t> face_tier_;    ///< per unique face
     std::vector<double>  facc_L_;       ///< pending ΔM for the cL side (m³)
     std::vector<double>  facc_R_;       ///< pending ΔM for the cR side (m³)
+    /// False when every booked ΔM is known to have been consumed already —
+    /// true after a GLOBAL substep, where every active face fired and then
+    /// every active cell gathered both of its sides (faces touching an
+    /// inactive cell carry q = 0 and were zeroed when it deactivated). Under
+    /// per-routing-step coupling every substep is global, so without this the
+    /// marcher walked the whole per-cell CSR once per substep to find nothing.
+    bool accumulators_pending_ = false;
     std::vector<std::vector<int>> cells_by_tier_;
     std::vector<std::vector<int>> edges_by_tier_;
     double dt0_ = 0.0;                  ///< base (tier-0) step from the rebuild

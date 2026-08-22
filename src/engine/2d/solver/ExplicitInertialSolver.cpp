@@ -28,6 +28,9 @@
 
 #include <algorithm>
 #include <cmath>
+#if defined(SWMM_USE_OPENMP)
+#include <omp.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 
@@ -142,7 +145,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
                     double sx = 0.0, sy = 0.0;
                     for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                         const int    e = ed.cell_edge[p];
-                        const double fq = ed.cell_sign[p] * q_[e] * ed.xi[e];
+                        const double fq = static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
                         sx += fq * (ed.mx[e] - mesh.tri_cx[i]);
                         sy += fq * (ed.my[e] - mesh.tri_cy[i]);
                     }
@@ -172,6 +175,8 @@ void ExplicitInertialSolver::reconstructAll() {
 }
 
 void ExplicitInertialSolver::settleAccumulators() {
+    if (!accumulators_pending_) return;
+    accumulators_pending_ = false;
     const int nt = mesh_->n_triangles();
     const auto& ed = edges_;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -179,7 +184,7 @@ void ExplicitInertialSolver::settleAccumulators() {
         double pending = 0.0;
         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
             const int e = ed.cell_edge[p];
-            if (ed.cell_sign[p] > 0.0) {
+            if (ed.cell_sign[p] > 0) {
                 pending += facc_L_[e];
                 facc_L_[e] = 0.0;
             } else {
@@ -255,7 +260,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     const double band  = std::min(0.001, 0.5 * opts_->h_move);
     const double h_on  = opts_->h_move + band;
     const double h_off = std::max(0.0, opts_->h_move - band);
-    std::vector<uint8_t> next(static_cast<std::size_t>(nt), 0);
+    rebuild_seed_.assign(static_cast<std::size_t>(nt), 0);
+    std::vector<uint8_t>& next = rebuild_seed_;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
         const double thresh = cell_active_[i] ? h_off : h_on;
@@ -282,23 +288,44 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // 4. Tier assignment from the local CFL step. Pinned to tier 0: cells with
     //    concentrated sources (coupling points) and boundary cells — their
     //    forcing changes fastest. dt0_ = the finest active requirement.
-    const int K = static_cast<int>(cells_by_tier_.size());
+    const int K  = static_cast<int>(cells_by_tier_.size());
+    const int na = static_cast<int>(active_cells_.size());
     dt0_ = 1.0e30;
-    std::vector<double> dt_cell(active_cells_.size());
-    for (std::size_t k = 0; k < active_cells_.size(); ++k) {
-        const int i = active_cells_[k];
-        const double h = state_->depth[i];
-        double speed = 0.0;
-        if (!qcx_.empty() && h > 1.0e-6)
-            speed = std::hypot(qcx_[i], qcy_[i]) / h;
-        double dt = (h > opts_->dry_depth)
-                        ? inertial::cellCflDt(opts_->cfl_number,
-                                              edges_.cell_lchar[i], h, speed)
-                        : 1.0e30;
-        dt = std::min(dt, opts_->max_timestep);
-        dt_cell[k] = dt;
-        dt0_ = std::min(dt0_, dt);
+    rebuild_dt_cell_.resize(static_cast<std::size_t>(na));
+    std::vector<double>& dt_cell = rebuild_dt_cell_;
+    // Parallel, exactly like its twin refreshDt0(): each iteration writes only
+    // dt_cell[k], and the min is folded from per-thread partials. min over
+    // doubles is exact and order-independent, so the partition cannot change
+    // dt0_ — this was the longest serial stretch of the rebuild.
+    const int nthr = std::max(1, opts_->num_threads);
+    rebuild_dt_partial_.assign(static_cast<std::size_t>(nthr), 1.0e30);
+#pragma omp parallel num_threads(nthr)
+    {
+#if defined(SWMM_USE_OPENMP)
+        const int tid = omp_get_thread_num();
+#else
+        const int tid = 0;
+#endif
+        double local = 1.0e30;
+#pragma omp for schedule(static) nowait
+        for (int k = 0; k < na; ++k) {
+            const int i = active_cells_[static_cast<std::size_t>(k)];
+            const double h = state_->depth[i];
+            double speed = 0.0;
+            if (!qcx_.empty() && h > 1.0e-6)
+                speed = inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
+            double dt = (h > opts_->dry_depth)
+                            ? inertial::cellCflDt(opts_->cfl_number,
+                                                  edges_.cell_lchar[i], h,
+                                                  speed)
+                            : 1.0e30;
+            dt = std::min(dt, opts_->max_timestep);
+            dt_cell[static_cast<std::size_t>(k)] = dt;
+            if (dt < local) local = dt;
+        }
+        rebuild_dt_partial_[static_cast<std::size_t>(tid)] = local;
     }
+    for (double v : rebuild_dt_partial_) dt0_ = std::min(dt0_, v);
     if (dt0_ >= 1.0e30) dt0_ = opts_->max_timestep;   // fully quiescent
 
     for (auto& v : cells_by_tier_) v.clear();
@@ -308,21 +335,26 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         int tk = 0;
         if (K > 1) {
             const double ratio = dt_cell[k] / dt0_;
-            tk = (ratio >= 2.0)
-                     ? std::min(K - 1, static_cast<int>(std::log2(ratio)))
-                     : 0;
+            // ilogb(x) IS floor(log2(x)) for finite positive x, in a few
+            // cycles instead of a libm call (std::log2 measured 1.8 % of the
+            // run). They can only disagree where log2's <=1 ulp error crosses
+            // an integer — within an ulp of an exact power of two, where
+            // ilogb is the exactly-correct one.
+            tk = (ratio >= 2.0) ? std::min(K - 1, std::ilogb(ratio)) : 0;
             if (state_->coupling_flux[i] != 0.0 || pin_t0_[i]) tk = 0;
         }
         tier_[i] = static_cast<uint8_t>(tk);
         cells_by_tier_[static_cast<std::size_t>(tk)].push_back(i);
     }
 
+    active_faces_.clear();
     for (int e = 0; e < edges_.ne; ++e) {
         const int a = edges_.cL[e], b = edges_.cR[e];
         if (cell_active_[a] && cell_active_[b]) {
             const auto ft = std::min(tier_[a], tier_[b]);
             face_tier_[e] = ft;
             edges_by_tier_[ft].push_back(e);
+            active_faces_.push_back(e);
         } else {
             q_[e] = 0.0;   // walled faces carry no stale momentum
         }
@@ -358,7 +390,7 @@ void ExplicitInertialSolver::refreshDt0() {
             if (h <= opts_->dry_depth) continue;
             double speed = 0.0;
             if (!qcx_.empty() && h > 1.0e-6)
-                speed = std::hypot(qcx_[i], qcy_[i]) / h;
+                speed = inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
             const double dt = inertial::cellCflDt(opts_->cfl_number,
                                                   edges_.cell_lchar[i], h, speed);
             if (dt < local) local = dt;
@@ -372,7 +404,7 @@ void ExplicitInertialSolver::refreshDt0() {
 }
 
 void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
-                                       double dt_f) {
+                                       double dt_f, bool global_step) {
     const auto& ed = edges_;
     const int   na = static_cast<int>(faces.size());
     const double theta = opts_->theta;
@@ -405,7 +437,7 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
             // Friction magnitude: the face flow VECTOR, floored at |q_n| so
             // a face whose reconstruction lags its own discharge (front
             // arrival, first firing after activation) never under-damps.
-            q_mag = std::max(q_mag, std::hypot(qfx, qfy));
+            q_mag = std::max(q_mag, inertial::qMagnitude(qfx, qfy));
         }
         double deta = state_->head[b] - state_->head[a];
         if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
@@ -434,7 +466,8 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
         // ratio or the repeated takes drain the cell into the backstop
         // (measured: a dam-break basin discarded to exactly zero).
         const int    exp_cell = (qn1 > 0.0) ? a : b;
-        const int    refire   = 1 << (tier_[exp_cell] - face_tier_[e]);
+        const int    refire   =
+            global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
         const double budget   = beta_share / refire *
                                 std::max(state_->volume[exp_cell], 0.0);
         const double take = std::fabs(qn1) * ed.xi[e] * dt_f;
@@ -448,26 +481,39 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
         facc_R_[e] += dM;
     }
     face_passes_ += na;
+    accumulators_pending_ = true;
 }
 
 void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
-                                       double dt_c) {
+                                       double dt_c, bool tier0) {
     const auto& ed = edges_;
     const int   nc = static_cast<int>(cells.size());
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < nc; ++k) {
         const int i = cells[static_cast<std::size_t>(k)];
-        // Gather + clear this cell's side of every incident face accumulator.
-        double flux_m3 = 0.0;
+        // ONE walk of this cell's CSR row: gather + clear its side of every
+        // incident face accumulator, and (when the Perot reconstruction is
+        // live) accumulate its discharge vector from the same face ids. The
+        // two loops used to load cell_edge/cell_sign twice for every incident
+        // face; the arms (m_e - c_i) are precomputed per CSR entry so the
+        // midpoint gather and the two subtractions are gone as well.
+        const bool   perot   = !qcx_.empty();
+        double flux_m3 = 0.0, sx = 0.0, sy = 0.0;
         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
             const int e = ed.cell_edge[p];
-            if (ed.cell_sign[p] > 0.0) {
+            if (ed.cell_sign[p] > 0) {
                 flux_m3 += facc_L_[e];
                 facc_L_[e] = 0.0;
             } else {
                 flux_m3 += facc_R_[e];
                 facc_R_[e] = 0.0;
+            }
+            if (perot) {
+                const double f =
+                    static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
+                sx += f * ed.cell_arm_x[p];
+                sy += f * ed.cell_arm_y[p];
             }
         }
         const double src =
@@ -494,14 +540,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
         // Refresh this cell's Perot discharge vector at its own cadence.
-        if (!qcx_.empty()) {
-            double sx = 0.0, sy = 0.0;
-            for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
-                const int    e = ed.cell_edge[p];
-                const double f = ed.cell_sign[p] * q_[e] * ed.xi[e];
-                sx += f * (ed.mx[e] - mesh_->tri_cx[i]);
-                sy += f * (ed.my[e] - mesh_->tri_cy[i]);
-            }
+        if (perot) {
             const double inv_a = 1.0 / mesh_->tri_area[i];
             qcx_[i] = sx * inv_a;
             qcy_[i] = sy * inv_a;
@@ -516,7 +555,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         if (tier_[i] != 0 || !cell_active_[i]) continue;
         // BC cells are pinned to tier 0, so they fire with every tier-0 list;
         // guard against double-firing when called for other tiers.
-        if (&cells != &cells_by_tier_[0]) continue;
+        if (!tier0) continue;
         const int    idx = bc_slot_[k];
         const auto   bt  = static_cast<BoundaryType>(
             state_->boundary->edge_bc_type[idx]);
@@ -623,7 +662,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
     // Drains cap at the exchange-β share of the source cell; spills cap at
     // the node's stored volume for the whole advance (node_drawn_ ledger) —
     // the same water cannot spill twice within a routing step.
-    if (!exch_.empty() && &cells == &cells_by_tier_[0] &&
+    if (!exch_.empty() && tier0 &&
         state_->node_coupling && state_->nodes_1d) {
         const auto& pts = *state_->node_coupling;
         for (std::size_t k = 0; k < pts.size(); ++k) {
@@ -661,7 +700,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
     }
     // Head-ramp clock: tier-0 fires once per finest substep, so dt_c here is
     // exactly the wall the batch has advanced since the last exchange pass.
-    if (&cells == &cells_by_tier_[0]) exch_tau_ += dt_c;
+    if (tier0) exch_tau_ += dt_c;
 }
 
 void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
@@ -696,7 +735,7 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
         for (int k = 0; k < K; ++k) {
             if (s % (1 << k)) continue;
             if (!cells_by_tier_[k].empty() || k == 0)
-                fireCells(cells_by_tier_[k], (1 << k) * dt0);
+                fireCells(cells_by_tier_[k], (1 << k) * dt0, k == 0);
         }
         if (dbg_invariant) {
             const double inv2 = invariant();
@@ -749,30 +788,35 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
             break;
         }
 
-        double dt0 = std::min(dt0_, remaining);
-        int    nsub = nsub_full;
+        const double dt0 = std::min(dt0_, remaining);
+        int nsub = nsub_full;
         if (nsub_full * dt0_ > remaining) {
-            // Tail: not enough room for a full macro cycle — degenerate to
-            // global-dt stepping so the window lands exactly. Settle pending
-            // transfers first: the re-tiering below invalidates the cap
-            // bookkeeping of any in-flight accumulator.
+            // Tail: not enough room for a full macro cycle — step the whole
+            // active set once at the global dt so the window lands exactly.
+            // Settle pending transfers first: a cell about to be stepped out
+            // of cadence must not carry an in-flight accumulator whose cap
+            // bookkeeping assumed the tiered schedule.
+            //
+            // This used to be expressed by collapsing every cell and face to
+            // tier 0 and running a one-substep macro cycle, which cost an
+            // O(n_cells + n_faces) re-tiering and (because the tier lists had
+            // been destroyed) forced a full syncAndRebuild on the next entry.
+            // Under per-routing-step coupling the tail fires in EVERY window,
+            // so the marcher paid one full rebuild per substep — 4,644
+            // rebuilds for 4,643 substeps on the 79k-cell benchmark. Firing
+            // the union lists directly is the same arithmetic in the same
+            // order (the collapsed tier-0 lists WERE these lists) and leaves
+            // the tiering intact, so the rebuild keeps its own cadence.
             settleAccumulators();
             nsub = 1;
-            for (auto& v : edges_by_tier_) v.clear();
-            for (auto& v : cells_by_tier_) v.clear();
-            for (int i : active_cells_) {
-                tier_[i] = 0;
-                cells_by_tier_[0].push_back(i);
-            }
-            for (int e = 0; e < edges_.ne; ++e)
-                if (cell_active_[edges_.cL[e]] && cell_active_[edges_.cR[e]]) {
-                    face_tier_[e] = 0;
-                    edges_by_tier_[0].push_back(e);
-                }
-            cycles_since_rebuild = kRebuildEveryCycles;  // rebuild after tail
+            fireFaces(active_faces_, dt0, /*global_step=*/true);
+            fireCells(active_cells_, dt0, /*tier0=*/true);
+            accumulators_pending_ = false;   // every side just gathered
+            ++substeps_run_;
+            ++last_steps_;
+        } else {
+            runMacroCycle(dt0, nsub);
         }
-
-        runMacroCycle(dt0, nsub);
         t += nsub * dt0;
         last_dt_ = dt0;
         ++cycles_since_rebuild;
@@ -800,7 +844,12 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     std::fill(state_->edge_flux.begin(), state_->edge_flux.end(), 0.0);
     const bool vfr_face =
         (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
-    for (int e = 0; e < edges_.ne; ++e) {
+    // Only the ACTIVE faces can carry flux: a face with an inactive side had
+    // its q zeroed when the side deactivated, so the old full sweep spent
+    // O(n_faces) recomputing a face depth and a Froude cap in order to publish
+    // the zero the fill above already wrote. Identical output, and a quiescent
+    // tail (active fraction reached 0.0 % in the storm run) now costs nothing.
+    for (const int e : active_faces_) {
         const double hf = vfr_face
             ? inertial::faceFlowDepthVfr(state_->head[edges_.cL[e]],
                                          state_->head[edges_.cR[e]],
@@ -831,6 +880,7 @@ void ExplicitInertialSolver::reinitialize(double /*t0*/) {
     std::fill(bc_q_.begin(), bc_q_.end(), 0.0);
     std::fill(facc_L_.begin(), facc_L_.end(), 0.0);
     std::fill(facc_R_.begin(), facc_R_.end(), 0.0);
+    accumulators_pending_ = false;
     reconstructAll();
 }
 

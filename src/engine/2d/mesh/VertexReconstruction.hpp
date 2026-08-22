@@ -134,9 +134,27 @@ double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
  * @param state     Surface state (reads depth[], writes vert_depth_signed[]).
  * @param dry_depth Wet/dry threshold (m) — cells below it are excluded.
  * @param nthreads  OpenMP thread count for the per-vertex loop (1 = serial).
+ * @param eta_scratch Caller-owned scratch resized to n_triangles(); the
+ *                  per-cell free-surface elevations are evaluated ONCE here
+ *                  and gathered per vertex. Passing a persistent buffer keeps
+ *                  the closure evaluations at O(nt) instead of O(nt x
+ *                  incidence) and avoids a per-call allocation. Bit-identical
+ *                  to the per-incidence evaluation it replaces (same value,
+ *                  same gather order).
  */
 void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state,
-                                   double dry_depth, int nthreads = 1);
+                                   double dry_depth, int nthreads,
+                                   std::vector<double>& eta_scratch);
+
+/// Convenience overload for callers with no persistent scratch (tests, one-shot
+/// seeding): allocates the per-cell buffer for the duration of the call.
+inline void reconstructVertexRenderDepths(const MeshData& mesh,
+                                          SurfaceStateData& state,
+                                          double dry_depth, int nthreads = 1) {
+    std::vector<double> eta_scratch;
+    reconstructVertexRenderDepths(mesh, state, dry_depth, nthreads,
+                                  eta_scratch);
+}
 
 } // namespace openswmm::twoD
 

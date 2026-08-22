@@ -188,7 +188,13 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_lchar_ = devCopy("cell_lchar", edges_.cell_lchar);
     d_cell_ptr_  = devCopy("cell_ptr", edges_.cell_ptr);
     d_cell_edge_ = devCopy("cell_edge", edges_.cell_edge);
-    d_sign_      = devCopy("cell_sign", edges_.cell_sign);
+    {
+        // edges_.cell_sign is int8 on the host (gather-traffic diet in the CPU
+        // marcher); the device kernels keep it as doubles they multiply by.
+        std::vector<double> sgn(edges_.cell_sign.begin(),
+                                edges_.cell_sign.end());
+        d_sign_ = devCopy("cell_sign", sgn);
+    }
 
     // State + marching arrays.
     d_volume_ = devCopy("volume", state.volume);
@@ -339,7 +345,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
                     double sx = 0.0, sy = 0.0;
                     for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                         const int    e = ed.cell_edge[p];
-                        const double fq = ed.cell_sign[p] * qh[e] * ed.xi[e];
+                        const double fq = static_cast<double>(ed.cell_sign[p]) * qh[e] * ed.xi[e];
                         sx += fq * (ed.mx[e] - mesh.tri_cx[i]);
                         sy += fq * (ed.my[e] - mesh.tri_cy[i]);
                     }
@@ -505,7 +511,7 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
             const double h = depth(i);
             double speed = 0.0;
             if (perot && h > 1.0e-6)
-                speed = std::hypot(qcx(i), qcy(i)) / h;
+                speed = inertial::qMagnitude(qcx(i), qcy(i)) / h;
             double dt = (h > dry)
                             ? inertial::cellCflDt(alpha, lchar(i), h, speed)
                             : 1.0e30;
@@ -618,7 +624,7 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
             if (h <= dry) return;
             double speed = 0.0;
             if (perot && h > 1.0e-6)
-                speed = std::hypot(qcx(i), qcy(i)) / h;
+                speed = inertial::qMagnitude(qcx(i), qcy(i)) / h;
             const double dt = inertial::cellCflDt(alpha, lchar(i), h, speed);
             if (dt < mn) mn = dt;
         },
@@ -724,7 +730,7 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
                 const double qn  = qfx * nxv(e) + qfy * nyv(e);
                 qhat  = theta * qv(e) + (1.0 - theta) * qn;
                 // Vector friction magnitude, floored at |q_n| (== serial).
-                const double qm = std::sqrt(qfx * qfx + qfy * qfy);
+                const double qm = inertial::qMagnitude(qfx, qfy);
                 if (qm > q_mag) q_mag = qm;
             }
             double deta = head(b) - head(a);

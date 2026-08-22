@@ -724,7 +724,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // any sync batch fires — e.g. a hotstart-restored wet state) already
     // carries a physically consistent field instead of the resize() zeros.
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
-                                  options_.num_threads);
+                                  options_.num_threads, render_eta_);
+    render_dirty_ = false;
 }
 
 
@@ -747,11 +748,39 @@ void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx) {
 }
 
 
+bool SurfaceRouter2D::refreshDue(const SimulationContext& ctx,
+                                 double dt) const {
+    // Sampling cadence for the per-cell continuity residual, the face
+    // velocity and the cumulative envelopes update_statistics builds from
+    // them. Capped at 30 s because the envelopes are PEAK trackers: sampling
+    // them only at REPORT_STEP would quietly lower every reported maximum.
+    (void)ctx;
+    const double refresh_dt = std::max(dt, 30.0);
+    return co_refresh_elapsed_ + dt >= refresh_dt;
+}
+
+
+void SurfaceRouter2D::refreshRenderFields() {
+    reconstructVertexHeads(mesh_, state_, options_.num_threads);
+    refreshOutputGradients(mesh_, state_, options_);
+    reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
+                                  options_.num_threads, render_eta_);
+    co_render_elapsed_ = 0.0;
+    render_dirty_      = false;
+}
+
+
 void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                                     double t) {
     if (dt <= 0.0) return;
     perf::ScopedTimer tm_window(perf::sec_2d_window);
-    state_.save_state();
+    // Snapshot for computeCellContinuity, taken only on the batch whose
+    // output refresh will consume it. The diagnostic is
+    // (volume - old_volume)/dt against the END-OF-BATCH flux and source
+    // rates, so its snapshot must be one batch old — not one refresh window
+    // old — and every other batch's two full-mesh memcpys were pure cost.
+    const bool refresh_due = refreshDue(ctx, dt);
+    if (refresh_due) state_.save_state();
 
     // Outfall discharge → 2D: accumulate this step's 1D outfall discharge and
     // inject it as a constant-rate source over the subcycle (same ledger as
@@ -888,14 +917,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
 
     // Boundary ledger: the marcher published the WINDOW-MEAN applied flux in
     // the boundary slots, so −flux·dt recovers the exact ∫F_applied dt.
-    {
-        const int ne = boundary_.size();
-        for (int idx = 0; idx < ne; ++idx)
-            if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx]) !=
-                BoundaryType::WALL)
-                boundary_.edge_bc_cum_flux[idx] +=
-                    -state_.edge_flux[idx] * dt;
-    }
+    for (const int idx : bc_nonwall_slots_)
+        boundary_.edge_bc_cum_flux[idx] += -state_.edge_flux[idx] * dt;
 
     // Ledgers every batch (accumulateMassBalance reads coupling_volume as
     // "this batch's exchange", so it MUST run before the queue move below) …
@@ -928,22 +951,30 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // at REPORT_STEP granularity; exchange/outfall heads use solver-fresh
     // state.head directly, not these derived fields.
     co_refresh_elapsed_ += dt;
-    const double refresh_dt =
-        std::max(dt, std::min(ctx.options.report_step > 0.0
-                                  ? ctx.options.report_step
-                                  : 30.0,
-                              30.0));
-    if (co_refresh_elapsed_ >= refresh_dt) {
-        reconstructVertexHeads(mesh_, state_, options_.num_threads);
-        refreshOutputGradients(mesh_, state_, options_);
-        computeCellContinuity(mesh_, state_, options_, co_refresh_elapsed_);
+    if (refresh_due) {
+        // dt, not the refresh span: old_volume was snapshotted at the top of
+        // THIS batch, and the flux/source rates the residual is measured
+        // against are this batch's end-of-step values.
+        computeCellContinuity(mesh_, state_, options_, dt);
         computeFaceVelocity(mesh_, state_, options_);
-        reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
-                                      options_.num_threads);
+        // The cumulative envelopes DO integrate over the refresh span: this
+        // sample stands for the whole window in stat_cum_volume.
         state_.update_statistics(mesh_.tri_area, co_refresh_elapsed_,
                                  options_.num_threads);
         co_refresh_elapsed_ = 0.0;
     }
+
+    // Render fields on the REPORT_STEP grid. They feed the output snapshot and
+    // the bulk API getters and nothing else — no solver term, no coupling head
+    // reads them — so running them on the 30 s statistics cadence did six
+    // full-mesh passes for every one a consumer could see. A reader arriving
+    // off-grid gets them refreshed on demand (refreshRenderFieldsIfStale).
+    render_dirty_ = true;
+    co_render_elapsed_ += dt;
+    const double render_dt = std::max(dt, ctx.options.report_step > 0.0
+                                              ? ctx.options.report_step
+                                              : 30.0);
+    if (co_render_elapsed_ >= render_dt) refreshRenderFields();
 }
 
 
@@ -1133,6 +1164,19 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
     const int ne = boundary_.size();
     if (ne == 0) return;
 
+    // Compact the non-WALL slots once. A WALL slot resolves to nothing and is
+    // ledgered as nothing, but both passes used to switch over all 3*n_tri
+    // slots every routing step to find the perimeter-sized handful that are
+    // not WALL.
+    if (bc_nonwall_dirty_) {
+        bc_nonwall_dirty_ = false;
+        bc_nonwall_slots_.clear();
+        for (int idx = 0; idx < ne; ++idx)
+            if (static_cast<BoundaryType>(boundary_.edge_bc_type[idx])
+                    != BoundaryType::WALL)
+                bc_nonwall_slots_.push_back(idx);
+    }
+
     // One-shot: resolve deferred timeseries / curve names to table indices.
     // ctx.tables is only populated post-parse, so this can't happen at parse
     // time; -2 = "name pending", -1 = not found (then treated as constant).
@@ -1161,7 +1205,7 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
     const double abs_t = datetime::addSeconds(ctx.options.start_date, t);
 
     const int n_tables = static_cast<int>(ctx.tables.tables.size());
-    for (int idx = 0; idx < ne; ++idx) {
+    for (const int idx : bc_nonwall_slots_) {
         switch (static_cast<BoundaryType>(boundary_.edge_bc_type[idx])) {
             case BoundaryType::SPECIFIED_STAGE: {
                 const int ts = boundary_.edge_bc_tseries[idx];
@@ -1208,11 +1252,32 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     auto& mb = ctx.mass_balance_2d;
     int nt = mesh_.n_triangles();
 
-    // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
-    double rain_vol = 0.0;
+    // Rain / evaporation / infiltration / storage in ONE pass over the cells.
+    // Each accumulator still sums its own term over ascending i, so every
+    // total is bit-identical to the four separate passes this replaces; only
+    // the memory traffic (four full sweeps of the same arrays per routing
+    // step) is gone.
+    const bool do_infil = infil_.active();
+    const bool track_cum =
+        do_infil && infil_cum_applied_.size() == static_cast<std::size_t>(nt);
+    double rain_vol = 0.0, evap_vol = 0.0, infil_vol = 0.0, storage = 0.0;
     for (int i = 0; i < nt; ++i) {
-        rain_vol += state_.rainfall[i] * mesh_.tri_area[i];
+        const auto ui = static_cast<std::size_t>(i);
+        const double area = mesh_.tri_area[ui];
+        rain_vol += state_.rainfall[ui] * area;
+        evap_vol += evapSink(state_.evap_rate[ui], state_.depth[ui],
+                             options_.dry_depth) * area;
+        if (do_infil) {
+            const double applied = infilSink(state_.infil_rate[ui],
+                                             state_.depth[ui],
+                                             options_.dry_depth);
+            infil_vol += applied * area;
+            if (track_cum) infil_cum_applied_[ui] += applied * dt;
+        }
+        storage += state_.volume[ui];
     }
+
+    // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
     mb.rainfall_in += rain_vol * dt;
 
     // Evaporation loss (m³): the depth-limited sink assembleRHS integrates,
@@ -1221,11 +1286,6 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     // rainfall term's treatment). Accumulated into the 2D mass-balance struct
     // so the continuity error and reported totals close natively; the 2D
     // state mirror (evap_loss_total) is retained for back-compatibility.
-    double evap_vol = 0.0;
-    for (int i = 0; i < nt; ++i) {
-        evap_vol += evapSink(state_.evap_rate[i], state_.depth[i],
-                             options_.dry_depth) * mesh_.tri_area[i];
-    }
     mb.evap_out += evap_vol * dt;
     state_.evap_loss_total += evap_vol * dt;
 
@@ -1242,18 +1302,7 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     // construction. Infil2D::cumulative() cannot serve here: it integrates the
     // unramped capacity the kernel offered, which exceeds the applied loss
     // whenever a cell is drying.
-    if (infil_.active()) {
-        double infil_vol = 0.0;
-        const bool track_cum =
-            infil_cum_applied_.size() == static_cast<std::size_t>(nt);
-        for (int i = 0; i < nt; ++i) {
-            const double applied = infilSink(state_.infil_rate[i], state_.depth[i],
-                                             options_.dry_depth);
-            infil_vol += applied * mesh_.tri_area[i];
-            if (track_cum) infil_cum_applied_[static_cast<std::size_t>(i)] += applied * dt;
-        }
-        mb.infil_out += infil_vol * dt;
-    }
+    if (do_infil) mb.infil_out += infil_vol * dt;
 
     // Coupling and outfall exchange (m³, SI-native, already capped/clamped —
     // exactly what the 2D domain was asked to move). Outfall sign: + = pipe
@@ -1261,7 +1310,7 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     // accumulator. Junction exchange: the marcher booked the batch's per-node
     // total into nodes.coupling_volume (before the queue move) — read it with
     // a per-node dedupe. Sign: + = 2D→1D drain (out of 2D), − = 1D→2D spill.
-    std::unordered_set<int> seen;
+    mb_seen_nodes_.clear();
     for (std::size_t k = 0; k < coupling_points_.size(); ++k) {
         const auto& cp = coupling_points_[k];
         if (cp.is_outfall) {
@@ -1269,7 +1318,7 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
             if (v > 0.0) mb.outfall_in  += v;
             else         mb.outfall_out += -v;
         } else {
-            if (!seen.insert(cp.node_idx).second) continue;
+            if (!mb_seen_nodes_.insert(cp.node_idx).second) continue;
             const double vol = ctx.nodes.coupling_volume[
                 static_cast<std::size_t>(cp.node_idx)] * options_.vol_1d_to_2d;
             if (vol > 0.0) mb.coupling_2d_to_1d_out += vol;
@@ -1280,14 +1329,16 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     // Boundary exchange (outward-positive cumulative, m³). Reads 0 until the
     // non-Wall BC flux integration lands, but the term is wired now.
     double cur_bnd = 0.0;
-    for (double f : boundary_.edge_bc_cum_flux) cur_bnd += f;
+    for (const int idx : bc_nonwall_slots_)
+        cur_bnd += boundary_.edge_bc_cum_flux[idx];
     double dbnd = cur_bnd - prev_boundary_cum_;
     prev_boundary_cum_ = cur_bnd;
     if (dbnd > 0.0) mb.boundary_out += dbnd;
     else            mb.boundary_in  += -dbnd;
 
-    // Latest storage (m³) — overwrite so the value at simulation end is final.
-    mb.final_storage = totalVolume();
+    // Latest storage (m³) — overwrite so the value at simulation end is final
+    // (summed in the fused pass above, same ascending order as totalVolume()).
+    mb.final_storage = storage;
 }
 
 

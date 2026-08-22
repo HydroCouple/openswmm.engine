@@ -49,6 +49,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
@@ -189,6 +190,20 @@ public:
     /// Access per-edge boundary-condition data (mutable, for forcing/parsing).
     BoundaryData& boundary() noexcept { return boundary_; }
 
+    /// Announce that a boundary slot's TYPE changed (the API BC-type setter),
+    /// so the compact non-WALL slot list the per-step boundary passes walk is
+    /// rebuilt before it is next used.
+    void invalidateBoundaryIndex() noexcept { bc_nonwall_dirty_ = true; }
+
+    /// Bring the render fields (vertex heads, output gradients, vertex render
+    /// depths) up to date with the current solver state if a batch has run
+    /// since they were last computed. The API getters that expose those fields
+    /// call this so a reader arriving between reports is never served a stale
+    /// field; it is a no-op at a report instant, where the refresh already ran.
+    void refreshRenderFieldsIfStale() {
+        if (render_dirty_) refreshRenderFields();
+    }
+
     /**
      * @brief Access the per-cell infiltration model (plan §5.5, track I).
      *
@@ -306,8 +321,29 @@ private:
     /// initialize().
     std::vector<CouplingPoint> node_coupling_points_;
 
-    /// Sim time since the last co-advance output refresh (report-scale cadence).
+    /// Sim time since the last statistics/continuity sample (30 s cadence).
     double co_refresh_elapsed_ = 0.0;
+    /// Sim time since the last RENDER-field refresh (vertex heads, gradients,
+    /// render depths). Those fields have exactly two consumers — the output
+    /// snapshot and the bulk API getters — so they are refreshed on the
+    /// REPORT_STEP grid, and on demand for an API reader that arrives between
+    /// reports (render_dirty_).
+    double co_render_elapsed_ = 0.0;
+    bool   render_dirty_      = false;
+    /// Per-cell free-surface scratch for the render-depth reconstruction,
+    /// held across refreshes so the pass allocates nothing.
+    std::vector<double> render_eta_;
+    /// Flat mesh edge slots (3*i+e) carrying a non-WALL boundary condition.
+    /// The BC TYPE of a slot is fixed once the model is resolved, so the list
+    /// is built once in initialize(); the per-step boundary ledger and the
+    /// per-step TS/rating resolve walk it instead of all 3*n_triangles slots.
+    std::vector<int> bc_nonwall_slots_;
+    /// Set whenever a slot's BC TYPE changes (parse-time drain, API setter);
+    /// bc_nonwall_slots_ is rebuilt on the next resolve.
+    bool bc_nonwall_dirty_ = true;
+    /// Per-node dedupe for the coupling term of the per-batch mass balance;
+    /// a member so the batch does not build and destroy a hash set each time.
+    std::unordered_set<int> mb_seen_nodes_;
     /// Sim time since the last rainfall/forcing refresh (gage-scale cadence).
     double co_forcing_elapsed_ = 0.0;
     bool   co_forcing_first_   = true;
@@ -316,6 +352,12 @@ private:
     /// mass balance + output refresh. Replaces the whole window state machine
     /// on the marcher path.
     void coAdvanceStep(SimulationContext& ctx, double dt, double t);
+    /// True when the batch about to run (span @p dt) is the one that closes
+    /// the current output-refresh window — decided BEFORE the advance so the
+    /// continuity snapshot is only taken on batches that will use it.
+    bool refreshDue(const SimulationContext& ctx, double dt) const;
+    /// Recompute the render fields from the current state.
+    void refreshRenderFields();
 
     bool   active_           = false;
     double sim_time_         = 0.0;

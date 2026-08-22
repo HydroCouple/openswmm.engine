@@ -140,7 +140,9 @@ void InertialEdges::build(const MeshData& mesh) {
     }
     const int total = cell_ptr[nt];
     cell_edge.assign(static_cast<std::size_t>(total), 0);
-    cell_sign.assign(static_cast<std::size_t>(total), 0.0);
+    cell_sign.assign(static_cast<std::size_t>(total), 0);
+    cell_arm_x.assign(static_cast<std::size_t>(total), 0.0);
+    cell_arm_y.assign(static_cast<std::size_t>(total), 0.0);
 
     std::vector<int> fill(static_cast<std::size_t>(nt), 0);
     for (int t = 0; t < nt; ++t) {
@@ -149,7 +151,9 @@ void InertialEdges::build(const MeshData& mesh) {
             if (eid < 0) continue;
             const int pos = cell_ptr[t] + fill[t]++;
             cell_edge[pos] = eid;
-            cell_sign[pos] = (cL[eid] == t) ? 1.0 : -1.0;
+            cell_sign[pos] = (cL[eid] == t) ? 1 : -1;
+            cell_arm_x[pos] = mx[eid] - mesh.tri_cx[t];
+            cell_arm_y[pos] = my[eid] - mesh.tri_cy[t];
         }
     }
 }

@@ -179,8 +179,28 @@ double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
 
 void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state,
                                    double dry_depth,
-                                   [[maybe_unused]] int nthreads) {
+                                   [[maybe_unused]] int nthreads,
+                                   std::vector<double>& eta_scratch) {
     const int nv = mesh.n_vertices();
+    const int nt = mesh.n_triangles();
+
+    // Each cell's free surface is a property of the CELL, not of the (vertex,
+    // cell) incidence: the per-incidence form re-ran the exact planar-bed
+    // closure (sort3 + cube root / Newton) about once per incident vertex,
+    // i.e. ~3x per cell per pass, and it was the single largest consumer in
+    // the profile. Evaluate it once per wet cell here, then gather. Dry cells
+    // are left untouched (the gather re-tests the same predicate) so the
+    // closure is never evaluated where the old code would not have evaluated
+    // it either.
+    eta_scratch.resize(static_cast<std::size_t>(nt));
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+    for (int t = 0; t < nt; ++t) {
+        const double h = state.depth[t];
+        if (!(h >= dry_depth)) continue;
+        eta_scratch[static_cast<std::size_t>(t)] = cellFreeSurfaceElevation(
+            h, mesh.vz[mesh.tri_v0[t]], mesh.vz[mesh.tri_v1[t]],
+            mesh.vz[mesh.tri_v2[t]]);
+    }
 
     // Per-vertex CSR gather over the stencil's cell LIST (topology only — the
     // pseudo-Laplacian weights are a solver concern). Each iteration writes
@@ -196,9 +216,7 @@ void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state
             const int    t = mesh.vert_stencil_idx[k];
             const double h = state.depth[t];
             if (!(h >= dry_depth)) continue;        // dry skip (NaN-robust)
-            const double eta = cellFreeSurfaceElevation(
-                h, mesh.vz[mesh.tri_v0[t]], mesh.vz[mesh.tri_v1[t]],
-                mesh.vz[mesh.tri_v2[t]]);
+            const double eta = eta_scratch[static_cast<std::size_t>(t)];
             if (!std::isfinite(eta)) continue;      // nodata z must not spread
             // Wetted-contact gate: a cell votes at this vertex only if its
             // water surface actually reaches the vertex's corner (η above the
