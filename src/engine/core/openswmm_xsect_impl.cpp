@@ -434,6 +434,7 @@ SWMM_ENGINE_API int swmm_link_create_xsect(SWMM_Engine engine, int link_idx,
         h->params.area_tbl          = h->table.area_tbl;
         h->params.hrad_tbl          = h->table.hrad_tbl;
         h->params.width_tbl         = h->table.width_tbl;
+        h->params.area_lut          = &h->table.area_lut;
         h->params.transect_tbl_size = openswmm::transect::N_TRANSECT_TBL;
     }
 

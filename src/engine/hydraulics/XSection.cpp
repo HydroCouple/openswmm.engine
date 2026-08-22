@@ -48,6 +48,7 @@
 #  pragma STDC FP_CONTRACT OFF
 #endif
 
+#include <array>
 #include <cmath>
 #include <algorithm>
 
@@ -75,6 +76,40 @@ double getWofY(const XSectParams& xs, double y);
 // `tbl` binds straight back to `xsect_tables::X` on the host. The public
 // entry points are one-line forwarders so every existing caller is unchanged.
 // ============================================================================
+
+// ============================================================================
+// Bucket maps for the inverted built-in tables (plan XSECT_LOOKUP_ACCEL A1).
+//
+// One static block, built on first use and never mutated afterwards, so the
+// shared `const XsectEval` stays safe to read from every thread and copyable
+// to a device. Each entry is index-identical to plain bisection by
+// construction (see XSectLookup.hpp), so this changes speed only.
+// ============================================================================
+static const LocateLut* builtinLuts() {
+    static const std::array<LocateLut, static_cast<std::size_t>(LutId::COUNT)> luts = [] {
+        std::array<LocateLut, static_cast<std::size_t>(LutId::COUNT)> a{};
+        const auto set = [&a](LutId id, const double* t, int n) {
+            xsect::build_invlookup_lut(a[static_cast<std::size_t>(id)], t, n);
+        };
+        set(LutId::Y_Gothic,       xsect_tables::Y_Gothic,       xsect_tables::N_Y_Gothic);
+        set(LutId::Y_Catenary,     xsect_tables::Y_Catenary,     xsect_tables::N_Y_Catenary);
+        set(LutId::Y_SemiEllip,    xsect_tables::Y_SemiEllip,    xsect_tables::N_Y_SemiEllip);
+        set(LutId::Y_SemiCirc,     xsect_tables::Y_SemiCirc,     xsect_tables::N_Y_SemiCirc);
+        set(LutId::A_HorizEllipse, xsect_tables::A_HorizEllipse, xsect_tables::N_A_HorizEllipse);
+        set(LutId::A_VertEllipse,  xsect_tables::A_VertEllipse,  xsect_tables::N_A_VertEllipse);
+        set(LutId::A_Arch,         xsect_tables::A_Arch,         xsect_tables::N_A_Arch);
+        set(LutId::S_Circ,         xsect_tables::S_Circ,         xsect_tables::N_S_Circ);
+        set(LutId::S_Egg,          xsect_tables::S_Egg,          xsect_tables::N_S_Egg);
+        set(LutId::S_Horseshoe,    xsect_tables::S_Horseshoe,    xsect_tables::N_S_Horseshoe);
+        set(LutId::S_Gothic,       xsect_tables::S_Gothic,       xsect_tables::N_S_Gothic);
+        set(LutId::S_Catenary,     xsect_tables::S_Catenary,     xsect_tables::N_S_Catenary);
+        set(LutId::S_SemiEllip,    xsect_tables::S_SemiEllip,    xsect_tables::N_S_SemiEllip);
+        set(LutId::S_BasketHandle, xsect_tables::S_BasketHandle, xsect_tables::N_S_BasketHandle);
+        set(LutId::S_SemiCirc,     xsect_tables::S_SemiCirc,     xsect_tables::N_S_SemiCirc);
+        return a;
+    }();
+    return luts.data();
+}
 
 const XsectTables& hostTables() {
     static const XsectTables t = [] {
@@ -121,6 +156,7 @@ const XsectTables& hostTables() {
     t.Y_SemiCirc = xsect_tables::Y_SemiCirc;
     t.Y_SemiEllip = xsect_tables::Y_SemiEllip;
     t.Amax = xsect_tables::Amax;
+    t.luts = builtinLuts();
     t.N_A_Arch = xsect_tables::N_A_Arch;
     t.N_A_Baskethandle = xsect_tables::N_A_Baskethandle;
     t.N_A_Circ = xsect_tables::N_A_Circ;
@@ -177,7 +213,8 @@ const XsectEval& hostEval() {
 
 int    locate(double y, const double* table, int jLast)  { return hostEval().locate(y, table, jLast); }
 double lookup(double x, const double* table, int n)      { return hostEval().lookup(x, table, n); }
-double invLookup(double y, const double* table, int n)   { return hostEval().invLookup(y, table, n); }
+double invLookup(double y, const double* table, int n, const LocateLut* lut)
+                                                         { return hostEval().invLookup(y, table, n, lut); }
 double getYcircular(double alpha)                        { return hostEval().getYcircular(alpha); }
 double getScircular(double alpha)                        { return hostEval().getScircular(alpha); }
 
