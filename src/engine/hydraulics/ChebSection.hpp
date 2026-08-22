@@ -346,18 +346,37 @@ OPENSWMM_KERNEL_FN double mapDsDu(double u, double e_lo, double e_hi) noexcept {
 // Accessors — header-inline, POD-only, device-safe
 // ===========================================================================
 
-/// Clenshaw evaluation of sum c_k T_k(2u-1) for u in [0,1].
+/// Evaluate sum c_k T_k(2u-1) for u in [0,1] by the FORWARD T_k recurrence.
+///
+/// @note **Not Clenshaw**, deliberately, and this is worth 2x. Clenshaw's step
+///       `b1 = x2*b1 - b2 + c[k]` puts two dependent arithmetic ops on the
+///       critical path per coefficient and carries the accumulation IN that
+///       chain, so a degree-n series costs n times the latency of both. The
+///       forward form advances `T_k = x2*T_{k-1} - T_{k-2}` with ONE fused
+///       op and accumulates `a += c[k]*T_k` OFF the chain, where it overlaps
+///       freely. Measured on a compiled circular pipe (9 coefficients,
+///       Phase 5B): Clenshaw 9.44 ns/eval against 4.76 ns forward.
+///
+///       Clenshaw is normally preferred for stability, and that preference
+///       does not apply here: |T_k(x)| <= 1 for |x| <= 1, so the forward
+///       recurrence cannot amplify, and u is confined to [0,1] by chebUofY.
+///       chebAll() already used the forward form for exactly this reason
+///       (see its own note); this makes the single-field accessors agree
+///       with it instead of reaching the same value by a different rounding.
 OPENSWMM_KERNEL_FN double chebEval(const double* c, int n, double u) noexcept {
     if (n <= 0) return 0.0;
     const double x = 2.0 * u - 1.0;
     const double x2 = 2.0 * x;
-    double b1 = 0.0, b2 = 0.0;
-    for (int k = n - 1; k >= 1; --k) {
-        const double t = x2 * b1 - b2 + c[k];
-        b2 = b1;
-        b1 = t;
+    double a = c[0];
+    if (n > 1) a += c[1] * x;
+    double t_prev = 1.0, t_cur = x;
+    for (int k = 2; k < n; ++k) {
+        const double t = x2 * t_cur - t_prev;
+        t_prev = t_cur;
+        t_cur = t;
+        a += c[k] * t;
     }
-    return x * b1 - b2 + c[0];
+    return a;
 }
 
 /// Exact derivative coefficients, d/du on [0,1]. @p dc holds n entries; the
@@ -376,9 +395,25 @@ OPENSWMM_KERNEL_FN void chebDeriv(const double* c, int n, double* dc) noexcept {
 }
 
 /// Index of the piece containing depth @p y.
-/// @note Linear scan over y_lo. With at most 24 pieces this is 1-3 predictable
-///       compares; a binary search and a per-cell cached piece index were both
-///       measured SLOWER during design and must not be reintroduced.
+///
+/// @note Linear scan over y_lo, exiting at the first piece above @p y. With
+///       at most 24 pieces this is 1-3 compares; a binary search and a
+///       per-cell cached piece index were both measured SLOWER during
+///       Phase 4 and must not be reintroduced.
+///
+/// @note Phase 5B also measured, and REJECTED, two further variants of this
+///       scan: mirroring the piece lower bounds into a contiguous array in
+///       the section header (so the scan stops striding by sizeof(ChebPiece))
+///       and replacing the early exit with a branch-free `p += (y >= ...)`
+///       count. In ISOLATION the branch-free contiguous form looks like a
+///       clear win — 2.7 ns against 7.6 for a 5-piece section, because the
+///       early exit is a data-dependent branch. In CONTEXT it lost in every
+///       case measured: 37.4 ns/eval against this loop's 26.2 inside
+///       chebAll, and 17.6 against 15.8 inside chebAofY. The early exit's
+///       saved iterations are worth more than the mispredictions cost, since
+///       the surrounding evaluation gives the processor plenty to do while
+///       the branch resolves — and counting always pays for every piece.
+///       Keep the early exit.
 OPENSWMM_KERNEL_FN int chebPieceOfY(const ChebSection& s, double y) noexcept {
     int p = 0;
     for (int i = 1; i < s.n_pieces; ++i) {

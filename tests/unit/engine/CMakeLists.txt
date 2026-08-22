@@ -183,6 +183,11 @@ add_gtest_unit(test_engine_xsect_boundary    test_xsect_boundary.cpp)
 # the coordinate map, and the two trap-setters guarding the critical-height
 # split and the sqrt-end stretch.
 add_gtest_unit(test_engine_cheb_section      test_cheb_section.cpp)
+# Batched evaluation of compiled sections (Phase 5B). Speed-only change, so
+# the whole safety argument is that it returns the SAME BITS as the scalar
+# accessors — asserted exactly, not to a tolerance, at dry / below-crown /
+# at-crown / above-crown depths across the shape catalog.
+add_gtest_unit(test_engine_cheb_section_batch test_cheb_section_batch.cpp)
 # Built-in shapes (CIRCULAR/FORCE_MAIN as a true circle; the 10 classic
 # tabulated shapes from their own width table) reconstructed as an exact
 # boundary under XSECT_GEOMETRY EXACT — see the file header for the real bug
