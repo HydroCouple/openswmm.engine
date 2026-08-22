@@ -138,6 +138,71 @@ elif [ "$(sha "$BASE_LIB")" = "$(sha "$PATCHED_LIB")" ]; then
     fi
 fi
 
+# ---- the OTHER direction, which is the dangerous one -----------------------
+#
+# The check above asks "are these secretly the SAME build?" -- a run that
+# cannot fail. The failure mode that actually cost a round is the mirror of
+# it: two builds that differ by more than the changeset. On 2026-08-22 a
+# corpus run reported FOUR moved decks -- force_legacy, force_ard,
+# orif_legacy, sdm_struct_dw_ard, precisely the quality decks, exactly what a
+# washoff-guard defect would look like. It was not the changeset. The two
+# build directories had different CMake options
+# (OPENSWMM_FAST_MANNING_POW / OPENSWMM_FAST_XSECT_LOOKUP OFF in one, ON in
+# the other), so the run measured an xsect accelerator. A matched pair gave
+# 18/18.
+#
+# A moved deck is the loudest signal this tool produces, and it was wrong in
+# the most plausible possible way. So diff the two caches on the options that
+# can change results, and say so BEFORE the table rather than after.
+# Entries that pass the filter above but CANNOT change a number: which extra
+# targets get built, the version strings compiled into the banner, and where
+# things install.  They are excluded because the first real matched pair --
+# build/darwin against build/darwin-tests-release, the two directories that
+# produced the trustworthy 18/18 -- differed on OPENSWMM_BUILD_TESTS and on
+# OPENSWMM_PRERELEASE, and raised the loud banner over a version string.  A
+# warning that fires on every long-lived pair of build directories is a
+# warning nobody reads, which is the failure this guard exists to avoid one
+# level up.
+#
+# OPENSWMM_BUILD_2D and OPENSWMM_BUILD_GPU_PLUGIN match `BUILD_` and are
+# deliberately NOT here: they change what the engine computes.  This is a
+# named list rather than a `BUILD_*` pattern for exactly that reason.
+CFG_IGNORE='^OPENSWMM_(BUILD_(TESTS|UNIT_TESTS|REGRESSION_TESTS|BENCHMARKS|PYTHON|O4_DIFFERENTIAL)|PRERELEASE|LEGACY_PRERELEASE|INSTALL|GPU_PLUGIN_INSTALL_DESTINATION):'
+
+cache_opts() {
+    local dir; dir=$(cd -- "$(dirname -- "$1")" && pwd)
+    local c
+    for c in "$dir/CMakeCache.txt" "$dir/../CMakeCache.txt" \
+             "$dir/../../CMakeCache.txt" "$dir/../../../CMakeCache.txt"; do
+        if [ -f "$c" ]; then
+            grep -E '^(OPENSWMM_|CMAKE_BUILD_TYPE|CMAKE_CXX_FLAGS)[A-Z_0-9]*(:[A-Z]+)?=' \
+                 "$c" 2>/dev/null | grep -Ev "$CFG_IGNORE" | sort
+            return
+        fi
+    done
+}
+BASE_OPTS=$(cache_opts "$BASE_CLI")
+PATCHED_OPTS=$(cache_opts "$PATCHED_CLI")
+
+if [ -z "$BASE_OPTS" ] || [ -z "$PATCHED_OPTS" ]; then
+    echo "NOTE: no CMakeCache.txt found beside one or both binaries, so the" \
+         "build CONFIGURATIONS were not compared. A moved deck may be a" \
+         "build-option difference rather than a code change."
+    echo "NOTE: build configurations not compared (no CMakeCache)." >> "$PROV"
+elif [ "$BASE_OPTS" != "$PATCHED_OPTS" ]; then
+    echo "⛔ THE TWO BUILDS ARE CONFIGURED DIFFERENTLY. Any moved deck below"
+    echo "   may be the configuration, not the changeset. Differences:"
+    diff <(printf '%s\n' "$BASE_OPTS") <(printf '%s\n' "$PATCHED_OPTS") \
+        | sed 's/^/     /'
+    {
+        echo "WARNING: build configurations DIFFER:"
+        diff <(printf '%s\n' "$BASE_OPTS") <(printf '%s\n' "$PATCHED_OPTS")
+    } >> "$PROV"
+else
+    echo "build configurations match on OPENSWMM_*, CMAKE_BUILD_TYPE and" \
+         "CMAKE_CXX_FLAGS." >> "$PROV"
+fi
+
 # ---- run ------------------------------------------------------------------
 # Each deck runs with its own output directory as the working directory, so a
 # deck that writes a scratch file cannot reach another deck's.
