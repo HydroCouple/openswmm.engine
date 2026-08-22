@@ -2353,9 +2353,35 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
         ctx_.mass_balance.runoff_infil +=
             ctx_.subcatches.infil_loss[ui] * area_ft2 * dt_runoff;
 
-        // Surface runoff volume (ft³) — runoff is cfs
-        ctx_.mass_balance.runoff_runoff +=
-            ctx_.subcatches.runoff[ui] * dt_runoff;
+        // Surface runoff volume (ft³) — runoff is cfs.
+        //
+        // ONLY when the outlet is a drainage-system node. A subcatchment that
+        // sheds onto another subcatchment has not left the runoff system: its
+        // water arrives as run-on and is counted again when the receiver
+        // discharges. Adding it here books the same water twice and the
+        // ledger reads a system output that never happened — measured on
+        // tests/parity/transport/age_legacy.inp, whose S1 drains onto S2:
+        // runoff continuity −23.667 % against legacy's −0.271 %, precipitation
+        // and infiltration agreeing to the digit and only runoff differing,
+        // by S1's own 1.628 in.
+        //
+        // Legacy guards exactly this (subcatch.c:761-765): `outNode == -1 &&
+        // outSubcatch != subcatchIndex` zeroes vOutflow before
+        // massbal_updateRunoffTotals. The self-outlet exclusion matters —
+        // a subcatchment routed to ITSELF is a real system output, not a
+        // cascade.
+        //
+        // This is a LEDGER term only: runoff_runoff is read by the continuity
+        // total, the report row and the mass-balance API, and by nothing that
+        // routes water. The routed hydrology and every .out column are
+        // unaffected.
+        const bool sheds_to_node = ctx_.subcatches.outlet_node[ui] >= 0;
+        const bool sheds_to_self =
+            ctx_.subcatches.outlet_subcatch[ui] == i;
+        if (sheds_to_node || sheds_to_self) {
+            ctx_.mass_balance.runoff_runoff +=
+                ctx_.subcatches.runoff[ui] * dt_runoff;
+        }
 
         // Subcatchment-level statistics
         if (ctx_.subcatches.runoff[ui] > ctx_.subcatches.stat_max_runoff[ui])

@@ -122,8 +122,8 @@ def options(extra):
         "[OPTIONS]",
         "FLOW_UNITS           CFS",
         ";; KINWAVE: routing is not what this deck observes.  See",
-        ";; tests/parity/README.md §5 -- three sdm_fv_* decks are already",
-        ";; 96 % of the corpus wall time and these must not add to that.",
+        ";; tests/parity/README.md section 5 -- three sdm_fv_* decks are",
+        ";; already 96 % of the corpus wall time; do not add to that.",
         "FLOW_ROUTING         KINWAVE",
         "INFILTRATION         HORTON",
     ]
@@ -328,7 +328,7 @@ def main():
         else:
             with open(path, "w") as f:
                 f.write(text)
-            print("wrote %s (%d bytes)" % (name, len(text)))
+            print("wrote %s (%d bytes)" % (name, len(text.encode("utf-8"))))
     if check:
         print("check: %s" % ("FAIL" if bad else "all files match the generator"))
     return 1 if bad else 0
