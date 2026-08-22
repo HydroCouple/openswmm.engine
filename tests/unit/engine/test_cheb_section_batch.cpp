@@ -447,3 +447,73 @@ TEST(ChebSectionBatch, BypassMaskPackedViewKeepsCompiledBoundaries) {
         EXPECT_EQ(mhm[i], hm[i]);
     }
 }
+
+// ===========================================================================
+// The inverse path — where the EXACT profile actually lives.
+// ===========================================================================
+
+TEST(ChebSectionBatch, PieceLocalDerivativeMatchesTheSectionLevelOne) {
+    // chebYofA's Newton loop used to call chebdAdY, which recomputed the
+    // piece's derivative coefficient series on EVERY iteration even though
+    // that series depends only on the piece. Hoisting it out is worth 2.3x on
+    // the single most expensive function in the header (966 -> 419 ns/eval,
+    // and 68% of all non-idle samples in a profiled Bellinge EXACT run).
+    //
+    // The hoist is only safe if chebdAdYOnPiece, fed the series the caller
+    // computed once, returns exactly what chebdAdY computes for itself. Exact
+    // equality, not a tolerance: this is the same expression evaluated on the
+    // same inputs, and any drift would mean the two have diverged.
+    struct Case { const char* name; std::vector<BElem> b; bool open; };
+    std::vector<Case> cases;
+    cases.push_back({"circle", circleOf(4.0), false});
+    cases.push_back({"benched", benchedOf(6.0, 4.0, 1.0), false});
+    cases.push_back({"gothic", gothicOf(4.0), false});
+    cases.push_back({"open box", openBoxOf(5.0, 3.0), true});
+
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        ChebSection s{};
+        ASSERT_EQ(compile(s, c.b.data(), static_cast<int>(c.b.size()), c.open), 0);
+
+        for (int p = 0; p < s.n_pieces; ++p) {
+            const ChebPiece& pc = s.piece[p];
+            double dc[kMaxChebCoeff];
+            chebDeriv(pc.c_a, pc.n_a, dc);
+            for (int i = 1; i < 40; ++i) {          // strictly inside the piece
+                const double y = pc.y_lo +
+                                 (pc.y_hi - pc.y_lo) * static_cast<double>(i) / 40.0;
+                EXPECT_EQ(chebdAdYOnPiece(pc, dc, y), chebdAdY(s, y))
+                    << "piece " << p << " at y = " << y;
+            }
+        }
+    }
+}
+
+TEST(ChebSectionBatch, InvertingAreaRoundTripsThroughTheForwardSeries) {
+    // chebYofA is the function the hoist changed, so pin what it must still
+    // do: y(A(y)) == y to the fit's own accuracy, on every piece, for shapes
+    // whose inverse behaves differently (a smooth circle, a benched section
+    // with a real kink, an open channel with no crown).
+    struct Case { const char* name; std::vector<BElem> b; bool open; };
+    std::vector<Case> cases;
+    cases.push_back({"circle", circleOf(4.0), false});
+    cases.push_back({"benched", benchedOf(6.0, 4.0, 1.0), false});
+    cases.push_back({"open box", openBoxOf(5.0, 3.0), true});
+
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        ChebSection s{};
+        ASSERT_EQ(compile(s, c.b.data(), static_cast<int>(c.b.size()), c.open), 0);
+
+        double worst = 0.0;
+        for (int i = 1; i < 400; ++i) {
+            const double y = s.y_full * static_cast<double>(i) / 400.0;
+            const double back = chebYofA(s, chebAofY(s, y));
+            worst = std::max(worst, std::fabs(back - y) / s.y_full);
+        }
+        // Newton is safeguarded to 1e-15 * y_full, so the round trip is
+        // limited by the AREA fit rather than by the inversion; kFitTol with
+        // room for the derivative's own n^2 amplification is the honest bar.
+        EXPECT_LT(worst, 1.0e-7) << "worst relative round-trip error " << worst;
+    }
+}

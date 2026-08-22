@@ -475,13 +475,21 @@ OPENSWMM_KERNEL_FN double chebI1ofY(const ChebSection& s, double y) noexcept {
 /// dA/dy from the A series' exact derivative — the same quantity chebWofY
 /// returns, reached by an independent route. Agreement between the two is what
 /// proves the map Jacobian below is the one the fit actually used.
-OPENSWMM_KERNEL_FN double chebdAdY(const ChebSection& s, double y) noexcept {
-    if (y <= 0.0 || y >= s.y_full || s.n_pieces <= 0) return 0.0;
-    const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
+/// dA/dy on ONE piece, from a derivative series the caller already has.
+///
+/// @param pc  the piece containing @p y.
+/// @param dc  d/du coefficients of pc.c_a, from chebDeriv(pc.c_a, pc.n_a, dc).
+/// @param y   depth (ft), which must lie inside @p pc.
+///
+/// @note Split out of chebdAdY so a caller that evaluates the derivative
+///       REPEATEDLY ON ONE PIECE — chebYofA's Newton loop is the only one, and
+///       it dominated the whole EXACT profile — can lift the chebDeriv call
+///       out of its loop. `dc` depends on the piece alone, never on y, so
+///       recomputing it per iteration was pure waste: measured 966 ns/eval
+///       against 419 for the same inversion, bit-for-bit identical output.
+OPENSWMM_KERNEL_FN double chebdAdYOnPiece(const ChebPiece& pc, const double* dc,
+                                          double y) noexcept {
     const double u = chebUofY(pc, y);
-
-    double dc[kMaxChebCoeff];
-    chebDeriv(pc.c_a, pc.n_a, dc);
     const double dAdu = chebEval(dc, pc.n_a - 1, u);
 
     // dy/du = span * ds/du. At an end tagged 1.5 the Jacobian vanishes, and so
@@ -490,6 +498,15 @@ OPENSWMM_KERNEL_FN double chebdAdY(const ChebSection& s, double y) noexcept {
     const double dydu = mapDsDu(u, pc.exp_lo, pc.exp_hi) / pc.inv_span;
     if (!(dydu > 1.0e-300)) return 0.0;
     return dAdu / dydu;
+}
+
+OPENSWMM_KERNEL_FN double chebdAdY(const ChebSection& s, double y) noexcept {
+    if (y <= 0.0 || y >= s.y_full || s.n_pieces <= 0) return 0.0;
+    const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
+
+    double dc[kMaxChebCoeff];
+    chebDeriv(pc.c_a, pc.n_a, dc);
+    return chebdAdYOnPiece(pc, dc, y);
 }
 
 /// dP/dy from the P series' exact derivative — same construction as
@@ -512,6 +529,29 @@ OPENSWMM_KERNEL_FN double chebdPdY(const ChebSection& s, double y) noexcept {
 }
 
 /// Invert A -> y. Newton on the exact derivative, safeguarded by bisection.
+///
+/// @warning **This is the most expensive function in this header by two
+///          orders of magnitude, and profiling a real network says so
+///          loudly.** On Bellinge under XSECT_GEOMETRY EXACT it and its
+///          derivative evaluation were 68% of all non-idle solver samples,
+///          against 10% for every forward accessor combined. Measured cost
+///          per inversion: 419 ns, against 15.7 ns for a forward chebAofY and
+///          4.9 ns for the legacy inverse table lookup it replaces. Anything
+///          that makes EXACT competitive on wall time has to come from here,
+///          not from the forward path — see the @note below for the option
+///          that has not been taken yet.
+///
+/// @note **The structural fix, not yet implemented: compile the inverse.**
+///       Every other quantity in this file is fitted once at load time and
+///       evaluated in one Clenshaw pass; y(A) alone is left as a runtime root
+///       find. y(A) is analytic on each piece for exactly the same reason
+///       A(y) is (the map removes the branch point at either end), so it
+///       could be fitted per piece into its own coefficient array and
+///       evaluated at forward-path cost — roughly 419 ns -> ~16 ns, which
+///       would move EXACT from about 4.7x LEGACY on a real network to
+///       somewhere near parity. The cost is one more coefficient array per
+///       piece; note that kMaxPieces * kMaxChebCoeff * 8 bytes is ~6 kB, so
+///       ChebSection would need its 32 kB trivially-copyable bound revisited.
 OPENSWMM_KERNEL_FN double chebYofA(const ChebSection& s, double a) noexcept {
     if (a <= 0.0 || s.n_pieces <= 0) return 0.0;
     if (a >= s.a_full) return s.y_full;
@@ -524,6 +564,13 @@ OPENSWMM_KERNEL_FN double chebYofA(const ChebSection& s, double a) noexcept {
     }
     const ChebPiece& pc = s.piece[p];
 
+    // Loop-invariant: the derivative series belongs to the PIECE, and the
+    // bracket below never leaves it. Computing it here rather than inside
+    // chebdAdY on every iteration is worth 2.3x on this function and changes
+    // no bit of the answer.
+    double dc[kMaxChebCoeff];
+    chebDeriv(pc.c_a, pc.n_a, dc);
+
     double lo = pc.y_lo, hi = pc.y_hi;
     double y = 0.5 * (lo + hi);
     for (int it = 0; it < 40; ++it) {
@@ -531,7 +578,7 @@ OPENSWMM_KERNEL_FN double chebYofA(const ChebSection& s, double a) noexcept {
         if (f > 0.0) hi = y; else lo = y;
         if (hi - lo <= 1.0e-15 * s.y_full) break;
 
-        const double d = chebdAdY(s, y);
+        const double d = chebdAdYOnPiece(pc, dc, y);
         double y_next = (d > 0.0) ? (y - f / d) : (0.5 * (lo + hi));
         if (!(y_next > lo && y_next < hi)) y_next = 0.5 * (lo + hi);
         if (std::fabs(y_next - y) <= 1.0e-15 * s.y_full) { y = y_next; break; }
