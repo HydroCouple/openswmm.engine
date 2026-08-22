@@ -103,6 +103,8 @@ SWMM_ENGINE_API int swmm_get_runoff_total(SWMM_Engine engine, int component, dou
         case SWMM_RUNOFF_INFIL:      *volume = mb.runoff_infil;       break;
         case SWMM_RUNOFF_RUNOFF:     *volume = mb.runoff_runoff;      break;
         case SWMM_RUNOFF_SNOWREMOV:  *volume = mb.runoff_snowremov;   break;
+        case SWMM_RUNOFF_INITSNOW:   *volume = mb.runoff_init_snow;   break;
+        case SWMM_RUNOFF_FINALSNOW:  *volume = mb.runoff_final_snow;  break;
         case SWMM_RUNOFF_INITSTORE:  *volume = mb.runoff_init_store;  break;
         case SWMM_RUNOFF_FINALSTORE: *volume = mb.runoff_final_store; break;
         default: return SWMM_ERR_BADPARAM;

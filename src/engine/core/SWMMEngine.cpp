@@ -940,6 +940,53 @@ int SWMMEngine::initialize() noexcept {
 // start()
 // ============================================================================
 
+// ============================================================================
+// F8 — snow cover volume, the ledger term the engine never had
+// ============================================================================
+//
+// Legacy `snow_getSnowCover` (snow.c:587):
+//
+//     for (i = SNOW_PLOWABLE; i <= SNOW_PERV; i++)
+//         snowCover += (wsnow[i] + fw[i]) * fArea[i];
+//     return snowCover * (Subcatch[j].area - Subcatch[j].lidArea);
+//
+// Two details are load-bearing and easy to drop:
+//   * `fw` is IN. The free-water store is water the pack is holding, not
+//     water that has left it. Counting only `wsnow` understates the term by
+//     up to `fwfrac` of every pack and would leave a residual that looks
+//     like a leak -- which is exactly the shape of the residual F8's first
+//     write-up chased and had to retract.
+//   * LID area is OUT, matching the plow-removal volume (Gap #60) and legacy
+//     Build 5.2.0. Water in a LID unit is already counted by
+//     `lid_.storedVolume()` in init/final STORAGE; counting it here as well
+//     would double it.
+static double snowCoverVolumeFt3(const openswmm::SimulationContext& ctx,
+                                 const openswmm::snow::SnowSoA& soa) {
+    double total = 0.0;
+    for (int i = 0; i < ctx.n_subcatches(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ctx.subcatches.snowpack[ui] < 0) continue;
+        double depth = 0.0;
+        for (int k = 0; k < openswmm::snow::N_SUBAREAS; ++k) {
+            auto idx = static_cast<std::size_t>(i * openswmm::snow::N_SUBAREAS + k);
+            if (idx >= soa.wsnow.size()) break;
+            depth += (soa.wsnow[idx] + soa.fw[idx]) * soa.fArea[idx];
+        }
+        const double lid_ft2 = (ui < ctx.subcatches.total_lid_area_ft2.size())
+                                   ? ctx.subcatches.total_lid_area_ft2[ui] : 0.0;
+        // `subcatches.area` is in PROJECT LAND-AREA UNITS (acres in US,
+        // hectares in SI); `total_lid_area_ft2` is in ft². Subtracting one
+        // from the other without converting is the defect the comment at
+        // the rainfall-volume site warns about — it was 2.471x wrong on SI
+        // there, and would be here.
+        double area_ft2 = ctx.subcatches.area[ui] /
+                              ucf::UCF(ucf::LANDAREA, ctx.options) - lid_ft2;
+        if (area_ft2 < 0.0) area_ft2 = 0.0;
+        total += depth * area_ft2;
+    }
+    return total;
+}
+
 int SWMMEngine::start(int save_results) noexcept {
     if (ctx_.state != EngineState::INITIALIZED) {
         set_error(SWMM_ERR_WRONG_STATE,
@@ -3867,6 +3914,20 @@ void SWMMEngine::computeFinalStorage() noexcept {
         // Water still held in LID units is runoff-system storage (legacy
         // massbal counts lid_getStoredVolume() in final storage).
         ctx_.mass_balance.runoff_final_store += lid_.storedVolume();
+
+        // F8 — the pack still standing, and the snow ploughed out of the
+        // system. Legacy massbal.c:671-679.
+        ctx_.mass_balance.runoff_final_snow =
+            snowCoverVolumeFt3(ctx_, snow_.state());
+        // `runoff_snowremov` HAD NO WRITER ANYWHERE. It was declared, exposed
+        // through `SWMM_RUNOFF_SNOWREMOV`, returned by the mass-balance API
+        // and read by callers — and nothing ever assigned it, so every deck
+        // that ploughs snow reported zero removal while `SnowSoA::removed`
+        // accumulated the real figure with no consumer. Same shape as F1
+        // (`setMeltCoeffs` with no caller) and as the snapshot quality
+        // vectors that wrote every pollutant column as zero: a field that
+        // exists, is exposed, is read, and is never written.
+        ctx_.mass_balance.runoff_snowremov = snow_.state().removed;
     }
 
     // B8. Compute routing final storage for mass balance
@@ -6731,6 +6792,11 @@ void SWMMEngine::initMassBalance() noexcept {
     // Initial water in LID units (InitSat + wilting-point soil moisture) is
     // part of runoff storage, mirroring the final-storage accounting.
     ctx_.mass_balance.runoff_init_store += lid_.storedVolume();
+
+    // F8 — the pack the deck starts with is water the model was GIVEN, and
+    // the ledger had no row for it. Legacy massbal.c:124-129.
+    ctx_.mass_balance.runoff_init_snow =
+        snowCoverVolumeFt3(ctx_, snow_.state());
 
     // Record initial groundwater storage
     // Legacy: GwaterTotals.initStorage += gwater_getVolume(j) * Subcatch[j].area
