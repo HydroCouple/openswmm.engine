@@ -4649,6 +4649,35 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 // comment used to promise.
                 snap.subcatch_quality.assign(nS_s * nr_s, 0.0);
                 for (std::size_t s = 0; s < nS_s; ++s) {
+                    // H5a temperature — written BEFORE the runoff gate, and
+                    // unmasked, exactly as the node and link loops above do.
+                    //
+                    // Until 2026-08-22 there was no writer here at all: the
+                    // age row below had one and temperature did not, so
+                    // subcatch_quality kept the assign(…, 0.0) and the output
+                    // plugin faithfully wrote the zero. Measured on
+                    // tests/parity/transport/heat_parity.inp — nodes and links
+                    // carried −4.147…17.66 °C while every subcatchment read
+                    // exactly 0.0 for the whole run. The column existed in the
+                    // header the whole time, which is why a column-presence
+                    // check passed over it.
+                    //
+                    // It is OUTSIDE the has_runoff gate on purpose, and that
+                    // is a deliberate divergence from the age column beside
+                    // it. Age is gated because legacy's washoff convention
+                    // says a subcatchment producing nothing reports nothing.
+                    // Temperature cannot use that convention: 0 °C is a real
+                    // temperature and cannot double as "no water" — the same
+                    // reasoning H1 applied at nodes and links. D-H5c exists
+                    // precisely so the dry-element value is the deck's choice
+                    // (HOLD | AIR | DEFAULT) rather than an accident, so the
+                    // state carries a meaningful number when dry and blanking
+                    // it here would throw that away.
+                    if (temp_col && s < ctx_.heat_state
+                                            .subcatch_runoff_temp.size())
+                        snap.subcatch_quality[s * nr_s + temp_i] =
+                            ctx_.heat_state.subcatch_runoff_temp[s];
+
                     const bool has_runoff =
                         (s < ctx_.subcatches.runoff.size() &&
                          ctx_.subcatches.runoff[s] != 0.0);
