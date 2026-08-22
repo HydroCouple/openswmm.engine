@@ -370,3 +370,149 @@ TEST_F(ForcedInflowMassBalanceTest, PersistentAddForcingDoesNotCompound) {
 
     ASSERT_EQ(swmm_engine_end(engine_), 0);
 }
+
+// ---------------------------------------------------------------------------
+// Cascaded run-on must not be booked as a system output.
+//
+// Found 2026-08-22 by tests/parity/transport/age_legacy.inp on its FIRST run,
+// the first corpus deck ever to route a subcatchment onto another
+// subcatchment: runoff continuity read -23.667 % against legacy 5.x's
+// -0.271 % on the same hydrology, precipitation and infiltration agreeing to
+// the digit and only Surface Runoff differing -- by exactly the donor's own
+// 1.628 in. S1's water was counted once when S1 shed it and again when S2
+// discharged it.
+//
+// Legacy guards it at subcatch.c:761-765 (`outNode == -1 && outSubcatch !=
+// subcatchIndex` zeroes vOutflow before massbal_updateRunoffTotals).
+//
+// This gate is deliberately a CASCADE-vs-DIRECT comparison rather than an
+// absolute number. An absolute expectation would pin whatever this build
+// produces; the invariant is that moving a subcatchment's outlet from a node
+// to a peer must REMOVE its contribution from the runoff ledger and change
+// nothing else about the water.
+namespace {
+
+const char* kCascadeOptions =
+    "[OPTIONS]\n"
+    "FLOW_UNITS           CFS\n"
+    "FLOW_ROUTING         KINWAVE\n"
+    "INFILTRATION         HORTON\n"
+    "START_DATE           01/01/2026\n"
+    "START_TIME           00:00:00\n"
+    "END_DATE             01/01/2026\n"
+    "END_TIME             06:00:00\n"
+    "WET_STEP             00:15:00\n"
+    "DRY_STEP             00:15:00\n"
+    "ROUTING_STEP         60\n"
+    "REPORT_STEP          00:15:00\n"
+    "ALLOW_PONDING        NO\n"
+    "\n"
+    "[EVAPORATION]\n"
+    "CONSTANT             0.0\n"
+    "DRY_ONLY             NO\n"
+    "\n"
+    "[RAINGAGES]\n"
+    "RG1     INTENSITY  1:00  1.0  TIMESERIES rain_ts\n"
+    "\n"
+    "[TIMESERIES]\n"
+    "rain_ts  01/01/2026 00:00  0.50\n"
+    "rain_ts  01/01/2026 01:00  0.50\n"
+    "rain_ts  01/01/2026 02:00  0.00\n"
+    "rain_ts  01/01/2026 06:00  0.00\n"
+    "\n";
+
+const char* kCascadeTail =
+    "\n[SUBAREAS]\n"
+    "SA      0.01  0.10  0.02  0.05  25  OUTLET\n"
+    "SB      0.01  0.10  0.05  0.10  25  OUTLET\n"
+    "\n[INFILTRATION]\n"
+    "SA      3.0  0.5  4  7  0\n"
+    "SB      3.0  0.5  4  7  0\n"
+    "\n[JUNCTIONS]\n"
+    "JN      10.0  10.0  0  0  0\n"
+    "\n[OUTFALLS]\n"
+    "OF      9.0   FREE  NO\n"
+    "\n[CONDUITS]\n"
+    "CN      JN    OF    400.0  0.013  0  0\n"
+    "\n[XSECTIONS]\n"
+    "CN      CIRCULAR  3.0  0  0  0  1\n"
+    "\n[COORDINATES]\n"
+    "JN      0.0    0.0\n"
+    "OF      400.0  0.0\n";
+
+// `sa_outlet` is the only thing that differs between the two fixtures.
+std::string cascadeDeck(const char* sa_outlet) {
+    return std::string(kCascadeOptions) +
+           "[SUBCATCHMENTS]\n"
+           ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+           "SA      RG1   " + sa_outlet + "      5.0   70.0     500.0  1.0    0\n"
+           "SB      RG1   JN      5.0   30.0     300.0  0.5    0\n" +
+           kCascadeTail;
+}
+
+double runOnceAndGetRunoffTotal(const std::string& base, const char* sa_outlet,
+                                double* rainfall_out) {
+    const std::string inp = forcedOutPath(base + ".inp");
+    std::ofstream(inp) << cascadeDeck(sa_outlet);
+
+    SWMM_Engine e = swmm_engine_create();
+    EXPECT_NE(e, nullptr);
+    EXPECT_EQ(swmm_engine_open(e, inp.c_str(),
+                               forcedOutPath(base + ".rpt").c_str(),
+                               forcedOutPath(base + ".out").c_str(), nullptr),
+              0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        EXPECT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0 && ++guard < 100000);
+    EXPECT_EQ(swmm_engine_end(e), 0) << swmm_get_last_error_msg(e);
+
+    double runoff = -1.0, rain = -1.0;
+    EXPECT_EQ(swmm_get_runoff_total(e, SWMM_RUNOFF_RUNOFF, &runoff), SWMM_OK);
+    EXPECT_EQ(swmm_get_runoff_total(e, SWMM_RUNOFF_RAINFALL, &rain), SWMM_OK);
+    if (rainfall_out != nullptr) *rainfall_out = rain;
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return runoff;
+}
+
+}  // namespace
+
+TEST(RunoffLedgerCascadeTest, RunOnIsNotBookedAsASystemOutput) {
+    double rain_direct = -1.0, rain_cascade = -1.0;
+    // SA -> JN: both subcatchments discharge to the drainage system.
+    const double direct = runOnceAndGetRunoffTotal("cascade_direct", "JN",
+                                                   &rain_direct);
+    // SA -> SB: SA's water reaches the system only via SB.
+    const double cascade = runOnceAndGetRunoffTotal("cascade_runon", "SB",
+                                                    &rain_cascade);
+
+    ASSERT_GT(direct, 0.0) << "the direct fixture produced no runoff at all — "
+                              "the deck, not the ledger, is the problem";
+
+    // Same rain on the same two subcatchments either way. If this moves, the
+    // two fixtures differ by more than SA's outlet and nothing below counts.
+    EXPECT_NEAR(rain_cascade, rain_direct, rain_direct * 1e-9)
+        << "the outlet change altered PRECIPITATION, so the fixtures are not "
+           "comparable";
+
+    // The invariant. Cascading SA must remove SA's own shed volume from the
+    // ledger — so the cascade total is strictly smaller. Before the fix the
+    // two were EQUAL, because the ledger added every subcatchment
+    // unconditionally.
+    EXPECT_LT(cascade, direct)
+        << "cascaded run-on is still being booked as a system output: "
+           "direct=" << direct << " cascade=" << cascade;
+
+    // And it must remove SA's contribution, not something else. SA is the
+    // 70 %-impervious half, so the drop is a large fraction of the total —
+    // a token difference would mean the guard fired on the wrong term.
+    EXPECT_LT(cascade, direct * 0.75)
+        << "the ledger dropped something, but far too little to be SA's "
+           "runoff: direct=" << direct << " cascade=" << cascade;
+}
