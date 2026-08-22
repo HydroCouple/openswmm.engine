@@ -81,7 +81,8 @@ enum class TableType : int {
     CURVE_PUMP2   = 8,  ///< Pump curve type 2 (head vs flow)
     CURVE_PUMP3   = 9,  ///< Pump curve type 3 (volume vs time)
     CURVE_PUMP4   = 10, ///< Pump curve type 4 (depth vs speed)
-    CURVE_PUMP5   = 11  ///< Pump curve type 5 (head vs flow, variable speed)
+    CURVE_PUMP5   = 11, ///< Pump curve type 5 (head vs flow, variable speed)
+    CURVE_XPOLYGON = 12 ///< POLYGON cross-section arc/line boundary curve
 };
 
 // ============================================================================
@@ -147,6 +148,26 @@ struct Table {
     std::vector<double> x;       ///< Independent variable (time, depth, etc.)
     std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
     TableCursor         cursor;  ///< Bidirectional lookup cursor
+
+    /**
+     * @brief Per-point DXF-convention bulge (CURVE_XPOLYGON only).
+     * @details Parallel to x/y: bulge[i] is the arc bulge for the segment
+     *          running from point i to point i+1 (0 = straight). Empty for
+     *          every other curve type — the row loop only fills it for
+     *          XPOLYGON, where a row's optional 3rd column feeds it.
+     */
+    std::vector<double> bulge;
+
+    /**
+     * @brief Resolved per-point column stride for CURVE_XPOLYGON (0 = not
+     *        yet decided, 2 = x,y pairs, 3 = x,y,bulge triples).
+     * @details Decided once, from the first data row's own token count, and
+     *          then held fixed for every later row of the same curve — a
+     *          row-by-row modulo re-decision would silently misparse a
+     *          6-token continuation row (divisible by both 2 and 3) as
+     *          triples even when every sibling row in the curve was pairs.
+     */
+    int                  xpolygon_stride = 0;
 
     // ---- File-backed time series support ----
     bool               is_file_based = false; ///< True if data is read from external file

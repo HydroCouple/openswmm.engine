@@ -70,7 +70,7 @@ static const char* XsectShapeWords[] = {
     "CATENARY", "SEMI_ELLIPTIC", "BASKETHANDLE", "SEMI_CIRCULAR",
     "RECT_TRIANG", "RECT_ROUND", "HORIZ_ELLIPSE", "VERT_ELLIPSE",
     "ARCH", "IRREGULAR", "CUSTOM",
-    "FORCE_MAIN", "STREET", "DUMMY"
+    "FORCE_MAIN", "STREET", "DUMMY", "POLYGON"
 };
 
 // ---------------------------------------------------------------------------
@@ -484,7 +484,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 if (ctx.links.type[ui] != LinkType::CONDUIT) continue;
 
                 int shape = static_cast<int>(ctx.links.xsect_shape[ui]);
-                const char* shape_str = (shape >= 0 && shape <= 25) ?
+                const char* shape_str = (shape >= 0 && shape <= 26) ?
                     XsectShapeWords[shape] : "CIRCULAR";
 
                 const int cr = ctx.link_subtypes.conduit_row(i);
@@ -554,6 +554,10 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                             : (rm == 1) ? "KINWAVE"
                                         : "STEADY";
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
+
+        const char* xg_name = (opt.xsect_geometry == XsectGeometryMode::EXACT)
+                              ? "EXACT" : "LEGACY";
+        std::fprintf(f, "\n  Cross-Section Geometry ... %s", xg_name);
 
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;

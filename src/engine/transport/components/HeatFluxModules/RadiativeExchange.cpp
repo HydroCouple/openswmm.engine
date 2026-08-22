@@ -36,6 +36,7 @@
 #include "SurfaceExchange.hpp"
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
+#include "../../../hydraulics/Link.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../../hydraulics/XSectBatch.hpp"
 
@@ -170,8 +171,11 @@ void applyRadiativeExchange(SimulationContext& ctx, double dt) {
         if (!(depth > 0.0)) continue;
 
         XSectParams xs{};
-        const auto ls = ctx.links.xsect_shape[uj];
-        xs.type   = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+        // link::translateShape is the canonical LinkData-enum -> batch-enum
+        // translation (Link.cpp) — POLYGON=26 was appended to both enums at
+        // the same numeric value, breaking the flat +1 offset every earlier
+        // shape follows, so this delegates rather than re-deriving it here.
+        xs.type = link::translateShape(ctx.links.xsect_shape[uj]);
         xs.y_full = ctx.links.xsect_y_full[uj];
         xs.a_full = ctx.links.xsect_a_full[uj];
         xs.w_max  = ctx.links.xsect_w_max[uj];
@@ -182,6 +186,11 @@ void applyRadiativeExchange(SimulationContext& ctx, double dt) {
         xs.a_bot  = ctx.links.xsect_a_bot[uj];
         xs.s_bot  = ctx.links.xsect_s_bot[uj];
         xs.r_bot  = ctx.links.xsect_r_bot[uj];
+        {
+            const int ci = ctx.links.xsect_cheb_idx[uj];
+            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+                xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
+        }
         const double top_width = xsect::getWofY(xs, depth);
         if (!(top_width > 0.0)) continue;
 

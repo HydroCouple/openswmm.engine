@@ -151,8 +151,10 @@ TEST(XSectShapeEnumParity, ShapeNameRejectsOutOfRange)
 {
     EXPECT_STREQ(swmm_xsect_shape_name(SWMM_XSECT_CIRCULAR), "CIRCULAR");
     EXPECT_STREQ(swmm_xsect_shape_name(SWMM_XSECT_IRREGULAR), "IRREGULAR");
+    // POLYGON=26 (Phase 5) extended the valid range by one.
+    EXPECT_STREQ(swmm_xsect_shape_name(SWMM_XSECT_POLYGON), "POLYGON");
     EXPECT_EQ(swmm_xsect_shape_name(-1), nullptr);
-    EXPECT_EQ(swmm_xsect_shape_name(26), nullptr);
+    EXPECT_EQ(swmm_xsect_shape_name(27), nullptr);
 }
 
 // ===========================================================================

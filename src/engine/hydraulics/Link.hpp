@@ -37,7 +37,9 @@
 #include "XSectBatch.hpp"
 #include "Node.hpp"
 #include "Transect.hpp"
+#include "ChebSection.hpp"
 
+#include <deque>
 #include <vector>
 
 namespace openswmm {
@@ -137,11 +139,18 @@ double getHydPower(double flow, double head_upstream, double head_downstream);
  *                   A/R/W table pointers attached so the per-element accessors
  *                   can evaluate tabulated geometry. Pass nullptr when the link
  *                   is known to be a self-contained shape.
+ * @param cheb_sections  Optional compiled-boundary pool (ctx.cheb_sections).
+ *                   When supplied and `links.xsect_cheb_idx[uj] >= 0`,
+ *                   XSectParams::cheb is attached — every POLYGON link
+ *                   always qualifies; any other shape qualifies too once
+ *                   XSECT_GEOMETRY EXACT compiled it. Pass nullptr when the
+ *                   link is known to have no compiled boundary.
  * @returns Populated XSectParams struct.
  */
 XSectParams buildXSectParams(
     const LinkData& links, std::size_t uj,
-    const std::vector<transect::TransectData>* transects = nullptr);
+    const std::vector<transect::TransectData>* transects = nullptr,
+    const std::deque<chebsec::ChebSection>* cheb_sections = nullptr);
 
 // ============================================================================
 // Batch functions (for routing hot loop)

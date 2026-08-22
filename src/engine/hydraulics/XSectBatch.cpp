@@ -105,7 +105,10 @@ void XSectGroups::build(const XSectParams* params, int n_links) {
     mask_active_ = false;
 
     // Count links per shape (skip DUMMY=0: non-conduit links that need no geometry)
-    constexpr int MAX_SHAPES = 26;
+    // One past the highest XSectShape value (POLYGON=26) — a link whose type
+    // lands exactly at MAX_SHAPES-1 must still be countable, so this is
+    // XSectShape::POLYGON + 1, not just "big enough".
+    constexpr int MAX_SHAPES = 27;
     int shape_count[MAX_SHAPES] = {};
     for (int i = 0; i < n_links; ++i) {
         int t = params[i].type;
@@ -191,6 +194,51 @@ void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
                 g.a_full[uk] = td.a_full;
                 g.r_full[uk] = td.r_full;
                 g.w_max[uk]  = td.w_max;
+            }
+        }
+    }
+}
+
+void XSectGroups::attachChebSections(const SimulationContext& ctx) {
+    // Same lazy-mirror invalidation as attachTransectTables — the packed
+    // mirrors would otherwise serve stale (cheb-less) copies.
+    packed_groups_.clear();
+    packed_count_.clear();
+    mask_active_ = false;
+    for (auto& g : groups_) {
+        // Every POLYGON group needs this; any other group needs it too once
+        // XSECT_GEOMETRY EXACT compiled a boundary for its shape (a link with
+        // no compiled boundary simply keeps a null cheb entry, which routes
+        // it back through that group's normal table/formula kernels).
+        bool any = false;
+        for (int k = 0; k < g.count && !any; ++k) {
+            int link_j = g.link_idx[static_cast<std::size_t>(k)];
+            if (ctx.links.xsect_cheb_idx[static_cast<std::size_t>(link_j)] >= 0) any = true;
+        }
+        if (!any || g.count == 0) continue;
+
+        auto uc = static_cast<std::size_t>(g.count);
+        g.cheb.resize(uc, nullptr);
+
+        for (int k = 0; k < g.count; ++k) {
+            auto uk = static_cast<std::size_t>(k);
+            int link_j = g.link_idx[uk];
+            auto uj = static_cast<std::size_t>(link_j);
+
+            int ci = ctx.links.xsect_cheb_idx[uj];
+            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size()) {
+                // Same stability argument as attachTransectTables: a raw
+                // pointer into ctx.cheb_sections, valid because it is a
+                // std::deque (stable addresses across push_back) and nothing
+                // appends to it once BUILDING/OPENED is left.
+                const auto& cs = ctx.cheb_sections[static_cast<std::size_t>(ci)];
+                g.cheb[uk] = &cs;
+                g.y_full[uk] = cs.y_full;
+                g.inv_y_full[uk] = (cs.y_full > 0.0) ? 1.0 / cs.y_full : 0.0;
+                g.a_full[uk] = cs.a_full;
+                g.r_full[uk] = cs.r_full;
+                g.s_full[uk] = cs.s_full;
+                g.w_max[uk]  = cs.w_max;
             }
         }
     }
@@ -709,7 +757,32 @@ static inline XSectParams paramsAt(const ShapeGroup& g, int k) {
     xs.a_bot  = g.a_bot[uk];
     xs.s_bot  = g.s_bot[uk];
     xs.r_bot  = g.r_bot[uk];
+    if (uk < g.cheb.size()) xs.cheb = g.cheb[uk];
     return xs;
+}
+
+/// R = A/P via chebsec::chebAll's ONE shared-basis pass, instead of
+/// xsect::getRofY's chebRofY (which independently re-walks the piece lookup
+/// and Clenshaw recurrence once for A and again for P). W/I1 fall out of the
+/// same pass and are discarded — still cheaper than two independent
+/// evaluations, since the basis terms are shared across all four fields.
+static inline double cheb_getRofY_fast(const chebsec::ChebSection& cs, double y) {
+    double a, w, p, i1;
+    chebsec::chebAll(cs, y, &a, &w, &p, &i1);
+    return (p > 0.0) ? a / p : 0.0;
+}
+
+/// A and R together via ONE chebAll pass — the fused counterpart to
+/// area_hydrad_circular for a compiled boundary. Calling apply_area_kernel
+/// then apply_hydrad_kernel back to back would walk the same piece/Clenshaw
+/// three times over (A once for area, then A again and P once for hydrad);
+/// this walks it once.
+static inline void cheb_getAofY_getRofY_fast(const chebsec::ChebSection& cs, double y,
+                                             double& a_out, double& r_out) {
+    double a, w, p, i1;
+    chebsec::chebAll(cs, y, &a, &w, &p, &i1);
+    a_out = a;
+    r_out = (p > 0.0) ? a / p : 0.0;
 }
 
 /// Get the area lookup table and size for a tabulated shape.
@@ -790,8 +863,21 @@ static void apply_area_kernel(const ShapeGroup& g,
     switch (g.shape) {
         case XSectShape::CIRCULAR:
         case XSectShape::FORCE_MAIN:
-            xsect_batch::area_circular(ld, norm_param(g) + lo,
-                                       g.a_full.data() + lo, la, n);
+            // g.cheb is non-empty only once some member of this group has a
+            // compiled EXACT boundary (attachChebSections); the legacy
+            // circular table kernel below knows nothing about xs.cheb, so it
+            // must be bypassed in favor of the cheb-aware scalar path, which
+            // is correct per element (paramsAt forwards g.cheb[uk], null or
+            // not) even for a group with a mix of compiled/uncompiled links.
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_a[uk] = xsect::getAofY(paramsAt(g, k), local_d[uk]);
+                }
+            } else {
+                xsect_batch::area_circular(ld, norm_param(g) + lo,
+                                           g.a_full.data() + lo, la, n);
+            }
             break;
         case XSectShape::RECT_CLOSED:
         case XSectShape::RECT_OPEN:
@@ -823,6 +909,21 @@ static void apply_area_kernel(const ShapeGroup& g,
                                                g.transect_tbl_size, la, n);
             break;
         default: {
+            // g.cheb must be checked BEFORE either table lookup: EGG/
+            // HORSESHOE/BASKETHANDLE/HORIZ_ELLIPSE/VERT_ELLIPSE/ARCH have
+            // real area_table_for data, and GOTHIC/CATENARY/SEMIELLIPTICAL/
+            // SEMICIRCULAR have real area_inv_table_for data, so EVERY
+            // tabulated shape EXACT reconstructs would otherwise take its
+            // legacy table unconditionally and never reach the scalar
+            // cheb-aware path below — the same bypass already fixed for
+            // CIRCULAR/FORCE_MAIN above, just reached from the other arm.
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_a[uk] = xsect::getAofY(paramsAt(g, k), local_d[uk]);
+                }
+                break;
+            }
             auto tbl = area_table_for(g.shape);
             if (tbl.data) {
                 xsect_batch::area_tabulated(ld, norm_param(g) + lo,
@@ -861,8 +962,20 @@ static void apply_hydrad_kernel(const ShapeGroup& g,
     switch (g.shape) {
         case XSectShape::CIRCULAR:
         case XSectShape::FORCE_MAIN:
-            xsect_batch::hydrad_circular(ld, norm_param(g) + lo,
-                                         g.r_full.data() + lo, lh, n);
+            // See apply_area_kernel — g.cheb non-empty means at least one
+            // member compiled an EXACT boundary, which the legacy table
+            // kernel below cannot see; the scalar path is cheb-aware.
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_h[uk] = g.cheb[uk]
+                        ? cheb_getRofY_fast(*g.cheb[uk], local_d[uk])
+                        : xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                }
+            } else {
+                xsect_batch::hydrad_circular(ld, norm_param(g) + lo,
+                                             g.r_full.data() + lo, lh, n);
+            }
             break;
         case XSectShape::RECT_CLOSED:
             xsect_batch::hydrad_rect_closed(ld, g.w_max.data() + lo,
@@ -891,6 +1004,22 @@ static void apply_hydrad_kernel(const ShapeGroup& g,
                                                g.transect_tbl_size, lh, n);
             break;
         default: {
+            // g.cheb must be checked BEFORE the table lookup: EGG/HORSESHOE/
+            // BASKETHANDLE/HORIZ_ELLIPSE/VERT_ELLIPSE/ARCH have real
+            // hydrad_table_for data too, so those would otherwise take their
+            // legacy table unconditionally and never reach the cheb-aware
+            // path below, exactly like the CIRCULAR bypass fixed above (only
+            // GOTHIC/CATENARY/SEMIELLIPTICAL/SEMICIRCULAR/POLYGON have no
+            // table at all, so this used to look sufficient — it was not).
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_h[uk] = g.cheb[uk]
+                        ? cheb_getRofY_fast(*g.cheb[uk], local_d[uk])
+                        : xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                }
+                break;
+            }
             auto tbl = hydrad_table_for(g.shape);
             if (tbl.data) {
                 xsect_batch::hydrad_tabulated(ld, norm_param(g) + lo,
@@ -922,8 +1051,18 @@ static void apply_width_kernel(const ShapeGroup& g,
     switch (g.shape) {
         case XSectShape::CIRCULAR:
         case XSectShape::FORCE_MAIN:
-            xsect_batch::width_circular(ld, norm_param(g) + lo,
-                                        g.w_max.data() + lo, lw, n);
+            // See apply_area_kernel — g.cheb non-empty means at least one
+            // member compiled an EXACT boundary, which the legacy table
+            // kernel below cannot see; the scalar path is cheb-aware.
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_w[uk] = xsect::getWofY(paramsAt(g, k), local_d[uk]);
+                }
+            } else {
+                xsect_batch::width_circular(ld, norm_param(g) + lo,
+                                            g.w_max.data() + lo, lw, n);
+            }
             break;
         case XSectShape::RECT_OPEN:
             xsect_batch::width_rect(g.w_max.data() + lo, lw, n);
@@ -950,6 +1089,18 @@ static void apply_width_kernel(const ShapeGroup& g,
                                                g.transect_tbl_size, lw, n);
             break;
         default: {
+            // g.cheb must be checked BEFORE the table lookup — ALL 10
+            // tabulated shapes have real width_table_for data, so this would
+            // otherwise take the legacy table unconditionally for every one
+            // of them and never reach the cheb-aware path below. Same bypass
+            // as area/hydrad above.
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_w[uk] = xsect::getWofY(paramsAt(g, k), local_d[uk]);
+                }
+                break;
+            }
             auto tbl = width_table_for(g.shape);
             if (tbl.data) {
                 xsect_batch::width_tabulated(ld, norm_param(g) + lo,
@@ -971,14 +1122,32 @@ static void apply_width_kernel(const ShapeGroup& g,
     apply_width_kernel(g, local_d, local_w, 0, g.count);
 }
 
-// Combined area + hydraulic radius over one group (single depth gather). Uses
-// the fused circular kernel for the dominant CIRCULAR/FORCE_MAIN shape (shares
-// the table index between A and R); falls back to the two separate dispatchers
-// for every other shape. Range form — see apply_area_kernel.
+// Combined area + hydraulic radius over one group (single depth gather). A
+// cheb-backed group (POLYGON always; any shape under XSECT_GEOMETRY EXACT)
+// takes a dedicated fused branch — one chebAll pass yields A and P together,
+// so R = A/P is free, versus calling apply_area_kernel then apply_hydrad_kernel
+// separately, which would independently re-walk the same piece/Clenshaw three
+// times (once for area, then again for area and once more for perimeter
+// inside getRofY's chebRofY). Falls back to the fused circular table kernel
+// for the dominant CIRCULAR/FORCE_MAIN LEGACY-mode shape (shares the table
+// index between A and R), or the two separate dispatchers for every other
+// shape. Range form — see apply_area_kernel.
 static void apply_area_hydrad_kernel(const ShapeGroup& g, const double* local_d,
                                      double* local_a, double* local_h,
                                      int lo, int n) {
-    if (g.shape == XSectShape::CIRCULAR || g.shape == XSectShape::FORCE_MAIN) {
+    if (!g.cheb.empty()) {
+        for (int k = lo; k < lo + n; ++k) {
+            auto uk = static_cast<std::size_t>(k);
+            if (g.cheb[uk]) {
+                cheb_getAofY_getRofY_fast(*g.cheb[uk], local_d[uk],
+                                          local_a[uk], local_h[uk]);
+            } else {
+                const XSectParams xs = paramsAt(g, k);
+                local_a[uk] = xsect::getAofY(xs, local_d[uk]);
+                local_h[uk] = xsect::getRofY(xs, local_d[uk]);
+            }
+        }
+    } else if (g.shape == XSectShape::CIRCULAR || g.shape == XSectShape::FORCE_MAIN) {
         xsect_batch::area_hydrad_circular(local_d + lo, norm_param(g) + lo,
                                           g.a_full.data() + lo, g.r_full.data() + lo,
                                           local_a + lo, local_h + lo, n);
