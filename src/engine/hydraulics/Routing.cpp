@@ -51,10 +51,10 @@ namespace openswmm {
 // because the function is tiny and tightly coupled to the SoA layout.
 // ============================================================================
 
-static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
+static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
-    auto ls = links.xsect_shape[uk];
-    xs.type   = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    xs.type = link::translateShape(links.xsect_shape[uk]);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];
@@ -65,6 +65,11 @@ static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
     xs.a_bot  = links.xsect_a_bot[uk];
     xs.s_bot  = links.xsect_s_bot[uk];
     xs.r_bot  = links.xsect_r_bot[uk];
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
+    }
     return xs;
 }
 
@@ -78,50 +83,18 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     int n_links = ctx.n_links();
     int n_nodes = ctx.n_nodes();
 
-    // Build XSectParams array from ctx.links SoA fields
-    // NOTE: LinkData::XsectShape and XSectBatch::XSectShape have different
-    //       orderings. LinkData follows legacy enums.h (CIRCULAR=0), while
-    //       XSectBatch prepends DUMMY=0 and reorders some shapes.
-    //       Use explicit mapping to avoid misalignment.
-    auto translateShape = [](XsectShape link_shape) -> int {
-        switch (link_shape) {
-            case XsectShape::CIRCULAR:        return static_cast<int>(XSectShape::CIRCULAR);
-            case XsectShape::FILLED_CIRCULAR: return static_cast<int>(XSectShape::FILLED_CIRCULAR);
-            case XsectShape::RECT_CLOSED:     return static_cast<int>(XSectShape::RECT_CLOSED);
-            case XsectShape::RECT_OPEN:       return static_cast<int>(XSectShape::RECT_OPEN);
-            case XsectShape::TRAPEZOIDAL:     return static_cast<int>(XSectShape::TRAPEZOIDAL);
-            case XsectShape::TRIANGULAR:      return static_cast<int>(XSectShape::TRIANGULAR);
-            case XsectShape::PARABOLIC:       return static_cast<int>(XSectShape::PARABOLIC);
-            case XsectShape::POWER:           return static_cast<int>(XSectShape::POWERFUNC);
-            case XsectShape::MODBASKETHANDLE: return static_cast<int>(XSectShape::MOD_BASKET);
-            case XsectShape::EGGSHAPED:       return static_cast<int>(XSectShape::EGGSHAPED);
-            case XsectShape::HORSESHOE:       return static_cast<int>(XSectShape::HORSESHOE);
-            case XsectShape::GOTHIC:          return static_cast<int>(XSectShape::GOTHIC);
-            case XsectShape::CATENARY:        return static_cast<int>(XSectShape::CATENARY);
-            case XsectShape::SEMIELLIPTICAL:  return static_cast<int>(XSectShape::SEMIELLIPTICAL);
-            case XsectShape::BASKETHANDLE:    return static_cast<int>(XSectShape::BASKETHANDLE);
-            case XsectShape::SEMICIRCULAR:    return static_cast<int>(XSectShape::SEMICIRCULAR);
-            case XsectShape::RECT_TRIANG:     return static_cast<int>(XSectShape::RECT_TRIANG);
-            case XsectShape::RECT_ROUND:      return static_cast<int>(XSectShape::RECT_ROUND);
-            case XsectShape::HORIZ_ELLIPSE:   return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
-            case XsectShape::VERT_ELLIPSE:    return static_cast<int>(XSectShape::VERT_ELLIPSE);
-            case XsectShape::ARCH:            return static_cast<int>(XSectShape::ARCH);
-            case XsectShape::IRREGULAR:       return static_cast<int>(XSectShape::IRREGULAR);
-            case XsectShape::CUSTOM:          return static_cast<int>(XSectShape::CUSTOM);
-            case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
-            case XsectShape::STREET_XSECT:    return static_cast<int>(XSectShape::STREET_XSECT);
-            case XsectShape::DUMMY:           return static_cast<int>(XSectShape::DUMMY);
-            default:                          return static_cast<int>(XSectShape::DUMMY);
-        }
-    };
-
+    // Build XSectParams array from ctx.links SoA fields. LinkData::XsectShape
+    // and XSectBatch::XSectShape have different orderings (LinkData follows
+    // legacy enums.h with CIRCULAR=0; XSectBatch prepends DUMMY=0 and
+    // reorders some shapes) — link::translateShape (Link.cpp) is the single
+    // canonical mapping between them.
     std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
 
         auto& xs = xsect_params[uj];
-        xs.type   = translateShape(ctx.links.xsect_shape[uj]);
+        xs.type   = link::translateShape(ctx.links.xsect_shape[uj]);
         // Cache translated shape code to avoid per-timestep switch dispatch
         ctx.links.xsect_batch_shape[uj] = xs.type;
         xs.y_full = ctx.links.xsect_y_full[uj];
@@ -246,6 +219,10 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 
     // Attach transect tables for IRREGULAR cross-sections
     groups_.attachTransectTables(ctx);
+
+    // Attach compiled Chebyshev boundaries for POLYGON cross-sections (and,
+    // under XSECT_GEOMETRY EXACT, any other shape too).
+    groups_.attachChebSections(ctx);
 
     // Cache outfall → connecting-conduit mapping so setAllOutfallDepths
     // skips an O(n_links) inner scan on every Picard iteration.
@@ -562,6 +539,14 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             double length = CD.length[ucr];
             if (length <= 0.0) length = CD.mod_length[ucr];
             int batch_shape = links.xsect_batch_shape[uj];
+            // isOpen(int) can't classify a compiled boundary (POLYGON, or any
+            // shape under XSECT_GEOMETRY EXACT) — look up ChebSection::is_open
+            // directly rather than building a full XSectParams for this check.
+            const int cheb_idx = links.xsect_cheb_idx[uj];
+            const bool isOpenShape =
+                (cheb_idx >= 0 && static_cast<std::size_t>(cheb_idx) < ctx.cheb_sections.size())
+                    ? ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)].is_open
+                    : xsect::isOpen(batch_shape);
 
             // Evaporation for open conduits only.
             //
@@ -579,7 +564,7 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // The transect top-width below uses the linear approximation; the
             // faithful getWofY was tried and does NOT resolve the parity gap
             // (the gap is the timing, not the width). See PARITY_FINDINGS.
-            if (xsect::isOpen(batch_shape) && evap_rate > 0.0) {
+            if (isOpenShape && evap_rate > 0.0) {
                 double top_width = 0.0;
                 if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
                     batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
@@ -592,6 +577,8 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                     xs.y_full = links.xsect_y_full[uj];
                     xs.a_full = links.xsect_a_full[uj];
                     xs.w_max  = links.xsect_w_max[uj];
+                    if (cheb_idx >= 0 && static_cast<std::size_t>(cheb_idx) < ctx.cheb_sections.size())
+                        xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)];
                     top_width = xsect::getWofY(xs, depth);
                 }
                 evap_loss = top_width * length * evap_rate;
@@ -605,6 +592,8 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                 xs.a_full = links.xsect_a_full[uj];
                 xs.w_max  = links.xsect_w_max[uj];
                 xs.yw_max = links.xsect_yw_max[uj];
+                if (cheb_idx >= 0 && static_cast<std::size_t>(cheb_idx) < ctx.cheb_sections.size())
+                    xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)];
 
                 double d_seep = depth;
                 // Limit depth to depth at max width (matching legacy)
@@ -719,7 +708,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         if (q < 0.0) q = 0.0;
 
         // Build cross-section params once (used for getAofS and getYofA below).
-        XSectParams xs = buildXSP(links, uj);
+        XSectParams xs = buildXSP(ctx, uj);
 
         // Manning normal-depth area.
         double q_full = CD.q_full[ucr];

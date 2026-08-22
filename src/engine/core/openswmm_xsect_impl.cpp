@@ -69,6 +69,7 @@ using openswmm::transect::TransectData;
 struct XSectHandle {
     XSectParams  params{};
     TransectData table{};        ///< Owned; only populated for tabulated shapes.
+    openswmm::chebsec::ChebSection cheb{}; ///< Owned; only populated for a compiled boundary.
     XsectShape   shape = XsectShape::CIRCULAR;   ///< Public (storage) shape code.
     int          unit_system = 0;                ///< 0 = US, 1 = SI.
     int          flow_units  = 0;                ///< FlowUnits code (0..5).
@@ -131,12 +132,12 @@ bool valid_input(double v) { return std::isfinite(v) && v >= 0.0; }
 
 bool is_tabulated(XsectShape s) {
     return s == XsectShape::IRREGULAR || s == XsectShape::CUSTOM ||
-           s == XsectShape::STREET_XSECT;
+           s == XsectShape::STREET_XSECT || s == XsectShape::POLYGON;
 }
 
 bool valid_shape(int s) {
     return s >= static_cast<int>(XsectShape::CIRCULAR) &&
-           s <= static_cast<int>(XsectShape::DUMMY);
+           s <= static_cast<int>(XsectShape::POLYGON);
 }
 
 // ============================================================================
@@ -187,13 +188,13 @@ double k_area_of_sf(const XSectParams& p, double s)     { return openswmm::xsect
 double k_dsda(const XSectParams& p, double a)           { return openswmm::xsect::getdSdA(p, a); }
 double k_ycrit(const XSectParams& p, double q)          { return openswmm::xsect::getYcrit(p, q); }
 
-const char* const kShapeNames[26] = {
+const char* const kShapeNames[27] = {
     "CIRCULAR", "FILLED_CIRCULAR", "RECT_CLOSED", "RECT_OPEN", "TRAPEZOIDAL",
     "TRIANGULAR", "PARABOLIC", "POWER", "MODBASKETHANDLE", "EGGSHAPED",
     "HORSESHOE", "GOTHIC", "CATENARY", "SEMIELLIPTICAL", "BASKETHANDLE",
     "SEMICIRCULAR", "RECT_TRIANG", "RECT_ROUND", "HORIZ_ELLIPSE",
     "VERT_ELLIPSE", "ARCH", "IRREGULAR", "CUSTOM", "FORCE_MAIN",
-    "STREET_XSECT", "DUMMY"
+    "STREET_XSECT", "DUMMY", "POLYGON"
 };
 
 } // namespace
@@ -412,7 +413,8 @@ SWMM_ENGINE_API int swmm_link_create_xsect(SWMM_Engine engine, int link_idx,
     // buildXSectParams reads the geometry the engine actually resolved, so a
     // link handle reflects the model rather than re-deriving from raw geoms.
     h->params = openswmm::link::buildXSectParams(ctx.links, uidx,
-                                                 &ctx.transect_tables);
+                                                 &ctx.transect_tables,
+                                                 &ctx.cheb_sections);
 
     // ...but it takes the shape from links.xsect_batch_shape, which is a
     // hot-loop cache that SWMMEngine::initialize() fills — and then only for
@@ -435,6 +437,15 @@ SWMM_ENGINE_API int swmm_link_create_xsect(SWMM_Engine engine, int link_idx,
         h->params.hrad_tbl          = h->table.hrad_tbl;
         h->params.width_tbl         = h->table.width_tbl;
         h->params.transect_tbl_size = openswmm::transect::N_TRANSECT_TBL;
+    }
+
+    // Same lifetime concern for a compiled Chebyshev boundary: buildXSectParams
+    // aimed params.cheb into ctx.cheb_sections, which dies with the engine.
+    // ChebSection is POD/trivially copyable (see ChebSection.hpp), so take our
+    // own copy and re-point at it, exactly like the transect table above.
+    if (h->params.cheb) {
+        h->cheb = *h->params.cheb;
+        h->params.cheb = &h->cheb;
     }
 
     *out = h.release();

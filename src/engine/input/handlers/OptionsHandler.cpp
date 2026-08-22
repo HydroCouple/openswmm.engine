@@ -479,6 +479,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             if      (nc == "EXPLICIT")      opt.node_continuity = NodeContinuity::EXPLICIT;
             else if (nc == "SEMI_IMPLICIT") opt.node_continuity = NodeContinuity::SEMI_IMPLICIT;
 
+        } else if (key == "XSECT_GEOMETRY") {
+            const std::string xg = norm(val);
+            if      (xg == "LEGACY") opt.xsect_geometry = XsectGeometryMode::LEGACY;
+            else if (xg == "EXACT")  opt.xsect_geometry = XsectGeometryMode::EXACT;
+
         } else if (key == "VIRTUAL_JUNCTION_MOMENTUM") {
             // RETIRED 2026-08-14. FULL is accepted and warned for one release,
             // then the keyword goes the way of FV_NODE_CELL_COUPLING above.

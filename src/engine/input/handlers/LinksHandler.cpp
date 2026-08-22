@@ -317,6 +317,7 @@ static const std::unordered_map<std::string, XsectShape> SHAPE_MAP = {
     {"FORCE_MAIN",      XsectShape::FORCE_MAIN},
     {"STREET",          XsectShape::STREET_XSECT},
     {"DUMMY",           XsectShape::DUMMY},
+    {"POLYGON",         XsectShape::POLYGON},
 };
 
 void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& lines) {
@@ -339,11 +340,25 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         auto it = SHAPE_MAP.find(shape_str);
         if (it != SHAPE_MAP.end()) {
             ctx.links.xsect_shape[idx] = it->second;
+        } else {
+            // A bad shape keyword used to fall through silently, leaving the
+            // link at its default-initialized CIRCULAR shape with Geom1-4
+            // still parsed as if they were a circular pipe's diameter/etc —
+            // e.g. a typo'd EGGSHAPED (correct keyword: EGG), or a nonsense
+            // keyword, both silently became a 2 ft circular pipe with no
+            // error and no warning. A bad [OPTIONS] keyword raises
+            // ERR_KEYWORD; a bad shape keyword must too.
+            ctx.errors.push_back(format_error(ERR_KEYWORD, shape_str));
+            continue;
         }
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
         // STREET shapes:    tok[2] is street name, not a dimension.
         // CUSTOM shapes:    tok[2] = y_full, tok[3] = shape curve name.
+        // POLYGON shapes:   tok[2] = scale, tok[3] = open-flag (both genuine
+        //                   numbers, captured by the raw Geom1-4 block below);
+        //                   curve name follows Barrels at tok[7], not tok[3]
+        //                   like CUSTOM, since tok[3] here is real geometry.
         // All need deferred resolution (TRANSECTS/STREETS/CURVES may not be
         // parsed yet).
         if (ctx.links.xsect_shape[idx] == XsectShape::IRREGULAR ||
@@ -358,13 +373,32 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
                 ctx.links.pump_curve_name[idx] = tok[3]; // Shape curve name
                 ctx.links.xsect_curve[idx] = -1;
             }
+        } else if (ctx.links.xsect_shape[idx] == XsectShape::POLYGON) {
+            // y_full/w_max come from PostParseResolver's compile() of the
+            // boundary curve, not from these tokens — leave them at their
+            // zero default rather than transiently holding scale/open-flag.
+            if (tok.size() > 7) {
+                ctx.links.pump_curve_name[idx] = tok[7]; // Boundary curve name
+                ctx.links.xsect_cheb_idx[idx] = -1;
+            } else {
+                // A row short of tok[7] (e.g. Barrels omitted, which is
+                // optional for every other shape) leaves pump_curve_name
+                // empty; PostParseResolver's POLYGON block silently skips an
+                // empty curve name, so without this the link would fall
+                // through to a much later, harder-to-place "no usable
+                // cross-section" error instead of pointing at the actual
+                // malformed [XSECTIONS] row.
+                ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+                continue;
+            }
         } else {
             // Geom1 = full depth (diameter for circular, etc.)
             if (tok.size() > 2) ctx.links.xsect_y_full[idx] = to_double(tok[2]);
         }
 
-        // Geom2 = width or second parameter (shape-dependent, skip for CUSTOM)
-        if (ctx.links.xsect_shape[idx] != XsectShape::CUSTOM) {
+        // Geom2 = width or second parameter (shape-dependent, skip for CUSTOM/POLYGON)
+        if (ctx.links.xsect_shape[idx] != XsectShape::CUSTOM &&
+            ctx.links.xsect_shape[idx] != XsectShape::POLYGON) {
             if (tok.size() > 3) ctx.links.xsect_w_max[idx]  = to_double(tok[3]);
         }
 
@@ -396,8 +430,10 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
                 ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] = barrels;
         }
 
-        // Culvert code (optional, token 7)
-        if (tok.size() > 7 && cr >= 0) {
+        // Culvert code (optional, token 7). Not for POLYGON — token 7 there
+        // is the boundary curve name, not a number.
+        if (tok.size() > 7 && cr >= 0 &&
+            ctx.links.xsect_shape[idx] != XsectShape::POLYGON) {
             int cc = static_cast<int>(to_double(tok[7]));
             if (cc > 0)
                 ctx.link_subtypes.conduits.culvert_code[static_cast<std::size_t>(cr)] = cc;

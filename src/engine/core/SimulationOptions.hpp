@@ -131,6 +131,33 @@ enum class NodeContinuity : int {
     SEMI_IMPLICIT = 1   ///< Unified semi-implicit formulation
 };
 
+/**
+ * @brief Cross-section geometry backend (`[OPTIONS] XSECT_GEOMETRY`).
+ *
+ * @details Maintainer decision, 2026-08-19 (see project history): ship
+ *          alpha-gated, default LEGACY.
+ *  - LEGACY: every shape (built-in and POLYGON) evaluates through the
+ *    EPA-parity 51-point tables / closed-form formulas it always has.
+ *    `test_xsect_kernels_parity` runs in this mode — existing models see no
+ *    change.
+ *  - EXACT: every self-contained shape (built-in AND POLYGON) is compiled to
+ *    an exact arc/line boundary and evaluated through the piecewise-
+ *    Chebyshev path (chebAll). Parity with EPA SWMM 5 is INTENTIONALLY
+ *    broken at the ~1e-3-and-below level documented in the design notes —
+ *    the new numbers are more accurate, not bit-identical. Alpha /
+ *    experimental: no committed second regression baseline yet.
+ *
+ * Specified in [OPTIONS] as:
+ * @code
+ * XSECT_GEOMETRY  LEGACY  ;; default
+ * XSECT_GEOMETRY  EXACT
+ * @endcode
+ */
+enum class XsectGeometryMode : int {
+    LEGACY = 0,
+    EXACT  = 1
+};
+
 // ============================================================================
 // SimulationOptions struct
 // ============================================================================
@@ -344,6 +371,9 @@ struct SimulationOptions {
 
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
+
+    /** @brief Cross-section geometry backend. Default: LEGACY (EPA parity). */
+    XsectGeometryMode xsect_geometry = XsectGeometryMode::LEGACY;
 
     /** @brief Virtual-junction momentum treatment. Always 0 (BASIC).
      *  @details BASIC applies zero storage, the shared junction sigma and
