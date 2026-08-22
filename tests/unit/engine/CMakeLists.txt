@@ -301,19 +301,26 @@ set_property(TEST
     test_engine_site_drainage_builder
     APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
 
-# ---- Same defect, second fixture: the _h5b.* heat deck ----
-# `test_engine_heat_watershed` and `test_engine_heat_lid` both WRITE
+# ---- Same defect, second fixture: REMOVED AT THE ROOT, not locked ----
+# `test_engine_heat_watershed` and `test_engine_heat_lid` both WROTE
 # `_h5b.inp` / `_h5b.heat` into the shared data/ working directory and then
-# open them. Under `ctest -jN` one suite's config lands between the other's
-# write and its open, and the reader gets a deck it did not author: measured
-# 8 failures in 8 concurrent runs, every one of them
-# `HeatWatershedTest.RunoffLeavesAtTheSurfaceTemperatureNotTheRainTemperature`
-# reporting `SURFACE_EXCHANGE did not parse` — the gate's own SETUP catching
-# the wrong file rather than a wrong number. Both pass alone.
-set_property(TEST
-    test_engine_heat_watershed
-    test_engine_heat_lid
-    APPEND PROPERTY RESOURCE_LOCK h5b_heat_deck)
+# opened them. Under `ctest -jN` one suite's config landed between the other's
+# write and its open: measured 8 failures in 8 concurrent runs, every one
+# `SURFACE_EXCHANGE did not parse` — the gate's SETUP catching the WRONG FILE
+# rather than a wrong number. Both passed alone.
+#
+# A RESOURCE_LOCK fixed it by serialising the pair. The names are now unique
+# instead (`_h5lid.*` in the LID suite), which is strictly better for an
+# ACCIDENTAL collision: it costs no parallelism, and it protects against the
+# next test to pick the same name rather than only the pair someone noticed.
+#
+# The site_drainage lock above stays, because that case is different in kind —
+# a real committed fixture that nine tests genuinely share. You cannot rename
+# your way out of that one.
+#
+# A sweep at the time found a SECOND, unlocked instance nobody had hit:
+# `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
+# Also renamed. The check below is what stops a third.
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
@@ -758,4 +765,47 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     )
     set_tests_properties(test_engine_geopackage_external_content_reader
         PROPERTIES LABELS "unit")
+endif()
+
+
+# ---- No two test sources may share a scratch-fixture name ----
+# Every test here runs with data/ as its WORKING_DIRECTORY, so two files that
+# write the same "_name.ext" are one test wearing two names: under -jN they
+# race, and the failure surfaces as a CONTENT error (a parse failure, a wrong
+# value) rather than as a file conflict. That disguise is why the first
+# instance was written off as a flake and the second went unnoticed entirely.
+#
+# Fails at CONFIGURE time, before anything runs.
+# CONFIGURE_DEPENDS so ADDING a test file re-runs this check. Without it
+# the guard only sees the files that existed at the last configure — and
+# a new file is exactly when a name gets reused.
+file(GLOB _osw_test_sources CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
+set(_osw_seen_fixtures "")
+set(_osw_seen_owners "")
+set(_osw_fixture_clashes "")
+foreach(_src IN LISTS _osw_test_sources)
+    get_filename_component(_srcname "${_src}" NAME)
+    file(READ "${_src}" _content)
+    string(REGEX MATCHALL "\"_[A-Za-z0-9_]+\\.[A-Za-z0-9]+\"" _lits "${_content}")
+    list(REMOVE_DUPLICATES _lits)
+    foreach(_lit IN LISTS _lits)
+        list(FIND _osw_seen_fixtures "${_lit}" _idx)
+        if(_idx EQUAL -1)
+            list(APPEND _osw_seen_fixtures "${_lit}")
+            list(APPEND _osw_seen_owners "${_srcname}")
+        else()
+            list(GET _osw_seen_owners ${_idx} _first)
+            list(APPEND _osw_fixture_clashes
+                 "  ${_lit} written by both ${_first} and ${_srcname}")
+        endif()
+    endforeach()
+endforeach()
+if(_osw_fixture_clashes)
+    string(REPLACE ";" "\n" _osw_clash_text "${_osw_fixture_clashes}")
+    message(FATAL_ERROR
+        "Two or more unit tests share a scratch-fixture name, and they all run "
+        "with data/ as their working directory:\n${_osw_clash_text}\n"
+        "Rename one of them. A RESOURCE_LOCK also works but costs parallelism "
+        "and only protects the pair you noticed. See the note above this check.")
 endif()
