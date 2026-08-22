@@ -37,6 +37,7 @@
 #include "xsect_tables.hpp"
 #include "XSectKernels.hpp"   // xsect::shape — the shared analytic formulas
 #include "XSectLookup.hpp"
+#include "ChebSectionBatch.hpp"  // chebsec::cheb*Batch — the fused cheb path
 #include "../core/SimulationContext.hpp"
 #include "../math/SIMD.hpp"
 
@@ -761,28 +762,18 @@ static inline XSectParams paramsAt(const ShapeGroup& g, int k) {
     return xs;
 }
 
-/// R = A/P via chebsec::chebAll's ONE shared-basis pass, instead of
-/// xsect::getRofY's chebRofY (which independently re-walks the piece lookup
-/// and Clenshaw recurrence once for A and again for P). W/I1 fall out of the
-/// same pass and are discarded — still cheaper than two independent
-/// evaluations, since the basis terms are shared across all four fields.
-static inline double cheb_getRofY_fast(const chebsec::ChebSection& cs, double y) {
-    double a, w, p, i1;
-    chebsec::chebAll(cs, y, &a, &w, &p, &i1);
-    return (p > 0.0) ? a / p : 0.0;
-}
-
-/// A and R together via ONE chebAll pass — the fused counterpart to
-/// area_hydrad_circular for a compiled boundary. Calling apply_area_kernel
-/// then apply_hydrad_kernel back to back would walk the same piece/Clenshaw
-/// three times over (A once for area, then A again and P once for hydrad);
-/// this walks it once.
-static inline void cheb_getAofY_getRofY_fast(const chebsec::ChebSection& cs, double y,
-                                             double& a_out, double& r_out) {
-    double a, w, p, i1;
-    chebsec::chebAll(cs, y, &a, &w, &p, &i1);
-    a_out = a;
-    r_out = (p > 0.0) ? a / p : 0.0;
+/// True when this group has at least one member whose boundary did NOT
+/// compile, so the batch cheb calls will leave gaps that need filling.
+///
+/// @note Per element, never group-level. PostParseResolver's EXACT-mode
+///       compilation of a built-in shape can fail for one degenerate link
+///       while its group-mates succeed (documented at
+///       PostParseResolver.cpp:2112), leaving a null entry beside valid ones.
+static inline bool cheb_has_gaps(const ShapeGroup& g, int lo, int n) {
+    for (int k = lo; k < lo + n; ++k) {
+        if (!g.cheb[static_cast<std::size_t>(k)]) return true;
+    }
+    return false;
 }
 
 /// Get the area lookup table and size for a tabulated shape.
@@ -866,13 +857,20 @@ static void apply_area_kernel(const ShapeGroup& g,
             // g.cheb is non-empty only once some member of this group has a
             // compiled EXACT boundary (attachChebSections); the legacy
             // circular table kernel below knows nothing about xs.cheb, so it
-            // must be bypassed in favor of the cheb-aware scalar path, which
-            // is correct per element (paramsAt forwards g.cheb[uk], null or
-            // not) even for a group with a mix of compiled/uncompiled links.
+            // must be bypassed in favour of the compiled path. The batch call
+            // SKIPS elements with a null section (a mixed group is legal —
+            // one link's boundary can fail to compile while its group-mates
+            // succeed), so those are filled afterwards from the ordinary
+            // per-element dispatch, which paramsAt still feeds correctly.
             if (!g.cheb.empty()) {
-                for (int k = lo; k < lo + n; ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    local_a[uk] = xsect::getAofY(paramsAt(g, k), local_d[uk]);
+                chebsec::chebAofYBatch(g.cheb.data() + ulo, ld, la,
+                                       static_cast<std::size_t>(n));
+                if (cheb_has_gaps(g, lo, n)) {
+                    for (int k = lo; k < lo + n; ++k) {
+                        auto uk = static_cast<std::size_t>(k);
+                        if (!g.cheb[uk])
+                            local_a[uk] = xsect::getAofY(paramsAt(g, k), local_d[uk]);
+                    }
                 }
             } else {
                 xsect_batch::area_circular(ld, norm_param(g) + lo,
@@ -918,9 +916,14 @@ static void apply_area_kernel(const ShapeGroup& g,
             // cheb-aware path below — the same bypass already fixed for
             // CIRCULAR/FORCE_MAIN above, just reached from the other arm.
             if (!g.cheb.empty()) {
-                for (int k = lo; k < lo + n; ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    local_a[uk] = xsect::getAofY(paramsAt(g, k), local_d[uk]);
+                chebsec::chebAofYBatch(g.cheb.data() + ulo, ld, la,
+                                       static_cast<std::size_t>(n));
+                if (cheb_has_gaps(g, lo, n)) {
+                    for (int k = lo; k < lo + n; ++k) {
+                        auto uk = static_cast<std::size_t>(k);
+                        if (!g.cheb[uk])
+                            local_a[uk] = xsect::getAofY(paramsAt(g, k), local_d[uk]);
+                    }
                 }
                 break;
             }
@@ -964,13 +967,18 @@ static void apply_hydrad_kernel(const ShapeGroup& g,
         case XSectShape::FORCE_MAIN:
             // See apply_area_kernel — g.cheb non-empty means at least one
             // member compiled an EXACT boundary, which the legacy table
-            // kernel below cannot see; the scalar path is cheb-aware.
+            // kernel below cannot see. chebRofYBatch evaluates A and P from
+            // ONE basis recurrence (chebEval2), where reaching R through
+            // chebAll would evaluate W and I1 as well and discard them.
             if (!g.cheb.empty()) {
-                for (int k = lo; k < lo + n; ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    local_h[uk] = g.cheb[uk]
-                        ? cheb_getRofY_fast(*g.cheb[uk], local_d[uk])
-                        : xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                chebsec::chebRofYBatch(g.cheb.data() + ulo, ld, lh,
+                                       static_cast<std::size_t>(n));
+                if (cheb_has_gaps(g, lo, n)) {
+                    for (int k = lo; k < lo + n; ++k) {
+                        auto uk = static_cast<std::size_t>(k);
+                        if (!g.cheb[uk])
+                            local_h[uk] = xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                    }
                 }
             } else {
                 xsect_batch::hydrad_circular(ld, norm_param(g) + lo,
@@ -1012,11 +1020,14 @@ static void apply_hydrad_kernel(const ShapeGroup& g,
             // GOTHIC/CATENARY/SEMIELLIPTICAL/SEMICIRCULAR/POLYGON have no
             // table at all, so this used to look sufficient — it was not).
             if (!g.cheb.empty()) {
-                for (int k = lo; k < lo + n; ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    local_h[uk] = g.cheb[uk]
-                        ? cheb_getRofY_fast(*g.cheb[uk], local_d[uk])
-                        : xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                chebsec::chebRofYBatch(g.cheb.data() + ulo, ld, lh,
+                                       static_cast<std::size_t>(n));
+                if (cheb_has_gaps(g, lo, n)) {
+                    for (int k = lo; k < lo + n; ++k) {
+                        auto uk = static_cast<std::size_t>(k);
+                        if (!g.cheb[uk])
+                            local_h[uk] = xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                    }
                 }
                 break;
             }
@@ -1053,11 +1064,16 @@ static void apply_width_kernel(const ShapeGroup& g,
         case XSectShape::FORCE_MAIN:
             // See apply_area_kernel — g.cheb non-empty means at least one
             // member compiled an EXACT boundary, which the legacy table
-            // kernel below cannot see; the scalar path is cheb-aware.
+            // kernel below cannot see.
             if (!g.cheb.empty()) {
-                for (int k = lo; k < lo + n; ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    local_w[uk] = xsect::getWofY(paramsAt(g, k), local_d[uk]);
+                chebsec::chebWofYBatch(g.cheb.data() + ulo, ld, lw,
+                                       static_cast<std::size_t>(n));
+                if (cheb_has_gaps(g, lo, n)) {
+                    for (int k = lo; k < lo + n; ++k) {
+                        auto uk = static_cast<std::size_t>(k);
+                        if (!g.cheb[uk])
+                            local_w[uk] = xsect::getWofY(paramsAt(g, k), local_d[uk]);
+                    }
                 }
             } else {
                 xsect_batch::width_circular(ld, norm_param(g) + lo,
@@ -1095,9 +1111,14 @@ static void apply_width_kernel(const ShapeGroup& g,
             // of them and never reach the cheb-aware path below. Same bypass
             // as area/hydrad above.
             if (!g.cheb.empty()) {
-                for (int k = lo; k < lo + n; ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    local_w[uk] = xsect::getWofY(paramsAt(g, k), local_d[uk]);
+                chebsec::chebWofYBatch(g.cheb.data() + ulo, ld, lw,
+                                       static_cast<std::size_t>(n));
+                if (cheb_has_gaps(g, lo, n)) {
+                    for (int k = lo; k < lo + n; ++k) {
+                        auto uk = static_cast<std::size_t>(k);
+                        if (!g.cheb[uk])
+                            local_w[uk] = xsect::getWofY(paramsAt(g, k), local_d[uk]);
+                    }
                 }
                 break;
             }
@@ -1124,11 +1145,13 @@ static void apply_width_kernel(const ShapeGroup& g,
 
 // Combined area + hydraulic radius over one group (single depth gather). A
 // cheb-backed group (POLYGON always; any shape under XSECT_GEOMETRY EXACT)
-// takes a dedicated fused branch — one chebAll pass yields A and P together,
-// so R = A/P is free, versus calling apply_area_kernel then apply_hydrad_kernel
-// separately, which would independently re-walk the same piece/Clenshaw three
-// times (once for area, then again for area and once more for perimeter
-// inside getRofY's chebRofY). Falls back to the fused circular table kernel
+// takes a dedicated fused branch — chebARofYBatch walks the piece once and
+// runs ONE basis recurrence for A and P, so R = A/P is free. Calling
+// apply_area_kernel then apply_hydrad_kernel separately would re-walk the
+// same piece three times over; reaching A and R through chebAll (what this
+// did before Phase 5B) walks it once but evaluates W and I1 as well and
+// throws them away, which measured about 1.6x more expensive than the
+// two-field form on a circular section. Falls back to the fused table kernel
 // for the dominant CIRCULAR/FORCE_MAIN LEGACY-mode shape (shares the table
 // index between A and R), or the two separate dispatchers for every other
 // shape. Range form — see apply_area_kernel.
@@ -1136,12 +1159,14 @@ static void apply_area_hydrad_kernel(const ShapeGroup& g, const double* local_d,
                                      double* local_a, double* local_h,
                                      int lo, int n) {
     if (!g.cheb.empty()) {
-        for (int k = lo; k < lo + n; ++k) {
-            auto uk = static_cast<std::size_t>(k);
-            if (g.cheb[uk]) {
-                cheb_getAofY_getRofY_fast(*g.cheb[uk], local_d[uk],
-                                          local_a[uk], local_h[uk]);
-            } else {
+        const auto ulo = static_cast<std::size_t>(lo);
+        chebsec::chebARofYBatch(g.cheb.data() + ulo, local_d + lo,
+                                local_a + lo, local_h + lo,
+                                static_cast<std::size_t>(n));
+        if (cheb_has_gaps(g, lo, n)) {
+            for (int k = lo; k < lo + n; ++k) {
+                auto uk = static_cast<std::size_t>(k);
+                if (g.cheb[uk]) continue;
                 const XSectParams xs = paramsAt(g, k);
                 local_a[uk] = xsect::getAofY(xs, local_d[uk]);
                 local_h[uk] = xsect::getRofY(xs, local_d[uk]);
@@ -1327,13 +1352,26 @@ void XSectGroups::setBypassMask(const std::uint8_t* bypassed_by_link) const {
             auto& p = packed_groups_[gi];
             p.shape = g.shape;
             p.resize(g.count);
+            auto uc = static_cast<std::size_t>(g.count);
             if (!g.area_tables.empty()) {
-                auto uc = static_cast<std::size_t>(g.count);
                 p.area_tables.resize(uc, nullptr);
                 p.hrad_tables.resize(uc, nullptr);
                 p.width_tables.resize(uc, nullptr);
                 p.transect_tbl_size = g.transect_tbl_size;
             }
+            // The compiled-boundary array has to be mirrored for the SAME
+            // reason the transect tables do, and leaving it out was a real
+            // bug (fixed in Phase 5B): every kernel decides "compiled or
+            // legacy?" on `g.cheb.empty()`, and `g` here is whatever
+            // maskedGroup() returns. A partially-bypassed group returns the
+            // PACKED view, so an unmirrored cheb array made that view look
+            // like a LEGACY-only group and silently routed it back to the
+            // tables. That is the common case, not a corner: DYNWAVE runs
+            // ~9 Picard iterations per step with most links converged, so
+            // most groups are partially bypassed most of the time. Same
+            // class of silent EXACT bypass as the two Phase 5 found in the
+            // kernels themselves, reached through a third route.
+            if (!g.cheb.empty()) p.cheb.resize(uc, nullptr);
         }
     }
 
@@ -1351,6 +1389,7 @@ void XSectGroups::setBypassMask(const std::uint8_t* bypassed_by_link) const {
         if (nb == g.count) { packed_count_[gi] = 0;              continue; }
 
         const bool has_tbl = !g.area_tables.empty();
+        const bool has_cheb = !g.cheb.empty();
         int n = 0;
         for (int k = 0; k < g.count; ++k) {
             auto uk = static_cast<std::size_t>(k);
@@ -1373,6 +1412,7 @@ void XSectGroups::setBypassMask(const std::uint8_t* bypassed_by_link) const {
                 p.hrad_tables[un]  = g.hrad_tables[uk];
                 p.width_tables[un] = g.width_tables[uk];
             }
+            if (has_cheb) p.cheb[un] = g.cheb[uk];
             ++n;
         }
         p.count = n;  // the kernels and gather/scatter read the view's count
