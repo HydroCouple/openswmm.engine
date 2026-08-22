@@ -185,17 +185,58 @@ int runOnce(const char* inp, const char* rpt, const char* out,
         ++steps;
     }
 
-    // Order matters and is worth testing: a driver that reports before
-    // ending has not had the final continuity terms computed.
-    if (v.report_before_end) {
-        swmm_engine_report(e);
-        swmm_engine_end(e);
-    } else {
-        swmm_engine_end(e);
-        swmm_engine_report(e);
-    }
+    // Order matters, and so does LOOKING AT WHAT THE ENGINE SAYS ABOUT IT.
+    //
+    // The first version of this driver discarded both return codes, and the
+    // round that ran it recorded `report()` before `end()` as "legal and
+    // silently lossy — no crash, no error code." There IS a code. An
+    // instrument that ignores a return value cannot tell "the engine allowed
+    // this" from "the engine refused and nobody asked".
+    //
+    // MEASURED, once the codes were printed — and it is not the call the
+    // correction predicted:
+    //
+    //   * `step()` sets `ENDED` when the run finishes (SWMMEngine.cpp:1177),
+    //     so by the time this driver reports, the engine is ALREADY ended.
+    //     `report()`'s `state != ENDED` guard (4924) therefore never fires:
+    //     **`report()` succeeds**, and sets `REPORTED` (4970).
+    //   * `end()` accepts only `RUNNING` or `ENDED` (4813). It sees
+    //     `REPORTED`. **`end()` is the call the engine refuses**, with
+    //     SWMM_ERR_WRONG_STATE (6).
+    //
+    // And the two artefacts have two different causes, separated by
+    // falsifier ii-b (let `end()` accept `REPORTED`):
+    //
+    //   * the `.out` is 24 bytes short because `end()` never wrote its
+    //     closing block — ii-b makes it byte-identical to `cli`;
+    //   * the `.rpt` says "All links are stable." and prints a flat
+    //     `300.000 - 300.000 sec` ladder because `report()` ran BEFORE
+    //     `end()` computed those two diagnostics — ii-b does NOT bring them
+    //     back, because by then the report is already written.
+    //
+    // Removing `report()`'s guard entirely (falsifier ii) changes nothing at
+    // all, which is how the attribution was settled rather than argued.
+    // Reported at the CALL, not after both. `swmm_get_last_error_msg` returns
+    // whatever the engine set most recently, so printing after the pair would
+    // caption a failing `report()` with a later `end()`'s message -- an
+    // instrument that mislabels which call failed is the same defect this
+    // file was corrected for, one step smaller.
+    auto call = [&](const char* what, int rc) {
+        if (rc != SWMM_OK)
+            std::printf("  [%s] %s returned %d: %s\n", v.name, what, rc,
+                        swmm_get_last_error_msg(e));
+        return rc;
+    };
 
-    swmm_engine_close(e);
+    if (v.report_before_end) {
+        call("report()", swmm_engine_report(e));
+        call("end()",    swmm_engine_end(e));
+    } else {
+        call("end()",    swmm_engine_end(e));
+        call("report()", swmm_engine_report(e));
+    }
+    call("close()", swmm_engine_close(e));
+
     swmm_engine_destroy(e);
 
     *out_elapsed = elapsed;

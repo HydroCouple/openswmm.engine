@@ -301,6 +301,20 @@ set_property(TEST
     test_engine_site_drainage_builder
     APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
 
+# ---- Same defect, second fixture: the _h5b.* heat deck ----
+# `test_engine_heat_watershed` and `test_engine_heat_lid` both WRITE
+# `_h5b.inp` / `_h5b.heat` into the shared data/ working directory and then
+# open them. Under `ctest -jN` one suite's config lands between the other's
+# write and its open, and the reader gets a deck it did not author: measured
+# 8 failures in 8 concurrent runs, every one of them
+# `HeatWatershedTest.RunoffLeavesAtTheSurfaceTemperatureNotTheRainTemperature`
+# reporting `SURFACE_EXCHANGE did not parse` — the gate's own SETUP catching
+# the wrong file rather than a wrong number. Both pass alone.
+set_property(TEST
+    test_engine_heat_watershed
+    test_engine_heat_lid
+    APPEND PROPERTY RESOURCE_LOCK h5b_heat_deck)
+
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
 # SectionHandlers2D, Default2DOutputPlugin) are NOT compiled into the test here:
@@ -473,6 +487,15 @@ if(OPENSWMM_BUILD_2D)
     # rederivation, conductance sign + FD parity.
     add_gtest_unit(test_engine_2d_windowless_coupling
                    test_2d_windowless_coupling.cpp)
+    # Track I — per-cell 2D infiltration (plan §5.5, D-I1…D-I6). Unit gates
+    # over Infil2D itself: the SI⇄ft/project-unit adapter (anchored on
+    # hand-computed SI values, not on a re-derivation of the adapter), the
+    # D-I3 override>tag>'*'>none resolution order, and D-I4 validation.
+    add_gtest_unit(test_engine_2d_infil test_2d_infil.cpp)
+    # Track I end-to-end: mass-balance ledger closure, the per-cell continuity
+    # residual (the silent call site 4), lazy/inactive-cell equivalence,
+    # section round-trip and the C API surface.
+    add_gtest_unit(test_engine_2d_infil_integration test_2d_infil_integration.cpp)
 endif()
 
 # ---------------------------------------------------------------------------
