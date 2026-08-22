@@ -2873,9 +2873,23 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                 // Update quality mass balance and per-subcatch total load
                 if (total_washoff_load > 0.0) {
                     double mass = total_washoff_load * dt_runoff;
-                    ctx_.mass_balance.qual_runoff_load[
-                        static_cast<std::size_t>(p)] += mass;
-                    // Accumulate per-subcatchment washoff load
+                    // The LEDGER term is booked only when this subcatchment's
+                    // load actually reaches the conveyance system — legacy's
+                    // third `!= subcatchIndex` site (surfqual.c:363,
+                    // `outNode >= 0 || outSubcatch == subcatchIndex`). A
+                    // subcatchment shedding onto a peer has not delivered its
+                    // load to the system; the receiver books it on discharge,
+                    // and adding it here counts the same mass twice. The
+                    // volumetric sibling of this is `421e95c2`.
+                    const bool load_reaches_system =
+                        (ctx_.subcatches.outlet_node[ui] >= 0 ||
+                         ctx_.subcatches.outlet_subcatch[ui] == i);
+                    if (load_reaches_system)
+                        ctx_.mass_balance.qual_runoff_load[
+                            static_cast<std::size_t>(p)] += mass;
+                    // The PER-SUBCATCHMENT total is unconditional, as legacy's
+                    // is (surfqual.c:356, above its own guard): it is what this
+                    // subcatchment washed off, not what the system received.
                     ctx_.subcatches.total_load[sq_idx] += mass;
                 }
             } // end pollutant loop
@@ -6494,7 +6508,25 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         int out_sc = ctx_.subcatches.outlet_subcatch[ui];
-        if (out_sc >= 0 && out_sc < ctx_.n_subcatches()) {
+        // `out_sc != i` is legacy's guard (subcatch.c:546-548,
+        // `k >= 0 && k != subcatchIndex`) and its absence here was the whole
+        // defect: a subcatchment routed to ITSELF fed its own runoff back into
+        // its own run-on every step and recirculated. Measured against legacy
+        // 5.x on the selfroute fixture: 2.328 acre-feet of surface runoff
+        // booked against legacy's 0.417 — 5.6× — with −265 % continuity, while
+        // direct, 2-deep, 3-deep and all-direct cascades all agreed to the
+        // digit.
+        //
+        // A self-route is not a cascade. Legacy treats it as a subcatchment
+        // that discharges to the system like any other; the outlet name is
+        // simply a no-op. `421e95c2` already carries that reading in the
+        // runoff ledger (`sheds_to_self`), and this is the site that makes the
+        // ledger's number true rather than merely consistent.
+        //
+        // This guard covers the age and temperature run-on seams below too:
+        // both live inside this branch, so a self-route was also feeding its
+        // own age and its own heat back to itself.
+        if (out_sc >= 0 && out_sc < ctx_.n_subcatches() && out_sc != i) {
             auto usc = static_cast<std::size_t>(out_sc);
             ctx_.subcatches.runon_inflow[usc] += ctx_.subcatches.runoff[ui];
             // A3: run-on carries the donor's runoff age. Without this the

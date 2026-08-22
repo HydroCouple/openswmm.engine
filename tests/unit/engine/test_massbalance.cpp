@@ -516,3 +516,162 @@ TEST(RunoffLedgerCascadeTest, RunOnIsNotBookedAsASystemOutput) {
         << "the ledger dropped something, but far too little to be SA's "
            "runoff: direct=" << direct << " cascade=" << cascade;
 }
+
+// ---------------------------------------------------------------------------
+// A self-routed subcatchment must not feed its own runoff back to itself.
+//
+// Found 2026-08-22 while writing the falsifier fixture for the CASCADE gate
+// above: `selfroute` booked 2.328 in against legacy 5.x's 0.417 -- 5.6x, with
+// -265 % continuity -- while direct, 2-deep, 3-deep and all-direct cascades
+// all agreed with legacy to the digit. The ledger guard added in 421e95c2 was
+// correct and could not help: the divergence is one layer up, in assembleRunon,
+// where the water genuinely recirculates.
+//
+// Legacy carries `!= subcatchIndex` in THREE places -- run-on distribution
+// (subcatch.c:546-548), the ledger (763), and washoff (surfqual.c:363). 421e95c2
+// matched only the second. That is lesson 142: porting one site is not porting
+// the invariant.
+//
+// The gate compares SELF-ROUTED against DIRECT on two fixtures differing only
+// in one outlet. A self-route is a no-op in legacy's model -- the subcatchment
+// discharges to the system exactly as if the outlet named a node -- so the two
+// must agree, and that equality is a far stronger statement than "smaller than
+// the broken value".
+TEST(RunoffLedgerCascadeTest, SelfRoutedSubcatchmentDoesNotRecirculate) {
+    double rain_direct = -1.0, rain_self = -1.0;
+    const double direct = runOnceAndGetRunoffTotal("selfroute_direct", "JN",
+                                                   &rain_direct);
+    // SA -> SA. Legacy treats the self-reference as no outlet subcatchment at
+    // all, so this must behave exactly like the line above.
+    const double self = runOnceAndGetRunoffTotal("selfroute_self", "SA",
+                                                 &rain_self);
+
+    ASSERT_GT(direct, 0.0) << "the direct fixture produced no runoff at all — "
+                              "the deck, not the guard";
+    EXPECT_NEAR(rain_self, rain_direct, rain_direct * 1e-9)
+        << "the outlet change altered PRECIPITATION, so the fixtures are not "
+           "comparable and nothing below counts";
+
+    // The invariant. Before the fix `self` was several times `direct`, because
+    // SA's runoff re-entered SA as run-on every step.
+    EXPECT_NEAR(self, direct, direct * 1e-6)
+        << "a self-routed subcatchment is not behaving like a directly "
+           "connected one: direct=" << direct << " self=" << self
+        << ". Ratio " << (direct > 0.0 ? self / direct : 0.0)
+        << " — greater than 1 means its runoff is recirculating.";
+}
+
+// ---------------------------------------------------------------------------
+// The quality half of the same guard.
+//
+// The two gates above are VOLUMETRIC and are blind to the washoff site: with
+// the run-on guard in place and the washoff guard removed, both still pass
+// while `qual_runoff_load` on a cascaded deck reads 1.522 lbs against the
+// directly-connected deck's 1.369 -- MORE load reaching the system than if
+// every subcatchment discharged straight to a node, which cannot happen.
+// That measurement is why this gate exists; without it the changeset's third
+// site is unasserted.
+//
+// Legacy is not usable as the control here. On this fixture EPA 5.x reports
+// Surface Buildup 0.885 lbs and Surface Runoff 0.000 against our 2.500 and
+// 1.369: the buildup/washoff functions themselves diverge, so a
+// cross-engine number would be measuring that gap rather than this guard.
+// The invariants below are internal differentials on one engine, which the
+// falsifier sweep showed do discriminate.
+namespace {
+
+// The cascade deck plus one pollutant on one land use. POW buildup with a
+// six-hour antecedent period gives a load large enough to be unambiguous,
+// and EXP washoff makes it depend on runoff rate rather than volume alone.
+std::string qualityDeck(const char* sa_outlet) {
+    return cascadeDeck(sa_outlet) +
+        "\n[POLLUTANTS]\n"
+        "TSS     MG/L   0.0    0.0  0.0  0.0  NO  *  0.0  0.0  0.0\n"
+        "\n[LANDUSES]\n"
+        "RESID   0  0  0\n"
+        "\n[COVERAGES]\n"
+        "SA      RESID  100\n"
+        "SB      RESID  100\n"
+        "\n[BUILDUP]\n"
+        "RESID   TSS  POW  100.0  1.0  1.0  AREA\n"
+        "\n[WASHOFF]\n"
+        "RESID   TSS  EXP  2.0  1.5  0  0\n";
+}
+
+// Returns the qual_runoff_load LEDGER term; `sa_total_out` receives SA's own
+// cumulative washoff, which is the other side of the split at :2886.
+double runQualityDeck(const std::string& base, const char* sa_outlet,
+                      double* sa_total_out) {
+    const std::string inp = forcedOutPath(base + ".inp");
+    std::ofstream(inp) << qualityDeck(sa_outlet);
+
+    SWMM_Engine e = swmm_engine_create();
+    EXPECT_NE(e, nullptr);
+    EXPECT_EQ(swmm_engine_open(e, inp.c_str(),
+                               forcedOutPath(base + ".rpt").c_str(),
+                               forcedOutPath(base + ".out").c_str(), nullptr),
+              0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        EXPECT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0 && ++guard < 100000);
+    EXPECT_EQ(swmm_engine_end(e), 0) << swmm_get_last_error_msg(e);
+
+    const auto& ctx = as_cpp_engine(e).context();
+    const double load = ctx.mass_balance.qual_runoff_load.empty()
+                        ? -1.0 : ctx.mass_balance.qual_runoff_load[0];
+    // SA is subcatchment 0 and TSS is pollutant 0, so total_load[0] is SA's.
+    if (sa_total_out != nullptr)
+        *sa_total_out = ctx.subcatches.total_load.empty()
+                        ? -1.0 : ctx.subcatches.total_load[0];
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return load;
+}
+
+}  // namespace
+
+TEST(RunoffLedgerCascadeTest, WashoffLoadIsBookedOnlyWhenItReachesTheSystem) {
+    double sa_direct = -1.0, sa_cascade = -1.0, sa_self = -1.0;
+    const double direct  = runQualityDeck("qual_direct",  "JN", &sa_direct);
+    const double cascade = runQualityDeck("qual_cascade", "SB", &sa_cascade);
+    const double self    = runQualityDeck("qual_self",    "SA", &sa_self);
+
+    ASSERT_GT(direct, 0.0) << "the direct fixture washed nothing off at all — "
+                              "the deck, not the guard";
+
+    // Same statement as the volumetric gate, in the quality ledger: a
+    // self-route is a no-op, so it must book exactly what a node outlet does.
+    EXPECT_NEAR(self, direct, direct * 1e-6)
+        << "a self-routed subcatchment's washoff load is not what a directly "
+           "connected one books: direct=" << direct << " self=" << self;
+
+    // Cascading SA must REMOVE SA's load from the ledger; the receiver books
+    // it when it discharges. Without the guard this rose ABOVE `direct`,
+    // which is the impossible signature.
+    EXPECT_LT(cascade, direct)
+        << "cascaded washoff load is still booked as reaching the system: "
+           "direct=" << direct << " cascade=" << cascade
+        << (cascade > direct
+                ? " — and it EXCEEDS the directly-connected deck, so the same "
+                  "mass is being counted twice"
+                : "");
+
+    // The other side of the split. `subcatches.total_load` is what the
+    // subcatchment washed off, not what the system received, so cascading
+    // must NOT zero it — legacy keeps its equivalent above its own guard
+    // (surfqual.c:356). Making this conditional too drove SA's total to 0.
+    EXPECT_GT(sa_cascade, 0.0)
+        << "SA's own washoff total was zeroed by the ledger guard: the "
+           "per-subcatchment total and the ledger term are different "
+           "questions and only the ledger term is conditional";
+    EXPECT_NEAR(sa_cascade, sa_direct, sa_direct * 1e-6)
+        << "SA washed off a different amount depending on where it drains, "
+           "which the per-subcatchment total should not see: direct="
+        << sa_direct << " cascade=" << sa_cascade;
+}
