@@ -1290,7 +1290,11 @@ TEST(SurfaceState, ClearResetForcings) {
     SurfaceStateData state;
     state.resize(2, 1);
 
-    // Set RESET forcing on cell 0, PERSIST on cell 1
+    // Set RESET forcing on cell 0, PERSIST on cell 1. forcing_ever_set is
+    // what the swmm_2d_force_* API stamps when it writes a prescription; the
+    // expiry sweep is skipped without it (it is dead work on every deck that
+    // never forces anything), so a direct-write test must stamp it too.
+    state.forcing_ever_set = true;
     state.rainfall_forced[0] = 1;
     state.rainfall_force_val[0] = 0.001;
     state.rainfall_persist[0] = 0;  // RESET

@@ -718,6 +718,7 @@ int swmm_2d_vertex_get_head(SWMM_Engine engine, int idx, double* head) {
     CHECK_VERT_IDX(idx, router2d);
     if (!head) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     *head = router2d.state().vert_head[idx];
     return SWMM_OK;
 }
@@ -727,6 +728,7 @@ int swmm_2d_vertex_get_heads_bulk(SWMM_Engine engine, double* heads) {
     CHECK_2D_ACTIVE(eng);
     if (!heads) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     auto& s = router2d.state();
     std::memcpy(heads, s.vert_head.data(), s.vert_head.size() * sizeof(double));
     return SWMM_OK;
@@ -737,6 +739,7 @@ int swmm_2d_vertex_get_render_depths_bulk(SWMM_Engine engine, double* depths) {
     CHECK_2D_ACTIVE(eng);
     if (!depths) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     auto& s = router2d.state();
     std::memcpy(depths, s.vert_depth_signed.data(),
                 s.vert_depth_signed.size() * sizeof(double));
@@ -882,6 +885,7 @@ int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
     s.rainfall_force_val[idx] = value;
     s.rainfall_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -900,6 +904,7 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
         s.rainfall_persist[i]   = static_cast<int8_t>(persist);
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -916,6 +921,7 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx,
     s.evap_force_val[idx] = value;
     s.evap_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -934,6 +940,7 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine,
         s.evap_persist[i]   = static_cast<int8_t>(persist);
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -950,6 +957,7 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
     s.coupling_force_val[idx] = value;
     s.coupling_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -971,6 +979,7 @@ int swmm_2d_force_clear_all(SWMM_Engine engine) {
         s.coupling_persist[i] = 0;
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -1060,6 +1069,7 @@ int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
 
     router2d.boundary().edge_bc_type[tri_idx * 3 + edge] =
         static_cast<int8_t>(bc_type);
+    router2d.invalidateBoundaryIndex();
     return SWMM_OK;
 }
 
