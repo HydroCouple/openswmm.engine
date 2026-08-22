@@ -909,6 +909,21 @@ static void apply_area_kernel(const ShapeGroup& g,
                                                g.transect_tbl_size, la, n);
             break;
         default: {
+            // g.cheb must be checked BEFORE either table lookup: EGG/
+            // HORSESHOE/BASKETHANDLE/HORIZ_ELLIPSE/VERT_ELLIPSE/ARCH have
+            // real area_table_for data, and GOTHIC/CATENARY/SEMIELLIPTICAL/
+            // SEMICIRCULAR have real area_inv_table_for data, so EVERY
+            // tabulated shape EXACT reconstructs would otherwise take its
+            // legacy table unconditionally and never reach the scalar
+            // cheb-aware path below — the same bypass already fixed for
+            // CIRCULAR/FORCE_MAIN above, just reached from the other arm.
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_a[uk] = xsect::getAofY(paramsAt(g, k), local_d[uk]);
+                }
+                break;
+            }
             auto tbl = area_table_for(g.shape);
             if (tbl.data) {
                 xsect_batch::area_tabulated(ld, norm_param(g) + lo,
@@ -989,22 +1004,31 @@ static void apply_hydrad_kernel(const ShapeGroup& g,
                                                g.transect_tbl_size, lh, n);
             break;
         default: {
+            // g.cheb must be checked BEFORE the table lookup: EGG/HORSESHOE/
+            // BASKETHANDLE/HORIZ_ELLIPSE/VERT_ELLIPSE/ARCH have real
+            // hydrad_table_for data too, so those would otherwise take their
+            // legacy table unconditionally and never reach the cheb-aware
+            // path below, exactly like the CIRCULAR bypass fixed above (only
+            // GOTHIC/CATENARY/SEMIELLIPTICAL/SEMICIRCULAR/POLYGON have no
+            // table at all, so this used to look sufficient — it was not).
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_h[uk] = g.cheb[uk]
+                        ? cheb_getRofY_fast(*g.cheb[uk], local_d[uk])
+                        : xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                }
+                break;
+            }
             auto tbl = hydrad_table_for(g.shape);
             if (tbl.data) {
                 xsect_batch::hydrad_tabulated(ld, norm_param(g) + lo,
                                               g.r_full.data() + lo, tbl.data, tbl.size,
                                               lh, n);
             } else {
-                // POLYGON (always) and any other shape reconstructed under
-                // XSECT_GEOMETRY EXACT land here — no legacy table exists at
-                // all, so g.cheb[uk] is set whenever the boundary compiled.
-                // See cheb_getRofY_fast: one shared chebAll pass, not
-                // getRofY's independent chebAofY + chebPofY.
                 for (int k = lo; k < lo + n; ++k) {
                     auto uk = static_cast<std::size_t>(k);
-                    local_h[uk] = (uk < g.cheb.size() && g.cheb[uk])
-                        ? cheb_getRofY_fast(*g.cheb[uk], local_d[uk])
-                        : xsect::getRofY(paramsAt(g, k), local_d[uk]);
+                    local_h[uk] = xsect::getRofY(paramsAt(g, k), local_d[uk]);
                 }
             }
             break;
@@ -1065,6 +1089,18 @@ static void apply_width_kernel(const ShapeGroup& g,
                                                g.transect_tbl_size, lw, n);
             break;
         default: {
+            // g.cheb must be checked BEFORE the table lookup — ALL 10
+            // tabulated shapes have real width_table_for data, so this would
+            // otherwise take the legacy table unconditionally for every one
+            // of them and never reach the cheb-aware path below. Same bypass
+            // as area/hydrad above.
+            if (!g.cheb.empty()) {
+                for (int k = lo; k < lo + n; ++k) {
+                    auto uk = static_cast<std::size_t>(k);
+                    local_w[uk] = xsect::getWofY(paramsAt(g, k), local_d[uk]);
+                }
+                break;
+            }
             auto tbl = width_table_for(g.shape);
             if (tbl.data) {
                 xsect_batch::width_tabulated(ld, norm_param(g) + lo,

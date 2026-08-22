@@ -1470,7 +1470,7 @@ struct XsectEval {
             double y1 = 0.0;
             double y2 = 0.99 * xs.y_full;
             double q2 = qCritical(y2, 0.0);
-            if (q2 < q) return std::min(xs.y_full, xs.y_full);
+            if (q2 < q) return xs.y_full;
             double q0 = qCritical(y0, 0.0);
             double q1 = qCritical(0.5 * xs.y_full, 0.0);
             if (q0 > q) {
