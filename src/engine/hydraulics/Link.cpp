@@ -194,6 +194,7 @@ XSectParams buildXSectParams(
             xs.area_tbl          = td.area_tbl;
             xs.hrad_tbl          = td.hrad_tbl;
             xs.width_tbl         = td.width_tbl;
+            xs.area_lut          = &td.area_lut;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
     }
@@ -272,6 +273,7 @@ void applyTabulatedXSectParams(XSectParams& xs, const transect::TransectData& td
     xs.area_tbl          = td.area_tbl;
     xs.hrad_tbl          = td.hrad_tbl;
     xs.width_tbl         = td.width_tbl;
+    xs.area_lut          = &td.area_lut;
     xs.transect_tbl_size = transect::N_TRANSECT_TBL;
 }
 

@@ -195,6 +195,11 @@ void buildTables(TransectData& td) {
     // width at zero depth = width at first increment (legacy createTables:309)
     td.width_tbl[0] = td.width_tbl[1];
 
+    // Bucket map for the getYofA inversion (plan XSECT_LOOKUP_ACCEL A1) — a
+    // search accelerator only; it returns the same bracketing index bisection
+    // would, so the interpolated depth is unchanged.
+    xsect::build_invlookup_lut(td.area_lut, td.area_tbl, N_TRANSECT_TBL);
+
     // --- A3 transect-table parity dump (env-gated), mirrors legacy transect.c
     if (const char* p = std::getenv("SWMM_TRACE_TRANSECT")) {
         if (*p) {
@@ -392,6 +397,8 @@ void buildCustomTables(TransectData& td, double y_full,
     td.w_max  = wMax * y_full;
     td.a_full = aFull * y_full * y_full;
     td.r_full = rFull * y_full;
+
+    xsect::build_invlookup_lut(td.area_lut, td.area_tbl, N_TRANSECT_TBL);
 }
 
 bool buildFromStore(const TransectStore& ts, int index, double ucf_length,

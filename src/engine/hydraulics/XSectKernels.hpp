@@ -196,6 +196,35 @@ OPENSWMM_KERNEL_FN double powerfuncWofY(double y, double s_bot, double r_bot) {
  * are deliberately identical to the `xsect_tables::` symbols they bind to, so
  * the moved bodies differ from the originals by exactly one token.
  */
+/**
+ * @brief The tables `invLookup()` inverts, and so the ones that carry a
+ *        `LocateLut` (plan XSECT_LOOKUP_ACCEL §4 item A1).
+ *
+ * Every other shared table is only ever read forward, where the index is a
+ * divide-and-truncate and there is no search to accelerate. Keeping the maps in
+ * one array indexed by this enum costs XsectTables a single pointer instead of
+ * fifteen, and keeps the host binding (XSection.cpp hostTables) and any device
+ * binding to one block to copy.
+ */
+enum class LutId : int {
+    Y_Gothic = 0,
+    Y_Catenary,
+    Y_SemiEllip,
+    Y_SemiCirc,
+    A_HorizEllipse,
+    A_VertEllipse,
+    A_Arch,
+    S_Circ,
+    S_Egg,
+    S_Horseshoe,
+    S_Gothic,
+    S_Catenary,
+    S_SemiEllip,
+    S_BasketHandle,
+    S_SemiCirc,
+    COUNT
+};
+
 struct XsectTables {
     const double* A_Arch = nullptr;
     const double* A_Baskethandle = nullptr;
@@ -239,6 +268,8 @@ struct XsectTables {
     const double* Y_SemiCirc = nullptr;
     const double* Y_SemiEllip = nullptr;
     const double* Amax = nullptr;
+    /// Bucket maps for the inverted tables, indexed by LutId; null == bisect.
+    const LocateLut* luts = nullptr;
     int N_A_Arch = 0;
     int N_A_Baskethandle = 0;
     int N_A_Circ = 0;
@@ -280,6 +311,11 @@ struct XsectTables {
     int N_Y_Horseshoe = 0;
     int N_Y_SemiCirc = 0;
     int N_Y_SemiEllip = 0;
+
+    /// The bucket map for one inverted table, or null when none was built.
+    OPENSWMM_KERNEL_FN const LocateLut* lut(LutId id) const {
+        return luts ? (luts + static_cast<int>(id)) : nullptr;
+    }
 };
 
 /**
@@ -375,16 +411,7 @@ struct XsectEval {
 
     OPENSWMM_KERNEL_FN int locate(double y, const double* table, int jLast) const {
         // Bisection: highest index j with table[j] <= y (legacy locate()).
-        int j1 = 0;
-        int j2 = jLast;
-        if (y <= table[0])     return 0;
-        if (y >= table[jLast]) return jLast;
-        while (j2 - j1 > 1) {
-            int j = (j1 + j2) >> 1;
-            if (y >= table[j]) j1 = j;
-            else               j2 = j;
-        }
-        return j1;
+        return locate_bisect(y, table, jLast);
     }
 
     OPENSWMM_KERNEL_FN double lookup(double x, const double* table, int n_items) const {
@@ -411,7 +438,11 @@ struct XsectEval {
         return lookup_exact(x, table, n_items);
     }
 
-    OPENSWMM_KERNEL_FN double invLookup(double y, const double* table, int n_items) const {
+    /// @param lut  Optional bucket map for `table` (plan A1). It changes only
+    ///             how the bracketing index is *found*, never which one — so
+    ///             passing it or not gives byte-identical results.
+    OPENSWMM_KERNEL_FN double invLookup(double y, const double* table, int n_items,
+                                        const LocateLut* lut = nullptr) const {
         double dx = 1.0 / static_cast<double>(n_items - 1);
         int n = n_items;
 
@@ -424,7 +455,7 @@ struct XsectEval {
             if (y <= table[n_items - 2]) i = n_items - 2;
             else                         i = n_items - 3;
         } else {
-            i = locate(y, table, n - 1);
+            i = locate_maybe_lut(y, table, n - 1, lut);
         }
         if (i >= n - 1) return static_cast<double>(n - 1) * dx;
 
@@ -565,7 +596,7 @@ struct XsectEval {
         if (psi == 0.0) return 0.0;
         if (psi >= 1.0) return xs.a_full;
         if (psi <= 0.015) return xs.a_full * getAcircular(psi);
-        return xs.a_full * invLookup(psi, tbl.S_Circ, tbl.N_S_Circ);
+        return xs.a_full * invLookup(psi, tbl.S_Circ, tbl.N_S_Circ, tbl.lut(LutId::S_Circ));
     }
 
     OPENSWMM_KERNEL_FN double circ_getdSdA(const XSectParams& xs, double a) const {
@@ -998,15 +1029,15 @@ struct XsectEval {
             case XSectShape::HORSESHOE:
                 return xs.a_full * lookup(y_norm, tbl.A_Horseshoe, tbl.N_A_Horseshoe);
             case XSectShape::GOTHIC:
-                return xs.a_full * invLookup(y_norm, tbl.Y_Gothic, tbl.N_Y_Gothic);
+                return xs.a_full * invLookup(y_norm, tbl.Y_Gothic, tbl.N_Y_Gothic, tbl.lut(LutId::Y_Gothic));
             case XSectShape::CATENARY:
-                return xs.a_full * invLookup(y_norm, tbl.Y_Catenary, tbl.N_Y_Catenary);
+                return xs.a_full * invLookup(y_norm, tbl.Y_Catenary, tbl.N_Y_Catenary, tbl.lut(LutId::Y_Catenary));
             case XSectShape::SEMIELLIPTICAL:
-                return xs.a_full * invLookup(y_norm, tbl.Y_SemiEllip, tbl.N_Y_SemiEllip);
+                return xs.a_full * invLookup(y_norm, tbl.Y_SemiEllip, tbl.N_Y_SemiEllip, tbl.lut(LutId::Y_SemiEllip));
             case XSectShape::BASKETHANDLE:
                 return xs.a_full * lookup(y_norm, tbl.A_Baskethandle, tbl.N_A_Baskethandle);
             case XSectShape::SEMICIRCULAR:
-                return xs.a_full * invLookup(y_norm, tbl.Y_SemiCirc, tbl.N_Y_SemiCirc);
+                return xs.a_full * invLookup(y_norm, tbl.Y_SemiCirc, tbl.N_Y_SemiCirc, tbl.lut(LutId::Y_SemiCirc));
             case XSectShape::HORIZ_ELLIPSE:
                 return xs.a_full * lookup(y_norm, tbl.A_HorizEllipse, tbl.N_A_HorizEllipse);
             case XSectShape::VERT_ELLIPSE:
@@ -1163,11 +1194,11 @@ struct XsectEval {
             case XSectShape::SEMICIRCULAR:
                 return xs.y_full * lookup(alpha, tbl.Y_SemiCirc, tbl.N_Y_SemiCirc);
             case XSectShape::HORIZ_ELLIPSE:
-                return xs.y_full * invLookup(alpha, tbl.A_HorizEllipse, tbl.N_A_HorizEllipse);
+                return xs.y_full * invLookup(alpha, tbl.A_HorizEllipse, tbl.N_A_HorizEllipse, tbl.lut(LutId::A_HorizEllipse));
             case XSectShape::VERT_ELLIPSE:
-                return xs.y_full * invLookup(alpha, tbl.A_VertEllipse, tbl.N_A_VertEllipse);
+                return xs.y_full * invLookup(alpha, tbl.A_VertEllipse, tbl.N_A_VertEllipse, tbl.lut(LutId::A_VertEllipse));
             case XSectShape::ARCH:
-                return xs.y_full * invLookup(alpha, tbl.A_Arch, tbl.N_A_Arch);
+                return xs.y_full * invLookup(alpha, tbl.A_Arch, tbl.N_A_Arch, tbl.lut(LutId::A_Arch));
             case XSectShape::RECT_CLOSED:
             case XSectShape::RECT_OPEN:    return a / xs.w_max;
             case XSectShape::RECT_TRIANG:  return rect_triang_getYofA(xs, a);
@@ -1182,7 +1213,7 @@ struct XsectEval {
             case XSectShape::STREET_XSECT:
                 // Invert the normalized area table (legacy xsect_getYofA IRREGULAR).
                 if (xs.area_tbl)
-                    return xs.y_full * invLookup(alpha, xs.area_tbl, xs.transect_tbl_size);
+                    return xs.y_full * invLookup(alpha, xs.area_tbl, xs.transect_tbl_size, xs.area_lut);
                 return 0.0;
             default: return 0.0;
         }
@@ -1305,19 +1336,19 @@ struct XsectEval {
             case XSectShape::FORCE_MAIN:
             case XSectShape::CIRCULAR:     return circ_getAofS(xs, s);
             case XSectShape::EGGSHAPED:
-                return xs.a_full * invLookup(psi, tbl.S_Egg, tbl.N_S_Egg);
+                return xs.a_full * invLookup(psi, tbl.S_Egg, tbl.N_S_Egg, tbl.lut(LutId::S_Egg));
             case XSectShape::HORSESHOE:
-                return xs.a_full * invLookup(psi, tbl.S_Horseshoe, tbl.N_S_Horseshoe);
+                return xs.a_full * invLookup(psi, tbl.S_Horseshoe, tbl.N_S_Horseshoe, tbl.lut(LutId::S_Horseshoe));
             case XSectShape::GOTHIC:
-                return xs.a_full * invLookup(psi, tbl.S_Gothic, tbl.N_S_Gothic);
+                return xs.a_full * invLookup(psi, tbl.S_Gothic, tbl.N_S_Gothic, tbl.lut(LutId::S_Gothic));
             case XSectShape::CATENARY:
-                return xs.a_full * invLookup(psi, tbl.S_Catenary, tbl.N_S_Catenary);
+                return xs.a_full * invLookup(psi, tbl.S_Catenary, tbl.N_S_Catenary, tbl.lut(LutId::S_Catenary));
             case XSectShape::SEMIELLIPTICAL:
-                return xs.a_full * invLookup(psi, tbl.S_SemiEllip, tbl.N_S_SemiEllip);
+                return xs.a_full * invLookup(psi, tbl.S_SemiEllip, tbl.N_S_SemiEllip, tbl.lut(LutId::S_SemiEllip));
             case XSectShape::BASKETHANDLE:
-                return xs.a_full * invLookup(psi, tbl.S_BasketHandle, tbl.N_S_BasketHandle);
+                return xs.a_full * invLookup(psi, tbl.S_BasketHandle, tbl.N_S_BasketHandle, tbl.lut(LutId::S_BasketHandle));
             case XSectShape::SEMICIRCULAR:
-                return xs.a_full * invLookup(psi, tbl.S_SemiCirc, tbl.N_S_SemiCirc);
+                return xs.a_full * invLookup(psi, tbl.S_SemiCirc, tbl.N_S_SemiCirc, tbl.lut(LutId::S_SemiCirc));
             default: {
                 // Newton-Raphson on S(a) = s, bracketed in [a1, a2] (legacy generic_getAofS).
                 // a2 = absolute area at max flow = xsect_getAmax.

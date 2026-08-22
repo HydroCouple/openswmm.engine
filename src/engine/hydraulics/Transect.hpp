@@ -37,6 +37,8 @@
 #include <vector>
 #include <string>
 
+#include "XSectLookup.hpp"
+
 namespace openswmm {
 
 struct TransectStore;  // engine/data/InfraData.hpp
@@ -73,6 +75,11 @@ struct TransectData {
     double area_tbl[N_TRANSECT_TBL]  = {};
     double hrad_tbl[N_TRANSECT_TBL]  = {};
     double width_tbl[N_TRANSECT_TBL] = {};
+
+    /// Bucket map over `area_tbl`, used by getYofA's invLookup (plan
+    /// XSECT_LOOKUP_ACCEL A1). Rebuilt by the two table builders below; stays
+    /// disabled (and callers bisect as before) if either bails out early.
+    xsect::LocateLut area_lut;
 };
 
 /**
