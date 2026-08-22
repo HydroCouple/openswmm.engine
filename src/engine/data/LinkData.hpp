@@ -93,7 +93,8 @@ enum class XsectShape : int16_t {
     CUSTOM           = 22,  ///< Shape from CURVE_SHAPE table
     FORCE_MAIN       = 23,  ///< Circular force main (Hazen-Williams or D-W)
     STREET_XSECT     = 24,  ///< Street cross-section
-    DUMMY            = 25   ///< Dummy (no geometry)
+    DUMMY            = 25,  ///< Dummy (no geometry)
+    POLYGON          = 26   ///< Arc/line boundary from a [CURVES] XPOLYGON entry
 };
 
 /**
@@ -208,6 +209,20 @@ struct LinkData {
      * @details -1 for standard shapes.
      */
     std::vector<int>        xsect_curve;
+
+    /**
+     * @brief Index into SimulationContext::cheb_sections, or -1.
+     * @details Set for every POLYGON link (always) and, under `[OPTIONS]
+     *          XSECT_GEOMETRY EXACT`, for every self-contained built-in
+     *          shape too — see PostParseResolver's boundary-reconstruction
+     *          pass. A link with `xsect_cheb_idx >= 0` evaluates entirely
+     *          through the Chebyshev path (XSectParams::cheb), bypassing the
+     *          legacy per-shape table/formula dispatch regardless of
+     *          @ref xsect_shape. Deliberately independent of @ref
+     *          xsect_curve, which stays reserved for the transect-table
+     *          index used by IRREGULAR/CUSTOM/STREET_XSECT.
+     */
+    std::vector<int>        xsect_cheb_idx;
 
     // Phase 6: conduit-config fields (roughness, length, slope, mod_length,
     // barrels, beta, rough_factor, q_full, q_max) moved to ConduitData in
@@ -574,6 +589,7 @@ struct LinkData {
         xsect_geom3.assign(un, 0.0);
         xsect_geom4.assign(un, 0.0);
         xsect_curve.assign(un, -1);
+        xsect_cheb_idx.assign(un, -1);
         xsect_r_full.assign(un, 0.0);
         xsect_s_full.assign(un, 0.0);
         xsect_s_max.assign(un, 0.0);
@@ -643,6 +659,7 @@ struct LinkData {
         g(xsect_y_full, 0.0); g(xsect_a_full, 0.0); g(xsect_w_max, 0.0);
         g(xsect_geom1, 0.0); g(xsect_geom2, 0.0); g(xsect_geom3, 0.0); g(xsect_geom4, 0.0);
         g(xsect_curve, -1);
+        g(xsect_cheb_idx, -1);
         g(xsect_r_full, 0.0); g(xsect_s_full, 0.0); g(xsect_s_max, 0.0);
         g(xsect_y_bot, 0.0); g(xsect_a_bot, 0.0);
         g(xsect_s_bot, 0.0); g(xsect_r_bot, 0.0);
@@ -701,7 +718,7 @@ struct LinkData {
         r(type); r(node1); r(node2); r(offset1);
         r(offset2); r(q0); r(q_limit); r(xsect_shape);
         r(xsect_y_full); r(xsect_a_full); r(xsect_w_max); r(xsect_geom1);
-        r(xsect_geom2); r(xsect_geom3); r(xsect_geom4); r(xsect_curve);
+        r(xsect_geom2); r(xsect_geom3); r(xsect_geom4); r(xsect_curve); r(xsect_cheb_idx);
         r(xsect_r_full); r(xsect_s_full); r(xsect_s_max); r(xsect_y_bot);
         r(xsect_a_bot); r(xsect_s_bot); r(xsect_r_bot); r(xsect_yw_max);
         r(xsect_batch_shape); r(setting); r(target_setting); r(time_last_set);
@@ -731,7 +748,7 @@ struct LinkData {
 
         e(type); e(node1); e(node2); e(offset1); e(offset2); e(q0); e(q_limit);
 
-        e(xsect_shape); e(xsect_y_full); e(xsect_a_full); e(xsect_w_max); e(xsect_curve);
+        e(xsect_shape); e(xsect_y_full); e(xsect_a_full); e(xsect_w_max); e(xsect_curve); e(xsect_cheb_idx);
         e(xsect_r_full); e(xsect_s_full); e(xsect_s_max);
         e(xsect_y_bot); e(xsect_a_bot); e(xsect_s_bot); e(xsect_r_bot); e(xsect_yw_max);
         e(xsect_batch_shape); e(setting); e(target_setting); e(direction);
@@ -826,6 +843,7 @@ struct LinkData {
         xsect_a_full.shrink_to_fit();
         xsect_w_max.shrink_to_fit();
         xsect_curve.shrink_to_fit();
+        xsect_cheb_idx.shrink_to_fit();
         xsect_r_full.shrink_to_fit();
         xsect_s_full.shrink_to_fit();
         xsect_s_max.shrink_to_fit();

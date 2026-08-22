@@ -51,6 +51,7 @@
  */
 
 #include "DynamicWave.hpp"
+#include "Link.hpp"
 #include "Node.hpp"
 #include "Outfall.hpp"
 #include "XSectBatch.hpp"
@@ -482,10 +483,25 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
         const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
         XsectShape shape = links.xsect_shape[uj];
 
-        is_open_[uj] = (shape == XsectShape::RECT_OPEN ||
-                        shape == XsectShape::TRAPEZOIDAL ||
-                        shape == XsectShape::TRIANGULAR ||
-                        shape == XsectShape::PARABOLIC);
+        // POLYGON carries no shape code isOpen(int) can classify — a compiled
+        // boundary's own is_open is authoritative there (mirrors the cheb-vs-
+        // shape fallback in recomputeConduitLossOne below). Every other shape
+        // keeps the plain shape-code test; this precompute feeds is_open_/
+        // tile_is_open_, which every DYNWAVE crown-cap and slot-exclusion
+        // check downstream reads, so getting it right here is what makes an
+        // open POLYGON channel behave like RECT_OPEN instead of like a closed
+        // pipe throughout the rest of this file.
+        if (shape == XsectShape::POLYGON) {
+            const int ci = links.xsect_cheb_idx[uj];
+            is_open_[uj] =
+                (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size()) &&
+                ctx.cheb_sections[static_cast<std::size_t>(ci)].is_open;
+        } else {
+            is_open_[uj] = (shape == XsectShape::RECT_OPEN ||
+                            shape == XsectShape::TRAPEZOIDAL ||
+                            shape == XsectShape::TRIANGULAR ||
+                            shape == XsectShape::PARABOLIC);
+        }
         is_force_main_[uj] = (shape == XsectShape::FORCE_MAIN);
         has_losses_[uj] = (CD.loss_inlet[ucr] != 0.0 ||
                            CD.loss_outlet[ucr] != 0.0 ||
@@ -1406,9 +1422,12 @@ void DWSolver::findBypassedLinks(const SimulationContext& ctx) {
 static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     const LinkData& links = ctx.links;
     XSectParams xs{};
-    // Translate LinkData enum (CIRCULAR=0) to batch enum (CIRCULAR=1)
     auto ls = links.xsect_shape[uk];
-    xs.type = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    // link::translateShape is the canonical LinkData-enum -> batch-enum
+    // translation (Link.cpp) — POLYGON=26 was appended to both enums at the
+    // same numeric value, breaking the flat +1 offset every earlier shape
+    // follows, so this delegates rather than re-deriving the mapping here.
+    xs.type = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];
@@ -1443,6 +1462,14 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
             xs.width_tbl       = td.width_tbl;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
+    }
+    // Compiled Chebyshev boundary: every POLYGON link, and, under
+    // XSECT_GEOMETRY EXACT, any other shape too. Same "otherwise the scalar
+    // getters return 0" reasoning as the transect-table block above.
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
     }
     return xs;
 }
@@ -1552,8 +1579,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // STEP B prep — fused inline. yCap is the EXTRAN crown cap; SLOT
         // mode disables it (yCap = ∞). Branchless via select.
         if (!slot_mode) {
-            const int bs = tile_xsect_batch_shape_[uci];
-            const bool is_open = xsect::isOpen(bs);
+            // tile_is_open_ (not xsect::isOpen(int) on the shape code) is
+            // POLYGON-correct — a compiled boundary's open/closed-ness is a
+            // property of the ChebSection, not the shape code, and this
+            // precomputed value already accounts for that (see is_open_'s
+            // init in refreshConduitTile).
+            const bool is_open = tile_is_open_[uci];
             const double yCap = (!is_open && yf > 0.0) ? EXTRAN_CROWN_CUTOFF * yf : 1e30;
             wcap_d1_[uj] = std::min(y1,   yCap);
             wcap_d2_[uj] = std::min(y2,   yCap);
@@ -1819,7 +1850,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 if (wSlotM > 0.0)
                     wMsa = wSlotM;
                 else if (yMid / yf >= getCrownCutoff() &&
-                         !xsect::isOpen(tile_xsect_batch_shape_[uci]))
+                         !xsect::isOpen(xs))
                     wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
                 else
                     wMsa = wM;
@@ -1853,7 +1884,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 if (wSlotM > 0.0)
                     wMsa = wSlotM;
                 else if (yMid / yf >= getCrownCutoff() &&
-                         !xsect::isOpen(tile_xsect_batch_shape_[uci]))
+                         !xsect::isOpen(xs))
                     wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
                 else
                     wMsa = wM;
@@ -2020,7 +2051,17 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
             if (length <= 0.0) length = CD.mod_length[uci];
             const int shape = links.xsect_batch_shape[u];
 
-            const bool wantEvap = xsect::isOpen(shape) && evap > 0.0;
+            // isOpen(int) can't classify a compiled boundary (POLYGON, or any
+            // shape under XSECT_GEOMETRY EXACT) — its open/closed-ness is a
+            // property of the specific ChebSection, not the shape code. Look
+            // that up directly rather than building the full XSectParams just
+            // for this early-exit check.
+            const int cheb_idx = links.xsect_cheb_idx[u];
+            const bool isOpenShape =
+                (cheb_idx >= 0 && static_cast<std::size_t>(cheb_idx) < ctx.cheb_sections.size())
+                    ? ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)].is_open
+                    : xsect::isOpen(shape);
+            const bool wantEvap = isOpenShape && evap > 0.0;
             const bool wantSeep = CD.seep_rate[uci] > 0.0;
             if (wantEvap || wantSeep) {
                 const XSectParams xs = buildXSP(ctx, u);  // faithful incl. transect

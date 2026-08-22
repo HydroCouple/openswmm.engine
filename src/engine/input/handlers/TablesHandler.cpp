@@ -56,6 +56,7 @@
 #include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../core/DateTime.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../data/TableData.hpp"
 
 #include "../InputParseUtils.hpp"
@@ -221,6 +222,7 @@ static const std::unordered_map<std::string, TableType> CURVE_TYPE_MAP = {
     {"PUMP3",     TableType::CURVE_PUMP3},
     {"PUMP4",     TableType::CURVE_PUMP4},
     {"PUMP5",     TableType::CURVE_PUMP5},
+    {"XPOLYGON",  TableType::CURVE_XPOLYGON},
 };
 
 void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines) {
@@ -273,10 +275,49 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
             }
         }
 
-        // Pairs: x y [x y ...]
-        for (std::size_t i = data_start; i + 1 < tok.size(); i += 2) {
-            tbl.x.push_back(to_double(tok[i]));
-            tbl.y.push_back(to_double(tok[i + 1]));
+        if (tbl.type == TableType::CURVE_XPOLYGON) {
+            // Variable column count per point: X Y [bulge] repeated. The
+            // stride (2 or 3) is decided ONCE for the whole curve, from the
+            // first data row's own token count, and then held fixed — NOT
+            // re-decided per row. A row-by-row modulo test would silently
+            // misparse a 6-token continuation row (divisible by both 2 and
+            // 3) as triples even when every sibling row in the same curve
+            // was pairs, scrambling every point after it with no error
+            // reported. First row's tie-break (a count divisible by BOTH):
+            // triples, since a genuinely bulge-free XPOLYGON curve may
+            // simply add an explicit 0.0 bulge column instead of omitting
+            // it. Every later row must fit the resolved stride exactly, or
+            // it is ragged (error 8, per XSectBoundary.hpp's
+            // BoundaryError::MALFORMED_CURVE_ROW).
+            const std::size_t n_tok = tok.size() - data_start;
+            if (tbl.xpolygon_stride == 0 && n_tok > 0) {
+                tbl.xpolygon_stride = (n_tok % 3 == 0) ? 3
+                                    : (n_tok % 2 == 0) ? 2
+                                    : 0;
+                if (tbl.xpolygon_stride == 0)
+                    ctx.errors.push_back(format_error(ERR_CURVE_SEQUENCE, current_name));
+            }
+            if (tbl.xpolygon_stride == 3 && n_tok % 3 == 0) {
+                for (std::size_t i = data_start; i + 2 < tok.size(); i += 3) {
+                    tbl.x.push_back(to_double(tok[i]));
+                    tbl.y.push_back(to_double(tok[i + 1]));
+                    tbl.bulge.push_back(to_double(tok[i + 2]));
+                }
+            } else if (tbl.xpolygon_stride == 2 && n_tok % 2 == 0) {
+                for (std::size_t i = data_start; i + 1 < tok.size(); i += 2) {
+                    tbl.x.push_back(to_double(tok[i]));
+                    tbl.y.push_back(to_double(tok[i + 1]));
+                    tbl.bulge.push_back(0.0);
+                }
+            } else if (n_tok > 0) {
+                ctx.errors.push_back(format_error(ERR_CURVE_SEQUENCE, current_name));
+            }
+        } else {
+            // Pairs: x y [x y ...]
+            for (std::size_t i = data_start; i + 1 < tok.size(); i += 2) {
+                tbl.x.push_back(to_double(tok[i]));
+                tbl.y.push_back(to_double(tok[i + 1]));
+            }
         }
     }
 }

@@ -196,6 +196,29 @@ struct ChebSection {
     double s_max = 0.0;    ///< maximum section factor
     double a_max = 0.0;    ///< area at which s_max occurs (ft^2)
 
+    /// Wetted perimeter AT y_full (ft).
+    /// @note NOT simply "the fitted P(y) series evaluated at its own y_full
+    ///       endpoint". For a CLOSED shape with a flat/cornered crown (Puiseux
+    ///       exponent 1.0 at the top — see XSectBoundary.hpp), P(y) has a real
+    ///       physical jump at y_full: just below the crown the water hasn't
+    ///       touched the top wall yet (wetted perimeter = bottom + side walls
+    ///       only), while AT y_full the section is pressurized-full (every
+    ///       boundary element wetted). The fit is built from strictly-interior
+    ///       samples and only ever captures the BELOW-crown limit, so
+    ///       extrapolating it to u=1 silently returns the wrong (smaller)
+    ///       perimeter — undercounting r_full/s_full by exactly the missing
+    ///       crown width. A smooth ROUND crown (exponent 1.5) has no such
+    ///       jump — the wetted arc already sweeps almost the entire circle as
+    ///       y -> y_full, so the fitted limit is correct there, which is why
+    ///       this was never caught by the circle-only Phase 4 test suite.
+    ///       compile() sets this to the TRUE closed-loop perimeter (every
+    ///       input BElem's arcLength summed, unconditionally) for a closed
+    ///       shape, and to the ordinary fitted limit for an open one (an open
+    ///       top is never a wall, so there is no discontinuity to correct).
+    ///       chebPofY/chebAll read this field directly for y >= y_full rather
+    ///       than re-deriving it, so every caller sees the same value.
+    double p_full = 0.0;
+
     ChebPiece piece[kMaxPieces];
 };
 
@@ -387,9 +410,12 @@ OPENSWMM_KERNEL_FN double chebWofY(const ChebSection& s, double y) noexcept {
 
 OPENSWMM_KERNEL_FN double chebPofY(const ChebSection& s, double y) noexcept {
     if (y <= 0.0 || s.n_pieces <= 0) return 0.0;
-    const double yy = (y >= s.y_full) ? s.y_full : y;
-    const ChebPiece& pc = s.piece[chebPieceOfY(s, yy)];
-    const double p = chebEval(pc.c_p, pc.n_p, chebUofY(pc, yy));
+    // At or above the crown, P jumps for a closed shape (see ChebSection::
+    // p_full) — read the compile()-computed true value rather than
+    // extrapolating the fit, which only ever captures the below-crown limit.
+    if (y >= s.y_full) return s.p_full;
+    const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
+    const double p = chebEval(pc.c_p, pc.n_p, chebUofY(pc, y));
     return (p > 0.0) ? p : 0.0;
 }
 
@@ -429,6 +455,25 @@ OPENSWMM_KERNEL_FN double chebdAdY(const ChebSection& s, double y) noexcept {
     const double dydu = mapDsDu(u, pc.exp_lo, pc.exp_hi) / pc.inv_span;
     if (!(dydu > 1.0e-300)) return 0.0;
     return dAdu / dydu;
+}
+
+/// dP/dy from the P series' exact derivative — same construction as
+/// chebdAdY, over c_p/n_p instead of c_a/n_a.
+/// @note Not in the original Phase 4 design; added for Phase 5's getdSdA,
+///       which needs dR/dA = 1/P - (A/P^2)*dP/dA analytically (no finite
+///       differences) and dP/dA = (dP/dy)/(dA/dy).
+OPENSWMM_KERNEL_FN double chebdPdY(const ChebSection& s, double y) noexcept {
+    if (y <= 0.0 || y >= s.y_full || s.n_pieces <= 0) return 0.0;
+    const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
+    const double u = chebUofY(pc, y);
+
+    double dc[kMaxChebCoeff];
+    chebDeriv(pc.c_p, pc.n_p, dc);
+    const double dPdu = chebEval(dc, pc.n_p - 1, u);
+
+    const double dydu = mapDsDu(u, pc.exp_lo, pc.exp_hi) / pc.inv_span;
+    if (!(dydu > 1.0e-300)) return 0.0;
+    return dPdu / dydu;
 }
 
 /// Invert A -> y. Newton on the exact derivative, safeguarded by bisection.
@@ -477,7 +522,8 @@ OPENSWMM_KERNEL_FN void chebAll(const ChebSection& s, double y,
         const ChebPiece& top = s.piece[s.n_pieces - 1];
         *A = s.a_full;
         *W = chebEval(top.c_w, top.n_w, 1.0);
-        *P = chebEval(top.c_p, top.n_p, 1.0);
+        // s.p_full, not the fitted extrapolation — see ChebSection::p_full.
+        *P = s.p_full;
         *I1 = chebEval(top.c_i1, top.n_i1, 1.0) + s.a_full * (y - s.y_full);
         if (*W < 0.0) *W = 0.0;
         if (*P < 0.0) *P = 0.0;

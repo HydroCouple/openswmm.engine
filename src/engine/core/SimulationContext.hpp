@@ -102,12 +102,15 @@
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
 #include "../hydraulics/Transect.hpp"
+#include "../hydraulics/XSectBoundary.hpp"
+#include "../hydraulics/ChebSection.hpp"
 #include "../data/HydrologyData.hpp"
 #include "../data/ForcingData.hpp"
 #include "../hydrology/Climate.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <utility>
 #include <vector>
@@ -676,6 +679,31 @@ struct SimulationContext {
     TransectStore    transects;
     /// Built transect geometry tables (indexed same as transects).
     std::vector<transect::TransectData> transect_tables;
+
+    /**
+     * @brief Compiled piecewise-Chebyshev cross-sections (Phase 4/5).
+     * @details One entry per distinct compiled boundary — every POLYGON
+     *          link's `[CURVES] XPOLYGON` curve (memoized by curve+scale, see
+     *          PostParseResolver), and, under `[OPTIONS] XSECT_GEOMETRY
+     *          EXACT`, one per distinct built-in shape geometry too.
+     *          `LinkData::xsect_cheb_idx` indexes into this. `std::deque`,
+     *          NOT `std::vector`: `XSectParams::cheb` holds raw pointers into
+     *          it, and a vector's reallocation-on-growth would dangle them —
+     *          mirroring the same stability concern already documented for
+     *          @ref transect_tables in XSectBatch.cpp. A deque never
+     *          invalidates existing elements on push_back, and ChebSection is
+     *          large enough (~26 kB) that deque's per-chunk overhead is
+     *          negligible.
+     */
+    std::deque<chebsec::ChebSection> cheb_sections;
+
+    /**
+     * @brief Source boundary (arcs/lines) behind each @ref cheb_sections
+     *        entry, indexed identically. Host-only; kept only so a boundary
+     *        can be recompiled later (e.g. Phase 7 run-time geometry
+     *        changes) without re-parsing the originating curve.
+     */
+    std::deque<std::vector<xsboundary::BElem>> cheb_boundaries;
     /// Bumped whenever a link's cross-section/flow properties are recomputed
     /// mid-run (C-API setters via recompute_conduit_flow_properties), so
     /// consumers holding per-link XSectParams caches know to rebuild
