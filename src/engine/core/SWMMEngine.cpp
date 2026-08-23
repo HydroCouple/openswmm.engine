@@ -325,22 +325,24 @@ int SWMMEngine::open(const char* inp_path,
         // ARD engine reads it from model.ard.
         transport::warnIfFvDispersionKeyIgnored(ctx_);
 
-        // X2: pollutant transport under LARD is live; what still does not
-        // run under this dispatch is the reserved-species pair (water age /
-        // temperature — X4), the reactions component (deferred L3) and
-        // treatment expressions. Each remaining bypass warns by name at
-        // open (silent no-result runs are never allowed — the E1-era rule;
-        // enumerate silent-bypass configurations, R4 lesson 5). All three
-        // stay inside stepRouting's !ignore_quality condition: under
-        // IGNORE_QUALITY the stage is skipped before the solver choice is
-        // consulted, and that configuration's own warning family covers it.
+        // X2: pollutant transport under LARD is live. X4: water age is
+        // live too (segment age row + node stores). What still does not
+        // run under this dispatch: temperature (H7), the reactions
+        // component (deferred L3) and treatment expressions. Each
+        // remaining bypass warns by name at open (silent no-result runs
+        // are never allowed — the E1-era rule; enumerate silent-bypass
+        // configurations, R4 lesson 5). All stay inside stepRouting's
+        // !ignore_quality condition: under IGNORE_QUALITY the stage is
+        // skipped before the solver choice is consulted, and that
+        // configuration's own warning family covers it.
         if (ctx_.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
             !ctx_.options.ignore_quality) {
-            if (ctx_.options.water_age || ctx_.options.heat_transport) {
+            if (ctx_.options.heat_transport) {
                 ctx_.warnings.push_back(
-                    "QUALITY_SOLVER LAGRANGIAN: water-age/temperature state "
-                    "does not advance under the LARD engine yet (subplan "
-                    "X4/H7) — pollutant transport is active.");
+                    "QUALITY_SOLVER LAGRANGIAN: temperature state "
+                    "does not advance under the LARD engine yet (plan "
+                    "phase H7) — pollutant transport and water age are "
+                    "active.");
             }
             if (transport::legacyReactionsActive(ctx_)) {
                 ctx_.warnings.push_back(

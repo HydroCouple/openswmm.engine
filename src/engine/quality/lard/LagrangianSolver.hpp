@@ -55,9 +55,18 @@
  *               engine-side final-storage and outfall bookings are exact),
  *               then `conc_old = conc` (the ARD convention).
  *
+ *          X4: water age rides the segments as species row `np` — exact
+ *          aging (+dt on every live parcel and node store BEFORE
+ *          transport, the routeLegacyAge convention), volume-weighted
+ *          mixing through the same drain/mix/release phases, sources from
+ *          `node_age_vol_in` (the D-UT10 parallel accumulator, all seven
+ *          loader pathways), state published to `water_age_state`
+ *          (seconds), no decay on the age row, and the dry-link state
+ *          keeps aging (the A2b state/report separation).
+ *
  *          Deliberately NOT here: reactions module binding (deferred L3),
- *          RWPT (X3), water age / heat (X4 — their state does not advance
- *          under this dispatch and the open() warning says so), treatment
+ *          RWPT (X3), heat (H7 — does not advance under this dispatch and
+ *          the open() warning says so), treatment
  *          interop (warned bypass), storage mixing models beyond CMSTR,
  *          the legacy evaporation up-concentration factor (recorded
  *          deviation — steady gates cannot see it; parity work owns it),
@@ -99,13 +108,28 @@ public:
      */
     void step(SimulationContext& ctx, double dt) {
         const int np = ctx.n_pollutants();
-        if (np <= 0) return;  // age/heat under LARD arrive with X4
+        // X4: the age row rides the segments as species index np, state
+        // published to water_age_state (seconds) rather than the np-strided
+        // conc arrays. Heat under LARD remains X-plan H7.
+        const bool age = ctx.options.water_age;
+        const int ns = np + (age ? 1 : 0);
+        if (ns <= 0) return;
         if (!initialized_) init(ctx);
 
         const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
         auto& nodes = ctx.nodes;
         auto& links = ctx.links;
+        auto& ws = ctx.water_age_state;
+
+        // ---- AGE (before transport): every parcel ages by exactly dt, and
+        //      the aged value is this step's "old" state — the plan §1
+        //      convention routeLegacyAge follows (age then mix). ------------
+        if (age) {
+            store_.add_species(np, dt);
+            for (int n = 0; n < nn; ++n)
+                ws.node_age[static_cast<std::size_t>(n)] += dt;
+        }
 
         // ---- 0. Flow reversal (§4.4) --------------------------------------
         bool topo_dirty = false;
@@ -123,7 +147,7 @@ public:
         if (topo_dirty || topo_.empty()) computeTopoOrder(ctx);
 
         // ---- 1. DRAIN (all conduits, before any node mixes) ---------------
-        scratch_.assign(static_cast<std::size_t>(np), 0.0);
+        scratch_.assign(static_cast<std::size_t>(ns), 0.0);
         for (int l = 0; l < nl; ++l) {
             const auto ul = static_cast<std::size_t>(l);
             if (links.type[ul] != LinkType::CONDUIT) continue;
@@ -135,7 +159,7 @@ public:
                 std::fill(scratch_.begin(), scratch_.end(), 0.0);
                 const double drained = store_.drain_back(l, q * dt,
                                                          scratch_.data());
-                addToLedger(dn, drained, scratch_.data(), np);
+                addToLedger(dn, drained, scratch_.data(), ns);
             }
             // Volume reconciliation: the slab must sum to links.volume.
             // A shortfall is filled at RELEASE with upstream water; an
@@ -147,7 +171,7 @@ public:
                 std::fill(scratch_.begin(), scratch_.end(), 0.0);
                 const double shed = store_.drain_front(l, v_rem - v_new,
                                                        scratch_.data());
-                addToLedger(up, shed, scratch_.data(), np);
+                addToLedger(up, shed, scratch_.data(), ns);
             }
         }
 
@@ -157,30 +181,41 @@ public:
             const double v_old = nodes.old_volume[un];
             const double v_in = node_vol_in_[un];
 
-            for (int p = 0; p < np; ++p) {
-                const auto idx = un * static_cast<std::size_t>(np) +
-                                 static_cast<std::size_t>(p);
-                const double c_old = nodes.conc[idx];
-                // External loads from the shared seam: rate × dt (mass) —
-                // the same convention mixAtNodes consumes.
-                const double m_ext = nodes.qual_mass_in[idx] * dt;
-                double m = c_old * v_old + node_mass_in_[idx] + m_ext;
+            for (int s = 0; s < ns; ++s) {
+                const bool is_age = (s >= np);
+                const auto li = un * static_cast<std::size_t>(ns) +
+                                static_cast<std::size_t>(s);  // ledger index
+                // State and external load per row. Pollutants: nodes.conc +
+                // qual_mass_in (rate × dt — the mixAtNodes convention). Age:
+                // water_age_state.node_age (already aged +dt this step) +
+                // node_age_vol_in (age·ft³/s rate, the D-UT10 parallel
+                // accumulator filled by all seven loader pathways).
+                const auto ci = un * static_cast<std::size_t>(np) +
+                                static_cast<std::size_t>(s);
+                const double st_old = is_age ? ws.node_age[un]
+                                             : nodes.conc[ci];
+                const double m_ext =
+                    is_age ? ws.node_age_vol_in[un] * dt
+                           : nodes.qual_mass_in[ci] * dt;
+                double m = st_old * v_old + node_mass_in_[li] + m_ext;
                 // D-NS1 floor (defensive until X6 makes it observable):
                 // extraction can never drive a store's mass negative.
                 if (m < 0.0) m = 0.0;
                 const double denom = v_old + v_in + nodes.qual_vol_in[un];
                 // ALWAYS divide by the full denominator. m/denom is a convex
-                // combination of c_old and the arriving concentrations, so it
-                // can never exceed its inputs; the fallback this replaces
-                // divided a mass that included c_old*v_old by a divisor that
-                // EXCLUDED v_old, and at a nearly-dry junction that quotient
-                // amplified step over step -- measured on a receding-flow
-                // deck (inflow stops at 1 h): node concentrations reached
-                // 2.7e30, 2.0e281, then inf, and the final-storage row went
-                // NaN. Below 1e-12 ft^3 there is no meaningful water and the
-                // store keeps its concentration.
-                nodes.conc[idx] = (denom > 1.0e-12) ? m / denom : c_old;
-                node_mass_in_[idx] = 0.0;  // consumed; cycle residue carries
+                // combination of st_old and the arriving values, so it can
+                // never exceed its inputs; the fallback this replaces
+                // divided a mass that included st_old*v_old by a divisor
+                // that EXCLUDED v_old, and at a nearly-dry junction that
+                // quotient amplified step over step -- measured on a
+                // receding-flow deck (inflow stops at 1 h): node
+                // concentrations reached 2.7e30, 2.0e281, then inf, and the
+                // final-storage row went NaN. Below 1e-12 ft^3 there is no
+                // meaningful water and the store keeps its value.
+                const double st_new = (denom > 1.0e-12) ? m / denom : st_old;
+                if (is_age) ws.node_age[un] = st_new;
+                else        nodes.conc[ci] = st_new;
+                node_mass_in_[li] = 0.0;  // consumed; cycle residue carries
             }
             node_vol_in_[un] = 0.0;
 
@@ -197,12 +232,16 @@ public:
                 for (int p = 0; p < np; ++p) {
                     const auto ni = un * static_cast<std::size_t>(np) +
                                     static_cast<std::size_t>(p);
-                    const auto li = ul * static_cast<std::size_t>(np) +
+                    const auto lp = ul * static_cast<std::size_t>(np) +
                                     static_cast<std::size_t>(p);
                     scratch_[static_cast<std::size_t>(p)] = nodes.conc[ni];
-                    links.conc[li] = nodes.conc[ni];
+                    links.conc[lp] = nodes.conc[ni];
                 }
-                addToLedgerRate(dn, q * dt, scratch_.data(), np);
+                if (age) {
+                    scratch_[static_cast<std::size_t>(np)] = ws.node_age[un];
+                    ws.link_age[ul] = ws.node_age[un];
+                }
+                addToLedgerRate(dn, q * dt, scratch_.data(), ns);
             }
         }
 
@@ -218,6 +257,8 @@ public:
                 scratch_[static_cast<std::size_t>(p)] =
                     nodes.conc[uu * static_cast<std::size_t>(np) +
                                static_cast<std::size_t>(p)];
+            if (age)
+                scratch_[static_cast<std::size_t>(np)] = ws.node_age[uu];
             store_.push_front(l, need, scratch_.data());
         }
 
@@ -250,6 +291,19 @@ public:
                 links.conc[ul * static_cast<std::size_t>(np) +
                            static_cast<std::size_t>(p)] =
                     scratch_[static_cast<std::size_t>(p)];
+            // Age: volume-weighted mean over the same segments, seconds.
+            // The dry-element report mask (A2b) is at the report boundary,
+            // engine-side — state keeps aging here regardless. An EMPTY
+            // slab holds no parcels to average, so the link's held age
+            // ages in place instead of resetting to 0 — the state/report
+            // separation the dry-mask round established (a dry element's
+            // STATE keeps aging; only the report masks it).
+            if (age) {
+                if (store_.count(l) > 0)
+                    ws.link_age[ul] = scratch_[static_cast<std::size_t>(np)];
+                else
+                    ws.link_age[ul] += dt;
+            }
         }
         // conc_old bookkeeping matches the ARD/legacy convention.
         links.conc_old = links.conc;
@@ -259,15 +313,37 @@ public:
 private:
     void init(SimulationContext& ctx) {
         const int np = ctx.n_pollutants();
+        const bool age = ctx.options.water_age;
+        const int ns = np + (age ? 1 : 0);
         const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
-        store_.resize(nl, np);
+        store_.resize(nl, ns);
         flow_sign_.assign(static_cast<std::size_t>(nl), 1);
         node_mass_in_.assign(
-            static_cast<std::size_t>(nn) * static_cast<std::size_t>(np), 0.0);
+            static_cast<std::size_t>(nn) * static_cast<std::size_t>(ns), 0.0);
         node_vol_in_.assign(static_cast<std::size_t>(nn), 0.0);
-        scratch_.assign(static_cast<std::size_t>(np), 0.0);
+        scratch_.assign(static_cast<std::size_t>(ns), 0.0);
         node_out_links_.assign(static_cast<std::size_t>(nn), {});
+
+        // X4 age seeding, the ARD precedent: a hotstart-loaded state wins
+        // (node_age/link_age already carry the restored values, A2a);
+        // otherwise a configured INITIAL_STATE age fills the network.
+        // Restored/seeded link ages then seed the segments below — the
+        // same within-link profile collapse A2a recorded for ARD
+        // (lesson 37): continuous, not bit-continuous.
+        if (age) {
+            auto& ws = ctx.water_age_state;
+            if (ws.node_age.size() != static_cast<std::size_t>(nn))
+                ws.resize(nn, nl, ctx.n_subcatches());
+            if (!ws.hotstart_loaded) {
+                const double a0 = ctx.water_age_config.global_age[
+                    static_cast<int>(WaterAgeSource::INITIAL_STATE)];
+                if (a0 > 0.0) {
+                    std::fill(ws.node_age.begin(), ws.node_age.end(), a0);
+                    std::fill(ws.link_age.begin(), ws.link_age.end(), a0);
+                }
+            }
+        }
 
         // Seed: one segment per conduit at the link's current volume and
         // (initQuality-seeded) concentration — a dry link seeds nothing.
@@ -281,6 +357,9 @@ private:
                 scratch_[static_cast<std::size_t>(p)] =
                     ctx.links.conc[ul * static_cast<std::size_t>(np) +
                                    static_cast<std::size_t>(p)];
+            if (age)
+                scratch_[static_cast<std::size_t>(np)] =
+                    ctx.water_age_state.link_age[ul];
             store_.push_front(l, v, scratch_.data());
             flow_sign_[ul] = (ctx.links.flow[ul] >= 0.0) ? 1 : -1;
         }
