@@ -20,9 +20,12 @@
  *
  * @details Subplan X2 (`plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md`;
  *          strategy `plans/LAGRANGIAN_QUALITY_STRATEGY.md` §2/§4, §16
- *          amendments D-L1/D-L2/D-L5 binding). One substep per routing step
- *          (a `QUALITY_STEP` sub-stepping option arrives with X3, where it
- *          starts to matter for RWPT).
+ *          amendments D-L1/D-L2/D-L5 binding). X3a: `[OPTIONS]
+ *          QUALITY_STEP` splits each routing step into equal transport
+ *          substeps (strategy §4.2) — flows are frozen within the routing
+ *          step, so refining dtq refines transport ALONE, which is what
+ *          the dt-reference instrument leans on; `MAX_SEGMENTS_PER_LINK`
+ *          sizes the slabs. Both keys warn when set under other engines.
  *
  *          Step orchestration (§4.2, trimmed to X2 scope):
  *            0. flow-reversal detection → ring reversal + topo invalidation
@@ -106,7 +109,7 @@ public:
      * @brief One routing step of LTD transport. Lazily initializes on the
      *        first call (needs router-set volumes, the ARD precedent).
      */
-    void step(SimulationContext& ctx, double dt) {
+    void step(SimulationContext& ctx, double dt_routing) {
         const int np = ctx.n_pollutants();
         // X4: the age row rides the segments as species index np, state
         // published to water_age_state (seconds) rather than the np-strided
@@ -116,22 +119,11 @@ public:
         if (ns <= 0) return;
         if (!initialized_) init(ctx);
 
-        const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
-        auto& nodes = ctx.nodes;
         auto& links = ctx.links;
-        auto& ws = ctx.water_age_state;
 
-        // ---- AGE (before transport): every parcel ages by exactly dt, and
-        //      the aged value is this step's "old" state — the plan §1
-        //      convention routeLegacyAge follows (age then mix). ------------
-        if (age) {
-            store_.add_species(np, dt);
-            for (int n = 0; n < nn; ++n)
-                ws.node_age[static_cast<std::size_t>(n)] += dt;
-        }
-
-        // ---- 0. Flow reversal (§4.4) --------------------------------------
+        // ---- 0. Flow reversal (§4.4) — once per routing step: the flow
+        //      solution is constant within it. -----------------------------
         bool topo_dirty = false;
         for (int l = 0; l < nl; ++l) {
             const auto ul = static_cast<std::size_t>(l);
@@ -145,6 +137,49 @@ public:
             }
         }
         if (topo_dirty || topo_.empty()) computeTopoOrder(ctx);
+
+        // ---- X3a: QUALITY_STEP substepping (strategy §4.2). Equal
+        //      substeps; mass/age external loads are RATES and scale
+        //      through dt, the per-routing-step external VOLUME
+        //      (qual_vol_in) scales through frac. dtq absent or >= the
+        //      routing step degenerates to one substep — bit-identical to
+        //      the pre-X3a engine by construction.
+        const double dtq = ctx.options.quality_step;
+        const int nsub = (dtq > 0.0 && dtq < dt_routing)
+                             ? static_cast<int>(std::ceil(dt_routing / dtq))
+                             : 1;
+        const double dt = dt_routing / static_cast<double>(nsub);
+        const double frac = 1.0 / static_cast<double>(nsub);
+        for (int sub = 0; sub < nsub; ++sub) substep(ctx, dt, frac);
+
+        publish(ctx, dt_routing);
+    }
+
+    /**
+     * @brief One LTD substep: AGE → DRAIN → MIX(+passthrough) → RELEASE →
+     *        DECAY.
+     *
+     * @param frac  fraction of the per-routing-step external volume
+     *              (`qual_vol_in`) this substep consumes.
+     */
+    void substep(SimulationContext& ctx, double dt, double frac) {
+        const int np = ctx.n_pollutants();
+        const bool age = ctx.options.water_age;
+        const int ns = np + (age ? 1 : 0);
+        const int nn = ctx.n_nodes();
+        const int nl = ctx.n_links();
+        auto& nodes = ctx.nodes;
+        auto& links = ctx.links;
+        auto& ws = ctx.water_age_state;
+
+        // ---- AGE (before transport): every parcel ages by exactly dt, and
+        //      the aged value is this substep's "old" state — the plan §1
+        //      convention routeLegacyAge follows (age then mix). ------------
+        if (age) {
+            store_.add_species(np, dt);
+            for (int n = 0; n < nn; ++n)
+                ws.node_age[static_cast<std::size_t>(n)] += dt;
+        }
 
         // ---- 1. DRAIN (all conduits, before any node mixes) ---------------
         scratch_.assign(static_cast<std::size_t>(ns), 0.0);
@@ -201,7 +236,8 @@ public:
                 // D-NS1 floor (defensive until X6 makes it observable):
                 // extraction can never drive a store's mass negative.
                 if (m < 0.0) m = 0.0;
-                const double denom = v_old + v_in + nodes.qual_vol_in[un];
+                const double denom =
+                    v_old + v_in + nodes.qual_vol_in[un] * frac;
                 // ALWAYS divide by the full denominator. m/denom is a convex
                 // combination of st_old and the arriving values, so it can
                 // never exceed its inputs; the fallback this replaces
@@ -281,6 +317,17 @@ public:
                 ctx.mass_balance.qual_routing_reacted[
                     static_cast<std::size_t>(p)] += removed;
         }
+    }
+
+    /// Per-routing-step publication: link means + the conc_old convention.
+    /// `dt_routing` ages the held state of empty slabs (once per step).
+    void publish(SimulationContext& ctx, double dt_routing) {
+        const int np = ctx.n_pollutants();
+        const bool age = ctx.options.water_age;
+        const int nl = ctx.n_links();
+        auto& nodes = ctx.nodes;
+        auto& links = ctx.links;
+        auto& ws = ctx.water_age_state;
 
         // ---- 5. PUBLISH ---------------------------------------------------
         for (int l = 0; l < nl; ++l) {
@@ -302,7 +349,7 @@ public:
                 if (store_.count(l) > 0)
                     ws.link_age[ul] = scratch_[static_cast<std::size_t>(np)];
                 else
-                    ws.link_age[ul] += dt;
+                    ws.link_age[ul] += dt_routing;
             }
         }
         // conc_old bookkeeping matches the ARD/legacy convention.
@@ -317,7 +364,10 @@ private:
         const int ns = np + (age ? 1 : 0);
         const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
-        store_.resize(nl, ns);
+        // X3a: slab capacity from [OPTIONS] MAX_SEGMENTS_PER_LINK, floored
+        // at 2 (one segment to hold, one to receive).
+        store_.resize(nl, ns,
+                      std::max(2, ctx.options.max_segments_per_link));
         flow_sign_.assign(static_cast<std::size_t>(nl), 1);
         node_mass_in_.assign(
             static_cast<std::size_t>(nn) * static_cast<std::size_t>(ns), 0.0);

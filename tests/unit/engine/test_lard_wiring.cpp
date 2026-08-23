@@ -81,6 +81,8 @@ struct DeckSpec {
     bool heat = false;                  ///< HEAT_TRANSPORT ON (the X4-era
                                         ///< bypass warning's only trigger)
     bool ignore_quality = false;        ///< IGNORE_QUALITY YES
+    int quality_step = 0;               ///< X3a: QUALITY_STEP seconds; 0 = omit
+    int max_segs = 0;                   ///< X3a: MAX_SEGMENTS_PER_LINK; 0 = omit
 };
 
 void write_deck(const std::string& path, const DeckSpec& s) {
@@ -91,6 +93,8 @@ void write_deck(const std::string& path, const DeckSpec& s) {
     if (s.water_age) f << "WATER_AGE ON\n";
     if (s.heat) f << "HEAT_TRANSPORT ON\n";
     if (s.ignore_quality) f << "IGNORE_QUALITY YES\n";
+    if (s.quality_step > 0) f << "QUALITY_STEP " << s.quality_step << "\n";
+    if (s.max_segs > 0) f << "MAX_SEGMENTS_PER_LINK " << s.max_segs << "\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       // 4 h, not 1: at 1 h the LEGACY control's exponential approach to
       // steady state leaves the tail links at 99.998 against kCin's 1e-6
@@ -211,6 +215,8 @@ bool has_lard_warning(const std::vector<std::string>& warnings) {
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
     DeckSpec s;  // LAGRANGIAN, pollutants on
+    s.quality_step = 2;   // X3a keys ride the same save-as rule
+    s.max_segs = 50;
     write_deck("_lw_rt.inp", s);
 
     SWMM_Engine e = swmm_engine_create();
@@ -239,6 +245,12 @@ TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
     EXPECT_EQ(as_cpp_engine(e2).context().options.quality_solver,
               openswmm::QualitySolverKind::LAGRANGIAN)
         << "save-as dropped QUALITY_SOLVER LAGRANGIAN (reopened as LEGACY)";
+    // X3a: the stepping keys survive the same round-trip — dropping either
+    // silently changes the transport discretization on reopen.
+    EXPECT_DOUBLE_EQ(as_cpp_engine(e2).context().options.quality_step, 2.0)
+        << "save-as dropped QUALITY_STEP";
+    EXPECT_EQ(as_cpp_engine(e2).context().options.max_segments_per_link, 50)
+        << "save-as dropped MAX_SEGMENTS_PER_LINK";
     swmm_engine_destroy(e2);
 
     // The short spelling parses too (the EULERIAN_ARD/ARD precedent).

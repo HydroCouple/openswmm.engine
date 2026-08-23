@@ -238,6 +238,27 @@ struct SimulationOptions {
     QualitySolverKind quality_solver = QualitySolverKind::LEGACY;
 
     /**
+     * @brief `[OPTIONS] QUALITY_STEP` — transport substep, seconds
+     *        (HH:MM:SS or seconds; 0 = follow ROUTING_STEP).
+     *
+     * @details X3a: consumed by the LARD engine only, which splits each
+     *          routing step into ceil(dt_routing / quality_step) equal
+     *          substeps (strategy §4.2). Setting it under LEGACY or
+     *          EULERIAN_ARD warns at open — those engines do not substep
+     *          on this key.
+     */
+    double quality_step = 0.0;
+
+    /**
+     * @brief `[OPTIONS] MAX_SEGMENTS_PER_LINK` — LARD slab capacity per
+     *        link (strategy §4.1; default 100, the EPANET MAXSEGS shape).
+     *
+     * @details Values below 2 are clamped to 2 at solver init. Consumed by
+     *          the LARD engine only; warns at open under other solvers.
+     */
+    int max_segments_per_link = 100;
+
+    /**
      * @brief `[OPTIONS] WATER_AGE ON|OFF` — transported water-age tracking
      *        (water age plan §1, reserved species __WATER_AGE__).
      *
