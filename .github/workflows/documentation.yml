@@ -97,8 +97,13 @@ jobs:
           doxygen --version
 
       - name: Build Doxygen HTML docs
+        # docs/CNAME pins the Pages custom domain. It must sit at the ROOT of
+        # the published site, which is the Doxygen output — the Python docs
+        # land under /python and would put it one level too deep.
         working-directory: docs
-        run: doxygen Doxyfile
+        run: |
+          doxygen Doxyfile
+          cp CNAME html/
 
       - name: Upload Doxygen docs artifact
         uses: actions/upload-artifact@v5
