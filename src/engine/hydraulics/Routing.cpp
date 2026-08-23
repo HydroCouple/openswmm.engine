@@ -280,13 +280,29 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             // compiled default (DEFAULT_HEAD_TOL, already in feet) is left as-is.
             // Skipping this made an SI model's 0.0015 m tolerance act as
             // 0.0015 ft (~3.3× too tight) → chronic non-convergence.
+            //
+            // A deck may also carry an explicit ZERO for either option.
+            // Legacy treats zero as "use the compiled default"
+            // (dynwave.c:182-184):
+            //     if (HeadTol == 0.0)  HeadTol  = DEFAULT_HEADTOL;
+            //     if (MaxTrials == 0)  MaxTrials = DEFAULT_MAXTRIALS;
+            // and SWMM itself writes those zeros — project.c:897-898 sets
+            // MaxTrials/HeadTol to 0 precisely to "force use of default", so
+            // decks saved by the GUI ship them. Without the substitution
+            // `while (t_steps < max_trials)` runs ZERO Picard iterations: every
+            // link flow and node depth stays at its initial value for the whole
+            // simulation, silently, with no error and a clean mass balance.
+            // 362 of the 1,396 corpus decks (26%) carry MAX_TRIALS 0.
             const double ucf_len = ucf::Ucf[ucf::LENGTH][
                 ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
             dw_solver_.head_tol =
-                (ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
+                (ctx.options.head_tol == 0.0
+                 || ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
                     ? constants::DEFAULT_HEAD_TOL
                     : ctx.options.head_tol / ucf_len;
-            dw_solver_.max_trials = ctx.options.max_trials;
+            dw_solver_.max_trials = (ctx.options.max_trials > 0)
+                    ? ctx.options.max_trials
+                    : constants::DEFAULT_MAX_TRIALS;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
