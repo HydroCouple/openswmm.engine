@@ -28,6 +28,13 @@
 //   - Implements the new option to skip checking for normal flow limitations.
 //   Build 5.2.4:
 //   - Arguments to function link_getLossRate changed.
+//   OpenSWMM (issue #144):
+//   - Preissmann slot area removed from the momentum equation. Velocity,
+//     upstream-weighted area, inertial terms and local losses now use the
+//     conveyance area (getConveyArea); node continuity and link storage keep
+//     the slot-inclusive area. Previously getHydRad() excluded the slot from
+//     the hydraulic radius while getArea() left it in the area, so a single
+//     friction term mixed two cross-sections.
 //-----------------------------------------------------------------------------
 #define _CRT_SECURE_NO_DEPRECATE
 
@@ -54,6 +61,7 @@ static double findLocalLosses(int link, double a1, double a2, double aMid,
 static double getWidth(TXsect* xsect, double y);
 static double getSlotWidth(TXsect* xsect, double y);
 static double getArea(TXsect* xsect, double y, double wSlot);
+static double getConveyArea(TXsect* xsect, double a);
 static double getHydRad(TXsect* xsect, double y);
 
 static double checkNormalFlow(int j, double q, double y1, double y2,
@@ -81,6 +89,8 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
     double qLast;                      // flow from previous iteration (cfs)
     double qOld;                       // flow from previous time step (cfs)
     double aOld;                       // area from previous time step (ft2)
+    double a1Conv, a2Conv;             // upstrm/dnstrm conveyance areas (ft2)
+    double aMidConv, aOldConv;         // midpoint & previous conveyance areas (ft2)
     double v;                          // velocity (ft/sec)
     double rho;                        // upstream weighting factor
     double sigma;                      // inertial damping factor
@@ -161,6 +171,16 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
     //aMid = (a1+a2)/2.0;
     //rMid = (r1+getHydRad(xsect,y2))/2.0;
 
+    // --- conveyance areas for the momentum equation exclude the Preissmann
+    //     slot (see getConveyArea). aOld is clamped alongside aMid so the
+    //     dq3 difference below stays apples-to-apples across a time step in
+    //     which the conduit crosses its crown; the slot-inclusive a1/a2/aMid
+    //     are still used for stored area, volume and full-state below.
+    a1Conv   = getConveyArea(xsect, a1);
+    a2Conv   = getConveyArea(xsect, a2);
+    aMidConv = getConveyArea(xsect, aMid);
+    aOldConv = getConveyArea(xsect, aOld);
+
     // --- check if conduit is flowing full
     if ( y1 >= xsect->yFull &&
          y2 >= xsect->yFull) isFull = TRUE;
@@ -184,7 +204,7 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
     }
 
     // --- compute velocity from last flow estimate
-    v = qLast / aMid;
+    v = qLast / aMidConv;
     if ( fabs(v) > MAXVELOCITY )  v = MAXVELOCITY * SGN(qLast);
 
     // --- compute Froude No.
@@ -201,7 +221,7 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
     //     (modified version of R. Dickinson's slope weighting)
     rho = 1.0;
     if ( !isFull && qLast > 0.0 && h1 >= h2 ) rho = sigma;
-    aWtd = a1 + (aMid - a1) * rho;
+    aWtd = a1Conv + (aMidConv - a1Conv) * rho;
     rWtd = r1 + (rMid - r1) * rho;
 
     // --- determine how much inertial damping to apply
@@ -225,15 +245,16 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
     dq4 = 0.0;
     if ( sigma > 0.0 )
     {
-        dq3 = 2.0 * v * (aMid - aOld) * sigma;
-        dq4 = dt * v * v * (a2 - a1) / length * sigma;
+        dq3 = 2.0 * v * (aMidConv - aOldConv) * sigma;
+        dq4 = dt * v * v * (a2Conv - a1Conv) / length * sigma;
     }
 
     // --- 5. local losses term
     dq5 = 0.0;
     if ( Conduit[k].hasLosses )
     {
-        dq5 = findLocalLosses(linkIndex, a1, a2, aMid, qLast) / 2.0 / length * dt;
+        dq5 = findLocalLosses(linkIndex, a1Conv, a2Conv, aMidConv, qLast) /
+              2.0 / length * dt;
     }
 
     // --- 6. term for evap and seepage losses per unit length
@@ -271,7 +292,7 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
                 snprintf(fname, sizeof(fname), "%s.link%ld", tr, lfTarget);
                 lf = fopen(fname, "w");
                 if ( lf ) fprintf(lf,
-                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid\n");
+                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv\n");
             }
         }
         if ( lf && linkIndex == lfTarget )
@@ -287,12 +308,12 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
             if ( inWindow && lfRows < 128 )
             {
                 ++lfRows;
-                fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a\n",
+                fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a\n",
                         lfCount, qLast, v, sigma, rho, aWtd, rWtd,
                         dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
                         Link[linkIndex].surfArea1, Link[linkIndex].surfArea2,
                         Link[linkIndex].flowClass,
-                        y1, yMid, a1, aMid, r1, rMid);
+                        y1, yMid, a1, aMid, r1, rMid, aMidConv);
                 if ( lfRows >= 128 ) { fclose(lf); lf = NULL; }
             }
         }
@@ -672,6 +693,35 @@ double getArea(TXsect* xsect, double y, double wSlot)
 {
     if ( y >= xsect->yFull ) return xsect->aFull + (y - xsect->yFull) * wSlot;
     return xsect_getAofY(xsect, y);
+}
+
+//=============================================================================
+
+double getConveyArea(TXsect* xsect, double a)
+//
+//  Input:   xsect = ptr. to conduit cross section
+//           a     = flow area, slot included if surcharged (ft2)
+//  Output:  returns conveyance area (ft2)
+//  Purpose: strips the Preissmann slot contribution from a flow area.
+//
+//  The slot is a fictitious gap above the crown whose purpose is to supply a
+//  finite free-surface top width so the Saint-Venant system stays hyperbolic
+//  once a conduit pressurizes. It stores water but conveys none, so the
+//  momentum equation - velocity, friction, inertial terms and local losses -
+//  must use the closed-section area. This mirrors getHydRad(), which already
+//  clamps to rFull on the same reasoning: the slot adds no wetted perimeter.
+//
+//  Node continuity (findSurfArea) and link storage (newVolume) deliberately
+//  keep the slot-inclusive area - that is where the slot does its real work,
+//  and where the water it holds is booked. See issue #144.
+//
+//  Off the slot path this is the identity: getArea() returns aFull for an
+//  open shape or under EXTRAN (wSlot == 0), and less than aFull below full
+//  depth, so nothing is clamped.
+//
+{
+    if ( a > xsect->aFull ) return xsect->aFull;
+    return a;
 }
 
 //=============================================================================
