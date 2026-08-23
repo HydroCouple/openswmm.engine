@@ -4637,7 +4637,13 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
             // 2D surface routing state (deep-copied; empty when 2D inactive,
             // and Default2DOutputPlugin::update() short-circuits on
-            // surface_tri_count == 0).
+            // surface_tri_count == 0). The render fields refresh on the
+            // REPORT_STEP grid; bring them up to date first for the case where
+            // the report instant does not land on a co-advance batch boundary.
+#ifdef OPENSWMM_HAS_2D
+            if (surface_router_.isActive())
+                surface_router_.refreshRenderFieldsIfStale();
+#endif
             fillSurfaceSnapshot(snap);
 
             // Single conversion boundary: convert the 1D snapshot to project
@@ -4936,6 +4942,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // never consumed; DefaultReportPlugin::update() is a no-op.
             SimulationSnapshot snap;
             snap.sim_time = report_date;
+            surface_router_.refreshRenderFieldsIfStale();
             fillSurfaceSnapshot(snap);
             io_thread_.post(std::move(snap));
         }
