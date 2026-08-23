@@ -746,6 +746,16 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // LEGACY (the A1a defect shape, third instance guarded).
     if (o.quality_solver == QualitySolverKind::LAGRANGIAN)
         std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "LAGRANGIAN");
+    // X3a: the LARD stepping keys ride the same save-as rule — dropping
+    // either silently changes the transport discretization on reopen.
+    if (o.quality_step > 0.0) {
+        char qsb[32];
+        fmt_step(qsb, o.quality_step);
+        std::fprintf(f,"%-20s %s\n",  "QUALITY_STEP",      qsb);
+    }
+    if (o.max_segments_per_link != 100)
+        std::fprintf(f,"%-20s %d\n",  "MAX_SEGMENTS_PER_LINK",
+                     o.max_segments_per_link);
     if (o.water_age)
         std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
     // H1: same rule, same reason — a save-as that dropped this reopened as a

@@ -359,6 +359,23 @@ int SWMMEngine::open(const char* inp_path,
                     "is applied this simulation.");
             }
         }
+        // X3a: the LARD stepping keys are consumed by no other engine —
+        // the inverse bypass direction (E3 lesson 10: config spelled for
+        // one engine while another runs).
+        if (ctx_.options.quality_solver != QualitySolverKind::LAGRANGIAN &&
+            !ctx_.options.ignore_quality) {
+            if (ctx_.options.quality_step > 0.0)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] QUALITY_STEP is set but QUALITY_SOLVER is "
+                    "not LAGRANGIAN — only the LARD engine substeps on "
+                    "this key; it has no effect this simulation.");
+            if (ctx_.options.max_segments_per_link != 100)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] MAX_SEGMENTS_PER_LINK is set but "
+                    "QUALITY_SOLVER is not LAGRANGIAN — only the LARD "
+                    "engine holds segments; it has no effect this "
+                    "simulation.");
+        }
 
         // A1a/A1b: the reserved species registers so downstream consumers
         // see the registry truth. Age now tracks under BOTH engines (ARD

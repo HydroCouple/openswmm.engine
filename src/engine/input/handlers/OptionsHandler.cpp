@@ -223,6 +223,15 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.wet_step = parse_time_seconds(val);
         } else if (key == "REPORT_STEP") {
             opt.report_step = parse_time_seconds(val);
+        } else if (key == "QUALITY_STEP") {
+            // X3a: LARD transport substep (strategy §4.2). Same time
+            // spelling as the other *_STEP keys.
+            opt.quality_step = parse_time_seconds(val);
+        } else if (key == "MAX_SEGMENTS_PER_LINK") {
+            // X3a: LARD slab capacity (strategy §4.1, EPANET MAXSEGS).
+            double d = 0.0;
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
+            opt.max_segments_per_link = static_cast<int>(d);
 
         // -----------------------------------------------------------------
         // Simulation dates / times
