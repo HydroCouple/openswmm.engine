@@ -259,6 +259,23 @@ struct SimulationOptions {
     int max_segments_per_link = 100;
 
     /**
+     * @brief `[OPTIONS] DISPERSION RWPT|OFF` — LARD RWPT dispersion (X3b;
+     *        strategy §5; the GUI plan's Lagrangian-group key).
+     *
+     * @details Resolved vertical-shear dispersion on the segments
+     *          (RwptDispersion.hpp). LARD-only; warns under other solvers
+     *          (the ARD engine's dispersion is E3's `transport.ard`
+     *          machinery, deliberately separate).
+     */
+    bool lard_rwpt = false;
+
+    /**
+     * @brief `[OPTIONS] RWPT_SEED` — deterministic counter-RNG seed
+     *        (D-L6). Same seed ⇒ bit-identical runs at any thread count.
+     */
+    int rwpt_seed = 0;
+
+    /**
      * @brief `[OPTIONS] WATER_AGE ON|OFF` — transported water-age tracking
      *        (water age plan §1, reserved species __WATER_AGE__).
      *

@@ -67,8 +67,14 @@
  *          (seconds), no decay on the age row, and the dry-link state
  *          keeps aging (the A2b state/report separation).
  *
+ *          X3b: `[OPTIONS] DISPERSION RWPT` activates resolved
+ *          vertical-shear dispersion on the segments (RwptDispersion.hpp,
+ *          D-X3b1: particles estimate inter-segment exchange, carry no
+ *          mass themselves), keyed by the deterministic `RWPT_SEED`
+ *          (D-L6). Runs on the substep's final field, conduits only.
+ *
  *          Deliberately NOT here: reactions module binding (deferred L3),
- *          RWPT (X3), heat (H7 — does not advance under this dispatch and
+ *          heat (H7 — does not advance under this dispatch and
  *          the open() warning says so), treatment
  *          interop (warned bypass), storage mixing models beyond CMSTR,
  *          the legacy evaporation up-concentration factor (recorded
@@ -96,6 +102,7 @@
 
 #include "../../core/SimulationContext.hpp"
 #include "../QualityRouting.hpp"
+#include "RwptDispersion.hpp"
 #include "SegmentStore.hpp"
 
 namespace openswmm {
@@ -287,6 +294,7 @@ public:
             if (links.type[ul] != LinkType::CONDUIT) continue;
             const int up = upstreamNode(ctx, l);
             const double need = links.volume[ul] - store_.total_volume(l);
+            release_vol_[ul] = (need > 0.0) ? need : 0.0;  // X3b: RWPT's V_in
             if (need <= 0.0 || up < 0) continue;
             const auto uu = static_cast<std::size_t>(up);
             for (int p = 0; p < np; ++p)
@@ -296,6 +304,40 @@ public:
             if (age)
                 scratch_[static_cast<std::size_t>(np)] = ws.node_age[uu];
             store_.push_front(l, need, scratch_.data());
+        }
+
+        // ---- 3b. RWPT dispersion (X3b) — on the substep's FINAL segment
+        //      field, per link, resolved vertical shear + walk. The age row
+        //      disperses with the water like every other species — mixing
+        //      moves age, physically. ---------------------------------------
+        if (ctx.options.lard_rwpt) {
+            ++substep_counter_;
+            const auto& cond = ctx.link_subtypes.conduits;
+            for (int l = 0; l < nl; ++l) {
+                const auto ul = static_cast<std::size_t>(l);
+                if (links.type[ul] != LinkType::CONDUIT) continue;
+                const double q = std::abs(links.flow[ul]);
+                if (q <= kTinyFlow) continue;
+                const int row = ctx.link_subtypes.conduit_row(l);
+                if (row < 0) continue;
+                const auto ur = static_cast<std::size_t>(row);
+                const double len = cond.length[ur];
+                const double vol = links.volume[ul];
+                if (len <= 0.0 || vol <= 0.0) continue;
+                const double a_flow = vol / len;
+                const double ubar = q / a_flow;
+                const double h = links.depth[ul];
+                const bool circ =
+                    links.xsect_shape[ul] == XsectShape::CIRCULAR;
+                const double rh =
+                    rwpt_hyd_radius(a_flow, h, links.xsect_geom1[ul], circ);
+                rwpt_.disperse(ctx, store_, l, ubar, h, rh,
+                               cond.roughness[ur], release_vol_[ul],
+                               q * dt, dt, substep_counter_,
+                               static_cast<std::uint64_t>(
+                                   ctx.options.rwpt_seed),
+                               scratch_);
+            }
         }
 
         // ---- 4. DECAY (exact exponential; species-major stripes) ----------
@@ -374,6 +416,8 @@ private:
         node_vol_in_.assign(static_cast<std::size_t>(nn), 0.0);
         scratch_.assign(static_cast<std::size_t>(ns), 0.0);
         node_out_links_.assign(static_cast<std::size_t>(nn), {});
+        release_vol_.assign(static_cast<std::size_t>(nl), 0.0);
+        if (ctx.options.lard_rwpt) rwpt_.resize(nl);
 
         // X4 age seeding, the ARD precedent: a hotstart-loaded state wins
         // (node_age/link_age already carry the restored values, A2a);
@@ -490,6 +534,9 @@ private:
     }
 
     SegmentStore store_;
+    RwptDispersion rwpt_;                ///< X3b particle field
+    std::vector<double> release_vol_;    ///< per-substep V_in per link (X3b)
+    std::uint64_t substep_counter_ = 0;  ///< D-L6 RNG key component
     std::vector<int> topo_;
     std::vector<std::vector<int>> node_out_links_;
     std::vector<std::int8_t> flow_sign_;
