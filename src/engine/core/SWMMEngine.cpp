@@ -375,6 +375,13 @@ int SWMMEngine::open(const char* inp_path,
                     "QUALITY_SOLVER is not LAGRANGIAN — only the LARD "
                     "engine holds segments; it has no effect this "
                     "simulation.");
+            if (ctx_.options.lard_rwpt)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] DISPERSION RWPT is set but QUALITY_SOLVER "
+                    "is not LAGRANGIAN — RWPT is the LARD engine's "
+                    "dispersion; the ARD engine reads dispersion from the "
+                    "transport.ard component instead. No dispersion is "
+                    "applied from this key this simulation.");
         }
 
         // A1a/A1b: the reserved species registers so downstream consumers

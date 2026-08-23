@@ -756,6 +756,11 @@ int writeInpFile(const SimulationContext& ctx_internal,
     if (o.max_segments_per_link != 100)
         std::fprintf(f,"%-20s %d\n",  "MAX_SEGMENTS_PER_LINK",
                      o.max_segments_per_link);
+    // X3b: the RWPT keys ride the same rule.
+    if (o.lard_rwpt)
+        std::fprintf(f,"%-20s %s\n",  "DISPERSION",         "RWPT");
+    if (o.rwpt_seed != 0)
+        std::fprintf(f,"%-20s %d\n",  "RWPT_SEED",          o.rwpt_seed);
     if (o.water_age)
         std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
     // H1: same rule, same reason — a save-as that dropped this reopened as a

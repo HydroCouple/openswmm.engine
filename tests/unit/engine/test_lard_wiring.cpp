@@ -83,6 +83,8 @@ struct DeckSpec {
     bool ignore_quality = false;        ///< IGNORE_QUALITY YES
     int quality_step = 0;               ///< X3a: QUALITY_STEP seconds; 0 = omit
     int max_segs = 0;                   ///< X3a: MAX_SEGMENTS_PER_LINK; 0 = omit
+    bool rwpt = false;                  ///< X3b: DISPERSION RWPT
+    int rwpt_seed = 0;                  ///< X3b: RWPT_SEED; 0 = omit
 };
 
 void write_deck(const std::string& path, const DeckSpec& s) {
@@ -95,6 +97,8 @@ void write_deck(const std::string& path, const DeckSpec& s) {
     if (s.ignore_quality) f << "IGNORE_QUALITY YES\n";
     if (s.quality_step > 0) f << "QUALITY_STEP " << s.quality_step << "\n";
     if (s.max_segs > 0) f << "MAX_SEGMENTS_PER_LINK " << s.max_segs << "\n";
+    if (s.rwpt) f << "DISPERSION RWPT\n";
+    if (s.rwpt_seed != 0) f << "RWPT_SEED " << s.rwpt_seed << "\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       // 4 h, not 1: at 1 h the LEGACY control's exponential approach to
       // steady state leaves the tail links at 99.998 against kCin's 1e-6
@@ -217,6 +221,8 @@ TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
     DeckSpec s;  // LAGRANGIAN, pollutants on
     s.quality_step = 2;   // X3a keys ride the same save-as rule
     s.max_segs = 50;
+    s.rwpt = true;        // X3b keys too (handoff §5.viii's W1 extension)
+    s.rwpt_seed = 42;
     write_deck("_lw_rt.inp", s);
 
     SWMM_Engine e = swmm_engine_create();
@@ -251,6 +257,10 @@ TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
         << "save-as dropped QUALITY_STEP";
     EXPECT_EQ(as_cpp_engine(e2).context().options.max_segments_per_link, 50)
         << "save-as dropped MAX_SEGMENTS_PER_LINK";
+    EXPECT_TRUE(as_cpp_engine(e2).context().options.lard_rwpt)
+        << "save-as dropped DISPERSION RWPT";
+    EXPECT_EQ(as_cpp_engine(e2).context().options.rwpt_seed, 42)
+        << "save-as dropped RWPT_SEED";
     swmm_engine_destroy(e2);
 
     // The short spelling parses too (the EULERIAN_ARD/ARD precedent).

@@ -232,6 +232,18 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             double d = 0.0;
             openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
             opt.max_segments_per_link = static_cast<int>(d);
+        } else if (key == "DISPERSION") {
+            // X3b: LARD RWPT toggle (GUI-plan Lagrangian-group key).
+            // Unknown values fall to ext_options for diagnostics.
+            const std::string dv = norm(val);
+            if      (dv == "RWPT")           opt.lard_rwpt = true;
+            else if (dv == "OFF" || dv == "NONE") opt.lard_rwpt = false;
+            else opt.ext_options[key] = val;
+        } else if (key == "RWPT_SEED") {
+            // X3b: D-L6 deterministic counter-RNG seed.
+            double d = 0.0;
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
+            opt.rwpt_seed = static_cast<int>(d);
 
         // -----------------------------------------------------------------
         // Simulation dates / times

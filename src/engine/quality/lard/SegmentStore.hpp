@@ -89,6 +89,12 @@ public:
 
     double seg_volume(int l, int i) const { return vol_[phys(l, i)]; }
     double seg_conc(int l, int i, int s) const { return conc_[cidx(l, i, s)]; }
+    /// X3b: the RWPT exchange rewrites segment concentrations in place
+    /// (mass-conserving by its own construction — every debit pairs with a
+    /// credit; see RwptDispersion::exchange).
+    void set_seg_conc(int l, int i, int s, double c) {
+        conc_[cidx(l, i, s)] = c;
+    }
 
     /// Volume-weighted mean concentration over the link's segments.
     /// `out` has ns_ entries; an empty link reports 0.
