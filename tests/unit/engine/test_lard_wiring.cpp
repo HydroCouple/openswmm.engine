@@ -25,24 +25,22 @@
  *          1. The option parses and survives a save-as (the A1a defect
  *             shape: a save-as must not silently reopen as LEGACY).
  *             Falsify: drop the InpWriter LAGRANGIAN branch.
- *          2. A LARD run publishes exactly zero quality while a LEGACY run
- *             of the SAME deck publishes nonzero — the control run is the
- *             liveness half, so this gate cannot pass vacuously on a deck
- *             that delivers no quality signal (E3 lesson 9).
- *             Falsify: remove the skeleton's zeroing fill.
+ *          2. [X2 FLIP of X1's inert-no-op claim] LARD transports: the
+ *             steady deck reads kCin at every link like the LEGACY control,
+ *             under the maximum principle, with NO bypass warning on a
+ *             pollutant-only deck. Falsify: break the dispatch branch, or
+ *             re-widen the warning predicate to X1's.
  *          3. Hydraulics are bitwise-identical LEGACY vs LAGRANGIAN —
  *             quality is passive, so the dispatch may not perturb flow.
- *             Falsify: make the skeleton touch any hydraulic array.
+ *             Falsify: make the solver touch any hydraulic array.
  *          4. The default (no QUALITY_SOLVER line) still runs LEGACY and
  *             transports — guards the reordered else-chain.
  *             Falsify: break the dispatch default arm.
- *          5. The bypass warning fires exactly when the quality stage would
- *             have been live, in BOTH directions (R4 lesson 5): present for
- *             pollutants and for a reserved-species-only deck, absent when
- *             there is nothing to transport, absent under IGNORE_QUALITY
- *             (whose own warning family covers that configuration).
- *             Falsify: remove the open()-time warning, or widen/narrow its
- *             predicate away from stepRouting's.
+ *          5. The reserved-species bypass warning (X2 wording) fires for an
+ *             age/heat deck under LARD, not for a pollutant-only or bare
+ *             deck, and never under IGNORE_QUALITY (R4 lesson 5, both
+ *             directions). Falsify: drop the warning or move its guard off
+ *             stepRouting's condition.
  *
  *          Scratch fixtures use the `_lw_` prefix — unique per the
  *          configure-time collision check (b85b802d).
@@ -192,10 +190,12 @@ WiringRun run_deck(const std::string& tag, const DeckSpec& s) {
     return r;
 }
 
-/// The one phrase unique to the X1 bypass warning (R1 probe refinement:
-/// assert wording unique to the defense under test, so a different warning
-/// family cannot satisfy this gate).
-constexpr const char* kLardWarn = "LARD transport engine is not yet implemented";
+/// The one phrase unique to the X2 reserved-species bypass warning (R1 probe
+/// refinement: assert wording unique to the defense under test, so a
+/// different warning family cannot satisfy this gate). X1's blanket
+/// "transport not implemented" warning retired with X2 — pollutant transport
+/// is live; what remains bypassed under LARD is age/heat (X4).
+constexpr const char* kLardWarn = "does not advance under the LARD engine yet";
 
 bool has_lard_warning(const std::vector<std::string>& warnings) {
     for (const auto& w : warnings)
@@ -253,9 +253,12 @@ TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2 — inert no-op, with the control run carrying the liveness claim.
+// Gate 2 — X2 FLIP of X1's inert-no-op gate (the H1-precedent inversion:
+// the behavior it asserted is retired by the phase that implements the
+// engine). LARD now transports: the same deck reads the same steady answer
+// as LEGACY, and the pollutant-only run carries NO bypass warning.
 // ---------------------------------------------------------------------------
-TEST(LardWiringTest, LagrangianPublishesZeroWhereLegacyPublishesSignal) {
+TEST(LardWiringTest, LagrangianTransportsWhereLegacyDoes) {
     DeckSpec lard;                      // LAGRANGIAN
     DeckSpec leg;  leg.solver = "LEGACY";
 
@@ -264,23 +267,26 @@ TEST(LardWiringTest, LagrangianPublishesZeroWhereLegacyPublishesSignal) {
     ASSERT_TRUE(a.ok);
     ASSERT_TRUE(b.ok);
 
-    // Liveness first: if LEGACY reads no quality on this deck, the deck is
-    // broken and the zero assertion below would be measuring nothing.
+    // Control liveness (unchanged from X1): if LEGACY reads no quality on
+    // this deck, the deck premise is broken.
     ASSERT_GT(b.peak_link_conc, 1.0)
         << "the control run carries no quality signal — deck premise broken";
 
-    // The claim: not one nonzero concentration, at any element, at any step.
-    // Cinit = 50 seeds real state at start, so a skeleton that stopped
-    // zeroing fails here on the very first sample.
-    EXPECT_EQ(a.peak_node_conc, 0.0)
-        << "a LARD node published nonzero quality — the skeleton leaked "
-           "state (frozen Cinit masquerading as a result)";
-    EXPECT_EQ(a.peak_link_conc, 0.0)
-        << "a LARD link published nonzero quality";
+    // The X2 claim: LARD transports. Steady source, no decay — the exact
+    // answer at every link is kCin, same as gate 4 asserts for LEGACY.
+    ASSERT_EQ(a.link_final.size(), 5u);
+    for (std::size_t l = 0; l < a.link_final.size(); ++l)
+        EXPECT_NEAR(a.link_final[l], kCin, 1.0e-6)
+            << "LARD link " << l << " did not carry the steady signal";
+    // Max principle: one source feeding the network — nothing may exceed it
+    // (mass manufacture, the 7b2dfaae shape).
+    EXPECT_LE(a.peak_link_conc, kCin * (1.0 + 1.0e-9));
+    EXPECT_LE(a.peak_node_conc, kCin * (1.0 + 1.0e-9));
 
-    // And the run says so: the bypass has its observer.
-    EXPECT_TRUE(has_lard_warning(a.warnings))
-        << "LARD ran as a silent no-quality run — the E1-era rule";
+    // A pollutant-only LARD run is no longer a bypass of anything: no
+    // reserved-species warning may fire.
+    EXPECT_FALSE(has_lard_warning(a.warnings))
+        << "the age/heat bypass warning fired on a pollutant-only deck";
     EXPECT_FALSE(has_lard_warning(b.warnings))
         << "the LARD warning fired on a LEGACY run";
 }
@@ -333,32 +339,35 @@ TEST(LardWiringTest, DefaultDeckStillRunsLegacyTransport) {
 // Gate 5 — the warning predicate, exercised in both directions.
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
-    // (a) Reserved-species-only: WATER_AGE ON with no [POLLUTANTS]. The
-    // stage-liveness predicate includes the age family (the lesson-52
-    // shape: a temperature/age-only deck has no pollutant row to gate on).
+    // (a) An age deck under LARD: age state does not advance until X4, so
+    // the reserved-species bypass warning must fire (with or without a
+    // pollutant row — the lesson-52 shape).
     DeckSpec age_only;
     age_only.pollutants = false;
     age_only.water_age = true;
     const WiringRun a = run_deck("_lw_warn_age", age_only);
     ASSERT_TRUE(a.ok);
     EXPECT_TRUE(has_lard_warning(a.warnings))
-        << "an age-only LARD deck ran silently — the predicate lost the "
-           "reserved-species families";
+        << "an age deck under LARD ran silently — the reserved-species "
+           "bypass lost its observer";
 
-    // (b) Nothing to transport: no pollutants, no age, no heat. A warning
-    // here would be noise about a bypass of nothing.
+    // (b) Pollutants only, no age, no heat: transport is live, nothing is
+    // bypassed — a warning here would be noise (also asserted by gate 2 on
+    // its own deck; this leg keeps the direction explicit when gate 2's
+    // deck changes).
     DeckSpec bare;
     bare.pollutants = false;
     const WiringRun b = run_deck("_lw_warn_bare", bare);
     ASSERT_TRUE(b.ok);
     EXPECT_FALSE(has_lard_warning(b.warnings))
-        << "the LARD warning fired with nothing to transport";
+        << "the LARD warning fired with nothing bypassed";
 
-    // (c) IGNORE_QUALITY wins: that configuration's own warning family
-    // covers it, and stepRouting's guard skips the stage before the solver
-    // choice is ever consulted — the LARD warning must match.
+    // (c) IGNORE_QUALITY wins even over a deck that WOULD warn: the stage
+    // is skipped before the solver choice is consulted, and that
+    // configuration's own warning family covers it.
     DeckSpec ignored;
     ignored.ignore_quality = true;
+    ignored.water_age = true;  // the warning's trigger, suppressed by (c)
     const WiringRun c = run_deck("_lw_warn_ign", ignored);
     ASSERT_TRUE(c.ok);
     EXPECT_FALSE(has_lard_warning(c.warnings))
