@@ -461,7 +461,7 @@ private:
     // ext, dwf, then PER-SUBCATCHMENT wet-weather q (routing.c:716), then GW,
     // RDII, iface into Node.newLatFlow. Pre-summing per node and adding in a
     // different source order rounds differently (1-ULP lat-flow drift).
-    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff+runon (cfs)
+    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff (cfs; NOT runon — it is already inside runoff[])
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
 

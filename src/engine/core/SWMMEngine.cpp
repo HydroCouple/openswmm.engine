@@ -2175,13 +2175,33 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         auto ui = static_cast<std::size_t>(i);
         if (ctx_.subcatches.area[ui] <= 0.0) continue;
 
-        // Interpolated runoff rate including runon from upstream subcatchments.
-        // (matching legacy subcatch_getWtdOutflow)
-        double q_runoff = (1.0 - f) * ctx_.subcatches.old_runoff[ui]
-                        +        f  * ctx_.subcatches.runoff[ui];
-        double q_runon  = (1.0 - f) * ctx_.subcatches.old_runon_inflow[ui]
-                        +        f  * ctx_.subcatches.runon_inflow[ui];
-        double q = q_runoff + q_runon;
+        // Interpolated runoff rate. RUN-ON IS NOT ADDED HERE: it is already
+        // inside `runoff[]`.
+        //
+        // `assembleRunon` sums every run-on contributor into
+        // `runon_inflow[]` — subcatchment-to-subcatchment, LID drain
+        // (Gap #25) and outfall return (Gap #28) — and `Runoff.cpp:333`
+        // consumes that array WHOLESALE as an inflow rate:
+        // `precip += runon_q / total_area`. Whatever went in comes back out
+        // in `runoff[]`, so adding `q_runon` again at the node booked the
+        // same water twice.
+        //
+        // The per-contributor question is answered uniformly, and that is
+        // why: the solver does not distinguish where a contribution came
+        // from, it reads one lump. `total_area` there is `soa_.area[ui]`,
+        // the same area this loop already guards on, so there is no
+        // subcatchment that receives run-on and fails to consume it.
+        //
+        // Legacy is unambiguous — `subcatch_getWtdOutflow` is
+        // `(1-f)*oldRunoff + f*newRunoff` and nothing else. Measured:
+        // cascade 0.511 acre-feet against legacy's 0.218, three-deep 0.536
+        // against 0.318; the excess on cascade is 0.293 against the donor's
+        // own runoff of 0.294. The conveyance was receiving 2.3× what our
+        // own runoff ledger said left the surface — and NEITHER continuity
+        // check noticed, because each balance was self-consistent on its own
+        // side of the seam.
+        double q = (1.0 - f) * ctx_.subcatches.old_runoff[ui]
+                 +        f  * ctx_.subcatches.runoff[ui];
 
         // Scatter to decomposed runoff inflow array
         int out_node = ctx_.subcatches.outlet_node[ui];

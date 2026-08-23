@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -674,4 +675,117 @@ TEST(RunoffLedgerCascadeTest, WashoffLoadIsBookedOnlyWhenItReachesTheSystem) {
         << "SA washed off a different amount depending on where it drains, "
            "which the per-subcatchment total should not see: direct="
         << sa_direct << " cascade=" << sa_cascade;
+}
+
+// ---------------------------------------------------------------------------
+// THE SEAM: what the conveyance receives must equal what the surface shed.
+//
+// Finding 4, 2026-08-22. The node injection fed each outlet node
+// `q_runoff + q_runon`, but run-on is already inside `runoff[]` --
+// assembleRunon sums every contributor into runon_inflow[] and Runoff.cpp:333
+// consumes that array wholesale as an inflow rate. Legacy's
+// subcatch_getWtdOutflow returns runoff alone. Measured: cascade 0.511
+// acre-feet against legacy's 0.218, three-deep 0.536 against 0.318, with the
+// excess equal to the donor's own runoff.
+//
+// It survived because NEITHER continuity check could see it. The runoff
+// balance closed. The routing balance closed. Each was self-consistent on its
+// own side of a seam across which 2.3x more water arrived than departed
+// (lesson 147).
+//
+// So this gate is deliberately not another one-sided balance. It asserts
+// CORRESPONDENCE: on a deck where every subcatchment drains to one junction
+// and nothing is lost between surface and node, the routing wet-weather
+// inflow must equal the runoff ledger's surface runoff. That equality is the
+// thing no existing check in this file makes.
+namespace {
+
+struct SeamTotals {
+    double runoff_out = -1.0;   // SWMM_RUNOFF_RUNOFF -- left the surface
+    double wet_in     = -1.0;   // SWMM_ROUTING_WET_WEATHER -- reached the pipes
+};
+
+SeamTotals runAndReadSeam(const std::string& base, const char* sa_outlet) {
+    const std::string inp = forcedOutPath(base + ".inp");
+    std::ofstream(inp) << cascadeDeck(sa_outlet);
+
+    SeamTotals t;
+    SWMM_Engine e = swmm_engine_create();
+    EXPECT_NE(e, nullptr);
+    EXPECT_EQ(swmm_engine_open(e, inp.c_str(),
+                               forcedOutPath(base + ".rpt").c_str(),
+                               forcedOutPath(base + ".out").c_str(), nullptr),
+              0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        EXPECT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0 && ++guard < 100000);
+    EXPECT_EQ(swmm_engine_end(e), 0) << swmm_get_last_error_msg(e);
+
+    EXPECT_EQ(swmm_get_runoff_total(e, SWMM_RUNOFF_RUNOFF, &t.runoff_out),
+              SWMM_OK);
+    EXPECT_EQ(swmm_get_routing_total(e, SWMM_ROUTING_WET_WEATHER, &t.wet_in),
+              SWMM_OK);
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return t;
+}
+
+}  // namespace
+
+TEST(RunoffLedgerCascadeTest, ConveyanceReceivesWhatTheSurfaceShed) {
+    // Both fixtures matter. `direct` is the control: with no cascade there is
+    // no run-on to double-count, so it must have been correct before the fix
+    // AND after it. If the control moves, the fix broke the ordinary case.
+    const SeamTotals direct  = runAndReadSeam("seam_direct", "JN");
+    const SeamTotals cascade = runAndReadSeam("seam_cascade", "SB");
+
+    ASSERT_GT(direct.runoff_out, 0.0)
+        << "the control fixture shed no runoff — the deck, not the seam";
+    ASSERT_GT(cascade.runoff_out, 0.0)
+        << "the cascade fixture shed no runoff — the deck, not the seam";
+
+    // Every subcatchment on these decks drains (directly or via SB) to JN,
+    // and there is nothing between the surface and the node to lose water in.
+    //
+    // The two totals cannot be compared to machine precision, and the bar
+    // here is set from measurement rather than taste. The runoff ledger
+    // integrates runoff[] on the RUNOFF clock; the routing total integrates
+    // the interpolated q on the ROUTING clock. That is a quadrature
+    // difference, and it shrinks with the wet step -- measured on this deck,
+    // relative gap 5.1e-5 at WET_STEP 15 min, 2.0e-5 at 5 min, 6.6e-6 at
+    // 1 min, 2.2e-6 at 20 s, converging to zero. A leak would not converge.
+    // So 1e-3: twenty times above the floor this fixture can reach, and
+    // three orders below the defect, which was 1.35.
+    constexpr double kSeam = 1e-3;
+    EXPECT_NEAR(direct.wet_in, direct.runoff_out, direct.runoff_out * kSeam)
+        << "CONTROL: the node received " << direct.wet_in
+        << " while the surface shed " << direct.runoff_out
+        << ". With no cascade these cannot legitimately differ.";
+
+    EXPECT_NEAR(cascade.wet_in, cascade.runoff_out, cascade.runoff_out * kSeam)
+        << "the node received " << cascade.wet_in
+        << " while the surface shed " << cascade.runoff_out
+        << " (ratio " << (cascade.runoff_out > 0.0
+                          ? cascade.wet_in / cascade.runoff_out : 0.0)
+        << "). Run-on is already inside runoff[]; adding it again at the node "
+           "books the same water twice. Both continuity checks still close — "
+           "that is the point of comparing ACROSS the seam.";
+
+    // The statement that does not rot with the tolerance. The control
+    // measures what quadrature agreement this engine and this timestep can
+    // actually reach; cascading must not degrade it. Measured: 1.5x with the
+    // fix, 26000x without it.
+    const double err_direct  = std::fabs(direct.wet_in / direct.runoff_out - 1.0);
+    const double err_cascade = std::fabs(cascade.wet_in / cascade.runoff_out - 1.0);
+    EXPECT_LE(err_cascade, std::max(10.0 * err_direct, 1e-9))
+        << "cascading degraded the surface-to-node correspondence by "
+        << (err_direct > 0.0 ? err_cascade / err_direct : 0.0)
+        << "x: the control closes to " << err_direct << " and the cascade to "
+        << err_cascade << " on the same engine and the same clock.";
 }
