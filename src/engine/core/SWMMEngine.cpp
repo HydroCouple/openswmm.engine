@@ -4229,8 +4229,12 @@ void convertSnapshotToDisplay(SimulationSnapshot& s, const ucf::DisplayUnits& du
     scale(s.links.depth,    du.length);
     scale(s.links.velocity, du.length);
     scale(s.links.volume,   du.volume);
-    // System scalars (legacy SysResults order)
-    s.sys_temperature = du.temperature(s.sys_temperature);
+    // System scalars (legacy SysResults order).
+    // The temperature conversion is AFFINE, so it must be skipped — not merely
+    // fed a zero — on a model with no subcatchments; see
+    // SimulationSnapshot::has_subcatchments.
+    if (s.has_subcatchments)
+        s.sys_temperature = du.temperature(s.sys_temperature);
     s.sys_rainfall   *= du.rainfall;
     s.sys_snow_depth *= du.raindepth;
     s.sys_infil      *= du.rainfall;
@@ -4491,8 +4495,22 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
             }
 
-            // System-level results
-            snap.sys_temperature = ctx_.climate_state.temperature;
+            // System-level results.
+            //
+            // Legacy assigns SYS_TEMPERATURE and SYS_PET at the END of
+            // output_saveSubcatchResults, and that function is called only
+            // behind `if (Nobjects[SUBCATCH] > 0)` (output.c:489-490). On a
+            // deck with NO subcatchments both therefore stay at the
+            // zero-initialised value of SysResults — regardless of the
+            // temperature data or the unit system. Reproducing that is not
+            // cosmetic: on an SI model this engine correctly converts its
+            // 0 degF to -17.78 degC, which is a defensible number and a parity
+            // failure on every period (extran-family and other pipe-only decks
+            // are exactly this shape).
+            const bool has_subcatchments = ctx_.n_subcatches() > 0;
+            snap.has_subcatchments = has_subcatchments;
+            snap.sys_temperature =
+                has_subcatchments ? ctx_.climate_state.temperature : 0.0;
 
             // Area-weighted average rainfall across subcatchments
             // (matching legacy output_saveSubcatchResults accumulation)
@@ -4525,7 +4543,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
                 snap.sys_snow_depth = (total_area > 0.0) ? total_snow / total_area : 0.0;
             }
-            snap.sys_pet = ctx_.climate_state.evap_rate;
+            snap.sys_pet = has_subcatchments ? ctx_.climate_state.evap_rate : 0.0;
 
             // Area-weighted averages of evap and infil; total runoff
             // Legacy adds GW evaporation (gw->evapLoss) to system evap
@@ -6072,6 +6090,24 @@ void SWMMEngine::initHydrology() noexcept {
         // Resolve timeseries names to table indices
         if (ctx_.options.temp_source == 1 && !ctx_.options.temp_ts_name.empty()) {
             ctx_.climate_state.temp_ts_index = ctx_.find_timeseries(ctx_.options.temp_ts_name);
+        }
+
+        // With NO temperature source, legacy's air temperature stays at the
+        // zero-initialised value of its `Temp` struct: climate.c's setTemp only
+        // assigns `Temp.ta` for FILE_TEMP or TSERIES_TEMP, so a deck with no
+        // [TEMPERATURE] data reports and computes with 0 degF. This engine's
+        // 70 degF default is the more sensible number but it is NOT what legacy
+        // does, and the difference is not confined to reporting: `Temp.ea`, the
+        // saturation vapour pressure, is derived from `ta` and feeds
+        // evaporation. Matching legacy is what the parity gate is for; a
+        // deliberate, better default belongs in a documented deviation, not in
+        // a silent 70-vs-0 disagreement on nearly every deck in the corpus.
+        //
+        // An API-prescribed temperature still overrides this, exactly as
+        // legacy's `Temp.apiTemp` does (climate.c:1222).
+        if (ctx_.options.temp_source == 0 && ctx_.climate_state.temp_ts_index < 0) {
+            ctx_.climate_state.temperature_src = 0.0;
+            ctx_.climate_state.temperature = 0.0;
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
             ctx_.climate_state.evap_ts_index = ctx_.find_timeseries(ctx_.options.evap_ts_name);

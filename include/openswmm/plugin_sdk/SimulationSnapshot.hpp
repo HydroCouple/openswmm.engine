@@ -166,6 +166,21 @@ struct SimulationSnapshot {
     double sys_storage        = 0.0;  ///< Total storage volume
     double sys_pet            = 0.0;  ///< Potential evapotranspiration
 
+    /**
+     * @brief Whether the model has any subcatchments.
+     * @details Legacy assigns SYS_TEMPERATURE and SYS_PET — and applies the SI
+     *          temperature conversion — at the end of
+     *          output_saveSubcatchResults, which is called only behind
+     *          `if (Nobjects[SUBCATCH] > 0)` (output.c:489-490). With no
+     *          subcatchments both stay at the zero-initialised value of
+     *          SysResults and are never converted, so a raw 0 is reported
+     *          whatever the unit system. Carried on the snapshot because the
+     *          display-unit conversion is where that has to be honoured: the
+     *          degF->degC conversion is AFFINE, so converting a zero yields
+     *          -17.78 degC rather than zero.
+     */
+    bool has_subcatchments = true;
+
     // -----------------------------------------------------------------------
     // Pollutant concentrations (optional; populated only if quality routing active)
     // -----------------------------------------------------------------------
