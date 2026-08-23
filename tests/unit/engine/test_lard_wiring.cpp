@@ -36,11 +36,11 @@
  *          4. The default (no QUALITY_SOLVER line) still runs LEGACY and
  *             transports — guards the reordered else-chain.
  *             Falsify: break the dispatch default arm.
- *          5. The reserved-species bypass warning (X2 wording) fires for an
- *             age/heat deck under LARD, not for a pollutant-only or bare
- *             deck, and never under IGNORE_QUALITY (R4 lesson 5, both
- *             directions). Falsify: drop the warning or move its guard off
- *             stepRouting's condition.
+ *          5. The bypass warning (X4 wording) fires for a HEAT deck under
+ *             LARD only — age is live as of X4 — not for a pollutant-only,
+ *             age-only, or bare deck, and never under IGNORE_QUALITY (R4
+ *             lesson 5, both directions). Falsify: drop the warning or
+ *             move its guard off stepRouting's condition.
  *
  *          Scratch fixtures use the `_lw_` prefix — unique per the
  *          configure-time collision check (b85b802d).
@@ -78,6 +78,8 @@ struct DeckSpec {
     const char* solver = "LAGRANGIAN";  ///< QUALITY_SOLVER value; "" = omit line
     bool pollutants = true;             ///< [POLLUTANTS] TSS + its inflow row
     bool water_age = false;             ///< WATER_AGE ON
+    bool heat = false;                  ///< HEAT_TRANSPORT ON (the X4-era
+                                        ///< bypass warning's only trigger)
     bool ignore_quality = false;        ///< IGNORE_QUALITY YES
 };
 
@@ -87,6 +89,7 @@ void write_deck(const std::string& path, const DeckSpec& s) {
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n";
     if (s.solver[0] != '\0') f << "QUALITY_SOLVER " << s.solver << "\n";
     if (s.water_age) f << "WATER_AGE ON\n";
+    if (s.heat) f << "HEAT_TRANSPORT ON\n";
     if (s.ignore_quality) f << "IGNORE_QUALITY YES\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       // 4 h, not 1: at 1 h the LEGACY control's exponential approach to
@@ -339,17 +342,27 @@ TEST(LardWiringTest, DefaultDeckStillRunsLegacyTransport) {
 // Gate 5 — the warning predicate, exercised in both directions.
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
-    // (a) An age deck under LARD: age state does not advance until X4, so
-    // the reserved-species bypass warning must fire (with or without a
-    // pollutant row — the lesson-52 shape).
+    // (a) A heat deck under LARD: temperature does not advance until H7,
+    // so the bypass warning must fire (with or without a pollutant row —
+    // the lesson-52 shape).
+    DeckSpec heat_only;
+    heat_only.pollutants = false;
+    heat_only.heat = true;
+    const WiringRun a = run_deck("_lw_warn_heat", heat_only);
+    ASSERT_TRUE(a.ok);
+    EXPECT_TRUE(has_lard_warning(a.warnings))
+        << "a heat deck under LARD ran silently — the reserved-species "
+           "bypass lost its observer";
+
+    // (a2) X4 FLIP: an age deck under LARD is now LIVE — no bypass warning.
     DeckSpec age_only;
     age_only.pollutants = false;
     age_only.water_age = true;
-    const WiringRun a = run_deck("_lw_warn_age", age_only);
-    ASSERT_TRUE(a.ok);
-    EXPECT_TRUE(has_lard_warning(a.warnings))
-        << "an age deck under LARD ran silently — the reserved-species "
-           "bypass lost its observer";
+    const WiringRun a2 = run_deck("_lw_warn_age", age_only);
+    ASSERT_TRUE(a2.ok);
+    EXPECT_FALSE(has_lard_warning(a2.warnings))
+        << "the bypass warning fired on an age deck — age is live under "
+           "LARD as of X4, and warning about it would be a false claim";
 
     // (b) Pollutants only, no age, no heat: transport is live, nothing is
     // bypassed — a warning here would be noise (also asserted by gate 2 on
@@ -367,7 +380,7 @@ TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
     // configuration's own warning family covers it.
     DeckSpec ignored;
     ignored.ignore_quality = true;
-    ignored.water_age = true;  // the warning's trigger, suppressed by (c)
+    ignored.heat = true;  // the warning's trigger, suppressed by (c)
     const WiringRun c = run_deck("_lw_warn_ign", ignored);
     ASSERT_TRUE(c.ok);
     EXPECT_FALSE(has_lard_warning(c.warnings))

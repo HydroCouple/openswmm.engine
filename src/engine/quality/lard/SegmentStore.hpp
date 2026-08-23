@@ -188,6 +188,18 @@ public:
     }
 
     /**
+     * @brief Add a constant to one species on every LIVE segment.
+     *
+     * @details X4: the water-age row ages by exactly +dt per routing step in
+     *          every parcel (zero-order growth, water age plan §1). Only
+     *          live segments are touched — stale slot contents never age.
+     */
+    void add_species(int s, double delta) {
+        for (int l = 0; l < nl_; ++l)
+            for (int i = 0; i < count(l); ++i) conc_[cidx(l, i, s)] += delta;
+    }
+
+    /**
      * @brief Exact-exponential decay on one species over every LIVE segment.
      *
      * @param factor  exp(-k·dt), applied multiplicatively.

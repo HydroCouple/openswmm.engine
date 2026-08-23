@@ -63,4 +63,5 @@ tests/parity/snow/snow_parity.inp	KINWAVE + [SNOWPACKS] -- the only deck with sn
 # moves on a snow change.  Attribute the movement; do not widen anything.
 tests/parity/transport/age_legacy.inp	WATER_AGE ON with np=0, default solver -- age through the LEGACY CSTR mirror (A1b)
 tests/parity/transport/age_ard.inp	the same body under QUALITY_SOLVER EULERIAN_ARD -- age as an ARD mesh row (A1a); the pair localises a movement to one engine
+tests/parity/transport/age_lard.inp	the same body once more under QUALITY_SOLVER LAGRANGIAN -- age as the LARD segment row (X4); the TRIPLE localises a movement to one of three engines
 tests/parity/transport/heat_parity.inp	pollutant + age + heat -- the only deck reaching the np+age+heat reported stride (D-UT10's seam); carries heat_parity.heat beside it
