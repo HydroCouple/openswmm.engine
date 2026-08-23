@@ -149,6 +149,13 @@ bool fitPieceAtDegree(ChebPiece& pc, const BElem* elems, int n, int deg) {
     pc.n_p = chebChop(pc.c_p, deg, kFitTol);
     pc.n_i1 = chebChop(pc.c_i1, deg, kFitTol);
 
+    // Derivative series belong to the piece, so build them once here — every
+    // caller used to rebuild them per evaluation. Must come after the chops:
+    // differentiating the untruncated series would leave the derivative
+    // carrying a tail its own field no longer has.
+    chebDeriv(pc.c_a, pc.n_a, pc.c_da);
+    chebDeriv(pc.c_p, pc.n_p, pc.c_dp);
+
     // "Resolved" means the chop found a negligible tail in EVERY field, i.e.
     // the degree was more than enough.
     return pc.n_a < deg && pc.n_w < deg && pc.n_p < deg && pc.n_i1 < deg;
@@ -178,8 +185,7 @@ bool fitPiece(ChebPiece& pc, const BElem* elems, int n) {
 /// machine precision. What the guard is actually for is a REAL reversal, orders
 /// above this floor, which would make y(A) multi-valued.
 bool pieceIsMonotone(const ChebPiece& pc) {
-    double dc[kMaxChebCoeff];
-    chebDeriv(pc.c_a, pc.n_a, dc);
+    const double* dc = pc.c_da;   // built by fitPieceAtDegree
     const int nd = pc.n_a - 1;
     if (nd < 1) return true;                    // constant A: flat, not falling
     double scale = 0.0;
@@ -191,6 +197,175 @@ bool pieceIsMonotone(const ChebPiece& pc) {
         if (chebEval(dc, nd, u) < tol) return false;
     }
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// The compiled inverse, u(A)
+// ---------------------------------------------------------------------------
+
+/// Root order of the inverse coordinate at one end of a piece: 1, 2 or 3.
+///
+/// @details A is analytic in the fit variable u by construction, but u is NOT
+///          generally analytic in A — the inverse acquires its own branch
+///          point wherever dA/du vanishes, and the order of that zero sets the
+///          root the inverse coordinate needs. Two mechanisms produce one:
+///
+///          * a horizontal tangency (forward tag 1.5). The map already puts
+///            y - y_lo ~ u^2 there and W ~ sqrt(y - y_lo) ~ u, so
+///            dA/du = W dy/du ~ u^2 and A vanishes like u^3. Order 3.
+///          * a corner where the width simply goes to zero linearly — a
+///            V-notch invert, a pointed crown. The forward tag is 1.0 there
+///            (A is perfectly analytic in y, which is why Phase 3 tags it so),
+///            dy/du is bounded away from zero, and A vanishes like u^2.
+///            Order 2.
+///
+///          Everywhere else W is bounded away from zero and so is dA/du.
+///          Order 1, identity map, no transcendental at all.
+///
+/// @note The second case is why this cannot simply read exp_lo/exp_hi. The
+///       forward exponent tag answers "is A analytic in y", and a pointed
+///       crown answers yes; the inverse asks a different question and gets a
+///       different answer at the same point.
+///
+/// @note The zero-width test is relative (1e-6 of the piece's own width
+///       scale) and therefore approximate. A width that is genuinely tiny but
+///       nonzero at an end reads as order 2; the fit then either resolves
+///       anyway or fails to, and failing to is safe — see fitPieceInverse.
+int inverseRootOrder(const ChebPiece& pc, bool at_hi) {
+    const double e = at_hi ? pc.exp_hi : pc.exp_lo;
+    if (e > kExpSplit) return 3;
+
+    double w_ref = 0.0;
+    for (int i = 0; i < pc.n_w; ++i) w_ref = std::max(w_ref, std::fabs(pc.c_w[i]));
+    if (!(w_ref > 0.0)) return 2;
+
+    const double w_end = chebEval(pc.c_w, pc.n_w, at_hi ? 1.0 : 0.0);
+    return (w_end > 1.0e-6 * w_ref) ? 1 : 2;
+}
+
+/// Solve A(u) = a for u on one piece. Compile-time only — the runtime path is
+/// the fitted series this feeds.
+///
+/// @note Bisection carries the convergence, Newton only accelerates it. Near
+///       a singular end dA/du vanishes, so Newton's step is unusable there
+///       and the bracket is what actually delivers u; the bracket halves in
+///       u regardless of how flat A is, which is exactly the property needed.
+double uOfAOnPiece(const ChebPiece& pc, const double* dc, double a) {
+    double lo = 0.0, hi = 1.0, u = 0.5;
+    for (int it = 0; it < 100; ++it) {
+        const double f = chebEval(pc.c_a, pc.n_a, u) - a;
+        if (f > 0.0) hi = u; else lo = u;
+        if (hi - lo <= 1.0e-16) break;
+
+        const double d = chebEval(dc, pc.n_a - 1, u);
+        double un = (d > 0.0) ? (u - f / d) : (0.5 * (lo + hi));
+        if (!(un > lo && un < hi)) un = 0.5 * (lo + hi);
+        if (std::fabs(un - u) <= 1.0e-16) { u = un; break; }
+        u = un;
+    }
+    return u;
+}
+
+double ipow123(double v, int k) {
+    return (k == 1) ? v : (k == 2) ? (v * v) : (v * v * v);
+}
+
+/// Sampling degree for the inverse fit on an IDENTITY-mapped piece, where the
+/// series converges cleanly and the usual chop applies.
+constexpr int kInvFitDeg = 24;
+
+/// Sampling degree and chop tolerance on a ROOT-MAPPED piece.
+///
+/// @note **Both are set by measurement, and more of either makes it worse.**
+///       On a root-mapped piece the inverse cannot be more accurate than the
+///       forward series it inverts: A is chopped at kFitTol, so near a k-th
+///       order zero its zero is only clean to that tolerance, and taking the
+///       k-th root magnifies the discrepancy into a localized distortion at
+///       the singular end. Measured on a circular pipe's invert piece, |du|
+///       against the reference inversion is 2.7e-8 from an 8-node fit, 3.9e-8
+///       from 12, 9.3e-8 from 16 and 5.1e-7 from 32 — the extra nodes sample
+///       the distortion and the interpolant then carries it everywhere.
+///       Chopping at kFitTol simply rejects these pieces outright (the
+///       circle's own invert and crown both fell back to Newton), so the
+///       tolerance is set at the floor the samples actually support.
+///
+/// @note An adaptive scheme that measured its own error at check points and
+///       spent the fewest coefficients reaching the floor WAS built and
+///       measured, and it lost to these two constants both ways: with a
+///       uniform check grid it kept 19 coefficients for 4.3e-7 of full depth,
+///       and with an end-clustered grid it kept 14 for 6.1e-5, against 12 for
+///       4.0e-8 here. The floor near the singular end is unrepresentable
+///       rather than merely unresolved, so letting the fit chase it either
+///       over-fits the distortion or gives up on the rest of the piece.
+constexpr int kInvFitDegRoot = 12;
+constexpr double kInvRootTol = 1.0e-7;
+
+/// Fit u(t) for one piece, where t is A normalized and rooted at whichever end
+/// carries the branch point. Leaves n_u = 0 if that cannot be done, which makes
+/// chebYofA fall back to its Newton solve for this piece — slow but correct, so
+/// a shape this does not suit degrades in speed and never in answer.
+///
+/// @note Accuracy delivered: ~4e-8 of full depth on a root-mapped piece and
+///       ~1e-11 on an identity-mapped one. Both are far past what this
+///       replaces — the legacy inverse table carries ~1.4e-2, and ~4.1e-1
+///       below 5% of full depth.
+void fitPieceInverse(ChebPiece& pc) {
+    pc.n_u = 0;
+    pc.inv_k = 1;
+    pc.inv_at_hi = false;
+
+    const double da = pc.a_hi - pc.a_lo;
+    if (!(da > 0.0)) return;
+    pc.inv_span_a = 1.0 / da;
+
+    const int k_lo = inverseRootOrder(pc, false);
+    const int k_hi = inverseRootOrder(pc, true);
+
+    // Both ends singular in the area ordinate cannot be straightened by a
+    // single root map, the same way the forward map cannot straighten a
+    // 1.5/1.5 piece. The forward compiler answers that by splitting; here the
+    // Newton fallback answers it, because the case does not arise for any
+    // shape in the catalogue (test_cheb_section asserts full inverse coverage
+    // and will say so if that ever stops being true).
+    if (k_lo > 1 && k_hi > 1) return;
+
+    pc.inv_at_hi = (k_hi > 1);
+    pc.inv_k = pc.inv_at_hi ? k_hi : k_lo;
+
+    const double* dc = pc.c_da;
+
+    const auto sample = [&](int deg, double* su) {
+        for (int j = 0; j < deg; ++j) {
+            const double t = chebNode(deg, j);
+            const double sa = pc.inv_at_hi ? (1.0 - ipow123(1.0 - t, pc.inv_k))
+                                           : ipow123(t, pc.inv_k);
+            su[j] = uOfAOnPiece(pc, dc, pc.a_lo + sa * da);
+        }
+    };
+
+    double su[kInvFitDeg], c[kMaxChebCoeff];
+
+    if (pc.inv_k > 1) {
+        sample(kInvFitDegRoot, su);
+        chebFitSamples(su, kInvFitDegRoot, c);
+        const int m = chebChop(c, kInvFitDegRoot, kInvRootTol);
+        for (int i = 0; i < kMaxChebCoeff; ++i) {
+            pc.c_u[i] = (i < kInvFitDegRoot) ? c[i] : 0.0;
+        }
+        pc.n_u = m;
+        return;
+    }
+
+    for (const int d : {8, 16, kInvFitDeg}) {
+        sample(d, su);
+        chebFitSamples(su, d, c);
+        const int m = chebChop(c, d, kFitTol);
+        if (m < d) {
+            for (int i = 0; i < kMaxChebCoeff; ++i) pc.c_u[i] = (i < d) ? c[i] : 0.0;
+            pc.n_u = m;
+            return;
+        }
+    }
 }
 
 } // namespace
@@ -349,7 +524,14 @@ int compile(ChebSection& out, const BElem* elems, int n, bool is_open) {
     for (int p = 0; p < out.n_pieces; ++p) {
         ChebPiece& pc = out.piece[p];
         pc.a_lo = (p == 0) ? 0.0 : chebEval(pc.c_a, pc.n_a, 0.0);
+        pc.a_hi = chebEval(pc.c_a, pc.n_a, 1.0);
     }
+
+    // ---- the compiled inverse, u(A) --------------------------------------
+    // Done last, once the piece set is final: the refinement pass above can
+    // still split a piece, and a split changes both the area bracket and the
+    // series the inverse is fitted against.
+    for (int p = 0; p < out.n_pieces; ++p) fitPieceInverse(out.piece[p]);
 
     // ---- scalars ---------------------------------------------------------
     // a_full and the perimeter at the crown come from the TOP PIECE evaluated
