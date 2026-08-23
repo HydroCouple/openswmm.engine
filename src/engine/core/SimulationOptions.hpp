@@ -84,8 +84,11 @@ enum class RoutingModel : int {
  */
 enum class QualitySolverKind : int {
     LEGACY       = 0,  ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
-    EULERIAN_ARD = 1   ///< Eulerian ARD on the FV cell mesh (all routing models)
-    // LAGRANGIAN reserved — plans/LAGRANGIAN_QUALITY_STRATEGY.md (phase T5)
+    EULERIAN_ARD = 1,  ///< Eulerian ARD on the FV cell mesh (all routing models)
+    LAGRANGIAN   = 2   ///< LARD segment transport — X1 skeleton dispatch only;
+                       ///< transport lands in X2
+                       ///< (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
+                       ///< plans/LAGRANGIAN_QUALITY_STRATEGY.md)
 };
 
 /**
@@ -227,8 +230,10 @@ struct SimulationOptions {
      *          bit-identical behavior). EULERIAN_ARD = the solver-agnostic
      *          Eulerian ARD engine on the FV cell mesh
      *          (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md rev. 2;
-     *          master plan D-UT6). LAGRANGIAN is reserved (parses to a
-     *          warning until LARD lands, plan phase T5).
+     *          master plan D-UT6). LAGRANGIAN = the LARD segment engine —
+     *          X1 wiring only: the dispatch exists, transport does not, so
+     *          quality state reads zero and the open() warning says so
+     *          (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md).
      */
     QualitySolverKind quality_solver = QualitySolverKind::LEGACY;
 

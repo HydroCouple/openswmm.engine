@@ -742,6 +742,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // user saved.
     if (o.quality_solver == QualitySolverKind::EULERIAN_ARD)
         std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "EULERIAN_ARD");
+    // X1: same rule for LAGRANGIAN — a save-as must not silently reopen as
+    // LEGACY (the A1a defect shape, third instance guarded).
+    if (o.quality_solver == QualitySolverKind::LAGRANGIAN)
+        std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "LAGRANGIAN");
     if (o.water_age)
         std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
     // H1: same rule, same reason — a save-as that dropped this reopened as a
