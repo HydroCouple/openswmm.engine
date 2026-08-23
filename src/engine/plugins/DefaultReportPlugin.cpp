@@ -776,8 +776,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             double total_in  = init_bu + surf_bu + wet_dep;
             double total_out = sweep + bmp + infil + runoff + final_bu;
-            double err_pct = (total_in > 0.0) ?
-                (total_in - total_out) / total_in * 100.0 : 0.0;
+            // Legacy's THREE branches (massbal.c:900-911). The third is the
+            // one this site lacked, and this is the site the user reads: the
+            // 2026-08-23 API fix landed in swmm_get_quality_continuity_error
+            // and left the printed row on the two-branch form, so a deck
+            // that discharged mass it never received still printed 0.000 --
+            // which is the exact symptom Finding 10 was raised on.
+            double err_pct;
+            if (std::fabs(total_in - total_out) < 0.001)
+                err_pct = 0.0;
+            else if (total_in > 0.0)
+                err_pct = (total_in - total_out) / total_in * 100.0;
+            else if (total_out > 0.0)
+                err_pct = (total_in - total_out) / total_out * 100.0;
+            else
+                err_pct = 0.0;
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
 
             WRITE(f, "");
@@ -1493,13 +1506,19 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     // =====================================================================
     // Subcatchment Washoff Summary — Gap #64, matches legacy writeSubcatchLoads()
-    // total_load is in mg (washoff_load [mg/s] × dt [s]); convert to lbs: /453592
+    // total_load is in USER MASS (lbs/kg) since the 2026-08-23 units fix:
+    // the washoff loop applies mcf at the booking seam, exactly as legacy
+    // does at surfqual.c:357 — so this summary prints the value RAW, and it
+    // agrees with the Runoff Quality Continuity ledger row by construction.
+    // The /453592 that used to sit here was half of the defect: with the
+    // booking in mg/L·ft³ the summary printed 1/28.3 of the true pounds
+    // while the ledger row printed 16057× them (known-mass audit,
+    // QUALITY_LEDGER_UNITS_AUDIT §7).
     // =====================================================================
     if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0
         && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
         int np = ctx.n_pollutants();
-        static constexpr double MG_TO_LBS = 1.0 / 453592.0;
 
         WRITE(f, "****************************");
         WRITE(f, "Subcatchment Washoff Summary");
@@ -1530,9 +1549,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             for (int p = 0; p < np; ++p) {
                 auto up = static_cast<std::size_t>(p);
                 auto idx = uj * static_cast<std::size_t>(np) + up;
-                double load_mg = (idx < ctx.subcatches.total_load.size())
+                double load_lbs = (idx < ctx.subcatches.total_load.size())
                     ? ctx.subcatches.total_load[idx] : 0.0;
-                double load_lbs = load_mg * MG_TO_LBS;
                 sys_loads[up] += load_lbs;
                 std::fprintf(f, "%14.3f", load_lbs);
             }
