@@ -456,13 +456,24 @@ TEST(ChebSectionBatch, PieceLocalDerivativeMatchesTheSectionLevelOne) {
     // chebYofA's Newton loop used to call chebdAdY, which recomputed the
     // piece's derivative coefficient series on EVERY iteration even though
     // that series depends only on the piece. Hoisting it out is worth 2.3x on
-    // the single most expensive function in the header (966 -> 419 ns/eval,
-    // and 68% of all non-idle samples in a profiled Bellinge EXACT run).
+    // what was then the single most expensive function in the header
+    // (966 -> 419 ns/eval, and 68% of all non-idle samples in a profiled
+    // Bellinge EXACT run). The series is now built once per piece by
+    // compile() and stored as ChebPiece::c_da, which removed the same
+    // recompute from chebdAdY, chebdPdY and chebRdPdA as well.
     //
-    // The hoist is only safe if chebdAdYOnPiece, fed the series the caller
-    // computed once, returns exactly what chebdAdY computes for itself. Exact
-    // equality, not a tolerance: this is the same expression evaluated on the
-    // same inputs, and any drift would mean the two have diverged.
+    // Two separate claims below, and they need different strengths:
+    //
+    //   * Fed the SAME series, chebdAdYOnPiece and chebdAdY must agree to the
+    //     bit — that is one expression on one set of inputs.
+    //   * The stored series matches one recomputed here only to about an ulp.
+    //     chebDeriv is an inline function, so the library and this test
+    //     compile their own instantiations, and the two are free to contract
+    //     `nxt + 2*k*c[k]` into an FMA differently. Measured: one coefficient
+    //     of one circle piece differs by 2.0e-16 relative, the rest by
+    //     exactly zero. Storing the series once is what makes the first claim
+    //     hold everywhere it matters, rather than leaving each call site to
+    //     rebuild it and drift.
     struct Case { const char* name; std::vector<BElem> b; bool open; };
     std::vector<Case> cases;
     cases.push_back({"circle", circleOf(4.0), false});
@@ -479,10 +490,22 @@ TEST(ChebSectionBatch, PieceLocalDerivativeMatchesTheSectionLevelOne) {
             const ChebPiece& pc = s.piece[p];
             double dc[kMaxChebCoeff];
             chebDeriv(pc.c_a, pc.n_a, dc);
+
+            // The stored series IS the derivative series, to an ulp.
+            double cmax = 0.0;
+            for (int i = 0; i < pc.n_a; ++i) cmax = std::max(cmax, std::fabs(dc[i]));
+            for (int i = 0; i < pc.n_a; ++i) {
+                EXPECT_NEAR(pc.c_da[i], dc[i], 1e-14 * std::max(cmax, 1.0))
+                    << "piece " << p << " coefficient " << i;
+            }
+
             for (int i = 1; i < 40; ++i) {          // strictly inside the piece
                 const double y = pc.y_lo +
                                  (pc.y_hi - pc.y_lo) * static_cast<double>(i) / 40.0;
-                EXPECT_EQ(chebdAdYOnPiece(pc, dc, y), chebdAdY(s, y))
+                EXPECT_EQ(chebdAdYOnPiece(pc, pc.c_da, y), chebdAdY(s, y))
+                    << "piece " << p << " at y = " << y;
+                EXPECT_NEAR(chebdAdYOnPiece(pc, dc, y), chebdAdY(s, y),
+                            1e-13 * std::max(1.0, std::fabs(chebdAdY(s, y))))
                     << "piece " << p << " at y = " << y;
             }
         }

@@ -166,6 +166,70 @@ struct ChebPiece {
     double c_p[kMaxChebCoeff]{};   ///< wetted perimeter
     double c_i1[kMaxChebCoeff]{};  ///< hydrostatic first moment
 
+    /// Exact derivative coefficients of c_a and c_p, d/du on [0,1]. Evaluate
+    /// with n_a-1 and n_p-1 terms respectively (chebDeriv's convention).
+    ///
+    /// @note Precomputed because they depend on the PIECE and never on the
+    ///       evaluation point, and every consumer had been rebuilding them per
+    ///       call — a 32-double zero fill plus an O(n) transform each time.
+    ///       Measured on a circular pipe: the two chebDeriv calls inside
+    ///       chebRdPdA alone were 35 ns of its 106, and getdSdA was the single
+    ///       largest item in the whole EXACT profile at 18% of non-idle
+    ///       samples. This is the same loop-invariant recompute already fixed
+    ///       once inside chebYofA's Newton loop, at a different call site.
+    double c_da[kMaxChebCoeff]{};
+    double c_dp[kMaxChebCoeff]{};
+
+    // -- the compiled INVERSE, u(A) ----------------------------------------
+    //
+    // Everything above answers "given depth, what is ...". The solver spends
+    // most of its geometry time asking the opposite question, because area is
+    // what the routing conserves. Phase 4-5B left that direction as a runtime
+    // Newton solve and it measured 419 ns against 15.7 for a forward
+    // accessor and 4.9 for the legacy inverse TABLE — 68% of all non-idle
+    // samples on a real network. These fields compile it away.
+    //
+    // Only u(A) is fitted, not y(A)/W(A)/P(A)/I1(A) separately. Once u is in
+    // hand, y is a closed form (mapSofU, no series at all) and W/P/I1 are the
+    // series ALREADY here, evaluated at that u — so one extra array buys the
+    // whole A-parametrized family. Fitting four more would cost 24 kB per
+    // section against this 8 kB, double every piece's footprint in the
+    // forward path's own scan, and add four new fitted-accuracy surfaces to
+    // test, in exchange for saving one shared basis recurrence on the
+    // compound accessors only. Revisit if Phase 6 measures that recurrence.
+
+    /// A(y_hi) from this piece's own series, so [a_lo, a_hi] is exactly the
+    /// range the fit below covers.
+    double a_hi = 0.0;
+    double inv_span_a = 0.0;  ///< 1 / (a_hi - a_lo)
+
+    /// Root order of the inverse coordinate: 1 identity, 2 sqrt, 3 cbrt.
+    ///
+    /// @details A is not generally analytic in the coordinate the FORWARD map
+    ///          uses, and the exponent is not the forward tag. Near an end
+    ///          where the boundary is tangent to horizontal (forward tag 1.5)
+    ///          A vanishes like the CUBE of the fit variable, so u ~ dA^(1/3).
+    ///          Near a corner where the width merely goes to zero linearly (a
+    ///          V-notch invert, a pointed crown — forward tag 1.0, analytic
+    ///          in y) A vanishes like the SQUARE, so u ~ dA^(1/2). Everywhere
+    ///          else dA/du is bounded away from zero and u is analytic in A.
+    ///          That last case is the common one; the map is the identity and
+    ///          costs nothing.
+    int inv_k = 1;
+
+    /// Whether the branch point sits at the piece's UPPER end (a_hi) rather
+    /// than its lower one. compile() guarantees at most one end is singular,
+    /// splitting the piece if both are — the same normalization the forward
+    /// map already relies on, applied in the area ordinate.
+    bool inv_at_hi = false;
+
+    /// Retained coefficients of u(t). ZERO means this piece has no compiled
+    /// inverse and chebYofA must fall back to its Newton solve — a safety
+    /// valve for a shape whose inverse does not resolve, never the normal path.
+    int n_u = 0;
+
+    double c_u[kMaxChebCoeff]{};   ///< fit variable u as a function of t(A)
+
     double rho_a = 0.0;  ///< measured Bernstein parameter for A (diagnostic)
 };
 
@@ -174,14 +238,25 @@ struct ChebPiece {
  *        can be memcpy'd to device memory.
  *
  * @note **Size.** With kMaxPieces = 24 and kMaxChebCoeff = 32 this is about
- *       26 kB: 24 pieces x 4 fields x 32 coefficients x 8 bytes is already
- *       24 kB of coefficients alone. The design sketch's "sizeof <= 8 kB"
+ *       45 kB: 24 pieces x 7 coefficient arrays x 32 coefficients x 8 bytes is
+ *       already 43 kB of coefficients alone. The design sketch's "sizeof <= 8 kB"
  *       acceptance figure is arithmetically unreachable with those two
  *       constants and has been reported rather than met by shrinking them —
  *       both are set by accuracy requirements (a benched section needs ~33
  *       coefficients in total, and subdivision needs the piece headroom).
  *       The load-bearing part of that requirement, trivial copyability for the
  *       device backend, IS asserted below.
+ *
+ *       Four of the seven arrays hold the fields themselves; the other three
+ *       were each added against a measured profile rather than on principle.
+ *       c_u is the compiled inverse u(A), added once profiling showed the
+ *       runtime inversion it replaces was 68% of the whole EXACT solver — and
+ *       it is deliberately ONE array and not four, see the note on
+ *       ChebPiece::a_hi for why y/W/P/I1 in the area ordinate are
+ *       compositions rather than fits of their own. c_da and c_dp are the
+ *       derivative series, stored because every consumer was rebuilding them
+ *       per call; that was 35 ns of chebRdPdA's 106, and getdSdA was in turn
+ *       the largest single item in the profile once the inversion was gone.
  */
 struct ChebSection {
     int  n_pieces = 0;
@@ -428,6 +503,59 @@ OPENSWMM_KERNEL_FN double chebUofY(const ChebPiece& pc, double y) noexcept {
     return mapUofS((y - pc.y_lo) * pc.inv_span, pc.exp_lo, pc.exp_hi);
 }
 
+/// Index of the piece containing area @p a.
+///
+/// @note Same linear scan as chebPieceOfY, in the area ordinate. The two stay
+///       consistent because ChebPiece::a_lo is read off the piece's own
+///       fitted series rather than from evalExact(y_lo), so the seams agree
+///       exactly with what chebAofY returns there.
+OPENSWMM_KERNEL_FN int chebPieceOfA(const ChebSection& s, double a) noexcept {
+    int p = 0;
+    for (int i = 1; i < s.n_pieces; ++i) {
+        if (a >= s.piece[i].a_lo) p = i;
+        else break;
+    }
+    return p;
+}
+
+/// Fit variable u for area @p a within piece @p pc, from the COMPILED
+/// inverse. Undefined unless pc.n_u > 0 — callers check.
+///
+/// @details Two coordinate changes, both cheap. First A is normalized onto
+///          [0,1] and taken to the inv_k-th root at whichever end carries the
+///          branch point, which is what makes u analytic in the result.
+///          Then one Chebyshev series. The root is a hardware sqrt or cbrt,
+///          never an inverse trig call: compile() guarantees at most one end
+///          of a piece is singular, exactly as it does for the forward map.
+OPENSWMM_KERNEL_FN double chebUofA(const ChebPiece& pc, double a) noexcept {
+    double sa = (a - pc.a_lo) * pc.inv_span_a;
+    if (sa < 0.0) sa = 0.0;
+    else if (sa > 1.0) sa = 1.0;
+
+    double t;
+    if (pc.inv_at_hi) {
+        const double v = 1.0 - sa;
+        t = 1.0 - ((pc.inv_k == 1) ? v
+                                   : (pc.inv_k == 2) ? std::sqrt(v)
+                                                     : std::cbrt(v));
+    } else {
+        t = (pc.inv_k == 1) ? sa
+                            : (pc.inv_k == 2) ? std::sqrt(sa)
+                                              : std::cbrt(sa);
+    }
+
+    double u = chebEval(pc.c_u, pc.n_u, t);
+    if (u < 0.0) u = 0.0;
+    else if (u > 1.0) u = 1.0;
+    return u;
+}
+
+/// Depth from the fit variable — closed form, no series.
+/// @note This is why only u(A) needs fitting and y(A) does not.
+OPENSWMM_KERNEL_FN double chebYofU(const ChebPiece& pc, double u) noexcept {
+    return pc.y_lo + mapSofU(u, pc.exp_lo, pc.exp_hi) / pc.inv_span;
+}
+
 OPENSWMM_KERNEL_FN double chebAofY(const ChebSection& s, double y) noexcept {
     if (y <= 0.0 || s.n_pieces <= 0) return 0.0;
     if (y >= s.y_full) return s.a_full;
@@ -478,7 +606,8 @@ OPENSWMM_KERNEL_FN double chebI1ofY(const ChebSection& s, double y) noexcept {
 /// dA/dy on ONE piece, from a derivative series the caller already has.
 ///
 /// @param pc  the piece containing @p y.
-/// @param dc  d/du coefficients of pc.c_a, from chebDeriv(pc.c_a, pc.n_a, dc).
+/// @param dc  d/du coefficients of pc.c_a — pass pc.c_da, which compile()
+///            builds once per piece.
 /// @param y   depth (ft), which must lie inside @p pc.
 ///
 /// @note Split out of chebdAdY so a caller that evaluates the derivative
@@ -503,10 +632,7 @@ OPENSWMM_KERNEL_FN double chebdAdYOnPiece(const ChebPiece& pc, const double* dc,
 OPENSWMM_KERNEL_FN double chebdAdY(const ChebSection& s, double y) noexcept {
     if (y <= 0.0 || y >= s.y_full || s.n_pieces <= 0) return 0.0;
     const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
-
-    double dc[kMaxChebCoeff];
-    chebDeriv(pc.c_a, pc.n_a, dc);
-    return chebdAdYOnPiece(pc, dc, y);
+    return chebdAdYOnPiece(pc, pc.c_da, y);
 }
 
 /// dP/dy from the P series' exact derivative — same construction as
@@ -518,59 +644,28 @@ OPENSWMM_KERNEL_FN double chebdPdY(const ChebSection& s, double y) noexcept {
     if (y <= 0.0 || y >= s.y_full || s.n_pieces <= 0) return 0.0;
     const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
     const double u = chebUofY(pc, y);
-
-    double dc[kMaxChebCoeff];
-    chebDeriv(pc.c_p, pc.n_p, dc);
-    const double dPdu = chebEval(dc, pc.n_p - 1, u);
+    const double dPdu = chebEval(pc.c_dp, pc.n_p - 1, u);
 
     const double dydu = mapDsDu(u, pc.exp_lo, pc.exp_hi) / pc.inv_span;
     if (!(dydu > 1.0e-300)) return 0.0;
     return dPdu / dydu;
 }
 
-/// Invert A -> y. Newton on the exact derivative, safeguarded by bisection.
+/// Invert A -> y on a KNOWN piece by Newton, safeguarded by bisection.
 ///
-/// @warning **This is the most expensive function in this header by two
-///          orders of magnitude, and profiling a real network says so
-///          loudly.** On Bellinge under XSECT_GEOMETRY EXACT it and its
-///          derivative evaluation were 68% of all non-idle solver samples,
-///          against 10% for every forward accessor combined. Measured cost
-///          per inversion: 419 ns, against 15.7 ns for a forward chebAofY and
-///          4.9 ns for the legacy inverse table lookup it replaces. Anything
-///          that makes EXACT competitive on wall time has to come from here,
-///          not from the forward path — see the @note below for the option
-///          that has not been taken yet.
+/// @warning **Not the hot path any more, and must not become it again.** This
+///          is the fallback for a piece whose inverse did not compile
+///          (ChebPiece::n_u == 0) and the reference the compiler itself uses
+///          to generate the samples it fits. It costs 419 ns against roughly
+///          16 for the compiled inverse; when it dominated the whole EXACT
+///          solver it was 68% of all non-idle samples on a real network.
 ///
-/// @note **The structural fix, not yet implemented: compile the inverse.**
-///       Every other quantity in this file is fitted once at load time and
-///       evaluated in one Clenshaw pass; y(A) alone is left as a runtime root
-///       find. y(A) is analytic on each piece for exactly the same reason
-///       A(y) is (the map removes the branch point at either end), so it
-///       could be fitted per piece into its own coefficient array and
-///       evaluated at forward-path cost — roughly 419 ns -> ~16 ns, which
-///       would move EXACT from about 4.7x LEGACY on a real network to
-///       somewhere near parity. The cost is one more coefficient array per
-///       piece; note that kMaxPieces * kMaxChebCoeff * 8 bytes is ~6 kB, so
-///       ChebSection would need its 32 kB trivially-copyable bound revisited.
-OPENSWMM_KERNEL_FN double chebYofA(const ChebSection& s, double a) noexcept {
-    if (a <= 0.0 || s.n_pieces <= 0) return 0.0;
-    if (a >= s.a_full) return s.y_full;
-
-    // Same cheap linear scan as the depth path, in the area ordinate.
-    int p = 0;
-    for (int i = 1; i < s.n_pieces; ++i) {
-        if (a >= s.piece[i].a_lo) p = i;
-        else break;
-    }
-    const ChebPiece& pc = s.piece[p];
-
-    // Loop-invariant: the derivative series belongs to the PIECE, and the
-    // bracket below never leaves it. Computing it here rather than inside
-    // chebdAdY on every iteration is worth 2.3x on this function and changes
-    // no bit of the answer.
-    double dc[kMaxChebCoeff];
-    chebDeriv(pc.c_a, pc.n_a, dc);
-
+/// @note The derivative series is a loop invariant — it belongs to the PIECE
+///       and the bracket never leaves it — so it is computed once here rather
+///       than inside chebdAdY on every iteration. That alone was 2.3x on this
+///       function, bit for bit identical.
+OPENSWMM_KERNEL_FN double chebYofASolve(const ChebSection& s,
+                                        const ChebPiece& pc, double a) noexcept {
     double lo = pc.y_lo, hi = pc.y_hi;
     double y = 0.5 * (lo + hi);
     for (int it = 0; it < 40; ++it) {
@@ -578,13 +673,197 @@ OPENSWMM_KERNEL_FN double chebYofA(const ChebSection& s, double a) noexcept {
         if (f > 0.0) hi = y; else lo = y;
         if (hi - lo <= 1.0e-15 * s.y_full) break;
 
-        const double d = chebdAdYOnPiece(pc, dc, y);
+        const double d = chebdAdYOnPiece(pc, pc.c_da, y);
         double y_next = (d > 0.0) ? (y - f / d) : (0.5 * (lo + hi));
         if (!(y_next > lo && y_next < hi)) y_next = 0.5 * (lo + hi);
         if (std::fabs(y_next - y) <= 1.0e-15 * s.y_full) { y = y_next; break; }
         y = y_next;
     }
     return y;
+}
+
+/// Depth from area — one series evaluation, no iteration.
+///
+/// @details Area is what the routing conserves, so this is the question the
+///          solver asks most; profiling Bellinge under XSECT_GEOMETRY EXACT
+///          put this function and its derivative at 68% of all non-idle
+///          samples while it was still a Newton solve. It is now the same
+///          shape as the forward accessors: locate the piece, change
+///          coordinate, evaluate one Chebyshev series.
+///
+/// @note The legacy engine never inverts anything at runtime either — EPA
+///       SWMM ships a SECOND table per shape (Y_Circ beside A_Circ) and reads
+///       it. Compiling u(A) is the same trick in a representation that is
+///       seven orders more accurate.
+OPENSWMM_KERNEL_FN double chebYofA(const ChebSection& s, double a) noexcept {
+    if (a <= 0.0 || s.n_pieces <= 0) return 0.0;
+    if (a >= s.a_full) return s.y_full;
+
+    const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+    if (pc.n_u > 0) return chebYofU(pc, chebUofA(pc, a));
+    return chebYofASolve(s, pc, a);
+}
+
+/// Top width from area.
+OPENSWMM_KERNEL_FN double chebWofA(const ChebSection& s, double a) noexcept {
+    if (a <= 0.0 || s.n_pieces <= 0) return 0.0;
+    if (a >= s.a_full) return chebWofY(s, s.y_full);
+
+    const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+    const double u = (pc.n_u > 0) ? chebUofA(pc, a)
+                                  : chebUofY(pc, chebYofASolve(s, pc, a));
+    const double w = chebEval(pc.c_w, pc.n_w, u);
+    return (w > 0.0) ? w : 0.0;
+}
+
+/// Wetted perimeter from area.
+OPENSWMM_KERNEL_FN double chebPofA(const ChebSection& s, double a) noexcept {
+    if (a <= 0.0 || s.n_pieces <= 0) return 0.0;
+    // At and above the crown the section is full: p_full, not the fitted
+    // limit. See ChebSection::p_full for why those differ.
+    if (a >= s.a_full) return s.p_full;
+
+    const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+    const double u = (pc.n_u > 0) ? chebUofA(pc, a)
+                                  : chebUofY(pc, chebYofASolve(s, pc, a));
+    const double p = chebEval(pc.c_p, pc.n_p, u);
+    return (p > 0.0) ? p : 0.0;
+}
+
+/// Hydraulic radius from area — A/P with one piece scan, not chebRofY of
+/// chebYofA, which walks the piece twice.
+///
+/// @note The numerator is the CALLER's area, not the area series re-evaluated
+///       at the recovered depth. The two agree to the fit's own accuracy, and
+///       using the caller's is both cheaper and the more faithful answer: a
+///       routing scheme that conserves A is asking what the wetted radius is
+///       for the A it is holding.
+OPENSWMM_KERNEL_FN double chebRofA(const ChebSection& s, double a) noexcept {
+    if (a <= 0.0 || s.n_pieces <= 0) return 0.0;
+    if (a >= s.a_full) return s.r_full;
+
+    const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+    const double u = (pc.n_u > 0) ? chebUofA(pc, a)
+                                  : chebUofY(pc, chebYofASolve(s, pc, a));
+    const double p = chebEval(pc.c_p, pc.n_p, u);
+    return (p > 0.0) ? a / p : 0.0;
+}
+
+/// Hydrostatic first moment from area.
+OPENSWMM_KERNEL_FN double chebI1ofA(const ChebSection& s, double a) noexcept {
+    if (a <= 0.0 || s.n_pieces <= 0) return 0.0;
+    if (a >= s.a_full) {
+        const ChebPiece& top = s.piece[s.n_pieces - 1];
+        return chebEval(top.c_i1, top.n_i1, 1.0);
+    }
+    const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+    const double u = (pc.n_u > 0) ? chebUofA(pc, a)
+                                  : chebUofY(pc, chebYofASolve(s, pc, a));
+    return chebEval(pc.c_i1, pc.n_i1, u);
+}
+
+/// Hydraulic radius and dP/dA at area @p a, from ONE piece scan.
+///
+/// @details Everything getdSdA needs. Returns false when the piece cannot
+///          support the derivative (full section, zero perimeter, or a
+///          vanishing dA/du at a tangency), leaving the caller to fall back
+///          to its finite-difference form.
+///
+/// @note dP/dA is formed as (dP/du)/(dA/du), NOT as (dP/dy)/(dA/dy). The map
+///       Jacobian cancels identically between numerator and denominator, so
+///       taking the ratio in the fit variable skips mapDsDu entirely — and,
+///       more usefully, avoids dividing each derivative separately by a
+///       Jacobian that vanishes at a horizontal tangency. Same value, better
+///       conditioned exactly where the old form was worst.
+OPENSWMM_KERNEL_FN bool chebRdPdA(const ChebSection& s, double a,
+                                  double* R, double* dPdA) noexcept {
+    if (a <= 0.0 || s.n_pieces <= 0 || a >= s.a_full) return false;
+
+    const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+    const double u = (pc.n_u > 0) ? chebUofA(pc, a)
+                                  : chebUofY(pc, chebYofASolve(s, pc, a));
+
+    const double p = chebEval(pc.c_p, pc.n_p, u);
+    if (!(p > 0.0)) return false;
+
+    const double dAdu = chebEval(pc.c_da, pc.n_a - 1, u);
+    if (!(dAdu > 0.0)) return false;
+    const double dPdu = chebEval(pc.c_dp, pc.n_p - 1, u);
+
+    *R = a / p;
+    *dPdA = dPdu / dAdu;
+    return true;
+}
+
+/**
+ * @brief FUSED inverse evaluation — depth, width, perimeter and first moment
+ *        from area in one piece scan, one coordinate change and one shared
+ *        basis recurrence.
+ *
+ * @details The mirror of chebAll, and the entry point for any solver that
+ *          carries area as its state variable (the finite-volume path does).
+ *          Calling chebYofA and then chebAll would walk the piece twice and
+ *          run two basis recurrences; this runs one of each. Every
+ *          redundant-evaluation bug found on this project has had that shape.
+ *
+ * @note Pass nullptr for any output not wanted — the cost of a field is its
+ *       dot product, and skipping it skips that.
+ */
+OPENSWMM_KERNEL_FN void chebAllOfA(const ChebSection& s, double a,
+                                   double* y, double* W, double* P,
+                                   double* I1) noexcept {
+    if (s.n_pieces <= 0 || a <= 0.0) {
+        if (y) *y = 0.0;
+        if (W) *W = 0.0;
+        if (P) *P = 0.0;
+        if (I1) *I1 = 0.0;
+        return;
+    }
+    if (a >= s.a_full) {
+        const ChebPiece& top = s.piece[s.n_pieces - 1];
+        if (y) *y = s.y_full;
+        if (W) { const double w = chebEval(top.c_w, top.n_w, 1.0);
+                 *W = (w > 0.0) ? w : 0.0; }
+        if (P) *P = s.p_full;
+        if (I1) *I1 = chebEval(top.c_i1, top.n_i1, 1.0);
+        return;
+    }
+
+    const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+    const double u = (pc.n_u > 0) ? chebUofA(pc, a)
+                                  : chebUofY(pc, chebYofASolve(s, pc, a));
+    if (y) *y = chebYofU(pc, u);
+
+    const double x = 2.0 * u - 1.0;
+    const double x2 = 2.0 * x;
+
+    // Trip count is the longest REQUESTED field. Reading past a field's own
+    // retained count is safe and deliberate — chebChop zeroes the tail — so
+    // the loop carries no per-field length test, exactly as chebAll does.
+    int nmax = 0;
+    if (W && pc.n_w > nmax) nmax = pc.n_w;
+    if (P && pc.n_p > nmax) nmax = pc.n_p;
+    if (I1 && pc.n_i1 > nmax) nmax = pc.n_i1;
+
+    double aw = pc.c_w[0], ap = pc.c_p[0], ai = pc.c_i1[0];
+    if (nmax > 1) {
+        aw += pc.c_w[1] * x;
+        ap += pc.c_p[1] * x;
+        ai += pc.c_i1[1] * x;
+    }
+    double t_prev = 1.0, t_cur = x;
+    for (int k = 2; k < nmax; ++k) {
+        const double t = x2 * t_cur - t_prev;
+        t_prev = t_cur;
+        t_cur = t;
+        aw += pc.c_w[k] * t;
+        ap += pc.c_p[k] * t;
+        ai += pc.c_i1[k] * t;
+    }
+
+    if (W) *W = (aw > 0.0) ? aw : 0.0;
+    if (P) *P = (ap > 0.0) ? ap : 0.0;
+    if (I1) *I1 = ai;
 }
 
 /**
