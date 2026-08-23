@@ -22,6 +22,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <cstdlib>
+#include <sstream>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_forcing.h>
@@ -163,7 +165,17 @@ TEST_F(MassBalanceApiTest, QualityKnownImbalanceMatchesExpected) {
     mass_balance.qual_routing_reacted[0] = 10.0;
     mass_balance.qual_routing_final[0] = 5.0;
 
-    const double expected = 2.0 / 100.0;
+    // The denominator is total inflow INCLUDING initial storage, and the
+    // outflow side includes final storage -- legacy massbal.c:888-898, and
+    // what runoff_error() and routing_error() have always done here
+    // (SimulationContext.hpp:1178, 1190). This expectation used to read
+    // 2.0/100.0, which divided by inflow alone while still subtracting final
+    // storage in the numerator: the one continuity error of the three that
+    // did not follow its siblings or legacy. The 2026-08-23 three-branch fix
+    // brought it into line and this number moved with it.
+    //   in  = 10 + 30 + 40 + 20 + 5(init) = 105
+    //   out = 68 + 20 + 10 + 5(final)     = 103
+    const double expected = 2.0 / 105.0;
     double error = -1.0;
     ASSERT_EQ(swmm_get_quality_continuity_error(engine_, 0, &error), SWMM_OK);
     EXPECT_NEAR(error, expected, 1e-12);
@@ -788,4 +800,177 @@ TEST(RunoffLedgerCascadeTest, ConveyanceReceivesWhatTheSurfaceShed) {
         << (err_direct > 0.0 ? err_cascade / err_direct : 0.0)
         << "x: the control closes to " << err_direct << " and the cascade to "
         << err_cascade << " on the same engine and the same clock.";
+}
+
+// ---------------------------------------------------------------------------
+// THE QUALITY SEAM: the Washoff Summary and the continuity ledger print the
+// SAME MASS, and both must carry the known mass the deck put in.
+//
+// Findings 5/8/10, fixed 2026-08-23. Before the fix the washoff accumulator
+// mixed three unit systems (EMC in mg/L·ft³/s, EXPON in user-mass/s, RATING
+// in mg/s), the ledger row printed the raw accumulator (16057x legacy on a
+// 100 mg/L EMC deck), the Washoff Summary divided the same variable by
+// 453592 (1/28.3 of the true pounds), and the quality continuity error was
+// computed only against total INFLOW -- so 1.8M units of mass leaving a
+// system that received none printed an error of exactly 0.000.
+//
+// This gate is the acceptance test the audit named: a KNOWN-MASS deck (EMC
+// washoff only, no buildup) where the true load is C x V x LperFT3 x
+// UCF(MASS) and nothing else can contribute. It reads the FINISHED .rpt --
+// both printed numbers, not the context -- because the defect lived between
+// the accumulator and the printer, where a context-level gate cannot see
+// (lesson 139's family: only reading what the user reads is evidence).
+namespace {
+
+// One subcatchment straight to a junction; EMC 100 mg/L on TSS; 2 hours of
+// 0.5 in/hr rain in a 6-hour run so the surface wets, washes and dries.
+const char* kSeamQualInp =
+    "[OPTIONS]\n"
+    "FLOW_UNITS           CFS\n"
+    "FLOW_ROUTING         KINWAVE\n"
+    "INFILTRATION         HORTON\n"
+    "START_DATE           01/01/2026\n"
+    "START_TIME           00:00:00\n"
+    "END_DATE             01/01/2026\n"
+    "END_TIME             06:00:00\n"
+    "WET_STEP             00:15:00\n"
+    "DRY_STEP             00:15:00\n"
+    "ROUTING_STEP         60\n"
+    "REPORT_STEP          00:15:00\n"
+    "\n[EVAPORATION]\nCONSTANT 0.0\nDRY_ONLY NO\n"
+    "\n[RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES rain_ts\n"
+    "\n[TIMESERIES]\n"
+    "rain_ts  01/01/2026 00:00  0.50\n"
+    "rain_ts  01/01/2026 01:00  0.50\n"
+    "rain_ts  01/01/2026 02:00  0.00\n"
+    "rain_ts  01/01/2026 06:00  0.00\n"
+    "\n[SUBCATCHMENTS]\nSA RG1 JN 5.0 70.0 500.0 1.0 0\n"
+    "\n[SUBAREAS]\nSA 0.01 0.10 0.02 0.05 25 OUTLET\n"
+    "\n[INFILTRATION]\nSA 3.0 0.5 4 7 0\n"
+    "\n[JUNCTIONS]\nJN 10.0 10.0 0 0 0\n"
+    "\n[OUTFALLS]\nOF 9.0 FREE NO\n"
+    "\n[CONDUITS]\nCN JN OF 400.0 0.013 0 0\n"
+    "\n[XSECTIONS]\nCN CIRCULAR 3.0 0 0 0 1\n"
+    "\n[POLLUTANTS]\n"
+    ";;Name  Units  Crain  Cgw  Crdii  Kdecay\n"
+    "TSS     MG/L   0.0    0.0  0.0    0.0\n"
+    "\n[LANDUSES]\nRES\n"
+    "\n[COVERAGES]\nSA RES 100.0\n"
+    "\n[WASHOFF]\n"
+    ";;Landuse  Pollutant  Type  Coeff  Expon  SweepEffic  BmpEffic\n"
+    "RES        TSS        EMC   100.0  0.0    0.0         0.0\n"
+    "\n[REPORT]\nINPUT NO\nCONTINUITY YES\nSUBCATCHMENTS ALL\n"
+    "\n[COORDINATES]\nJN 0.0 0.0\nOF 400.0 0.0\n";
+
+// Pull the first number following `label` out of the report text.
+double rptValueAfter(const std::string& rpt, const std::string& label,
+                     bool* found) {
+    std::size_t at = rpt.find(label);
+    if (at == std::string::npos) { *found = false; return 0.0; }
+    at += label.size();
+    // skip dots, spaces, and the "....." leader the report uses
+    while (at < rpt.size() &&
+           (rpt[at] == '.' || rpt[at] == ' ' || rpt[at] == '\t')) ++at;
+    *found = true;
+    return std::atof(rpt.c_str() + at);
+}
+
+}  // namespace
+
+TEST(QualityLedgerSeamTest, SummaryAndLedgerAgreeAndCarryTheKnownMass) {
+    const std::string inp = forcedOutPath("qual_seam.inp");
+    const std::string rpt = forcedOutPath("qual_seam.rpt");
+    std::ofstream(inp) << kSeamQualInp;
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(),
+                               forcedOutPath("qual_seam.out").c_str(), nullptr),
+              0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0 && ++guard < 100000);
+    ASSERT_EQ(swmm_engine_end(e), 0) << swmm_get_last_error_msg(e);
+
+    // The independently-known truth: mass = C x V, converted once.
+    //   C = 100 mg/L, V = the run's own surface runoff (ft^3),
+    //   x 28.317 L/ft^3 -> mg, x 2.203e-6 lb/mg -> lbs.
+    double runoff_ft3 = -1.0;
+    ASSERT_EQ(swmm_get_runoff_total(e, SWMM_RUNOFF_RUNOFF, &runoff_ft3),
+              SWMM_OK);
+    ASSERT_GT(runoff_ft3, 0.0) << "the deck shed no runoff — deck, not seam";
+    const double expected_lbs = 100.0 * runoff_ft3 * 28.317 * 2.203e-6;
+
+    ASSERT_EQ(swmm_engine_report(e), 0) << swmm_get_last_error_msg(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    std::ifstream fin(rpt);
+    ASSERT_TRUE(fin.good()) << "no report was written";
+    std::stringstream ss;
+    ss << fin.rdbuf();
+    const std::string text = ss.str();
+
+    // Leg 1: the continuity ledger's Surface Runoff row (user mass since the
+    // fix; was the raw mg/L·ft^3 accumulator, 16057x legacy).
+    //
+    // "Surface Runoff ..........." appears in BOTH the water-quantity block
+    // and the quality block, and a bare find() lands on the water one — a
+    // defect this gate shipped with in draft and would have made it compare
+    // acre-feet against pounds. Anchor on the QUALITY block first.
+    std::size_t qblock = text.find("Runoff Quality Continuity");
+    ASSERT_NE(qblock, std::string::npos)
+        << "no Runoff Quality Continuity block in the report";
+    bool have_ledger = false;
+    const double ledger = rptValueAfter(
+        text.substr(qblock), "Surface Runoff ...........", &have_ledger);
+    ASSERT_TRUE(have_ledger)
+        << "the Runoff Quality Continuity block has no Surface Runoff row";
+
+    // Leg 2: the Washoff Summary System row (printed raw user mass since the
+    // fix; was the same accumulator divided by 453592).
+    std::size_t ws = text.find("Subcatchment Washoff Summary");
+    ASSERT_NE(ws, std::string::npos) << "no Washoff Summary in the report";
+    std::size_t sys = text.find("System", ws);
+    ASSERT_NE(sys, std::string::npos) << "no System row in the Washoff Summary";
+    const double summary = std::atof(text.c_str() + sys + 6);
+
+    // The seam: same mass by construction, so they must agree...
+    EXPECT_NEAR(ledger, summary, std::max(summary * 1e-3, 1e-6))
+        << "the ledger row (" << ledger << ") and the Washoff Summary ("
+        << summary << ") print the same booked mass and disagree — a unit "
+           "conversion is applied on one side of the seam and not the other";
+
+    // ...and both must carry the KNOWN mass, or they merely agree on a wrong
+    // number — which is exactly what booking both in mg would produce.
+    EXPECT_NEAR(ledger, expected_lbs, expected_lbs * 0.02)
+        << "ledger " << ledger << " lbs against C·V = " << expected_lbs
+        << " lbs (ratio " << (expected_lbs > 0 ? ledger / expected_lbs : 0)
+        << "): 16057 means the mg/L·ft³ accumulator is back; 28.25 under 1 "
+           "means the summary-side conversion leaked into the booking";
+    EXPECT_NEAR(summary, expected_lbs, expected_lbs * 0.02);
+
+    // Leg 3: the ledger BALANCES. This deck has no buildup function, so
+    // legacy books the washoff as BUILDUP_LOAD to keep the runoff-quality
+    // balance closed (landuse.c:585-593) and its Surface Buildup row equals
+    // its Surface Runoff row exactly — 113.082 against 113.082. Without that
+    // fallback ours reads 0.000 against 113.269: mass discharged by a system
+    // that received none, and with the report's three-branch error live that
+    // prints a continuity error of -100.000 %. Measured both ways.
+    bool have_bu = false;
+    const double buildup_row = rptValueAfter(
+        text.substr(qblock), "Surface Buildup ..........", &have_bu);
+    ASSERT_TRUE(have_bu)
+        << "the Runoff Quality Continuity block has no Surface Buildup row";
+    EXPECT_NEAR(buildup_row, ledger, std::max(ledger * 1e-3, 1e-6))
+        << "Surface Buildup " << buildup_row << " against Surface Runoff "
+        << ledger << ": with no buildup function these are the same mass by "
+           "construction, and a gap means the BUILDUP_LOAD fallback is not "
+           "booking — the ledger then reports mass leaving a system that "
+           "received none.";
 }

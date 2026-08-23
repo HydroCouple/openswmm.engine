@@ -2634,7 +2634,31 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
             for (int p = 0; p < np; ++p) {
                 auto sq_idx = ui * static_cast<std::size_t>(np)
                               + static_cast<std::size_t>(p);
-                double total_washoff_load = 0.0; // mass/sec
+                // THE UNIT CONVENTION, fixed 2026-08-23 after the known-mass
+                // audit (QUALITY_LEDGER_UNITS_AUDIT §7): total_washoff_load
+                // accumulates in CONCENTRATION MASS UNITS per second (mg/s,
+                // or µg/s, or counts/s — whatever the pollutant's units are),
+                // and every LEDGER booking converts to USER MASS (lbs/kg) at
+                // the seam via mcf_p, exactly as legacy applies Pollut[].mcf
+                // at source (landuse.c:585, surfqual.c:352/357/366). Before
+                // this, the accumulator mixed three unit systems — EMC in
+                // mg/L·ft³/s, EXPON in user-mass/s, RATING in mg/s — and the
+                // ledger row printed 16057× legacy on a 100 mg/L EMC deck
+                // while the Washoff Summary printed 1/28.3 of it.
+                //
+                // mcf_p mirrors legacy landuse.c:167-169: UCF(MASS) for mg,
+                // /1000 for µg, 1.0 for counts.
+                const double mass_ucf_p = ucf::UCF(ucf::MASS, ctx_.options);
+                double mcf_p = mass_ucf_p;
+                if (static_cast<std::size_t>(p) < ctx_.pollutants.units.size()) {
+                    switch (ctx_.pollutants.units[static_cast<std::size_t>(p)]) {
+                        case MassUnits::UG_PER_L:     mcf_p = mass_ucf_p / 1000.0; break;
+                        case MassUnits::COUNTS_PER_L: mcf_p = 1.0; break;
+                        default: break;
+                    }
+                }
+                constexpr double kLperFt3 = 28.317;
+                double total_washoff_load = 0.0; // concen. mass units / sec
 
                 // Iterate over land uses weighted by coverage
                 // Buildup is now stored PER LAND USE: bu_idx(i, lu, p)
@@ -2745,14 +2769,36 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             : 0.0;
                         double q_flow   = q * ucf::UCF(ucf::FLOW, ctx_.options);
 
-                        double load = 0.0; // mass/sec (absolute)
+                        // `load` is in CONCENTRATION MASS UNITS per second
+                        // (mg/s for a mg/L pollutant). Each branch mirrors
+                        // legacy landuse_getWashoffQual × Q, with the
+                        // parse-time coefficient pre-multiplies
+                        // (landuse.c:332-334) applied here at runtime instead,
+                        // because our parser stores the user coefficient raw:
+                        //
+                        //   EMC:    coeff[mg/L] × LperFT3 → mg/ft³, × Q[cfs].
+                        //           Legacy uses INTERNAL flow here, not
+                        //           UCF(FLOW) — the previous q_flow form was
+                        //           inert under CFS and wrong under any other
+                        //           flow unit.
+                        //   EXPON:  coeff is PER HOUR in the deck; legacy
+                        //           divides by 3600 at parse. Without it the
+                        //           load was 3600× the formulation. Buildup
+                        //           is stored in user mass, so /mcf brings it
+                        //           to concentration mass units (legacy:
+                        //           `buildup / Pollut[p].mcf`).
+                        //   RATING: coeff × (Q·UCF(FLOW))^expon is already
+                        //           legacy's coeff·UCF^e × Q_int^e — unchanged.
+                        double load = 0.0; // concen. mass units / sec
                         switch (wp.type) {
                             case landuse::WashoffType::EMC:
-                                load = wp.coeff * q_flow * frac;
+                                load = wp.coeff * kLperFt3 * q * frac;
                                 break;
                             case landuse::WashoffType::EXPON:
-                                if (buildup > 0.0)
-                                    load = wp.coeff * std::pow(q_expon, wp.expon) * buildup * norm;
+                                if (buildup > 0.0 && mcf_p > 0.0)
+                                    load = (wp.coeff / 3600.0)
+                                         * std::pow(q_expon, wp.expon)
+                                         * (buildup * norm) / mcf_p;
                                 break;
                             case landuse::WashoffType::RATING:
                                 load = wp.coeff * std::pow(q_flow, wp.expon) * frac;
@@ -2760,21 +2806,63 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             default: break;
                         }
 
-                        // Cap washoff to available buildup (mass/sec <= total_mass / dt)
-                        double avail = buildup * norm;
+                        // Cap washoff to available buildup. Buildup is user
+                        // mass; the cap must be in the SAME units as `load`
+                        // (concen. mass), or the comparison is the mixed-unit
+                        // defect all over again — before this fix the EMC/
+                        // RATING mg-based load was compared against a lbs cap.
+                        double avail = (mcf_p > 0.0)
+                            ? (buildup * norm) / mcf_p : 0.0;
                         double max_load = (dt_runoff > 0.0) ? avail / dt_runoff : 0.0;
                         if (load > max_load && wp.type != landuse::WashoffType::EMC)
                             load = max_load;
 
-                        // Reduce per-landuse buildup by washoff amount
-                        if (norm > 0.0) {
-                            double washed = load * dt_runoff / norm;
+                        // Reduce per-landuse buildup by washoff amount —
+                        // buildup is user mass per normalizer unit, so the
+                        // reduction converts back (legacy reduces buildup by
+                        // washoffLoad, which is already lbs).
+                        //
+                        // ...unless there is NO buildup function and the
+                        // washoff exceeds what is on the ground, in which
+                        // case legacy books the load as BUILDUP_LOAD instead
+                        // (landuse.c:585-593, "otherwise add washoff to
+                        // buildup mass balance totals so that things will
+                        // balance"). Without that branch an EMC-only deck
+                        // discharges mass the ledger never received: the
+                        // Runoff Quality Continuity block reads Surface
+                        // Buildup 0.000 against Surface Runoff 113.269 where
+                        // legacy reads 113.082 on both. It is also what makes
+                        // the printed continuity error meaningful rather than
+                        // merely non-zero.
+                        const double washed_mass = load * mcf_p * dt_runoff;
+                        const bool has_buildup_fn =
+                            bp.type != landuse::BuildupType::NONE;
+                        if (!has_buildup_fn && washed_mass > buildup * norm) {
+                            auto upb2 = static_cast<std::size_t>(p);
+                            if (upb2 < ctx_.mass_balance.qual_surface_buildup.size())
+                                ctx_.mass_balance.qual_surface_buildup[upb2] +=
+                                    washed_mass;
+                            surface_quality_.buildup[bu] = 0.0;
+                        } else if (norm > 0.0) {
+                            double washed = washed_mass / norm;
                             surface_quality_.buildup[bu] =
                                 std::max(surface_quality_.buildup[bu] - washed, 0.0);
                         }
 
-                        // Apply BMP removal
-                        load *= (1.0 - wp.bmp_effic / 100.0);
+                        // BMP removal — and BOOK it. qual_bmp_removal had no
+                        // writer anywhere (Finding 8, the fourth
+                        // rendered-but-never-written ledger row after the
+                        // snapshot quality vectors, the snow rows and the
+                        // subcatchment temperature column). Legacy books it at
+                        // surfqual.c:352 in user mass.
+                        double bmp_removed = load * (wp.bmp_effic / 100.0);
+                        if (bmp_removed > 0.0) {
+                            auto upb = static_cast<std::size_t>(p);
+                            if (upb < ctx_.mass_balance.qual_bmp_removal.size())
+                                ctx_.mass_balance.qual_bmp_removal[upb] +=
+                                    bmp_removed * dt_runoff * mcf_p;
+                            load -= bmp_removed;
+                        }
 
                         total_washoff_load += load;
                     }
@@ -2811,16 +2899,26 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         ? ctx_.pollutants.c_rain[up] : 0.0;
                     double w_rain_pq = c_rain_pq * L_PER_FT3 * v_rain_pq;
 
-                    // Accumulate wet deposition in mass balance
+                    // Accumulate wet deposition in mass balance — LEDGER
+                    // booking, so convert to user mass at the seam (legacy
+                    // books WET_DEPOSITION_LOAD in lbs/kg).
                     if (w_rain_pq > 0.0 && up < ctx_.mass_balance.qual_wet_deposition.size())
-                        ctx_.mass_balance.qual_wet_deposition[up] += w_rain_pq;
+                        ctx_.mass_balance.qual_wet_deposition[up] += w_rain_pq * mcf_p;
 
                     double w_mass_pq = ctx_.subcatches.ponded_qual[sq_idx];  // mg
 
                     if (v_inflow_pq <= 0.0) {
-                        // Dry surface — move remaining ponded mass to final stored load
-                        if (w_mass_pq > 0.0 && up < ctx_.mass_balance.qual_final_buildup.size())
-                            ctx_.mass_balance.qual_final_buildup[up] += w_mass_pq;
+                        // Dry surface. The `+=` into qual_final_buildup that
+                        // used to sit here was DEAD (Finding 9):
+                        // computeFinalQualityMassBalance overwrites the term
+                        // with `=` at end-of-run, discarding every value
+                        // accumulated here — and it was in mg against that
+                        // site's user mass, so surviving would have corrupted
+                        // the term. Removed rather than converted. The
+                        // residual ponded mass at final time is NOT in the
+                        // final-buildup term on either path; that matches the
+                        // 4073 computation and is recorded as a small parity
+                        // gap against legacy's FINAL_STORED_LOAD.
                         ctx_.subcatches.ponded_qual[sq_idx] = 0.0;
                     } else {
                         // Complete-mix balance (matching legacy findPondedLoads):
@@ -2831,8 +2929,9 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         // Mass lost to infiltration
                         double w_infil_pq = std::min(c_ponded_pq * v_infil_pq, w_total_pq);
                         w_total_pq -= w_infil_pq;
+                        // Ledger booking → user mass (legacy INFIL_LOAD, lbs/kg)
                         if (w_infil_pq > 0.0 && up < ctx_.mass_balance.qual_infil_loss.size())
-                            ctx_.mass_balance.qual_infil_loss[up] += w_infil_pq;
+                            ctx_.mass_balance.qual_infil_loss[up] += w_infil_pq * mcf_p;
 
                         // Mass carried out with runoff outflow
                         double w_outflow_pq = std::min(c_ponded_pq * v_outflow_pq, w_total_pq);
@@ -2876,23 +2975,41 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             double q_runon37 = ctx_.subcatches.runon_inflow[ui];  // CFS
                             double c_old37 = (sq_idx < ctx_.subcatches.conc_old.size())
                                              ? ctx_.subcatches.conc_old[sq_idx] : 0.0;
-                            double w_lid_runon = q_runon37 * c_old37 * dt_runoff;  // mg
+                            // conc_old is mg/L (the reported convention), so
+                            // × LperFT3 brings cfs·mg/L·s to mg — legacy
+                            // findLidLoads multiplies its runon term by
+                            // LperFT3 for the same reason.
+                            double w_lid_runon =
+                                q_runon37 * c_old37 * L_PER_FT3_37 * dt_runoff;  // mg
                             if (w_lid_runon > 0.0)
                                 total_washoff_load += w_lid_runon / dt_runoff;
                         }
                     }
                 }
 
-                // Convert washoff load to concentration (mass/ft3)
+                // Convert washoff load to the REPORTED concentration, mg/L.
+                // load/q is mass/ft³; ÷ LperFT3 gives mass/L, exactly
+                // legacy's `newQual[p] = cOut / LperFT3` (surfqual.c:370).
+                // For EMC this leaves the value where it already was (the
+                // old form skipped LperFT3 in both load and conc, cancelling);
+                // for EXPON and RATING it is a real correction — their
+                // concentrations were in incompatible units before this.
                 double conc = 0.0;
                 if (q > MIN_RUNOFF_RATE && total_washoff_load > 0.0)
-                    conc = total_washoff_load / q;
+                    conc = total_washoff_load / q / kLperFt3;
 
                 ctx_.subcatches.conc[sq_idx] = conc;
 
-                // Update quality mass balance and per-subcatch total load
+                // Update quality mass balance and per-subcatch total load.
+                // ONE conversion, applied to BOTH bookings, so the Washoff
+                // Summary and the continuity ledger can never again disagree
+                // by a unit factor: `mass` is user mass (lbs/kg), matching
+                // legacy's massLoad at surfqual.c:357/366. On the known-mass
+                // deck (EMC 100 mg/L, V = 18157.174 ft³) this is
+                // 100 × 18157.174 × 28.317 × 2.203e-6 ≈ 113.3 lbs against
+                // legacy's 113.082 — where the old code booked 1 815 717.383.
                 if (total_washoff_load > 0.0) {
-                    double mass = total_washoff_load * dt_runoff;
+                    double mass = total_washoff_load * dt_runoff * mcf_p;
                     // The LEDGER term is booked only when this subcatchment's
                     // load actually reaches the conveyance system — legacy's
                     // third `!= subcatchIndex` site (surfqual.c:363,
