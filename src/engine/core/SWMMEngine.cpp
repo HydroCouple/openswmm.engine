@@ -325,6 +325,30 @@ int SWMMEngine::open(const char* inp_path,
         // ARD engine reads it from model.ard.
         transport::warnIfFvDispersionKeyIgnored(ctx_);
 
+        // X1: QUALITY_SOLVER LAGRANGIAN selects the LARD dispatch, whose
+        // transport does not exist yet — the skeleton publishes zeroes.
+        // Silent no-quality runs are never allowed (the E1-era rule), so
+        // say so at open. The guard is EXACTLY stepRouting's stage-liveness
+        // predicate (np > 0 || legacyReactionsActive || water_age ||
+        // heat_transport, && !ignore_quality): the warning fires exactly
+        // when the stage it bypasses would have been live, in both
+        // directions (lesson-52 family — if you change one site, change
+        // both). Under IGNORE_QUALITY the stage is skipped before the
+        // solver choice is consulted, and that configuration's own warning
+        // family covers it.
+        if (ctx_.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
+            (ctx_.n_pollutants() > 0 ||
+             transport::legacyReactionsActive(ctx_) ||
+             ctx_.options.water_age ||
+             ctx_.options.heat_transport) &&
+            !ctx_.options.ignore_quality) {
+            ctx_.warnings.push_back(
+                "QUALITY_SOLVER LAGRANGIAN: the LARD transport engine is "
+                "not yet implemented (X1 wiring only). Pollutant, water-age "
+                "and heat transport will NOT run; published concentrations "
+                "read zero for this simulation.");
+        }
+
         // A1a/A1b: the reserved species registers so downstream consumers
         // see the registry truth. Age now tracks under BOTH engines (ARD
         // mesh row / LEGACY CSTR mirror) — the A1b bypass warning is
@@ -3563,6 +3587,16 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             } else {
                 quality_.execute(ctx_, dt_routing);
             }
+        } else if (ctx_.options.quality_solver ==
+                   QualitySolverKind::LAGRANGIAN) {
+            // X1: the LARD dispatch. The skeleton zeroes published
+            // node/link concentrations (current AND old — the .out
+            // writer's old/new interpolation is live) so a LARD run can
+            // never present frozen Cinit seeds as results; open() warned.
+            // Deliberately NO assembleExternalLoads here: loads would
+            // accumulate into stores nothing drains. X2 replaces the body
+            // with segment transport.
+            lard_.step(ctx_, dt_routing);
         } else {
             quality_.execute(ctx_, dt_routing);
         }

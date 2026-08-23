@@ -68,6 +68,7 @@
 #include "../hydrology/RunoffInterface.hpp"
 #include "../hydrology/RdiiInterface.hpp"
 #include "../quality/QualityRouting.hpp"
+#include "../quality/lard/LagrangianSolver.hpp"
 #include "../transport/components/EulerianArdComponent/ArdEngine.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
@@ -387,6 +388,7 @@ private:
     quality::QualitySolver       quality_;      ///< Quality routing (batch link-load + mixing)
     transport::ArdEngine         ard_;          ///< QUALITY_SOLVER EULERIAN_ARD engine (phase E1)
     bool                         ard_init_attempted_ = false;  ///< lazy init after Router::init
+    lard::LagrangianSolver       lard_;         ///< QUALITY_SOLVER LAGRANGIAN (X1 skeleton — no-op)
     landuse::LanduseSolver       landuse_solver_; ///< Buildup/washoff computation
     landuse::SurfaceQualitySoA   surface_quality_; ///< Per-subcatch surface quality state
     controls::ControlEngine      controls_;     ///< Control rule evaluation

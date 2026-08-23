@@ -170,14 +170,16 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else opt.ext_options[key] = val;
 
         } else if (key == "QUALITY_SOLVER") {
-            // Unified Transport suite, master plan D-UT6. LAGRANGIAN is a
-            // recognised-but-unimplemented value (plan phase T5): fall back to
-            // LEGACY rather than erroring so the file stays portable, and let
-            // the ext_options record surface it for diagnostics.
+            // Unified Transport suite, master plan D-UT6. LAGRANGIAN selects
+            // the LARD dispatch (X1 wiring — a warned no-op until X2 lands
+            // transport; LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md). Unknown
+            // values still fall to ext_options for diagnostics.
             const std::string qv = norm(val);
             if      (qv == "LEGACY")       opt.quality_solver = QualitySolverKind::LEGACY;
             else if (qv == "EULERIAN_ARD" || qv == "ARD")
                 opt.quality_solver = QualitySolverKind::EULERIAN_ARD;
+            else if (qv == "LAGRANGIAN" || qv == "LARD")
+                opt.quality_solver = QualitySolverKind::LAGRANGIAN;
             else opt.ext_options[key] = val;
 
         } else if (key == "WATER_AGE") {
