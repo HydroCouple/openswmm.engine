@@ -966,6 +966,29 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "FV_CFL_CENSUS_INTERVAL")
         val = std::to_string(opt.fv.cfl_census_interval);
 
+    // Quality & transport (subplan Y0). Readable and writable under ANY
+    // solver — the keys are inert rather than rejected, the same contract
+    // the FV group above documents, so a GUI can configure LARD before
+    // selecting it. Without these the C API returned BADPARAM and the
+    // options dialog could not hydrate the page at all.
+    else if (k == "QUALITY_SOLVER") {
+        switch (opt.quality_solver) {
+            case openswmm::QualitySolverKind::EULERIAN_ARD:
+                val = "EULERIAN_ARD"; break;
+            case openswmm::QualitySolverKind::LAGRANGIAN:
+                val = "LAGRANGIAN";   break;
+            default:
+                val = "LEGACY";       break;
+        }
+    }
+    else if (k == "WATER_AGE")         val = opt.water_age ? "YES" : "NO";
+    else if (k == "HEAT_TRANSPORT")    val = opt.heat_transport ? "YES" : "NO";
+    else if (k == "QUALITY_STEP")      val = std::to_string(opt.quality_step);
+    else if (k == "MAX_SEGMENTS_PER_LINK")
+        val = std::to_string(opt.max_segments_per_link);
+    else if (k == "DISPERSION")        val = opt.lard_rwpt ? "RWPT" : "OFF";
+    else if (k == "RWPT_SEED")         val = std::to_string(opt.rwpt_seed);
+
     // System / Performance
     else if (k == "THREADS")           val = std::to_string(opt.num_threads);
 
@@ -1345,6 +1368,43 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (vu == "SYCL") opt.fv.backend = openswmm::fv::Backend::SYCL;
         else return SWMM_ERR_BADPARAM;
     }
+
+    // Quality & transport (subplan Y0) — the setter half of the getter
+    // block above. Enum keys REJECT unknown tokens (the FV precedent the
+    // hydration contract's rejectBadEnumTokens case relies on) so a typo
+    // surfaces as a failed set instead of a silently lost edit.
+    else if (k == "QUALITY_SOLVER") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "LEGACY")
+            opt.quality_solver = openswmm::QualitySolverKind::LEGACY;
+        else if (vu == "EULERIAN_ARD" || vu == "ARD")
+            opt.quality_solver = openswmm::QualitySolverKind::EULERIAN_ARD;
+        else if (vu == "LAGRANGIAN" || vu == "LARD")
+            opt.quality_solver = openswmm::QualitySolverKind::LAGRANGIAN;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "WATER_AGE") {
+        const std::string vu = upper_copy(v);
+        opt.water_age = (vu == "YES" || vu == "ON" || vu == "TRUE" ||
+                         vu == "1");
+    }
+    else if (k == "HEAT_TRANSPORT") {
+        const std::string vu = upper_copy(v);
+        opt.heat_transport = (vu == "YES" || vu == "ON" || vu == "TRUE" ||
+                              vu == "1");
+    }
+    else if (k == "QUALITY_STEP")
+        opt.quality_step = std::max(0.0, std::stod(v));
+    else if (k == "MAX_SEGMENTS_PER_LINK")
+        opt.max_segments_per_link = std::max(2, std::stoi(v));
+    else if (k == "DISPERSION") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "RWPT")                 opt.lard_rwpt = true;
+        else if (vu == "OFF" || vu == "NONE")  opt.lard_rwpt = false;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "RWPT_SEED")
+        opt.rwpt_seed = std::stoi(v);
 
     else {
         return SWMM_ERR_BADPARAM;
