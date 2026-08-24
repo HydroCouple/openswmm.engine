@@ -298,7 +298,8 @@ private:
     /// from the global path whenever the option was on but tiering was not
     /// running (RK2, species), reproducing FV_NODE_DT NONE unasked.
     bool ltsEligible() const noexcept {
-        return opts_.lts && opts_.time_integration != TimeIntegration::RK2 &&
+        return opts_.lts &&
+               opts_.time_integration != TimeIntegration::RK2 &&
                state_ && state_->n_species == 0;
     }
 
@@ -321,6 +322,39 @@ private:
     /// Semi-implicit friction for one cell: Manning, or — for a FORCE_MAIN
     /// running full — the Hazen-Williams / Darcy-Weisbach law the section
     /// actually obeys, through the engine's own forcemain functions.
+    /// Explicit stability bound for an ALGEBRAIC junction (issue: FV rings on
+    /// pressurized networks while dynamic wave does not).
+    ///
+    /// An algebraic junction has no volume state, so it has no STORAGE bound --
+    /// which is why it was exempted here. But it is not unbounded. Its head is
+    /// solved from the instantaneous flux balance and then handed to the
+    /// incident cells as a ghost, so the neighbours integrate against a
+    /// boundary state that can travel a long way inside one step. That feedback
+    /// loop is explicit, and it has its own limit:
+    ///
+    ///     tau = min_i( 0.5*dx_i*T_i )  /  sum_j( T_j*c_j )
+    ///
+    /// Every incident conduit pushes flux into the junction (the sum), but the
+    /// solved head has to be resolved on the TIGHTEST incident storage (the
+    /// min) -- that is the ghost the stiffest neighbour sees. Summing the
+    /// numerator instead, the obvious first guess and what legacy DW does for
+    /// its own node continuity solve, makes the bound LOOSER at exactly the
+    /// junctions that need it: at a 12 ft barrel meeting a 3 ft one the summed
+    /// area gives an effective length of 2123 ft against a 250 ft cell.
+    ///
+    /// Relative to the cell bound this is 1/(2n) * (T_min/T_max), i.e. purely
+    /// geometric: 4x for two identical barrels, 32x across a 16:1 area step.
+    /// Those are the factors the EPA QA decks were measured to need (test5 2x,
+    /// test2 25x), which is what the global FV_CFL had to be hand-lowered to
+    /// 0.1 and 0.02 to fake.
+    ///
+    /// Gated on the junction actually being pressurized: below the crown the
+    /// slot is not engaged, the head response is soft, and the measured
+    /// oscillation disappears entirely (enlarging the barrels so they never
+    /// surcharge takes the zigzag index from 37.6 to 4.97, dynamic wave's own
+    /// value). So an open-channel network pays nothing for this.
+    double algebraicNodeStableDt(int n) const noexcept;
+
     double frictionFor(const FvGeometry& g, double q, double u, double h,
                        double dt) const;
 

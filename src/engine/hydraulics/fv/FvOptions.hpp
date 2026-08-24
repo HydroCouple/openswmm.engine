@@ -241,6 +241,53 @@ struct FvOptions {
     /// path bit-for-bit, so this is on by default (plan §3.3).
     bool lts = true;
 
+    /// Bound the explicit step by the ALGEBRAIC JUNCTION feedback limit.
+    /// Opt-in: correct but costly (see the wall-time note below).
+    ///
+    /// An algebraic junction has no volume state, so it carries no storage
+    /// bound and was exempted from the step census on both paths. But its head
+    /// is solved from the instantaneous flux balance and then handed to the
+    /// incident cells as a ghost, so the neighbours integrate against a
+    /// boundary state that can travel a long way inside one step. That feedback
+    /// is explicit and has its own limit (algebraicNodeStableDt):
+    ///
+    ///     tau = min_i(0.5*dx_i*T_i) / sum_j(T_j*c_j)
+    ///
+    /// `min` in the numerator, not `sum`: every incident conduit pushes flux
+    /// (the sum), but the solved head must resolve on the TIGHTEST incident
+    /// storage. Summing -- what legacy DW does for its own node continuity --
+    /// makes the bound LOOSER at exactly the junctions that need it (a 12 ft
+    /// barrel meeting a 3 ft one gives a 2123 ft effective length against a
+    /// 250 ft cell). Gated on the junction being pressurized, so open-channel
+    /// networks pay nothing.
+    ///
+    /// Relative to the cell bound this is 1/(2n) * (T_min/T_max) -- purely
+    /// geometric: 4x for two equal barrels, 32x across a 16:1 area step. Those
+    /// are the factors the EPA QA decks were measured to need, and they are
+    /// CELERITY-INVARIANT (T ~ 1/c^2 cancels), which is why lowering
+    /// FV_SLOT_CELERITY suppresses the symptom without fixing the bound.
+    ///
+    /// The constraint is applied to the junction's INCIDENT CELLS in
+    /// assignTiers, not to dt_node: a plain junction integrates no state and is
+    /// pinned to its finest incident cell, so routing it through dt_node
+    /// discards the tier while still dragging dt0 down. On the cells it is an
+    /// ordinary local CFL number and tiering localises it normally.
+    ///
+    /// Measured at stock FV_CFL 0.5 with LTS on (zigzag = total variation /
+    /// range of the worst link, against dynamic wave):
+    ///   test5  37.95 -> 4.97  (DW 5.08), peak Q 1.06x -> 1.01x,  8.5 s ->  121 s
+    ///   test2  52.01 -> 2.99  (DW 6.87), peak Q 11.9x -> 0.99x,  1.0 s -> 9.7 s
+    /// It also closes an accuracy hole unrelated to oscillation: on the culvert
+    /// fixture the un-tiered path floods 0.885 acre-ft against DW's 0.003, and
+    /// 0.001 with this on.
+    ///
+    /// Default OFF because of that 10-14x wall cost on pressurized networks.
+    /// The cost is the bound doing its job -- a stiff junction genuinely needs
+    /// a small step -- but it is the user's call whether to pay it. It does NOT
+    /// disable tiering (an earlier revision did): LTS still localises the cost,
+    /// and turning LTS off instead costs 376 s / 38 s on the same decks.
+    bool node_feedback_dt = false;
+
     /// Maximum LTS tier count (tier k advances at 2^k·dt₀). 6 ⇒ 64× spread.
     int lts_max_tiers = 6;
 
