@@ -383,6 +383,23 @@ int SWMMEngine::open(const char* inp_path,
                     "transport.ard component instead. No dispersion is "
                     "applied from this key this simulation.");
         }
+        // D-NS1 (X6): a configured negative quality inflow is EXTRACTION —
+        // legal, warned per row at open (subplan §3.1 rule 2). Runtime
+        // clamps + the end-of-run summary are the other two warnings of
+        // the contract. Only the configured BASELINE is scanned here; a
+        // timeseries that goes negative at runtime is caught by the clamp
+        // warning instead.
+        for (int i = 0; i < ctx_.ext_inflows.count(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            if (ctx_.ext_inflows.inflow_type[ui] == "FLOW") continue;
+            if (ctx_.ext_inflows.baseline[ui] >= 0.0) continue;
+            ctx_.warnings.push_back(
+                "[INFLOWS] node '" + ctx_.ext_inflows.node_name[ui] +
+                "' pollutant '" + ctx_.ext_inflows.constituent[ui] +
+                "': the baseline is negative — this row EXTRACTS mass "
+                "(D-NS1). Extraction clamps per step to the mass the "
+                "element holds.");
+        }
 
         // A1a/A1b: the reserved species registers so downstream consumers
         // see the registry truth. Age now tracks under BOTH engines (ARD
@@ -5130,6 +5147,11 @@ int SWMMEngine::end() noexcept {
         }
     }
 
+    // D-NS1 (X6): summarize extraction clamps before the report renders,
+    // so the counts reach the .rpt warning block (gates read
+    // ctx.warnings directly, so .rpt ordering is not load-bearing).
+    quality::summarizeNegativeSourceClamps(ctx_);
+
     // Build routing time step histogram for report
     ctx_.routing_stats.build_histogram();
 
@@ -7081,6 +7103,7 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
 void SWMMEngine::initMassBalance() noexcept {
     // 14. Mass balance: record initial storage (nodes + links, matching legacy)
     ctx_.mass_balance.reset();
+    ctx_.negsrc.reset();  // D-NS1 (X6): clamp counters share the lifecycle
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         // Legacy-convention node volume (junctions => 0) so init storage matches
         // legacy; the internal volume-state is unchanged.

@@ -101,6 +101,7 @@
 #include <vector>
 
 #include "../../core/SimulationContext.hpp"
+#include "../NegativeSources.hpp"
 #include "../QualityRouting.hpp"
 #include "RwptDispersion.hpp"
 #include "SegmentStore.hpp"
@@ -240,9 +241,17 @@ public:
                     is_age ? ws.node_age_vol_in[un] * dt
                            : nodes.qual_mass_in[ci] * dt;
                 double m = st_old * v_old + node_mass_in_[li] + m_ext;
-                // D-NS1 floor (defensive until X6 makes it observable):
-                // extraction can never drive a store's mass negative.
-                if (m < 0.0) m = 0.0;
+                // D-NS1 (X6, now observable): extraction beyond the
+                // store's mass clamps to available — counted, warned
+                // once, and (pollutant rows) un-booked so the ledger
+                // carries what actually left.
+                if (m < 0.0) {
+                    if (is_age)
+                        quality::bookNegativeAgeClamp(ctx, n);
+                    else
+                        quality::bookNegativeSourceClamp(ctx, n, s, -m);
+                    m = 0.0;
+                }
                 const double denom =
                     v_old + v_in + nodes.qual_vol_in[un] * frac;
                 // ALWAYS divide by the full denominator. m/denom is a convex

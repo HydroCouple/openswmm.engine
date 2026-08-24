@@ -34,6 +34,7 @@
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/components/HeatModule/HeatLegacy.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeLegacy.hpp"
+#include "NegativeSources.hpp"
 #include "Treatment.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -236,7 +237,20 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
                               static_cast<std::size_t>(p);
                 if (nd_idx >= nodes.user_conc_mass_flux.size()) continue;
                 const double w = nodes.user_conc_mass_flux[nd_idx];
-                if (w <= 0.0) continue;
+                if (w == 0.0) continue;
+                // D-NS1 (X6): negative forced mass is extraction —
+                // DELIBERATE deviation from legacy's positive-only rule
+                // (routing.c `if (w > 0.0)`), per the user decision of
+                // 2026-08-23. The signed rate books signed; the mix stage
+                // clamps to available and un-books any shortfall. First
+                // negative warns once (the API has no parse stage).
+                if (w < 0.0 && !ctx.negsrc.api_warned) {
+                    ctx.negsrc.api_warned = true;
+                    ctx.warnings.push_back(
+                        "D-NS1: a negative quality mass flux was applied "
+                        "via the runtime API (extraction). It is clamped "
+                        "per step to the mass the element holds.");
+                }
                 if (nd_idx < nodes.qual_mass_in.size())
                     nodes.qual_mass_in[nd_idx] += w;
 
@@ -680,6 +694,18 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
             }
 
             double mass_in = (idx < nodes.qual_mass_in.size()) ? nodes.qual_mass_in[idx] * dt : 0.0;
+            // D-NS1 (X6): a negative load is extraction, clamped to the
+            // mass the store holds; the shortfall is counted and un-booked
+            // so the ledger carries what actually left. The branch is
+            // untaken on every non-negative deck — bit-inert by
+            // construction.
+            if (mass_in < 0.0) {
+                const double avail = c_old * v_old;
+                if (mass_in < -avail) {
+                    bookNegativeSourceClamp(ctx, i, p, -(avail + mass_in));
+                    mass_in = -avail;
+                }
+            }
             double c_in = mass_in / v_in;
             double c_max = std::max(c_old, c_in);
 

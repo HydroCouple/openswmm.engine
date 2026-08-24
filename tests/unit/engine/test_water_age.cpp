@@ -363,8 +363,13 @@ TEST(WaterAgeTest, ConfigErrorsArePrecise) {
          "NODE scope applies to DWF and EXTERNAL_INFLOW"},
         {"_a1_e_un", "[WATER_AGE_SOURCES]\nDWF NODE NOPE 10\n",
          "unknown node 'NOPE'"},
-        {"_a1_e_bad", "[WATER_AGE_SOURCES]\nGW GLOBAL -1\n",
-         "not a non-negative age"},
+        // D-NS1 (X6) FLIP: "GW GLOBAL -1" is no longer an ERROR — a
+        // negative source age extracts age-volume and parses with a
+        // warning instead. The refusal row keeps this table's shape with a
+        // genuinely non-numeric value; the negative-row WARNING has its
+        // own gate in test_negative_sources.cpp.
+        {"_a1_e_bad", "[WATER_AGE_SOURCES]\nGW GLOBAL abc\n",
+         "is not an age in hours"},
         // The spelling plan §2 actually documents — the series NAME makes
         // the row one column wider than a constant row. Checking arity
         // first reported "malformed row" here and left the TIMESERIES
