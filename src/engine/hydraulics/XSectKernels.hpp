@@ -63,6 +63,7 @@
 
 #include "XSectLookup.hpp"
 #include "ChebSection.hpp"
+#include "ChebSectionBatch.hpp"
 #include "../data/LinkData.hpp"
 
 // Portable kernel-function marker — same convention as FvKernels.hpp and
@@ -1429,9 +1430,22 @@ struct XsectEval {
     // XSECT_GEOMETRY EXACT) mixing an exact formula with an approximate A/W.
     OPENSWMM_KERNEL_FN double generic_getYcrit(const XSectParams& xs, double q, double q2g) const {
         // Critical flow function Q_c(yc) - qTarget (legacy getQcritical).
+        // Phase A (promptperf.md) audit: on a compiled section this probe
+        // used to call getAofY then getWofY separately at the same yc, each
+        // its own piece scan + basis recurrence, on every one of the 25
+        // enumeration steps or Ridder iterations below. chebAWofY shares the
+        // scan and recurrence between the two fields — same fusion shape as
+        // FvKernels::closureAll, just at this one leaf accessor rather than
+        // the DYNWAVE STEP B/D batch pass (see promptperf.md's Phase A
+        // report for why that one is NOT fused the same way here).
         auto qCritical = [&](double yc, double qTarget) -> double {
-            double a = getAofY(xs, yc);
-            double w = getWofY(xs, yc);
+            double a, w;
+            if (xs.cheb) {
+                chebsec::chebAWofY(*xs.cheb, yc, a, w);
+            } else {
+                a = getAofY(xs, yc);
+                w = getWofY(xs, yc);
+            }
             if (w > 0.0) return a * std::sqrt(GRAVITY * a / w) - qTarget;
             return -qTarget;
         };

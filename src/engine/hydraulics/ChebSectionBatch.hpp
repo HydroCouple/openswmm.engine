@@ -178,9 +178,53 @@ OPENSWMM_KERNEL_FN void chebARofY(const ChebSection& s, double y,
     if (y >= s.y_full) { A = s.a_full; R = s.r_full; return; }
     const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
     double a = 0.0, p = 0.0;
-    chebEval2(pc.c_a, pc.n_a, pc.c_p, pc.n_p, chebUofY(pc, y), a, p);
+    chebEval2(chebCoef(s, pc.off_a), pc.n_a, chebCoef(s, pc.off_p), pc.n_p,
+             chebUofY(pc, y), a, p);
     A = a;
     R = (p > 0.0) ? a / p : 0.0;
+}
+
+/**
+ * @brief Flow area and top width at one depth, in one pass.
+ *
+ * @details Added for `XSectKernels.hpp`'s `generic_getYcrit` — its
+ *          `qCritical` probe called `getAofY` then `getWofY` separately at
+ *          the same trial depth on every enumeration/Ridder iteration, which
+ *          on a compiled section is two independent piece scans and basis
+ *          recurrences for one probe. Same redundant-evaluation shape as
+ *          `chebARofY`, one caller over (DYNWAVE's offset/critical-depth
+ *          classification path, and `Outfall.cpp`), not the batch layer —
+ *          kept here anyway, next to `chebARofY`, so every non-`chebAll`
+ *          fused N-series accessor stays in one place.
+ *
+ * @param s  compiled section.
+ * @param y  depth (ft).
+ * @param A  flow area (ft^2).
+ * @param W  top width (ft).
+ *
+ * @note Bit-identical to chebAofY() and chebWofY() called separately: both
+ *       select the same piece via chebPieceOfY(s, y) and the same u via
+ *       chebUofY(pc, y) below the crown; at or above y_full both resolve to
+ *       the top piece evaluated at u = 1.0 (chebWofY has no precomputed
+ *       "w_full" scalar the way chebRofY has r_full, so this mirrors its
+ *       actual code path rather than shortcutting through one).
+ */
+OPENSWMM_KERNEL_FN void chebAWofY(const ChebSection& s, double y,
+                                  double& A, double& W) noexcept {
+    if (s.n_pieces <= 0 || y <= 0.0) { A = 0.0; W = 0.0; return; }
+    if (y >= s.y_full) {
+        const ChebPiece& top = s.piece[s.n_pieces - 1];
+        A = s.a_full;
+        const double w = chebEval(chebCoef(s, top.off_w), top.n_w, 1.0);
+        W = (w > 0.0) ? w : 0.0;
+        return;
+    }
+    const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
+    double a = 0.0, w = 0.0;
+    chebEval2(chebCoef(s, pc.off_a), pc.n_a, chebCoef(s, pc.off_w), pc.n_w,
+             chebUofY(pc, y), a, w);
+    A = a;
+    W = (w > 0.0) ? w : 0.0;
 }
 
 // ===========================================================================
