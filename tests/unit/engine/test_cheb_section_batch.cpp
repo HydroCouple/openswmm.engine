@@ -175,6 +175,14 @@ void expectBatchMatchesScalar(const char* what, const ChebSection& s) {
         // it replaced in XSectBatch.cpp, which is the substitution that
         // actually shipped.
         EXPECT_EQ(bR2[i], (p > 0.0) ? a / p : 0.0);
+
+        // chebAWofY (promptperf.md Phase A: generic_getYcrit's qCritical
+        // probe used to call getAofY then getWofY separately at the same
+        // trial depth) must agree with the two accessors it replaces there.
+        double awA = 0.0, awW = 0.0;
+        chebAWofY(s, y[i], awA, awW);
+        EXPECT_EQ(awA, a);
+        EXPECT_EQ(awW, w);
     }
 }
 
@@ -489,20 +497,26 @@ TEST(ChebSectionBatch, PieceLocalDerivativeMatchesTheSectionLevelOne) {
         for (int p = 0; p < s.n_pieces; ++p) {
             const ChebPiece& pc = s.piece[p];
             double dc[kMaxChebCoeff];
-            chebDeriv(pc.c_a, pc.n_a, dc);
+            chebDeriv(chebCoef(s, pc.off_a), pc.n_a, dc);
 
-            // The stored series IS the derivative series, to an ulp.
+            // The stored series IS the derivative series, to an ulp. Packed
+            // storage (promptperf.md Phase B) keeps only pc.n_a - 1 entries
+            // of c_da — the trailing term chebDeriv always leaves exactly
+            // zero is no longer reserved space, so compare only the entries
+            // that actually exist in the pool.
+            const int nd = std::max(0, pc.n_a - 1);
             double cmax = 0.0;
-            for (int i = 0; i < pc.n_a; ++i) cmax = std::max(cmax, std::fabs(dc[i]));
-            for (int i = 0; i < pc.n_a; ++i) {
-                EXPECT_NEAR(pc.c_da[i], dc[i], 1e-14 * std::max(cmax, 1.0))
+            for (int i = 0; i < nd; ++i) cmax = std::max(cmax, std::fabs(dc[i]));
+            const double* c_da = chebCoef(s, pc.off_da);
+            for (int i = 0; i < nd; ++i) {
+                EXPECT_NEAR(c_da[i], dc[i], 1e-14 * std::max(cmax, 1.0))
                     << "piece " << p << " coefficient " << i;
             }
 
             for (int i = 1; i < 40; ++i) {          // strictly inside the piece
                 const double y = pc.y_lo +
                                  (pc.y_hi - pc.y_lo) * static_cast<double>(i) / 40.0;
-                EXPECT_EQ(chebdAdYOnPiece(pc, pc.c_da, y), chebdAdY(s, y))
+                EXPECT_EQ(chebdAdYOnPiece(pc, c_da, y), chebdAdY(s, y))
                     << "piece " << p << " at y = " << y;
                 EXPECT_NEAR(chebdAdYOnPiece(pc, dc, y), chebdAdY(s, y),
                             1e-13 * std::max(1.0, std::fabs(chebdAdY(s, y))))
@@ -538,5 +552,54 @@ TEST(ChebSectionBatch, InvertingAreaRoundTripsThroughTheForwardSeries) {
         // limited by the AREA fit rather than by the inversion; kFitTol with
         // room for the derivative's own n^2 amplification is the honest bar.
         EXPECT_LT(worst, 1.0e-7) << "worst relative round-trip error " << worst;
+    }
+}
+
+// ===========================================================================
+// generic_getYcrit — the one DYNWAVE call site chebAWofY was added for.
+// ===========================================================================
+
+TEST(ChebSectionBatch, GetYcritOnACompiledSectionMatchesTheAnalyticCircle) {
+    // Phase A (promptperf.md) audit: DYNWAVE's offset/critical-depth
+    // classification path (and Outfall.cpp) reach getYcrit's generic solver,
+    // whose qCritical probe now takes the chebAWofY fused path whenever
+    // xs.cheb is set instead of two separate getAofY/getWofY calls. That
+    // substitution is already pinned bit-exact in expectBatchMatchesScalar
+    // above (chebAWofY vs chebAofY+chebWofY, same depth grid, same piece —
+    // so generic_getYcrit's own enumeration/Ridder logic, unchanged by this
+    // patch, necessarily sees the same (a, w) pairs either way). What THIS
+    // test checks is different: that the fused path, reached end to end
+    // through xsect::getYcrit on a real compiled circle, still lands close
+    // to the legacy TABLE dispatch for the same nominal circle — "close",
+    // not exact, because the two sides are genuinely different geometric
+    // representations (an exact circular arc vs. legacy's 51-point
+    // interpolated A/W tables), and the whole point of XSECT_GEOMETRY EXACT
+    // is that it does NOT reproduce the table's interpolation error. The
+    // tolerance below is sized to that known table error (up to ~1.4%
+    // relative above 5% of full depth — see ChebSection.hpp/current.md),
+    // not to machine precision; it exists to catch a gross break (wrong
+    // branch, NaN, wrong scale), not to assert parity.
+    const double d = 4.0;
+    double p[4] = {d, 0.0, 0.0, 0.0};
+
+    XSectParams legacy{};
+    ASSERT_EQ(xsect::setParams(legacy, static_cast<int>(XSectShape::CIRCULAR),
+                               p, 1.0), 0);
+
+    std::vector<BElem> elems;
+    ASSERT_TRUE(xsboundary::buildLegacyBoundary(XSectShape::CIRCULAR, legacy,
+                                                elems));
+    ChebSection cs{};
+    ASSERT_EQ(compile(cs, elems.data(), static_cast<int>(elems.size()), false),
+              0);
+    XSectParams compiled = legacy;
+    compiled.cheb = &cs;
+
+    for (double q : {1.0, 10.0, 40.0, 80.0}) {
+        SCOPED_TRACE(::testing::Message() << "q = " << q);
+        const double yc_legacy = xsect::getYcrit(legacy, q);
+        const double yc_cheb = xsect::getYcrit(compiled, q);
+        EXPECT_NEAR(yc_cheb, yc_legacy, 0.01 * d)
+            << "legacy=" << yc_legacy << " compiled=" << yc_cheb;
     }
 }

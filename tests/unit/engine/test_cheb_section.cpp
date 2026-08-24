@@ -435,22 +435,28 @@ TEST(ChebSection, TooManyVerticesIsRejectedLoudlyNotDegradedQuietly) {
 }
 
 TEST(ChebSection, IsTriviallyCopyableAndBounded) {
-    // Test 27. Trivial copyability is the load-bearing claim (device mirroring).
-    // The size figure is reported rather than asserted at the design sketch's
-    // 8 kB, which is arithmetically impossible: 24 pieces x 5 fields x 32
-    // coefficients x 8 bytes is 30 kB of coefficients before anything else.
+    // Test 27. Trivial copyability is the load-bearing claim (device mirroring)
+    // and is unchanged by Phase B (promptperf.md) — packing moved WHERE the
+    // coefficients live, not whether the type stays POD/memcpy-able.
     //
-    // The bound moved 32 -> 48 kB when the compiled inverse u(A) added the
-    // fifth coefficient array. That was a deliberate trade, not drift: the
-    // runtime inversion it replaced measured 419 ns against ~16 for a fitted
-    // series and was 68% of all non-idle samples on a real network. One array
-    // and not four — y(A) is closed-form once u is known, and W/P/I1 reuse the
-    // forward series at that same u — so the fifth array buys the entire
-    // area-parametrized family for 8 kB rather than 24.
+    // The size bound itself, though, is the thing Phase B exists to shrink.
+    // Pre-Phase-B, every piece reserved seven kMaxChebCoeff(32)-wide arrays
+    // regardless of actual content: ~45 kB per section, of which ~43 kB was
+    // coefficients no real compiled boundary ever needed (typical content is
+    // 1-12 pieces at well under 32 coefficients per field) — on a 953-conduit
+    // network that put the whole compiled geometry data set at ~24 MB, larger
+    // than L3, so every EXACT evaluation missed cache before doing any
+    // arithmetic. Phase B replaces the fixed arrays with offset/length pairs
+    // into one shared pool (kMaxPoolCoeff), sized from a MEASURED worst case
+    // across the shape catalog — see kMaxPoolCoeff's own note — rather than
+    // the arithmetic maximum. Asserting close to the real measured size,
+    // rather than well above it, is deliberate: this is the regression test
+    // that would catch a change silently reintroducing the old per-piece
+    // reservation.
     static_assert(std::is_trivially_copyable_v<ChebSection>);
     std::printf("[cheb] sizeof(ChebSection) = %zu bytes (%.1f kB)\n",
                 sizeof(ChebSection), sizeof(ChebSection) / 1024.0);
-    EXPECT_LE(sizeof(ChebSection), 48u * 1024u);
+    EXPECT_LE(sizeof(ChebSection), 20u * 1024u);
 }
 
 // ===========================================================================
