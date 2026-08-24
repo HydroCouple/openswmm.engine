@@ -1204,6 +1204,26 @@ struct SimulationContext {
     } mass_balance;
 
     /**
+     * @brief D-NS1 negative-source clamp bookkeeping (subplan §3.1, X6).
+     *
+     * @details A negative source (mass extraction) is clamped per step to
+     *          the mass its element holds; each clamp is counted here, its
+     *          shortfall un-booked from the extraction's ledger row (the
+     *          ledger carries what was ACTUALLY removed), and the first
+     *          clamp warns. Age extraction (age·volume) is counted but not
+     *          ledgered — age has no continuity row until A2c.
+     */
+    struct NegativeSourceStats {
+        long   clamp_events     = 0;   ///< pollutant clamps, all engines
+        double shortfall_mass   = 0.0; ///< unmet extraction, internal units
+        long   age_clamp_events = 0;   ///< age-row clamps
+        int    first_node       = -1;  ///< element of the first clamp
+        bool   runtime_warned   = false;
+        bool   api_warned       = false; ///< first negative API mass flux
+        void reset() { *this = NegativeSourceStats{}; }
+    } negsrc;
+
+    /**
      * @brief System mass-balance totals for the optional 2D surface domain.
      *
      * @details Accumulated each executed 2D step by SurfaceRouter2D. Unlike

@@ -62,9 +62,12 @@ std::string upper(std::string s) {
 }
 
 bool parse_hours(const std::string& tok, double& out) {
+    // D-NS1 (X6): negative hours are now legal — a negative source age is
+    // age-volume EXTRACTION (warned at the call site). The parse rejects
+    // only non-numbers.
     char* end = nullptr;
     out = std::strtod(tok.c_str(), &end);
-    return end != nullptr && *end == '\0' && end != tok.c_str() && out >= 0.0;
+    return end != nullptr && *end == '\0' && end != tok.c_str();
 }
 
 int source_of(const std::string& u) {
@@ -156,9 +159,17 @@ void applyWaterAgeSections(SimulationContext& ctx,
             if (!parse_hours(vtok, hours)) {
                 errors.push_back(
                     "[WATER_AGE_SOURCES] '" + toks[0] + "': '" + vtok +
-                    "' is not a non-negative age in hours.");
+                    "' is not an age in hours.");
                 continue;
             }
+            // D-NS1 (X6): a negative source age is age-volume EXTRACTION —
+            // legal, warned at parse per the subplan §3.1 contract.
+            if (hours < 0.0)
+                ctx.warnings.push_back(
+                    "[WATER_AGE_SOURCES] '" + toks[0] + "' is negative (" +
+                    vtok + " h): the pathway EXTRACTS age-volume (water "
+                    "reads younger). Extraction clamps so age never goes "
+                    "below zero (D-NS1).");
             const double seconds = hours * 3600.0;
 
             if (scope == "GLOBAL") {

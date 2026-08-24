@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "../../../core/SimulationContext.hpp"
+#include "../../../quality/NegativeSources.hpp"
 
 namespace openswmm::transport {
 
@@ -129,7 +130,15 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
             ws.node_age[ui] = a_old;
             continue;
         }
-        const double mass_in = sc.age_in[ui] * dt;
+        double mass_in = sc.age_in[ui] * dt;
+        // D-NS1 (X6): a negative age source extracts age·volume, clamped
+        // to what the store holds — counted and warned, not ledgered
+        // (age has no continuity row until A2c). Branch untaken on
+        // non-negative decks.
+        if (mass_in < 0.0 && a_old * v_old + mass_in < 0.0) {
+            quality::bookNegativeAgeClamp(ctx, i);
+            mass_in = -(a_old * v_old);
+        }
         const double a_in    = mass_in / v_in;
         const double a_max   = std::max(a_old, a_in);
         double a_new = (v_old > kZeroVolume)

@@ -31,6 +31,7 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
+#include "../../../quality/NegativeSources.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
@@ -656,11 +657,25 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
             const auto und = static_cast<std::size_t>(nd);
             node_vol_[und] += load_frac * ctx.nodes.qual_vol_in[und];
-            for (int s = 0; s < np_l; ++s)
-                node_mass_[und * uns + static_cast<std::size_t>(s)] += std::max(
-                    0.0, dt_sub *
-                             ctx.nodes.qual_mass_in[und * unp_l +
-                                                    static_cast<std::size_t>(s)]);
+            for (int s = 0; s < np_l; ++s) {
+                // D-NS1 (X6): the old `max(0, ...)` silently DROPPED a
+                // negative load while the loaders had booked the full
+                // request — a silent ledger break. Extraction now applies
+                // signed, clamped to the store's mass, shortfall counted
+                // and un-booked. Positive loads take the identical value —
+                // bit-inert on every non-negative deck.
+                double delta =
+                    dt_sub * ctx.nodes.qual_mass_in[und * unp_l +
+                                                    static_cast<std::size_t>(s)];
+                double& mstore =
+                    node_mass_[und * uns + static_cast<std::size_t>(s)];
+                if (delta < 0.0 && mstore + delta < 0.0) {
+                    quality::bookNegativeSourceClamp(ctx, nd, s,
+                                                     -(mstore + delta));
+                    delta = -mstore;
+                }
+                mstore += delta;
+            }
             // Persistent user quality mass flux is NOT added here: it is
             // folded into qual_mass_in by QualitySolver::addExtInflowLoads(),
             // the same loader stage legacy uses, so the line above already
