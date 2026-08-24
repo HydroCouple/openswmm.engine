@@ -588,9 +588,14 @@ double ExplicitFvSolver::censusDt() const {
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         if (mesh_->node_kind[un] == kNodeVirtual) continue;
-        // Algebraic junctions have no volume state and hence no stability or
-        // accuracy bound of their own — their head is solved, not integrated.
-        if (!node_alg_.empty() && node_alg_[un]) continue;
+        // Algebraic junctions: no storage bound, but the ghost-feedback bound
+        // above still applies. On this path (tiering not running) there is
+        // nowhere to put it but the global step.
+        if (!node_alg_.empty() && node_alg_[un]) {
+            if (opts_.node_feedback_dt)
+                dt = std::min(dt, algebraicNodeStableDt(n));
+            continue;
+        }
         // Outfalls: head imposed, volume never integrated — nothing to bound
         // (mirrors nodeStableDt's skip, same rationale).
         if (mesh_->node_kind[un] == kNodeOutfall) continue;
@@ -2244,11 +2249,58 @@ double ExplicitFvSolver::cellStableDt(int c) const {
     return (speed > 1.0e-12) ? opts_.cfl * dx / speed : 1.0e30;
 }
 
+double ExplicitFvSolver::algebraicNodeStableDt(int n) const noexcept {
+    const auto un = static_cast<std::size_t>(n);
+    const int b = mesh_->node_face_ptr[un];
+    const int e = mesh_->node_face_ptr[un + 1];
+
+    double store_min = std::numeric_limits<double>::max();  // min 0.5*dx*T
+    double admit_sum = 0.0;                                 // sum T*c
+
+    for (int p = b; p < e; ++p) {
+        const int f = mesh_->node_face_idx[static_cast<std::size_t>(p)];
+        const auto uf = static_cast<std::size_t>(f);
+        const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                   : mesh_->face_cr[uf];
+        if (cell < 0) continue;
+        const auto uc = static_cast<std::size_t>(cell);
+        // Not gated on cell_active_, for the same reason nodeStableDt is not:
+        // the tier schedule must not depend on whether compaction is on.
+        const double h = state_->cell_h[uc];
+        if (h <= k::kDryDepth) continue;
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double t = k::widthOfDepth(g, h);
+        if (t <= 0.0) continue;
+
+        // Every live face contributes flux the junction has to balance.
+        admit_sum += t * k::celerity(state_->cell_a[uc], t);
+
+        // Only a PRESSURIZED face contributes the stiff storage. Below the
+        // crown the slot has not engaged and the response is soft.
+        if (h >= g.y_crown) {
+            const double store = 0.5 * mesh_->cell_dx[uc] * t;
+            if (store < store_min) store_min = store;
+        }
+    }
+
+    if (store_min >= std::numeric_limits<double>::max() * 0.5) return 1.0e30;
+    if (!(admit_sum > 0.0)) return 1.0e30;
+    const double tau = store_min / admit_sum;
+    return (tau > 0.0) ? opts_.cfl * tau : 1.0e30;
+}
+
 double ExplicitFvSolver::nodeStableDt(int n) const {
     const auto un = static_cast<std::size_t>(n);
     if (mesh_->node_kind[un] == kNodeVirtual) return 1.0e30;
-    // An algebraic junction has no volume state to bound; its tier is pinned
-    // to its incident cells in assignTiers so its faces fire together.
+    // An algebraic junction has no volume state to bound, and its tier is
+    // pinned to its finest incident cell in assignTiers so its faces fire
+    // together. Its ghost-feedback limit is real (algebraicNodeStableDt) but
+    // it must NOT be routed through dt_node: the pin discards the resulting
+    // tier while dt_node still drags dt0 down, which desynchronises the
+    // schedule. assignTiers applies it to the incident CELLS instead, which
+    // is where the feedback actually destabilises the solution and what the
+    // pin then follows.
     if (!node_alg_.empty() && node_alg_[un]) return 1.0e30;
     // An outfall's head is IMPOSED (forcing.node_fixed_head) and its volume
     // ledger is never integrated — there is nothing for a bound to protect.
@@ -2328,6 +2380,45 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
         dt_node[un] = nodeStableDt(n);
         if (node_sets_dt0) dt_min = std::min(dt_min, dt_node[un]);
     }
+    // An ALGEBRAIC junction's ghost-feedback bound (algebraicNodeStableDt) is a
+    // CFL constraint like any other, and CFL constraints are local -- so it
+    // belongs on the entity that actually integrates state. A plain junction
+    // does not: it has no volume, its head is the instantaneous solution of
+    // sum Q_i(H) = 0, and assignTiers pins it to its finest incident cell so
+    // every incident face is live when that solve happens. Routing the bound
+    // through dt_node therefore buys nothing (the pin discards the tier) while
+    // still dragging dt0 down -- all of the cost, none of the locality.
+    //
+    // Its incident CELLS are what integrate against the solved head, and they
+    // are where the feedback shows up as oscillation, so the constraint lands
+    // on them. Tier grading then spreads it outward one level at a time and
+    // coarse cells keep advancing at 2^k*dt0, which is exactly the locality
+    // tiering exists to provide.
+    //
+    // This MUST run before `dt0 = dt_min`: tightening dt_cell alone only moves
+    // tier indices, while the base step the tiers are measured against stays
+    // put -- an inconsistent schedule that changes answers without enforcing
+    // anything.
+    if (opts_.node_feedback_dt) {
+        for (int n = 0; n < nn; ++n) {
+            const auto un = static_cast<std::size_t>(n);
+            if (node_alg_.empty() || !node_alg_[un]) continue;
+            const double dtn = algebraicNodeStableDt(n);
+            if (dtn >= 1.0e29) continue;
+            const int b = mesh_->node_face_ptr[un], e = mesh_->node_face_ptr[un + 1];
+            for (int q = b; q < e; ++q) {
+                const auto uf = static_cast<std::size_t>(
+                    mesh_->node_face_idx[static_cast<std::size_t>(q)]);
+                const int cl = mesh_->face_cl[uf], cr = mesh_->face_cr[uf];
+                if (cl >= 0) dt_cell[static_cast<std::size_t>(cl)] =
+                    std::min(dt_cell[static_cast<std::size_t>(cl)], dtn);
+                if (cr >= 0) dt_cell[static_cast<std::size_t>(cr)] =
+                    std::min(dt_cell[static_cast<std::size_t>(cr)], dtn);
+            }
+            dt_min = std::min(dt_min, dtn);
+        }
+    }
+
     if (!(dt_min > 0.0) || dt_min >= 1.0e29) return 1;
     dt0 = dt_min;
 

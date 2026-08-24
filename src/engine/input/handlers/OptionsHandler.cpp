@@ -476,6 +476,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             const std::string bv = norm(val);
             opt.fv.lts = !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
 
+        } else if (key == "FV_NODE_FEEDBACK_DT") {
+            const std::string bv = norm(val);
+            opt.fv.node_feedback_dt =
+                !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
+
         } else if (key == "FV_LTS_MAX_TIERS") {
             opt.fv.lts_max_tiers = std::max(1, static_cast<int>(to_double(val)));
 
