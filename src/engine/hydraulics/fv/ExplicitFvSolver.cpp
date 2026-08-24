@@ -1469,7 +1469,19 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
             cell_u_[uc]        = 0.0;
             continue;
         }
-        const double u = q_new / a_new;
+        // #144-class: the Preissmann slot stores water but conveys none, so the
+        // momentum SINKS -- Manning friction and the local-loss velocity head --
+        // must see the conveyance velocity, not the slot-inflated one. Dividing
+        // by the slot area understated |u| exactly where the pipe pressurizes,
+        // and since S_f is quadratic in u the surcharged head loss came out low
+        // by a factor that tracked FV_SLOT_CELERITY -- a numerical dial was
+        // moving a physical answer. sectionArea() clamps h to the crown, so off
+        // the slot path this is the identity and open channels are unaffected.
+        // cell_u_ below deliberately keeps the slot-inclusive area: that is the
+        // transport velocity of the conserved (slot-inclusive) area, and the
+        // flux/CFL machinery is built on it.
+        const double a_conv = k::sectionArea(g, h_new);
+        const double u = (a_conv > 0.0) ? q_new / a_conv : 0.0;
         q_new = frictionFor(g, q_new, u, h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
 
@@ -2711,7 +2723,19 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
             cell_u_[uc]        = 0.0;
             continue;
         }
-        const double u = q_new / a_new;
+        // #144-class: the Preissmann slot stores water but conveys none, so the
+        // momentum SINKS -- Manning friction and the local-loss velocity head --
+        // must see the conveyance velocity, not the slot-inflated one. Dividing
+        // by the slot area understated |u| exactly where the pipe pressurizes,
+        // and since S_f is quadratic in u the surcharged head loss came out low
+        // by a factor that tracked FV_SLOT_CELERITY -- a numerical dial was
+        // moving a physical answer. sectionArea() clamps h to the crown, so off
+        // the slot path this is the identity and open channels are unaffected.
+        // cell_u_ below deliberately keeps the slot-inclusive area: that is the
+        // transport velocity of the conserved (slot-inclusive) area, and the
+        // flux/CFL machinery is built on it.
+        const double a_conv = k::sectionArea(g, h_new);
+        const double u = (a_conv > 0.0) ? q_new / a_conv : 0.0;
         q_new = frictionFor(g, q_new, u, h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
 
