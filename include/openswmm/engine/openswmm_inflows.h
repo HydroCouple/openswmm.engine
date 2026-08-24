@@ -51,7 +51,12 @@ extern "C" {
  *
  * @param engine     Engine handle.
  * @param node_idx   Zero-based index of the receiving node.
- * @param constituent Constituent name ("FLOW" for flow, or a pollutant name).
+ * @param constituent Constituent name ("FLOW" for flow, a pollutant name,
+ *                   or the reserved species "__WATER_AGE__" — such a row
+ *                   prescribes the AGE, in HOURS, carried by the node's
+ *                   external inflow water, and wins over the
+ *                   [WATER_AGE_SOURCES] EXTERNAL_INFLOW entry (Z1,
+ *                   amendment D-Y4). It adds no water and no mass.
  * @param ts_name    Time series name (NULL or "" for constant baseline only).
  * @param type       Inflow type: "FLOW", "CONCEN", or "MASS".
  * @param m_factor   Multiplier applied to the time series values.
