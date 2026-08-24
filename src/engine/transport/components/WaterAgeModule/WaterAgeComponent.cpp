@@ -145,9 +145,13 @@ void applyWaterAgeSections(SimulationContext& ctx,
             // documents, and the deferral this phase owes the user was
             // unreachable in the only form anyone would write.
             if (upper(vtok).rfind("TIMESERIES", 0) == 0) {
+                // Z1 (amendment D-Y4) FLIPPED this from a deferral to a
+                // redirect: time-varying ages ARE supported now, through
+                // the pathway that already speaks timeseries.
                 errors.push_back(
-                    "[WATER_AGE_SOURCES] TIMESERIES ages arrive with a "
-                    "later water-age phase — A1a takes constant hours.");
+                    "[WATER_AGE_SOURCES] TIMESERIES ages are prescribed as "
+                    "[INFLOWS] rows naming __WATER_AGE__ (amendment D-Y4 / "
+                    "Z1) — this table takes constant hours.");
                 continue;
             }
             if (toks.size() != vpos + 1) {

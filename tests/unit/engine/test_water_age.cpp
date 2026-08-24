@@ -47,6 +47,10 @@
  *            DWF/EXTERNAL_INFLOW, never-half-apply.
  *          - BypassWarnings: component with WATER_AGE OFF; WATER_AGE ON
  *            under LEGACY names A1b (lessons 10/20).
+ *          - Z1 (amendment D-Y4) gates: `__WATER_AGE__` as an [INFLOWS]
+ *            constituent — equivalence with the source table, precedence
+ *            (the inflow row wins, warned), TIMESERIES-driven ages, the
+ *            silent-drop path replaced by warnings, and writer round-trip.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
@@ -58,11 +62,13 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_hotstart.h>
+#include <openswmm/engine/openswmm_model.h>
 
 #include "core/InpWriter.hpp"
 #include "core/SWMMEngine.hpp"
@@ -81,7 +87,9 @@ void write_deck(const char* path, const std::string& pc_lines,
                 bool water_age = true, bool pollutants = false,
                 bool stagnant = false,
                 const std::string& extra_options = "",
-                int routing_step = 5, bool dry = false) {
+                int routing_step = 5, bool dry = false,
+                const std::string& extra_inflows = "",
+                const std::string& extra_sections = "") {
     std::ofstream f(path);
     f << "[TITLE]\nA1a water age gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -132,7 +140,9 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "C3 CIRCULAR 2.0 0 0 0\nC4 CIRCULAR 2.0 0 0 0\n"
       << "C5 CIRCULAR 2.0 0 0 0\n\n";
     if (!stagnant && !dry)
-        f << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n\n";
+        f << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n"
+          << extra_inflows << "\n";
+    if (!extra_sections.empty()) f << extra_sections << "\n";
     if (pollutants)
         f << "[POLLUTANTS]\n"
           << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
@@ -353,8 +363,12 @@ TEST(WaterAgeTest, AgeRowLeavesOtherRowsBitwise) {
 TEST(WaterAgeTest, ConfigErrorsArePrecise) {
     struct Case { const char* tag; const char* body; const char* needle; };
     const Case cases[] = {
+        // Z1 (amendment D-Y4) FLIP: the A1a deferral ("arrive with a
+        // later water-age phase") became a REDIRECT — time-varying ages
+        // are now prescribed as [INFLOWS] rows naming __WATER_AGE__, and
+        // this table's refusal must say exactly where to go instead.
         {"_a1_e_ts", "[WATER_AGE_SOURCES]\nGW GLOBAL TIMESERIES ts1\n",
-         "TIMESERIES ages arrive with a later"},
+         "prescribed as [INFLOWS] rows naming __WATER_AGE__"},
         {"_a1_e_sc", "[WATER_AGE_SOURCES]\nGW SUBCATCH S1 10\n",
          "SUBCATCH scope arrives with plan phase A3"},
         {"_a1_e_uk", "[WATER_AGE_SOURCES]\nMAGIC GLOBAL 1\n",
@@ -376,7 +390,7 @@ TEST(WaterAgeTest, ConfigErrorsArePrecise) {
         // deferral unreachable in the only form a user would write.
         {"_a1_e_tsn",
          "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 TIMESERIES age_ts\n",
-         "TIMESERIES ages arrive with a later"},
+         "prescribed as [INFLOWS] rows naming __WATER_AGE__"},
         // A NODE row with the age omitted. The value token used to be bound
         // as toks[3] BEFORE the arity check, reading one past the end of a
         // 3-token row.
@@ -937,5 +951,225 @@ TEST(WaterAgeTest, DryElementHotstartCarriesTheAgedState) {
     }
     swmm_engine_destroy(e2);
 }
+
+
+// ===========================================================================
+// Z1 (amendment D-Y4) — reserved species as [INFLOWS] constituents.
+// ===========================================================================
+
+// Z1 gate 1 — equivalence: an [INFLOWS] __WATER_AGE__ row with baseline
+// 6 h is the SAME statement as the source table's EXTERNAL_INFLOW 6 h.
+// Same loader, same q·age, same arithmetic — the trajectories must agree
+// exactly, and the shift against the clean base run is gate 2's razor.
+TEST(WaterAgeTest, InflowAgeRowMatchesSourceTableExactly) {
+    write_deck("_z1_base.inp", "");
+    write_file("_z1_tab.age",
+               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 6.0\n");
+    write_deck("_z1_tab.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_z1_tab.age\"");
+    write_deck("_z1_row.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    const auto base = run_recording("_z1_base.inp", "_z1_base.rpt",
+                                    "_z1_base.out");
+    const auto tab  = run_recording("_z1_tab.inp", "_z1_tab.rpt",
+                                    "_z1_tab.out");
+    const auto row  = run_recording("_z1_row.inp", "_z1_row.rpt",
+                                    "_z1_row.out");
+    ASSERT_TRUE(base.ok);
+    ASSERT_TRUE(tab.ok);
+    ASSERT_TRUE(row.ok);
+    ASSERT_FALSE(row.age_link[kC5].empty());
+
+    const double shift =
+        row.age_link[kC5].back() - base.age_link[kC5].back();
+    EXPECT_NEAR(shift, 21600.0, 5.0)
+        << "an [INFLOWS] __WATER_AGE__ row of 6 h did not shift the steady "
+           "effluent age by 6 h — the row is dead or mis-scaled (hours vs "
+           "seconds).";
+
+    ASSERT_EQ(tab.age_link[kC5].size(), row.age_link[kC5].size());
+    for (std::size_t t = 0; t < tab.age_link[kC5].size(); ++t)
+        ASSERT_EQ(tab.age_link[kC5][t], row.age_link[kC5][t])
+            << "step " << t << ": the [INFLOWS] pathway and the source "
+               "table disagree for the identical prescription — the two "
+               "must be the same statement through the same loader.";
+}
+
+// Z1 gate 2 — precedence: with BOTH stated, the [INFLOWS] row wins (the
+// more specific statement, amendment §6), and the conflict is warned
+// rather than silently resolved.
+TEST(WaterAgeTest, InflowAgeRowWinsOverSourceTable) {
+    write_file("_z1_conf.age",
+               "[WATER_AGE_SOURCES]\nEXTERNAL_INFLOW NODE J0 2.0\n");
+    write_deck("_z1_conf.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_z1_conf.age\"",
+               true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    write_deck("_z1_row6.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    const auto conf = run_recording("_z1_conf.inp", "_z1_conf.rpt",
+                                    "_z1_conf.out");
+    const auto row6 = run_recording("_z1_row6.inp", "_z1_row6.rpt",
+                                    "_z1_row6.out");
+    ASSERT_TRUE(conf.ok);
+    ASSERT_TRUE(row6.ok);
+    ASSERT_FALSE(conf.age_link[kC5].empty());
+
+    EXPECT_EQ(conf.age_link[kC5].back(), row6.age_link[kC5].back())
+        << "with both an [INFLOWS] __WATER_AGE__ row (6 h) and a source-"
+           "table override (2 h) at the same node, the effluent age is not "
+           "the row's — the precedence decided in Z1 does not hold.";
+    EXPECT_TRUE(has_needle(conf.warnings, "the inflow row wins"))
+        << "the conflict between the two prescriptions was resolved "
+           "silently — one of them has to be told it lost.";
+}
+
+// Z1 gate 3 — a TIMESERIES drives the age. (a) A flat series at 6 h
+// reproduces the baseline-6 h run: the series pathway carries the number.
+// (b) A 1 h → 9 h step at 00:30 shifts the effluent on the schedule.
+TEST(WaterAgeTest, InflowAgeTimeseriesDrivesTheValue) {
+    const std::string ts6 =
+        "[TIMESERIES]\n"
+        "age6 01/01/2026 00:00 6.0\n"
+        "age6 01/01/2026 12:00 6.0\n";
+    write_deck("_z1_ts6.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ age6 CONCEN 1.0 1.0 0.0\n", ts6);
+    write_deck("_z1_b6.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    const auto ts  = run_recording("_z1_ts6.inp", "_z1_ts6.rpt",
+                                   "_z1_ts6.out");
+    const auto b6  = run_recording("_z1_b6.inp", "_z1_b6.rpt", "_z1_b6.out");
+    ASSERT_TRUE(ts.ok);
+    ASSERT_TRUE(b6.ok);
+    ASSERT_FALSE(ts.age_link[kC5].empty());
+    EXPECT_NEAR(ts.age_link[kC5].back(), b6.age_link[kC5].back(), 1.0e-6)
+        << "a flat 6 h TIMESERIES and a 6 h baseline disagree — the series "
+           "value is not reaching the age pathway.";
+
+    const std::string tsStep =
+        "[TIMESERIES]\n"
+        "agestep 01/01/2026 00:00 1.0\n"
+        "agestep 01/01/2026 00:29 1.0\n"
+        "agestep 01/01/2026 00:30 9.0\n"
+        "agestep 01/01/2026 12:00 9.0\n";
+    write_deck("_z1_tsstep.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ agestep CONCEN 1.0 1.0 0.0\n", tsStep);
+    write_deck("_z1_b1.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 1.0\n");
+    write_deck("_z1_b9.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 9.0\n");
+    const auto st = run_recording("_z1_tsstep.inp", "_z1_tsstep.rpt",
+                                  "_z1_tsstep.out");
+    const auto b1 = run_recording("_z1_b1.inp", "_z1_b1.rpt", "_z1_b1.out");
+    const auto b9 = run_recording("_z1_b9.inp", "_z1_b9.rpt", "_z1_b9.out");
+    ASSERT_TRUE(st.ok);
+    ASSERT_TRUE(b1.ok);
+    ASSERT_TRUE(b9.ok);
+    const auto& stc5 = st.age_link[kC5];
+    const auto& b1c5 = b1.age_link[kC5];
+    const auto& b9c5 = b9.age_link[kC5];
+    ASSERT_GE(stc5.size(), std::size_t(50));
+    ASSERT_EQ(stc5.size(), b1c5.size());
+
+    // Before the schedule moves (first 25 min) the two decks are the same
+    // deck — the trajectories agree to interpolation noise.
+    for (std::size_t t = 0; t < std::size_t(25); ++t)
+        ASSERT_NEAR(stc5[t], b1c5[t], 1.0e-6)
+            << "step " << t << ": the step-series deck diverged from the "
+               "constant deck BEFORE the schedule moved.";
+    // After it moves, the effluent shifts on the schedule: by the end the
+    // step deck has left 1 h decisively behind and cannot exceed the
+    // always-9 h deck.
+    EXPECT_GT(stc5.back(), b1c5.back() + 0.5 * 8.0 * 3600.0)
+        << "30 min after the series stepped 1 h -> 9 h the effluent age "
+           "has not moved — the schedule is not being read.";
+    EXPECT_LE(stc5.back(), b9c5.back() + 1.0)
+        << "the step deck's effluent is OLDER than an always-9 h run — "
+           "the series value is being over-applied.";
+}
+
+// Z1 gate 4 — the silent-drop path has words now: a typo'd pollutant, a
+// deferred __TEMPERATURE__ row, an inert row under WATER_AGE OFF, and a
+// MASS-typed age row all WARN — and the runs still complete.
+TEST(WaterAgeTest, InflowConstituentSilentDropReplacedByWarnings) {
+    write_deck("_z1_typo.inp", "", true, /*pollutants=*/true, false, "", 5,
+               false, "J0 TSSX \"\" CONCEN 1.0 1.0 5.0\n");
+    const auto typo = run_recording("_z1_typo.inp", "_z1_typo.rpt",
+                                    "_z1_typo.out");
+    ASSERT_TRUE(typo.ok);
+    EXPECT_TRUE(has_needle(typo.warnings,
+                           "matches no pollutant or reserved species"))
+        << "a misspelled [INFLOWS] constituent still vanishes silently.";
+
+    write_deck("_z1_temp.inp", "", true, false, false, "", 5, false,
+               "J0 __TEMPERATURE__ \"\" CONCEN 1.0 1.0 20.0\n");
+    const auto temp = run_recording("_z1_temp.inp", "_z1_temp.rpt",
+                                    "_z1_temp.out");
+    ASSERT_TRUE(temp.ok);
+    EXPECT_TRUE(has_needle(temp.warnings, "arrive with heat's round"))
+        << "__TEMPERATURE__ rows must defer with words, not vanish "
+           "(amendment §6: temperature keeps the old treatment).";
+
+    write_deck("_z1_off.inp", "", /*water_age=*/false, false, false, "", 5,
+               false, "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    const auto off = run_recording("_z1_off.inp", "_z1_off.rpt",
+                                   "_z1_off.out");
+    ASSERT_TRUE(off.ok);
+    EXPECT_TRUE(has_needle(off.warnings, "WATER_AGE is OFF"))
+        << "an age row on a WATER_AGE OFF deck is inert and must say so "
+           "(the silent-bypass rule, lessons 10/20).";
+
+    write_deck("_z1_mbase.inp", "");
+    write_deck("_z1_mass.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" MASS 1.0 1.0 6.0\n");
+    const auto mbase = run_recording("_z1_mbase.inp", "_z1_mbase.rpt",
+                                     "_z1_mbase.out");
+    const auto mass  = run_recording("_z1_mass.inp", "_z1_mass.rpt",
+                                     "_z1_mass.out");
+    ASSERT_TRUE(mbase.ok);
+    ASSERT_TRUE(mass.ok);
+    EXPECT_TRUE(has_needle(mass.warnings, "MASS has no meaning"))
+        << "a MASS-typed age row was reinterpreted without a word.";
+    EXPECT_NEAR(mass.age_link[kC5].back() - mbase.age_link[kC5].back(),
+                21600.0, 5.0)
+        << "the MASS-typed age row did not land as 6 h (CONCEN "
+           "semantics) — the warning promised one thing and the engine "
+           "did another.";
+}
+
+// Z1 gate 5 — writer round-trip: the row survives swmm_model_write and
+// the reopened deck reproduces the run.
+TEST(WaterAgeTest, InflowAgeRowRoundTripsThroughTheWriter) {
+    write_deck("_z1_rt.inp", "", true, false, false, "", 5, false,
+               "J0 __WATER_AGE__ \"\" CONCEN 1.0 1.0 6.0\n");
+    {
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        ASSERT_EQ(swmm_engine_open(e, "_z1_rt.inp", "_z1_rt.rpt",
+                                   "_z1_rt.out", nullptr),
+                  SWMM_OK);
+        ASSERT_EQ(swmm_model_write(e, "_z1_rt_w.inp"), SWMM_OK);
+        swmm_engine_destroy(e);
+    }
+    {
+        std::ifstream f("_z1_rt_w.inp");
+        ASSERT_TRUE(f.good());
+        std::string text((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+        EXPECT_NE(text.find("__WATER_AGE__"), std::string::npos)
+            << "the writer dropped the __WATER_AGE__ [INFLOWS] row — the "
+               "prescription dies on the first save.";
+    }
+    const auto orig = run_recording("_z1_rt.inp", "_z1_rt2.rpt",
+                                    "_z1_rt2.out");
+    const auto rt   = run_recording("_z1_rt_w.inp", "_z1_rt_w.rpt",
+                                    "_z1_rt_w.out");
+    ASSERT_TRUE(orig.ok);
+    ASSERT_TRUE(rt.ok);
+    ASSERT_FALSE(orig.age_link[kC5].empty());
+    EXPECT_NEAR(rt.age_link[kC5].back(), orig.age_link[kC5].back(), 1.0e-6)
+        << "the round-tripped deck runs to a different effluent age.";
+}
+
 
 }  // namespace

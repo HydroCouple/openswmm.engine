@@ -61,7 +61,13 @@ constexpr int WEEKEND_PATTERN = 3;
 enum class ExtInflowKind : int {
     FLOW   = 0,  ///< Volumetric inflow (constituent FLOW)
     CONCEN = 1,  ///< Pollutant concentration; mass rate = value * node flow
-    MASS   = 2   ///< Pollutant mass rate directly
+    MASS   = 2,  ///< Pollutant mass rate directly
+    /// Z1 (amendment D-Y4): a row naming the reserved species
+    /// `__WATER_AGE__`. Its value is the AGE (hours in the file, seconds
+    /// after conv_factor) carried by the node's external inflow — it adds
+    /// no water and no mass; the EXTERNAL_INFLOW loader books q·age with
+    /// this age instead of the source table's.
+    AGE    = 3
 };
 
 struct ExtInflowSoA {

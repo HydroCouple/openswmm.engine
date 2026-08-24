@@ -32,6 +32,7 @@
 #include "../data/TableData.hpp"
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <algorithm>
 #include <string>
 #include <unordered_map>
@@ -113,6 +114,17 @@ void InflowSolver::init(SimulationContext& ctx) {
     // ---- Copy patterns into runtime structures ----
     refreshPatterns(ctx);
 
+    // Z1 (amendment D-Y4): (re)assert the per-node inflow-age channel.
+    // Sized HERE — before the first routing step — because the loaders'
+    // lazy WaterAgeState::resize lands between Pass 3's first write and
+    // its first read; and re-filled with NaN on every init because init
+    // is the authority on which rows exist (an [INFLOWS] row removed via
+    // the API must not leave its last age behind).
+    if (ctx.options.water_age)
+        ctx.water_age_state.node_ext_inflow_age.assign(
+            static_cast<std::size_t>(ctx.n_nodes()),
+            std::numeric_limits<double>::quiet_NaN());
+
     // ---- Populate external inflows with name resolution ----
     int ne = ctx.ext_inflows.count();
     ext_inflows_.resize(ne);
@@ -138,18 +150,79 @@ void InflowSolver::init(SimulationContext& ctx) {
                 static_cast<unsigned char>(ch)));
             return s;
         };
+        // Warnings below dedupe against ctx.warnings because init() re-runs
+        // on every swmm_ext_inflow_add() — without the check each API add
+        // would repeat every standing warning.
+        auto warn_once = [&ctx](const std::string& msg) {
+            for (const auto& w : ctx.warnings)
+                if (w == msg) return;
+            ctx.warnings.push_back(msg);
+        };
         const std::string cons_u = upper(cons);
         if (cons_u == "FLOW") {
             ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::FLOW);
             ext_inflows_.pollut_idx[ui] = -1;
             int fu = static_cast<int>(ctx.options.flow_units);
             if (fu >= 0 && fu < 6) cf /= ucf::Qcf[fu];
+        } else if (cons == "__WATER_AGE__") {
+            // Z1 (amendment D-Y4): the reserved age species is a legal
+            // [INFLOWS] constituent. The row's value is the AGE of the
+            // node's external inflow water — HOURS in the file (the
+            // [WATER_AGE_SOURCES] unit), SECONDS internally — and it wins
+            // over the source table's EXTERNAL_INFLOW entry at this node.
+            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::AGE);
+            ext_inflows_.pollut_idx[ui] = -1;
+            cf *= 3600.0;   // hours → seconds
+            const std::string type_u = upper(ctx.ext_inflows.inflow_type[ui]);
+            if (type_u == "MASS")
+                warn_once(
+                    "[INFLOWS] __WATER_AGE__ at node '" +
+                    ctx.ext_inflows.node_name[ui] +
+                    "': MASS has no meaning for the age species — the value "
+                    "is taken as the inflow's age in hours (CONCEN).");
+            if (!ctx.options.water_age)
+                warn_once(
+                    "[INFLOWS] __WATER_AGE__ rows are present but [OPTIONS] "
+                    "WATER_AGE is OFF — the rows are inert this simulation.");
+            // Amendment 1 §6: two ways to state an external-inflow age.
+            // The [INFLOWS] row wins because it is the more specific
+            // statement; say so instead of letting one silently lose.
+            for (std::size_t k = 0;
+                 k < ctx.water_age_config.node_over_source.size(); ++k)
+                if (ctx.water_age_config.node_over_source[k] ==
+                        static_cast<int>(WaterAgeSource::EXTERNAL_INFLOW) &&
+                    ctx.water_age_config.node_over_node[k] ==
+                        ext_inflows_.node_idx[ui])
+                    warn_once(
+                        "[INFLOWS] __WATER_AGE__ at node '" +
+                        ctx.ext_inflows.node_name[ui] +
+                        "' overrides the [WATER_AGE_SOURCES] "
+                        "EXTERNAL_INFLOW row for the same node — the "
+                        "inflow row wins (amendment D-Y4).");
+        } else if (cons == "__TEMPERATURE__") {
+            // Heat keeps the dedicated-page treatment until its own round
+            // (amendment 1 §6) — but never the silent drop.
+            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::CONCEN);
+            ext_inflows_.pollut_idx[ui] = -1;
+            warn_once(
+                "[INFLOWS] __TEMPERATURE__ rows arrive with heat's round — "
+                "the row at node '" + ctx.ext_inflows.node_name[ui] +
+                "' is ignored.");
         } else {
             const std::string type_u = upper(ctx.ext_inflows.inflow_type[ui]);
             const bool is_mass = (type_u == "MASS");
             ext_inflows_.kind[ui] = static_cast<int>(
                 is_mass ? ExtInflowKind::MASS : ExtInflowKind::CONCEN);
             ext_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(cons);
+            // Z1: a constituent matching nothing was SILENTLY dropped at
+            // routing (pollut_idx −1 skips the row); a typo in a pollutant
+            // name deserves words.
+            if (ext_inflows_.pollut_idx[ui] < 0)
+                warn_once(
+                    "[INFLOWS] constituent '" + cons + "' at node '" +
+                    ctx.ext_inflows.node_name[ui] +
+                    "' matches no pollutant or reserved species — the row "
+                    "is ignored.");
             // Internal quality unit is ft3 x mg/L, so a user-supplied MASS rate
             // divides by the liters-per-ft3 factor exactly as legacy does
             // (inflow.c: "if ( type == MASS_INFLOW ) cf /= LperFT3").
@@ -313,6 +386,26 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
                              static_cast<std::size_t>(p);
             if (idx < ctx.nodes.ext_qual_mass.size())
                 ctx.nodes.ext_qual_mass[idx] += w;
+        }
+    }
+
+    // Pass 3 — __WATER_AGE__ rows (Z1, amendment D-Y4): the row's current
+    // value is the AGE (seconds after conv_factor) of this node's external
+    // inflow. It adds no water and no mass; the EXTERNAL_INFLOW loader
+    // (QualityRouting::addExtInflowLoads → addAgeVolume) reads it in place
+    // of the source table's age. Later rows at the same node win, matching
+    // write order. The state array is sized by the transport engine at
+    // init; the guard below only skips writes on an unsized array (age OFF).
+    if (ctx.options.water_age &&
+        !ctx.water_age_state.node_ext_inflow_age.empty()) {
+        auto& ov = ctx.water_age_state.node_ext_inflow_age;
+        for (int i = 0; i < ext_inflows_.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ext_inflows_.kind[ui] != static_cast<int>(ExtInflowKind::AGE))
+                continue;
+            const int ni = ext_inflows_.node_idx[ui];
+            if (ni >= 0 && static_cast<std::size_t>(ni) < ov.size())
+                ov[static_cast<std::size_t>(ni)] = row_value(ui);
         }
     }
 

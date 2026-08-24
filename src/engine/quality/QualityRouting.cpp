@@ -86,7 +86,16 @@ inline void addAgeVolume(SimulationContext& ctx, int node, double q,
     auto& s = ctx.water_age_state.node_age_vol_in;
     const auto un = static_cast<std::size_t>(node);
     if (un >= s.size()) return;
-    s[un] += q * ctx.water_age_config.source_age(src, node);
+    double age = ctx.water_age_config.source_age(src, node);
+    // Z1 (amendment D-Y4): an [INFLOWS] row naming __WATER_AGE__ is the
+    // more specific statement of THIS node's inflow age and wins over the
+    // source table's EXTERNAL_INFLOW entry (constant or node override).
+    // NaN marks "no row at this node" — never a value.
+    if (src == WaterAgeSource::EXTERNAL_INFLOW) {
+        const auto& ov = ctx.water_age_state.node_ext_inflow_age;
+        if (un < ov.size() && !std::isnan(ov[un])) age = ov[un];
+    }
+    s[un] += q * age;
 }
 
 /// H1: one loader's temperature-volume contribution — `q · T_source` (a
