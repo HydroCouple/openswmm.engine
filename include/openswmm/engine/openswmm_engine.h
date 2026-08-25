@@ -500,6 +500,7 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 #include "openswmm_pollutants.h"
 #include "openswmm_initial_quality.h"
 #include "openswmm_reactions.h"
+#include "openswmm_process_components.h"
 #include "openswmm_tables.h"
 #include "openswmm_inflows.h"
 #include "openswmm_controls.h"
