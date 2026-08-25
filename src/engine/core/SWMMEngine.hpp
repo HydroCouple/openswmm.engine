@@ -374,6 +374,7 @@ private:
 
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
     bool                   lenient_open_ = false;  ///< permissive open (see setter)
+    bool                   plugins_prepare_attempted_ = false;  ///< start() reached prepare_all (report file may be open)
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread
 
