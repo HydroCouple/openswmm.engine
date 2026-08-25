@@ -246,6 +246,18 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
                     ctx.reactions.init_global[static_cast<std::size_t>(m)];
             }
+            // E-B2: [REACTION_QUALITY] LINK rows override the GLOBAL fill —
+            // EVERY cell of the conduit, and only the named species' row
+            // (ns-strided (np + m) math, the E4/R6 stride audit).
+            for (std::size_t k = 0;
+                 k < ctx.reactions.init_elem_idx.size(); ++k) {
+                if (!ctx.reactions.init_elem_is_link[k]) continue;
+                if (ctx.reactions.init_elem_idx[k] != link) continue;
+                const int m = ctx.reactions.init_elem_species[k];
+                if (m < 0 || m >= nm) continue;
+                state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
+                    ctx.reactions.init_elem_value[k];
+            }
             if (age_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(age_row_) * unc + uc] =
                     age_seed_link(link);
@@ -265,6 +277,15 @@ bool ArdEngine::init(SimulationContext& ctx) {
             node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
                 ctx.reactions.init_global[static_cast<std::size_t>(m)] *
                 node_vol_[und];
+        // E-B2: NODE rows override the GLOBAL fill (mass = value * volume).
+        for (std::size_t k = 0; k < ctx.reactions.init_elem_idx.size(); ++k) {
+            if (ctx.reactions.init_elem_is_link[k]) continue;
+            if (ctx.reactions.init_elem_idx[k] != nd) continue;
+            const int m = ctx.reactions.init_elem_species[k];
+            if (m < 0 || m >= nm) continue;
+            node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
+                ctx.reactions.init_elem_value[k] * node_vol_[und];
+        }
         if (age_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(age_row_)] =
                 age_seed_node(und) * node_vol_[und];

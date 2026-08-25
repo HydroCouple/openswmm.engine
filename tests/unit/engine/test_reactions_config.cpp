@@ -310,4 +310,183 @@ TEST_F(ReactionsConfigTest, EmbeddedSectionsLostOnSaveAreReported) {
     std::remove("_rx_saved.inp");
 }
 
+// ---------------------------------------------------------------------------
+// E-B1 — [REACTION_QUALITY] NODE|LINK scopes parse into the per-element row
+// table; GLOBAL keeps feeding init_global. Falsifier before the round: the
+// phase-rejection error fires and open FAILS.
+TEST_F(ReactionsConfigTest, NodeLinkQualityRowsParse) {
+    write_rxn("_rx_nl.rxn",
+              "[REACTION_SPECIES]\nBULK HOCL MG\nBULK NH2CL MG\n"
+              "[REACTION_QUALITY]\n"
+              "GLOBAL HOCL 0.8\n"
+              "NODE   J0  HOCL  1.2\n"
+              "LINK   C1  NH2CL 0.05\n");
+    write_deck("_rx_nl.inp",
+               "org.hydrocouple.openswmm.reactions  config=\"_rx_nl.rxn\"");
+    ASSERT_EQ(open_deck("_rx_nl.inp", "_rx_nl.rpt", "_rx_nl.out"), SWMM_OK);
+
+    const auto& ctx = as_cpp_engine(engine_).context();
+    const auto& rx  = ctx.reactions;
+    EXPECT_DOUBLE_EQ(rx.init_global[0], 0.8);
+    ASSERT_EQ(rx.init_elem_idx.size(), 2u);
+    EXPECT_EQ(rx.init_elem_is_link[0], 0);
+    EXPECT_EQ(rx.init_elem_idx[0], ctx.node_names.find("J0"));
+    EXPECT_EQ(rx.init_elem_species[0], 0);          // HOCL
+    EXPECT_DOUBLE_EQ(rx.init_elem_value[0], 1.2);
+    EXPECT_EQ(rx.init_elem_is_link[1], 1);
+    EXPECT_EQ(rx.init_elem_idx[1], ctx.link_names.find("C1"));
+    EXPECT_EQ(rx.init_elem_species[1], 1);          // NH2CL
+    EXPECT_DOUBLE_EQ(rx.init_elem_value[1], 0.05);
+
+    std::remove("_rx_nl.inp");
+    std::remove("_rx_nl.rxn");
+}
+
+// ---------------------------------------------------------------------------
+// E-B1 — the error matrix stays loud AND transactional: a rejected config
+// leaves ctx.reactions fully clean (the R2 lesson re-applied to the new
+// vectors) and the species registry at the pollutant block only.
+TEST_F(ReactionsConfigTest, NodeLinkQualityErrorsAreLoudAndTransactional) {
+    struct Case { const char* tag; const char* rows; const char* needle; };
+    const Case cases[] = {
+        {"uelem", "NODE NOPE HOCL 1.0\n",   "unknown node 'NOPE'"},
+        {"ulink", "LINK NOPE HOCL 1.0\n",   "unknown link 'NOPE'"},
+        {"uspec", "NODE J0 NOPE 1.0\n",     "undeclared species 'NOPE'"},
+        {"dup",   "NODE J0 HOCL 1.0\nNODE J0 HOCL 2.0\n", "duplicate row"},
+        {"neg",   "NODE J0 HOCL -1.0\n",    "bad value for 'HOCL'"},
+        {"scope", "CELL J0 HOCL 1.0\n",     "not GLOBAL, NODE, or LINK"},
+    };
+    for (const auto& c : cases) {
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr) << c.tag;
+        std::string rxn = std::string("_rx_nle_") + c.tag + ".rxn";
+        std::string inp = std::string("_rx_nle_") + c.tag + ".inp";
+        std::string rpt = std::string("_rx_nle_") + c.tag + ".rpt";
+        write_rxn(rxn.c_str(),
+                  std::string("[REACTION_SPECIES]\nBULK HOCL MG\n"
+                              "[REACTION_QUALITY]\n") + c.rows);
+        write_deck(inp.c_str(),
+                   "org.hydrocouple.openswmm.reactions  config=\"" + rxn +
+                       "\"");
+        EXPECT_NE(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr,
+                                   nullptr),
+                  SWMM_OK) << c.tag;
+        const auto& ctx = as_cpp_engine(e).context();
+        EXPECT_TRUE(contains(ctx.errors, c.needle)) << c.tag;
+        // Transactional: nothing committed.
+        EXPECT_FALSE(ctx.reactions.configured) << c.tag;
+        EXPECT_TRUE(ctx.reactions.init_elem_idx.empty()) << c.tag;
+        EXPECT_EQ(ctx.species_registry.count(),
+                  ctx.species_registry.pollutant_count()) << c.tag;
+        swmm_engine_destroy(e);
+        std::remove(rxn.c_str());
+        std::remove(inp.c_str());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E-B2 — the NODE/LINK rows are CONSUMED: overridden elements read their row
+// after the first step, others read the GLOBAL, under both the legacy CSTR
+// binding (msx_* seeded lazily in ensureMsxState) and the ARD engine (cell
+// and node-store seeding; the link probe is the volume-weighted published
+// value, so a seed that touched only cell 0 of the conduit would drag the
+// mean toward the GLOBAL and fail).
+TEST_F(ReactionsConfigTest, NodeLinkQualityRowsConsumed) {
+    struct Solver { const char* tag; const char* opt; };
+    const Solver solvers[] = {
+        {"leg", ""},
+        {"ard", "[OPTIONS]\nQUALITY_SOLVER EULERIAN_ARD\n\n"},
+    };
+    for (const auto& s : solvers) {
+        std::string rxn = std::string("_rx_nlc_") + s.tag + ".rxn";
+        std::string inp = std::string("_rx_nlc_") + s.tag + ".inp";
+        std::string rpt = std::string("_rx_nlc_") + s.tag + ".rpt";
+        std::string out = std::string("_rx_nlc_") + s.tag + ".out";
+        // The node probe targets a STORAGE node: under ARD a junction is a
+        // zero-volume passthrough whose published conc is mass/volume — only
+        // a node with storage holds initial MSX mass (the E-A2 lesson).
+        write_rxn(rxn.c_str(),
+                  "[REACTION_SPECIES]\nBULK HOCL MG\n"
+                  "[REACTION_QUALITY]\n"
+                  "GLOBAL HOCL 0.8\n"
+                  "NODE   ST1 HOCL 1.2\n"
+                  "LINK   C1  HOCL 0.5\n");
+        {
+            std::ofstream f(inp);
+            f << "[TITLE]\nE-B2 consumption gate deck\n\n"
+              << "[OPTIONS]\n"
+              << "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
+              << "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              << "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+              << "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n"
+              << s.opt
+              << "[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth Aponded\n"
+              << "J0     10.0 10 0.5 0 0\n\n"
+              << "[OUTFALLS]\n;;Name Elev Type StageData Gated\nOUT 7.0 FREE  NO\n\n"
+              << "[STORAGE]\n"
+              << ";;Name Elev MaxDepth InitDepth Shape     Coeff Expon Const\n"
+              << "ST1    8.5  10       0.5       FUNCTIONAL 0    0     1000\n\n"
+              << "[CONDUITS]\n;;Name From To Length N Zin Zout Q0\n"
+              << "C1 J0  OUT 400 0.013 0 0 0\n"
+              << "C2 ST1 OUT 400 0.013 0 0 0\n\n"
+              << "[XSECTIONS]\n;;Link Shape G1 G2 G3 G4\n"
+              << "C1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n\n"
+              << "[POLLUTANTS]\n"
+              << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut "
+                 "CoFrac Cdwf Cinit\n"
+              << "TSS    MG/L  0.0   0.0 0.0   0.0    NO       *        "
+                 "0.0    0.0  0.0\n\n"
+              << "[PROCESS_COMPONENTS]\n"
+              << "org.hydrocouple.openswmm.reactions  config=\"" << rxn
+              << "\"\n\n"
+              << "[REPORT]\nINPUT NO\n";
+        }
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr) << s.tag;
+        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(),
+                                   nullptr), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << s.tag;
+        double elapsed = 1.0;
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << s.tag;
+
+        const auto& ctx = as_cpp_engine(e).context();
+        const auto& rx  = ctx.reactions;
+        const auto ns = static_cast<std::size_t>(rx.n_species());
+        const auto st = static_cast<std::size_t>(ctx.node_names.find("ST1"));
+        const auto c1 = static_cast<std::size_t>(ctx.link_names.find("C1"));
+        ASSERT_GE(rx.msx_node_conc.size(), (st + 1) * ns) << s.tag;
+        ASSERT_GE(rx.msx_link_conc.size(), (c1 + 1) * ns) << s.tag;
+        // One 5 s step of real flow: 10% tolerance separates the override
+        // from the 0.8 global by a wide margin (falsifier: both read 0.8).
+        EXPECT_NEAR(rx.msx_node_conc[st * ns], 1.2, 0.12)
+            << s.tag << ": storage-node override lost";
+        EXPECT_NEAR(rx.msx_link_conc[c1 * ns], 0.5, 0.05)
+            << s.tag << ": link override lost (or only part of the conduit "
+                        "was seeded)";
+
+        swmm_engine_end(e);
+        swmm_engine_destroy(e);
+        std::remove(rxn.c_str());
+        std::remove(inp.c_str());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E-B1 — the embedded-section path flows through the same apply (D-RQ3), so
+// NODE/LINK rows work embedded for free. Pinned so a future split of the
+// two paths cannot silently drop it.
+TEST_F(ReactionsConfigTest, NodeLinkQualityWorksEmbedded) {
+    write_deck("_rx_nlemb.inp", "",
+               "[REACTION_SPECIES]\nBULK EMB_Q MG\n\n"
+               "[REACTION_QUALITY]\nNODE J0 EMB_Q 2.5\n\n");
+    ASSERT_EQ(open_deck("_rx_nlemb.inp", "_rx_nlemb.rpt", "_rx_nlemb.out"),
+              SWMM_OK);
+    const auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_EQ(ctx.reactions.init_elem_idx.size(), 1u);
+    EXPECT_EQ(ctx.reactions.init_elem_idx[0], ctx.node_names.find("J0"));
+    EXPECT_DOUBLE_EQ(ctx.reactions.init_elem_value[0], 2.5);
+    std::remove("_rx_nlemb.inp");
+}
+
 }  // namespace

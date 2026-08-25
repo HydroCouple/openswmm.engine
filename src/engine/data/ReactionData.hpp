@@ -115,9 +115,16 @@ struct ReactionData {
     std::vector<ReactionExprForm> tank_form;
     std::vector<std::string>      tank_expr_src;
 
-    // ---- [REACTION_QUALITY] GLOBAL initial values (R1 scope; NODE/LINK
-    //      scopes land with R-later phases) ----------------------------------
+    // ---- [REACTION_QUALITY] GLOBAL initial values (R1) ---------------------
     std::vector<double> init_global;         ///< size n_species
+
+    // ---- [REACTION_QUALITY] NODE/LINK per-element overrides (E-B) ----------
+    // Sparse row table over the GLOBAL seed; covered by clear() via the
+    // *this = ReactionData{} reset.
+    std::vector<uint8_t> init_elem_is_link;  ///< 0 = NODE row, 1 = LINK row
+    std::vector<int>     init_elem_idx;      ///< resolved node/link index
+    std::vector<int>     init_elem_species;  ///< 0..n_species()-1
+    std::vector<double>  init_elem_value;
 
     // ---- Compiled bytecode (R2 — D-L3 flat pool; spans index token_pool) ----
     std::vector<RxToken>    token_pool;      ///< hot: one contiguous pool

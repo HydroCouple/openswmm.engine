@@ -73,6 +73,16 @@ void ensureMsxState(SimulationContext& ctx) {
         for (std::size_t e = 0; e < static_cast<std::size_t>(ctx.n_links()); ++e)
             for (std::size_t s = 0; s < ns; ++s)
                 rx.msx_link_conc[e * ns + s] = rx.init_global[s];
+        // E-B2: [REACTION_QUALITY] NODE/LINK rows override the GLOBAL fill.
+        for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
+            const auto e = static_cast<std::size_t>(rx.init_elem_idx[k]);
+            const auto s = static_cast<std::size_t>(rx.init_elem_species[k]);
+            if (s >= ns) continue;
+            auto& arr = rx.init_elem_is_link[k] ? rx.msx_link_conc
+                                                : rx.msx_node_conc;
+            if (e * ns + s < arr.size()) arr[e * ns + s] =
+                rx.init_elem_value[k];
+        }
     }
     if (!rx.warned_msx_not_transported) {
         bool any_rate = false;
