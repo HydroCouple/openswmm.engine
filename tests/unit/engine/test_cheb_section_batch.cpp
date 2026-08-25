@@ -142,13 +142,23 @@ void expectBatchMatchesScalar(const char* what, const ChebSection& s) {
     // Prefill with a value nothing can legitimately produce, so an entry the
     // batch call failed to write shows up as a mismatch rather than as a
     // stale zero that happens to be right.
+    //
+    // bA1/bW1 are chebAofYBatch/chebWofYBatch's OWN buffers, distinct from
+    // bA/bW below (a code-review finding: chebAllBatch was writing into the
+    // very same bA/bW vectors chebAofYBatch/chebWofYBatch had just filled,
+    // so the later EXPECT_EQ(bA[i], a) checks were silently re-checking
+    // chebAllBatch against chebAll rather than chebAofYBatch against
+    // chebAofY — apply_area_kernel/apply_width_kernel in XSectBatch.cpp call
+    // the single-field batches in production, so this suite's own stated
+    // goal ("every batch entry point against the scalar accessor it stands
+    // in for") was not actually being met for area or width).
     const double kUnset = -12345.0;
     std::vector<double> bA(n, kUnset), bW(n, kUnset), bP(n, kUnset),
-                        bI(n, kUnset), bR(n, kUnset), bA2(n, kUnset),
-                        bR2(n, kUnset);
+                        bI(n, kUnset), bR(n, kUnset), bA1(n, kUnset),
+                        bW1(n, kUnset), bA2(n, kUnset), bR2(n, kUnset);
 
-    chebAofYBatch(secs.data(), y.data(), bA.data(), n);
-    chebWofYBatch(secs.data(), y.data(), bW.data(), n);
+    chebAofYBatch(secs.data(), y.data(), bA1.data(), n);
+    chebWofYBatch(secs.data(), y.data(), bW1.data(), n);
     chebRofYBatch(secs.data(), y.data(), bR.data(), n);
     chebARofYBatch(secs.data(), y.data(), bA2.data(), bR2.data(), n);
     chebAllBatch(secs.data(), y.data(), bA.data(), bW.data(), bP.data(),
@@ -167,6 +177,8 @@ void expectBatchMatchesScalar(const char* what, const ChebSection& s) {
 
         // The single-field batches must agree with the single-field
         // accessors, which are the things they actually replace.
+        EXPECT_EQ(bA1[i], chebAofY(s, y[i]));
+        EXPECT_EQ(bW1[i], chebWofY(s, y[i]));
         EXPECT_EQ(bR[i], chebRofY(s, y[i]));
         EXPECT_EQ(bA2[i], chebAofY(s, y[i]));
         EXPECT_EQ(bR2[i], chebRofY(s, y[i]));
@@ -252,11 +264,16 @@ TEST(ChebSectionBatch, NullSectionEntriesAreLeftUntouched) {
     const ChebSection* secs[n] = {&s, nullptr, &s, nullptr, &s, &s, nullptr};
 
     const double kSentinel = -777.25;
+    // A1/W1 are chebAofYBatch/chebWofYBatch's own buffers, distinct from
+    // A/W below — see the comment in expectBatchMatchesScalar about why
+    // sharing a buffer with chebAllBatch silently stops exercising the
+    // single-field batch's own null-skip behavior.
     std::vector<double> A(n, kSentinel), W(n, kSentinel), P(n, kSentinel),
-                        I(n, kSentinel), R(n, kSentinel);
+                        I(n, kSentinel), R(n, kSentinel),
+                        A1(n, kSentinel), W1(n, kSentinel);
 
-    chebAofYBatch(secs, y, A.data(), n);
-    chebWofYBatch(secs, y, W.data(), n);
+    chebAofYBatch(secs, y, A1.data(), n);
+    chebWofYBatch(secs, y, W1.data(), n);
     chebRofYBatch(secs, y, R.data(), n);
     chebAllBatch(secs, y, A.data(), W.data(), P.data(), I.data(), n);
 
@@ -268,6 +285,8 @@ TEST(ChebSectionBatch, NullSectionEntriesAreLeftUntouched) {
             EXPECT_EQ(P[i], kSentinel);
             EXPECT_EQ(I[i], kSentinel);
             EXPECT_EQ(R[i], kSentinel);
+            EXPECT_EQ(A1[i], kSentinel);
+            EXPECT_EQ(W1[i], kSentinel);
         } else {
             double a = 0.0, w = 0.0, p = 0.0, i1 = 0.0;
             chebAll(s, y[i], &a, &w, &p, &i1);
@@ -276,6 +295,8 @@ TEST(ChebSectionBatch, NullSectionEntriesAreLeftUntouched) {
             EXPECT_EQ(P[i], p);
             EXPECT_EQ(I[i], i1);
             EXPECT_EQ(R[i], chebRofY(s, y[i]));
+            EXPECT_EQ(A1[i], chebAofY(s, y[i]));
+            EXPECT_EQ(W1[i], chebWofY(s, y[i]));
         }
     }
 }
