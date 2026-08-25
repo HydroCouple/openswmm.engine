@@ -270,15 +270,71 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
                   std::vector<std::string>& errors) {
     auto& rx = ctx.reactions;
     rx.init_global.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
+    rx.init_elem_is_link.clear();
+    rx.init_elem_idx.clear();
+    rx.init_elem_species.clear();
+    rx.init_elem_value.clear();
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.empty()) continue;
         const std::string scope = Tokenizer::to_upper(tok[0]);
+
+        // E-B1: NODE/LINK per-element rows. Element resolution happens here
+        // (D-RQ1): components apply at open, AFTER the full .inp parse, so
+        // ctx.node_names/link_names are complete.
+        if (scope == "NODE" || scope == "LINK") {
+            const bool link = (scope == "LINK");
+            if (tok.size() < 4) {
+                errors.push_back("[REACTION_QUALITY] row needs " + scope +
+                                 " element species value: '" + line + "'.");
+                continue;
+            }
+            const int ei = link ? ctx.link_names.find(tok[1])
+                                : ctx.node_names.find(tok[1]);
+            if (ei < 0) {
+                errors.push_back(std::string("[REACTION_QUALITY] unknown ") +
+                                 (link ? "link" : "node") + " '" + tok[1] +
+                                 "'.");
+                continue;
+            }
+            const int s = rx.find_species(tok[2]);
+            if (s < 0) {
+                errors.push_back("[REACTION_QUALITY] undeclared species '" +
+                                 tok[2] + "'.");
+                continue;
+            }
+            double v = 0.0;
+            if (!to_num(tok[3], v) || v < 0.0) {
+                errors.push_back("[REACTION_QUALITY] bad value for '" +
+                                 tok[2] + "'.");
+                continue;
+            }
+            bool dup = false;
+            for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
+                if ((rx.init_elem_is_link[k] != 0) == link &&
+                    rx.init_elem_idx[k] == ei &&
+                    rx.init_elem_species[k] == s) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) {
+                errors.push_back("[REACTION_QUALITY] duplicate row for '" +
+                                 tok[2] + "' at " +
+                                 (link ? "link" : "node") + " '" + tok[1] +
+                                 "'.");
+                continue;
+            }
+            rx.init_elem_is_link.push_back(link ? 1 : 0);
+            rx.init_elem_idx.push_back(ei);
+            rx.init_elem_species.push_back(s);
+            rx.init_elem_value.push_back(v);
+            continue;
+        }
+
         if (scope != "GLOBAL") {
             errors.push_back("[REACTION_QUALITY] scope '" + tok[0] +
-                             "' is not available yet — NODE/LINK initial "
-                             "values arrive with a later reactions phase; "
-                             "GLOBAL only in R1.");
+                             "' is not GLOBAL, NODE, or LINK.");
             continue;
         }
         if (tok.size() < 3) {
