@@ -44,6 +44,7 @@
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_initial_quality.h>
 #include <openswmm/engine/openswmm_model.h>
 
 #include "core/SWMMEngine.hpp"
@@ -544,6 +545,100 @@ TEST_F(InitialQualityTest, InitialStoredMassDelta) {
 
     std::remove("_iq_m0.inp");
     std::remove("_iq_m1.inp");
+}
+
+// ---------------------------------------------------------------------------
+// E-A4 — the row C API: set x3 / count / get / upsert-in-place / remove-
+// shifts. Falsifier before the round: the symbols do not exist (link
+// failure); after: each contract assertion.
+TEST_F(InitialQualityTest, ApiRoundTripUpsertRemove) {
+    write_deck("_iq_api.inp", "", "WATER_AGE            YES\n");
+    ASSERT_EQ(open_deck("_iq_api.inp", "_iq_api.rpt", nullptr), SWMM_OK);
+    const auto& ctx = as_cpp_engine(engine_).context();
+    const int j0 = ctx.node_names.find("J0");
+    const int j1 = ctx.node_names.find("J1");
+    const int c1 = ctx.link_names.find("C1");
+
+    EXPECT_EQ(swmm_init_quality_count(engine_), 0);
+    ASSERT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 12.5), SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_set(engine_, 1, c1, "TSS", 9.0), SWMM_OK);
+    // Signed age is legal (D-NS1).
+    ASSERT_EQ(swmm_init_quality_set(engine_, 0, j0, "__WATER_AGE__", -2.0),
+              SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_count(engine_), 3);
+
+    int is_link = -1, ei = -1;
+    char buf[64];
+    double v = 0.0;
+    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v),
+              SWMM_OK);
+    EXPECT_EQ(is_link, 0);
+    EXPECT_EQ(ei, j1);
+    EXPECT_STREQ(buf, "TSS");
+    EXPECT_DOUBLE_EQ(v, 12.5);
+
+    // Upsert: the same key changes the value without growing the count.
+    ASSERT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 6.25), SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_count(engine_), 3);
+    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v),
+              SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 6.25);
+
+    // Rejections: unknown constituent, negative pollutant, bad element.
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "NOPE", 1.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", -1.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, 9999, "TSS", 1.0),
+              SWMM_ERR_BADINDEX);
+
+    // Remove shifts subsequent entries down.
+    ASSERT_EQ(swmm_init_quality_remove(engine_, 0), SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_count(engine_), 2);
+    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v),
+              SWMM_OK);
+    EXPECT_EQ(is_link, 1);
+    EXPECT_EQ(ei, c1);
+
+    std::remove("_iq_api.inp");
+}
+
+// ---------------------------------------------------------------------------
+// E-A4 — the API and the parser feed the SAME store (anti-drift): a row set
+// through the API survives swmm_model_write -> reopen and then actually
+// seeds state. Mutation after start is refused (the set_init_conc
+// lifecycle contract).
+TEST_F(InitialQualityTest, ApiSaveRoundTripAndLifecycleGuard) {
+    write_deck("_iq_api2.inp", "");
+    ASSERT_EQ(open_deck("_iq_api2.inp", "_iq_api2.rpt", nullptr), SWMM_OK);
+    const auto& ctx = as_cpp_engine(engine_).context();
+    const int j1 = ctx.node_names.find("J1");
+    ASSERT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 12.5), SWMM_OK);
+
+    ASSERT_EQ(swmm_model_write(engine_, "_iq_api2_saved.inp"), SWMM_OK);
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_NE(e2, nullptr);
+    ASSERT_EQ(swmm_engine_open(e2, "_iq_api2_saved.inp", "_iq_api3.rpt",
+                               nullptr, nullptr),
+              SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_count(e2), 1);
+    ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
+    const auto& ctx2 = as_cpp_engine(e2).context();
+    EXPECT_DOUBLE_EQ(
+        ctx2.nodes.conc[static_cast<std::size_t>(ctx2.node_names.find("J1"))],
+        12.5)
+        << "the API-set row must seed state after the save round-trip";
+    swmm_engine_destroy(e2);
+
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 1.0),
+              SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_init_quality_remove(engine_, 0), SWMM_ERR_LIFECYCLE);
+    swmm_engine_end(engine_);
+
+    std::remove("_iq_api2.inp");
+    std::remove("_iq_api2_saved.inp");
 }
 
 }  // namespace
