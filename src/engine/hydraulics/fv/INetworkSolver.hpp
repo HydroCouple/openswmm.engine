@@ -147,6 +147,14 @@ public:
 
         long   tier_cells[8] = {0}; ///< cumulative rebuild-sampled cells per LTS tier
         int    n_tiers       = 0;   ///< populated tier count (≤ 8)
+
+        // dt-argmin attribution (slot program R0): which regime owned the
+        // binding CFL element, counted once per census (global path) or
+        // re-tier (LTS path). Answers "who sets the step" without a trace.
+        long   dt_argmin_pressurized = 0;  ///< h ≥ y_full (slot celerity)
+        long   dt_argmin_band        = 0;  ///< y_crown ≤ h < y_full (mouth)
+        long   dt_argmin_free        = 0;  ///< open-channel cell
+        long   dt_argmin_node        = 0;  ///< node storage / feedback bound
     };
 
     /// Read cumulative statistics. Default: zeros (backend has no counters).

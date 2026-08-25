@@ -1386,6 +1386,13 @@ struct SimulationContext {
         // on the sentinel rather than printing a row of zeros, which would
         // read as "the solver did nothing" instead of "nobody counted".
         // ---------------------------------------------------------------
+        // Slot-storage share (FV slot program R0). Peak instantaneous
+        // system share slot/stored and the time that share exceeded 1 %;
+        // the run-level integrated share is Σ links.stat_slot_vol_dt /
+        // Σ links.stat_vol_dt, summed at report time. 0 under DW.
+        double slot_peak_share   = 0.0;
+        double slot_time_above_s = 0.0;
+
         long   fv_nsteps        = -1;   ///< explicit substeps over the run
         long   fv_nflux         = 0;    ///< face flux evaluations
         double fv_avg_h         = 0.0;  ///< mean substep (s)
@@ -1396,6 +1403,13 @@ struct SimulationContext {
         double fv_active_max    = -1.0; ///< max active-face fraction
         long   fv_tier_cells[8] = {0};  ///< rebuild-sampled cells per LTS tier
         int    fv_n_tiers       = 0;    ///< populated tier count
+
+        // dt-argmin attribution (slot program R0): who owned the binding
+        // CFL element, counted per census / re-tier.
+        long   fv_dt_argmin_pressurized = 0;
+        long   fv_dt_argmin_band        = 0;
+        long   fv_dt_argmin_free        = 0;
+        long   fv_dt_argmin_node        = 0;
     } routing_stats;
 
     // =========================================================================

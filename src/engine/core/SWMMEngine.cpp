@@ -3769,6 +3769,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         }
     }
     ensureXspCache();
+    double step_slot_vol = 0.0, step_stored_vol = 0.0;   // slot program R0
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = std::fabs(ctx_.links.flow[uj]);
@@ -3802,6 +3803,25 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Surcharge duration tracking
         if (d >= y_full && y_full > 0.0)
             ctx_.links.stat_time_surcharged[uj] += dt_routing;
+
+        // Slot-storage share accumulation (FV slot program R0). The run
+        // share is ∫slot dt / ∫stored dt — a ratio of integrals, never an
+        // average of ratios. All terms are 0 under the dynamic-wave router.
+        {
+            const double v  = ctx_.links.volume[uj];
+            const double sv = ctx_.links.slot_volume[uj];
+            ctx_.links.stat_vol_dt[uj]      += v  * dt_routing;
+            step_stored_vol += v;
+            if (sv > 0.0) {
+                ctx_.links.stat_slot_vol_dt[uj] += sv * dt_routing;
+                step_slot_vol += sv;
+                const double share = (v > 0.0) ? sv / v : 0.0;
+                if (share > ctx_.links.stat_peak_slot_share[uj])
+                    ctx_.links.stat_peak_slot_share[uj] = share;
+                if (share > 0.01)
+                    ctx_.links.stat_time_slot_above[uj] += dt_routing;
+            }
+        }
 
         // Conduit surcharge detail tracking (upstream/downstream/both)
         // Gap #57: use persistent full_state set by routing solver (area/depth-based).
@@ -3919,6 +3939,29 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
                 }
             }
         }
+    }
+
+    // System-level slot share (FV slot program R0): the peak instantaneous
+    // share and the time above the 1 % budget need the per-step totals; the
+    // run-level integrated share is recovered at report time by summing the
+    // per-link integrals.
+    if (step_slot_vol > 0.0) {
+        const double sys_share =
+            (step_stored_vol > 0.0) ? step_slot_vol / step_stored_vol : 0.0;
+        if (sys_share > ctx_.routing_stats.slot_peak_share)
+            ctx_.routing_stats.slot_peak_share = sys_share;
+        if (sys_share > 0.01)
+            ctx_.routing_stats.slot_time_above_s += dt_routing;
+    }
+    // OPENSWMM_FV_SLOT_TRACE=1 → one CSV row per routing step on stdout.
+    static const bool slot_trace = []() {
+        const char* e = std::getenv("OPENSWMM_FV_SLOT_TRACE");
+        return e && *e && *e != '0';
+    }();
+    if (slot_trace && step_stored_vol > 0.0) {
+        std::printf("SLOT_TRACE,%.6f,%.6g,%.6g,%.6g\n",
+                    ctx_.current_time, step_slot_vol, step_stored_vol,
+                    step_slot_vol / step_stored_vol);
     }
 }
 
@@ -5181,6 +5224,10 @@ int SWMMEngine::end() noexcept {
         rs.fv_n_tiers     = s.n_tiers;
         for (int k = 0; k < s.n_tiers && k < 8; ++k)
             rs.fv_tier_cells[k] = s.tier_cells[k];
+        rs.fv_dt_argmin_pressurized = s.dt_argmin_pressurized;
+        rs.fv_dt_argmin_band        = s.dt_argmin_band;
+        rs.fv_dt_argmin_free        = s.dt_argmin_free;
+        rs.fv_dt_argmin_node        = s.dt_argmin_node;
     }
 
     // Finalize per-element max stats for report (top-5 CFL-critical, flow turns,

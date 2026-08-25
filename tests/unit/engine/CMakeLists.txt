@@ -193,6 +193,7 @@ add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
 add_gtest_unit(test_engine_virtual_junction test_virtual_junction.cpp)
 add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)
 add_gtest_unit(test_engine_fv_slot_volume test_fv_slot_volume.cpp)
+add_gtest_unit(test_engine_fv_closure_shapes test_fv_closure_shapes.cpp)
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 target_compile_definitions(test_engine_infiltration PRIVATE

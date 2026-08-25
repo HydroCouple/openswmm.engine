@@ -576,6 +576,14 @@ private:
     long   total_flux_   = 0;
     double min_h_        = 0.0;
     double sim_time_     = 0.0;
+
+    // dt-argmin attribution (slot program R0): who owned the binding CFL
+    // element, counted once per censusDt (global path) / assignTiers (LTS
+    // path). `mutable` because censusDt is const; these are telemetry.
+    mutable long dt_argmin_pressurized_ = 0;
+    mutable long dt_argmin_band_        = 0;
+    mutable long dt_argmin_free_        = 0;
+    mutable long dt_argmin_node_        = 0;
     double active_sum_   = 0.0;
     double active_min_   = -1.0;
     double active_max_   = -1.0;

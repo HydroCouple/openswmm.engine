@@ -1556,6 +1556,26 @@ SWMM_ENGINE_API int swmm_link_get_stat_max_filling(SWMM_Engine engine, int idx, 
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_link_get_stat_peak_slot_share(SWMM_Engine engine, int idx, double* val) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    // dimensionless 0..1; FV routing only, 0 under DW
+    if (val) *val = ctx.links.stat_peak_slot_share[static_cast<std::size_t>(idx)];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_stat_slot_share(SWMM_Engine engine, int idx, double* val) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    // run-level time-integrated share: (∫slot dt)/(∫stored dt), 0..1
+    const auto u = static_cast<std::size_t>(idx);
+    const double denom = ctx.links.stat_vol_dt[u];
+    if (val) *val = (denom > 0.0) ? ctx.links.stat_slot_vol_dt[u] / denom : 0.0;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_link_get_stat_vol_flow(SWMM_Engine engine, int idx, double* val) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();

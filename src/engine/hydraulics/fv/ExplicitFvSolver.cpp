@@ -209,6 +209,10 @@ INetworkSolver::RunStats ExplicitFvSolver::run_stats() const noexcept {
     s.n_tiers = std::min(lts_tiers_, static_cast<int>(kMaxLtsTiers));
     for (int k = 0; k < s.n_tiers; ++k)
         s.tier_cells[k] = tier_occupancy_[static_cast<std::size_t>(k)];
+    s.dt_argmin_pressurized = dt_argmin_pressurized_;
+    s.dt_argmin_band        = dt_argmin_band_;
+    s.dt_argmin_free        = dt_argmin_free_;
+    s.dt_argmin_node        = dt_argmin_node_;
     return s;
 }
 
@@ -521,6 +525,40 @@ double ExplicitFvSolver::censusDt() const {
         }
     }
 
+    // dt-argmin attribution (slot program R0): classify the binding element
+    // once per census — pressurized / taper-band / free from the argmin
+    // face's wettest side (ghost included), or the node bound when a node
+    // loop below lowers dt past the face census. Telemetry only.
+    bool node_owns_dt = false;
+    auto count_argmin = [&]() {
+        if (node_owns_dt) { ++dt_argmin_node_; return; }
+        if (trace_face < 0) return;
+        const auto uf = static_cast<std::size_t>(trace_face);
+        const int cl = mesh_->face_cl[uf], cr = mesh_->face_cr[uf];
+        const int nd = mesh_->face_node[uf];
+        double h_max = 0.0;
+        const FvGeometry* gm = nullptr;
+        auto consider = [&](int cell, double h) {
+            if (cell < 0 || h <= h_max) return;
+            h_max = h;
+            gm = &mesh_->geom[static_cast<std::size_t>(
+                mesh_->cell_geom[static_cast<std::size_t>(cell)])];
+        };
+        if (cl >= 0) consider(cl, state_->cell_h[static_cast<std::size_t>(cl)]);
+        if (cr >= 0) consider(cr, state_->cell_h[static_cast<std::size_t>(cr)]);
+        if (nd >= 0) {
+            const int other = (cl >= 0) ? cl : cr;
+            if (other >= 0)
+                consider(other,
+                         state_->node_head[static_cast<std::size_t>(nd)] -
+                             mesh_->face_zb[uf]);
+        }
+        if (!gm) return;
+        if      (h_max >= gm->y_full)  ++dt_argmin_pressurized_;
+        else if (h_max >= gm->y_crown) ++dt_argmin_band_;
+        else                           ++dt_argmin_free_;
+    };
+
     // Diagnostic: report which face is setting the step, and what its dx and
     // wave speed are. Explaining a substep count needs the argmin, not the min.
     if (kDtTrace) {
@@ -583,6 +621,7 @@ double ExplicitFvSolver::censusDt() const {
     if (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT &&
         (ltsEligible() || opts_.node_dt_limit == NodeDtLimit::NONE)) {
         if (dt >= std::numeric_limits<double>::max() * 0.5) dt = 1.0e30;
+        count_argmin();
         return dt;
     }
     for (int n = 0; n < nn; ++n) {
@@ -592,8 +631,10 @@ double ExplicitFvSolver::censusDt() const {
         // above still applies. On this path (tiering not running) there is
         // nowhere to put it but the global step.
         if (!node_alg_.empty() && node_alg_[un]) {
-            if (opts_.node_feedback_dt)
-                dt = std::min(dt, algebraicNodeStableDt(n));
+            if (opts_.node_feedback_dt) {
+                const double dt_n = algebraicNodeStableDt(n);
+                if (dt_n < dt) { dt = dt_n; node_owns_dt = true; }
+            }
             continue;
         }
         // Outfalls: head imposed, volume never integrated — nothing to bound
@@ -618,11 +659,14 @@ double ExplicitFvSolver::censusDt() const {
             const double t = k::widthOfDepth(g, h);
             if (t <= 0.0) continue;
             const double c_wave = k::celerity(state_->cell_a[uc], t);
-            dt = std::min(dt, k::faceCflDt(opts_.cfl, as / t, cell_u_[uc], c_wave));
+            const double dt_n =
+                k::faceCflDt(opts_.cfl, as / t, cell_u_[uc], c_wave);
+            if (dt_n < dt) { dt = dt_n; node_owns_dt = true; }
         }
     }
 
     if (dt >= std::numeric_limits<double>::max() * 0.5) dt = 1.0e30;
+    count_argmin();
     return dt;
 }
 
@@ -2359,10 +2403,11 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
     // the compacted run would then not merely skip work but integrate on a
     // different clock, breaking the §6.10 transparency contract outright.
     double dt_min = 1.0e30;
+    int    dt_argmin_cell = -1;   // slot program R0: attribution
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         dt_cell[uc] = cellStableDt(c);
-        dt_min = std::min(dt_min, dt_cell[uc]);
+        if (dt_cell[uc] < dt_min) { dt_min = dt_cell[uc]; dt_argmin_cell = c; }
     }
     // FV_NODE_DT NONE: the node's term is an EXPLICIT stability bound on an
     // unconditionally-stable semi-implicit update (see NodeDtLimit). Dropping
@@ -2378,7 +2423,10 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         dt_node[un] = nodeStableDt(n);
-        if (node_sets_dt0) dt_min = std::min(dt_min, dt_node[un]);
+        if (node_sets_dt0 && dt_node[un] < dt_min) {
+            dt_min = dt_node[un];
+            dt_argmin_cell = -2;   // node bound owns dt0
+        }
     }
     // An ALGEBRAIC junction's ghost-feedback bound (algebraicNodeStableDt) is a
     // CFL constraint like any other, and CFL constraints are local -- so it
@@ -2415,12 +2463,27 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
                 if (cr >= 0) dt_cell[static_cast<std::size_t>(cr)] =
                     std::min(dt_cell[static_cast<std::size_t>(cr)], dtn);
             }
-            dt_min = std::min(dt_min, dtn);
+            if (dtn < dt_min) { dt_min = dtn; dt_argmin_cell = -2; }
         }
     }
 
     if (!(dt_min > 0.0) || dt_min >= 1.0e29) return 1;
     dt0 = dt_min;
+
+    // dt-argmin attribution (slot program R0), LTS path: counted once per
+    // re-tier — coarser sampling than the global path's per-census count,
+    // which is fine for a "who owns the step" ratio.
+    if (dt_argmin_cell == -2) {
+        ++dt_argmin_node_;
+    } else if (dt_argmin_cell >= 0) {
+        const auto uc = static_cast<std::size_t>(dt_argmin_cell);
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double h = state_->cell_h[uc];
+        if      (h >= g.y_full)  ++dt_argmin_pressurized_;
+        else if (h >= g.y_crown) ++dt_argmin_band_;
+        else                     ++dt_argmin_free_;
+    }
 
     const int k_cap = std::min(std::max(opts_.lts_max_tiers, 1), kMaxLtsTiers);
     auto tier_of = [&](double dt) -> int {
