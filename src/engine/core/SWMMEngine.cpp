@@ -6501,6 +6501,38 @@ void SWMMEngine::initQuality() noexcept {
                     ctx_.links.conc_old[idx] = c;
                 }
             }
+
+            // [INITIAL_QUALITY] per-element pollutant overrides — applied
+            // after the global Cinit seed ("specific beats general"), wet or
+            // dry (D-IQ4: an explicit per-element row is the user's intent,
+            // unlike the global default; mass stays C·V-safe because a dry
+            // element holds no volume). One write site feeds all three
+            // quality engines (D-IQ6): ARD and LARD both initialize lazily
+            // on their first step FROM these arrays, and the legacy CSTR
+            // routes on them directly. Reserved-species rows (age /
+            // temperature, kind < 0) are consumed at their seed sites (E-A3).
+            // When hotstart quality restore lands it must win over both
+            // seeds — apply it AFTER this block (D-IQ5).
+            {
+                const auto& iq = ctx_.initial_quality;
+                for (int r = 0; r < iq.count(); ++r) {
+                    const auto ur = static_cast<std::size_t>(r);
+                    const int k = iq.kind[ur];
+                    if (k < 0 || k >= np) continue;   // reserved/unresolved
+                    const int ei = iq.elem_idx[ur];
+                    if (ei < 0) continue;
+                    auto& conc     = iq.is_link[ur] ? ctx_.links.conc
+                                                    : ctx_.nodes.conc;
+                    auto& conc_old = iq.is_link[ur] ? ctx_.links.conc_old
+                                                    : ctx_.nodes.conc_old;
+                    const auto idx = static_cast<std::size_t>(ei) *
+                                     static_cast<std::size_t>(np) +
+                                     static_cast<std::size_t>(k);
+                    if (idx >= conc.size()) continue;
+                    conc[idx]     = iq.value[ur];
+                    conc_old[idx] = iq.value[ur];
+                }
+            }
         }
     }
 
