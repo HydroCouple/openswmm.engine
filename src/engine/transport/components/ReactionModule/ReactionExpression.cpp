@@ -141,7 +141,9 @@ struct OpEntry {
     int  col;
     bool is_func;
     int  arity;        ///< funcs
+    const char* name;  ///< funcs — for the arity diagnostic (D-R9)
     bool is_paren;     ///< '(' marker
+    int  commas;       ///< parens — argument-separator count (D-R9)
 };
 
 int precOf(char op) {
@@ -222,6 +224,7 @@ std::string compileReactionExpression(const std::string& src,
                                     "' needs '('", lx.col);
                     OpEntry fe{};
                     fe.op = f->op; fe.is_func = true; fe.arity = f->arity;
+                    fe.name = f->name;
                     fe.col = lx.col;
                     ops.push_back(fe);
                     OpEntry pe{};
@@ -341,10 +344,24 @@ std::string compileReactionExpression(const std::string& src,
                 }
                 if (ops.empty())
                     return fail("unbalanced ')'", lx.col);
+                const int commas = ops.back().commas;
                 ops.pop_back();               // the '('
                 --depth_guard;
                 // Function application?
                 if (!ops.empty() && ops.back().is_func) {
+                    // D-R9: name the function and its arity at the call
+                    // site, instead of the generic RPN-discipline
+                    // "malformed expression" at col 1.
+                    const int argc = commas + 1;
+                    if (argc != ops.back().arity)
+                        return fail(
+                            std::string("function '") + ops.back().name +
+                                "' expects " +
+                                std::to_string(ops.back().arity) +
+                                (ops.back().arity == 1 ? " argument"
+                                                       : " arguments") +
+                                ", got " + std::to_string(argc),
+                            ops.back().col);
                     popOpToOutput(ops.back());
                     ops.pop_back();
                 }
@@ -360,6 +377,7 @@ std::string compileReactionExpression(const std::string& src,
                 if (ops.empty() || ops.size() < 2 ||
                     !ops[ops.size() - 2].is_func)
                     return fail("',' outside a function call", lx.col);
+                ++ops.back().commas;          // the paren frame (D-R9)
                 expect_operand = true;
                 break;
             }
