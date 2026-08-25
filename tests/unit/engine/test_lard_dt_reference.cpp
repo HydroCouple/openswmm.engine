@@ -89,6 +89,8 @@ struct DeckSpec {
     bool water_age = false;       ///< age washout variant (INITIAL_STATE)
     bool reverse = false;         ///< FIXED high-stage outfall deck
     bool orifice = false;         ///< washout variant: C3 becomes ORIFICE O3
+    bool dry_start = false;       ///< gate 5: init depth 0, fill transient
+    bool storage = false;         ///< gate 5: J2 becomes a storage unit
 };
 
 void write_deck(const std::string& path, const std::string& tag,
@@ -113,9 +115,21 @@ void write_deck(const std::string& path, const std::string& tag,
           << "[XSECTIONS]\n"
           << "C1 CIRCULAR 2.0 0 0 0\nC2 CIRCULAR 2.0 0 0 0\n\n";
     } else {
+        const char* y0 = s.dry_start ? "0.0" : "1.5";
         f << "[JUNCTIONS]\n"
-          << "J0 10.0 10 1.5 0 0\nJ1 9.4  10 1.5 0 0\nJ2 8.8  10 1.5 0 0\n"
-          << "J3 8.2  10 1.5 0 0\nJ4 7.6  10 1.5 0 0\n\n"
+          << "J0 10.0 10 " << y0 << " 0 0\nJ1 9.4  10 " << y0 << " 0 0\n";
+        // The storage variant gives the node mix a node whose volume is
+        // STATE, not MIN_SURFAREA residue — the only place old-vs-new
+        // volume (X2.viii) is a leading-order term.
+        if (!s.storage)
+            f << "J2 8.8  10 " << y0 << " 0 0\n";
+        f << "J3 8.2  10 " << y0 << " 0 0\n"
+          << "J4 7.6  10 " << y0 << " 0 0\n\n";
+        if (s.storage)
+            f << "[STORAGE]\n"
+              << "J2 8.8 10 " << (s.dry_start ? "0.05" : "1.5")
+              << " FUNCTIONAL 0 0 2000\n\n";
+        f
           << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
           << "[CONDUITS]\n"
           << "C1 J0 J1 500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n";
@@ -158,6 +172,8 @@ void write_deck(const std::string& path, const std::string& tag,
 struct DtRun {
     double outfall_conc = 0.0;   ///< TSS at the outfall node, end of run
     double outfall_age = 0.0;    ///< seconds
+    double mass_out = 0.0;       ///< ∫ conc·|q| dt on the LAST link, engine-
+                                 ///< neutral (same formula both engines)
     std::vector<double> node_final;
     double peak_node = 0.0, peak_link = 0.0;
     double min_flow_c2 = 1.0e30, final_flow_c2 = 0.0;
@@ -186,6 +202,7 @@ DtRun run_deck(const std::string& tag, const DeckSpec& s) {
     const int nl = ctx.n_links();
     const int nn = ctx.n_nodes();
     double elapsed = 0.0;
+    double prev_elapsed = 0.0;
     int guard = 0;
     do {
         if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
@@ -193,6 +210,18 @@ DtRun run_deck(const std::string& tag, const DeckSpec& s) {
             swmm_engine_destroy(e);
             return r;
         }
+        // Engine-neutral discharged mass: last link's published conc ×
+        // flow × dt. The final step's flux is lost when elapsed reports 0
+        // at end-of-run — identical loss for both engines at the same
+        // ROUTING_STEP, so it cancels in any lard-vs-legacy difference.
+        if (elapsed > prev_elapsed && nl > 0) {
+            const double dt_s = (elapsed - prev_elapsed) * 86400.0;
+            const auto ul = static_cast<std::size_t>((nl - 1) * np);
+            r.mass_out += ctx.links.conc[ul] *
+                          std::abs(ctx.links.flow[static_cast<std::size_t>(
+                              nl - 1)]) * dt_s;
+        }
+        prev_elapsed = elapsed;
         for (int l = 0; l < nl; ++l) {
             const double c =
                 ctx.links.conc[static_cast<std::size_t>(l * np)];
@@ -418,6 +447,102 @@ TEST(LardDtReferenceTest, ReverseFlowConservesAndStaysBounded) {
     // 3.3x below the handoff's 5% refusal line.
     EXPECT_NEAR(out / in, 1.0, 0.015)
         << "ledger broke under reversal: in=" << in << " out=" << out;
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5 — the ROUTING_STEP axis: X2.viii's observer, at last
+// (closeout P1.1).
+//
+// X2.viii — the node mix reading nodes.volume instead of old_volume — is
+// dtq-INDEPENDENT by construction: volumes advance once per routing step,
+// so gates 1–3 cannot see it (X3a measured the defect moving only the
+// LIMIT, 19.057 → 17.952, with the dtq-ladder spread unchanged). The
+// rs axis is where it lives — but the closeout plan's proposed form,
+// contraction of the raw ladder |A(40)−A(20)| > |A(20)−A(10)|, is NOT
+// achievable, and that is a MEASURED finding, not a guess:
+//
+//   · Raw A does not contract, clean: the point value expands (ratio
+//     0.899 — the O(rs) hydraulic phase shift amplified by the front's
+//     slope), and the integral oscillates (gaps 3232/463/1261 — the
+//     dynamic-wave solution's own rs-dependence is not smooth).
+//   · The lard-vs-legacy difference D removes the hydraulic drift
+//     (common mode: identical routing under either QUALITY_SOLVER), but
+//     D contracts toward a STRUCTURAL limit, not zero — legacy's CSTR
+//     chain breaks through instantly while parcels arrive late, so |D|
+//     legitimately GROWS as refinement strips the noise: measured
+//     −114 → −129 → −225 → −316 clean.
+//
+// What discriminates is the LEVEL of D where the defect is largest — the
+// coarsest rung, where old-vs-new volume differ most. The gate is
+// therefore a band on D(80), pinned correct-form vs X2.viii-form.
+// ---------------------------------------------------------------------------
+TEST(LardDtReferenceTest, StorageFillLardVsLegacyGapBoundedOnRsLadder) {
+    // Instrument design, all of it measured this round rather than assumed:
+    //   · The washout deck cannot carry this gate — X2.viii's error term is
+    //     the per-step volume change at the mixing node, and junction
+    //     volumes are MIN_SURFAREA residue: the defect measured at ~1/20 of
+    //     the ladder's own hydraulic noise (shift +186 at rs=80 against
+    //     gaps of 400–3200). The deck here starts DRY and fills a STORAGE
+    //     unit (volume that is state, not residue) from a steady
+    //     concentration source: defect shift −324/−314/−243/−158 across
+    //     the ladder — rs-dependent, exactly the signature the dtq axis
+    //     could not see.
+    //   · The raw observable still cannot be gated — refining rs moves the
+    //     fill hydrograph itself (A spans 8336 → 12183, 12–24× the defect).
+    //     So each rung is paired against the LEGACY control on the SAME
+    //     deck: hydraulics are engine-independent, the drift is common
+    //     mode, and the difference D(rs) = lard − legacy carries only the
+    //     transport-scheme gap, which must shrink with rs.
+    //   · D is built from an engine-neutral integral (∫ conc·|q| dt on C5,
+    //     same formula both engines), not the ledger, whose rows the two
+    //     families do not book identically.
+    // 17:20 = 1040 s divides by every rung — a horizon one rung overshoots
+    // and another truncates is an artifact the ladder would book as error.
+    double dd[4] = {0.0, 0.0, 0.0, 0.0};
+    double a_lard[4], a_leg[4];
+    double liveness = 0.0;
+    const int ladder[4] = {80, 40, 20, 10};
+    for (int i = 0; i < 4; ++i) {
+        DeckSpec si;              // QUALITY_STEP omitted → dtq = rs
+        si.washout = false;       // steady CONCEN source at J0
+        si.dry_start = true;      // fill transient: dV/dt large
+        si.storage = true;        // J2's volume is state, not residue
+        si.end_time = "00:17:20";
+        si.routing_step = ladder[i];
+        DeckSpec sl = si;
+        sl.lard = false;
+        const DtRun r = run_deck("_ld_fill_rs", si);
+        const DtRun c = run_deck("_ld_fill_rs_leg", sl);
+        ASSERT_TRUE(r.ok && c.ok) << "rs=" << ladder[i];
+        a_lard[i] = r.mass_out;
+        a_leg[i] = c.mass_out;
+        dd[i] = r.mass_out - c.mass_out;
+        liveness = r.outfall_conc;
+    }
+    // Liveness: mass must actually be discharging by the horizon and the
+    // front must have arrived — a horizon before arrival observes nothing.
+    ASSERT_GT(a_lard[3], 0.0) << "nothing discharged — lengthen the run";
+    ASSERT_GT(liveness, 0.02 * kCin) << "front never arrived";
+
+    std::printf("[ INSTR    ] rs lard   A = %.3f %.3f %.3f %.3f\n",
+                a_lard[0], a_lard[1], a_lard[2], a_lard[3]);
+    std::printf("[ INSTR    ] rs legacy A = %.3f %.3f %.3f %.3f\n",
+                a_leg[0], a_leg[1], a_leg[2], a_leg[3]);
+    std::printf("[ INSTR    ] rs D = %.3f %.3f %.3f %.3f  |D80/D10| = %.3f\n",
+                dd[0], dd[1], dd[2], dd[3],
+                dd[3] != 0.0 ? std::abs(dd[0] / dd[3]) : 0.0);
+    // The razor. MEASURED (closeout P1.1 round): correct form D(80) =
+    // −114.4; X2.viii applied (nodes.volume for old_volume in the node
+    // mix) gives −329.8 — the defect loses arriving mass into the
+    // volume it double-counts, hardest where the per-step volume change
+    // is largest. Band at the geometric mean, 194. The finest rung
+    // (clean −316.3 vs defective −422.5) is reported above but NOT
+    // gated: its ±15% margins are inside plausible cross-platform FP
+    // drift, and a flaky razor is worse than none.
+    EXPECT_LT(std::abs(dd[0]), 194.0)
+        << "the lard-vs-legacy gap at the coarsest step is outside the "
+           "measured band — the X2.viii family (wrong mix volume) "
+           "produces exactly this signature";
 }
 
 }  // namespace
