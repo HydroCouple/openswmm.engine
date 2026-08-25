@@ -195,6 +195,10 @@ add_gtest_unit(test_engine_cheb_section_batch test_cheb_section_batch.cpp)
 # indistinguishable from LEGACY at full depth, invisible without a partial-
 # depth check or a full-network run).
 add_gtest_unit(test_engine_legacy_shape_boundary test_legacy_shape_boundary.cpp)
+# promptperf.md Phase C: PostParseResolver's POLYGON compiled-section dedup
+# key must cover every parameter chebsec::compile() actually takes, not just
+# (curve, scale) — see the file header for the is_open gap this pins.
+add_gtest_unit(test_engine_xsect_polygon_dedup test_xsect_polygon_dedup.cpp)
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)

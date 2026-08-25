@@ -252,18 +252,30 @@ struct ChebPiece {
  *       piece its own seven kMaxChebCoeff(32)-wide arrays regardless of
  *       actual content — about 45 kB per section, 43 kB of it coefficients
  *       nobody's compiled boundary ever needed (typical content is 2-12
- *       pieces at well under 32 coefficients per field). Built-in shapes
- *       under XSECT_GEOMETRY EXACT each compile their own section — no
- *       dedup by (shape, dimensions) yet, that is promptperf.md Phase C,
- *       separate and unstarted — so on a network where a compiled shape
- *       like CIRCULAR dominates (Bellinge, 953 conduits, ~70% CIRCULAR),
- *       roughly that many independent sections put the total compiled
- *       geometry data at ~43 MB pre-Phase-B (45 kB x 953), several times
- *       larger than L3, so every EXACT evaluation missed cache before doing
- *       any arithmetic. Packed, the same count is ~18 MB (this struct's own
- *       ~18.5 kB x 953) — still one section per conduit until Phase C lands,
- *       but each one small enough that the working set has a real chance
- *       against cache. Phase B replaces the seven fixed arrays with
+ *       pieces at well under 32 coefficients per field). Packed, a section
+ *       is ~18.5 kB.
+ * @note **Dedup (promptperf.md Phase C).** Contrary to an earlier draft of
+ *       this note (and of promptperf.md's own Phase C premise text): built-in
+ *       shapes under XSECT_GEOMETRY EXACT do NOT each compile their own
+ *       section — `PostParseResolver.cpp` has memoized them by
+ *       (shape, y_full, w_max) since the original Phase 5 commit
+ *       (`6a3ef934`), predating both Phase B and promptperf.md itself.
+ *       POLYGON links are separately memoized by (curve, scale, is_open) —
+ *       Phase C's own audit found and fixed a real gap in that second key
+ *       (it was missing `is_open`, which chebsec::compile() bakes into the
+ *       result — see PostParseResolver.cpp's POLYGON block). Measured on
+ *       Bellinge (953 CIRCULAR conduits, real network): dedup collapses
+ *       them to **46 unique compiled sections** — not 953 — so the total
+ *       compiled geometry footprint is ~46 x 18.5 kB ≈ 0.85 MB, comfortably
+ *       L2-resident, not the ~18-43 MB an assumed one-section-per-conduit
+ *       model would suggest. (Run `[OPTIONS] XSECT_GEOMETRY EXACT` and read
+ *       the .rpt's "Compiled Cross-Sections" line for any given network.)
+ *       This likely explains why Phase B's own measured network-level
+ *       timing delta was muted (~6%, within run-to-run noise) despite a
+ *       2.4x per-section size reduction: the working set was already small
+ *       before Phase B ran, because dedup — not packing — is what keeps a
+ *       real network's compiled geometry off of cache pressure. Phase B
+ *       replaces the seven fixed arrays with
  *       offset/length pairs (ChebPiece::off_a etc.) into ONE shared pool
  *       below, sized from a measured worst case across the shape catalog
  *       (kMaxPoolCoeff's own note) rather than the theoretical maximum every
