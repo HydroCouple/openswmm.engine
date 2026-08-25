@@ -435,12 +435,239 @@ TEST(ChebSection, TooManyVerticesIsRejectedLoudlyNotDegradedQuietly) {
 }
 
 TEST(ChebSection, IsTriviallyCopyableAndBounded) {
-    // Test 27. Trivial copyability is the load-bearing claim (device mirroring).
-    // The size figure is reported rather than asserted at the design sketch's
-    // 8 kB, which is arithmetically impossible: 24 pieces x 4 fields x 32
-    // coefficients x 8 bytes is 24 kB of coefficients before anything else.
+    // Test 27. Trivial copyability is the load-bearing claim (device mirroring)
+    // and is unchanged by Phase B (promptperf.md) — packing moved WHERE the
+    // coefficients live, not whether the type stays POD/memcpy-able.
+    //
+    // The size bound itself, though, is the thing Phase B exists to shrink.
+    // Pre-Phase-B, every piece reserved seven kMaxChebCoeff(32)-wide arrays
+    // regardless of actual content: ~45 kB per section, of which ~43 kB was
+    // coefficients no real compiled boundary ever needed (typical content is
+    // 1-12 pieces at well under 32 coefficients per field). Built-in shapes
+    // under XSECT_GEOMETRY EXACT each compile their own section — no dedup
+    // by (shape, dimensions) yet (promptperf.md Phase C, unstarted) — so on
+    // a network where one compiled shape dominates (Bellinge, 953 conduits,
+    // ~70% CIRCULAR), that put the compiled geometry data at ~43 MB
+    // (45 kB x 953), several times larger than L3, so every EXACT evaluation
+    // missed cache before doing any arithmetic. Packed, the same count is
+    // ~18 MB (~18.5 kB x 953). Phase B replaces the fixed arrays with
+    // offset/length pairs into one shared pool (kMaxPoolCoeff), sized from a
+    // MEASURED worst case across the shape catalog — see kMaxPoolCoeff's own
+    // note — rather than the arithmetic maximum. Asserting close to the real
+    // measured size, rather than well above it, is deliberate: this is the
+    // regression test that would catch a change silently reintroducing the
+    // old per-piece reservation.
     static_assert(std::is_trivially_copyable_v<ChebSection>);
     std::printf("[cheb] sizeof(ChebSection) = %zu bytes (%.1f kB)\n",
                 sizeof(ChebSection), sizeof(ChebSection) / 1024.0);
-    EXPECT_LE(sizeof(ChebSection), 32u * 1024u);
+    EXPECT_LE(sizeof(ChebSection), 20u * 1024u);
+}
+
+// ===========================================================================
+// The compiled inverse, u(A)
+// ===========================================================================
+
+namespace {
+
+/// Gothic arch — round invert, POINTED crown. The two ends want different
+/// inverse root orders, which is the case a single tag could not describe.
+std::vector<BElem> gothicOf(double d) {
+    const double r = 0.5 * d;
+    const double cy = r;
+    const double R = 2.0 * r;
+    const double crown_y = cy + std::sqrt(R * R - r * r);
+    return {arcOf(0.0, cy, r, kPiL, 2.0 * kPiL),
+            arcOf(-r, cy, R, 0.0, std::atan2(crown_y - cy, r)),
+            arcOf(r, cy, R, std::atan2(crown_y - cy, -r), kPiL)};
+}
+
+/// Closed box — flat invert, flat crown. Nothing singular anywhere.
+std::vector<BElem> boxOf(double w, double h) {
+    const double hw = 0.5 * w;
+    return {segOf(-hw, 0.0, hw, 0.0), segOf(hw, 0.0, hw, h),
+            segOf(hw, h, -hw, h), segOf(-hw, h, -hw, 0.0)};
+}
+
+/// V-notch — the width goes to zero LINEARLY at the invert, so A ~ y^2 there.
+/// The forward exponent tag is 1.0 (A is analytic in y); the inverse is not.
+std::vector<BElem> vNotchOf(double w, double h) {
+    const double hw = 0.5 * w;
+    return {segOf(0.0, 0.0, hw, h), segOf(hw, h, -hw, h), segOf(-hw, h, 0.0, 0.0)};
+}
+
+} // namespace
+
+TEST(ChebSection, EveryPieceOfEveryShapeCompilesAnInverse) {
+    // Test 28. fitPieceInverse leaves n_u = 0 when it cannot straighten a
+    // piece, and chebYofA then falls back to its Newton solve — correct but
+    // ~25x slower, and silently so. This is the test the fallback's own
+    // comment points at: it asserts the fallback is dead code for every shape
+    // the compiler is actually asked to handle, so a future change that starts
+    // tripping it says so here rather than as an unexplained slowdown.
+    const struct { const char* name; std::vector<BElem> b; bool open; } cases[] = {
+        {"circle", circleOf(4.0), false},
+        {"benched", benchedOf(6.0, 3.0, 1.0), false},
+        {"gothic", gothicOf(4.0), false},
+        {"box", boxOf(5.0, 3.0), false},
+        {"v-notch", vNotchOf(4.0, 2.0), true},
+        {"48-gon", ngonOf(48), false},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        ChebSection s;
+        ASSERT_EQ(compile(s, c.b.data(), static_cast<int>(c.b.size()), c.open), 0);
+        ASSERT_GT(s.n_pieces, 0);
+        for (int p = 0; p < s.n_pieces; ++p) {
+            EXPECT_GT(s.piece[p].n_u, 0) << "piece " << p << " fell back to Newton";
+        }
+    }
+}
+
+TEST(ChebSection, InverseRootOrderFollowsTheGeometryNotTheForwardTag) {
+    // Test 29 — pins inverseRootOrder, the one piece of judgement in the
+    // inverse that a plausible-looking shortcut gets wrong. Reading
+    // exp_lo/exp_hi would give the right answer for a round invert and the
+    // WRONG one for a V-notch, whose forward tag is 1.0 (A really is analytic
+    // in y there) while A still vanishes quadratically.
+
+    // Round invert, round crown: cube root at both outer ends.
+    ChebSection circ;
+    const auto cb = circleOf(4.0);
+    ASSERT_EQ(compile(circ, cb.data(), static_cast<int>(cb.size())), 0);
+    EXPECT_EQ(circ.piece[0].inv_k, 3);
+    EXPECT_FALSE(circ.piece[0].inv_at_hi);
+    EXPECT_EQ(circ.piece[circ.n_pieces - 1].inv_k, 3);
+    EXPECT_TRUE(circ.piece[circ.n_pieces - 1].inv_at_hi);
+
+    // Flat invert, flat crown: nothing singular, identity map, no root at all.
+    ChebSection box;
+    const auto bb = boxOf(5.0, 3.0);
+    ASSERT_EQ(compile(box, bb.data(), static_cast<int>(bb.size())), 0);
+    for (int p = 0; p < box.n_pieces; ++p) EXPECT_EQ(box.piece[p].inv_k, 1);
+
+    // V-notch invert: forward tag 1.0, inverse root order 2.
+    ChebSection vee;
+    const auto vb = vNotchOf(4.0, 2.0);
+    ASSERT_EQ(compile(vee, vb.data(), static_cast<int>(vb.size()), true), 0);
+    EXPECT_LT(vee.piece[0].exp_lo, kExpSplit) << "forward tag should be analytic";
+    EXPECT_EQ(vee.piece[0].inv_k, 2) << "inverse still has a square-root branch";
+    EXPECT_FALSE(vee.piece[0].inv_at_hi);
+}
+
+TEST(ChebSection, CompiledInverseAgreesWithTheNewtonSolveItReplaces) {
+    // Test 30. chebYofASolve is the reference the compiler itself fits
+    // against, so this is the direct statement of what compiling the inverse
+    // costs in accuracy. The tolerance is split because the two piece kinds
+    // have genuinely different ceilings, and the reason is structural: on a
+    // root-mapped piece the forward series' own kFitTol chop leaves its k-th
+    // order zero imperfect, and the k-th root magnifies that. Neither figure
+    // is close to mattering — the legacy inverse TABLE this replaces carries
+    // ~1.4e-2, and ~4.1e-1 below 5% of full depth.
+    const struct { const char* name; std::vector<BElem> b; bool open; double tol; }
+    cases[] = {
+        {"circle", circleOf(4.0), false, 1e-7},
+        {"benched", benchedOf(6.0, 3.0, 1.0), false, 1e-7},
+        {"gothic", gothicOf(4.0), false, 1e-7},
+        {"box", boxOf(5.0, 3.0), false, 1e-9},
+        {"v-notch", vNotchOf(4.0, 2.0), true, 1e-9},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        ChebSection s;
+        ASSERT_EQ(compile(s, c.b.data(), static_cast<int>(c.b.size()), c.open), 0);
+        for (int i = 1; i < 4000; ++i) {
+            const double a = s.a_full * static_cast<double>(i) / 4000.0;
+            const ChebPiece& pc = s.piece[chebPieceOfA(s, a)];
+            EXPECT_NEAR(chebYofA(s, a), chebYofASolve(s, pc, a), c.tol * s.y_full)
+                << "at a/a_full = " << (a / s.a_full);
+        }
+    }
+}
+
+TEST(ChebSection, TheAreaAccessorsAgreeWithGoingThroughDepth) {
+    // Test 31. chebWofA/chebPofA/chebRofA/chebI1ofA/chebAllOfA all evaluate at
+    // the SAME u the inverse produced rather than re-entering through
+    // chebYofA, which is the whole point of having them — one piece scan
+    // instead of two. That makes them a second implementation of the same
+    // quantity, so pin them against the composition they stand in for.
+    for (const auto& b : {circleOf(4.0), benchedOf(6.0, 3.0, 1.0), gothicOf(4.0)}) {
+        ChebSection s;
+        ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
+        for (int i = 0; i <= 500; ++i) {
+            const double a = s.a_full * static_cast<double>(i) / 500.0;
+            SCOPED_TRACE(::testing::Message() << "a/a_full = " << (a / s.a_full));
+            const double y = chebYofA(s, a);
+
+            // NOT exact, and the reason is worth stating: the A-domain
+            // accessors evaluate at the u the inverse produced, while going
+            // through depth recovers u from y with the forward map. u -> y is
+            // a squaring on a root-mapped piece and y -> u the matching
+            // square root, so the round trip is faithful to within an ulp or
+            // two, not to the bit. Requiring exact equality here would be
+            // asserting that sqrt(x*x) == x.
+            const double scale = std::max(1.0, s.a_full);
+            EXPECT_NEAR(chebWofA(s, a), chebWofY(s, y), 1e-12 * scale);
+            EXPECT_NEAR(chebPofA(s, a), chebPofY(s, y), 1e-12 * scale);
+            EXPECT_NEAR(chebI1ofA(s, a), chebI1ofY(s, y), 1e-12 * scale * s.y_full);
+
+            double yy = 0.0, w = 0.0, p = 0.0, i1 = 0.0;
+            chebAllOfA(s, a, &yy, &w, &p, &i1);
+            // These four DO have to be bit-exact: chebAllOfA shares one piece
+            // scan and one u with the single-field A accessors, so the only
+            // difference is the shared basis recurrence running to the longest
+            // requested field instead of each field's own count — and the
+            // surplus terms multiply coefficients chebChop already zeroed.
+            EXPECT_EQ(yy, y);
+            EXPECT_EQ(w, chebWofA(s, a));
+            EXPECT_EQ(p, chebPofA(s, a));
+            EXPECT_EQ(i1, chebI1ofA(s, a));
+
+            // R is A/P by construction, not a fitted quantity of its own.
+            EXPECT_EQ(chebRofA(s, a), (p > 0.0) ? a / p : 0.0);
+        }
+    }
+}
+
+TEST(ChebSection, RAndDPdAMatchAFiniteDifferenceOfTheSeries) {
+    // Test 32 — chebRdPdA forms dP/dA as (dP/du)/(dA/du) so the coordinate
+    // map's Jacobian cancels instead of being divided out twice. That is an
+    // algebraic identity, so a wrong one is silent; a finite difference in A
+    // is an independent construction and catches it.
+    for (const auto& b : {circleOf(4.0), benchedOf(6.0, 3.0, 1.0)}) {
+        ChebSection s;
+        ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
+        for (double f : {0.15, 0.3, 0.45, 0.6, 0.75, 0.9}) {
+            const double a = f * s.a_full;
+            double r = 0.0, dpda = 0.0;
+            ASSERT_TRUE(chebRdPdA(s, a, &r, &dpda)) << "at f = " << f;
+            EXPECT_NEAR(r, chebRofA(s, a), 1e-12 * std::max(1.0, r));
+
+            const double h = 1e-6 * s.a_full;
+            const double fd = (chebPofA(s, a + h) - chebPofA(s, a - h)) / (2.0 * h);
+            EXPECT_NEAR(dpda, fd, 1e-4 * std::max(std::fabs(fd), 1.0))
+                << "at f = " << f;
+        }
+    }
+}
+
+TEST(ChebSection, TheNewtonFallbackStillAnswersWhenAPieceHasNoInverse) {
+    // Test 33. n_u == 0 is the safety valve, and safety valves rot unless
+    // something exercises them. Clear the compiled inverse off one piece and
+    // check the answer is unchanged to the accuracy the fit claims — which
+    // also demonstrates that the fallback and the fitted path are inverting
+    // the same function rather than two subtly different ones.
+    const auto b = circleOf(4.0);
+    ChebSection s;
+    ASSERT_EQ(compile(s, b.data(), static_cast<int>(b.size())), 0);
+    ASSERT_GE(s.n_pieces, 3);
+
+    ChebSection maimed = s;
+    maimed.piece[1].n_u = 0;
+    ASSERT_GT(s.piece[1].n_u, 0) << "piece 1 must have had an inverse to remove";
+
+    for (int i = 1; i < 2000; ++i) {
+        const double a = s.a_full * static_cast<double>(i) / 2000.0;
+        EXPECT_NEAR(chebYofA(maimed, a), chebYofA(s, a), 1e-7 * s.y_full)
+            << "at a/a_full = " << (a / s.a_full);
+    }
 }

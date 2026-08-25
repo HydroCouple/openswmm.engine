@@ -63,6 +63,7 @@
 
 #include "XSectLookup.hpp"
 #include "ChebSection.hpp"
+#include "ChebSectionBatch.hpp"
 #include "../data/LinkData.hpp"
 
 // Portable kernel-function marker — same convention as FvKernels.hpp and
@@ -544,17 +545,22 @@ struct XsectEval {
     // the same closed form circ_getdSdA uses below (expand and it reduces to
     // (5/3 - (2/3)*dPdA*R) * R^(2/3)), just reached via the chain rule instead of
     // a direct dP/dA formula: dR/dA = 1/P - (A/P^2)*dP/dA, dP/dA = (dP/dy)/(dA/dy).
-    // Exact throughout — chebdAdY and chebdPdY are the fit's own derivative
-    // coefficients, not finite differences.
+    // Exact throughout — the derivatives are the fit's own coefficients, not
+    // finite differences. chebRdPdA does the whole thing from ONE piece scan
+    // and one inverse evaluation, where this used to invert A->y and then walk
+    // the piece three more times (chebdAdY, chebPofY, chebdPdY) for quantities
+    // that all live on the same piece at the same u.
     OPENSWMM_KERNEL_FN double cheb_getdSdA(const XSectParams& xs, double a) const {
         if (a <= 0.0 || !xs.cheb) return 0.0;
-        const double y = chebsec::chebYofA(*xs.cheb, a);
-        const double w = chebsec::chebdAdY(*xs.cheb, y);   // dA/dy = W, exact
-        const double p = chebsec::chebPofY(*xs.cheb, y);
-        if (w <= 0.0 || p <= 0.0) return generic_getdSdA(xs, a);
-        const double r = a / p;
-        const double dPdA = chebsec::chebdPdY(*xs.cheb, y) / w;
-        return (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * std::pow(r, 2.0 / 3.0);
+        double r = 0.0, dPdA = 0.0;
+        if (!chebsec::chebRdPdA(*xs.cheb, a, &r, &dPdA)) return generic_getdSdA(xs, a);
+        // cbrt(r)^2 rather than pow(r, 2/3): same quantity to within an ulp,
+        // measured 5.5 ns against 19.2 for the pow. Confined to the compiled
+        // path on purpose — the legacy formulas keep their pow, because their
+        // bit-for-bit agreement with EPA SWMM is a contract this must not
+        // touch.
+        const double cr = std::cbrt(r);
+        return (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * cr * cr;
     }
 
     // ============================================================================
@@ -1227,7 +1233,8 @@ struct XsectEval {
             if (a == 0.0) return 0.0;
             double r = getRofA(xs, a);   // redirects through xs.cheb itself
             if (r < TINY) return 0.0;
-            return a * std::pow(r, 2.0 / 3.0);
+            const double cr = std::cbrt(r);   // see cheb_getdSdA on cbrt vs pow
+            return a * cr * cr;
         }
         double alpha = a / xs.a_full;
 
@@ -1267,7 +1274,7 @@ struct XsectEval {
 
     OPENSWMM_KERNEL_FN double getRofA(const XSectParams& xs, double a) const {
         if (a <= 0.0) return 0.0;
-        if (xs.cheb) return chebsec::chebRofY(*xs.cheb, chebsec::chebYofA(*xs.cheb, a));
+        if (xs.cheb) return chebsec::chebRofA(*xs.cheb, a);
         switch (static_cast<XSectShape>(xs.type)) {
             case XSectShape::HORIZ_ELLIPSE:
             case XSectShape::VERT_ELLIPSE:
@@ -1423,9 +1430,22 @@ struct XsectEval {
     // XSECT_GEOMETRY EXACT) mixing an exact formula with an approximate A/W.
     OPENSWMM_KERNEL_FN double generic_getYcrit(const XSectParams& xs, double q, double q2g) const {
         // Critical flow function Q_c(yc) - qTarget (legacy getQcritical).
+        // Phase A (promptperf.md) audit: on a compiled section this probe
+        // used to call getAofY then getWofY separately at the same yc, each
+        // its own piece scan + basis recurrence, on every one of the 25
+        // enumeration steps or Ridder iterations below. chebAWofY shares the
+        // scan and recurrence between the two fields — same fusion shape as
+        // FvKernels::closureAll, just at this one leaf accessor rather than
+        // the DYNWAVE STEP B/D batch pass (see promptperf.md's Phase A
+        // report for why that one is NOT fused the same way here).
         auto qCritical = [&](double yc, double qTarget) -> double {
-            double a = getAofY(xs, yc);
-            double w = getWofY(xs, yc);
+            double a, w;
+            if (xs.cheb) {
+                chebsec::chebAWofY(*xs.cheb, yc, a, w);
+            } else {
+                a = getAofY(xs, yc);
+                w = getWofY(xs, yc);
+            }
             if (w > 0.0) return a * std::sqrt(GRAVITY * a / w) - qTarget;
             return -qTarget;
         };
