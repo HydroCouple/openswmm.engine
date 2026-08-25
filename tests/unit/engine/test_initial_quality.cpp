@@ -47,6 +47,7 @@
 #include <openswmm/engine/openswmm_model.h>
 
 #include "core/SWMMEngine.hpp"
+#include "transport/InitialQualitySeeds.hpp"
 #include "data/InitialQualityData.hpp"
 
 namespace {
@@ -57,9 +58,11 @@ openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
 
 /// Minimal wet two-junction deck with one pollutant. `iq_lines` lands in an
 /// [INITIAL_QUALITY] section when non-empty; `options_extra` is appended to
-/// [OPTIONS] verbatim.
+/// [OPTIONS] verbatim; `extra_sections` lands before [REPORT] (sidecar
+/// registration for the E-A3 reserved-species gates).
 void write_deck(const char* path, const std::string& iq_lines,
-                const std::string& options_extra = "") {
+                const std::string& options_extra = "",
+                const std::string& extra_sections = "") {
     std::ofstream f(path);
     f << "[TITLE]\nE-A1 initial quality gate deck\n\n"
       << "[OPTIONS]\n"
@@ -94,6 +97,7 @@ void write_deck(const char* path, const std::string& iq_lines,
          "0.0  5.0\n\n";
     if (!iq_lines.empty())
         f << "[INITIAL_QUALITY]\n" << iq_lines << "\n";
+    f << extra_sections;
     f << "[REPORT]\nINPUT NO\nNODES ALL\nLINKS ALL\n";
 }
 
@@ -343,6 +347,157 @@ TEST_F(InitialQualityTest, ArdAndLardPickUpOverrides) {
         swmm_engine_destroy(e);
         std::remove(inp.c_str());
     }
+}
+
+// ---------------------------------------------------------------------------
+// E-A3 — __WATER_AGE__ rows override the sidecar INITIAL_STATE GLOBAL under
+// every engine. Global 2 h, overridden elements 6 h; after one 5 s step the
+// two populations sit ~4 h apart, so a 60 s tolerance separates them by
+// 240x. Falsifier: with the seed-site wiring removed, every element reads
+// the global 2 h.
+TEST_F(InitialQualityTest, ReservedAgeRowsOverrideGlobalPerEngine) {
+    {
+        std::ofstream a("_iq_g2.age");
+        a << "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n";
+    }
+    const std::string pc =
+        "[PROCESS_COMPONENTS]\n"
+        "org.hydrocouple.openswmm.waterage  config=\"_iq_g2.age\"\n\n";
+
+    struct Solver { const char* tag; const char* opt; bool nodes; };
+    const Solver solvers[] = {
+        {"aleg",  "WATER_AGE            YES\n", true},
+        {"aard",  "WATER_AGE            YES\n"
+                  "QUALITY_SOLVER       EULERIAN_ARD\n", true},
+        {"alard", "WATER_AGE            YES\n"
+                  "QUALITY_SOLVER       LAGRANGIAN\n", false},
+    };
+    for (const auto& s : solvers) {
+        std::string inp = std::string("_iq_") + s.tag + ".inp";
+        std::string rpt = std::string("_iq_") + s.tag + ".rpt";
+        write_deck(inp.c_str(),
+                   "LINK C1  __WATER_AGE__ 6.0\n"
+                   "NODE ST1 __WATER_AGE__ 6.0\n",
+                   s.opt, pc);
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr) << s.tag;
+        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr,
+                                   nullptr), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << s.tag;
+        double elapsed = 1.0;
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << s.tag;
+
+        const auto& ctx = as_cpp_engine(e).context();
+        const auto& ws  = ctx.water_age_state;
+        const auto uc1 = static_cast<std::size_t>(ctx.link_names.find("C1"));
+        const auto uc2 = static_cast<std::size_t>(ctx.link_names.find("C2"));
+        EXPECT_NEAR(ws.link_age[uc1], 6.0 * 3600.0, 60.0)
+            << s.tag << ": link age override lost";
+        // Control: the untouched link must sit near the 2 h global, NOT the
+        // 6 h override. ARD's first-step publish carries a ~10% volume-
+        // bookkeeping sag on this near-static deck (same factor on every
+        // species), so the control is a range, not a point.
+        EXPECT_GT(ws.link_age[uc2], 1.0 * 3600.0)
+            << s.tag << ": untouched link lost the global seed";
+        EXPECT_LT(ws.link_age[uc2], 4.0 * 3600.0)
+            << s.tag << ": untouched link picked up the override";
+        if (s.nodes) {
+            const auto ust =
+                static_cast<std::size_t>(ctx.node_names.find("ST1"));
+            EXPECT_NEAR(ws.node_age[ust], 6.0 * 3600.0, 60.0)
+                << s.tag << ": storage-node age override lost";
+        }
+        swmm_engine_end(e);
+        swmm_engine_destroy(e);
+        std::remove(inp.c_str());
+    }
+    std::remove("_iq_g2.age");
+}
+
+// ---------------------------------------------------------------------------
+// E-A3 — __TEMPERATURE__ rows override the sidecar INITIAL_STATE GLOBAL
+// under LEGACY and ARD (LARD does not advance temperature; out of scope).
+// All heat fluxes off, so one step leaves the fields essentially static.
+TEST_F(InitialQualityTest, ReservedTempRowsOverrideGlobalPerEngine) {
+    {
+        std::ofstream h("_iq_h15.heat");
+        h << "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 15.0\n\n"
+          << "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE OFF\n";
+    }
+    const std::string pc =
+        "[PROCESS_COMPONENTS]\n"
+        "org.hydrocouple.openswmm.heat  config=\"_iq_h15.heat\"\n\n";
+
+    struct Solver { const char* tag; const char* opt; };
+    const Solver solvers[] = {
+        {"tleg", "HEAT_TRANSPORT       YES\n"},
+        {"tard", "HEAT_TRANSPORT       YES\n"
+                 "QUALITY_SOLVER       EULERIAN_ARD\n"},
+    };
+    for (const auto& s : solvers) {
+        std::string inp = std::string("_iq_") + s.tag + ".inp";
+        std::string rpt = std::string("_iq_") + s.tag + ".rpt";
+        write_deck(inp.c_str(),
+                   "LINK C1  __TEMPERATURE__ 18.5\n"
+                   "NODE ST1 __TEMPERATURE__ 18.5\n",
+                   s.opt, pc);
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr) << s.tag;
+        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr,
+                                   nullptr), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << s.tag;
+        double elapsed = 1.0;
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << s.tag;
+
+        const auto& ctx = as_cpp_engine(e).context();
+        const auto& hs  = ctx.heat_state;
+        const auto uc1 = static_cast<std::size_t>(ctx.link_names.find("C1"));
+        const auto uc2 = static_cast<std::size_t>(ctx.link_names.find("C2"));
+        const auto ust = static_cast<std::size_t>(ctx.node_names.find("ST1"));
+        EXPECT_NEAR(hs.link_temp[uc1], 18.5, 0.5)
+            << s.tag << ": link temperature override lost";
+        // Range control — see the age gate's note on ARD's first-step
+        // publish sag.
+        EXPECT_GT(hs.link_temp[uc2], 12.0)
+            << s.tag << ": untouched link lost the global seed";
+        EXPECT_LT(hs.link_temp[uc2], 16.5)
+            << s.tag << ": untouched link picked up the override";
+        EXPECT_NEAR(hs.node_temp[ust], 18.5, 0.5)
+            << s.tag << ": storage-node temperature override lost";
+        swmm_engine_end(e);
+        swmm_engine_destroy(e);
+        std::remove(inp.c_str());
+    }
+    std::remove("_iq_h15.heat");
+}
+
+// ---------------------------------------------------------------------------
+// E-A3 — D-IQ7 enforcement point: the age applier itself refuses to write
+// over a hotstart-loaded state, so no call site can get the precedence
+// wrong. Probed at the helper level.
+TEST_F(InitialQualityTest, HotstartWinsInsideTheAgeApplier) {
+    write_deck("_iq_hs.inp", "NODE J0 __WATER_AGE__ 6.0\n",
+               "WATER_AGE            YES\n");
+    ASSERT_EQ(open_deck("_iq_hs.inp", "_iq_hs.rpt", nullptr), SWMM_OK);
+    auto& ctx = as_cpp_engine(engine_).context();
+    auto& ws = ctx.water_age_state;
+    ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
+    const auto uj0 = static_cast<std::size_t>(ctx.node_names.find("J0"));
+
+    std::fill(ws.node_age.begin(), ws.node_age.end(), 999.0);
+    ws.hotstart_loaded = true;
+    openswmm::transport::applyInitialAgeOverrides(ctx);
+    EXPECT_DOUBLE_EQ(ws.node_age[uj0], 999.0)
+        << "hotstart must win over [INITIAL_QUALITY] (D-IQ7)";
+
+    ws.hotstart_loaded = false;
+    openswmm::transport::applyInitialAgeOverrides(ctx);
+    EXPECT_DOUBLE_EQ(ws.node_age[uj0], 6.0 * 3600.0)
+        << "without hotstart the row must apply";
+
+    std::remove("_iq_hs.inp");
 }
 
 // ---------------------------------------------------------------------------

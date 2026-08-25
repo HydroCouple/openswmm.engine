@@ -40,6 +40,7 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../quality/NegativeSources.hpp"
+#include "../../InitialQualitySeeds.hpp"
 
 namespace openswmm::transport {
 
@@ -88,6 +89,9 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
             std::fill(ws.node_age.begin(), ws.node_age.end(), a0);
             std::fill(ws.link_age.begin(), ws.link_age.end(), a0);
         }
+        // E-A3: per-element [INITIAL_QUALITY] __WATER_AGE__ rows override
+        // the global fill (hotstart wins inside the helper, D-IQ7).
+        applyInitialAgeOverrides(ctx);
         ws.legacy_seeded = true;
     }
 
