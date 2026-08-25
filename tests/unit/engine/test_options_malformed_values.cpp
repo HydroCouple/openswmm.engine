@@ -242,3 +242,72 @@ TEST(OptionsMalformedValuesTest, EnumKeysStillRejectUnknownTokens) {
 
     swmm_engine_destroy(e);
 }
+
+// ---------------------------------------------------------------------------
+// Gate 5 — the H1 §7 residue: the same TU's OTHER two dispatches
+// (closeout P1.3). swmm_options_set was hardened in H1; the audit of the
+// remaining `*_impl.cpp` parse sites found exactly three more, all in
+// this TU, all inside local try/catch — so neither could ABORT, but both
+// accepted the PARTIAL-PARSE family silently: HOTSTART_SAVE_DATETIME
+// stored 1.5 for "1.5abc" (and 1.0 for "01/01/2026"), and a file-slot
+// owner index of "0.5" resolved to slot 0 — a caller's typo turned into
+// a different slot. The LID_REPORT owner shares the same edit and
+// pattern but has no direct observer here: exercising it needs a LID
+// deck this TU does not carry. Recorded, not claimed.
+// ---------------------------------------------------------------------------
+TEST(OptionsMalformedValuesTest, FilesAndPathSlotParsesAreStrict) {
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+
+    // Establish hot-start save slot 0 with a known datetime, then attack.
+    ASSERT_EQ(swmm_files_set(e, "HOTSTART_SAVE_PATH", "a.hsf"), SWMM_OK);
+    ASSERT_EQ(swmm_files_set(e, "HOTSTART_SAVE_DATETIME", "46036.5"),
+              SWMM_OK);
+
+    // ("" is deliberately absent: for this key it is the documented
+    // clear spelling, not a malformed value.)
+    const char* const bad_datetime[] = {
+        "abc", " ", "--",
+        "1.5abc",      // partial parse — stored 1.5 before this gate
+        "01/01/2026",  // date spelling — stored 1.0 before this gate
+        "1e999999",    // overflow
+    };
+    for (const char* bad : bad_datetime)
+        EXPECT_NE(swmm_files_set(e, "HOTSTART_SAVE_DATETIME", bad), SWMM_OK)
+            << "HOTSTART_SAVE_DATETIME accepted '" << bad << "'";
+    // Every refused set left the previous value standing.
+    {
+        char buf[64] = {0};
+        ASSERT_EQ(swmm_files_get(e, "HOTSTART_SAVE_DATETIME", buf,
+                                 static_cast<int>(sizeof(buf))),
+                  SWMM_OK);
+        EXPECT_DOUBLE_EQ(std::stod(buf), 46036.5);
+    }
+
+    // Owner indexes are decimal integers, strictly. "0.5" resolving to
+    // slot 0 was a wrong-slot WRITE — the quieter sibling of the
+    // wrong-value store, and with slot 0 present it returned SWMM_OK.
+    EXPECT_NE(swmm_file_path_set(e, SWMM_FILE_HOTSTART_SAVE, "0.5",
+                                 "b.hsf"),
+              SWMM_OK);
+    EXPECT_NE(swmm_file_path_set(e, SWMM_FILE_HOTSTART_SAVE, "0x0",
+                                 "b.hsf"),
+              SWMM_OK);
+    char abs_buf[512] = {0};
+    char orig_buf[512] = {0};
+    EXPECT_NE(swmm_file_path_get(e, SWMM_FILE_HOTSTART_SAVE, "0.5",
+                                 abs_buf, static_cast<int>(sizeof(abs_buf)),
+                                 orig_buf,
+                                 static_cast<int>(sizeof(orig_buf))),
+              SWMM_OK);
+    // Liveness: the plain index still resolves, and the attacked slot
+    // kept its path.
+    ASSERT_EQ(swmm_file_path_get(e, SWMM_FILE_HOTSTART_SAVE, "0",
+                                 abs_buf, static_cast<int>(sizeof(abs_buf)),
+                                 orig_buf,
+                                 static_cast<int>(sizeof(orig_buf))),
+              SWMM_OK);
+    EXPECT_STREQ(orig_buf, "a.hsf");
+
+    swmm_engine_destroy(e);
+}

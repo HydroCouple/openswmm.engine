@@ -440,7 +440,10 @@ SWMM_ENGINE_API int swmm_files_set(SWMM_Engine engine,
     }
     else if (k == "HOTSTART_SAVE_DATETIME") {
         double dt = 0.0;
-        try { dt = v.empty() ? 0.0 : std::stod(v); }
+        // H1 §7 residue: std::stod alone accepts a numeric PREFIX, so
+        // "1.5abc" stored 1.5 and "01/01/2026" stored 1.0 silently. The
+        // contract is a decimal-day floating-point string — strict.
+        try { dt = v.empty() ? 0.0 : stod_strict(v); }
         catch (...) { return SWMM_ERR_BADPARAM; }
         if (f.hotstart_saves.empty()) f.hotstart_saves.emplace_back();
         f.hotstart_saves.front().datetime = dt;
@@ -493,7 +496,9 @@ openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
         case SWMM_FILE_HOTSTART_SAVE: {
             if (!owner) return nullptr;
             int idx = 0;
-            try { idx = std::stoi(owner); } catch (...) { return nullptr; }
+            // H1 §7 residue: a partial parse ("1.5") resolved to slot 1
+            // instead of failing. The owner contract is a decimal index.
+            try { idx = stoi_strict(owner); } catch (...) { return nullptr; }
             if (idx < 0 ||
                 static_cast<std::size_t>(idx) >= ctx.files.hotstart_saves.size())
                 return nullptr;
@@ -533,7 +538,9 @@ openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
         case SWMM_FILE_LID_REPORT: {
             if (!owner) return nullptr;
             int idx = 0;
-            try { idx = std::stoi(owner); } catch (...) { return nullptr; }
+            // H1 §7 residue: a partial parse ("1.5") resolved to slot 1
+            // instead of failing. The owner contract is a decimal index.
+            try { idx = stoi_strict(owner); } catch (...) { return nullptr; }
             if (idx < 0 ||
                 static_cast<std::size_t>(idx) >= ctx.lid_usage.rpt_file.size())
                 return nullptr;
