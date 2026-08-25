@@ -98,6 +98,22 @@ std::string compileReactionExpression(const std::string& src,
                                       RxExprSpan& out,
                                       int& error_col);
 
+// ---------------------------------------------------------------------------
+// Vocabulary discovery (E-C1) — served from the compiler's OWN tables so the
+// GUI completer/highlighter (swmm_reaction_hydvar_* / swmm_reaction_
+// function_*) cannot drift from what actually compiles. Returned pointers
+// are static storage.
+// ---------------------------------------------------------------------------
+
+/// Number of built-in functions.
+int reactionFunctionCount();
+/// Name + arity of function @p idx; false when out of range.
+bool reactionFunctionInfo(int idx, const char** name, int* arity);
+/// Number of built-in hydraulic variables.
+int reactionHydVarCount();
+/// Name + one-line description of hydraulic variable @p idx.
+bool reactionHydVarInfo(int idx, const char** name, const char** description);
+
 /// Tier-1 evaluation: one pass, fixed-depth stack, allocation-free.
 double evalReactionExpression(const std::vector<RxToken>& pool,
                               const RxExprSpan& span,
