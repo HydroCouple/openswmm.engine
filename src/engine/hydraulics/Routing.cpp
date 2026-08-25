@@ -973,8 +973,9 @@ void Router::initFv(SimulationContext& ctx) {
         if (sum_len > 0.0) {
             ctx.links.volume[uj]      = vol;
             ctx.links.slot_volume[uj] = slot_vol;
-            ctx.links.depth[uj]  =
-                fv::kernels::depthOfArea(g, a_len / sum_len);
+            // R0b: published depth truncated to y_full (see publishFv).
+            ctx.links.depth[uj]  = std::min(
+                fv::kernels::depthOfArea(g, a_len / sum_len), g.y_full);
         }
     }
     for (int n = 0; n < nn; ++n) {
@@ -1211,7 +1212,17 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         const double a_mean = (sum_len > 0.0) ? a_len / sum_len : 0.0;
 
         ctx.links.flow[uj]   = q_mean;
-        ctx.links.depth[uj]  = fv::kernels::depthOfArea(g, a_mean);
+        // Slot program R0b: the PUBLISHED depth is a water depth, truncated
+        // to the pipe's true max height — matching the dynamic-wave
+        // convention (DynamicWave.cpp links.depth = min(depth_mid, yf)).
+        // Above the crown the piezometric surplus lives in node heads and
+        // links.slot_volume; the .out depth column stops doubling as a head
+        // channel, and stat_max_filling reads ≤ 1 like legacy. The clamp is
+        // publish-only: every internal use of the mean state works from
+        // a_mean, and widthOfDepth(y_full) == widthOfDepth(piezo) == t_slot,
+        // so the derived hyd-depth/Froude below are unchanged.
+        ctx.links.depth[uj]  = std::min(
+            fv::kernels::depthOfArea(g, a_mean), g.y_full);
         // Inlet control was applied inside the solver, at the culvert's
         // upstream face; only the report flag comes back out here.
         if (impl) {

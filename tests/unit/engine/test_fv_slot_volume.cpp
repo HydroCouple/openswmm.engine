@@ -24,6 +24,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_links.h>
+#include <openswmm/engine/openswmm_nodes.h>
 
 namespace fs = std::filesystem;
 
@@ -95,7 +96,8 @@ std::string deck(const std::string& routing, bool pressurized) {
 }
 
 struct RunResult {
-    double depth       = -1.0;   // published link depth (piezometric under FV)
+    double depth       = -1.0;   // published link depth (CLAMPED to y_full, R0b)
+    double j0_depth    = -1.0;   // upstream node depth (piezometric head - invert)
     double volume      = -1.0;
     double slot_volume = -1.0;
     std::string rpt;
@@ -124,6 +126,8 @@ RunResult run(const std::string& base, const std::string& text) {
         EXPECT_EQ(swmm_link_get_volume(e, c1, &r.volume), 0);
         EXPECT_EQ(swmm_link_get_slot_volume(e, c1, &r.slot_volume), 0);
     }
+    const int j0 = swmm_node_index(e, "J0");
+    if (j0 >= 0) EXPECT_EQ(swmm_node_get_depth(e, j0, &r.j0_depth), 0);
     swmm_engine_end(e);
     swmm_engine_report(e);   // writes the summary sections (incl. continuity)
     swmm_engine_close(e);
@@ -137,17 +141,25 @@ RunResult run(const std::string& base, const std::string& text) {
 TEST(FvSlotVolume, pressurizedSlotVolumeMatchesTheClosure) {
     const RunResult r = run("pressurized_fv", deck("FV", true));
 
-    // Fully pressurized: published depth is piezometric and well above the
-    // 3-ft crown (downstream boundary alone pins 15 ft over the invert).
-    ASSERT_GT(r.depth, 3.5);
+    // R0b: the PUBLISHED link depth is truncated to the pipe's true max
+    // height even though the barrel is pressurized well past it.
+    ASSERT_GT(r.slot_volume, 0.0);            // pressurized for certain...
+    EXPECT_DOUBLE_EQ(r.depth, 3.0);           // ...and reported at the crown
 
+    // The piezometric identity now reads through the NODE heads: at steady
+    // state on a flat pipe the HGL is linear, A(h) is affine above the
+    // crown, so the length-mean piezometric depth is the mean of the end
+    // heads — upstream from J0, downstream pinned by the 115 ft outfall
+    // stage over the 100 ft invert. End-face vs node-head offsets leave a
+    // small residual, hence 2% (the pre-R0b gate read the exact mean from
+    // the published depth, which no longer carries it).
+    ASSERT_GT(r.j0_depth, 3.0);
+    const double mean_piezo = 0.5 * (r.j0_depth + 15.0);
     const double a_full = M_PI * 1.5 * 1.5;
     const double t_req  = 32.2 * a_full / (100.0 * 100.0);  // g*A_full/c^2
     const double t_slot = std::min(t_req, 0.05 * 3.0);      // 5%-of-Wmax cap
-    const double expected = t_slot * (r.depth - 3.0) * 300.0;
-
-    ASSERT_GT(r.slot_volume, 0.0);
-    EXPECT_NEAR(r.slot_volume, expected, 1.0e-6 * expected);
+    const double expected = t_slot * (mean_piezo - 3.0) * 300.0;
+    EXPECT_NEAR(r.slot_volume, expected, 0.02 * expected);
 
     // Always a subset of the link's total stored volume.
     EXPECT_LT(r.slot_volume, r.volume);
