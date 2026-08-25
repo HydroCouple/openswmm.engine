@@ -612,6 +612,19 @@ SWMM_ENGINE_API int swmm_link_get_capacity(SWMM_Engine engine, int idx, double* 
  */
 SWMM_ENGINE_API int swmm_link_get_volume(SWMM_Engine engine, int idx, double* volume);
 
+/**
+ * @brief Get the portion of a link's stored volume held in the Preissmann slot.
+ * @details Finite-volume routing only: the water standing above the pipe crown
+ *          in the slot (`sum over cells of max(0, A - A_crown) * dx`). Always a
+ *          subset of @ref swmm_link_get_volume; reads 0.0 under the dynamic-wave
+ *          router and whenever the conduit is below its crown.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based link index.
+ * @param[out] volume  Receives the slot volume in project volume units.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_link_get_slot_volume(SWMM_Engine engine, int idx, double* volume);
+
 /* --- Runtime forcing (RUNNING state only) --- */
 
 /**

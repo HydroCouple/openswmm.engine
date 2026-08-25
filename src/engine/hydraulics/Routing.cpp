@@ -941,7 +941,7 @@ void Router::initFv(SimulationContext& ctx) {
         const double uniform =
             fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
 
-        double vol = 0.0, a_len = 0.0, sum_len = 0.0;
+        double vol = 0.0, a_len = 0.0, sum_len = 0.0, slot_vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {
             const auto uc = static_cast<std::size_t>(c);
             double a_c = uniform;
@@ -956,9 +956,10 @@ void Router::initFv(SimulationContext& ctx) {
             fv_state_.cell_q[uc] = (a_c > fv::kernels::kDryArea) ? q : 0.0;
 
             const double dx = fv_mesh_.cell_dx[uc];
-            sum_len += dx;
-            a_len   += a_c * dx;
-            vol     += a_c * dx;
+            sum_len  += dx;
+            a_len    += a_c * dx;
+            vol      += a_c * dx;
+            slot_vol += std::max(0.0, a_c - g.a_crown) * dx;
         }
 
         // Publish what was actually seeded, by the same reduction publishFv
@@ -970,7 +971,8 @@ void Router::initFv(SimulationContext& ctx) {
         // acre-feet, reported as a 17 % continuity error on a model where
         // nothing moves and nothing leaves.
         if (sum_len > 0.0) {
-            ctx.links.volume[uj] = vol;
+            ctx.links.volume[uj]      = vol;
+            ctx.links.slot_volume[uj] = slot_vol;
             ctx.links.depth[uj]  =
                 fv::kernels::depthOfArea(g, a_len / sum_len);
         }
@@ -1189,6 +1191,7 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         // Cell area and discharge are ALREADY the aggregate of all barrels
         // (FvGeometry::barrel_scale), so nothing here is scaled by the count.
         double sum_len = 0.0, q_len = 0.0, a_len = 0.0, vol = 0.0;
+        double slot_vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {
             const auto uc = static_cast<std::size_t>(c);
             const double dx = fv_mesh_.cell_dx[uc];
@@ -1199,6 +1202,10 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             q_len   += q * dx;
             a_len   += fv_state_.cell_a[uc] * dx;
             vol     += fv_state_.cell_a[uc] * dx;
+            // Slot share of the cell's storage: area above a_crown is water
+            // standing in the Preissmann slot (the crown-band taper's tiny
+            // content lives inside a_crown and is deliberately not counted).
+            slot_vol += std::max(0.0, fv_state_.cell_a[uc] - g.a_crown) * dx;
         }
         const double q_mean = (sum_len > 0.0) ? q_len / sum_len : 0.0;
         const double a_mean = (sum_len > 0.0) ? a_len / sum_len : 0.0;
@@ -1213,7 +1220,8 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
                 ctx.link_subtypes.conduits.inlet_control[
                     static_cast<std::size_t>(cr)] = impl->inlet_control()[ur];
         }
-        ctx.links.volume[uj] = vol;
+        ctx.links.volume[uj]      = vol;
+        ctx.links.slot_volume[uj] = slot_vol;
         const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;
         const double hyd_depth =
             (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)

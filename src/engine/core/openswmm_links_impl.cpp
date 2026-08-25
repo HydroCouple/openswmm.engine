@@ -956,6 +956,15 @@ SWMM_ENGINE_API int swmm_link_get_volume(SWMM_Engine engine, int idx, double* vo
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_link_get_slot_volume(SWMM_Engine engine, int idx, double* volume) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    // units: internal ft^3 -> display VOLUME. FV routing only; 0.0 under DW.
+    if (volume) *volume = to_display(ctx, openswmm::ucf::VOLUME, ctx.links.slot_volume[static_cast<std::size_t>(idx)]);
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Runtime forcing
 // ============================================================================

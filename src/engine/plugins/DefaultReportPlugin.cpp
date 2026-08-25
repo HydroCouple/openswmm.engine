@@ -888,6 +888,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Initial Stored Volume ....", mb.routing_init_storage);
         row("Final Stored Volume ......", mb.routing_final_storage);
 
+        // FV only (slot_volume stays 0.0 under DW): the share of Final
+        // Stored Volume standing in the Preissmann slot. Informational —
+        // already inside Final Stored Volume, never added again.
+        {
+            double slot_ft3 = 0.0;
+            for (double sv : ctx.links.slot_volume) slot_ft3 += sv;
+            if (slot_ft3 > 0.0)
+                row("Final Slot Storage .......", slot_ft3);
+        }
+
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.routing_error() * 100.0);
     }
 
