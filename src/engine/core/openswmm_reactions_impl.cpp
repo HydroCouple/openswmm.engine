@@ -32,10 +32,14 @@
 
 #include "../transport/components/ReactionModule/ReactionExpression.hpp"
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
+#include "../transport/components/ReactionModule/ReactionsWriter.hpp"
+#include "../plugins/ProcessComponentRegistry.hpp"
 
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -64,15 +68,15 @@ bool pool_references(const openswmm::ReactionData& rx, uint8_t op, int idx) {
 /// (the reserved species live there), truncate, re-add the MSX species in
 /// ReactionData order, restore the tail. Legal in BUILDING/OPENED only —
 /// nothing downstream has latched registry indexes before initialize().
-void rebuild_msx_registry(openswmm::SimulationContext& ctx, int old_n_msx) {
+void rebuild_msx_registry(openswmm::SimulationContext& ctx, int old_base,
+                          int old_n_msx) {
     auto& reg = ctx.species_registry;
     auto& rx  = ctx.reactions;
-    const int base = (rx.registry_base >= 0) ? rx.registry_base
-                                             : reg.pollutant_count();
+    const int base = (old_base >= 0) ? old_base : reg.pollutant_count();
     struct Row { std::string name; openswmm::SpeciesKind kind;
                  std::string units; };
     std::vector<Row> tail;
-    for (int i = base + ((rx.registry_base >= 0) ? old_n_msx : 0);
+    for (int i = base + ((old_base >= 0) ? old_n_msx : 0);
          i < reg.count(); ++i)
         tail.push_back({reg.name(i), reg.kind(i), reg.units(i)});
 
@@ -287,7 +291,8 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     auto rx_backup  = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     auto& rx = ctx.reactions;
-    const int old_n = rx.n_species();
+    const int old_base = rx.registry_base;
+    const int old_n    = rx.n_species();
     rx.species_name.push_back(name);
     rx.species_is_wall.push_back(is_wall ? 1 : 0);
     rx.species_units.push_back(units);
@@ -298,7 +303,7 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     rx.tank_form.push_back(openswmm::ReactionExprForm::NONE);
     rx.tank_expr_src.emplace_back();
     rx.init_global.push_back(0.0);
-    rebuild_msx_registry(ctx, old_n);
+    rebuild_msx_registry(ctx, old_base, old_n);
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
         return SWMM_ERR_BADPARAM;
     rx.configured = true;
@@ -318,7 +323,8 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
 
     auto rx_backup  = ctx.reactions;
     auto reg_backup = ctx.species_registry;
-    const int old_n = rx.n_species();
+    const int old_base = rx.registry_base;
+    const int old_n    = rx.n_species();
     const auto u = static_cast<std::size_t>(idx);
     // Erase the row from EVERY index-aligned vector (the D-RC3 hazard).
     rx.species_name.erase(rx.species_name.begin() + u);
@@ -344,7 +350,7 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
             --rx.init_elem_species[ur];
         }
     }
-    rebuild_msx_registry(ctx, old_n);
+    rebuild_msx_registry(ctx, old_base, old_n);
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
         return SWMM_ERR_BADPARAM;
     return SWMM_OK;
@@ -630,6 +636,132 @@ SWMM_ENGINE_API int swmm_reaction_init_elem_remove(SWMM_Engine engine,
     rx.init_elem_species.erase(rx.init_elem_species.begin() + u);
     rx.init_elem_value.erase(rx.init_elem_value.begin() + u);
     return SWMM_OK;
+}
+
+// ============================================================================
+// Whole-file text surface (E-C3)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_reactions_serialize(SWMM_Engine engine, char* buf,
+        int buflen, int* needed_len) {
+    CHECK_HANDLE(engine);
+    if (!needed_len) return SWMM_ERR_BADPARAM;
+    const std::string text = openswmm::transport::serializeReactionSystem(
+        to_engine(engine)->context());
+    *needed_len = static_cast<int>(text.size()) + 1;
+    if (!buf) return SWMM_OK;
+    if (buflen < *needed_len) return SWMM_ERR_BADPARAM;
+    std::memcpy(buf, text.c_str(), text.size() + 1);
+    return SWMM_OK;
+}
+
+namespace {
+
+/// Shared body of check_text (keep=false) and apply_text (keep=true):
+/// parse, strip the current MSX system (preserving the reserved-species
+/// tail so the re-applied block lands back in canonical position), apply,
+/// and either keep or restore. On ANY failure both ctx.reactions and the
+/// registry are restored byte-identical (the staged-swap contract).
+int apply_or_check_text(openswmm::SimulationContext& ctx, const char* text,
+                        char* errbuf, int buflen, bool keep) {
+    if (errbuf && buflen > 0) errbuf[0] = '\0';
+    if (!text || !*text) {
+        if (errbuf && buflen > 0)
+            copy_to_buf("empty reactions text", errbuf, buflen);
+        return SWMM_ERR_BADPARAM;
+    }
+
+    openswmm::components::ComponentConfigSections sections;
+    const std::string perr = openswmm::components::parse_component_config_text(
+        text, "<text>", sections);
+    if (!perr.empty()) {
+        if (errbuf && buflen > 0) copy_to_buf(perr, errbuf, buflen);
+        return SWMM_ERR_BADPARAM;
+    }
+
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+
+    // Strip: remove the current MSX block but SNAPSHOT everything after it
+    // (the reserved species), so the fresh apply's registry adds land in
+    // the canonical pollutants < MSX < reserved order.
+    auto& reg = ctx.species_registry;
+    auto& rx  = ctx.reactions;
+    const int base = (rx.registry_base >= 0) ? rx.registry_base
+                                             : reg.pollutant_count();
+    const int old_msx = (rx.registry_base >= 0) ? rx.n_species() : 0;
+    struct Row { std::string name; openswmm::SpeciesKind kind;
+                 std::string units; };
+    std::vector<Row> tail;
+    for (int i = base + old_msx; i < reg.count(); ++i)
+        tail.push_back({reg.name(i), reg.kind(i), reg.units(i)});
+    reg.truncate_to(base);
+    rx.clear();
+
+    std::vector<std::string> errs;
+    openswmm::transport::applyReactionSections(ctx, sections, errs);
+    if (!errs.empty()) {
+        ctx.reactions        = std::move(rx_backup);
+        ctx.species_registry = std::move(reg_backup);
+        if (errbuf && buflen > 0) copy_to_buf(errs.front(), errbuf, buflen);
+        return SWMM_ERR_BADPARAM;
+    }
+    for (auto& r : tail)
+        reg.add(std::move(r.name), r.kind, std::move(r.units));
+
+    if (!keep) {
+        ctx.reactions        = std::move(rx_backup);
+        ctx.species_registry = std::move(reg_backup);
+    }
+    return SWMM_OK;
+}
+
+} // namespace
+
+SWMM_ENGINE_API int swmm_reactions_check_text(SWMM_Engine engine,
+        const char* text, char* errbuf, int buflen) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    // The dry-run stages through the live context (restore-always), so it
+    // shares apply's editable-states guard rather than racing a running
+    // solver with a transient swap.
+    CHECK_GEOMETRY(ctx);
+    return apply_or_check_text(ctx, text, errbuf, buflen, /*keep=*/false);
+}
+
+SWMM_ENGINE_API int swmm_reactions_apply_text(SWMM_Engine engine,
+        const char* text, char* errbuf, int buflen) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    return apply_or_check_text(ctx, text, errbuf, buflen, /*keep=*/true);
+}
+
+SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine,
+        const char* path_or_null) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+
+    std::string path = path_or_null ? path_or_null : "";
+    if (path.empty()) {
+        // The bound reactions component's config path — resolved when the
+        // model was opened from a file, verbatim otherwise.
+        for (const auto& spec : ctx.process_component_specs) {
+            if (spec.id != "org.hydrocouple.openswmm.reactions") continue;
+            path = !spec.resolved_config_path.empty()
+                       ? spec.resolved_config_path
+                       : spec.config_path;
+            break;
+        }
+    }
+    if (path.empty()) return SWMM_ERR_BADPARAM;
+
+    const std::string text =
+        openswmm::transport::serializeReactionSystem(ctx);
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) return SWMM_ERR_BADPARAM;
+    f << text;
+    return f.good() ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
 // ============================================================================

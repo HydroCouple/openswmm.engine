@@ -181,6 +181,46 @@ SWMM_ENGINE_API int swmm_reaction_init_elem_set(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_reaction_init_elem_remove(SWMM_Engine engine,
         int entry_idx);
 
+/* ---- Whole-file text surface (E-C3) — the GUI text tab's contract.
+ * serialize -> apply_text -> serialize is byte-identical (D-RC6). -------- */
+
+/**
+ * @brief Canonical .rxn text from engine state.
+ * @param buf        Caller buffer (may be NULL to size).
+ * @param buflen     Size of buf in bytes.
+ * @param needed_len [out] Required size INCLUDING the NUL — always set.
+ * @return SWMM_OK when written; SWMM_ERR_BADPARAM when buf is too small
+ *         (needed_len still tells the caller how much to allocate).
+ */
+SWMM_ENGINE_API int swmm_reactions_serialize(SWMM_Engine engine, char* buf,
+        int buflen, int* needed_len);
+
+/**
+ * @brief Dry-run full-file parse+compile of .rxn TEXT against this model.
+ *        Zero state change, success or failure.
+ * @return SWMM_OK when the text would apply; SWMM_ERR_BADPARAM with the
+ *         first diagnostic in errbuf otherwise.
+ */
+SWMM_ENGINE_API int swmm_reactions_check_text(SWMM_Engine engine,
+        const char* text, char* errbuf, int buflen);
+
+/**
+ * @brief Transactional replace of the whole reaction system from .rxn TEXT.
+ * @details BUILDING/OPENED only. Staged: on ANY error the previous system —
+ *          reaction state and registry block — is byte-identical to before
+ *          the call (today's clear-on-error is fine at open where there is
+ *          nothing to lose; on a live model it would be destructive).
+ */
+SWMM_ENGINE_API int swmm_reactions_apply_text(SWMM_Engine engine,
+        const char* text, char* errbuf, int buflen);
+
+/**
+ * @brief Serialize to the bound component config path (or @p path_or_null
+ *        when given). SWMM_ERR_BADPARAM when neither names a path.
+ */
+SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine,
+        const char* path_or_null);
+
 /* ---- Static vocabulary (no engine handle needed) ----------------------- */
 
 /** @brief Number of built-in hydraulic variables (D Q U RE US FF AV HRT DT). */

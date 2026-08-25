@@ -308,6 +308,149 @@ TEST(ReactionsApiCrud, ApiBuiltSystemEqualsFileAuthored) {
 }
 
 // ---------------------------------------------------------------------------
+// E-C3 — D-RC6: serialize -> apply_text -> serialize is byte-identical (the
+// GUI text tab's sync contract), and check_text is a true dry run.
+TEST_F(ReactionsApiTest, SerializeApplyRoundTripIsByteIdentical) {
+    int need = 0;
+    ASSERT_EQ(swmm_reactions_serialize(engine_, nullptr, 0, &need), SWMM_OK);
+    ASSERT_GT(need, 1);
+    std::string a(static_cast<std::size_t>(need), '\0');
+    ASSERT_EQ(swmm_reactions_serialize(engine_, a.data(), need, &need),
+              SWMM_OK);
+    a.resize(static_cast<std::size_t>(need) - 1);
+
+    // check_text: valid, and zero state change.
+    char err[256];
+    const int ns0 = swmm_reaction_species_count(engine_);
+    ASSERT_EQ(swmm_reactions_check_text(engine_, a.c_str(), err, 256),
+              SWMM_OK) << err;
+    EXPECT_EQ(swmm_reaction_species_count(engine_), ns0);
+
+    ASSERT_EQ(swmm_reactions_apply_text(engine_, a.c_str(), err, 256),
+              SWMM_OK) << err;
+    ASSERT_EQ(swmm_reactions_serialize(engine_, nullptr, 0, &need), SWMM_OK);
+    std::string b(static_cast<std::size_t>(need), '\0');
+    ASSERT_EQ(swmm_reactions_serialize(engine_, b.data(), need, &need),
+              SWMM_OK);
+    b.resize(static_cast<std::size_t>(need) - 1);
+    EXPECT_EQ(a, b) << "serialize -> apply_text -> serialize must be "
+                       "byte-identical (D-RC6)";
+}
+
+// ---------------------------------------------------------------------------
+// E-C3 — a failed apply_text leaves the previous system byte-identical.
+// Falsifier: under the old clear-on-error design the system would be GONE.
+TEST_F(ReactionsApiTest, FailedApplyLeavesSystemIntact) {
+    int need = 0;
+    ASSERT_EQ(swmm_reactions_serialize(engine_, nullptr, 0, &need), SWMM_OK);
+    std::string before(static_cast<std::size_t>(need), '\0');
+    ASSERT_EQ(swmm_reactions_serialize(engine_, before.data(), need, &need),
+              SWMM_OK);
+    before.resize(static_cast<std::size_t>(need) - 1);
+
+    char err[256] = {0};
+    EXPECT_EQ(swmm_reactions_apply_text(
+                  engine_,
+                  "[REACTION_SPECIES]\nBULK A MG\n"
+                  "[REACTION_PIPES]\nRATE NOPE -1.0 * NOPE\n",
+                  err, 256),
+              SWMM_ERR_BADPARAM);
+    EXPECT_NE(std::string(err).find("NOPE"), std::string::npos) << err;
+
+    ASSERT_EQ(swmm_reactions_serialize(engine_, nullptr, 0, &need), SWMM_OK);
+    std::string after(static_cast<std::size_t>(need), '\0');
+    ASSERT_EQ(swmm_reactions_serialize(engine_, after.data(), need, &need),
+              SWMM_OK);
+    after.resize(static_cast<std::size_t>(need) - 1);
+    EXPECT_EQ(before, after)
+        << "a failed apply must leave the prior system intact";
+    // ...and the intact system's vocabulary still validates.
+    int col = -1;
+    EXPECT_EQ(swmm_reaction_validate_expression(engine_, SWMM_RXN_SCOPE_PIPE,
+                                                "HOCL * k1", err, 256, &col),
+              SWMM_OK) << err;
+}
+
+// ---------------------------------------------------------------------------
+// E-C3 — save writes a file a fresh engine reads back into the identical
+// canonical text.
+TEST_F(ReactionsApiTest, SaveReopensIdentically) {
+    ASSERT_EQ(swmm_reactions_save(engine_, "_rxapi_saved.rxn"), SWMM_OK);
+
+    // The fixture deck, rebound to the saved file.
+    {
+        std::ifstream in("_rxapi.inp");
+        std::ofstream out("_rxapi_s.inp");
+        std::string line;
+        while (std::getline(in, line)) {
+            const auto pos = line.find("_rxapi.rxn");
+            if (pos != std::string::npos)
+                line.replace(pos, std::strlen("_rxapi.rxn"),
+                             "_rxapi_saved.rxn");
+            out << line << "\n";
+        }
+    }
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_NE(e2, nullptr);
+    ASSERT_EQ(swmm_engine_open(e2, "_rxapi_s.inp", "_rxapi_s.rpt", nullptr,
+                               nullptr), SWMM_OK);
+    int n1 = 0, n2 = 0;
+    ASSERT_EQ(swmm_reactions_serialize(engine_, nullptr, 0, &n1), SWMM_OK);
+    ASSERT_EQ(swmm_reactions_serialize(e2, nullptr, 0, &n2), SWMM_OK);
+    std::string a(static_cast<std::size_t>(n1), '\0'),
+                b(static_cast<std::size_t>(n2), '\0');
+    ASSERT_EQ(swmm_reactions_serialize(engine_, a.data(), n1, &n1), SWMM_OK);
+    ASSERT_EQ(swmm_reactions_serialize(e2, b.data(), n2, &n2), SWMM_OK);
+    EXPECT_EQ(a, b);
+    swmm_engine_destroy(e2);
+    std::remove("_rxapi_s.inp");
+    std::remove("_rxapi_saved.rxn");
+}
+
+// ---------------------------------------------------------------------------
+// E-C3 — the [PROCESS_COMPONENTS] surface: enumerate/find on the fixture,
+// register (dup refused, file need not exist), remove, and a registration
+// survives swmm_model_write.
+TEST_F(ReactionsApiTest, ProcessComponentRegistryRoundTrip) {
+    ASSERT_GE(swmm_process_component_count(engine_), 1);
+    const int ri = swmm_process_component_find(
+        engine_, "org.hydrocouple.openswmm.reactions");
+    ASSERT_GE(ri, 0);
+    char id[128], cfg[256], res[512];
+    ASSERT_EQ(swmm_process_component_get(engine_, ri, id, 128, cfg, 256,
+                                         res, 512), SWMM_OK);
+    EXPECT_STREQ(id, "org.hydrocouple.openswmm.reactions");
+    EXPECT_STREQ(cfg, "_rxapi.rxn");
+    EXPECT_NE(std::string(res).find("_rxapi.rxn"), std::string::npos)
+        << "resolved path must be set after open";
+
+    // Register: new id OK (config file absent — D-RC8), duplicate refused.
+    ASSERT_EQ(swmm_process_component_register(
+                  engine_, "org.hydrocouple.openswmm.waterage",
+                  "_rxapi_new.age"), SWMM_OK);
+    EXPECT_EQ(swmm_process_component_register(
+                  engine_, "org.hydrocouple.openswmm.reactions", "x.rxn"),
+              SWMM_ERR_BADPARAM);
+
+    // The registration reaches the written deck.
+    ASSERT_EQ(swmm_model_write(engine_, "_rxapi_pc.inp"), SWMM_OK);
+    {
+        std::ifstream f("_rxapi_pc.inp");
+        std::string all((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
+        EXPECT_NE(all.find("org.hydrocouple.openswmm.waterage"),
+                  std::string::npos);
+    }
+    const int wi = swmm_process_component_find(
+        engine_, "org.hydrocouple.openswmm.waterage");
+    ASSERT_GE(wi, 0);
+    ASSERT_EQ(swmm_process_component_remove(engine_, wi), SWMM_OK);
+    EXPECT_EQ(swmm_process_component_find(
+                  engine_, "org.hydrocouple.openswmm.waterage"), -1);
+    std::remove("_rxapi_pc.inp");
+}
+
+// ---------------------------------------------------------------------------
 // E-C2 — D-RC3: species removal keeps every aligned vector in step, and a
 // referenced species cannot be removed.
 TEST_F(ReactionsApiTest, SpeciesRemoveAlignmentAudit) {
