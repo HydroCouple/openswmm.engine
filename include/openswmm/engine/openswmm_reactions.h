@@ -116,6 +116,71 @@ SWMM_ENGINE_API int swmm_reaction_expr_get(SWMM_Engine engine, int scope,
 SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
         const char* key, char* value, int value_len);
 
+/* ---- CRUD (E-C2) — BUILDING/OPENED only (rows only seed at start).
+ * Every mutator validates eagerly: the whole system is recompiled before
+ * the call returns, and a mutation that leaves any expression uncompilable
+ * is rolled back and refused (SWMM_ERR_BADPARAM) — the GUI can never store
+ * an uncompilable model (D-RC5). Species add/remove rebuild the species
+ * registry's MSX block in place (D-RC3); removal of a species still
+ * referenced by any compiled expression is refused. --------------------- */
+
+/** @brief Declare a species (is_wall: 0 BULK, 1 WALL; atol/rtol 0 = global). */
+SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
+        const char* name, int is_wall, const char* units, double atol,
+        double rtol);
+
+/** @brief Remove species @p idx. Refused while any expression references it. */
+SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine, int idx);
+
+/** @brief Add a coefficient (is_param: 1 PARAMETER, 0 CONSTANT). */
+SWMM_ENGINE_API int swmm_reaction_coeff_add(SWMM_Engine engine,
+        const char* name, int is_param, double value);
+
+/** @brief Change a coefficient's value. */
+SWMM_ENGINE_API int swmm_reaction_coeff_set_value(SWMM_Engine engine, int idx,
+        double value);
+
+/** @brief Remove coefficient @p idx. Refused while referenced. */
+SWMM_ENGINE_API int swmm_reaction_coeff_remove(SWMM_Engine engine, int idx);
+
+/** @brief Add an intermediate term (referencable by later terms only). */
+SWMM_ENGINE_API int swmm_reaction_term_add(SWMM_Engine engine,
+        const char* name, const char* expr);
+
+/** @brief Replace term @p idx's expression. */
+SWMM_ENGINE_API int swmm_reaction_term_set_expr(SWMM_Engine engine, int idx,
+        const char* expr);
+
+/** @brief Remove term @p idx. Refused while referenced. */
+SWMM_ENGINE_API int swmm_reaction_term_remove(SWMM_Engine engine, int idx);
+
+/**
+ * @brief Set (or clear, with SWMM_RXN_FORM_NONE) a species' expression in
+ *        one scope (PIPE or TANK).
+ */
+SWMM_ENGINE_API int swmm_reaction_expr_set(SWMM_Engine engine, int scope,
+        int species_idx, int form, const char* expr);
+
+/** @brief Set a [REACTION_OPTIONS] value from its canonical token. */
+SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
+        const char* key, const char* value);
+
+/* ---- Initial quality (GLOBAL + the E-B NODE/LINK rows) ----------------- */
+
+SWMM_ENGINE_API int swmm_reaction_init_global_get(SWMM_Engine engine,
+        int species_idx, double* value);
+SWMM_ENGINE_API int swmm_reaction_init_global_set(SWMM_Engine engine,
+        int species_idx, double value);
+SWMM_ENGINE_API int swmm_reaction_init_elem_count(SWMM_Engine engine);
+SWMM_ENGINE_API int swmm_reaction_init_elem_get(SWMM_Engine engine,
+        int entry_idx, int* is_link, int* elem_idx, int* species_idx,
+        double* value);
+/** @brief Upsert on (is_link, elem_idx, species_idx). Value must be >= 0. */
+SWMM_ENGINE_API int swmm_reaction_init_elem_set(SWMM_Engine engine,
+        int is_link, int elem_idx, int species_idx, double value);
+SWMM_ENGINE_API int swmm_reaction_init_elem_remove(SWMM_Engine engine,
+        int entry_idx);
+
 /* ---- Static vocabulary (no engine handle needed) ----------------------- */
 
 /** @brief Number of built-in hydraulic variables (D Q U RE US FF AV HRT DT). */

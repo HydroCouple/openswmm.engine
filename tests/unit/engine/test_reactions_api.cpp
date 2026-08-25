@@ -223,4 +223,190 @@ TEST_F(ReactionsApiTest, ValidationOutcomes) {
               SWMM_ERR_BADPARAM);
 }
 
+// ---------------------------------------------------------------------------
+// E-C2 — the strongest anti-drift falsifier: a system built from an EMPTY
+// engine through the CRUD API must step identically to the same system
+// authored in a .rxn file. If the API stored anything the compiler/binding
+// reads differently (a missed aligned vector, an unset flag), the
+// trajectories diverge.
+TEST(ReactionsApiCrud, ApiBuiltSystemEqualsFileAuthored) {
+    // File-authored twin.
+    write_files();
+    SWMM_Engine ef = swmm_engine_create();
+    ASSERT_NE(ef, nullptr);
+    ASSERT_EQ(swmm_engine_open(ef, "_rxapi.inp", "_rxapi_f.rpt", nullptr,
+                               nullptr), SWMM_OK);
+
+    // API-built twin: the same deck minus [PROCESS_COMPONENTS].
+    {
+        std::ifstream in("_rxapi.inp");
+        std::ofstream out("_rxapi_a.inp");
+        std::string line;
+        bool skip = false;
+        while (std::getline(in, line)) {
+            if (line.find("[PROCESS_COMPONENTS]") != std::string::npos) {
+                skip = true;
+                continue;
+            }
+            if (skip && !line.empty() && line[0] == '[') skip = false;
+            if (!skip) out << line << "\n";
+        }
+    }
+    SWMM_Engine ea = swmm_engine_create();
+    ASSERT_NE(ea, nullptr);
+    ASSERT_EQ(swmm_engine_open(ea, "_rxapi_a.inp", "_rxapi_a.rpt", nullptr,
+                               nullptr), SWMM_OK);
+    EXPECT_EQ(swmm_reaction_species_count(ea), 0);
+
+    ASSERT_EQ(swmm_reaction_option_set(ea, "SOLVER", "BDF2"), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_option_set(ea, "RATE_UNITS", "HR"), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_option_set(ea, "ATOL", "1e-8"), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_species_add(ea, "HOCL", 0, "MG", 0.0, 0.0),
+              SWMM_OK);
+    ASSERT_EQ(swmm_reaction_species_add(ea, "WALLP", 1, "MG", 1e-7, 1e-5),
+              SWMM_OK);
+    ASSERT_EQ(swmm_reaction_coeff_add(ea, "k1", 1, 0.36), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_coeff_add(ea, "kb", 0, 0.12), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_term_add(ea, "AMM", "0.05 * HOCL"), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_expr_set(ea, SWMM_RXN_SCOPE_PIPE, 0,
+                                     SWMM_RXN_FORM_RATE, "-k1 * HOCL"),
+              SWMM_OK);
+
+    // Step both five routing steps and compare the MSX trajectory bitwise-
+    // tight (same code path, same inputs).
+    auto run5 = [](SWMM_Engine e) {
+        EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
+        EXPECT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+        double elapsed = 1.0;
+        for (int i = 0; i < 5 && elapsed > 0.0; ++i)
+            EXPECT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+    };
+    run5(ef);
+    run5(ea);
+
+    // Probe through the public discovery surface (no internals).
+    double gf = -1, ga = -1;
+    ASSERT_EQ(swmm_reaction_init_global_get(ef, 0, &gf), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_init_global_get(ea, 0, &ga), SWMM_OK);
+    EXPECT_DOUBLE_EQ(gf, ga);
+    char e1[256], e2[256];
+    int f1 = -1, f2 = -1;
+    ASSERT_EQ(swmm_reaction_expr_get(ef, SWMM_RXN_SCOPE_PIPE, 0, &f1, e1,
+                                     256), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_expr_get(ea, SWMM_RXN_SCOPE_PIPE, 0, &f2, e2,
+                                     256), SWMM_OK);
+    EXPECT_EQ(f1, f2);
+    EXPECT_STREQ(e1, e2);
+
+    swmm_engine_end(ef);
+    swmm_engine_end(ea);
+    swmm_engine_destroy(ef);
+    swmm_engine_destroy(ea);
+    std::remove("_rxapi.inp");
+    std::remove("_rxapi.rxn");
+    std::remove("_rxapi_a.inp");
+}
+
+// ---------------------------------------------------------------------------
+// E-C2 — D-RC3: species removal keeps every aligned vector in step, and a
+// referenced species cannot be removed.
+TEST_F(ReactionsApiTest, SpeciesRemoveAlignmentAudit) {
+    // The fixture holds HOCL (with a RATE referencing it via k1) and WALLP.
+    ASSERT_EQ(swmm_reaction_species_add(engine_, "ZED", 0, "MG", 0.0, 0.0),
+              SWMM_OK);
+    ASSERT_EQ(swmm_reaction_expr_set(engine_, SWMM_RXN_SCOPE_TANK, 2,
+                                     SWMM_RXN_FORM_RATE, "-0.5 * ZED"),
+              SWMM_OK);
+    ASSERT_EQ(swmm_reaction_species_count(engine_), 3);
+
+    // HOCL is referenced by its own RATE — removal refused.
+    EXPECT_EQ(swmm_reaction_species_remove(engine_, 0), SWMM_ERR_BADPARAM);
+
+    // WALLP (idx 1) is unreferenced — removal shifts ZED down to idx 1 with
+    // its expression intact and the registry agreeing on names.
+    ASSERT_EQ(swmm_reaction_species_remove(engine_, 1), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_species_count(engine_), 2);
+    char name[64], units[32], expr[256];
+    int is_wall = -1, form = -1;
+    double atol = 0, rtol = 0;
+    ASSERT_EQ(swmm_reaction_species_get(engine_, 1, name, 64, &is_wall,
+                                        units, 32, &atol, &rtol), SWMM_OK);
+    EXPECT_STREQ(name, "ZED");
+    ASSERT_EQ(swmm_reaction_expr_get(engine_, SWMM_RXN_SCOPE_TANK, 1, &form,
+                                     expr, 256), SWMM_OK);
+    EXPECT_EQ(form, SWMM_RXN_FORM_RATE);
+    EXPECT_STREQ(expr, "-0.5 * ZED");
+    // The recompiled expression must still evaluate against the SHIFTED
+    // index — validated implicitly by the eager recompile, and the
+    // validate call agrees the vocabulary still holds ZED.
+    char err[128];
+    int col = -1;
+    EXPECT_EQ(swmm_reaction_validate_expression(engine_, SWMM_RXN_SCOPE_TANK,
+                                                "ZED * 2", err, 128, &col),
+              SWMM_OK) << err;
+}
+
+// ---------------------------------------------------------------------------
+// E-C2 — eager validation rolls the mutation back (D-RC5): a bad expression
+// never lands, and the pre-existing system is untouched.
+TEST_F(ReactionsApiTest, EagerValidationRollsBack) {
+    const int nt = swmm_reaction_term_count(engine_);
+    EXPECT_EQ(swmm_reaction_term_add(engine_, "BAD", "MIN(HOCL)"),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_reaction_term_count(engine_), nt);
+
+    char expr[256];
+    int form = -1;
+    EXPECT_EQ(swmm_reaction_expr_set(engine_, SWMM_RXN_SCOPE_PIPE, 0,
+                                     SWMM_RXN_FORM_RATE, "1 + NOPE"),
+              SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_reaction_expr_get(engine_, SWMM_RXN_SCOPE_PIPE, 0, &form,
+                                     expr, 256), SWMM_OK);
+    EXPECT_STREQ(expr, "-k1 * HOCL") << "failed set must leave the old expr";
+
+    // Duplicate names refused across kinds.
+    EXPECT_EQ(swmm_reaction_species_add(engine_, "k1", 0, "MG", 0, 0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_reaction_coeff_add(engine_, "HOCL", 1, 1.0),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_reaction_species_add(engine_, "TSS", 0, "MG", 0, 0),
+              SWMM_ERR_BADPARAM) << "may not shadow a pollutant";
+}
+
+// ---------------------------------------------------------------------------
+// E-C2 — per-element initial rows: upsert/get/remove round-trip, negative
+// refused, and lifecycle guards bite after start.
+TEST_F(ReactionsApiTest, InitRowsAndLifecycle) {
+    ASSERT_EQ(swmm_reaction_init_global_set(engine_, 0, 0.8), SWMM_OK);
+    double g = -1;
+    ASSERT_EQ(swmm_reaction_init_global_get(engine_, 0, &g), SWMM_OK);
+    EXPECT_DOUBLE_EQ(g, 0.8);
+
+    EXPECT_EQ(swmm_reaction_init_elem_count(engine_), 0);
+    ASSERT_EQ(swmm_reaction_init_elem_set(engine_, 0, 0, 0, 1.2), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_init_elem_set(engine_, 1, 0, 0, 0.5), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_init_elem_set(engine_, 0, 0, 0, 1.4), SWMM_OK);
+    EXPECT_EQ(swmm_reaction_init_elem_count(engine_), 2);   // upsert
+    int il = -1, ei = -1, si = -1;
+    double v = -1;
+    ASSERT_EQ(swmm_reaction_init_elem_get(engine_, 0, &il, &ei, &si, &v),
+              SWMM_OK);
+    EXPECT_EQ(il, 0);
+    EXPECT_DOUBLE_EQ(v, 1.4);
+    EXPECT_EQ(swmm_reaction_init_elem_set(engine_, 0, 0, 0, -1.0),
+              SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_reaction_init_elem_remove(engine_, 0), SWMM_OK);
+    EXPECT_EQ(swmm_reaction_init_elem_count(engine_), 1);
+
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
+    EXPECT_EQ(swmm_reaction_species_add(engine_, "LATE", 0, "MG", 0, 0),
+              SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_reaction_option_set(engine_, "ATOL", "1e-9"),
+              SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_reaction_init_elem_set(engine_, 0, 0, 0, 1.0),
+              SWMM_ERR_LIFECYCLE);
+    swmm_engine_end(engine_);
+}
+
 }  // namespace

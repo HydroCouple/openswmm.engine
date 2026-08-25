@@ -111,6 +111,22 @@ public:
     SpeciesKind kind(int i) const { return kind_[static_cast<std::size_t>(i)]; }
     const std::string& units(int i) const { return units_[static_cast<std::size_t>(i)]; }
 
+    /// Drop every entry at index >= @p n (E-C2: the MSX-block rebuild in
+    /// the reactions CRUD API snapshots the tail, truncates, re-adds the
+    /// MSX species from ReactionData, then restores the tail). Recounts
+    /// pollutants defensively, though the pollutant block always precedes n.
+    void truncate_to(int n) {
+        if (n < 0) n = 0;
+        if (n >= count()) return;
+        const auto un = static_cast<std::size_t>(n);
+        name_.resize(un);
+        kind_.resize(un);
+        units_.resize(un);
+        n_pollutants_ = 0;
+        for (const auto k : kind_)
+            if (k == SpeciesKind::POLLUTANT) ++n_pollutants_;
+    }
+
 private:
     std::vector<std::string> name_;
     std::vector<SpeciesKind> kind_;
