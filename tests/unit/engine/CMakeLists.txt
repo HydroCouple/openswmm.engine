@@ -199,6 +199,12 @@ add_gtest_unit(test_engine_legacy_shape_boundary test_legacy_shape_boundary.cpp)
 # key must cover every parameter chebsec::compile() actually takes, not just
 # (curve, scale) — see the file header for the is_open gap this pins.
 add_gtest_unit(test_engine_xsect_polygon_dedup test_xsect_polygon_dedup.cpp)
+# Phase 7: run-time cross-section change through swmm_link_set_polygon --
+# the CONSERVE_DEPTH/CONSERVE_VOLUME reconciliation, the FV-only refusal
+# (Gap D), boundary rejects, and the get_polygon round-trip.
+add_gtest_unit(test_engine_link_polygon_runtime test_link_polygon_runtime.cpp)
+target_compile_definitions(test_engine_link_polygon_runtime PRIVATE
+    OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
