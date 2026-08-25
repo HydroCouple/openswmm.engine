@@ -227,6 +227,98 @@ OPENSWMM_KERNEL_FN void chebAWofY(const ChebSection& s, double y,
     W = (w > 0.0) ? w : 0.0;
 }
 
+/**
+ * @brief Three Chebyshev series sharing one basis recurrence.
+ *
+ * @details The three-field sibling of chebEval2, for callers that need A, W
+ *          and P together. Same reasoning: the `T_k` recurrence is a serial
+ *          dependency chain and the per-field multiply-adds are not, so a
+ *          third field is very nearly free where a third CALL is not.
+ *
+ * @param ca,na  first field's coefficients and retained count.
+ * @param cb,nb  second field's coefficients and retained count.
+ * @param cc,nc  third field's coefficients and retained count.
+ * @param u      fit variable in [0,1], from chebUofY().
+ * @param a_out,b_out,c_out  the three sums.
+ *
+ * @note All three fields run to `max(na, nb, nc)` terms — safe and
+ *       result-preserving for exactly the reason chebEval2 and chebAll
+ *       document: the surplus coefficients are zero, so the extra terms add
+ *       `0.0 * T_k`.
+ */
+OPENSWMM_KERNEL_FN void chebEval3(const double* ca, int na,
+                                  const double* cb, int nb,
+                                  const double* cc, int nc, double u,
+                                  double& a_out, double& b_out,
+                                  double& c_out) noexcept {
+    const double x = 2.0 * u - 1.0;
+    const double x2 = 2.0 * x;
+    int n = (na > nb) ? na : nb;
+    if (nc > n) n = nc;
+
+    double a = ca[0], b = cb[0], c = cc[0];
+    if (n > 1) { a += ca[1] * x; b += cb[1] * x; c += cc[1] * x; }
+    double t_prev = 1.0, t_cur = x;
+    for (int k = 2; k < n; ++k) {
+        const double t = x2 * t_cur - t_prev;
+        t_prev = t_cur;
+        t_cur = t;
+        a += ca[k] * t;
+        b += cb[k] * t;
+        c += cc[k] * t;
+    }
+    a_out = a;
+    b_out = b;
+    c_out = c;
+}
+
+/**
+ * @brief Flow area, top width and hydraulic radius at one depth, in one pass.
+ *
+ * @details Exists for the FV closure (`FvKernels.hpp::closureAll`), which
+ *          needs exactly these three at one depth for every cell on every
+ *          timestep. Through the ordinary accessors that costs FOUR series
+ *          evaluations and four piece scans, not three: `chebRofY` evaluates
+ *          the area series a second time to form A/P (see its body). One
+ *          piece scan and one basis recurrence replace all of it.
+ *
+ * @param s  compiled section.
+ * @param y  depth (ft).
+ * @param A  flow area (ft^2).
+ * @param W  top width (ft), clamped at 0 like chebWofY.
+ * @param R  hydraulic radius (ft).
+ *
+ * @note Bit-identical to chebAofY/chebWofY/chebRofY called separately. Below
+ *       the crown all three select the same piece and the same u, and R is
+ *       formed as `a / p` from the very coefficients chebRofY would have
+ *       re-evaluated. At and above y_full each field takes the scalar its own
+ *       accessor takes (a_full, the top piece's width at u = 1, r_full) —
+ *       note in particular that R uses `r_full`, which for a closed shape
+ *       carries the crown perimeter JUMP that extrapolating the fitted P
+ *       series would miss (ChebSection::p_full).
+ */
+OPENSWMM_KERNEL_FN void chebAWRofY(const ChebSection& s, double y,
+                                   double& A, double& W, double& R) noexcept {
+    if (s.n_pieces <= 0 || y <= 0.0) { A = 0.0; W = 0.0; R = 0.0; return; }
+    if (y >= s.y_full) {
+        const ChebPiece& top = s.piece[s.n_pieces - 1];
+        A = s.a_full;
+        const double w = chebEval(chebCoef(s, top.off_w), top.n_w, 1.0);
+        W = (w > 0.0) ? w : 0.0;
+        R = s.r_full;
+        return;
+    }
+    const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
+    double a = 0.0, w = 0.0, p = 0.0;
+    chebEval3(chebCoef(s, pc.off_a), pc.n_a,
+              chebCoef(s, pc.off_w), pc.n_w,
+              chebCoef(s, pc.off_p), pc.n_p,
+              chebUofY(pc, y), a, w, p);
+    A = a;
+    W = (w > 0.0) ? w : 0.0;
+    R = (p > 0.0) ? a / p : 0.0;
+}
+
 // ===========================================================================
 // Batch accessors
 // ===========================================================================

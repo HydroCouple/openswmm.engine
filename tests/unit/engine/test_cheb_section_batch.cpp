@@ -195,6 +195,16 @@ void expectBatchMatchesScalar(const char* what, const ChebSection& s) {
         chebAWofY(s, y[i], awA, awW);
         EXPECT_EQ(awA, a);
         EXPECT_EQ(awW, w);
+
+        // chebAWRofY (Phase 6: FvKernels' closureAll used to call getAofY,
+        // getWofY and getRofY separately per cell per timestep — four series
+        // evaluations, since chebRofY re-evaluates area to form A/P). Must
+        // agree with all three accessors it replaces there.
+        double rA = 0.0, rW = 0.0, rR = 0.0;
+        chebAWRofY(s, y[i], rA, rW, rR);
+        EXPECT_EQ(rA, chebAofY(s, y[i]));
+        EXPECT_EQ(rW, chebWofY(s, y[i]));
+        EXPECT_EQ(rR, chebRofY(s, y[i]));
     }
 }
 

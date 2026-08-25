@@ -37,6 +37,44 @@ struct Attachment {
 /// Each table interval is integrated with kSub Simpson panels of the exact
 /// closure, so the tabulated I₁ is far more accurate than a trapezoid over the
 /// coarse grid would be — it is the pressure term of every momentum flux.
+/// Exact I₁ for a compiled section, replacing the Simpson quadrature below.
+///
+/// promptperf.md Phase 6 asks for the I₁ table to come "directly from
+/// chebI1ofY". Taken literally that is WRONG here, and the reason is worth
+/// recording: `buildI1Table` integrates `areaOfDepth`, which is NOT the
+/// section area. It is `barrel_scale * A_section` plus the Preissmann slot's
+/// tapered contribution, and `chebI1ofY` knows about neither. Substituting it
+/// unmodified would silently drop the slot area from the pressure term of
+/// every momentum flux on every closed conduit.
+///
+/// The decomposition is exact, though, because `areaOfDepth` is itself a sum
+/// of two terms that integrate independently:
+///
+///     ∫₀ʰ A dη = barrel_scale·I₁_section(h) + t_slot·band²·(S⁴/4 − S⁵/10)
+///
+/// with S = clamp((h − y_crown)/band, 0, 1), since the slot term is
+/// t_slot·band·slotRampIntegral(s) and ∫₀^S (σ³ − σ⁴/2)dσ = S⁴/4 − S⁵/10.
+/// Both halves are closed form, so the table nodes become exact rather than
+/// eighth-order-accurate — which matters most near the invert, where A ~ h^1.5
+/// has an unbounded fourth derivative and Simpson converges worst. That is
+/// precisely the dry-weather regime this project exists to serve.
+///
+/// @note Well-balancedness is unaffected either way: it requires only that I₁
+///       be single-valued in h (see FvKernels.hpp's file header), which a
+///       closed form satisfies at least as well as a quadrature.
+double exactI1(const FvGeometry& g, double h) {
+    const double i1_sec = chebsec::chebI1ofY(*g.xs.cheb, h);
+    double slot = 0.0;
+    const double band = g.y_full - g.y_crown;
+    if (band > 0.0 && h > g.y_crown) {
+        double S = (h - g.y_crown) / band;
+        if (S > 1.0) S = 1.0;
+        const double S4 = S * S * S * S;
+        slot = g.t_slot * band * band * (0.25 * S4 - 0.1 * S4 * S);
+    }
+    return g.barrel_scale * i1_sec + slot;
+}
+
 void buildI1Table(FvGeometry& g) {
     constexpr int kSub = 8;                      // Simpson panels per interval
     const int n = kI1Samples;
@@ -44,6 +82,21 @@ void buildI1Table(FvGeometry& g) {
     if (g.y_full <= 0.0) return;
 
     const double dh = g.y_full / static_cast<double>(n - 1);
+
+    // Compiled boundary: I₁ is available in closed form, so skip the
+    // quadrature entirely (see exactI1 above).
+    if (g.xs.cheb) {
+        g.i1_tbl[0] = 0.0;
+        g.i1_tbl[static_cast<std::size_t>(n)] = 0.0;
+        for (int i = 1; i < n; ++i) {
+            const double h_i = static_cast<double>(i) * dh;
+            g.i1_tbl[static_cast<std::size_t>(i)] = exactI1(g, h_i);
+            g.i1_tbl[static_cast<std::size_t>(n + i)] =
+                kernels::areaOfDepth(g, h_i);
+        }
+        g.i1_crown = exactI1(g, g.y_full);
+        return;
+    }
     const double hs = dh / static_cast<double>(2 * kSub);   // Simpson half-panel
 
     double acc = 0.0;
