@@ -31,7 +31,10 @@
 #include "../../../include/openswmm/engine/openswmm_reactions.h"
 
 #include "../transport/components/ReactionModule/ReactionExpression.hpp"
+#include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -44,6 +47,60 @@ inline void copy_to_buf(const std::string& src, char* buf, int buflen) {
     const int copy_len = std::min(static_cast<int>(src.size()), buflen - 1);
     std::memcpy(buf, src.c_str(), static_cast<std::size_t>(copy_len));
     buf[copy_len] = '\0';
+}
+
+/// True when any compiled expression pushes slot @p idx of kind @p op —
+/// the authoritative referenced-check for remove refusals (D-RC3): the
+/// compiled tokens are what evaluation actually reads, so a scan over the
+/// pool cannot miss or over-count.
+bool pool_references(const openswmm::ReactionData& rx, uint8_t op, int idx) {
+    for (const auto& t : rx.token_pool)
+        if (t.op == op && t.idx == idx) return true;
+    return false;
+}
+
+/// Rebuild the species registry's MSX block from ctx.reactions after a
+/// species add/remove (D-RC3): snapshot every row after the old MSX block
+/// (the reserved species live there), truncate, re-add the MSX species in
+/// ReactionData order, restore the tail. Legal in BUILDING/OPENED only —
+/// nothing downstream has latched registry indexes before initialize().
+void rebuild_msx_registry(openswmm::SimulationContext& ctx, int old_n_msx) {
+    auto& reg = ctx.species_registry;
+    auto& rx  = ctx.reactions;
+    const int base = (rx.registry_base >= 0) ? rx.registry_base
+                                             : reg.pollutant_count();
+    struct Row { std::string name; openswmm::SpeciesKind kind;
+                 std::string units; };
+    std::vector<Row> tail;
+    for (int i = base + ((rx.registry_base >= 0) ? old_n_msx : 0);
+         i < reg.count(); ++i)
+        tail.push_back({reg.name(i), reg.kind(i), reg.units(i)});
+
+    reg.truncate_to(base);
+    rx.registry_base = -1;
+    for (int s = 0; s < rx.n_species(); ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        const int idx = reg.add(rx.species_name[us],
+                                rx.species_is_wall[us]
+                                    ? openswmm::SpeciesKind::MSX_WALL
+                                    : openswmm::SpeciesKind::MSX_BULK,
+                                rx.species_units[us]);
+        if (rx.registry_base < 0) rx.registry_base = idx;
+    }
+    for (auto& r : tail)
+        reg.add(std::move(r.name), r.kind, std::move(r.units));
+}
+
+/// Recompile after a mutation; on failure restore the given backups and
+/// return false (D-RC5: the engine never holds an uncompilable system).
+bool recompile_or_rollback(openswmm::SimulationContext& ctx,
+                           openswmm::ReactionData& rx_backup,
+                           openswmm::SpeciesRegistry& reg_backup) {
+    std::vector<std::string> errs;
+    if (openswmm::transport::recompileReactionSystem(ctx, errs)) return true;
+    ctx.reactions        = std::move(rx_backup);
+    ctx.species_registry = std::move(reg_backup);
+    return false;
 }
 
 } // namespace
@@ -203,6 +260,375 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
         return SWMM_ERR_BADPARAM;
     }
     copy_to_buf(v, value, value_len);
+    return SWMM_OK;
+}
+
+// ============================================================================
+// CRUD (E-C2) — BUILDING/OPENED, eager validation, rollback on failure
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
+        const char* name, int is_wall, const char* units, double atol,
+        double rtol) {
+    CHECK_HANDLE(engine);
+    if (!name || !*name || !units || atol < 0.0 || rtol < 0.0)
+        return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    // Names are unique across ALL kinds (an MSX species may not shadow a
+    // pollutant or reserved species) — the parser's collision rule — and a
+    // species named like a coefficient or term would silently SHADOW it in
+    // expressions (resolution order: species first), so those collide too.
+    if (ctx.species_registry.find(name) >= 0 ||
+        ctx.reactions.find_coef(name) >= 0 ||
+        ctx.reactions.find_term(name) >= 0)
+        return SWMM_ERR_BADPARAM;
+
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+    auto& rx = ctx.reactions;
+    const int old_n = rx.n_species();
+    rx.species_name.push_back(name);
+    rx.species_is_wall.push_back(is_wall ? 1 : 0);
+    rx.species_units.push_back(units);
+    rx.species_atol.push_back(atol);
+    rx.species_rtol.push_back(rtol);
+    rx.pipe_form.push_back(openswmm::ReactionExprForm::NONE);
+    rx.pipe_expr_src.emplace_back();
+    rx.tank_form.push_back(openswmm::ReactionExprForm::NONE);
+    rx.tank_expr_src.emplace_back();
+    rx.init_global.push_back(0.0);
+    rebuild_msx_registry(ctx, old_n);
+    if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+        return SWMM_ERR_BADPARAM;
+    rx.configured = true;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
+        int idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(idx >= 0 && idx < rx.n_species());
+    // D-RC3: refuse while any compiled expression references the species.
+    if (pool_references(rx, openswmm::RxToken::PUSH_SPECIES, idx))
+        return SWMM_ERR_BADPARAM;
+
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+    const int old_n = rx.n_species();
+    const auto u = static_cast<std::size_t>(idx);
+    // Erase the row from EVERY index-aligned vector (the D-RC3 hazard).
+    rx.species_name.erase(rx.species_name.begin() + u);
+    rx.species_is_wall.erase(rx.species_is_wall.begin() + u);
+    rx.species_units.erase(rx.species_units.begin() + u);
+    rx.species_atol.erase(rx.species_atol.begin() + u);
+    rx.species_rtol.erase(rx.species_rtol.begin() + u);
+    rx.pipe_form.erase(rx.pipe_form.begin() + u);
+    rx.pipe_expr_src.erase(rx.pipe_expr_src.begin() + u);
+    rx.tank_form.erase(rx.tank_form.begin() + u);
+    rx.tank_expr_src.erase(rx.tank_expr_src.begin() + u);
+    rx.init_global.erase(rx.init_global.begin() + u);
+    // Per-element initial rows for the species vanish with it; higher
+    // species indexes shift down.
+    for (int r = static_cast<int>(rx.init_elem_idx.size()) - 1; r >= 0; --r) {
+        const auto ur = static_cast<std::size_t>(r);
+        if (rx.init_elem_species[ur] == idx) {
+            rx.init_elem_is_link.erase(rx.init_elem_is_link.begin() + ur);
+            rx.init_elem_idx.erase(rx.init_elem_idx.begin() + ur);
+            rx.init_elem_species.erase(rx.init_elem_species.begin() + ur);
+            rx.init_elem_value.erase(rx.init_elem_value.begin() + ur);
+        } else if (rx.init_elem_species[ur] > idx) {
+            --rx.init_elem_species[ur];
+        }
+    }
+    rebuild_msx_registry(ctx, old_n);
+    if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+        return SWMM_ERR_BADPARAM;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_coeff_add(SWMM_Engine engine,
+        const char* name, int is_param, double value) {
+    CHECK_HANDLE(engine);
+    if (!name || !*name) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    // The parser's duplicate rule: a coefficient may not duplicate a
+    // coefficient, species, or term name.
+    if (rx.find_coef(name) >= 0 || rx.find_species(name) >= 0 ||
+        rx.find_term(name) >= 0)
+        return SWMM_ERR_BADPARAM;
+    rx.coef_name.push_back(name);
+    rx.coef_is_param.push_back(is_param ? 1 : 0);
+    rx.coef_value.push_back(value);
+    // Appending shifts no compiled index — no recompile needed.
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_coeff_set_value(SWMM_Engine engine,
+        int idx, double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.coef_name.size()));
+    rx.coef_value[static_cast<std::size_t>(idx)] = value;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_coeff_remove(SWMM_Engine engine, int idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.coef_name.size()));
+    if (pool_references(rx, openswmm::RxToken::PUSH_COEF, idx))
+        return SWMM_ERR_BADPARAM;
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+    const auto u = static_cast<std::size_t>(idx);
+    rx.coef_name.erase(rx.coef_name.begin() + u);
+    rx.coef_is_param.erase(rx.coef_is_param.begin() + u);
+    rx.coef_value.erase(rx.coef_value.begin() + u);
+    // Higher coefficient indexes shift — recompile re-derives them from
+    // the sources.
+    if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+        return SWMM_ERR_BADPARAM;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_term_add(SWMM_Engine engine,
+        const char* name, const char* expr) {
+    CHECK_HANDLE(engine);
+    if (!name || !*name || !expr) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    if (rx.find_term(name) >= 0 || rx.find_species(name) >= 0 ||
+        rx.find_coef(name) >= 0)
+        return SWMM_ERR_BADPARAM;
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+    rx.term_name.push_back(name);
+    rx.term_expr_src.push_back(expr);
+    if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+        return SWMM_ERR_BADPARAM;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_term_set_expr(SWMM_Engine engine, int idx,
+        const char* expr) {
+    CHECK_HANDLE(engine);
+    if (!expr) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.term_name.size()));
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+    rx.term_expr_src[static_cast<std::size_t>(idx)] = expr;
+    if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+        return SWMM_ERR_BADPARAM;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_term_remove(SWMM_Engine engine, int idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(idx >= 0 && idx < static_cast<int>(rx.term_name.size()));
+    if (pool_references(rx, openswmm::RxToken::PUSH_TERM, idx))
+        return SWMM_ERR_BADPARAM;
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+    const auto u = static_cast<std::size_t>(idx);
+    rx.term_name.erase(rx.term_name.begin() + u);
+    rx.term_expr_src.erase(rx.term_expr_src.begin() + u);
+    if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+        return SWMM_ERR_BADPARAM;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_expr_set(SWMM_Engine engine, int scope,
+        int species_idx, int form, const char* expr) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
+    if (scope != SWMM_RXN_SCOPE_PIPE && scope != SWMM_RXN_SCOPE_TANK)
+        return SWMM_ERR_BADPARAM;
+    if (form < SWMM_RXN_FORM_NONE || form > SWMM_RXN_FORM_FORMULA)
+        return SWMM_ERR_BADPARAM;
+    if (form != SWMM_RXN_FORM_NONE && (!expr || !*expr))
+        return SWMM_ERR_BADPARAM;
+
+    auto rx_backup  = ctx.reactions;
+    auto reg_backup = ctx.species_registry;
+    const auto u = static_cast<std::size_t>(species_idx);
+    auto& forms = (scope == SWMM_RXN_SCOPE_PIPE) ? rx.pipe_form
+                                                 : rx.tank_form;
+    auto& srcs  = (scope == SWMM_RXN_SCOPE_PIPE) ? rx.pipe_expr_src
+                                                 : rx.tank_expr_src;
+    forms[u] = static_cast<openswmm::ReactionExprForm>(form);
+    srcs[u]  = (form == SWMM_RXN_FORM_NONE) ? std::string() : expr;
+    if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
+        return SWMM_ERR_BADPARAM;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
+        const char* key, const char* value) {
+    CHECK_HANDLE(engine);
+    if (!key || !value) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+
+    auto up = [](const char* s) {
+        std::string r(s);
+        for (auto& ch : r)
+            ch = static_cast<char>(
+                std::toupper(static_cast<unsigned char>(ch)));
+        return r;
+    };
+    const std::string k = up(key);
+    const std::string v = up(value);
+
+    if (k == "SOLVER") {
+        if      (v == "EUL")  rx.solver = openswmm::ReactionSolverKind::EUL;
+        else if (v == "RK5")  rx.solver = openswmm::ReactionSolverKind::RK5;
+        else if (v == "ROS2") rx.solver = openswmm::ReactionSolverKind::ROS2;
+        else if (v == "BDF2") rx.solver = openswmm::ReactionSolverKind::BDF2;
+        else return SWMM_ERR_BADPARAM;
+    } else if (k == "COUPLING") {
+        if      (v == "NONE") rx.coupling = openswmm::ReactionCoupling::NONE;
+        else if (v == "FULL") rx.coupling = openswmm::ReactionCoupling::FULL;
+        else return SWMM_ERR_BADPARAM;
+    } else if (k == "RATE_UNITS") {
+        if      (v == "SEC") rx.rate_units = openswmm::ReactionRateUnits::SEC;
+        else if (v == "MIN") rx.rate_units = openswmm::ReactionRateUnits::MIN;
+        else if (v == "HR")  rx.rate_units = openswmm::ReactionRateUnits::HR;
+        else if (v == "DAY") rx.rate_units = openswmm::ReactionRateUnits::DAY;
+        else return SWMM_ERR_BADPARAM;
+    } else if (k == "AREA_UNITS") {
+        if      (v == "FT2") rx.area_units = openswmm::ReactionAreaUnits::FT2;
+        else if (v == "M2")  rx.area_units = openswmm::ReactionAreaUnits::M2;
+        else if (v == "CM2") rx.area_units = openswmm::ReactionAreaUnits::CM2;
+        else return SWMM_ERR_BADPARAM;
+    } else if (k == "TIMESTEP") {
+        char* end = nullptr;
+        const double d = std::strtod(value, &end);
+        if (!end || *end != '\0' || end == value || d < 0.0)
+            return SWMM_ERR_BADPARAM;
+        rx.timestep = d;
+    } else if (k == "ATOL" || k == "RTOL") {
+        char* end = nullptr;
+        const double d = std::strtod(value, &end);
+        if (!end || *end != '\0' || end == value || d <= 0.0)
+            return SWMM_ERR_BADPARAM;
+        (k == "ATOL" ? rx.atol : rx.rtol) = d;
+    } else {
+        return SWMM_ERR_BADPARAM;
+    }
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Initial quality (GLOBAL + the E-B NODE/LINK rows)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_reaction_init_global_get(SWMM_Engine engine,
+        int species_idx, double* value) {
+    CHECK_HANDLE(engine);
+    const auto& rx = to_engine(engine)->context().reactions;
+    CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
+    if (!value) return SWMM_ERR_BADPARAM;
+    const auto u = static_cast<std::size_t>(species_idx);
+    *value = (u < rx.init_global.size()) ? rx.init_global[u] : 0.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_init_global_set(SWMM_Engine engine,
+        int species_idx, double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
+    if (value < 0.0) return SWMM_ERR_BADPARAM;
+    if (rx.init_global.size() < static_cast<std::size_t>(rx.n_species()))
+        rx.init_global.resize(static_cast<std::size_t>(rx.n_species()), 0.0);
+    rx.init_global[static_cast<std::size_t>(species_idx)] = value;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_init_elem_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return static_cast<int>(
+        to_engine(engine)->context().reactions.init_elem_idx.size());
+}
+
+SWMM_ENGINE_API int swmm_reaction_init_elem_get(SWMM_Engine engine,
+        int entry_idx, int* is_link, int* elem_idx, int* species_idx,
+        double* value) {
+    CHECK_HANDLE(engine);
+    const auto& rx = to_engine(engine)->context().reactions;
+    CHECK_INDEX(entry_idx >= 0 &&
+                entry_idx < static_cast<int>(rx.init_elem_idx.size()));
+    if (!is_link || !elem_idx || !species_idx || !value)
+        return SWMM_ERR_BADPARAM;
+    const auto u = static_cast<std::size_t>(entry_idx);
+    *is_link     = rx.init_elem_is_link[u] ? 1 : 0;
+    *elem_idx    = rx.init_elem_idx[u];
+    *species_idx = rx.init_elem_species[u];
+    *value       = rx.init_elem_value[u];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_init_elem_set(SWMM_Engine engine,
+        int is_link, int elem_idx, int species_idx, double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
+    const int n_elems = is_link ? ctx.n_links() : ctx.n_nodes();
+    CHECK_INDEX(elem_idx >= 0 && elem_idx < n_elems);
+    if (value < 0.0) return SWMM_ERR_BADPARAM;
+    for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
+        if ((rx.init_elem_is_link[k] != 0) == (is_link != 0) &&
+            rx.init_elem_idx[k] == elem_idx &&
+            rx.init_elem_species[k] == species_idx) {
+            rx.init_elem_value[k] = value;                    // upsert
+            return SWMM_OK;
+        }
+    }
+    rx.init_elem_is_link.push_back(is_link ? 1 : 0);
+    rx.init_elem_idx.push_back(elem_idx);
+    rx.init_elem_species.push_back(species_idx);
+    rx.init_elem_value.push_back(value);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_init_elem_remove(SWMM_Engine engine,
+        int entry_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(entry_idx >= 0 &&
+                entry_idx < static_cast<int>(rx.init_elem_idx.size()));
+    const auto u = static_cast<std::size_t>(entry_idx);
+    rx.init_elem_is_link.erase(rx.init_elem_is_link.begin() + u);
+    rx.init_elem_idx.erase(rx.init_elem_idx.begin() + u);
+    rx.init_elem_species.erase(rx.init_elem_species.begin() + u);
+    rx.init_elem_value.erase(rx.init_elem_value.begin() + u);
     return SWMM_OK;
 }
 

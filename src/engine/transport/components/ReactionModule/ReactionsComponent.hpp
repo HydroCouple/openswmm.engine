@@ -79,6 +79,15 @@ void applyEmbeddedReactionSections(SimulationContext& ctx,
                                    bool external_component_registered,
                                    std::vector<std::string>& errors);
 
+/// Recompile every reaction expression (terms, pipes, tanks) into a fresh
+/// flat token pool from the sources in ctx.reactions (E-C2: the one compile
+/// path, shared by the file apply and the CRUD API's eager validation —
+/// D-RC4, no second compiler). Returns true and sets rx.compiled on
+/// success; on failure appends diagnostics and leaves rx.compiled false
+/// (the pool/spans hold the partial result — callers roll back or clear).
+bool recompileReactionSystem(SimulationContext& ctx,
+                             std::vector<std::string>& errors);
+
 }  // namespace openswmm::transport
 
 #endif  // OPENSWMM_ENGINE_TRANSPORT_REACTIONS_COMPONENT_HPP
