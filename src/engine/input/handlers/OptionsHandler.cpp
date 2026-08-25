@@ -439,6 +439,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "FV_SLOT_CELERITY") {
             opt.fv.slot_celerity = to_double(val);
 
+        } else if (key == "FV_PRESSURIZED_IMPLICIT") {
+            const std::string pv = norm(val);
+            opt.fv.pressurized_implicit =
+                (pv == "YES" || pv == "TRUE" || pv == "ON" || pv == "1");
+
         } else if (key == "FV_DISPERSION") {
             opt.fv.dispersion = to_double(val);
 

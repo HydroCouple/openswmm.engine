@@ -206,6 +206,21 @@ struct FvOptions {
     /// ft/s is the same order DW's SLOT surcharge method produces.
     double slot_celerity = 100.0;
 
+    /// Integrate the acoustic/slot pair implicitly on the pressurized subset
+    /// (slot program R2a, Strategy E). Above the taper band the closure is
+    /// linear in head, so cells at/above band entry solve an SPD head system
+    /// per substep (Thomas on chains, Jacobi-CG past folded junctions) whose
+    /// back-substituted face discharges overwrite `f_mass_` — a pure flux
+    /// predictor: conservation, rollback and hot start are untouched, and a
+    /// run that never pressurizes is bit-identical with the option on.
+    ///
+    /// With it, pressurized cells are advection-bound in the step census —
+    /// FV_SLOT_CELERITY leaves the dt law entirely, making the slot width a
+    /// pure accuracy parameter (a narrow slot no longer costs runtime).
+    /// Default OFF while the R2 gates land; the R4 default flip is a
+    /// separate, deliberate commit.
+    bool pressurized_implicit = false;
+
     // -- Coupling -----------------------------------------------------------
 
     StructureCoupling structure_coupling = StructureCoupling::SUBSTEP;

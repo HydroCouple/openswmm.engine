@@ -1000,6 +1000,8 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         val = (opt.fv.time_integration == openswmm::fv::TimeIntegration::RK2)
                   ? "RK2" : "EULER";
     else if (k == "FV_SLOT_CELERITY")  val = std::to_string(opt.fv.slot_celerity);
+    else if (k == "FV_PRESSURIZED_IMPLICIT")
+        val = opt.fv.pressurized_implicit ? "YES" : "NO";
     else if (k == "FV_DISPERSION")     val = std::to_string(opt.fv.dispersion);
     else if (k == "FV_STRUCTURE_COUPLING")
         val = (opt.fv.structure_coupling == openswmm::fv::StructureCoupling::ROUTING_STEP)
@@ -1374,6 +1376,11 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     else if (k == "FV_CFL")            opt.fv.cfl              = stod_strict(v);
     else if (k == "FV_ORDER")          opt.fv.order            = stoi_strict(v);
     else if (k == "FV_SLOT_CELERITY")  opt.fv.slot_celerity    = stod_strict(v);
+    else if (k == "FV_PRESSURIZED_IMPLICIT") {
+        const std::string vu = upper_copy(v);
+        opt.fv.pressurized_implicit =
+            (vu == "YES" || vu == "TRUE" || vu == "ON" || vu == "1");
+    }
     else if (k == "FV_DISPERSION")     opt.fv.dispersion       = stod_strict(v);
     else if (k == "FV_MIN_PARALLEL_CELLS")
         opt.fv.min_parallel_cells = stol_strict(v);

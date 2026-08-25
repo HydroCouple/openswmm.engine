@@ -855,6 +855,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n", "FV_TIME_INTEGRATION",
                      sTime[static_cast<int>(fvo.time_integration)]);
         std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
+        if (fvo.pressurized_implicit)
+            std::fprintf(f,"%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
         if (fvo.dispersion > 0.0)
             std::fprintf(f,"%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
         if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
