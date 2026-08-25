@@ -75,6 +75,47 @@
  *    sections slower (a one-piece box went 3.1 -> 4.3 ns/eval) once the
  *    per-lane piece pointers stopped fitting in registers. The compiler
  *    already interleaves these loops; hand-unrolling got in its way.
+ * 4. **Taylor-extrapolating A and W across Picard iterations instead of
+ *    re-evaluating** (promptperf.md Phase F). Investigated with a full
+ *    instrumented run on Bellinge and dropped without being built, for two
+ *    independent reasons, either of which is fatal:
+ *
+ *    *The premise does not hold.* Phase F assumes DYNWAVE grinds through many
+ *    Picard iterations with the depth change shrinking each time. Bellinge
+ *    converges in **2.00 iterations per step**: of 159.3 M conduit
+ *    evaluations, 79.67 M are at iteration 0, 79.67 M at iteration 1, and
+ *    **1,790 — 0.001% — at iteration 2 or beyond.** There is no "later
+ *    iteration" to extrapolate into. (The same run shows the legacy
+ *    `bypassed_` mask skipping only 0.1% of evaluations, because legacy's own
+ *    `Steps > 1` schedule means it is never populated before the step ends.)
+ *
+ *    *The error bound is unavailable exactly where the traffic is.* Reframing
+ *    it as extrapolation from a fixed ANCHOR (never chained — chaining
+ *    integrates truncation error over ~157k iterations with no bound) does
+ *    work: measured hit rates are 23.3% at dy == 0, 92.5% within 1e-5*y_full
+ *    and 99.7% within 1e-3*y_full. But a fast path must decide validity **in
+ *    advance**, and the only a-priori bound is sup|A''| / sup|A'''| over the
+ *    piece, which is FINITE only where the coordinate map is the identity.
+ *    Phase 4's normalization invariant ("no piece may be singular at both
+ *    ends") guarantees every other piece has a sqrt-mapped end where du/dy
+ *    blows up — and dry-weather depths sit in the invert piece, so only
+ *    **7.8% of evaluations land on an identity-mapped piece**. Measuring the
+ *    error a 2nd-order Taylor would actually commit confirms it from the
+ *    other side: only 56.9% of extrapolations stay inside the compiled fit's
+ *    own kFitTol, 99.1% stay inside 1e-7*a_full, and the worst observed is
+ *    7.3e-5*a_full — 73,000x the fit tolerance. A rigorously-bounded fast
+ *    path therefore fires on ~7.6% of traffic; a tuned-constant radius is
+ *    what promptperf.md explicitly forbids.
+ *
+ *    Ceiling, for anyone tempted to revisit: running the STEP B + STEP D
+ *    batch kernels twice (idempotent, so results stay bit-identical) costs
+ *    +6.5 to +7.3 s on a 42 s EXACT run, so ONE full forward-geometry pass is
+ *    worth ~6.5 s against a ~6 s EXACT-vs-LEGACY gap. At a 7.6% hit rate the
+ *    rigorous version is worth ~0.3 s — an order of magnitude below this
+ *    machine's run-to-run spread. **Attack the S-family and the compiled
+ *    inverse instead:** the same profile puts +2,514 whole-run samples of the
+ *    gap in getAofS/getSofA/getdSdA against +2,368 in the entire forward
+ *    batch path, and that third needs no accuracy trade at all.
  *
  * @note Every function here returns **bit-identical** results to the
  *       ChebSection.hpp accessor it replaces — not merely close. Sharing the
