@@ -1779,12 +1779,25 @@ void resolve_cross_references(SimulationContext& ctx) {
 
     // Resolve POLYGON shape curves — [CURVES] XPOLYGON arc/line boundaries,
     // compiled to a piecewise-Chebyshev section (Phase 4/5). Mirrors the
-    // CUSTOM block above: memoized by (curve, scale) so every link sharing
-    // both a curve and a scale shares one compiled ChebSection, exactly like
-    // CUSTOM shares one TransectData per (curve, y_full).
+    // CUSTOM block above: memoized by (curve, scale, open) so every link
+    // sharing a curve, a scale AND the same open/closed flag shares one
+    // compiled ChebSection, exactly like CUSTOM shares one TransectData per
+    // (curve, y_full).
+    //
+    // promptperf.md Phase C (dedup by geometric identity): `is_open` is part
+    // of that identity, not incidental to it — chebsec::compile() bakes it
+    // directly into ChebSection::is_open and into a_max/s_max (compile()
+    // takes a different branch for each), so two links that reference the
+    // SAME curve+scale but set Geom2 differently (one open channel, one
+    // closed conduit off the same profile) are NOT the same compiled
+    // section. Keying on (curve, scale) alone — the original memoization —
+    // let the second link silently inherit the first's is_open, a_max and
+    // s_max: a real, exact-bit-equality gap of the kind Phase C's own
+    // "near-equal geometries are different geometries" rule exists to catch,
+    // just applied to a boolean parameter instead of a numeric one.
     {
         int n_tables = static_cast<int>(ctx.tables.tables.size());
-        std::map<std::pair<int, double>, int> polygon_memo;
+        std::map<std::tuple<int, double, bool>, int> polygon_memo;
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         const double ucf_len = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us)];
         for (int j = 0; j < n_links; ++j) {
@@ -1805,7 +1818,7 @@ void resolve_cross_references(SimulationContext& ctx) {
             scale /= ucf_len;
             const bool is_open = ctx.links.xsect_geom2[uj] != 0.0;
 
-            const auto memo = polygon_memo.find({ci, scale});
+            const auto memo = polygon_memo.find({ci, scale, is_open});
             if (memo != polygon_memo.end()) {
                 const auto& shared = ctx.cheb_sections[static_cast<std::size_t>(memo->second)];
                 ctx.links.xsect_y_full[uj]   = shared.y_full;
@@ -1854,7 +1867,7 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.links.xsect_r_full[uj]   = cs.r_full;
             ctx.links.xsect_w_max[uj]    = cs.w_max;
             ctx.links.xsect_cheb_idx[uj] = cheb_idx;
-            polygon_memo.emplace(std::pair<int, double>{ci, scale}, cheb_idx);
+            polygon_memo.emplace(std::tuple<int, double, bool>{ci, scale, is_open}, cheb_idx);
         }
     }
 

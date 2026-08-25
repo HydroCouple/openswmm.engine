@@ -683,17 +683,22 @@ struct SimulationContext {
     /**
      * @brief Compiled piecewise-Chebyshev cross-sections (Phase 4/5).
      * @details One entry per distinct compiled boundary — every POLYGON
-     *          link's `[CURVES] XPOLYGON` curve (memoized by curve+scale, see
-     *          PostParseResolver), and, under `[OPTIONS] XSECT_GEOMETRY
-     *          EXACT`, one per distinct built-in shape geometry too.
+     *          link's `[CURVES] XPOLYGON` curve (memoized by
+     *          (curve, scale, is_open), see PostParseResolver), and, under
+     *          `[OPTIONS] XSECT_GEOMETRY EXACT`, one per distinct built-in
+     *          (shape, y_full, w_max) too. Both memoizations mean the pool is
+     *          usually far smaller than one entry per link: measured on
+     *          Bellinge (953 CIRCULAR conduits), dedup collapses them to 46
+     *          unique sections (promptperf.md Phase C — see ChebSection.hpp's
+     *          own note for the full finding).
      *          `LinkData::xsect_cheb_idx` indexes into this. `std::deque`,
      *          NOT `std::vector`: `XSectParams::cheb` holds raw pointers into
      *          it, and a vector's reallocation-on-growth would dangle them —
      *          mirroring the same stability concern already documented for
      *          @ref transect_tables in XSectBatch.cpp. A deque never
      *          invalidates existing elements on push_back, and ChebSection is
-     *          large enough (~26 kB) that deque's per-chunk overhead is
-     *          negligible.
+     *          large enough (~18.5 kB packed, promptperf.md Phase B) that
+     *          deque's per-chunk overhead is negligible.
      */
     std::deque<chebsec::ChebSection> cheb_sections;
 

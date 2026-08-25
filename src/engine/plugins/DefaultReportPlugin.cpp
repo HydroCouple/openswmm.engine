@@ -559,6 +559,23 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                               ? "EXACT" : "LEGACY";
         std::fprintf(f, "\n  Cross-Section Geometry ... %s", xg_name);
 
+        // promptperf.md Phase C diagnostic: a compiled ChebSection is shared
+        // (memoized) across every link with an identical geometric identity
+        // — POLYGON links on the same (curve, scale, open flag), and, under
+        // XSECT_GEOMETRY EXACT, built-in shapes on the same (shape, y_full,
+        // w_max) — see PostParseResolver.cpp. Recomputed here from the
+        // resolved link/section state rather than cached at build time, so
+        // it can never drift from what the run actually used.
+        if (!ctx.cheb_sections.empty()) {
+            int n_compiled = 0;
+            for (std::size_t li = 0; li < ctx.links.xsect_cheb_idx.size(); ++li)
+                if (ctx.links.xsect_cheb_idx[li] >= 0) ++n_compiled;
+            std::fprintf(f, "\n  Compiled Cross-Sections .. %d link%s -> %d unique section%s",
+                         n_compiled, (n_compiled == 1 ? "" : "s"),
+                         static_cast<int>(ctx.cheb_sections.size()),
+                         (ctx.cheb_sections.size() == 1 ? "" : "s"));
+        }
+
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;
             const char* sm_name = (sm >= 0 && sm <= 2) ? SurchargeWords[sm] : "EXTRAN";
