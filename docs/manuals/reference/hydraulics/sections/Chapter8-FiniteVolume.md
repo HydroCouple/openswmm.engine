@@ -149,6 +149,19 @@ The default of 100 ft/s is the same order the dynamic wave solver's
 5 % of the section's maximum width so it can never become the dominant
 storage and understate a surge.
 
+Two practical consequences of (8-5) and the cap, measurable through the
+diagnostics of §8.7.1: the slot's share of stored volume scales as
+\f$1/c_{slot}^{2}\f$, and requests **below** the cap-implied celerity
+\f$\sqrt{g A_{full}/(0.05\,W_{max})}\f$ are inert — every such value
+produces byte-identical geometry (WARNING 108 reports the override).
+The cap-implied celerity is shape-dependent, since \f$A_{full}/W_{max}\f$
+varies by a factor of 2–3 across the closed-section catalog: for a
+circular pipe it is reached at \f$c \approx 22.5\sqrt{D}\f$ ft/s
+(≈ 39 ft/s at D = 3 ft, ≈ 67 ft/s at D = 9 ft). Because the slot also
+absorbs part of the friction grade while engaged, steady full-bore head
+loss converges on the Manning value from below as the celerity rises
+(§8.7.1) — a low celerity understates surcharge and head loss together.
+
 ### 8.4.2 The tapered slot mouth
 
 The slot does not appear abruptly at the crown. It opens smoothly over
@@ -1240,6 +1253,68 @@ volume are instantaneous, as under dynamic wave routing. A virtual
 junction reports the state of the interior face that replaced it, and
 zero volume — it has none by construction.
 
+**Reported link depth is a water depth, truncated at the section's full
+height.** Internally the solver's mean state above the crown is
+piezometric — `depthOfArea` of the slot-inclusive mean area — but the
+published depth is `min(depthOfArea(A_mean), y_full)`, matching the
+dynamic-wave convention. The `.out` LINK_DEPTH column therefore never
+doubles as a head channel, and the Link Flow Summary's "Max/Full Depth"
+reads at most 1.00 for a closed conduit. The surcharge head remains
+fully visible where it belongs: in the **node** depths/heads (which are
+genuine piezometric state) and in the slot-storage accounting below.
+The truncation is publish-only — velocity, capacity, Froude number,
+surcharge hours, and the volume/slot ledgers are computed from the mean
+area or from saturating section geometry and are unaffected.
+
+### 8.7.1 Slot storage accounting and diagnostics
+
+The Preissmann slot's water is genuine storage in the conservation
+ledger: link volume is \f$\sum A\,\Delta x\f$ over the slot-inclusive
+conserved area, with no clamp, and it feeds *Final Stored Volume* and
+`SYS_STORAGE` at full weight. Because plain junctions report zero
+storage under FV (their water stands in the incident cells), the slot
+is the only place surcharge storage can be booked — so on a pressurized
+system a material share of reported storage can stand in the slot.
+The engine separates that share out rather than leaving it folded in:
+
+- **`links.slot_volume`** — per link,
+  \f$\sum \max(0,\,A - A_{crown})\,\Delta x\f$, always a subset of the
+  link volume, zero below the crown and zero under dynamic-wave
+  routing. C API: `swmm_link_get_slot_volume`.
+- **"Final Slot Storage"** — an informational line under *Flow Routing
+  Continuity* (printed only when nonzero): the slot's share of *Final
+  Stored Volume*. It is already inside that total, never added again.
+- **"Slot Storage Summary"** — a report block giving the run-level
+  share (the ratio of time integrals
+  \f$\int V_{slot}\,dt \,/\, \int V_{stored}\,dt\f$ — a ratio of
+  integrals, never an average of instantaneous ratios), the peak
+  instantaneous system share, the hours the share exceeded 1 %, and a
+  per-link table of every conduit whose peak share crossed 1 %.
+  C API: `swmm_link_get_stat_slot_share` (run-level) and
+  `swmm_link_get_stat_peak_slot_share` (peak, 0..1).
+- **`OPENSWMM_FV_SLOT_TRACE=1`** — one CSV row per routing step on
+  stdout (`SLOT_TRACE,t,slot_ft3,stored_ft3,share`), for plotting the
+  slot share through a transient.
+
+The **FV Solver Statistics** block attributes the time step alongside:
+four "dt Argmin" rows give the fraction of CFL censuses whose binding
+element was a pressurized cell (at or above the crown), a taper-band
+cell, a free-surface cell, or a node bound. On a pressurized system
+the pressurized rows dominating is the measured statement that
+`FV_SLOT_CELERITY` — not the free-surface dynamics — is setting the
+run's cost.
+
+Two properties of the slot worth reading off these instruments rather
+than assuming: the slot share of storage scales as \f$1/c^{2}\f$ in the
+celerity, and the steady **full-bore head loss depends on the
+celerity** — the slot absorbs part of the friction grade — converging
+on the Manning value from below as the slot narrows. A low celerity
+therefore understates both pressurization and head loss at once; the
+5 % width cap (§8.4.1) bounds the damage but does not remove it, and
+WARNING 108 reports when the cap has silently overridden the requested
+celerity (every request below the cap-implied celerity produces
+byte-identical geometry).
+
 **Node stage is reconstructed from the incident cells, not read off the
 solver's head.** For a storage-less clean junction of any degree — the
 publish rule is the *clean* test of §8.6.1 without its degree-2
@@ -1325,7 +1400,7 @@ file.
 | `FV_LIMITER` | `MINMOD` | `MINMOD`, `VANLEER` or `SUPERBEE`, with `FV_ORDER 2`. |
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
-| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). |
+| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows and outfall stages are refreshed: every substep, or once per routing step. A device backend clamps to `ROUTING_STEP`. |
 | `FV_NODE_COUPLING` | `SEMI_IMPLICIT` | `EXPLICIT` freezes face fluxes across the node update; `SEMI_IMPLICIT` linearizes them in the node head (§8.6.1). |
