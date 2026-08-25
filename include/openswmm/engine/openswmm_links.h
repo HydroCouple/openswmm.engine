@@ -934,6 +934,21 @@ SWMM_ENGINE_API int swmm_link_get_stat_max_velocity(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_link_get_stat_max_filling(SWMM_Engine engine, int idx, double* val);
 
 /**
+ * @brief Peak instantaneous Preissmann-slot storage share of a link.
+ * @details FV routing only: max over the run of slot_volume/volume (0..1).
+ *          Reads 0.0 under the dynamic-wave router.
+ */
+SWMM_ENGINE_API int swmm_link_get_stat_peak_slot_share(SWMM_Engine engine, int idx, double* val);
+
+/**
+ * @brief Run-level Preissmann-slot storage share of a link.
+ * @details FV routing only: the ratio of time integrals
+ *          (∫ slot_volume dt)/(∫ volume dt) over the run (0..1) — never an
+ *          average of instantaneous ratios. Reads 0.0 under dynamic wave.
+ */
+SWMM_ENGINE_API int swmm_link_get_stat_slot_share(SWMM_Engine engine, int idx, double* val);
+
+/**
  * @brief Get the total volume conveyed through a link.
  * @param engine    Engine handle.
  * @param idx       Zero-based link index.

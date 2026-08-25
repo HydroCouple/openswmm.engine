@@ -1314,6 +1314,28 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 100.0 * rs.fv_active_max);
         }
 
+        // dt-argmin attribution (slot program R0): which regime owned the
+        // binding CFL element, as a share of census/re-tier events. The
+        // number that says whether the step is set by the slot.
+        {
+            const long tot = rs.fv_dt_argmin_pressurized + rs.fv_dt_argmin_band +
+                             rs.fv_dt_argmin_free + rs.fv_dt_argmin_node;
+            if (tot > 0) {
+                auto pct = [&](long v) {
+                    return 100.0 * static_cast<double>(v) /
+                           static_cast<double>(tot);
+                };
+                std::fprintf(f, "\n  dt Argmin Pressurized (%%) %14.1f",
+                             pct(rs.fv_dt_argmin_pressurized));
+                std::fprintf(f, "\n  dt Argmin Taper Band (%%) .%14.1f",
+                             pct(rs.fv_dt_argmin_band));
+                std::fprintf(f, "\n  dt Argmin Free (%%) .......%14.1f",
+                             pct(rs.fv_dt_argmin_free));
+                std::fprintf(f, "\n  dt Argmin Node Bound (%%) .%14.1f",
+                             pct(rs.fv_dt_argmin_node));
+            }
+        }
+
         // LTS tier occupancy. A run that quietly collapsed to one tier reads
         // as n_tiers == 1 here rather than as a silently ordinary run — which
         // is the difference between "tiering did not help" and "tiering never
@@ -1328,6 +1350,57 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                         "\n  LTS Tier %d Occupancy (%%) .%14.1f", k,
                         100.0 * static_cast<double>(rs.fv_tier_cells[k])
                               / static_cast<double>(total));
+            }
+        }
+    }
+
+    // =====================================================================
+    // Slot Storage Summary (FV slot program R0) — how much of the run's
+    // conduit storage stood in the Preissmann slot. The run share is the
+    // ratio of time integrals; links are listed when their peak share
+    // crossed the 1 % budget. Silent when the slot never held water.
+    // =====================================================================
+    {
+        double sum_slot_dt = 0.0, sum_vol_dt = 0.0;
+        for (std::size_t j = 0; j < ctx.links.stat_slot_vol_dt.size(); ++j) {
+            sum_slot_dt += ctx.links.stat_slot_vol_dt[j];
+            sum_vol_dt  += ctx.links.stat_vol_dt[j];
+        }
+        if (sum_slot_dt > 0.0) {
+            WRITE(f, "");
+            WRITE(f, "");
+            WRITE(f, "*********************");
+            WRITE(f, "Slot Storage Summary");
+            WRITE(f, "*********************");
+            std::fprintf(f, "\n  Run Slot Share (%%) .......%14.2f",
+                         100.0 * sum_slot_dt / std::max(sum_vol_dt, 1e-30));
+            std::fprintf(f, "\n  Peak Slot Share (%%) ......%14.2f",
+                         100.0 * ctx.routing_stats.slot_peak_share);
+            std::fprintf(f, "\n  Hours Share Above 1%% .....%14.2f",
+                         ctx.routing_stats.slot_time_above_s / 3600.0);
+
+            // Per-link rows for offenders (peak share >= 1%).
+            bool header = false;
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.stat_peak_slot_share[uj] < 0.01) continue;
+                if (!header) {
+                    std::fprintf(f,
+                        "\n\n  Link                    Peak Share    Run Share"
+                        "   Hrs >1%%"
+                        "\n  ----------------------------------------------------------");
+                    header = true;
+                }
+                const double run_share =
+                    (ctx.links.stat_vol_dt[uj] > 0.0)
+                        ? ctx.links.stat_slot_vol_dt[uj] /
+                              ctx.links.stat_vol_dt[uj]
+                        : 0.0;
+                std::fprintf(f, "\n  %-20s %9.2f%%   %9.2f%% %9.2f",
+                             ctx.link_names.name_of(j).c_str(),
+                             100.0 * ctx.links.stat_peak_slot_share[uj],
+                             100.0 * run_share,
+                             ctx.links.stat_time_slot_above[uj] / 3600.0);
             }
         }
     }

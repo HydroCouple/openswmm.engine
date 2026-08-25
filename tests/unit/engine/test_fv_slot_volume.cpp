@@ -168,4 +168,57 @@ TEST(FvSlotVolume, dynamicWaveNeverPopulatesTheChannel) {
     const RunResult r = run("pressurized_dw", deck("DYNWAVE", true));
     EXPECT_EQ(r.slot_volume, 0.0);
     EXPECT_EQ(r.rpt.find("Final Slot Storage"), std::string::npos);
+    EXPECT_EQ(r.rpt.find("Slot Storage Summary"), std::string::npos);
+}
+
+// Slot program R0 — the share statistics ride the same identity as the
+// volume: on a run that is steady and fully pressurized for most of its
+// span, the run-level share (∫slot dt / ∫stored dt) approaches the final
+// instantaneous ratio, the peak share bounds it, and the summary block +
+// dt-argmin attribution both surface in the report.
+TEST(FvSlotVolume, shareStatisticsAndReportBlock) {
+    const std::string base = "pressurized_share";
+    const std::string inp = outPath(base + ".inp");
+    const std::string rpt = outPath(base + ".rpt");
+    writeFile(inp, deck("FV", true));
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(),
+                               outPath(base + ".out").c_str(), nullptr), 0);
+    ASSERT_EQ(swmm_engine_initialize(e), 0);
+    ASSERT_EQ(swmm_engine_start(e, 0), 0);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0);
+    } while (elapsed > 0.0);
+    const int c1 = swmm_link_index(e, "C1");
+    ASSERT_GE(c1, 0);
+    double vol = 0.0, slot = 0.0, run_share = 0.0, peak_share = 0.0;
+    EXPECT_EQ(swmm_link_get_volume(e, c1, &vol), 0);
+    EXPECT_EQ(swmm_link_get_slot_volume(e, c1, &slot), 0);
+    EXPECT_EQ(swmm_link_get_stat_slot_share(e, c1, &run_share), 0);
+    EXPECT_EQ(swmm_link_get_stat_peak_slot_share(e, c1, &peak_share), 0);
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    const double inst_share = slot / vol;            // final instantaneous
+    ASSERT_GT(inst_share, 0.0);
+    EXPECT_GT(run_share, 0.0);
+    EXPECT_LE(run_share, peak_share + 1.0e-12);
+    EXPECT_LT(peak_share, 1.0);
+    // Steady for most of the hour → the integrals converge on the final
+    // ratio; 5% covers the fill transient's dilution of the average.
+    EXPECT_NEAR(run_share, inst_share, 0.05 * inst_share);
+
+    const std::string text = readFile(rpt);
+    EXPECT_NE(text.find("Slot Storage Summary"), std::string::npos);
+    EXPECT_NE(text.find("Run Slot Share (%)"), std::string::npos);
+    // On a deck pressurized for nearly the whole run, the pressurized
+    // regime must OWN the dt argmin — the classification, not just the row.
+    const auto pos = text.find("dt Argmin Pressurized (%)");
+    ASSERT_NE(pos, std::string::npos);
+    double pct = -1.0;
+    std::sscanf(text.c_str() + pos, "dt Argmin Pressurized (%%)%lf", &pct);
+    EXPECT_GT(pct, 50.0);
 }
