@@ -33,6 +33,7 @@
 #include "../../../core/UnitConversion.hpp"
 #include "../../../quality/NegativeSources.hpp"
 #include "../../../hydraulics/Node.hpp"
+#include "../../InitialQualitySeeds.hpp"
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
@@ -197,11 +198,15 @@ bool ArdEngine::init(SimulationContext& ctx) {
         hs_link_age = ctx.water_age_state.link_age;
     }
     const auto age_seed_link = [&](int link) {
-        return (age_from_hs &&
-                static_cast<std::size_t>(link) < hs_link_age.size())
-                   ? hs_link_age[static_cast<std::size_t>(link)]
-                   : ctx.water_age_config.global_age[static_cast<int>(
-                         WaterAgeSource::INITIAL_STATE)];
+        if (age_from_hs &&
+            static_cast<std::size_t>(link) < hs_link_age.size())
+            return hs_link_age[static_cast<std::size_t>(link)];
+        // E-A3: [INITIAL_QUALITY] __WATER_AGE__ rows override the global
+        // (hotstart wins above, D-IQ7).
+        return initialAgeSecondsFor(
+            ctx, true, link,
+            ctx.water_age_config.global_age[static_cast<int>(
+                WaterAgeSource::INITIAL_STATE)]);
     };
     // H4: temperature's INITIAL_STATE. Unlike age (whose default is 0, so
     // an unseeded row merely looks plausible) HeatConfigData's defaults are
@@ -210,10 +215,11 @@ bool ArdEngine::init(SimulationContext& ctx) {
     const double temp_seed = ctx.heat_config.global_temp[static_cast<int>(
         HeatSource::INITIAL_STATE)];
     const auto age_seed_node = [&](std::size_t nd) {
-        return (age_from_hs && nd < hs_node_age.size())
-                   ? hs_node_age[nd]
-                   : ctx.water_age_config.global_age[static_cast<int>(
-                         WaterAgeSource::INITIAL_STATE)];
+        if (age_from_hs && nd < hs_node_age.size()) return hs_node_age[nd];
+        return initialAgeSecondsFor(
+            ctx, false, static_cast<int>(nd),
+            ctx.water_age_config.global_age[static_cast<int>(
+                WaterAgeSource::INITIAL_STATE)]);
     };
 
     const int n_links = ctx.n_links();
@@ -245,7 +251,7 @@ bool ArdEngine::init(SimulationContext& ctx) {
                     age_seed_link(link);
             if (temp_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(temp_row_) * unc + uc] =
-                    temp_seed;
+                    initialTempFor(ctx, true, link, temp_seed);   // E-A3
         }
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
@@ -264,13 +270,19 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 age_seed_node(und) * node_vol_[und];
         if (temp_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] =
-                temp_seed * node_vol_[und];
+                initialTempFor(ctx, false, nd, temp_seed) *       // E-A3
+                node_vol_[und];
     }
     if (age_row_ >= 0)
         ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links(),
                                    ctx.n_subcatches());  // A3: keep watershed rows
-    if (temp_row_ >= 0)
+    if (temp_row_ >= 0) {
         ctx.heat_state.resize(ctx.n_nodes(), ctx.n_links(), temp_seed);
+        // E-A3: mirror per-element temperature rows into the state arrays so
+        // anything reading heat_state before the first publish agrees with
+        // the mesh (which already carries them and republishes each step).
+        applyInitialTempOverrides(ctx);
+    }
     // (resize consumed hotstart_loaded — the loaded ages now live in the
     // mesh state and republish on the first step.)
 

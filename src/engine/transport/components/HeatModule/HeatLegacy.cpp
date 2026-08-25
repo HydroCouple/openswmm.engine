@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "../../../core/SimulationContext.hpp"
+#include "../../InitialQualitySeeds.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
 
 namespace openswmm::transport {
@@ -87,6 +88,9 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     if (!hs.legacy_seeded) {
         std::fill(hs.node_temp.begin(), hs.node_temp.end(), t_init);
         std::fill(hs.link_temp.begin(), hs.link_temp.end(), t_init);
+        // E-A3: per-element [INITIAL_QUALITY] __TEMPERATURE__ rows override
+        // the global fill.
+        applyInitialTempOverrides(ctx);
         hs.legacy_seeded = true;
     }
 

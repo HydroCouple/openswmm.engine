@@ -101,6 +101,7 @@
 #include <vector>
 
 #include "../../core/SimulationContext.hpp"
+#include "../../transport/InitialQualitySeeds.hpp"
 #include "../NegativeSources.hpp"
 #include "../QualityRouting.hpp"
 #include "RwptDispersion.hpp"
@@ -446,6 +447,10 @@ private:
                     std::fill(ws.link_age.begin(), ws.link_age.end(), a0);
                 }
             }
+            // E-A3: [INITIAL_QUALITY] __WATER_AGE__ rows override the
+            // global fill; the helper no-ops under hotstart (D-IQ7). The
+            // per-link values then seed the segments below.
+            transport::applyInitialAgeOverrides(ctx);
         }
 
         // Seed: one segment per conduit at the link's current volume and
