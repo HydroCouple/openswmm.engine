@@ -37,9 +37,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
-#include <sstream>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -69,13 +70,23 @@ void write_deck(const char* path, const std::string& iq_lines,
       << options_extra << "\n"
       << "[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth Aponded\n"
       << "J0     10.0 10 0.5 0 0\n"
-      << "J1     9.0  10 0.5 0 0\n\n"
+      << "J1     9.0  10 0.5 0 0\n"
+      << "J2     9.5  10 0   0 0\n"     // dry (InitDepth 0)
+      << "J3     9.8  10 0   0 0\n\n"   // dry (InitDepth 0)
       << "[OUTFALLS]\n;;Name Elev Type StageData Gated\nOUT 7.0 FREE  NO\n\n"
+      << "[STORAGE]\n"
+      << ";;Name Elev MaxDepth InitDepth Shape     Coeff Expon Const\n"
+      << "ST1    8.5  10       0.5       FUNCTIONAL 0    0     1000\n\n"
       << "[CONDUITS]\n;;Name From To Length N Zin Zout Q0\n"
       << "C1 J0 J1  400 0.013 0 0 0\n"
-      << "C2 J1 OUT 400 0.013 0 0 0\n\n"
+      << "C2 J1 OUT 400 0.013 0 0 0\n"
+      << "C3 J2 J1  400 0.013 0 0 0\n"
+      << "C4 J3 J2  400 0.013 0 0 0\n"   // both ends dry -> dry link
+      << "C5 ST1 J1 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\n;;Link Shape G1 G2 G3 G4\n"
-      << "C1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n\n"
+      << "C1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n"
+      << "C3 CIRCULAR 1.5 0 0 0\nC4 CIRCULAR 1.5 0 0 0\n"
+      << "C5 CIRCULAR 1.5 0 0 0\n\n"
       << "[POLLUTANTS]\n"
       << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
          "Cdwf Cinit\n"
@@ -84,13 +95,6 @@ void write_deck(const char* path, const std::string& iq_lines,
     if (!iq_lines.empty())
         f << "[INITIAL_QUALITY]\n" << iq_lines << "\n";
     f << "[REPORT]\nINPUT NO\nNODES ALL\nLINKS ALL\n";
-}
-
-std::string slurp(const char* path) {
-    std::ifstream f(path, std::ios::binary);
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
 }
 
 class InitialQualityTest : public ::testing::Test {
@@ -251,47 +255,140 @@ TEST_F(InitialQualityTest, SaveRoundTrip) {
 }
 
 // ---------------------------------------------------------------------------
-// E-A1 contract: the section is stored but NOT consumed — identical results
-// with and without it. E-A2 rewrites this gate into an override assertion.
-TEST_F(InitialQualityTest, BehaviorNeutralThisRound) {
-    write_deck("_iq_base.inp", "");
-    write_deck("_iq_with.inp", "NODE J1 TSS 12.5\nLINK C2 TSS 0.05\n");
+// E-A2 — the quartet under LEGACY: wet override, dry set, untouched wet
+// (Cinit), untouched dry (0). initQuality() runs inside initialize(), so no
+// stepping is needed. Falsifier: with the override loop removed, J1 reads
+// Cinit (5), J2/C4 read 0.
+TEST_F(InitialQualityTest, OverridesApplyWetAndDry) {
+    write_deck("_iq_ovr.inp",
+               "NODE J1 TSS 12.5\n"      // wet node override
+               "NODE J2 TSS 7.0\n"       // dry node set (D-IQ4: applies)
+               "LINK C4 TSS 3.0\n");     // dry link set (both ends dry)
+    ASSERT_EQ(open_deck("_iq_ovr.inp", "_iq_ovr.rpt", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
 
-    auto run = [](const char* inp, const char* rpt, const char* out) {
+    const auto& ctx = as_cpp_engine(engine_).context();
+    const auto ni = [&](const char* n) {
+        return static_cast<std::size_t>(ctx.node_names.find(n));
+    };
+    const auto li = [&](const char* n) {
+        return static_cast<std::size_t>(ctx.link_names.find(n));
+    };
+    // np == 1, so conc[idx] == conc[element index].
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J1")], 12.5);  // wet override
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J2")], 7.0);   // dry set (D-IQ4)
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J0")], 5.0);   // untouched wet: Cinit
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J3")], 0.0);   // untouched dry: 0
+    EXPECT_DOUBLE_EQ(ctx.links.conc[li("C4")], 3.0);   // dry link set
+    EXPECT_DOUBLE_EQ(ctx.links.conc[li("C1")], 5.0);   // untouched wet link
+    // conc_old mirrors conc (both seeds write the pair).
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc_old[ni("J1")], 12.5);
+    EXPECT_DOUBLE_EQ(ctx.links.conc_old[li("C4")], 3.0);
+
+    std::remove("_iq_ovr.inp");
+}
+
+// ---------------------------------------------------------------------------
+// E-A2 — ARD and LARD both seed lazily FROM the initQuality()-written arrays
+// (D-IQ6), so the override must be visible after the first step under each.
+// Zero flow (Q0=0, no inflows) keeps concentrations put; tolerance is for
+// one transport step of numerical noise.
+TEST_F(InitialQualityTest, ArdAndLardPickUpOverrides) {
+    struct Solver { const char* tag; const char* opt; };
+    const Solver solvers[] = {
+        {"ard",  "QUALITY_SOLVER       EULERIAN_ARD\n"},
+        {"lard", "QUALITY_SOLVER       LAGRANGIAN\n"},
+    };
+    for (const auto& s : solvers) {
+        std::string inp = std::string("_iq_") + s.tag + ".inp";
+        std::string rpt = std::string("_iq_") + s.tag + ".rpt";
+        std::string out = std::string("_iq_") + s.tag + ".out";
+        write_deck(inp.c_str(),
+                   "NODE ST1 TSS 12.5\n"   // storage node: holds mass
+                   "LINK C1 TSS 9.0\n"     // wet conduit override
+                   "LINK C4 TSS 3.0\n",    // dry conduit row: inert, no crash
+                   s.opt);
         SWMM_Engine e = swmm_engine_create();
-        if (!e) return false;
-        bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK &&
-                  swmm_engine_initialize(e) == SWMM_OK &&
-                  swmm_engine_start(e, 1) == SWMM_OK;
-        if (!ok) {
-            ADD_FAILURE() << "open/init/start failed for " << inp;
-            for (const auto& msg : as_cpp_engine(e).context().errors)
-                ADD_FAILURE() << "engine error: " << msg;
-        }
+        ASSERT_NE(e, nullptr) << s.tag;
+        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(),
+                                   nullptr), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << s.tag;
         double elapsed = 1.0;
-        while (ok && elapsed > 0.0) {
-            if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
-                ADD_FAILURE() << "step failed at elapsed=" << elapsed;
-                ok = false;
-                break;
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << s.tag;
+
+        const auto& ctx = as_cpp_engine(e).context();
+        const auto ust = static_cast<std::size_t>(ctx.node_names.find("ST1"));
+        const auto uc1 = static_cast<std::size_t>(ctx.link_names.find("C1"));
+        const auto uc4 = static_cast<std::size_t>(ctx.link_names.find("C4"));
+        // One routing step of real exchange (the deck has a head gradient)
+        // drifts conc by ~2e-4; the falsifier (override loop removed) reads
+        // the Cinit 5.0 instead — 1e-2 separates them by 400x.
+        EXPECT_NEAR(ctx.links.conc[uc1], 9.0, 1e-2)
+            << s.tag << ": wet conduit override lost in first step";
+        if (std::string(s.tag) == "ard") {
+            // Junctions are zero-volume passthrough under ARD — only a node
+            // WITH storage holds initial mass, so the node gate probes ST1.
+            EXPECT_NEAR(ctx.nodes.conc[ust], 12.5, 1e-2)
+                << "ard: storage-node override lost in first step";
+        }
+        // Dry conduit: LARD seeds no segment (v<=0 skip); ARD may hold the
+        // seeded value in a zero-volume cell. Either way the value must be
+        // finite and within [0, override] — no NaN, no garbage, no crash.
+        EXPECT_TRUE(std::isfinite(ctx.links.conc[uc4])) << s.tag;
+        EXPECT_GE(ctx.links.conc[uc4], 0.0) << s.tag;
+        EXPECT_LE(ctx.links.conc[uc4], 3.0 + 1e-6) << s.tag;
+
+        swmm_engine_end(e);
+        swmm_engine_destroy(e);
+        std::remove(inp.c_str());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E-A2 — mass-balance falsifier for D-IQ4: "Initial Stored Mass" moves by
+// exactly ΔC·V of the overridden WET link (dry elements carry no volume, so
+// their overrides add nothing).
+TEST_F(InitialQualityTest, InitialStoredMassDelta) {
+    write_deck("_iq_m0.inp", "");
+    write_deck("_iq_m1.inp",
+               "LINK C1 TSS 12.5\n"
+               "NODE J2 TSS 7.0\n");     // dry: must contribute 0 mass
+
+    auto init_stored = [](const char* inp, const char* rpt,
+                          double* c1_vol) -> double {
+        SWMM_Engine e = swmm_engine_create();
+        if (!e) return -1.0;
+        double m = -1.0;
+        if (swmm_engine_open(e, inp, rpt, nullptr, nullptr) == SWMM_OK &&
+            swmm_engine_initialize(e) == SWMM_OK &&
+            swmm_engine_start(e, 1) == SWMM_OK) {
+            const auto& ctx = as_cpp_engine(e).context();
+            if (!ctx.mass_balance.qual_routing_init.empty())
+                m = ctx.mass_balance.qual_routing_init[0];
+            if (c1_vol) {
+                const int c1 = ctx.link_names.find("C1");
+                if (c1 >= 0) *c1_vol =
+                    ctx.links.volume[static_cast<std::size_t>(c1)];
             }
         }
-        if (ok) swmm_engine_end(e);
         swmm_engine_destroy(e);
-        return ok;
+        return m;
     };
-    ASSERT_TRUE(run("_iq_base.inp", "_iq_base.rpt", "_iq_base.out"));
-    ASSERT_TRUE(run("_iq_with.inp", "_iq_with.rpt", "_iq_with.out"));
 
-    const std::string base = slurp("_iq_base.out");
-    const std::string with = slurp("_iq_with.out");
-    ASSERT_FALSE(base.empty());
-    EXPECT_EQ(base, with)
-        << "E-A1 must not consume [INITIAL_QUALITY]; if E-A2 landed, "
-           "rewrite this gate into the override assertion.";
+    double vol_c1 = 0.0;
+    const double m_base = init_stored("_iq_m0.inp", "_iq_m0.rpt", nullptr);
+    const double m_ovr  = init_stored("_iq_m1.inp", "_iq_m1.rpt", &vol_c1);
+    ASSERT_GE(m_base, 0.0);
+    ASSERT_GE(m_ovr, 0.0);
+    ASSERT_GT(vol_c1, 0.0) << "C1 must hold water for this gate to bite";
+    EXPECT_NEAR(m_ovr - m_base, (12.5 - 5.0) * vol_c1,
+                1e-9 * std::max(1.0, m_ovr))
+        << "delta must be exactly the wet link's dC*V; the dry node row "
+           "must contribute nothing";
 
-    std::remove("_iq_base.inp");
-    std::remove("_iq_with.inp");
+    std::remove("_iq_m0.inp");
+    std::remove("_iq_m1.inp");
 }
 
 }  // namespace
