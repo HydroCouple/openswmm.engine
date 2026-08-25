@@ -4692,6 +4692,21 @@ int SWMMEngine::end() noexcept {
     // hotstart_save (swmm5.c). Datetime-suffixed intermediate saves are a
     // follow-up (not exercised by the QA suite). Legacy .hsf format so the file
     // round-trips through USE HOTSTART (apply_legacy_routing).
+    // Gap E: a hotstart carries state, not geometry. Warn rather than write a
+    // file that would silently reload the .inp section under the changed run's
+    // depths. Serialising the boundary chain would need a new .hsf version the
+    // legacy reader could not consume, so the limitation is documented and
+    // announced instead of half-solved.
+    if (!ctx_.xsect_runtime_changed_links.empty() &&
+        !ctx_.files.hotstart_saves.empty()) {
+        ctx_.warnings.push_back(
+            "SAVE HOTSTART: " +
+            std::to_string(ctx_.xsect_runtime_changed_links.size()) +
+            " link(s) had their cross-section changed at run time. Hot start "
+            "files do not carry geometry, so reloading this file restores the "
+            "input-file cross-sections under these depths. Re-apply the "
+            "polygons after loading.");
+    }
     for (const auto& entry : ctx_.files.hotstart_saves) {
         if (entry.datetime != 0.0) continue;   // intermediate save — not yet
         const std::string& sp = !entry.path.absolute.empty()

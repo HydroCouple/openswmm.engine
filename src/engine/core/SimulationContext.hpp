@@ -715,6 +715,19 @@ struct SimulationContext {
     /// (e.g. SWMMEngine's reporting-path cache).
     std::uint64_t xsect_generation = 0;
 
+    /**
+     * @brief Links whose cross-section was replaced at run time (Phase 7).
+     *
+     * @details Populated by swmm_link_set_polygon once the run has STARTED.
+     *          A hotstart file records depths and flows but NOT geometry, so a
+     *          file saved after such a change reloads with the `.inp` shape and
+     *          the changed run's depths — the two no longer describe the same
+     *          model. SAVE HOTSTART warns when this is non-empty rather than
+     *          serialising the modified boundary chain, which would need a new
+     *          `.hsf` version the legacy reader could not consume.
+     */
+    std::vector<int> xsect_runtime_changed_links;
+
     /// True when the model was loaded from a GeoPackage, whose hydraulic fields
     /// are stored in CANONICAL internal units (feet/cfs/ft³) — NOT the display
     /// units a .inp uses. resolve_cross_references then SKIPS the display→

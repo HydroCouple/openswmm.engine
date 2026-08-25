@@ -1187,6 +1187,94 @@ SWMM_ENGINE_API int swmm_link_get_tag(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_link_set_tag(SWMM_Engine engine, int idx,
                                        const char* tag);
 
+/* =========================================================================
+ * Polygon cross-section — exact arc/line boundary, changeable at run time
+ * ========================================================================= */
+
+/**
+ * @brief Replace a conduit's cross-section with an arbitrary closed polygon.
+ *
+ * @details The boundary is compiled to a piecewise-Chebyshev closure and
+ *          installed on the link, replacing whatever shape it carried. Legal
+ *          both before the run and BETWEEN routing steps; during a run the
+ *          water already in the conduit's cells is reconciled by @p policy.
+ *
+ * @param engine  engine handle.
+ * @param link    link index.
+ * @param x,y     boundary vertices in PROJECT length units, counter-clockwise
+ *                or clockwise (the orientation is normalised). Point i joins
+ *                point (i+1) mod n; the chain closes automatically, so do not
+ *                repeat the first vertex.
+ * @param n       vertex count (>= 3).
+ * @param policy  0 = CONSERVE_DEPTH — solid material INTRUDES (sediment, a
+ *                CIPP liner). The free surface stays put and the displaced
+ *                water leaves the conduit.
+ *                1 = CONSERVE_VOLUME — material is REMOVED (corrosion,
+ *                erosion, cleaning). The water stays and the surface moves.
+ *                There is deliberately no default: the two describe opposite
+ *                physical events, and choosing wrongly is silent — the run
+ *                completes and the numbers are wrong.
+ * @param[out] displaced_volume_out  water volume removed from the conduit, in
+ *                PROJECT volume units (+ = removed). Always 0 for
+ *                CONSERVE_VOLUME by construction. **Book this into your mass
+ *                balance**: an unbooked change is indistinguishable from a
+ *                continuity error in the report. May be NULL.
+ *
+ * @returns SWMM_OK;
+ *          SWMM_ERR_BADHANDLE / SWMM_ERR_BADINDEX / SWMM_ERR_BADPARAM as usual;
+ *          SWMM_ERR_GEOMETRY when the polygon is not a valid simple closed
+ *          boundary (fewer than 3 points, self-intersecting, zero area,
+ *          non-finite coordinate), when it does not compile to a usable
+ *          closure, or when the link is not an FV-routed conduit (below).
+ *
+ * @warning **Run-time change is FV-only.** Under `FLOW_ROUTING FV` the solver
+ *          state is per-cell flow AREA, which is exactly what a section change
+ *          has to be reconciled against. DYNWAVE and KINWAVE instead hold
+ *          per-link state derived from the section at init (conveyance, full
+ *          flow, the Picard depth/area history), and there is no defined way to
+ *          re-seed that mid-Picard. Calling this once the run has STARTED under
+ *          any other routing model returns SWMM_ERR_GEOMETRY rather than
+ *          quietly producing state that half describes each section. Before the
+ *          run starts it is accepted in every routing model — the section is
+ *          simply part of the model at that point.
+ *
+ * @warning **Not carried in hot starts.** A hotstart file records depths and
+ *          flows, not geometry, so a file saved after a run-time change reloads
+ *          with the `.inp` shape and the changed run's depths. `swmm_save_hotstart`
+ *          emits SWMM_WARN_GEOMETRY_NOT_SAVED when any link's geometry was
+ *          changed at run time; re-apply the polygons after loading.
+ *
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_set_polygon(SWMM_Engine engine, int link,
+                                           const double* x, const double* y,
+                                           int n, int policy,
+                                           double* displaced_volume_out);
+
+/**
+ * @brief Read back a conduit's polygon boundary.
+ *
+ * @details Returns the vertices of the boundary chain currently installed on
+ *          the link, in PROJECT length units. Pass @p x and @p y as NULL to
+ *          query the count first.
+ *
+ * @param[in,out] n  on entry, the capacity of @p x / @p y; on return, the
+ *                   vertex count. Required (non-NULL).
+ *
+ * @returns SWMM_OK; SWMM_ERR_GEOMETRY when the link carries no polygon
+ *          boundary; SWMM_ERR_BADPARAM when @p n is NULL or the buffers are
+ *          too small (`*n` is still set to the required count).
+ *
+ * @note Arc segments are reported by their endpoints only — the bulge is not
+ *       recoverable through this call, so a boundary that came from a
+ *       `[CURVES] XPOLYGON` with arcs reads back as the inscribed polyline.
+ *       A boundary set through swmm_link_set_polygon round-trips exactly.
+ *
+ * @since 6.0.0
+ */
+SWMM_ENGINE_API int swmm_link_get_polygon(SWMM_Engine engine, int link,
+                                           double* x, double* y, int* n);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

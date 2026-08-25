@@ -321,6 +321,25 @@ public:
     void attachChebSections(const SimulationContext& ctx);
 
     /**
+     * @brief Re-read one link's cross-section into the grouped SoA arrays.
+     *
+     * @details For run-time geometry change (Phase 7). Updates the element's
+     *          scalar summary fields and compiled-boundary pointer in place,
+     *          and drops the packed bypass mirrors so they cannot serve the
+     *          pre-change copies.
+     *
+     * @returns true when the update was applied in place. **false means the
+     *          link's SHAPE changed** — groups partition by shape, so the link
+     *          has moved between them and only a full rebuild
+     *          (build + attachTransectTables + attachChebSections) is correct.
+     *          That is the normal case for swmm_link_set_polygon on a conduit
+     *          that was not already POLYGON. The rebuild is left to the caller
+     *          because the XSectParams array it needs is assembled in
+     *          Router::init, not here.
+     */
+    bool refreshLink(const SimulationContext& ctx, int link_j);
+
+    /**
      * @brief Build shape groups from an array of XSectParams.
      *
      * @details Alternative to build(ctx) — useful for testing.

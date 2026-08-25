@@ -77,23 +77,20 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
 // Init
 // ============================================================================
 
-void Router::init(SimulationContext& ctx, RouteModel model) {
-    model_ = model;
+namespace {
 
-    int n_links = ctx.n_links();
-    int n_nodes = ctx.n_nodes();
-
-    // Build XSectParams array from ctx.links SoA fields. LinkData::XsectShape
-    // and XSectBatch::XSectShape have different orderings (LinkData follows
-    // legacy enums.h with CIRCULAR=0; XSectBatch prepends DUMMY=0 and
-    // reorders some shapes) — link::translateShape (Link.cpp) is the single
-    // canonical mapping between them.
-    std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
+/// Assemble the per-link XSectParams the batch layer is grouped from.
+///
+/// Factored out of Router::init so Router::refreshConduitGeometry can rebuild
+/// the groups after a run-time cross-section change without a second, drifting
+/// copy of this field list. @p out must already be sized to ctx.n_links().
+void fillXSectParamsArray(SimulationContext& ctx, std::vector<XSectParams>& out) {
+    const int n_links = static_cast<int>(out.size());
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
 
-        auto& xs = xsect_params[uj];
+        auto& xs = out[uj];
         xs.type   = link::translateShape(ctx.links.xsect_shape[uj]);
         // Cache translated shape code to avoid per-timestep switch dispatch
         ctx.links.xsect_batch_shape[uj] = xs.type;
@@ -120,6 +117,23 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             ctx.links.xsect_w_max[uj]  = xs.w_max;
         }
     }
+}
+
+}  // namespace
+
+void Router::init(SimulationContext& ctx, RouteModel model) {
+    model_ = model;
+
+    int n_links = ctx.n_links();
+    int n_nodes = ctx.n_nodes();
+
+    // Build XSectParams array from ctx.links SoA fields. LinkData::XsectShape
+    // and XSectBatch::XSectShape have different orderings (LinkData follows
+    // legacy enums.h with CIRCULAR=0; XSectBatch prepends DUMMY=0 and
+    // reorders some shapes) — link::translateShape (Link.cpp) is the single
+    // canonical mapping between them.
+    std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
+    fillXSectParamsArray(ctx, xsect_params);
 
     // Compute modified conduit lengths for CFL stability
     // (matching legacy link.c conduit_getLengthFactor / conduit_validate:
@@ -1387,4 +1401,89 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
     }
 }
 
+// ============================================================================
+// Router::refreshConduitGeometry — run-time cross-section change (Phase 7)
+// ============================================================================
+
+bool Router::refreshConduitGeometry(SimulationContext& ctx, int link_j,
+                                    fv::GeomChangePolicy policy, double t_now,
+                                    double bed_offset, double* displaced) {
+    if (displaced) *displaced = 0.0;
+    if (model_ != RouteModel::FV || !fv_solver_) return false;
+    if (link_j < 0 || link_j >= ctx.n_links()) return false;
+
+    // Batch SoA first: the FV closure is built from an XSectParams assembled
+    // out of the same link fields, so a stale group entry would otherwise be
+    // the one copy that still describes the old section.
+    if (!groups_.refreshLink(ctx, link_j)) {
+        std::vector<XSectParams> params(static_cast<std::size_t>(ctx.n_links()));
+        fillXSectParamsArray(ctx, params);
+        groups_.build(params.data(), ctx.n_links());
+        groups_.attachTransectTables(ctx);
+        groups_.attachChebSections(ctx);
+    }
+
+    // Find the conduit row this link owns a mesh entry for. conduit_link is the
+    // mesh's own row -> link map, so this stays correct even if the FV mesh
+    // skipped conduits the context still carries.
+    int row = -1;
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        if (fv_mesh_.conduit_link[static_cast<std::size_t>(r)] == link_j) { row = r; break; }
+    }
+    if (row < 0) return false;
+
+    const auto ur = static_cast<std::size_t>(row);
+    XSectParams xs = link::buildXSectParams(ctx.links,
+                                            static_cast<std::size_t>(link_j),
+                                            &ctx.transect_tables,
+                                            &ctx.cheb_sections);
+    if (!(xs.y_full > 0.0) || !(xs.a_full > 0.0)) return false;
+
+    fv::FvGeometry g_new{};
+    fv::buildGeometry(xs, xsect::isOpen(xs), fv_opts_.slot_celerity, g_new,
+                      fv_mesh_.geom[ur].barrels);
+
+    // A section whose area does not grow with depth above the crown has no
+    // invertible closure: depthOfArea's `y_full + (a - a_crown)/t_slot` branch
+    // divides by t_slot, so t_slot == 0 turns any surcharged cell into an
+    // infinite depth. buildGeometry only produces that from a degenerate
+    // section, and refusing here converts a mid-run NaN into a rejected call.
+    if (!(g_new.t_slot > 0.0)) return false;
+
+    // Friction and loss scalars are per-CONDUIT, not per-section: they are
+    // assigned after buildGeometry in the mesh builder and a changed shape does
+    // not change the pipe's roughness or its entrance/exit losses. Carry them
+    // across rather than leaving buildGeometry's defaults.
+    const fv::FvGeometry& g_old = fv_mesh_.geom[ur];
+    g_new.roughness    = g_old.roughness;
+    g_new.rough_factor = g_old.rough_factor;
+    g_new.loss_inlet   = g_old.loss_inlet;
+    g_new.loss_outlet  = g_old.loss_outlet;
+    g_new.slope        = g_old.slope;
+    g_new.bed_offset   = bed_offset;
+
+    const double vol = fv_solver_->refreshConduitGeometry(row, g_new, t_now, policy);
+
+    // Re-derive the link's reported storage from the reconciled cells. Without
+    // this the cached value stays at whatever the last completed routing step
+    // wrote, so the displaced volume would be invisible to every consumer that
+    // reads links.volume — and, more practically, unverifiable: the identity
+    // that makes the returned number checkable is
+    // `volume_before - volume_after == displaced`.
+    {
+        const int c0 = fv_mesh_.conduit_cell_begin[ur];
+        const int nc = fv_mesh_.conduit_cell_count[ur];
+        double v = 0.0;
+        for (int i = 0; i < nc; ++i) {
+            const auto uc = static_cast<std::size_t>(c0 + i);
+            v += fv_state_.cell_a[uc] * fv_mesh_.cell_dx[uc];
+        }
+        ctx.links.volume[static_cast<std::size_t>(link_j)] = v;
+    }
+
+    if (displaced) *displaced = vol;
+    return true;
+}
+
 } // namespace openswmm
+
