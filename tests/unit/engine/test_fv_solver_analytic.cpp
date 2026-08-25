@@ -23,6 +23,9 @@
 #include <fstream>
 
 #include "fv_test_support.hpp"
+#include "hydraulics/ChebSection.hpp"
+#include "hydraulics/LegacyShapeBoundary.hpp"
+#include "hydraulics/XSectBoundary.hpp"
 
 using namespace fvtest;
 namespace k = openswmm::fv::kernels;
@@ -491,3 +494,85 @@ TEST(FvAnalytic, Rk2StaysWellBalanced) {
     s.finalize();
 }
 
+
+// ---------------------------------------------------------------------------
+// Well-balancedness on a COMPILED section (XSECT_GEOMETRY EXACT)
+// ---------------------------------------------------------------------------
+
+TEST(FvAnalytic, CompiledSectionIsAtLeastAsWellBalancedAsLegacy) {
+    // The two lake-at-rest tests above cover an OPEN channel and a fully
+    // PRESSURIZED pipe. Neither covers a partly-full CLOSED pipe, which is
+    // the regime where FvKernels::depthOfArea actually iterates — and which
+    // this work changed, replacing Brent with a seeded Newton on the
+    // compiled boundary.
+    //
+    // Measured while adding this test: a partly-full closed pipe over a slope
+    // break does NOT hold lake-at-rest to machine precision in EITHER
+    // geometry mode. That is a pre-existing property of the closure (most
+    // likely the Preissmann taper band, where the slot term makes the
+    // area/depth round trip only as invertible as the smoothstep allows), not
+    // something introduced here — it reproduces with the original Brent
+    // inverse, and it is two orders of magnitude WORSE under LEGACY.
+    //
+    // So the honest assertion is comparative, not absolute: whatever the
+    // closure's floor is, the compiled path must not be worse than the
+    // tabulated one, and must stay under the bound actually achieved.
+    // Asserting 1e-9 here would simply be asserting something untrue of the
+    // solver in either mode.
+    auto bed = [](double x) {
+        if (x < 150.0) return 10.0 - 0.02 * x;
+        if (x < 300.0) return 7.0 + 0.02 * (x - 150.0);
+        return 10.0 - 0.01 * (x - 300.0);
+    };
+    const double eta = 9.0;                 // partly full over the low reach
+
+    openswmm::chebsec::ChebSection cs{};
+    XSectParams xs_legacy = circular(4.0);
+    std::vector<openswmm::xsboundary::BElem> elems;
+    ASSERT_TRUE(openswmm::xsboundary::buildLegacyBoundary(
+        openswmm::XSectShape::CIRCULAR, xs_legacy, elems));
+    ASSERT_EQ(openswmm::chebsec::compile(cs, elems.data(),
+                                         static_cast<int>(elems.size()), false), 0);
+    XSectParams xs_cheb = xs_legacy;
+    xs_cheb.cheb = &cs;
+
+    // Worst free-surface drift and worst spurious discharge over the run.
+    auto worstDrift = [&](const XSectParams& xs, int* partly_full_out) {
+        Channel ch = makeWalledChannel(xs, 150, 3.0, bed, 0.014);
+        seedLevel(ch, eta);
+        FvOptions o = defaultOptions();
+        run(ch, o, 600.0, 60.0);
+        double worst = 0.0;
+        int partly = 0;
+        for (int i = 0; i < ch.n; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const double h = ch.state.cell_h[ui];
+            if (h <= k::kDryDepth) continue;
+            if (h < ch.mesh.geom[0].y_full) ++partly;
+            worst = std::max(worst, std::fabs(ch.mesh.cell_zb[ui] + h - eta));
+        }
+        if (partly_full_out) *partly_full_out = partly;
+        return worst;
+    };
+
+    int partly_cheb = 0, partly_legacy = 0;
+    const double drift_cheb   = worstDrift(xs_cheb,   &partly_cheb);
+    const double drift_legacy = worstDrift(xs_legacy, &partly_legacy);
+
+    // Non-vacuity: the compiled depth inversion must actually have run, which
+    // it only does for cells below the crown.
+    EXPECT_GT(partly_cheb, 10)
+        << "no partly-full cell — the compiled depth inversion never ran";
+
+    EXPECT_LE(drift_cheb, drift_legacy)
+        << "compiled geometry is LESS well-balanced than the legacy tables "
+           "(compiled=" << drift_cheb << " legacy=" << drift_legacy << ")";
+
+    // Absolute backstop just under the level the compiled path actually
+    // achieves (measured 5.6e-5), so a regression toward the legacy floor is
+    // caught even if the legacy number degrades alongside it. This bound is
+    // the closure's measured floor for this configuration, NOT a target —
+    // see the note above about partly-full closed pipes.
+    EXPECT_LT(drift_cheb, 7.0e-5)
+        << "compiled free-surface drift regressed: " << drift_cheb;
+}
