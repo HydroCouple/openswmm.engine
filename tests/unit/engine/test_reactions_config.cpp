@@ -473,6 +473,30 @@ TEST_F(ReactionsConfigTest, NodeLinkQualityRowsConsumed) {
 }
 
 // ---------------------------------------------------------------------------
+// E-D1 — an UNQUOTED comma inside a two-argument function survives the row
+// capture: the expression payload is the raw remainder of the line, no
+// longer tokenize-then-rejoin (which ate the comma and produced "unexpected
+// number"). The pre-E-D1 double-quoted form keeps working.
+TEST_F(ReactionsConfigTest, UnquotedCommaExpressionsParse) {
+    write_rxn("_rx_comma.rxn",
+              "[REACTION_SPECIES]\nBULK HOCL MG\n"
+              "[REACTION_TERMS]\nCAPPED   MIN(HOCL, 2.0)\n"
+              "[REACTION_PIPES]\nRATE HOCL -0.1 * MIN(HOCL, 2.0)\n"
+              "[REACTION_TANKS]\nRATE HOCL \"MAX(HOCL, 0.5) * -0.1\"\n");
+    write_deck("_rx_comma.inp",
+               "org.hydrocouple.openswmm.reactions  config=\"_rx_comma.rxn\"");
+    ASSERT_EQ(open_deck("_rx_comma.inp", "_rx_comma.rpt", "_rx_comma.out"),
+              SWMM_OK);
+    const auto& rx = as_cpp_engine(engine_).context().reactions;
+    ASSERT_EQ(rx.term_expr_src.size(), 1u);
+    EXPECT_EQ(rx.term_expr_src[0], "MIN(HOCL, 2.0)");   // comma intact
+    EXPECT_EQ(rx.pipe_expr_src[0], "-0.1 * MIN(HOCL, 2.0)");
+    EXPECT_EQ(rx.tank_expr_src[0], "MAX(HOCL, 0.5) * -0.1");  // unwrapped
+    std::remove("_rx_comma.inp");
+    std::remove("_rx_comma.rxn");
+}
+
+// ---------------------------------------------------------------------------
 // E-B1 — the embedded-section path flows through the same apply (D-RQ3), so
 // NODE/LINK rows work embedded for free. Pinned so a future split of the
 // two paths cannot silently drop it.

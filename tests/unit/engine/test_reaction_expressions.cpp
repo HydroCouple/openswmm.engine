@@ -170,6 +170,31 @@ TEST_F(RxVmTest, DepthGuardRejectsTooDeepExpressions) {
     EXPECT_NE(err.find("expression too deep"), std::string::npos) << err;
 }
 
+// E-D1 (D-R9): arity errors name the function, its arity, and the actual
+// count, at the CALL-SITE column — not "malformed expression" col 1.
+// Falsifier: before the round each of these compiled into the RPN discipline
+// check and reported the generic message.
+TEST_F(RxVmTest, ArityErrorsNameTheFunction) {
+    struct Case { const char* src; const char* needle; };
+    const Case cases[] = {
+        {"MIN(HOCL)",       "function 'MIN' expects 2 arguments, got 1"},
+        {"MAX(1, 2, 3)",    "function 'MAX' expects 2 arguments, got 3"},
+        {"EXP(1, 2)",       "function 'EXP' expects 1 argument, got 2"},
+        {"1 + POW(2)",      "function 'POW' expects 2 arguments, got 1"},
+    };
+    for (const auto& c : cases) {
+        RxSymbols sym;
+        sym.species = &species;
+        RxExprSpan span;
+        int col = 0;
+        const std::string err =
+            compileReactionExpression(c.src, sym, pool, span, col);
+        EXPECT_NE(err.find(c.needle), std::string::npos)
+            << c.src << " → '" << err << "'";
+        EXPECT_GT(col, 0) << c.src << ": arity error must carry a column";
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Engine-level gates
 // ---------------------------------------------------------------------------

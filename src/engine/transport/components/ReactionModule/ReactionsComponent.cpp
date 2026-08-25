@@ -40,14 +40,34 @@ using input::Tokenizer;
 
 constexpr const char* kComponentId = "org.hydrocouple.openswmm.reactions";
 
-/// Rejoin tokens [from, end) with single spaces — expression bodies span the
-/// rest of their row.
-std::string rejoin(const std::vector<std::string>& tok, std::size_t from) {
-    std::string s;
-    for (std::size_t i = from; i < tok.size(); ++i) {
-        if (!s.empty()) s += ' ';
-        s += tok[i];
+/// The raw remainder of @p line after its first @p n_lead fields —
+/// expression bodies span the rest of their row VERBATIM, so an unquoted
+/// comma (`MIN(A, 2)`) survives where the old tokenize-then-rejoin capture
+/// ate it as a delimiter (E-D1). A fully double-quoted remainder is
+/// unwrapped, keeping the pre-E-D1 quoted workaround working.
+std::string expr_payload(const std::string& line, std::size_t n_lead) {
+    const auto is_delim = [](char c) {
+        return c == ' ' || c == '\t' || c == ',';
+    };
+    std::size_t i = 0;
+    for (std::size_t f = 0; f < n_lead; ++f) {
+        while (i < line.size() && is_delim(line[i])) ++i;
+        if (i < line.size() && line[i] == '"') {          // quoted field
+            ++i;
+            while (i < line.size() && line[i] != '"') ++i;
+            if (i < line.size()) ++i;
+        } else {
+            while (i < line.size() && !is_delim(line[i])) ++i;
+        }
     }
+    while (i < line.size() && is_delim(line[i])) ++i;
+    std::size_t e = line.size();
+    while (e > i && (line[e - 1] == ' ' || line[e - 1] == '\t' ||
+                     line[e - 1] == '\r'))
+        --e;
+    std::string s = line.substr(i, e - i);
+    if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
+        s = s.substr(1, s.size() - 2);
     return s;
 }
 
@@ -206,7 +226,7 @@ void parseTerms(SimulationContext& ctx, const std::vector<std::string>& lines,
             continue;
         }
         rx.term_name.push_back(tok[0]);
-        rx.term_expr_src.push_back(rejoin(tok, 1));
+        rx.term_expr_src.push_back(expr_payload(line, 1));
     }
 }
 
@@ -262,7 +282,7 @@ void parseExpressions(SimulationContext& ctx,
             continue;
         }
         forms[us] = f;
-        srcs[us]  = rejoin(tok, 2);
+        srcs[us]  = expr_payload(line, 2);
     }
 }
 
