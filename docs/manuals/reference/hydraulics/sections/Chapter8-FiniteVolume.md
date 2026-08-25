@@ -268,6 +268,60 @@ and `h_tbl` members of @ref openswmm::fv::FvGeometry
 (`src/engine/hydraulics/fv/NetworkMeshData.hpp`, `kI1Samples` = 129),
 built in `src/engine/hydraulics/fv/NetworkMeshBuilder.cpp`.
 
+### 8.4.4 The implicit pressurized head update
+
+`FV_PRESSURIZED_IMPLICIT YES` removes the slot's wave from the explicit
+time-step law. Above the taper band the closure (8-4) is exactly linear
+in head, so the acoustic pair — slot storage \f$T_{slot}\,\partial H/\partial t\f$
+against the pressure gradient \f$gA\,\partial H/\partial x\f$ — is a
+linear diffusion system in \f$H\f$ that can be integrated implicitly
+(\f$\theta = 1\f$), unconditionally stably. Each substep, every closed-
+section cell at or above the band entry \f$y_c\f$ forms, with its
+like neighbours, a symmetric positive-definite head system
+
+| | | | |
+|---|---|---|---|
+| \f[\frac{T_i\,\Delta x_i}{\Delta t}H_i + \sum_f C_f\,(H_i - H_{nbr}) = \mathrm{RHS}_i,\qquad C_f = \frac{\alpha_f\,\Delta t\,g\,\hat A_f}{L_f},\quad \alpha_f = \frac{1}{1+\Delta t\,\gamma_f}\f] | | (8-24a) | |
+
+solved directly — the Thomas algorithm along pipe chains, Jacobi-
+preconditioned conjugate gradients where a folded junction has three or
+more branches. The solve is a **flux predictor**: the back-substituted
+face discharges overwrite the face mass fluxes, and the ordinary cell
+and node updates then integrate them unchanged, so mass conservation,
+step rejection, hot start and reporting are structurally untouched.
+Membership is a pure function of the instantaneous state — no flags, no
+memory — so the hysteresis and hot-start properties of §8.4 are
+inherited rather than re-proven.
+
+Three details carry the accuracy claims. First, the conductance area
+\f$\hat A_f\f$ and the friction coefficient \f$\gamma_f\f$ use the
+**conveyance** area \f$\min(A, A(y_{full}))\f$ — the slot stores volume
+but must not conduct, the same distinction the dynamic wave solver
+draws when it strips the slot from `conveyArea`. At steady state
+(8-24a) then reduces per face to \f$\Delta H/L = -S_f\f$ exactly, which
+makes full-bore head loss equal to the friction law and **independent
+of `FV_SLOT_CELERITY`** — where the explicit scheme understates it at
+low celerity (§8.4.1). Second, pressurized algebraic junctions whose
+every face joins two pressurized states are folded into the system as
+unknown rows (a lagged junction head would recreate the very feedback
+stiffness the solve removes); a solved head that violates the node's
+rim or invert is demoted to a Dirichlet row at the clamp and the
+imbalance books through the carry ledger into the same flooding and
+ponding paths as always. Third, **transition faces** — one side
+pressurized, one free — stay entirely explicit, Godunov flux and
+Courant bound alike: filling bores keep their shock-captured physics at
+a front-resolving step, and the step census drops the celerity of a
+pressurized side only where the face is covered by the solve. A fully
+pressurized network therefore runs at the advective bound — the slot
+width becomes a pure accuracy parameter with no runtime price — while a
+network that never pressurizes is bit-identical with the option on.
+
+The pass lives in `src/engine/hydraulics/fv/PressurizedHeadSolver.{hpp,cpp}`
+and runs on the CPU solver's global path (a device backend request is
+overridden while the option is on; composing the solve with the local-
+time-stepping macro cycle is future work). Gates:
+`tests/unit/engine/test_fv_pressurized_implicit.cpp`.
+
 ## 8.5 Numerical scheme
 
 ### 8.5.1 Face reconstruction
@@ -1400,7 +1454,8 @@ file.
 | `FV_LIMITER` | `MINMOD` | `MINMOD`, `VANLEER` or `SUPERBEE`, with `FV_ORDER 2`. |
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
-| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. |
+| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
+| `FV_PRESSURIZED_IMPLICIT` | `NO` | Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; a run that never pressurizes is bit-identical either way. |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows and outfall stages are refreshed: every substep, or once per routing step. A device backend clamps to `ROUTING_STEP`. |
 | `FV_NODE_COUPLING` | `SEMI_IMPLICIT` | `EXPLICIT` freezes face fluxes across the node update; `SEMI_IMPLICIT` linearizes them in the node head (§8.6.1). |

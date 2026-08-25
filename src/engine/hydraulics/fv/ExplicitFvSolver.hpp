@@ -47,6 +47,7 @@
 #include "FvOptions.hpp"
 #include "INetworkSolver.hpp"
 #include "NetworkMeshData.hpp"
+#include "PressurizedHeadSolver.hpp"
 
 namespace openswmm::transport::fvkernels {
 struct SpeciesKernelView;  // transport/fvkernels/SpeciesTransportKernels.hpp
@@ -152,7 +153,13 @@ private:
     void   refreshDepths();
     void   refreshNodeAreas();
     void   rebuildActiveLists();
-    double censusDt() const;
+    /// Global Courant census. @p press_edit applies the R2 edit: a
+    /// pressurized side of an implicit-eligible face is advection-bound only
+    /// (its acoustic pair is integrated implicitly this substep), and a
+    /// junction the implicit pass will fold is exempt from the algebraic
+    /// feedback bound. false everywhere the implicit pass will NOT run —
+    /// the LTS macro path, and every run without FV_PRESSURIZED_IMPLICIT.
+    double censusDt(bool press_edit = false) const;
     void   reconstructState();
     void   computeFaceFlux(int face);
     /// Species transport forwarders (phase E0): the reconstruction / FCT /
@@ -412,6 +419,20 @@ private:
     /// One forward-Euler substep of the whole operator: reconstruct, flux,
     /// positivity-limit, transport, then the cell and node updates.
     void   takeSubstep(double dt, const FvStepForcing& forcing);
+
+    // -- implicit pressurized head update (slot program R2a) ----------------
+    /// Any active closed-section cell at/above band entry? Cheap early-exit
+    /// scan deciding whether this substep runs the implicit pass (and
+    /// whether the census may apply the R2 edit).
+    bool   anyPressurizedCell() const;
+    /// Would the implicit pass fold this junction as an unknown row RIGHT
+    /// NOW? Pure state predicate, shared by the census's feedback-bound
+    /// exemption and classify()'s fold pass.
+    bool   nodePressFolded(int n) const;
+    PressurizedView pressView(const FvStepForcing& forcing);
+    PressurizedHeadSolver press_;
+    /// Did classify() find implicit work for the substep in flight?
+    bool   press_step_ = false;
 
     /// Snapshot / average for SSP-RK2. `rkSave` records Uⁿ and the ledger
     /// totals; `rkAverage` forms ½(Uⁿ + U⁽²⁾) and halves the ledger deltas the

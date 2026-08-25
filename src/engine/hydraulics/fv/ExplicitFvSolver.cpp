@@ -458,7 +458,7 @@ void ExplicitFvSolver::rebuildActiveLists() {
 // CFL census
 // ===========================================================================
 
-double ExplicitFvSolver::censusDt() const {
+double ExplicitFvSolver::censusDt(bool press_edit) const {
     perf::GatedTimer _pt(perf::sec_fv_census);
     perf::count(perf::n_fv_census);
     perf::count(perf::n_fv_census_face, static_cast<long>(active_faces_.size()));
@@ -486,6 +486,16 @@ double ExplicitFvSolver::censusDt() const {
         double speed = 0.0;
         double dx_ref = 1.0e30;
 
+        // R2 census edit: on a FULL face the implicit pass covers this
+        // substep, a pressurized side no longer time-steps its acoustic pair
+        // explicitly, so its bound is advective only. Face-level eligibility
+        // comes from the SAME predicate classify() uses, so gated/culvert
+        // faces AND transition (DELTA) faces — which stay entirely explicit,
+        // bores included — keep the full explicit bound.
+        const std::uint8_t fmode =
+            press_edit ? PressurizedHeadSolver::faceModeOf(*mesh_, *state_, f)
+                       : PressurizedHeadSolver::kNone;
+
         auto consider_cell = [&](int cell) {
             const auto uc = static_cast<std::size_t>(cell);
             dx_ref = std::min(dx_ref, mesh_->cell_dx[uc]);
@@ -493,6 +503,11 @@ double ExplicitFvSolver::censusDt() const {
             if (h <= k::kDryDepth) return;
             const FvGeometry& g =
                 mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            if (fmode == PressurizedHeadSolver::kFull && !g.is_open &&
+                h >= g.y_crown) {
+                speed = std::max(speed, std::fabs(cell_u_[uc]));
+                return;
+            }
             speed = std::max(speed,
                              std::fabs(cell_u_[uc]) +
                                  k::celerity(state_->cell_a[uc],
@@ -510,10 +525,21 @@ double ExplicitFvSolver::censusDt() const {
                 const double hg = state_->node_head[static_cast<std::size_t>(nd)] -
                                   mesh_->face_zb[uf];
                 if (hg > k::kDryDepth) {
-                    const double ag = k::areaOfDepth(g, hg);
-                    speed = std::max(speed,
-                                     std::fabs(cell_u_[uo]) +
-                                         k::celerity(ag, k::widthOfDepth(g, hg)));
+                    // Same edit for the ghost: an implicit-covered face
+                    // integrates the ghost's acoustic exchange in the head
+                    // system. A pressurized ghost feeding a FREE cell is the
+                    // filling bore, stays explicit (fmode == kNone there),
+                    // and keeps its full celerity.
+                    if (fmode == PressurizedHeadSolver::kFull && !g.is_open &&
+                        hg >= g.y_crown) {
+                        speed = std::max(speed, std::fabs(cell_u_[uo]));
+                    } else {
+                        const double ag = k::areaOfDepth(g, hg);
+                        speed = std::max(speed,
+                                         std::fabs(cell_u_[uo]) +
+                                             k::celerity(ag,
+                                                         k::widthOfDepth(g, hg)));
+                    }
                 }
             }
         }
@@ -632,6 +658,10 @@ double ExplicitFvSolver::censusDt() const {
         // nowhere to put it but the global step.
         if (!node_alg_.empty() && node_alg_[un]) {
             if (opts_.node_feedback_dt) {
+                // A junction the implicit pass folds has no explicit
+                // ghost-feedback loop left to bound — its head is a row of
+                // the SPD system (slot program R2).
+                if (press_edit && nodePressFolded(n)) continue;
                 const double dt_n = algebraicNodeStableDt(n);
                 if (dt_n < dt) { dt = dt_n; node_owns_dt = true; }
             }
@@ -1206,7 +1236,13 @@ void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) 
     const bool semi = (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT);
     all_faces_live_ = true;      // global path: every face was just computed
     const int nn = mesh_->n_nodes();
+    const auto& fold = press_.foldedNodes();
+    const bool have_fold = press_step_ && !fold.empty();
     for (int n = 0; n < nn; ++n) {
+        // A junction the implicit pass folds is a ROW of the SPD head
+        // system — solving or damping it here would overwrite the very
+        // fluxes the solve is about to own (slot program R2).
+        if (have_fold && fold[static_cast<std::size_t>(n)]) continue;
         // The algebraic solve is not a relaxation — it applies under either
         // coupling mode. Storage nodes (and demoted ponding junctions) keep
         // the semi-implicit correction.
@@ -2179,16 +2215,93 @@ void ExplicitFvSolver::restoreState() {
 // Substep and time integration
 // ===========================================================================
 
+bool ExplicitFvSolver::anyPressurizedCell() const {
+    if (!opts_.pressurized_implicit) return false;
+    const int nc = mesh_->n_cells();
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (!cell_active_[uc]) continue;
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        if (!g.is_open && state_->cell_h[uc] >= g.y_crown) return true;
+    }
+    return false;
+}
+
+bool ExplicitFvSolver::nodePressFolded(int n) const {
+    const auto un = static_cast<std::size_t>(n);
+    if (!algebraicActive(n)) return false;
+    if (forcing_ && forcing_->node_fixed_head &&
+        std::isfinite(forcing_->node_fixed_head[un]))
+        return false;
+    const int b = mesh_->node_face_ptr[un];
+    const int e = mesh_->node_face_ptr[un + 1];
+    if (e <= b) return false;
+    for (int p = b; p < e; ++p) {
+        const int f = mesh_->node_face_idx[static_cast<std::size_t>(p)];
+        if (PressurizedHeadSolver::faceModeOf(*mesh_, *state_, f) !=
+            PressurizedHeadSolver::kFull)
+            return false;
+    }
+    return true;
+}
+
+PressurizedView ExplicitFvSolver::pressView(const FvStepForcing& forcing) {
+    PressurizedView pv;
+    pv.mesh         = mesh_;
+    pv.state        = state_;
+    pv.opts         = &opts_;
+    pv.forcing      = &forcing;
+    pv.f_mass       = f_mass_.data();
+    pv.f_sstar      = f_sstar_.data();
+    pv.f_state_l    = f_state_l_.data();
+    pv.f_state_r    = f_state_r_.data();
+    pv.f_flux       = f_flux_.data();
+    pv.cell_eta     = cell_eta_.data();
+    pv.cell_u       = cell_u_.data();
+    pv.active_faces = &active_faces_;
+    pv.cell_active  = &cell_active_;
+    pv.node_qstruct = &node_qstruct_;
+    pv.node_carry   = &node_carry_;
+    pv.node_alg     = &node_alg_;
+    pv.node_vfull   = &node_vfull_;
+    pv.node_lat_div = &node_lat_div_;
+    pv.cell_qlat    = &cell_qlat_;
+    return pv;
+}
+
 void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
     reconstructState();
     computeFluxes();
+    // R2a: derive the pressurized subset BEFORE the node pass, so the node
+    // pass can leave the folded junctions to the implicit solve.
+    press_step_ = false;
+    if (opts_.pressurized_implicit) {
+        PressurizedView pv = pressView(forcing);
+        press_step_ = press_.classify(pv);
+    }
     relaxNodeFluxes(dt, forcing);   // BEFORE limiting: the limiter must bound
                                     // the flux that is actually applied
+    if (press_step_) {
+        // The implicit acoustic solve: overwrites the implicit faces'
+        // entries in f_mass_ (the single flux ledger), so everything
+        // downstream — limiter, transport, cell and node updates —
+        // integrates the solved discharges with no further branching.
+        PressurizedView pv = pressView(forcing);
+        press_.solve(pv, dt);
+    }
     limitPositivity(dt);
     reconstructScalars(dt);   // AFTER limiting: the species must ride on the
                               // same water the hydrodynamics moved
     updateCells(dt, forcing);
     updateNodes(dt, forcing);
+    if (press_step_) {
+        // Slave the pressurized cells' momentum to the solved face
+        // discharges — the collocated Q must carry no explicit acoustic
+        // residue, or the instability re-enters through the predictor.
+        PressurizedView pv = pressView(forcing);
+        press_.finalizeCells(pv);
+    }
     dispersionSolve(dt);
 }
 
@@ -3058,6 +3171,22 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
             census_count_ = 0;
         }
 
+        // ---- implicit pressurized head update (slot program R2a) ----------
+        // With FV_PRESSURIZED_IMPLICIT on and any cell at/above band entry,
+        // the substep runs the implicit pass on the GLOBAL path: the census
+        // takes the R2 edit (pressurized sides advection-bound), and the LTS
+        // macro cycle — whose face/volume cadences the synchronized solve
+        // cannot honour yet (R2b) — stands down for this iteration. A run
+        // that never pressurizes takes none of these branches and stays
+        // bit-identical, option on or off.
+        const bool press = anyPressurizedCell();
+        if (press && lts_valid_) {
+            // The macro cycle may hold booked-but-undrained flux; settle it
+            // before stepping globally or that water is double-timed.
+            settleAccumulators();
+            lts_valid_ = false;
+        }
+
         // ---- local time stepping (plan §3.3) -------------------------------
         // Tiers are reassigned only HERE, at a macro-cycle boundary with the
         // ledger settled — never mid-cycle, where a re-tiered volume would
@@ -3066,7 +3195,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // different steps, so the two stages would be averaging states that
         // never shared a Δt. They are mutually exclusive, and the integrator
         // wins because it is the more specific request.
-        if (ltsEligible()) {
+        if (!press && ltsEligible()) {
             // Re-tiering costs a pass over every cell, face and node plus the
             // grading sweep. Doing it every cycle is what made tiering SLOWER
             // than global stepping on the reference model — the assignment is
@@ -3141,7 +3270,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         }
 
         if (census_count_ <= 0) {
-            dt_census_ = censusDt();
+            dt_census_ = censusDt(press);
             census_count_ = std::max(1, opts_.cfl_census_interval);
         }
         --census_count_;
@@ -3177,7 +3306,10 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
             }
 
             if (attempt >= kMaxStepRetries || dt <= constants::MIN_TIMESTEP) break;
-            const double dt_post = censusDt();
+            // Post-step census on the state actually reached — membership is
+            // memoryless, so re-derive it (a cell may have crossed the crown
+            // inside the step, in EITHER direction).
+            const double dt_post = censusDt(anyPressurizedCell());
             if (dt_post >= kStepAcceptRatio * dt) break;          // admissible
             restoreState();
             dt = std::max(0.9 * dt_post, constants::MIN_TIMESTEP);

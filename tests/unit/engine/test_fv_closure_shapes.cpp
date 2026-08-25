@@ -169,6 +169,39 @@ TEST_P(FvClosureShapes, slotWidthMatchesTheDesignArithmetic) {
         std::to_string(std::sqrt(32.2 * g.a_full / (0.05 * g.w_max))));
 }
 
+// Amendment A-S5P (SWMM5+ review): the TRANSITION CELERITY RATIO — wave
+// speed just above the crown over wave speed at band entry — is the
+// quantity that predicts crown reflections (the zigzag gates measure the
+// symptom; this measures the cause). SWMM5+ pins its slot ENTRY celerity
+// at α·√(g·ℓ_full) with α = 2; our smoothstep band controls the WIDTH
+// blend, so the delivered ratio is shape-dependent. Measured at the
+// narrowest slot the current geometry allows (the 5% cap), recorded per
+// shape as R3's α-rule work order, and bounded so a cap or band regression
+// bites here first.
+TEST_P(FvClosureShapes, transitionCelerityRatioIsRecordedAndBounded) {
+    const FvGeometry g = build(GetParam(), 15.0);   // cap binds catalog-wide
+    const double t_req = 32.2 * g.a_full / (15.0 * 15.0);
+    ASSERT_NEAR(g.t_slot, std::min(t_req, 0.05 * g.w_max),
+                1.0e-12 * std::max(g.t_slot, 1.0))
+        << GetParam().name << " — cap expectation moved; re-derive this gate";
+
+    const double h_below = g.y_crown * (1.0 - 1.0e-9);
+    const double c_below = k::celerity(k::areaOfDepth(g, h_below),
+                                       k::widthOfDepth(g, h_below));
+    const double c_above = k::celerity(g.a_crown, g.t_slot);
+    ASSERT_GT(c_below, 0.0) << GetParam().name;
+    ASSERT_GT(c_above, 0.0) << GetParam().name;
+    const double ratio = c_above / c_below;
+    ::testing::Test::RecordProperty(
+        std::string(GetParam().name) + "_transition_celerity_ratio",
+        std::to_string(ratio));
+    // Regression bound, not a design target: today's band+cap geometry
+    // delivers ratios in the low single digits across the catalog. The
+    // A1 α-rule (R3) would pin this at α ≈ 2 for every shape.
+    EXPECT_GE(ratio, 0.5) << GetParam().name;
+    EXPECT_LE(ratio, 8.0) << GetParam().name;
+}
+
 // Multi-barrel slots are sized from the AGGREGATE section, so both the
 // delivered and the cap-implied celerity are barrel-invariant.
 TEST(FvClosureShapesBarrels, slotCelerityIsBarrelInvariant) {
