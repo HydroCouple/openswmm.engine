@@ -99,6 +99,7 @@
 #include "SpatialFrame.hpp"
 #include "UserFlags.hpp"
 #include "../data/QualityData.hpp"
+#include "../data/InitialQualityData.hpp"
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
 #include "../hydraulics/Transect.hpp"
@@ -658,6 +659,15 @@ struct SimulationContext {
     BuildupData      buildup;
     WashoffData      washoff;
     TreatmentData    treatment;
+
+    /**
+     * @brief Per-element initial quality rows from [INITIAL_QUALITY].
+     * @details Pollutant + reserved-species (__WATER_AGE__/__TEMPERATURE__)
+     *          per-node/per-link initial values overriding the global
+     *          [POLLUTANTS] Cinit / sidecar INITIAL_STATE seeds. Names are
+     *          resolved and constituents classified in PostParseResolver.
+     */
+    InitialQualityData initial_quality;
 
     // =========================================================================
     // Inflow data (external, DWF, RDII, patterns)

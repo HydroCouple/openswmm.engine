@@ -1424,6 +1424,98 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // [INITIAL_QUALITY] element + constituent resolution
+    // -------------------------------------------------------------------------
+    // The section may precede the node/link/pollutant sections, so the handler
+    // stored raw names; resolve and classify here. Every failure is loud
+    // (fatal on strict open) and the failing row is erased so downstream
+    // consumers never see an unresolved entry. Iterate backwards so erase()
+    // keeps remaining indices valid.
+    {
+        auto& iq = ctx.initial_quality;
+        for (int i = iq.count() - 1; i >= 0; --i) {
+            auto ui = static_cast<std::size_t>(i);
+            const bool  link = iq.is_link[ui] != 0;
+            const auto& en   = iq.elem_name[ui];
+            const auto& cons = iq.constituent[ui];
+
+            // Element name → index.
+            iq.elem_idx[ui] = link ? ctx.link_names.find(en)
+                                   : ctx.node_names.find(en);
+            if (iq.elem_idx[ui] < 0) {
+                ctx.errors.push_back(
+                    std::string("[INITIAL_QUALITY] unknown ") +
+                    (link ? "link" : "node") + " '" + en + "'.");
+                iq.erase(i);
+                continue;
+            }
+
+            // Constituent → kind. Pollutant first, then the reserved species.
+            if (cons == "__WATER_AGE__") {
+                iq.kind[ui] = InitialQualityData::kKindWaterAge;
+                if (!ctx.options.water_age)
+                    ctx.warnings.push_back(
+                        "[INITIAL_QUALITY] __WATER_AGE__ rows are present but "
+                        "[OPTIONS] WATER_AGE is OFF — the rows are inert this "
+                        "simulation.");
+            } else if (cons == "__TEMPERATURE__") {
+                iq.kind[ui] = InitialQualityData::kKindTemperature;
+                if (!ctx.options.heat_transport)
+                    ctx.warnings.push_back(
+                        "[INITIAL_QUALITY] __TEMPERATURE__ rows are present "
+                        "but [OPTIONS] HEAT_TRANSPORT is OFF — the rows are "
+                        "inert this simulation.");
+            } else {
+                iq.kind[ui] = ctx.pollutant_names.find(cons);
+                if (iq.kind[ui] < 0) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] unknown constituent '" + cons +
+                        "' at " + std::string(link ? "link" : "node") + " '" +
+                        en + "' — pollutant names and __WATER_AGE__/"
+                        "__TEMPERATURE__ are accepted here; MSX species "
+                        "initial values belong in the reactions config "
+                        "[REACTION_QUALITY] NODE|LINK scopes.");
+                    iq.erase(i);
+                    continue;
+                }
+                // Age (signed per D-NS1) and temperature (degC) may be
+                // negative; a pollutant concentration may not.
+                if (iq.value[ui] < 0.0) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] negative value for pollutant '" +
+                        cons + "' at " + std::string(link ? "link" : "node") +
+                        " '" + en + "'.");
+                    iq.erase(i);
+                    continue;
+                }
+            }
+        }
+
+        // Duplicate (scope, element, constituent) keys are an error, not
+        // last-wins — silent override order in a hand-edited deck is exactly
+        // the ambiguity this section should refuse. Forward scan so the
+        // SECOND occurrence is the one reported.
+        for (int i = 0; i < iq.count(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            for (int j = 0; j < i; ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                if (iq.is_link[ui] == iq.is_link[uj] &&
+                    iq.elem_idx[ui] == iq.elem_idx[uj] &&
+                    iq.kind[ui] == iq.kind[uj]) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] duplicate row for '" +
+                        iq.constituent[ui] + "' at " +
+                        std::string(iq.is_link[ui] ? "link" : "node") + " '" +
+                        iq.elem_name[ui] + "'.");
+                    iq.erase(i);
+                    --i;
+                    break;
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Link end-node re-resolution
     // -------------------------------------------------------------------------
     // Legacy parsing is order-independent, so [CONDUITS]/[PUMPS]/[ORIFICES]/

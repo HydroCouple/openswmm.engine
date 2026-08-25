@@ -114,6 +114,7 @@ add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 # whole days into a "d." prefix as in report_writeSysTime().
 add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
 add_gtest_unit(test_engine_ard_transport          test_ard_transport.cpp)
+add_gtest_unit(test_engine_initial_quality        test_initial_quality.cpp)
 add_gtest_unit(test_engine_process_components     test_process_components.cpp)
 add_gtest_unit(test_engine_reactions_config       test_reactions_config.cpp)
 add_gtest_unit(test_engine_reaction_expressions   test_reaction_expressions.cpp)
