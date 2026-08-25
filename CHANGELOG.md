@@ -112,6 +112,19 @@ retroactive.
 
 ### Fixed
 
+- **A malformed option value handed to `swmm_options_set` returns
+  `SWMM_ERR_BADPARAM` instead of killing the process.** Thirty of the
+  dispatch's key branches parsed with raw `std::stod`/`std::stoi`, which
+  throw on junk — and an exception crossing the C boundary is
+  `std::terminate`. The guard alone was also not sufficient: two
+  non-throwing families slipped through it — the lenient time parse
+  fabricated `0.0` from junk (`"1e999999"` read back as 3600 s), and
+  `std::stoi` accepted a numeric prefix (`"1.5"` read as 1). All parse
+  sites in the dispatch now use strict wrappers that consume the entire
+  token or reject, covered by an exhaustive malformed-value suite over
+  every settable key. Reachable from any API client, including the MCP
+  server passing through arbitrary text. (`d80bba34`.)
+
 - **The `OPENSWMM_PERF` FV phase split double-counted, and its parts could
   exceed the whole.** `perf::GatedTimer` accumulated wall time, so a timed
   phase that called another timed phase booked the child twice — once in the
@@ -180,6 +193,27 @@ retroactive.
   `"Apache-2.0"`.
 
 ### Added
+
+- **A Lagrangian transport engine (LARD) joins the quality solvers.**
+  `QUALITY_SOLVER LAGRANGIAN` routes pollutants with a Lagrangian
+  advection–reaction–dispersion scheme in place of the legacy complete-mix
+  chain: plug-parcel advection on per-link segment stores, first-order
+  `KDECAY`, quality substepping under a `QUALITY_STEP` key, and random-walk
+  particle tracking for longitudinal dispersion (validated against the Elder
+  profile). Water age rides the same engine as a reserved species: `WATER_AGE
+  ON`, a `[WATER_AGE_SOURCES]` table for initial state and boundary ages,
+  `__WATER_AGE__` rows in `[INFLOWS]`, hotstart round-tripping of the aged
+  state (including dry elements), and age columns in the report and binary
+  output. Negative source loads now extract mass deliberately at the node
+  seam in all three quality engines — warned at parse, clamped to the mass
+  actually held, booked to the ledger, and summarised in the report — instead
+  of being silently dropped. The option and API surface lands with it:
+  transport keys in `swmm_options_set`/`_get`, and a C age-source table API
+  (`openswmm_water_age.h`). Configurations the LARD engine does not cover yet
+  (heat, MSX-style reactions, `[TREATMENT]`) announce themselves with bypass
+  warnings at open rather than failing silently. (`24602eb2`, `8c141a5e`,
+  `647a3603`, `b9852cee`, `9f155227`, `d79c8bcf`, `d7b6c079`, `948b2840`,
+  `4639be37`.)
 
 - **FV solver statistics in the report file, and `OPENSWMM_PERF` phase timers
   for the FV step.** FV runs now emit an "FV Solver Statistics" block —
