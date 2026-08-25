@@ -1901,6 +1901,23 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f %10.4f %10.4f\n",pN(ctx,p),un,ctx.pollutants.c_rain[u],ctx.pollutants.c_gw[u],ctx.pollutants.c_rdii[u],ctx.pollutants.k_decay[u],ctx.pollutants.snow_only[u]?"YES":"NO",ctx.pollutants.co_pollut[u]>=0?pN(ctx,ctx.pollutants.co_pollut[u]):"*",ctx.pollutants.co_frac[u],ctx.pollutants.c_dwf[u],ctx.pollutants.init_conc[u]);
     }}
 
+    // [INITIAL_QUALITY] — per-element initial concentrations (raw constituent
+    // name + raw value retained by the store; resolved element names preferred,
+    // falling back to the retained raw name for never-resolved rows).
+    if(ctx.initial_quality.count()>0){sec(f,"INITIAL_QUALITY");
+    std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","Scope","Element","Constituent","Value");
+    std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","--------","----------------","----------------","----------");
+    for(int j=0;j<ctx.initial_quality.count();++j){auto u=static_cast<size_t>(j);
+    const auto& iq=ctx.initial_quality;
+    const bool link=iq.is_link[u]!=0;
+    const int ei=iq.elem_idx[u];
+    const char*en;
+    if(link)en=(ei>=0&&ei<ctx.n_links())?ctx.link_names.name_of(ei).c_str():iq.elem_name[u].c_str();
+    else en=(ei>=0&&ei<ctx.n_nodes())?ctx.node_names.name_of(ei).c_str():iq.elem_name[u].c_str();
+    std::fprintf(f,"%-8s %-16s %-16s %10.4f\n",link?"LINK":"NODE",en,
+        iq.constituent[u].c_str(),iq.value[u]);
+    }}
+
     // [LANDUSES]
     if(ctx.n_landuses()>0){sec(f,"LANDUSES");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s\n","Name","SweepIntrvl","MaxRemoval","LastSwept");
