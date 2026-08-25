@@ -443,16 +443,20 @@ TEST(ChebSection, IsTriviallyCopyableAndBounded) {
     // Pre-Phase-B, every piece reserved seven kMaxChebCoeff(32)-wide arrays
     // regardless of actual content: ~45 kB per section, of which ~43 kB was
     // coefficients no real compiled boundary ever needed (typical content is
-    // 1-12 pieces at well under 32 coefficients per field) — on a 953-conduit
-    // network that put the whole compiled geometry data set at ~24 MB, larger
-    // than L3, so every EXACT evaluation missed cache before doing any
-    // arithmetic. Phase B replaces the fixed arrays with offset/length pairs
-    // into one shared pool (kMaxPoolCoeff), sized from a MEASURED worst case
-    // across the shape catalog — see kMaxPoolCoeff's own note — rather than
-    // the arithmetic maximum. Asserting close to the real measured size,
-    // rather than well above it, is deliberate: this is the regression test
-    // that would catch a change silently reintroducing the old per-piece
-    // reservation.
+    // 1-12 pieces at well under 32 coefficients per field). Built-in shapes
+    // under XSECT_GEOMETRY EXACT each compile their own section — no dedup
+    // by (shape, dimensions) yet (promptperf.md Phase C, unstarted) — so on
+    // a network where one compiled shape dominates (Bellinge, 953 conduits,
+    // ~70% CIRCULAR), that put the compiled geometry data at ~43 MB
+    // (45 kB x 953), several times larger than L3, so every EXACT evaluation
+    // missed cache before doing any arithmetic. Packed, the same count is
+    // ~18 MB (~18.5 kB x 953). Phase B replaces the fixed arrays with
+    // offset/length pairs into one shared pool (kMaxPoolCoeff), sized from a
+    // MEASURED worst case across the shape catalog — see kMaxPoolCoeff's own
+    // note — rather than the arithmetic maximum. Asserting close to the real
+    // measured size, rather than well above it, is deliberate: this is the
+    // regression test that would catch a change silently reintroducing the
+    // old per-piece reservation.
     static_assert(std::is_trivially_copyable_v<ChebSection>);
     std::printf("[cheb] sizeof(ChebSection) = %zu bytes (%.1f kB)\n",
                 sizeof(ChebSection), sizeof(ChebSection) / 1024.0);
