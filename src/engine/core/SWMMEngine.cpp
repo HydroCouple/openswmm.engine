@@ -1206,6 +1206,7 @@ int SWMMEngine::start(int save_results) noexcept {
     // Phase 4: call prepare() on all plugins (opens output files/headers)
     if (!plugins_.empty()) {
         perf::ScopedTimer _pt(perf::sec_start_plugins);
+        plugins_prepare_attempted_ = true;
         const int rc = plugins_.prepare_all(ctx_);
         if (rc != 0) {
             set_error(SWMM_ERR_PLUGIN, "swmm_engine_start: plugin prepare() failed");
@@ -5171,6 +5172,13 @@ void SWMMEngine::applyAvgResults(SimulationSnapshot& snap) noexcept {
 int SWMMEngine::end() noexcept {
     if (ctx_.state != EngineState::RUNNING &&
         ctx_.state != EngineState::ENDED) {
+        // A failed run sits in ERROR_STATE holding the root-cause message.
+        // Callers (GUI, CLI, swmm_engine_run) call end() unconditionally on
+        // their teardown path, so a wrong-state set_error here would clobber
+        // the reason swmm_get_last_error_msg reports. Preserve it.
+        if (ctx_.state == EngineState::ERROR_STATE)
+            return (ctx_.error_code != SWMM_OK) ? ctx_.error_code
+                                                : SWMM_ERR_WRONG_STATE;
         set_error(SWMM_ERR_WRONG_STATE,
                   "swmm_engine_end: engine must be running or ended");
         return SWMM_ERR_WRONG_STATE;
@@ -5290,6 +5298,11 @@ int SWMMEngine::end() noexcept {
 
 int SWMMEngine::report() noexcept {
     if (ctx_.state != EngineState::ENDED) {
+        // Same preservation as end(): never clobber a failed run's recorded
+        // cause with a wrong-state complaint on the unconditional teardown path.
+        if (ctx_.state == EngineState::ERROR_STATE)
+            return (ctx_.error_code != SWMM_OK) ? ctx_.error_code
+                                                : SWMM_ERR_WRONG_STATE;
         set_error(SWMM_ERR_WRONG_STATE,
                   "swmm_engine_report: must call end() first");
         return SWMM_ERR_WRONG_STATE;
@@ -5354,6 +5367,29 @@ int SWMMEngine::close() noexcept {
 
     // Stop IO thread if still running (safe to call even if already stopped)
     io_thread_.stop();
+
+    // A run that failed after open() never reaches end()/report(), so without
+    // this flush the root cause would never reach the .rpt — the report
+    // plugin's destructor only stamps the generic "[Report interrupted]"
+    // footer. Record the fatal message alongside any accumulated errors and
+    // write them out, mirroring write_open_failure_report() for open()-time
+    // failures. Many set_error sites (hotstart, interface files) do not push
+    // into ctx_.errors themselves, hence the append here.
+    if (ctx_.state == EngineState::ERROR_STATE) {
+        try {
+            if (!ctx_.error_message.empty() &&
+                std::find(ctx_.errors.begin(), ctx_.errors.end(),
+                          ctx_.error_message) == ctx_.errors.end())
+                ctx_.errors.push_back(ctx_.error_message);
+        } catch (...) {
+            // Out-of-memory recording the error is non-fatal for close().
+        }
+        if (plugins_prepare_attempted_)
+            plugins_.finalize_all(ctx_);   // flushes into the open .rpt/.out
+        else
+            write_open_failure_report();   // .rpt was never opened — write one
+    }
+    plugins_prepare_attempted_ = false;
 
     // Close routing interface files
     iface_.closeFiles();
