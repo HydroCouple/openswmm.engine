@@ -34,16 +34,19 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_edit.h>
+#include <openswmm/engine/openswmm_massbalance.h>
 
 namespace fs = std::filesystem;
 
@@ -554,6 +557,172 @@ TEST(VirtualJunction, SteadyEquivalenceAnderson) {
     steadyEquivalence("aa",
         "ANDERSON_ACCEL       YES\n"
         "NODE_CONTINUITY      SEMI_IMPLICIT\n");
+}
+
+// ---------------------------------------------------------------------------
+// Slot surcharge across a virtual-junction chain (divergence regression)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A transmission main climbing a 200 ft crest on a 1 ft pipe at 500 cfs: the
+// upstream leg has to surcharge to push flow over the summit while the
+// downstream leg is still dry. That pairing — a slot-surcharged pass-through
+// node, whose top width is only the slot, next to a dry one — is what made the
+// head update diverge. A virtual junction carries no storage, so the explicit
+// dV/A step divided a large volume change by a near-zero area; on TwinOaks
+// (5028 virtual junctions) the head reached 1.9e14 by the fourth routing step.
+// Reproduced compactly here with 12 chain nodes.
+std::string hillChainModel(bool virtual_mid) {
+    const int n = 12;
+    const double seg = 300.0, dia = 1.0, rise = 200.0, q = 500.0;
+    const double top = 10.0;
+    const double half = (n + 1) / 2.0;
+
+    std::vector<std::string> names;
+    std::vector<double> inv;
+    for (int i = 0; i < n; ++i) {
+        char b[16];
+        std::snprintf(b, sizeof(b), "MID%02d", i);
+        names.emplace_back(b);
+        const double x = (i + 1) / half;
+        inv.push_back(top + rise * (x <= 1.0 ? x : 2.0 - x));
+    }
+
+    auto num = [](double v) {
+        char b[32];
+        std::snprintf(b, sizeof(b), "%.2f", v);
+        return std::string(b);
+    };
+
+    // The TwinOaks step regime: a 30 s nominal step the Courant limiter walks
+    // down toward MINIMUM_STEP. dV = 0.5*(Qold+Q)*dt scales with the step, so
+    // the large nominal step is part of what starves the update.
+    std::string m =
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             00:30:00\n"
+        "REPORT_STEP          00:01:00\n"
+        "ROUTING_STEP         30\n"
+        "ALLOW_PONDING        NO\n"
+        "SURCHARGE_METHOD     SLOT\n"
+        "NODE_CONTINUITY      SEMI_IMPLICIT\n"
+        "INERTIAL_DAMPING     PARTIAL\n"
+        "NORMAL_FLOW_LIMITED  BOTH\n"
+        "VARIABLE_STEP        0.75\n"
+        "LENGTHENING_STEP     0\n"
+        "MIN_SURFAREA         0\n"
+        "MAX_TRIALS           8\n"
+        "HEAD_TOLERANCE       0.005\n"
+        "MINIMUM_STEP         0.5\n"
+        "\n"
+        "[JUNCTIONS]\n;;Name  Elev  MaxDepth\n"
+        "J_IN    " + num(top) + "  " + num(rise) + "\n";
+    if (!virtual_mid)
+        for (int i = 0; i < n; ++i)
+            m += names[i] + "   " + num(inv[i]) + "  0.0\n";
+    m += "\n";
+
+    if (virtual_mid) {
+        m += "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\n";
+        for (int i = 0; i < n; ++i)
+            m += names[i] + "   " + num(inv[i]) + "\n";
+        m += "\n";
+    }
+
+    m += "[OUTFALLS]\n;;Name  Elev  Type  Gated\n"
+         "O_OUT   " + num(top) + "   FREE  NO\n\n";
+
+    std::vector<std::string> chain{"J_IN"};
+    chain.insert(chain.end(), names.begin(), names.end());
+    chain.emplace_back("O_OUT");
+
+    m += "[CONDUITS]\n;;Name  From  To  Length  N  Z1  Z2\n";
+    for (std::size_t i = 0; i + 1 < chain.size(); ++i) {
+        char b[16];
+        std::snprintf(b, sizeof(b), "C%02d", static_cast<int>(i));
+        m += std::string(b) + "   " + chain[i] + "  " + chain[i + 1] + "  " +
+             num(seg) + "  0.013  0  0\n";
+    }
+    m += "\n[XSECTIONS]\n;;Link  Shape  G1  G2  G3  G4  Barrels\n";
+    for (std::size_t i = 0; i + 1 < chain.size(); ++i) {
+        char b[16];
+        std::snprintf(b, sizeof(b), "C%02d", static_cast<int>(i));
+        m += std::string(b) + "   CIRCULAR  " + num(dia) + "  0  0  0  1\n";
+    }
+
+    m += "\n[DWF]\n;;Node  Param  Value\nJ_IN    FLOW   " + num(q) + "\n\n";
+    m += "[COORDINATES]\n;;Node  X  Y\n";
+    for (std::size_t i = 0; i < chain.size(); ++i)
+        m += chain[i] + "   " + num(static_cast<double>(i) * seg) + "  0.0\n";
+    return m;
+}
+
+struct ChainRun {
+    bool ran = false;
+    double max_depth = 0.0;
+    double routing_error = 0.0;
+};
+
+// Steps the model to completion, tracking the largest depth reached anywhere.
+ChainRun runChain(SWMM_Engine e) {
+    ChainRun r;
+    EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+
+    const int n_nodes = swmm_node_count(e);
+    std::vector<double> depths(static_cast<std::size_t>(n_nodes), 0.0);
+
+    double elapsed = 0.0;
+    do {
+        if (swmm_engine_step(e, &elapsed) != 0) {
+            ADD_FAILURE() << "step failed: " << swmm_get_last_error_msg(e);
+            return r;
+        }
+        if (swmm_node_get_depths_bulk(e, depths.data(), n_nodes) == SWMM_OK)
+            for (double d : depths)
+                r.max_depth = std::max(r.max_depth, std::fabs(d));
+    } while (elapsed > 0.0);
+
+    swmm_engine_end(e);
+    swmm_get_routing_continuity_error(e, &r.routing_error);
+    r.ran = true;
+    return r;
+}
+
+} // namespace
+
+// Before the fix this run aborted with ERROR 14 (the divergence detector) —
+// the explicit dV/A update ran the chain heads away. It must now complete with
+// bounded heads and a mass balance no worse than the same network built from
+// real junctions.
+TEST(VirtualJunction, SlotChainOverCrestStaysBounded) {
+    SWMM_Engine vj = openModel("vj_chain_slot", hillChainModel(true), true);
+    ChainRun pv = runChain(vj);
+    destroy(vj);
+
+    ASSERT_TRUE(pv.ran) << "virtual-junction chain did not complete";
+
+    // The crest is 200 ft above the inlet invert, so a legitimate slot
+    // surcharge reaches a few hundred feet. The divergence produced 1e14.
+    EXPECT_LT(pv.max_depth, 1.0e4)
+        << "virtual-junction head ran away (max depth " << pv.max_depth << " ft)";
+
+    // Real-junction twin: same network, same forcing, storage at each node.
+    SWMM_Engine rj = openModel("vj_chain_slot_real", hillChainModel(false), true);
+    ChainRun pr = runChain(rj);
+    destroy(rj);
+    ASSERT_TRUE(pr.ran);
+
+    // The zero-storage chain must not be dramatically worse at conserving mass
+    // than the stored one. Pre-fix this was -1.0e6 % against the twin's few %.
+    EXPECT_LT(std::fabs(pv.routing_error), std::fabs(pr.routing_error) + 25.0)
+        << "virtual-junction routing continuity " << pv.routing_error
+        << " % vs real-junction " << pr.routing_error << " %";
 }
 
 // The regular-junction split still passes flow (baseline sanity for the
