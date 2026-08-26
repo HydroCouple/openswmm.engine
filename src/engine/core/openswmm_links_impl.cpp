@@ -32,8 +32,12 @@
 #include "../hydraulics/Street.hpp"
 #include "TypeHelpers.hpp"
 #include "StringCase.hpp"
+#include "../hydraulics/XSectBoundary.hpp"
+#include "../hydraulics/ChebSection.hpp"
+#include "../hydraulics/Routing.hpp"
 
 #include <algorithm>
+#include <vector>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -1619,3 +1623,148 @@ SWMM_ENGINE_API int swmm_link_set_tag(SWMM_Engine engine, int idx,
 }
 
 } /* extern "C" */
+
+/* =========================================================================
+ * Polygon cross-section (Phase 7) — exact boundary, changeable at run time
+ * ========================================================================= */
+
+SWMM_ENGINE_API int swmm_link_set_polygon(SWMM_Engine engine, int link,
+                                          const double* x, const double* y,
+                                          int n, int policy,
+                                          double* displaced_volume_out) {
+    if (displaced_volume_out) *displaced_volume_out = 0.0;
+    CHECK_HANDLE(engine);
+    auto* eng = to_engine(engine);
+    auto& ctx = eng->context();
+    CHECK_READABLE(ctx);
+    CHECK_INDEX(link >= 0 && link < ctx.n_links());
+    if (!x || !y || n < 3) return SWMM_ERR_BADPARAM;
+    if (policy != 0 && policy != 1) return SWMM_ERR_BADPARAM;
+    const auto uj = static_cast<std::size_t>(link);
+    if (ctx.links.type[uj] != openswmm::LinkType::CONDUIT) return SWMM_ERR_BADPARAM;
+
+    const bool running = (ctx.state == openswmm::EngineState::RUNNING);
+
+    // Gap D. Once the run is under way, only FV can adopt a new section: its
+    // state is per-cell flow AREA, which is exactly what the reconciliation
+    // acts on. DYNWAVE/KINWAVE hold per-link quantities derived from the
+    // section at init (conveyance, full flow, the Picard depth/area history)
+    // with no defined mid-Picard re-seed, so this is refused rather than left
+    // undefined. Before the run starts, every model accepts it — the section is
+    // just part of the model then.
+    if (running && ctx.options.routing_model != openswmm::RoutingModel::FV)
+        return SWMM_ERR_GEOMETRY;
+
+    // Vertices arrive in PROJECT length units, like every other geometry
+    // setter here (see swmm_link_set_xsect's geom1 handling).
+    std::vector<double> xi(static_cast<std::size_t>(n)), yi(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        xi[ui] = to_internal(ctx, openswmm::ucf::LENGTH, x[ui]);
+        yi[ui] = to_internal(ctx, openswmm::ucf::LENGTH, y[ui]);
+    }
+
+    // The boundary compiler shifts the chain so its lowest point sits at
+    // y = 0, because every accessor measures depth from the section's own
+    // invert. Capture the shift first: y = 0 in the CALLER's frame is the
+    // conduit's invert elevation, so a boundary whose minimum is above 0 sits
+    // on a raised bed (sediment, a liner floor) and the conduit's flow bed has
+    // to rise with it. Without this the fill reads as EXTRA capacity near the
+    // invert — a flat sediment bed is wider there than the round invert it
+    // replaced — which is the opposite of what the caller asked for.
+    double bed_offset = yi[0];
+    for (int i = 1; i < n; ++i) bed_offset = std::min(bed_offset, yi[static_cast<std::size_t>(i)]);
+    if (bed_offset < 0.0) bed_offset = 0.0;   // below the invert: no bed rise
+
+    std::vector<openswmm::xsboundary::BElem> elems;
+    if (openswmm::xsboundary::fromPolyline(xi.data(), yi.data(), n, elems) != 0)
+        return SWMM_ERR_GEOMETRY;
+
+    // An explicitly supplied boundary is a CLOSED conduit section: the chain is
+    // a closed loop with a crown, which is what makes the Preissmann slot (and
+    // hence a finite surcharge depth) apply. An open channel is expressed
+    // through the ordinary open shapes, not through this call.
+    openswmm::chebsec::ChebSection cs{};
+    if (openswmm::chebsec::compile(cs, elems.data(), static_cast<int>(elems.size()),
+                                   /*is_open=*/false) != 0)
+        return SWMM_ERR_GEOMETRY;
+    if (!(cs.y_full > 0.0) || !(cs.a_full > 0.0)) return SWMM_ERR_GEOMETRY;
+
+    // Append rather than overwrite. ctx.cheb_sections is a std::deque precisely
+    // so existing raw pointers into it stay valid across growth — the batch
+    // groups and every FvGeometry::xs hold such pointers, and a mid-run
+    // reallocation would dangle every one of them.
+    ctx.cheb_boundaries.push_back(elems);
+    ctx.cheb_sections.push_back(cs);
+    const int cheb_idx = static_cast<int>(ctx.cheb_sections.size()) - 1;
+    const auto& stored = ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)];
+
+    ctx.links.xsect_shape[uj]     = openswmm::XsectShape::POLYGON;
+    ctx.links.xsect_cheb_idx[uj]  = cheb_idx;
+    ctx.links.xsect_y_full[uj]    = stored.y_full;
+    ctx.links.xsect_a_full[uj]    = stored.a_full;
+    ctx.links.xsect_w_max[uj]     = stored.w_max;
+    ctx.links.xsect_r_full[uj]    = stored.r_full;
+    ctx.links.xsect_s_full[uj]    = stored.s_full;
+    ctx.links.xsect_s_max[uj]     = stored.s_max;
+    ++ctx.xsect_generation;
+
+    // Conveyance, full flow and the derived conduit scalars are all functions
+    // of the section; the same helper every other cross-section setter here
+    // uses recomputes them.
+    openswmm::input::recompute_conduit_flow_properties(ctx, link);
+
+    if (!running) return SWMM_OK;   // Router::init has not run; nothing cached yet
+
+    double displaced_ft3 = 0.0;
+    const auto pol = (policy == 0) ? openswmm::fv::GeomChangePolicy::CONSERVE_DEPTH
+                                   : openswmm::fv::GeomChangePolicy::CONSERVE_VOLUME;
+    if (!eng->router().refreshConduitGeometry(ctx, link, pol,
+                                              0.001 * ctx.elapsed_ms, bed_offset,
+                                              &displaced_ft3))
+        return SWMM_ERR_GEOMETRY;
+
+    // Record each link only ONCE, however many times its section is changed
+    // during the run: SWMMEngine::end() reports this list's SIZE as "N link(s)
+    // had their cross-section changed", and a caller reasonably re-applying a
+    // polygon repeatedly (e.g. tracking a slowly filling sediment bed) would
+    // otherwise inflate that count to the number of CALLS rather than the
+    // number of LINKS. A linear scan is fine — this fires only on an explicit,
+    // rare API call, never on the routing hot path, so the list stays small.
+    if (std::find(ctx.xsect_runtime_changed_links.begin(),
+                  ctx.xsect_runtime_changed_links.end(),
+                  link) == ctx.xsect_runtime_changed_links.end())
+        ctx.xsect_runtime_changed_links.push_back(link);
+    if (displaced_volume_out)
+        *displaced_volume_out = to_display(ctx, openswmm::ucf::VOLUME, displaced_ft3);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_link_get_polygon(SWMM_Engine engine, int link,
+                                          double* x, double* y, int* n) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_READABLE(ctx);
+    CHECK_INDEX(link >= 0 && link < ctx.n_links());
+    if (!n) return SWMM_ERR_BADPARAM;
+
+    const auto uj = static_cast<std::size_t>(link);
+    const int ci = ctx.links.xsect_cheb_idx[uj];
+    if (ci < 0 || static_cast<std::size_t>(ci) >= ctx.cheb_boundaries.size()) {
+        *n = 0;
+        return SWMM_ERR_GEOMETRY;
+    }
+    const auto& elems = ctx.cheb_boundaries[static_cast<std::size_t>(ci)];
+    const int have = static_cast<int>(elems.size());
+    const int cap = *n;
+    *n = have;
+    if (!x || !y) return SWMM_OK;          // count query
+    if (cap < have) return SWMM_ERR_BADPARAM;
+
+    for (int i = 0; i < have; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        x[ui] = to_display(ctx, openswmm::ucf::LENGTH, elems[ui].x0);
+        y[ui] = to_display(ctx, openswmm::ucf::LENGTH, elems[ui].y0);
+    }
+    return SWMM_OK;
+}

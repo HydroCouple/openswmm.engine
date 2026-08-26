@@ -74,6 +74,8 @@ public:
     double suggested_step() const noexcept override { return suggested_h_; }
     RunStats run_stats() const noexcept override;
     bool   is_initialized() const noexcept override { return mesh_ != nullptr; }
+    double refreshConduitGeometry(int conduit, const FvGeometry& g_new,
+                                  double t_now, GeomChangePolicy policy) override;
 
     /// Per-node net exchange VOLUME (ft³) accumulated over the last advance().
     /// Signed positive INTO the node. The Router glue turns this into the node

@@ -21,6 +21,9 @@
 #include <cmath>
 
 #include "fv_test_support.hpp"
+#include "hydraulics/ChebSection.hpp"
+#include "hydraulics/LegacyShapeBoundary.hpp"
+#include "hydraulics/XSectBoundary.hpp"
 
 using namespace fvtest;
 namespace k = openswmm::fv::kernels;
@@ -272,4 +275,188 @@ TEST(FvClosure, F1_ClosureAllIsBitIdenticalToUnfusedPath_OpenRect) {
         expectClosureAllMatchesUnfused(g, h);
     }
     expectClosureAllMatchesUnfused(g, g.y_full);
+}
+
+// ---------------------------------------------------------------------------
+// Compiled (XSECT_GEOMETRY EXACT) sections — Phase 6 / promptperf.md Phase E
+// ---------------------------------------------------------------------------
+//
+// Two things changed for a section carrying a compiled Chebyshev boundary:
+// closureAll reaches A/W/R through one fused evaluation, and depthOfArea
+// seeds Newton from the compiled inverse instead of running Brent. The
+// second is the risky one — depthOfArea must be a TRUE inverse of
+// areaOfDepth, not merely an accurate one, or lake-at-rest fails on every
+// partly-full pipe (see that function's own header). These pin the
+// round-trip at the same tolerance the legacy path is held to, plus the two
+// places the compiled path could diverge from it: inside the slot taper
+// band, where the seed is deliberately an over-estimate Newton must walk
+// back, and against the bracketed reference solver that remains the
+// definition of the answer.
+
+namespace {
+
+/// Circular section of diameter @p d compiled to an exact arc boundary, the
+/// way PostParseResolver does under XSECT_GEOMETRY EXACT. The ChebSection is
+/// returned by reference-parameter because FvGeometry::xs.cheb points at it.
+FvGeometry makeCompiledCircular(double d, openswmm::chebsec::ChebSection& cs,
+                                double celerity = 100.0) {
+    XSectParams xs = circular(d);
+    std::vector<openswmm::xsboundary::BElem> elems;
+    EXPECT_TRUE(openswmm::xsboundary::buildLegacyBoundary(
+        openswmm::XSectShape::CIRCULAR, xs, elems));
+    EXPECT_EQ(openswmm::chebsec::compile(cs, elems.data(),
+                                         static_cast<int>(elems.size()), false), 0);
+    xs.cheb = &cs;
+    FvGeometry g;
+    buildGeometry(xs, false, celerity, g);
+    return g;
+}
+
+} // namespace
+
+TEST(FvClosureCompiled, DepthAreaRoundTripsOnACompiledSection) {
+    for (double d : {3.0, 0.5, 8.0}) {
+        openswmm::chebsec::ChebSection cs{};
+        const FvGeometry g = makeCompiledCircular(d, cs);
+        ASSERT_NE(g.xs.cheb, nullptr) << "compiled boundary not attached";
+        for (int i = 1; i <= 3000; ++i) {
+            const double h = g.y_full * 2.0 * static_cast<double>(i) / 1500.0;
+            const double a = k::areaOfDepth(g, h);
+            EXPECT_NEAR(k::depthOfArea(g, a), h, 1.0e-8 * std::max(1.0, h))
+                << "D=" << d << " round-trip failed at h=" << h;
+        }
+    }
+}
+
+TEST(FvClosureCompiled, DepthAreaRoundTripsInsideTheTaperBand) {
+    // The band is where the compiled-inverse seed is knowingly wrong (part of
+    // the area is slot, which chebYofA knows nothing about), so Newton has to
+    // do real work here rather than confirming an already-exact guess.
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g = makeCompiledCircular(3.0, cs);
+    for (int i = 0; i <= 2000; ++i) {
+        const double h = g.y_crown +
+                         (g.y_full - g.y_crown) * static_cast<double>(i) / 2000.0;
+        const double a = k::areaOfDepth(g, h);
+        EXPECT_NEAR(k::depthOfArea(g, a), h, 1.0e-9);
+    }
+}
+
+TEST(FvClosureCompiled, NewtonAgreesWithTheBracketedReference) {
+    // depthOfAreaBracketed is untouched by this work and remains the
+    // definition of the root. The fast path must land on the same one.
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g = makeCompiledCircular(3.0, cs);
+    for (int i = 1; i <= 2000; ++i) {
+        const double a = g.a_crown * static_cast<double>(i) / 2000.0;
+        const double h_fast = k::depthOfArea(g, a);
+        const double h_ref  = k::depthOfAreaBracketed(g, a);
+        EXPECT_NEAR(h_fast, h_ref, 1.0e-10 * g.y_full)
+            << "diverged from the bracketed reference at a=" << a;
+    }
+}
+
+TEST(FvClosureCompiled, FusedClosureAllMatchesTheIndividualAccessors) {
+    // closureAll's compiled branch must equal areaOfDepth/widthOfDepth/
+    // hydRadOfDepth/i1OfDepth at the same depth — the fusion is an
+    // optimization, not a reformulation.
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g = makeCompiledCircular(3.0, cs);
+    for (int i = 0; i <= 1200; ++i) {
+        const double h = g.y_full * 1.4 * static_cast<double>(i) / 1000.0;
+        double A = 0.0, W = 0.0, R = 0.0, I1 = 0.0;
+        k::closureAll(g, h, &A, &W, &R, &I1);
+        EXPECT_EQ(A, k::areaOfDepth(g, h))   << "at h=" << h;
+        EXPECT_EQ(W, k::widthOfDepth(g, h))  << "at h=" << h;
+        EXPECT_EQ(R, k::hydRadOfDepth(g, h)) << "at h=" << h;
+        EXPECT_EQ(I1, k::i1OfDepth(g, h, A)) << "at h=" << h;
+    }
+}
+
+TEST(FvClosureCompiled, ExactI1TableAgreesWithFineQuadrature) {
+    // The closed form replacing Simpson (NetworkMeshBuilder::exactI1) must
+    // integrate the SAME areaOfDepth the solver uses — slot and barrels
+    // included, which is exactly what the phase spec's literal "fill from
+    // chebI1ofY" would have dropped. Checked against a fine composite
+    // Simpson of areaOfDepth itself, so the reference is the real integrand
+    // rather than the compiled series.
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g = makeCompiledCircular(3.0, cs);
+
+    auto refI1 = [&](double h) {
+        const int m = 20000;                 // even -> composite Simpson
+        const double dh = h / static_cast<double>(m);
+        double s = k::areaOfDepth(g, 0.0) + k::areaOfDepth(g, h);
+        for (int i = 1; i < m; ++i)
+            s += ((i & 1) ? 4.0 : 2.0) * k::areaOfDepth(g, static_cast<double>(i) * dh);
+        return s * dh / 3.0;
+    };
+
+    // Sample at EXACT table-node depths. At a node, i1OfDepth's trapezoid
+    // refinement term is (h - h_i) = 0, so this reads the stored value and
+    // isolates the closed form from the between-node interpolation (which is
+    // second-order and unchanged by this work).
+    const int n = static_cast<int>(openswmm::fv::kI1Samples);
+    const double dh = g.y_full / static_cast<double>(n - 1);
+    for (int i : {1, 2, 4, 8, 16, 32, 64, 96, 128}) {
+        if (i > n - 1) continue;
+        const double h = static_cast<double>(i) * dh;
+        const double got = k::i1OfDepth(g, h, k::areaOfDepth(g, h));
+        const double ref = refI1(h);
+        // Tolerance keys off chebsec::kFitTol (1e-9), the accuracy the
+        // compiled series is deliberately chopped to (ChebSection.hpp) — the
+        // closed form cannot be more exact than the I1 series it reads, and
+        // measured it lands right at that bound. Scaled by the field's FULL
+        // range (i1_crown), not by the local value: a Chebyshev fit's error
+        // is uniform across the piece, so near the invert — where I1 is five
+        // orders below its crown value — the same absolute error is a large
+        // RELATIVE one. Judging it locally would be holding the fit to a
+        // tolerance it never claimed.
+        EXPECT_NEAR(got, ref, 5.0e-9 * g.i1_crown)
+            << "I1 node mismatch at h=" << h << " (I1=" << got
+            << " ref=" << ref << ")";
+    }
+
+    // Is the closed form actually BETTER than the Simpson quadrature it
+    // replaces? Compare both against the same fine reference, on the same
+    // integrand, using the identical kSub=8 composite scheme buildI1Table
+    // applies to a non-compiled section. This is the check that justifies
+    // the substitution rather than assuming it: near the invert A ~ h^1.5
+    // has an unbounded fourth derivative, which is exactly where Simpson's
+    // error term blows up and a closed form does not care.
+    auto simpsonNode = [&](int node) {
+        constexpr int kSub = 8;
+        const double hs = dh / static_cast<double>(2 * kSub);
+        double acc = 0.0;
+        for (int i = 1; i <= node; ++i) {
+            const double h0 = static_cast<double>(i - 1) * dh;
+            double sum = k::areaOfDepth(g, h0) + k::areaOfDepth(g, h0 + dh);
+            for (int q = 1; q < 2 * kSub; ++q)
+                sum += ((q & 1) ? 4.0 : 2.0) *
+                       k::areaOfDepth(g, h0 + static_cast<double>(q) * hs);
+            acc += sum * hs / 3.0;
+        }
+        return acc;
+    };
+    for (int node : {1, 2, 3}) {
+        const double h = static_cast<double>(node) * dh;
+        const double ref = refI1(h);
+        const double e_exact = std::fabs(g.i1_tbl[static_cast<std::size_t>(node)] - ref);
+        const double e_simp  = std::fabs(simpsonNode(node) - ref);
+        EXPECT_LT(e_exact, e_simp)
+            << "near the invert the closed form should beat Simpson: node "
+            << node << " h=" << h << " exact_err=" << e_exact
+            << " simpson_err=" << e_simp;
+    }
+
+    // I1 must stay monotone and start at zero — the properties the
+    // well-balanced construction actually depends on.
+    double prev = 0.0;
+    for (int i = 0; i <= 400; ++i) {
+        const double h = g.y_full * 1.2 * static_cast<double>(i) / 400.0;
+        const double v = k::i1OfDepth(g, h, k::areaOfDepth(g, h));
+        EXPECT_GE(v, prev - 1.0e-14) << "I1 decreased at h=" << h;
+        prev = v;
+    }
+    EXPECT_EQ(k::i1OfDepth(g, 0.0, 0.0), 0.0);
 }

@@ -1363,6 +1363,40 @@ struct XsectEval {
         double a = 0.5 * (a1 + a2);
         double tol = 0.0001 * xs.a_full;
         findroot_Newton(a1, a2, &a, tol, [&](double aa, double* f, double* df) {
+            // On a compiled boundary S and dS/dA are two readings of ONE
+            // quantity: getSofA reduces to a*cbrt(R)^2 and cheb_getdSdA to
+            // (5/3 - (2/3)*dPdA*R)*cbrt(R)^2. Both reach R through the same
+            // piece scan, the same compiled inverse u(A) and the same P(u)
+            // series -- chebRofA and chebRdPdA are line-for-line identical
+            // apart from the extra dP/du the latter also returns. Calling
+            // them separately ran that whole dependent-load chain twice per
+            // Newton iteration and paid two cbrts for one cbrt's worth of
+            // information, and getAofS is a hot DYNWAVE path (normal-flow
+            // and routing-step limiting), so the doubling lands on every
+            // conduit of every iteration.
+            //
+            // Bit-identical, not merely equivalent: chebRdPdA forms R as
+            // a/p from exactly the p chebRofA would have evaluated, so the
+            // fused branch reproduces both readings to the last bit. When
+            // it declines (full section, zero perimeter, vanishing dA/du)
+            // the unfused pair below is used unchanged, preserving the
+            // finite-difference fallback getdSdA relies on there.
+            if (xs.cheb && aa > 0.0) {
+                double r = 0.0, dPdA = 0.0;
+                if (chebsec::chebRdPdA(*xs.cheb, aa, &r, &dPdA)) {
+                    const double cr = std::cbrt(r);
+                    // Keep the ORIGINAL left-to-right association of both
+                    // expressions -- (x*cr)*cr, not x*(cr*cr). Hoisting cr*cr
+                    // into a shared temporary is algebraically identical and
+                    // numerically is not: it rounds differently, and on
+                    // Bellinge it moved the .out file. Bit-identity here is a
+                    // verification tool this project depends on, so the
+                    // grouping is load-bearing, not stylistic.
+                    *f  = ((r < TINY) ? 0.0 : aa * cr * cr) - s;
+                    *df = (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * cr * cr;
+                    return;
+                }
+            }
             *f = getSofA(xs, aa) - s;
             *df = getdSdA(xs, aa);
         });

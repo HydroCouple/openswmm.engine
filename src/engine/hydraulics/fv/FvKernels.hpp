@@ -65,6 +65,7 @@
 
 #include "FvOptions.hpp"
 #include "NetworkMeshData.hpp"
+#include "../ChebSectionBatch.hpp"   // chebAWRofY — the fused closure path
 
 // Portable kernel-function marker — identical convention to
 // 2d/solver/InertialKernels.hpp:45. Host builds get plain `inline`; the GPU
@@ -247,8 +248,26 @@ OPENSWMM_KERNEL_FN void closureAll(const FvGeometry& g, double h,
         *I1 = g.i1_crown + g.a_crown * d + 0.5 * g.t_slot * d * d;
         return;
     }
-    const double ax = g.barrel_scale * g.eval->getAofY(g.xs, h);
-    const double wx = g.barrel_scale * g.eval->getWofY(g.xs, h);
+    // A compiled boundary (POLYGON always; any shape under XSECT_GEOMETRY
+    // EXACT) reaches A, W and R in ONE piece scan and ONE basis recurrence.
+    // The three getters below are pure passthroughs to chebAofY/chebWofY/
+    // chebRofY when xs.cheb is set — each an independent scan, and chebRofY
+    // re-evaluates the area series on top — so this branch is bit-identical
+    // by construction while doing a quarter of the work. This is the call
+    // site behind the measured 3.7x FV EXACT-vs-LEGACY gap (Phase 6):
+    // closureAll runs per cell, per timestep.
+    double ax, wx;
+    if (g.xs.cheb) {
+        double a = 0.0, w = 0.0, r = 0.0;
+        chebsec::chebAWRofY(*g.xs.cheb, h, a, w, r);
+        ax = g.barrel_scale * a;
+        wx = g.barrel_scale * w;
+        *R = r;
+    } else {
+        ax = g.barrel_scale * g.eval->getAofY(g.xs, h);
+        wx = g.barrel_scale * g.eval->getWofY(g.xs, h);
+        *R = g.eval->getRofY(g.xs, h);
+    }
     const double band = g.y_full - g.y_crown;
     if (band <= 0.0) {
         *A = ax;
@@ -258,7 +277,6 @@ OPENSWMM_KERNEL_FN void closureAll(const FvGeometry& g, double h,
         *A = ax + g.t_slot * band * slotRampIntegral(s);
         *W = wx + g.t_slot * slotRamp(s);
     }
-    *R  = g.eval->getRofY(g.xs, h);
     *I1 = i1OfDepth(g, h, *A);
 }
 
@@ -363,6 +381,42 @@ OPENSWMM_KERNEL_FN double depthOfAreaBracketed(const FvGeometry& g,
 OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
     if (a <= 0.0) return 0.0;
     if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
+
+    // ---- A compiled inverse was tried here and REJECTED (promptperf.md
+    // Phase E). Do not re-add it without new evidence. -----------------------
+    //
+    // The idea was sound and the opening is real: the "Why not Newton"
+    // argument above is about TABULATED shapes, where W and A are
+    // independent legacy tabulations and so not an exact derivative pair. A
+    // compiled boundary removes exactly that objection — W is the analytic
+    // derivative of A by construction — and profiling a live FV EXACT run
+    // put this function and the area evaluations it drives at ~53% of
+    // non-idle solver work, so it is unambiguously where the time is.
+    //
+    // It was built: seed from chebYofA (exact below the taper band, where
+    // the slot contributes nothing), then Newton on the true areaOfDepth
+    // with the exact width. Measured on Bellinge FV EXACT, 2 h window:
+    // 264 s -> 162 s. What killed it was the convergence test, and both
+    // ways out are worse than not doing it:
+    //
+    //   * Stopping on a step of 1e-15*y_full is reachable in 2-3 iterations
+    //     but leaves the iterate short of a true fixed point, and this
+    //     function's contract is to be the EXACT inverse of areaOfDepth, not
+    //     an accurate one. Worst free-surface drift on a partly-full closed
+    //     pipe went 5.6e-5 (bracketed solver) -> 1.1e-4. Lake-at-rest is the
+    //     property the whole well-balanced construction exists to deliver.
+    //   * Tightening to a machine-precision fixed point is UNREACHABLE:
+    //     areaOfDepth is itself a Chebyshev evaluation carrying ~1e-16
+    //     relative noise, so near the root the Newton step jitters at the
+    //     noise floor and never settles. Every call then burned the full
+    //     iteration budget AND fell back to the bracketed solve anyway —
+    //     measured 366 s and 639 s for two such variants, i.e. slower than
+    //     the 296 s this branch started from.
+    //
+    // Brent converges on the BRACKET, which is why it reaches the root
+    // robustly on a noisy function where a derivative-based step cannot.
+    // Anyone revisiting should attack the number of CALLS (the solver
+    // inverting the same area repeatedly) rather than the cost of one call.
 
     const int n = static_cast<int>(kI1Samples);
     const double da = g.a_crown / static_cast<double>(n - 1);

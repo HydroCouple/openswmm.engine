@@ -39,6 +39,7 @@
 #include "XSectLookup.hpp"
 #include "ChebSectionBatch.hpp"  // chebsec::cheb*Batch — the fused cheb path
 #include "../core/SimulationContext.hpp"
+#include "Link.hpp"           // link::translateShape — refreshLink's group check
 #include "../math/SIMD.hpp"
 
 // Belt-and-suspenders against FMA contraction fusing a `mul`+`add` into a single
@@ -243,6 +244,70 @@ void XSectGroups::attachChebSections(const SimulationContext& ctx) {
             }
         }
     }
+}
+
+bool XSectGroups::refreshLink(const SimulationContext& ctx, int link_j) {
+    if (link_j < 0 || static_cast<std::size_t>(link_j) >= ctx.links.xsect_shape.size())
+        return true;
+    const auto uj = static_cast<std::size_t>(link_j);
+
+    // Locate the link's slot. Groups partition links by SHAPE, so a change that
+    // also changes the shape (CIRCULAR -> POLYGON, which is what
+    // swmm_link_set_polygon does to a conduit that was not already a polygon)
+    // moves the link between groups and cannot be patched in place. Detect that
+    // by shape mismatch and fall back to a full rebuild — correctness first;
+    // a geometry change is a rare, explicitly-requested event, and build() is
+    // the same O(n_links) pass Router::init already runs once.
+    const XsectShape want = ctx.links.xsect_shape[uj];
+    ShapeGroup* found = nullptr;
+    std::size_t slot = 0;
+    for (auto& g : groups_) {
+        for (int k = 0; k < g.count; ++k) {
+            if (g.link_idx[static_cast<std::size_t>(k)] != link_j) continue;
+            found = &g;
+            slot = static_cast<std::size_t>(k);
+            break;
+        }
+        if (found) break;
+    }
+    if (!found ||
+        found->shape != static_cast<XSectShape>(link::translateShape(want))) {
+        return false;   // caller must rebuild — the link moved between groups
+    }
+
+    // Same group: refresh this element's scalars and compiled-boundary pointer
+    // from the link's current state. The packed bypass mirrors cache both, so
+    // they must be dropped exactly as attachChebSections drops them — this is
+    // the same "a different ShapeGroup view is a separate decision point"
+    // hazard that produced three silent EXACT bypasses on this branch.
+    packed_groups_.clear();
+    packed_count_.clear();
+    mask_active_ = false;
+
+    auto& g = *found;
+    const int ci = ctx.links.xsect_cheb_idx[uj];
+    if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size()) {
+        const auto& cs = ctx.cheb_sections[static_cast<std::size_t>(ci)];
+        if (g.cheb.size() != static_cast<std::size_t>(g.count))
+            g.cheb.resize(static_cast<std::size_t>(g.count), nullptr);
+        g.cheb[slot]       = &cs;
+        g.y_full[slot]     = cs.y_full;
+        g.inv_y_full[slot] = (cs.y_full > 0.0) ? 1.0 / cs.y_full : 0.0;
+        g.a_full[slot]     = cs.a_full;
+        g.r_full[slot]     = cs.r_full;
+        g.s_full[slot]     = cs.s_full;
+        g.w_max[slot]      = cs.w_max;
+        return true;
+    }
+
+    if (!g.cheb.empty()) g.cheb[slot] = nullptr;
+    g.y_full[slot]     = ctx.links.xsect_y_full[uj];
+    g.inv_y_full[slot] = (ctx.links.xsect_y_full[uj] > 0.0)
+                       ? 1.0 / ctx.links.xsect_y_full[uj] : 0.0;
+    g.a_full[slot]     = ctx.links.xsect_a_full[uj];
+    g.r_full[slot]     = ctx.links.xsect_r_full[uj];
+    g.w_max[slot]      = ctx.links.xsect_w_max[uj];
+    return true;
 }
 
 const ShapeGroup* XSectGroups::findGroup(XSectShape shape) const {

@@ -111,6 +111,19 @@ struct FvGeometry {
     /// I₁(y_full) — the table's last entry, cached for the same reason.
     double i1_crown = 0.0;
 
+    /// Height of this section's flow invert above the conduit's own invert
+    /// elevation (ft). Zero for every section that comes from the input file:
+    /// a `[XSECTIONS]` shape is defined FROM the invert, so its lowest point is
+    /// the invert. A run-time polygon (swmm_link_set_polygon) may instead sit
+    /// on a raised bed — sediment, a liner floor — and the boundary compiler
+    /// normalises that away by shifting the chain to min-y = 0. Recording the
+    /// shift here is what lets a geometry change move `cell_zb` with it, so a
+    /// free surface stays at the same ELEVATION rather than the same numeric
+    /// depth. Without it, filling a pipe with sediment reads as adding capacity
+    /// near the invert (the flat bed is wider there than the round one it
+    /// replaced) instead of removing it.
+    double bed_offset = 0.0;
+
     uint8_t is_open = 0;           ///< open section: no crown, no slot taper
 
     // -- Friction and losses (already lengthening-adjusted, see Router::init) --
