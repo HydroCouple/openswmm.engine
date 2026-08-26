@@ -753,6 +753,17 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine,
                                                        int edge,
                                                        const char* name);
 
+/** @brief Get the timeseries NAME driving a SPECIFIED_STAGE edge.
+ *
+ *  SVBC A8 — the setter's mirror, so a caller can verify what the engine
+ *  holds after an edit push. Works in the OPENED state (mesh guard, like
+ *  the setter). Truncating copy into \p buf, always NUL-terminated.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_tseries_name(SWMM_Engine engine,
+                                                       int tri_idx,
+                                                       int edge,
+                                                       char* buf, int buflen);
+
 /** @brief Get prescribed flow per metre of edge (m³/s/m) for a
  *         SPECIFIED_FLOW edge. V-E4.
  *  @ingroup engine_2d */
@@ -772,6 +783,14 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine,
                                                             int edge,
                                                             const char* name);
 
+/** @brief Get the timeseries NAME driving a SPECIFIED_FLOW edge.
+ *  SVBC A8 — same contract as `swmm_2d_get_edge_bc_tseries_name`. */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_flow_tseries_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            char* buf,
+                                                            int buflen);
+
 /** @brief Set the curve NAME to drive a RATING_CURVE edge.
  *
  *  V-E5. Stage → flow lookup is resolved against the existing
@@ -781,6 +800,14 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine,
                                                             int tri_idx,
                                                             int edge,
                                                             const char* name);
+
+/** @brief Get the curve NAME driving a RATING_CURVE edge.
+ *  SVBC A8 — same contract as `swmm_2d_get_edge_bc_tseries_name`. */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_rating_curve_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            char* buf,
+                                                            int buflen);
 
 /** @brief Get cumulative boundary flux at an edge (m³, + = outflow).
  *  @ingroup engine_2d */
