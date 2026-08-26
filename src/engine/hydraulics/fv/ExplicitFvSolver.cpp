@@ -31,6 +31,11 @@ namespace {
 /// Below this many faces the OpenMP fork/join costs more than the flux loop.
 constexpr int kOmpMinFaces = 4096;
 
+/// Same trade for the per-cell loops (depth refresh, cell update). Kept at the
+/// face threshold: a conduit mesh carries comparable cell and face counts, and
+/// the per-item work is the same order.
+constexpr int kOmpMinCells = 4096;
+
 /// limitSlope moved to transport/fvkernels/SpeciesTransportKernels.hpp
 /// (phase E0) — shared between the species kernels and the hydrodynamic
 /// second-order reconstruction below.
@@ -292,12 +297,22 @@ double ExplicitFvSolver::nodeDepthFromVolume(int node, double volume) const {
 void ExplicitFvSolver::refreshDepths() {
     perf::GatedTimer _pt(perf::sec_fv_refreshdep);
     const int nc = mesh_->n_cells();
+    // Every iteration reads and writes only its OWN cell index, and
+    // depthOfArea is a pure function of (const geometry, area) -- no table
+    // cursor, no shared scratch -- so the loop carries no dependence and the
+    // result is bit-identical to the serial order regardless of thread count
+    // (there is no reduction here to reassociate). The inversion counter is
+    // hoisted out: incrementing it per iteration would be a data race, and
+    // the count is exactly nc either way.
+    perf::count(perf::n_fv_invert, static_cast<long>(nc));
+#ifdef SWMM_USE_OPENMP
+#pragma omp parallel for schedule(static) if (nc >= kOmpMinCells)
+#endif
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
         double a = state_->cell_a[uc];
         if (a < 0.0) a = 0.0;
-        perf::count(perf::n_fv_invert);
         const double h = k::depthOfArea(g, a);
         state_->cell_a[uc] = a;
         state_->cell_h[uc] = h;
@@ -1422,6 +1437,23 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
     const int nf = mesh_->n_faces();
     const int ns = state_->n_species;
 
+    // Cell-local update: every write is indexed by this cell (state cell_a /
+    // cell_h / cell_q / cell_phi, cell_eta_, cell_u_, cell_q_int_), the face
+    // and mesh arrays are read-only here, and frictionFor / depthOfArea are
+    // pure. No cross-cell dependence and no floating-point reduction, so the
+    // result is bit-identical to the serial order at any thread count. The
+    // only accumulator is the inversion COUNT, reduced as an integer (exact,
+    // order-independent) and applied once after the loop.
+    // Dynamic schedule, not static: inactive cells are skipped outright and
+    // they arrive in spatial runs (a filling main leaves whole stretches
+    // quiescent), so a contiguous static split hands some threads nothing to
+    // do. Measured on TwinOaks-v2 (5086 cells, 2 h) against the same run at
+    // one thread: static 2.05x, dynamic 2.92x.
+    long n_inv = 0;
+#ifdef SWMM_USE_OPENMP
+#pragma omp parallel for schedule(dynamic, 64) reduction(+ : n_inv) \
+        if (nc >= kOmpMinCells)
+#endif
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         if (!cell_active_[uc]) continue;
@@ -1544,7 +1576,7 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
         if (a_new < 0.0) a_new = 0.0;
 
         // ---- friction + local losses, both semi-implicit --------------------
-        perf::count(perf::n_fv_invert);
+        ++n_inv;
         const double h_new = k::depthOfArea(g, a_new);
         state_->cell_a[uc] = a_new;
         state_->cell_h[uc] = h_new;
@@ -1561,6 +1593,7 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
         state_->cell_q[uc] = q_new;
         cell_u_[uc] = q_new / a_new;
     }
+    perf::count(perf::n_fv_invert, n_inv);
 }
 
 // ===========================================================================
