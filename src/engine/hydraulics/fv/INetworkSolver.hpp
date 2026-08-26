@@ -46,6 +46,23 @@ namespace openswmm::fv {
 struct NetworkMeshData;
 struct NetworkStateData;
 struct FvOptions;
+struct FvGeometry;
+
+/// How a mid-run cross-section change reconciles the water already in the cells.
+///
+/// @note There is deliberately no default. The two policies describe physically
+///       opposite events and produce different volumes; picking one silently
+///       for the caller would be picking their physics for them.
+enum class GeomChangePolicy {
+    /// `A_new = A_new(h_old)`. Correct when solid material INTRUDES into the
+    /// flow (sediment deposition, a CIPP liner): the bed/wall displaces water,
+    /// the free surface stays put, and the displaced volume leaves the conduit.
+    CONSERVE_DEPTH,
+    /// `h_new = h(A_old)` in the new section. Correct when material is REMOVED
+    /// (corrosion, erosion, cleaning): the same water now occupies a larger
+    /// section, so the free surface drops.
+    CONSERVE_VOLUME
+};
 
 /// Per-routing-step boundary forcing pushed into the solver before advance()
 /// and results pulled back after. Kept as a flat struct so the plugin ABI can
@@ -154,6 +171,45 @@ public:
 
     /// True once initialize() has completed and the solver is ready.
     virtual bool is_initialized() const noexcept = 0;
+
+    /**
+     * @brief Rebuild one conduit's closure after its cross-section changed.
+     *
+     * @details The caller chooses the reconciliation policy; there is no
+     *          universally correct default. Getting this backwards is silent —
+     *          the run completes and the numbers are wrong.
+     *
+     * @param conduit  conduit row (index into NetworkMeshData::geom).
+     * @param g_new    the already-built closure for the NEW section. The
+     *                 caller builds it because buildGeometry() needs an
+     *                 XSectParams, which lives in SimulationContext and the
+     *                 solver deliberately does not hold.
+     * @param t_now    current simulation time (s), for diagnostics.
+     * @param policy   how to reconcile the water already in the cells.
+     *
+     * @returns Water volume displaced (ft³, + = removed from the conduit).
+     *          Always 0 for CONSERVE_VOLUME by construction; non-zero for
+     *          CONSERVE_DEPTH. An unbooked change silently breaks continuity
+     *          reporting, so the caller must add it to the mass balance.
+     *
+     * @warning Legal only BETWEEN routing steps, never inside advance().
+     *
+     * @note The design sketch passed only (conduit, t_now, policy) and had the
+     *       solver re-run buildGeometry itself. It cannot: the OLD closure has
+     *       to stay intact while `h_old = depthOfArea(g_old, a)` is evaluated
+     *       for CONSERVE_DEPTH, and that call reaches
+     *       `g.eval->getAofY(g.xs, ...)` through sectionArea — so overwriting
+     *       `geom[conduit].xs` in place before the reconciliation would make
+     *       the old inversion read the new section. Passing the new closure in
+     *       keeps both alive simultaneously, which is what the reconciliation
+     *       actually needs.
+     */
+    virtual double refreshConduitGeometry(int /*conduit*/,
+                                          const FvGeometry& /*g_new*/,
+                                          double /*t_now*/,
+                                          GeomChangePolicy /*policy*/) {
+        return 0.0;
+    }
 };
 
 } // namespace openswmm::fv

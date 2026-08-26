@@ -290,8 +290,54 @@ public:
      *          xsect_curve.
      *
      * @param ctx  SimulationContext with cheb_sections populated.
+     *
+     * @note **Sorting a group's elements by compiled section was built,
+     *       measured and REJECTED (promptperf.md Phase D) — do not re-add it
+     *       without new evidence.** The idea: a group stores links in
+     *       ascending link-index order, so consecutive elements reference
+     *       different compiled sections, and sorting by section would keep
+     *       each section's data hot across the run of links using it. It
+     *       works and it is numerically inert (Bellinge's 180 MB EXACT `.out`
+     *       came back byte-identical, as the permutation argument requires),
+     *       and it genuinely engages — 932 of the 951 CIRCULAR elements moved,
+     *       collapsing into 46 contiguous runs. It is simply **not faster**:
+     *       interleaved A/B on Bellinge measured 44.20 s unsorted vs 45.18 s
+     *       sorted (3 pairs each), i.e. ~2 % the wrong way and well inside
+     *       this network's run-to-run spread.
+     *       The mechanism, which is the part worth keeping: sorting **trades
+     *       output locality for input locality**. Unsorted, `link_idx` rises
+     *       monotonically, so gather_depths/scatter_results stream
+     *       sequentially through the global per-link arrays (eight of them on
+     *       the triple path). Sorted, those accesses scatter. The input side
+     *       had little left to buy, because the compiled sections are already
+     *       deduplicated — 46 of them, only a few hot cache lines each (see
+     *       ChebSection.hpp) — so the section working set was cache-resident
+     *       before any reordering. promptperf.md's own synthetic table
+     *       predicted a 2.5x win here, but it modelled section access ALONE,
+     *       with no global scatter arrays present, and against the pre-Phase-B
+     *       25 kB sections. Dedup (Phase C) removed the problem Phase D was
+     *       designed to solve.
      */
     void attachChebSections(const SimulationContext& ctx);
+
+    /**
+     * @brief Re-read one link's cross-section into the grouped SoA arrays.
+     *
+     * @details For run-time geometry change (Phase 7). Updates the element's
+     *          scalar summary fields and compiled-boundary pointer in place,
+     *          and drops the packed bypass mirrors so they cannot serve the
+     *          pre-change copies.
+     *
+     * @returns true when the update was applied in place. **false means the
+     *          link's SHAPE changed** — groups partition by shape, so the link
+     *          has moved between them and only a full rebuild
+     *          (build + attachTransectTables + attachChebSections) is correct.
+     *          That is the normal case for swmm_link_set_polygon on a conduit
+     *          that was not already POLYGON. The rebuild is left to the caller
+     *          because the XSectParams array it needs is assembled in
+     *          Router::init, not here.
+     */
+    bool refreshLink(const SimulationContext& ctx, int link_j);
 
     /**
      * @brief Build shape groups from an array of XSectParams.

@@ -75,6 +75,47 @@
  *    sections slower (a one-piece box went 3.1 -> 4.3 ns/eval) once the
  *    per-lane piece pointers stopped fitting in registers. The compiler
  *    already interleaves these loops; hand-unrolling got in its way.
+ * 4. **Taylor-extrapolating A and W across Picard iterations instead of
+ *    re-evaluating** (promptperf.md Phase F). Investigated with a full
+ *    instrumented run on Bellinge and dropped without being built, for two
+ *    independent reasons, either of which is fatal:
+ *
+ *    *The premise does not hold.* Phase F assumes DYNWAVE grinds through many
+ *    Picard iterations with the depth change shrinking each time. Bellinge
+ *    converges in **2.00 iterations per step**: of 159.3 M conduit
+ *    evaluations, 79.67 M are at iteration 0, 79.67 M at iteration 1, and
+ *    **1,790 — 0.001% — at iteration 2 or beyond.** There is no "later
+ *    iteration" to extrapolate into. (The same run shows the legacy
+ *    `bypassed_` mask skipping only 0.1% of evaluations, because legacy's own
+ *    `Steps > 1` schedule means it is never populated before the step ends.)
+ *
+ *    *The error bound is unavailable exactly where the traffic is.* Reframing
+ *    it as extrapolation from a fixed ANCHOR (never chained — chaining
+ *    integrates truncation error over ~157k iterations with no bound) does
+ *    work: measured hit rates are 23.3% at dy == 0, 92.5% within 1e-5*y_full
+ *    and 99.7% within 1e-3*y_full. But a fast path must decide validity **in
+ *    advance**, and the only a-priori bound is sup|A''| / sup|A'''| over the
+ *    piece, which is FINITE only where the coordinate map is the identity.
+ *    Phase 4's normalization invariant ("no piece may be singular at both
+ *    ends") guarantees every other piece has a sqrt-mapped end where du/dy
+ *    blows up — and dry-weather depths sit in the invert piece, so only
+ *    **7.8% of evaluations land on an identity-mapped piece**. Measuring the
+ *    error a 2nd-order Taylor would actually commit confirms it from the
+ *    other side: only 56.9% of extrapolations stay inside the compiled fit's
+ *    own kFitTol, 99.1% stay inside 1e-7*a_full, and the worst observed is
+ *    7.3e-5*a_full — 73,000x the fit tolerance. A rigorously-bounded fast
+ *    path therefore fires on ~7.6% of traffic; a tuned-constant radius is
+ *    what promptperf.md explicitly forbids.
+ *
+ *    Ceiling, for anyone tempted to revisit: running the STEP B + STEP D
+ *    batch kernels twice (idempotent, so results stay bit-identical) costs
+ *    +6.5 to +7.3 s on a 42 s EXACT run, so ONE full forward-geometry pass is
+ *    worth ~6.5 s against a ~6 s EXACT-vs-LEGACY gap. At a 7.6% hit rate the
+ *    rigorous version is worth ~0.3 s — an order of magnitude below this
+ *    machine's run-to-run spread. **Attack the S-family and the compiled
+ *    inverse instead:** the same profile puts +2,514 whole-run samples of the
+ *    gap in getAofS/getSofA/getdSdA against +2,368 in the entire forward
+ *    batch path, and that third needs no accuracy trade at all.
  *
  * @note Every function here returns **bit-identical** results to the
  *       ChebSection.hpp accessor it replaces — not merely close. Sharing the
@@ -225,6 +266,98 @@ OPENSWMM_KERNEL_FN void chebAWofY(const ChebSection& s, double y,
              chebUofY(pc, y), a, w);
     A = a;
     W = (w > 0.0) ? w : 0.0;
+}
+
+/**
+ * @brief Three Chebyshev series sharing one basis recurrence.
+ *
+ * @details The three-field sibling of chebEval2, for callers that need A, W
+ *          and P together. Same reasoning: the `T_k` recurrence is a serial
+ *          dependency chain and the per-field multiply-adds are not, so a
+ *          third field is very nearly free where a third CALL is not.
+ *
+ * @param ca,na  first field's coefficients and retained count.
+ * @param cb,nb  second field's coefficients and retained count.
+ * @param cc,nc  third field's coefficients and retained count.
+ * @param u      fit variable in [0,1], from chebUofY().
+ * @param a_out,b_out,c_out  the three sums.
+ *
+ * @note All three fields run to `max(na, nb, nc)` terms — safe and
+ *       result-preserving for exactly the reason chebEval2 and chebAll
+ *       document: the surplus coefficients are zero, so the extra terms add
+ *       `0.0 * T_k`.
+ */
+OPENSWMM_KERNEL_FN void chebEval3(const double* ca, int na,
+                                  const double* cb, int nb,
+                                  const double* cc, int nc, double u,
+                                  double& a_out, double& b_out,
+                                  double& c_out) noexcept {
+    const double x = 2.0 * u - 1.0;
+    const double x2 = 2.0 * x;
+    int n = (na > nb) ? na : nb;
+    if (nc > n) n = nc;
+
+    double a = ca[0], b = cb[0], c = cc[0];
+    if (n > 1) { a += ca[1] * x; b += cb[1] * x; c += cc[1] * x; }
+    double t_prev = 1.0, t_cur = x;
+    for (int k = 2; k < n; ++k) {
+        const double t = x2 * t_cur - t_prev;
+        t_prev = t_cur;
+        t_cur = t;
+        a += ca[k] * t;
+        b += cb[k] * t;
+        c += cc[k] * t;
+    }
+    a_out = a;
+    b_out = b;
+    c_out = c;
+}
+
+/**
+ * @brief Flow area, top width and hydraulic radius at one depth, in one pass.
+ *
+ * @details Exists for the FV closure (`FvKernels.hpp::closureAll`), which
+ *          needs exactly these three at one depth for every cell on every
+ *          timestep. Through the ordinary accessors that costs FOUR series
+ *          evaluations and four piece scans, not three: `chebRofY` evaluates
+ *          the area series a second time to form A/P (see its body). One
+ *          piece scan and one basis recurrence replace all of it.
+ *
+ * @param s  compiled section.
+ * @param y  depth (ft).
+ * @param A  flow area (ft^2).
+ * @param W  top width (ft), clamped at 0 like chebWofY.
+ * @param R  hydraulic radius (ft).
+ *
+ * @note Bit-identical to chebAofY/chebWofY/chebRofY called separately. Below
+ *       the crown all three select the same piece and the same u, and R is
+ *       formed as `a / p` from the very coefficients chebRofY would have
+ *       re-evaluated. At and above y_full each field takes the scalar its own
+ *       accessor takes (a_full, the top piece's width at u = 1, r_full) —
+ *       note in particular that R uses `r_full`, which for a closed shape
+ *       carries the crown perimeter JUMP that extrapolating the fitted P
+ *       series would miss (ChebSection::p_full).
+ */
+OPENSWMM_KERNEL_FN void chebAWRofY(const ChebSection& s, double y,
+                                   double& A, double& W, double& R) noexcept {
+    if (s.n_pieces <= 0 || y <= 0.0) { A = 0.0; W = 0.0; R = 0.0; return; }
+    if (y >= s.y_full) {
+        const ChebPiece& top = s.piece[s.n_pieces - 1];
+        A = s.a_full;
+        const double w = chebEval(chebCoef(s, top.off_w), top.n_w, 1.0);
+        W = (w > 0.0) ? w : 0.0;
+        R = s.r_full;
+        return;
+    }
+    const ChebPiece& pc = s.piece[chebPieceOfY(s, y)];
+    double a = 0.0, w = 0.0, p = 0.0;
+    chebEval3(chebCoef(s, pc.off_a), pc.n_a,
+              chebCoef(s, pc.off_w), pc.n_w,
+              chebCoef(s, pc.off_p), pc.n_p,
+              chebUofY(pc, y), a, w, p);
+    A = a;
+    W = (w > 0.0) ? w : 0.0;
+    R = (p > 0.0) ? a / p : 0.0;
 }
 
 // ===========================================================================

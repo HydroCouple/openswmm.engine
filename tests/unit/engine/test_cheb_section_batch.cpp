@@ -195,6 +195,16 @@ void expectBatchMatchesScalar(const char* what, const ChebSection& s) {
         chebAWofY(s, y[i], awA, awW);
         EXPECT_EQ(awA, a);
         EXPECT_EQ(awW, w);
+
+        // chebAWRofY (Phase 6: FvKernels' closureAll used to call getAofY,
+        // getWofY and getRofY separately per cell per timestep — four series
+        // evaluations, since chebRofY re-evaluates area to form A/P). Must
+        // agree with all three accessors it replaces there.
+        double rA = 0.0, rW = 0.0, rR = 0.0;
+        chebAWRofY(s, y[i], rA, rW, rR);
+        EXPECT_EQ(rA, chebAofY(s, y[i]));
+        EXPECT_EQ(rW, chebWofY(s, y[i]));
+        EXPECT_EQ(rR, chebRofY(s, y[i]));
     }
 }
 
@@ -623,4 +633,85 @@ TEST(ChebSectionBatch, GetYcritOnACompiledSectionMatchesTheAnalyticCircle) {
         EXPECT_NEAR(yc_cheb, yc_legacy, 0.01 * d)
             << "legacy=" << yc_legacy << " compiled=" << yc_cheb;
     }
+}
+
+// ---------------------------------------------------------------------------
+// generic_getAofS's Newton probe fuses S and dS/dA into ONE chebRdPdA call.
+// That is only bit-identical to the old separate getSofA/getdSdA pair because
+// chebRdPdA forms R as a/p from exactly the p that chebRofA (which getSofA
+// reaches through getRofA) would have evaluated — same piece, same compiled
+// inverse u(A), same P(u) series. This test pins that equality directly, so a
+// future change to EITHER function that breaks the correspondence fails here
+// rather than silently shifting every EXACT-mode .out file.
+//
+// The assertions are exact (EXPECT_EQ on doubles, not EXPECT_NEAR): an
+// approximate check would pass straight through the very drift it exists to
+// catch. Note the deliberate (x*cr)*cr grouping — hoisting cr*cr into a shared
+// temporary is algebraically identical and rounds differently, which is how
+// the first cut of this fusion moved Bellinge's output.
+// ---------------------------------------------------------------------------
+namespace {
+
+void expectFusedNewtonProbeMatchesUnfused(const std::vector<BElem>& elems,
+                                          bool is_open, const char* what) {
+    SCOPED_TRACE(what);
+    ChebSection cs{};
+    ASSERT_EQ(compile(cs, elems.data(), static_cast<int>(elems.size()), is_open), 0);
+
+    XSectParams xs{};
+    xs.type = static_cast<int>(XSectShape::CIRCULAR);   // ignored once cheb is set
+    xs.y_full = cs.y_full;  xs.a_full = cs.a_full;  xs.w_max = cs.w_max;
+    xs.r_full = cs.r_full;  xs.s_full = cs.s_full;  xs.s_max = cs.s_max;
+    xs.cheb   = &cs;
+
+    int n_fused = 0;
+    for (int i = 1; i < 200; ++i) {
+        const double a = cs.a_full * (static_cast<double>(i) / 200.0);
+        double r = 0.0, dPdA = 0.0;
+        if (!chebRdPdA(cs, a, &r, &dPdA)) continue;   // fallback arm, not fused
+        ++n_fused;
+
+        // The load-bearing identity: the fused probe's R is the SAME double
+        // getSofA would have obtained via getRofA -> chebRofA.
+        EXPECT_EQ(r, chebRofA(cs, a)) << "a = " << a;
+
+        // The composed values are asserted to ~a few ulp, NOT exactly, and the
+        // distinction is the same one Phase 5C hit with the piece-local
+        // derivative test: these expressions are re-typed HERE, so the test's
+        // instantiation and the library's are separate translation units and
+        // are free to contract `x*cr*cr` into FMAs differently. Inside the
+        // library both live in XSectKernels.hpp and do agree bit-for-bit —
+        // which is what Bellinge's byte-identical .out actually demonstrates,
+        // and what the exact EXPECT_EQ on r above pins here. Asserting
+        // exactness on a recomputed expression would only pin the compiler.
+        const double cr = std::cbrt(r);
+        const double s_fused  = (r < 1.0e-6) ? 0.0 : a * cr * cr;
+        const double ds_fused = (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * cr * cr;
+        const double s_ref  = openswmm::xsect::getSofA(xs, a);
+        const double ds_ref = openswmm::xsect::getdSdA(xs, a);
+        EXPECT_NEAR(s_fused,  s_ref,  8.0 * std::fabs(s_ref)  * 2.3e-16) << "a = " << a;
+        EXPECT_NEAR(ds_fused, ds_ref, 8.0 * std::fabs(ds_ref) * 2.3e-16) << "a = " << a;
+    }
+    EXPECT_GT(n_fused, 100) << "fused arm barely exercised — test is vacuous";
+}
+
+}  // namespace
+
+TEST(ChebSectionBatch, FusedSectionFactorProbeMatchesTheSeparateAccessors) {
+    expectFusedNewtonProbeMatchesUnfused(circleOf(4.0), false, "circle d=4");
+    expectFusedNewtonProbeMatchesUnfused(benchedOf(6.0, 4.0, 1.0), false, "benched");
+}
+
+TEST(ChebSectionBatch, FusedSectionFactorProbeMatchesOnATabulatedShape) {
+    // EGG exercises a LegacyShapeBoundary reconstruction rather than an
+    // analytic arc, so the piece structure (and therefore the compiled
+    // inverse's root orders) differs from the circle's.
+    double p[4] = {4.0, 0.0, 0.0, 0.0};
+    XSectParams legacy{};
+    ASSERT_EQ(openswmm::xsect::setParams(
+                  legacy, static_cast<int>(XSectShape::EGGSHAPED), p, 1.0), 0);
+    std::vector<BElem> elems;
+    ASSERT_TRUE(openswmm::xsboundary::buildLegacyBoundary(
+        XSectShape::EGGSHAPED, legacy, elems));
+    expectFusedNewtonProbeMatchesUnfused(elems, false, "eggshaped");
 }
