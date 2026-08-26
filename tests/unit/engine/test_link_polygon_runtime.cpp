@@ -49,15 +49,20 @@ std::string outDir() {
 
 /// A two-conduit chain with a steady inflow — small enough to step quickly,
 /// long enough that the pipes carry real water when the section is changed.
-std::string writeModel(const std::string& name, const char* routing) {
+/// @param hotstart_out  if non-empty, adds a `[FILES] SAVE HOTSTART` line so
+///        the end-of-run save (and its geometry-change warning) can be tested.
+std::string writeModel(const std::string& name, const char* routing,
+                       const std::string& hotstart_out = "") {
     const std::string path = outDir() + "/" + name + ".inp";
     std::ofstream os(path);
     os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
        << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
           "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
           "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
-          "ALLOW_PONDING        NO\n\n"
-          "[JUNCTIONS]\nJ0  40.0  12.0  0  0  0\nJ1  39.6  12.0  0  0  0\n\n"
+          "ALLOW_PONDING        NO\n\n";
+    if (!hotstart_out.empty())
+        os << "[FILES]\nSAVE HOTSTART \"" << hotstart_out << "\"\n\n";
+    os << "[JUNCTIONS]\nJ0  40.0  12.0  0  0  0\nJ1  39.6  12.0  0  0  0\n\n"
           "[OUTFALLS]\nO1  39.2  FREE  NO\n\n"
           "[CONDUITS]\n"
           "C0  J0  J1  200.0  0.013  0  0  0\n"
@@ -281,6 +286,51 @@ TEST(LinkPolygonRuntime, RepeatedUpdatesShrinkMonotonicallyAndStayValid) {
         ASSERT_EQ(swmm_engine_step(r.e, &t), 0);
     }
     EXPECT_EQ(swmm_engine_end(r.e), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Gap E — the SAVE HOTSTART warning counts LINKS, not CHANGES.
+// ---------------------------------------------------------------------------
+
+// Regression for a GitHub Copilot review finding on PR #146:
+// xsect_runtime_changed_links recorded the link index on every call with no
+// de-duplication, so a link updated 100 times (exactly what
+// RepeatedUpdatesShrinkMonotonicallyAndStayValid above does) would have made
+// the end-of-run warning read "100 link(s) had their cross-section changed"
+// for what is actually one link.
+TEST(LinkPolygonRuntime, HotstartWarningCountsDistinctLinksNotChanges) {
+    const std::string hs = outDir() + "/repeat_hs_warn.hsf";
+    const std::string inp = writeModel("repeat_hs_warn", "FV", hs);
+    FvRun r;
+    ASSERT_NO_FATAL_FAILURE(r.open(inp, "repeat_hs_warn"));
+    ASSERT_NO_FATAL_FAILURE(stepTo(r.e, 0.01));
+
+    std::vector<double> x, y;
+    for (int k = 0; k < 5; ++k) {
+        sedimentedCircle(4.0, 0.01 + 0.01 * k, 24, x, y);
+        double displaced = 0.0;
+        ASSERT_EQ(swmm_link_set_polygon(r.e, r.link, x.data(), y.data(),
+                                        static_cast<int>(x.size()), 0, &displaced),
+                  SWMM_OK);
+        double t = 0.0;
+        ASSERT_EQ(swmm_engine_step(r.e, &t), 0);
+    }
+    ASSERT_EQ(swmm_engine_end(r.e), 0);
+
+    // Exactly one link was ever touched, five times. Find the SAVE HOTSTART
+    // warning among whatever else the run produced and check ITS count, not
+    // just that some geometry warning exists.
+    bool found = false;
+    const int n = swmm_get_warning_count(r.e);
+    for (int i = 0; i < n; ++i) {
+        const std::string w = swmm_get_warning_at(r.e, i);
+        if (w.find("cross-section changed at run time") == std::string::npos)
+            continue;
+        found = true;
+        EXPECT_NE(w.find("1 link(s)"), std::string::npos)
+            << "warning should count the one DISTINCT link, not the 5 calls: " << w;
+    }
+    EXPECT_TRUE(found) << "no SAVE HOTSTART geometry-change warning was emitted";
 }
 
 // ---------------------------------------------------------------------------
