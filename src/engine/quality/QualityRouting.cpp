@@ -678,6 +678,10 @@ void QualitySolver::accumulateLinkLoads(SimulationContext& ctx, double dt) {
 void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
     auto& nodes = ctx.nodes;
+    // OUTFALL_BACKFLOW_QUALITY ZERO: a supplying outfall is a fresh
+    // boundary — its held state reads zero, so backflow re-enters clean
+    // instead of carrying the last mix (legacy LAST keeps the hold).
+    const bool zero_bf_opt = ctx.options.outfall_backflow_zero;
 
     // Batch over all nodes — inner loop over pollutants is vectorisable
     // Outer node loop is parallelisable: each node reads only its own
@@ -690,6 +694,8 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
         auto ui = static_cast<size_t>(i);
         double v_old = nodes.old_volume[ui];
         double v_in = nodes.qual_vol_in[ui];
+        const bool zero_bf =
+            zero_bf_opt && nodes.type[ui] == NodeType::OUTFALL;
 
         for (int p = 0; p < np; ++p) {
             auto idx = ui * static_cast<size_t>(np) + static_cast<size_t>(p);
@@ -698,7 +704,7 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
             double c_old = nodes.conc_old[idx];
 
             if (v_in <= 0.0) {
-                nodes.conc[idx] = c_old;
+                nodes.conc[idx] = zero_bf ? 0.0 : c_old;
                 continue;
             }
 

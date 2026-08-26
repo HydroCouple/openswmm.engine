@@ -811,9 +811,17 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 // store threshold the donor contributes nothing, which is both
                 // stable and what "the node holds no water" means.
                 const double vol = node_vol_[und];
+                // OUTFALL_BACKFLOW_QUALITY ZERO: an outfall donating into
+                // the network is a fresh boundary — it contributes water
+                // but no mass and no age (same rule as the LEGACY and LARD
+                // solvers' held-state sites). Its store keeps the mass that
+                // arrived; the flag guarantees that mass never re-enters.
+                const bool fresh_outfall =
+                    ctx.options.outfall_backflow_zero &&
+                    ctx.nodes.type[und] == NodeType::OUTFALL;
                 for (int s = 0; s < ns; ++s) {
                     const double cnode =
-                        (vol > kMinStoreVol)
+                        (!fresh_outfall && vol > kMinStoreVol)
                             ? node_mass_[und * uns +
                                          static_cast<std::size_t>(s)] / vol
                             : 0.0;

@@ -763,6 +763,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %d\n",  "RWPT_SEED",          o.rwpt_seed);
     if (o.water_age)
         std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
+    // Same save-as rule: dropping this line silently reverts a fresh-boundary
+    // model to the legacy held-quality backflow on reopen.
+    if (o.outfall_backflow_zero)
+        std::fprintf(f,"%-20s %s\n",  "OUTFALL_BACKFLOW_QUALITY", "ZERO");
     // H1: same rule, same reason — a save-as that dropped this reopened as a
     // model with no temperature tracking, silently (the A1a defect).
     if (o.heat_transport)

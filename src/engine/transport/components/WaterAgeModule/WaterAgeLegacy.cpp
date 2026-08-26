@@ -131,7 +131,13 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
         const double v_in  = ctx.nodes.qual_vol_in[ui];
         const double a_old = sc.node_old[ui];
         if (v_in <= 0.0) {
-            ws.node_age[ui] = a_old;
+            // OUTFALL_BACKFLOW_QUALITY ZERO: a supplying outfall delivers
+            // fresh (age-zero) boundary water — without this, the held
+            // boundary water ages 1:1 forever and every reversal imports it.
+            ws.node_age[ui] = (ctx.options.outfall_backflow_zero &&
+                               ctx.nodes.type[ui] == NodeType::OUTFALL)
+                                  ? 0.0
+                                  : a_old;
             continue;
         }
         double mass_in = sc.age_in[ui] * dt;
