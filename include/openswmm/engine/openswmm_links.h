@@ -1240,9 +1240,12 @@ SWMM_ENGINE_API int swmm_link_set_tag(SWMM_Engine engine, int idx,
  *
  * @warning **Not carried in hot starts.** A hotstart file records depths and
  *          flows, not geometry, so a file saved after a run-time change reloads
- *          with the `.inp` shape and the changed run's depths. `swmm_save_hotstart`
- *          emits SWMM_WARN_GEOMETRY_NOT_SAVED when any link's geometry was
- *          changed at run time; re-apply the polygons after loading.
+ *          with the `.inp` shape and the changed run's depths. An end-of-run
+ *          `[FILES] SAVE HOTSTART` appends a plain-text warning to the run's
+ *          warning list when any link's geometry was changed at run time;
+ *          `swmm_hotstart_save()`, called directly at an arbitrary point, does
+ *          not check for this and emits no warning. Re-apply the polygons
+ *          after loading either way.
  *
  * @since 6.0.0
  */

@@ -33,11 +33,8 @@ struct Attachment {
     int end     = 0;    ///< 0 = conduit's upstream (node1) end, 1 = downstream
 };
 
-/// Composite integration of A(h) over [0, y_full] onto the kI1Samples grid.
-/// Each table interval is integrated with kSub Simpson panels of the exact
-/// closure, so the tabulated I₁ is far more accurate than a trapezoid over the
-/// coarse grid would be — it is the pressure term of every momentum flux.
-/// Exact I₁ for a compiled section, replacing the Simpson quadrature below.
+/// Exact I₁ for a compiled section, replacing buildI1Table's Simpson
+/// quadrature below.
 ///
 /// promptperf.md Phase 6 asks for the I₁ table to come "directly from
 /// chebI1ofY". Taken literally that is WRONG here, and the reason is worth
@@ -75,6 +72,11 @@ double exactI1(const FvGeometry& g, double h) {
     return g.barrel_scale * i1_sec + slot;
 }
 
+/// Composite integration of A(h) over [0, y_full] onto the kI1Samples grid.
+/// Each table interval is integrated with kSub Simpson panels of the exact
+/// closure, so the tabulated I₁ is far more accurate than a trapezoid over the
+/// coarse grid would be — it is the pressure term of every momentum flux.
+/// A compiled boundary skips this entirely in favor of exactI1 above.
 void buildI1Table(FvGeometry& g) {
     constexpr int kSub = 8;                      // Simpson panels per interval
     const int n = kI1Samples;

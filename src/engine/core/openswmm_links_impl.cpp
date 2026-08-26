@@ -1724,7 +1724,17 @@ SWMM_ENGINE_API int swmm_link_set_polygon(SWMM_Engine engine, int link,
                                               &displaced_ft3))
         return SWMM_ERR_GEOMETRY;
 
-    ctx.xsect_runtime_changed_links.push_back(link);
+    // Record each link only ONCE, however many times its section is changed
+    // during the run: SWMMEngine::end() reports this list's SIZE as "N link(s)
+    // had their cross-section changed", and a caller reasonably re-applying a
+    // polygon repeatedly (e.g. tracking a slowly filling sediment bed) would
+    // otherwise inflate that count to the number of CALLS rather than the
+    // number of LINKS. A linear scan is fine — this fires only on an explicit,
+    // rare API call, never on the routing hot path, so the list stays small.
+    if (std::find(ctx.xsect_runtime_changed_links.begin(),
+                  ctx.xsect_runtime_changed_links.end(),
+                  link) == ctx.xsect_runtime_changed_links.end())
+        ctx.xsect_runtime_changed_links.push_back(link);
     if (displaced_volume_out)
         *displaced_volume_out = to_display(ctx, openswmm::ucf::VOLUME, displaced_ft3);
     return SWMM_OK;
