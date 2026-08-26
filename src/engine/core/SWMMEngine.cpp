@@ -1319,6 +1319,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // run every step.
     if (do_routing_) {
         stepRouting(dt_next);
+        if (const int drc = checkRoutingDiverged(); drc != SWMM_OK)
+            return drc;
         updateStatistics(dt_next);
         updateRoutingMassBalance(dt_next);
     }
@@ -5664,6 +5666,58 @@ void SWMMEngine::validate_project() noexcept {
         opt.routing_step = opt.wet_step;
         ctx_.warnings.push_back(format_warning(WARN_ROUTING_STEP_REDUCED, ""));
     }
+}
+
+int SWMMEngine::checkRoutingDiverged() noexcept {
+    // A diverged routing solve used to run to completion and write NaN into
+    // the report, which reads as a finished simulation (TwinOaks-v2 under
+    // DYNWAVE + SURCHARGE_METHOD SLOT: a slot-surcharged pass-through node
+    // beside a dry one drove 2.8e5 cfs through a 9 ft pipe, cascaded, and
+    // reached 1e290 before the report accumulators overflowed). Stop at the
+    // step that goes non-physical and name the element, so the failure is
+    // reportable instead of silent.
+    //
+    // The bound is deliberately absurd, not tight: real heads are O(1e3) ft
+    // and real flows O(1e5) cfs at the very largest, so 1e9 cannot fire on a
+    // converging model however badly conditioned. Catching a merely LARGE
+    // value is the caller's job (continuity error, non-convergence percent);
+    // this exists only to stop unbounded growth. Note an isfinite() test
+    // alone is not enough -- the runaway stays finite for a long way up.
+    constexpr double kAbsurd = 1.0e9;
+    auto diverged = [](double v) {
+        return !std::isfinite(v) || std::fabs(v) > kAbsurd;
+    };
+
+    const int nn = ctx_.n_nodes();
+    for (int i = 0; i < nn; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (!diverged(ctx_.nodes.head[ui])) continue;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "ERROR %d: the routing solution diverged at node '%s' "
+            "(head %.6g) after %.4f hours -- the run cannot continue.",
+            CFFI_ERR_NUMERICAL, ctx_.node_names.name_of(i).c_str(),
+            ctx_.nodes.head[ui], ctx_.current_time / 3600.0);
+        ctx_.errors.push_back(buf);
+        set_error(CFFI_ERR_NUMERICAL, buf);
+        return CFFI_ERR_NUMERICAL;
+    }
+
+    const int nl = ctx_.n_links();
+    for (int j = 0; j < nl; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (!diverged(ctx_.links.flow[uj])) continue;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "ERROR %d: the routing solution diverged at link '%s' "
+            "(flow %.6g) after %.4f hours -- the run cannot continue.",
+            CFFI_ERR_NUMERICAL, ctx_.link_names.name_of(j).c_str(),
+            ctx_.links.flow[uj], ctx_.current_time / 3600.0);
+        ctx_.errors.push_back(buf);
+        set_error(CFFI_ERR_NUMERICAL, buf);
+        return CFFI_ERR_NUMERICAL;
+    }
+    return SWMM_OK;
 }
 
 void SWMMEngine::write_open_failure_report() noexcept {

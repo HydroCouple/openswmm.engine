@@ -767,6 +767,11 @@ private:
      * @details Matches legacy behavior where a failed swmm_open still leaves a
      *          .rpt with the ERROR/WARNING lines. No-op if no report path is set.
      */
+    /*! Stop a routing solve that has gone non-physical (non-finite or absurd
+     *  head/flow) instead of letting it run on and write NaN into the report.
+     *  Returns SWMM_OK when the state is sane. */
+    [[nodiscard]] int checkRoutingDiverged() noexcept;
+
     void write_open_failure_report() noexcept;
 
     /** @brief Set a fatal error on the context and transition to ERROR_STATE. */
