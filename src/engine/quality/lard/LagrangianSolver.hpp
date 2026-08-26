@@ -224,6 +224,14 @@ public:
             const auto un = static_cast<std::size_t>(n);
             const double v_old = nodes.old_volume[un];
             const double v_in = node_vol_in_[un];
+            // OUTFALL_BACKFLOW_QUALITY ZERO: an outfall taking no volume
+            // inflow this substep is a fresh boundary — its held state
+            // (pollutant rows AND the age row) reads zero, so the RELEASE
+            // seeding and zero-volume passthrough below draw clean water.
+            const bool zero_bf =
+                ctx.options.outfall_backflow_zero &&
+                nodes.type[un] == NodeType::OUTFALL &&
+                v_in + nodes.qual_vol_in[un] * frac <= 0.0;
 
             for (int s = 0; s < ns; ++s) {
                 const bool is_age = (s >= np);
@@ -265,7 +273,9 @@ public:
                 // concentrations reached 2.7e30, 2.0e281, then inf, and the
                 // final-storage row went NaN. Below 1e-12 ft^3 there is no
                 // meaningful water and the store keeps its value.
-                const double st_new = (denom > 1.0e-12) ? m / denom : st_old;
+                const double st_new =
+                    zero_bf ? 0.0
+                            : ((denom > 1.0e-12) ? m / denom : st_old);
                 if (is_age) ws.node_age[un] = st_new;
                 else        nodes.conc[ci] = st_new;
                 node_mass_in_[li] = 0.0;  // consumed; cycle residue carries

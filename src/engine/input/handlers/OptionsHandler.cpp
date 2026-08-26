@@ -186,6 +186,16 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             // Water age plan §1 (phase A1a): transported age tracking.
             opt.water_age = (norm(val) == "ON" || norm(val) == "YES");
 
+        } else if (key == "OUTFALL_BACKFLOW_QUALITY") {
+            // Boundary re-entry quality at outfalls. LAST = legacy held
+            // state (the default); ZERO = fresh boundary — a supplying
+            // outfall's held state reads zero for pollutants and
+            // __WATER_AGE__ alike. Unknown values fall to ext_options.
+            const std::string bv = norm(val);
+            if      (bv == "LAST") opt.outfall_backflow_zero = false;
+            else if (bv == "ZERO") opt.outfall_backflow_zero = true;
+            else opt.ext_options[key] = val;
+
         } else if (key == "HEAT_TRANSPORT") {
             // Heat plan §1 (phase H1): transported temperature.
             opt.heat_transport = (norm(val) == "ON" || norm(val) == "YES");

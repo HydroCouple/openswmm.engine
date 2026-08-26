@@ -1052,6 +1052,8 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         }
     }
     else if (k == "WATER_AGE")         val = opt.water_age ? "YES" : "NO";
+    else if (k == "OUTFALL_BACKFLOW_QUALITY")
+        val = opt.outfall_backflow_zero ? "ZERO" : "LAST";
     else if (k == "HEAT_TRANSPORT")    val = opt.heat_transport ? "YES" : "NO";
     else if (k == "QUALITY_STEP")      val = std::to_string(opt.quality_step);
     else if (k == "MAX_SEGMENTS_PER_LINK")
@@ -1480,6 +1482,12 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         const std::string vu = upper_copy(v);
         opt.water_age = (vu == "YES" || vu == "ON" || vu == "TRUE" ||
                          vu == "1");
+    }
+    else if (k == "OUTFALL_BACKFLOW_QUALITY") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "LAST") opt.outfall_backflow_zero = false;
+        else if (vu == "ZERO") opt.outfall_backflow_zero = true;
+        else return SWMM_ERR_BADPARAM;
     }
     else if (k == "HEAT_TRANSPORT") {
         const std::string vu = upper_copy(v);

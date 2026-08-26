@@ -288,6 +288,26 @@ struct SimulationOptions {
     bool water_age = false;
 
     /**
+     * @brief `[OPTIONS] OUTFALL_BACKFLOW_QUALITY LAST|ZERO` — quality carried
+     *        by reverse flow at outfalls (false = LAST, the default).
+     *
+     * @details LAST is the legacy convention (src/legacy/engine/qualrout.c
+     *          findNodeQual): an outfall that takes no inflow keeps its last
+     *          mixed concentration while wet, and backflow re-injects that
+     *          held value — under WATER_AGE the held boundary water also
+     *          keeps aging 1:1, so a permanently supplying outfall becomes an
+     *          unbounded age source. ZERO makes a supplying outfall a fresh
+     *          boundary: whenever it takes no volume inflow its held state
+     *          reads zero for every pollutant AND __WATER_AGE__, so
+     *          re-entering water carries no mass and no age (the
+     *          EPANET-reservoir picture). ZERO deliberately does NOT return
+     *          the mass that left through the outfall — the receiving water
+     *          is an infinite fresh reservoir; tidal-flushing studies where
+     *          returned mass matters keep LAST.
+     */
+    bool outfall_backflow_zero = false;
+
+    /**
      * @brief `[OPTIONS] HEAT_TRANSPORT ON|OFF` — transported temperature
      *        (heat plan §1, reserved species __TEMPERATURE__).
      *
