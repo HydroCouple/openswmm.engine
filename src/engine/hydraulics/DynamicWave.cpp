@@ -3329,12 +3329,36 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // convention the EXTRAN surcharge branch divides by. Flooding cannot
     // occur (commitNodeDepthState seals the node: volume ≡ 0, overflow ≡ 0,
     // no cap at full depth).
+    // Under SEMI_IMPLICIT the two regimes below collapse into one denominator,
+    // exactly as they do for real nodes: a virtual junction carries no storage,
+    // so its natural area can be arbitrarily small (a dry pass-through node
+    // between two conduits has almost none) and the explicit dV/A step then
+    // divides a finite volume change by ~0. On a 5028-VJ transmission main a
+    // full-pipe neighbour drove dV = -4.1e6 ft^3 into a node holding
+    // A = 2.4 ft^2, reaching head 1.9e14 by the fourth routing step. Folding
+    // the head-response Jacobian into the denominator keeps it bounded as
+    // A -> 0, where it degrades to the zero-storage Newton step dy = dQ/Σdqdh
+    // — the relation this node type actually obeys. sumdqdh is accumulated
+    // non-negative (g*dt*A/L/denom per link), so the sum is positive whenever
+    // the node has either storage or a live flow path.
     if (t.is_virtual != 0) {
         const double sum = xnode_.sumdqdh[ui];
+        const double denom_semi = surf_area + 0.5 * dt * sum;
+        const bool semi_implicit =
+            (node_continuity == NodeContinuity::SEMI_IMPLICIT) &&
+            denom_semi > FUDGE;
         double y_vj;
-        if (surf_area > FUDGE && !is_surcharged) {
-            // Free surface: standard dV/A path on the natural area, with the
-            // usual under-relaxation.
+        if (semi_implicit) {
+            // Unified path — free-surface and surcharged alike, matching the
+            // real-node SEMI_IMPLICIT branch (which likewise ignores the
+            // is_surcharged dQ/dH split and the crown clamp).
+            y_vj = y_old + dV / denom_semi;
+            xnode_.old_surf_area[ui] = surf_area;
+            if (step > 0) y_vj = (1.0 - omega) * y_last + omega * y_vj;
+        } else if (surf_area > FUDGE && !is_surcharged) {
+            // EXPLICIT free surface: historical dV/A path on the natural area,
+            // with the usual under-relaxation. Decks that do not ask for
+            // semi-implicit node continuity stay bit-identical.
             y_vj = y_old + dV / surf_area;
             xnode_.old_surf_area[ui] = surf_area;
             if (step > 0) y_vj = (1.0 - omega) * y_last + omega * y_vj;
