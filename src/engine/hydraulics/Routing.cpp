@@ -1205,10 +1205,17 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         }
         ctx.links.volume[uj]      = vol;
         ctx.links.slot_volume[uj] = slot_vol;
-        const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;
+        // Conveyance velocity: above the crown the conserved area carries
+        // Preissmann-slot content that conveys no momentum, so Q/a_mean is
+        // slot-diluted — the same rationale as the implicit face law
+        // (PressurizedHeadSolver). Open sections have no slot; their area
+        // above y_full is genuine conveyance and stays uncapped.
+        const double a_conv = (!g.is_open && a_mean > g.a_crown) ? g.a_crown
+                                                                 : a_mean;
+        const double v = (a_conv > 0.0) ? q_mean / a_conv : 0.0;
         const double hyd_depth =
             (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)
-                ? a_mean / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
+                ? a_conv / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
                 : 0.0;
         ctx.links.froude[uj] =
             (hyd_depth > 0.0)
