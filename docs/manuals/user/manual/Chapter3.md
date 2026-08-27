@@ -129,6 +129,8 @@ Conduits are pipes or channels that move water from one node to another in the c
 
 Most open channels can be represented with a rectangular, trapezoidal, or user-defined irregular cross-section shape. For irregular sections a Transect object is used to define how depth varies with distance across the cross-section (see Section 3.3.5 below). Most new drainage and sewer pipes are circular while culverts typically have elliptical, rectangular or arch shapes. Elliptical and Arch pipes come in standard sizes that are listed in Appendix A.12 and A.13. The Filled Circular shape allows the bottom of a circular pipe to be filled with sediment and thus limit its flow capacity. The Custom Closed Shape allows any closed geometrical shape that is symmetrical about the center line to be defined by supplying a Shape Curve for the cross section (see Section 3.3.13 below).
 
+The Polygon shape is a more general alternative to the Custom Closed Shape: it is not required to be symmetrical, and its boundary is defined as an exact chain of straight segments and circular arcs (an optional bulge value on each vertex) rather than a normalized width-versus-depth table, so top-width discontinuities at a bench or shelf are reproduced exactly rather than smoothed by table interpolation (see Section 3.3.14 below). A boundary that self-intersects is rejected at input.
+
 SWMM uses the Manning equation to express the relationship between flow rate (Q), cross-sectional area (A), hydraulic radius (R), and slope (S) in all conduits. For standard U.S. units,
 
 Q=1.49/n AR^(2/3) S^(1/2)
@@ -170,7 +172,7 @@ Catenary    Full Height         Semi-Elliptical    Full Height
 Baskethandle    Full Height         Semi-Circular    Full Height     
 Irregular Channel    Transect Coordinates         Custom Closed Shape    Full Height, Shape Curve
 Coordinates      
-Street or Roadway    See Section 3.3.6         
+Street or Roadway    See Section 3.3.6         Polygon    Scale, Open/Closed Flag, Boundary Curve
 
 
 

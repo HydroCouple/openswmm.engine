@@ -94,6 +94,11 @@ public:
      * @param ctx        Simulation context (modified in place).
      * @param dt         Routing timestep (seconds).
      * @param evap_rate  Current evaporation rate (ft/sec), from climate module.
+     * @param non_conduit_fn  Optional callback to compute pump/orifice/weir/
+     *                        outlet flows, passed through to the DW Picard
+     *                        iteration loop (matching legacy) or to the FV
+     *                        step; ignored for KW/STEADY. See
+     *                        `dynwave::DWSolver::NonConduitFlowFunc`.
      * @returns Number of solver iterations used.
      */
     int step(SimulationContext& ctx, double dt,
