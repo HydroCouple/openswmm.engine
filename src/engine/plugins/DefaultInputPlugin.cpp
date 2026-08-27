@@ -200,10 +200,30 @@ int DefaultInputPlugin::read(const std::string& path, SimulationContext& ctx) {
 }
 
 int DefaultInputPlugin::write(const std::string& path, const SimulationContext& ctx) {
-    int err = inp_writer::writeInpFile(ctx, path);
+    // The writer's warning sink is optional and this caller used to pass
+    // nullptr, which is half of why the "embedded [REACTION_*] sections are
+    // lost from this save" notice never reached a user (2026-08-26). The
+    // other two callers forward into ctx.warnings; this one cannot — the
+    // plugin interface hands it a CONST context by design — so the notice
+    // goes to the plugin's own diagnostic channel instead.
+    //
+    // ⚠ On a SUCCESSFUL write `last_error_message()` is not conventionally
+    // read, so a caller driving the engine through this interface can still
+    // miss it. That is a real residual gap, recorded rather than papered
+    // over: closing it needs a non-error diagnostic channel on IInputPlugin,
+    // which is an interface change and not this round's.
+    std::vector<std::string> warns;
+    int err = inp_writer::writeInpFile(ctx, path, &warns);
     if (err != 0) {
         last_error_ = "Failed to write .inp file: " + path;
+        // Losing model data is worth saying even while reporting the failure.
+        for (const auto& w : warns) last_error_ += "\n" + w;
     }
+    // On SUCCESS the warnings are collected and deliberately NOT written to
+    // last_error_. Putting a non-error in an error channel is worse than the
+    // silence it replaces: a caller that checks last_error_message() after a
+    // successful write would read a warning as a failure. The first draft of
+    // this hunk did exactly that and it was wrong.
     return err;
 }
 

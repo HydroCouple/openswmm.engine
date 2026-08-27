@@ -26,6 +26,10 @@
  * @license  Apache-2.0
  */
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "openswmm_api_common.hpp"
 #include "InpWriter.hpp"
 #include "DateTime.hpp"
@@ -259,10 +263,38 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine) {
 // Model serialisation
 // ============================================================================
 
+namespace {
+
+// The writer's `warnings` sink is OPTIONAL, and until 2026-08-26 every
+// production caller passed nullptr — so the "embedded [REACTION_*] sections
+// are lost from this save" notice (InpWriter.cpp:2580-2586) was real code
+// that NEVER FIRED. Opening a deck with embedded reaction sections, editing
+// anything and saving destroyed the reaction system silently, from the GUI
+// included. The test that certified the behaviour called the writer directly
+// WITH a sink, so it could not see this.
+//
+// Every write path now collects and forwards into `ctx.warnings` — the same
+// vector `swmm_get_warning_count`/`swmm_get_warning_at` read
+// (`openswmm_engine_impl.cpp:242-252`), which the GUI already consumes. The
+// save still SUCCEEDS: warn-not-refuse is the writer's existing intent and
+// the defect was the silence, not the policy. Whether a save that loses model
+// data should refuse outright is a real question, deliberately left to IO3 —
+// where per-component saveData() removes the loss and makes the question moot.
+void forwardWriteWarnings(openswmm::SimulationContext& ctx,
+                          std::vector<std::string>&    sink) {
+    for (auto& w : sink) ctx.warnings.push_back(std::move(w));
+}
+
+}  // namespace
+
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path) {
     CHECK_HANDLE(engine);
     if (!new_inp_path) return SWMM_ERR_BADPARAM;
-    return openswmm::inp_writer::writeInpFile(to_engine(engine)->context(), new_inp_path);
+    auto& ctx = to_engine(engine)->context();
+    std::vector<std::string> warns;
+    const int rc = openswmm::inp_writer::writeInpFile(ctx, new_inp_path, &warns);
+    forwardWriteWarnings(ctx, warns);
+    return rc;
 }
 
 SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
@@ -272,9 +304,14 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
     if (!new_path) return SWMM_ERR_BADPARAM;
 
     // Empty / NULL plugin id → built-in .inp writer.
+    // This is the path the GUI takes; see forwardWriteWarnings above for why
+    // the sink is no longer nullptr.
     if (!output_plugin_id || output_plugin_id[0] == '\0') {
-        return openswmm::inp_writer::writeInpFile(
-            to_engine(engine)->context(), new_path);
+        auto& ctx = to_engine(engine)->context();
+        std::vector<std::string> warns;
+        const int rc = openswmm::inp_writer::writeInpFile(ctx, new_path, &warns);
+        forwardWriteWarnings(ctx, warns);
+        return rc;
     }
 
     auto* eng = to_engine(engine);
