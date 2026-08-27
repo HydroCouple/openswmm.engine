@@ -84,8 +84,11 @@ enum class RoutingModel : int {
  */
 enum class QualitySolverKind : int {
     LEGACY       = 0,  ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
-    EULERIAN_ARD = 1   ///< Eulerian ARD on the FV cell mesh (all routing models)
-    // LAGRANGIAN reserved — plans/LAGRANGIAN_QUALITY_STRATEGY.md (phase T5)
+    EULERIAN_ARD = 1,  ///< Eulerian ARD on the FV cell mesh (all routing models)
+    LAGRANGIAN   = 2   ///< LARD segment transport — X1 skeleton dispatch only;
+                       ///< transport lands in X2
+                       ///< (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
+                       ///< plans/LAGRANGIAN_QUALITY_STRATEGY.md)
 };
 
 /**
@@ -254,10 +257,50 @@ struct SimulationOptions {
      *          bit-identical behavior). EULERIAN_ARD = the solver-agnostic
      *          Eulerian ARD engine on the FV cell mesh
      *          (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md rev. 2;
-     *          master plan D-UT6). LAGRANGIAN is reserved (parses to a
-     *          warning until LARD lands, plan phase T5).
+     *          master plan D-UT6). LAGRANGIAN = the LARD segment engine —
+     *          X1 wiring only: the dispatch exists, transport does not, so
+     *          quality state reads zero and the open() warning says so
+     *          (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md).
      */
     QualitySolverKind quality_solver = QualitySolverKind::LEGACY;
+
+    /**
+     * @brief `[OPTIONS] QUALITY_STEP` — transport substep, seconds
+     *        (HH:MM:SS or seconds; 0 = follow ROUTING_STEP).
+     *
+     * @details X3a: consumed by the LARD engine only, which splits each
+     *          routing step into ceil(dt_routing / quality_step) equal
+     *          substeps (strategy §4.2). Setting it under LEGACY or
+     *          EULERIAN_ARD warns at open — those engines do not substep
+     *          on this key.
+     */
+    double quality_step = 0.0;
+
+    /**
+     * @brief `[OPTIONS] MAX_SEGMENTS_PER_LINK` — LARD slab capacity per
+     *        link (strategy §4.1; default 100, the EPANET MAXSEGS shape).
+     *
+     * @details Values below 2 are clamped to 2 at solver init. Consumed by
+     *          the LARD engine only; warns at open under other solvers.
+     */
+    int max_segments_per_link = 100;
+
+    /**
+     * @brief `[OPTIONS] DISPERSION RWPT|OFF` — LARD RWPT dispersion (X3b;
+     *        strategy §5; the GUI plan's Lagrangian-group key).
+     *
+     * @details Resolved vertical-shear dispersion on the segments
+     *          (RwptDispersion.hpp). LARD-only; warns under other solvers
+     *          (the ARD engine's dispersion is E3's `transport.ard`
+     *          machinery, deliberately separate).
+     */
+    bool lard_rwpt = false;
+
+    /**
+     * @brief `[OPTIONS] RWPT_SEED` — deterministic counter-RNG seed
+     *        (D-L6). Same seed ⇒ bit-identical runs at any thread count.
+     */
+    int rwpt_seed = 0;
 
     /**
      * @brief `[OPTIONS] WATER_AGE ON|OFF` — transported water-age tracking
@@ -270,6 +313,26 @@ struct SimulationOptions {
      *          warns until then.
      */
     bool water_age = false;
+
+    /**
+     * @brief `[OPTIONS] OUTFALL_BACKFLOW_QUALITY LAST|ZERO` — quality carried
+     *        by reverse flow at outfalls (false = LAST, the default).
+     *
+     * @details LAST is the legacy convention (src/legacy/engine/qualrout.c
+     *          findNodeQual): an outfall that takes no inflow keeps its last
+     *          mixed concentration while wet, and backflow re-injects that
+     *          held value — under WATER_AGE the held boundary water also
+     *          keeps aging 1:1, so a permanently supplying outfall becomes an
+     *          unbounded age source. ZERO makes a supplying outfall a fresh
+     *          boundary: whenever it takes no volume inflow its held state
+     *          reads zero for every pollutant AND __WATER_AGE__, so
+     *          re-entering water carries no mass and no age (the
+     *          EPANET-reservoir picture). ZERO deliberately does NOT return
+     *          the mass that left through the outfall — the receiving water
+     *          is an infinite fresh reservoir; tidal-flushing studies where
+     *          returned mass matters keep LAST.
+     */
+    bool outfall_backflow_zero = false;
 
     /**
      * @brief `[OPTIONS] HEAT_TRANSPORT ON|OFF` — transported temperature

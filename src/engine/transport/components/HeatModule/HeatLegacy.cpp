@@ -39,8 +39,8 @@
 #include <vector>
 
 #include "../../../core/SimulationContext.hpp"
-#include "../HeatFluxModules/RadiativeExchange.hpp"
-#include "../HeatFluxModules/SurfaceExchange.hpp"
+#include "../../InitialQualitySeeds.hpp"
+#include "../HeatFluxModules/HeatFluxes.hpp"
 
 namespace openswmm::transport {
 
@@ -88,6 +88,9 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     if (!hs.legacy_seeded) {
         std::fill(hs.node_temp.begin(), hs.node_temp.end(), t_init);
         std::fill(hs.link_temp.begin(), hs.link_temp.end(), t_init);
+        // E-A3: per-element [INITIAL_QUALITY] __TEMPERATURE__ rows override
+        // the global fill.
+        applyInitialTempOverrides(ctx);
         hs.legacy_seeded = true;
     }
 
@@ -98,8 +101,13 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     //         post-flux temperature exactly as it sees the post-aging age.
     //         H2 delivers SurfaceExchange; H3/H4 add radiative and
     //         sediment terms at this same point. ------------------------
-    heat::applySurfaceExchange(ctx, dt);
-    heat::applyRadiativeExchange(ctx, dt);
+    //
+    //         D-H5e: ONE call. This was two, and once D-H5d made the step a
+    //         relaxation the two stopped commuting — each relaxed fully
+    //         toward its own module's equilibrium, so the result depended on
+    //         which ran last. Every family now sums into one J(T) inside
+    //         applyHeatFluxes before a single step.
+    heat::applyHeatFluxes(ctx, dt);
 
     for (int i = 0; i < nn; ++i)
         sc.node_old[static_cast<std::size_t>(i)] =

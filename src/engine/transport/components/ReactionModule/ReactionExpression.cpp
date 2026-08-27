@@ -119,14 +119,34 @@ const FuncDef* findFunc(const std::string& ident) {
     return nullptr;
 }
 
-/// Hydraulic variable names (case-sensitive match on the documented
-/// spellings, then a case-insensitive fallback — "Re" and "RE" both work).
+/// Hydraulic variable names + one-line descriptions (E-C1: also served to
+/// the GUI through reactionHydVarInfo — one copy of the truth). Meanings and
+/// units per ReactionTokens.hpp.
+const char* kHydVarNames[] = {"D", "Q", "U", "RE", "US", "FF", "AV",
+                              "HRT", "DT"};
+const char* kHydVarDescs[] = {
+    "Depth (ft)",
+    "Flow (cfs)",
+    "Velocity (ft/s)",
+    "Reynolds number",
+    "Shear velocity (ft/s)",
+    "Darcy-Weisbach friction factor",
+    "Wetted surface area per volume (1/ft)",
+    "Hydraulic residence time (s)",
+    "Reaction step (s)",
+};
+static_assert(sizeof(kHydVarNames) / sizeof(kHydVarNames[0]) ==
+                  static_cast<std::size_t>(RxHydVar::COUNT_),
+              "hydraulic-variable name table out of sync with RxHydVar");
+static_assert(sizeof(kHydVarDescs) / sizeof(kHydVarDescs[0]) ==
+                  static_cast<std::size_t>(RxHydVar::COUNT_),
+              "hydraulic-variable description table out of sync with RxHydVar");
+
+/// Hydraulic variable lookup (case-insensitive — "Re" and "RE" both work).
 int findHydVar(const std::string& ident) {
-    static const char* kNames[] = {"D", "Q", "U", "RE", "US", "FF", "AV",
-                                   "HRT", "DT"};
     const std::string u = upper(ident);
     for (int i = 0; i < static_cast<int>(RxHydVar::COUNT_); ++i)
-        if (u == kNames[i]) return i;
+        if (u == kHydVarNames[i]) return i;
     return -1;
 }
 
@@ -141,7 +161,9 @@ struct OpEntry {
     int  col;
     bool is_func;
     int  arity;        ///< funcs
+    const char* name;  ///< funcs — for the arity diagnostic (D-R9)
     bool is_paren;     ///< '(' marker
+    int  commas;       ///< parens — argument-separator count (D-R9)
 };
 
 int precOf(char op) {
@@ -222,6 +244,7 @@ std::string compileReactionExpression(const std::string& src,
                                     "' needs '('", lx.col);
                     OpEntry fe{};
                     fe.op = f->op; fe.is_func = true; fe.arity = f->arity;
+                    fe.name = f->name;
                     fe.col = lx.col;
                     ops.push_back(fe);
                     OpEntry pe{};
@@ -341,10 +364,24 @@ std::string compileReactionExpression(const std::string& src,
                 }
                 if (ops.empty())
                     return fail("unbalanced ')'", lx.col);
+                const int commas = ops.back().commas;
                 ops.pop_back();               // the '('
                 --depth_guard;
                 // Function application?
                 if (!ops.empty() && ops.back().is_func) {
+                    // D-R9: name the function and its arity at the call
+                    // site, instead of the generic RPN-discipline
+                    // "malformed expression" at col 1.
+                    const int argc = commas + 1;
+                    if (argc != ops.back().arity)
+                        return fail(
+                            std::string("function '") + ops.back().name +
+                                "' expects " +
+                                std::to_string(ops.back().arity) +
+                                (ops.back().arity == 1 ? " argument"
+                                                       : " arguments") +
+                                ", got " + std::to_string(argc),
+                            ops.back().col);
                     popOpToOutput(ops.back());
                     ops.pop_back();
                 }
@@ -360,6 +397,7 @@ std::string compileReactionExpression(const std::string& src,
                 if (ops.empty() || ops.size() < 2 ||
                     !ops[ops.size() - 2].is_func)
                     return fail("',' outside a function call", lx.col);
+                ++ops.back().commas;          // the paren frame (D-R9)
                 expect_operand = true;
                 break;
             }
@@ -462,6 +500,32 @@ double evalReactionExpression(const std::vector<RxToken>& pool,
         }
     }
     return st[0];
+}
+
+// ---------------------------------------------------------------------------
+// Vocabulary discovery (E-C1) — the completer/highlighter contract.
+// ---------------------------------------------------------------------------
+
+int reactionFunctionCount() {
+    return static_cast<int>(sizeof(kFuncs) / sizeof(kFuncs[0]));
+}
+
+bool reactionFunctionInfo(int idx, const char** name, int* arity) {
+    if (idx < 0 || idx >= reactionFunctionCount()) return false;
+    if (name)  *name  = kFuncs[idx].name;
+    if (arity) *arity = kFuncs[idx].arity;
+    return true;
+}
+
+int reactionHydVarCount() {
+    return static_cast<int>(RxHydVar::COUNT_);
+}
+
+bool reactionHydVarInfo(int idx, const char** name, const char** description) {
+    if (idx < 0 || idx >= reactionHydVarCount()) return false;
+    if (name)        *name        = kHydVarNames[idx];
+    if (description) *description = kHydVarDescs[idx];
+    return true;
 }
 
 }  // namespace openswmm::transport

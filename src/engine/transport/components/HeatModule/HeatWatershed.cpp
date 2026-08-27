@@ -26,13 +26,15 @@
 
 #include "HeatWatershed.hpp"
 
+#include "../WatershedCommon.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../hydrology/Runoff.hpp"
-#include "../HeatFluxModules/RadiativeExchange.hpp"
+#include "../HeatFluxModules/HeatFluxes.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 
 namespace openswmm::transport {
@@ -42,11 +44,11 @@ namespace {
 constexpr int    kNSub    = HeatState::kNSubArea;
 constexpr double kTinyVol = 1.0e-12;  ///< ft³
 
-/// Largest surface-balance step this explicit form is allowed to take, °C.
-/// See the block at the call site: this bounds a forward-Euler excursion on
-/// a ponded film, and separates a resolved step (1e-2 - 1 °C/min) from an
-/// unresolved one (1e2 - 1e3) by five orders of magnitude.
-constexpr double kMaxStepC = 5.0;
+// `kMaxStepC` lived here: the refuse-above-5-°C bound H5a used to stop the
+// forward-Euler divergence. D-H5d removed it with the divergence — a
+// relaxation step cannot overshoot equilibrium, so there is nothing left to
+// refuse, and keeping a threshold nothing can reach would be a constant that
+// no gate could observe being wrong (lesson 39).
 
 /// What a subarea holding no water reports (plan D-H5c).
 ///
@@ -119,14 +121,14 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
     // (air), :1424 (wind) and :1431 (humidity), all BEFORE runoff_.execute
     // at :1648 — so they are current here, which is the fact that made the
     // runoff-clock binding possible at all.
-    const double t_air   = heat::airTempCelsius(ctx);
-    const double rh      = ctx.climate_state.humidity;
-    const double wind_ms = ctx.climate_state.wind_speed * heat::kMphToMs;
-    const double wa      = ctx.options.wind_func_coeff_a;
-    const double wb      = ctx.options.wind_func_coeff_b;
-    const double rho     = ctx.options.water_density;
-    const double cp      = ctx.options.water_specific_heat;
-    const double p_ratio = ctx.options.pressure_ratio;
+    // Air temperature is still read here — the DRY-element policy needs it
+    // (D-H5c). The humidity, wind and wind-function coefficients that used
+    // to be extracted alongside it moved inside the shared flux evaluators
+    // with D-H5e, so this function no longer knows which parameters a flux
+    // family reads.
+    const double t_air = heat::airTempCelsius(ctx);
+    const double rho   = ctx.options.water_density;
+    const double cp    = ctx.options.water_specific_heat;
 
     const bool do_surface   = ctx.heat_config.surface_exchange;
     const bool do_radiative = ctx.heat_config.radiative_exchange;
@@ -138,7 +140,7 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
         // deck's USER area units (acres here — Runoff.cpp:197 divides by
         // ucf_area before subtracting the LID footprint), so substituting it
         // is a 43560x error, not the footprint double-count it looks like.
-        // See the header: the exchange area cancels in `deltaT`, so only the
+        // See the header: the exchange area cancels in `relaxT`, so only the
         // run-on depth conversion below can see this.
         const double area = soa.area[ui];
         const double fi   = soa.imperv_pct[ui];
@@ -162,9 +164,12 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
         // Divide by the rate whose temperature is KNOWN, not by the total
         // run-on. A3 divided by the total while filling the numerator from
         // one of three contributors, and the arriving age came out younger
-        // than anything entering the model. Here an uncounted contributor
-        // (the LID underdrain, until H5b) leaves the mean over less water
-        // rather than dragging it toward zero.
+        // than anything entering the model. Since H5b all three contributors
+        // — cascade, outfall return and LID underdrain — supply one, so the
+        // two rates coincide today; the pair is what keeps a FOURTH
+        // contributor from reintroducing the defect, and
+        // `EveryRunonContributorKeepsTemperaturesInsideTheSources` asserts
+        // they still match.
         const double known_rate =
             (ui < hs.subcatch_runon_temp_rate.size())
                 ? hs.subcatch_runon_temp_rate[ui]
@@ -175,25 +180,40 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 ? hs.subcatch_runon_temp_vol_in[ui] / known_rate
                 : t_rain;
 
-        const double rain_rate = (ui < ctx.subcatches.rainfall.size())
-                                     ? ctx.subcatches.rainfall[ui]
-                                     : 0.0;
+        // Run-on spreads over the whole subcatchment, so its depth rate is
+        // the same for every subarea. The PRECIPITATION rate is not.
         const double runon_depth_rate = (area > 0.0) ? runon_rate / area : 0.0;
-        const double in_rate = rain_rate + runon_depth_rate;
-
-        // Arriving water is rain and run-on MIXED, flow-weighted. Rain
-        // routinely outweighs run-on by orders of magnitude, so treating
-        // the arrival as pure run-on wherever any exists would hand the
-        // whole inflow the donor's temperature.
-        const double t_in = (in_rate > 0.0)
-            ? (rain_rate * t_rain + runon_depth_rate * runon_temp) / in_rate
-            : t_rain;
 
         double out_num = 0.0, out_den = 0.0;
         for (int k = 0; k < kNSub; ++k) {
             const auto idx = ui * static_cast<std::size_t>(kNSub) +
                              static_cast<std::size_t>(k);
             if (idx >= hs.subarea_temp.size()) break;
+
+            // S1: the water that ACTUALLY reached THIS subarea — the gage
+            // rate on a bare subcatchment, `imelt + rain·(1 − asc)` under a
+            // snowpack, and different BETWEEN subareas in the second case.
+            // See WatershedCommon.hpp; A3's copy of this read had the same
+            // defect and is fixed in the same changeset.
+            const double rain_rate = arrivingPrecipRate(ctx, ui, k);
+            const double in_rate = rain_rate + runon_depth_rate;
+
+            // S2: the temperature of that precipitation. Under a pack it is
+            // NOT the configured RAINFALL value — the arriving water is part
+            // meltwater, which is at 0 °C essentially by definition, and
+            // part rain that reached the ground through the snow-free
+            // fraction. `arrivingPrecipTemperature` blends the two and
+            // returns the configured value unchanged wherever there is no
+            // pack, so a bare deck is untouched.
+            const double t_precip = arrivingPrecipTemperature(ctx, ui, k);
+
+            // Arriving water is precipitation and run-on MIXED, flow-
+            // weighted. Rain routinely outweighs run-on by orders of
+            // magnitude, so treating the arrival as pure run-on wherever any
+            // exists would hand the whole inflow the donor's temperature.
+            const double t_in = (in_rate > 0.0)
+                ? (rain_rate * t_precip + runon_depth_rate * runon_temp) / in_rate
+                : t_precip;
 
             const double v_new = depth[k] * frac[k] * area;
             const double v_old = hs.subarea_vol_prev[idx];
@@ -217,58 +237,32 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
             //    Applying it to the post-mix volume instead would let a
             //    step's rain be heated before it had arrived.
             if (v_old > kTinyVol && (do_surface || do_radiative)) {
-                double je = 0.0, jc = 0.0, jr = 0.0;
-                if (do_surface) {
-                    je = heat::latentFlux(t, t_air, rh, wind_ms, wa, wb, rho);
-                    jc = heat::sensibleFlux(
-                        je, heat::bowenRatio(t, t_air, rh, p_ratio));
-                }
-                if (do_radiative)
-                    jr = heat::netRadiativeFluxOut(t, t_air, rh,
-                                                   ctx.heat_config.radiative);
-                // Both flux families are signed POSITIVE OUT of the water,
-                // so they add before the single conversion to a ΔT. There is
-                // exactly one sign flip in this program and it lives inside
-                // `deltaT`; a second one here would silently cancel it.
-                const double dT = heat::deltaT(je + jr, jc,
-                                               a_ft2 * heat::kSqFtToSqM,
-                                               v_old * heat::kCuFtToCuM,
-                                               dt, rho, cp);
-                // A ponded film has almost no thermal mass per unit of
-                // exchanging area, and this is a FORWARD EULER step with no
-                // stability limit: measured, a 0.52 ft3 film over 27226 ft2
-                // moves 862 C in one 60 s step, the flux is re-evaluated at
-                // 182 C, and the sequence diverges 5 -> 182 -> -1.8e4 ->
-                // -3.9e9 -> ... -> inf -> NaN, which then travels out
-                // through subcatch_runoff_temp into the node temperatures
-                // and the report.
+                // Net outward flux, via the shared composition (D-H5e).
+                // This was a hand-rolled sum of the two modules — the fourth
+                // such copy in the program, and copies of exactly this sum
+                // are how the LEGACY node/link path ended up relaxing each
+                // module separately toward a different equilibrium.
+                const auto net_out = [&](double tw) {
+                    return heat::netFluxOut(ctx, tw);
+                };
+                // Both flux families are signed POSITIVE OUT of the water, so
+                // they add. There is exactly one sign flip in this program
+                // and it lives inside `relaxT`; a second one here would
+                // silently cancel it.
                 //
-                // `deltaT`'s own contract already names this hazard ("a film
-                // of water has no thermal mass and would otherwise take an
-                // unbounded excursion in one step") but its guard only
-                // catches an exactly-zero heat capacity.
-                //
-                // A step this large is not a wrong answer, it is NO answer:
-                // the explicit form has stopped representing the ODE. So the
-                // step is refused rather than clamped — clamping to a
-                // driving temperature would either freeze the surface at the
-                // air temperature or oscillate between the clamp and a
-                // re-diverging excursion, and both look like physics.
-                // kMaxStepC is a numerical resolution limit, not a physical
-                // parameter: a resolved pond moves ~0.01-1 C per minute and
-                // an unresolved film moves 1e2-1e3, so nothing sits near the
-                // threshold and its exact value does not enter any answer.
-                //
-                // @note This makes an unresolved film carry its mixed inflow
-                //       temperature instead of exchanging. That is an
-                //       UNDER-estimate of exchange, bounded in the quantity
-                //       that leaves the subcatchment (a thin film carries
-                //       little volume, and the published runoff temperature
-                //       is volume-weighted). Resolving it properly needs a
-                //       sub-stepped or implicit integrator, which is a
-                //       design decision of the same kind as D-H5a/b/c and is
-                //       recorded for the user rather than taken here.
-                if (std::isfinite(dT) && std::fabs(dT) <= kMaxStepC) t += dT;
+                // D-H5d: SEMI-IMPLICIT. H5a shipped a forward-Euler step and
+                // a refuse-above-5 C bound, because a ponded film has almost
+                // no thermal mass per unit exchanging area: a 0.52 ft3 film
+                // over 27226 ft2 moved 862 C in one 60 s step and the
+                // sequence diverged 5 -> 182 -> -1.8e4 -> -3.9e9 -> inf ->
+                // NaN. The bound stopped the divergence but made an
+                // unresolved film carry its inflow temperature instead of
+                // exchanging at all. Relaxation removes both problems: the
+                // step cannot overshoot the equilibrium temperature however
+                // thin the film, so there is nothing left to refuse.
+                t += heat::relaxT(net_out(t), net_out(t + heat::kProbeC),
+                                  heat::kProbeC, a_ft2 * heat::kSqFtToSqM,
+                                  v_old * heat::kCuFtToCuM, dt, rho, cp);
             }
 
             // 2. What arrived mixes in by GROSS inflow volume — never the

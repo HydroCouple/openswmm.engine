@@ -37,7 +37,11 @@
 #include <vector>
 #include <string>
 
+#include "XSectLookup.hpp"
+
 namespace openswmm {
+
+struct TransectStore;  // engine/data/InfraData.hpp
 
 namespace transect {
 
@@ -71,6 +75,11 @@ struct TransectData {
     double area_tbl[N_TRANSECT_TBL]  = {};
     double hrad_tbl[N_TRANSECT_TBL]  = {};
     double width_tbl[N_TRANSECT_TBL] = {};
+
+    /// Bucket map over `area_tbl`, used by getYofA's invLookup (plan
+    /// XSECT_LOOKUP_ACCEL A1). Rebuilt by the two table builders below; stays
+    /// disabled (and callers bisect as before) if either bails out early.
+    xsect::LocateLut area_lut;
 };
 
 /**
@@ -100,6 +109,28 @@ void buildTables(TransectData& td);
  */
 void buildCustomTables(TransectData& td, double y_full,
                        const double* curve_x, const double* curve_y, int n_pts);
+
+/**
+ * @brief Build one transect's geometry tables from the raw [TRANSECTS] store.
+ *
+ * @details Copies the store entry into @p td, applies the legacy parse-time
+ *          transforms (Station = x·Xfactor/UCF; Elev = (y + Yfactor)/UCF with
+ *          Yfactor = y_factor/UCF; banks = (x/UCF)·Xfactor — see
+ *          transect.c::setParams/addStation) to the COPY only, then calls
+ *          buildTables(). The store itself stays raw/display so [TRANSECTS]
+ *          round-trips losslessly. Shared by PostParseResolver (per-store
+ *          resolve pass) and swmm_link_set_xsect (IRREGULAR assignment of a
+ *          transect added after open) — the two must stay bit-identical.
+ *
+ * @param ts          Raw transect store.
+ * @param index       Store row to build.
+ * @param ucf_length  UCF(LENGTH) for the model's unit system.
+ * @param td          [out] Built tables.
+ * @return false when the entry has no valid channel Manning's n (caller
+ *         reports the error); true on success.
+ */
+bool buildFromStore(const TransectStore& ts, int index, double ucf_length,
+                    TransectData& td);
 
 } // namespace transect
 } // namespace openswmm

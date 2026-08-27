@@ -42,6 +42,7 @@
 #ifndef OPENSWMM_ENGINE_DATA_WATER_AGE_DATA_HPP
 #define OPENSWMM_ENGINE_DATA_WATER_AGE_DATA_HPP
 
+#include <limits>
 #include <vector>
 
 namespace openswmm {
@@ -163,6 +164,14 @@ struct WaterAgeState {
     std::vector<double> subcatch_lid_drain_age_cfs;
     std::vector<double> subcatch_outfall_age_vol;
 
+    /// Z1 (amendment D-Y4): [node] age (SECONDS) prescribed by an
+    /// [INFLOWS] row naming `__WATER_AGE__`, refreshed by
+    /// InflowSolver::computeAll each routing step; quiet_NaN where no row
+    /// exists. The row is the more specific statement of the node's
+    /// inflow age and WINS over the source table's EXTERNAL_INFLOW entry
+    /// (global or node override) — the conflict is warned at init.
+    std::vector<double> node_ext_inflow_age;
+
     /// A2a: set by HotStartManager::apply when a V3 file restored ages —
     /// both engines then seed from node_age/link_age instead of
     /// INITIAL_STATE (the ARD engine consumes and clears it at init).
@@ -181,6 +190,18 @@ struct WaterAgeState {
         node_age.assign(static_cast<std::size_t>(n_nodes), 0.0);
         link_age.assign(static_cast<std::size_t>(n_links), 0.0);
         node_lid_drain_age_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
+        // Z1: PRESERVE when already sized. InflowSolver::init sizes and
+        // fills this at open — BEFORE the first routing step's
+        // computeAll — and the loaders' first lazy resize() lands between
+        // that write and its first read. A blanket assign here re-NaN'd
+        // the array and cost the row exactly one routing step of table-
+        // default age (measured: a 4-ULP C5 residue that broke the
+        // Z1 equivalence gate). init() re-asserts NaN on every re-init,
+        // so a removed row cannot leave a stale age behind.
+        if (node_ext_inflow_age.size() != static_cast<std::size_t>(n_nodes))
+            node_ext_inflow_age.assign(
+                static_cast<std::size_t>(n_nodes),
+                std::numeric_limits<double>::quiet_NaN());
         const auto ns3 = static_cast<std::size_t>(n_subcatch) *
                          static_cast<std::size_t>(SubArea::COUNT_);
         subarea_age.assign(ns3, 0.0);

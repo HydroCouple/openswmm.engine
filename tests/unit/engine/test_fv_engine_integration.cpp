@@ -919,6 +919,121 @@ TEST(FvEngine, FlapGatesMatchDynamicWave) {
 }
 
 // ===========================================================================
+// The same two gates on STRUCTURE links (orifice / weir / outlet)
+//
+// Legacy applies ONE predicate, link_setFlapGate (link.c:646), to conduits and
+// structures alike, and it has two halves: the link's own gate, and a gated
+// OUTFALL on the inflow end. The structure kernels in HydStructures.cpp
+// implemented only the first half, so a tide gate modelled the ordinary way —
+// a gated outfall with an orifice or weir on it — admitted the sea. FV routes
+// its structure links through the same code (Routing.cpp stepFv ->
+// non_conduit_fn), so both solvers failed identically.
+// ===========================================================================
+
+namespace {
+
+/// The backflow fixture again, but the junction reaches the sea through a
+/// STRUCTURE rather than a conduit. `kind` selects which one; @p link_gate and
+/// @p outfall_gate are the two independent flags under test.
+///
+/// A dead-end conduit JU->JA is present only so the FV mesh has a cell to
+/// build: a structure link contributes a node source/sink, not a cell, and a
+/// conduit-free network is not what this test is about. It carries no forcing
+/// and is identical across all cases, so it cannot separate them.
+std::string writeStructBackflowModel(const std::string& name, const char* routing,
+                                     const std::string& kind,
+                                     const char* link_gate, const char* outfall_gate) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "ALLOW_PONDING        NO\n\n"
+          "[JUNCTIONS]\nJU  100.0  10.0  0  0  0\nJA  100.0  10.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF  100.0  FIXED  108.0  " << outfall_gate << "\n\n"
+          "[CONDUITS]\nC0  JU  JA  200  0.013  0  0  0  0\n\n";
+
+    if (kind == "orifice") {
+        os << "[ORIFICES]\nS1  JA  OF  SIDE  0  0.65  " << link_gate << "  0\n\n";
+    } else if (kind == "weir") {
+        os << "[WEIRS]\nS1  JA  OF  TRANSVERSE  0  3.33  " << link_gate
+           << "  0  0  YES\n\n";
+    } else {  // outlet
+        os << "[OUTLETS]\nS1  JA  OF  0  FUNCTIONAL/HEAD  10.0  0.5  "
+           << link_gate << "\n\n";
+    }
+
+    os << "[XSECTIONS]\nC0  CIRCULAR  2.0  0  0  0  1\n";
+    if (kind == "orifice")   os << "S1  RECT_CLOSED  2.0  2.0  0  0\n";
+    else if (kind == "weir") os << "S1  RECT_OPEN    2.0  4.0  0  0\n";
+    os << "\n[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n"
+          "NODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+} // namespace
+
+// Each structure, each gate. The ungated run must admit real backflow or the
+// gated runs prove nothing, so that is asserted rather than assumed.
+TEST(FvEngine, StructureFlapGatesBlockBackflow) {
+    for (const char* routing : {"DYNWAVE", "FV"}) {
+        for (const char* kind : {"orifice", "weir", "outlet"}) {
+            const std::string stem =
+                std::string("sflap_") + routing + "_" + kind + "_";
+
+            const RunResult open = runModel(writeStructBackflowModel(
+                stem + "open", routing, kind, "NO", "NO"));
+            ASSERT_TRUE(open.parsed) << stem << "open";
+            const auto oit = open.peak_flow.find("S1");
+            ASSERT_NE(oit, open.peak_flow.end())
+                << stem << "open: no S1 row in the flow summary";
+            const double open_flow = oit->second;
+            ASSERT_GT(open_flow, 0.1)
+                << stem << ": the ungated fixture admitted no backflow ("
+                << open_flow << " cfs), so the gated cases prove nothing";
+
+            // "link" is the structure's own Gated column; "outfall" is the
+            // [OUTFALLS] Gated column, which the structure kernels ignored.
+            const struct { const char* tag; const char* lg; const char* og; }
+            gated[] = {{"link", "YES", "NO"}, {"outfall", "NO", "YES"}};
+
+            for (const auto& c : gated) {
+                const RunResult r = runModel(writeStructBackflowModel(
+                    stem + c.tag, routing, kind, c.lg, c.og));
+                ASSERT_TRUE(r.parsed) << stem << c.tag;
+                const auto it = r.peak_flow.find("S1");
+                ASSERT_NE(it, r.peak_flow.end()) << stem << c.tag;
+                EXPECT_LT(it->second, 0.01 * open_flow)
+                    << stem << c.tag << ": peak flow " << it->second
+                    << " cfs against " << open_flow
+                    << " cfs ungated — the gate is open";
+            }
+        }
+    }
+}
+
+// FV has to agree with DW on the gated answer, not merely be closed itself.
+TEST(FvEngine, StructureFlapGatesMatchDynamicWave) {
+    for (const char* kind : {"orifice", "weir", "outlet"}) {
+        const struct { const char* tag; const char* lg; const char* og; }
+        gated[] = {{"link", "YES", "NO"}, {"outfall", "NO", "YES"}};
+        for (const auto& c : gated) {
+            const std::string stem =
+                std::string("sflapcmp_") + kind + "_" + c.tag + "_";
+            const RunResult dw = runModel(writeStructBackflowModel(
+                stem + "dw", "DYNWAVE", kind, c.lg, c.og));
+            const RunResult fv = runModel(writeStructBackflowModel(
+                stem + "fv", "FV", kind, c.lg, c.og));
+            ASSERT_TRUE(dw.parsed && fv.parsed) << stem;
+            EXPECT_NEAR(fv.peak_flow.at("S1"), dw.peak_flow.at("S1"), 0.05)
+                << stem << ": FV " << fv.peak_flow.at("S1")
+                << " cfs vs DW " << dw.peak_flow.at("S1") << " cfs";
+        }
+    }
+}
+
+// ===========================================================================
 // Stage 2 — force-main friction, structure coupling, inert-option warnings
 // ===========================================================================
 

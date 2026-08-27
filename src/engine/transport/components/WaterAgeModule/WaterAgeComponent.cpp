@@ -62,9 +62,12 @@ std::string upper(std::string s) {
 }
 
 bool parse_hours(const std::string& tok, double& out) {
+    // D-NS1 (X6): negative hours are now legal — a negative source age is
+    // age-volume EXTRACTION (warned at the call site). The parse rejects
+    // only non-numbers.
     char* end = nullptr;
     out = std::strtod(tok.c_str(), &end);
-    return end != nullptr && *end == '\0' && end != tok.c_str() && out >= 0.0;
+    return end != nullptr && *end == '\0' && end != tok.c_str();
 }
 
 int source_of(const std::string& u) {
@@ -142,9 +145,13 @@ void applyWaterAgeSections(SimulationContext& ctx,
             // documents, and the deferral this phase owes the user was
             // unreachable in the only form anyone would write.
             if (upper(vtok).rfind("TIMESERIES", 0) == 0) {
+                // Z1 (amendment D-Y4) FLIPPED this from a deferral to a
+                // redirect: time-varying ages ARE supported now, through
+                // the pathway that already speaks timeseries.
                 errors.push_back(
-                    "[WATER_AGE_SOURCES] TIMESERIES ages arrive with a "
-                    "later water-age phase — A1a takes constant hours.");
+                    "[WATER_AGE_SOURCES] TIMESERIES ages are prescribed as "
+                    "[INFLOWS] rows naming __WATER_AGE__ (amendment D-Y4 / "
+                    "Z1) — this table takes constant hours.");
                 continue;
             }
             if (toks.size() != vpos + 1) {
@@ -156,9 +163,17 @@ void applyWaterAgeSections(SimulationContext& ctx,
             if (!parse_hours(vtok, hours)) {
                 errors.push_back(
                     "[WATER_AGE_SOURCES] '" + toks[0] + "': '" + vtok +
-                    "' is not a non-negative age in hours.");
+                    "' is not an age in hours.");
                 continue;
             }
+            // D-NS1 (X6): a negative source age is age-volume EXTRACTION —
+            // legal, warned at parse per the subplan §3.1 contract.
+            if (hours < 0.0)
+                ctx.warnings.push_back(
+                    "[WATER_AGE_SOURCES] '" + toks[0] + "' is negative (" +
+                    vtok + " h): the pathway EXTRACTS age-volume (water "
+                    "reads younger). Extraction clamps so age never goes "
+                    "below zero (D-NS1).");
             const double seconds = hours * 3600.0;
 
             if (scope == "GLOBAL") {

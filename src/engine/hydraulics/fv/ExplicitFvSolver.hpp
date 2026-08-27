@@ -47,6 +47,7 @@
 #include "FvOptions.hpp"
 #include "INetworkSolver.hpp"
 #include "NetworkMeshData.hpp"
+#include "PressurizedHeadSolver.hpp"
 
 namespace openswmm::transport::fvkernels {
 struct SpeciesKernelView;  // transport/fvkernels/SpeciesTransportKernels.hpp
@@ -112,6 +113,21 @@ public:
         return node_pass_;
     }
 
+    /// Nodes whose PUBLISHED stage should be reconstructed from the incident
+    /// wet cells rather than reported as the solver's own head. A superset of
+    /// node_passthrough(): the same cleanliness and structure/carry tests, but
+    /// at any degree, because the degree-2 restriction exists only for the
+    /// solver's direct-face bypass.
+    ///
+    /// Measured on Example1 under FLOW_ROUTING FV: nodes outside this set
+    /// published a stage up to 0.91 ft above their own adjacent cell at
+    /// FV_MIN_CELLS 1, falling ~first-order with refinement (a datum term),
+    /// while nodes inside it never exceeded 0.0002 ft at any refinement.
+    /// See tests/manual/fv_node_stage/RESULTS.md.
+    const std::vector<std::uint8_t>& node_publish_stage() const noexcept {
+        return node_pub_;
+    }
+
     /// Time-integrated cell discharge (ft³) over the last advance(), used to
     /// publish a routing-step MEAN link flow rather than an end-of-step
     /// snapshot — the snapshot aliases badly when a routing step spans many
@@ -139,7 +155,13 @@ private:
     void   refreshDepths();
     void   refreshNodeAreas();
     void   rebuildActiveLists();
-    double censusDt() const;
+    /// Global Courant census. @p press_edit applies the R2 edit: a
+    /// pressurized side of an implicit-eligible face is advection-bound only
+    /// (its acoustic pair is integrated implicitly this substep), and a
+    /// junction the implicit pass will fold is exempt from the algebraic
+    /// feedback bound. false everywhere the implicit pass will NOT run —
+    /// the LTS macro path, and every run without FV_PRESSURIZED_IMPLICIT.
+    double censusDt(bool press_edit = false) const;
     void   reconstructState();
     void   computeFaceFlux(int face);
     /// Species transport forwarders (phase E0): the reconstruction / FCT /
@@ -201,6 +223,14 @@ private:
     /// other directly (faceSide/computeFaceFlux) — the direct spliced face —
     /// which transmits both momentum and depth across the interface exactly.
     std::vector<std::uint8_t> node_pass_;
+    /// Static/full halves of the PUBLISH-stage test — see
+    /// node_publish_stage(). Deliberately separate from node_pass_, which the
+    /// SOLVER reads: widening node_pass_ instead would change the direct-face
+    /// bypass and with it the routing, which this is explicitly not allowed to
+    /// do (solver-internal heads are load-bearing ghost states under LTS tier
+    /// holds).
+    std::vector<std::uint8_t> node_pub_static_;
+    std::vector<std::uint8_t> node_pub_;
     /// Residual-volume carry (ft³) for algebraic junctions: root-solve
     /// tolerance and any cell-side positivity scaling land here and are bled
     /// back into the next solve's forcing. ≈0 in a converged steady state.
@@ -277,7 +307,8 @@ private:
     /// from the global path whenever the option was on but tiering was not
     /// running (RK2, species), reproducing FV_NODE_DT NONE unasked.
     bool ltsEligible() const noexcept {
-        return opts_.lts && opts_.time_integration != TimeIntegration::RK2 &&
+        return opts_.lts &&
+               opts_.time_integration != TimeIntegration::RK2 &&
                state_ && state_->n_species == 0;
     }
 
@@ -300,6 +331,39 @@ private:
     /// Semi-implicit friction for one cell: Manning, or — for a FORCE_MAIN
     /// running full — the Hazen-Williams / Darcy-Weisbach law the section
     /// actually obeys, through the engine's own forcemain functions.
+    /// Explicit stability bound for an ALGEBRAIC junction (issue: FV rings on
+    /// pressurized networks while dynamic wave does not).
+    ///
+    /// An algebraic junction has no volume state, so it has no STORAGE bound --
+    /// which is why it was exempted here. But it is not unbounded. Its head is
+    /// solved from the instantaneous flux balance and then handed to the
+    /// incident cells as a ghost, so the neighbours integrate against a
+    /// boundary state that can travel a long way inside one step. That feedback
+    /// loop is explicit, and it has its own limit:
+    ///
+    ///     tau = min_i( 0.5*dx_i*T_i )  /  sum_j( T_j*c_j )
+    ///
+    /// Every incident conduit pushes flux into the junction (the sum), but the
+    /// solved head has to be resolved on the TIGHTEST incident storage (the
+    /// min) -- that is the ghost the stiffest neighbour sees. Summing the
+    /// numerator instead, the obvious first guess and what legacy DW does for
+    /// its own node continuity solve, makes the bound LOOSER at exactly the
+    /// junctions that need it: at a 12 ft barrel meeting a 3 ft one the summed
+    /// area gives an effective length of 2123 ft against a 250 ft cell.
+    ///
+    /// Relative to the cell bound this is 1/(2n) * (T_min/T_max), i.e. purely
+    /// geometric: 4x for two identical barrels, 32x across a 16:1 area step.
+    /// Those are the factors the EPA QA decks were measured to need (test5 2x,
+    /// test2 25x), which is what the global FV_CFL had to be hand-lowered to
+    /// 0.1 and 0.02 to fake.
+    ///
+    /// Gated on the junction actually being pressurized: below the crown the
+    /// slot is not engaged, the head response is soft, and the measured
+    /// oscillation disappears entirely (enlarging the barrels so they never
+    /// surcharge takes the zigzag index from 37.6 to 4.97, dynamic wave's own
+    /// value). So an open-channel network pays nothing for this.
+    double algebraicNodeStableDt(int n) const noexcept;
+
     double frictionFor(const FvGeometry& g, double q, double u, double h,
                        double dt) const;
 
@@ -358,6 +422,20 @@ private:
     /// positivity-limit, transport, then the cell and node updates.
     void   takeSubstep(double dt, const FvStepForcing& forcing);
 
+    // -- implicit pressurized head update (slot program R2a) ----------------
+    /// Any active closed-section cell at/above band entry? Cheap early-exit
+    /// scan deciding whether this substep runs the implicit pass (and
+    /// whether the census may apply the R2 edit).
+    bool   anyPressurizedCell() const;
+    /// Would the implicit pass fold this junction as an unknown row RIGHT
+    /// NOW? Pure state predicate, shared by the census's feedback-bound
+    /// exemption and classify()'s fold pass.
+    bool   nodePressFolded(int n) const;
+    PressurizedView pressView(const FvStepForcing& forcing);
+    PressurizedHeadSolver press_;
+    /// Did classify() find implicit work for the substep in flight?
+    bool   press_step_ = false;
+
     /// Snapshot / average for SSP-RK2. `rkSave` records Uⁿ and the ledger
     /// totals; `rkAverage` forms ½(Uⁿ + U⁽²⁾) and halves the ledger deltas the
     /// two stages accumulated, which is what makes the reported flow integral
@@ -389,7 +467,6 @@ private:
     // g·(I₁(h_K) − I₁(h*_K)) — per-cell, not per-face, which is why they are
     // stored separately from the shared flux.
     std::vector<double> f_mass_, f_mom_, f_sstar_, f_corr_l_, f_corr_r_;
-    std::vector<double> f_scale_;
 
     /// Reconstructed species values on each side of each face, species-major
     /// [s * n_faces + f]. Filled by reconstructScalars() — this is the
@@ -522,11 +599,33 @@ private:
     long   total_flux_   = 0;
     double min_h_        = 0.0;
     double sim_time_     = 0.0;
+
+    // dt-argmin attribution (slot program R0): who owned the binding CFL
+    // element, counted once per censusDt (global path) / assignTiers (LTS
+    // path). `mutable` because censusDt is const; these are telemetry.
+    mutable long dt_argmin_pressurized_ = 0;
+    mutable long dt_argmin_band_        = 0;
+    mutable long dt_argmin_free_        = 0;
+    mutable long dt_argmin_node_        = 0;
     double active_sum_   = 0.0;
     double active_min_   = -1.0;
     double active_max_   = -1.0;
     long   active_n_     = 0;
+
+    /// The step the last accepted substep actually TOOK. Published as
+    /// suggested_step() and therefore what Router::getAdaptiveStep offers the
+    /// engine as the next routing step.
     double dt_cache_     = 0.0;
+
+    /// The CFL bound the last census returned — deliberately distinct from
+    /// dt_cache_. `dt_cache_` is clamped to the time remaining in the routing
+    /// step, so caching it as the Courant bound would drag every later substep
+    /// down to whatever fragment closed the previous step. Only this one may be
+    /// carried across a skipped census (FV_CFL_CENSUS_INTERVAL > 1).
+    double dt_census_    = 0.0;
+
+    /// Substeps remaining before the next full Courant census. Reloaded from
+    /// FV_CFL_CENSUS_INTERVAL; zero forces a census on the next substep.
     int    census_count_ = 0;
 };
 

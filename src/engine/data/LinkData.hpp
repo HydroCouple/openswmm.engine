@@ -371,6 +371,29 @@ struct LinkData {
     std::vector<double>     volume;
 
     /**
+     * @brief Portion of `volume` held in the Preissmann slot (ft³).
+     * @details FV routing only — `Σ max(0, cell_a − a_crown)·dx` per conduit
+     *          (Router::publishFv). Always a subset of `volume`; stays 0.0
+     *          under the dynamic-wave router and below the pipe crown. No
+     *          legacy counterpart: legacy never separates slot storage.
+     */
+    std::vector<double>     slot_volume;
+
+    // Slot-storage share statistics (FV slot program R0). All stay 0.0
+    // under the dynamic-wave router. The share of a link at an instant is
+    // slot_volume/volume; the run-level share is the ratio of the two
+    // time integrals below, never an average of instantaneous ratios.
+
+    /** @brief ∫ slot_volume dt over the run (ft³·s). */
+    std::vector<double>     stat_slot_vol_dt;
+    /** @brief ∫ volume dt over the run (ft³·s) — the share denominator. */
+    std::vector<double>     stat_vol_dt;
+    /** @brief Peak instantaneous slot share (slot_volume/volume, 0..1). */
+    std::vector<double>     stat_peak_slot_share;
+    /** @brief Time (s) the instantaneous slot share exceeded 1 %. */
+    std::vector<double>     stat_time_slot_above;
+
+    /**
      * @brief Current froude number (absolute).
      * @see Legacy: Link[i].froude
      */
@@ -611,6 +634,11 @@ struct LinkData {
         flow.assign(un, 0.0);
         depth.assign(un, 0.0);
         volume.assign(un, 0.0);
+        slot_volume.assign(un, 0.0);
+        stat_slot_vol_dt.assign(un, 0.0);
+        stat_vol_dt.assign(un, 0.0);
+        stat_peak_slot_share.assign(un, 0.0);
+        stat_time_slot_above.assign(un, 0.0);
         froude.assign(un, 0.0);
         flow_class.assign(un, FlowClass::DRY);
         is_closed.assign(un, 0);
@@ -668,7 +696,9 @@ struct LinkData {
         g(direction, 1);
         g(has_flap_gate, uint8_t{0}); g(dqdh, 0.0);
         pump_curve_name.resize(un);
-        g(flow, 0.0); g(depth, 0.0); g(volume, 0.0);
+        g(flow, 0.0); g(depth, 0.0); g(volume, 0.0); g(slot_volume, 0.0);
+        g(stat_slot_vol_dt, 0.0); g(stat_vol_dt, 0.0);
+        g(stat_peak_slot_share, 0.0); g(stat_time_slot_above, 0.0);
         g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
         g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
         comments.resize(un, std::string{});

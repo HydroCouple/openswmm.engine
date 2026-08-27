@@ -50,6 +50,7 @@
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../transport/components/HeatModule/HeatComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
+#include "../transport/components/HeatModule/HeatLid.hpp"
 #include "../transport/components/HeatModule/HeatWatershed.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeWatershed.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeLid.hpp"
@@ -125,6 +126,7 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.boundary   = &surface_router_.boundary();
     ctx_.twod_io.pending_bc = &surface_router_.pendingBCRows();
     ctx_.twod_io.pending_ec = &surface_router_.pendingEdgeConveyanceRows();
+    ctx_.twod_io.infil      = &surface_router_.infil();
 }
 #endif
 
@@ -156,6 +158,7 @@ int SWMMEngine::open(const char* inp_path,
     // Zero the load-phase accumulators so a process that opens several models
     // reports each one separately (see core/PerfTimers.hpp).
     perf::reset_load();
+    perf::reset_fv();
 
     // Stamp the report wall clock before any parsing work. Legacy takes this
     // timestamp in report_writeLogo(), which swmm_open() calls before
@@ -234,6 +237,7 @@ int SWMMEngine::open(const char* inp_path,
                 surface_router_.mesh(), surface_router_.options(),
                 surface_router_.pendingBCRows(),
                 surface_router_.pendingEdgeConveyanceRows(),
+                &surface_router_.infil(),
                 mf, base_dir, &ctx_.warnings);
             if (!err.empty()) {
                 if (lenient_open_) {
@@ -320,6 +324,82 @@ int SWMMEngine::open(const char* inp_path,
         // The mirror case for E3: dispersion spelled the FV way while the
         // ARD engine reads it from model.ard.
         transport::warnIfFvDispersionKeyIgnored(ctx_);
+
+        // X2: pollutant transport under LARD is live. X4: water age is
+        // live too (segment age row + node stores). What still does not
+        // run under this dispatch: temperature (H7), the reactions
+        // component (deferred L3) and treatment expressions. Each
+        // remaining bypass warns by name at open (silent no-result runs
+        // are never allowed — the E1-era rule; enumerate silent-bypass
+        // configurations, R4 lesson 5). All stay inside stepRouting's
+        // !ignore_quality condition: under IGNORE_QUALITY the stage is
+        // skipped before the solver choice is consulted, and that
+        // configuration's own warning family covers it.
+        if (ctx_.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
+            !ctx_.options.ignore_quality) {
+            if (ctx_.options.heat_transport) {
+                ctx_.warnings.push_back(
+                    "QUALITY_SOLVER LAGRANGIAN: temperature state "
+                    "does not advance under the LARD engine yet (plan "
+                    "phase H7) — pollutant transport and water age are "
+                    "active.");
+            }
+            if (transport::legacyReactionsActive(ctx_)) {
+                ctx_.warnings.push_back(
+                    "A reactions component is configured but QUALITY_SOLVER "
+                    "is LAGRANGIAN — the LARD reaction binding is not "
+                    "implemented (deferred L3), so no species react this "
+                    "simulation beyond first-order KDECAY.");
+            }
+            if (ctx_.treatment.hasAny()) {
+                ctx_.warnings.push_back(
+                    "[TREATMENT] expressions are configured but "
+                    "QUALITY_SOLVER is LAGRANGIAN — treatment interop is "
+                    "not implemented under the LARD engine yet; no removal "
+                    "is applied this simulation.");
+            }
+        }
+        // X3a: the LARD stepping keys are consumed by no other engine —
+        // the inverse bypass direction (E3 lesson 10: config spelled for
+        // one engine while another runs).
+        if (ctx_.options.quality_solver != QualitySolverKind::LAGRANGIAN &&
+            !ctx_.options.ignore_quality) {
+            if (ctx_.options.quality_step > 0.0)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] QUALITY_STEP is set but QUALITY_SOLVER is "
+                    "not LAGRANGIAN — only the LARD engine substeps on "
+                    "this key; it has no effect this simulation.");
+            if (ctx_.options.max_segments_per_link != 100)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] MAX_SEGMENTS_PER_LINK is set but "
+                    "QUALITY_SOLVER is not LAGRANGIAN — only the LARD "
+                    "engine holds segments; it has no effect this "
+                    "simulation.");
+            if (ctx_.options.lard_rwpt)
+                ctx_.warnings.push_back(
+                    "[OPTIONS] DISPERSION RWPT is set but QUALITY_SOLVER "
+                    "is not LAGRANGIAN — RWPT is the LARD engine's "
+                    "dispersion; the ARD engine reads dispersion from the "
+                    "transport.ard component instead. No dispersion is "
+                    "applied from this key this simulation.");
+        }
+        // D-NS1 (X6): a configured negative quality inflow is EXTRACTION —
+        // legal, warned per row at open (subplan §3.1 rule 2). Runtime
+        // clamps + the end-of-run summary are the other two warnings of
+        // the contract. Only the configured BASELINE is scanned here; a
+        // timeseries that goes negative at runtime is caught by the clamp
+        // warning instead.
+        for (int i = 0; i < ctx_.ext_inflows.count(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            if (ctx_.ext_inflows.inflow_type[ui] == "FLOW") continue;
+            if (ctx_.ext_inflows.baseline[ui] >= 0.0) continue;
+            ctx_.warnings.push_back(
+                "[INFLOWS] node '" + ctx_.ext_inflows.node_name[ui] +
+                "' pollutant '" + ctx_.ext_inflows.constituent[ui] +
+                "': the baseline is negative — this row EXTRACTS mass "
+                "(D-NS1). Extraction clamps per step to the mass the "
+                "element holds.");
+        }
 
         // A1a/A1b: the reserved species registers so downstream consumers
         // see the registry truth. Age now tracks under BOTH engines (ARD
@@ -937,6 +1017,53 @@ int SWMMEngine::initialize() noexcept {
 // start()
 // ============================================================================
 
+// ============================================================================
+// F8 — snow cover volume, the ledger term the engine never had
+// ============================================================================
+//
+// Legacy `snow_getSnowCover` (snow.c:587):
+//
+//     for (i = SNOW_PLOWABLE; i <= SNOW_PERV; i++)
+//         snowCover += (wsnow[i] + fw[i]) * fArea[i];
+//     return snowCover * (Subcatch[j].area - Subcatch[j].lidArea);
+//
+// Two details are load-bearing and easy to drop:
+//   * `fw` is IN. The free-water store is water the pack is holding, not
+//     water that has left it. Counting only `wsnow` understates the term by
+//     up to `fwfrac` of every pack and would leave a residual that looks
+//     like a leak -- which is exactly the shape of the residual F8's first
+//     write-up chased and had to retract.
+//   * LID area is OUT, matching the plow-removal volume (Gap #60) and legacy
+//     Build 5.2.0. Water in a LID unit is already counted by
+//     `lid_.storedVolume()` in init/final STORAGE; counting it here as well
+//     would double it.
+static double snowCoverVolumeFt3(const openswmm::SimulationContext& ctx,
+                                 const openswmm::snow::SnowSoA& soa) {
+    double total = 0.0;
+    for (int i = 0; i < ctx.n_subcatches(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ctx.subcatches.snowpack[ui] < 0) continue;
+        double depth = 0.0;
+        for (int k = 0; k < openswmm::snow::N_SUBAREAS; ++k) {
+            auto idx = static_cast<std::size_t>(i * openswmm::snow::N_SUBAREAS + k);
+            if (idx >= soa.wsnow.size()) break;
+            depth += (soa.wsnow[idx] + soa.fw[idx]) * soa.fArea[idx];
+        }
+        const double lid_ft2 = (ui < ctx.subcatches.total_lid_area_ft2.size())
+                                   ? ctx.subcatches.total_lid_area_ft2[ui] : 0.0;
+        // `subcatches.area` is in PROJECT LAND-AREA UNITS (acres in US,
+        // hectares in SI); `total_lid_area_ft2` is in ft². Subtracting one
+        // from the other without converting is the defect the comment at
+        // the rainfall-volume site warns about — it was 2.471x wrong on SI
+        // there, and would be here.
+        double area_ft2 = ctx.subcatches.area[ui] /
+                              ucf::UCF(ucf::LANDAREA, ctx.options) - lid_ft2;
+        if (area_ft2 < 0.0) area_ft2 = 0.0;
+        total += depth * area_ft2;
+    }
+    return total;
+}
+
 int SWMMEngine::start(int save_results) noexcept {
     if (ctx_.state != EngineState::INITIALIZED) {
         set_error(SWMM_ERR_WRONG_STATE,
@@ -1080,6 +1207,7 @@ int SWMMEngine::start(int save_results) noexcept {
     // Phase 4: call prepare() on all plugins (opens output files/headers)
     if (!plugins_.empty()) {
         perf::ScopedTimer _pt(perf::sec_start_plugins);
+        plugins_prepare_attempted_ = true;
         const int rc = plugins_.prepare_all(ctx_);
         if (rc != 0) {
             set_error(SWMM_ERR_PLUGIN, "swmm_engine_start: plugin prepare() failed");
@@ -1192,6 +1320,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // run every step.
     if (do_routing_) {
         stepRouting(dt_next);
+        if (const int drc = checkRoutingDiverged(); drc != SWMM_OK)
+            return drc;
         updateStatistics(dt_next);
         updateRoutingMassBalance(dt_next);
     }
@@ -1382,6 +1512,19 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             ctx_.forcing.effective_temperature(ctx_.climate_state.temperature_src);
 
         climate::updateDailyClimate(ctx_.climate_state, doy, mon);
+
+        // A2b'. Seasonal snowmelt coefficients. Legacy recomputes these once
+        // a day, from setTemp in climate.c:1176-1180, and NOTHING in this
+        // engine called the modern equivalent: `dhm` stayed at its
+        // `assign(0.0)` value, so `imelt = dhm * (temp - tbase)` was
+        // identically zero and the degree-day melt term never fired on any
+        // deck. Only rain-on-snow melt could produce water. The unit suite
+        // did not catch it because every snow gate calls setMeltCoeffs
+        // itself before stepping the solver.
+        if (doy != last_melt_doy_) {
+            last_melt_doy_ = doy;
+            snow_.setMeltCoeffs(doy);
+        }
 
         // A2b. Evaporation from timeseries or climate file
         if (ctx_.climate_state.evap_method == climate::EvapMethod::TIMESERIES &&
@@ -1576,6 +1719,18 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 snow_snow_[ui] = ctx_.forcing.effective_snowfall(ui, p.snowfall);
             }
 
+            // S2b — hand the snow solver what it needs to carry water age.
+            // A scalar in, nothing out: hydrology keeps no dependency on the
+            // transport layer, the same way `season` is handed in. Set
+            // BEFORE plowSnow, because plowSnow is where snowfall is mixed
+            // into the pack at its source age.
+            {
+                auto& snow_soa = snow_.state();
+                snow_soa.track_age  = ctx_.options.water_age;
+                snow_soa.precip_age = ctx_.water_age_config.global_age[
+                    static_cast<int>(WaterAgeSource::RAINFALL)];
+            }
+
             // Accumulation + plowing BEFORE melt (legacy runoff.c:254).
             snow_.plowSnow(ctx_, dt_runoff, snow_snow_.data());
 
@@ -1610,6 +1765,40 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     ? (net_plow * fPlow + net_imperv * fImperv) / fTotalI
                     : net_plow;
                 ctx_.subcatches.snow_net_perv[ui] = net_perv;
+
+                // S2: the MELT-ONLY part, under the identical area blend.
+                // Arriving water under a pack is two different waters —
+                // meltwater at 0 C carrying the pack's age, and rain that
+                // reached the ground through the snow-free fraction — and
+                // their sum cannot say what either is worth. The split is a
+                // local here; publishing it follows A4's precedent rather
+                // than having transport reconstruct it.
+                ctx_.subcatches.snow_melt_imperv[ui] = (fTotalI > 0.0)
+                    ? (soa.imelt[plow_idx] * fPlow +
+                       soa.imelt[imperv_idx] * fImperv) / fTotalI
+                    : soa.imelt[plow_idx];
+                ctx_.subcatches.snow_melt_perv[ui] = soa.imelt[perv_idx];
+
+                // S2b — the AGE of that meltwater, under the identical
+                // blend. Weighted by melt VOLUME rather than by area alone:
+                // the impervious value mixes plowable and non-plowable melt,
+                // and two surfaces contributing different rates do not
+                // contribute their ages equally. Weighting by area would be
+                // the same expression as the rate blend and would still be
+                // wrong, because an age is an intensive property of the
+                // water and the rate is not.
+                if (soa.track_age) {
+                    const double m_plow = soa.imelt[plow_idx] * fPlow;
+                    const double m_imp  = soa.imelt[imperv_idx] * fImperv;
+                    const double m_sum  = m_plow + m_imp;
+                    ctx_.subcatches.snow_melt_age_imperv[ui] =
+                        (m_sum > 0.0)
+                            ? (soa.out_age[plow_idx] * m_plow +
+                               soa.out_age[imperv_idx] * m_imp) / m_sum
+                            : soa.out_age[plow_idx];
+                    ctx_.subcatches.snow_melt_age_perv[ui] =
+                        soa.out_age[perv_idx];
+                }
             }
         }
 
@@ -1765,6 +1954,17 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                         ? ctx_.subcatches.runon_inflow[usc]
                         : 0.0,
                     lid_area);
+                // H5b: the temperature of that same inflow, weighted by the
+                // same four rates.
+                transport::setLidInflowTemperature(
+                    ctx_, t, u, sc, rain,
+                    q_imperv * g.from_imperv[uu], q_perv * g.from_perv[uu],
+                    (rsoa.area[usc] <= 0.0 &&
+                     usc < ctx_.subcatches.total_lid_area_ft2.size() &&
+                     ctx_.subcatches.total_lid_area_ft2[usc] > 0.0)
+                        ? ctx_.subcatches.runon_inflow[usc]
+                        : 0.0,
+                    lid_area);
             }
         }
 
@@ -1774,6 +1974,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // produced — the same slot A3's watershed update occupies relative
         // to the runoff solver.
         transport::routeLidLayerAge(ctx_, lid_, dt_runoff);
+        // H5b: and the temperature column, on the same clock. Separate
+        // entry point rather than a species loop inside one routine: the
+        // two tracks differ in their operators (no aging, no zero floor, a
+        // dry-layer policy, and a coupled conduction solve), not merely in
+        // which row they write.
+        transport::routeLidLayerTemperature(ctx_, lid_, dt_runoff);
 
         // A6b. Route LID outputs back to subcatchment runoff totals
         for (int t = 0; t < lid_.numGroups(); ++t) {
@@ -1831,6 +2037,25 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                         static_cast<std::size_t>(
                                             lst.n_species) +
                                     static_cast<std::size_t>(LidSpecies::AGE)];
+                        }
+                        // H5b: the same seam for temperature — and this is
+                        // the third run-on contributor H5a carried as owed,
+                        // because a drain's temperature is a per-layer
+                        // quantity that did not exist until now. It goes
+                        // through addRunonTemperatureAt so the numerator and
+                        // the rate move together (H5a's pair invariant).
+                        if (ctx_.options.heat_transport && lst.active() &&
+                            uts2 + 1 < lst.group_offset.size()) {
+                            const int fl = lst.group_offset[uts2] + u;
+                            if (fl >= 0 && fl < lst.n_units)
+                                transport::addRunonTemperatureAt(
+                                    ctx_, target_sc, q_dr,
+                                    lst.drain_value[
+                                        static_cast<std::size_t>(fl) *
+                                            static_cast<std::size_t>(
+                                                lst.n_species) +
+                                        static_cast<std::size_t>(
+                                            LidSpecies::TEMPERATURE)]);
                         }
                     }
                 }
@@ -2030,13 +2255,33 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         auto ui = static_cast<std::size_t>(i);
         if (ctx_.subcatches.area[ui] <= 0.0) continue;
 
-        // Interpolated runoff rate including runon from upstream subcatchments.
-        // (matching legacy subcatch_getWtdOutflow)
-        double q_runoff = (1.0 - f) * ctx_.subcatches.old_runoff[ui]
-                        +        f  * ctx_.subcatches.runoff[ui];
-        double q_runon  = (1.0 - f) * ctx_.subcatches.old_runon_inflow[ui]
-                        +        f  * ctx_.subcatches.runon_inflow[ui];
-        double q = q_runoff + q_runon;
+        // Interpolated runoff rate. RUN-ON IS NOT ADDED HERE: it is already
+        // inside `runoff[]`.
+        //
+        // `assembleRunon` sums every run-on contributor into
+        // `runon_inflow[]` — subcatchment-to-subcatchment, LID drain
+        // (Gap #25) and outfall return (Gap #28) — and `Runoff.cpp:333`
+        // consumes that array WHOLESALE as an inflow rate:
+        // `precip += runon_q / total_area`. Whatever went in comes back out
+        // in `runoff[]`, so adding `q_runon` again at the node booked the
+        // same water twice.
+        //
+        // The per-contributor question is answered uniformly, and that is
+        // why: the solver does not distinguish where a contribution came
+        // from, it reads one lump. `total_area` there is `soa_.area[ui]`,
+        // the same area this loop already guards on, so there is no
+        // subcatchment that receives run-on and fails to consume it.
+        //
+        // Legacy is unambiguous — `subcatch_getWtdOutflow` is
+        // `(1-f)*oldRunoff + f*newRunoff` and nothing else. Measured:
+        // cascade 0.511 acre-feet against legacy's 0.218, three-deep 0.536
+        // against 0.318; the excess on cascade is 0.293 against the donor's
+        // own runoff of 0.294. The conveyance was receiving 2.3× what our
+        // own runoff ledger said left the surface — and NEITHER continuity
+        // check noticed, because each balance was self-consistent on its own
+        // side of the seam.
+        double q = (1.0 - f) * ctx_.subcatches.old_runoff[ui]
+                 +        f  * ctx_.subcatches.runoff[ui];
 
         // Scatter to decomposed runoff inflow array
         int out_node = ctx_.subcatches.outlet_node[ui];
@@ -2208,9 +2453,35 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
         ctx_.mass_balance.runoff_infil +=
             ctx_.subcatches.infil_loss[ui] * area_ft2 * dt_runoff;
 
-        // Surface runoff volume (ft³) — runoff is cfs
-        ctx_.mass_balance.runoff_runoff +=
-            ctx_.subcatches.runoff[ui] * dt_runoff;
+        // Surface runoff volume (ft³) — runoff is cfs.
+        //
+        // ONLY when the outlet is a drainage-system node. A subcatchment that
+        // sheds onto another subcatchment has not left the runoff system: its
+        // water arrives as run-on and is counted again when the receiver
+        // discharges. Adding it here books the same water twice and the
+        // ledger reads a system output that never happened — measured on
+        // tests/parity/transport/age_legacy.inp, whose S1 drains onto S2:
+        // runoff continuity −23.667 % against legacy's −0.271 %, precipitation
+        // and infiltration agreeing to the digit and only runoff differing,
+        // by S1's own 1.628 in.
+        //
+        // Legacy guards exactly this (subcatch.c:761-765): `outNode == -1 &&
+        // outSubcatch != subcatchIndex` zeroes vOutflow before
+        // massbal_updateRunoffTotals. The self-outlet exclusion matters —
+        // a subcatchment routed to ITSELF is a real system output, not a
+        // cascade.
+        //
+        // This is a LEDGER term only: runoff_runoff is read by the continuity
+        // total, the report row and the mass-balance API, and by nothing that
+        // routes water. The routed hydrology and every .out column are
+        // unaffected.
+        const bool sheds_to_node = ctx_.subcatches.outlet_node[ui] >= 0;
+        const bool sheds_to_self =
+            ctx_.subcatches.outlet_subcatch[ui] == i;
+        if (sheds_to_node || sheds_to_self) {
+            ctx_.mass_balance.runoff_runoff +=
+                ctx_.subcatches.runoff[ui] * dt_runoff;
+        }
 
         // Subcatchment-level statistics
         if (ctx_.subcatches.runoff[ui] > ctx_.subcatches.stat_max_runoff[ui])
@@ -2443,7 +2714,31 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
             for (int p = 0; p < np; ++p) {
                 auto sq_idx = ui * static_cast<std::size_t>(np)
                               + static_cast<std::size_t>(p);
-                double total_washoff_load = 0.0; // mass/sec
+                // THE UNIT CONVENTION, fixed 2026-08-23 after the known-mass
+                // audit (QUALITY_LEDGER_UNITS_AUDIT §7): total_washoff_load
+                // accumulates in CONCENTRATION MASS UNITS per second (mg/s,
+                // or µg/s, or counts/s — whatever the pollutant's units are),
+                // and every LEDGER booking converts to USER MASS (lbs/kg) at
+                // the seam via mcf_p, exactly as legacy applies Pollut[].mcf
+                // at source (landuse.c:585, surfqual.c:352/357/366). Before
+                // this, the accumulator mixed three unit systems — EMC in
+                // mg/L·ft³/s, EXPON in user-mass/s, RATING in mg/s — and the
+                // ledger row printed 16057× legacy on a 100 mg/L EMC deck
+                // while the Washoff Summary printed 1/28.3 of it.
+                //
+                // mcf_p mirrors legacy landuse.c:167-169: UCF(MASS) for mg,
+                // /1000 for µg, 1.0 for counts.
+                const double mass_ucf_p = ucf::UCF(ucf::MASS, ctx_.options);
+                double mcf_p = mass_ucf_p;
+                if (static_cast<std::size_t>(p) < ctx_.pollutants.units.size()) {
+                    switch (ctx_.pollutants.units[static_cast<std::size_t>(p)]) {
+                        case MassUnits::UG_PER_L:     mcf_p = mass_ucf_p / 1000.0; break;
+                        case MassUnits::COUNTS_PER_L: mcf_p = 1.0; break;
+                        default: break;
+                    }
+                }
+                constexpr double kLperFt3 = 28.317;
+                double total_washoff_load = 0.0; // concen. mass units / sec
 
                 // Iterate over land uses weighted by coverage
                 // Buildup is now stored PER LAND USE: bu_idx(i, lu, p)
@@ -2554,14 +2849,36 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             : 0.0;
                         double q_flow   = q * ucf::UCF(ucf::FLOW, ctx_.options);
 
-                        double load = 0.0; // mass/sec (absolute)
+                        // `load` is in CONCENTRATION MASS UNITS per second
+                        // (mg/s for a mg/L pollutant). Each branch mirrors
+                        // legacy landuse_getWashoffQual × Q, with the
+                        // parse-time coefficient pre-multiplies
+                        // (landuse.c:332-334) applied here at runtime instead,
+                        // because our parser stores the user coefficient raw:
+                        //
+                        //   EMC:    coeff[mg/L] × LperFT3 → mg/ft³, × Q[cfs].
+                        //           Legacy uses INTERNAL flow here, not
+                        //           UCF(FLOW) — the previous q_flow form was
+                        //           inert under CFS and wrong under any other
+                        //           flow unit.
+                        //   EXPON:  coeff is PER HOUR in the deck; legacy
+                        //           divides by 3600 at parse. Without it the
+                        //           load was 3600× the formulation. Buildup
+                        //           is stored in user mass, so /mcf brings it
+                        //           to concentration mass units (legacy:
+                        //           `buildup / Pollut[p].mcf`).
+                        //   RATING: coeff × (Q·UCF(FLOW))^expon is already
+                        //           legacy's coeff·UCF^e × Q_int^e — unchanged.
+                        double load = 0.0; // concen. mass units / sec
                         switch (wp.type) {
                             case landuse::WashoffType::EMC:
-                                load = wp.coeff * q_flow * frac;
+                                load = wp.coeff * kLperFt3 * q * frac;
                                 break;
                             case landuse::WashoffType::EXPON:
-                                if (buildup > 0.0)
-                                    load = wp.coeff * std::pow(q_expon, wp.expon) * buildup * norm;
+                                if (buildup > 0.0 && mcf_p > 0.0)
+                                    load = (wp.coeff / 3600.0)
+                                         * std::pow(q_expon, wp.expon)
+                                         * (buildup * norm) / mcf_p;
                                 break;
                             case landuse::WashoffType::RATING:
                                 load = wp.coeff * std::pow(q_flow, wp.expon) * frac;
@@ -2569,21 +2886,63 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             default: break;
                         }
 
-                        // Cap washoff to available buildup (mass/sec <= total_mass / dt)
-                        double avail = buildup * norm;
+                        // Cap washoff to available buildup. Buildup is user
+                        // mass; the cap must be in the SAME units as `load`
+                        // (concen. mass), or the comparison is the mixed-unit
+                        // defect all over again — before this fix the EMC/
+                        // RATING mg-based load was compared against a lbs cap.
+                        double avail = (mcf_p > 0.0)
+                            ? (buildup * norm) / mcf_p : 0.0;
                         double max_load = (dt_runoff > 0.0) ? avail / dt_runoff : 0.0;
                         if (load > max_load && wp.type != landuse::WashoffType::EMC)
                             load = max_load;
 
-                        // Reduce per-landuse buildup by washoff amount
-                        if (norm > 0.0) {
-                            double washed = load * dt_runoff / norm;
+                        // Reduce per-landuse buildup by washoff amount —
+                        // buildup is user mass per normalizer unit, so the
+                        // reduction converts back (legacy reduces buildup by
+                        // washoffLoad, which is already lbs).
+                        //
+                        // ...unless there is NO buildup function and the
+                        // washoff exceeds what is on the ground, in which
+                        // case legacy books the load as BUILDUP_LOAD instead
+                        // (landuse.c:585-593, "otherwise add washoff to
+                        // buildup mass balance totals so that things will
+                        // balance"). Without that branch an EMC-only deck
+                        // discharges mass the ledger never received: the
+                        // Runoff Quality Continuity block reads Surface
+                        // Buildup 0.000 against Surface Runoff 113.269 where
+                        // legacy reads 113.082 on both. It is also what makes
+                        // the printed continuity error meaningful rather than
+                        // merely non-zero.
+                        const double washed_mass = load * mcf_p * dt_runoff;
+                        const bool has_buildup_fn =
+                            bp.type != landuse::BuildupType::NONE;
+                        if (!has_buildup_fn && washed_mass > buildup * norm) {
+                            auto upb2 = static_cast<std::size_t>(p);
+                            if (upb2 < ctx_.mass_balance.qual_surface_buildup.size())
+                                ctx_.mass_balance.qual_surface_buildup[upb2] +=
+                                    washed_mass;
+                            surface_quality_.buildup[bu] = 0.0;
+                        } else if (norm > 0.0) {
+                            double washed = washed_mass / norm;
                             surface_quality_.buildup[bu] =
                                 std::max(surface_quality_.buildup[bu] - washed, 0.0);
                         }
 
-                        // Apply BMP removal
-                        load *= (1.0 - wp.bmp_effic / 100.0);
+                        // BMP removal — and BOOK it. qual_bmp_removal had no
+                        // writer anywhere (Finding 8, the fourth
+                        // rendered-but-never-written ledger row after the
+                        // snapshot quality vectors, the snow rows and the
+                        // subcatchment temperature column). Legacy books it at
+                        // surfqual.c:352 in user mass.
+                        double bmp_removed = load * (wp.bmp_effic / 100.0);
+                        if (bmp_removed > 0.0) {
+                            auto upb = static_cast<std::size_t>(p);
+                            if (upb < ctx_.mass_balance.qual_bmp_removal.size())
+                                ctx_.mass_balance.qual_bmp_removal[upb] +=
+                                    bmp_removed * dt_runoff * mcf_p;
+                            load -= bmp_removed;
+                        }
 
                         total_washoff_load += load;
                     }
@@ -2620,16 +2979,26 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         ? ctx_.pollutants.c_rain[up] : 0.0;
                     double w_rain_pq = c_rain_pq * L_PER_FT3 * v_rain_pq;
 
-                    // Accumulate wet deposition in mass balance
+                    // Accumulate wet deposition in mass balance — LEDGER
+                    // booking, so convert to user mass at the seam (legacy
+                    // books WET_DEPOSITION_LOAD in lbs/kg).
                     if (w_rain_pq > 0.0 && up < ctx_.mass_balance.qual_wet_deposition.size())
-                        ctx_.mass_balance.qual_wet_deposition[up] += w_rain_pq;
+                        ctx_.mass_balance.qual_wet_deposition[up] += w_rain_pq * mcf_p;
 
                     double w_mass_pq = ctx_.subcatches.ponded_qual[sq_idx];  // mg
 
                     if (v_inflow_pq <= 0.0) {
-                        // Dry surface — move remaining ponded mass to final stored load
-                        if (w_mass_pq > 0.0 && up < ctx_.mass_balance.qual_final_buildup.size())
-                            ctx_.mass_balance.qual_final_buildup[up] += w_mass_pq;
+                        // Dry surface. The `+=` into qual_final_buildup that
+                        // used to sit here was DEAD (Finding 9):
+                        // computeFinalQualityMassBalance overwrites the term
+                        // with `=` at end-of-run, discarding every value
+                        // accumulated here — and it was in mg against that
+                        // site's user mass, so surviving would have corrupted
+                        // the term. Removed rather than converted. The
+                        // residual ponded mass at final time is NOT in the
+                        // final-buildup term on either path; that matches the
+                        // 4073 computation and is recorded as a small parity
+                        // gap against legacy's FINAL_STORED_LOAD.
                         ctx_.subcatches.ponded_qual[sq_idx] = 0.0;
                     } else {
                         // Complete-mix balance (matching legacy findPondedLoads):
@@ -2640,8 +3009,9 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         // Mass lost to infiltration
                         double w_infil_pq = std::min(c_ponded_pq * v_infil_pq, w_total_pq);
                         w_total_pq -= w_infil_pq;
+                        // Ledger booking → user mass (legacy INFIL_LOAD, lbs/kg)
                         if (w_infil_pq > 0.0 && up < ctx_.mass_balance.qual_infil_loss.size())
-                            ctx_.mass_balance.qual_infil_loss[up] += w_infil_pq;
+                            ctx_.mass_balance.qual_infil_loss[up] += w_infil_pq * mcf_p;
 
                         // Mass carried out with runoff outflow
                         double w_outflow_pq = std::min(c_ponded_pq * v_outflow_pq, w_total_pq);
@@ -2685,26 +3055,58 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             double q_runon37 = ctx_.subcatches.runon_inflow[ui];  // CFS
                             double c_old37 = (sq_idx < ctx_.subcatches.conc_old.size())
                                              ? ctx_.subcatches.conc_old[sq_idx] : 0.0;
-                            double w_lid_runon = q_runon37 * c_old37 * dt_runoff;  // mg
+                            // conc_old is mg/L (the reported convention), so
+                            // × LperFT3 brings cfs·mg/L·s to mg — legacy
+                            // findLidLoads multiplies its runon term by
+                            // LperFT3 for the same reason.
+                            double w_lid_runon =
+                                q_runon37 * c_old37 * L_PER_FT3_37 * dt_runoff;  // mg
                             if (w_lid_runon > 0.0)
                                 total_washoff_load += w_lid_runon / dt_runoff;
                         }
                     }
                 }
 
-                // Convert washoff load to concentration (mass/ft3)
+                // Convert washoff load to the REPORTED concentration, mg/L.
+                // load/q is mass/ft³; ÷ LperFT3 gives mass/L, exactly
+                // legacy's `newQual[p] = cOut / LperFT3` (surfqual.c:370).
+                // For EMC this leaves the value where it already was (the
+                // old form skipped LperFT3 in both load and conc, cancelling);
+                // for EXPON and RATING it is a real correction — their
+                // concentrations were in incompatible units before this.
                 double conc = 0.0;
                 if (q > MIN_RUNOFF_RATE && total_washoff_load > 0.0)
-                    conc = total_washoff_load / q;
+                    conc = total_washoff_load / q / kLperFt3;
 
                 ctx_.subcatches.conc[sq_idx] = conc;
 
-                // Update quality mass balance and per-subcatch total load
+                // Update quality mass balance and per-subcatch total load.
+                // ONE conversion, applied to BOTH bookings, so the Washoff
+                // Summary and the continuity ledger can never again disagree
+                // by a unit factor: `mass` is user mass (lbs/kg), matching
+                // legacy's massLoad at surfqual.c:357/366. On the known-mass
+                // deck (EMC 100 mg/L, V = 18157.174 ft³) this is
+                // 100 × 18157.174 × 28.317 × 2.203e-6 ≈ 113.3 lbs against
+                // legacy's 113.082 — where the old code booked 1 815 717.383.
                 if (total_washoff_load > 0.0) {
-                    double mass = total_washoff_load * dt_runoff;
-                    ctx_.mass_balance.qual_runoff_load[
-                        static_cast<std::size_t>(p)] += mass;
-                    // Accumulate per-subcatchment washoff load
+                    double mass = total_washoff_load * dt_runoff * mcf_p;
+                    // The LEDGER term is booked only when this subcatchment's
+                    // load actually reaches the conveyance system — legacy's
+                    // third `!= subcatchIndex` site (surfqual.c:363,
+                    // `outNode >= 0 || outSubcatch == subcatchIndex`). A
+                    // subcatchment shedding onto a peer has not delivered its
+                    // load to the system; the receiver books it on discharge,
+                    // and adding it here counts the same mass twice. The
+                    // volumetric sibling of this is `421e95c2`.
+                    const bool load_reaches_system =
+                        (ctx_.subcatches.outlet_node[ui] >= 0 ||
+                         ctx_.subcatches.outlet_subcatch[ui] == i);
+                    if (load_reaches_system)
+                        ctx_.mass_balance.qual_runoff_load[
+                            static_cast<std::size_t>(p)] += mass;
+                    // The PER-SUBCATCHMENT total is unconditional, as legacy's
+                    // is (surfqual.c:356, above its own guard): it is what this
+                    // subcatchment washed off, not what the system received.
                     ctx_.subcatches.total_load[sq_idx] += mass;
                 }
             } // end pollutant loop
@@ -3241,6 +3643,15 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             } else {
                 quality_.execute(ctx_, dt_routing);
             }
+        } else if (ctx_.options.quality_solver ==
+                   QualitySolverKind::LAGRANGIAN) {
+            // X2: LTD segment transport. External loads come from the SAME
+            // shared loader seam both other engines consume (the ARD
+            // precedent one branch up); the solver drains them as rate×dt /
+            // volume inside its topological mixing pass. Treatment and the
+            // reactions component do not run here yet — warned at open.
+            quality_.assembleExternalLoads(ctx_, dt_routing);
+            lard_.step(ctx_, dt_routing);
         } else {
             quality_.execute(ctx_, dt_routing);
         }
@@ -3325,6 +3736,12 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         }
         ctx_.nodes.stat_lat_inflow_vol[uj]   += std::fabs(lat) * dt_routing;
         ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
+        // PARITY stats.c:588 stats_updateStorageStats — a storage unit's peak
+        // RELEASE, which is what its outlet structures actually passed. Not
+        // interchangeable with peak inflow: attenuating the two is the point.
+        if (ctx_.nodes.type[uj] == NodeType::STORAGE &&
+            ctx_.nodes.outflow[uj] > ctx_.nodes.stat_storage_max_outflow[uj])
+            ctx_.nodes.stat_storage_max_outflow[uj] = ctx_.nodes.outflow[uj];
         // For outfall nodes, outflow = inflow by definition (matching legacy
         // massbal.c line 587: NodeOutflow[j] += Node[j].inflow * tStep).
         // For non-storage terminal nodes (degree==0), same treatment.
@@ -3362,6 +3779,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         }
     }
     ensureXspCache();
+    double step_slot_vol = 0.0, step_stored_vol = 0.0;   // slot program R0
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = std::fabs(ctx_.links.flow[uj]);
@@ -3395,6 +3813,25 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Surcharge duration tracking
         if (d >= y_full && y_full > 0.0)
             ctx_.links.stat_time_surcharged[uj] += dt_routing;
+
+        // Slot-storage share accumulation (FV slot program R0). The run
+        // share is ∫slot dt / ∫stored dt — a ratio of integrals, never an
+        // average of ratios. All terms are 0 under the dynamic-wave router.
+        {
+            const double v  = ctx_.links.volume[uj];
+            const double sv = ctx_.links.slot_volume[uj];
+            ctx_.links.stat_vol_dt[uj]      += v  * dt_routing;
+            step_stored_vol += v;
+            if (sv > 0.0) {
+                ctx_.links.stat_slot_vol_dt[uj] += sv * dt_routing;
+                step_slot_vol += sv;
+                const double share = (v > 0.0) ? sv / v : 0.0;
+                if (share > ctx_.links.stat_peak_slot_share[uj])
+                    ctx_.links.stat_peak_slot_share[uj] = share;
+                if (share > 0.01)
+                    ctx_.links.stat_time_slot_above[uj] += dt_routing;
+            }
+        }
 
         // Conduit surcharge detail tracking (upstream/downstream/both)
         // Gap #57: use persistent full_state set by routing solver (area/depth-based).
@@ -3512,6 +3949,29 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
                 }
             }
         }
+    }
+
+    // System-level slot share (FV slot program R0): the peak instantaneous
+    // share and the time above the 1 % budget need the per-step totals; the
+    // run-level integrated share is recovered at report time by summing the
+    // per-link integrals.
+    if (step_slot_vol > 0.0) {
+        const double sys_share =
+            (step_stored_vol > 0.0) ? step_slot_vol / step_stored_vol : 0.0;
+        if (sys_share > ctx_.routing_stats.slot_peak_share)
+            ctx_.routing_stats.slot_peak_share = sys_share;
+        if (sys_share > 0.01)
+            ctx_.routing_stats.slot_time_above_s += dt_routing;
+    }
+    // OPENSWMM_FV_SLOT_TRACE=1 → one CSV row per routing step on stdout.
+    static const bool slot_trace = []() {
+        const char* e = std::getenv("OPENSWMM_FV_SLOT_TRACE");
+        return e && *e && *e != '0';
+    }();
+    if (slot_trace && step_stored_vol > 0.0) {
+        std::printf("SLOT_TRACE,%.6f,%.6g,%.6g,%.6g\n",
+                    ctx_.current_time, step_slot_vol, step_stored_vol,
+                    step_slot_vol / step_stored_vol);
     }
 }
 
@@ -3769,6 +4229,20 @@ void SWMMEngine::computeFinalStorage() noexcept {
         // Water still held in LID units is runoff-system storage (legacy
         // massbal counts lid_getStoredVolume() in final storage).
         ctx_.mass_balance.runoff_final_store += lid_.storedVolume();
+
+        // F8 — the pack still standing, and the snow ploughed out of the
+        // system. Legacy massbal.c:671-679.
+        ctx_.mass_balance.runoff_final_snow =
+            snowCoverVolumeFt3(ctx_, snow_.state());
+        // `runoff_snowremov` HAD NO WRITER ANYWHERE. It was declared, exposed
+        // through `SWMM_RUNOFF_SNOWREMOV`, returned by the mass-balance API
+        // and read by callers — and nothing ever assigned it, so every deck
+        // that ploughs snow reported zero removal while `SnowSoA::removed`
+        // accumulated the real figure with no consumer. Same shape as F1
+        // (`setMeltCoeffs` with no caller) and as the snapshot quality
+        // vectors that wrote every pollutant column as zero: a field that
+        // exists, is exposed, is read, and is never written.
+        ctx_.mass_balance.runoff_snowremov = snow_.state().removed;
     }
 
     // B8. Compute routing final storage for mass balance
@@ -3893,8 +4367,12 @@ void convertSnapshotToDisplay(SimulationSnapshot& s, const ucf::DisplayUnits& du
     scale(s.links.depth,    du.length);
     scale(s.links.velocity, du.length);
     scale(s.links.volume,   du.volume);
-    // System scalars (legacy SysResults order)
-    s.sys_temperature = du.temperature(s.sys_temperature);
+    // System scalars (legacy SysResults order).
+    // The temperature conversion is AFFINE, so it must be skipped — not merely
+    // fed a zero — on a model with no subcatchments; see
+    // SimulationSnapshot::has_subcatchments.
+    if (s.has_subcatchments)
+        s.sys_temperature = du.temperature(s.sys_temperature);
     s.sys_rainfall   *= du.rainfall;
     s.sys_snow_depth *= du.raindepth;
     s.sys_infil      *= du.rainfall;
@@ -4155,8 +4633,22 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
             }
 
-            // System-level results
-            snap.sys_temperature = ctx_.climate_state.temperature;
+            // System-level results.
+            //
+            // Legacy assigns SYS_TEMPERATURE and SYS_PET at the END of
+            // output_saveSubcatchResults, and that function is called only
+            // behind `if (Nobjects[SUBCATCH] > 0)` (output.c:489-490). On a
+            // deck with NO subcatchments both therefore stay at the
+            // zero-initialised value of SysResults — regardless of the
+            // temperature data or the unit system. Reproducing that is not
+            // cosmetic: on an SI model this engine correctly converts its
+            // 0 degF to -17.78 degC, which is a defensible number and a parity
+            // failure on every period (extran-family and other pipe-only decks
+            // are exactly this shape).
+            const bool has_subcatchments = ctx_.n_subcatches() > 0;
+            snap.has_subcatchments = has_subcatchments;
+            snap.sys_temperature =
+                has_subcatchments ? ctx_.climate_state.temperature : 0.0;
 
             // Area-weighted average rainfall across subcatchments
             // (matching legacy output_saveSubcatchResults accumulation)
@@ -4189,7 +4681,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
                 snap.sys_snow_depth = (total_area > 0.0) ? total_snow / total_area : 0.0;
             }
-            snap.sys_pet = ctx_.climate_state.evap_rate;
+            snap.sys_pet = has_subcatchments ? ctx_.climate_state.evap_rate : 0.0;
 
             // Area-weighted averages of evap and infil; total runoff
             // Legacy adds GW evaporation (gw->evapLoss) to system evap
@@ -4239,7 +4731,13 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
 
             // 2D surface routing state (deep-copied; empty when 2D inactive,
             // and Default2DOutputPlugin::update() short-circuits on
-            // surface_tri_count == 0).
+            // surface_tri_count == 0). The render fields refresh on the
+            // REPORT_STEP grid; bring them up to date first for the case where
+            // the report instant does not land on a co-advance batch boundary.
+#ifdef OPENSWMM_HAS_2D
+            if (surface_router_.isActive())
+                surface_router_.refreshRenderFieldsIfStale();
+#endif
             fillSurfaceSnapshot(snap);
 
             // Single conversion boundary: convert the 1D snapshot to project
@@ -4464,6 +4962,35 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 // comment used to promise.
                 snap.subcatch_quality.assign(nS_s * nr_s, 0.0);
                 for (std::size_t s = 0; s < nS_s; ++s) {
+                    // H5a temperature — written BEFORE the runoff gate, and
+                    // unmasked, exactly as the node and link loops above do.
+                    //
+                    // Until 2026-08-22 there was no writer here at all: the
+                    // age row below had one and temperature did not, so
+                    // subcatch_quality kept the assign(…, 0.0) and the output
+                    // plugin faithfully wrote the zero. Measured on
+                    // tests/parity/transport/heat_parity.inp — nodes and links
+                    // carried −4.147…17.66 °C while every subcatchment read
+                    // exactly 0.0 for the whole run. The column existed in the
+                    // header the whole time, which is why a column-presence
+                    // check passed over it.
+                    //
+                    // It is OUTSIDE the has_runoff gate on purpose, and that
+                    // is a deliberate divergence from the age column beside
+                    // it. Age is gated because legacy's washoff convention
+                    // says a subcatchment producing nothing reports nothing.
+                    // Temperature cannot use that convention: 0 °C is a real
+                    // temperature and cannot double as "no water" — the same
+                    // reasoning H1 applied at nodes and links. D-H5c exists
+                    // precisely so the dry-element value is the deck's choice
+                    // (HOLD | AIR | DEFAULT) rather than an accident, so the
+                    // state carries a meaningful number when dry and blanking
+                    // it here would throw that away.
+                    if (temp_col && s < ctx_.heat_state
+                                            .subcatch_runoff_temp.size())
+                        snap.subcatch_quality[s * nr_s + temp_i] =
+                            ctx_.heat_state.subcatch_runoff_temp[s];
+
                     const bool has_runoff =
                         (s < ctx_.subcatches.runoff.size() &&
                          ctx_.subcatches.runoff[s] != 0.0);
@@ -4509,6 +5036,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // never consumed; DefaultReportPlugin::update() is a no-op.
             SimulationSnapshot snap;
             snap.sim_time = report_date;
+            surface_router_.refreshRenderFieldsIfStale();
             fillSurfaceSnapshot(snap);
             io_thread_.post(std::move(snap));
         }
@@ -4533,6 +5061,19 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_rainfall       = st.rainfall;
     snap.surface_coupling_flux  = st.coupling_flux;
     snap.surface_net_source     = st.net_source;
+    // Per-cell infiltration (plan §5.5.6). The held rate lives on the surface
+    // state; the cumulative depth comes from the ROUTER's applied-loss
+    // accumulator (SurfaceRouter2D::infilCumulative) rather than
+    // Infil2D::cumulative(), so sum(infil_cum * area) equals the ledger's
+    // infil_out exactly. It is empty when no [2D_INFILTRATION*] model
+    // resolved — publish zeros then, so both sidecar variables always carry
+    // one full [nFace] row per time step.
+    snap.surface_infil_rate     = st.infil_rate;
+    const auto& infil_cum = surface_router_.infilCumulative();
+    if (infil_cum.size() == st.infil_rate.size())
+        snap.surface_infil_cum = infil_cum;
+    else
+        snap.surface_infil_cum.assign(st.infil_rate.size(), 0.0);
     // Output sign convention: the integrator stores edge_flux and the face
     // velocity INFLOW-positive (a positive edge_flux raises the cell — see
     // SurfaceFluxCalculator), whereas the documented public/HDF5 convention
@@ -4640,6 +5181,13 @@ void SWMMEngine::applyAvgResults(SimulationSnapshot& snap) noexcept {
 int SWMMEngine::end() noexcept {
     if (ctx_.state != EngineState::RUNNING &&
         ctx_.state != EngineState::ENDED) {
+        // A failed run sits in ERROR_STATE holding the root-cause message.
+        // Callers (GUI, CLI, swmm_engine_run) call end() unconditionally on
+        // their teardown path, so a wrong-state set_error here would clobber
+        // the reason swmm_get_last_error_msg reports. Preserve it.
+        if (ctx_.state == EngineState::ERROR_STATE)
+            return (ctx_.error_code != SWMM_OK) ? ctx_.error_code
+                                                : SWMM_ERR_WRONG_STATE;
         set_error(SWMM_ERR_WRONG_STATE,
                   "swmm_engine_end: engine must be running or ended");
         return SWMM_ERR_WRONG_STATE;
@@ -4659,8 +5207,45 @@ int SWMMEngine::end() noexcept {
         }
     }
 
+    // D-NS1 (X6): summarize extraction clamps before the report renders,
+    // so the counts reach the .rpt warning block (gates read
+    // ctx.warnings directly, so .rpt ordering is not load-bearing).
+    quality::summarizeNegativeSourceClamps(ctx_);
+
     // Build routing time step histogram for report
     ctx_.routing_stats.build_histogram();
+
+    // Publish the FV solver's cumulative counters into the context so the
+    // report plugin can print them — IReportPlugin only ever sees a
+    // SimulationContext, never the Router. Exactly the 2D pattern
+    // (SurfaceRouter2D::finalize -> mass_balance_2d.solver_*), except the FV
+    // solver's counters survive finalize(), so ordering here is free.
+    // The nsteps > 0 test is load-bearing: INetworkSolver::run_stats() defaults
+    // to a ZEROED struct, so a backend carrying no counters returns nsteps == 0
+    // — not the -1 the report block treats as "skip me". Leaving the sentinel
+    // in place for that case is what keeps the block from printing a row of
+    // zeros, which reads as "the solver did nothing" instead of "nobody
+    // counted".
+    if (const auto* fv = router_.fvSolver();
+        fv != nullptr && fv->run_stats().nsteps > 0) {
+        const auto s = fv->run_stats();
+        auto& rs = ctx_.routing_stats;
+        rs.fv_nsteps      = s.nsteps;
+        rs.fv_nflux       = s.nflux;
+        rs.fv_avg_h       = s.avg_h;
+        rs.fv_last_h      = s.last_h;
+        rs.fv_min_h       = s.min_h;
+        rs.fv_active_min  = s.active_frac_min;
+        rs.fv_active_mean = s.active_frac_mean;
+        rs.fv_active_max  = s.active_frac_max;
+        rs.fv_n_tiers     = s.n_tiers;
+        for (int k = 0; k < s.n_tiers && k < 8; ++k)
+            rs.fv_tier_cells[k] = s.tier_cells[k];
+        rs.fv_dt_argmin_pressurized = s.dt_argmin_pressurized;
+        rs.fv_dt_argmin_band        = s.dt_argmin_band;
+        rs.fv_dt_argmin_free        = s.dt_argmin_free;
+        rs.fv_dt_argmin_node        = s.dt_argmin_node;
+    }
 
     // Finalize per-element max stats for report (top-5 CFL-critical, flow turns,
     // non-convergence — matching legacy stats_findMaxStats)
@@ -4737,6 +5322,11 @@ int SWMMEngine::end() noexcept {
 
 int SWMMEngine::report() noexcept {
     if (ctx_.state != EngineState::ENDED) {
+        // Same preservation as end(): never clobber a failed run's recorded
+        // cause with a wrong-state complaint on the unconditional teardown path.
+        if (ctx_.state == EngineState::ERROR_STATE)
+            return (ctx_.error_code != SWMM_OK) ? ctx_.error_code
+                                                : SWMM_ERR_WRONG_STATE;
         set_error(SWMM_ERR_WRONG_STATE,
                   "swmm_engine_report: must call end() first");
         return SWMM_ERR_WRONG_STATE;
@@ -4795,8 +5385,35 @@ int SWMMEngine::close() noexcept {
     // open+initialize, and the full sequence. (See core/PerfTimers.hpp.)
     if (perf::enabled()) perf::dump_load();
 
+    // FV phase breakdown, only when the FV solver actually ran — an empty line
+    // on a DYNWAVE run would be noise the harness has to filter.
+    if (perf::enabled() && perf::n_fv_substep > 0) perf::dump_fv();
+
     // Stop IO thread if still running (safe to call even if already stopped)
     io_thread_.stop();
+
+    // A run that failed after open() never reaches end()/report(), so without
+    // this flush the root cause would never reach the .rpt — the report
+    // plugin's destructor only stamps the generic "[Report interrupted]"
+    // footer. Record the fatal message alongside any accumulated errors and
+    // write them out, mirroring write_open_failure_report() for open()-time
+    // failures. Many set_error sites (hotstart, interface files) do not push
+    // into ctx_.errors themselves, hence the append here.
+    if (ctx_.state == EngineState::ERROR_STATE) {
+        try {
+            if (!ctx_.error_message.empty() &&
+                std::find(ctx_.errors.begin(), ctx_.errors.end(),
+                          ctx_.error_message) == ctx_.errors.end())
+                ctx_.errors.push_back(ctx_.error_message);
+        } catch (...) {
+            // Out-of-memory recording the error is non-fatal for close().
+        }
+        if (plugins_prepare_attempted_)
+            plugins_.finalize_all(ctx_);   // flushes into the open .rpt/.out
+        else
+            write_open_failure_report();   // .rpt was never opened — write one
+    }
+    plugins_prepare_attempted_ = false;
 
     // Close routing interface files
     iface_.closeFiles();
@@ -5071,6 +5688,58 @@ void SWMMEngine::validate_project() noexcept {
         opt.routing_step = opt.wet_step;
         ctx_.warnings.push_back(format_warning(WARN_ROUTING_STEP_REDUCED, ""));
     }
+}
+
+int SWMMEngine::checkRoutingDiverged() noexcept {
+    // A diverged routing solve used to run to completion and write NaN into
+    // the report, which reads as a finished simulation (TwinOaks-v2 under
+    // DYNWAVE + SURCHARGE_METHOD SLOT: a slot-surcharged pass-through node
+    // beside a dry one drove 2.8e5 cfs through a 9 ft pipe, cascaded, and
+    // reached 1e290 before the report accumulators overflowed). Stop at the
+    // step that goes non-physical and name the element, so the failure is
+    // reportable instead of silent.
+    //
+    // The bound is deliberately absurd, not tight: real heads are O(1e3) ft
+    // and real flows O(1e5) cfs at the very largest, so 1e9 cannot fire on a
+    // converging model however badly conditioned. Catching a merely LARGE
+    // value is the caller's job (continuity error, non-convergence percent);
+    // this exists only to stop unbounded growth. Note an isfinite() test
+    // alone is not enough -- the runaway stays finite for a long way up.
+    constexpr double kAbsurd = 1.0e9;
+    auto diverged = [](double v) {
+        return !std::isfinite(v) || std::fabs(v) > kAbsurd;
+    };
+
+    const int nn = ctx_.n_nodes();
+    for (int i = 0; i < nn; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (!diverged(ctx_.nodes.head[ui])) continue;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "ERROR %d: the routing solution diverged at node '%s' "
+            "(head %.6g) after %.4f hours -- the run cannot continue.",
+            CFFI_ERR_NUMERICAL, ctx_.node_names.name_of(i).c_str(),
+            ctx_.nodes.head[ui], ctx_.current_time / 3600.0);
+        ctx_.errors.push_back(buf);
+        set_error(CFFI_ERR_NUMERICAL, buf);
+        return CFFI_ERR_NUMERICAL;
+    }
+
+    const int nl = ctx_.n_links();
+    for (int j = 0; j < nl; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (!diverged(ctx_.links.flow[uj])) continue;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "ERROR %d: the routing solution diverged at link '%s' "
+            "(flow %.6g) after %.4f hours -- the run cannot continue.",
+            CFFI_ERR_NUMERICAL, ctx_.link_names.name_of(j).c_str(),
+            ctx_.links.flow[uj], ctx_.current_time / 3600.0);
+        ctx_.errors.push_back(buf);
+        set_error(CFFI_ERR_NUMERICAL, buf);
+        return CFFI_ERR_NUMERICAL;
+    }
+    return SWMM_OK;
 }
 
 void SWMMEngine::write_open_failure_report() noexcept {
@@ -5399,6 +6068,12 @@ void SWMMEngine::initHydraulics() noexcept {
     // gone — the side-tables stand on their own.
     hydstruct_.init(ctx_);
 
+    // KINWAVE/STEADY evaluate orifice/weir/outlet/pump discharge inline inside
+    // their sorted-link loop (legacy getLinkInflow), so the router needs the
+    // structure solver itself — DW/FV get theirs via the non_conduit_fn
+    // callback below. Must be wired before the first router_.step().
+    router_.setStructureSolver(&hydstruct_);
+
     // 10c. Exfiltration solver: initialize Green-Ampt state for storage nodes
     exfil_.init(ctx_);
 
@@ -5485,6 +6160,7 @@ void SWMMEngine::initHydrology() noexcept {
     // A4: size the per-layer species block against the units the manager
     // just built, and seed whatever they already hold.
     transport::initLidLayerAge(ctx_, lid_);
+    transport::initLidLayerTemperature(ctx_, lid_);
 
     // 2. Runoff solver: populate RunoffSoA from subcatchment properties
     runoff_.init(ctx_);
@@ -5562,9 +6238,21 @@ void SWMMEngine::initHydrology() noexcept {
                 soa.fwfrac[idx] = p[3];
                 soa.wsnow[idx]  = p[4] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
                 soa.fw[idx]     = p[5] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
-                soa.si[idx]     = soa.wsnow[idx]; // depth at 100% cover = initial depth
-                if (k == snow::SNOW_PLOWABLE)
+                // F6: the 7th field is SNN0 on the PLOWABLE row and SD100 —
+                // the depth at which areal coverage reaches 100 % — on the
+                // other two. Legacy splits it exactly this way
+                // (`snow.c:348-352`). Pinning `si` to the INITIAL pack depth
+                // instead made `asc` identically 1 on every deck, so
+                // `rain·(1 − asc)` was always zero and no rain ever reached
+                // the ground under a pack unless the deck wrote an explicit
+                // ADC row.
+                if (k == snow::SNOW_PLOWABLE) {
                     soa.snn[ui] = p[6];
+                    // The plowable surface has no SD100 of its own; legacy
+                    // leaves its `si` at the init value (0).
+                } else {
+                    soa.si[idx] = p[6] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
+                }
             }
 
             // Fractional area of each snow surface (legacy snow_initSnowpack,
@@ -5664,6 +6352,24 @@ void SWMMEngine::initHydrology() noexcept {
         // Resolve timeseries names to table indices
         if (ctx_.options.temp_source == 1 && !ctx_.options.temp_ts_name.empty()) {
             ctx_.climate_state.temp_ts_index = ctx_.find_timeseries(ctx_.options.temp_ts_name);
+        }
+
+        // With NO temperature source, legacy's air temperature stays at the
+        // zero-initialised value of its `Temp` struct: climate.c's setTemp only
+        // assigns `Temp.ta` for FILE_TEMP or TSERIES_TEMP, so a deck with no
+        // [TEMPERATURE] data reports and computes with 0 degF. This engine's
+        // 70 degF default is the more sensible number but it is NOT what legacy
+        // does, and the difference is not confined to reporting: `Temp.ea`, the
+        // saturation vapour pressure, is derived from `ta` and feeds
+        // evaporation. Matching legacy is what the parity gate is for; a
+        // deliberate, better default belongs in a documented deviation, not in
+        // a silent 70-vs-0 disagreement on nearly every deck in the corpus.
+        //
+        // An API-prescribed temperature still overrides this, exactly as
+        // legacy's `Temp.apiTemp` does (climate.c:1222).
+        if (ctx_.options.temp_source == 0 && ctx_.climate_state.temp_ts_index < 0) {
+            ctx_.climate_state.temperature_src = 0.0;
+            ctx_.climate_state.temperature = 0.0;
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
             ctx_.climate_state.evap_ts_index = ctx_.find_timeseries(ctx_.options.evap_ts_name);
@@ -5911,6 +6617,38 @@ void SWMMEngine::initQuality() noexcept {
                         : 0.0;
                     ctx_.links.conc[idx]     = c;
                     ctx_.links.conc_old[idx] = c;
+                }
+            }
+
+            // [INITIAL_QUALITY] per-element pollutant overrides — applied
+            // after the global Cinit seed ("specific beats general"), wet or
+            // dry (D-IQ4: an explicit per-element row is the user's intent,
+            // unlike the global default; mass stays C·V-safe because a dry
+            // element holds no volume). One write site feeds all three
+            // quality engines (D-IQ6): ARD and LARD both initialize lazily
+            // on their first step FROM these arrays, and the legacy CSTR
+            // routes on them directly. Reserved-species rows (age /
+            // temperature, kind < 0) are consumed at their seed sites (E-A3).
+            // When hotstart quality restore lands it must win over both
+            // seeds — apply it AFTER this block (D-IQ5).
+            {
+                const auto& iq = ctx_.initial_quality;
+                for (int r = 0; r < iq.count(); ++r) {
+                    const auto ur = static_cast<std::size_t>(r);
+                    const int k = iq.kind[ur];
+                    if (k < 0 || k >= np) continue;   // reserved/unresolved
+                    const int ei = iq.elem_idx[ur];
+                    if (ei < 0) continue;
+                    auto& conc     = iq.is_link[ur] ? ctx_.links.conc
+                                                    : ctx_.nodes.conc;
+                    auto& conc_old = iq.is_link[ur] ? ctx_.links.conc_old
+                                                    : ctx_.nodes.conc_old;
+                    const auto idx = static_cast<std::size_t>(ei) *
+                                     static_cast<std::size_t>(np) +
+                                     static_cast<std::size_t>(k);
+                    if (idx >= conc.size()) continue;
+                    conc[idx]     = iq.value[ur];
+                    conc_old[idx] = iq.value[ur];
                 }
             }
         }
@@ -6237,7 +6975,25 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         int out_sc = ctx_.subcatches.outlet_subcatch[ui];
-        if (out_sc >= 0 && out_sc < ctx_.n_subcatches()) {
+        // `out_sc != i` is legacy's guard (subcatch.c:546-548,
+        // `k >= 0 && k != subcatchIndex`) and its absence here was the whole
+        // defect: a subcatchment routed to ITSELF fed its own runoff back into
+        // its own run-on every step and recirculated. Measured against legacy
+        // 5.x on the selfroute fixture: 2.328 acre-feet of surface runoff
+        // booked against legacy's 0.417 — 5.6× — with −265 % continuity, while
+        // direct, 2-deep, 3-deep and all-direct cascades all agreed to the
+        // digit.
+        //
+        // A self-route is not a cascade. Legacy treats it as a subcatchment
+        // that discharges to the system like any other; the outlet name is
+        // simply a no-op. `421e95c2` already carries that reading in the
+        // runoff ledger (`sheds_to_self`), and this is the site that makes the
+        // ledger's number true rather than merely consistent.
+        //
+        // This guard covers the age and temperature run-on seams below too:
+        // both live inside this branch, so a self-route was also feeding its
+        // own age and its own heat back to itself.
+        if (out_sc >= 0 && out_sc < ctx_.n_subcatches() && out_sc != i) {
             auto usc = static_cast<std::size_t>(out_sc);
             ctx_.subcatches.runon_inflow[usc] += ctx_.subcatches.runoff[ui];
             // A3: run-on carries the donor's runoff age. Without this the
@@ -6544,6 +7300,7 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
 void SWMMEngine::initMassBalance() noexcept {
     // 14. Mass balance: record initial storage (nodes + links, matching legacy)
     ctx_.mass_balance.reset();
+    ctx_.negsrc.reset();  // D-NS1 (X6): clamp counters share the lifecycle
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         // Legacy-convention node volume (junctions => 0) so init storage matches
         // legacy; the internal volume-state is unchanged.
@@ -6590,6 +7347,11 @@ void SWMMEngine::initMassBalance() noexcept {
     // Initial water in LID units (InitSat + wilting-point soil moisture) is
     // part of runoff storage, mirroring the final-storage accounting.
     ctx_.mass_balance.runoff_init_store += lid_.storedVolume();
+
+    // F8 — the pack the deck starts with is water the model was GIVEN, and
+    // the ledger had no row for it. Legacy massbal.c:124-129.
+    ctx_.mass_balance.runoff_init_snow =
+        snowCoverVolumeFt3(ctx_, snow_.state());
 
     // Record initial groundwater storage
     // Legacy: GwaterTotals.initStorage += gwater_getVolume(j) * Subcatch[j].area

@@ -114,8 +114,10 @@ add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 # whole days into a "d." prefix as in report_writeSysTime().
 add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
 add_gtest_unit(test_engine_ard_transport          test_ard_transport.cpp)
+add_gtest_unit(test_engine_initial_quality        test_initial_quality.cpp)
 add_gtest_unit(test_engine_process_components     test_process_components.cpp)
 add_gtest_unit(test_engine_reactions_config       test_reactions_config.cpp)
+add_gtest_unit(test_engine_reactions_api          test_reactions_api.cpp)
 add_gtest_unit(test_engine_reaction_expressions   test_reaction_expressions.cpp)
 add_gtest_unit(test_engine_reaction_integrators   test_reaction_integrators.cpp)
 add_gtest_unit(test_engine_reaction_legacy_binding test_reaction_legacy_binding.cpp)
@@ -124,10 +126,25 @@ add_gtest_unit(test_engine_reaction_ard_binding   test_reaction_ard_binding.cpp)
 add_gtest_unit(test_engine_ard_transport_bcs      test_ard_transport_bcs.cpp)
 add_gtest_unit(test_engine_ard_e5b                test_ard_e5b.cpp)
 add_gtest_unit(test_engine_ard_node_store         test_ard_node_store.cpp)
+add_gtest_unit(test_engine_lard_wiring            test_lard_wiring.cpp)
+add_gtest_unit(test_engine_lard_transport         test_lard_transport.cpp)
+add_gtest_unit(test_engine_kinwave_storage        test_kinwave_storage_outlets.cpp)
+add_gtest_unit(test_engine_lard_age               test_lard_age.cpp)
+add_gtest_unit(test_engine_lard_dt_reference      test_lard_dt_reference.cpp)
+add_gtest_unit(test_engine_lard_rwpt              test_lard_rwpt.cpp)
+add_gtest_unit(test_engine_outfall_backflow       test_outfall_backflow_quality.cpp)
+add_gtest_unit(test_engine_negative_sources       test_negative_sources.cpp)
+add_gtest_unit(test_engine_water_age_api          test_water_age_api.cpp)
+add_gtest_unit(test_engine_transport_options_api  test_transport_options_api.cpp)
+add_gtest_unit(test_engine_options_malformed      test_options_malformed_values.cpp)
 add_gtest_unit(test_engine_water_age              test_water_age.cpp)
 add_gtest_unit(test_engine_water_age_watershed    test_water_age_watershed.cpp)
 add_gtest_unit(test_engine_water_age_lid          test_water_age_lid.cpp)
 add_gtest_unit(test_engine_heat_watershed         test_heat_watershed.cpp)
+add_gtest_unit(test_engine_heat_integrator        test_heat_integrator.cpp)
+add_gtest_unit(test_engine_heat_lid               test_heat_lid.cpp)
+add_gtest_unit(test_engine_transport_dt_reference test_transport_dt_reference.cpp)
+add_gtest_unit(test_engine_transport_snow       test_transport_snow.cpp)
 add_gtest_unit(test_engine_heat_transport         test_heat_transport.cpp)
 add_gtest_unit(test_engine_heat_surface_exchange  test_heat_surface_exchange.cpp)
 add_gtest_unit(test_engine_heat_radiative_exchange test_heat_radiative_exchange.cpp)
@@ -210,6 +227,9 @@ target_compile_definitions(test_engine_link_polygon_runtime PRIVATE
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
 add_gtest_unit(test_engine_virtual_junction test_virtual_junction.cpp)
 add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)
+add_gtest_unit(test_engine_fv_slot_volume test_fv_slot_volume.cpp)
+add_gtest_unit(test_engine_fv_closure_shapes test_fv_closure_shapes.cpp)
+add_gtest_unit(test_engine_fv_pressurized_implicit test_fv_pressurized_implicit.cpp)
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 target_compile_definitions(test_engine_infiltration PRIVATE
@@ -327,6 +347,27 @@ set_property(TEST
     test_engine_runoff_interface_capi
     test_engine_site_drainage_builder
     APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
+
+# ---- Same defect, second fixture: REMOVED AT THE ROOT, not locked ----
+# `test_engine_heat_watershed` and `test_engine_heat_lid` both WROTE
+# `_h5b.inp` / `_h5b.heat` into the shared data/ working directory and then
+# opened them. Under `ctest -jN` one suite's config landed between the other's
+# write and its open: measured 8 failures in 8 concurrent runs, every one
+# `SURFACE_EXCHANGE did not parse` — the gate's SETUP catching the WRONG FILE
+# rather than a wrong number. Both passed alone.
+#
+# A RESOURCE_LOCK fixed it by serialising the pair. The names are now unique
+# instead (`_h5lid.*` in the LID suite), which is strictly better for an
+# ACCIDENTAL collision: it costs no parallelism, and it protects against the
+# next test to pick the same name rather than only the pair someone noticed.
+#
+# The site_drainage lock above stays, because that case is different in kind —
+# a real committed fixture that nine tests genuinely share. You cannot rename
+# your way out of that one.
+#
+# A sweep at the time found a SECOND, unlocked instance nobody had hit:
+# `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
+# Also renamed. The check below is what stops a third.
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
@@ -500,6 +541,15 @@ if(OPENSWMM_BUILD_2D)
     # rederivation, conductance sign + FD parity.
     add_gtest_unit(test_engine_2d_windowless_coupling
                    test_2d_windowless_coupling.cpp)
+    # Track I — per-cell 2D infiltration (plan §5.5, D-I1…D-I6). Unit gates
+    # over Infil2D itself: the SI⇄ft/project-unit adapter (anchored on
+    # hand-computed SI values, not on a re-derivation of the adapter), the
+    # D-I3 override>tag>'*'>none resolution order, and D-I4 validation.
+    add_gtest_unit(test_engine_2d_infil test_2d_infil.cpp)
+    # Track I end-to-end: mass-balance ledger closure, the per-cell continuity
+    # residual (the silent call site 4), lazy/inactive-cell equivalence,
+    # section round-trip and the C API surface.
+    add_gtest_unit(test_engine_2d_infil_integration test_2d_infil_integration.cpp)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -762,4 +812,47 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     )
     set_tests_properties(test_engine_geopackage_external_content_reader
         PROPERTIES LABELS "unit")
+endif()
+
+
+# ---- No two test sources may share a scratch-fixture name ----
+# Every test here runs with data/ as its WORKING_DIRECTORY, so two files that
+# write the same "_name.ext" are one test wearing two names: under -jN they
+# race, and the failure surfaces as a CONTENT error (a parse failure, a wrong
+# value) rather than as a file conflict. That disguise is why the first
+# instance was written off as a flake and the second went unnoticed entirely.
+#
+# Fails at CONFIGURE time, before anything runs.
+# CONFIGURE_DEPENDS so ADDING a test file re-runs this check. Without it
+# the guard only sees the files that existed at the last configure — and
+# a new file is exactly when a name gets reused.
+file(GLOB _osw_test_sources CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
+set(_osw_seen_fixtures "")
+set(_osw_seen_owners "")
+set(_osw_fixture_clashes "")
+foreach(_src IN LISTS _osw_test_sources)
+    get_filename_component(_srcname "${_src}" NAME)
+    file(READ "${_src}" _content)
+    string(REGEX MATCHALL "\"_[A-Za-z0-9_]+\\.[A-Za-z0-9]+\"" _lits "${_content}")
+    list(REMOVE_DUPLICATES _lits)
+    foreach(_lit IN LISTS _lits)
+        list(FIND _osw_seen_fixtures "${_lit}" _idx)
+        if(_idx EQUAL -1)
+            list(APPEND _osw_seen_fixtures "${_lit}")
+            list(APPEND _osw_seen_owners "${_srcname}")
+        else()
+            list(GET _osw_seen_owners ${_idx} _first)
+            list(APPEND _osw_fixture_clashes
+                 "  ${_lit} written by both ${_first} and ${_srcname}")
+        endif()
+    endforeach()
+endforeach()
+if(_osw_fixture_clashes)
+    string(REPLACE ";" "\n" _osw_clash_text "${_osw_fixture_clashes}")
+    message(FATAL_ERROR
+        "Two or more unit tests share a scratch-fixture name, and they all run "
+        "with data/ as their working directory:\n${_osw_clash_text}\n"
+        "Rename one of them. A RESOURCE_LOCK also works but costs parallelism "
+        "and only protects the pair you noticed. See the note above this check.")
 endif()

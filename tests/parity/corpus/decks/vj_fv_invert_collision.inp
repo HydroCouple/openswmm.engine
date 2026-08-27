@@ -1,0 +1,46 @@
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         FV
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             00:30:00
+REPORT_STEP          00:01:00
+ROUTING_STEP         1
+ALLOW_PONDING        NO
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth
+J_IN    11.0  5.0
+
+[VIRTUAL_JUNCTIONS]
+;;Name  Elev
+VJ_A    9.0
+VJ_B    9.0
+
+[OUTFALLS]
+;;Name  Elev  Type  Gated
+O_OUT   8.0   FREE  NO
+
+[CONDUITS]
+;;Name    From   To     Length  N      Z1  Z2
+C_UP      J_IN   VJ_A   100.0   0.013  0   0
+C_FLAT    VJ_A   VJ_B   100.0   0.013  0   0
+C_DN      VJ_B   O_OUT  100.0   0.013  0   0
+
+[XSECTIONS]
+;;Link    Shape     G1   G2  G3  G4  Barrels
+C_UP      CIRCULAR  1.0  0   0   0   1
+C_FLAT    CIRCULAR  1.0  0   0   0   1
+C_DN      CIRCULAR  1.0  0   0   0   1
+
+[DWF]
+;;Node  Param  Value
+J_IN    FLOW   0.75
+
+[COORDINATES]
+;;Node  X      Y
+J_IN    0.0    0.0
+VJ_A    100.0  0.0
+VJ_B    200.0  0.0
+O_OUT   300.0  0.0

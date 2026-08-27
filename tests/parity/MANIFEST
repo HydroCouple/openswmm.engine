@@ -1,0 +1,67 @@
+# The bit-identity corpus.
+#
+# One deck per line:   <path relative to repo root>  <TAB>  <why it is here>
+# Blank lines and #-comments ignored.  Basenames must be unique --
+# run_corpus.sh refuses a duplicate, because every deck writes its .out
+# under its own basename.
+#
+# Read tests/parity/README.md before adding a deck.  In particular: a deck
+# earns its place by reaching a code path no other deck reaches, and the
+# reason column is where you say which.
+
+# ---- FV routing (10) ------------------------------------------------------
+# Ten of fifteen.  The corpus is heavily weighted to one router; see
+# README.md §4, which is the honest statement of what "15/15 unchanged"
+# does and does not prove.
+tests/parity/corpus/decks/agree_pass.inp	FV, AGREE flux, passing flow
+tests/parity/corpus/decks/agree_vj.inp	FV, AGREE flux at a vertical junction
+tests/parity/corpus/decks/steep_pass.inp	FV on a steep reach -- the supercritical branch
+tests/parity/corpus/decks/slot_capped.inp	FV Preissmann slot, width capped
+tests/parity/corpus/decks/slot_uncapped.inp	FV Preissmann slot, uncapped -- the other side of the cap
+tests/parity/corpus/decks/vj_fv_invert_collision.inp	FV vertical junction, colliding inverts
+tests/parity/corpus/decks/vj_fv_steep_datum.inp	FV vertical junction on a steep datum
+tests/parity/corpus/decks/sdm_fv_o1.inp	Site Drainage Model under FV, first-order
+tests/parity/corpus/decks/sdm_fv_o2.inp	Site Drainage Model under FV, second-order
+tests/parity/corpus/decks/sdm_fv_o2_superbee.inp	Site Drainage Model under FV, second-order + superbee limiter
+
+# ---- Dynamic wave, and the two quality solvers (4) ------------------------
+tests/parity/corpus/decks/force_legacy.inp	DYNWAVE + runtime-forced quality through the LEGACY solver
+tests/parity/corpus/decks/force_ard.inp	DYNWAVE + the same forcing through EULERIAN_ARD -- the pair is the point
+tests/parity/corpus/decks/orif_legacy.inp	DYNWAVE orifice load, the deck E2 measured against EPA
+tests/parity/corpus/decks/sdm_struct_dw_ard.inp	Site Drainage Model, DYNWAVE + structures + EULERIAN_ARD
+
+# ---- Snow (1) -------------------------------------------------------------
+# Added 2026-08-22.  SNOW_DIVERGENCE_REGISTER.md §4 called this a hard
+# prerequisite once S2b landed.  Seven defects (F1-F7) were fixed in the snow
+# module against a corpus in which no deck had a [SNOWPACKS] section, so
+# "14/14 unchanged" could not observe any of them.
+#
+# EXPECT THIS DECK TO MOVE on any snow-module change -- that is what it is
+# for.  A snow round that leaves it byte-identical has either changed nothing
+# reachable or is not exercising what it claims.  It also carries its own
+# stored baseline with provenance under tests/parity/snow/baseline/, which is
+# separate from this runner and stays that way.
+#
+# Cost: 8,641 routing steps, MEASURED at 0.30 s -- among the FASTEST decks
+# here, not the slowest.  The "~15-24 s" this line used to claim came from
+# snow/README.md and was never measured on a CLI build; see README.md §5 for
+# the per-deck table.  The three sdm_fv_* decks are 96 % of the corpus.
+tests/parity/snow/snow_parity.inp	KINWAVE + [SNOWPACKS] -- the only deck with snow, water in a pack, or areal depletion
+
+# ---- Water age and heat (3) -----------------------------------------------
+# Added 2026-08-22.  README.md §4 recorded 0 water-age and 0 heat decks after
+# roughly fifteen rounds of building both, so "15/15 byte-identical" could
+# observe neither.  Same hole the snow deck closed for [SNOWPACKS], and that
+# deck found a real ledger defect on its first run.
+#
+# All three share one network -- S1 -> S2 -> J1 with S3 -> J1 direct -- so a
+# difference between them is the CAPABILITY and not the model.  The cascade is
+# there because run-on is where both age defects lived (A3, A4); S3 is the
+# no-run-on control.  Generated: tests/parity/transport/gen_transport_parity.py.
+#
+# EXPECT THESE TO MOVE on any age or heat change, exactly as the snow deck
+# moves on a snow change.  Attribute the movement; do not widen anything.
+tests/parity/transport/age_legacy.inp	WATER_AGE ON with np=0, default solver -- age through the LEGACY CSTR mirror (A1b)
+tests/parity/transport/age_ard.inp	the same body under QUALITY_SOLVER EULERIAN_ARD -- age as an ARD mesh row (A1a); the pair localises a movement to one engine
+tests/parity/transport/age_lard.inp	the same body once more under QUALITY_SOLVER LAGRANGIAN -- age as the LARD segment row (X4); the TRIPLE localises a movement to one of three engines
+tests/parity/transport/heat_parity.inp	pollutant + age + heat -- the only deck reaching the np+age+heat reported stride (D-UT10's seam); carries heat_parity.heat beside it

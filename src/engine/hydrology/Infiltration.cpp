@@ -421,5 +421,14 @@ double curvenum_getInfil(CurveNumState& state, double precip, double depth, doub
     return f1;
 }
 
+// ============================================================================
+// Constant rate — 2D only (plan §5.5.1); no legacy infil.c counterpart
+// ============================================================================
+
+double constant_getInfil(double rate_ftsec, double precip, double depth, double dt) {
+    double ia = precip + depth / dt;  // available water rate (ft/sec)
+    return std::max(0.0, std::min(rate_ftsec, ia));
+}
+
 } // namespace infil
 } // namespace openswmm

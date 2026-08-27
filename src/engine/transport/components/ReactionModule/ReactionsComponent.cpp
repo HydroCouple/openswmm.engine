@@ -40,14 +40,34 @@ using input::Tokenizer;
 
 constexpr const char* kComponentId = "org.hydrocouple.openswmm.reactions";
 
-/// Rejoin tokens [from, end) with single spaces — expression bodies span the
-/// rest of their row.
-std::string rejoin(const std::vector<std::string>& tok, std::size_t from) {
-    std::string s;
-    for (std::size_t i = from; i < tok.size(); ++i) {
-        if (!s.empty()) s += ' ';
-        s += tok[i];
+/// The raw remainder of @p line after its first @p n_lead fields —
+/// expression bodies span the rest of their row VERBATIM, so an unquoted
+/// comma (`MIN(A, 2)`) survives where the old tokenize-then-rejoin capture
+/// ate it as a delimiter (E-D1). A fully double-quoted remainder is
+/// unwrapped, keeping the pre-E-D1 quoted workaround working.
+std::string expr_payload(const std::string& line, std::size_t n_lead) {
+    const auto is_delim = [](char c) {
+        return c == ' ' || c == '\t' || c == ',';
+    };
+    std::size_t i = 0;
+    for (std::size_t f = 0; f < n_lead; ++f) {
+        while (i < line.size() && is_delim(line[i])) ++i;
+        if (i < line.size() && line[i] == '"') {          // quoted field
+            ++i;
+            while (i < line.size() && line[i] != '"') ++i;
+            if (i < line.size()) ++i;
+        } else {
+            while (i < line.size() && !is_delim(line[i])) ++i;
+        }
     }
+    while (i < line.size() && is_delim(line[i])) ++i;
+    std::size_t e = line.size();
+    while (e > i && (line[e - 1] == ' ' || line[e - 1] == '\t' ||
+                     line[e - 1] == '\r'))
+        --e;
+    std::string s = line.substr(i, e - i);
+    if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
+        s = s.substr(1, s.size() - 2);
     return s;
 }
 
@@ -206,7 +226,7 @@ void parseTerms(SimulationContext& ctx, const std::vector<std::string>& lines,
             continue;
         }
         rx.term_name.push_back(tok[0]);
-        rx.term_expr_src.push_back(rejoin(tok, 1));
+        rx.term_expr_src.push_back(expr_payload(line, 1));
     }
 }
 
@@ -262,7 +282,7 @@ void parseExpressions(SimulationContext& ctx,
             continue;
         }
         forms[us] = f;
-        srcs[us]  = rejoin(tok, 2);
+        srcs[us]  = expr_payload(line, 2);
     }
 }
 
@@ -270,15 +290,71 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
                   std::vector<std::string>& errors) {
     auto& rx = ctx.reactions;
     rx.init_global.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
+    rx.init_elem_is_link.clear();
+    rx.init_elem_idx.clear();
+    rx.init_elem_species.clear();
+    rx.init_elem_value.clear();
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.empty()) continue;
         const std::string scope = Tokenizer::to_upper(tok[0]);
+
+        // E-B1: NODE/LINK per-element rows. Element resolution happens here
+        // (D-RQ1): components apply at open, AFTER the full .inp parse, so
+        // ctx.node_names/link_names are complete.
+        if (scope == "NODE" || scope == "LINK") {
+            const bool link = (scope == "LINK");
+            if (tok.size() < 4) {
+                errors.push_back("[REACTION_QUALITY] row needs " + scope +
+                                 " element species value: '" + line + "'.");
+                continue;
+            }
+            const int ei = link ? ctx.link_names.find(tok[1])
+                                : ctx.node_names.find(tok[1]);
+            if (ei < 0) {
+                errors.push_back(std::string("[REACTION_QUALITY] unknown ") +
+                                 (link ? "link" : "node") + " '" + tok[1] +
+                                 "'.");
+                continue;
+            }
+            const int s = rx.find_species(tok[2]);
+            if (s < 0) {
+                errors.push_back("[REACTION_QUALITY] undeclared species '" +
+                                 tok[2] + "'.");
+                continue;
+            }
+            double v = 0.0;
+            if (!to_num(tok[3], v) || v < 0.0) {
+                errors.push_back("[REACTION_QUALITY] bad value for '" +
+                                 tok[2] + "'.");
+                continue;
+            }
+            bool dup = false;
+            for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
+                if ((rx.init_elem_is_link[k] != 0) == link &&
+                    rx.init_elem_idx[k] == ei &&
+                    rx.init_elem_species[k] == s) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) {
+                errors.push_back("[REACTION_QUALITY] duplicate row for '" +
+                                 tok[2] + "' at " +
+                                 (link ? "link" : "node") + " '" + tok[1] +
+                                 "'.");
+                continue;
+            }
+            rx.init_elem_is_link.push_back(link ? 1 : 0);
+            rx.init_elem_idx.push_back(ei);
+            rx.init_elem_species.push_back(s);
+            rx.init_elem_value.push_back(v);
+            continue;
+        }
+
         if (scope != "GLOBAL") {
             errors.push_back("[REACTION_QUALITY] scope '" + tok[0] +
-                             "' is not available yet — NODE/LINK initial "
-                             "values arrive with a later reactions phase; "
-                             "GLOBAL only in R1.");
+                             "' is not GLOBAL, NODE, or LINK.");
             continue;
         }
         if (tok.size() < 3) {
@@ -398,54 +474,11 @@ void applyReactionSections(SimulationContext& ctx,
     }
 
     // ---- R2: compile every expression into the flat token pool. --------
-    auto& rx2 = ctx.reactions;
-    rx2.token_pool.clear();
-    rx2.term_expr.assign(rx2.term_name.size(), RxExprSpan{});
-    rx2.pipe_expr.assign(static_cast<std::size_t>(rx2.n_species()), RxExprSpan{});
-    rx2.tank_expr.assign(static_cast<std::size_t>(rx2.n_species()), RxExprSpan{});
-
-    // R4: pollutants are referencable (read-only) in expressions. Build the
-    // name list in registry order (pollutants occupy the first registry
-    // slots; PUSH_POLLUT idx == pollutant index).
-    std::vector<std::string> pollutant_names;
-    for (int p2 = 0; p2 < ctx.species_registry.pollutant_count(); ++p2)
-        pollutant_names.push_back(ctx.species_registry.name(p2));
-
-    RxSymbols sym;
-    sym.species    = &rx2.species_name;
-    sym.coefs      = &rx2.coef_name;
-    sym.terms      = &rx2.term_name;
-    sym.pollutants = &pollutant_names;
-
-    auto compile_one = [&](const std::string& src_expr, RxExprSpan& span,
-                           const std::string& where) {
-        int col = 0;
-        const std::string err = compileReactionExpression(
-            src_expr, sym, rx2.token_pool, span, col);
-        if (!err.empty())
-            errors.push_back(where + " (col " + std::to_string(col) +
-                             "): " + err + ".");
-    };
-
-    for (std::size_t i = 0; i < rx2.term_name.size(); ++i) {
-        sym.max_term = static_cast<int>(i);   // forward-only rule
-        compile_one(rx2.term_expr_src[i], rx2.term_expr[i],
-                    "[REACTION_TERMS] '" + rx2.term_name[i] + "'");
-    }
-    sym.max_term = static_cast<int>(rx2.term_name.size());
-    for (int sidx = 0; sidx < rx2.n_species(); ++sidx) {
-        const auto us = static_cast<std::size_t>(sidx);
-        if (rx2.pipe_form[us] != ReactionExprForm::NONE)
-            compile_one(rx2.pipe_expr_src[us], rx2.pipe_expr[us],
-                        "[REACTION_PIPES] '" + rx2.species_name[us] + "'");
-        if (rx2.tank_form[us] != ReactionExprForm::NONE)
-            compile_one(rx2.tank_expr_src[us], rx2.tank_expr[us],
-                        "[REACTION_TANKS] '" + rx2.species_name[us] + "'");
-    }
-    if (!errors.empty()) {
+    if (!recompileReactionSystem(ctx, errors)) {
         ctx.reactions.clear();
         return;
     }
+    auto& rx2 = ctx.reactions;
 
     // ---- Commit: registry entries only now, after full success. --------
     for (int sidx = 0; sidx < rx2.n_species(); ++sidx) {
@@ -496,6 +529,65 @@ void registerReactionsComponent() {
            std::vector<std::string>& errors) {
             applyReactionSections(ctx, config, errors);
         });
+}
+
+// ============================================================================
+// recompileReactionSystem() — the one compile path (E-C2 / D-RC4)
+// ============================================================================
+
+bool recompileReactionSystem(SimulationContext& ctx,
+                             std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    rx.compiled = false;
+    rx.token_pool.clear();
+    rx.term_expr.assign(rx.term_name.size(), RxExprSpan{});
+    rx.pipe_expr.assign(static_cast<std::size_t>(rx.n_species()),
+                        RxExprSpan{});
+    rx.tank_expr.assign(static_cast<std::size_t>(rx.n_species()),
+                        RxExprSpan{});
+
+    // R4: pollutants are referencable (read-only) in expressions. Build the
+    // name list in registry order (pollutants occupy the first registry
+    // slots; PUSH_POLLUT idx == pollutant index).
+    std::vector<std::string> pollutant_names;
+    for (int p2 = 0; p2 < ctx.species_registry.pollutant_count(); ++p2)
+        pollutant_names.push_back(ctx.species_registry.name(p2));
+
+    RxSymbols sym;
+    sym.species    = &rx.species_name;
+    sym.coefs      = &rx.coef_name;
+    sym.terms      = &rx.term_name;
+    sym.pollutants = &pollutant_names;
+
+    const std::size_t n_errors_in = errors.size();
+    auto compile_one = [&](const std::string& src_expr, RxExprSpan& span,
+                           const std::string& where) {
+        int col = 0;
+        const std::string err = compileReactionExpression(
+            src_expr, sym, rx.token_pool, span, col);
+        if (!err.empty())
+            errors.push_back(where + " (col " + std::to_string(col) +
+                             "): " + err + ".");
+    };
+
+    for (std::size_t i = 0; i < rx.term_name.size(); ++i) {
+        sym.max_term = static_cast<int>(i);   // forward-only rule
+        compile_one(rx.term_expr_src[i], rx.term_expr[i],
+                    "[REACTION_TERMS] '" + rx.term_name[i] + "'");
+    }
+    sym.max_term = static_cast<int>(rx.term_name.size());
+    for (int sidx = 0; sidx < rx.n_species(); ++sidx) {
+        const auto us = static_cast<std::size_t>(sidx);
+        if (rx.pipe_form[us] != ReactionExprForm::NONE)
+            compile_one(rx.pipe_expr_src[us], rx.pipe_expr[us],
+                        "[REACTION_PIPES] '" + rx.species_name[us] + "'");
+        if (rx.tank_form[us] != ReactionExprForm::NONE)
+            compile_one(rx.tank_expr_src[us], rx.tank_expr[us],
+                        "[REACTION_TANKS] '" + rx.species_name[us] + "'");
+    }
+    if (errors.size() != n_errors_in) return false;
+    rx.compiled = true;
+    return true;
 }
 
 }  // namespace openswmm::transport

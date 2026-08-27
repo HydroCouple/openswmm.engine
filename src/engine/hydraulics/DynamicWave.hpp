@@ -631,8 +631,6 @@ private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)
     double getSlotWidth(double y, double y_full, double w_max, XsectShape shape) const;
-    double getSlotArea(double y, double y_full, double a_full, double slot_width) const;
-    double getSlotHydRad(double y, double y_full, double r_full) const;
     double getCrownCutoff() const;
 
     // Dynamic Preissmann Slot (DPS) state and methods

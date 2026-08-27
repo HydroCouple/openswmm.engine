@@ -34,6 +34,7 @@
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/components/HeatModule/HeatLegacy.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeLegacy.hpp"
+#include "NegativeSources.hpp"
 #include "Treatment.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -85,7 +86,16 @@ inline void addAgeVolume(SimulationContext& ctx, int node, double q,
     auto& s = ctx.water_age_state.node_age_vol_in;
     const auto un = static_cast<std::size_t>(node);
     if (un >= s.size()) return;
-    s[un] += q * ctx.water_age_config.source_age(src, node);
+    double age = ctx.water_age_config.source_age(src, node);
+    // Z1 (amendment D-Y4): an [INFLOWS] row naming __WATER_AGE__ is the
+    // more specific statement of THIS node's inflow age and wins over the
+    // source table's EXTERNAL_INFLOW entry (constant or node override).
+    // NaN marks "no row at this node" — never a value.
+    if (src == WaterAgeSource::EXTERNAL_INFLOW) {
+        const auto& ov = ctx.water_age_state.node_ext_inflow_age;
+        if (un < ov.size() && !std::isnan(ov[un])) age = ov[un];
+    }
+    s[un] += q * age;
 }
 
 /// H1: one loader's temperature-volume contribution — `q · T_source` (a
@@ -236,7 +246,20 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
                               static_cast<std::size_t>(p);
                 if (nd_idx >= nodes.user_conc_mass_flux.size()) continue;
                 const double w = nodes.user_conc_mass_flux[nd_idx];
-                if (w <= 0.0) continue;
+                if (w == 0.0) continue;
+                // D-NS1 (X6): negative forced mass is extraction —
+                // DELIBERATE deviation from legacy's positive-only rule
+                // (routing.c `if (w > 0.0)`), per the user decision of
+                // 2026-08-23. The signed rate books signed; the mix stage
+                // clamps to available and un-books any shortfall. First
+                // negative warns once (the API has no parse stage).
+                if (w < 0.0 && !ctx.negsrc.api_warned) {
+                    ctx.negsrc.api_warned = true;
+                    ctx.warnings.push_back(
+                        "D-NS1: a negative quality mass flux was applied "
+                        "via the runtime API (extraction). It is clamped "
+                        "per step to the mass the element holds.");
+                }
                 if (nd_idx < nodes.qual_mass_in.size())
                     nodes.qual_mass_in[nd_idx] += w;
 
@@ -655,6 +678,10 @@ void QualitySolver::accumulateLinkLoads(SimulationContext& ctx, double dt) {
 void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
     int np = n_pollutants_;
     auto& nodes = ctx.nodes;
+    // OUTFALL_BACKFLOW_QUALITY ZERO: a supplying outfall is a fresh
+    // boundary — its held state reads zero, so backflow re-enters clean
+    // instead of carrying the last mix (legacy LAST keeps the hold).
+    const bool zero_bf_opt = ctx.options.outfall_backflow_zero;
 
     // Batch over all nodes — inner loop over pollutants is vectorisable
     // Outer node loop is parallelisable: each node reads only its own
@@ -667,6 +694,8 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
         auto ui = static_cast<size_t>(i);
         double v_old = nodes.old_volume[ui];
         double v_in = nodes.qual_vol_in[ui];
+        const bool zero_bf =
+            zero_bf_opt && nodes.type[ui] == NodeType::OUTFALL;
 
         for (int p = 0; p < np; ++p) {
             auto idx = ui * static_cast<size_t>(np) + static_cast<size_t>(p);
@@ -675,11 +704,23 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
             double c_old = nodes.conc_old[idx];
 
             if (v_in <= 0.0) {
-                nodes.conc[idx] = c_old;
+                nodes.conc[idx] = zero_bf ? 0.0 : c_old;
                 continue;
             }
 
             double mass_in = (idx < nodes.qual_mass_in.size()) ? nodes.qual_mass_in[idx] * dt : 0.0;
+            // D-NS1 (X6): a negative load is extraction, clamped to the
+            // mass the store holds; the shortfall is counted and un-booked
+            // so the ledger carries what actually left. The branch is
+            // untaken on every non-negative deck — bit-inert by
+            // construction.
+            if (mass_in < 0.0) {
+                const double avail = c_old * v_old;
+                if (mass_in < -avail) {
+                    bookNegativeSourceClamp(ctx, i, p, -(avail + mass_in));
+                    mass_in = -avail;
+                }
+            }
             double c_in = mass_in / v_in;
             double c_max = std::max(c_old, c_in);
 

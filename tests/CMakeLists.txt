@@ -131,6 +131,20 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     add_test(NAME test_legacy_solver_storage_shapes
         COMMAND $<TARGET_FILE:test_solver_storage_shapes>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    # These two are built by add_solver_test() like the rest, but that helper
+    # only creates the executable -- ctest registration is this hand-kept list,
+    # so a target added there and not here BUILDS AND NEVER RUNS.
+    add_test(NAME test_legacy_solver_transect_nc
+        COMMAND $<TARGET_FILE:test_solver_transect_nc>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    add_test(NAME test_legacy_solver_backflow_quality
+        COMMAND $<TARGET_FILE:test_solver_backflow_quality>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    # NOT the data directory: this one reads "./data/gage_scalefactor.inp",
+    # so its working directory is the PARENT of the others'.
+    add_test(NAME test_legacy_gage_scalefactor
+        COMMAND $<TARGET_FILE:test_gage_scalefactor>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine)
     add_test(NAME test_legacy_output
         COMMAND $<TARGET_FILE:test_output>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/output/data)
@@ -143,6 +157,8 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         test_legacy_solver_shapes
         test_legacy_solver_expanded_api
         test_legacy_solver_storage_shapes
+        test_legacy_solver_transect_nc
+        test_legacy_gage_scalefactor
         test_legacy_output
         PROPERTIES LABELS "unit"
     )

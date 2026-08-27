@@ -25,6 +25,8 @@
 
 #include "WaterAgeLid.hpp"
 
+#include "../LidLayerCommon.hpp"
+
 #include <algorithm>
 #include <vector>
 
@@ -36,75 +38,13 @@ namespace openswmm::transport {
 
 namespace {
 
-constexpr int    kNL      = LidLayerSpeciesState::kLayerCount;
 constexpr int    kAge     = static_cast<int>(LidSpecies::AGE);
 constexpr double kTinyVol = 1.0e-12;  ///< ft of water per unit area
 
-/// Where each layer's water comes from. -1 means "external to the unit";
-/// -2 means "this type has no such layer". Explicit per type rather than
-/// inferred: the eight stacks genuinely differ, and the solver is itself
-/// written one routine per type.
-struct Donors { int surface, pavement, soil, storage; };
-
-constexpr int kExternal = -1;
-constexpr int kAbsent   = -2;
-constexpr int kSurf     = static_cast<int>(LidLayer::SURFACE);
-constexpr int kPave     = static_cast<int>(LidLayer::PAVEMENT);
-constexpr int kSoil     = static_cast<int>(LidLayer::SOIL);
-constexpr int kStor     = static_cast<int>(LidLayer::STORAGE);
-
-Donors donorsFor(lid::LIDType t, bool has_soil) {
-    switch (t) {
-        case lid::LIDType::BIO_CELL:
-        case lid::LIDType::RAIN_GARDEN:
-            // Rain garden is the storage-less bio-cell; its stor_thick is 0,
-            // so in_stor stays 0 and the storage row never mixes.
-            return {kExternal, kAbsent, kSurf, kSoil};
-        case lid::LIDType::GREEN_ROOF:
-            // "Storage" is the drainage mat, fed by soil percolation.
-            return {kExternal, kAbsent, kSurf, kSoil};
-        case lid::LIDType::INFIL_TRENCH:
-            return {kExternal, kAbsent, kAbsent, kSurf};
-        case lid::LIDType::PERM_PAVEMENT:
-            // The only four-layer stack, and the only conditional donor:
-            // storage takes soil percolation when there is a soil layer and
-            // pavement percolation when there is not, exactly as the solver's
-            // storageInflow_local resolves it.
-            return {kExternal, kSurf, kPave, has_soil ? kSoil : kPave};
-        case lid::LIDType::RAIN_BARREL:
-            // Storage is the ONLY layer, and it is therefore the topmost
-            // present one — its inflow is external, not from a layer above.
-            return {kAbsent, kAbsent, kAbsent, kExternal};
-        case lid::LIDType::VEG_SWALE:
-        case lid::LIDType::ROOF_DISCON:
-            return {kExternal, kAbsent, kAbsent, kAbsent};
-    }
-    return {kExternal, kAbsent, kAbsent, kAbsent};
-}
-
-/// Void-weighted water held in each layer, as a depth per unit area (ft).
-/// The four terms are exactly those `LIDSolver::storedVolume()` sums, so a
-/// layer's age is weighted by the same water the mass balance counts.
-void layerVolumes(const lid::LIDGroupSoA& g, std::size_t ui,
-                  double (&v)[kNL]) {
-    v[kSurf] = g.surf_depth[ui] * g.surf_void_frac[ui];
-    v[kPave] = g.pave_depth[ui] * g.pave_void[ui] *
-               (1.0 - g.pave_imperv_frac[ui]);
-    v[kSoil] = g.soil_moist[ui] * g.soil_thick[ui];
-    v[kStor] = g.stor_depth[ui] * g.stor_void[ui];
-}
-
-std::vector<int> buildOffsets(const lid::LIDSolver& solver) {
-    std::vector<int> off;
-    off.reserve(static_cast<std::size_t>(solver.numGroups()) + 1);
-    int running = 0;
-    for (int t = 0; t < solver.numGroups(); ++t) {
-        off.push_back(running);
-        running += solver.group(t).count;
-    }
-    off.push_back(running);
-    return off;
-}
+// Donors/donorsFor, layerVolumes and buildOffsets moved to
+// LidLayerCommon at H5b: temperature needs the same topology, and a
+// second copy of an eight-case per-type stack table is exactly the
+// duplication lesson 81 is about.
 
 }  // namespace
 
@@ -115,7 +55,10 @@ void initLidLayerAge(SimulationContext& ctx, const lid::LIDSolver& solver) {
     if (units <= 0) return;
 
     auto& st = ctx.lid_layer_state;
-    st.resize(units, static_cast<int>(LidSpecies::COUNT_), offsets);
+    // H5b: ensureSized, not resize. The block is now shared with the heat
+    // track, and whichever capability initialises first must not wipe the
+    // other's row.
+    st.ensureSized(units, static_cast<int>(LidSpecies::COUNT_), offsets);
 
     // Seed the volumes a unit already holds, so the first step mixes against
     // real water rather than against zero. INITIAL_STATE is the age of water

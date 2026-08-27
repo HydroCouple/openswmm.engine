@@ -76,6 +76,22 @@ std::string validateMesh(const MeshData& mesh);
  */
 void recomputeVertexZDependents(MeshData& mesh, int vidx);
 
+/**
+ * @brief Whole-mesh form of `recomputeVertexZDependents`.
+ *
+ * Recomputes `tri_cz` and `edge_mz` for EVERY triangle in one pass, and
+ * produces bitwise-identical values to calling the per-vertex form for every
+ * vertex in turn (same operands, same operand order, same arithmetic).
+ *
+ * This exists because the per-vertex form scans all triangles per call: doing
+ * that once per vertex is O(nVertices x nTriangles), which is minutes on a
+ * million-cell mesh. `swmm_2d_set_vertex_z_bulk` writes every Z and then calls
+ * this once, making the same work O(nVertices + nTriangles).
+ *
+ * @param mesh The mesh; `mesh.vz` is assumed to already hold the new Zs.
+ */
+void recomputeAllZDependents(MeshData& mesh);
+
 } // namespace openswmm::twoD
 
 #endif // OPENSWMM_ENGINE_2D_MESH_BUILDER_HPP

@@ -430,6 +430,11 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                         cs.regen = save_regen;
                         break;
                     }
+                    case InfilModel::CONSTANT:
+                        // 2D-only method (plan §5.5.1): [INFILTRATION] has no
+                        // token for it, so no subcatchment can carry it. Listed
+                        // explicitly to keep the switch exhaustive.
+                        break;
                 }
             }
 
@@ -646,6 +651,8 @@ void RunoffSolver::infil_get_state(int i, int& model, double state[6]) const noe
             state[5] = c.T;
             break;
         }
+        case InfilModel::CONSTANT:
+            break;  // 2D-only, stateless — nothing to save
     }
 }
 
@@ -685,6 +692,8 @@ void RunoffSolver::infil_set_state(int i, int model, const double state[6]) noex
             c.T  = state[5];
             break;
         }
+        case InfilModel::CONSTANT:
+            break;  // 2D-only, stateless — nothing to restore
     }
 }
 

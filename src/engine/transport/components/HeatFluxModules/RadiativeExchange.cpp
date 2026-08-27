@@ -16,7 +16,13 @@
 
 /**
  * @file RadiativeExchange.cpp
- * @brief Phase H3 body — shortwave/longwave radiation and its binding.
+ * @brief Phase H3 body — shortwave/longwave radiation.
+ *
+ * @details D-H5e moved the node and link BINDING out of this file into
+ *          HeatFluxes.cpp. This file had its own hand-inlined explicit
+ *          conversion and its own copy of the element traversal, which is
+ *          how it came to carry H2's divergence through a different
+ *          spelling and then to relax separately from it.
  *
  * @details Line-for-line provenance is `RHEComponent/src/element.cpp`:
  *          `computeNetSWSolarRadiation` (:106), `computeBackLWRadiation`
@@ -35,10 +41,6 @@
 
 #include "SurfaceExchange.hpp"
 #include "../../../core/SimulationContext.hpp"
-#include "../../../core/UnitConversion.hpp"
-#include "../../../hydraulics/Link.hpp"
-#include "../../../hydraulics/Node.hpp"
-#include "../../../hydraulics/XSectBatch.hpp"
 
 namespace openswmm::transport::heat {
 
@@ -117,90 +119,12 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
     return jbr - jsn - jan - jlc;
 }
 
-void applyRadiativeExchange(SimulationContext& ctx, double dt) {
+double radiativeFluxOut(const SimulationContext& ctx, double t_w) noexcept {
     if (!ctx.options.heat_transport || !ctx.heat_config.radiative_exchange)
-        return;
-    if (!(dt > 0.0)) return;
-
-    auto& hs  = ctx.heat_state;
-    const auto& cfg = ctx.heat_config.radiative;
-    const double t_air = airTempCelsius(ctx);
-    const double rh    = ctx.climate_state.humidity;
-    const double rho   = ctx.options.water_density;
-    const double cp    = ctx.options.water_specific_heat;
-    const int unit_sys =
-        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-
-    // Same free surfaces as SurfaceExchange — storage nodes and open
-    // conduits, which is where evaporation acts too. Sunlight does not
-    // reach a closed pipe any more than wind does.
-    const int nn = ctx.n_nodes();
-    for (int i = 0; i < nn; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        if (ui >= hs.node_temp.size()) break;
-        const double vol_ft3 = ctx.nodes.volume[ui];
-        if (!(vol_ft3 > 0.0)) continue;
-        const double area_ft2 = node::getSurfArea(
-            ctx.nodes, i, ctx.nodes.depth[ui], &ctx.tables, unit_sys,
-            &ctx.node_subtypes);
-        if (!(area_ft2 > 0.0)) continue;
-
-        const double j_out = netRadiativeFluxOut(hs.node_temp[ui], t_air, rh,
-                                                 cfg);
-        const double hc = rho * cp * vol_ft3 * kCuFtToCuM;
-        if (hc > 0.0)
-            hs.node_temp[ui] += -j_out * area_ft2 * kSqFtToSqM * dt / hc;
-    }
-
-    const int nl = ctx.n_links();
-    const auto& CD = ctx.link_subtypes.conduits;
-    for (int j = 0; j < nl; ++j) {
-        const auto uj = static_cast<std::size_t>(j);
-        if (uj >= hs.link_temp.size()) break;
-        const double vol_ft3 = ctx.links.volume[uj];
-        if (!(vol_ft3 > 0.0)) continue;
-        const int cr = ctx.link_subtypes.conduit_row(j);
-        if (cr < 0) continue;
-        const auto ucr = static_cast<std::size_t>(cr);
-        if (!xsect::isOpen(ctx.links.xsect_batch_shape[uj])) continue;
-
-        double length = CD.length[ucr];
-        if (!(length > 0.0)) length = CD.mod_length[ucr];
-        if (!(length > 0.0)) continue;
-        const double depth = ctx.links.depth[uj];
-        if (!(depth > 0.0)) continue;
-
-        XSectParams xs{};
-        // link::translateShape is the canonical LinkData-enum -> batch-enum
-        // translation (Link.cpp) — POLYGON=26 was appended to both enums at
-        // the same numeric value, breaking the flat +1 offset every earlier
-        // shape follows, so this delegates rather than re-deriving it here.
-        xs.type = link::translateShape(ctx.links.xsect_shape[uj]);
-        xs.y_full = ctx.links.xsect_y_full[uj];
-        xs.a_full = ctx.links.xsect_a_full[uj];
-        xs.w_max  = ctx.links.xsect_w_max[uj];
-        xs.r_full = ctx.links.xsect_r_full[uj];
-        xs.s_full = ctx.links.xsect_s_full[uj];
-        xs.s_max  = ctx.links.xsect_s_max[uj];
-        xs.y_bot  = ctx.links.xsect_y_bot[uj];
-        xs.a_bot  = ctx.links.xsect_a_bot[uj];
-        xs.s_bot  = ctx.links.xsect_s_bot[uj];
-        xs.r_bot  = ctx.links.xsect_r_bot[uj];
-        {
-            const int ci = ctx.links.xsect_cheb_idx[uj];
-            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
-                xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
-        }
-        const double top_width = xsect::getWofY(xs, depth);
-        if (!(top_width > 0.0)) continue;
-
-        const double area_ft2 = top_width * length * CD.barrels[ucr];
-        const double j_out = netRadiativeFluxOut(hs.link_temp[uj], t_air, rh,
-                                                 cfg);
-        const double hc = rho * cp * vol_ft3 * kCuFtToCuM;
-        if (hc > 0.0)
-            hs.link_temp[uj] += -j_out * area_ft2 * kSqFtToSqM * dt / hc;
-    }
+        return 0.0;
+    return netRadiativeFluxOut(t_w, airTempCelsius(ctx),
+                               ctx.climate_state.humidity,
+                               ctx.heat_config.radiative);
 }
 
 }  // namespace openswmm::transport::heat

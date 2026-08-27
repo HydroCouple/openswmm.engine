@@ -422,6 +422,14 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
                                            "coupling flux with SWMM node", "m s-1");
     ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
                                            "net volumetric source/sink", "m s-1");
+    // Per-cell infiltration (plan §5.5.6): the held INFIL_STEP rate and the
+    // cumulative infiltrated depth. Both are all-zero when no
+    // [2D_INFILTRATION*] rows resolved; they are always written so the time
+    // axis stays aligned across every face variable.
+    ds_face_infil_rate_    = createFaceDS("Mesh2_face_infil_rate",
+                                           "infiltration loss rate", "m s-1");
+    ds_face_infil_cum_     = createFaceDS("Mesh2_face_infil_cum",
+                                           "cumulative infiltrated depth", "m");
     ds_face_vx_            = createFaceDS("Mesh2_face_vx",
                                           "cell-centred velocity X (RT0)", "m s-1");
     ds_face_vy_            = createFaceDS("Mesh2_face_vy",
@@ -498,6 +506,8 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     extendAndWrite2D(ds_face_rainfall_,      snap.surface_rainfall.data(),      n_faces_);
     extendAndWrite2D(ds_face_coupling_flux_, snap.surface_coupling_flux.data(), n_faces_);
     extendAndWrite2D(ds_face_net_source_,    snap.surface_net_source.data(),    n_faces_);
+    extendAndWrite2D(ds_face_infil_rate_,    snap.surface_infil_rate.data(),    n_faces_);
+    extendAndWrite2D(ds_face_infil_cum_,     snap.surface_infil_cum.data(),     n_faces_);
     extendAndWrite2D(ds_face_vx_,            snap.surface_face_vx.data(),       n_faces_);
     extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
     extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
@@ -552,6 +562,11 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
             writeScalar(grp, "outfall_out",           mb.outfall_out);
             writeScalar(grp, "boundary_in",           mb.boundary_in);
             writeScalar(grp, "boundary_out",          mb.boundary_out);
+            // Both loss channels (plan §5.5.4): evap_out was previously
+            // omitted here, so writing infil_out alone would leave the
+            // sidecar's budget silently non-closing.
+            writeScalar(grp, "evap_out",              mb.evap_out);
+            writeScalar(grp, "infil_out",             mb.infil_out);
             writeDoubleAttr(grp, "continuity_error",  mb.error());
             H5Gclose(grp);
         }
@@ -571,6 +586,8 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_rainfall_);
     closeDS(ds_face_coupling_flux_);
     closeDS(ds_face_net_source_);
+    closeDS(ds_face_infil_rate_);
+    closeDS(ds_face_infil_cum_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

@@ -769,6 +769,18 @@ enum SurchargeMethodType
 };
 
 /*!
+* \enum BackflowQualType
+* \brief Quality carried by reverse flow at outfalls
+*/
+enum BackflowQualType
+{
+     /*! \brief Hold the last mixed concentration (legacy behavior) */
+     BACKFLOW_LAST,
+     /*! \brief Fresh boundary: backflow enters with zero concentration */
+     BACKFLOW_ZERO,
+};
+
+/*!
 * \enum InflowType
 * \brief Enumeration of inflow method types
 */
@@ -1196,6 +1208,8 @@ enum InputOptionType
      NUM_THREADS,
      /*! \brief Surcharge method */
      SURCHARGE_METHOD,
+     /*! \brief Quality carried by reverse flow at outfalls */
+     OUTFALL_BACKFLOW_QUALITY,
 };
 
 /*!

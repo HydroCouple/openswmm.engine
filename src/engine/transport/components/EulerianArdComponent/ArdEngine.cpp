@@ -31,10 +31,12 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
+#include "../../../quality/NegativeSources.hpp"
 #include "../../../hydraulics/Node.hpp"
+#include "../../InitialQualitySeeds.hpp"
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
-#include "../HeatFluxModules/RadiativeExchange.hpp"
+#include "../HeatFluxModules/HeatFluxes.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 #include "../../fvkernels/SpeciesTransportKernels.hpp"
 #include "../ReactionModule/ReactionArdBinding.hpp"
@@ -196,11 +198,15 @@ bool ArdEngine::init(SimulationContext& ctx) {
         hs_link_age = ctx.water_age_state.link_age;
     }
     const auto age_seed_link = [&](int link) {
-        return (age_from_hs &&
-                static_cast<std::size_t>(link) < hs_link_age.size())
-                   ? hs_link_age[static_cast<std::size_t>(link)]
-                   : ctx.water_age_config.global_age[static_cast<int>(
-                         WaterAgeSource::INITIAL_STATE)];
+        if (age_from_hs &&
+            static_cast<std::size_t>(link) < hs_link_age.size())
+            return hs_link_age[static_cast<std::size_t>(link)];
+        // E-A3: [INITIAL_QUALITY] __WATER_AGE__ rows override the global
+        // (hotstart wins above, D-IQ7).
+        return initialAgeSecondsFor(
+            ctx, true, link,
+            ctx.water_age_config.global_age[static_cast<int>(
+                WaterAgeSource::INITIAL_STATE)]);
     };
     // H4: temperature's INITIAL_STATE. Unlike age (whose default is 0, so
     // an unseeded row merely looks plausible) HeatConfigData's defaults are
@@ -209,10 +215,11 @@ bool ArdEngine::init(SimulationContext& ctx) {
     const double temp_seed = ctx.heat_config.global_temp[static_cast<int>(
         HeatSource::INITIAL_STATE)];
     const auto age_seed_node = [&](std::size_t nd) {
-        return (age_from_hs && nd < hs_node_age.size())
-                   ? hs_node_age[nd]
-                   : ctx.water_age_config.global_age[static_cast<int>(
-                         WaterAgeSource::INITIAL_STATE)];
+        if (age_from_hs && nd < hs_node_age.size()) return hs_node_age[nd];
+        return initialAgeSecondsFor(
+            ctx, false, static_cast<int>(nd),
+            ctx.water_age_config.global_age[static_cast<int>(
+                WaterAgeSource::INITIAL_STATE)]);
     };
 
     const int n_links = ctx.n_links();
@@ -239,12 +246,24 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
                     ctx.reactions.init_global[static_cast<std::size_t>(m)];
             }
+            // E-B2: [REACTION_QUALITY] LINK rows override the GLOBAL fill —
+            // EVERY cell of the conduit, and only the named species' row
+            // (ns-strided (np + m) math, the E4/R6 stride audit).
+            for (std::size_t k = 0;
+                 k < ctx.reactions.init_elem_idx.size(); ++k) {
+                if (!ctx.reactions.init_elem_is_link[k]) continue;
+                if (ctx.reactions.init_elem_idx[k] != link) continue;
+                const int m = ctx.reactions.init_elem_species[k];
+                if (m < 0 || m >= nm) continue;
+                state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
+                    ctx.reactions.init_elem_value[k];
+            }
             if (age_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(age_row_) * unc + uc] =
                     age_seed_link(link);
             if (temp_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(temp_row_) * unc + uc] =
-                    temp_seed;
+                    initialTempFor(ctx, true, link, temp_seed);   // E-A3
         }
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
@@ -258,18 +277,33 @@ bool ArdEngine::init(SimulationContext& ctx) {
             node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
                 ctx.reactions.init_global[static_cast<std::size_t>(m)] *
                 node_vol_[und];
+        // E-B2: NODE rows override the GLOBAL fill (mass = value * volume).
+        for (std::size_t k = 0; k < ctx.reactions.init_elem_idx.size(); ++k) {
+            if (ctx.reactions.init_elem_is_link[k]) continue;
+            if (ctx.reactions.init_elem_idx[k] != nd) continue;
+            const int m = ctx.reactions.init_elem_species[k];
+            if (m < 0 || m >= nm) continue;
+            node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
+                ctx.reactions.init_elem_value[k] * node_vol_[und];
+        }
         if (age_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(age_row_)] =
                 age_seed_node(und) * node_vol_[und];
         if (temp_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] =
-                temp_seed * node_vol_[und];
+                initialTempFor(ctx, false, nd, temp_seed) *       // E-A3
+                node_vol_[und];
     }
     if (age_row_ >= 0)
         ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links(),
                                    ctx.n_subcatches());  // A3: keep watershed rows
-    if (temp_row_ >= 0)
+    if (temp_row_ >= 0) {
         ctx.heat_state.resize(ctx.n_nodes(), ctx.n_links(), temp_seed);
+        // E-A3: mirror per-element temperature rows into the state arrays so
+        // anything reading heat_state before the first publish agrees with
+        // the mesh (which already carries them and republishes each step).
+        applyInitialTempOverrides(ctx);
+    }
     // (resize consumed hotstart_loaded — the loaded ages now live in the
     // mesh state and republish on the first step.)
 
@@ -656,11 +690,25 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
             const auto und = static_cast<std::size_t>(nd);
             node_vol_[und] += load_frac * ctx.nodes.qual_vol_in[und];
-            for (int s = 0; s < np_l; ++s)
-                node_mass_[und * uns + static_cast<std::size_t>(s)] += std::max(
-                    0.0, dt_sub *
-                             ctx.nodes.qual_mass_in[und * unp_l +
-                                                    static_cast<std::size_t>(s)]);
+            for (int s = 0; s < np_l; ++s) {
+                // D-NS1 (X6): the old `max(0, ...)` silently DROPPED a
+                // negative load while the loaders had booked the full
+                // request — a silent ledger break. Extraction now applies
+                // signed, clamped to the store's mass, shortfall counted
+                // and un-booked. Positive loads take the identical value —
+                // bit-inert on every non-negative deck.
+                double delta =
+                    dt_sub * ctx.nodes.qual_mass_in[und * unp_l +
+                                                    static_cast<std::size_t>(s)];
+                double& mstore =
+                    node_mass_[und * uns + static_cast<std::size_t>(s)];
+                if (delta < 0.0 && mstore + delta < 0.0) {
+                    quality::bookNegativeSourceClamp(ctx, nd, s,
+                                                     -(mstore + delta));
+                    delta = -mstore;
+                }
+                mstore += delta;
+            }
             // Persistent user quality mass flux is NOT added here: it is
             // folded into qual_mass_in by QualitySolver::addExtInflowLoads(),
             // the same loader stage legacy uses, so the line above already
@@ -763,9 +811,17 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 // store threshold the donor contributes nothing, which is both
                 // stable and what "the node holds no water" means.
                 const double vol = node_vol_[und];
+                // OUTFALL_BACKFLOW_QUALITY ZERO: an outfall donating into
+                // the network is a fresh boundary — it contributes water
+                // but no mass and no age (same rule as the LEGACY and LARD
+                // solvers' held-state sites). Its store keeps the mass that
+                // arrived; the flag guarantees that mass never re-enters.
+                const bool fresh_outfall =
+                    ctx.options.outfall_backflow_zero &&
+                    ctx.nodes.type[und] == NodeType::OUTFALL;
                 for (int s = 0; s < ns; ++s) {
                     const double cnode =
-                        (vol > kMinStoreVol)
+                        (!fresh_outfall && vol > kMinStoreVol)
                             ? node_mass_[und * uns +
                                          static_cast<std::size_t>(s)] / vol
                             : 0.0;
@@ -1147,31 +1203,21 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
 
     constexpr double kSqFtToSqM = 0.09290304;
     constexpr double kCuFtToCuM = 0.028316846592;
-    constexpr double kMphToMs   = 0.44704;
 
-    const double t_air   = (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
-    const double rh      = ctx.climate_state.humidity;
-    const double wind_ms = ctx.climate_state.wind_speed * kMphToMs;
-    const double rho     = ctx.options.water_density;
-    const double cp      = ctx.options.water_specific_heat;
-    const double a_wf    = ctx.options.wind_func_coeff_a;
-    const double b_wf    = ctx.options.wind_func_coeff_b;
-    const double p_ratio = ctx.options.pressure_ratio;
+    const double rho = ctx.options.water_density;
+    const double cp  = ctx.options.water_specific_heat;
 
-    /// Net flux OUT of the water, W/m2 — the two modules summed under one
-    /// sign convention (both return positive-out).
+    // The met forcing and wind-function coefficients that used to be
+    // extracted here moved inside the shared evaluators with D-H5e; this
+    // function no longer needs to know which parameters a flux family reads.
+
+    /// Net flux OUT of the water, W/m2. Delegates to the shared
+    /// composition (D-H5e) rather than re-summing the modules here: a
+    /// hand-rolled copy is how the LEGACY node/link path came to relax each
+    /// module separately, and a fifth flux family must not need editing in
+    /// four places.
     const auto flux_out = [&](double t_w) {
-        double j = 0.0;
-        if (ctx.heat_config.surface_exchange) {
-            const double je = heat::latentFlux(t_w, t_air, rh, wind_ms, a_wf,
-                                               b_wf, rho);
-            j += je + heat::sensibleFlux(
-                          je, heat::bowenRatio(t_w, t_air, rh, p_ratio));
-        }
-        if (ctx.heat_config.radiative_exchange)
-            j += heat::netRadiativeFluxOut(t_w, t_air, rh,
-                                           ctx.heat_config.radiative);
-        return j;
+        return heat::netFluxOut(ctx, t_w);
     };
 
     // ---- Cells ----------------------------------------------------------

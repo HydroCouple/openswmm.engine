@@ -68,6 +68,7 @@
 #include "../hydrology/RunoffInterface.hpp"
 #include "../hydrology/RdiiInterface.hpp"
 #include "../quality/QualityRouting.hpp"
+#include "../quality/lard/LagrangianSolver.hpp"
 #include "../transport/components/EulerianArdComponent/ArdEngine.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
@@ -378,6 +379,7 @@ private:
 
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
     bool                   lenient_open_ = false;  ///< permissive open (see setter)
+    bool                   plugins_prepare_attempted_ = false;  ///< start() reached prepare_all (report file may be open)
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread
 
@@ -386,11 +388,13 @@ private:
     runoff::RunoffSolver         runoff_;       ///< Subcatchment runoff (batch nonlinear reservoir)
     climate::ClimateFileReader   climate_file_; ///< Climate file reader (temp/evap/wind from file)
     snow::SnowSolver             snow_;         ///< Snowmelt (batch over subcatch×subareas)
+    int                          last_melt_doy_ = -1;  ///< Day the seasonal melt coeffs were last set (legacy climate.c LastDay)
     groundwater::GWSolver        groundwater_;  ///< Groundwater (batch ODE per subcatchment)
     lid::LIDSolver               lid_;          ///< LID (batch by type group)
     quality::QualitySolver       quality_;      ///< Quality routing (batch link-load + mixing)
     transport::ArdEngine         ard_;          ///< QUALITY_SOLVER EULERIAN_ARD engine (phase E1)
     bool                         ard_init_attempted_ = false;  ///< lazy init after Router::init
+    lard::LagrangianSolver       lard_;         ///< QUALITY_SOLVER LAGRANGIAN (X1 skeleton — no-op)
     landuse::LanduseSolver       landuse_solver_; ///< Buildup/washoff computation
     landuse::SurfaceQualitySoA   surface_quality_; ///< Per-subcatch surface quality state
     controls::ControlEngine      controls_;     ///< Control rule evaluation
@@ -465,7 +469,7 @@ private:
     // ext, dwf, then PER-SUBCATCHMENT wet-weather q (routing.c:716), then GW,
     // RDII, iface into Node.newLatFlow. Pre-summing per node and adding in a
     // different source order rounds differently (1-ULP lat-flow drift).
-    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff+runon (cfs)
+    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff (cfs; NOT runon — it is already inside runoff[])
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
 
@@ -768,6 +772,11 @@ private:
      * @details Matches legacy behavior where a failed swmm_open still leaves a
      *          .rpt with the ERROR/WARNING lines. No-op if no report path is set.
      */
+    /*! Stop a routing solve that has gone non-physical (non-finite or absurd
+     *  head/flow) instead of letting it run on and write NaN into the report.
+     *  Returns SWMM_OK when the state is sane. */
+    [[nodiscard]] int checkRoutingDiverged() noexcept;
+
     void write_open_failure_report() noexcept;
 
     /** @brief Set a fatal error on the context and transition to ERROR_STATE. */

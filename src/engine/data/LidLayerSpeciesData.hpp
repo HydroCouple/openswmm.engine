@@ -57,10 +57,13 @@ enum class LidLayer : int {
     COUNT_   = 4
 };
 
-/// Species rows carried on the LID layers. Age is the only one in A4.
+/// Species rows carried on the LID layers.
 enum class LidSpecies : int {
-    AGE    = 0,
-    COUNT_ = 1
+    AGE         = 0,
+    /// H5b. A4 reserved the stride for exactly this: one more row, no second
+    /// array, no change to `layer_index`.
+    TEMPERATURE = 1,
+    COUNT_      = 2
 };
 
 /**
@@ -129,6 +132,30 @@ struct LidLayerSpeciesState {
                                static_cast<std::size_t>(species), 0.0);
         inflow_value.assign(static_cast<std::size_t>(units) *
                                 static_cast<std::size_t>(species), 0.0);
+    }
+
+    /**
+     * @brief Size the block if it is not already the requested shape.
+     *
+     * @details H5b: the block is now shared by TWO capabilities that are
+     *          independently switchable. A4's `initLidLayerAge` both sized
+     *          and seeded, under a `water_age` guard — so a HEAT-only deck
+     *          would never have sized it, and an AGE-only deck would have
+     *          left the temperature row at 0 °C, which D-H5c exists to say
+     *          is a real temperature and not a sentinel.
+     *
+     *          Both initialisers now call this first and seed only their own
+     *          row, so neither depends on the other having run. That is the
+     *          lesson-20 configuration trap, whose eighth instance this
+     *          would otherwise have been.
+     */
+    void ensureSized(int units, int species, const std::vector<int>& offsets) {
+        const auto want = static_cast<std::size_t>(units) *
+                          static_cast<std::size_t>(kLayerCount) *
+                          static_cast<std::size_t>(species);
+        if (n_units == units && n_species == species && value.size() == want)
+            return;
+        resize(units, species, offsets);
     }
 
     void clear() { *this = LidLayerSpeciesState{}; }
