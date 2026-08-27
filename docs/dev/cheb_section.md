@@ -57,9 +57,15 @@ crossings.
 This is the entire reason `POLYGON` exists: every one of EPA SWMM's built-in
 rounded shapes (EGG, HORSESHOE, GOTHIC, ...) is instead defined by a 51- or
 26-point uniform table with *linear* interpolation between points, which
-carries real, measured error — up to 41% in area below 5% of full depth,
-and comfortably double digits for GOTHIC even at ordinary mid-range depths.
-An arc/line boundary has no interpolation step to carry that error.
+carries real, measured error, worst at low fill: the 51-point CUSTOM table
+is off by up to 41% in area below 5% of full depth (1.4% above it); the
+26-point CIRCULAR table's worst relative area error below a tenth of full
+depth measures 470% against the analytic circle (test-pinned in
+`test_fv_solver_closure.cpp`, where the compiled boundary's worst over the
+same band is 4.5e-7); EGG runs 4–5% off even at ordinary mid-range depths;
+and GOTHIC's own width and area tables disagree with *each other* by up to
+439% near the invert. An arc/line boundary has no interpolation step to
+carry any of that error.
 
 ## 2. Why I₁ needs no depth quadrature
 
@@ -269,10 +275,12 @@ generalize to every shape:**
   the compiled path is unusually fast.
 - Fixing genuinely redundant evaluation (four independent piece-scans
   collapsed into one shared-basis pass; a runtime Newton solve for the
-  inverse `y(A)` compiled at load time instead) closed a **5.64× → ~1.16×**
+  inverse `y(A)` compiled at load time instead) closed a **5.64× → ~1.13×**
   EXACT-vs-LEGACY gap on Bellinge under DYNWAVE over several dedicated
-  passes — none of which changed a single output value, only which work was
-  redundant. The largest single item, at 49.1% of a profiled run, was the
+  passes (final contemporaneous interleaved pair 40.97 s vs 36.31 s; this
+  machine shows up to ±18% run-to-run spread, so treat the last few percent
+  as noise) — none of which changed a single output value, only which work
+  was redundant. The largest single item, at 49.1% of a profiled run, was the
   runtime Newton inversion; compiling it ahead of time (the same coordinate-
   change idea as §3, applied to the *inverse* function `u(A)` instead of
   `A(y)`) took it to 0.7% of the profile.
