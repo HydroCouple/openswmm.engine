@@ -570,6 +570,13 @@ add_gtest_unit(test_engine_fv_analytic test_fv_solver_analytic.cpp)
 # coupling and continuity, mixed-flow filling bore vs. Rankine–Hugoniot,
 # compaction results-transparency, and the scalar-transport contracts.
 add_gtest_unit(test_engine_fv_network test_fv_solver_network.cpp)
+# Plan test 22: a POLYGON cross-section routed through a full FV network run,
+# compared against the built-in CIRCULAR conduit it replaces. The only test
+# that exercises POLYGON through the whole input path ([CURVES] parsing ->
+# fromArcSpec -> compile() -> PostParseResolver -> mesh -> FV routing).
+add_gtest_unit(test_engine_fv_polygon_network test_fv_polygon_network.cpp)
+target_compile_definitions(test_engine_fv_polygon_network PRIVATE
+    OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 # Local time stepping (§6.12): fall-through to global stepping bit-for-bit on an
 # untiered mesh, tier-interface conservation exact at every tier count, a
 # wetting front crossing tier boundaries without loss, and the substep-count

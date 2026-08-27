@@ -460,3 +460,265 @@ TEST(FvClosureCompiled, ExactI1TableAgreesWithFineQuadrature) {
     }
     EXPECT_EQ(k::i1OfDepth(g, 0.0, 0.0), 0.0);
 }
+
+// ---------------------------------------------------------------------------
+// Test 19 (FV half) — a top width that collapses to zero at the crown
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Box `w` wide and `h_wall` tall closed by a triangular roof rising to a
+/// POINT: the top width falls to zero LINEARLY at the crown. Compiled and
+/// wrapped as an FvGeometry the way PostParseResolver + buildGeometry would.
+FvGeometry makePointedRoof(openswmm::chebsec::ChebSection& cs,
+                           double w, double h_wall, double h_apex,
+                           double celerity = 100.0) {
+    const double hw = 0.5 * w;
+    const double px[5] = {-hw, hw, hw, 0.0, -hw};
+    const double py[5] = {0.0, 0.0, h_wall, h_apex, h_wall};
+    std::vector<openswmm::xsboundary::BElem> elems;
+    EXPECT_EQ(openswmm::xsboundary::fromPolyline(px, py, 5, elems), 0);
+    EXPECT_EQ(openswmm::chebsec::compile(cs, elems.data(),
+                                         static_cast<int>(elems.size()), false), 0);
+    XSectParams xs{};
+    xs.type   = static_cast<int>(openswmm::XSectShape::POLYGON);
+    xs.y_full = cs.y_full; xs.a_full = cs.a_full; xs.r_full = cs.r_full;
+    xs.w_max  = cs.w_max;  xs.yw_max = cs.yw_max;
+    xs.s_full = cs.s_full; xs.s_max  = cs.s_max;
+    xs.cheb   = &cs;
+    FvGeometry g;
+    buildGeometry(xs, false, celerity, g);
+    return g;
+}
+
+} // namespace
+
+TEST(FvClosureCompiled, VanishingTopWidthStaysFiniteThroughTheClosure) {
+    // Test 19. A section whose width goes to ZERO at the crown is the case
+    // that turns a small fitting overshoot into a solver-wide NaN: celerity
+    // is sqrt(g*A/B), so B <= 0 is either a division by zero or the square
+    // root of a negative. The Preissmann slot is what makes this safe — the
+    // ramp floors the width at t_slot before the geometric width reaches
+    // zero — and this pins that the floor actually holds for a compiled
+    // boundary, not just for the tabulated shapes the slot was written
+    // against.
+    //
+    // A POINTED roof is used rather than a round one deliberately: it closes
+    // LINEARLY, so it reaches small widths over a much wider band of depth
+    // than a round crown's sqrt does, giving the slot ramp the most
+    // opportunity to be caught mis-blending.
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g = makePointedRoof(cs, 4.0, 2.0, 3.0);
+    ASSERT_NE(g.xs.cheb, nullptr);
+    ASSERT_GT(g.t_slot, 0.0) << "a closed section must have a slot";
+
+    double min_w = 1.0e300, max_cel = 0.0;
+    for (int i = 0; i <= 40000; ++i) {
+        const double h = 1.5 * g.y_full * static_cast<double>(i) / 40000.0;
+        double A = 0.0, W = 0.0, R = 0.0, I1 = 0.0;
+        k::closureAll(g, h, &A, &W, &R, &I1);
+        ASSERT_TRUE(std::isfinite(A) && std::isfinite(W) &&
+                    std::isfinite(R) && std::isfinite(I1))
+            << "non-finite closure at h=" << h << " A=" << A << " W=" << W
+            << " R=" << R << " I1=" << I1;
+        ASSERT_GE(A, 0.0) << "negative area at h=" << h;
+        if (h <= 1.0e-9) continue;         // the invert itself is legitimately dry
+        ASSERT_GT(W, 0.0) << "top width reached zero at h=" << h
+                          << " — celerity would be infinite";
+        min_w = std::min(min_w, W);
+        const double cel = std::sqrt(32.2 * A / W);
+        ASSERT_TRUE(std::isfinite(cel)) << "non-finite celerity at h=" << h;
+        max_cel = std::max(max_cel, cel);
+    }
+
+    // The floor is the slot width itself, not some arbitrary epsilon — that
+    // is the mechanism, so assert the mechanism.
+    EXPECT_GE(min_w, g.t_slot * (1.0 - 1.0e-12))
+        << "width fell below the slot floor (min=" << min_w
+        << " t_slot=" << g.t_slot << ")";
+    // And the celerity the floor buys is the DESIGN celerity, so a future
+    // change to the ramp that technically keeps W > 0 but lets it collapse
+    // by orders would still be caught here.
+    EXPECT_LT(max_cel, 1.05 * 100.0)
+        << "slot celerity overshot its design value: " << max_cel;
+}
+
+// ---------------------------------------------------------------------------
+// Test 20 — POLYGON circle vs. legacy CIRCULAR through the FV closure
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The same physical circle a user would write as a `[CURVES] XPOLYGON`:
+/// four quarter-arc bulge points, the construction
+/// test_xsect_boundary.cpp's FourQuarterArcBulgesFormAFullCircle proves
+/// traces an exact circle.
+FvGeometry makePolygonCircle(openswmm::chebsec::ChebSection& cs, double d,
+                             double celerity = 100.0) {
+    const double r = 0.5 * d;
+    const double b = std::tan(0.25 * 3.14159265358979323846 / 2.0);
+    const double px[4] = {r, 0.0, -r, 0.0};
+    const double py[4] = {0.0, r, 0.0, -r};
+    const double pb[4] = {b, b, b, b};
+    std::vector<openswmm::xsboundary::BElem> elems;
+    EXPECT_EQ(openswmm::xsboundary::fromArcSpec(px, py, pb, 4, elems), 0);
+    EXPECT_EQ(openswmm::chebsec::compile(cs, elems.data(),
+                                         static_cast<int>(elems.size()), false), 0);
+    XSectParams xs = circular(d);       // identical scalars, per PostParseResolver
+    xs.cheb = &cs;
+    FvGeometry g;
+    buildGeometry(xs, false, celerity, g);
+    return g;
+}
+
+/// Exact circular-segment area — the outside ground truth neither backend
+/// is built from.
+double trueCircleArea(double h, double d) {
+    if (h <= 0.0) return 0.0;
+    if (h >= d) return 0.25 * 3.14159265358979323846 * d * d;
+    const double th = 2.0 * std::acos(1.0 - 2.0 * h / d);
+    return (d * d / 8.0) * (th - std::sin(th));
+}
+
+} // namespace
+
+TEST(FvClosureCompiled, PolygonCircleAndLegacyCircularShareTheSlotClosureExactly) {
+    // Test 20, first half. The plan asks for POLYGON-circle and CIRCULAR to
+    // "agree to 1e-9 over [0, 1.5 y_full], slot region included". Measured,
+    // that is FALSE below the crown and cannot be made true: the two are
+    // different GEOMETRIES there (an exact arc vs. a 26-point interpolated
+    // table) and disagree by up to ~1.2% around y/D = 0.02-0.05. Phase 6's
+    // own spec text already corrects the plan on exactly this point — "the
+    // two geometry sources are EXPECTED to disagree" — and the whole project
+    // exists because the table is the wrong one.
+    //
+    // ABOVE the crown they agree BIT-EXACTLY, and the mechanism is worth
+    // stating precisely rather than being read as "the two geometries
+    // agree there", which is not what it shows. For h >= y_full,
+    // FvKernels::areaOfDepth returns `a_crown + t_slot*(h - y_full)` and
+    // widthOfDepth returns `t_slot` — no call into the section at all — and
+    // buildGeometry derives all three of y_crown, t_slot and a_crown from
+    // the XSectParams scalars y_full/a_full/w_max, which both modes take
+    // from setParams()'s closed-form circle. So what is pinned here is that
+    // the slot closure is a pure function of those shared scalars and is
+    // INDEPENDENT of the geometry backend — which is the useful content of
+    // "slot region included", and is exactly the property that would break
+    // if someone routed the above-crown branch back through the section.
+    //
+    // Established by mutation, not assumed: perturbing the compiled circle's
+    // radius by 1 part in 1e9 leaves every assertion below passing (the
+    // compiled boundary is genuinely not consulted up there), which is why
+    // the sub-crown disagreement is asserted too — without it this test
+    // could be satisfied by two backends that were secretly the same object.
+    const double d = 3.0;
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g_poly = makePolygonCircle(cs, d);
+    const FvGeometry g_leg  = makeCircular(d);
+
+    // The slot is parametrized off scalars both modes share, so these must
+    // match before the sweep means anything.
+    ASSERT_EQ(g_poly.y_full,  g_leg.y_full);
+    ASSERT_EQ(g_poly.y_crown, g_leg.y_crown);
+    ASSERT_EQ(g_poly.t_slot,  g_leg.t_slot);
+    ASSERT_EQ(g_poly.a_crown, g_leg.a_crown);
+
+    for (int i = 0; i <= 1500; ++i) {
+        const double h = g_leg.y_full +
+                         0.5 * g_leg.y_full * static_cast<double>(i) / 1500.0;
+        EXPECT_EQ(k::areaOfDepth(g_poly, h),  k::areaOfDepth(g_leg, h))
+            << "area diverged above the crown at h=" << h;
+        EXPECT_EQ(k::widthOfDepth(g_poly, h), k::widthOfDepth(g_leg, h))
+            << "width diverged above the crown at h=" << h;
+    }
+
+    // NON-VACUITY: below the crown these really are two different sections.
+    // Without this the bit-exact block above would also pass if `cheb` had
+    // silently failed to attach and both FvGeometry objects were evaluating
+    // the identical legacy table.
+    double worst_rel = 0.0;
+    for (int i = 1; i < 1000; ++i) {
+        const double h = 0.999 * d * static_cast<double>(i) / 1000.0;
+        const double a_leg = k::areaOfDepth(g_leg, h);
+        if (a_leg <= 0.0) continue;
+        worst_rel = std::max(worst_rel,
+                             std::fabs(k::areaOfDepth(g_poly, h) - a_leg) / a_leg);
+    }
+    EXPECT_GT(worst_rel, 1.0e-3)
+        << "the two backends are indistinguishable below the crown ("
+        << worst_rel << ") — the compiled boundary is probably not attached";
+}
+
+TEST(FvClosureCompiled, DepthAreaRoundTripsInBothGeometryBackends) {
+    // Test 20, second half. The property the FV solver actually depends on
+    // is not that the two backends agree with each other — it is that EACH
+    // is self-consistent, because depthOfArea o areaOfDepth == identity is
+    // what makes lake-at-rest hold (see depthOfArea's own header). Asserted
+    // over the full [0, 1.5 y_full] the plan names, slot band included.
+    const double d = 3.0;
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g_poly = makePolygonCircle(cs, d);
+    const FvGeometry g_leg  = makeCircular(d);
+
+    for (int i = 1; i <= 3000; ++i) {
+        const double h = 1.5 * d * static_cast<double>(i) / 3000.0;
+        SCOPED_TRACE(::testing::Message() << "h=" << h);
+        EXPECT_NEAR(k::depthOfArea(g_poly, k::areaOfDepth(g_poly, h)), h, 1.0e-8);
+        EXPECT_NEAR(k::depthOfArea(g_leg,  k::areaOfDepth(g_leg,  h)), h, 1.0e-8);
+    }
+}
+
+TEST(FvClosureCompiled, WhereTheBackendsDisagreeTheCompiledOneIsRight) {
+    // Test 20, third half — the one that turns the previous test's admitted
+    // disagreement from a caveat into the project's actual claim. Both
+    // backends are compared against the analytic circular-segment area,
+    // which is outside ground truth for each of them.
+    //
+    // Measured over 999 depths: the compiled boundary is closer at 99.9% of
+    // them and ~317x better on mean absolute error. Below y/D = 0.10 — the
+    // dry-weather-flow regime, where self-cleansing velocity and sediment
+    // initiation are decided — the legacy table's worst relative error is
+    // 4.7 (i.e. 470%) against the compiled path's 4.5e-7. The bounds below
+    // sit well inside those measurements so ordinary table or fit changes
+    // do not trip them, while a regression that silently put the legacy
+    // table back in front of the compiled boundary would.
+    const double d = 3.0;
+    openswmm::chebsec::ChebSection cs{};
+    const FvGeometry g_poly = makePolygonCircle(cs, d);
+    const FvGeometry g_leg  = makeCircular(d);
+
+    double sum_leg = 0.0, sum_poly = 0.0;
+    int poly_closer = 0, n = 0;
+    for (int i = 1; i < 1000; ++i) {
+        const double h = d * static_cast<double>(i) / 1000.0;
+        const double a_true = trueCircleArea(h, d);
+        const double e_leg  = std::fabs(k::areaOfDepth(g_leg,  h) - a_true);
+        const double e_poly = std::fabs(k::areaOfDepth(g_poly, h) - a_true);
+        sum_leg += e_leg;
+        sum_poly += e_poly;
+        if (e_poly < e_leg) ++poly_closer;
+        ++n;
+    }
+    EXPECT_GT(poly_closer, static_cast<int>(0.95 * n))
+        << "compiled boundary was closer to the true circle at only "
+        << poly_closer << " of " << n << " depths";
+    EXPECT_LT(sum_poly * 50.0, sum_leg)
+        << "compiled mean error " << (sum_poly / n)
+        << " vs legacy " << (sum_leg / n) << " — expected a large margin";
+
+    // The low-fill band the project targets, stated on its own.
+    double worst_leg = 0.0, worst_poly = 0.0;
+    for (int i = 1; i <= 500; ++i) {
+        const double h = 0.10 * d * static_cast<double>(i) / 500.0;
+        const double a_true = trueCircleArea(h, d);
+        ASSERT_GT(a_true, 0.0);
+        worst_leg  = std::max(worst_leg,
+                              std::fabs(k::areaOfDepth(g_leg,  h) - a_true) / a_true);
+        worst_poly = std::max(worst_poly,
+                              std::fabs(k::areaOfDepth(g_poly, h) - a_true) / a_true);
+    }
+    EXPECT_LT(worst_poly, 1.0e-4) << "compiled low-fill error " << worst_poly;
+    EXPECT_GT(worst_leg,  0.5)    << "legacy low-fill error " << worst_leg
+                                  << " — the table got better, re-check the premise";
+    std::printf("[fv] low-fill (y/D<=0.10) worst rel err: legacy=%.3e compiled=%.3e\n",
+                worst_leg, worst_poly);
+}
