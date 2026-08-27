@@ -275,6 +275,71 @@ TEST(XSectBoundary, ClockwiseInputIsReorientedCCW) {
     EXPECT_NEAR(area, 15.0, 1.0e-12);
 }
 
+TEST(XSectBoundary, ClockwiseArcSpecReorientsAndNegatesBulges) {
+    // The reversal path for a chain WITH bulges is subtler than the polyline
+    // case the test above covers: bulge[i] belongs to the EDGE from point i to
+    // point i+1, so reversing the point order re-homes every bulge onto a
+    // different index (src = n-1-k, not n-k) as well as negating it. A wrong
+    // mapping there would hand a clockwise-traced XPOLYGON user silently
+    // scrambled arcs — no error, plausible-looking numbers — which is exactly
+    // the failure mode this project keeps finding. Pin both a pure-arc chain
+    // and a mixed segment/arc chain against their CCW-traced references.
+    //
+    // A user tracing clockwise writes each arc's bulge by ITS OWN sweep
+    // direction (DXF convention: CCW positive), so the CW circle carries
+    // negative bulges and the CW notch square's notch flips sign.
+    const double b = std::tan(0.25 * kPi / 2.0);   // tan(theta/4), theta = pi/2
+
+    {   // Pure arcs: the 4-point unit circle, CCW vs CW.
+        const double xf[4] = {1.0, 0.0, -1.0, 0.0};
+        const double yf[4] = {0.0, 1.0, 0.0, -1.0};
+        const double bf[4] = {b, b, b, b};
+        const double xr[4] = {1.0, 0.0, -1.0, 0.0};
+        const double yr[4] = {0.0, -1.0, 0.0, 1.0};
+        const double br[4] = {-b, -b, -b, -b};
+        std::vector<BElem> ccw, cw;
+        ASSERT_EQ(fromArcSpec(xf, yf, bf, 4, ccw), 0);
+        ASSERT_EQ(fromArcSpec(xr, yr, br, 4, cw), 0);
+        for (double q : {0.3, 1.0 + 0.3, 2.0}) {   // generic depths + full
+            const ExactProps pf = evalExact(ccw.data(), 4, q);
+            const ExactProps pr = evalExact(cw.data(), 4, q);
+            EXPECT_NEAR(pr.area, pf.area, 1.0e-12) << "at y=" << q;
+            EXPECT_NEAR(pr.width, pf.width, 1.0e-12) << "at y=" << q;
+            EXPECT_NEAR(pr.perim, pf.perim, 1.0e-12) << "at y=" << q;
+        }
+    }
+
+    {   // Mixed segments + one arc: the concave-notch square, CCW vs CW.
+        const double nb = 0.4142135623730951;
+        const double xf[4] = {0.0, 4.0, 4.0, 0.0};
+        const double yf[4] = {0.0, 0.0, 4.0, 4.0};
+        const double bf[4] = {-nb, 0.0, 0.0, 0.0};
+        // Reversed traversal: the notch edge is now walked (4,0) -> (0,0),
+        // sweeping the other way, so its bulge is +nb — and it sits on the
+        // LAST vertex of the reversed chain, which is what makes this a real
+        // test of the re-homing rather than only of the negation.
+        const double xr[4] = {0.0, 0.0, 4.0, 4.0};
+        const double yr[4] = {0.0, 4.0, 4.0, 0.0};
+        const double br[4] = {0.0, 0.0, 0.0, +nb};
+        std::vector<BElem> ccw, cw;
+        ASSERT_EQ(fromArcSpec(xf, yf, bf, 4, ccw), 0);
+        ASSERT_EQ(fromArcSpec(xr, yr, br, 4, cw), 0);
+        // PARTIAL depths, not just full: a mis-homed bulge lands the notch on
+        // the WRONG EDGE (the wall instead of the floor), which encloses the
+        // identical area and perimeter at full depth — mutation-tested: the
+        // src = (n-k) mutation passes a full-depth-only check and fails these.
+        // Width is the sharpest discriminator (a floor notch never changes the
+        // top width; a wall notch displaces one crossing by the sagitta).
+        for (double q : {1.0, 2.0, 3.0, 4.0}) {
+            const ExactProps pf = evalExact(ccw.data(), 4, q);
+            const ExactProps pr = evalExact(cw.data(), 4, q);
+            EXPECT_NEAR(pr.area, pf.area, 1.0e-12) << "at y=" << q;
+            EXPECT_NEAR(pr.width, pf.width, 1.0e-12) << "at y=" << q;
+            EXPECT_NEAR(pr.perim, pf.perim, 1.0e-12) << "at y=" << q;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Critical heights + Puiseux/map exponents (Phase 3)
 // ---------------------------------------------------------------------------
