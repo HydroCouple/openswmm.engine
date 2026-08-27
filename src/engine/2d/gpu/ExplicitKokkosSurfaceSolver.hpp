@@ -104,6 +104,14 @@ private:
     DView d_volume_, d_head_, d_depth_;
     DView d_q_, d_faccL_, d_faccR_, d_qcx_, d_qcy_;
     DView d_rain_, d_coup_, d_evap_, d_infil_;
+
+    /// Infiltration APPLIED depth (m) accumulated on device since the last
+    /// publish, then drained ADDITIVELY into state_->infil_applied and zeroed.
+    /// Additive because the host array is consumed on the routing-step cadence
+    /// while this one drains on the publish cadence — a plain overwrite would
+    /// lose or double-count whatever fell between the two.
+    DView d_infil_applied_;
+    std::vector<double> infil_applied_host_;  ///< drain scratch (nt)
     DView d_edge_flux_;                ///< 3·nt flat slots (published)
     IView d_active_, d_pin_t0_, d_tier_, d_face_tier_;
     IView d_cells_compact_, d_edges_compact_;  ///< per-tier segments

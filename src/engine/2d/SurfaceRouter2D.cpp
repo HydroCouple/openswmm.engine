@@ -1268,11 +1268,14 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         evap_vol += evapSink(state_.evap_rate[ui], state_.depth[ui],
                              options_.dry_depth) * area;
         if (do_infil) {
-            const double applied = infilSink(state_.infil_rate[ui],
-                                             state_.depth[ui],
-                                             options_.dry_depth);
+            // APPLIED depth (m) the marcher actually removed since the last
+            // read — not a re-derivation at the accepted end-of-step depth.
+            // Consumed and zeroed here, so this must run exactly once per
+            // routing step.
+            const double applied = state_.infil_applied[ui];
+            state_.infil_applied[ui] = 0.0;
             infil_vol += applied * area;
-            if (track_cum) infil_cum_applied_[ui] += applied * dt;
+            if (track_cum) infil_cum_applied_[ui] += applied;
         }
         storage += state_.volume[ui];
     }
@@ -1289,20 +1292,28 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     mb.evap_out += evap_vol * dt;
     state_.evap_loss_total += evap_vol * dt;
 
-    // Infiltration loss (m³) — plan §5.5.2 site 5 / §5.5.4. The same
-    // depth-limited sink the marcher integrates (D-I2: after evaporation),
-    // evaluated at the accepted end-of-step depths exactly like the
-    // evaporation term above. Destination is LOST in this release (D-I4), so
-    // it is a true exit from the modelled system. Skipped entirely when no
-    // [2D_INFILTRATION*] rows resolved.
+    // Infiltration loss (m³) — plan §5.5.2 site 5 / §5.5.4. Destination is
+    // LOST in this release (D-I4), so it is a true exit from the modelled
+    // system. Skipped entirely when no [2D_INFILTRATION*] rows resolved.
     //
-    // The per-cell APPLIED cumulative depth (m) is accumulated from the SAME
-    // infilSink() value in the same pass, which is what makes
+    // Unlike the rainfall and evaporation terms above, this is NOT re-derived
+    // from the accepted end-of-step state: it is the volume the marcher
+    // actually removed, summed as it was removed (state_.infil_applied, above).
+    // Re-deriving infilSink() at the end-of-step depth and scaling by the full
+    // routing dt is only first-order, and it under-books on exactly the cells
+    // that matter — a cell that dries mid-step is sunk at the higher
+    // early-step rate but re-derived at the ramped end-of-step rate, and the
+    // lazy tier integrates a stale depth across an entire sync interval. On the
+    // G3 rain-on-grid gate that left 0.0117 m³ of the 3.775 m³ budget
+    // unaccounted: storage fell by more than the ledger booked.
+    //
+    // The per-cell APPLIED cumulative depth (m) comes from the SAME array in
+    // the same pass, which is what keeps
     // sum(infil_cum_applied_[i] * tri_area[i]) == mb.infil_out true by
     // construction. Infil2D::cumulative() cannot serve here: it integrates the
     // unramped capacity the kernel offered, which exceeds the applied loss
     // whenever a cell is drying.
-    if (do_infil) mb.infil_out += infil_vol * dt;
+    if (do_infil) mb.infil_out += infil_vol;
 
     // Coupling and outfall exchange (m³, SI-native, already capped/clamped —
     // exactly what the 2D domain was asked to move). Outfall sign: + = pipe

@@ -121,6 +121,17 @@ struct SurfaceStateData {
     /// resolved — the bitwise-regression fast path (gate I7).
     std::vector<double> infil_rate;
 
+    /// Infiltration APPLIED depth (m) accumulated since the last mass-balance
+    /// read, then zeroed by it. Every site that integrates the infiltration
+    /// sink into `volume` adds `infilSink(...) * dt` here with the SAME depth
+    /// and the SAME dt it used, so the ledger books what the marcher actually
+    /// removed. Re-deriving the loss from the accepted end-of-step depth is
+    /// only first-order: a cell that dries mid-step is sunk at the higher
+    /// early-step rate but re-derived at the ramped end-of-step rate, and the
+    /// lazy tier integrates a stale depth across a whole sync interval. Both
+    /// leave storage falling by more than the ledger books.
+    std::vector<double> infil_applied;
+
     std::vector<double> coupling_flux;  ///< Exchange with SWMM node (m/s, + = into 2D)
     std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
 
@@ -198,6 +209,7 @@ struct SurfaceStateData {
         rainfall.assign(nt, 0.0);
         evap_rate.assign(nt, 0.0);
         infil_rate.assign(nt, 0.0);
+        infil_applied.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
         net_source.assign(nt, 0.0);
 

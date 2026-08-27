@@ -211,6 +211,8 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_coup_ = DView("coup", nt);
     d_evap_ = DView("evap", nt);
     d_infil_ = DView("infil", nt);
+    d_infil_applied_ = DView("infil_applied", nt);
+    infil_applied_host_.assign(static_cast<std::size_t>(nt), 0.0);
     d_edge_flux_ = DView("edge_flux", state.edge_flux.size());
     d_active_ = IView("active", nt);
     d_pin_t0_ = IView("pin_t0", nt);
@@ -432,6 +434,7 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
     const int nt = mesh_->n_triangles();
     auto vol = d_volume_, head = d_head_, depth = d_depth_;
     auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
+    auto infil_app = d_infil_applied_;
     auto active = d_active_;
     auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
     auto v0 = d_tri_v0_, v1 = d_tri_v1_, v2 = d_tri_v2_;
@@ -444,9 +447,12 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
             if (active(i)) return;
             // D-I2 ordering: rainfall source → evaporation → infiltration
             // against the remaining depth (== ExplicitInertialSolver).
+            const double inf = devInfilSink(infil(i), depth(i), dry);
+            // Book before the early-out, as the serial marcher does.
+            infil_app(i) += inf * dt_lazy;
             const double src = rain(i) + coup(i)
                                - devEvapSink(evap(i), depth(i), dry)
-                               - devInfilSink(infil(i), depth(i), dry);
+                               - inf;
             if (src == 0.0) return;
             double v = vol(i) + dt_lazy * src * area(i);
             vol(i) = (v > 0.0) ? v : 0.0;
@@ -775,6 +781,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
     auto ptr = d_cell_ptr_, edge = d_cell_edge_;
     auto sign = d_sign_;
     auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
+    auto infil_app = d_infil_applied_;
     auto qv = d_q_, xi = d_xi_, mx = d_mx_, my = d_my_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     auto area = d_tri_area_, cz = d_tri_cz_, cx = d_tri_cx_, cy = d_tri_cy_;
@@ -802,9 +809,11 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                 }
                 // D-I2 ordering: rainfall source → evaporation → infiltration
                 // against the remaining depth (== ExplicitInertialSolver).
+                const double inf = devInfilSink(infil(i), depth(i), dry);
+                infil_app(i) += inf * dt_c;
                 const double src = rain(i) + coup(i)
                                    - devEvapSink(evap(i), depth(i), dry)
-                                   - devInfilSink(infil(i), depth(i), dry);
+                                   - inf;
                 double v = vol(i) + flux_m3 + dt_c * src * area(i);
                 vol(i) = (v > 0.0) ? v : 0.0;
                 double e2, d2;
@@ -1185,6 +1194,16 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
     hostRefresh(state_->depth, d_depth_);
     hostRefresh(state_->edge_flux, d_edge_flux_);
     if (!exch_host_.empty()) hostRefresh(exch_host_, d_exch_);
+
+    // Drain the applied-infiltration accumulator ADDITIVELY: the host array is
+    // consumed and zeroed by the mass balance on the routing-step cadence,
+    // which need not line up with this publish.
+    if (state_->infil_applied.size() == infil_applied_host_.size()) {
+        hostRefresh(infil_applied_host_, d_infil_applied_);
+        for (std::size_t i = 0; i < infil_applied_host_.size(); ++i)
+            state_->infil_applied[i] += infil_applied_host_[i];
+        Kokkos::deep_copy(d_infil_applied_, 0.0);
+    }
 }
 
 double ExplicitKokkosSurfaceSolver::advance(double t_current,
