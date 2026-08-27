@@ -58,7 +58,11 @@ static constexpr double STOR_STOPTOL = 0.005;
 // Tree-layout routing helpers (legacy flowrout.c) — shared with STEADY
 // ============================================================================
 
-static XSectParams buildXSP_KW(const LinkData& links, std::size_t uk);
+// MERGE NOTE: upstream declared this over (const LinkData&, size_t); this
+// branch's definition takes the whole context so it can attach a compiled
+// boundary (xs.cheb) — without it, a POLYGON conduit's getAofY/getSofA
+// below silently return 0. Declaration matched to the real definition.
+static XSectParams buildXSP_KW(const SimulationContext& ctx, std::size_t uk);
 
 /// PARITY node.c:1008 storage_getOutflow — flow from a storage unit into a
 /// CONDUIT is the conduit's NORMAL-DEPTH flow at the pond's current depth,
@@ -76,7 +80,7 @@ static double storageConduitOutflow(SimulationContext& ctx, int i, int j) {
     const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
     if (y >= ctx.links.xsect_y_full[uj]) return CD.q_full[ucr];
 
-    const XSectParams xs = buildXSP_KW(ctx.links, uj);
+    const XSectParams xs = buildXSP_KW(ctx, uj);
     const double a = xsect::getAofY(xs, y);
     return CD.beta[ucr] * xsect::getSofA(xs, a);
 }
