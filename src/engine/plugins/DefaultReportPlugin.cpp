@@ -2024,8 +2024,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
                                ctx.options.start_date, days, hrs, mins);
 
-                // Max outflow: use stat_max_total_inflow as proxy (outflow stats not separate)
-                double max_outflow = ctx.nodes.stat_max_total_inflow[uj] * Qcf;
+                double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
 
                 std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
                 std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f",

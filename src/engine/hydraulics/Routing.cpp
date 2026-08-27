@@ -370,55 +370,11 @@ int Router::step(SimulationContext& ctx, double dt,
     int iters = 0;
     switch (model_) {
         case RouteModel::KINWAVE:
-            iters = kw_solver_.execute(ctx, dt);
-
-            // Storage node iterative update for KW (P8-G07)
-            // After KW routing, storage nodes need depth from volume balance
-            for (int j = 0; j < ctx.n_nodes(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.nodes.type[uj] != NodeType::STORAGE) continue;
-
-                double v_old = ctx.nodes.old_volume[uj];
-                double q_in = ctx.nodes.inflow[uj];
-                double q_out = 0.0;
-                // Sum outgoing link flows
-                for (int k = 0; k < ctx.n_links(); ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    if (ctx.links.node1[uk] == j && ctx.links.flow[uk] > 0.0)
-                        q_out += ctx.links.flow[uk];
-                    if (ctx.links.node2[uk] == j && ctx.links.flow[uk] < 0.0)
-                        q_out -= ctx.links.flow[uk];
-                }
-
-                // Successive approximation (omega=0.55, max 10 iters)
-                double d1 = ctx.nodes.depth[uj];
-                for (int iter = 0; iter < 10; ++iter) {
-                    double v_new = v_old + (q_in - q_out) * dt;
-                    v_new = std::max(v_new, 0.0);
-
-                    // Overflow check
-                    double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj], &ctx.tables,
-                        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
-                        &ctx.node_subtypes);
-                    if (v_new > full_vol) {
-                        ctx.nodes.overflow[uj] = (v_new - full_vol) / dt;
-                        v_new = full_vol;
-                    }
-
-                    ctx.nodes.volume[uj] = v_new;
-                    // Invert volume → depth using node::getDepth (Newton / table lookup)
-                    // Matches legacy node_getDepth() in node.c (Gap #12)
-                    int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-                    double d2 = node::getDepth(ctx.nodes, j, v_new, &ctx.tables, us, &ctx.node_subtypes);
-
-                    // Under-relaxation
-                    d2 = 0.45 * d1 + 0.55 * d2;
-                    if (std::fabs(d2 - d1) < 0.005) { d1 = d2; break; }
-                    d1 = d2;
-                }
-                ctx.nodes.depth[uj] = d1;
-                ctx.nodes.head[uj] = ctx.nodes.invert_elev[uj] + d1;
-            }
+            // Storage nodes are converged INSIDE the sorted-link loop, before
+            // the links they drain through are routed (legacy flowrout.c:183).
+            // A post-pass cannot do it: an outlet structure's flow depends on
+            // the very depth the pass is trying to find.
+            iters = kw_solver_.execute(ctx, dt, structures_);
             break;
 
         case RouteModel::DYNWAVE:
@@ -681,20 +637,34 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
           }()
         : steady_sorted_links_;
 
+    steady_storage_updated_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0);
+
     for (int idx = 0; idx < static_cast<int>(order.size()); ++idx) {
         int j   = order[static_cast<std::size_t>(idx)];
         auto uj = static_cast<std::size_t>(j);
 
-        // Non-conduit links: outflow equals upstream node inflow (pass-through).
-        // Matches legacy steadyflow_execute() else branch: *qout = *qin.
+        // PARITY flowrout.c:181-183 — converge a storage unit's depth before
+        // routing the links it drains through (see the KINWAVE case).
+        {
+            int n1s = links.node1[uj];
+            if (n1s >= 0
+                && nodes.type[static_cast<std::size_t>(n1s)] == NodeType::STORAGE
+                && !steady_storage_updated_[static_cast<std::size_t>(n1s)]) {
+                kinwave::updateStorageState(ctx, structures_, order, idx, n1s, dt);
+                steady_storage_updated_[static_cast<std::size_t>(n1s)] = 1;
+            }
+        }
+
+        // Non-conduit links are not routed — steadyflow_execute returns
+        // *qout = *qin for them — but their INFLOW is their own head-discharge
+        // relation, not the upstream node's inflow (legacy getLinkInflow).
         if (links.type[uj] != LinkType::CONDUIT) {
             int n1 = links.node1[uj];
-            if (n1 >= 0) {
-                double q = nodes.inflow[static_cast<std::size_t>(n1)];
-                links.flow[uj] = q;
-                int n2 = links.node2[uj];
-                if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
-            }
+            int n2 = links.node2[uj];
+            double q = kinwave::getLinkInflow(ctx, structures_, j, dt);
+            links.flow[uj] = q;
+            if (n1 >= 0) nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
             continue;
         }
         auto& CD = ctx.link_subtypes.conduits;
@@ -720,7 +690,9 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         double qin = 0.0;
         if (n1 >= 0) {
             auto un1 = static_cast<std::size_t>(n1);
-            qin = nodes.inflow[un1];
+            qin = (nodes.type[un1] == NodeType::STORAGE)
+                ? kinwave::getLinkInflow(ctx, structures_, j, dt)
+                : nodes.inflow[un1];
             double q_max = node::getMaxOutflow(nodes, n1, qin, dt);
             qin = std::min(qin, q_max);
         }

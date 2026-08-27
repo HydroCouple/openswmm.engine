@@ -51,7 +51,70 @@ namespace openswmm {
 
 struct SimulationContext;
 
+namespace hydstruct { class StructureSolver; }
+
 namespace kinwave {
+
+// ============================================================================
+// Tree-layout routing helpers — shared by KINWAVE and STEADY
+// ============================================================================
+//
+// Legacy keeps these in flowrout.c because Steady Flow and Kinematic Wave run
+// the SAME outer loop (flowrout_execute) over a topologically sorted link
+// array; only the per-conduit kernel differs. They live here so the KW loop
+// and Router::executeSteadyFlow share one implementation.
+
+/**
+ * @brief Flow into the upstream end of a link under Steady/Kin. Wave routing.
+ *
+ * @details PARITY flowrout.c:517 getLinkInflow:
+ * @code
+ *     if ( Link[j].type == CONDUIT || Link[j].type == PUMP ||
+ *          Node[n1].type == STORAGE )  q = link_getInflow(j);
+ *     else                             q = 0.0;
+ *     return node_getMaxOutflow(n1, q, dt);
+ * @endcode
+ * A non-conduit link therefore carries its own HEAD-DISCHARGE flow when it
+ * drains a storage unit, and NOTHING otherwise — never the upstream node's
+ * inflow. Passing the node inflow through gives every outlet of a node the
+ * full inflow, so N outlets manufacture N× the water.
+ *
+ * @param ctx         Simulation context.
+ * @param structures  Structure solver used to evaluate pump/orifice/weir/
+ *                    outlet discharge. May be null (structures then carry 0).
+ * @param j           Link index.
+ * @param dt          Routing timestep (seconds).
+ * @returns Link inflow (cfs), already limited by the upstream node's
+ *          available volume.
+ */
+double getLinkInflow(SimulationContext& ctx,
+                     hydstruct::StructureSolver* structures,
+                     int j, double dt);
+
+/**
+ * @brief Update a storage node's depth & volume by successive approximation.
+ *
+ * @details PARITY flowrout.c:537 updateStorageState + :611 getStorageOutflow.
+ * Called from inside the sorted-link loop, BEFORE routing the links that
+ * drain node `i`, so those links see the converged end-of-step depth. The
+ * outflow term is re-evaluated at each iterate because it depends on that
+ * depth — an orifice on a pond is an implicit relation, not a known rate.
+ *
+ * `order`/`pos` locate the node's outlet links: the topological sort emits a
+ * node's outgoing links contiguously, so the scan runs forward from `pos`
+ * until node1 changes (matching legacy's `if (Link[m].node1 != i) break`).
+ *
+ * @param ctx         Simulation context.
+ * @param structures  Structure solver (see getLinkInflow).
+ * @param order       Topologically sorted link order.
+ * @param pos         Current position in `order`.
+ * @param i           Storage node index.
+ * @param dt          Routing timestep (seconds).
+ */
+void updateStorageState(SimulationContext& ctx,
+                        hydstruct::StructureSolver* structures,
+                        const std::vector<int>& order,
+                        int pos, int i, double dt);
 
 // ============================================================================
 // Constants (matching legacy)
@@ -95,10 +158,15 @@ public:
      * @param dt   Timestep (seconds).
      * @returns Average number of Newton iterations across all conduits.
      */
-    int execute(SimulationContext& ctx, double dt);
+    int execute(SimulationContext& ctx, double dt,
+                hydstruct::StructureSolver* structures = nullptr);
 
     /// Topological link order (upstream → downstream)
     std::vector<int> sorted_links_;
+
+    /// Per-node "already converged this step" flag for storage units
+    /// (legacy Node[i].updated). Reset at the top of every execute().
+    std::vector<char> storage_updated_;
 
     /// Per-conduit Newton solve. Returns iteration count.
     int solveConduit(int idx, const XSectParams& xs,
