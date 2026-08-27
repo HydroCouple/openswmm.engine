@@ -128,6 +128,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("BUILDUP",       input::handle_buildup);
     registry_.register_builtin("WASHOFF",       input::handle_washoff);
     registry_.register_builtin("TREATMENT",     input::handle_treatment);
+    registry_.register_builtin("INITIAL_QUALITY", input::handle_initial_quality);
 
     // Control / map / reporting
     registry_.register_builtin("CONTROLS",      input::handle_controls);

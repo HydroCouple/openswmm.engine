@@ -170,19 +170,31 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else opt.ext_options[key] = val;
 
         } else if (key == "QUALITY_SOLVER") {
-            // Unified Transport suite, master plan D-UT6. LAGRANGIAN is a
-            // recognised-but-unimplemented value (plan phase T5): fall back to
-            // LEGACY rather than erroring so the file stays portable, and let
-            // the ext_options record surface it for diagnostics.
+            // Unified Transport suite, master plan D-UT6. LAGRANGIAN selects
+            // the LARD dispatch (X1 wiring — a warned no-op until X2 lands
+            // transport; LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md). Unknown
+            // values still fall to ext_options for diagnostics.
             const std::string qv = norm(val);
             if      (qv == "LEGACY")       opt.quality_solver = QualitySolverKind::LEGACY;
             else if (qv == "EULERIAN_ARD" || qv == "ARD")
                 opt.quality_solver = QualitySolverKind::EULERIAN_ARD;
+            else if (qv == "LAGRANGIAN" || qv == "LARD")
+                opt.quality_solver = QualitySolverKind::LAGRANGIAN;
             else opt.ext_options[key] = val;
 
         } else if (key == "WATER_AGE") {
             // Water age plan §1 (phase A1a): transported age tracking.
             opt.water_age = (norm(val) == "ON" || norm(val) == "YES");
+
+        } else if (key == "OUTFALL_BACKFLOW_QUALITY") {
+            // Boundary re-entry quality at outfalls. LAST = legacy held
+            // state (the default); ZERO = fresh boundary — a supplying
+            // outfall's held state reads zero for pollutants and
+            // __WATER_AGE__ alike. Unknown values fall to ext_options.
+            const std::string bv = norm(val);
+            if      (bv == "LAST") opt.outfall_backflow_zero = false;
+            else if (bv == "ZERO") opt.outfall_backflow_zero = true;
+            else opt.ext_options[key] = val;
 
         } else if (key == "HEAT_TRANSPORT") {
             // Heat plan §1 (phase H1): transported temperature.
@@ -221,6 +233,27 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.wet_step = parse_time_seconds(val);
         } else if (key == "REPORT_STEP") {
             opt.report_step = parse_time_seconds(val);
+        } else if (key == "QUALITY_STEP") {
+            // X3a: LARD transport substep (strategy §4.2). Same time
+            // spelling as the other *_STEP keys.
+            opt.quality_step = parse_time_seconds(val);
+        } else if (key == "MAX_SEGMENTS_PER_LINK") {
+            // X3a: LARD slab capacity (strategy §4.1, EPANET MAXSEGS).
+            double d = 0.0;
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
+            opt.max_segments_per_link = static_cast<int>(d);
+        } else if (key == "DISPERSION") {
+            // X3b: LARD RWPT toggle (GUI-plan Lagrangian-group key).
+            // Unknown values fall to ext_options for diagnostics.
+            const std::string dv = norm(val);
+            if      (dv == "RWPT")           opt.lard_rwpt = true;
+            else if (dv == "OFF" || dv == "NONE") opt.lard_rwpt = false;
+            else opt.ext_options[key] = val;
+        } else if (key == "RWPT_SEED") {
+            // X3b: D-L6 deterministic counter-RNG seed.
+            double d = 0.0;
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
+            opt.rwpt_seed = static_cast<int>(d);
 
         // -----------------------------------------------------------------
         // Simulation dates / times
@@ -416,6 +449,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "FV_SLOT_CELERITY") {
             opt.fv.slot_celerity = to_double(val);
 
+        } else if (key == "FV_PRESSURIZED_IMPLICIT") {
+            const std::string pv = norm(val);
+            opt.fv.pressurized_implicit =
+                (pv == "YES" || pv == "TRUE" || pv == "ON" || pv == "1");
+
         } else if (key == "FV_DISPERSION") {
             opt.fv.dispersion = to_double(val);
 
@@ -452,6 +490,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "FV_LTS") {
             const std::string bv = norm(val);
             opt.fv.lts = !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
+
+        } else if (key == "FV_NODE_FEEDBACK_DT") {
+            const std::string bv = norm(val);
+            opt.fv.node_feedback_dt =
+                !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
 
         } else if (key == "FV_LTS_MAX_TIERS") {
             opt.fv.lts_max_tiers = std::max(1, static_cast<int>(to_double(val)));

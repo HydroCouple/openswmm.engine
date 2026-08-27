@@ -140,6 +140,20 @@ int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z) {
     return SWMM_OK;
 }
 
+int swmm_2d_set_vertex_z_bulk(SWMM_Engine engine, const double* z, int count) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!z) return SWMM_ERR_BADPARAM;
+
+    auto& m = router2d.mesh();
+    if (count != m.n_vertices()) return SWMM_ERR_BADPARAM;
+
+    std::memcpy(m.vz.data(), z, static_cast<std::size_t>(count) * sizeof(double));
+    // One pass over the triangles instead of one pass PER VERTEX.
+    openswmm::twoD::recomputeAllZDependents(m);
+    return SWMM_OK;
+}
+
 int swmm_2d_triangle_get_vertices(SWMM_Engine engine, int idx,
                                     int* v0, int* v1, int* v2) {
     GET_ENGINE(engine);
@@ -704,6 +718,7 @@ int swmm_2d_vertex_get_head(SWMM_Engine engine, int idx, double* head) {
     CHECK_VERT_IDX(idx, router2d);
     if (!head) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     *head = router2d.state().vert_head[idx];
     return SWMM_OK;
 }
@@ -713,6 +728,7 @@ int swmm_2d_vertex_get_heads_bulk(SWMM_Engine engine, double* heads) {
     CHECK_2D_ACTIVE(eng);
     if (!heads) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     auto& s = router2d.state();
     std::memcpy(heads, s.vert_head.data(), s.vert_head.size() * sizeof(double));
     return SWMM_OK;
@@ -723,6 +739,7 @@ int swmm_2d_vertex_get_render_depths_bulk(SWMM_Engine engine, double* depths) {
     CHECK_2D_ACTIVE(eng);
     if (!depths) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     auto& s = router2d.state();
     std::memcpy(depths, s.vert_depth_signed.data(),
                 s.vert_depth_signed.size() * sizeof(double));
@@ -868,6 +885,7 @@ int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
     s.rainfall_force_val[idx] = value;
     s.rainfall_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -886,6 +904,7 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
         s.rainfall_persist[i]   = static_cast<int8_t>(persist);
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -902,6 +921,7 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx,
     s.evap_force_val[idx] = value;
     s.evap_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -920,6 +940,7 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine,
         s.evap_persist[i]   = static_cast<int8_t>(persist);
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -936,6 +957,7 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
     s.coupling_force_val[idx] = value;
     s.coupling_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -957,6 +979,7 @@ int swmm_2d_force_clear_all(SWMM_Engine engine) {
         s.coupling_persist[i] = 0;
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -1019,12 +1042,26 @@ int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count) {
     return SWMM_OK;
 }
 
+// The four BC-value getters below read parsed MESH data, not solver state,
+// so they use CHECK_2D_MESH and work in the OPENED state the GUI holds —
+// the setters' mirror image (SVBC round A8). Only the cum_flux getter reads
+// a runtime accumulator and keeps CHECK_2D_ACTIVE.
+// BoundaryData's live arrays are sized by drainPendingRows() (via
+// swmm_2d_prepare_for_edit or initialize) — before that, in the freshly
+// OPENED state, they are EMPTY even for a deck with authored BC rows, and
+// unchecked indexing segfaulted (found by this round's pre-push gate). The
+// getters refuse cleanly until the drain instead.
+#define CHECK_BC_SIZED(vec, idx) \
+    if ((idx) < 0 || static_cast<std::size_t>(idx) >= (vec).size()) \
+        return SWMM_ERR_BADPARAM
+
 int swmm_2d_get_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
                               int* bc_type) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2 || !bc_type) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_type, tri_idx * 3 + edge);
 
     *bc_type = router2d.boundary().edge_bc_type[tri_idx * 3 + edge];
     return SWMM_OK;
@@ -1046,15 +1083,17 @@ int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
 
     router2d.boundary().edge_bc_type[tri_idx * 3 + edge] =
         static_cast<int8_t>(bc_type);
+    router2d.invalidateBoundaryIndex();
     return SWMM_OK;
 }
 
 int swmm_2d_get_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
                               double* head) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2 || !head) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_head, tri_idx * 3 + edge);
 
     *head = router2d.boundary().edge_bc_head[tri_idx * 3 + edge];
     return SWMM_OK;
@@ -1074,9 +1113,10 @@ int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_get_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
                                double* slope) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2 || !slope) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_bed_slope, tri_idx * 3 + edge);
 
     *slope = router2d.boundary().edge_bed_slope[tri_idx * 3 + edge];
     return SWMM_OK;
@@ -1134,12 +1174,65 @@ int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_get_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
                                double* flow) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (edge < 0 || edge > 2 || !flow) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_flow, tri_idx * 3 + edge);
 
     *flow = router2d.boundary().edge_bc_flow[tri_idx * 3 + edge];
     return SWMM_OK;
+}
+
+// SVBC A8 — name getters, the setter trio's mirror image, so a caller can
+// VERIFY what the engine holds after an edit push (the GUI previously had
+// write-only access to BC names). Same buf/buflen truncating-copy
+// convention as swmm_2d_get_vertex_tag.
+static int copyBcName(const std::string& s, char* buf, int buflen) {
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0)
+        std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
+                                       char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_tseries_name,
+                   tri_idx * 3 + edge);
+    return copyBcName(
+        router2d.boundary().edge_bc_tseries_name[tri_idx * 3 + edge],
+        buf, buflen);
+}
+
+int swmm_2d_get_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx,
+                                            int edge, char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_flow_tseries_name,
+                   tri_idx * 3 + edge);
+    return copyBcName(
+        router2d.boundary().edge_bc_flow_tseries_name[tri_idx * 3 + edge],
+        buf, buflen);
+}
+
+int swmm_2d_get_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx,
+                                            int edge, char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_rating_curve_name,
+                   tri_idx * 3 + edge);
+    return copyBcName(
+        router2d.boundary().edge_bc_rating_curve_name[tri_idx * 3 + edge],
+        buf, buflen);
 }
 
 int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,

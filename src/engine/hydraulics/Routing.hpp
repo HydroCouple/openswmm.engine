@@ -151,6 +151,12 @@ public:
     /// Access the DW solver (for non-conduit node state scatter).
     dynwave::DWSolver& dwSolver() { return dw_solver_; }
 
+    /// Supply the structure solver used to evaluate pump/orifice/weir/outlet
+    /// discharge. DYNWAVE/FV get theirs through the non_conduit_fn callback,
+    /// but KINWAVE/STEADY evaluate structures inline (legacy getLinkInflow),
+    /// so they need the solver itself. Must be set before the first step().
+    void setStructureSolver(hydstruct::StructureSolver* s) { structures_ = s; }
+
     /// Whether the most recent step() converged. DYNWAVE returns the solver's
     /// real final Picard flag; other models always converge (legacy only tracks
     /// dynwave non-convergence). FV has no convergence loop at all — that is a
@@ -178,6 +184,14 @@ public:
 private:
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
+
+    /// Non-owning; set by SWMMEngine. Null in standalone Router unit tests,
+    /// where structures then carry no flow.
+    hydstruct::StructureSolver* structures_ = nullptr;
+
+    /// Per-node "already converged this step" flag for storage units under
+    /// STEADY (the KW solver keeps its own).
+    std::vector<char> steady_storage_updated_;
 
     // --- Explicit finite-volume solver (FLOW_ROUTING FV) -------------------
     // The mesh and state are owned here, not by the solver, exactly as

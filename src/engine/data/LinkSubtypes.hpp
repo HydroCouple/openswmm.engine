@@ -231,7 +231,10 @@ struct OrificeData {
     std::vector<int>    link_idx;
     std::vector<double> orifice_type;    ///< 0 = BOTTOM, 1 = SIDE (legacy param1)
     std::vector<double> cd;              ///< Discharge coefficient
-    std::vector<double> orate;           ///< Open/close time (s)
+    std::vector<double> orate;           ///< Open/close time in HOURS, as parsed
+                                         ///< from [ORIFICES]; x3600 at use
+                                         ///< (SWMMEngine.cpp:2927), matching
+                                         ///< legacy link.c:372.
 
     int count() const noexcept { return static_cast<int>(link_idx.size()); }
 

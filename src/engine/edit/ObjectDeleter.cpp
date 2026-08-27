@@ -888,14 +888,23 @@ CascadeResult delete_transect(SimulationContext& ctx, int transect_idx) {
     auto erase_ts = [&](auto& v) {
         if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(transect_idx));
     };
+    // Lock-step with EVERY parallel array in TransectStore (InfraData.hpp:42)
+    // — missing one here leaves every transect past the deleted index reading
+    // its neighbour's value for that field (comments/encroachments/Lfactor
+    // were missed once and the writer then emitted the wrong Lfactor for all
+    // of them). swmm_transect_remove keeps its own complete copy of this list.
     erase_ts(ctx.transects.names);
+    erase_ts(ctx.transects.comments);
     erase_ts(ctx.transects.n_left);
     erase_ts(ctx.transects.n_right);
     erase_ts(ctx.transects.n_channel);
     erase_ts(ctx.transects.x_left_bank);
     erase_ts(ctx.transects.x_right_bank);
+    erase_ts(ctx.transects.x_left_encroachment);
+    erase_ts(ctx.transects.x_right_encroachment);
     erase_ts(ctx.transects.x_factor);
     erase_ts(ctx.transects.y_factor);
+    erase_ts(ctx.transects.length_factor);
     erase_ts(ctx.transects.stations);
     erase_ts(ctx.transects.elevations);
 

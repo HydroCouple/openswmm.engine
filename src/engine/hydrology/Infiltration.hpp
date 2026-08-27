@@ -47,7 +47,9 @@ enum class InfilModel : int {
     MOD_HORTON     = 1,   ///< Modified Horton: linear decay fp = f0 - kd * Fe
     GREEN_AMPT     = 2,
     MOD_GREEN_AMPT = 3,   ///< Modified Green-Ampt: does not reset F between events
-    CURVE_NUM      = 4
+    CURVE_NUM      = 4,
+    CONSTANT       = 5    ///< Constant rate, capacity-bounded. 2D-only (no legacy
+                          ///< [INFILTRATION] token); see plan §5.5.1.
 };
 
 // ============================================================================
@@ -104,6 +106,13 @@ struct CurveNumState {
 
 namespace infil {
 
+// The state structs above are declared at `openswmm` scope. Re-export them
+// here so callers may also spell them `infil::HortonState` (the 2D adapter
+// contract, src/engine/2d/infil/Infil2D.hpp, uses that qualification).
+using ::openswmm::HortonState;
+using ::openswmm::GreenAmptState;
+using ::openswmm::CurveNumState;
+
 /**
  * @brief Compute Horton infiltration rate for one timestep.
  *
@@ -153,6 +162,21 @@ double grnampt_getInfil(GreenAmptState& state, double precip, double depth, doub
  * @returns Infiltration rate (ft/sec).
  */
 double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt);
+
+/**
+ * @brief Compute constant-rate infiltration, bounded by available water.
+ *
+ * @details Stateless: f = min(rate, precip + depth/dt), floored at zero. Has
+ *          no legacy infil.c counterpart — added for the 2D per-cell
+ *          infiltration track (plan §5.5.1, InfilModel::CONSTANT).
+ *
+ * @param rate_ftsec  Constant infiltration rate (ft/sec).
+ * @param precip      Rainfall rate (ft/sec).
+ * @param depth       Ponded depth (ft).
+ * @param dt          Timestep (seconds).
+ * @returns Infiltration rate (ft/sec).
+ */
+double constant_getInfil(double rate_ftsec, double precip, double depth, double dt);
 
 /**
  * @brief Initialise Horton parameters from user input.

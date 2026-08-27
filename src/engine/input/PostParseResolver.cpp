@@ -1426,6 +1426,98 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // [INITIAL_QUALITY] element + constituent resolution
+    // -------------------------------------------------------------------------
+    // The section may precede the node/link/pollutant sections, so the handler
+    // stored raw names; resolve and classify here. Every failure is loud
+    // (fatal on strict open) and the failing row is erased so downstream
+    // consumers never see an unresolved entry. Iterate backwards so erase()
+    // keeps remaining indices valid.
+    {
+        auto& iq = ctx.initial_quality;
+        for (int i = iq.count() - 1; i >= 0; --i) {
+            auto ui = static_cast<std::size_t>(i);
+            const bool  link = iq.is_link[ui] != 0;
+            const auto& en   = iq.elem_name[ui];
+            const auto& cons = iq.constituent[ui];
+
+            // Element name → index.
+            iq.elem_idx[ui] = link ? ctx.link_names.find(en)
+                                   : ctx.node_names.find(en);
+            if (iq.elem_idx[ui] < 0) {
+                ctx.errors.push_back(
+                    std::string("[INITIAL_QUALITY] unknown ") +
+                    (link ? "link" : "node") + " '" + en + "'.");
+                iq.erase(i);
+                continue;
+            }
+
+            // Constituent → kind. Pollutant first, then the reserved species.
+            if (cons == "__WATER_AGE__") {
+                iq.kind[ui] = InitialQualityData::kKindWaterAge;
+                if (!ctx.options.water_age)
+                    ctx.warnings.push_back(
+                        "[INITIAL_QUALITY] __WATER_AGE__ rows are present but "
+                        "[OPTIONS] WATER_AGE is OFF — the rows are inert this "
+                        "simulation.");
+            } else if (cons == "__TEMPERATURE__") {
+                iq.kind[ui] = InitialQualityData::kKindTemperature;
+                if (!ctx.options.heat_transport)
+                    ctx.warnings.push_back(
+                        "[INITIAL_QUALITY] __TEMPERATURE__ rows are present "
+                        "but [OPTIONS] HEAT_TRANSPORT is OFF — the rows are "
+                        "inert this simulation.");
+            } else {
+                iq.kind[ui] = ctx.pollutant_names.find(cons);
+                if (iq.kind[ui] < 0) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] unknown constituent '" + cons +
+                        "' at " + std::string(link ? "link" : "node") + " '" +
+                        en + "' — pollutant names and __WATER_AGE__/"
+                        "__TEMPERATURE__ are accepted here; MSX species "
+                        "initial values belong in the reactions config "
+                        "[REACTION_QUALITY] NODE|LINK scopes.");
+                    iq.erase(i);
+                    continue;
+                }
+                // Age (signed per D-NS1) and temperature (degC) may be
+                // negative; a pollutant concentration may not.
+                if (iq.value[ui] < 0.0) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] negative value for pollutant '" +
+                        cons + "' at " + std::string(link ? "link" : "node") +
+                        " '" + en + "'.");
+                    iq.erase(i);
+                    continue;
+                }
+            }
+        }
+
+        // Duplicate (scope, element, constituent) keys are an error, not
+        // last-wins — silent override order in a hand-edited deck is exactly
+        // the ambiguity this section should refuse. Forward scan so the
+        // SECOND occurrence is the one reported.
+        for (int i = 0; i < iq.count(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            for (int j = 0; j < i; ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                if (iq.is_link[ui] == iq.is_link[uj] &&
+                    iq.elem_idx[ui] == iq.elem_idx[uj] &&
+                    iq.kind[ui] == iq.kind[uj]) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] duplicate row for '" +
+                        iq.constituent[ui] + "' at " +
+                        std::string(iq.is_link[ui] ? "link" : "node") + " '" +
+                        iq.elem_name[ui] + "'.");
+                    iq.erase(i);
+                    --i;
+                    break;
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Link end-node re-resolution
     // -------------------------------------------------------------------------
     // Legacy parsing is order-independent, so [CONDUITS]/[PUMPS]/[ORIFICES]/
@@ -1614,42 +1706,18 @@ void resolve_cross_references(SimulationContext& ctx) {
         perf::ScopedTimer _pt_transects(perf::sec_res_transects);
         int nt = ctx.transects.count();
         ctx.transect_tables.resize(static_cast<std::size_t>(nt));
+        // Copy-transform-build extracted to transect::buildFromStore so
+        // swmm_link_set_xsect (IRREGULAR) builds bit-identical tables; the
+        // parity notes on the legacy transforms live with the helper.
+        const int t_us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double t_ucf = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(t_us)];
         for (int t = 0; t < nt; ++t) {
             auto ut = static_cast<std::size_t>(t);
             auto& td = ctx.transect_tables[ut];
-            td.name      = ctx.transects.names[ut];
-            td.n_left    = ctx.transects.n_left[ut];
-            td.n_right   = ctx.transects.n_right[ut];
-            td.n_channel = ctx.transects.n_channel[ut];
-            if (td.n_channel <= 0.0) {
+            if (!transect::buildFromStore(ctx.transects, t, t_ucf, td)) {
                 ctx.errors.push_back(format_error(ERR_TRANSECT_MANNING, td.name));
                 continue;
             }
-            td.stations  = ctx.transects.stations[ut];
-            td.elevations = ctx.transects.elevations[ut];
-            td.length_factor = ctx.transects.length_factor[ut];
-            // PARITY: legacy transect setParams/addStation (transect.c:360-410)
-            // transform the raw [TRANSECTS] GR data BEFORE building the tables:
-            //   Station = x * Xfactor / UCF(LENGTH)          (mult, then divide)
-            //   Elev    = (y + Yfactor) / UCF(LENGTH),  Yfactor = x9 / UCF
-            //   Xbank   = (xbank / UCF) * Xfactor            (divide, then mult)
-            // The elevation OFFSET (x9, e.g. 799/798 in extran8a) is the load-
-            // bearing part: legacy builds every slice area/width/hrad at the
-            // real bed elevation (~800 ft), so `y - yhi` rounds at that
-            // magnitude. Building on the raw ~0-ft elevations rounds
-            // differently (~1e-13 per entry) and breaks bit-parity even though
-            // the geometry is offset-invariant in exact arithmetic. Applied to
-            // the td COPY only, so [TRANSECTS] round-trips the raw GR values.
-            const int t_us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-            const double t_ucf = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(t_us)];
-            double xFactor = ctx.transects.x_factor[ut];      // parse-time 0→1 default
-            if (xFactor == 0.0) xFactor = 1.0;
-            const double yFactor = ctx.transects.y_factor[ut] / t_ucf;   // x9 / UCF
-            for (auto& s : td.stations)   s = s * xFactor / t_ucf;
-            for (auto& e : td.elevations) e = (e + yFactor) / t_ucf;
-            td.x_left_bank  = (ctx.transects.x_left_bank[ut]  / t_ucf) * xFactor;
-            td.x_right_bank = (ctx.transects.x_right_bank[ut] / t_ucf) * xFactor;
-            transect::buildTables(td);
         }
         // Resolve IRREGULAR link transect names → indices, then set properties.
         // The name→index map replaces a linear ieq scan per IRREGULAR link.
@@ -1669,6 +1737,18 @@ void resolve_cross_references(SimulationContext& ctx) {
                 const auto hit = transect_by_name.find(tname);
                 if (hit != transect_by_name.end())
                     ctx.links.xsect_curve[uj] = hit->second;
+                else if (ctx.links.xsect_curve[uj] < 0)
+                    // Dangling reference: legacy raises fatal ERROR 209 here
+                    // (transect_validate). Leaving it silent let the link
+                    // degenerate to zero area with no diagnostic — the state a
+                    // corrupted save produced. Lenient opens still load for
+                    // repair; strict opens must fail loudly.
+                    ctx.errors.push_back(format_error(ERR_NAME, tname));
+            } else if (ctx.links.xsect_curve[uj] < 0) {
+                // No name and no resolved index: an IRREGULAR link with no
+                // transect at all is as dead as a dangling one.
+                ctx.errors.push_back(
+                    format_error(ERR_NAME, ctx.link_names.name_of(j)));
             }
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && ci < nt) {

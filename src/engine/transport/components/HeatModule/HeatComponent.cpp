@@ -191,6 +191,8 @@ void applyHeatSections(SimulationContext& ctx,
                     ctx.heat_config.surface_exchange = on;
                 } else if (mod == "RADIATIVE_EXCHANGE") {
                     ctx.heat_config.radiative_exchange = on;
+                } else if (mod == "LAYER_CONDUCTION") {
+                    ctx.heat_config.layer_conduction = on;
                 } else if (mod == "SEDIMENT_EXCHANGE") {
                     errors.push_back(
                         "[HEAT_FLUXES] SEDIMENT_EXCHANGE arrives with plan "
@@ -200,7 +202,8 @@ void applyHeatSections(SimulationContext& ctx,
                     errors.push_back(
                         "[HEAT_FLUXES] unknown module '" + toks[0] +
                         "' (SURFACE_EXCHANGE in H2, RADIATIVE_EXCHANGE in "
-                        "H3, DRY_ELEMENT_TEMPERATURE in H5a).");
+                        "H3, DRY_ELEMENT_TEMPERATURE in H5a, "
+                        "LAYER_CONDUCTION in H5b).");
                 }
             }
             continue;

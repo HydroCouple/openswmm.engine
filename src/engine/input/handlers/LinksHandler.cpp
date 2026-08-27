@@ -178,7 +178,7 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
         // tok[5]: discharge coefficient
         if (tok.size() > 5) ctx.link_subtypes.orifices.cd[uorr] = to_double(tok[5]);
         // tok[6]: flap gate (YES/NO)
-        if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
+        if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[6]);
         // tok[7]: open/close time (seconds)
         if (tok.size() > 7) ctx.link_subtypes.orifices.orate[uorr] = to_double(tok[7]);
         if (!pl.comment.empty())
@@ -218,7 +218,7 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         // tok[5]: discharge coefficient
         if (tok.size() > 5) ctx.link_subtypes.weirs.cd[uwr] = to_double(tok[5]);
         // tok[6]: flap gate (YES/NO)
-        if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::to_upper(tok[6]) == "YES";
+        if (tok.size() > 6) ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[6]);
         // tok[7]: end contractions
         if (tok.size() > 7) ctx.link_subtypes.weirs.end_contractions[uwr] = to_double(tok[7]);
         // tok[8]: end-section discharge coeff (legacy cDisch2, link.c weir_readParams x[5])
@@ -279,6 +279,14 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         }
         if (tok.size() > 6 && !is_tabular)
             ctx.link_subtypes.outlets.expon[uolr] = to_double(tok[6]);
+        // Trailing optional Gated column (legacy link.c:395, x[4]). Its index
+        // depends on the rating type, because FUNCTIONAL carries two rating
+        // columns (C1, C2) where TABULAR carries one (the curve name):
+        //   TABULAR/*    : Name N1 N2 Offset Type Curve  [Gated]  -> tok[6]
+        //   FUNCTIONAL/* : Name N1 N2 Offset Type C1 C2  [Gated]  -> tok[7]
+        const std::size_t gate_tok = is_tabular ? 6u : 7u;
+        if (tok.size() > gate_tok)
+            ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[gate_tok]);
         if (!pl.comment.empty())
             ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

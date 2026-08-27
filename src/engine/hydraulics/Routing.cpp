@@ -271,13 +271,29 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             // compiled default (DEFAULT_HEAD_TOL, already in feet) is left as-is.
             // Skipping this made an SI model's 0.0015 m tolerance act as
             // 0.0015 ft (~3.3× too tight) → chronic non-convergence.
+            //
+            // A deck may also carry an explicit ZERO for either option.
+            // Legacy treats zero as "use the compiled default"
+            // (dynwave.c:182-184):
+            //     if (HeadTol == 0.0)  HeadTol  = DEFAULT_HEADTOL;
+            //     if (MaxTrials == 0)  MaxTrials = DEFAULT_MAXTRIALS;
+            // and SWMM itself writes those zeros — project.c:897-898 sets
+            // MaxTrials/HeadTol to 0 precisely to "force use of default", so
+            // decks saved by the GUI ship them. Without the substitution
+            // `while (t_steps < max_trials)` runs ZERO Picard iterations: every
+            // link flow and node depth stays at its initial value for the whole
+            // simulation, silently, with no error and a clean mass balance.
+            // 362 of the 1,396 corpus decks (26%) carry MAX_TRIALS 0.
             const double ucf_len = ucf::Ucf[ucf::LENGTH][
                 ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
             dw_solver_.head_tol =
-                (ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
+                (ctx.options.head_tol == 0.0
+                 || ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
                     ? constants::DEFAULT_HEAD_TOL
                     : ctx.options.head_tol / ucf_len;
-            dw_solver_.max_trials = ctx.options.max_trials;
+            dw_solver_.max_trials = (ctx.options.max_trials > 0)
+                    ? ctx.options.max_trials
+                    : constants::DEFAULT_MAX_TRIALS;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
@@ -345,55 +361,11 @@ int Router::step(SimulationContext& ctx, double dt,
     int iters = 0;
     switch (model_) {
         case RouteModel::KINWAVE:
-            iters = kw_solver_.execute(ctx, dt);
-
-            // Storage node iterative update for KW (P8-G07)
-            // After KW routing, storage nodes need depth from volume balance
-            for (int j = 0; j < ctx.n_nodes(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.nodes.type[uj] != NodeType::STORAGE) continue;
-
-                double v_old = ctx.nodes.old_volume[uj];
-                double q_in = ctx.nodes.inflow[uj];
-                double q_out = 0.0;
-                // Sum outgoing link flows
-                for (int k = 0; k < ctx.n_links(); ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    if (ctx.links.node1[uk] == j && ctx.links.flow[uk] > 0.0)
-                        q_out += ctx.links.flow[uk];
-                    if (ctx.links.node2[uk] == j && ctx.links.flow[uk] < 0.0)
-                        q_out -= ctx.links.flow[uk];
-                }
-
-                // Successive approximation (omega=0.55, max 10 iters)
-                double d1 = ctx.nodes.depth[uj];
-                for (int iter = 0; iter < 10; ++iter) {
-                    double v_new = v_old + (q_in - q_out) * dt;
-                    v_new = std::max(v_new, 0.0);
-
-                    // Overflow check
-                    double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj], &ctx.tables,
-                        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
-                        &ctx.node_subtypes);
-                    if (v_new > full_vol) {
-                        ctx.nodes.overflow[uj] = (v_new - full_vol) / dt;
-                        v_new = full_vol;
-                    }
-
-                    ctx.nodes.volume[uj] = v_new;
-                    // Invert volume → depth using node::getDepth (Newton / table lookup)
-                    // Matches legacy node_getDepth() in node.c (Gap #12)
-                    int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-                    double d2 = node::getDepth(ctx.nodes, j, v_new, &ctx.tables, us, &ctx.node_subtypes);
-
-                    // Under-relaxation
-                    d2 = 0.45 * d1 + 0.55 * d2;
-                    if (std::fabs(d2 - d1) < 0.005) { d1 = d2; break; }
-                    d1 = d2;
-                }
-                ctx.nodes.depth[uj] = d1;
-                ctx.nodes.head[uj] = ctx.nodes.invert_elev[uj] + d1;
-            }
+            // Storage nodes are converged INSIDE the sorted-link loop, before
+            // the links they drain through are routed (legacy flowrout.c:183).
+            // A post-pass cannot do it: an outlet structure's flow depends on
+            // the very depth the pass is trying to find.
+            iters = kw_solver_.execute(ctx, dt, structures_);
             break;
 
         case RouteModel::DYNWAVE:
@@ -668,20 +640,34 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
           }()
         : steady_sorted_links_;
 
+    steady_storage_updated_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0);
+
     for (int idx = 0; idx < static_cast<int>(order.size()); ++idx) {
         int j   = order[static_cast<std::size_t>(idx)];
         auto uj = static_cast<std::size_t>(j);
 
-        // Non-conduit links: outflow equals upstream node inflow (pass-through).
-        // Matches legacy steadyflow_execute() else branch: *qout = *qin.
+        // PARITY flowrout.c:181-183 — converge a storage unit's depth before
+        // routing the links it drains through (see the KINWAVE case).
+        {
+            int n1s = links.node1[uj];
+            if (n1s >= 0
+                && nodes.type[static_cast<std::size_t>(n1s)] == NodeType::STORAGE
+                && !steady_storage_updated_[static_cast<std::size_t>(n1s)]) {
+                kinwave::updateStorageState(ctx, structures_, order, idx, n1s, dt);
+                steady_storage_updated_[static_cast<std::size_t>(n1s)] = 1;
+            }
+        }
+
+        // Non-conduit links are not routed — steadyflow_execute returns
+        // *qout = *qin for them — but their INFLOW is their own head-discharge
+        // relation, not the upstream node's inflow (legacy getLinkInflow).
         if (links.type[uj] != LinkType::CONDUIT) {
             int n1 = links.node1[uj];
-            if (n1 >= 0) {
-                double q = nodes.inflow[static_cast<std::size_t>(n1)];
-                links.flow[uj] = q;
-                int n2 = links.node2[uj];
-                if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
-            }
+            int n2 = links.node2[uj];
+            double q = kinwave::getLinkInflow(ctx, structures_, j, dt);
+            links.flow[uj] = q;
+            if (n1 >= 0) nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
             continue;
         }
         auto& CD = ctx.link_subtypes.conduits;
@@ -707,7 +693,9 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         double qin = 0.0;
         if (n1 >= 0) {
             auto un1 = static_cast<std::size_t>(n1);
-            qin = nodes.inflow[un1];
+            qin = (nodes.type[un1] == NodeType::STORAGE)
+                ? kinwave::getLinkInflow(ctx, structures_, j, dt)
+                : nodes.inflow[un1];
             double q_max = node::getMaxOutflow(nodes, n1, qin, dt);
             qin = std::min(qin, q_max);
         }
@@ -928,7 +916,7 @@ void Router::initFv(SimulationContext& ctx) {
         const double uniform =
             fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
 
-        double vol = 0.0, a_len = 0.0, sum_len = 0.0;
+        double vol = 0.0, a_len = 0.0, sum_len = 0.0, slot_vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {
             const auto uc = static_cast<std::size_t>(c);
             double a_c = uniform;
@@ -943,9 +931,10 @@ void Router::initFv(SimulationContext& ctx) {
             fv_state_.cell_q[uc] = (a_c > fv::kernels::kDryArea) ? q : 0.0;
 
             const double dx = fv_mesh_.cell_dx[uc];
-            sum_len += dx;
-            a_len   += a_c * dx;
-            vol     += a_c * dx;
+            sum_len  += dx;
+            a_len    += a_c * dx;
+            vol      += a_c * dx;
+            slot_vol += std::max(0.0, a_c - g.a_crown) * dx;
         }
 
         // Publish what was actually seeded, by the same reduction publishFv
@@ -957,9 +946,11 @@ void Router::initFv(SimulationContext& ctx) {
         // acre-feet, reported as a 17 % continuity error on a model where
         // nothing moves and nothing leaves.
         if (sum_len > 0.0) {
-            ctx.links.volume[uj] = vol;
-            ctx.links.depth[uj]  =
-                fv::kernels::depthOfArea(g, a_len / sum_len);
+            ctx.links.volume[uj]      = vol;
+            ctx.links.slot_volume[uj] = slot_vol;
+            // R0b: published depth truncated to y_full (see publishFv).
+            ctx.links.depth[uj]  = std::min(
+                fv::kernels::depthOfArea(g, a_len / sum_len), g.y_full);
         }
     }
     for (int n = 0; n < nn; ++n) {
@@ -1176,6 +1167,7 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         // Cell area and discharge are ALREADY the aggregate of all barrels
         // (FvGeometry::barrel_scale), so nothing here is scaled by the count.
         double sum_len = 0.0, q_len = 0.0, a_len = 0.0, vol = 0.0;
+        double slot_vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {
             const auto uc = static_cast<std::size_t>(c);
             const double dx = fv_mesh_.cell_dx[uc];
@@ -1186,12 +1178,26 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             q_len   += q * dx;
             a_len   += fv_state_.cell_a[uc] * dx;
             vol     += fv_state_.cell_a[uc] * dx;
+            // Slot share of the cell's storage: area above a_crown is water
+            // standing in the Preissmann slot (the crown-band taper's tiny
+            // content lives inside a_crown and is deliberately not counted).
+            slot_vol += std::max(0.0, fv_state_.cell_a[uc] - g.a_crown) * dx;
         }
         const double q_mean = (sum_len > 0.0) ? q_len / sum_len : 0.0;
         const double a_mean = (sum_len > 0.0) ? a_len / sum_len : 0.0;
 
         ctx.links.flow[uj]   = q_mean;
-        ctx.links.depth[uj]  = fv::kernels::depthOfArea(g, a_mean);
+        // Slot program R0b: the PUBLISHED depth is a water depth, truncated
+        // to the pipe's true max height — matching the dynamic-wave
+        // convention (DynamicWave.cpp links.depth = min(depth_mid, yf)).
+        // Above the crown the piezometric surplus lives in node heads and
+        // links.slot_volume; the .out depth column stops doubling as a head
+        // channel, and stat_max_filling reads ≤ 1 like legacy. The clamp is
+        // publish-only: every internal use of the mean state works from
+        // a_mean, and widthOfDepth(y_full) == widthOfDepth(piezo) == t_slot,
+        // so the derived hyd-depth/Froude below are unchanged.
+        ctx.links.depth[uj]  = std::min(
+            fv::kernels::depthOfArea(g, a_mean), g.y_full);
         // Inlet control was applied inside the solver, at the culvert's
         // upstream face; only the report flag comes back out here.
         if (impl) {
@@ -1200,7 +1206,8 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
                 ctx.link_subtypes.conduits.inlet_control[
                     static_cast<std::size_t>(cr)] = impl->inlet_control()[ur];
         }
-        ctx.links.volume[uj] = vol;
+        ctx.links.volume[uj]      = vol;
+        ctx.links.slot_volume[uj] = slot_vol;
         const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;
         const double hyd_depth =
             (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)
@@ -1255,19 +1262,35 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             continue;
         }
         double head = fv_state_.node_head[un];
-        // Pass-through junctions: publish the face-consistent stage — the
-        // same reconstruction the virtual-junction loop below uses — instead
-        // of the solver's wet-mean of cell-centre etas, which sits ~S0·dx/2
-        // above the face stage on steep COARSE chains and steps against the
-        // VJ rule at every pass-through/VJ pair in the plotted HGL
-        // (HGL_STEP_ATTRIBUTION.md, mechanism B). REPORTING only, on
-        // purpose: changing the solver-internal head instead destabilized
-        // the lake-at-rest diameter-change case through the LTS-hold ghost
-        // channel (70 cfs standing oscillation from a 0.007 cfs residual).
+        // Storage-less clean junctions, ANY degree: publish the
+        // face-consistent stage — the same reconstruction the
+        // virtual-junction loop below uses — instead of the solver's own
+        // head, which sits ~S0·dx/2 above the face stage on steep COARSE
+        // chains and steps against the VJ rule in the plotted HGL
+        // (mechanism B).
+        //
+        // Originally this covered degree-2 pass-through junctions only,
+        // because that is the set the SOLVER splices. Measured on Example1
+        // under FLOW_ROUTING FV, that left two thirds of nodes publishing the
+        // raw head and standing up to 0.91 ft above their own adjacent cell
+        // at FV_MIN_CELLS 1 — falling ~first-order under refinement, so a
+        // datum term, not physics. Nodes inside the set never exceeded
+        // 0.0002 ft at any refinement, and the excess survives on nodes with
+        // NO lateral inflow, which rules out "head needed to drive the
+        // inflow out". See tests/manual/fv_node_stage/RESULTS.md.
+        //
+        // Culvert-inlet and flap-gate faces are excluded: those node heads
+        // are genuine headwaters that must not be reconstructed away. So are
+        // nodes carrying a structure flow or an unbled carry.
+        //
+        // REPORTING only, on purpose: changing the solver-internal head
+        // instead destabilized the lake-at-rest diameter-change case through
+        // the LTS-hold ghost channel (70 cfs standing oscillation from a
+        // 0.007 cfs residual).
         // A dry cell's vote is bare ground, so only wet neighbours vote; the
         // all-dry case keeps the solver's lowest-adjacent-bed contract.
-        if (impl && un < impl->node_passthrough().size() &&
-            impl->node_passthrough()[un]) {
+        if (impl && un < impl->node_publish_stage().size() &&
+            impl->node_publish_stage()[un]) {
             const int b0 = fv_mesh_.node_face_ptr[un];
             const int e0 = fv_mesh_.node_face_ptr[un + 1];
             double eta = -1.0e30;
@@ -1280,6 +1303,17 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
                 if (c < 0) continue;
                 const auto uc = static_cast<std::size_t>(c);
                 if (fv_state_.cell_h[uc] <= fv::kernels::kDryDepth) continue;
+                // A face perched ABOVE the node's own water surface is
+                // discharging as a free overfall (manual §8.6, ghost state
+                // 8-28: "a node standing below the face invert presents a dry
+                // ghost"). Its stage describes the pipe, not the node, and
+                // letting it vote reads the pipe's OFFSET as node depth --
+                // measured on Example1's J11, where conduit C2 enters 4 ft
+                // above the invert and an unguarded vote drove the reported
+                // average depth from 0.28 ft to 4.11 ft. The solver head is
+                // used only as the submergence THRESHOLD here, never as the
+                // published value, so its datum bias cannot leak back in.
+                if (fv_mesh_.face_zb[uf] > head) continue;
                 eta = std::max(eta, std::min(fv_mesh_.cell_zb[uc],
                                              fv_mesh_.face_zb[uf]) +
                                     fv_state_.cell_h[uc]);

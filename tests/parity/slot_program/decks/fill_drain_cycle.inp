@@ -1,0 +1,50 @@
+[TITLE]
+Slot program fixture (c): fill - pressurize - drain - refill cycling.
+The downstream stage boundary oscillates above and below the crown
+(115 ft vs 100.5 ft on a 3 ft pipe at invert 100), so the barrel is driven
+across the pressurization transition twice per 2 h regardless of inflow.
+Network-level hysteresis probe: the second pressurized visit must land on
+the first (memoryless closure); slot storage must return to zero on drain.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         FV
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             04:00:00
+REPORT_STEP          00:01:00
+ROUTING_STEP         0.5
+FV_SLOT_CELERITY     100
+LENGTHENING_STEP     0
+
+[JUNCTIONS]
+J0     100.0 40.0 0 0 0
+
+[OUTFALLS]
+OF     100.0 TIMESERIES CycleStage NO
+
+[CONDUITS]
+C1     J0   OF 300 0.013 0 0 0
+
+[XSECTIONS]
+C1     CIRCULAR 3 0 0 0 1
+
+[INFLOWS]
+J0     FLOW "" FLOW 1.0 1.0 2.0
+
+[TIMESERIES]
+;;pressurized 0-1h, drained 1-2h, pressurized 2-3h, drained 3-4h
+CycleStage 0:00 115.0
+CycleStage 0:59 115.0
+CycleStage 1:00 100.5
+CycleStage 1:59 100.5
+CycleStage 2:00 115.0
+CycleStage 2:59 115.0
+CycleStage 3:00 100.5
+
+[REPORT]
+CONTINUITY YES
+FLOWSTATS YES
+NODES ALL
+LINKS ALL

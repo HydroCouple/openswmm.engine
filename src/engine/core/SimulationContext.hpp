@@ -99,6 +99,7 @@
 #include "SpatialFrame.hpp"
 #include "UserFlags.hpp"
 #include "../data/QualityData.hpp"
+#include "../data/InitialQualityData.hpp"
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
 #include "../hydraulics/Transect.hpp"
@@ -329,6 +330,7 @@ namespace twoD {
 struct MeshData;
 struct SolverOptions2D;
 struct BoundaryData;
+class  Infil2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 } // namespace twoD
@@ -661,6 +663,15 @@ struct SimulationContext {
     WashoffData      washoff;
     TreatmentData    treatment;
 
+    /**
+     * @brief Per-element initial quality rows from [INITIAL_QUALITY].
+     * @details Pollutant + reserved-species (__WATER_AGE__/__TEMPERATURE__)
+     *          per-node/per-link initial values overriding the global
+     *          [POLLUTANTS] Cinit / sidecar INITIAL_STATE seeds. Names are
+     *          resolved and constituents classified in PostParseResolver.
+     */
+    InitialQualityData initial_quality;
+
     // =========================================================================
     // Inflow data (external, DWF, RDII, patterns)
     // =========================================================================
@@ -936,6 +947,11 @@ struct SimulationContext {
         twoD::BoundaryData*                          boundary   = nullptr;
         std::vector<twoD::PendingBoundaryRow>*       pending_bc = nullptr;
         std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
+        /// Per-cell infiltration (track I, plan §5.5). Owned by
+        /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate
+        /// its defaults()/overrides()/options() and the InpWriter reads them
+        /// back. Null when the engine was built without 2D support.
+        twoD::Infil2D*                               infil      = nullptr;
     } twod_io;
 
     /**
@@ -1045,6 +1061,20 @@ struct SimulationContext {
         double runoff_snowremov  = 0.0;  ///< Total snow removal volume (ft3)
         double runoff_init_store = 0.0;  ///< Initial surface storage (ft3)
         double runoff_final_store= 0.0;  ///< Final surface storage (ft3)
+        /// Snow water equivalent PLUS free water held in every pack at the
+        /// start of the run (ft3). Legacy `RunoffTotals.initSnowCover`,
+        /// summed from `snow_getSnowCover` (`snow.c:587`).
+        double runoff_init_snow  = 0.0;
+        /// The same quantity at the end of the run (ft3). Legacy
+        /// `RunoffTotals.finalSnowCover`.
+        ///
+        /// **These two, and `runoff_snowremov`, were the whole of F8.** The
+        /// ledger had no snow terms at all, so on any deck with a
+        /// `[SNOWPACKS]` section the starting pack was unaccounted INPUT and
+        /// the surviving pack unaccounted OUTPUT, and the printed continuity
+        /// percentage was not a meaningful number. Measured on the snow
+        /// parity deck: **-8.193 % before, +1.419 % after.**
+        double runoff_final_snow = 0.0;
 
         // Routing totals
         double routing_dry_weather   = 0.0;
@@ -1197,8 +1227,15 @@ struct SimulationContext {
 
         /// Runoff continuity error (fraction).
         double runoff_error() const {
-            double total_in = runoff_rainfall + runoff_runon + runoff_init_store;
-            double total_out = runoff_evap + runoff_infil + runoff_runoff + runoff_final_store;
+            // Snow is a STORE on both sides, and snow ploughed out of the
+            // system is a loss — matching legacy massbal.c:685-692. A pack
+            // present at the start is water the model was given; a pack still
+            // standing at the end is water it still holds.
+            double total_in = runoff_rainfall + runoff_runon + runoff_init_store +
+                              runoff_init_snow;
+            double total_out = runoff_evap + runoff_infil + runoff_runoff +
+                               runoff_final_store + runoff_snowremov +
+                               runoff_final_snow;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
 
@@ -1223,6 +1260,26 @@ struct SimulationContext {
     } mass_balance;
 
     /**
+     * @brief D-NS1 negative-source clamp bookkeeping (subplan §3.1, X6).
+     *
+     * @details A negative source (mass extraction) is clamped per step to
+     *          the mass its element holds; each clamp is counted here, its
+     *          shortfall un-booked from the extraction's ledger row (the
+     *          ledger carries what was ACTUALLY removed), and the first
+     *          clamp warns. Age extraction (age·volume) is counted but not
+     *          ledgered — age has no continuity row until A2c.
+     */
+    struct NegativeSourceStats {
+        long   clamp_events     = 0;   ///< pollutant clamps, all engines
+        double shortfall_mass   = 0.0; ///< unmet extraction, internal units
+        long   age_clamp_events = 0;   ///< age-row clamps
+        int    first_node       = -1;  ///< element of the first clamp
+        bool   runtime_warned   = false;
+        bool   api_warned       = false; ///< first negative API mass flux
+        void reset() { *this = NegativeSourceStats{}; }
+    } negsrc;
+
+    /**
      * @brief System mass-balance totals for the optional 2D surface domain.
      *
      * @details Accumulated each executed 2D step by SurfaceRouter2D. Unlike
@@ -1243,6 +1300,11 @@ struct SimulationContext {
         double boundary_in           = 0.0;  ///< Cumulative boundary inflow (m³)
         double boundary_out          = 0.0;  ///< Cumulative boundary outflow (m³)
         double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
+        /// Cumulative 2D per-cell infiltration loss (m³). Track I, plan §5.5.4.
+        /// Destination is LOST in this release (D-I4), so this is a true exit
+        /// from the modelled system and enters the continuity balance as a loss
+        /// term alongside evap_out.
+        double infil_out             = 0.0;
         bool   active                = false;///< True if the 2D module ran
 
         // Cumulative marcher statistics (published by SurfaceRouter2D at
@@ -1265,7 +1327,7 @@ struct SimulationContext {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
                                + boundary_in + init_storage;
             double total_out = coupling_2d_to_1d_out + outfall_out + boundary_out
-                               + evap_out + final_storage;
+                               + evap_out + infil_out + final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance_2d;
@@ -1369,6 +1431,41 @@ struct SimulationContext {
         double computed_avg_iterations() const {
             return (n_steps > 0) ? sum_iterations / static_cast<double>(n_steps) : 0.0;
         }
+
+        // ---------------------------------------------------------------
+        // FV 1D solver statistics (published by SWMMEngine::end() from
+        // INetworkSolver::run_stats, printed as the "FV Solver Statistics"
+        // report block). The 1D counterpart of mass_balance_2d.solver_*.
+        //
+        // -1 = not populated: the run was not FLOW_ROUTING FV, or a backend
+        // that carries no counters was selected. The report block is skipped
+        // on the sentinel rather than printing a row of zeros, which would
+        // read as "the solver did nothing" instead of "nobody counted".
+        // ---------------------------------------------------------------
+        // Slot-storage share (FV slot program R0). Peak instantaneous
+        // system share slot/stored and the time that share exceeded 1 %;
+        // the run-level integrated share is Σ links.stat_slot_vol_dt /
+        // Σ links.stat_vol_dt, summed at report time. 0 under DW.
+        double slot_peak_share   = 0.0;
+        double slot_time_above_s = 0.0;
+
+        long   fv_nsteps        = -1;   ///< explicit substeps over the run
+        long   fv_nflux         = 0;    ///< face flux evaluations
+        double fv_avg_h         = 0.0;  ///< mean substep (s)
+        double fv_last_h        = 0.0;  ///< last substep (s)
+        double fv_min_h         = 0.0;  ///< smallest substep taken (s)
+        double fv_active_min    = -1.0; ///< min active-face fraction
+        double fv_active_mean   = -1.0; ///< mean active-face fraction
+        double fv_active_max    = -1.0; ///< max active-face fraction
+        long   fv_tier_cells[8] = {0};  ///< rebuild-sampled cells per LTS tier
+        int    fv_n_tiers       = 0;    ///< populated tier count
+
+        // dt-argmin attribution (slot program R0): who owned the binding
+        // CFL element, counted per census / re-tier.
+        long   fv_dt_argmin_pressurized = 0;
+        long   fv_dt_argmin_band        = 0;
+        long   fv_dt_argmin_free        = 0;
+        long   fv_dt_argmin_node        = 0;
     } routing_stats;
 
     // =========================================================================

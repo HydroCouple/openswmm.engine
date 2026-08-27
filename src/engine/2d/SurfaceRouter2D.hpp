@@ -44,10 +44,12 @@
 #include "data/BoundaryData.hpp"
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
+#include "infil/Infil2D.hpp"
 #include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
@@ -188,6 +190,47 @@ public:
     /// Access per-edge boundary-condition data (mutable, for forcing/parsing).
     BoundaryData& boundary() noexcept { return boundary_; }
 
+    /// Announce that a boundary slot's TYPE changed (the API BC-type setter),
+    /// so the compact non-WALL slot list the per-step boundary passes walk is
+    /// rebuilt before it is next used.
+    void invalidateBoundaryIndex() noexcept { bc_nonwall_dirty_ = true; }
+
+    /// Bring the render fields (vertex heads, output gradients, vertex render
+    /// depths) up to date with the current solver state if a batch has run
+    /// since they were last computed. The API getters that expose those fields
+    /// call this so a reader arriving between reports is never served a stale
+    /// field; it is a no-op at a report instant, where the refresh already ran.
+    void refreshRenderFieldsIfStale() {
+        if (render_dirty_) refreshRenderFields();
+    }
+
+    /**
+     * @brief Access the per-cell infiltration model (plan §5.5, track I).
+     *
+     * Mutable so SWMMEngine can publish it on `ctx.twod_io.infil` — the
+     * [2D_INFILTRATION*] section handlers and the InpWriter reach it there.
+     * The router owns the object, resolves it against the mesh in
+     * initialize(), and drives its INFIL_STEP cadence in coAdvanceStep().
+     */
+    Infil2D& infil() noexcept { return infil_; }
+    const Infil2D& infil() const noexcept { return infil_; }
+
+    /**
+     * @brief Ledger-consistent cumulative infiltrated depth per cell (m).
+     *
+     * @details Drains the SAME `SurfaceStateData::infil_applied` accumulator
+     *          that `MassBalance2D::infil_out` books — the depth the marcher
+     *          actually removed, summed as it was removed — so
+     *          `sum(infilCumulative()[i] * tri_area[i]) == infil_out` holds by
+     *          construction. Prefer this over `Infil2D::cumulative()`, which is
+     *          the unramped capacity the kernels offered and therefore exceeds
+     *          the applied loss on drying cells. Empty when no
+     *          `[2D_INFILTRATION*]` model resolved.
+     */
+    const std::vector<double>& infilCumulative() const noexcept {
+        return infil_cum_applied_;
+    }
+
     /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
      *
@@ -249,6 +292,23 @@ private:
     SolverOptions2D  options_;
     BoundaryData     boundary_;
 
+    /// §5.5 track I — per-cell infiltration parameters, kernel state and the
+    /// held rates published into state_.infil_rate. Inert (no allocation, no
+    /// per-step work) until a [2D_INFILTRATION*] section resolves a model.
+    Infil2D infil_;
+
+    /// Sim time since the last Infil2D::updateRates call (D-I1 INFIL_STEP
+    /// cadence). Advanced on the routing/co-advance cadence, NEVER per
+    /// marcher substep.
+    double infil_elapsed_ = 0.0;
+
+    /// Per-cell APPLIED cumulative infiltrated depth (m) — see
+    /// infilCumulative(). Filled in accumulateMassBalance() by draining the
+    /// same SurfaceStateData::infil_applied accumulator that feeds
+    /// MassBalance2D::infil_out; empty when no [2D_INFILTRATION*] model
+    /// resolved.
+    std::vector<double> infil_cum_applied_;
+
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
     std::vector<PendingBoundaryRow> pending_bc_rows_;
 
@@ -263,8 +323,29 @@ private:
     /// initialize().
     std::vector<CouplingPoint> node_coupling_points_;
 
-    /// Sim time since the last co-advance output refresh (report-scale cadence).
+    /// Sim time since the last statistics/continuity sample (30 s cadence).
     double co_refresh_elapsed_ = 0.0;
+    /// Sim time since the last RENDER-field refresh (vertex heads, gradients,
+    /// render depths). Those fields have exactly two consumers — the output
+    /// snapshot and the bulk API getters — so they are refreshed on the
+    /// REPORT_STEP grid, and on demand for an API reader that arrives between
+    /// reports (render_dirty_).
+    double co_render_elapsed_ = 0.0;
+    bool   render_dirty_      = false;
+    /// Per-cell free-surface scratch for the render-depth reconstruction,
+    /// held across refreshes so the pass allocates nothing.
+    std::vector<double> render_eta_;
+    /// Flat mesh edge slots (3*i+e) carrying a non-WALL boundary condition.
+    /// The BC TYPE of a slot is fixed once the model is resolved, so the list
+    /// is built once in initialize(); the per-step boundary ledger and the
+    /// per-step TS/rating resolve walk it instead of all 3*n_triangles slots.
+    std::vector<int> bc_nonwall_slots_;
+    /// Set whenever a slot's BC TYPE changes (parse-time drain, API setter);
+    /// bc_nonwall_slots_ is rebuilt on the next resolve.
+    bool bc_nonwall_dirty_ = true;
+    /// Per-node dedupe for the coupling term of the per-batch mass balance;
+    /// a member so the batch does not build and destroy a hash set each time.
+    std::unordered_set<int> mb_seen_nodes_;
     /// Sim time since the last rainfall/forcing refresh (gage-scale cadence).
     double co_forcing_elapsed_ = 0.0;
     bool   co_forcing_first_   = true;
@@ -273,6 +354,12 @@ private:
     /// mass balance + output refresh. Replaces the whole window state machine
     /// on the marcher path.
     void coAdvanceStep(SimulationContext& ctx, double dt, double t);
+    /// True when the batch about to run (span @p dt) is the one that closes
+    /// the current output-refresh window — decided BEFORE the advance so the
+    /// continuity snapshot is only taken on batches that will use it.
+    bool refreshDue(const SimulationContext& ctx, double dt) const;
+    /// Recompute the render fields from the current state.
+    void refreshRenderFields();
 
     bool   active_           = false;
     double sim_time_         = 0.0;
@@ -356,7 +443,8 @@ private:
 
     /// Accumulate the global 2D mass-balance terms for one executed step
     /// into ctx.mass_balance_2d (rainfall, coupling, outfall, boundary,
-    /// latest storage) and the evaporation loss into state_.evap_loss_total.
+    /// infiltration, latest storage) and the evaporation loss into
+    /// state_.evap_loss_total.
     /// All terms in the 2D solver's SI internal units (m³).
     void accumulateMassBalance(SimulationContext& ctx, double dt);
 };

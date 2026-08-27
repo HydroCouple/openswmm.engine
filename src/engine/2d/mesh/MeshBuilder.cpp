@@ -233,4 +233,26 @@ void recomputeVertexZDependents(MeshData& mesh, int vidx) {
     }
 }
 
+void recomputeAllZDependents(MeshData& mesh) {
+    const int nt = mesh.n_triangles();
+    for (int t = 0; t < nt; ++t) {
+        // Identical body to recomputeVertexZDependents above, minus the
+        // incidence filter — same operands in the same order, so the results
+        // are bitwise equal to recomputing vertex by vertex.
+        const int v0 = mesh.tri_v0[t];
+        const int v1 = mesh.tri_v1[t];
+        const int v2 = mesh.tri_v2[t];
+
+        const double z0 = mesh.vz[v0];
+        const double z1 = mesh.vz[v1];
+        const double z2 = mesh.vz[v2];
+
+        mesh.tri_cz[t] = (z0 + z1 + z2) / 3.0;
+
+        mesh.edge_mz[t * 3 + 0] = 0.5 * (z1 + z2);
+        mesh.edge_mz[t * 3 + 1] = 0.5 * (z2 + z0);
+        mesh.edge_mz[t * 3 + 2] = 0.5 * (z0 + z1);
+    }
+}
+
 } // namespace openswmm::twoD

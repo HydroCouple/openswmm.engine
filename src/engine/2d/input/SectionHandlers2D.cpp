@@ -9,6 +9,7 @@
 #include "SectionHandlers2D.hpp"
 
 #include "../data/BoundaryData.hpp"
+#include "../../input/InputParseUtils.hpp"
 #include "../../input/InputReader.hpp"
 #include "../../input/Tokenizer.hpp"
 #include "../../core/ErrorCodes.hpp"
@@ -635,6 +636,161 @@ std::string parse2DEdgeConveyanceLine(
 
 
 // ============================================================================
+// §5.5 track I — [2D_INFILTRATION_OPTIONS] / [2D_INFILTRATION_DEFAULTS] /
+// [2D_INFILTRATION] line parsers
+// ============================================================================
+
+namespace {
+
+// Shared tail of a [2D_INFILTRATION_DEFAULTS] / [2D_INFILTRATION] row:
+//
+//     METHOD  [P1 .. P5]  [DEST]
+//
+// starting at tokens[first]. Parameter columns are POSITIONAL and carry
+// PROJECT UNITS — they are stored verbatim; Infil2D::resolve() does the
+// conversion. "-" means "unset" and leaves the slot at its default 0.
+// Trailing columns a method does not use may be omitted (the writer trims
+// them with infil2DParamCount), so a row's length varies by method. DEST is
+// recognised as the final token when it is neither numeric nor "-"; absent,
+// the Infil2DRow default (LOST) stands.
+std::string parseInfil2DRowTail(const std::vector<std::string>& tokens,
+                                std::size_t first,
+                                const char* section,
+                                Infil2DRow& row)
+{
+    if (tokens.size() <= first)
+        return std::string(section) + " missing METHOD";
+
+    if (!parseInfil2DMethod(tokens[first], row.method, row.has_method))
+        return std::string(section) + " unknown METHOD: " + tokens[first];
+
+    std::size_t end = tokens.size();
+    if (end > first + 1) {
+        const std::string& last = tokens[end - 1];
+        bool numeric = false;
+        (void)tryParseDouble(last, numeric);
+        if (!numeric && last != "-") {
+            if (!parseInfil2DDest(last, row.dest))
+                return std::string(section) + " unknown DEST: " + last;
+            --end;
+        }
+    }
+
+    for (std::size_t k = first + 1; k < end; ++k) {
+        const std::size_t idx = k - (first + 1);
+        if (idx >= static_cast<std::size_t>(kInfil2DMaxParams))
+            return std::string(section) + " too many parameter columns (max "
+                   + std::to_string(kInfil2DMaxParams) + ")";
+        if (tokens[k] == "-") continue;  // unset
+        bool ok = false;
+        row.p[idx] = tryParseDouble(tokens[k], ok);
+        if (!ok)
+            return std::string(section) + " invalid parameter: " + tokens[k];
+    }
+
+    return {};
+}
+
+// makeSectionHandler's sibling for the [2D_INFILTRATION*] family. Those
+// sections write into the Infil2D owned by SurfaceRouter2D, which — unlike the
+// mesh, options and pending-row buffers — is reached through
+// ctx.twod_io.infil rather than a captured reference. Null (engine built
+// without 2D, or a detached context) means the section is skipped, matching
+// how every other twod_io consumer runtime-guards.
+using InfilLineParser =
+    std::function<std::string(const std::vector<std::string>&, Infil2D&)>;
+
+input::SectionHandler makeInfilSectionHandler(InfilLineParser line_parser) {
+    return [lp = std::move(line_parser)](
+        openswmm::SimulationContext& ctx,
+        const std::vector<std::string>& lines)
+    {
+        Infil2D* infil = ctx.twod_io.infil;
+        if (!infil) return;
+        for (const auto& raw : lines) {
+            auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+            if (tokens.empty()) continue;
+            std::string err = lp(tokens, *infil);
+            if (!err.empty()) {
+                ctx.error_code    = 5;  // SWMM_ERR_PARSE (see makeSectionHandler)
+                ctx.error_message = "[2D] " + err + " — line: " + raw;
+                return;
+            }
+        }
+    };
+}
+
+} // anonymous namespace
+
+
+std::string parse2DInfiltrationOptionsLine(
+    const std::vector<std::string>& tokens, Infil2D& infil)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 2)
+        return "[2D_INFILTRATION_OPTIONS] needs PARAMETER VALUE";
+
+    if (!iequals(tokens[0], "INFIL_STEP"))
+        return "Unknown 2D_INFILTRATION_OPTIONS parameter: " + tokens[0];
+
+    // Same duration grammar as WET_STEP / DRY_STEP in [OPTIONS].
+    const double secs = openswmm::input::parse_time_seconds(tokens[1]);
+    if (secs < 0.0)
+        return "[2D_INFILTRATION_OPTIONS] invalid INFIL_STEP (expected "
+               "hh:mm:ss >= 0): " + tokens[1];
+
+    infil.options().infil_step = secs;
+    return {};
+}
+
+
+std::string parse2DInfiltrationDefaultsLine(
+    const std::vector<std::string>& tokens, Infil2D& infil)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 2)
+        return "[2D_INFILTRATION_DEFAULTS] needs TAG METHOD [P1..P5] [DEST]";
+
+    Infil2DDefault entry;
+    entry.tag = tokens[0];
+
+    const std::string err = parseInfil2DRowTail(
+        tokens, 1, "[2D_INFILTRATION_DEFAULTS]", entry.row);
+    if (!err.empty()) return err;
+
+    infil.defaults().push_back(std::move(entry));
+    return {};
+}
+
+
+std::string parse2DInfiltrationLine(
+    const std::vector<std::string>& tokens, Infil2D& infil)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 2)
+        return "[2D_INFILTRATION] needs CELL METHOD [P1..P5] [DEST]";
+
+    // CELL is 1-BASED in the file, 0-based in Infil2DOverride::tri. Only the
+    // lower bound is checked here — the mesh may not be loaded yet, so the
+    // upper bound is Infil2D::resolve()'s job.
+    bool ok = false;
+    const int cell = tryParseInt(tokens[0], ok);
+    if (!ok || cell < 1)
+        return "[2D_INFILTRATION] invalid CELL index (1-based): " + tokens[0];
+
+    Infil2DOverride entry;
+    entry.tri = cell - 1;
+
+    const std::string err = parseInfil2DRowTail(
+        tokens, 1, "[2D_INFILTRATION]", entry.row);
+    if (!err.empty()) return err;
+
+    infil.overrides().push_back(std::move(entry));
+    return {};
+}
+
+
+// ============================================================================
 // register2DSections
 // ============================================================================
 
@@ -703,6 +859,18 @@ void register2DSections(MeshData& mesh,
             return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
         }));
 
+    // §5.5 track I — per-cell infiltration. Rows land in the Infil2D reached
+    // through ctx.twod_io.infil and are resolved against the mesh (tag/cell
+    // precedence) in SurfaceRouter2D::initialize().
+    registry.register_custom("2D_INFILTRATION_OPTIONS",
+        makeInfilSectionHandler(parse2DInfiltrationOptionsLine));
+
+    registry.register_custom("2D_INFILTRATION_DEFAULTS",
+        makeInfilSectionHandler(parse2DInfiltrationDefaultsLine));
+
+    registry.register_custom("2D_INFILTRATION",
+        makeInfilSectionHandler(parse2DInfiltrationLine));
+
     // [2D_MESH_FILE] — capture only the first FILE token; mesh is loaded
     // after the main .inp is fully parsed (see SWMMEngine::open).
     registry.register_custom("2D_MESH_FILE",
@@ -712,7 +880,14 @@ void register2DSections(MeshData& mesh,
             for (const auto& raw : lines) {
                 auto tokens = openswmm::input::Tokenizer::tokenize(raw);
                 if (tokens.size() >= 2 && iequals(tokens[0], "FILE")) {
-                    options.mesh_file = tokens[1];
+                    // Path may contain spaces; the tokenizer split an unquoted
+                    // path, so rejoin the tokens after FILE (a quoted path is a
+                    // single token already). Fixes meshes like "My Model.2dm".
+                    std::string path = tokens[1];
+                    for (std::size_t k = 2; k < tokens.size(); ++k) { path += ' '; path += tokens[k]; }
+                    if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
+                        path = path.substr(1, path.size() - 2);
+                    options.mesh_file = path;
                     return; // only first FILE line
                 }
             }
@@ -728,6 +903,7 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                                   Infil2D* infil,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir,
                                    std::vector<std::string>* warnings)
@@ -778,6 +954,29 @@ std::string load2DMeshExternalFile(MeshData& mesh,
             return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
         }));
 
+    // §5.5.5 — [2D_INFILTRATION*] are per-cell mesh attributes, so they follow
+    // the mesh into the .2dm. The registry the main .inp uses reaches its
+    // target through ctx.twod_io.infil, which the detached context below does
+    // not carry, so the sidecar rows are parsed into a scratch object bound
+    // here by reference and transplanted after the read. Per SECTION
+    // precedence: a section the sidecar carries REPLACES the inline one
+    // (external overrides inline, the [2D_MESH_FILE] rule) rather than
+    // appending to it, so no row can be counted twice; sections the sidecar
+    // omits keep whatever the .inp supplied.
+    Infil2D sidecar_infil;
+    mini.register_custom("2D_INFILTRATION_OPTIONS",
+        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
+            return parse2DInfiltrationOptionsLine(tokens, sidecar_infil);
+        }));
+    mini.register_custom("2D_INFILTRATION_DEFAULTS",
+        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
+            return parse2DInfiltrationDefaultsLine(tokens, sidecar_infil);
+        }));
+    mini.register_custom("2D_INFILTRATION",
+        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
+            return parse2DInfiltrationLine(tokens, sidecar_infil);
+        }));
+
     // The external .2dm may carry its own `;; UNITS:` header. Scan first
     // so SurfaceRouter2D::initialize sees the right flag before it runs.
     prescan2DUnitsHeader(p.string(), opts);
@@ -786,6 +985,15 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     openswmm::SimulationContext  dummy;
     if (!reader.read(p.string(), dummy)) {
         return "2D_MESH_FILE: error reading '" + p.string() + "': " + dummy.error_message;
+    }
+
+    if (infil != nullptr) {
+        if (!sidecar_infil.defaults().empty())
+            infil->defaults() = std::move(sidecar_infil.defaults());
+        if (!sidecar_infil.overrides().empty())
+            infil->overrides() = std::move(sidecar_infil.overrides());
+        if (sidecar_infil.options().infil_step > 0.0)
+            infil->options() = sidecar_infil.options();
     }
     return {};
 }

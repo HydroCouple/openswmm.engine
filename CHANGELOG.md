@@ -23,6 +23,55 @@ retroactive.
 
 ### Performance
 
+- **FV published node stages no longer stand above the conduits they connect.**
+  The face-consistent stage reconstruction covered only degree-2 pass-through
+  junctions -- the set the solver splices -- so on a branching network most
+  nodes published the solver's own head. Measured on `Example1.inp` under
+  `FLOW_ROUTING FV` at `FV_MIN_CELLS 1`, where a conduit is a single cell and
+  the comparison is exact, those nodes sat up to **0.91 ft above their own
+  adjacent cell**, falling ~first-order under refinement -- a datum term, not
+  physics. It survives on nodes with no lateral inflow at all, which rules out
+  "head needed to drive the inflow out".
+
+  The reconstruction now covers storage-less clean junctions at any degree.
+  Two guards make that safe: a face perched ABOVE the node's own water surface
+  is a free overfall and does not vote (without this, a conduit entering 4 ft
+  above the invert read its offset as node depth and drove one junction's
+  reported average from 0.28 ft to 4.11 ft), and a pondable junction demoted to
+  the bucket path above its rim keeps its volume-ledger head.
+
+  Culvert-inlet and flap-gate faces are excluded: those node heads are genuine
+  headwaters. Storage units, outfalls and structure-fed nodes are unchanged.
+
+  After: max +0.0002 ft and -0.0001 ft on the two affected classes. **Routing is
+  untouched** -- continuity identical and the Link Flow Summary byte-identical.
+  Reporting only, on purpose: solver-internal heads double as ghost boundary
+  states under LTS tier holds. Probe and full measurements in
+  `tests/manual/fv_node_stage/`.
+
+- **`FV_CFL_CENSUS_INTERVAL` now does what it says; it was inert for every
+  value.** The explicit FV solver conflated two quantities in one member: the
+  step the last accepted substep took, and the Courant bound the last census
+  returned. The substep tail wrote the taken step — clamped to the time
+  remaining in the routing step, so possibly a tiny fragment — into that
+  member and then zeroed the census countdown to undo the damage, which forced
+  a full face census on every substep no matter what the option was set to.
+
+  The two are now separate. The bound survives a skipped census, which is the
+  entire point of the option, and only a genuine invalidation resets the
+  countdown: a retry (the post-step census having proved the bound
+  inadmissible), a rebuild of the active face lists, a re-tier's accumulator
+  settle, and both macro-cycle exits. A clamp to the routing-step boundary
+  proves nothing about the Courant bound and is no longer written back.
+
+  At the default of 1 this is bit-identical — verified, not asserted:
+  `Example1.inp` under `FLOW_ROUTING FV` produces a byte-identical `.out` at
+  `OMP_NUM_THREADS` 1 and 8 against the same build with the change reverted.
+
+- **Dropped the write-only `f_scale_` face array from the explicit FV solver.**
+  Written at four sites (`initialize`, `computeFaceFlux`, `limitPositivity`,
+  `fireFaces`) and read nowhere in the repository.
+
 - **Model load and initialization: up to 17× faster, and the wall-clock window
   before the first routing step cut on every model size.** A user reported 25
   minutes between clicking Run and the analysis starting on a large model; that
@@ -61,7 +110,74 @@ retroactive.
   written-back `.inp`, across six models covering STREET, IRREGULAR, FV,
   storage and quality.
 
+### Fixed
+
+- **A malformed option value handed to `swmm_options_set` returns
+  `SWMM_ERR_BADPARAM` instead of killing the process.** Thirty of the
+  dispatch's key branches parsed with raw `std::stod`/`std::stoi`, which
+  throw on junk — and an exception crossing the C boundary is
+  `std::terminate`. The guard alone was also not sufficient: two
+  non-throwing families slipped through it — the lenient time parse
+  fabricated `0.0` from junk (`"1e999999"` read back as 3600 s), and
+  `std::stoi` accepted a numeric prefix (`"1.5"` read as 1). All parse
+  sites in the dispatch now use strict wrappers that consume the entire
+  token or reject, covered by an exhaustive malformed-value suite over
+  every settable key. Reachable from any API client, including the MCP
+  server passing through arbitrary text. (`d80bba34`.)
+
+- **The `OPENSWMM_PERF` FV phase split double-counted, and its parts could
+  exceed the whole.** `perf::GatedTimer` accumulated wall time, so a timed
+  phase that called another timed phase booked the child twice — once in the
+  child's accumulator and once inside its own. Three nestings exist:
+  `settleAccumulators` and `restoreState` both call `refreshDepths`, and the
+  boundary-flow callback sits inside the settle window. Two of the three are
+  local-time-stepping only, which is why the symptom appeared only on LTS runs:
+  `total` came out **larger than the routing `step` it is a breakdown of**, for
+  an "unattributed" share of **−16.2 %** on Example1 and **−19.0 %** on a
+  500-conduit graded chain. That is not a quantity that can be negative, and a
+  breakdown whose parts exceed the whole cannot rank optimization targets —
+  the only reason the timers exist.
+
+  Timers now book **self** time: a thread-local tally collects the wall time of
+  timers opening and closing inside the running one, and each timer subtracts it
+  before accumulating. Unattributed time is now **+3.5 % to +6.2 %** across the
+  same four runs. No call site changed, and with `OPENSWMM_PERF` unset the
+  destructor still returns before touching anything.
+
+  The correction changes what the table recommends. `settle` read 2.255 s on the
+  graded chain — 18 % of the reported total — while its own work is 0.007 s;
+  effectively all of it was the two `refreshDepths()` calls already counted under
+  `refreshdepths`. `restore` was the same. The real target is `refreshDepths`, at
+  33 % of total on that deck, and it was not legible before. Evidence and
+  reproduction: `tests/manual/fv_phase_timers/RESULTS.md`.
+
 ### Changed
+
+- **Hydraulics Reference Manual §8.6 and §8.7 rewritten to describe the solver
+  that ships.** §8.6.1 documented junctions as `MIN_SURFAREA` linear reservoirs
+  integrated in time — the BUCKET model, removed when junctions became
+  interfaces. A plain junction has **no storage**: a clean degree-2 junction
+  passes its cells' states straight through, and every other storage-less
+  junction solves its head from an instantaneous flux balance, now written out
+  as equation (8-31). §8.6.5's step 3 and the option table still documented
+  `FV_NODE_CELL_COUPLING` and `FV_JUNCTION_MODEL`, both retired and
+  accept-and-ignore since the interface treatment landed. The node time-step
+  bound (8-32) is now stated to apply to bucket nodes only, which is what
+  `nodeStableDt` implements.
+
+  Two gaps are also closed. The chapter said junction momentum is not conserved
+  without saying what that costs — roughly a millimetre of head per junction
+  from splitting one Riemann problem into two, integrating to a 0.23 m backwater
+  over a 199-junction subcritical chain, which is why the pass-through splice
+  exists. And §8.7 now documents the published node stage (8-33), reconstructed
+  from the incident wet cells rather than read off the solver's head; that rule
+  changed in the previous release and was undocumented.
+
+  A new subsection also answers a recurring question directly: the node is not
+  given half of each connected link's volume, as dynamic wave does, because
+  under finite volume the end cells already hold that water as explicit state.
+  Booking it at the node too was measured twice and rejected twice, at ~0.3 % of
+  routing continuity and −0.005 % per junction.
 
 - **Relicensed from MIT to the Apache License, Version 2.0** (#123, #122). The
   `LICENSE` file now carries the full Apache 2.0 text, retaining the addendum
@@ -77,6 +193,35 @@ retroactive.
   `"Apache-2.0"`.
 
 ### Added
+
+- **A Lagrangian transport engine (LARD) joins the quality solvers.**
+  `QUALITY_SOLVER LAGRANGIAN` routes pollutants with a Lagrangian
+  advection–reaction–dispersion scheme in place of the legacy complete-mix
+  chain: plug-parcel advection on per-link segment stores, first-order
+  `KDECAY`, quality substepping under a `QUALITY_STEP` key, and random-walk
+  particle tracking for longitudinal dispersion (validated against the Elder
+  profile). Water age rides the same engine as a reserved species: `WATER_AGE
+  ON`, a `[WATER_AGE_SOURCES]` table for initial state and boundary ages,
+  `__WATER_AGE__` rows in `[INFLOWS]`, hotstart round-tripping of the aged
+  state (including dry elements), and age columns in the report and binary
+  output. Negative source loads now extract mass deliberately at the node
+  seam in all three quality engines — warned at parse, clamped to the mass
+  actually held, booked to the ledger, and summarised in the report — instead
+  of being silently dropped. The option and API surface lands with it:
+  transport keys in `swmm_options_set`/`_get`, and a C age-source table API
+  (`openswmm_water_age.h`). Configurations the LARD engine does not cover yet
+  (heat, MSX-style reactions, `[TREATMENT]`) announce themselves with bypass
+  warnings at open rather than failing silently. (`24602eb2`, `8c141a5e`,
+  `647a3603`, `b9852cee`, `9f155227`, `d79c8bcf`, `d7b6c079`, `948b2840`,
+  `4639be37`.)
+
+- **FV solver statistics in the report file, and `OPENSWMM_PERF` phase timers
+  for the FV step.** FV runs now emit an "FV Solver Statistics" block —
+  explicit substeps, face-flux evaluations, mean/min/last substep, active-face
+  occupancy and the LTS tier histogram. Setting `OPENSWMM_PERF=1` additionally
+  prints a `[PERF-FV]` line whose bracketed phases sum to `total`, beside the
+  whole-router `step`; the difference between them is unattributed time and is
+  meant to be read as a finding rather than smoothed away.
 
 - **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
   roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —

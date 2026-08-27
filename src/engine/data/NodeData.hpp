@@ -586,6 +586,12 @@ struct NodeData {
     /// @see Legacy: NodeStats[i].maxInflow
     std::vector<double>     stat_max_total_inflow;
 
+    /// Peak outflow released by a storage unit (project flow units). Storage
+    /// only; stays zero elsewhere. Tracked separately from inflow because a
+    /// pond's whole purpose is that the two differ.
+    /// @see Legacy: StorageStats[k].maxFlow (stats.c:588)
+    std::vector<double>     stat_storage_max_outflow;
+
     /// Cumulative lateral inflow volume at each node (ft3).
     /// @see Legacy: NodeStats[i].totLatFlow
     std::vector<double>     stat_lat_inflow_vol;
@@ -713,6 +719,7 @@ struct NodeData {
         stat_max_surcharge_height.assign(un, 0.0);
         stat_max_lat_inflow.assign(un, 0.0);
         stat_max_total_inflow.assign(un, 0.0);
+        stat_storage_max_outflow.assign(un, 0.0);
         stat_lat_inflow_vol.assign(un, 0.0);
         stat_total_inflow_vol.assign(un, 0.0);
         stat_total_outflow_vol.assign(un, 0.0);
@@ -764,6 +771,7 @@ struct NodeData {
         g(stat_max_inflow_date, 0.0); g(stat_time_surcharged, 0.0);
         g(stat_max_surcharge_height, 0.0);
         g(stat_max_lat_inflow, 0.0); g(stat_max_total_inflow, 0.0);
+        g(stat_storage_max_outflow, 0.0);
         g(stat_lat_inflow_vol, 0.0); g(stat_total_inflow_vol, 0.0);
         g(stat_total_outflow_vol, 0.0);
         g(stat_outfall_avg_flow, 0.0); g(stat_outfall_max_flow, 0.0);
@@ -807,6 +815,7 @@ struct NodeData {
         r(stat_max_depth); r(stat_max_overflow); r(stat_max_overflow_date); r(stat_sum_depth);
         r(stat_sum_volume); r(stat_max_depth_date); r(stat_max_rpt_depth); r(stat_max_inflow_date);
         r(stat_time_surcharged); r(stat_max_surcharge_height); r(stat_max_lat_inflow); r(stat_max_total_inflow);
+        r(stat_storage_max_outflow);
         r(stat_lat_inflow_vol); r(stat_total_inflow_vol); r(stat_total_outflow_vol); r(stat_outfall_avg_flow);
         r(stat_outfall_max_flow); r(stat_outfall_periods); r(stat_non_converged_count); r(stat_time_courant_critical);
         r(qual_vol_in); r(lid_drain_qual_vol); r(comments); r(tags);
@@ -846,7 +855,8 @@ struct NodeData {
         e(stat_max_overflow_date); e(stat_sum_depth); e(stat_sum_volume); e(stat_max_depth_date);
         e(stat_max_rpt_depth); e(stat_max_inflow_date); e(stat_time_surcharged);
         e(stat_max_surcharge_height); e(stat_outfall_avg_flow); e(stat_max_lat_inflow);
-        e(stat_max_total_inflow); e(stat_lat_inflow_vol); e(stat_total_inflow_vol);
+        e(stat_max_total_inflow); e(stat_storage_max_outflow);
+        e(stat_lat_inflow_vol); e(stat_total_inflow_vol);
         e(stat_total_outflow_vol); e(stat_outfall_max_flow); e(stat_outfall_periods);
         e(stat_non_converged_count); e(stat_time_courant_critical);
 
@@ -978,6 +988,7 @@ struct NodeData {
         stat_max_surcharge_height.shrink_to_fit();
         stat_max_lat_inflow.shrink_to_fit();
         stat_max_total_inflow.shrink_to_fit();
+        stat_storage_max_outflow.shrink_to_fit();
         stat_lat_inflow_vol.shrink_to_fit();
         stat_total_inflow_vol.shrink_to_fit();
         stat_total_outflow_vol.shrink_to_fit();

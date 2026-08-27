@@ -29,6 +29,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 #include "../core/SimulationContext.hpp"
 
@@ -73,6 +74,47 @@ bool looks_like_library(const std::string& id) {
 
 }  // namespace
 
+std::string parse_component_config_stream(std::istream& in,
+                                          const std::string& label,
+                                          ComponentConfigSections& out) {
+    std::vector<std::string>* current = nullptr;
+    std::string raw;
+    while (std::getline(in, raw)) {
+        const std::string line = strip_comment(raw);
+        if (line.empty()) continue;
+
+        // Section header?
+        const auto lb = line.find('[');
+        if (lb != std::string::npos && line.find(']', lb) != std::string::npos &&
+            line.find_first_not_of(" \t") == lb) {
+            const auto rb = line.find(']', lb);
+            const std::string tag = upper(line.substr(lb + 1, rb - lb - 1));
+            if (tag == "PROCESS_COMPONENTS")
+                return "Component config '" + label +
+                       "' contains a nested [PROCESS_COMPONENTS] section — "
+                       "component files cannot register components (no "
+                       "recursion; TRANSPORT_IO_PLUGIN_CONFIG_PLAN §3.3).";
+            out.sections.emplace_back(tag, std::vector<std::string>{});
+            current = &out.sections.back().second;
+            continue;
+        }
+        if (current == nullptr)
+            return "Component config '" + label +
+                   "' has content before its first [SECTION] header.";
+        current->push_back(line);
+    }
+    return {};
+}
+
+std::string parse_component_config_text(const std::string& text,
+                                        const std::string& label,
+                                        ComponentConfigSections& out) {
+    out.sections.clear();
+    out.source_path = label;
+    std::istringstream in(text);
+    return parse_component_config_stream(in, label, out);
+}
+
 std::string read_component_config(const std::string& path,
                                   const std::string& base_dir,
                                   ComponentConfigSections& out) {
@@ -87,34 +129,7 @@ std::string read_component_config(const std::string& path,
     if (!in.is_open())
         return "Process component config file not found or unreadable: '" +
                out.source_path + "'.";
-
-    std::vector<std::string>* current = nullptr;
-    std::string raw;
-    while (std::getline(in, raw)) {
-        const std::string line = strip_comment(raw);
-        if (line.empty()) continue;
-
-        // Section header?
-        const auto lb = line.find('[');
-        if (lb != std::string::npos && line.find(']', lb) != std::string::npos &&
-            line.find_first_not_of(" \t") == lb) {
-            const auto rb = line.find(']', lb);
-            const std::string tag = upper(line.substr(lb + 1, rb - lb - 1));
-            if (tag == "PROCESS_COMPONENTS")
-                return "Component config '" + out.source_path +
-                       "' contains a nested [PROCESS_COMPONENTS] section — "
-                       "component files cannot register components (no "
-                       "recursion; TRANSPORT_IO_PLUGIN_CONFIG_PLAN §3.3).";
-            out.sections.emplace_back(tag, std::vector<std::string>{});
-            current = &out.sections.back().second;
-            continue;
-        }
-        if (current == nullptr)
-            return "Component config '" + out.source_path +
-                   "' has content before its first [SECTION] header.";
-        current->push_back(line);
-    }
-    return {};
+    return parse_component_config_stream(in, out.source_path, out);
 }
 
 // ===========================================================================

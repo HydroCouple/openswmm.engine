@@ -108,10 +108,15 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
                            double humidity_pct,
                            const RadiativeConfig& cfg) noexcept;
 
-/// Apply one step of radiative exchange to every exchanging element — the
-/// same free surfaces SurfaceExchange uses. No-op unless HEAT_TRANSPORT is
-/// on AND `[HEAT_FLUXES] RADIATIVE_EXCHANGE` is enabled.
-void applyRadiativeExchange(SimulationContext& ctx, double dt);
+/// This module's contribution to the net outward flux at `t_w` [W/m²].
+/// Returns 0 unless HEAT_TRANSPORT is on AND `[HEAT_FLUXES]
+/// RADIATIVE_EXCHANGE` is enabled, so a caller sums it unconditionally.
+///
+/// D-H5e: this module no longer has a binding of its own. It had one, with
+/// its own element traversal and its own explicit conversion, and that is
+/// how it came to relax separately from SurfaceExchange toward a different
+/// equilibrium — making the answer depend on which module ran last.
+double radiativeFluxOut(const SimulationContext& ctx, double t_w) noexcept;
 
 }  // namespace openswmm::transport::heat
 

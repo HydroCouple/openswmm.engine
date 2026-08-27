@@ -55,6 +55,9 @@ void handle_treatment(SimulationContext& ctx, const std::vector<std::string>& li
 /** @brief Parse [LOADINGS] — initial pollutant buildup on subcatchments. */
 void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lines);
 
+/** @brief Parse [INITIAL_QUALITY] — per-node/per-link initial concentrations. */
+void handle_initial_quality(SimulationContext& ctx, const std::vector<std::string>& lines);
+
 } /* namespace openswmm::input */
 
 #endif /* OPENSWMM_ENGINE_QUALITY_HANDLER_HPP */

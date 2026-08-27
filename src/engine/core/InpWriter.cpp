@@ -742,8 +742,31 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // user saved.
     if (o.quality_solver == QualitySolverKind::EULERIAN_ARD)
         std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "EULERIAN_ARD");
+    // X1: same rule for LAGRANGIAN — a save-as must not silently reopen as
+    // LEGACY (the A1a defect shape, third instance guarded).
+    if (o.quality_solver == QualitySolverKind::LAGRANGIAN)
+        std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "LAGRANGIAN");
+    // X3a: the LARD stepping keys ride the same save-as rule — dropping
+    // either silently changes the transport discretization on reopen.
+    if (o.quality_step > 0.0) {
+        char qsb[32];
+        fmt_step(qsb, o.quality_step);
+        std::fprintf(f,"%-20s %s\n",  "QUALITY_STEP",      qsb);
+    }
+    if (o.max_segments_per_link != 100)
+        std::fprintf(f,"%-20s %d\n",  "MAX_SEGMENTS_PER_LINK",
+                     o.max_segments_per_link);
+    // X3b: the RWPT keys ride the same rule.
+    if (o.lard_rwpt)
+        std::fprintf(f,"%-20s %s\n",  "DISPERSION",         "RWPT");
+    if (o.rwpt_seed != 0)
+        std::fprintf(f,"%-20s %d\n",  "RWPT_SEED",          o.rwpt_seed);
     if (o.water_age)
         std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
+    // Same save-as rule: dropping this line silently reverts a fresh-boundary
+    // model to the legacy held-quality backflow on reopen.
+    if (o.outfall_backflow_zero)
+        std::fprintf(f,"%-20s %s\n",  "OUTFALL_BACKFLOW_QUALITY", "ZERO");
     // H1: same rule, same reason — a save-as that dropped this reopened as a
     // model with no temperature tracking, silently (the A1a defect).
     if (o.heat_transport)
@@ -836,6 +859,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n", "FV_TIME_INTEGRATION",
                      sTime[static_cast<int>(fvo.time_integration)]);
         std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
+        if (fvo.pressurized_implicit)
+            std::fprintf(f,"%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
         if (fvo.dispersion > 0.0)
             std::fprintf(f,"%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
         if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
@@ -1601,12 +1626,18 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     // [ORIFICES]
     if(hasLT(ctx,LinkType::ORIFICE)){sec(f,"ORIFICES");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s\n","Name","FromNode","ToNode","Type","Offset","Cd","Gated");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s\n","----------------","----------------","----------------","----------","----------","----------","--------");
+    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n","Name","FromNode","ToNode","Type","Offset","Cd","Gated","CloseTime");
+    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-8s %-10s\n","----------------","----------------","----------------","----------","----------","----------","--------","----------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::ORIFICE)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int orr=ctx.link_subtypes.orifice_row(j);
-    std::fprintf(f,"%-16s %-16s %-16s SIDE       %10.4f %10.4f NO\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),ctx.links.offset1[u],(orr>=0)?ctx.link_subtypes.orifices.cd[static_cast<size_t>(orr)]:0.0);
+    const auto uorr=static_cast<size_t>(orr);
+    // orifice_type: 0 = BOTTOM, 1 = SIDE (LinkSubtypes.hpp). `orate` is stored
+    // as parsed — HOURS, converted at use (SWMMEngine.cpp:2927) — so it is
+    // emitted verbatim. All four were previously hardcoded/dropped, which
+    // destroyed the orientation, the flap gate and the close time on save.
+    const char* otype=(orr>=0&&ctx.link_subtypes.orifices.orifice_type[uorr]!=0.0)?"SIDE":"BOTTOM";
+    std::fprintf(f,"%-16s %-16s %-16s %-10s %10.4f %10.4f %-8s %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),otype,ctx.links.offset1[u],(orr>=0)?ctx.link_subtypes.orifices.cd[uorr]:0.0,ctx.links.has_flap_gate[u]?"YES":"NO",(orr>=0)?ctx.link_subtypes.orifices.orate[uorr]:0.0);
     }}
 
     // [WEIRS]
@@ -1687,6 +1718,27 @@ int writeInpFile(const SimulationContext& ctx_internal,
             ctx.links.pump_curve_name[u].c_str(),0.0,0.0,0.0,xbarrels);
         continue;
     }
+    // IRREGULAR cross-sections reference a named [TRANSECTS] entry: Geom1 is
+    // the transect NAME, not a dimension. The parser retains it in
+    // pump_curve_name (and keeps xsect_geom1 at 0), so falling through to the
+    // numeric emission below wrote the resolver-derived y_full/w_max where the
+    // name belongs — on reload that numeric failed to resolve as a transect
+    // and the conduit silently degenerated to zero area. The trailing zeros
+    // land in w_max/y_bot/r_bot at reparse but the resolver re-derives all of
+    // them from the transect table; barrels stay in the tok[6] column. Legacy
+    // SWMM returns right after reading the name, so the tail is harmless there.
+    if(ctx.links.xsect_shape[u]==XsectShape::IRREGULAR){
+        const char* tname=ctx.links.pump_curve_name[u].c_str();
+        // API-built link that resolved a transect without retaining the name.
+        if(!*tname&&ctx.links.xsect_curve[u]>=0&&
+           ctx.links.xsect_curve[u]<ctx.transects.count())
+            tname=ctx.transects.names[static_cast<size_t>(ctx.links.xsect_curve[u])].c_str();
+        std::fprintf(f,"%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
+            ctx.link_names.name_of(j).c_str(),
+            xsName(static_cast<int>(ctx.links.xsect_shape[u])),
+            tname,0.0,0.0,0.0,xbarrels);
+        continue;
+    }
     // CUSTOM cross-sections reference a named shape curve: Geom1 is the max
     // height and the Geom2 slot holds the curve NAME (not a dimension), barrels
     // stay in the Geom5 column. Emitting numeric geometry drops the curve name,
@@ -1748,9 +1800,12 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.transects.length_factor[ut],
         ctx.transects.x_factor[ut],
         ctx.transects.y_factor[ut]);
+    // Full precision on the GR pairs: they are token-parsed on both engines
+    // (column width is not load-bearing) and %.4f silently rounded >4-dp
+    // stations/elevations on every save. Matches the [XSECTIONS] precedent.
     for(int k=0;k<nsta;++k){auto uk=static_cast<size_t>(k);
     if(k%5==0)std::fprintf(f,"GR");
-    std::fprintf(f," %10.4f %10.4f",ctx.transects.elevations[ut][uk],ctx.transects.stations[ut][uk]);
+    std::fprintf(f," %10.15g %10.15g",ctx.transects.elevations[ut][uk],ctx.transects.stations[ut][uk]);
     if(k%5==4||k==nsta-1)std::fprintf(f,"\n");
     }}}
 
@@ -1850,6 +1905,23 @@ int writeInpFile(const SimulationContext& ctx_internal,
     write_obj_comment(f, ctx.pollutants.comments, u);
     const char*un="MG/L";if(ctx.pollutants.units[u]==MassUnits::UG_PER_L)un="UG/L";if(ctx.pollutants.units[u]==MassUnits::COUNTS_PER_L)un="#/L";
     std::fprintf(f,"%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f %10.4f %10.4f\n",pN(ctx,p),un,ctx.pollutants.c_rain[u],ctx.pollutants.c_gw[u],ctx.pollutants.c_rdii[u],ctx.pollutants.k_decay[u],ctx.pollutants.snow_only[u]?"YES":"NO",ctx.pollutants.co_pollut[u]>=0?pN(ctx,ctx.pollutants.co_pollut[u]):"*",ctx.pollutants.co_frac[u],ctx.pollutants.c_dwf[u],ctx.pollutants.init_conc[u]);
+    }}
+
+    // [INITIAL_QUALITY] — per-element initial concentrations (raw constituent
+    // name + raw value retained by the store; resolved element names preferred,
+    // falling back to the retained raw name for never-resolved rows).
+    if(ctx.initial_quality.count()>0){sec(f,"INITIAL_QUALITY");
+    std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","Scope","Element","Constituent","Value");
+    std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","--------","----------------","----------------","----------");
+    for(int j=0;j<ctx.initial_quality.count();++j){auto u=static_cast<size_t>(j);
+    const auto& iq=ctx.initial_quality;
+    const bool link=iq.is_link[u]!=0;
+    const int ei=iq.elem_idx[u];
+    const char*en;
+    if(link)en=(ei>=0&&ei<ctx.n_links())?ctx.link_names.name_of(ei).c_str():iq.elem_name[u].c_str();
+    else en=(ei>=0&&ei<ctx.n_nodes())?ctx.node_names.name_of(ei).c_str():iq.elem_name[u].c_str();
+    std::fprintf(f,"%-8s %-16s %-16s %10.4f\n",link?"LINK":"NODE",en,
+        iq.constituent[u].c_str(),iq.value[u]);
     }}
 
     // [LANDUSES]

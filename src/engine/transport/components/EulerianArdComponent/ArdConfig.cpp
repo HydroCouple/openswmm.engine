@@ -310,10 +310,13 @@ void applyArdSections(SimulationContext& ctx,
                 "simulation.");
         } else if (ctx.options.quality_solver !=
                    QualitySolverKind::EULERIAN_ARD) {
+            // X1: "the LEGACY engine" became "the selected engine" when
+            // LAGRANGIAN joined the enum — the old wording would have
+            // misnamed the engine on a LARD deck.
             ctx.warnings.push_back(
                 "A transport.ard component is configured but QUALITY_SOLVER "
                 "is not EULERIAN_ARD — its dispersion/boundary/source "
-                "configuration is inert under the LEGACY engine. Set "
+                "configuration is inert under the selected engine. Set "
                 "[OPTIONS] QUALITY_SOLVER EULERIAN_ARD to activate it.");
         } else if (ctx.n_pollutants() == 0 &&
                    ctx.ard_config.any_dispersion()) {

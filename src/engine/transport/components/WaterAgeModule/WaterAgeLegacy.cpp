@@ -39,6 +39,8 @@
 #include <vector>
 
 #include "../../../core/SimulationContext.hpp"
+#include "../../../quality/NegativeSources.hpp"
+#include "../../InitialQualitySeeds.hpp"
 
 namespace openswmm::transport {
 
@@ -87,6 +89,9 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
             std::fill(ws.node_age.begin(), ws.node_age.end(), a0);
             std::fill(ws.link_age.begin(), ws.link_age.end(), a0);
         }
+        // E-A3: per-element [INITIAL_QUALITY] __WATER_AGE__ rows override
+        // the global fill (hotstart wins inside the helper, D-IQ7).
+        applyInitialAgeOverrides(ctx);
         ws.legacy_seeded = true;
     }
 
@@ -126,10 +131,24 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
         const double v_in  = ctx.nodes.qual_vol_in[ui];
         const double a_old = sc.node_old[ui];
         if (v_in <= 0.0) {
-            ws.node_age[ui] = a_old;
+            // OUTFALL_BACKFLOW_QUALITY ZERO: a supplying outfall delivers
+            // fresh (age-zero) boundary water — without this, the held
+            // boundary water ages 1:1 forever and every reversal imports it.
+            ws.node_age[ui] = (ctx.options.outfall_backflow_zero &&
+                               ctx.nodes.type[ui] == NodeType::OUTFALL)
+                                  ? 0.0
+                                  : a_old;
             continue;
         }
-        const double mass_in = sc.age_in[ui] * dt;
+        double mass_in = sc.age_in[ui] * dt;
+        // D-NS1 (X6): a negative age source extracts age·volume, clamped
+        // to what the store holds — counted and warned, not ledgered
+        // (age has no continuity row until A2c). Branch untaken on
+        // non-negative decks.
+        if (mass_in < 0.0 && a_old * v_old + mass_in < 0.0) {
+            quality::bookNegativeAgeClamp(ctx, i);
+            mass_in = -(a_old * v_old);
+        }
         const double a_in    = mass_in / v_in;
         const double a_max   = std::max(a_old, a_in);
         double a_new = (v_old > kZeroVolume)

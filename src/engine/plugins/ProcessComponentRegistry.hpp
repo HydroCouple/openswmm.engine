@@ -88,6 +88,13 @@ std::string read_component_config(const std::string& path,
                                   const std::string& base_dir,
                                   ComponentConfigSections& out);
 
+/// Parse config TEXT (same dialect/rules as read_component_config) —
+/// E-C3's swmm_reactions_check_text / apply_text surface. @p label names
+/// the source in diagnostics.
+std::string parse_component_config_text(const std::string& text,
+                                        const std::string& label,
+                                        ComponentConfigSections& out);
+
 /// Apply hook: consume the parsed config into engine state. Push
 /// diagnostics into `errors` (fatal) — never throw.
 using ComponentConfigApply =

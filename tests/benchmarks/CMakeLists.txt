@@ -8,6 +8,7 @@
 #   bench_engine_vs_legacy      — wall-time comparison: new engine vs legacy
 #   bench_timeseries_lookup     — cursor-based vs linear scan for time series
 #   bench_hydraulics            — SIMD vs scalar routing kernel
+#   bench_xsect_eval            — IRREGULAR cross-section evaluator per-op cost
 #
 # See: docs/MASTER_IMPLEMENTATION_PLAN.md Phase 9
 #
@@ -76,6 +77,45 @@ add_custom_command(TARGET bench_model_load POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:bench_model_load>
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:bench_model_load>
+)
+
+# ---------------------------------------------------------------------------
+# bench_xsect_eval — per-op timings of the IRREGULAR cross-section evaluation
+# chain on the transect tables a real deck builds
+# (plans/XSECT_LOOKUP_ACCEL_PLAN.md phase 0/1 gates).
+#
+# Like bench_model_load it opens decks named on the command line and reports
+# CSV, so it needs its own main() and cannot use benchmark::benchmark_main.
+# It reaches into src/engine directly (XSectKernels/XSectBatch are internal
+# headers), which is why it links the engine target rather than the public API
+# alone.
+# ---------------------------------------------------------------------------
+add_executable(bench_xsect_eval bench_xsect_eval.cpp)
+
+target_link_libraries(bench_xsect_eval PRIVATE openswmm_engine)
+
+target_include_directories(bench_xsect_eval
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+# The bench times BOTH lookup variants' kernels through the engine it links, so
+# its TU must agree with the engine on which one is compiled in — otherwise the
+# fused-pair kernel it calls and the one the engine built disagree on the
+# normalization argument (y_full vs 1/y_full).
+if(OPENSWMM_FAST_XSECT_LOOKUP)
+    target_compile_definitions(bench_xsect_eval PRIVATE SWMM_XSECT_FAST_LOOKUP)
+endif()
+
+set_target_properties(bench_xsect_eval PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+add_custom_command(TARGET bench_xsect_eval POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:bench_xsect_eval>
+        ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:bench_xsect_eval>
 )
 
 # The two load-optimization ctest gates are registered in tests/CMakeLists.txt,

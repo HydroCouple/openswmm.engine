@@ -631,7 +631,7 @@ is given by:
 
 where *W*<sub>max</sub> is the conduit's maximum width, *Y*<sub>full</sub> is its full
 depth, and Y is depth of flow. This equation applies to
-\f$\frac{Y}{Y_{full}}\f$ values between 0.985257 and 1.7. Below this range
+\f$\frac{Y}{Y_{full}}\f$ values between 0.985257 and 1.78. Below this range
 the slot is not used while above it the slot width relative to *W*<sub>max</sub>
 is clamped at 0.01. The range's lower limit was chosen so that the width
 computed from equation 3-30 is the same as the width across a circular

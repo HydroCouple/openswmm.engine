@@ -46,8 +46,10 @@
 #include <cstdio>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_output.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -642,23 +644,52 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     ASSERT_FALSE(ctx.heat_config.radiative_exchange);
     ASSERT_EQ(ctx.n_subcatches(), 2);
 
-    // SETUP, and the single most important line in this file: S1 must carry
-    // run-on whose temperature H5a does NOT know. If these two are equal the
-    // deck has collapsed back to a cascade, the divisor cannot be got wrong,
-    // and everything below passes for a reason unrelated to the fix.
-    ASSERT_GT(ctx.subcatches.runon_inflow[0], hs.subcatch_runon_temp_rate[0])
-        << "S1's run-on (" << ctx.subcatches.runon_inflow[0]
-        << " cfs) is fully accounted for by the known rate ("
-        << hs.subcatch_runon_temp_rate[0] << " cfs), so the LID underdrain "
-           "is not returning. Nothing here can tell the two divisors apart.";
+    // SETUP: both extra contributors must be returning water, or this is
+    // the cascade deck again under another name.
+    ASSERT_GT(ctx.subcatches.runon_inflow[0], 0.0)
+        << "no run-on reached S1 — the LID underdrain is not returning";
     ASSERT_GT(ctx.subcatches.runon_inflow[1], 0.0)
         << "no run-on reached S2 — the outfall RouteTo column did not parse";
+
+    // COMPLETENESS, and the single most important assertion in this file.
+    //
+    // It used to read the other way round. H5a could not supply a
+    // temperature for the LID underdrain — a drain's temperature is a
+    // per-layer quantity that did not exist until H5b — so this deck
+    // deliberately carried an UNCOUNTED contributor and the gate asserted
+    // that `runon_inflow` exceeded the known rate, to prove the two divisors
+    // could be told apart.
+    //
+    // H5b supplies it, so the two now coincide (measured 0.9797978893380731
+    // for both) and the old assertion fails. That is the phase doing its
+    // job, and the assertion inverts into the stronger claim it was always
+    // reaching for: **every cfs of run-on has a known temperature.** A
+    // fourth contributor added to `runon_inflow` without a matching
+    // `addRunonTemperatureAt` fires here, which is the failure A3 shipped
+    // and A4 found.
+    //
+    // Note what this costs: with every contributor counted, dividing by
+    // `subcatches.runon_inflow` instead of `subcatch_runon_temp_rate` is now
+    // arithmetically identical, so A3's defect is UNREPRESENTABLE in the
+    // heat track rather than merely absent. This assertion is what keeps it
+    // that way.
+    EXPECT_NEAR(hs.subcatch_runon_temp_rate[0], ctx.subcatches.runon_inflow[0],
+                1.0e-12)
+        << "S1 receives " << ctx.subcatches.runon_inflow[0] << " cfs of "
+           "run-on but only " << hs.subcatch_runon_temp_rate[0] << " cfs of "
+           "it has a temperature. Some contributor is adding to the flow "
+           "path without going through addRunonTemperatureAt.";
+    EXPECT_NEAR(hs.subcatch_runon_temp_rate[1], ctx.subcatches.runon_inflow[1],
+                1.0e-12)
+        << "S2 receives " << ctx.subcatches.runon_inflow[1] << " cfs of "
+           "run-on but only " << hs.subcatch_runon_temp_rate[1] << " cfs of "
+           "it has a temperature.";
 
     // (0) The volume ledger must be in ft3. `RunoffSoA::area` is ft2 and
     //     LID-excluded; `ctx.subcatches.area` is the deck's USER area units,
     //     so reaching for the obvious one is a 43560x error here and not the
     //     LID-footprint double-count it reads as. A temperature is intensive
-    //     and the area cancels inside `deltaT`, so the flux cannot see it —
+    //     and the area cancels inside `relaxT`, so the flux cannot see it —
     //     the ledger can. Five acres under three hours of 2 in/hr rain hold
     //     far more than a cubic foot; under the substitution the whole
     //     subcatchment ledgers 0.78 ft3.
@@ -691,10 +722,13 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     //     rain temperature exactly.
     EXPECT_NEAR(hs.subcatch_runoff_temp[0], kFloorC, 1.0e-9)
         << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C. Its only "
-           "run-on is a LID underdrain whose temperature arrives with H5b, "
-           "so the known rate is zero and the fallback is the rain "
-           "temperature. A lower value means the run-on volume is being "
-           "divided into an accumulator that contributor never wrote to.";
+           "run-on is a LID underdrain, which since H5b leaves at its own "
+           "storage-layer temperature — and with no flux enabled the whole "
+           "column is still at the " << kFloorC << " C it was rained on "
+           "with. Before H5b this held for a different reason: the known "
+           "rate was zero and the fallback was the rain temperature. Both "
+           "answers are " << kFloorC << ", which is why the deck could not "
+           "tell them apart and the completeness assertion above exists.";
 
     // (3) S2's counted contributor must actually be carried. Without it the
     //     same fallback returns exactly the rain temperature, so this is a
@@ -860,4 +894,183 @@ TEST(HeatWatershedTest, HeatOffLeavesTheWatershedStateEmpty) {
            "(lesson 52: reaching loadersNeeded is not reaching the stage)";
     EXPECT_TRUE(ctx.heat_state.subcatch_runon_temp_rate.empty());
     swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// The subcatchment __TEMPERATURE__ column must actually be WRITTEN.
+//
+// Found 2026-08-22 by tests/parity/transport/heat_parity.inp on its first run:
+// nodes and links carried live temperature (-4.147...17.66 degC) while EVERY
+// subcatchment read exactly 0.0 for the whole run. There was an age writer at
+// the subcatchment loop and no temperature sibling, so subcatch_quality kept
+// its assign(..., 0.0) and the output plugin faithfully wrote the zero.
+//
+// The column was in the header the whole time. That is why the deck round's
+// own column-presence check would have passed over it, and why this gate
+// reads VALUES out of the finished .out rather than asking whether the column
+// exists (lesson 139).
+//
+// It reads the .out and not ctx.heat_state deliberately: the state was always
+// correct, and a gate on the state cannot fail on this defect (lesson 104).
+TEST(HeatWatershedTest, SubcatchmentTemperatureColumnIsWrittenToTheOutput) {
+    DeckOpts o{};
+    o.surface = true;
+    o.air_f   = 85.0;       // well away from both source values below, so a
+                            // written column cannot coincide with a constant
+    write_heat_cfg("_h5t.heat", 8.0, 14.0, o);
+    write_deck("_h5t.inp", "_h5t.heat", o);
+
+    SWMM_Engine e = run_and_hold("_h5t.inp", "_h5t.rpt", "_h5t.out");
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    ASSERT_TRUE(ctx.options.heat_transport) << "deck did not enable heat";
+    ASSERT_TRUE(ProducedRunoff(ctx)) << "no runoff — the deck, not the writer";
+    const int nsc = ctx.n_subcatches();
+    ASSERT_GT(nsc, 0);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    SWMM_Output h = swmm_output_open("_h5t.out");
+    ASSERT_NE(h, nullptr) << "the run produced no readable .out";
+
+    // No pollutants on this deck and no WATER_AGE, so __TEMPERATURE__ is the
+    // one reported species: subcatchment attribute POLLUT_BASE + 0.
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 1)
+        << "the reported-species list is not what this gate assumes; the "
+           "attribute index below would then read a different column";
+    const int attr = SWMM_OUT_SUBCATCH_POLLUT_BASE + 0;
+
+    const int n_periods = swmm_output_get_period_count(h);
+    ASSERT_GT(n_periods, 2);
+
+    // Two independent things have to hold, and the first alone is what a
+    // careless version of this gate would assert.
+    //
+    //   (1) the column is not identically zero  — catches "no writer at all",
+    //       which is the defect;
+    //   (2) the column VARIES across periods   — catches a writer that puts
+    //       a constant there, which would satisfy (1) and still be wrong.
+    bool any_nonzero = false;
+    double first_seen = 0.0;
+    bool have_first = false;
+    bool varies = false;
+
+    // `swmm_output_get_subcatch_result(handle, period, var, values)` — one
+    // VARIABLE across all subcatchments. Not `..._get_subcatch_attribute`,
+    // whose second parameter is a subcatchment INDEX, not an attribute code:
+    // passing the attribute there indexes past the end of the object list and
+    // returns -1 for every period, so the gate fails on the read and never
+    // reaches what it is about.
+    std::vector<float> v(static_cast<std::size_t>(nsc));
+    for (int period = 0; period < n_periods; ++period) {
+        ASSERT_EQ(swmm_output_get_subcatch_result(h, period, attr, v.data()), 0)
+            << "could not read the temperature column at period " << period;
+        for (int s = 0; s < nsc; ++s) {
+            const double t = static_cast<double>(v[static_cast<std::size_t>(s)]);
+            if (t != 0.0) any_nonzero = true;
+            if (!have_first) { first_seen = t; have_first = true; }
+            else if (std::fabs(t - first_seen) > 1e-6) varies = true;
+        }
+    }
+    swmm_output_close(h);
+
+    EXPECT_TRUE(any_nonzero)
+        << "every subcatchment temperature in the .out is exactly 0.0 across "
+        << n_periods << " periods — the column exists and nothing writes it";
+    EXPECT_TRUE(varies)
+        << "the subcatchment temperature column is a constant across the "
+           "whole run; a writer that emits one number is not reporting state";
+}
+
+// A dry subcatchment still reports its temperature.
+//
+// This gates the one DELIBERATE divergence in the fix: the temperature write
+// sits OUTSIDE the has_runoff gate that the age column beside it obeys. Age is
+// gated because legacy's washoff convention says a subcatchment producing
+// nothing reports nothing. Temperature cannot borrow that convention, because
+// 0 degC is a real temperature and cannot double as "no water" — the reasoning
+// H1 applied at nodes and links, and the reason D-H5c exists at all: the
+// dry-element value is the deck's choice (HOLD | AIR | DEFAULT), so blanking
+// it here would discard a number the deck asked for.
+//
+// Without this gate, moving the write back inside has_runoff would pass every
+// other heat gate in this file.
+TEST(HeatWatershedTest, DrySubcatchmentStillReportsATemperature) {
+    DeckOpts o{};
+    o.surface        = true;
+    o.air_f          = 85.0;
+    o.rain_stop_min  = 15;      // rain for 15 minutes, then dry out
+    // S2 SITS ON A ZERO GAGE, and that is what makes this gate work.
+    //
+    // Stopping the rain is NOT enough, and the first two writings of this
+    // gate both failed on it. Measured: at 60 minutes the subcatchments are
+    // still shedding 0.0624 cfs, so the SETUP leg fired; at 360 minutes the
+    // REPORTED runoff column reads a hard 0.0 for 44 of 72 periods and the
+    // gate passed -- but it passed with the write moved INSIDE the has_runoff
+    // gate too, which is the one thing it exists to catch.
+    //
+    // The reason is that the two "dry"s are different predicates. The writer
+    // tests `runoff[s] != 0.0`, an EXACT double comparison on a decaying
+    // quantity that essentially never turns false; the gate reads the .out's
+    // float column, which rounds to 0.0f long before. A period can be dry to
+    // the reader and wet to the writer, and every one of those 44 was.
+    //
+    // A subcatchment on a gage that never rains is dry to both: runoff is
+    // exactly 0.0 from the first step. That is the only fixture in this file
+    // that can separate the two placements.
+    o.starve_receiver = true;
+    o.dry_policy     = "HOLD";  // the state keeps its last value when dry
+    write_heat_cfg("_h5u.heat", 8.0, 14.0, o);
+    write_deck("_h5u.inp", "_h5u.heat", o);
+
+    SWMM_Engine e = run_and_hold("_h5u.inp", "_h5u.rpt", "_h5u.out");
+    ASSERT_NE(e, nullptr);
+    const int nsc = as_cpp_engine(e).context().n_subcatches();
+    ASSERT_GT(nsc, 0);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    SWMM_Output h = swmm_output_open("_h5u.out");
+    ASSERT_NE(h, nullptr);
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 1);
+    const int t_attr = SWMM_OUT_SUBCATCH_POLLUT_BASE + 0;
+    const int n_periods = swmm_output_get_period_count(h);
+
+    std::vector<float> q(static_cast<std::size_t>(nsc));
+    std::vector<float> t(static_cast<std::size_t>(nsc));
+    int dry_periods_seen = 0;
+    int dry_with_temperature = 0;
+
+    // One VARIABLE across all subcatchments — see the note in the gate above
+    // on why this is not `..._get_subcatch_attribute`.
+    for (int period = 0; period < n_periods; ++period) {
+        ASSERT_EQ(swmm_output_get_subcatch_result(
+                      h, period, SWMM_OUT_SUBCATCH_RUNOFF, q.data()), 0);
+        ASSERT_EQ(swmm_output_get_subcatch_result(
+                      h, period, t_attr, t.data()), 0);
+        for (int s = 0; s < nsc; ++s) {
+            const auto us = static_cast<std::size_t>(s);
+            if (static_cast<double>(q[us]) != 0.0) continue;
+            ++dry_periods_seen;
+            if (static_cast<double>(t[us]) != 0.0) ++dry_with_temperature;
+        }
+    }
+    swmm_output_close(h);
+
+    // SETUP leg. If the rain never stops, or runoff never reaches zero in the
+    // reported periods, the assertion below is vacuous — say so rather than
+    // pass. This is the leg the cascade gate's falsifier ii landed on, which
+    // is what a SETUP leg is for.
+    ASSERT_GT(dry_periods_seen, 0)
+        << "no subcatchment-period in this run has zero runoff, so the deck "
+           "never reaches the dry case and this gate proved nothing — fix the "
+           "deck (rain_stop_min / end_min), not the assertion";
+
+    EXPECT_EQ(dry_with_temperature, dry_periods_seen)
+        << dry_periods_seen - dry_with_temperature << " of " << dry_periods_seen
+        << " dry subcatchment-periods report 0.0 degC. The temperature write "
+           "has been moved inside the has_runoff gate, which blanks a real "
+           "state that DRY_ELEMENT_TEMPERATURE exists to let the deck choose.";
 }

@@ -64,7 +64,9 @@ typedef enum SWMM_RunoffTotal {
     SWMM_RUNOFF_RUNOFF     = 3, /**< Cumulative surface runoff volume. */
     SWMM_RUNOFF_SNOWREMOV  = 4, /**< Cumulative snow removal volume. */
     SWMM_RUNOFF_INITSTORE  = 5, /**< Initial surface storage volume. */
-    SWMM_RUNOFF_FINALSTORE = 6  /**< Final surface storage volume. */
+    SWMM_RUNOFF_FINALSTORE = 6, /**< Final surface storage volume. */
+    SWMM_RUNOFF_INITSNOW   = 7, /**< Initial snow cover volume (SWE + free water). */
+    SWMM_RUNOFF_FINALSNOW  = 8  /**< Final snow cover volume (SWE + free water). */
 } SWMM_RunoffTotal;
 
 /** @brief Routing mass balance component codes. */

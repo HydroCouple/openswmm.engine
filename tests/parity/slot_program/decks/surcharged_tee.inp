@@ -1,0 +1,44 @@
+[TITLE]
+Slot program fixture (e): surcharged tee - a degree-3 junction held above
+its crown by two supplied branches meeting one undersized main. Exercises
+the pressurized-junction path (R2's fold-in) and the feedback bound.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         FV
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             02:00:00
+REPORT_STEP          00:01:00
+ROUTING_STEP         0.5
+FV_SLOT_CELERITY     100
+LENGTHENING_STEP     0
+
+[JUNCTIONS]
+A0     102.0 40.0 0 0 0
+B0     102.0 40.0 0 0 0
+TEE    100.0 40.0 0 0 0
+
+[OUTFALLS]
+OF     98.0 FREE NO
+
+[CONDUITS]
+CA     A0   TEE 500 0.013 0 0 0
+CB     B0   TEE 500 0.013 0 0 0
+CM     TEE  OF  800 0.013 0 0 0
+
+[XSECTIONS]
+CA     CIRCULAR 3 0 0 0 1
+CB     CIRCULAR 3 0 0 0 1
+CM     CIRCULAR 2 0 0 0 1
+
+[INFLOWS]
+A0     FLOW "" FLOW 1.0 1.0 25.0
+B0     FLOW "" FLOW 1.0 1.0 25.0
+
+[REPORT]
+CONTINUITY YES
+FLOWSTATS YES
+NODES ALL
+LINKS ALL

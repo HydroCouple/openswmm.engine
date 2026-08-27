@@ -41,6 +41,7 @@
 
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "../infil/Infil2D.hpp"
 #include "../SurfaceRouter2D.hpp"
 #include "../../input/SectionRegistry.hpp"
 
@@ -162,6 +163,52 @@ std::string parse2DEdgeConveyanceLine(
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_rows);
 
 /**
+ * @brief §5.5 track I — parse a single `[2D_INFILTRATION_OPTIONS]` line.
+ *
+ * Format: `INFIL_STEP <hh:mm:ss>`
+ *   The only key. Accepts the same duration grammar as WET_STEP/DRY_STEP in
+ *   [OPTIONS] (`hh:mm:ss`, `hh:mm`, or plain seconds) and stores seconds in
+ *   Infil2DOptions::infil_step. 0 means "use the project WET_STEP" (D-I1).
+ */
+std::string parse2DInfiltrationOptionsLine(
+    const std::vector<std::string>& tokens, Infil2D& infil);
+
+/**
+ * @brief §5.5 track I — parse a single `[2D_INFILTRATION_DEFAULTS]` line.
+ *
+ * Format: `TAG|*  METHOD  [P1 .. P5]  [DEST]`
+ *   TAG      : `[2D_TRIANGLES]` TAG to match, or `*` for the mesh-wide default.
+ *   METHOD   : HORTON / MODIFIED_HORTON / GREEN_AMPT / MODIFIED_GREEN_AMPT /
+ *              CURVE_NUMBER / CONSTANT / NONE (parseInfil2DMethod).
+ *   P1..P5   : POSITIONAL parameters in PROJECT UNITS, laid out per method
+ *              exactly like legacy [INFILTRATION] (see the table on
+ *              Infil2DRow). `-` means "unset"; trailing columns a method does
+ *              not use may be omitted.
+ *   DEST     : LOST / SUBCATCH_AQUIFER / AQUIFER_2D (default LOST). Only LOST
+ *              is accepted at validation in this release (D-I4).
+ *
+ * Rows are appended to `infil.defaults()` in file order and resolved against
+ * the mesh in Infil2D::resolve() (D-I3: override > tag > `*` > none).
+ */
+std::string parse2DInfiltrationDefaultsLine(
+    const std::vector<std::string>& tokens, Infil2D& infil);
+
+/**
+ * @brief §5.5 track I — parse a single `[2D_INFILTRATION]` line.
+ *
+ * Format: `CELL  METHOD  [P1 .. P5]  [DEST]`
+ *   CELL is the triangle index, **1-BASED in the file** and stored 0-based in
+ *   Infil2DOverride::tri. The upper bound is checked in Infil2D::resolve() —
+ *   the mesh is not necessarily loaded when this section is read.
+ *   The remaining columns are identical to [2D_INFILTRATION_DEFAULTS].
+ *
+ * Rows are appended to `infil.overrides()` and take precedence over every
+ * default row for that cell.
+ */
+std::string parse2DInfiltrationLine(
+    const std::vector<std::string>& tokens, Infil2D& infil);
+
+/**
  * @brief True when @p key (case-insensitive) is a [2D_OPTIONS] parameter
  *        accepted by parse2DOptionsLine.
  *
@@ -219,12 +266,23 @@ void register2DSections(MeshData& mesh,
  * Opens the file referenced by @p mesh_file (resolved relative to
  * @p inp_base_dir if it is a relative path) and parses any
  * [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_VERTEX_NODE_MAP],
- * and [2D_TRIANGLE_NODE_MAP] sections found in it.
+ * [2D_TRIANGLE_NODE_MAP] and [2D_INFILTRATION*] sections found in it.
  *
  * @param mesh         Mesh data to populate.
  * @param opts         Solver options to populate.
  * @param mesh_file    Path from the [2D_MESH_FILE] FILE token.
  * @param inp_base_dir Directory of the parent .inp file (may be empty).
+ * @param infil        Per-cell infiltration to populate from the sidecar's
+ *                     [2D_INFILTRATION*] sections (plan §5.5.5 — these are
+ *                     per-cell mesh attributes, so they travel with the mesh
+ *                     exactly like [2D_VERTICES]/[2D_TRIANGLES]). The .2dm is
+ *                     parsed against a detached context, so the handlers
+ *                     cannot reach it through ctx.twod_io.infil and it must be
+ *                     passed explicitly. May be null (rows are then dropped).
+ *                     A section present in BOTH files resolves in favour of
+ *                     the sidecar, matching the [2D_MESH_FILE] rule that the
+ *                     external file overrides the inline one; rows are never
+ *                     merged, so nothing is double-counted.
  * @param warnings     Optional sink for retired-key warnings (see
  *                     parse2DOptionsLine); pass &ctx.warnings so a legacy
  *                     external mesh file still loads.
@@ -234,6 +292,7 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                                   Infil2D* infil,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir,
                                    std::vector<std::string>* warnings = nullptr);
