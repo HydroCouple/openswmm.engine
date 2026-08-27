@@ -29,6 +29,7 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_links.h"
 #include "../input/PostParseResolver.hpp"
+#include "../hydraulics/Link.hpp"
 #include "../hydraulics/Street.hpp"
 #include "../hydraulics/Transect.hpp"
 #include "TypeHelpers.hpp"
@@ -918,16 +919,24 @@ SWMM_ENGINE_API int swmm_link_get_velocity(SWMM_Engine engine, int idx, double* 
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     if (velocity) {
         auto uidx = static_cast<std::size_t>(idx);
-        double q = ctx.links.flow[uidx];
-        double d = ctx.links.depth[uidx];
-        double y_full = ctx.links.xsect_y_full[uidx];
-        double a_full = ctx.links.xsect_a_full[uidx];
-        // Approximate flow area from depth/y_full ratio times full area
-        double area = (y_full > 0.0 && a_full > 0.0 && d > 0.0)
-                      ? a_full * (d / y_full)
-                      : 0.0;
+        // Same arithmetic as the .out reporting path (link::getVelocity at
+        // the published depth): the true cross-section area replaces the old
+        // linear depth-ratio approximation, and multi-barrel conduits divide
+        // the aggregate flow across barrels. The published depth is clamped
+        // to y_full, so above the crown this is the conveyance velocity —
+        // never diluted by Preissmann-slot area.
+        double v_internal = 0.0;
+        if (ctx.links.xsect_y_full[uidx] > 0.0) {
+            const openswmm::XSectParams xs = openswmm::link::buildXSectParams(
+                ctx.links, uidx, &ctx.transect_tables);
+            const int cr = ctx.link_subtypes.conduit_row(idx);
+            const int nb = (cr >= 0)
+                ? ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)]
+                : 1;
+            v_internal = openswmm::link::getVelocity(
+                xs, ctx.links.flow[uidx], ctx.links.depth[uidx], nb);
+        }
         // units: internal ft/s -> display LENGTH (velocity carries LENGTH UCF)
-        const double v_internal = (area > 1.0e-12) ? q / area : 0.0;
         *velocity = to_display(ctx, openswmm::ucf::LENGTH, v_internal);
     }
     return SWMM_OK;
@@ -1112,14 +1121,21 @@ SWMM_ENGINE_API int swmm_link_get_velocities_bulk(SWMM_Engine engine, double* bu
     const int n = std::min(count, ctx.n_links());
     for (int i = 0; i < n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        const double q = ctx.links.flow[ui];
-        const double d = ctx.links.depth[ui];
-        const double y_full = ctx.links.xsect_y_full[ui];
-        const double a_full = ctx.links.xsect_a_full[ui];
-        const double area = (y_full > 0.0 && a_full > 0.0 && d > 0.0)
-                            ? a_full * (d / y_full) : 0.0;
+        // Verbatim the scalar swmm_link_get_velocity arithmetic (true
+        // cross-section area at the published depth, aggregate flow split
+        // across barrels) so bulk vs scalar stays bit-equivalent.
+        double v_internal = 0.0;
+        if (ctx.links.xsect_y_full[ui] > 0.0) {
+            const openswmm::XSectParams xs = openswmm::link::buildXSectParams(
+                ctx.links, ui, &ctx.transect_tables);
+            const int cr = ctx.link_subtypes.conduit_row(i);
+            const int nb = (cr >= 0)
+                ? ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)]
+                : 1;
+            v_internal = openswmm::link::getVelocity(
+                xs, ctx.links.flow[ui], ctx.links.depth[ui], nb);
+        }
         // units: internal ft/s -> display LENGTH (velocity carries LENGTH UCF)
-        const double v_internal = (area > 1.0e-12) ? q / area : 0.0;
         buf[i] = to_display(ctx, openswmm::ucf::LENGTH, v_internal);
     }
     return SWMM_OK;
