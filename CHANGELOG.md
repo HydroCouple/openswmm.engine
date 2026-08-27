@@ -236,10 +236,10 @@ retroactive.
   invert or crown otherwise introduces) for constant-time evaluation in the
   hot loop. `[OPTIONS] XSECT_GEOMETRY LEGACY | EXACT` (default `LEGACY`)
   additionally routes every built-in rounded shape (EGG, HORSESHOE, GOTHIC,
-  ARCH, ...) through the same compiled path, replacing EPA's 51-/26-point
-  interpolated tables — measured to carry large low-fill error (up to 41%
+  ARCH, ...) through the same compiled path, replacing EPA's interpolated
+  shape tables (21 to 51 points, depending on shape and field) — measured to carry large low-fill error (up to 41%
   area error below 5% of full depth for the 51-point CUSTOM table; several
-  hundred percent relative error in the lowest panel of the 26-point
+  hundred percent relative error in the lowest panel of the 51-point
   CIRCULAR table) — with the exact reconstruction; this deliberately breaks
   bit-parity with legacy EPA SWMM results for those shapes, is alpha/
   experimental, and is opt-in (`LEGACY` is unaffected and remains the

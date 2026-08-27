@@ -26,7 +26,7 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 
 /// Four quarter-arc points, each bulging by tan(pi/8) (a 90-degree sweep) —
-/// a TRUE circle, replacing the 26-point A_Circ/W_Circ/R_Circ tables.
+/// a TRUE circle, replacing the 51-point A_Circ/W_Circ/R_Circ tables.
 /// Diameter = xs.y_full (already the resolved full depth for both CIRCULAR
 /// and FORCE_MAIN).
 bool buildCircle(double y_full, std::vector<BElem>& out) {

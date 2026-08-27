@@ -586,7 +586,7 @@ TEST(FvClosureCompiled, PolygonCircleAndLegacyCircularShareTheSlotClosureExactly
     // Test 20, first half. The plan asks for POLYGON-circle and CIRCULAR to
     // "agree to 1e-9 over [0, 1.5 y_full], slot region included". Measured,
     // that is FALSE below the crown and cannot be made true: the two are
-    // different GEOMETRIES there (an exact arc vs. a 26-point interpolated
+    // different GEOMETRIES there (an exact arc vs. a 51-point interpolated
     // table) and disagree by up to ~1.2% around y/D = 0.02-0.05. Phase 6's
     // own spec text already corrects the plan on exactly this point — "the
     // two geometry sources are EXPECTED to disagree" — and the whole project

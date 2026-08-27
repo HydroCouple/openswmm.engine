@@ -220,7 +220,7 @@ TEST(FvPolygonNetwork, PolygonCircleRoutesLikeTheBuiltInCircularConduit) {
     //
     // That reasoning is half right and the conclusion needs care. The two
     // conduits are NOT the same geometry: the POLYGON is the exact circle,
-    // while CIRCULAR is EPA's 26-point interpolated table, and the two
+    // while CIRCULAR is EPA's 51-point interpolated table, and the two
     // genuinely disagree — by ~1.2% in area around y/D = 0.02-0.05 and by
     // far more in the first thousandth of the depth (measured in
     // test_fv_solver_closure.cpp's WhereTheBackendsDisagreeTheCompiledOneIsRight,
