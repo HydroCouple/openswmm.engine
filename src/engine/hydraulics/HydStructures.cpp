@@ -44,6 +44,24 @@ extern long g_trace_rstep_sn;
 
 namespace hydstruct {
 
+// PARITY link.c:1836-1845 (orifice), 2266-2275 (weir), 2664-2673 (outlet).
+// Legacy reads the tailwater head from the DOWNSTREAM node only under DW:
+//     if ( RouteModel == DW ) h2 = Node[n2].newDepth + Node[n2].invertElev;
+//     else                    h2 = Node[n1].invertElev;
+// Steady and Kinematic Wave routing carry no downstream head — they route on
+// a tree layout where a link's flow can only depend on its upstream end — so
+// every structure discharges freely to its own upstream invert. Using the
+// DW form under KW/SF submerges a structure against whatever depth its
+// downstream junction happened to reach, which is not information KW has.
+// FV keeps the DW form: it does solve for downstream head.
+static inline double tailwaterHead(const SimulationContext& ctx,
+                                   std::size_t un1, std::size_t un2) {
+    const auto rm = ctx.options.routing_model;
+    if (rm == RoutingModel::KINWAVE || rm == RoutingModel::STEADY)
+        return ctx.nodes.invert_elev[un1];
+    return ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2];
+}
+
 // PARITY link.c:646-673 link_setFlapGate. Both halves, in legacy's order.
 bool flapGateBlocks(const SimulationContext& ctx, int j, int n1, int n2, double q) {
     const auto uj = static_cast<size_t>(j);
@@ -542,7 +560,7 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
 
         // --- Compute nodal heads (matching legacy orifice_getInflow) ---
         double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double h2 = tailwaterHead(ctx, un1, un2);
         double dir = (h1 >= h2) ? 1.0 : -1.0;
 
         double y1 = nodes.depth[un1];
@@ -747,7 +765,7 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
         auto un2 = static_cast<size_t>(n2);
 
         double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double hgl2 = tailwaterHead(ctx, un1, un2);
         double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
 
         // Flap gate check — legacy link_setFlapGate (link.c:2303 passes `dir`):
@@ -1065,7 +1083,7 @@ void StructureSolver::computeOutletFlowK(SimulationContext& ctx, int k) {
         auto un2 = static_cast<size_t>(n2);
 
         double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double h2 = tailwaterHead(ctx, un1, un2);
         int dir = (h1 >= h2) ? 1 : -1;
 
         // Track which node provides the upstream depth (legacy: y1 is

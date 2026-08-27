@@ -3735,6 +3735,12 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         }
         ctx_.nodes.stat_lat_inflow_vol[uj]   += std::fabs(lat) * dt_routing;
         ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
+        // PARITY stats.c:588 stats_updateStorageStats — a storage unit's peak
+        // RELEASE, which is what its outlet structures actually passed. Not
+        // interchangeable with peak inflow: attenuating the two is the point.
+        if (ctx_.nodes.type[uj] == NodeType::STORAGE &&
+            ctx_.nodes.outflow[uj] > ctx_.nodes.stat_storage_max_outflow[uj])
+            ctx_.nodes.stat_storage_max_outflow[uj] = ctx_.nodes.outflow[uj];
         // For outfall nodes, outflow = inflow by definition (matching legacy
         // massbal.c line 587: NodeOutflow[j] += Node[j].inflow * tStep).
         // For non-storage terminal nodes (degree==0), same treatment.
@@ -6045,6 +6051,12 @@ void SWMMEngine::initHydraulics() noexcept {
     // Router::init) and on GeoPackage load, so the temporary build() mirror is
     // gone — the side-tables stand on their own.
     hydstruct_.init(ctx_);
+
+    // KINWAVE/STEADY evaluate orifice/weir/outlet/pump discharge inline inside
+    // their sorted-link loop (legacy getLinkInflow), so the router needs the
+    // structure solver itself — DW/FV get theirs via the non_conduit_fn
+    // callback below. Must be wired before the first router_.step().
+    router_.setStructureSolver(&hydstruct_);
 
     // 10c. Exfiltration solver: initialize Green-Ampt state for storage nodes
     exfil_.init(ctx_);
