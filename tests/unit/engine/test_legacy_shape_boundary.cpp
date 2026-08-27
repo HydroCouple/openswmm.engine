@@ -137,7 +137,7 @@ TEST(LegacyShapeBoundary, CircularExactDivergesFromLegacyTableAtLowFill) {
     chebsec::ChebSection cs;
     ASSERT_TRUE(tryBuildExact(XSectShape::CIRCULAR, geom, legacy, cs, exact));
 
-    // At y/D = 0.02, legacy's 26-point table is documented (Phase 4 design
+    // At y/D = 0.02, legacy's 51-point table is documented (Phase 4 design
     // notes) to carry ~1.3% true error on CIRCULAR specifically — small
     // compared to other shapes, but not zero, and NOT what "two different
     // code paths returning the identical float" looks like.

@@ -55,11 +55,12 @@ its reflection `π−theta`) directly inverts the circle equation
 crossings.
 
 This is the entire reason `POLYGON` exists: every one of EPA SWMM's built-in
-rounded shapes (EGG, HORSESHOE, GOTHIC, ...) is instead defined by a 51- or
-26-point uniform table with *linear* interpolation between points, which
-carries real, measured error, worst at low fill: the 51-point CUSTOM table
+rounded shapes (EGG, HORSESHOE, GOTHIC, ...) is instead defined by a uniform
+table of 21 to 51 points (depending on the shape and the field), with
+*linear* interpolation between points — and that interpolation carries real,
+measured error, worst at low fill: the 51-point CUSTOM table
 is off by up to 41% in area below 5% of full depth (1.4% above it); the
-26-point CIRCULAR table's worst relative area error below a tenth of full
+51-point CIRCULAR table's worst relative area error below a tenth of full
 depth measures 470% against the analytic circle (test-pinned in
 `test_fv_solver_closure.cpp`, where the compiled boundary's worst over the
 same band is 4.5e-7); EGG runs 4–5% off even at ordinary mid-range depths;
