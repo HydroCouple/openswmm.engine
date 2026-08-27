@@ -212,10 +212,11 @@ public:
      *       keeps both alive simultaneously, which is what the reconciliation
      *       actually needs.
      */
-    virtual double refreshConduitGeometry(int /*conduit*/,
-                                          const FvGeometry& /*g_new*/,
-                                          double /*t_now*/,
-                                          GeomChangePolicy /*policy*/) {
+    virtual double refreshConduitGeometry(int conduit,
+                                          const FvGeometry& g_new,
+                                          double t_now,
+                                          GeomChangePolicy policy) {
+        (void)conduit; (void)g_new; (void)t_now; (void)policy;
         return 0.0;
     }
 };

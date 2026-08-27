@@ -1008,7 +1008,8 @@ INPUT                  = ../README.md \
                          ./manuals/manuals.md \
                          ./manuals/user \
                          ./manuals/reference \
-                         ./manuals/application
+                         ./manuals/application \
+                         ./dev
 
 # This tag can be used to specify the character encoding of the source files
 # that Doxygen parses. Internally Doxygen uses the UTF-8 encoding. Doxygen uses

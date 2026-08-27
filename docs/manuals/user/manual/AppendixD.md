@@ -989,6 +989,7 @@ Formats:
 Link    Shape            Geom1 Geom2 Geom3 Geom4 (Barrels Culvert)
 Link    IRREGULAR    Tsect
 Link    STREET          Street
+Link    POLYGON       Scale Open 0 0 Barrels Bcurve
 
 Parameters:
 Link    name of a conduit, orifice, or weir.
@@ -1000,6 +1001,9 @@ Culvert    code number from Table A.10 for the conduit’s inlet geometry if it 
 Curve    name of a Shape Curve in the [CURVES] section that defines how cross-section width varies with depth.
 Tsect    name of an entry in the [TRANSECTS] section that describes the cross-section geometry of an irregular channel.
 Street    name of an entry in the [STREETS] section that describes the cross-section geometry of a street.
+Scale    a multiplier applied to every coordinate of the Boundary Curve (leave 0 or blank for a scale of 1.0).
+Open    0 if the Polygon boundary describes a closed conduit, 1 if it describes an open channel.
+Bcurve    name of an XPOLYGON curve in the [CURVES] section that describes the cross-section boundary as a chain of straight segments and circular arcs. Geom3 and Geom4 are unused for the Polygon shape and should be entered as 0; Barrels must be supplied (it cannot be left blank as it can for other shapes) since Bcurve is read from the token that follows it.
 
 Remarks:
 The standard conduit shapes and their geometric parameters are listed in the following table:
@@ -1030,16 +1034,24 @@ SEMIELLIPTICAL    Full Height
 BASKETHANDLE    Full Height            
 SEMICIRCULAR    Full Height            
 CUSTOM    Full Height    Shape Curve        
+POLYGON    Scale7    Open/Closed Flag7    -    -
 1C-factors are used when H-W is the FORCE_MAIN_EQUATION choice in the [OPTIONS] section while roughness heights (in inches or mm) are used for D-W.
  2A circular conduit partially filled with sediment to a specified depth.
 3Slopes are horizontal run / vertical rise.
 4Size code of a standard shaped elliptical pipe as listed in Appendix A12. Leave blank (or 0) if the pipe has custom dimensions.
 5Size code of a standard arch pipe as listed in Appendix A13. Leave blank (or 0) if the pipe has custom dimensions).
 6Set to zero to use a standard modified baskethandle shape whose top radius is half the base width.
+7Full height is not entered for a POLYGON shape — it is computed from the referenced Boundary Curve, scaled by Geom1.
 The CUSTOM shape is a closed conduit whose width versus height is described by a user-supplied Shape Curve.
+The POLYGON shape describes a cross-section as an exact boundary of straight segments and circular arcs, given by an XPOLYGON curve in the [CURVES] section (see the example below). Unlike CUSTOM, a POLYGON boundary need not be symmetrical and may be either open or closed. Because the boundary is exact rather than a normalized table, a bench or shelf reproduces its top-width discontinuity exactly rather than smoothing it through interpolation. A boundary whose segments or arcs cross themselves is rejected with an error rather than accepted and silently mis-evaluated.
 An IRREGULAR cross-section is used to model an open channel whose geometry is described by a Transect object.
 A STREET cross-section is used to model street conduits and inlet flow capture (see the [INLETS] and [INLETS_USAGE] sections).
 The Culvert code number is used only for closed conduits acting as culverts that should be analyzed for inlet control conditions using the FHWA HDS-5 methodology.
+
+Example:
+; A 4-ft-diameter closed conduit whose boundary is the MyCircle XPOLYGON
+; curve defined in the [CURVES] section above, with 1 barrel.
+C1  POLYGON  1.0  0  0  0  1  MyCircle
  
 ### Section: [TRANSECTS]
 
@@ -1547,7 +1559,7 @@ Name  X-value  Y-value  ...
 Parameters:
 Name    name assigned to the curve.
 Type    the type of curve being defined:
-STORAGE / SHAPE / DIVERSION / TIDAL / PUMP1 / PUMP2 / PUMP3 / PUMP4 / PUMP5 / RATING / CONTROL / WEIR.
+STORAGE / SHAPE / XPOLYGON / DIVERSION / TIDAL / PUMP1 / PUMP2 / PUMP3 / PUMP4 / PUMP5 / RATING / CONTROL / WEIR.
 X-value    an X (independent variable) value.
 Y-value    the Y (dependent variable) value corresponding to X.
 
@@ -1558,6 +1570,7 @@ X-values must be entered in increasing order.
 Choices for curve type have the following meanings (flows are expressed in the user’s choice of flow units set in the [OPTIONS] section):
 STORAGE    surface area in ft2 (m2) versus depth in ft (m) for a storage unit node
 SHAPE    width versus depth for a custom closed cross-section, both normalized with respect to full depth
+XPOLYGON    the exact boundary of a Polygon cross-section, as a chain of vertices (X, Y) with an optional bulge value at each vertex describing a circular arc to the next one (see Remarks below)
 DIVERSION    diverted outflow versus total inflow for a flow divider node or a Custom inlet
 TIDAL    water surface elevation in ft (m) versus hour of the day for an outfall node
 PUMP1    pump outflow versus increment of inlet node volume in ft3 (m3)
@@ -1572,10 +1585,19 @@ WEIR    discharge coefficient for flow in CFS (CMS) versus head in ft (m)
 Remarks:
 See Section 3.2 for illustrations of the different types of pump curves.
 
+For an XPOLYGON curve, each data line supplies one vertex of the cross-section boundary as either an (X, Y) pair or an (X, Y, Bulge) triple; every vertex in a given curve must use the same number of values. Coordinates may be entered in any convenient units and any convenient placement (the invert is located automatically as the boundary's lowest point) but must trace the boundary counterclockwise and must not cross themselves. A Bulge of 0, or an omitted Bulge, connects a vertex to the next one with a straight segment. A non-zero Bulge connects them with a circular arc instead, using the same convention as the DXF file format: Bulge = tan(theta/4), where theta is the arc's included angle in radians, positive for an arc that bulges to the left of the direction of travel and negative for one that bulges to the right. Bulge must lie between -1 and 1 (an arc of more than 180 degrees must be split into two vertices).
+
 Examples:
 ; Storage curve (x = depth, y = surface area)
 AC1  STORAGE
 AC1  0  1000  2  2000  4  3500  6  4200  8  5000
+
+; XPOLYGON curve tracing a 4-ft-diameter circle from four quarter-circle
+; arcs (Bulge = tan(45 deg/4) = 0.4142136 sweeps a 90-degree arc)
+MyCircle  XPOLYGON   2.0   0.0   0.4142136
+MyCircle             0.0   2.0   0.4142136
+MyCircle             -2.0  0.0   0.4142136
+MyCircle             0.0   -2.0  0.4142136
 
 ; Type 1 pump curve (x = inlet wet well volume, y = flow)
 PC1  PUMP1
