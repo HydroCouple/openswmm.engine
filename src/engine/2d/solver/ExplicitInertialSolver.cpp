@@ -207,12 +207,16 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
         if (cell_active_[i]) continue;
+        const double infil = infilSink(state_->infil_rate[i], state_->depth[i],
+                                       opts_->dry_depth);
+        // Book before the early-out: rain exactly cancelling the sink leaves
+        // src == 0, but water still infiltrated and the ledger counts the rain.
+        state_->infil_applied[i] += infil * dt_lazy;
         const double src =
             state_->rainfall[i] + state_->coupling_flux[i]
             - evapSink(state_->evap_rate[i], state_->depth[i],
                        opts_->dry_depth)
-            - infilSink(state_->infil_rate[i], state_->depth[i],
-                        opts_->dry_depth);
+            - infil;
         if (src == 0.0) continue;
         double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
         state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -233,12 +237,14 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
         for (int i = 0; i < nt; ++i) {
             if (cell_active_[i]) continue;
+            const double infil = infilSink(state_->infil_rate[i],
+                                           state_->depth[i], opts_->dry_depth);
+            state_->infil_applied[i] += infil * dt_lazy;
             const double src =
                 state_->rainfall[i] + state_->coupling_flux[i]
                 - evapSink(state_->evap_rate[i], state_->depth[i],
                            opts_->dry_depth)
-                - infilSink(state_->infil_rate[i], state_->depth[i],
-                            opts_->dry_depth);
+                - infil;
             if (src == 0.0) continue;
             double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
             state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -516,10 +522,13 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                 sy += f * ed.cell_arm_y[p];
             }
         }
+        const double infil =
+            infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth);
+        state_->infil_applied[i] += infil * dt_c;
         const double src =
             state_->rainfall[i] + state_->coupling_flux[i]
             - evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)
-            - infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth);
+            - infil;
         double v = state_->volume[i] + flux_m3 +
                    dt_c * src * mesh_->tri_area[i];
 #ifndef NDEBUG

@@ -218,8 +218,9 @@ public:
     /**
      * @brief Ledger-consistent cumulative infiltrated depth per cell (m).
      *
-     * @details Accumulates the SAME depth-ramped `infilSink(...)` value the
-     *          marcher removes and `MassBalance2D::infil_out` books, so
+     * @details Drains the SAME `SurfaceStateData::infil_applied` accumulator
+     *          that `MassBalance2D::infil_out` books — the depth the marcher
+     *          actually removed, summed as it was removed — so
      *          `sum(infilCumulative()[i] * tri_area[i]) == infil_out` holds by
      *          construction. Prefer this over `Infil2D::cumulative()`, which is
      *          the unramped capacity the kernels offered and therefore exceeds
@@ -302,9 +303,10 @@ private:
     double infil_elapsed_ = 0.0;
 
     /// Per-cell APPLIED cumulative infiltrated depth (m) — see
-    /// infilCumulative(). Filled in accumulateMassBalance() from the same
-    /// infilSink() value that feeds MassBalance2D::infil_out; empty when no
-    /// [2D_INFILTRATION*] model resolved.
+    /// infilCumulative(). Filled in accumulateMassBalance() by draining the
+    /// same SurfaceStateData::infil_applied accumulator that feeds
+    /// MassBalance2D::infil_out; empty when no [2D_INFILTRATION*] model
+    /// resolved.
     std::vector<double> infil_cum_applied_;
 
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
