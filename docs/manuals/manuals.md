@@ -25,3 +25,6 @@ See @ref authors for the full list of authors and contributors.
 * Developer Notes
     * The Chebyshev-Compressed Cross-Section (@ref dev_cheb_section) — design
       rationale for `POLYGON` cross-sections and `XSECT_GEOMETRY EXACT`.
+    * Known Defects in the Legacy SWMM 5.2.4 Solver (@ref legacy_defects) —
+      register of inherited defects that the LEGACY bit-parity contract
+      deliberately preserves, what was measured, and how to avoid each.

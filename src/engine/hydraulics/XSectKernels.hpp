@@ -86,6 +86,22 @@ inline constexpr double RECT_ALFMAX        = 0.97;
 inline constexpr double RECT_TRIANG_ALFMAX = 0.98;
 inline constexpr double RECT_ROUND_ALFMAX  = 0.98;
 
+/// Critical-depth tolerance for a COMPILED boundary (`XSectParams::cheb`), as a
+/// fraction of `y_full`. Legacy's own critical-depth solve stops far short of
+/// this — one linear interpolation across a `y_full/25` bracket in the
+/// enumeration branch, 0.001 ft absolute in the Ridder branch — because a
+/// tabulated shape's A and W are themselves only good to ~1e-2 and refining
+/// further would be false precision. A compiled boundary evaluates A and W to
+/// ~`chebsec::kFitTol`, so it can and should solve its bracket properly.
+/// Deliberately one decade looser than `kFitTol` itself: the root of
+/// `A*sqrt(gA/W) = Q` cannot be located more sharply than the A/W feeding it.
+/// See `generic_getYcrit`. Legacy paths never read this.
+inline constexpr double kYcritTolCheb = 1.0e-8;
+
+/// `findroot_Ridder`'s "bracket had no sign change" sentinel is -1e20; test
+/// against this rather than repeating the magic number at each call site.
+inline constexpr double kRidderFailed = -1.0e19;
+
 /**
  * @brief The analytic shape formulas — the single definition of each.
  *
@@ -1378,6 +1394,45 @@ struct XsectEval {
     // other shape uses aFull * Amax-ratio. A compiled Chebyshev boundary
     // (xs.cheb) always has an absolute a_max of its own — see getAmax, which
     // returns it pre-divided back to the ratio this formula expects.
+    //
+    // KNOWN DEFECT (inherited from legacy, NOT fixed here) — S(a) is not
+    // invertible near full, and this function's branch choice is neither
+    // continuous nor monotone across it. Documented rather than changed
+    // because the fix is a hydraulic-convention decision, not a bug fix; see
+    // @ref legacy_defects_conveyance_branch for the full write-up.
+    //
+    // A closed conduit with a narrowing crown reaches PEAK conveyance before
+    // it runs full (a_max < a_full, s_max > s_full), so S rises on [0, a_max]
+    // and falls back on [a_max, a_full]. Every s in [s_full, s_max] therefore
+    // has TWO valid area preimages. The bracket below resolves that by
+    // searching [a_full, a_max] — the FALLING (near-full) branch — whenever s
+    // lands in that window, and [0, a_max] otherwise. Measured on a compiled
+    // D=4 circle (scratch probe, 2026-08-28):
+    //
+    //   * a_max/a_full = 0.9743, y(a_max)/D = 0.938, s_max/s_full = 1.0757.
+    //   * JUMP at s = s_full: s/s_full = 0.99999 returns y/D = 0.8196, and
+    //     s/s_full = 1.0 returns y/D = 0.9990 — an ~0.18 D step for an
+    //     infinitesimal change in flow.
+    //   * NON-MONOTONE above it: a then DECREASES as s rises to s_max, by up
+    //     to 0.466% of a_full — i.e. more flow reported as less depth.
+    //   * Round-trip getAofS(getSofA(a)) therefore fails over the top 12.3%
+    //     of area (y/D from 0.8196 to 1.0), worst error 12.3% of a_full.
+    //
+    // The jump is INHERENT to wanting a full pipe reported at full-pipe flow:
+    // any single-valued inverse that can return a_full has one. The falling
+    // branch is also the conservative answer (a pipe at capacity reads as
+    // full, not 82% full) and agrees with circ_getAofS, which reaches the same
+    // place by clamping `psi >= 1.0` straight to a_full. Switching to the
+    // rising branch — the obvious "make the round trip work" fix — would make
+    // a pipe at design capacity report y/D = 0.82 and is NOT wanted.
+    //
+    // Reachability, since it decides how much this matters: KinematicWave
+    // cannot hit the window (it clamps q >= q_full to a_full before calling).
+    // DYNWAVE's computeYnorm CAN — CD.q_max is s_max*beta, not s_full*beta —
+    // and so can SWMMEngine's init-time getDepthFromFlow, which clamps
+    // nothing. The non-monotonicity is the part worth fixing; doing so means
+    // choosing between generic's falling-branch root and circ's clamp, which
+    // is a maintainer call.
     OPENSWMM_KERNEL_FN double generic_getAofS(const XSectParams& xs, double s) const {
         double a1, a2;
         const XSectShape sh = static_cast<XSectShape>(xs.type);
@@ -1534,12 +1589,18 @@ struct XsectEval {
             double dy = xs.y_full / N_INC;
             int i1 = static_cast<int>(y0 / dy);
             double q0 = qCritical(i1 * dy, 0.0);
+            // Bracket the enumeration lands on, kept so a compiled boundary can
+            // polish inside it below. y_hi > y_lo marks it valid; it stays
+            // 0/0 on the "ran off the end" paths, which have no bracket.
+            double y_lo = 0.0, y_hi = 0.0;
             if (q0 < q) {
                 y = xs.y_full;
                 for (int i = i1 + 1; i <= N_INC; ++i) {
                     double qc = qCritical(i * dy, 0.0);
                     if (qc >= q) {
                         y = ((q - q0) / (qc - q0) + static_cast<double>(i - 1)) * dy;
+                        y_lo = static_cast<double>(i - 1) * dy;
+                        y_hi = static_cast<double>(i) * dy;
                         break;
                     }
                     q0 = qc;
@@ -1550,10 +1611,31 @@ struct XsectEval {
                     double qc = qCritical(i * dy, 0.0);
                     if (qc < q) {
                         y = ((q - qc) / (q0 - qc) + static_cast<double>(i)) * dy;
+                        y_lo = static_cast<double>(i) * dy;
+                        y_hi = static_cast<double>(i + 1) * dy;
                         break;
                     }
                     q0 = qc;
                 }
+            }
+            // The 25-step enumeration closes with ONE linear interpolation
+            // across a bracket of width y_full/25, so its answer carries an
+            // O(dy) discretization error no matter how exact A and W are --
+            // measured worst case 8.6e-3 ft on a D=4 circle, three orders
+            // above the 1e-6 ft this project's own suite targets elsewhere.
+            // That floor is a property of the SOLVER, not the geometry, and
+            // it is the legacy shapes' bit-parity contract (their tables are
+            // themselves only good to ~1e-2, so refining inside one of their
+            // brackets would be false precision). A compiled boundary has no
+            // such excuse: chebAWofY is exact to ~kFitTol, so the bracket the
+            // enumeration already produced can simply be solved properly.
+            // Ridder is used rather than Newton because the bracket is already
+            // in hand and dW/dy is not among the compiled series.
+            if (xs.cheb && y_hi > y_lo) {
+                const double yr = findroot_Ridder(
+                    y_lo, y_hi, kYcritTolCheb * xs.y_full,
+                    [&](double yc) { return qCritical(yc, q); });
+                if (yr > kRidderFailed) y = yr;
             }
         } else {
             // --- Ridder's method (legacy getYcritRidder)
@@ -1570,7 +1652,11 @@ struct XsectEval {
                 y1 = y0;
                 if (q1 > q) y2 = 0.5 * xs.y_full;
             }
-            y = findroot_Ridder(y1, y2, 0.001,
+            // Same reasoning as the enumeration branch above: legacy's 0.001 ft
+            // absolute tolerance is the shapes' own table accuracy, not this
+            // root finder's limit, so a compiled boundary tightens it.
+            const double tol = xs.cheb ? (kYcritTolCheb * xs.y_full) : 0.001;
+            y = findroot_Ridder(y1, y2, tol,
                                 [&](double yc) { return qCritical(yc, q); });
         }
         return std::min(y, xs.y_full);

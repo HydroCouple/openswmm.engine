@@ -194,6 +194,35 @@ retroactive.
 
 ### Added
 
+- **A register of known defects in the legacy SWMM 5.2.4 solver.**
+  `docs/dev/legacy_defects.md` (Doxygen page `legacy_defects`, linked from the
+  Manuals index) catalogues defects OpenSWMM inherits from EPA SWMM 5.2.4 and
+  deliberately preserves under the LEGACY bit-parity contract, so that the
+  behavior is discoverable rather than folklore. Each entry records what is
+  wrong, what was measured, which code paths can reach it, and how to avoid
+  it. Four entries at introduction: the mutual inconsistency of the tabulated
+  shapes' area and width tables (`GOTHIC` worst, 439%); the shallow-depth
+  interpolation error of those tables (470% below `y/D = 0.10` on CIRCULAR);
+  the discontinuous, non-monotone conveyance inverse near full
+  (`generic_getAofS`); and the critical-depth solver's `O(y_full/25)`
+  precision floor. Nothing in `src/legacy/` or on any LEGACY code path was
+  changed.
+
+- **Critical depth is now solved to full precision on compiled boundaries.**
+  `generic_getYcrit`'s 25-step enumeration closes with a single linear
+  interpolation across a `y_full/25` bracket, leaving an `O(dy)` error —
+  worst measured **8.6e-3 ft** on a D=4 ft circle, three orders above the
+  1e-6 ft targeted elsewhere in the geometry pipeline. For a section carrying
+  a compiled boundary (`XSectParams::cheb` — every `POLYGON` link, and every
+  shape under `XSECT_GEOMETRY EXACT`), the bracket the enumeration already
+  produced is now polished with Ridder's method to `kYcritTolCheb`, since
+  `chebAWofY` resolves `A` and `W` far more sharply than the bracket does.
+  Worst error over `q` in [0.25, 100] cfs falls to **4.1e-8 ft**, a ~2e5x
+  improvement. LEGACY keeps the coarse enumeration by design — its tables are
+  themselves only good to ~1e-2, so refining inside one of their brackets
+  would be false precision — and is asserted untouched by
+  `ChebSection.CriticalDepthOnACompiledCircleMatchesTheAnalyticFormula`.
+
 - **A Lagrangian transport engine (LARD) joins the quality solvers.**
   `QUALITY_SOLVER LAGRANGIAN` routes pollutants with a Lagrangian
   advection–reaction–dispersion scheme in place of the legacy complete-mix
