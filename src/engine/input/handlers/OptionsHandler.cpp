@@ -32,19 +32,19 @@
  *  FLOW_UNITS           → options.flow_units
  *  INFILTRATION         → options.infiltration
  *  FLOW_ROUTING         → options.routing_model
- *  LINK_OFFSETS         → (ignored — legacy compatibility)
- *  MIN_SLOPE            → (stored in ext_options — not used by new solver yet)
+ *  LINK_OFFSETS         → options.link_offsets (0 = DEPTH, 1 = ELEVATION)
+ *  MIN_SLOPE            → options.min_slope
  *  ALLOW_PONDING        → options.allow_ponding
- *  SKIP_STEADY_STATE    → (ignored)
+ *  SKIP_STEADY_STATE    → options.skip_steady_state
  *  START_DATE           → options.start_date (OADate (days since 12/30/1899))
  *  START_TIME           → combined with START_DATE
  *  END_DATE             → options.end_date
  *  END_TIME             → combined with END_DATE
  *  REPORT_START_DATE    → options.report_start
  *  REPORT_START_TIME    → combined with REPORT_START_DATE
- *  SWEEP_START          → (ext_options)
- *  SWEEP_END            → (ext_options)
- *  DRY_DAYS             → (ext_options)
+ *  SWEEP_START          → options.sweep_start (MM/DD → day-of-year)
+ *  SWEEP_END            → options.sweep_end (MM/DD → day-of-year)
+ *  DRY_DAYS             → options.dry_days
  *  REPORT_STEP          → options.report_step (HH:MM:SS or seconds)
  *  WET_STEP             → options.wet_step
  *  DRY_STEP             → options.dry_step
