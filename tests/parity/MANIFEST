@@ -9,10 +9,9 @@
 # earns its place by reaching a code path no other deck reaches, and the
 # reason column is where you say which.
 
-# ---- FV routing (10) ------------------------------------------------------
-# Ten of fifteen.  The corpus is heavily weighted to one router; see
-# README.md §4, which is the honest statement of what "15/15 unchanged"
-# does and does not prove.
+# ---- FV routing (11) ------------------------------------------------------
+# The corpus is heavily weighted to one router; see README.md §4, which is
+# the honest statement of what "N/N unchanged" does and does not prove.
 tests/parity/corpus/decks/agree_pass.inp	FV, AGREE flux, passing flow
 tests/parity/corpus/decks/agree_vj.inp	FV, AGREE flux at a vertical junction
 tests/parity/corpus/decks/steep_pass.inp	FV on a steep reach -- the supercritical branch
@@ -23,6 +22,7 @@ tests/parity/corpus/decks/vj_fv_steep_datum.inp	FV vertical junction on a steep 
 tests/parity/corpus/decks/sdm_fv_o1.inp	Site Drainage Model under FV, first-order
 tests/parity/corpus/decks/sdm_fv_o2.inp	Site Drainage Model under FV, second-order
 tests/parity/corpus/decks/sdm_fv_o2_superbee.inp	Site Drainage Model under FV, second-order + superbee limiter
+tests/parity/corpus/decks/storage_bucket_fv.inp	FV storage node -- the only deck reaching relaxOneNode / the semi-implicit bucket relaxation (plain junctions are algebraic and bypass it)
 
 # ---- Dynamic wave, and the two quality solvers (4) ------------------------
 tests/parity/corpus/decks/force_legacy.inp	DYNWAVE + runtime-forced quality through the LEGACY solver
