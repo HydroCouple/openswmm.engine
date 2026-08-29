@@ -190,11 +190,39 @@ OPENSWMM_KERNEL_FN double hydRadOfDepth(const FvGeometry& g, double h) noexcept 
  *
  * Below the crown this reads the per-geometry table built at init (uniform on
  * [0, y_full]) and refines with one trapezoid step using the exact A(h) the
- * caller needs anyway — second-order accurate and, crucially, a single-valued
- * function of h, which is all the well-balanced property requires.
+ * caller needs anyway, plus a residual term (below) that makes the refinement
+ * land exactly on the next table node.
  *
  * Above the crown A is exactly linear (A = a_crown + t_slot·(h − y_full)), so
  * the extension is analytic — deep surcharge stays exact with a small table.
+ *
+ * @note The residual term is load-bearing, and an earlier version of this
+ *       comment was wrong about why. It claimed a single-valued function of h
+ *       was "all the well-balanced property requires". It is not: lake-at-rest
+ *       needs the discrete pressure term to be a CONTINUOUS antiderivative of
+ *       the same A the mass update uses. The table nodes are accumulated with
+ *       composite Simpson (or, for a compiled boundary, `exactI1`) while the
+ *       in-interval refinement is a trapezoid, and those two disagree — so
+ *       without the correction I₁ jumped at EVERY node, by up to 8% relative
+ *       near the invert and 7.1e-5 ft³ at the taper onset, where A is most
+ *       curved. Measured consequence: a still pool over a slope break drifted
+ *       off level by 7.4e-5 ft, which this project had recorded as an
+ *       untouchable limitation of the Preissmann taper band. It was not the
+ *       taper band; it was this. With the correction the same sweep holds
+ *       level to 4.4e-14 ft across every fill level, and the drift at the
+ *       originally reported case is exactly zero.
+ *
+ * @note Why the residual is ramped by a smoothstep rather than added flat, and
+ *       why not just interpolate: the ramp w(t) = t²(3−2t) has w(0) = w(1) = 0
+ *       for its DERIVATIVE, so the correction changes neither endpoint's slope
+ *       — dI₁/dh still equals A exactly at every node — while w(0) = 0 and
+ *       w(1) = 1 make the value land on both nodes. A plain cubic Hermite in
+ *       (I₁, A) at the two nodes is more accurate in isolation (4.7e-6 vs
+ *       2.9e-5 worst absolute) but was measured WORSE end to end, because it
+ *       never reads `area_at_h`: decoupling I₁ from the exact A the same step
+ *       uses for mass moved storage-node continuity from −0.023% to +0.058%
+ *       and failed its gate. Accuracy of the interpolant is not the objective;
+ *       consistency with A is.
  */
 OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
                                     double area_at_h) noexcept {
@@ -213,7 +241,14 @@ OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
     // second half of the same buffer (see buildI1Table).
     const double i1_i = g.i1_tbl[static_cast<std::size_t>(i)];
     const double a_i  = g.i1_tbl[static_cast<std::size_t>(n + i)];
-    return i1_i + 0.5 * (a_i + area_at_h) * (h - h_i);
+    // Gap between the node the table records and where the trapezoid alone
+    // would land at that node — the quadrature disagreement, closed below.
+    const double i1_n = g.i1_tbl[static_cast<std::size_t>(i + 1)];
+    const double a_n  = g.i1_tbl[static_cast<std::size_t>(n + i + 1)];
+    const double resid = i1_n - (i1_i + 0.5 * (a_i + a_n) * dh);
+    const double t = (h - h_i) / dh;
+    return i1_i + 0.5 * (a_i + area_at_h) * (h - h_i)
+         + resid * t * t * (3.0 - 2.0 * t);
 }
 
 /**

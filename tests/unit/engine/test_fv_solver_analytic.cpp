@@ -506,19 +506,29 @@ TEST(FvAnalytic, CompiledSectionIsAtLeastAsWellBalancedAsLegacy) {
     // this work changed, replacing Brent with a seeded Newton on the
     // compiled boundary.
     //
-    // Measured while adding this test: a partly-full closed pipe over a slope
-    // break does NOT hold lake-at-rest to machine precision in EITHER
-    // geometry mode. That is a pre-existing property of the closure (most
-    // likely the Preissmann taper band, where the slot term makes the
-    // area/depth round trip only as invertible as the smoothstep allows), not
-    // something introduced here — it reproduces with the original Brent
-    // inverse, and it is two orders of magnitude WORSE under LEGACY.
+    // HISTORY, because this test's own premise turned out to be wrong and the
+    // correction is the interesting part. It originally recorded that a
+    // partly-full closed pipe over a slope break does NOT hold lake-at-rest
+    // in either geometry mode (worst drift 5.6e-5 compiled / 7.4e-5
+    // tabulated), and attributed that to "a pre-existing property of the
+    // closure, most likely the Preissmann taper band". It asserted only the
+    // comparative property on those grounds, saying outright that demanding
+    // 1e-9 "would simply be asserting something untrue of the solver".
     //
-    // So the honest assertion is comparative, not absolute: whatever the
-    // closure's floor is, the compiled path must not be worse than the
-    // tabulated one, and must stay under the bound actually achieved.
-    // Asserting 1e-9 here would simply be asserting something untrue of the
-    // solver in either mode.
+    // It was not the taper band. It was i1OfDepth: its table nodes are
+    // accumulated with Simpson while its in-interval refinement is a
+    // trapezoid, so the discrete pressure term jumped at every table node and
+    // was not a continuous antiderivative of the A the mass update uses —
+    // which is what well-balancedness actually requires. See the residual
+    // term and its note in FvKernels.hpp. With that closed, both modes hold
+    // level to ~1e-15, so the bound below is now the real 1e-9 the sibling
+    // lake-at-rest gates demand, and the comparative check is kept only as a
+    // backend-parity guard.
+    //
+    // Lesson worth keeping: "measured floor" is a claim about the code as it
+    // stands, not a law. This one hardened into a documented limitation, was
+    // cited as such in three places, and dissolved once the mechanism was
+    // actually traced instead of attributed.
     auto bed = [](double x) {
         if (x < 150.0) return 10.0 - 0.02 * x;
         if (x < 300.0) return 7.0 + 0.02 * (x - 150.0);
@@ -564,17 +574,21 @@ TEST(FvAnalytic, CompiledSectionIsAtLeastAsWellBalancedAsLegacy) {
     EXPECT_GT(partly_cheb, 10)
         << "no partly-full cell — the compiled depth inversion never ran";
 
-    EXPECT_LE(drift_cheb, drift_legacy)
+    // Backend parity. Both modes now sit at the floating-point floor, so the
+    // comparison is between two rounding-noise values and cannot be a strict
+    // ordering — 1 ulp either way is meaningless. The allowance keeps it a
+    // real guard against the compiled path genuinely degrading while staying
+    // insensitive to which mode happens to land on exact zero.
+    EXPECT_LE(drift_cheb, std::max(drift_legacy, 1.0e-12))
         << "compiled geometry is LESS well-balanced than the legacy tables "
            "(compiled=" << drift_cheb << " legacy=" << drift_legacy << ")";
 
-    // Absolute backstop just under the level the compiled path actually
-    // achieves (measured 5.6e-5), so a regression toward the legacy floor is
-    // caught even if the legacy number degrades alongside it. This bound is
-    // the closure's measured floor for this configuration, NOT a target —
-    // see the note above about partly-full closed pipes.
-    EXPECT_LT(drift_cheb, 7.0e-5)
+    // The real target, now that it is achievable: the same 1e-9 every other
+    // lake-at-rest gate in this suite demands. Both modes measure ~1e-15.
+    EXPECT_LT(drift_cheb, 1.0e-9)
         << "compiled free-surface drift regressed: " << drift_cheb;
+    EXPECT_LT(drift_legacy, 1.0e-9)
+        << "tabulated free-surface drift regressed: " << drift_legacy;
 }
 
 // ---------------------------------------------------------------------------
