@@ -31,7 +31,7 @@
  *            - CIRCULAR / FORCE_MAIN: reconstructed as a TRUE circle (four
  *              exact quarter-circle arcs — fromArcSpec requires n >= 3
  *              points, so two antipodal points cannot express it) rather
- *              than the 26-point A_Circ/W_Circ/R_Circ tables.
+ *              than the 51-point A_Circ/W_Circ/R_Circ tables.
  *            - EGGSHAPED, HORSESHOE, GOTHIC, CATENARY, SEMIELLIPTICAL,
  *              BASKETHANDLE, SEMICIRCULAR, ARCH, HORIZ_ELLIPSE, VERT_ELLIPSE:
  *              reconstructed from each shape's OWN existing normalized width
@@ -40,7 +40,7 @@
  *              to validate a POLYGON reconstruction of EGG against its
  *              tabulated legacy A/R/W. This is table-driven, not invented
  *              geometry: it uses exactly the data the engine already ships,
- *              at the ~26-point resolution EPA's own tables provide, then
+ *              at the 21-to-26-point resolution EPA's own width tables provide, then
  *              lets the Chebyshev fit interpolate BETWEEN those points with
  *              a smooth, physically-motivated polynomial in place of
  *              linear segments.

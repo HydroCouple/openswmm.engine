@@ -22,3 +22,6 @@ See @ref authors for the full list of authors and contributors.
       and @ref openswmm_model.h.
 * Changelog — see [CHANGELOG.md](../../CHANGELOG.md) for the complete list of
   changes in each release.
+* Developer Notes
+    * The Chebyshev-Compressed Cross-Section (@ref dev_cheb_section) — design
+      rationale for `POLYGON` cross-sections and `XSECT_GEOMETRY EXACT`.

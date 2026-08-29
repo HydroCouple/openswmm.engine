@@ -223,6 +223,35 @@ retroactive.
   whole-router `step`; the difference between them is unattributed time and is
   meant to be read as a finding rather than smoothed away.
 
+- **`POLYGON` cross-section — exact circular-arc/line boundary geometry
+  compressed to a piecewise Chebyshev series — plus a fused FV closure
+  evaluation and `swmm_link_set_polygon()` for run-time geometry updates.**
+  A conduit's boundary can now be given directly as a chain of straight
+  segments and circular arcs (`[CURVES] XPOLYGON`, DXF-style bulge
+  convention), rather than approximated from a normalized width table —
+  area, perimeter, top width, and the first moment of area are exact in
+  closed form (Green's theorem) at every depth, and are then compiled to a
+  compact piecewise Chebyshev series (split at every critical height, with
+  a coordinate change removing the square-root singularities a round
+  invert or crown otherwise introduces) for constant-time evaluation in the
+  hot loop. `[OPTIONS] XSECT_GEOMETRY LEGACY | EXACT` (default `LEGACY`)
+  additionally routes every built-in rounded shape (EGG, HORSESHOE, GOTHIC,
+  ARCH, ...) through the same compiled path, replacing EPA's interpolated
+  shape tables (21 to 51 points, depending on shape and field) — measured to carry large low-fill error (up to 41%
+  area error below 5% of full depth for the 51-point CUSTOM table; several
+  hundred percent relative error in the lowest panel of the 51-point
+  CIRCULAR table) — with the exact reconstruction; this deliberately breaks
+  bit-parity with legacy EPA SWMM results for those shapes, is alpha/
+  experimental, and is opt-in (`LEGACY` is unaffected and remains the
+  default). `swmm_link_set_polygon()` / `swmm_link_get_polygon()` let a
+  conduit's boundary be changed mid-run (sediment deposition, a CIPP
+  liner, corrosion) under FV routing, with `CONSERVE_DEPTH` /
+  `CONSERVE_VOLUME` reconciliation policies and a reported displaced
+  volume; this is FV-only (DYNWAVE/KINWAVE refuse the call) and is not
+  carried in hotstart files. See `docs/dev/cheb_section.md` for the design
+  rationale and measured performance, and Appendix D's `[XSECTIONS]` /
+  `[CURVES]` reference for the input format.
+
 - **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
   roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —
   let a host read the resolved and authored form of the 2D mesh reference, the 2D

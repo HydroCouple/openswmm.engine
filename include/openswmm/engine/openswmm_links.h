@@ -1289,6 +1289,12 @@ SWMM_ENGINE_API int swmm_link_set_polygon(SWMM_Engine engine, int link,
  *          the link, in PROJECT length units. Pass @p x and @p y as NULL to
  *          query the count first.
  *
+ * @param engine  Engine handle.
+ * @param link    Zero-based link index.
+ * @param[out] x  X-coordinates of the boundary vertices, or NULL to query
+ *                the count only.
+ * @param[out] y  Y-coordinates of the boundary vertices, or NULL to query
+ *                the count only.
  * @param[in,out] n  on entry, the capacity of @p x / @p y; on return, the
  *                   vertex count. Required (non-NULL).
  *
