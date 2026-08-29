@@ -56,6 +56,41 @@ struct MeshData;  // forward declaration
  * ### Root attributes
  *   - Conventions = "CF-1.11 UGRID-1.0"
  *
+ * ### Coordinate reference (written once in prepareMeshAndDatasets())
+ *   - /crs                           scalar georeferencing variable, pointed at
+ *                                    by the `openswmm_crs` attribute on /Mesh2
+ *                                    and the node/face coordinate variables.
+ *
+ *   All x/y coordinates in this file are stored in **SI metres**, because the
+ *   2D solver runs internally in SI. The model itself may be authored in a
+ *   different linear unit (US FLOW_UNITS projects are in feet, and their CRS
+ *   is typically a foot-based projected CRS such as EPSG:2249). The `/crs`
+ *   variable makes that relationship explicit rather than leaving a consumer
+ *   to assume the coordinates are already in the model CRS's unit:
+ *
+ *   - @model_crs             the model's CRS as authored in `[OPTIONS] CRS`
+ *                            (e.g. "EPSG:2249", a PROJ string, or WKT). This
+ *                            is the CRS of the MODEL coordinates, not of the
+ *                            metric values stored here.
+ *   - @metres_per_model_unit stored = model x this; model = stored / this.
+ *                            Precisely: the factor SurfaceRouter2D::initialize
+ *                            actually applied — 0.3048 for US FLOW_UNITS, and
+ *                            1.0 for SI projects AND for any mesh that
+ *                            declared `;; UNITS: SI (m)` (the engine skips its
+ *                            scaling there, so the stored metres already ARE
+ *                            the authored values).
+ *   - @units                 "m" — the unit of the stored coordinates.
+ *
+ *   Deliberately NOT a CF grid mapping — not `grid_mapping_name`, not
+ *   `spatial_ref`/`crs_wkt`, and the pointer attribute is `openswmm_crs`
+ *   rather than CF's `grid_mapping`. A generic CF/GDAL reader honouring those
+ *   would place the metric values in the foot-based CRS and reproduce the very
+ *   offset this variable exists to describe; and a `grid_mapping` pointing at
+ *   a variable with no `grid_mapping_name` is itself non-conformant, so strict
+ *   readers could warn or drop the coordinate variables. The OpenSWMM-
+ *   namespaced pair `model_crs` + `metres_per_model_unit` cannot be
+ *   half-consumed: neither means anything without the other. See issue #155.
+ *
  * ### Static mesh topology (written once in prepare())
  *   - /Mesh2                         topology variable (cf_role = "mesh_topology")
  *   - /Mesh2_node_x, /Mesh2_node_y  vertex coordinates
@@ -140,10 +175,28 @@ public:
      */
     void prepareMeshAndDatasets(const MeshData& mesh);
 
+    /**
+     * @brief Declare the factor already applied to the stored coordinates.
+     *
+     * @details The model CRS reaches the plugin through prepare()'s
+     *          SimulationContext, but the mesh scale factor does not —
+     *          SurfaceRouter2D owns it. SWMMEngine calls this between
+     *          prepare() and prepareMeshAndDatasets(). Left uncalled, `/crs`
+     *          reports 1.0, i.e. it claims nothing it cannot substantiate.
+     *
+     * @param metres_per_model_unit Metres per model-CRS linear unit — the
+     *                              factor already applied to the stored
+     *                              coordinates (0.3048 for US, 1.0 for SI).
+     */
+    void setMeshCoordinateScale(double metres_per_model_unit);
+
 private:
     std::string  h5_path_;
     PluginState  state_ = PluginState::UNLOADED;
     std::string  last_error_;
+
+    std::string  model_crs_;                ///< `[OPTIONS] CRS`, verbatim
+    double       metres_per_model_unit_ = 1.0;  ///< stored = model x this
 
     hid_t file_id_   = H5I_INVALID_HID;  ///< HDF5 file handle
 
@@ -178,6 +231,8 @@ private:
 
     // Helpers
     void writeMeshTopology(const SimulationContext& ctx);
+    /// Write the scalar `/crs` georeferencing variable (see class docs).
+    void writeCrsVariable();
     hid_t createUnlimitedDataset(const char* name, int rank,
                                   const hsize_t* dims,
                                   const hsize_t* chunk_dims);

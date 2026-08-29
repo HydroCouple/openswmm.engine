@@ -255,6 +255,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         bc_flow_scale_ = (fu >= 0 && fu < 6) ? kFlowToCms[fu] : 1.0;
     }
 
+    // Record the factor that applies to this mesh — metres per model-CRS
+    // linear unit — outside the guard below, so a repeated initialize() that
+    // short-circuits the in-place scaling still reports the factor the stored
+    // coordinates carry. Consumed by Default2DOutputPlugin's `/crs` variable
+    // (issue #155).
+    options_.mesh_to_si_factor =
+        (!options_.mesh_units_si && mesh_to_si != 1.0) ? mesh_to_si : 1.0;
+
     // Convert mesh geometry from project length units (feet for US) to the SI
     // internal units the 2D solver expects. MUST run BEFORE buildMeshTopology
     // so all derived geometry (areas, edge lengths, centroids, midpoint Z) is
