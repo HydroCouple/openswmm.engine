@@ -77,56 +77,14 @@ enum class TimeIntegration : int {
     RK2   = 1   ///< SSP-RK2 (Heun) — strong-stability-preserving
 };
 
-/// How a node's continuity equation is coupled to the faces that feed it.
-enum class NodeCoupling : int {
-    EXPLICIT      = 0,  ///< face fluxes frozen across the node update
-    SEMI_IMPLICIT = 1   ///< default: fluxes linearized in the node head
-};
-
-/// What a node contributes to the LTS base timestep.
-///
-/// `dt0` is the minimum over every cell AND every node, and the node's term is
-/// `A_s / (sum T*c)` — the correct EXPLICIT stability bound for a control
-/// volume of surface area A_s. But the node is not updated explicitly: the
-/// semi-implicit correction carries the step in its denominator,
-/// `dh = dt*R / (A_s + dt*resist)`, which is unconditionally stable. So the
-/// term is not buying STABILITY, whatever its form says; and a manhole's plan
-/// area is one to two orders of magnitude below a conduit cell's, so it sets
-/// `dt0` for the whole network.
-///
-/// It is, however, buying ACCURACY, and far more of it than the shape of the
-/// expression suggests. Scored against the SWASHES analytic solutions, L1 depth
-/// error, STABILITY vs NONE with three node sweeps:
-///
-///     bump-subcritical      0.1045  ->  1.132     10.8x worse
-///     bump-transcritical    0.2979  ->  0.9067     3.0x worse
-///     bump-shock            0.0596  ->  2.897     48.6x worse
-///     thacker-planar-1d     0.7559  ->  0.8636     1.1x worse
-///     macdonald-long-sub         -  -> 10.23      unusable
-///     macdonald-long-sup         -  -> 51.84      unusable
-///     ritter / stoker / lake-at-rest    unchanged (PASS either way)
-///
-/// NONE is 24-134x faster (bump-transcritical 120 s -> 5 s, bump-subcritical
-/// 134 s -> 1 s, both continuity-clean) and wrong wherever the node coupling
-/// carries the solution: steady frictional channels and anything transcritical.
-/// Three Picard sweeps do not stand in for the term at large dt — the sweeps
-/// converge the node's own continuity equation at the step it is handed, which
-/// is a different thing from that step being small enough to resolve the
-/// coupling. Only the cases the nodes barely participate in (dam breaks on a
-/// flat bed, a lake at rest) are indifferent.
-///
-/// So this is not a performance lever to reach for; it is the instrument that
-/// showed the node term is load-bearing, which is why STABILITY is the default
-/// and why the way out has to bound the node's step by what accuracy needs
-/// rather than by deleting the bound.
-///
-/// (An earlier note here claimed NONE scored 0.00159 on bump-subcritical, 66x
-/// BETTER. That does not reproduce: STABILITY's half of it, 0.1045, reproduces
-/// exactly, and NONE's is 1.132. Recorded so the number is not trusted again.)
-enum class NodeDtLimit : int {
-    STABILITY = 0,  ///< default: the explicit A_s/(sum T*c) bound (today)
-    NONE      = 1   ///< nodes do not constrain dt0; accuracy rests on sweeps
-};
+// FV_NODE_COUPLING, FV_NODE_DT and FV_NODE_PICARD were retired 2026-08-29
+// (parsed and warned when they ask for the behaviour that no longer exists):
+// storage-node coupling is always semi-implicit, the node accuracy bound is
+// always armed, and the correction is always a single sweep -- each the
+// former default. The SWASHES table that justified FV_NODE_DT was measured
+// under the BUCKET junction model described below, three days before that
+// model was deleted, and never re-measured
+// (plans/FV1D_PERF_PLAN_REVIEW_2026-08-20.md §3.1).
 
 // Junctions are always ALGEBRAIC interfaces, not states (matching legacy
 // DYNWAVE, where a junction's own surface area is exactly zero and all
@@ -225,15 +183,6 @@ struct FvOptions {
 
     StructureCoupling structure_coupling = StructureCoupling::SUBSTEP;
 
-    /// A junction's storage area is the MIN_SURFAREA floor, which as an
-    /// effective length A_s/T is a few feet against a conduit Δx of several
-    /// hundred — so under explicit coupling the MANHOLE, not the pipe, sets the
-    /// substep for the whole model. Linearizing each coupling face's flux in
-    /// the node head removes the node from the explicit stability limit.
-    /// Conservation is unaffected: the corrected flux is what BOTH the node and
-    /// the cell see.
-    NodeCoupling node_coupling = NodeCoupling::SEMI_IMPLICIT;
-
     // -- Execution ----------------------------------------------------------
 
     Backend backend = Backend::AUTO;
@@ -323,33 +272,6 @@ struct FvOptions {
     /// option is therefore ~2× on census cost, not k×. Measure before raising
     /// the default (Phase 1, FV1D_PERF_PLAN_REVISED_2026-08-20.md).
     int cfl_census_interval = 1;
-
-    /// Whether a node's explicit stability estimate enters the LTS base step.
-    NodeDtLimit node_dt_limit = NodeDtLimit::STABILITY;
-
-    /// Picard sweeps on the node head inside the semi-implicit coupling.
-    ///
-    /// 1 (default) is the original behaviour: ONE correction, with the
-    /// characteristic resistance √(g·A·T), the node surface area and the face
-    /// fluxes all frozen at the head the substep started from. That is exact
-    /// for the linearized problem — the residual after one sweep is
-    /// identically zero — so more sweeps only help because the real problem is
-    /// not linear: A, T and the storage area all move with the head, and the
-    /// Riemann flux is not the straight line the correction extrapolates
-    /// along. Freezing them is why the node is stable at a large Δt but not
-    /// ACCURATE at one, which is what forces it into a fine LTS tier and sets
-    /// the substep count (plan §7B.8).
-    ///
-    /// > 1 re-evaluates all three at the provisional head each sweep and
-    /// re-solves the incident faces' Riemann problems, so the node converges
-    /// on its own continuity equation instead of a tangent to it.
-    /// Conservation is untouched either way: every sweep leaves the answer in
-    /// `f_mass_`, the single array both the cell update and the node update
-    /// read.
-    int node_picard_sweeps = 1;
-
-    /// Stop sweeping when the head correction falls below this (ft).
-    double node_picard_tol = 1.0e-6;
 
     // -- Transport (plan §3.2 / §6.11) --------------------------------------
 

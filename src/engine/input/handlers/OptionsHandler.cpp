@@ -465,11 +465,21 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.fv.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
 
         } else if (key == "FV_NODE_COUPLING") {
-            const std::string nv = norm(val);
-            if      (nv == "EXPLICIT")
-                opt.fv.node_coupling = fv::NodeCoupling::EXPLICIT;
-            else if (nv == "SEMI_IMPLICIT")
-                opt.fv.node_coupling = fv::NodeCoupling::SEMI_IMPLICIT;
+            // RETIRED 2026-08-29 with FV_NODE_DT and FV_NODE_PICARD below.
+            // Two retirement tiers, on purpose: these three had an effect and
+            // warn when a deck asks for the behaviour that no longer exists
+            // (a calibrated model would otherwise change answers silently);
+            // FV_NODE_CELL_COUPLING / FV_JUNCTION_MODEL further down were
+            // already no-ops and stay silent. Spelling out the former default
+            // is not warned -- it is what every deck gets.
+            if (norm(val) == "EXPLICIT") {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_COUPLING EXPLICIT is retired and will be "
+                    "treated as SEMI_IMPLICIT - storage nodes are always coupled "
+                    "semi-implicitly (plain junctions are algebraic interfaces "
+                    "under either).");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_COMPACTION") {
             const std::string bv = norm(val);
@@ -503,12 +513,25 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.fv.cfl_census_interval = std::max(1, static_cast<int>(to_double(val)));
 
         } else if (key == "FV_NODE_DT") {
-            const std::string nd = norm(val);
-            if      (nd == "STABILITY") opt.fv.node_dt_limit = fv::NodeDtLimit::STABILITY;
-            else if (nd == "NONE")      opt.fv.node_dt_limit = fv::NodeDtLimit::NONE;
+            // RETIRED 2026-08-29 -- see FV_NODE_COUPLING above.
+            if (norm(val) == "NONE") {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_DT NONE is retired and will be treated as "
+                    "STABILITY - the node accuracy bound is always armed (it "
+                    "binds storage nodes only; algebraic junctions and outfalls "
+                    "are exempt).");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_NODE_PICARD") {
-            opt.fv.node_picard_sweeps = std::max(1, static_cast<int>(to_double(val)));
+            // RETIRED 2026-08-29 -- see FV_NODE_COUPLING above.
+            if (std::max(1, static_cast<int>(to_double(val))) > 1) {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_PICARD " + val + " is retired and will be "
+                    "treated as 1 - the semi-implicit node correction is always "
+                    "a single sweep.");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_NODE_CELL_COUPLING" ||
                    key == "FV_JUNCTION_MODEL") {
