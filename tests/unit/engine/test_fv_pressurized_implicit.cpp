@@ -99,17 +99,23 @@ TEST_P(PressLakeAtRest, staysAtRestToMachinePrecision) {
 // Measured over a 12-level sweep on a D=4 pipe across a slope break, worst
 // free-surface drift after 600 s at rest:
 //
-//   fully open, no cell pressurized   7.4e-05 ft   (option inert; see below)
-//   straddling the crown, implicit ON 2.1e-14 ft
-//   straddling the crown, implicit OFF 3.3e-02 ft  <-- 440x worse
+//   fully open, no cell pressurized    1.8e-15 ft  (option inert here)
+//   straddling the crown, implicit ON  4.4e-14 ft
+//   straddling the crown, implicit OFF 3.3e-02 ft  <-- 10^12 worse
 //
-// The 7.4e-05 floor in the first row is a SEPARATE, pre-existing limitation of
-// the Preissmann taper band that this option cannot touch (no cell reaches
-// y_crown, so the implicit path never engages and the two modes agree
-// bit-for-bit). It is not what this test is about. Confirmed independent of
-// the substep-acceptance fix in this same change: that fix left every number
-// in the sweep identical, because a pool at rest has u = 0 everywhere and so
-// never saturates the positivity limiter that the fix concerns.
+// The first row was 7.4e-05 when this test was written, and was described
+// here as a separate pre-existing limitation of the Preissmann taper band
+// that the option could not touch. That attribution was wrong: it was the
+// discontinuity in i1OfDepth (Simpson nodes vs trapezoid refinement), fixed
+// in the same change that added this note, and it is now at the
+// floating-point floor. See the residual term in FvKernels.hpp.
+//
+// What remains in row three is genuinely a different mechanism and genuinely
+// needs the implicit solver: with cells straddling y_crown and the option
+// off, the explicit acoustic step is the binding problem, not the closure.
+// Also confirmed independent of the substep-acceptance fix in this same
+// change — that fix left every number in the sweep identical, because a pool
+// at rest has u = 0 everywhere and never saturates the positivity limiter.
 TEST(PressLakeAtRest, holdsWhileStraddlingTheCrown) {
     // Slope break, so cells sit at a range of bed elevations and one pool
     // level puts some above the crown and some below it.

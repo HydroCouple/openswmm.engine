@@ -194,6 +194,30 @@ retroactive.
 
 ### Fixed
 
+- **The FV pressure term was discontinuous, and it was the real cause of the
+  "partly-full pipe cannot hold lake-at-rest" limitation.** `i1OfDepth`
+  accumulates its table nodes with composite Simpson (or `exactI1` for a
+  compiled boundary) but refines within an interval with a trapezoid. Those
+  two quadratures disagree, so I₁ jumped at EVERY table node — by up to **8%
+  relative** near the invert, and **7.1e-5 ft³** at the taper onset where the
+  area curve is sharpest. Well-balancedness does not merely need I₁ to be
+  single-valued in depth (as a comment here previously claimed); it needs a
+  continuous antiderivative of the same area the mass update uses.
+
+  The refinement now carries a smoothstep-ramped residual that makes it land
+  exactly on the next table node. The ramp's derivative vanishes at both ends,
+  so dI₁/dh still equals A exactly at every node. Measured on a still pool
+  over a slope break, worst free-surface drift across a 12-level fill sweep:
+  **7.4e-5 ft → 4.4e-14 ft**, and the specific case this project had recorded
+  as a permanent limitation now drifts by exactly zero. Absolute I₁ accuracy
+  improves 2.4x as a side effect.
+
+  A plain cubic Hermite interpolant is more accurate in isolation (4.7e-6 vs
+  2.9e-5 worst absolute) and was rejected on measurement: it never reads the
+  exact area the caller already computed, and decoupling I₁ from that area
+  moved storage-node routing continuity from −0.023% to +0.058%, failing its
+  gate. Consistency with A, not interpolant accuracy, is the objective.
+
 - **FV substep acceptance was decided by a floating-point tie, costing up to
   20x the substeps.** A step far past CFL saturates the positivity limiter,
   which clamps outflow to `vol/dt` and so caps the Courant number at exactly
