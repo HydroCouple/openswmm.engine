@@ -192,6 +192,46 @@ retroactive.
   Built-in plugin metadata (`IPluginComponentInfo::license_type`) now reports
   `"Apache-2.0"`.
 
+### Fixed
+
+- **FV substep acceptance was decided by a floating-point tie, costing up to
+  20x the substeps.** A step far past CFL saturates the positivity limiter,
+  which clamps outflow to `vol/dt` and so caps the Courant number at exactly
+  1. The post-step census then returns exactly `cfl*dt` — a pure function of
+  the step taken, carrying no information about whether that step was
+  admissible. With the default `cfl` equal to `kStepAcceptRatio` (both 0.5),
+  the acceptance comparison became the exact tie `0.5*dt >= 0.5*dt`, resolved
+  by whichever way the last bit fell.
+
+  Measured on the R2 pressurized head-loss fixture: substeps to reach steady
+  flow across a slot-celerity sweep ran 204 at c=700, 2975 at 800, 204 at 900,
+  4196 at 1000, 6701 at 1100, then 204 again at 1500 — non-monotone by a
+  factor of 30, which no `dt ~ 1/c` law can produce. The oversized accepted
+  first step injected a spurious water hammer, and the thousands of substeps
+  that followed were resolving the solver's own artifact.
+
+  The comparison now carries a small relative margin, so the degenerate case
+  rejects deterministically and the retry ladder descends to a genuinely
+  admissible step. The sweep flattens to 204-207 over c = 100..2000 and c=1000
+  drops from 4196 substeps to 204 — strictly less work, because the artifact
+  is never created. This also fixes
+  `PressCensus.substepCountIsCelerityInvariantAndFarBelowExplicit`, which had
+  been failing on a clean `swmm6_rel` checkout: the assertion was correct and
+  the solver was at fault. Found while investigating that failure during the
+  POLYGON geometry work; the geometry work itself is unrelated to it.
+
+- **A still pool straddling a pipe's crown drifted off level under FV.**
+  Both existing lake-at-rest gates surcharge every cell, so neither covered
+  the mixed state where part of a pipe is pressurized and part is still
+  open-channel. Sweeping fill level instead of testing one found worst
+  free-surface drift of **3.3e-2 ft** there with `FV_PRESSURIZED_IMPLICIT`
+  off, against **2.1e-14 ft** with it on — 440x. Now pinned by
+  `PressLakeAtRest.holdsWhileStraddlingTheCrown`, at the same 1e-9 its
+  sibling gates demand, with a non-vacuity guard asserting the fixture really
+  does straddle. Note this is distinct from the ~7.4e-5 ft floor a partly-full
+  pipe shows when NO cell reaches the crown, which is a separate pre-existing
+  limitation of the Preissmann taper band that this option cannot affect.
+
 ### Added
 
 - **A register of known defects in the legacy SWMM 5.2.4 solver.**
