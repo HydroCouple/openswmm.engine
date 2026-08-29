@@ -358,6 +358,8 @@ double chebNode(int n, int j) noexcept;
 
 /// Chebyshev coefficients on [0,1] from samples already taken at chebNode().
 /// @param f samples f(chebNode(n,j)), j = 0..n-1
+/// @param n sample/coefficient count
+/// @param[out] c the n fitted coefficients
 void chebFitSamples(const double* f, int n, double* c) noexcept;
 
 /// Chebyshev coefficients of @p f on [0,1].

@@ -120,6 +120,8 @@ double arcLength(const BElem& e) noexcept;
  *          (within one sweep of magnitude <= 2*pi). A horizontal segment
  *          (y0 == y1) never "crosses" — it either coincides with @p y or
  *          misses it entirely, and is reported as 0 crossings either way.
+ * @param e the boundary element (segment or arc)
+ * @param y the query height
  * @param[out] xout up to 2 x-coordinates, ascending.
  * @returns the crossing count, 0, 1, or 2.
  * @note At a depth exactly equal to a vertex height shared by two elements,
@@ -139,6 +141,9 @@ int crossingsAt(const BElem& e, double y, double xout[2]) noexcept;
  *          each side of the peak) — hence `out[2]`. Each returned piece keeps
  *          the SAME signed walking direction as @p e (so its own contribution
  *          to greenArea/greenMomentY carries the correct sign).
+ * @param e the boundary element (segment or arc)
+ * @param y the query height
+ * @param[out] out up to 2 surviving sub-elements
  * @returns the number of surviving pieces, 0, 1, or 2.
  */
 int clipBelow(const BElem& e, double y, BElem out[2]) noexcept;
