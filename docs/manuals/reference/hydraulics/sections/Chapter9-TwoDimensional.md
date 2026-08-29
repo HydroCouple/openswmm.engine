@@ -1352,20 +1352,30 @@ legacy models still open.
 | `COUPLING_CD` | 0.65 | Default exchange discharge coefficient. |
 | `COUPLING_AREA` | `DEFAULT` | `AUTO` derives an unauthored exchange area as clamp(1.25 × largest connected conduit full-flow area, 0.05, 2.0) m² (§9.7.5). |
 | `COUPLING_SYNC` | 0 s | 0 co-advances every routing step; > 0 batches the 2D advance (§9.7.3). |
+| `BACKEND` | `AUTO` | `AUTO`, `CPU`, `OMP`, `CUDA`, `HIP` or `SYCL` — which marcher implementation runs the mesh (below). |
 | `FLUX_DH_EPS` | 0.004 m | Head-gradient floor of the diffusive boundary flux. 0 restores the bare \f$\sqrt{\ }\f$. |
 | `LIMITER_EPSILON` | \f$10^{-6}\f$ | Regularization of the output gradient limiter. |
 | `REPORT_2D` | `YES` | Write 2D results. |
 | `OUTPUT_FILE` | — | HDF5 results path, resolved relative to the `.inp` directory. |
 
-The computational backend is selected at runtime rather than from the
-input file. The built-in marcher is OpenMP-threaded on the host and uses
-the project's `THREADS` setting; a Kokkos plugin (`omp`, `cuda`, `hip`
-or `sycl`) is preferred when one is installed and the mesh is large
-enough to amortize per-substep kernel launches. `OPENSWMM_2D_BACKEND`
-overrides the choice. The gate is deliberately high — on a 25 000-cell
-coupled model the OpenMP plugin measured an order of magnitude *slower*
-than the built-in marcher, because the plugin pays a launch cost on
-every substep while the built-in path is already threaded.
+The computational backend is chosen by `BACKEND`. The built-in `CPU`
+marcher is OpenMP-threaded on the host and uses the project's `THREADS`
+setting; `OMP`, `CUDA`, `HIP` and `SYCL` name a Kokkos plugin and load it
+outright (a plugin that is not installed, or reports no usable device,
+falls back to `CPU` with a notice — never a hard failure). `AUTO`, the
+default, prefers a device plugin when one is installed and the mesh is
+above the device floor (`OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE`, default
+10 000 cells), then the OpenMP plugin above its own, much higher floor
+(`OPENSWMM_2D_MIN_PARALLEL_CELLS`, default 50 000), else `CPU`. The
+`OPENSWMM_2D_BACKEND` environment variable overrides the option when set
+(the same precedence `OPENSWMM_FV_BACKEND` has over `FV_BACKEND`). The
+OpenMP floor is deliberately high — on a 25 000-cell coupled model the
+OpenMP plugin measured an order of magnitude *slower* than the built-in
+marcher, because the plugin pays a launch cost on every substep while the
+built-in path is already threaded. Whether a discrete GPU pays off is
+likewise problem-dependent (§9.7.3: every routing step is a host↔device
+round trip, and the junction-exchange and boundary passes run serially),
+so a model that measures slower on `AUTO` should pin `BACKEND CPU`.
 
 ## 9.12 Limitations
 

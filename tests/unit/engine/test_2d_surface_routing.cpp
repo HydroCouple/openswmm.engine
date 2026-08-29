@@ -39,6 +39,8 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstdlib>
 #include <vector>
 #include <string>
 #include <numeric>
@@ -51,6 +53,8 @@
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
 #include "2d/input/SectionHandlers2D.hpp"
+#include "2d/solver/SurfaceSolverFactory.hpp"
+#include "2d/solver/ISurfaceSolver.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "2d/output/Default2DOutputPlugin.hpp"
@@ -1058,6 +1062,80 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(opts.rainfall_mode, RainfallMode::NONE);
     EXPECT_EQ(format2DOptionValue(opts, "RAINFALL_MODE"), "NONE");
+
+    // BACKEND: the model's own marcher-backend request (AUTO default). Every
+    // token round-trips through format2DOptionValue, case-insensitively, and
+    // an unknown accelerator is rejected rather than silently becoming AUTO.
+    EXPECT_EQ(opts.backend, Backend2D::AUTO);
+    EXPECT_TRUE(is2DOptionKey("BACKEND"));
+    EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), "AUTO");
+    const struct { const char* tok; Backend2D want; } backends[] = {
+        {"cpu", Backend2D::CPU},   {"OMP", Backend2D::OMP},
+        {"Cuda", Backend2D::CUDA}, {"HIP", Backend2D::HIP},
+        {"sycl", Backend2D::SYCL}, {"auto", Backend2D::AUTO},
+    };
+    for (const auto& b : backends) {
+        err = parse2DOptionsLine({"BACKEND", b.tok}, opts);
+        EXPECT_TRUE(err.empty()) << b.tok << ": " << err;
+        EXPECT_EQ(opts.backend, b.want) << b.tok;
+        std::string upper = b.tok;
+        for (char& c : upper) c = static_cast<char>(std::toupper(
+            static_cast<unsigned char>(c)));
+        EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), upper) << b.tok;
+    }
+    err = parse2DOptionsLine({"BACKEND", "METAL"}, opts);
+    EXPECT_FALSE(err.empty()) << "BACKEND METAL must be rejected";
+    EXPECT_EQ(opts.backend, Backend2D::AUTO)
+        << "a rejected token must not clobber the previous value";
+}
+
+// The factory honours [2D_OPTIONS] BACKEND when OPENSWMM_2D_BACKEND is unset,
+// and the environment variable overrides the option when set — the same
+// precedence the FV module gives OPENSWMM_FV_BACKEND over FV_BACKEND. The
+// ctest harness pins OPENSWMM_2D_BACKEND=cpu for this binary, so the variable
+// is saved, cleared and restored around the checks.
+TEST(SurfaceSolverFactory, DeckBackendOptionSelectsMarcher) {
+    const char* prev = std::getenv("OPENSWMM_2D_BACKEND");
+    const std::string saved = prev ? prev : "";
+    struct Restore {
+        std::string v; bool had;
+        ~Restore() {
+            if (had) setenv("OPENSWMM_2D_BACKEND", v.c_str(), 1);
+            else     unsetenv("OPENSWMM_2D_BACKEND");
+        }
+    } restore{saved, prev != nullptr};
+
+    SolverOptions2D opts;
+    std::string chosen;
+
+    // CPU by option, no env: the built-in marcher, no plugin discovery.
+    unsetenv("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::CPU;
+    auto s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // Env wins over the option: BACKEND OMP in the deck, cpu in the env.
+    setenv("OPENSWMM_2D_BACKEND", "cpu", 1);
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // OMP by option, no env: the Kokkos OpenMP plugin when it is discoverable
+    // (co-located beside the engine library in every default build); an
+    // absent plugin falls back to CPU by contract, which is not a failure of
+    // the option plumbing — so that case is reported as skipped, not passed.
+    unsetenv("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 10);  // below every floor
+    ASSERT_TRUE(s);
+    if (chosen.rfind("omp", 0) != 0)
+        GTEST_SKIP() << "omp plugin not discoverable here (chosen='" << chosen
+                     << "'); CPU + env-precedence legs passed";
+    EXPECT_EQ(chosen.rfind("omp", 0), 0u) << chosen;
 }
 
 TEST(InputParsing, Parse2DOptionsRejectsUnknown) {
