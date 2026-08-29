@@ -295,7 +295,11 @@ plan existed specifically to confirm that premise before anything was built.
 
 ## 7. Known limits
 
-Stated plainly, not as caveats to be read past:
+Stated plainly, not as caveats to be read past. Note that limits of the
+*legacy* representation this one replaces — the accuracy of the built-in
+lookup tables, and the shared solvers that consume them — are catalogued
+separately in @ref legacy_defects, which also records which of them
+`XSECT_GEOMETRY EXACT` removes and which it inherits unchanged.
 
 - **Resistance is still `R = A/P`** — a single Manning's `n` applies around
   the entire wetted perimeter. There is no composite-roughness treatment

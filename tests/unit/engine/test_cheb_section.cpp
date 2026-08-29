@@ -675,16 +675,21 @@ TEST(ChebSection, CriticalDepthOnACompiledCircleMatchesTheAnalyticFormula) {
     // table carries up to ~1.4% error and that test is about the fused-vs-
     // unfused accessor path, not accuracy).
     //
-    // The spec's original target was 1e-6 ft. Measured: xsect::getYcrit's
-    // shared solver (identical on LEGACY and EXACT alike — this is not a
-    // geometry-backend question) uses the legacy 25-step interval
-    // enumeration with LINEAR interpolation inside the bracketing interval
-    // whenever a_full/(pi/4*y_full^2) is in [0.5, 2.0], which a circle always
-    // is. That gives an inherent O(y_full/25) discretization error — d=4 ->
-    // worst observed 8.6e-3 ft against the true analytic root, three orders
-    // above 1e-6 ft, and unrelated to whether the section is compiled or
-    // tabulated. The bound below is tied to that known mechanism (a tenth of
-    // one enumeration step) rather than to the unreachable original number.
+    // The spec's original target was 1e-6 ft. It was originally UNREACHABLE:
+    // getYcrit's enumeration branch (taken whenever a_full/(pi/4*y_full^2) is
+    // in [0.5, 2.0], which a circle always is) closes with ONE linear
+    // interpolation across a y_full/25 bracket, giving an O(dy)
+    // discretization error — worst observed 8.6e-3 ft on this circle, three
+    // orders ABOVE the target and nothing to do with the geometry backend.
+    //
+    // generic_getYcrit now polishes that bracket with Ridder for a COMPILED
+    // boundary only (kYcritTolCheb), because chebAWofY resolves A and W far
+    // more sharply than the bracket does. Measured after: worst 4.1e-8 ft
+    // over q in [0.25, 100], a ~2e5x improvement, so the original 1e-6 ft
+    // target is now met with two decades to spare and is asserted directly.
+    // LEGACY keeps the coarse enumeration by design (its own tables are only
+    // good to ~1e-2, so refining inside one of their brackets would be false
+    // precision) — the second half of this test pins that it was untouched.
     const double d = 4.0;
     const auto circ = circleOf(d);
     ChebSection s;
@@ -695,9 +700,50 @@ TEST(ChebSection, CriticalDepthOnACompiledCircleMatchesTheAnalyticFormula) {
     for (double q : {1.0, 10.0, 40.0, 80.0}) {
         const double yc_code = xsect::getYcrit(xs, q);
         const double yc_true = analyticYcrit(circ, s.y_full, q);
-        EXPECT_NEAR(yc_code, yc_true, 0.1 * dy_step)
+        EXPECT_NEAR(yc_code, yc_true, 1.0e-6)
             << "q=" << q << " code=" << yc_code << " analytic=" << yc_true;
     }
+
+    // The polish is gated on xs.cheb, so a plain tabulated CIRCULAR must still
+    // show the coarse enumeration floor. Comparing legacy against the ANALYTIC
+    // root cannot show that — legacy's ~1.4% table error swamps the O(dy)
+    // solver error, so the comparison passes with or without the gate
+    // (confirmed by mutation: dropping `xs.cheb &&` left it green). The
+    // discriminator has to compare legacy's getYcrit against the root of
+    // legacy's OWN table-based Qc, which cancels the table error and leaves
+    // only what the solver itself contributes.
+    double p[4] = {d, 0.0, 0.0, 0.0};
+    XSectParams legacy{};
+    ASSERT_EQ(xsect::setParams(legacy, static_cast<int>(XSectShape::CIRCULAR),
+                               p, 1.0), 0);
+    ASSERT_EQ(legacy.cheb, nullptr);
+
+    auto legacySelfYcrit = [&](double q) {
+        double lo = 1.0e-9 * legacy.y_full, hi = 0.999999 * legacy.y_full;
+        for (int it = 0; it < 200; ++it) {
+            const double mid = 0.5 * (lo + hi);
+            const double a = xsect::getAofY(legacy, mid);
+            const double w = xsect::getWofY(legacy, mid);
+            const double f = (w > 0.0)
+                                 ? a * std::sqrt(32.2 * a / w) - q
+                                 : -q;
+            if (f > 0.0) hi = mid; else lo = mid;
+        }
+        return 0.5 * (lo + hi);
+    };
+
+    double worst_legacy = 0.0;
+    for (double q : {1.0, 10.0, 40.0, 80.0}) {
+        const double yc_legacy = xsect::getYcrit(legacy, q);
+        worst_legacy = std::max(worst_legacy,
+                                std::fabs(yc_legacy - legacySelfYcrit(q)));
+    }
+    EXPECT_GT(worst_legacy, 1.0e-4)
+        << "LEGACY getYcrit resolved its own Qc to " << worst_legacy
+        << " ft — far sharper than the 25-step enumeration can manage, so the "
+           "compiled-only polish has leaked into the legacy path";
+    EXPECT_LT(worst_legacy, dy_step)
+        << "LEGACY getYcrit worse than one enumeration step";
 }
 
 TEST(ChebSection, NonMonotoneConveyanceRoundTripsOnBothSidesOfAMax) {
