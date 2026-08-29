@@ -1045,13 +1045,11 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
                   ? "ROUTING_STEP" : "SUBSTEP";
     else if (k == "FV_COMPACTION")     val = opt.fv.compaction ? "YES" : "NO";
     else if (k == "FV_NODE_COUPLING")
-        val = (opt.fv.node_coupling == openswmm::fv::NodeCoupling::EXPLICIT)
-                  ? "EXPLICIT" : "SEMI_IMPLICIT";
+        val = "SEMI_IMPLICIT";            // retired option; the only coupling
     else if (k == "FV_NODE_DT")
-        val = (opt.fv.node_dt_limit == openswmm::fv::NodeDtLimit::NONE)
-                  ? "NONE" : "STABILITY";
+        val = "STABILITY";                // retired option; bound always armed
     else if (k == "FV_NODE_PICARD")
-        val = std::to_string(opt.fv.node_picard_sweeps);
+        val = "1";                        // retired option; always one sweep
     else if (k == "FV_NODE_CELL_COUPLING")
         val = "NO";                       // retired option; kept readable
     else if (k == "FV_JUNCTION_MODEL")
@@ -1427,25 +1425,14 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         const std::string vu = upper_copy(v);
         opt.fv.compaction = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
     }
-    else if (k == "FV_NODE_COUPLING") {
-        const std::string vu = upper_copy(v);
-        if      (vu == "EXPLICIT")
-            opt.fv.node_coupling = openswmm::fv::NodeCoupling::EXPLICIT;
-        else if (vu == "SEMI_IMPLICIT")
-            opt.fv.node_coupling = openswmm::fv::NodeCoupling::SEMI_IMPLICIT;
-        else return SWMM_ERR_BADPARAM;
-    }
-    else if (k == "FV_NODE_DT") {
-        const std::string vu = upper_copy(v);
-        if      (vu == "STABILITY") opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::STABILITY;
-        else if (vu == "NONE")      opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::NONE;
-        else return SWMM_ERR_BADPARAM;
-    }
-    else if (k == "FV_NODE_PICARD")
-        opt.fv.node_picard_sweeps = std::max(1, stoi_strict(v));
-    else if (k == "FV_NODE_CELL_COUPLING" || k == "FV_JUNCTION_MODEL") {
+    else if (k == "FV_NODE_CELL_COUPLING" || k == "FV_JUNCTION_MODEL" ||
+             k == "FV_NODE_COUPLING" || k == "FV_NODE_DT" ||
+             k == "FV_NODE_PICARD") {
         // Retired options, accepted and ignored: junctions are always
-        // algebraic interfaces now.
+        // algebraic interfaces, storage-node coupling is always semi-implicit
+        // with a single sweep, and the node accuracy bound is always armed.
+        // The .inp parser warns when a retired key asks for the behaviour that
+        // no longer exists; the C API stays silent, as for the older two.
     }
     else if (k == "FV_LTS") {
         const std::string vu = upper_copy(v);

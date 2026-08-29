@@ -871,12 +871,6 @@ int writeInpFile(const SimulationContext& ctx_internal,
             std::fprintf(f,"%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
         if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
             std::fprintf(f,"%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
-        if (fvo.node_coupling != fv::NodeCoupling::SEMI_IMPLICIT)
-            std::fprintf(f,"%-20s %s\n", "FV_NODE_COUPLING", "EXPLICIT");
-        if (fvo.node_dt_limit != fv::NodeDtLimit::STABILITY)
-            std::fprintf(f,"%-20s %s\n", "FV_NODE_DT", "NONE");
-        if (fvo.node_picard_sweeps != 1)
-            std::fprintf(f,"%-20s %d\n", "FV_NODE_PICARD", fvo.node_picard_sweeps);
         if (!fvo.compaction)
             std::fprintf(f,"%-20s %s\n", "FV_COMPACTION", "NO");
         std::fprintf(f,"%-20s %s\n", "FV_BACKEND",      sBackend[static_cast<int>(fvo.backend)]);

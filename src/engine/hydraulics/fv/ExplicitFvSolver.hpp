@@ -277,11 +277,6 @@ private:
 
     double nodeDepthFromVolume(int node, double volume) const;
 
-    /// dV/dH at an arbitrary depth — what the semi-implicit node correction is
-    /// damped against once Picard sweeping has moved the head off the one
-    /// `node_surf_area` was refreshed at.
-    double nodeStorageSlope(int node, double depth) const;
-
     /// Is this face's flux the one being computed and booked RIGHT NOW?
     ///
     /// Under LTS a node's incident faces can sit in different tiers, so only
@@ -291,19 +286,17 @@ private:
     /// that belongs to a different window, which is the one property the
     /// macro cycle's face-open/volume-close offset exists to guarantee.
     ///
-    /// Picard's flux re-solve is therefore restricted to live faces. The
-    /// residual still sums over ALL incident faces (a held flux is the best
-    /// estimate of what that face is carrying), and the linear correction is
-    /// still written to all of them, exactly as the single-sweep scheme did —
-    /// only the re-solve is gated. On the global path every face is live.
+    /// The algebraic-junction re-solve and the LTS due-set machinery are the
+    /// callers; both must touch only live faces. On the global path every
+    /// face is live.
     /// Can the LTS macro cycle run under the current options and state?
     /// One predicate shared by advance() and censusDt(): tiering is off under
     /// RK2 (the two stages must share one Δt) and under transport (the FCT
-    /// sweep is synchronous). censusDt() skips the node stability term only
+    /// sweep is synchronous). censusDt() skips the node accuracy bound only
     /// when tiering can actually supply the node its own fine tier — gating
     /// that skip on the FV_LTS option alone silently dropped the node bound
     /// from the global path whenever the option was on but tiering was not
-    /// running (RK2, species), reproducing FV_NODE_DT NONE unasked.
+    /// running (RK2, species).
     bool ltsEligible() const noexcept {
         return opts_.lts &&
                opts_.time_integration != TimeIntegration::RK2 &&

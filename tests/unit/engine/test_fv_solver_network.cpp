@@ -715,39 +715,6 @@ void attachPrismaticStorage(Channel& ch, int node, double area, double dmax) {
 }
 }  // namespace
 
-// The property that makes the damping legitimate rather than a fudge: at
-// EQUILIBRIUM the correction is identically zero. It is proportional to the
-// node's net imbalance, and a settled node has none — so the two couplings
-// must agree on the steady state they reach, however differently they get
-// there. If they did not, the damping would be changing the answer rather than
-// the path to it.
-TEST(FvNetwork, NodeCouplingsAgreeOnTheSteadyState) {
-    auto settle = [](NodeCoupling nc) {
-        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                      [](double x) { return 0.002 * (1000.0 - x); },
-                                      0.013);
-        attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
-        for (int i = 0; i < ch.n; ++i)
-            ch.state.cell_a[static_cast<std::size_t>(i)] =
-                k::areaOfDepth(ch.mesh.geom[0], 0.8);
-        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
-        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
-
-        FvOptions o = defaultOptions();
-        o.node_coupling = nc;
-        runNoded(ch, o, 3000.0, 5.0, /*q_in=*/12.0,
-                 /*stage_dn=*/ch.mesh.node_invert[1] + 0.8);
-        return ch.state.cell_q;
-    };
-
-    const std::vector<double> expl = settle(NodeCoupling::EXPLICIT);
-    const std::vector<double> semi = settle(NodeCoupling::SEMI_IMPLICIT);
-    ASSERT_EQ(expl.size(), semi.size());
-    for (std::size_t i = 5; i + 5 < expl.size(); ++i)
-        EXPECT_NEAR(semi[i], expl[i], 0.02 * 12.0)
-            << "steady discharge differs at cell " << i;
-}
-
 // Conservation is the property that must survive, and the mechanism is
 // specific: the correction is written into the SHARED face-flux array, so the
 // node and the cell see the same number. Damping the node head directly would
@@ -765,7 +732,6 @@ TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
     ch.state.node_head[1] = 1.2;
 
     FvOptions o = defaultOptions();
-    o.node_coupling = NodeCoupling::SEMI_IMPLICIT;
     ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, o);
 
@@ -792,46 +758,45 @@ TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
     s.finalize();
 }
 
-// The point of the exercise: the manhole no longer sets the substep. A
-// measurement with a loose gate — it exists so a regression that silently
-// reinstates the node limit is visible.
-TEST(FvNetwork, SemiImplicitCouplingRemovesTheNodeStepLimit) {
-    auto substeps = [](NodeCoupling nc) {
-        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                      [](double x) { return 0.002 * (1000.0 - x); },
-                                      0.013);
-        attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
-        for (int i = 0; i < ch.n; ++i)
-            ch.state.cell_a[static_cast<std::size_t>(i)] =
-                k::areaOfDepth(ch.mesh.geom[0], 0.8);
-        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
-        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
+// The point of the exercise: the manhole does not set the substep. Before the
+// coupling knob was retired this compared EXPLICIT against SEMI_IMPLICIT on
+// this fixture and recorded 2750 vs 2453 substeps (1.12x; the pre-removal
+// evidence record, openswmm.gui/test_artifacts/eastboston_fv_node_options/
+// EVIDENCE.md). The explicit alternative no longer exists, so the ceiling sits
+// between the two recorded counts: a regression that silently reinstates the
+// node's explicit stability limit walks the count back toward 2750 and trips
+// it. If an unrelated census change moves the count, re-measure both sides
+// rather than loosening past 2750.
+TEST(FvNetwork, NodeDoesNotOwnTheSubstep) {
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                  [](double x) { return 0.002 * (1000.0 - x); },
+                                  0.013);
+    attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
+    for (int i = 0; i < ch.n; ++i)
+        ch.state.cell_a[static_cast<std::size_t>(i)] =
+            k::areaOfDepth(ch.mesh.geom[0], 0.8);
+    ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
+    ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
 
-        FvOptions o = defaultOptions();
-        o.node_coupling = nc;
-        ExplicitFvSolver s;
-        s.initialize(ch.mesh, ch.state, o);
-        std::vector<double> lateral = {12.0, 0.0};
-        std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(),
-                                     ch.mesh.node_invert[1] + 0.8};
-        FvStepForcing f;
-        f.node_lateral = lateral.data();
-        f.node_fixed_head = fixed.data();
-        f.n_nodes = 2;
-        long n = 0;
-        for (double t = 0.0; t < 600.0; t += 5.0) {
-            s.advance(t, t + 5.0, f);
-            n += s.last_num_steps();
-        }
-        s.finalize();
-        return n;
-    };
-
-    const long ex = substeps(NodeCoupling::EXPLICIT);
-    const long si = substeps(NodeCoupling::SEMI_IMPLICIT);
-    std::printf("[fv-node] substeps explicit %ld vs semi-implicit %ld (%.2fx)\n",
-                ex, si, static_cast<double>(ex) / static_cast<double>(std::max(1L, si)));
-    EXPECT_LT(si, ex) << "the node still sets the substep";
+    FvOptions o = defaultOptions();
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+    std::vector<double> lateral = {12.0, 0.0};
+    std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(),
+                                 ch.mesh.node_invert[1] + 0.8};
+    FvStepForcing f;
+    f.node_lateral = lateral.data();
+    f.node_fixed_head = fixed.data();
+    f.n_nodes = 2;
+    long n = 0;
+    for (double t = 0.0; t < 600.0; t += 5.0) {
+        s.advance(t, t + 5.0, f);
+        n += s.last_num_steps();
+    }
+    s.finalize();
+    std::printf("[fv-node] substeps %ld (recorded: semi-implicit 2453, "
+                "explicit 2750)\n", n);
+    EXPECT_LT(n, 2600L) << "the node is setting the substep again";
 }
 
 

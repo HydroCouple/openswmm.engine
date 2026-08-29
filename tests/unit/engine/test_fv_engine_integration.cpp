@@ -1387,43 +1387,33 @@ TEST(FvEngine, StorageNodeLossesLeaveTheWater) {
 
 
 // ---------------------------------------------------------------------------
-// FV_NODE_PICARD — the semi-implicit node correction, iterated.
+// FV_NODE_COUPLING / FV_NODE_DT / FV_NODE_PICARD are RETIRED (2026-08-29).
 //
-// The correction freezes the characteristic resistance sqrt(g*A*T), the node's
-// storage response and the incident faces' fluxes at the head the substep
-// started from. That is exact for the LINEARIZED problem, so one sweep leaves
-// zero residual and more sweeps only matter because the real problem is not
-// linear. Sweeping re-evaluates all three at the head each pass lands on.
-//
-// Two properties are asserted, and the second is the one this repo keeps
-// getting wrong: FV_STRUCTURE_COUPLING and RK2 both shipped parsed, exposed
-// and READ NOWHERE. An option that cannot be shown to change a result is a
-// dead option, so the test requires a visible difference rather than trusting
-// the plumbing.
+// Each hardwires what was already its default: storage-node coupling is
+// semi-implicit, the node accuracy bound is armed, the correction is a single
+// sweep. Plain junctions never used any of them (algebraic interfaces), so
+// the fixture is the storage-node network the Picard gates used to run — the
+// only configuration where the retired knobs ever changed a result (the
+// pre-removal evidence record, openswmm.gui/test_artifacts/
+// eastboston_fv_node_options/EVIDENCE.md, has EXPLICIT and PICARD 6 live on
+// it). Three claims, and the last is what keeps the warning honest:
+//   1. a deck asking for the retired behaviour still opens and runs
+//      BIT-IDENTICALLY to the defaults — inert, not merely similar;
+//   2. it is told so: one WARNING per key, naming the key, in the .rpt;
+//   3. a deck spelling out the former DEFAULTS is not warned at all — a
+//      notice that fires on every FV deck is one users learn to ignore.
 // ---------------------------------------------------------------------------
 namespace {
-std::string writeNodePicardModel(const std::string& name, int sweeps) {
-    const std::string dir = outDir();
-    const std::string inp = dir + "/" + name + ".inp";
+std::string writeStorageNodeModel(const std::string& name,
+                                  const std::string& extra_options) {
+    const std::string inp = outDir() + "/" + name + ".inp";
     std::ofstream os(inp);
     os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
           "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
           "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
-          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n";
-    // Sweeping only matters when the node is taking a step that is LARGE
-    // relative to its own stiffness. Under default tiering the node is handed
-    // a fine tier precisely so the frozen tangent stays accurate, and the
-    // first sweep's correction already falls under the tolerance — the option
-    // is inert, which is a property of the schedule, not of the option. One
-    // tier puts the node on the macro step, which is the regime it exists for.
-    os << "FV_LTS_MAX_TIERS     1\n";
-    if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
-    // Picard sweeps iterate the integrated-bucket node relaxation. Plain
-    // junctions are algebraic interfaces and never use it, so the machinery's
-    // remaining home is a STORAGE node — a small one, so its storage stays
-    // tiny against the conduit's conveyance, which is the configuration where
-    // the frozen tangent is furthest from the true flux response.
-    os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+       << extra_options
+       << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n\n"
           "[STORAGE]\nJ2  99.0  8.0  0  FUNCTIONAL  0  0  12.5\n\n"
           "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
           "[CONDUITS]\nC1  J1  J2  300  0.02  0  0  0  0\n"
@@ -1434,83 +1424,64 @@ std::string writeNodePicardModel(const std::string& name, int sweeps) {
           "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
     return inp;
 }
+
+struct RetiredRun {
+    RunResult   result;
+    std::string report;   // the whole .rpt, for the warning lines
+};
+
+RetiredRun runStorageNodeModel(const std::string& name,
+                               const std::string& extra_options) {
+    const std::string inp = writeStorageNodeModel(name, extra_options);
+    const std::string rpt = outDir() + "/" + name + ".rpt";
+    const std::string out = outDir() + "/" + name + ".out";
+    const int err = swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
+    EXPECT_EQ(err, 0) << name << " run failed with code " << err;
+    RetiredRun rr;
+    rr.result = parseReport(rpt);
+    std::ifstream in(rpt);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    rr.report = ss.str();
+    return rr;
+}
 }  // namespace
 
-TEST(FvEngine, NodePicardSweepsPreserveConservation) {
-    for (int sweeps : {1, 2, 4}) {
-        const RunResult r = runModel(
-            writeNodePicardModel("picard_" + std::to_string(sweeps), sweeps));
-        ASSERT_TRUE(r.parsed) << "sweeps=" << sweeps;
-        // Every sweep leaves its answer in the one shared face-flux array, so
-        // exactness is structural and must not depend on the sweep count.
-        EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
-            << "sweeps=" << sweeps << " continuity " << r.continuity_pct << " %";
-    }
-}
+TEST(FvEngine, RetiredNodeOptionsAreInertAndWarn) {
+    const RetiredRun base = runStorageNodeModel("retired_node_base", "");
+    const RetiredRun asks = runStorageNodeModel(
+        "retired_node_asks",
+        "FV_NODE_COUPLING     EXPLICIT\n"
+        "FV_NODE_DT           NONE\n"
+        "FV_NODE_PICARD       3\n");
+    const RetiredRun spells = runStorageNodeModel(
+        "retired_node_defaults",
+        "FV_NODE_COUPLING     SEMI_IMPLICIT\n"
+        "FV_NODE_DT           STABILITY\n"
+        "FV_NODE_PICARD       1\n");
+    ASSERT_TRUE(base.result.parsed && asks.result.parsed && spells.result.parsed);
+    ASSERT_GT(base.result.peak_flow.at("C2"), 0.0) << "fixture never routed";
 
-// Sweeping UNDER LOCAL TIME STEPPING, which is the harder case and the one the
-// fixture above deliberately opts out of.
-//
-// A node's incident faces can sit in different tiers, so on any base step only
-// some are firing; the rest are holding the flux they will book over their own
-// 2^k*dt0 window. The sweep's flux re-solve must therefore touch only the live
-// faces — recomputing a held one re-times a flux against the wrong dt and
-// breaks the macro cycle's face-open/volume-close contract, which is what makes
-// a tiered step conservative in TIME as well as in mass. Mass alone would not
-// catch it (both sides of a face still see one number), so this asserts the
-// ledger through continuity across sweep counts WITH tiering active.
-TEST(FvEngine, NodePicardIsTierWindowSafeUnderLts) {
-    double base = 0.0;
-    for (int sweeps : {1, 3, 6}) {
-        const std::string name = "picard_lts_" + std::to_string(sweeps);
-        const std::string dir = outDir();
-        const std::string inp = dir + "/" + name + ".inp";
-        {
-            // Same network as above but with tiering LEFT ON, and a graded
-            // reach so the tiers genuinely separate rather than collapsing to
-            // K = 1 (which would make this a duplicate of the global-path test).
-            std::ofstream os(inp);
-            os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
-                  "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
-                  "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
-                  "REPORT_STEP          00:05:00\nROUTING_STEP         5\n";
-            if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
-            // Picard machinery lives on the storage node (junctions are
-            // algebraic); J2 sits between the tier-split conduits.
-            os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n"
-                  "J3   99.0  8.0  0  0  0\n\n"
-                  "[STORAGE]\nJ2  99.4  8.0  0  FUNCTIONAL  0  0  12.5\n\n"
-                  "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
-                  // 40:1 length ratio — the tier spread the grading sweep exists for
-                  "[CONDUITS]\nC1  J1  J2  800  0.02  0  0  0  0\n"
-                  "C2  J2  J3   20  0.02  0  0  0  0\n"
-                  "C3  J3  OF  800  0.02  0  0  0  0\n\n"
-                  "[XSECTIONS]\nC1  RECT_OPEN  6.0  20.0  0  0  1\n"
-                  "C2  RECT_OPEN  6.0  20.0  0  0  1\n"
-                  "C3  RECT_OPEN  6.0  20.0  0  0  1\n\n"
-                  "[INFLOWS]\nJ1  FLOW  \"\"  FLOW  1.0  1.0  60.0\n\n"
-                  "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
-        }
-        const RunResult r = runModel(inp);
-        ASSERT_TRUE(r.parsed) << "sweeps=" << sweeps;
-        EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
-            << "sweeps=" << sweeps << " continuity " << r.continuity_pct
-            << " % under LTS — a sweep re-solved a face outside its tier window";
-        if (sweeps == 1) base = r.peak_flow.at("C3");
-        else
-            EXPECT_NEAR(r.peak_flow.at("C3"), base, 0.25 * base)
-                << "sweeps=" << sweeps << " diverged from the single-sweep result";
-    }
-}
+    // 1. Inert: bit-equality, not a tolerance — the retired keys select no
+    //    code path any more.
+    EXPECT_EQ(asks.result.peak_flow.at("C2"), base.result.peak_flow.at("C2"))
+        << "a retired node option still changes the answer";
+    EXPECT_EQ(asks.result.continuity_pct, base.result.continuity_pct);
+    EXPECT_EQ(spells.result.peak_flow.at("C2"), base.result.peak_flow.at("C2"));
 
-TEST(FvEngine, NodePicardIsNotADeadOption) {
-    const RunResult one = runModel(writeNodePicardModel("picard_one", 1));
-    const RunResult many = runModel(writeNodePicardModel("picard_many", 6));
-    ASSERT_TRUE(one.parsed && many.parsed);
-    ASSERT_GT(one.peak_flow.at("C2"), 0.0) << "fixture never routed";
-    EXPECT_NE(one.peak_flow.at("C2"), many.peak_flow.at("C2"))
-        << "FV_NODE_PICARD changed nothing — the option is being parsed and "
-           "ignored, exactly as FV_STRUCTURE_COUPLING and RK2 once were";
+    // 2. Warned, one line per key, naming the key and the value asked for.
+    for (const char* key : {"FV_NODE_COUPLING EXPLICIT is retired",
+                            "FV_NODE_DT NONE is retired",
+                            "FV_NODE_PICARD 3 is retired"}) {
+        EXPECT_NE(asks.report.find(key), std::string::npos)
+            << "the .rpt does not carry: " << key;
+    }
+
+    // 3. Spelling out the former defaults asks for nothing that was retired —
+    //    no warning.
+    EXPECT_EQ(base.report.find("is retired"), std::string::npos);
+    EXPECT_EQ(spells.report.find("is retired"), std::string::npos)
+        << "the retirement warning fires on a deck that asked for nothing";
 }
 
 // ---------------------------------------------------------------------------

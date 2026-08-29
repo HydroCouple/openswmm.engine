@@ -647,20 +647,13 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
     // on does not mean tiering runs: RK2 disables the LTS path outright, and
     // a water-quality run (species FCT needs a synchronous sweep) degenerates
     // assignTiers() to K = 1. Both fall through to the global path, and
-    // skipping the node term there silently reproduced FV_NODE_DT NONE —
-    // with its measured 10-50× accuracy loss — while the option still read
-    // STABILITY.
-    //
-    // FV_NODE_DT NONE is honoured here as well, so the option means the same
-    // thing on both paths — and only under SEMI_IMPLICIT coupling, because
-    // for explicitly coupled nodes the bound buys stability, not accuracy,
-    // and there is no opting out of it.
+    // skipping the node term there silently dropped the bound — with its
+    // measured 10-50× accuracy loss — while nothing had asked for that.
     //
     // The relaxation was swept rather than assumed: with tiering on, 1×, 4×,
     // 16×, 64× and unbounded gave 14.7 / 7.3 / 5.1 / 5.1 / 5.0 s at 7.2 / 7.2 /
     // 7.1 / 7.2 / 7.2 % mean agreement.
-    if (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT &&
-        (ltsEligible() || opts_.node_dt_limit == NodeDtLimit::NONE)) {
+    if (ltsEligible()) {
         if (dt >= std::numeric_limits<double>::max() * 0.5) dt = 1.0e30;
         count_argmin();
         return dt;
@@ -1248,7 +1241,6 @@ void ExplicitFvSolver::limitPositivity(double dt) {
 
 void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) {
     perf::GatedTimer _pt(perf::sec_fv_nodesolve);
-    const bool semi = (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT);
     all_faces_live_ = true;      // global path: every face was just computed
     const int nn = mesh_->n_nodes();
     const auto& fold = press_.foldedNodes();
@@ -1258,172 +1250,90 @@ void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) 
         // system — solving or damping it here would overwrite the very
         // fluxes the solve is about to own (slot program R2).
         if (have_fold && fold[static_cast<std::size_t>(n)]) continue;
-        // The algebraic solve is not a relaxation — it applies under either
-        // coupling mode. Storage nodes (and demoted ponding junctions) keep
-        // the semi-implicit correction.
+        // The algebraic solve is not a relaxation. Storage nodes (and demoted
+        // ponding junctions) get the semi-implicit correction.
         if (algebraicActive(n))  solveAlgebraicNode(n, dt, forcing);
-        else if (semi)           relaxOneNode(n, dt, forcing);
+        else                     relaxOneNode(n, dt, forcing);
     }
-}
-
-// dV/dH at a given depth — the storage response the correction is damped
-// against. Mirrors refreshNodeAreas' three cases, but evaluated at an
-// ARBITRARY depth rather than at the node's current one, because that is the
-// whole point of iterating: past the first sweep the head has moved.
-double ExplicitFvSolver::nodeStorageSlope(int node, double depth) const {
-    const auto un = static_cast<std::size_t>(node);
-    const double full = mesh_->node_full_depth[un];
-    if (mesh_->node_can_pond[un] && full > 0.0 && depth > full)
-        return mesh_->node_ponded_area[un];
-    if (mesh_->node_vol_off[un] < 0)          // junction: V = A_s·depth, A_s fixed
-        return state_->node_surf_area[un];
-    const double dd = mesh_->node_vol_dmax[un] /
-                      static_cast<double>(kNodeVolSamples - 1);
-    const double d = std::max(0.0, depth);
-    return std::max((nodeVolumeFromDepth(node, d + dd) -
-                     nodeVolumeFromDepth(node, d)) / dd,
-                    constants::MIN_SURFAREA);
 }
 
 void ExplicitFvSolver::relaxOneNode(int n, double dt,
                                     const FvStepForcing& forcing) {
-    {
-        const auto un = static_cast<std::size_t>(n);
-        if (mesh_->node_kind[un] == kNodeVirtual) return;
-        // A prescribed head has no continuity equation to damp — the stage is
-        // imposed and the exchange is whatever the Riemann solver produced.
-        if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un]))
-            return;
-        if (!(state_->node_surf_area[un] > 0.0)) return;
+    const auto un = static_cast<std::size_t>(n);
+    if (mesh_->node_kind[un] == kNodeVirtual) return;
+    // A prescribed head has no continuity equation to damp — the stage is
+    // imposed and the exchange is whatever the Riemann solver produced.
+    if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un]))
+        return;
+    if (!(state_->node_surf_area[un] > 0.0)) return;
 
-        const int b = mesh_->node_face_ptr[un];
-        const int e = mesh_->node_face_ptr[un + 1];
+    const int b = mesh_->node_face_ptr[un];
+    const int e = mesh_->node_face_ptr[un + 1];
 
-        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
-        const double invert  = mesh_->node_invert[un];
-        const double h_start = state_->node_head[un];
-        const double v_start =
-            nodeVolumeFromDepth(n, std::max(0.0, h_start - invert));
+    const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
+    // ONE correction, with the characteristic resistance √(g·A·T), the node
+    // surface area and the face fluxes all frozen at the head the substep
+    // started from. Exact for the linearized problem — the residual after it
+    // is identically zero. The real problem's nonlinearity is what a fine LTS
+    // tier resolves; iterating this correction instead (FV_NODE_PICARD) was
+    // retired with a recorded negative result (4987f552).
+    const double h0 = state_->node_head[un];
 
-        // One sweep is the original scheme, and stays bit-identical to it: the
-        // residual is the raw face sum, and the resistance, the storage area
-        // and the fluxes are all the ones the substep started with. Additional
-        // sweeps re-evaluate all three at the head the previous sweep landed
-        // on, so the node converges on its own continuity equation rather than
-        // on a tangent taken at the start of the step (plan §7B.8).
-        const int sweeps = std::max(1, opts_.node_picard_sweeps);
-        double h_k = h_start;
+    // Σ ∂F/∂H over the incident faces, from the characteristic relation
+    // for a simple wave: |dQ/dH| = gA/c = √(g·A·T) at the ghost state.
+    // Always a RESISTANCE — raising the head drives more out and lets
+    // less in, on either side of the face — so the denominator below
+    // can only grow, and the correction can only damp.
+    double sum_f = 0.0, resist = 0.0;
+    for (int p = b; p < e; ++p) {
+        const auto up = static_cast<std::size_t>(p);
+        const int f = mesh_->node_face_idx[up];
+        const auto uf = static_cast<std::size_t>(f);
+        sum_f += mesh_->node_face_sign[up] * f_mass_[uf];
 
-        for (int it = 0; it < sweeps; ++it) {
-            // Σ ∂F/∂H over the incident faces, from the characteristic relation
-            // for a simple wave: |dQ/dH| = gA/c = √(g·A·T) at the ghost state.
-            // Always a RESISTANCE — raising the head drives more out and lets
-            // less in, on either side of the face — so the denominator below
-            // can only grow, and the correction can only damp.
-            double sum_f = 0.0, resist = 0.0;
-            for (int p = b; p < e; ++p) {
-                const auto up = static_cast<std::size_t>(p);
-                const int f = mesh_->node_face_idx[up];
-                const auto uf = static_cast<std::size_t>(f);
-                sum_f += mesh_->node_face_sign[up] * f_mass_[uf];
+        const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                   : mesh_->face_cr[uf];
+        if (cell < 0) continue;
+        const auto uc = static_cast<std::size_t>(cell);
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double hg = h0 - mesh_->face_zb[uf];
+        if (hg <= k::kDryDepth) continue;
+        const double ag = k::areaOfDepth(g, hg);
+        const double tg = k::widthOfDepth(g, hg);
+        if (ag <= k::kDryArea || tg <= 0.0) continue;
+        resist += std::sqrt(k::kGravity * ag * tg);
+    }
+    if (resist <= 0.0) return;
 
-                const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                           : mesh_->face_cr[uf];
-                if (cell < 0) continue;
-                const auto uc = static_cast<std::size_t>(cell);
-                const FvGeometry& g =
-                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-                const double hg = h_k - mesh_->face_zb[uf];
-                if (hg <= k::kDryDepth) continue;
-                const double ag = k::areaOfDepth(g, hg);
-                const double tg = k::widthOfDepth(g, hg);
-                if (ag <= k::kDryArea || tg <= 0.0) continue;
-                resist += std::sqrt(k::kGravity * ag * tg);
-            }
-            if (resist <= 0.0) break;
+    const double as = state_->node_surf_area[un];
+    const double dh = dt * (sum_f + q_lat) / (as + dt * resist);
+    if (dh == 0.0) return;
 
-            // Residual of the node's own continuity equation at h_k. On the
-            // first sweep h_k == h_start, so the storage term is identically
-            // zero and this is the original expression.
-            const double as = (it == 0)
-                                  ? state_->node_surf_area[un]
-                                  : nodeStorageSlope(n, h_k - invert);
-            const double dv =
-                (it == 0) ? 0.0
-                          : nodeVolumeFromDepth(n, std::max(0.0, h_k - invert)) -
-                                v_start;
-            const double dh =
-                dt * (sum_f + q_lat - dv / dt) / (as + dt * resist);
-            if (dh == 0.0) break;
-
-            const bool last = (it + 1 >= sweeps) ||
-                              (std::fabs(dh) <= opts_.node_picard_tol);
-            if (!last) {
-                // Re-solve the incident faces against the corrected head. This
-                // REPLACES the linear extrapolation with the flux the Riemann
-                // solver actually returns there, which is the part a single
-                // tangent gets wrong at a large Δt.
-                //
-                // Two gates, and they are different claims. cell_active_ keeps
-                // work-list compaction results-transparent (§6.10): only faces
-                // the flux pass itself would have computed are touched.
-                // faceIsLive keeps LOCAL TIME STEPPING correct: under LTS a
-                // node's incident faces can sit in different tiers, and a face
-                // that is not firing on this base step is holding the flux it
-                // will book over its own 2^k·dt₀ window. Re-solving it here
-                // would re-time that flux against the wrong Δt and break the
-                // macro cycle's face-open/volume-close contract — the very
-                // property that makes a tiered step conservative in TIME as
-                // well as in mass.
-                h_k += dh;
-                state_->node_head[un] = h_k;
-                for (int p = b; p < e; ++p) {
-                    const auto up = static_cast<std::size_t>(p);
-                    const int f = mesh_->node_face_idx[up];
-                    const auto uf = static_cast<std::size_t>(f);
-                    if (!faceIsLive(f)) continue;
-                    const int cl = mesh_->face_cl[uf];
-                    const int cr = mesh_->face_cr[uf];
-                    const bool la = (cl >= 0) &&
-                                    cell_active_[static_cast<std::size_t>(cl)];
-                    const bool ra = (cr >= 0) &&
-                                    cell_active_[static_cast<std::size_t>(cr)];
-                    if (la || ra) computeFaceFlux(f);
-                }
-                continue;
-            }
-
-            // Write the correction into f_mass_ — the ONE array both the cell
-            // update and the node update read. That is what keeps mass
-            // conservation exact: whatever the correction does, the two sides
-            // of every face see the same number.
-            for (int p = b; p < e; ++p) {
-                const auto up = static_cast<std::size_t>(p);
-                const int f = mesh_->node_face_idx[up];
-                const auto uf = static_cast<std::size_t>(f);
-                const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                           : mesh_->face_cr[uf];
-                if (cell < 0) continue;
-                const auto uc = static_cast<std::size_t>(cell);
-                const FvGeometry& g =
-                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-                const double hg = h_k - mesh_->face_zb[uf];
-                if (hg <= k::kDryDepth) continue;
-                const double ag = k::areaOfDepth(g, hg);
-                const double tg = k::widthOfDepth(g, hg);
-                if (ag <= k::kDryArea || tg <= 0.0) continue;
-                // β = −sign·√(gAT): the node on a face's LEFT exports on a
-                // positive flux, the node on its RIGHT imports, and raising the
-                // head opposes the import in both cases.
-                const double a = std::sqrt(k::kGravity * ag * tg);
-                f_mass_[uf] += -mesh_->node_face_sign[up] * a * dh;
-            }
-            break;
-        }
-
-        // The head is the node update's to set, from the volume ledger. Any
-        // provisional value above was scaffolding for the flux re-solve.
-        state_->node_head[un] = h_start;
+    // Write the correction into f_mass_ — the ONE array both the cell
+    // update and the node update read. That is what keeps mass
+    // conservation exact: whatever the correction does, the two sides
+    // of every face see the same number.
+    for (int p = b; p < e; ++p) {
+        const auto up = static_cast<std::size_t>(p);
+        const int f = mesh_->node_face_idx[up];
+        const auto uf = static_cast<std::size_t>(f);
+        const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                   : mesh_->face_cr[uf];
+        if (cell < 0) continue;
+        const auto uc = static_cast<std::size_t>(cell);
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double hg = h0 - mesh_->face_zb[uf];
+        if (hg <= k::kDryDepth) continue;
+        const double ag = k::areaOfDepth(g, hg);
+        const double tg = k::widthOfDepth(g, hg);
+        if (ag <= k::kDryArea || tg <= 0.0) continue;
+        // β = −sign·√(gAT): the node on a face's LEFT exports on a
+        // positive flux, the node on its RIGHT imports, and raising the
+        // head opposes the import in both cases.
+        const double a = std::sqrt(k::kGravity * ag * tg);
+        f_mass_[uf] += -mesh_->node_face_sign[up] * a * dh;
     }
 }
 
@@ -1609,6 +1519,10 @@ namespace {
 /// a bracketing probe cannot disturb lake-at-rest by the solve tolerance.
 constexpr double kAlgQEps     = 1.0e-12;
 constexpr int    kAlgMaxIters = 16;
+/// |Δh| convergence floor of the root find and the bracket's seed step (ft).
+/// Was FvOptions::node_picard_tol, which the retired Picard sweeps shared;
+/// the value is load-bearing here and must stay 1.0e-6.
+constexpr double kAlgHeadTol  = 1.0e-6;
 // The EXPANSION loop gets its own, larger budget: its first step is the
 // quasi-Newton scale |R|/resist, which below a pipe crown (large open-channel
 // resistance) can start near the tolerance floor — 16 doublings from 1e-6 ft
@@ -1844,9 +1758,9 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     // evaluated at the clamped head.
     const double dir  = (r > 0.0) ? 1.0 : -1.0;
     const double res0 = resistAt(h);
-    double step = std::max(opts_.node_picard_tol,
+    double step = std::max(kAlgHeadTol,
                            (res0 > 0.0) ? std::fabs(r) / res0
-                                        : opts_.node_picard_tol);
+                                        : kAlgHeadTol);
     double h_a = h, r_a = r;
     bool bracketed = false;
     for (int it = 0; it < kAlgMaxExpand; ++it) {
@@ -1889,7 +1803,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
         h = h_new;
         r = residual(h);
         if (r > 0.0) lo = h; else hi = h;
-        if (std::fabs(dh) <= opts_.node_picard_tol ||
+        if (std::fabs(dh) <= kAlgHeadTol ||
             std::fabs(r) <= kAlgQEps)
             break;
     }
@@ -2555,21 +2469,15 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
         dt_cell[uc] = cellStableDt(c);
         if (dt_cell[uc] < dt_min) { dt_min = dt_cell[uc]; dt_argmin_cell = c; }
     }
-    // FV_NODE_DT NONE: the node's term is an EXPLICIT stability bound on an
-    // unconditionally-stable semi-implicit update (see NodeDtLimit). Dropping
-    // it from dt0 lets the CELL Courant limit set the base step — which is what
-    // the non-LTS path has always used — while tiering stays intact. Nodes are
-    // still TIERED (dt_node feeds tier_of below), just not allowed to drag the
-    // global base step down with them.
-    // As in censusDt(): NONE is a semi-implicit privilege — an explicitly
-    // coupled node's bound is a genuine stability limit and always applies.
-    const bool node_sets_dt0 =
-        (opts_.node_dt_limit == NodeDtLimit::STABILITY) ||
-        (opts_.node_coupling != NodeCoupling::SEMI_IMPLICIT);
+    // The node's term is an EXPLICIT stability bound on an unconditionally
+    // stable semi-implicit update; it stays in dt0 for ACCURACY (censusDt's
+    // rationale). nodeStableDt() exempts algebraic junctions and outfalls, so
+    // only storage-like nodes ever set the base step; every node is still
+    // TIERED (dt_node feeds tier_of below).
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         dt_node[un] = nodeStableDt(n);
-        if (node_sets_dt0 && dt_node[un] < dt_min) {
+        if (dt_node[un] < dt_min) {
             dt_min = dt_node[un];
             dt_argmin_cell = -2;   // node bound owns dt0
         }
@@ -2831,7 +2739,6 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
     // node's OWN tier step. Conservation is untouched for the same reason: the
     // correction lands in f_mass_, which is what gets booked into both incident
     // accumulators below.
-    const bool semi = (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT);
     if (forcing_) {
         static thread_local std::vector<char> touched;
         touched.assign(acc_nvol_.size(), 0);
@@ -2847,7 +2754,7 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
             // (assignTiers pinning), so a touched node's faces are all in this
             // due set and the flux-balance solve is complete.
             if (algebraicActive(n))  solveAlgebraicNode(n, dtn, *forcing_);
-            else if (semi)           relaxOneNode(n, dtn, *forcing_);
+            else                     relaxOneNode(n, dtn, *forcing_);
         }
     }
 
