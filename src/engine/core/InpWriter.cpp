@@ -393,6 +393,12 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                  o.advection ? "YES" : "NO");
     std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
                  o.coupling_area_auto ? "AUTO" : "DEFAULT");
+    {
+        static const char* sBackend2D[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
+        const int bi = static_cast<int>(o.backend);
+        std::fprintf(f, "%-22s %s\n", "BACKEND",
+                     (bi >= 0 && bi <= 5) ? sBackend2D[bi] : "AUTO");
+    }
     if (!o.output_file.empty()) {
         const std::string of_tok =
             emit_path_token(o.output_file, dst_dir, force_abs_paths, warnings);

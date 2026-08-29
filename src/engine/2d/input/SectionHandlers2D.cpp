@@ -211,6 +211,18 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.coupling_area_auto = false;
         else
             return "Unknown COUPLING_AREA: " + val + " (expected AUTO|DEFAULT)";
+    } else if (iequals(key, "BACKEND")) {
+        // Same token set as [OPTIONS] FV_BACKEND; unknown tokens are rejected
+        // so a typo surfaces as a failed set instead of a silent AUTO.
+        if      (iequals(val, "AUTO")) opts.backend = Backend2D::AUTO;
+        else if (iequals(val, "CPU"))  opts.backend = Backend2D::CPU;
+        else if (iequals(val, "OMP"))  opts.backend = Backend2D::OMP;
+        else if (iequals(val, "CUDA")) opts.backend = Backend2D::CUDA;
+        else if (iequals(val, "HIP"))  opts.backend = Backend2D::HIP;
+        else if (iequals(val, "SYCL")) opts.backend = Backend2D::SYCL;
+        else
+            return "Unknown BACKEND: " + val +
+                   " (expected AUTO|CPU|OMP|CUDA|HIP|SYCL)";
     } else if (is2DRetiredOptionKey(key)) {
         // These keys configured the deleted CVODE/ARKODE stack. On file load
         // they are ignored with a WARNING 104 (legacy models must still
@@ -246,6 +258,7 @@ bool is2DOptionKey(const std::string& key) {
         "OUTPUT_FILE",
         "INTEGRATOR", "THETA", "CFL_NUMBER", "H_MOVE",
         "LTS_TIERS", "FROUDE_MAX", "ADVECTION", "COUPLING_AREA",
+        "BACKEND",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -292,6 +305,17 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "FROUDE_MAX"))    return fmt_g(opts.froude_max);
     if (iequals(key, "ADVECTION"))     return opts.advection ? "YES" : "NO";
     if (iequals(key, "COUPLING_AREA")) return opts.coupling_area_auto ? "AUTO" : "DEFAULT";
+    if (iequals(key, "BACKEND")) {
+        switch (opts.backend) {
+            case Backend2D::CPU:  return "CPU";
+            case Backend2D::OMP:  return "OMP";
+            case Backend2D::CUDA: return "CUDA";
+            case Backend2D::HIP:  return "HIP";
+            case Backend2D::SYCL: return "SYCL";
+            case Backend2D::AUTO: break;
+        }
+        return "AUTO";
+    }
     return {};
 }
 

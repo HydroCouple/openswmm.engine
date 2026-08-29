@@ -7,8 +7,9 @@
  *          prefer the Kokkos marcher plugin (openswmm_make_gpu_explicit_solver
  *          — OpenMP threads on the host build, device-resident on
  *          CUDA/HIP/SYCL), fall back to the serial ExplicitInertialSolver.
- *          Respects OPENSWMM_2D_BACKEND (cpu|auto|omp|cuda|hip|sycl) and the
- *          small-mesh launch-overhead gate. The marcher kernels implement both
+ *          Respects [2D_OPTIONS] BACKEND (AUTO|CPU|OMP|CUDA|HIP|SYCL), the
+ *          OPENSWMM_2D_BACKEND environment override, and the small-mesh
+ *          launch-overhead gates. The marcher kernels implement both
  *          cell closures, so no CELL_CLOSURE restriction applies.
  *
  * @see SurfaceSolverFactory.hpp
@@ -191,9 +192,22 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
     return nullptr;
 }
 
+// [2D_OPTIONS] BACKEND value as the lower-case policy token the env var uses.
+std::string backend_name(Backend2D b) {
+    switch (b) {
+        case Backend2D::CPU:  return "cpu";
+        case Backend2D::OMP:  return "omp";
+        case Backend2D::CUDA: return "cuda";
+        case Backend2D::HIP:  return "hip";
+        case Backend2D::SYCL: return "sycl";
+        case Backend2D::AUTO: break;
+    }
+    return "auto";
+}
+
 } // anonymous namespace
 
-std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*/,
+std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                                                   std::string* chosen,
                                                   int n_cells) {
     auto serial_marcher = [&]() -> std::unique_ptr<ISurfaceSolver> {
@@ -201,11 +215,15 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
         return std::make_unique<ExplicitInertialSolver>();
     };
 
-    const std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
+    // Policy: the environment variable (operator/CI override) wins; otherwise
+    // the model's own [2D_OPTIONS] BACKEND — same precedence as the FV
+    // module's OPENSWMM_FV_BACKEND over FV_BACKEND.
+    std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
+    if (mode.empty()) mode = backend_name(opts.backend);
     if (mode == "cpu") return serial_marcher();
 
     // Explicit backend request bypasses every mesh-size gate — the operator
-    // asked for it by name (OPENSWMM_2D_BACKEND=omp|cuda|hip|sycl).
+    // asked for it by name (OPENSWMM_2D_BACKEND / BACKEND = omp|cuda|hip|sycl).
     if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
         if (auto s = try_plugin(mode, chosen)) return s;
         std::fprintf(stderr,
@@ -239,8 +257,9 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& /*opts*
 
     std::fprintf(stderr,
         "[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=%d, "
-        "device floor=%ld cells). Set OPENSWMM_2D_BACKEND=cuda to force the "
-        "GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.\n",
+        "device floor=%ld cells). Set [2D_OPTIONS] BACKEND CUDA (or "
+        "OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower "
+        "OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.\n",
         n_cells, dev_floor);
     return serial_marcher();
 }

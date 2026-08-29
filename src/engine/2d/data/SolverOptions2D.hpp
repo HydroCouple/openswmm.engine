@@ -117,6 +117,28 @@ enum class RainfallMode : int8_t {
 };
 
 /**
+ * @brief Compute backend for the 2D marcher (mirrors fv::Backend).
+ *
+ * AUTO (default) lets SurfaceSolverFactory pick: a device plugin (cuda, hip,
+ * sycl) above the device mesh-size floor, the OpenMP plugin above its own
+ * (higher) floor, else the built-in CPU marcher. The named values request one
+ * backend outright and bypass the size floors; a plugin that is absent or has
+ * no usable device falls back to CPU with a stderr notice, never a hard fail.
+ * The OPENSWMM_2D_BACKEND environment variable, when set, overrides this
+ * option (same precedence as OPENSWMM_FV_BACKEND over FV_BACKEND).
+ *
+ * Parsed from [2D_OPTIONS] BACKEND (AUTO|CPU|OMP|CUDA|HIP|SYCL).
+ */
+enum class Backend2D : int8_t {
+    CPU  = 0,   ///< Built-in marcher (OpenMP-threaded on the host), no plugin.
+    AUTO = 1,   ///< Default: plugins above their size floors, else CPU.
+    OMP  = 2,   ///< Kokkos OpenMP host plugin.
+    CUDA = 3,   ///< Kokkos CUDA device plugin (NVIDIA).
+    HIP  = 4,   ///< Kokkos HIP device plugin (AMD).
+    SYCL = 5    ///< Kokkos SYCL device plugin (Intel).
+};
+
+/**
  * @brief Configuration for the 2D surface routing solver.
  *
  * Populated from [2D_OPTIONS] input section. Defaults are chosen for
@@ -223,6 +245,11 @@ struct SolverOptions2D {
     /// resolve from the largest connected conduit (clamp(1.25·A_conduit,
     /// 0.05, 2.0) m²) for rows that did not author an explicit area.
     bool   coupling_area_auto = false;
+
+    /// [2D_OPTIONS] BACKEND: which marcher implementation runs the mesh. See
+    /// Backend2D. Read once, at SurfaceRouter2D::initialize() (the solver is
+    /// constructed there), so a mid-run edit takes effect on the next open.
+    Backend2D backend = Backend2D::AUTO;
 
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
     /// `.absolute` is filled by resolve_external_file_slots() against the source
