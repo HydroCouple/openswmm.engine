@@ -1593,7 +1593,7 @@ AC1  STORAGE
 AC1  0  1000  2  2000  4  3500  6  4200  8  5000
 
 ; XPOLYGON curve tracing a 4-ft-diameter circle from four quarter-circle
-; arcs (Bulge = tan(45 deg/4) = 0.4142136 sweeps a 90-degree arc)
+; arcs (Bulge = tan(90 deg/4) = 0.4142136 sweeps a 90-degree arc)
 MyCircle  XPOLYGON   2.0   0.0   0.4142136
 MyCircle             0.0   2.0   0.4142136
 MyCircle             -2.0  0.0   0.4142136
