@@ -112,6 +112,22 @@ retroactive.
 
 ### Fixed
 
+- **The 2D results file now says what its coordinates mean.** `Mesh2_node_x/y`
+  and `Mesh2_face_x/y` have always been written in the solver's SI metres and
+  tagged `units = "m"`, but nothing in the file recorded the model's own CRS or
+  the factor applied to get there. A consumer of a model in a foot-based
+  projected CRS (EPSG:2249 and friends) reasonably read those metres as the
+  CRS's own unit and placed the results ~0.3048x toward the CRS origin, while
+  the `.2dm`-backed mesh — which never leaves model units — rendered correctly.
+  The file gains a scalar `/crs` variable carrying `model_crs` (verbatim from
+  `[OPTIONS] CRS`) and `metres_per_model_unit` (the factor
+  `SurfaceRouter2D::initialize` actually applied), referenced by a
+  `openswmm_crs = "crs"` attribute on `/Mesh2` and the coordinate variables.
+  Deliberately not spelled as CF `spatial_ref`/`crs_wkt`: a reader honouring
+  those would place metres in a foot CRS and reproduce the very offset the
+  variable exists to describe. Existing files are unaffected and stay readable;
+  they simply declare nothing. (Issue #155.)
+
 - **A malformed option value handed to `swmm_options_set` returns
   `SWMM_ERR_BADPARAM` instead of killing the process.** Thirty of the
   dispatch's key branches parsed with raw `std::stod`/`std::stoi`, which

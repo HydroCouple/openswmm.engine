@@ -1814,4 +1814,143 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     fs::remove(h5_path);
 }
 
+// ---------------------------------------------------------------------------
+// Issue #155 — the .2d.h5 must say how its (always-SI) coordinates relate to
+// the model's CRS. Without it, a consumer of a foot-CRS model reasonably reads
+// the metres as feet and renders the results ~0.3048x toward the CRS origin
+// while the .2dm-backed mesh, which never leaves model units, sits correctly.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Read a fixed- or variable-length string attribute; "" when absent.
+std::string readStringAttrForTest(hid_t loc, const char* name) {
+    if (H5Aexists(loc, name) <= 0) return {};
+    hid_t attr = H5Aopen(loc, name, H5P_DEFAULT);
+    if (attr < 0) return {};
+    hid_t type = H5Aget_type(attr);
+    std::string out;
+    if (type >= 0 && H5Tget_class(type) == H5T_STRING) {
+        if (H5Tis_variable_str(type) > 0) {
+            char* raw = nullptr;
+            if (H5Aread(attr, type, &raw) >= 0 && raw) {
+                out = raw;
+                H5free_memory(raw);
+            }
+        } else {
+            std::vector<char> buf(H5Tget_size(type) + 1, '\0');
+            if (H5Aread(attr, type, buf.data()) >= 0) out = buf.data();
+        }
+    }
+    if (type >= 0) H5Tclose(type);
+    H5Aclose(attr);
+    return out;
+}
+
+} // namespace
+
+TEST(Default2DOutputPlugin, DeclaresModelCrsAndCoordinateScale) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() /
+                              "openswmm_test_2d_crs.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{};
+    ctx.spatial.crs = "EPSG:2249";           // NAD83 / Mass. Mainland (ftUS)
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx),  0);
+
+    // What SurfaceRouter2D::initialize() applied for a US-FLOW_UNITS project.
+    plugin.setMeshCoordinateScale(0.3048);
+    plugin.prepareMeshAndDatasets(mesh);
+    // finalize() closes the file. Without it the plugin still holds it open
+    // RDWR, and the fs::remove below throws on Windows.
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY,
+                             H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+
+    ASSERT_TRUE(H5Lexists(file_id, "crs", H5P_DEFAULT) > 0)
+        << "no /crs variable — consumers cannot tell metres from model units";
+
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_EQ(readStringAttrForTest(crs, "model_crs"), "EPSG:2249");
+    EXPECT_EQ(readStringAttrForTest(crs, "units"), "m");
+
+    ASSERT_TRUE(H5Aexists(crs, "metres_per_model_unit") > 0);
+    {
+        hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+        double factor = 0.0;
+        ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+        EXPECT_DOUBLE_EQ(factor, 0.3048);
+        H5Aclose(attr);
+    }
+    H5Dclose(crs);
+
+    // The mesh variables must point at it, or nothing leads a reader there.
+    // The attribute is `openswmm_crs`, NOT CF's `grid_mapping` — /crs is
+    // deliberately not a CF grid mapping (see the class docs and #155).
+    for (const char* name : {"Mesh2", "Mesh2_node_x", "Mesh2_node_y",
+                              "Mesh2_face_x", "Mesh2_face_y"}) {
+        hid_t ds = H5Dopen2(file_id, name, H5P_DEFAULT);
+        ASSERT_GE(ds, 0) << name;
+        EXPECT_EQ(readStringAttrForTest(ds, "openswmm_crs"), "crs")
+            << name << " does not reference the /crs variable";
+        EXPECT_FALSE(H5Aexists(ds, "grid_mapping") > 0)
+            << name << " advertises a CF grid mapping /crs cannot honour";
+        H5Dclose(ds);
+    }
+
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+TEST(Default2DOutputPlugin, CrsVariableClaimsNothingWhenModelDeclaresNoCrs) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() /
+                              "openswmm_test_2d_crs_absent.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{};   // no [OPTIONS] CRS
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx),  0);
+    // setMeshCoordinateScale deliberately not called (SI project / no 2D
+    // router wiring): the file must report an identity factor, not guess.
+    plugin.prepareMeshAndDatasets(mesh);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY,
+                             H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_FALSE(H5Aexists(crs, "model_crs") > 0)
+        << "model_crs must be absent rather than empty when none was declared";
+
+    hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+    ASSERT_GE(attr, 0);
+    double factor = 0.0;
+    ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+    EXPECT_DOUBLE_EQ(factor, 1.0);
+    H5Aclose(attr);
+
+    H5Dclose(crs);
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
 #endif // OPENSWMM_HAS_2D

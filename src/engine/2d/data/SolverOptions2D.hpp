@@ -311,6 +311,15 @@ struct SolverOptions2D {
      *  against double-scaling. Never parsed from input, never persisted. */
     bool mesh_scaled_to_si = false;
 
+    /*! Runtime-only: the linear factor SurfaceRouter2D::initialize() applied
+     *  to the authored mesh coordinates to reach the solver's SI metres —
+     *  0.3048 for US FLOW_UNITS, 1.0 for SI projects and for meshes that
+     *  declared `;; UNITS: SI (m)`. Equivalently: metres per model-CRS linear
+     *  unit. Georeferenced output (Default2DOutputPlugin) writes this into the
+     *  `/crs` variable so a consumer can return the stored metric coordinates
+     *  to the model CRS's own unit exactly. Never parsed/persisted. */
+    double mesh_to_si_factor = 1.0;
+
     /*! Runtime-only: true after SurfaceRouter2D::initialize() drained the
      *  pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
      *  BoundaryData / MeshData::edge_conveyance. Serialization collectors

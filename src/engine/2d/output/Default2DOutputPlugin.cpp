@@ -23,8 +23,13 @@ namespace openswmm::twoD {
 
 void Default2DOutputPlugin::writeStringAttr(hid_t loc, const char* name,
                                              const char* value) {
+    // H5Tset_size rejects 0, and nothing here checks return codes — an empty
+    // value would silently write no attribute at all. Store a single NUL
+    // instead, which reads back as the empty string.
+    const size_t len = (value && *value) ? std::strlen(value) : 1;
+
     hid_t atype = H5Tcopy(H5T_C_S1);
-    H5Tset_size(atype, std::strlen(value));
+    H5Tset_size(atype, len);
     H5Tset_strpad(atype, H5T_STR_NULLTERM);
 
     hid_t aspace = H5Screate(H5S_SCALAR);
@@ -191,8 +196,57 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     writeStringAttr(file_id_, "institution", "OpenSWMM / HydroCouple");
     writeStringAttr(file_id_, "source", "OpenSWMM Engine 6.0");
 
+    // Model CRS for the `/crs` variable written in prepareMeshAndDatasets().
+    // ctx.spatial.crs and ctx.options.crs are both set by OptionsHandler from
+    // `[OPTIONS] CRS`; prefer the spatial frame, which is what the spatial API
+    // mutates at runtime. Empty is legitimate — models need not declare a CRS.
+    model_crs_ = !ctx.spatial.crs.empty() ? ctx.spatial.crs : ctx.options.crs;
+
     state_ = PluginState::PREPARED;
     return 0;
+}
+
+void Default2DOutputPlugin::setMeshCoordinateScale(double metres_per_model_unit) {
+    if (metres_per_model_unit > 0.0)
+        metres_per_model_unit_ = metres_per_model_unit;
+}
+
+void Default2DOutputPlugin::writeCrsVariable() {
+    if (file_id_ == H5I_INVALID_HID) return;
+
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t ds = H5Dcreate2(file_id_, "crs", H5T_NATIVE_INT, space,
+                           H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (ds < 0) {
+        H5Sclose(space);
+        return;
+    }
+
+    writeStringAttr(ds, "long_name",
+                    "coordinate reference of the MODEL, plus the factor "
+                    "relating it to the metric Mesh2 coordinates stored here");
+    // Unit of the coordinates AS STORED here. The 2D solver runs in SI, so
+    // node/face x/y are metres whatever the model's own unit is.
+    writeStringAttr(ds, "units", "m");
+    // stored = model x factor; model = stored / factor.
+    writeDoubleAttr(ds, "metres_per_model_unit", metres_per_model_unit_);
+    writeStringAttr(ds, "comment",
+                    "Mesh2 x/y are stored in SI metres. Divide by "
+                    "metres_per_model_unit to obtain coordinates in the linear "
+                    "unit of model_crs; only then reproject from model_crs.");
+
+    if (!model_crs_.empty()) {
+        // CRS of the MODEL coordinates, not of the metric values stored here.
+        // Named model_crs rather than spatial_ref/crs_wkt on purpose: a
+        // generic reader honouring those would place metres in a foot-based
+        // CRS and reproduce the offset this variable exists to describe (#155).
+        writeStringAttr(ds, "model_crs", model_crs_.c_str());
+    }
+
+    int dummy = 0;
+    H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &dummy);
+    H5Dclose(ds);
+    H5Sclose(space);
 }
 
 // ============================================================================
@@ -216,6 +270,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         writeStringAttrFn(ds, "node_coordinates", "Mesh2_node_x Mesh2_node_y");
         writeStringAttrFn(ds, "face_node_connectivity", "Mesh2_face_nodes");
         writeStringAttrFn(ds, "face_coordinates", "Mesh2_face_x Mesh2_face_y");
+        writeStringAttrFn(ds, "openswmm_crs", "crs");
 
         // Write a dummy value
         int dummy = 0;
@@ -235,6 +290,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dwrite(ds_x, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vx.data());
         writeStringAttrFn(ds_x, "standard_name", "projection_x_coordinate");
         writeStringAttrFn(ds_x, "units", "m");
+        writeStringAttrFn(ds_x, "openswmm_crs", "crs");
         H5Dclose(ds_x);
 
         // Mesh2_node_y
@@ -243,6 +299,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dwrite(ds_y, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vy.data());
         writeStringAttrFn(ds_y, "standard_name", "projection_y_coordinate");
         writeStringAttrFn(ds_y, "units", "m");
+        writeStringAttrFn(ds_y, "openswmm_crs", "crs");
         H5Dclose(ds_y);
 
         // Mesh2_node_z (elevation)
@@ -288,12 +345,14 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_cx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cx.data());
         writeStringAttrFn(ds_cx, "units", "m");
+        writeStringAttrFn(ds_cx, "openswmm_crs", "crs");
         H5Dclose(ds_cx);
 
         hid_t ds_cy = H5Dcreate2(file_id, "Mesh2_face_y", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_cy, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cy.data());
         writeStringAttrFn(ds_cy, "units", "m");
+        writeStringAttrFn(ds_cy, "openswmm_crs", "crs");
         H5Dclose(ds_cy);
 
         hid_t ds_cz = H5Dcreate2(file_id, "Mesh2_face_z", H5T_NATIVE_DOUBLE,
@@ -368,6 +427,10 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 }
 
 void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
+    // Written first so the `openswmm_crs = "crs"` attributes the mesh
+    // variables carry resolve against a variable that already exists.
+    writeCrsVariable();
+
     auto writeAttr = [this](hid_t loc, const char* name, const char* val) {
         writeStringAttr(loc, name, val);
     };

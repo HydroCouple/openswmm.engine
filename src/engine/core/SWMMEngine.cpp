@@ -1220,6 +1220,12 @@ int SWMMEngine::start(int save_results) noexcept {
     // a separate step because the IOutputPlugin contract has no mesh access
     // through SimulationContext — SurfaceRouter2D owns the mesh privately.
     if (surface_output_plugin_ && surface_router_.isActive()) {
+        // The mesh coordinates about to be written were scaled to SI by
+        // SurfaceRouter2D::initialize(); hand the plugin the factor so the
+        // file's /crs variable can state how they relate to the model CRS's
+        // own linear unit (issue #155). The CRS itself arrived via prepare().
+        surface_output_plugin_->setMeshCoordinateScale(
+            surface_router_.options().mesh_to_si_factor);
         surface_output_plugin_->prepareMeshAndDatasets(surface_router_.mesh());
     }
 #endif
