@@ -270,6 +270,13 @@ built in `src/engine/hydraulics/fv/NetworkMeshBuilder.cpp`.
 
 ### 8.4.4 The implicit pressurized head update
 
+> **Experimental.** The option and the solver described here are fully
+> functional and gated, but the pass cannot yet compose with the
+> local-time-stepping macro cycle (§8.5.6) — tiering stands down on any
+> substep where the solve engages — and the slot program's next round
+> (R2b) is expected to revise it. It is deliberately not surfaced in the
+> GUI's simulation options; set it in `[OPTIONS]` directly.
+
 `FV_PRESSURIZED_IMPLICIT YES` removes the slot's wave from the explicit
 time-step law. Above the taper band the closure (8-4) is exactly linear
 in head, so the acoustic pair — slot storage \f$T_{slot}\,\partial H/\partial t\f$
@@ -1060,7 +1067,8 @@ area is typically the `MIN_SURFAREA` floor, which as an effective length
 hundred. Under explicit coupling it is therefore the manhole, rather
 than the pipe, that sets the stable substep for the whole model —
 which, before junctions became interfaces, was the whole network's
-substep. `FV_NODE_COUPLING SEMI_IMPLICIT` (the default) removes that by
+substep. The semi-implicit coupling — always on; the explicit
+alternative was retired with `FV_NODE_COUPLING` — removes that by
 linearizing each coupling face's mass flux in the node head, using the
 characteristic relation
 \f$\left| \partial Q/\partial H \right| = gA/c = \sqrt{g\,A\,T}\f$ at the
@@ -1209,27 +1217,30 @@ and its carry ledger.
 1. **Face fluxes.** Every boundary face of the node has been evaluated
    against the ghost state (8-28) by the flux pass.
 2. **Semi-implicit correction.** For bucket nodes without a prescribed
-   head, the correction (8-18) is computed from the net residual
-   \f$\sum s_{f} F_{f} + q_{lat} + q_{struct}\f$ and written into the
-   incident face fluxes through (8-29). With `FV_NODE_PICARD` greater
-   than one the correction is iterated: each sweep re-evaluates the
-   storage slope \f$dV/dH\f$, the residual — now including the storage
-   already moved, \f$-\Delta V/\Delta t\f$ — and the resistances at the
-   provisional head, re-solves the incident faces' Riemann problems
-   there, and repeats until the head correction falls below 10⁻⁶ ft or
-   the sweep budget is exhausted; the final sweep writes the linear
-   correction into the face fluxes exactly as the single sweep does.
-   One sweep, the default, reproduces the original linearized scheme
-   bit for bit. Under local time stepping the correction is applied per
-   node at that node's own tier step, and the Riemann re-solve is
-   restricted to faces firing on the current base step — a face held by
-   another tier keeps the flux it will book over its own window.
-3. *(Retired.)* `FV_NODE_CELL_COUPLING` once eliminated each end cell
-   from a joint backward-Euler system with the node, so that the
-   correction responded to the head *difference* between node and cell.
-   It was superseded by the interface treatment above — a junction that
-   holds no volume has nothing to couple *to* its end cells — and the
-   keyword is now accepted and ignored, as is `FV_JUNCTION_MODEL`.
+   head, the correction (8-18) is computed once from the net residual
+   \f$\sum s_{f} F_{f} + q_{lat} + q_{struct}\f$, with the resistances,
+   the storage area and the face fluxes all frozen at the head the
+   substep started from, and written into the incident face fluxes
+   through (8-29). That is exact for the linearized problem; the real
+   problem's nonlinearity is resolved by the node's fine tier under
+   local time stepping (below), where the correction is applied per
+   node at that node's own tier step.
+3. *(Retired.)* Three keywords are accepted and ignored so existing
+   projects still parse. `FV_NODE_CELL_COUPLING` once eliminated each
+   end cell from a joint backward-Euler system with the node, so that
+   the correction responded to the head *difference* between node and
+   cell; it was superseded by the interface treatment above — a junction
+   that holds no volume has nothing to couple *to* its end cells — as
+   was `FV_JUNCTION_MODEL`. `FV_NODE_PICARD` iterated the correction of
+   step 2, re-solving the incident faces at each provisional head; it
+   corrected the mass fluxes only, leaving the momentum fluxes
+   inconsistent with them — the same mass-only-correction defect the
+   interface solve exists to avoid — and shipped with a recorded
+   negative result (it never bought back the coarse step it was meant
+   to). `FV_NODE_COUPLING EXPLICIT` and `FV_NODE_DT NONE` are retired on
+   the same terms (§8.6.1 and the bound below); asking for any of the
+   three retired *behaviours* is answered with a warning at open, while
+   spelling out the former defaults is not.
 4. **Positivity.** The node's total outgoing flux is scaled by (8-26)
    against its stored volume.
 5. **Ledger.**
@@ -1250,39 +1261,35 @@ and its carry ledger.
    and the conduit exchange is whatever the Riemann solver produced
    against it.
 
-**The node's time-step bound (`FV_NODE_DT`).** A bucket node behaves as
-an extra control volume of effective length \f$A_{s}/T\f$, giving the
-bound
+**The node's time-step bound.** A bucket node behaves as an extra
+control volume of effective length \f$A_{s}/T\f$, giving the bound
 
 | | | | |
 |---|---|---|---|
 | \f[\Delta t \leq \alpha\,\frac{A_{s}/T}{\left\lvert v \right\rvert + c}\f] | | (8-32) | |
 
-evaluated over the node's wet incident end cells. It is skipped for the
-nodes that have no volume state to protect — algebraic junctions, whose
-tier is instead pinned to their incident cells so that their faces fire
-together, and outfalls, whose head is imposed. Applying it to those was
-how a single `MIN_SURFAREA` bucket used to set a millisecond step for
-the whole network. Under explicit coupling the bound is a genuine
-stability limit and always applies to the nodes it covers. Under
-the default semi-implicit coupling the correction is unconditionally
-stable and the bound instead controls accuracy: when local time
-stepping is running, the bound is dropped from the global census and
-each node receives its own fine tier from (8-32), which supplies the
-resolution at low cost; when tiering cannot run (`RK2`, or transport),
-the bound is honoured in the global census. `FV_NODE_DT NONE` removes
-it from the base-step computation while leaving nodes tiered. Measured
-against the SWASHES analytic solutions, `NONE` is 24–134× faster and
-degrades the L1 depth error by factors of 3 to 49 on the frictional and
-transcritical cases, so the default remains `STABILITY`. Additional
-Picard sweeps do not substitute for the bound at large steps: they
-converge the node's continuity equation at the step it is handed, which
-is a separate question from that step being small enough to resolve the
-coupling.
+evaluated over the node's wet incident end cells, and always armed. It
+is skipped for the nodes that have no volume state to protect —
+algebraic junctions, whose tier is instead pinned to their incident
+cells so that their faces fire together, and outfalls, whose head is
+imposed — which is why in practice it binds storage nodes only.
+Applying it to plain junctions was how a single `MIN_SURFAREA` bucket
+used to set a millisecond step for the whole network. The semi-implicit
+correction is unconditionally stable, so the bound controls accuracy
+rather than stability: when local time stepping is running, the bound
+is dropped from the global census and each node receives its own fine
+tier from (8-32), which supplies the resolution at low cost; when
+tiering cannot run (`RK2`, or transport), the bound is honoured in the
+global census. It is not optional: measured against the SWASHES
+analytic solutions under the earlier bucket junction model, dropping it
+was 24–134× faster and degraded the L1 depth error by factors of 3 to
+49 on the frictional and transcritical cases (the `FV_NODE_DT NONE`
+switch that produced those numbers is retired; asking for it warns and
+is ignored).
 
 **Implementation.**
 @ref openswmm::fv::ExplicitFvSolver::relaxNodeFluxes and
-@ref openswmm::fv::ExplicitFvSolver::relaxOneNode implement steps 2–3;
+@ref openswmm::fv::ExplicitFvSolver::relaxOneNode implement step 2;
 @ref openswmm::fv::ExplicitFvSolver::updateNodes and
 @ref openswmm::fv::ExplicitFvSolver::fireNodes carry the ledger on the
 global and tiered paths;
@@ -1455,13 +1462,11 @@ file.
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
 | `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
-| `FV_PRESSURIZED_IMPLICIT` | `NO` | Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; a run that never pressurizes is bit-identical either way. |
+| `FV_PRESSURIZED_IMPLICIT` | `NO` | **Experimental** — subject to slot program R2b; not surfaced in the GUI. Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; local time stepping stands down while the solve engages; a run that never pressurizes is bit-identical either way. |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows and outfall stages are refreshed: every substep, or once per routing step. A device backend clamps to `ROUTING_STEP`. |
-| `FV_NODE_COUPLING` | `SEMI_IMPLICIT` | `EXPLICIT` freezes face fluxes across the node update; `SEMI_IMPLICIT` linearizes them in the node head (§8.6.1). |
-| `FV_NODE_PICARD` | 1 | Picard sweeps on the node head inside the semi-implicit coupling (§8.6.5). 1 reproduces the single linearized correction exactly. |
 | `FV_NODE_CELL_COUPLING` | — | **Retired.** Accepted and ignored so existing projects still parse; junctions are always interfaces (§8.6.1). `FV_JUNCTION_MODEL` is retired on the same terms. |
-| `FV_NODE_DT` | `STABILITY` | Whether the bucket-node bound (8-32) enters the base time step. `NONE` removes it from the census; nodes remain tiered under local time stepping. Semi-implicit coupling only. |
+| `FV_NODE_COUPLING`, `FV_NODE_DT`, `FV_NODE_PICARD` | — | **Retired 2026-08-29.** Storage-node coupling is always semi-implicit (§8.6.1), the node bound (8-32) is always armed (§8.6.5), and the correction is always a single sweep — each the former default. Accepted so existing projects still parse; a value asking for the retired behaviour (`EXPLICIT`, `NONE`, sweeps above 1) warns at open and is ignored. |
 | `FV_COMPACTION` | `YES` | Skip dry, inactive parts of the network. Results-transparent. |
 | `FV_LTS` | `YES` | Local time stepping (§8.5.6). `NO` forces one global substep size. |
 | `FV_LTS_MAX_TIERS` | 6 | Cap on the tier spread; 6 allows 64×. |
