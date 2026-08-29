@@ -3461,7 +3461,12 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
             // memoryless, so re-derive it (a cell may have crossed the crown
             // inside the step, in EITHER direction).
             const double dt_post = censusDt(anyPressurizedCell());
-            if (dt_post >= kStepAcceptRatio * dt) break;          // admissible
+            // The margin makes the limiter-saturated case — where dt_post is
+            // exactly kStepAcceptRatio*dt and so says nothing — reject
+            // deterministically rather than on a last-bit tie. See
+            // kStepAcceptEps for the measurement that motivates it.
+            if (dt_post >= kStepAcceptRatio * dt * (1.0 + kStepAcceptEps))
+                break;                                            // admissible
             restoreState();
             dt = std::max(0.9 * dt_post, constants::MIN_TIMESTEP);
             if (dt > remaining) dt = remaining;
