@@ -274,8 +274,8 @@ built in `src/engine/hydraulics/fv/NetworkMeshBuilder.cpp`.
 > functional and gated, but the pass cannot yet compose with the
 > local-time-stepping macro cycle (§8.5.6) — tiering stands down on any
 > substep where the solve engages — and the slot program's next round
-> (R2b) is expected to revise it. It is deliberately not surfaced in the
-> GUI's simulation options; set it in `[OPTIONS]` directly.
+> (R2b) is expected to revise it. The GUI surfaces it as an explicitly
+> experimental checkbox on the Routing & Hydraulics page.
 
 `FV_PRESSURIZED_IMPLICIT YES` removes the slot's wave from the explicit
 time-step law. Above the taper band the closure (8-4) is exactly linear
@@ -1462,7 +1462,7 @@ file.
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
 | `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
-| `FV_PRESSURIZED_IMPLICIT` | `NO` | **Experimental** — subject to slot program R2b; not surfaced in the GUI. Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; local time stepping stands down while the solve engages; a run that never pressurizes is bit-identical either way. |
+| `FV_PRESSURIZED_IMPLICIT` | `NO` | **Experimental** — subject to slot program R2b; surfaced in the GUI as an experimental checkbox. Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; local time stepping stands down while the solve engages; a run that never pressurizes is bit-identical either way. |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows and outfall stages are refreshed: every substep, or once per routing step. A device backend clamps to `ROUTING_STEP`. |
 | `FV_NODE_CELL_COUPLING` | — | **Retired.** Accepted and ignored so existing projects still parse; junctions are always interfaces (§8.6.1). `FV_JUNCTION_MODEL` is retired on the same terms. |
