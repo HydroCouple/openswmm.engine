@@ -276,7 +276,11 @@ TEST(NegativeSourcesTest, NegativeInflowExtractsUnderAllThreeEngines) {
 // Gate 2 — over-extraction clamps, warns, stays non-negative, and the
 // un-booking keeps the ledger closed.
 // ---------------------------------------------------------------------------
-TEST(NegativeSourcesTest, OverExtractionClampsWarnsAndStaysNonNegative) {
+// Renamed 2026-08-29: was ...ClampsWarnsAndStaysNonNegative. The per-clamp
+// runtime warning is gone (P1.4b) and this test now asserts its ABSENCE, so
+// the old name described the opposite of what the body checks. A test whose
+// name contradicts its assertions is the trap this program keeps paying for.
+TEST(NegativeSourcesTest, OverExtractionClampsSummarizesAndStaysNonNegative) {
     for (const char* solver : kSolvers) {
         DeckSpec s;  s.solver = solver;
         // 10x the 500-internal-units/s throughflow, in mg/s (the MASS-row
@@ -294,8 +298,18 @@ TEST(NegativeSourcesTest, OverExtractionClampsWarnsAndStaysNonNegative) {
         EXPECT_GT(r.clamp_events, 0)
             << solver << ": over-extraction never clamped — the counter "
                "has no observer path in this engine";
-        EXPECT_TRUE(has_warning(r, "clamped to the available amount"))
-            << solver << ": the first-clamp warning did not fire";
+        // DELIBERATE FLIP (2026-08-29, user-approved): this row asserted the
+        // per-clamp runtime warning "clamped to the available amount". That
+        // warning is GONE — it fired on every correct extraction deck,
+        // because during fill every element is near-empty and any extraction
+        // clamps trivially (108 clamps measured on a deck extracting 40 % of
+        // its inflow). The claim it carried — that a clamp is observable —
+        // is not weakened: it moves to the summary row below plus the
+        // clamp_events counter above. See
+        // plans/transport/P1_4_NEGATIVE_CELL_SOURCES_HANDOFF_2026-08-29.md.
+        EXPECT_FALSE(has_warning(r, "clamped to the available amount"))
+            << solver << ": the per-clamp runtime warning is supposed to be "
+                         "gone — it fires on ordinary decks (lesson 148)";
         EXPECT_TRUE(has_warning(r, "D-NS1 summary"))
             << solver << ": the end-of-run summary did not fire";
 

@@ -371,8 +371,13 @@ TEST(ArdTransportBcsTest, OverExtractionClampsAndStaysNonNegative) {
         << "extraction of 10x the held mass never clamped";
     EXPECT_GT(ctx.negsrc.shortfall_mass, 0.0)
         << "a clamp was counted but no unmet mass recorded";
-    EXPECT_TRUE(has_needle(ctx.warnings, "clamped"))
-        << "the clamp produced no warning";
+    // The per-clamp runtime warning was removed 2026-08-29 (it fired on every
+    // correct extraction deck — during fill every cell is near-empty and any
+    // extraction clamps trivially). The END-OF-RUN SUMMARY is the observer.
+    EXPECT_TRUE(has_needle(ctx.warnings, "D-NS1 summary"))
+        << "the clamp reached no user-visible channel at all";
+    EXPECT_FALSE(has_needle(ctx.warnings, "clamped to the available amount"))
+        << "the per-clamp runtime warning is supposed to be gone";
     swmm_engine_destroy(e);
 }
 
