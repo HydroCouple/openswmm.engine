@@ -51,7 +51,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 #include <string>
 #include <vector>
 
@@ -63,6 +67,24 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+// The G5 backend gate needs the POSIX fd and environment calls; MSVC spells
+// them with a leading underscore and has no setenv/unsetenv at all.
+#ifdef _WIN32
+inline int  dupFd(int fd)                        { return _dup(fd); }
+inline int  dup2Fd(int from, int to)             { return _dup2(from, to); }
+inline int  closeFd(int fd)                      { return _close(fd); }
+inline int  fileNo(FILE* f)                      { return _fileno(f); }
+inline void setEnvVar(const char* n, const char* v) { _putenv_s(n, v); }
+inline void unsetEnvVar(const char* n)           { _putenv_s(n, ""); }
+#else
+inline int  dupFd(int fd)                        { return dup(fd); }
+inline int  dup2Fd(int from, int to)             { return dup2(from, to); }
+inline int  closeFd(int fd)                      { return close(fd); }
+inline int  fileNo(FILE* f)                      { return fileno(f); }
+inline void setEnvVar(const char* n, const char* v) { setenv(n, v, 1); }
+inline void unsetEnvVar(const char* n)           { unsetenv(n); }
+#endif
 
 constexpr double kMetrePerInch = 0.0254;
 constexpr double kSecPerHour   = 3600.0;
@@ -564,22 +586,22 @@ TEST_F(Infil2DIntegrationTest, KokkosMarcherAgreesWithTheCpuMarcher) {
     const char* prev = std::getenv("OPENSWMM_2D_BACKEND");
     const std::string saved = prev ? prev : "";
 
-    setenv("OPENSWMM_2D_BACKEND", "cpu", 1);
+    setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
     RunResult cpu = run(dir_, "g5_cpu", model, inhrToMs(4.0), 3600.0);
 
     // Capture stderr so a silent fallback to the CPU marcher is detectable.
     const fs::path errlog = dir_ / "g5_omp_stderr.log";
     fflush(stderr);
-    const int saved_fd = dup(fileno(stderr));
+    const int saved_fd = dupFd(fileNo(stderr));
     FILE* redirected = std::freopen(errlog.string().c_str(), "w", stderr);
-    setenv("OPENSWMM_2D_BACKEND", "omp", 1);
+    setEnvVar("OPENSWMM_2D_BACKEND", "omp");
     RunResult omp = run(dir_, "g5_omp", model, inhrToMs(4.0), 3600.0);
     fflush(stderr);
-    if (redirected) { dup2(saved_fd, fileno(stderr)); }
-    close(saved_fd);
+    if (redirected) { dup2Fd(saved_fd, fileNo(stderr)); }
+    closeFd(saved_fd);
 
-    if (saved.empty()) unsetenv("OPENSWMM_2D_BACKEND");
-    else               setenv("OPENSWMM_2D_BACKEND", saved.c_str(), 1);
+    if (saved.empty()) unsetEnvVar("OPENSWMM_2D_BACKEND");
+    else               setEnvVar("OPENSWMM_2D_BACKEND", saved.c_str());
 
     ASSERT_TRUE(cpu.ok);
     ASSERT_TRUE(omp.ok);
