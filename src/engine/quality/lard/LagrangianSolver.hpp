@@ -112,6 +112,50 @@ namespace lard {
 
 constexpr double kTinyFlow = 1.0e-8;  ///< cfs; below this a link moves nothing
 
+/**
+ * @brief The segment store's species-row layout, computed in ONE place.
+ *
+ * @details H7a. Three call sites (`step`, `substep`, `init`) each used to
+ *          recompute `np + (age ? 1 : 0)` independently, and the age row was
+ *          identified by the predicate `s >= np`. That predicate is only
+ *          correct while age is the **one and only** reserved row: the
+ *          moment a second one exists (temperature, H7b) `s >= np` captures
+ *          both, and temperature would be silently aged, sourced from
+ *          `node_age_vol_in` and published to `water_age_state` — a defect
+ *          that produces plausible numbers rather than a crash.
+ *
+ *          So the row identity becomes an explicit INDEX rather than a
+ *          threshold, mirroring what the ARD engine already does
+ *          (`ArdEngine.cpp` `age_row_` / `temp_row_`). LARD is the engine
+ *          that kept the threshold because it only ever had one.
+ *
+ *          **This struct is deliberately introduced while `temp_row` is
+ *          always -1**, so the change is provably inert: with one reserved
+ *          row, `s == age_row` and `s >= np` select exactly the same row.
+ *          The corpus and the existing water-age gates are the proof. H7b
+ *          then adds the temperature row on top of a layout that is already
+ *          trusted, rather than changing the indexing and the physics in one
+ *          step where a bit-identity check can no longer separate them.
+ */
+struct SpeciesRowLayout {
+    int np       = 0;   ///< pollutant rows occupy [0, np)
+    int age_row  = -1;  ///< water-age row index, or -1 when absent
+    int temp_row = -1;  ///< temperature row index, or -1 (H7b)
+    int ns       = 0;   ///< total rows the store carries
+};
+
+/// The single source of truth for the row layout. Reserved rows are appended
+/// after the pollutants in a fixed order (age, then temperature) so an index
+/// means the same thing everywhere.
+inline SpeciesRowLayout rowLayout(const SimulationContext& ctx) {
+    SpeciesRowLayout L;
+    L.np = ctx.n_pollutants();
+    L.ns = L.np;
+    if (ctx.options.water_age) L.age_row = L.ns++;
+    // H7b will add: if (ctx.options.heat_transport) L.temp_row = L.ns++;
+    return L;
+}
+
 class LagrangianSolver {
 public:
     /**
@@ -119,12 +163,12 @@ public:
      *        first call (needs router-set volumes, the ARD precedent).
      */
     void step(SimulationContext& ctx, double dt_routing) {
-        const int np = ctx.n_pollutants();
-        // X4: the age row rides the segments as species index np, state
+        // X4: the age row rides the segments after the pollutants, state
         // published to water_age_state (seconds) rather than the np-strided
-        // conc arrays. Heat under LARD remains X-plan H7.
-        const bool age = ctx.options.water_age;
-        const int ns = np + (age ? 1 : 0);
+        // conc arrays. Heat under LARD remains H7b.
+        const SpeciesRowLayout L = rowLayout(ctx);
+        const int np = L.np;
+        const int ns = L.ns;
         if (ns <= 0) return;
         if (!initialized_) init(ctx);
 
@@ -172,9 +216,12 @@ public:
      *              (`qual_vol_in`) this substep consumes.
      */
     void substep(SimulationContext& ctx, double dt, double frac) {
-        const int np = ctx.n_pollutants();
-        const bool age = ctx.options.water_age;
-        const int ns = np + (age ? 1 : 0);
+        const SpeciesRowLayout L = rowLayout(ctx);
+        const int np = L.np;
+        const int ns = L.ns;
+        // Derived from the layout rather than re-read from options, so the
+        // "is there an age row" question has exactly one answer per call.
+        const bool age = (L.age_row >= 0);
         const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
         auto& nodes = ctx.nodes;
@@ -234,7 +281,10 @@ public:
                 v_in + nodes.qual_vol_in[un] * frac <= 0.0;
 
             for (int s = 0; s < ns; ++s) {
-                const bool is_age = (s >= np);
+                // H7a: identity by INDEX, not by threshold. `s >= np` was
+                // correct only while age was the sole reserved row; it would
+                // silently capture the temperature row too (H7b).
+                const bool is_age = (s == L.age_row);
                 const auto li = un * static_cast<std::size_t>(ns) +
                                 static_cast<std::size_t>(s);  // ledger index
                 // State and external load per row. Pollutants: nodes.conc +
@@ -421,9 +471,12 @@ public:
 
 private:
     void init(SimulationContext& ctx) {
-        const int np = ctx.n_pollutants();
-        const bool age = ctx.options.water_age;
-        const int ns = np + (age ? 1 : 0);
+        const SpeciesRowLayout L = rowLayout(ctx);
+        const int np = L.np;
+        const int ns = L.ns;
+        // Derived from the layout rather than re-read from options, so the
+        // "is there an age row" question has exactly one answer per call.
+        const bool age = (L.age_row >= 0);
         const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
         // X3a: slab capacity from [OPTIONS] MAX_SEGMENTS_PER_LINK, floored
