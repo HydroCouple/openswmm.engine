@@ -18,13 +18,11 @@
  * @file test_heat_lid.cpp
  * @brief Phase H5b gates — temperature through the LID layer stack.
  *
- * @warning LID layer parameters in these decks are written in FEET and
- *          FEET/SECOND deliberately. Issue #131: a conventional
- *          `[LID_CONTROLS]` block reaches the solver UNCONVERTED, so a soil
- *          layer given in inches arrives as 18 ft with a 0.5 ft/s
- *          conductivity — 43,200x too fast. **These gates are expected to
- *          fail when the conversion lands, and the correct response then is
- *          to convert the decks, not to widen the bands.**
+ * @note LID layer parameters are in the section's user units (inches,
+ *       in/hr, void RATIO) since PR #103 made the solver convert them; the
+ *       decks were re-expressed from their earlier feet/ft·s form in the LID
+ *       fix round (2026-08-30), same physical column — see the note in
+ *       test_water_age_lid.cpp for the conversion.
  *
  * @details The load-bearing gates here need no reference value:
  *          - with conduction ON and both atmospheric modules OFF, the
@@ -103,7 +101,7 @@ struct Opts {
     /// Underdrain coefficient. Zeroing it, with the storm stopped, leaves a
     /// column that holds its water: no advection, no drainage, so the only
     /// operator left is the one being measured.
-    double drain_coeff = 1.0e-3;
+    double drain_coeff = 12.4708;
     /// Route the outfall's discharge back onto S1 as run-on. On by default
     /// because most gates want the LID fed; OFF for the ledger, which needs
     /// the column to stop exchanging water with the rest of the model.
@@ -143,12 +141,12 @@ void write_deck(const char* path, const Opts& o) {
       << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
       << "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
       << "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
-      // FEET and FT/S — see the file warning and issue #131.
+      // User units (in, in/hr, void ratio) — see the file note.
       << "[LID_CONTROLS]\n"
       << "BC1 BC\n"
-      << "BC1 SURFACE  0.05   0.0  0.1  1.0  5\n"
-      << "BC1 SOIL     0.25   0.5  0.2  0.1  2.0e-5 10.0 0.3\n"
-      << "BC1 STORAGE  1.0    0.75 0.0  0\n"
+      << "BC1 SURFACE  0.6    0.0  0.1  100  5\n"
+      << "BC1 SOIL     3.0    0.5  0.2  0.1  0.864  10.0 3.6\n"
+      << "BC1 STORAGE  12.0   3.0  0.0  0\n"
       << "BC1 DRAIN    " << o.drain_coeff << " 0.5  0    0\n\n"
       << "[LID_USAGE]\nS1 BC1 1 43560 500 50 " << o.from_imperv << " 0\n\n"
       << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
