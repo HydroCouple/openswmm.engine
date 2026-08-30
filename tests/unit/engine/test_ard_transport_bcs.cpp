@@ -275,6 +275,138 @@ TEST(ArdTransportBcsTest, SourceSteadyStateDeltaIsAnalytic) {
 }
 
 // ---------------------------------------------------------------------------
+// P1.4 — a NEGATIVE source row is extraction (D-NS1), not a no-op.
+//
+// Before P1.4 `updateTransportRows` did `src_now_[i] = std::max(0.0, r)`, so
+// a negative rate was zeroed before the apply loop ever saw it: the row did
+// nothing and said nothing. This gate FAILS at base — downstream would sit at
+// the boundary value instead of below it.
+// ---------------------------------------------------------------------------
+TEST(ArdTransportBcsTest, NegativeSourceExtractsMass) {
+    // Boundary supplies 5 mg/L; the source removes 2 mg/L worth at Q.
+    const double c_in    = 5.0;
+    const double r_mg_s  = 2.0 * kQ * kLperFt3;   // same arithmetic as gate 3
+    write_file("_e5_nsrc.rxn", kInertRxn);
+    write_file("_e5_nsrc.ard",
+               "[TRANSPORT_BOUNDARIES]\nJ0 X VALUE " + std::to_string(c_in) +
+                   "\n[TRANSPORT_SOURCES]\nC3 X VALUE -" +
+                   std::to_string(r_mg_s) + "\n");
+    write_deck("_e5_nsrc.inp", pc_two("_e5_nsrc.rxn", "_e5_nsrc.ard", false));
+    const auto rec =
+        run_recording("_e5_nsrc.inp", "_e5_nsrc.rpt", "_e5_nsrc.out");
+    ASSERT_TRUE(rec.ok);
+    const auto& c5 = rec.msx_link[kC5];
+    const auto& c1 = rec.msx_link[kC1];
+    ASSERT_FALSE(c5.empty());
+
+    const double expected = c_in - r_mg_s / (kLperFt3 * kQ);   // = 3.0 mg/L
+    // Measured 3.00000007 on landing; 1 % is 15x looser than that floor and
+    // 15x tighter than gate 3's band, which extraction does not need.
+    EXPECT_NEAR(c5.back(), expected, 0.01 * expected)
+        << "a negative [TRANSPORT_SOURCES] row did not extract mass — at "
+           "base it is silently zeroed, which is the P1.4 defect";
+    // Upstream of C3 is untouched: extraction must not propagate backwards.
+    EXPECT_NEAR(c1.back(), c_in, 0.15 * c_in)
+        << "extraction at C3 changed C1, upstream of it";
+}
+
+// ---------------------------------------------------------------------------
+// P1.4 — over-extraction clamps to the mass actually held, warns, and never
+// drives a cell negative. The clamp is COUNTED, not ledgered: cell sources
+// resolve to MSX species rows only (np + src_msx) and MSX species have no
+// mass-balance row, so there is nothing to un-book. See NegativeSources.hpp.
+// ---------------------------------------------------------------------------
+TEST(ArdTransportBcsTest, OverExtractionClampsAndStaysNonNegative) {
+    const double c_in   = 5.0;
+    const double r_mg_s = 50.0 * kQ * kLperFt3;   // 10× more than exists
+    write_file("_e5_nover.rxn", kInertRxn);
+    write_file("_e5_nover.ard",
+               "[TRANSPORT_BOUNDARIES]\nJ0 X VALUE " + std::to_string(c_in) +
+                   "\n[TRANSPORT_SOURCES]\nC3 X VALUE -" +
+                   std::to_string(r_mg_s) + "\n");
+    write_deck("_e5_nover.inp",
+               pc_two("_e5_nover.rxn", "_e5_nover.ard", false));
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_e5_nover.inp", "_e5_nover.rpt",
+                               "_e5_nover.out", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int    guard   = 0;   // same cap convention as run_recording above:
+                          // a hung test is worse than a failed assertion
+    // Watch the downstream conduit while stepping: the clamp's PHYSICAL
+    // claim is that no cell is ever driven below zero and that the chain
+    // downstream of the extraction runs dry of species -- counting clamps
+    // alone would pass a clamp that mis-signs the correction.
+    auto&  ctx    = as_cpp_engine(e).context();
+    const auto nm = static_cast<std::size_t>(ctx.reactions.n_species());
+    ASSERT_GT(nm, 0u);
+    // C3 is the conduit being extracted from: an unclamped extraction
+    // drives ITS cells negative, and the volume-weighted link projection
+    // carries the sign. C5 sees the depletion but not the sign -- the
+    // node hand-off downstream does not propagate a negative donor.
+    constexpr int kC3 = 2;
+    double c3_min = 1e300, c5_min = 1e300, c5_last = -1.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+        const auto i3 = static_cast<std::size_t>(kC3) * nm;
+        const auto i5 = static_cast<std::size_t>(kC5) * nm;
+        ASSERT_LT(i5, ctx.reactions.msx_link_conc.size());
+        c3_min  = std::min(c3_min, ctx.reactions.msx_link_conc[i3]);
+        c5_last = ctx.reactions.msx_link_conc[i5];
+        c5_min  = std::min(c5_min, c5_last);
+    } while (elapsed > 0.0 && ++guard < 100000);
+    ASSERT_LT(guard, 100000) << "step loop did not terminate";
+    ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
+
+    EXPECT_GE(c3_min, 0.0)
+        << "the extracted conduit went negative (c3_min " << c3_min << ")";
+    EXPECT_GE(c5_min, 0.0)
+        << "a cell downstream of the extraction went negative";
+    EXPECT_LT(c5_last, 0.15 * c_in)
+        << "extraction of 10x the held mass left species downstream";
+    EXPECT_GT(ctx.negsrc.clamp_events, 0)
+        << "extraction of 10x the held mass never clamped";
+    EXPECT_GT(ctx.negsrc.shortfall_mass, 0.0)
+        << "a clamp was counted but no unmet mass recorded";
+    EXPECT_TRUE(has_needle(ctx.warnings, "clamped"))
+        << "the clamp produced no warning";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// P1.4 — the parse warning fires on a negative VALUE row and ONLY then.
+// A notice that fires on every source deck is one users learn to ignore
+// (lesson 148).
+// ---------------------------------------------------------------------------
+TEST(ArdTransportBcsTest, NegativeSourceRowWarnsAtParseOnlyWhenNegative) {
+    for (const bool negative : {true, false}) {
+        const char* tag = negative ? "_e5_nwarn_n" : "_e5_nwarn_p";
+        write_file((std::string(tag) + ".rxn").c_str(), kInertRxn);
+        write_file((std::string(tag) + ".ard").c_str(),
+                   (std::string("[TRANSPORT_SOURCES]\nC3 X VALUE ") +
+                    (negative ? "-100" : "100") + "\n").c_str());
+        write_deck((std::string(tag) + ".inp").c_str(),
+                   pc_two((std::string(tag) + ".rxn").c_str(),
+                          (std::string(tag) + ".ard").c_str(), false));
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        ASSERT_EQ(swmm_engine_open(e, (std::string(tag) + ".inp").c_str(),
+                                   (std::string(tag) + ".rpt").c_str(),
+                                   (std::string(tag) + ".out").c_str(),
+                                   nullptr),
+                  SWMM_OK)
+            << tag;
+        auto& ctx = as_cpp_engine(e).context();
+        EXPECT_EQ(has_needle(ctx.warnings, "treated as EXTRACTION"), negative)
+            << tag;
+        swmm_engine_destroy(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 4 — pollutant rows are refused with the legacy-pathway message.
 // ---------------------------------------------------------------------------
 TEST(ArdTransportBcsTest, PollutantRowsAreRefused) {

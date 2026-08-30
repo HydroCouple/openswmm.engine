@@ -427,7 +427,18 @@ void ArdEngine::updateTransportRows(SimulationContext& ctx) {
             r = table_tseries_lookup_cursor(ctx.tables[ts],
                                             ctx.current_date) /
                 kLitersPerFt3;      // ts values are species mass/s
-        src_now_[i] = std::max(0.0, r);
+        // P1.4: the sign is CARRIED. This was `std::max(0.0, r)`, which
+        // silently zeroed a negative rate before the apply loop ever saw
+        // it — so a [TRANSPORT_SOURCES] extraction row did nothing at all,
+        // and said nothing about doing nothing. That is the same shape X6
+        // fixed at the loader seam in this file ("silently DROPPED negative
+        // loads while the ledger booked the full request"); cell sources
+        // were scoped out of D-NS1 (X6 §2.5) and kept the defect.
+        //
+        // The BC clamp above is deliberately NOT changed: a boundary
+        // CONCENTRATION below zero is meaningless, whereas a source RATE
+        // below zero is extraction. Same expression, different quantity.
+        src_now_[i] = r;
     }
 }
 
@@ -950,18 +961,36 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     //     undelivered remainder explicitly.
     for (std::size_t i = 0; i < src_crow_.size(); ++i) {
         const double r = src_now_[i];
-        if (r <= 0.0) continue;
+        // P1.4: was `r <= 0.0`, which skipped extraction rows. Zero is still
+        // nothing to do; a negative rate is now extraction (D-NS1).
+        if (r == 0.0) continue;
         const auto ucrow = static_cast<std::size_t>(src_crow_[i]);
         const int b2 = mesh_.conduit_cell_begin[ucrow];
         const int n2 = mesh_.conduit_cell_count[ucrow];
         const auto sb = static_cast<std::size_t>(src_srow_[i]);
+        double shortfall = 0.0;   // unmet extraction, internal mass units
         for (int i2 = 0; i2 < n2; ++i2) {
             const auto uc = static_cast<std::size_t>(b2 + i2);
             const double a = state_.cell_a[uc];
             if (a <= k::kDryArea) continue;
-            state_.cell_phi[sb * unc + uc] +=
-                dt_sub * r / (src_len_[i] * a);
+            // Identical arithmetic to the pre-P1.4 form for a POSITIVE r —
+            // same operations in the same order — so positive-source decks
+            // stay bit-identical. Only the negative branch is new.
+            double  dphi = dt_sub * r / (src_len_[i] * a);
+            double& phi  = state_.cell_phi[sb * unc + uc];
+            if (dphi < 0.0 && phi + dphi < 0.0) {
+                // Clamp to what THIS cell holds. The deficit is per-cell
+                // because the source's share is distributed ∝ dx, so a
+                // conduit whose cells are unevenly loaded can clamp in one
+                // cell while another still has mass to give.
+                shortfall += -(phi + dphi) * a * mesh_.cell_dx[uc];
+                dphi = -phi;
+            }
+            phi += dphi;
         }
+        if (shortfall > 0.0)
+            quality::bookNegativeCellSourceClamp(ctx, src_crow_[i],
+                                                 shortfall);
     }
 
     // 6. Dispersion (E3): implicit per-chain Thomas solve over the updated
