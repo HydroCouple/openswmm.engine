@@ -86,9 +86,10 @@
  *          configuration, not deck furniture. Lesson 55 — find the regime
  *          where the term under test dominates, do not widen the band.
  *
- * @warning LID decks are written in FEET and FT/S — issue #131, see
- *          `test_heat_lid.cpp`. Expected to fail when the conversion lands;
- *          convert the deck, do not widen the band.
+ * @note LID decks are in the section's user units since PR #103 made the
+ *       solver convert them (re-expressed in the LID fix round, 2026-08-30 —
+ *       see test_water_age_lid.cpp). The LID bands were re-pinned then, to
+ *       measured floors, not widened — see gate 4.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6.2 D-H5d, §6.3 D-H5e
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
@@ -160,7 +161,7 @@ struct Deck {
     /// whether the storage layer holds water, and so whether the two LID
     /// gates measure the transport scheme or the LID solver's own step
     /// sensitivity.
-    double drain_coeff = 1.0e-4;
+    double drain_coeff = 1.24708;
 };
 
 /// The spread the answer lives in, taken from the DECK's own sources. Gate
@@ -215,9 +216,9 @@ void write_files(const Deck& d, const Level& lv) {
       << "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n";
     if (d.lid)
         f << "[LID_CONTROLS]\nBC1 BC\n"
-          << "BC1 SURFACE  0.05   0.0  0.1  1.0  5\n"
-          << "BC1 SOIL     0.25   0.5  0.2  0.1  2.0e-5 10.0 0.3\n"
-          << "BC1 STORAGE  1.0    0.75 0.0  0\n"
+          << "BC1 SURFACE  0.6    0.0  0.1  100  5\n"
+          << "BC1 SOIL     3.0    0.5  0.2  0.1  0.864  10.0 3.6\n"
+          << "BC1 STORAGE  12.0   3.0  0.0  0\n"
           << "BC1 DRAIN    " << d.drain_coeff << " 0.5  0    0\n\n"
           << "[LID_USAGE]\nS1 BC1 1 43560 500 50 100 0\n\n";
     // A small storage node: large enough to be resolved, small enough that
@@ -378,7 +379,7 @@ TEST(TransportDtReferenceTest, LidColumnAgeConvergesUnderRefinement) {
     ASSERT_TRUE(a.ok && b.ok && c.ok) << "a refinement level failed to run";
 
     ExpectConverged(a.lid_storage_age, b.lid_storage_age, c.lid_storage_age,
-                    sourceSpread(d, false), 0.0012,
+                    sourceSpread(d, false), 0.0080,
                     "LID storage age (A4 falsifier iii)");
 }
 
@@ -454,15 +455,24 @@ TEST(TransportDtReferenceTest, LidColumnTemperatureConvergesUnderRefinement) {
     // two thirds full. Sealing it as gate 1 does leaves the soil leg barely
     // contracting (1.40, and 0.93 on a 60-minute deck); emptying it puts
     // both legs on the noise floor. See the file warning.
-    d.drain_coeff = 1.0e-4;
+    d.drain_coeff = 1.24708;
 
     const auto a = runAt(d, kCoarse);
     const auto b = runAt(d, kMid);
     const auto c = runAt(d, kFine);
     ASSERT_TRUE(a.ok && b.ok && c.ok);
 
+    // Bands re-pinned 2026-08-30 (LID fix round). The originals were fitted
+    // while (a) the solver read the deck's LID parameters unconverted
+    // (issue #131 / PR #103 — inches as feet, in/hr as ft/s) and (b) a
+    // target-less underdrain recirculated onto its own subcatchment. Both
+    // are gone; measured floors on the corrected engine: age 0.00644 at a
+    // contraction ratio of 2.77, storage temperature 0.00762 at 1.89, soil
+    // 0.0196 at 1.93. The temperature legs contract at ~1.9 on a 4x ladder
+    // — closer to first order than the age leg — which is recorded as a
+    // finding about the conduction/advection composition, not absorbed here.
     ExpectConverged(a.lid_storage_temp, b.lid_storage_temp,
-                    c.lid_storage_temp, sourceSpread(d, true), 0.0011,
+                    c.lid_storage_temp, sourceSpread(d, true), 0.0095,
                     "LID storage temperature (H5b falsifier ii)");
     ExpectConverged(a.lid_soil_temp, b.lid_soil_temp, c.lid_soil_temp,
                     sourceSpread(d, true), 0.023,

@@ -38,23 +38,18 @@
  *          ARRIVING, every gate in it watched a draining surface and the
  *          phase's central defect was invisible (lesson 65).
  *
- * @warning **The LID layer parameters below are in FEET and FEET/SECOND, not
- *          the inches and in/hr an `[LID_CONTROLS]` block normally carries.**
- *          That is deliberate and it is not a modelling choice: the engine
- *          never unit-converts LID layer parameters (issue #131's remaining
- *          item — the conversion belongs in `LIDSolver::init`, not the
- *          parser), so a conventional deck arrives at the solver as an 18 ft
- *          soil with a 0.5 ft/s conductivity, 43 200x too fast. Measured on
- *          the first draft of this file: the column drained every drop
- *          within one step, so no layer ever held water, no layer ever aged,
- *          and the underdrain never flowed.
- *
- *          These gates are about the AGE ARITHMETIC, so the numbers are
- *          chosen to be sensible in the units the solver actually applies.
- *          When the conversion lands, these decks must be re-expressed in
- *          inches and in/hr — and they will fail loudly until they are,
- *          which is the correct behaviour for a test standing on a known
- *          defect.
+ * @note The `[LID_CONTROLS]` blocks below are in the user units the section
+ *       normally carries — inches, in/hr, %, void RATIO — since PR #103
+ *       (`5f6a2ba5`, merged 2026-08-29) made `LIDSolver::init` convert them.
+ *       Until then the solver read them raw, and this file's decks were
+ *       written in feet and ft/s to be sensible in the units it actually
+ *       applied (issue #131); the LID fix round (2026-08-30) re-expressed the
+ *       same physical column — 0.6 in berm, 3 in soil at 0.864 in/hr, 12 in
+ *       storage at void ratio 3 (fraction 0.75), drain 12.4708 in/hr·in^-0.5
+ *       (= 1e-3 ft/s·ft^-0.5 exactly: 43 200/√12) — so the age arithmetic
+ *       these gates measure is unchanged. The one unit that could not be
+ *       re-expressed was the storage void ratio, until the parameter
+ *       validator stopped capping a RATIO at 1.0.
  *
  * @see plans/transport/WATER_AGE_TRACKING_PLAN.md §7 A4
  * @see plans/transport/A4_IMPLEMENTATION_BRIEF_2026-08-17.md
@@ -69,6 +64,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -147,13 +143,15 @@ void write_deck(const char* path, const std::string& lid_block,
 /// shallow. A layer still filling at the final step has a mean age below its
 /// V/Q, so a chain of slow layers cannot be checked against one.
 /// See the file warning on units.
-std::string bio_block() {
-    return "[LID_CONTROLS]\n"
-           "BC1 BC\n"
-           "BC1 SURFACE  0.05   0.0  0.1  1.0  5\n"
-           "BC1 SOIL     0.25   0.5  0.2  0.1  2.0e-5 10.0 0.3\n"
-           "BC1 STORAGE  1.0    0.75 0.0  0\n"
-           "BC1 DRAIN    1.0e-3 0.5  0    0\n\n"
+std::string bio_block(double drain_coeff = 12.4708) {
+    std::ostringstream o;
+    o << "[LID_CONTROLS]\n"
+         "BC1 BC\n"
+         "BC1 SURFACE  0.6    0.0  0.1  100  5\n"
+         "BC1 SOIL     3.0    0.5  0.2  0.1  0.864  10.0 3.6\n"
+         "BC1 STORAGE  12.0   3.0  0.0  0\n"
+         "BC1 DRAIN    " << drain_coeff << " 0.5  0    0\n\n";
+    return o.str() +
            "[LID_USAGE]\n"
            "S1 BC1 1 43560 500 50 100 0\n\n";
 }
@@ -165,7 +163,7 @@ std::string bio_block() {
 std::string swale_block() {
     return "[LID_CONTROLS]\n"
            "SW1 VS\n"
-           "SW1 SURFACE  0.05 0.0  0.2  0.02  5\n\n"
+           "SW1 SURFACE  0.6  0.0  0.2  2     5\n\n"
            "[LID_USAGE]\n"
            "S1 SW1 1 43560 500 0 100 0\n\n";
 }
@@ -174,8 +172,8 @@ std::string swale_block() {
 std::string garden_block() {
     return "[LID_CONTROLS]\n"
            "RG1 RG\n"
-           "RG1 SURFACE  0.5  0.0  0.1  1.0  5\n"
-           "RG1 SOIL     0.25 0.5  0.2  0.1  2.0e-5 10.0 0.3\n\n"
+           "RG1 SURFACE  6.0  0.0  0.1  100  5\n"
+           "RG1 SOIL     3.0  0.5  0.2  0.1  0.864  10.0 3.6\n\n"
            "[LID_USAGE]\n"
            "S1 RG1 1 43560 0 50 100 0\n\n";
 }
@@ -406,7 +404,10 @@ TEST(WaterAgeLidTest, StorageAgeIsTheSumOfTheLayerResidenceTimes) {
 TEST(WaterAgeLidTest, DrainLeavesAtStorageAgeAndReachesTheNode) {
     constexpr double kRainH = 4.0;
     write_file("_a4d.age", age_cfg(kRainH, kRainH));
-    write_deck("_a4d.inp", bio_block(), "_a4d.age");
+    // A slower underdrain than the chain gate's: the column has to hold its
+    // water long enough for the drain to be DISTINCTLY older than the
+    // subcatchment's own runoff, or the bracket below has no width.
+    write_deck("_a4d.inp", bio_block(1.0), "_a4d.age");
     SWMM_Engine e = run_and_hold("_a4d.inp", "_a4d.rpt", "_a4d.out");
     ASSERT_NE(e, nullptr);
     auto& eng = as_cpp_engine(e);

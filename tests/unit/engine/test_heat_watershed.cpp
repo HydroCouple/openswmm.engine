@@ -591,8 +591,8 @@ TEST(HeatWatershedTest, AnUnknownDryPolicyIsRefused) {
 // every flux module off nothing can add or remove energy, so every
 // temperature in the model must lie inside [12, 40].
 //
-// LID layer parameters are in FEET and FEET/SECOND — see the warning in
-// test_water_age_lid.cpp; the engine does not unit-convert them (issue #131).
+// LID layer parameters are in the section's user units (PR #103 converts
+// them) — see the note in test_water_age_lid.cpp.
 // ---------------------------------------------------------------------------
 TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) {
     constexpr double kFloorC = 12.0;   // RAINFALL and INITIAL_STATE
