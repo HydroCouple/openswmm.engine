@@ -1012,6 +1012,7 @@ struct SimulationContext {
         double runoff_evap       = 0.0;  ///< Total evaporation volume (ft3)
         double runoff_infil      = 0.0;  ///< Total infiltration volume (ft3)
         double runoff_runoff     = 0.0;  ///< Total surface runoff volume (ft3)
+        double runoff_lid_drain  = 0.0;  ///< LID drain-to-node outflow (ft3), legacy RUNOFF_DRAINS / VlidDrain
         double runoff_snowremov  = 0.0;  ///< Total snow removal volume (ft3)
         double runoff_init_store = 0.0;  ///< Initial surface storage (ft3)
         double runoff_final_store= 0.0;  ///< Final surface storage (ft3)
@@ -1188,6 +1189,7 @@ struct SimulationContext {
             double total_in = runoff_rainfall + runoff_runon + runoff_init_store +
                               runoff_init_snow;
             double total_out = runoff_evap + runoff_infil + runoff_runoff +
+                               runoff_lid_drain +
                                runoff_final_store + runoff_snowremov +
                                runoff_final_snow;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;

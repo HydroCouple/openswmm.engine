@@ -234,6 +234,14 @@ struct HeatConfigData {
  */
 struct HeatState {
     std::vector<double> node_temp_vol_in;  ///< [node], °C·ft³/s
+    /// [node], °C·ft³/s arriving through LID underdrains, accumulated in the
+    /// runoff step beside `nodes.lid_drain_qual_vol` and consumed by the
+    /// wet-weather loader on that same per-runoff-step cadence — the twin of
+    /// `WaterAgeState::node_lid_drain_age_vol_in`. Until this existed the
+    /// drain-to-node loader handed the drain the RAINFALL temperature, so
+    /// H5b's storage-layer temperature reached run-on receivers but never a
+    /// node (LID fix round, 2026-08-30).
+    std::vector<double> node_lid_drain_temp_vol_in;
     std::vector<double> node_temp;         ///< [node], °C
     std::vector<double> link_temp;         ///< [link], °C
 
@@ -294,6 +302,7 @@ struct HeatState {
 
     void resize(int n_nodes, int n_links, double initial_temp) {
         node_temp_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
+        node_lid_drain_temp_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_temp.assign(static_cast<std::size_t>(n_nodes), initial_temp);
         link_temp.assign(static_cast<std::size_t>(n_links), initial_temp);
         legacy_seeded = false;

@@ -1440,7 +1440,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // A4: water age keeps this alive at zero pollutants. The drain
         // volume accumulator is the age's mixing denominator, so the two
         // must be cleared and refilled on the same cadence.
-        if (ctx_.n_pollutants() > 0 || ctx_.options.water_age) {
+        // The drain's WATER channel is cleared on this cadence regardless of
+        // quality — it is what carries the drain into the network at all.
+        std::fill(ctx_.nodes.lid_drain_inflow.begin(),
+                  ctx_.nodes.lid_drain_inflow.end(), 0.0);
+        if (ctx_.n_pollutants() > 0 || ctx_.options.water_age ||
+            ctx_.options.heat_transport) {
             std::fill(ctx_.nodes.lid_drain_qual_load.begin(),
                       ctx_.nodes.lid_drain_qual_load.end(), 0.0);
             std::fill(ctx_.nodes.lid_drain_qual_vol.begin(),
@@ -1448,6 +1453,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             std::fill(ctx_.water_age_state.node_lid_drain_age_vol_in.begin(),
                       ctx_.water_age_state.node_lid_drain_age_vol_in.end(),
                       0.0);
+            std::fill(ctx_.heat_state.node_lid_drain_temp_vol_in.begin(),
+                      ctx_.heat_state.node_lid_drain_temp_vol_in.end(), 0.0);
         }
 
         // Current-step rainfall flag (legacy IsRaining): set BEFORE the timestep
@@ -2013,17 +2020,36 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // Drain flow (ft/sec * ft² = CFS):
                 //  drain_node >= 0        → external node inflow (lid_addDrainInflow)
                 //  drain_subcatch != self → runon to that subcatch (lid_addDrainRunon)
-                //  no target / self       → discharge to THIS subcatchment's outlet
-                //  The no-target case previously recirculated as runon-to-self,
+                //  no target / self       → the subcatchment's OWN outlet, node
+                //                           or subcatchment (legacy lid.c:1215
+                //                           assigns drainNode = outNode and
+                //                           drainSubcatch = outSubcatch at
+                //                           init when the user set neither).
+                //  The no-target case once recirculated as runon-to-self,
                 //  which double-feeds the subcatchment and leaks continuity;
-                //  EPA sends it straight to the outlet (issue #102 E).
-                if (g.drain_node[uu] >= 0) {
-                    auto un = static_cast<std::size_t>(g.drain_node[uu]);
-                    if (un < ctx_.nodes.ext_inflow.size()) {
-                        ctx_.nodes.ext_inflow[un] += g.drain_flow[uu] * lid_area;  // CFS
+                //  then (merge a38f0c0b) it was added to subcatches.runoff,
+                //  which routed the water through the runoff channel while the
+                //  quality block below booked the same volume to the outlet
+                //  NODE — water once, quality twice, and neither temperature
+                //  nor age paired on the water side. Resolving to the outlet
+                //  here makes water and quality take the SAME path.
+                int dn  = g.drain_node[uu];
+                int dsc = g.drain_subcatch[uu];
+                if (dn < 0 && (dsc < 0 || dsc == sc)) {
+                    dn  = ctx_.subcatches.outlet_node[usc];
+                    dsc = ctx_.subcatches.outlet_subcatch[usc];
+                }
+                if (dn >= 0) {
+                    auto un = static_cast<std::size_t>(dn);
+                    // NOT ext_inflow: clearInflowSources() zeroes that at the
+                    // top of every routing step, after this ran, so a drain
+                    // booked there never reached the network. See
+                    // NodeData::lid_drain_inflow.
+                    if (un < ctx_.nodes.lid_drain_inflow.size()) {
+                        ctx_.nodes.lid_drain_inflow[un] += g.drain_flow[uu] * lid_area;  // CFS
                     }
-                } else if (g.drain_subcatch[uu] >= 0 && g.drain_subcatch[uu] != sc) {
-                    auto utsc = static_cast<std::size_t>(g.drain_subcatch[uu]);
+                } else if (dsc >= 0 && dsc != sc) {
+                    auto utsc = static_cast<std::size_t>(dsc);
                     if (utsc < ctx_.subcatches.lid_drain_runon_cfs.size()) {
                         const double q_dr = g.drain_flow[uu] * lid_area;
                         ctx_.subcatches.lid_drain_runon_cfs[utsc] += q_dr;
@@ -2059,7 +2085,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                             // receiver here is g.drain_subcatch[uu] (utsc).
                             if (fl >= 0 && fl < lst.n_units)
                                 transport::addRunonTemperatureAt(
-                                    ctx_, g.drain_subcatch[uu], q_dr,
+                                    ctx_, dsc, q_dr,
                                     lst.drain_value[
                                         static_cast<std::size_t>(fl) *
                                             static_cast<std::size_t>(
@@ -2068,9 +2094,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                             LidSpecies::TEMPERATURE)]);
                         }
                     }
-                } else {
-                    ctx_.subcatches.runoff[usc] += g.drain_flow[uu] * lid_area;  // CFS
                 }
+                // (A subcatchment with neither an outlet node nor an outlet
+                //  subcatchment drops its runoff too; the drain follows it.)
 
                 // Gap #26: LID drain quality routing.
                 // The drain carries source-subcatch quality, reduced by drainRmvl.
@@ -2088,7 +2114,11 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     // a pure-age model never accumulated the drain volume at
                     // all, so neither the water nor its age reached the node
                     // — the np-guard family once more.
-                    if ((np_use > 0 || ctx_.options.water_age)
+                    // LID fix round: heat joins the guard for the same
+                    // reason age did — the drain's temperature is paired
+                    // inside this block, so a heat-only deck must reach it.
+                    if ((np_use > 0 || ctx_.options.water_age ||
+                         ctx_.options.heat_transport)
                         && g.drain_flow[uu] > 0.0
                         && !ctx_.options.ignore_quality) {
                         double drain_cfs = g.drain_flow[uu] * lid_area;
@@ -2129,6 +2159,32 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                         ctx_.water_age_state
                                             .node_lid_drain_age_vol_in[udn] +=
                                             drain_cfs * lst.drain_value[ai];
+                                }
+                            }
+                            // H5b pairing at the NODE seam: the drain leaves
+                            // at the storage layer's temperature, booked as
+                            // the usual q·T rate beside its age. Consumed by
+                            // the wet-weather loader in place of the RAINFALL
+                            // stand-in it used until the LID fix round.
+                            if (ctx_.options.heat_transport) {
+                                const auto& lst = ctx_.lid_layer_state;
+                                const auto uts = static_cast<std::size_t>(t);
+                                if (lst.active() &&
+                                    uts + 1 < lst.group_offset.size()) {
+                                    const int flat = lst.group_offset[uts] + u;
+                                    const auto ti =
+                                        static_cast<std::size_t>(flat) *
+                                            static_cast<std::size_t>(
+                                                lst.n_species) +
+                                        static_cast<std::size_t>(
+                                            LidSpecies::TEMPERATURE);
+                                    if (flat >= 0 && flat < lst.n_units &&
+                                        udn < ctx_.heat_state
+                                                  .node_lid_drain_temp_vol_in
+                                                  .size())
+                                        ctx_.heat_state
+                                            .node_lid_drain_temp_vol_in[udn] +=
+                                            drain_cfs * lst.drain_value[ti];
                                 }
                             }
                             // Add drain mass load per pollutant
@@ -2528,6 +2584,17 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
             ctx_.mass_balance.runoff_infil += g.infil_loss[uu] * g.area[uu];
         }
     }
+
+    // LID drain flow discharged to a NODE has left the runoff system — the
+    // legacy RUNOFF_DRAINS term (evalLidUnit books it only when
+    // drainNode >= 0; drains onto another subcatchment stay internal and are
+    // counted when the receiver sheds). nodes.lid_drain_inflow holds exactly
+    // that set for this runoff step. Without this term the ledger sprang a
+    // hole the size of the drain the moment the water stopped riding
+    // subcatches.runoff (LID fix round, 2026-08-30).
+    double lid_drain_cfs = 0.0;
+    for (double q : ctx_.nodes.lid_drain_inflow) lid_drain_cfs += q;
+    ctx_.mass_balance.runoff_lid_drain += lid_drain_cfs * dt_runoff;
 }
 
 // ============================================================================
@@ -7147,6 +7214,10 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         // the lateral inflow by 1 ULP at multi-source nodes.
         ctx_.nodes.lat_flow[uj] = ctx_.nodes.ext_inflow[uj]
                                 + ctx_.nodes.dwf_inflow[uj];
+        // LID drain-to-node water (legacy lid_addDrainInflow →
+        // Node.newLatFlow, booked as EXTERNAL_INFLOW). Added after the
+        // legacy pair so legacy-comparable runs (0.0 here) keep their ULPs.
+        ctx_.nodes.lat_flow[uj] += ctx_.nodes.lid_drain_inflow[uj];
 
         sum_dw   += ctx_.nodes.dwf_inflow[uj];
         sum_gw   += ctx_.nodes.gw_inflow[uj];
@@ -7154,7 +7225,8 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         // Interface file inflows count as external inflow for continuity
         // (legacy addIfaceInflows → massbal_addInflowFlow(EXTERNAL_INFLOW, q))
         sum_ext  += ctx_.nodes.ext_inflow[uj]
-                  + ctx_.nodes.iface_inflow[uj];
+                  + ctx_.nodes.iface_inflow[uj]
+                  + ctx_.nodes.lid_drain_inflow[uj];
 
         // 2D → 1D coupling (positive coupling_inflow) folds into the
         // routing_external category for continuity reporting; the negative

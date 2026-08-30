@@ -596,6 +596,83 @@ TEST(HeatLidTest, TheUnderdrainContributesToRunonTemperature) {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 7b — a target-less underdrain goes to its subcatchment's OUTLET NODE,
+//           and arrives there PAIRED: the node receives the drain's water,
+//           its storage-layer temperature and its storage-layer age.
+//
+//           Legacy lid.c:1215 assigns drainNode = outNode when the user set
+//           no target, and lid_addDrainRunon guards k != j, so an underdrain
+//           discharging onto its own subcatchment is never run-on. Merge
+//           a38f0c0b instead added that water to subcatches.runoff — routed
+//           through the runoff channel with no temperature and no age, while
+//           the quality block booked the same volume to the outlet node. This
+//           gate FAILS at base on its first leg (ext_inflow[J1] == 0) and
+//           would not compile against the old HeatState (no
+//           node_lid_drain_temp_vol_in): the temperature at the node seam was
+//           the RAINFALL stand-in for every drain-to-node case, not only this
+//           one.
+// ---------------------------------------------------------------------------
+TEST(HeatLidTest, ATargetlessUnderdrainReachesTheOutletNodePaired) {
+    Opts o{};
+    o.water_age = true;
+    o.rain_c = 5.0;
+    o.init_c = 25.0;
+    SWMM_Engine e = run(o);
+    ASSERT_NE(e, nullptr);
+    const auto& ctx  = as_cpp_engine(e).context();
+    const auto& st   = ctx.lid_layer_state;
+    const auto& gsoa = as_cpp_engine(e).lid().group(0);
+    ASSERT_TRUE(HasLidUnit(ctx));
+    ASSERT_TRUE(st.active());
+    ASSERT_EQ(ctx.subcatches.outlet_node[0], 0) << "S1 must drain to J1";
+
+    // SETUP: the drain is flowing at the final step, or nothing below is
+    // under test.
+    const double q_dr = gsoa.drain_flow[0] * gsoa.area[0];   // cfs
+    ASSERT_GT(q_dr, 0.0) << "the underdrain never flowed";
+
+    // (1) WATER: the drain rides the node's external-inflow channel — the
+    //     one legacy uses for drain-to-node — and this deck has no other
+    //     external inflow at all, so the routing ledger's external term is
+    //     the drain's delivered volume. (ext_inflow itself is a per-step
+    //     accumulator, zeroed once routing consumes it.)
+    EXPECT_NEAR(ctx.nodes.lid_drain_inflow[0], q_dr, 1.0e-9 * q_dr)
+        << "the drain's water channel at J1 does not carry the drain rate";
+    EXPECT_GT(ctx.mass_balance.routing_external, 0.0)
+        << "no external inflow reached the network on a deck whose only "
+           "external source is the underdrain — the drain is not reaching "
+           "its outlet node";
+
+    // (2) TEMPERATURE: paired at the storage layer's temperature, as q·T.
+    const double t_stor = st.drain_value[
+        static_cast<std::size_t>(0) * static_cast<std::size_t>(st.n_species) +
+        static_cast<std::size_t>(kTemp)];
+    ASSERT_GT(t_stor, 0.0);
+    EXPECT_NEAR(ctx.heat_state.node_lid_drain_temp_vol_in[0], q_dr * t_stor,
+                1.0e-9 * q_dr * t_stor)
+        << "the drain's temperature-volume at J1 is not q * T_storage";
+
+    // (3) AGE: the same pairing on the age row.
+    const double a_stor = st.drain_value[
+        static_cast<std::size_t>(0) * static_cast<std::size_t>(st.n_species) +
+        static_cast<std::size_t>(kAge)];
+    ASSERT_GT(a_stor, 0.0);
+    EXPECT_NEAR(ctx.water_age_state.node_lid_drain_age_vol_in[0], q_dr * a_stor,
+                1.0e-9 * q_dr * a_stor)
+        << "the drain's age-volume at J1 is not q * age_storage";
+
+    // (4) ONCE: the drain's water is in the node's quality denominator
+    //     exactly once — the external-inflow loader must not count the
+    //     share the drain loader books. Both loaders run per routing step;
+    //     the invariant checked is that the drain volume booked for this
+    //     runoff step equals what ext_inflow carries of it.
+    EXPECT_NEAR(ctx.nodes.lid_drain_qual_vol[0], q_dr, 1.0e-9 * q_dr)
+        << "the drain loader's volume (" << ctx.nodes.lid_drain_qual_vol[0]
+        << ") is not the drain rate (" << q_dr << ")";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
 // Gate 8 — HEAT_TRANSPORT off touches nothing.
 // ---------------------------------------------------------------------------
 TEST(HeatLidTest, HeatOffLeavesTheTemperatureRowUntouched) {
