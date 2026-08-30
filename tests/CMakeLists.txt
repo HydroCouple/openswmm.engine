@@ -37,6 +37,22 @@ find_package(GTest CONFIG REQUIRED)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ---- Floating-point reproducibility for test TUs ----
+# Must match the engine and legacy-engine targets (src/engine/CMakeLists.txt,
+# src/legacy/engine/CMakeLists.txt). Linking the engine is NOT enough: the hot
+# geometry kernels are header-inline (OPENSWMM_KERNEL_FN in XSectKernels.hpp,
+# FvKernels.hpp, ChebSection*.hpp), so every test translation unit compiles its
+# OWN copy of them under its own flags. With contraction left enabled here, a
+# test comparing the library's instantiation against its own would see the same
+# source expression fused differently and differ in the last ulp — which is
+# precisely what XSectBitExact and XsectKernels were reporting.
+#
+# Applied at directory scope so it reaches targets built by add_gtest_unit()
+# and the handful created with a bare add_executable() alike.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    add_compile_options(-fno-fast-math -ffp-contract=off -fno-math-errno)
+endif()
+
 # Directory with test input data files
 set(TEST_BIN_DIRECTORY ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)
 set(TEST_DATA_ROOT     ${CMAKE_CURRENT_SOURCE_DIR})

@@ -379,14 +379,21 @@ set_property(TEST
 set(TEST_2D_SOURCES
     test_2d_surface_routing.cpp
 )
-add_executable(test_engine_2d_surface ${TEST_2D_SOURCES})
-target_link_libraries(test_engine_2d_surface
-    PRIVATE
-        GTest::gtest GTest::gtest_main GTest::gmock
-        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
-        openswmm_legacy_engine
-)
+# The whole target is gated on OPENSWMM_BUILD_2D. The engine only compiles the
+# 2D sources under that same option (src/engine/CMakeLists.txt), so building
+# this executable without it produces a target that CANNOT link — undefined
+# references to twoD::validateMesh and twoD::is2DOptionKey — and ctest then
+# reports a permanent "Not Run" failure in every default build. The test was
+# previously created unconditionally, which is why that failure had been
+# carried as a known-unfixable item.
 if(OPENSWMM_BUILD_2D)
+    add_executable(test_engine_2d_surface ${TEST_2D_SOURCES})
+    target_link_libraries(test_engine_2d_surface
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_legacy_engine
+    )
     # HDF5 is required by Default2DOutputPlugin. The engine target resolves it
     # at configure time — prefer the imported target it set up (visible globally),
     # falling back to FindHDF5 variables for system installs.
@@ -401,30 +408,33 @@ if(OPENSWMM_BUILD_2D)
         target_link_libraries(test_engine_2d_surface PRIVATE ${HDF5_C_LIBRARIES})
         target_include_directories(test_engine_2d_surface PRIVATE ${HDF5_INCLUDE_DIRS})
     endif()
+    target_include_directories(test_engine_2d_surface
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    if(MSVC)
+        target_compile_options(test_engine_2d_surface PRIVATE /EHsc)
+    endif()
+    set_target_properties(test_engine_2d_surface PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_2d_surface)
+    add_test(
+        NAME    test_engine_2d_surface
+        COMMAND $<TARGET_FILE:test_engine_2d_surface>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_2d_surface PROPERTIES
+        LABELS "unit"
+        ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
+else()
+    message(STATUS "OpenSWMM tests: test_engine_2d_surface skipped "
+            "(needs -DOPENSWMM_BUILD_2D=ON)")
 endif()
-target_include_directories(test_engine_2d_surface
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/include
-        ${PROJECT_SOURCE_DIR}/src/engine
-)
-if(MSVC)
-    target_compile_options(test_engine_2d_surface PRIVATE /EHsc)
-endif()
-set_target_properties(test_engine_2d_surface PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
-    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
-    INSTALL_RPATH "${LIB_ROOT}"
-)
-openswmm_stage_test_runtime_deps(test_engine_2d_surface)
-add_test(
-    NAME    test_engine_2d_surface
-    COMMAND $<TARGET_FILE:test_engine_2d_surface>
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
-)
-set_tests_properties(test_engine_2d_surface PROPERTIES
-    LABELS "unit"
-    ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
 
 # Exercise the acceleration path end-to-end under BOTH cell closures. The
 # Kokkos marcher kernels implement FLAT and VFR alike, so the factory must
