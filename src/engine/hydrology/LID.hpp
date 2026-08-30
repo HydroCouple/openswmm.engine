@@ -221,8 +221,26 @@ public:
     int numGroups() const { return static_cast<int>(groups_.size()); }
 
     /// Total water volume currently stored in all LID units (ft³), for the
-    /// runoff mass balance (legacy lid_getStoredVolume()).
+    /// runoff mass balance (legacy lid_getStoredVolume()). This is the one
+    /// SWMMEngine calls (runoff_init_store / runoff_final_store).
     double storedVolume() const;
+
+    /// Water-balance-ledger volume queries (#102 C), summing the per-unit
+    /// `wb_*` accumulators over the unit footprints.
+    ///
+    /// MERGE REPAIR (a38f0c0b, 2026-08-29): these four were DEFINED in
+    /// LID.cpp on the incoming `swmm6_rel` side with no declaration on
+    /// EITHER side of the merge — that branch does not compile as it stands,
+    /// and neither did the merge result. The definitions are kept and
+    /// declared here rather than deleted, because deleting is the one choice
+    /// that cannot be undone by whoever wires them up. **Nothing calls them
+    /// yet**: `storedVolume()` above, not `totalStoredVolume()`, is what the
+    /// runoff mass balance uses, and the two measure different things
+    /// (void-weighted layer depths vs the wb_ ledger's final volume).
+    double totalStoredVolume() const;
+    double totalInitVolume() const;
+    double totalInfilVolume() const;
+    double totalEvapVolume() const;
 
     /**
      * @brief Compute LID performance for all units (batch by type).

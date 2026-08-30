@@ -2053,9 +2053,13 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                         if (ctx_.options.heat_transport && lst.active() &&
                             uts2 + 1 < lst.group_offset.size()) {
                             const int fl = lst.group_offset[uts2] + u;
+                            // Merge repair (issue #156 session, 2026-08-29):
+                            // the merged H5b block referenced `target_sc`,
+                            // which does not exist in this branch — the runon
+                            // receiver here is g.drain_subcatch[uu] (utsc).
                             if (fl >= 0 && fl < lst.n_units)
                                 transport::addRunonTemperatureAt(
-                                    ctx_, target_sc, q_dr,
+                                    ctx_, g.drain_subcatch[uu], q_dr,
                                     lst.drain_value[
                                         static_cast<std::size_t>(fl) *
                                             static_cast<std::size_t>(
