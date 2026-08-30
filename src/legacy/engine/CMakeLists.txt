@@ -114,10 +114,26 @@ set_target_properties(openswmm_legacy_engine
         VISIBILITY_INLINES_HIDDEN TRUE
 )
 
+# ---- Floating-point reproducibility ----
+# Must match src/engine/CMakeLists.txt exactly. The parity suites compare these
+# legacy C kernels against the refactored C++ ones and assert BIT equality, so
+# the two sides have to agree on whether `a*b + c` may become an FMA; if only
+# one side contracts they disagree in the last ulp and the comparison fails on
+# arithmetic that is otherwise identical.
+#
+# The comment below used to assert that "the global -ffp-contract=off prevents
+# FMA fusion". No such global existed — the flag was applied only under
+# OPENSWMM_ENGINE_FORCE_OPTIMIZED, which defaults OFF. This block, and its twin
+# on openswmm_engine, are what finally make that statement true.
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(openswmm_legacy_engine PRIVATE
+        -fno-fast-math -ffp-contract=off -fno-math-errno)
+endif()
+
 # Match the refactored engine's arm64 tuning flag (src/engine/CMakeLists.txt
 # enables -mcpu=native PRIVATE on openswmm_engine when the probe passes) so
 # legacy-vs-refactored wall-time comparisons stay flag-matched. FP semantics
-# are unaffected: the global -ffp-contract=off prevents FMA fusion.
+# are unaffected: -ffp-contract=off above prevents FMA fusion.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND NOT MSVC)
     include(CheckCCompilerFlag)
     check_c_compiler_flag("-mcpu=native" OPENSWMM_LEGACY_HAVE_MCPU_NATIVE)

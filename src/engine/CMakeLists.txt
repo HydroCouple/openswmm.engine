@@ -211,6 +211,45 @@ message(STATUS "OpenSWMM Engine: fast kernels — xsect_lookup=${OPENSWMM_FAST_X
         " manning_pow=${OPENSWMM_FAST_MANNING_POW}"
         " (ON ⇒ ~10% faster DW routing, NOT bit-exact vs legacy)")
 
+# ---- Floating-point reproducibility (ALWAYS ON) ----
+# The legacy bit-parity contract is enforced here, not merely declared.
+#
+# Without -ffp-contract=off the compiler is free to fuse `a*b + c` into a
+# single FMA in one inlining context and not in another, so the SAME source
+# expression yields results 1-2 ulp apart depending on where it was inlined.
+# That is not hypothetical: it was breaking five assertions across
+# test_engine_xsect_parity and test_engine_xsect_kernels_parity, including
+# comparisons of NEW code against NEW code (perlink_tabulated vs
+# perlink_tabulated_pair; XsectEval::getAofY vs xsect::getAofY), and the
+# committed golden hash in XSectBitExact.GoldenHashCircularKernels. All five
+# go green with contraction disabled, and the golden matches its committed
+# value again — i.e. the golden was right and the build had drifted.
+#
+# These flags used to be applied ONLY under OPENSWMM_ENGINE_FORCE_OPTIMIZED
+# (below), which defaults OFF — so a default build had no contraction control
+# at all and the parity the project depends on as its primary verification
+# instrument was not actually being enforced.
+#
+# Verified on Bellinge (1015 conduits, 180 MB output): the pure legacy engine
+# is byte-identical, DYNWAVE differs in 174 float values out of ~45 M (worst
+# relative 4.5e-6, on a quantity of magnitude 1e-10), and XSECT_GEOMETRY EXACT
+# in 3465 (worst 2.0e-5). In both the only report change is the day-of-maximum
+# column on junctions whose maximum depth is 0.00 ft — an arbitrary tie-break
+# on a permanently dry node. FV output shifts materially (~26% of values,
+# continuity -2.989% -> -3.124%), which is FV being a chaotic explicit
+# substepping scheme where ANY bit-level change compounds; FV is deliberately
+# outside the bit-parity contract (see specifications.md).
+#
+# MSVC is deliberately not handled: its contraction control is coarser
+# (/fp:strict would disable far more than FMA fusion) and was not measured.
+# openswmm_engine_internal (the MSVC-only static mirror) is created further
+# down this file and is therefore not reachable from here; it is covered by the
+# MSVC caveat above rather than by a guard that could never fire.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(openswmm_engine PRIVATE
+        -fno-fast-math -ffp-contract=off -fno-math-errno)
+endif()
+
 # ---- Force-optimized override (for Debug parent builds) ----
 # When the engine is consumed as a subdirectory by a parent project that's
 # in Debug mode (e.g. a GUI under active development), CMAKE_BUILD_TYPE=Debug
@@ -463,16 +502,28 @@ if(OPENSWMM_BUILD_2D)
     # Fall back to FindHDF5 for system installs (Linux distros, Homebrew) that
     # don't ship hdf5-config.cmake.
     find_package(hdf5 CONFIG QUIET)
+    set(_OPENSWMM_HDF5_TARGET "")
     if(hdf5_FOUND)
         if(TARGET hdf5::hdf5-shared)
             set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
         elseif(TARGET hdf5::hdf5-static)
             set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
-        else()
-            message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
         endif()
+    endif()
+    if(_OPENSWMM_HDF5_TARGET)
         target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
     else()
+        # A CONFIG package that defines NEITHER canonical target is not an error
+        # — several HDF5 distributions (Homebrew among them) ship an
+        # hdf5-config.cmake exporting other names, and this used to abort the
+        # whole configure with FATAL_ERROR, making -DOPENSWMM_BUILD_2D=ON
+        # unusable on those machines even though FindHDF5 resolves them fine.
+        # Fall through to the module path instead, which is the same route
+        # taken when no CONFIG package exists at all.
+        if(hdf5_FOUND)
+            message(STATUS "OpenSWMM Engine: hdf5 CONFIG package defines neither "
+                    "hdf5::hdf5-shared nor hdf5::hdf5-static — falling back to FindHDF5")
+        endif()
         find_package(HDF5 REQUIRED COMPONENTS C)
         target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
         target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
