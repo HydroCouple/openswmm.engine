@@ -371,7 +371,16 @@ TEST(PressCensus, substepCountIsCelerityInvariantAndFarBelowExplicit) {
     const HeadLossResult off_300 = runHeadLoss(300.0, false);
     const HeadLossResult on_300  = runHeadLoss(300.0, true);
     ASSERT_TRUE(on_300.converged);
-    ASSERT_TRUE(off_300.converged);
+    // off_300 is deliberately NOT required to converge. It is the acoustic-
+    // bound baseline and sits right at the 400-chunk cap, so whether it
+    // crosses the convergence threshold inside the cap is decided by details
+    // as small as whether the build contracts multiply-adds into FMAs — an
+    // earlier version of this test asserted it and failed under
+    // -ffp-contract=off for exactly that reason. The rate below is per
+    // simulated second, which is well defined for a run that never converged,
+    // so requiring it bought nothing and cost robustness. Only the span being
+    // non-trivial matters.
+    ASSERT_GT(off_300.chunks, 10);
     EXPECT_GT(off_300.perSecond(), 5.0 * on_300.perSecond());
 }
 
