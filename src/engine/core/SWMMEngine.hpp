@@ -458,6 +458,12 @@ private:
     double old_runoff_ms_ = 0.0;    ///< legacy OldRunoffTime (msec)
     double new_runoff_ms_ = 0.0;    ///< legacy NewRunoffTime (msec)
 
+    // Previous cumulative LID exfiltration / evaporation volumes (ft³), so the
+    // per-step delta can be folded into the runoff-continuity infil / evap
+    // outflow terms once per runoff step (issue #102 — legacy VlidInfil/VlidEvap).
+    double prev_lid_infil_vol_ = 0.0;
+    double prev_lid_evap_vol_  = 0.0;
+
     // PARITY: per-subcatchment interpolated wet-weather / GW inflows saved by
     // the Phase-2 interpolation so assembleLateralInflows() can replay
     // legacy's exact per-node accumulation ORDER — routing.c:466-473 adds
