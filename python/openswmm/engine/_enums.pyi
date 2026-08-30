@@ -758,6 +758,25 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class SurfaceInfilMethod(IntEnum):
+    """Per-cell 2D infiltration method. Mirrors ``SWMM_INFIL2D_*``."""
+
+    HORTON = 0
+    MOD_HORTON = 1
+    GREEN_AMPT = 2
+    MOD_GREEN_AMPT = 3
+    CURVE_NUMBER = 4
+    CONSTANT = 5
+
+
+class SurfaceInfilDest(IntEnum):
+    """Destination of 2D infiltrated water. Mirrors ``SWMM_INFIL2D_DEST_*``."""
+
+    LOST = 0
+    SUBCATCH_AQUIFER = 1
+    AQUIFER_2D = 2
+
+
 class RefType(IntEnum):
     """Object kind holding a reference (editing API). Mirrors ``SWMM_RefType``."""
 

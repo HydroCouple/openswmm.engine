@@ -906,6 +906,47 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class SurfaceInfilMethod(IntEnum):
+    """Per-cell 2D infiltration method (C{[2D_INFILTRATION*]}).
+
+    Mirrors the C{SWMM_INFIL2D_*} codes in C{openswmm_infil2d.h} and
+    C{openswmm::InfilModel}. Distinct from the 1D L{InfilModel} only in that
+    it also carries C{CONSTANT}, which has no legacy C{[INFILTRATION]} token.
+
+    @cvar HORTON: Original Horton model.
+    @cvar MOD_HORTON: Modified Horton model (linear decay).
+    @cvar GREEN_AMPT: Green-Ampt model.
+    @cvar MOD_GREEN_AMPT: Modified Green-Ampt model (M{F} not reset).
+    @cvar CURVE_NUMBER: SCS Curve Number model.
+    @cvar CONSTANT: Constant rate, capacity-bounded. 2D only.
+    """
+
+    HORTON = 0
+    MOD_HORTON = 1
+    GREEN_AMPT = 2
+    MOD_GREEN_AMPT = 3
+    CURVE_NUMBER = 4
+    CONSTANT = 5
+
+
+class SurfaceInfilDest(IntEnum):
+    """Destination of water infiltrated out of a 2D mesh cell.
+
+    Mirrors the C{SWMM_INFIL2D_DEST_*} codes in C{openswmm_infil2d.h} and
+    C{openswmm::twoD::Infil2DDest}. Only L{LOST} is routed in this release
+    (plan decision D-I4); the other two parse so the grammar is stable and
+    are rejected at validation.
+
+    @cvar LOST: Leaves the domain; booked to the C{infil_out} ledger row.
+    @cvar SUBCATCH_AQUIFER: Reserved — legacy subcatchment aquifer.
+    @cvar AQUIFER_2D: Reserved — the two-zone 2D groundwater kernel.
+    """
+
+    LOST = 0
+    SUBCATCH_AQUIFER = 1
+    AQUIFER_2D = 2
+
+
 # =============================================================================
 # Object references (model editing)
 # =============================================================================

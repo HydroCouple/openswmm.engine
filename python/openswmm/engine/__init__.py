@@ -241,7 +241,8 @@ from ._spatial import Spatial
 # Optional extensions (require specific build flags)
 # =============================================================================
 try:
-    from ._2d import Surface2D
+    from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
+                      Infil2DRow, Infil2DCell)
     HAS_2D = True
 except ImportError:
     HAS_2D = False
@@ -279,6 +280,7 @@ from ._enums import (
     ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
     # 2D surface routing
     SurfaceForcingMode, SurfaceBoundaryType,
+    SurfaceInfilMethod, SurfaceInfilDest,
     # Nodes / editing
     DividerType, RefType,
     # Tables / model files
@@ -319,6 +321,7 @@ __all__ = [
     # --- Spatial / infrastructure / 2D ---
     "Infrastructure", "Spatial",
     "Surface2D", "HAS_2D",
+    "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell",
     # --- Optional extensions ---
     "HAS_GEOPACKAGE",
     # --- Enumerations: lifecycle / errors ---
@@ -339,6 +342,7 @@ __all__ = [
     "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
     # --- Enumerations: 2D surface routing ---
     "SurfaceForcingMode", "SurfaceBoundaryType",
+    "SurfaceInfilMethod", "SurfaceInfilDest",
     "DividerType", "RefType",
     "TableType", "FilePathRole", "UserFlagType",
     # --- Enumerations: mass-balance totals ---

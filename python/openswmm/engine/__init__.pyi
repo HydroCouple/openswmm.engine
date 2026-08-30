@@ -101,6 +101,10 @@ from ._forcing import Forcing as Forcing
 from ._infrastructure import Infrastructure as Infrastructure
 from ._spatial import Spatial as Spatial
 from ._2d import Surface2D as Surface2D
+from ._2d import Infiltration2DView as Infiltration2DView
+from ._2d import Infil2DDefaults as Infil2DDefaults
+from ._2d import Infil2DRow as Infil2DRow
+from ._2d import Infil2DCell as Infil2DCell
 
 # =============================================================================
 # Optional GeoPackage I/O (only available with OPENSWMM_WITH_GEOPACKAGE build)
@@ -159,6 +163,8 @@ from ._enums import (
     # 2D surface routing
     SurfaceForcingMode as SurfaceForcingMode,
     SurfaceBoundaryType as SurfaceBoundaryType,
+    SurfaceInfilMethod as SurfaceInfilMethod,
+    SurfaceInfilDest as SurfaceInfilDest,
     # Nodes / editing
     DividerType as DividerType,
     RefType as RefType,
