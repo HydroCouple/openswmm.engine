@@ -34,8 +34,12 @@ cimport numpy as np
 import numpy as np
 from libc.stdint cimport uintptr_t
 
+from collections import namedtuple
+from collections.abc import MutableMapping
+
 from ._2d cimport *
-from ._enums import SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType
+from ._enums import (SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType,
+                     SurfaceInfilMethod, SurfaceInfilDest)
 
 
 cdef inline void _check(int rc) except *:
@@ -62,6 +66,7 @@ cdef class Surface2D:
     """
 
     cdef void* _engine
+    cdef object _infiltration
 
     def __cinit__(self, uintptr_t engine_ptr):
         """Construct a L{Surface2D} accessor from a raw engine handle.
@@ -71,6 +76,7 @@ cdef class Surface2D:
         @type engine_ptr: int
         """
         self._engine = <void*>engine_ptr
+        self._infiltration = None
 
     # ====================================================================
     # Mesh definition - status
@@ -1372,3 +1378,400 @@ cdef class Surface2D:
     def reset_edge_conveyance(self):
         """Reset every edge's conveyance factor to 1.0 (unrestricted)."""
         _check(swmm_2d_reset_edge_conveyance(self._engine))
+
+    # ------------------------------------------------------------------
+    # Per-cell infiltration (plan §5.5, track I)
+    # ------------------------------------------------------------------
+
+    @property
+    def infiltration(self):
+        """``surface2d.infiltration`` — the L{Infiltration2DView} sub-view.
+
+        Per-cell infiltration for the C{GROUNDWATER OFF} path: options,
+        the tag-default mapping, per-cell overrides, and the held-rate /
+        cumulative-depth readers.
+
+        @return: The cached L{Infiltration2DView} for this mesh.
+        @rtype: Infiltration2DView
+        """
+        if self._infiltration is None:
+            self._infiltration = Infiltration2DView(<uintptr_t>self._engine)
+        return self._infiltration
+
+
+# ========================================================================
+# Per-cell infiltration (plan §5.5.6, track I step I6)
+# ========================================================================
+
+Infil2DRow = namedtuple(
+    "Infil2DRow", "method params dest",
+    defaults=((0.0, 0.0, 0.0, 0.0, 0.0), SurfaceInfilDest.LOST),
+)
+Infil2DRow.__doc__ = """One infiltration specification.
+
+``method`` is a L{SurfaceInfilMethod}, or ``None`` for "no infiltration
+model" (the C{NONE} token). ``params`` is a tuple of up to five
+POSITIONAL values in B{PROJECT UNITS} — the same numbers a user types
+into a legacy C{[INFILTRATION]} row (in/hr and in on a US-C{FLOW_UNITS}
+project, mm/hr and mm on SI):
+
+    ==================  =========  ====  ============  ============  ====
+    method              params[0]  [1]   [2]           [3]           [4]
+    ==================  =========  ====  ============  ============  ====
+    HORTON              f0         fmin  decay (1/hr)  dry_time (d)  Fmax
+    MOD_HORTON          f0         fmin  decay (1/hr)  dry_time (d)  Fmax
+    GREEN_AMPT          suction    Ks    IMD           --            --
+    MOD_GREEN_AMPT      suction    Ks    IMD           --            --
+    CURVE_NUMBER        CN         --    dry_time (d)  --            --
+    CONSTANT            rate       --    --            --            --
+    ==================  =========  ====  ============  ============  ====
+
+``dest`` is a L{SurfaceInfilDest}; only C{LOST} is routed in this release.
+"""
+
+Infil2DCell = namedtuple("Infil2DCell", "row is_override")
+Infil2DCell.__doc__ = """The infiltration specification in force at one cell.
+
+Unpacks as ``row, is_override = surface2d.infiltration.cell(tri)``.
+``is_override`` is C{True} when the row came from the per-cell
+C{[2D_INFILTRATION]} layer rather than a tag / C{'*'} default.
+"""
+
+
+cdef void _infil_row_to_c(object row, SWMM_Infil2DRow* out) except *:
+    """Fill a C{SWMM_Infil2DRow} from an L{Infil2DRow} (or a NONE row).
+
+    @param row: The row to convert; C{None} or a row whose C{method} is
+        C{None} produces the C{NONE} specification.
+    @raise ValueError: If more than five parameters are supplied.
+    """
+    cdef int k
+    out.has_method = 0
+    out.method = 0
+    for k in range(5):
+        out.p[k] = 0.0
+    out.dest = <int>SurfaceInfilDest.LOST
+
+    if row is None or row.method is None:
+        return
+
+    params = tuple(row.params) if row.params is not None else ()
+    if len(params) > 5:
+        raise ValueError(
+            f"at most 5 infiltration parameters, got {len(params)}")
+
+    out.has_method = 1
+    out.method = <int>int(SurfaceInfilMethod(row.method))
+    for k in range(len(params)):
+        out.p[k] = float(params[k])
+    out.dest = <int>int(SurfaceInfilDest(row.dest))
+
+
+cdef object _infil_row_from_c(SWMM_Infil2DRow* c):
+    """Build an L{Infil2DRow} from a C{SWMM_Infil2DRow}."""
+    cdef object params = (c.p[0], c.p[1], c.p[2], c.p[3], c.p[4])
+    if not c.has_method:
+        return Infil2DRow(None, params, SurfaceInfilDest.LOST)
+    return Infil2DRow(SurfaceInfilMethod(c.method), params,
+                      SurfaceInfilDest(c.dest))
+
+
+class Infil2DDefaults(MutableMapping):
+    """``surface2d.infiltration.defaults`` — tag → L{Infil2DRow} mapping.
+
+    Mirrors C{[2D_INFILTRATION_DEFAULTS]}. The key C{"*"} is the mesh-wide
+    fallback; every other key matches the C{TAG} column of
+    C{[2D_TRIANGLES]}. Resolution order is
+    C{per-cell override > tag row > '*' row > none}.
+
+    .. code-block:: python
+
+        infil = solver.surface2d.infiltration
+        infil.defaults["*"] = Infil2DRow(None)                  # no default
+        infil.defaults["LAWN"] = Infil2DRow(
+            SurfaceInfilMethod.HORTON, (3.0, 0.5, 4.14, 7.0, 0.0))
+        del infil.defaults["WOODS"]
+
+    Assignment is only accepted before the solver initializes — see
+    L{Infiltration2DView} for the staleness rule.
+    """
+
+    def __init__(self, engine_ptr):
+        self._ptr = engine_ptr
+
+    def __len__(self):
+        cdef void* eng = <void*><uintptr_t>self._ptr
+        cdef int n = 0
+        _check(swmm_infil2d_defaults_count(eng, &n))
+        return n
+
+    def _tags(self):
+        """Return the authored tags in file order (C{'*'} may be anywhere)."""
+        cdef void* eng = <void*><uintptr_t>self._ptr
+        cdef int n = 0
+        cdef char buf[256]
+        cdef int i
+        _check(swmm_infil2d_defaults_count(eng, &n))
+        out = []
+        for i in range(n):
+            _check(swmm_infil2d_get_default_tag(eng, i, buf, 256))
+            out.append(buf.decode("utf-8"))
+        return out
+
+    def __iter__(self):
+        # Materialised deliberately: a generator would put the C{char[256]}
+        # scratch buffer in a closure, which Cython cannot do.
+        return iter(self._tags())
+
+    def __getitem__(self, key):
+        cdef void* eng = <void*><uintptr_t>self._ptr
+        cdef SWMM_Infil2DRow row
+        cdef int i
+        tags = self._tags()
+        for i in range(len(tags)):
+            if tags[i] != key:
+                continue
+            _check(swmm_infil2d_get_default(eng, i, &row))
+            return _infil_row_from_c(&row)
+        raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        cdef void* eng = <void*><uintptr_t>self._ptr
+        cdef bytes tag = str(key).encode("utf-8")
+        cdef SWMM_Infil2DRow row
+        _infil_row_to_c(value, &row)
+        _check(swmm_infil2d_set_default(eng, tag, &row))
+
+    def __delitem__(self, key):
+        cdef void* eng = <void*><uintptr_t>self._ptr
+        cdef bytes tag
+        if key not in self:
+            raise KeyError(key)
+        tag = str(key).encode("utf-8")
+        _check(swmm_infil2d_remove_default(eng, tag))
+
+    def __repr__(self):
+        try:
+            return f"<Infil2DDefaults {sorted(self)}>"
+        except Exception:
+            return "<Infil2DDefaults (unavailable)>"
+
+
+cdef class Infiltration2DView:
+    """``surface2d.infiltration`` — per-cell infiltration on the 2D mesh.
+
+    The C{GROUNDWATER OFF} loss model (plan §5.5): a held per-cell rate,
+    recomputed on the C{INFIL_STEP} cadence and consumed by the explicit
+    marcher. Wraps C{openswmm_infil2d.h}.
+
+    .. code-block:: python
+
+        infil = solver.surface2d.infiltration
+        infil.infil_step = 300.0                       # seconds
+        infil.defaults["LAWN"] = Infil2DRow(
+            SurfaceInfilMethod.HORTON, (3.0, 0.5, 4.14, 7.0, 0.0))
+        infil.set_cells([12, 13, 14], Infil2DRow(
+            SurfaceInfilMethod.CURVE_NUMBER, (85.0, 0.0, 7.0)))
+
+        row, is_override = infil.cell(12)
+        f = infil.rate()          # m/s, per triangle
+        F = infil.cumulative()    # m,   per triangle
+        infil.total_volume        # m^3, the infil_out ledger row
+
+    B{Units.} Row parameters are in B{project units} (see L{Infil2DRow});
+    every readback channel is SI, like the rest of the 2D API.
+
+    B{Staleness.} Parameters are baked into per-cell kernel state once,
+    when the 2D surface initializes, and there is no per-cell re-init path.
+    Every writer here therefore raises C{RuntimeError} (engine
+    C{SWMM_ERR_LIFECYCLE}) once the solver has been initialized; edit in the
+    opened state, then initialize.
+
+    @ivar _engine: Internal pointer to the underlying C{SWMM_Engine} handle.
+    """
+
+    cdef void* _engine
+    cdef object _ptr
+    cdef object _defaults
+
+    def __cinit__(self, uintptr_t engine_ptr):
+        """Construct the view from a raw engine handle.
+
+        @param engine_ptr: The raw engine handle (C{SWMM_Engine} cast to
+            C{uintptr_t}).
+        @type engine_ptr: int
+        """
+        self._engine = <void*>engine_ptr
+        self._ptr = int(engine_ptr)
+        self._defaults = None
+
+    # -- options -------------------------------------------------------
+
+    @property
+    def infil_step(self) -> float:
+        """Evaluation cadence in B{seconds} (C{[2D_INFILTRATION_OPTIONS]}).
+
+        C{<= 0} means "use the project C{WET_STEP}", which the 2D surface
+        resolves when it initializes. The value reported is the authored
+        one, not the resolved one.
+
+        @rtype: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef SWMM_Infil2DOptions opts
+        _check(swmm_infil2d_get_options(self._engine, &opts))
+        return opts.infil_step
+
+    @infil_step.setter
+    def infil_step(self, double seconds) -> None:
+        cdef SWMM_Infil2DOptions opts
+        opts.infil_step = seconds
+        _check(swmm_infil2d_set_options(self._engine, &opts))
+
+    # -- tag defaults --------------------------------------------------
+
+    @property
+    def defaults(self):
+        """The C{[2D_INFILTRATION_DEFAULTS]} tag → L{Infil2DRow} mapping.
+
+        @rtype: Infil2DDefaults
+        """
+        if self._defaults is None:
+            self._defaults = Infil2DDefaults(self._ptr)
+        return self._defaults
+
+    # -- per-cell overrides --------------------------------------------
+
+    def cell(self, int tri):
+        """Return the infiltration specification in force at one triangle.
+
+        After the solver initializes this is the B{resolved} row, with
+        C{is_override} reporting the resolved provenance. Before it
+        initializes only the per-cell override layer is visible, so a cell
+        carrying no override reports a C{NONE} row even when a tag or
+        C{'*'} default would later apply.
+
+        @param tri: Triangle index (0-based).
+        @type tri: int
+        @return: C{(row, is_override)}.
+        @rtype: Infil2DCell
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef SWMM_Infil2DRow row
+        cdef int is_override = 0
+        _check(swmm_infil2d_get_cell(self._engine, tri, &row, &is_override))
+        return Infil2DCell(_infil_row_from_c(&row), bool(is_override))
+
+    def set_cell(self, int tri, row) -> None:
+        """Set (or clear) the per-cell override of one triangle.
+
+        C{row=None} CLEARS the override so the cell falls back to its tag
+        row / the C{'*'} row. That differs from an L{Infil2DRow} whose
+        C{method} is C{None}, which stores an explicit C{NONE} override and
+        so suppresses the defaults for that cell.
+
+        @param tri: Triangle index (0-based).
+        @type tri: int
+        @param row: Row to store (parameters in B{project units}), or
+            C{None} to clear the override.
+        @type row: Infil2DRow or None
+        @raise RuntimeError: If the C API rejects the assignment (including
+            after the solver has been initialized).
+        """
+        cdef SWMM_Infil2DRow crow
+        if row is None:
+            _check(swmm_infil2d_set_cell(self._engine, tri, NULL))
+            return
+        _infil_row_to_c(row, &crow)
+        _check(swmm_infil2d_set_cell(self._engine, tri, &crow))
+
+    def set_cells(self, tris, row) -> None:
+        """Assign one specification to many triangles in a single call.
+
+        The select-many-cells-then-assign entry point: one validation pass,
+        then one apply. B{All-or-nothing} — if any index is out of range
+        nothing at all is written. An empty C{tris} is a no-op.
+
+        @param tris: Iterable of 0-based triangle indices.
+        @type tris: sequence[int]
+        @param row: Row to store on every listed triangle (parameters in
+            B{project units}), or C{None} to clear their overrides.
+        @type row: Infil2DRow or None
+        @raise RuntimeError: If the C API rejects the assignment.
+        """
+        cdef SWMM_Infil2DRow crow
+        cdef np.ndarray[int, ndim=1] arr = np.ascontiguousarray(
+            tris, dtype=np.intc).reshape(-1)
+        cdef int n = <int>arr.shape[0]
+        if n == 0:
+            return
+        if row is None:
+            _check(swmm_infil2d_set_cells(self._engine, <int*>arr.data, n, NULL))
+            return
+        _infil_row_to_c(row, &crow)
+        _check(swmm_infil2d_set_cells(self._engine, <int*>arr.data, n, &crow))
+
+    # -- state readback (SI) -------------------------------------------
+
+    def rate(self):
+        """Return the held per-cell infiltration rate as a NumPy array.
+
+        Units are B{m/s}, C{>= 0}, one entry per triangle. The rate is
+        recomputed on the C{INFIL_STEP} cadence and held constant between
+        updates. A mesh with no resolved model returns all zeros.
+
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int nt = 0
+        _check(swmm_2d_triangle_count(self._engine, &nt))
+        cdef double[::1] out = np.zeros(max(nt, 1), dtype=np.float64)
+        cdef double* p = &out[0]
+        cdef void* eng = self._engine
+        cdef int err
+        with nogil:
+            err = swmm_infil2d_get_rate_bulk(eng, p, nt if nt > 0 else 1)
+        _check(err)
+        return np.asarray(out)[:nt]
+
+    def cumulative(self):
+        """Return the cumulative infiltrated depth per cell as a NumPy array.
+
+        Units are B{m}, one entry per triangle — the C{infil_cum} sidecar
+        variable. A mesh with no resolved model returns all zeros.
+
+        @rtype: np.ndarray
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef int nt = 0
+        _check(swmm_2d_triangle_count(self._engine, &nt))
+        cdef double[::1] out = np.zeros(max(nt, 1), dtype=np.float64)
+        cdef double* p = &out[0]
+        cdef void* eng = self._engine
+        cdef int err
+        with nogil:
+            err = swmm_infil2d_get_cum_bulk(eng, p, nt if nt > 0 else 1)
+        _check(err)
+        return np.asarray(out)[:nt]
+
+    @property
+    def total_volume(self) -> float:
+        """Cumulative 2D infiltration loss in B{m³} (the C{infil_out} row).
+
+        The whole-domain companion to L{cumulative}. Requires the 2D mass
+        balance to be live (the same contract as
+        C{Surface2D.get_mass_balance}).
+
+        @rtype: float
+        @raise RuntimeError: If the 2D mass balance is not active.
+        """
+        cdef double v = 0.0
+        _check(swmm_infil2d_get_total_volume(self._engine, &v))
+        return v
+
+    def __repr__(self) -> str:
+        try:
+            return (f"<Infiltration2DView infil_step={self.infil_step} "
+                    f"defaults={len(self.defaults)}>")
+        except Exception:
+            return "<Infiltration2DView (unavailable)>"

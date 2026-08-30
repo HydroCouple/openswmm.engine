@@ -137,3 +137,37 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_set_edge_conveyance(void* engine, int tri, int edge, double conveyance)
     int swmm_2d_get_edge_conveyance_bulk(void* engine, double* conveyance) nogil
     int swmm_2d_reset_edge_conveyance(void* engine)
+
+
+# Per-cell 2D infiltration (plan §5.5.6, track I step I6).
+#
+# Row parameters (`p`) are in PROJECT UNITS — the same numbers a user types
+# into a legacy [INFILTRATION] row. The readback channels are SI like the rest
+# of the 2D API: rate is m/s, cumulative depth is m, total volume is m^3.
+# `p` is declared with the literal width of SWMM_INFIL2D_MAX_PARAMS (5).
+cdef extern from "openswmm_infil2d.h":
+    ctypedef struct SWMM_Infil2DOptions:
+        double infil_step
+
+    ctypedef struct SWMM_Infil2DRow:
+        int has_method
+        int method
+        double p[5]
+        int dest
+
+    int swmm_infil2d_get_options(void* engine, SWMM_Infil2DOptions* options)
+    int swmm_infil2d_set_options(void* engine, const SWMM_Infil2DOptions* options)
+    int swmm_infil2d_defaults_count(void* engine, int* count)
+    int swmm_infil2d_get_default(void* engine, int idx, SWMM_Infil2DRow* row)
+    int swmm_infil2d_get_default_tag(void* engine, int idx, char* buf, int buflen)
+    int swmm_infil2d_set_default(void* engine, const char* tag,
+                                  const SWMM_Infil2DRow* row)
+    int swmm_infil2d_remove_default(void* engine, const char* tag)
+    int swmm_infil2d_get_cell(void* engine, int tri, SWMM_Infil2DRow* row,
+                               int* is_override)
+    int swmm_infil2d_set_cell(void* engine, int tri, const SWMM_Infil2DRow* row)
+    int swmm_infil2d_set_cells(void* engine, const int* tris, int n,
+                                const SWMM_Infil2DRow* row)
+    int swmm_infil2d_get_rate_bulk(void* engine, double* f, int n) nogil
+    int swmm_infil2d_get_cum_bulk(void* engine, double* F, int n) nogil
+    int swmm_infil2d_get_total_volume(void* engine, double* volume)

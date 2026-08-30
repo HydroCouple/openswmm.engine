@@ -1191,6 +1191,11 @@ class SimulationOptions(MutableMapping):
         "FV_SLOT_CELERITY", "FV_DISPERSION", "FV_STRUCTURE_COUPLING",
         "FV_COMPACTION", "FV_BACKEND", "FV_MIN_PARALLEL_CELLS",
         "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
+        # Unsteady friction (issue #156): consumed by the FV (Phase 2) and
+        # dynamic wave (Phase 3) solvers.
+        "UNSTEADY_FRICTION", "UF_K3",
+        # TPA pressure closure (issue #156 Phase 4): FV solver.
+        "FV_PRESSURE_CLOSURE",
     )
 
     def __getitem__(self, key: str) -> str:
