@@ -4,7 +4,16 @@
 # Working notes not intended for version control
 doc/FlashX_SWMM_crosswalk.md
 doc/Verification_Implementation_Plan.md
-/plans/
+# Trailing /* rather than /, so the register below can be re-included: git
+# cannot re-include anything under an excluded *directory*.
+/plans/*
+!/plans/transport/
+/plans/transport/*
+# The snow divergence register is NOT a workplan. It is what a user needs in
+# order to interpret a deck comparison against EPA SWMM -- it records every
+# place this engine departs from legacy snow.c and why. Tracked by user
+# decision (2026-08-21); everything else under /plans/ stays out of the tree.
+!/plans/transport/SNOW_DIVERGENCE_REGISTER.md
 /tools/
 docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 # Ignore examples/ contents (not the dir itself, so the fixture below can be
