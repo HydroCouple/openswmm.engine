@@ -329,19 +329,65 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
             const auto uc = static_cast<std::size_t>(c);
             const FvGeometry& g =
                 mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
+            // A TPA-flagged cell (issue #156) is full at any piezometric
+            // depth: friction evaluates at y_full (R = r_full, and a full
+            // FORCE_MAIN keeps its pressurized law) rather than at a
+            // sub-atmospheric h the table would read as part-full.
+            const double h_fric =
+                (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0 &&
+                 state.cell_h[uc] < g.y_full)
+                    ? g.y_full : state.cell_h[uc];
             gamma += frictionGamma(g, state.cell_q[uc], state.cell_a[uc],
-                                   state.cell_h[uc]);
+                                   h_fric);
             ++ngam;
         }
         if (ngam > 0) gamma /= static_cast<double>(ngam);
 
-        F.alpha = 1.0 / (1.0 + dt * gamma);
-        F.cond  = F.alpha * dt * k::kGravity * ahat / Lf;
-        F.qstar = 0.5 * (L.q + R.q);
-
-        // Time-n heads / Dirichlet values of each side.
         const int cl = mesh.face_cl[uf];
         const int cr = mesh.face_cr[uf];
+        const double qstar0 = 0.5 * (L.q + R.q);
+
+        // Unsteady friction (issue #156): the Vitkovsky local-acceleration
+        // part folds into the SAME semi-implicit denominator steady friction
+        // uses — q^{n+1}·(1 + Δt·γ + k3) = (1+k3)·q* − Δt·gÂ/L·Δη −
+        // Δt·k3·Â·grad — so the implicit path damps exactly as
+        // kernels::ufUpdate does on the explicit path (without this the
+        // fully-pressurized e1 waterhammer is byte-inert under UF, U-G2).
+        // The convective part rides the old-state uf_grad snapshot the
+        // solver precomputed BEFORE this pass. Dead-band and the
+        // half-momentum clamp mirror the kernel, so a discretely-at-rest
+        // deck stays bit-identical; k3 = 0 (or UF off) leaves every
+        // coefficient bit-unchanged (adding 0.0 is exact).
+        double k3 = 0.0, uf_src = 0.0;
+        if (v.opts && v.opts->unsteady_friction != 0 &&
+            v.opts->uf_k3 > 0.0 && v.uf_grad && !v.uf_grad->empty() &&
+            std::fabs(qstar0 / ahat) >= 0.01 /* ft/s dead-band */) {
+            k3 = v.opts->uf_k3;
+            double gterm = 0.0;
+            if (cl >= 0 && cr >= 0) {
+                const auto ucl = static_cast<std::size_t>(cl);
+                const auto ucr = static_cast<std::size_t>(cr);
+                if (mesh.cell_conduit[ucl] == mesh.cell_conduit[ucr])
+                    gterm = 0.5 * ((*v.uf_grad)[ucl] + (*v.uf_grad)[ucr]);
+                // else: VJ splice — the frames may oppose; drop the
+                // convective part rather than risk an energizing sign
+                // (same rule as the cell stencil, one-sided there).
+            } else if (cl >= 0) {
+                gterm = (*v.uf_grad)[static_cast<std::size_t>(cl)];
+            } else if (cr >= 0) {
+                gterm = (*v.uf_grad)[static_cast<std::size_t>(cr)];
+            }
+            uf_src = dt * k3 * ahat * gterm;
+            const double cap = 0.5 * std::fabs(qstar0);
+            if (std::fabs(uf_src) > cap)
+                uf_src = (uf_src > 0.0) ? cap : -cap;
+        }
+
+        F.alpha = 1.0 / (1.0 + dt * gamma + k3);
+        F.cond  = F.alpha * dt * k::kGravity * ahat / Lf;
+        F.qstar = qstar0 * (1.0 + k3) - uf_src;
+
+        // Time-n heads / Dirichlet values of each side.
         const int nd = mesh.face_node[uf];
         F.eta_l = (cl >= 0) ? v.cell_eta[static_cast<std::size_t>(cl)]
                             : state.node_head[static_cast<std::size_t>(nd)];

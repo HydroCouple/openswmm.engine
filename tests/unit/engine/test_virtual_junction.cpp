@@ -1060,3 +1060,166 @@ TEST(VirtualJunction, FvSteepVJDepthTracksFlow) {
     swmm_engine_end(e);
     destroy(e);
 }
+
+// ---------------------------------------------------------------------------
+// Initial-state seeding (issue #156)
+// ---------------------------------------------------------------------------
+// [VIRTUAL_JUNCTIONS] has no init-depth column; the post-parse resolver seeds
+// each VJ's head by distance-weighted interpolation between the nearest
+// non-virtual nodes along the spliced chain, so an initial pool defined by
+// the real nodes has no dry hole at the splice. Dry decks stay bitwise dry.
+
+namespace {
+
+// J_IN (invert 10, init d_in) -> 100 ft -> MID (VJ, invert 9) -> 100 ft ->
+// J_OUT (invert 8, init d_out); high-crest weir to O_OUT satisfies the
+// >=1-outfall rule without draining the pool at t=0.
+std::string seededPoolModel(double d_in, double d_out, double mid_invert = 9.0,
+                            const std::string& routing = "DYNWAVE",
+                            double len_a = 100.0, double len_b = 100.0) {
+    std::ostringstream ss;
+    ss << options(routing)
+       << "[JUNCTIONS]\n"
+          ";;Name  Elev  MaxDepth  InitDepth\n"
+          "J_IN    10.0  8.0       " << d_in << "\n"
+          "J_OUT   8.0   8.0       " << d_out << "\n\n"
+          "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\nMID     " << mid_invert << "\n\n"
+          "[OUTFALLS]\n;;Name  Elev  Type  Gated\nO_OUT   8.0   FREE  NO\n\n"
+          "[WEIRS]\n;;Name  From   To     Type        CrestHt  Cd\n"
+          "W_OVF   J_OUT  O_OUT  TRANSVERSE  7.9      3.33\n\n"
+          "[CONDUITS]\n;;Name  From  To     Length  N      Z1  Z2\n"
+          "C_A     J_IN  MID    " << len_a << "   0.013  0   0\n"
+          "C_B     MID   J_OUT  " << len_b << "   0.013  0   0\n\n"
+          "[XSECTIONS]\n;;Link  Shape     G1   G2  G3  G4  Barrels\n"
+          "C_A     CIRCULAR  1.0  0   0   0   1\n"
+          "C_B     CIRCULAR  1.0  0   0   0   1\n"
+          "W_OVF   RECT_OPEN 2.0  1.0 0   0\n";
+    return ss.str();
+}
+
+} // namespace
+
+TEST(VirtualJunction, InitialStateSeededFromLevelPool) {
+    // Level pool: both real nodes at head 13.5 ft -> MID (invert 9) seeds to
+    // depth 4.5 ft at open, BEFORE any solver step.
+    SWMM_Engine e = openModel("vj_seed_level", seededPoolModel(3.5, 5.5), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_NEAR(d, 4.5, 1e-9);
+    destroy(e);
+}
+
+TEST(VirtualJunction, InitialStateSeededFromSlopedPool) {
+    // Unequal heads: 13.5 and 12.5 ft, equal 100 ft legs -> midpoint head
+    // 13.0 -> depth 4.0 at MID.
+    SWMM_Engine e = openModel("vj_seed_sloped", seededPoolModel(3.5, 4.5), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_NEAR(d, 4.0, 1e-9);
+    destroy(e);
+}
+
+TEST(VirtualJunction, InitialStateDryNeighborsStayDry) {
+    // No initial depths anywhere: interpolated head sits below the VJ invert
+    // -> seeding must leave the VJ exactly dry (inertness on dry decks).
+    SWMM_Engine e = openModel("vj_seed_dry", seededPoolModel(0.0, 0.0), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_EQ(d, 0.0);
+    destroy(e);
+}
+
+TEST(VirtualJunction, InitialStateDryDeckLowVJStaysDry) {
+    // The P1 corpus finding (vj_fv_invert_collision analog): BOTH endpoints
+    // dry, VJ invert BELOW the endpoint-invert interpolation line (8.5 vs
+    // interpolated 9.0). A dry node's head is just its invert — seeding must
+    // not manufacture 0.5 ft of water on a bone-dry deck. Requires the
+    // wet-endpoint gate.
+    SWMM_Engine e = openModel("vj_seed_dry_low",
+                              seededPoolModel(0.0, 0.0, 8.5), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_EQ(d, 0.0);
+    destroy(e);
+}
+
+TEST(VirtualJunction, InitialStateHumpVJAbovePoolStaysDry) {
+    // Wet endpoints (heads 13.5) but the VJ sits on a hump above the pool
+    // surface (invert 14.0): interpolated head < invert -> stays dry.
+    SWMM_Engine e = openModel("vj_seed_hump",
+                              seededPoolModel(3.5, 5.5, 14.0), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_EQ(d, 0.0);
+    destroy(e);
+}
+
+TEST(VirtualJunction, InitialStateSurvivesTheColdStartReset) {
+    // The tests above read the seeded depth straight after open(). That is not
+    // where a solver reads it: SWMMEngine::initialize() calls
+    // NodeData::reset_state(), which re-derives depth/old_depth/head from
+    // init_depth. A seeding that wrote only depth and head therefore vanished
+    // before the first routing step, and the study's e4 deck produced .out
+    // files byte-identical to the un-seeded engine. This gate is the one that
+    // observes the state the solver actually starts from.
+    SWMM_Engine e = openModel("vj_seed_survives_init", seededPoolModel(3.5, 5.5),
+                              true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
+
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_NEAR(d, 4.5, 1e-9);
+
+    swmm_engine_end(e);
+    destroy(e);
+}
+
+TEST(VirtualJunction, InitialStateIsNotSeededUnderFv) {
+    // The seeding is DYNWAVE-only on purpose. Under FV the initial condition
+    // lives in the cells, which Router::initFv lays at a uniform depth taken
+    // from links.depth; a seeded node head its own cells contradict starts a
+    // transient instead of a pool. Measured on the study's e3 deck when the
+    // guard was absent: flow-routing continuity 0.000% -> -19.133%, VJ head
+    // excursion 4371 m. This pins the restriction so that lifting it has to be
+    // a deliberate act with the cell projection landed alongside.
+    SWMM_Engine e = openModel("vj_seed_fv_unseeded",
+                              seededPoolModel(3.5, 5.5, 9.0, "FV"), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_EQ(d, 0.0);
+    destroy(e);
+}
+
+TEST(VirtualJunction, InitialStateWeightsByDistanceNotByEndOrder) {
+    // SlopedPool above uses two 100 ft legs, so (hA*dB + hB*dA)/(dA+dB) and
+    // (hA*dA + hB*dB)/(dA+dB) agree to the last bit — it pins the midpoint and
+    // says nothing about the weighting. Unequal legs separate them: with heads
+    // 13.5 / 12.5 and legs 100 / 300 ft, the near end must dominate
+    // (13.5*300 + 12.5*100)/400 = 13.25, depth 4.25 over MID's invert 9.0.
+    // The transposed form would give 12.75 -> depth 3.75.
+    SWMM_Engine e = openModel("vj_seed_weighted",
+                              seededPoolModel(3.5, 4.5, 9.0, "DYNWAVE",
+                                              100.0, 300.0), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    double d = -1.0;
+    ASSERT_EQ(swmm_node_get_depth(e, mid, &d), SWMM_OK);
+    EXPECT_NEAR(d, 4.25, 1e-9);
+    destroy(e);
+}

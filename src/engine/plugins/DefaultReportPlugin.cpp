@@ -555,6 +555,17 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                                         : "STEADY";
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
 
+        // TPA pressure closure (issue #156 Phase 4): FV, non-default only.
+        if (rm == 3 && opt.fv.pressure_closure == 1) {
+            std::fprintf(f, "\n  Pressure Closure ......... TPA");
+        }
+
+        // Unsteady friction (issue #156): applies to DW and FV alike.
+        if ((rm == 2 || rm == 3) && opt.unsteady_friction != 0) {
+            std::fprintf(f, "\n  Unsteady Friction ........ VITKOVSKY (k3 = %g)",
+                         opt.uf_k3);
+        }
+
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;
             const char* sm_name = (sm >= 0 && sm <= 2) ? SurchargeWords[sm] : "EXTRAN";

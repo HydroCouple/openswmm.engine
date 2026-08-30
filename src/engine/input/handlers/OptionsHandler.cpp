@@ -401,6 +401,19 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "DPS_DECAY_TIME") {
             opt.dps_decay_time = to_double(val);
 
+        // Unsteady friction (issue #156). Accepted-and-INERT, the same
+        // posture as the FV block below: nothing downstream reads either key
+        // yet (the Vitkovsky source term is Phase 2), so parsing them only
+        // stops a deck that names them from drawing an unknown-option warning
+        // and lets the writer carry them across a save.
+        } else if (key == "UNSTEADY_FRICTION") {
+            const std::string uv = norm(val);
+            if      (uv == "NONE")      opt.unsteady_friction = 0;
+            else if (uv == "VITKOVSKY") opt.unsteady_friction = 1;
+
+        } else if (key == "UF_K3") {
+            opt.uf_k3 = to_double(val);
+
         // -----------------------------------------------------------------
         // Explicit finite-volume solver (FLOW_ROUTING FV).
         //
@@ -453,6 +466,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             const std::string pv = norm(val);
             opt.fv.pressurized_implicit =
                 (pv == "YES" || pv == "TRUE" || pv == "ON" || pv == "1");
+
+        } else if (key == "FV_PRESSURE_CLOSURE") {  // issue #156 Phase 4
+            const std::string pc = norm(val);
+            if      (pc == "SLOT") opt.fv.pressure_closure = 0;
+            else if (pc == "TPA")  opt.fv.pressure_closure = 1;
 
         } else if (key == "FV_DISPERSION") {
             opt.fv.dispersion = to_double(val);

@@ -85,8 +85,19 @@ enum class RoutingModel : int {
 enum class QualitySolverKind : int {
     LEGACY       = 0,  ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
     EULERIAN_ARD = 1,  ///< Eulerian ARD on the FV cell mesh (all routing models)
-    LAGRANGIAN   = 2   ///< LARD segment transport — X1 skeleton dispatch only;
-                       ///< transport lands in X2
+    LAGRANGIAN   = 2   ///< LARD segment transport. LIVE: LTD advection +
+                       ///< junction/storage mixing (X2 `8c141a5e`), RWPT
+                       ///< dispersion (X3b `b9852cee`), water age (X4
+                       ///< `9f155227`), exact-exponential KDECAY.
+                       ///< NOT YET, each behind a live open() warning in
+                       ///< SWMMEngine::open: MSX reactions on segments (L3),
+                       ///< treatment interop, heat (H7). Storage mixing
+                       ///< beyond CMSTR is also absent but is NOT warned —
+                       ///< there is no input surface for it yet, so there is
+                       ///< nothing to bypass.
+                       ///< (This comment said "X1 skeleton dispatch only;
+                       ///< transport lands in X2" until 2026-08-25, five
+                       ///< rounds after X2 landed.)
                        ///< (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
                        ///< plans/LAGRANGIAN_QUALITY_STRATEGY.md)
 };
@@ -404,6 +415,26 @@ struct SimulationOptions {
      *           oscillations. Should be meaningful physical/numerical time scale.
      *  @see Sharior et al. (2023) Eq. 22 */
     double dps_decay_time = 0.5;
+
+    /** @brief Unsteady friction model: 0=NONE (default, inert), 1=VITKOVSKY.
+     *  @details Adds the Pinto/Vasconcelos/Soares (2025) unsteady-friction
+     *           source term S_fu = (k3/g)(dV/dt + c·sgn(V)|dV/dx|) with
+     *           regime-dependent celerity c to the momentum equation.
+     *           CONSUMED BY THE FV SOLVER as of issue #156 Phase 2 (copied
+     *           into FvOptions by Router::initFv; applied by
+     *           kernels::ufUpdate after the steady-friction stage, with the
+     *           convective term precomputed per substep). Under DYNWAVE the
+     *           key is still parsed, round-tripped and echoed but inert —
+     *           the dynamic wave source term is Phase 3.
+     *  @see Pinto, Vasconcelos & Soares (2025), J. Hydraul. Eng. 152(1);
+     *       Vitkovsky et al. (2000). Plan: plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §3 */
+    int unsteady_friction = 0;
+
+    /** @brief Unsteady friction coefficient k3 (dimensionless).
+     *  @details Brunone-type coefficient; used only when unsteady_friction != 0.
+     *           Paper-calibrated range 0.005–0.020 (tested to 0.045).
+     *  @see Pinto et al. (2025) Table 1 (issue #156) */
+    double uf_k3 = 0.015;
 
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;

@@ -79,6 +79,8 @@ const char* const kNumericKeys[] = {
     "FV_MIN_PARALLEL_CELLS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
     // Quality & transport (Y0)
     "QUALITY_STEP", "MAX_SEGMENTS_PER_LINK", "RWPT_SEED",
+    // Unsteady friction (issue #156)
+    "UF_K3",
 };
 
 /// Values every numeric key must refuse. VALIDATION FINDING (H1 round):
@@ -239,6 +241,7 @@ TEST(OptionsMalformedValuesTest, EnumKeysStillRejectUnknownTokens) {
     EXPECT_NE(swmm_options_set(e, "QUALITY_SOLVER", "MAGIC"),    SWMM_OK);
     EXPECT_NE(swmm_options_set(e, "DISPERSION",     "FISCHER"),  SWMM_OK);
     EXPECT_NE(swmm_options_set(e, "FV_RIEMANN",     "ROE"),      SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "UNSTEADY_FRICTION", "BRUNONE"), SWMM_OK);
 
     swmm_engine_destroy(e);
 }

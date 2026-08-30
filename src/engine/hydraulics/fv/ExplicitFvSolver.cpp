@@ -90,6 +90,22 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     cell_eta_.assign(nc, 0.0);
     cell_u_.assign(nc, 0.0);
     cell_q_int_.assign(nc, 0.0);
+    // Unsteady friction (issue #156): scratch sized only when active so the
+    // default path allocates nothing.
+    uf_grad_.assign((opts.unsteady_friction != 0) ? nc : 0, 0.0);
+
+    // TPA pressure closure (issue #156 Phase 4): the regime flag lives in the
+    // STATE so the static membership predicates see it; empty ⇒ SLOT closure
+    // everywhere (bit-inert default). Cold start: all-free (worst case one
+    // spurious re-pressurization step after a hotstart — TPA plan §5).
+    tpa_ = (opts.pressure_closure == 1);
+    if (tpa_) {
+        state.cell_tpa.assign(nc, 0);
+        tpa_scratch_.assign(nc, 0);
+    } else {
+        state.cell_tpa.clear();
+        tpa_scratch_.clear();
+    }
 
     node_exch_.assign(nn, 0.0);
     node_in_.assign(nn, 0.0);
@@ -313,11 +329,13 @@ void ExplicitFvSolver::refreshDepths() {
         const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
         double a = state_->cell_a[uc];
         if (a < 0.0) a = 0.0;
-        const double h = k::depthOfArea(g, a);
+        const bool tpa_cell = tpaCell(uc);   // regime-consistent h(A) (#156)
+        const double h = tpa_cell ? k::tpaDepthOfArea(g, a)
+                                  : k::depthOfArea(g, a);
         state_->cell_a[uc] = a;
         state_->cell_h[uc] = h;
         cell_eta_[uc] = mesh_->cell_zb[uc] + h;
-        if (h <= k::kDryDepth) {
+        if (!tpa_cell && h <= k::kDryDepth) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
         } else {
@@ -515,18 +533,20 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
             const auto uc = static_cast<std::size_t>(cell);
             dx_ref = std::min(dx_ref, mesh_->cell_dx[uc]);
             const double h = state_->cell_h[uc];
-            if (h <= k::kDryDepth) return;
+            const bool tpa_c = tpaCell(uc);   // full of water at any h (#156)
+            if (!tpa_c && h <= k::kDryDepth) return;
             const FvGeometry& g =
                 mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-            if (fmode == PressurizedHeadSolver::kFull && !g.is_open &&
-                h >= g.y_crown) {
+            if (fmode == PressurizedHeadSolver::kFull &&
+                (tpa_c || (!g.is_open && h >= g.y_crown))) {
                 speed = std::max(speed, std::fabs(cell_u_[uc]));
                 return;
             }
             speed = std::max(speed,
                              std::fabs(cell_u_[uc]) +
                                  k::celerity(state_->cell_a[uc],
-                                             k::widthOfDepth(g, h)));
+                                             tpa_c ? g.t_slot
+                                                   : k::widthOfDepth(g, h)));
         };
         if (cl >= 0) consider_cell(cl);
         if (cr >= 0) consider_cell(cr);
@@ -800,7 +820,11 @@ void ExplicitFvSolver::reconstructState() {
         const auto uc = static_cast<std::size_t>(c);
         const double h = state_->cell_h[uc];
         const double fall = std::fabs(mesh_->cell_dzdx[uc]) * mesh_->cell_dx[uc];
-        cell_ho2_[uc] = (h > k::kDryDepth && fall < 0.5 * h) ? char{1} : char{0};
+        // TPA-flagged cells stay first-order: the HO2 bed source and slope
+        // extrapolation evaluate free-surface geometry, which a pressurized
+        // (possibly sub-atmospheric) cell no longer has (#156).
+        cell_ho2_[uc] = (h > k::kDryDepth && fall < 0.5 * h && !tpaCell(uc))
+                            ? char{1} : char{0};
     }
 
     for (int ch = 0; ch < mesh_->n_chains(); ++ch) {
@@ -978,6 +1002,45 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // getAofY/getRofY-class evaluations per face side whose result the probe
     // pass discarded (its i1 out-param is written twice and never read).
     if (measure_only) { i1_raw = 0.0; out = k::FaceState{}; return; }
+
+    // TPA pressurized side (issue #156 Phase 4): the closure line extends to
+    // hs < 0, so neither dry cutoff applies — the pipe is full of water at
+    // (possibly sub-atmospheric) piezometric head. Which regime a SIDE uses:
+    // a cell side follows its own cell's flag; a node ghost follows the
+    // interior cell's flag only when the node is SEALED (SUR_DEPTH > 0) —
+    // a vented node's ghost carries hs = 0 by construction (plan §A3); a
+    // closed-end mirror ghost mirrors the interior regime.
+    bool tpa_side = false;
+    if (tpa_) {
+        if (cell >= 0) {
+            tpa_side = tpaCell(static_cast<std::size_t>(cell));
+        } else {
+            const int other2 = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                         : mesh_->face_cr[uf];
+            if (other2 >= 0) {
+                const bool interior_tpa =
+                    tpaCell(static_cast<std::size_t>(other2));
+                if (node >= 0) {
+                    tpa_side = interior_tpa &&
+                        mesh_->node_sur_depth[static_cast<std::size_t>(node)] > 0.0;
+                } else {
+                    tpa_side = interior_tpa;
+                }
+            }
+        }
+    }
+    if (tpa_side) {
+        i1_raw = k::tpaI1OfDepth(*g, h_raw);
+        const double h_star_t = eta - zstar;          // signed; no clamp
+        double a_t = k::tpaAreaOfDepth(*gf, h_star_t);
+        if (a_t < k::kDryArea) a_t = k::kDryArea;     // vacuum floor guard
+        out.a  = a_t;
+        out.u  = u;
+        out.q  = a_t * u;
+        out.c  = k::celerity(a_t, gf->t_slot);        // acoustic celerity
+        out.i1 = k::tpaI1OfDepth(*gf, h_star_t);
+        return;
+    }
 
     // i1_raw stays in the CELL's own section — it is the cell's true
     // hydrostatic moment, and the difference from the reconstructed one is the
@@ -1338,6 +1401,122 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
 }
 
 // ===========================================================================
+// Unsteady friction (issue #156)
+// ===========================================================================
+
+// Precompute the convective UF term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell from the
+// CURRENT (pre-update) cell_u_/state snapshot, so the parallel update loops
+// never read a mid-update neighbor. Stencil is same-conduit only: within one
+// conduit every cell shares the conduit frame, while across virtual-junction
+// splices and node faces the frames may oppose (face_dir_l/r flips), so the
+// stencil degrades to one-sided/own there — slightly diffusive at splices,
+// never sign-wrong. Wave celerity is regime-consistent by construction:
+// kernels::celerity(A, T) delivers √(gA/T), which above the crown is the slot
+// (acoustic) celerity because T = t_slot — exactly the paper's Eq. (12).
+void ExplicitFvSolver::computeUfGradients(const std::vector<int>* cells) {
+    const int nc = mesh_->n_cells();
+    auto grad_for = [&](int c) {
+        const auto uc = static_cast<std::size_t>(c);
+        uf_grad_[uc] = 0.0;
+        if (!cell_active_[uc]) return;
+        const double h = state_->cell_h[uc];
+        if (h <= k::kDryDepth) return;
+        const double u = cell_u_[uc];
+        if (u == 0.0) return;
+
+        const int cond = mesh_->cell_conduit[uc];
+        const double dx_c = mesh_->cell_dx[uc];
+        double uL = u, uR = u, dsum = 0.0;
+        const int faces[2]    = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        const int8_t sides[2] = {mesh_->cell_side0[uc], mesh_->cell_side1[uc]};
+        for (int e = 0; e < 2; ++e) {
+            const auto uf = static_cast<std::size_t>(faces[e]);
+            // sides==0: this cell is the face's LEFT cell -> neighbor right.
+            const int nb = (sides[e] == 0) ? mesh_->face_cr[uf]
+                                           : mesh_->face_cl[uf];
+            if (nb < 0) continue;                                  // node face
+            const auto unb = static_cast<std::size_t>(nb);
+            if (mesh_->cell_conduit[unb] != cond) continue;        // VJ splice
+            const double d = 0.5 * (dx_c + mesh_->cell_dx[unb]);
+            if (sides[e] == 0) { uR = cell_u_[unb]; dsum += d; }
+            else               { uL = cell_u_[unb]; dsum += d; }
+        }
+        if (dsum <= 0.0) return;
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double c_wave = k::celerity(state_->cell_a[uc],
+                                          k::widthOfDepth(g, h));
+        const double sgn = (u > 0.0) ? 1.0 : -1.0;
+        uf_grad_[uc] = c_wave * sgn * std::fabs((uR - uL) / dsum);
+    };
+    if (cells) {
+        for (const int c : *cells) grad_for(c);
+    } else {
+#ifdef SWMM_USE_OPENMP
+#pragma omp parallel for schedule(dynamic, 64) if (nc >= kOmpMinCells)
+#endif
+        for (int c = 0; c < nc; ++c) grad_for(c);
+    }
+}
+
+// ===========================================================================
+// TPA regime flags (issue #156 Phase 4)
+// ===========================================================================
+// Once per substep, BEFORE reconstruction (TPA plan §A2 — not per RK stage,
+// so both Heun stages see one operator). Entry (FS→P) is unconditional at
+// A ≥ a_crown (the cell filled through the taper). Exit (P→FS) requires
+// ΔA at/below the crown area (with an ε-hysteresis band, gate A-G2) AND
+// atmosphere contact this step. Contact rule — air is not modeled, so any
+// free surface is atmospheric (the paper's own assumption): an unsealed node
+// face (SURCHARGE_DEPTH == 0; virtual junctions never reach the node set and
+// are sealed splices by construction, plan §2.2(6)), or a face neighbor that
+// was free-surface last step. Transitions read the PREVIOUS flags via the
+// tpa_scratch_ snapshot, so the pass is order-independent and parallel-safe.
+void ExplicitFvSolver::updateTpaFlags() {
+    const int nc = mesh_->n_cells();
+    tpa_scratch_ = state_->cell_tpa;
+    constexpr double kEpsHead = 1.0e-4;   // ft — FUDGE-scale hysteresis
+#ifdef SWMM_USE_OPENMP
+#pragma omp parallel for schedule(static) if (nc >= kOmpMinCells)
+#endif
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (!cell_active_[uc]) { state_->cell_tpa[uc] = 0; continue; }
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        if (g.is_open) { state_->cell_tpa[uc] = 0; continue; }
+        const double a = state_->cell_a[uc];
+        if (tpa_scratch_[uc] == 0) {
+            state_->cell_tpa[uc] = (a >= g.a_crown) ? uint8_t{1} : uint8_t{0};
+            continue;
+        }
+        if (a > g.a_crown - g.t_slot * kEpsHead) continue;   // stays P
+        bool vented = false;
+        const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        for (const int f : faces) {
+            const auto uf = static_cast<std::size_t>(f);
+            const int nd = mesh_->face_node[uf];
+            if (nd >= 0) {
+                if (mesh_->node_sur_depth[static_cast<std::size_t>(nd)] <= 0.0) {
+                    vented = true;
+                    break;
+                }
+                continue;   // sealed node (bolted cover / SUR_DEPTH)
+            }
+            const int nb = (mesh_->face_cl[uf] == c) ? mesh_->face_cr[uf]
+                                                     : mesh_->face_cl[uf];
+            if (nb >= 0 &&
+                tpa_scratch_[static_cast<std::size_t>(nb)] == 0) {
+                vented = true;
+                break;
+            }
+            // nb < 0 with no node: a closed end — a sealed wall, not a vent.
+        }
+        if (vented) state_->cell_tpa[uc] = 0;
+    }
+}
+
+// ===========================================================================
 // Cell update
 // ===========================================================================
 
@@ -1487,18 +1666,29 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
 
         // ---- friction + local losses, both semi-implicit --------------------
         ++n_inv;
-        const double h_new = k::depthOfArea(g, a_new);
+        const bool tpa_cell = tpaCell(uc);   // regime-consistent closure (#156)
+        const double h_new = tpa_cell ? k::tpaDepthOfArea(g, a_new)
+                                      : k::depthOfArea(g, a_new);
         state_->cell_a[uc] = a_new;
         state_->cell_h[uc] = h_new;
         cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
-        if (h_new <= k::kDryDepth) {
+        // A flagged cell is FULL of water at (possibly sub-atmospheric)
+        // piezometric head — the dry cutoff must not fire on h < kDryDepth.
+        if (!tpa_cell && h_new <= k::kDryDepth) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
             continue;
         }
         const double u = q_new / a_new;
-        q_new = frictionFor(g, q_new, u, h_new, dt);
+        // Friction for a flagged cell evaluates at full depth (R = r_full,
+        // and a full FORCE_MAIN keeps its pressurized law).
+        q_new = frictionFor(g, q_new, u, tpa_cell ? g.y_full : h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
+        // Unsteady friction (issue #156): cell_u_[uc] still holds Vⁿ here —
+        // it is overwritten only below, and only by this cell's own iteration.
+        if (opts_.unsteady_friction != 0)
+            q_new = k::ufUpdate(q_new, a_new, cell_u_[uc], opts_.uf_k3,
+                                uf_grad_[uc], dt);
 
         state_->cell_q[uc] = q_new;
         cell_u_[uc] = q_new / a_new;
@@ -2139,6 +2329,8 @@ void ExplicitFvSolver::saveState() {
     save_flood_     = flood_vol_;
     save_qint_      = cell_q_int_;
     save_carry_     = node_carry_;
+    if (tpa_) save_tpa_ = state_->cell_tpa;   // regime flags roll back with
+                                              // the state that set them (#156)
 }
 
 void ExplicitFvSolver::restoreState() {
@@ -2155,6 +2347,8 @@ void ExplicitFvSolver::restoreState() {
     flood_vol_          = save_flood_;
     cell_q_int_         = save_qint_;
     node_carry_         = save_carry_;
+    if (tpa_) state_->cell_tpa = save_tpa_;   // BEFORE refreshDepths: h(A)
+                                              // is regime-dependent (#156)
     refreshDepths();               // cell_h / eta / u are derived
 }
 
@@ -2214,10 +2408,13 @@ PressurizedView ExplicitFvSolver::pressView(const FvStepForcing& forcing) {
     pv.node_vfull   = &node_vfull_;
     pv.node_lat_div = &node_lat_div_;
     pv.cell_qlat    = &cell_qlat_;
+    pv.uf_grad      = &uf_grad_;   // empty unless unsteady_friction (issue #156)
     return pv;
 }
 
 void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
+    if (tpa_) updateTpaFlags();   // once per substep, before reconstruction;
+                                  // rolled back with the state on rejection
     reconstructState();
     computeFluxes();
     // R2a: derive the pressurized subset BEFORE the node pass, so the node
@@ -2229,6 +2426,12 @@ void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
     }
     relaxNodeFluxes(dt, forcing);   // BEFORE limiting: the limiter must bound
                                     // the flux that is actually applied
+    if (opts_.unsteady_friction != 0)
+        computeUfGradients(nullptr);   // old-state snapshot (issue #156);
+                                       // BEFORE the implicit solve, whose
+                                       // face fold consumes the same snapshot
+                                       // (nothing between here and updateCells
+                                       // writes cell_u_ or the cell state)
     if (press_step_) {
         // The implicit acoustic solve: overwrites the implicit faces'
         // entries in f_mass_ (the single flux ledger), so everything
@@ -2909,18 +3112,25 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         if (a_new < 0.0) a_new = 0.0;
 
         perf::count(perf::n_fv_invert);
-        const double h_new = k::depthOfArea(g, a_new);
+        const bool tpa_cell = tpaCell(uc);   // regime-consistent closure (#156)
+        const double h_new = tpa_cell ? k::tpaDepthOfArea(g, a_new)
+                                      : k::depthOfArea(g, a_new);
         state_->cell_a[uc] = a_new;
         state_->cell_h[uc] = h_new;
         cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
-        if (h_new <= k::kDryDepth) {
+        if (!tpa_cell && h_new <= k::kDryDepth) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
             continue;
         }
         const double u = q_new / a_new;
-        q_new = frictionFor(g, q_new, u, h_new, dt);
+        q_new = frictionFor(g, q_new, u, tpa_cell ? g.y_full : h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
+        // Unsteady friction (issue #156): dt here is the tier window span,
+        // matching the local-acceleration difference (Vⁿ over the same span).
+        if (opts_.unsteady_friction != 0)
+            q_new = k::ufUpdate(q_new, a_new, cell_u_[uc], opts_.uf_k3,
+                                uf_grad_[uc], dt);
 
         state_->cell_q[uc] = q_new;
         cell_u_[uc] = q_new / a_new;
@@ -2963,6 +3173,9 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
 
 void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
                                      const FvStepForcing& forcing) {
+    if (tpa_) updateTpaFlags();   // once per macro cycle (#156); the caller's
+                                  // saveState precedes this, so rejection
+                                  // restores the pre-cycle flags
     const int K = static_cast<int>(cells_by_tier_.size());
 
     // A tier-k FACE opens its window at s ≡ 0 (mod 2^k); a tier-k VOLUME closes
@@ -2984,6 +3197,8 @@ void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
 
         if (opts_.order >= 2) reconstructState();
         fireFaces(due_f_upto_[jf], dt0);
+        if (opts_.unsteady_friction != 0)
+            computeUfGradients(&due_c_upto_[jv]);  // pre-tier snapshot (#156)
         fireCells(due_c_upto_[jv], dt0, forcing);
         fireNodes(due_n_upto_[jv], dt0, forcing);
     }

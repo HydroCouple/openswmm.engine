@@ -415,6 +415,61 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     auto un = static_cast<std::size_t>(n_nodes);
     auto ul = static_cast<std::size_t>(n_links);
 
+    // Unsteady-friction cross-link stencil (issue #156): see the member
+    // comment in DynamicWave.hpp. Topology is static, so build once.
+    if (unsteady_friction != 0) {
+        uf_nb_up_.assign(ul, -1);
+        uf_nb_dn_.assign(ul, -1);
+        uf_sg_up_.assign(ul, 0);
+        uf_sg_dn_.assign(ul, 0);
+        // Per-node incidence: count of incident CONDUITS (any other link
+        // type attached disqualifies the node as a "simple" pass-through),
+        // plus the first two conduit indices.
+        std::vector<int> ccount(un, 0), other(un, 0);
+        std::vector<std::array<int, 2>> inc(un, {-1, -1});
+        for (int j = 0; j < n_links; ++j) {
+            const auto ujj = static_cast<std::size_t>(j);
+            const bool is_cond = (ctx.links.type[ujj] == LinkType::CONDUIT);
+            for (const int nd : {ctx.links.node1[ujj], ctx.links.node2[ujj]}) {
+                if (nd < 0 || nd >= n_nodes) continue;
+                const auto und = static_cast<std::size_t>(nd);
+                if (!is_cond) { ++other[und]; continue; }
+                if (ccount[und] < 2) inc[und][ccount[und]] = j;
+                ++ccount[und];
+            }
+        }
+        for (int j = 0; j < n_links; ++j) {
+            const auto ujj = static_cast<std::size_t>(j);
+            if (ctx.links.type[ujj] != LinkType::CONDUIT) continue;
+            const int n1 = ctx.links.node1[ujj];
+            const int n2 = ctx.links.node2[ujj];
+            if (n1 >= 0 && n1 < n_nodes) {
+                const auto u1 = static_cast<std::size_t>(n1);
+                if (ccount[u1] == 2 && other[u1] == 0) {
+                    const int k = (inc[u1][0] == j) ? inc[u1][1] : inc[u1][0];
+                    if (k >= 0) {
+                        uf_nb_up_[ujj] = k;
+                        uf_sg_up_[ujj] =
+                            (ctx.links.node2[static_cast<std::size_t>(k)] == n1)
+                                ? int8_t{1} : int8_t{-1};
+                    }
+                }
+            }
+            if (n2 >= 0 && n2 < n_nodes) {
+                const auto u2 = static_cast<std::size_t>(n2);
+                if (ccount[u2] == 2 && other[u2] == 0) {
+                    const int k = (inc[u2][0] == j) ? inc[u2][1] : inc[u2][0];
+                    if (k >= 0) {
+                        uf_nb_dn_[ujj] = k;
+                        uf_sg_dn_[ujj] =
+                            (ctx.links.node1[static_cast<std::size_t>(k)] == n2)
+                                ? int8_t{1} : int8_t{-1};
+                    }
+                }
+            }
+        }
+    }
+
     // Seepage possibility is static input — scan once so the loss recompute
     // pass can be skipped bit-exactly on loss-free models (see
     // recomputeConduitLosses).
@@ -2622,7 +2677,83 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // Flow update
     double qOld = links.old_flow[uj] / barrels_d;
     double denom = 1.0 + dq1 + dq5;
-    double q = (qOld - dq2 + dq3 + dq4 + dq6) / denom;
+
+    // Unsteady friction (issue #156 Phase 3). S_fu = (k3/g)(∂V/∂t +
+    // c·sgn(V)|∂V/∂x|), Pinto et al. (2025). The local-acceleration half is
+    // folded into the SAME denominator the dqdh Jacobian is built from
+    // (q·(denom + k3) = ... + k3·aWtd·vOld), so the surcharge node iteration
+    // stays consistent by construction; the convective half is explicit from
+    // the end-velocity difference (same |Q| through both ends, conveyance
+    // areas), clamped to half the incoming momentum. Celerity is
+    // regime-consistent through width_mid_: the slot width when surcharged
+    // under SLOT/DYNAMIC_SLOT (acoustic), the free-surface width otherwise,
+    // and the near-crown width under EXTRAN (plan §3.2 O-1 default). The
+    // 0.01 ft/s dead-band mirrors kernels::ufUpdate (added-inertia noise
+    // amplification, measured on the FV side). When inactive, the original
+    // expression is evaluated verbatim so the default path stays bit-exact.
+    bool   uf_applied = false;
+    double uf_num = 0.0;
+    if (unsteady_friction != 0 && uf_k3 > 0.0) {
+        constexpr double kUfVelFloor = 0.01;  // ft/s, mirrors FvKernels
+        const double vOld = (aOld > FUDGE) ? qOld / aOld : 0.0;
+        if (std::fabs(vOld) >= kUfVelFloor || absv >= kUfVelFloor) {
+            const double wMid = width_mid_[uj];
+            const double c_wave = (wMid > FUDGE && aMid > FUDGE)
+                ? std::sqrt(GRAVITY * aMid / wMid) : 0.0;
+            // ∂V/∂x: cross-link stencil first (a full link has equal end
+            // areas, so the within-link estimator is structurally zero in
+            // exactly the pressurized cases UF exists for — measured
+            // anti-damping without this). Neighbor previous-iterate
+            // velocities, sign-mapped into this link's frame; falls back to
+            // the within-link end-velocity difference when no simple
+            // degree-2 conduit neighbor exists on either side.
+            double dv_dx = 0.0;
+            {
+                auto nb_vel = [&](int nbj, int8_t sg) -> double {
+                    const auto unb = static_cast<std::size_t>(nbj);
+                    const auto uci_nb =
+                        static_cast<std::size_t>(tile_uj_to_ci_[unb]);
+                    const double a_nb = std::max(
+                        conveyArea(area_mid_[unb], tile_a_full_[uci_nb]),
+                        FUDGE);
+                    return static_cast<double>(sg) *
+                           (links.flow[unb] / tile_barrels_d_[uci_nb]) / a_nb;
+                };
+                double vL = v, vR = v, dsum = 0.0;
+                if (uf_nb_up_[uj] >= 0) {
+                    const auto uci_nb = static_cast<std::size_t>(
+                        tile_uj_to_ci_[static_cast<std::size_t>(uf_nb_up_[uj])]);
+                    vL = nb_vel(uf_nb_up_[uj], uf_sg_up_[uj]);
+                    dsum += 0.5 * (length + tile_length_[uci_nb]);
+                }
+                if (uf_nb_dn_[uj] >= 0) {
+                    const auto uci_nb = static_cast<std::size_t>(
+                        tile_uj_to_ci_[static_cast<std::size_t>(uf_nb_dn_[uj])]);
+                    vR = nb_vel(uf_nb_dn_[uj], uf_sg_dn_[uj]);
+                    dsum += 0.5 * (length + tile_length_[uci_nb]);
+                }
+                if (dsum > 0.0) {
+                    dv_dx = std::fabs(vR - vL) / dsum;
+                } else if (length > 0.0) {
+                    const double absq = std::fabs(qLast);
+                    const double v1e = (a1Conv > FUDGE) ? absq / a1Conv : 0.0;
+                    const double v2e = (a2Conv > FUDGE) ? absq / a2Conv : 0.0;
+                    dv_dx = std::fabs(v2e - v1e) / length;
+                }
+            }
+            const double sgn = (v > 0.0) ? 1.0 : ((v < 0.0) ? -1.0 : 0.0);
+            double dq_grad = dt * uf_k3 * aWtd * c_wave * sgn * dv_dx;
+            const double cap = 0.5 * std::fabs(qOld);
+            if (std::fabs(dq_grad) > cap)
+                dq_grad = (dq_grad > 0.0) ? cap : -cap;
+            denom += uf_k3;
+            uf_num = uf_k3 * aWtd * vOld - dq_grad;
+            uf_applied = true;
+        }
+    }
+    double q = uf_applied
+        ? (qOld - dq2 + dq3 + dq4 + dq6 + uf_num) / denom
+        : (qOld - dq2 + dq3 + dq4 + dq6) / denom;
     // PARITY dwflow.c:240: legacy groups ((1/denom)*GRAVITY)*dt and divides by
     // length directly (NOT dt_g=dt*GRAVITY). dqdh feeds the surcharge node-depth
     // Jacobian (sumdqdh denominator), so the grouping/divide must match exactly.
@@ -2775,7 +2906,27 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     // Flow update
     double qOld = links.old_flow[uj] / barrels_d;
     double denom = 1.0 + dq1 + dq5;
-    double q = (qOld - dq2 + dq6) / denom;
+
+    // Unsteady friction (issue #156 Phase 3), force-main arm: full pipe, so
+    // the end areas are equal and the convective |∂V/∂x| term vanishes within
+    // the link — only the local-acceleration fold applies (vOld from the
+    // constant full-flow area). Same dead-band as the Manning arm; the
+    // default path evaluates the original expression verbatim.
+    bool uf_applied = false;
+    if (unsteady_friction != 0 && uf_k3 > 0.0) {
+        constexpr double kUfVelFloor = 0.01;  // ft/s, mirrors FvKernels
+        const double vOld = (aWtd > FUDGE)
+            ? qOld / aWtd : 0.0;
+        if (std::fabs(vOld) >= kUfVelFloor ||
+            std::fabs(v) >= kUfVelFloor) {
+            denom += uf_k3;
+            uf_applied = true;
+        }
+    }
+    // k3·aWtd·vOld with vOld = qOld/aWtd collapses to k3·qOld exactly.
+    double q = uf_applied
+        ? (qOld - dq2 + dq6 + uf_k3 * qOld) / denom
+        : (qOld - dq2 + dq6) / denom;
     dqdh_[uj] = (1.0 / denom) * dt_g * aWtd * inv_len * barrels_d;
 
     // Shared post-processing
