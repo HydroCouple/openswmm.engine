@@ -203,6 +203,9 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
         // The direct inflow's own water joins the mixing denominator, matching
         // legacy findNodeQual(), which divides the accumulated mass rate by
         // Node[j].inflow — a total that includes the external lateral inflow.
+        // (LID drain-to-node water rides nodes.lid_drain_inflow, not this
+        //  array; its volume, age and temperature are booked once, by the
+        //  drain loader below, at the storage layer's own values.)
         double q = nodes.ext_inflow[ui];
         if (q > 0.0) {
             nodes.qual_vol_in[ui] += q * dt;
@@ -434,7 +437,18 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         } else {
             addAgeVolume(ctx, j, drain_vol_rate, WaterAgeSource::RAINFALL);
         }
-        addTempVolume(ctx, j, drain_vol_rate, HeatSource::RAINFALL);
+        // H5b at the node seam: the drain arrives at its storage layer's
+        // temperature, accumulated beside this volume in the runoff step.
+        // The RAINFALL stand-in survives only when the layer block is unsized.
+        if (ctx.options.heat_transport &&
+            uj < ctx.heat_state.node_lid_drain_temp_vol_in.size() &&
+            ctx.lid_layer_state.active()) {
+            auto& tacc = ctx.heat_state.node_temp_vol_in;
+            if (uj < tacc.size())
+                tacc[uj] += ctx.heat_state.node_lid_drain_temp_vol_in[uj];
+        } else {
+            addTempVolume(ctx, j, drain_vol_rate, HeatSource::RAINFALL);
+        }
 
         for (int p = 0; p < np; ++p) {
             auto nd_idx = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);

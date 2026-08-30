@@ -375,6 +375,19 @@ struct NodeData {
      * @see Legacy: lid.c lid_addDrainInflow() Node[k].newLatFlow contribution
      */
     std::vector<double>     lid_drain_qual_vol;
+    /**
+     * @brief LID drain WATER inflow rate per node (ft3/sec) — the routing
+     *        twin of `lid_drain_qual_vol`.
+     * @details Set once per runoff step by the LID block in stepRunoff() and
+     *          read by assembleLateralInflows() every routing step until the
+     *          next runoff step overwrites it. It is NOT `ext_inflow`: that
+     *          array is cleared by clearInflowSources() at the top of every
+     *          routing step, i.e. AFTER stepRunoff has added to it, so a drain
+     *          booked there never reached the network (LID fix round,
+     *          2026-08-30 — every drain-to-node case, not only the target-less
+     *          one). Legacy books it as Node.newLatFlow + EXTERNAL_INFLOW.
+     */
+    std::vector<double>     lid_drain_inflow;
 
     // -----------------------------------------------------------------------
     // Per-node quality state — flat 2D: [node * n_pollutants + pollutant]
@@ -687,6 +700,7 @@ struct NodeData {
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
         lid_drain_qual_vol.assign(un, 0.0);
+        lid_drain_inflow.assign(un, 0.0);
         inflow.assign(un, 0.0);
         outflow.assign(un, 0.0);
         overflow.assign(un, 0.0);
@@ -754,6 +768,7 @@ struct NodeData {
         g(coupling_inflow, 0.0); g(coupling_volume, 0.0); g(coupling_queue, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
+        lid_drain_inflow.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
         g(old_net_inflow, 0.0); g(full_volume, 0.0);
@@ -818,7 +833,7 @@ struct NodeData {
         r(stat_storage_max_outflow);
         r(stat_lat_inflow_vol); r(stat_total_inflow_vol); r(stat_total_outflow_vol); r(stat_outfall_avg_flow);
         r(stat_outfall_max_flow); r(stat_outfall_periods); r(stat_non_converged_count); r(stat_time_courant_critical);
-        r(qual_vol_in); r(lid_drain_qual_vol); r(comments); r(tags);
+        r(qual_vol_in); r(lid_drain_qual_vol); r(lid_drain_inflow); r(comments); r(tags);
     }
 
     /**
@@ -845,7 +860,7 @@ struct NodeData {
         e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
         e(rdii_inflow); e(iface_inflow);
         e(coupling_inflow); e(coupling_volume); e(coupling_queue);
-        e(qual_vol_in); e(lid_drain_qual_vol);
+        e(qual_vol_in); e(lid_drain_qual_vol); e(lid_drain_inflow);
         e(inflow); e(outflow); e(overflow); e(losses);
         e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
         e(old_depth); e(old_volume); e(old_lat_flow); e(old_inflow);

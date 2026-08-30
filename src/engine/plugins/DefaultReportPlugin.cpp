@@ -726,6 +726,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Evaporation Loss .........", mb.runoff_evap);
         row("Infiltration Loss ........", mb.runoff_infil);
         row("Surface Runoff ...........", mb.runoff_runoff);
+        // Legacy prints this row whenever the model has LID area
+        // (report.c:551); the plugin sees only the ledger, so it prints
+        // whenever the term is live — a deck with LIDs but zero drain
+        // outflow omits a 0.000 row legacy would show.
+        if (mb.runoff_lid_drain != 0.0)
+            row("LID Drainage .............", mb.runoff_lid_drain);
         if (has_snow) {
             row("Snow Removed .............", mb.runoff_snowremov);
             row("Final Snow Cover .........", mb.runoff_final_snow);
