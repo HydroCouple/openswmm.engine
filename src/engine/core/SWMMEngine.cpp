@@ -1870,8 +1870,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
         }
 
-        // A4b. Accumulate runoff mass balance totals
-        accumulateRunoffMassBalance(dt_runoff);
+        // A4b. Runoff mass-balance accumulation is deferred to A6c (after the
+        // LID routing adjusts subcatches.runoff by −VlidIn/+VlidOut/+drain);
+        // accumulating here would capture the pre-LID runoff and miss the LID
+        // exchange, leaving the continuity unbalanced (issue #102 D/E).
 
         // A4b'. Phase 1b auto-save hook — when the runoff interface file
         // is open in SAVE mode, emit one record per substep. saveResults
@@ -2009,20 +2011,19 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                         g.surface_runoff[uu] * lid_area;  // CFS
                 }
                 // Drain flow (ft/sec * ft² = CFS):
-                //  drain_node >= 0 → external node inflow
-                //  otherwise → runon to target subcatch next step via lid_drain_runon_cfs
-                //  Matches legacy lid_addDrainRunon(): drain goes to runon, not runoff.
+                //  drain_node >= 0        → external node inflow (lid_addDrainInflow)
+                //  drain_subcatch != self → runon to that subcatch (lid_addDrainRunon)
+                //  no target / self       → discharge to THIS subcatchment's outlet
+                //  The no-target case previously recirculated as runon-to-self,
+                //  which double-feeds the subcatchment and leaks continuity;
+                //  EPA sends it straight to the outlet (issue #102 E).
                 if (g.drain_node[uu] >= 0) {
-                    // Route drain to a specific node — add as external inflow
                     auto un = static_cast<std::size_t>(g.drain_node[uu]);
                     if (un < ctx_.nodes.ext_inflow.size()) {
                         ctx_.nodes.ext_inflow[un] += g.drain_flow[uu] * lid_area;  // CFS
                     }
-                } else {
-                    // Route drain as runon to target subcatch next step.
-                    int target_sc = (g.drain_subcatch[uu] >= 0)
-                                    ? g.drain_subcatch[uu] : sc;
-                    auto utsc = static_cast<std::size_t>(target_sc);
+                } else if (g.drain_subcatch[uu] >= 0 && g.drain_subcatch[uu] != sc) {
+                    auto utsc = static_cast<std::size_t>(g.drain_subcatch[uu]);
                     if (utsc < ctx_.subcatches.lid_drain_runon_cfs.size()) {
                         const double q_dr = g.drain_flow[uu] * lid_area;
                         ctx_.subcatches.lid_drain_runon_cfs[utsc] += q_dr;
@@ -2063,6 +2064,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                             LidSpecies::TEMPERATURE)]);
                         }
                     }
+                } else {
+                    ctx_.subcatches.runoff[usc] += g.drain_flow[uu] * lid_area;  // CFS
                 }
 
                 // Gap #26: LID drain quality routing.
@@ -2143,6 +2146,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 }
             }
         }
+
+        // A6c. Accumulate runoff mass-balance totals now that the LID routing
+        // has finalised subcatches.runoff (moved from A4b — see note there).
+        accumulateRunoffMassBalance(dt_runoff);
 
         // A7. Street sweeping buildup removal (Gap #34)
         // Matches legacy surfqual_sweepBuildup(): per-(subcatch, landuse)
@@ -2441,22 +2448,28 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
     // breaking the runoff continuity balance.
     const double LANDAREA_TO_FT2 = 1.0 / ucf::UCF(ucf::LANDAREA, ctx_.options);
 
+    const auto& rsoa = runoff_.soa();
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         double area_ft2 = ctx_.subcatches.area[ui] * LANDAREA_TO_FT2;
+        // evap_loss / infil_loss are averaged over the NON-LID area only
+        // (RunoffSolver divides Vevap/Vinfil by soa.area = full − LID area).
+        // Multiplying them by the full subcatchment area double-counts the
+        // loss when LIDs cover part of the subcatchment (issue #102 —
+        // exposed once the LID footprint is actually removed, fix B).
+        double nonlid_area_ft2 = rsoa.area[ui];  // ft²
 
-        // Rainfall volume (ft³) — rainfall is already in ft/sec (internal units)
+        // Rainfall volume (ft³) — falls on the whole subcatchment (incl. LID)
         double rain_ftsec = ctx_.subcatches.rainfall[ui];
         ctx_.mass_balance.runoff_rainfall += rain_ftsec * area_ft2 * dt_runoff;
 
-        // Evaporation volume (ft³) — evap_loss is ft/sec
+        // Evaporation volume (ft³) — evap_loss is a non-LID-area-averaged rate
         ctx_.mass_balance.runoff_evap +=
-            ctx_.subcatches.evap_loss[ui] * area_ft2 * dt_runoff;
+            ctx_.subcatches.evap_loss[ui] * nonlid_area_ft2 * dt_runoff;
 
-        // Infiltration volume (ft³) — infil_loss is area-averaged rate (ft/sec)
-        // Already accounts for pervious fraction (Vinfil / dt / total_area)
+        // Infiltration volume (ft³) — infil_loss is a non-LID-area-averaged rate
         ctx_.mass_balance.runoff_infil +=
-            ctx_.subcatches.infil_loss[ui] * area_ft2 * dt_runoff;
+            ctx_.subcatches.infil_loss[ui] * nonlid_area_ft2 * dt_runoff;
 
         // Surface runoff volume (ft³) — runoff is cfs.
         //
@@ -2633,6 +2646,10 @@ int SWMMEngine::refreshTreatment(int node_idx, int pollut_idx) noexcept {
  */
 void SWMMEngine::refreshLIDDrainParams() noexcept {
     const auto& drain = ctx_.lid_controls.drain;
+    // Mirror the LID init() unit conversions (issue #102): coeff/expon stay in
+    // user units (converted at compute time by getDrainRate); the head-based
+    // columns convert in|mm → ft and the delay converts hours → seconds.
+    const double ucfRainDepth = ucf::UCF(ucf::RAINDEPTH, ctx_.options);
     for (int t = 0; t < lid_.numGroups(); ++t) {
         auto& g = lid_.group(t);
         for (int i = 0; i < g.count; ++i) {
@@ -2642,10 +2659,10 @@ void SWMMEngine::refreshLIDDrainParams() noexcept {
             const auto& p = drain[static_cast<std::size_t>(li)];
             g.drain_coeff[ui]  = p[0];
             g.drain_expon[ui]  = p[1];
-            g.drain_offset[ui] = p[2];
-            g.drain_delay[ui]  = p[3];
-            g.drain_hopen[ui]  = p[4];
-            g.drain_hclose[ui] = p[5];
+            g.drain_offset[ui] = p[2] / ucfRainDepth;
+            g.drain_delay[ui]  = p[3] * 3600.0;
+            g.drain_hopen[ui]  = p[4] / ucfRainDepth;
+            g.drain_hclose[ui] = p[5] / ucfRainDepth;
         }
     }
 }
@@ -4249,6 +4266,11 @@ void SWMMEngine::computeFinalStorage() noexcept {
         // exists, is exposed, is read, and is never written.
         ctx_.mass_balance.runoff_snowremov = snow_.state().removed;
     }
+
+    // (LID exfiltration / evaporation are folded into the runoff-continuity
+    //  infil / evap terms per-step in accumulateRunoffMassBalance — this
+    //  function is called every routing step, so cumulative terms cannot be
+    //  added here.)
 
     // B8. Compute routing final storage for mass balance
     //     Sum node volumes + link volumes (matching legacy). Nodes use the
