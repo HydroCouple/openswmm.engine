@@ -90,6 +90,49 @@ inline void bookNegativeAgeClamp(SimulationContext& ctx, int node) {
     }
 }
 
+/**
+ * @brief P1.4: book one ARD **cell**-source clamp. Counted and warned, NOT
+ *        ledgered — and the reason is structural, not an omission.
+ *
+ * @details The node seam un-books its shortfall from `qual_routing_ex_in`
+ *          because the loaders booked the signed request there in advance.
+ *          Cell sources have no such row to correct:
+ *
+ *          1. `[TRANSPORT_SOURCES]` rows resolve to **MSX species rows
+ *             only** — `ArdEngine.cpp` pushes `np + src_msx[i]`, so a cell
+ *             source can never name a pollutant; and
+ *          2. **MSX species have no mass-balance row at all.** The ARD
+ *             component writes to `ctx.mass_balance` nowhere.
+ *
+ *          So a per-pollutant row for this would be permanently zero, and
+ *          inventing an MSX row here would be a third self-consistent
+ *          balance (lesson 147) bolted on inside a defect fix. Giving MSX
+ *          species real ledger rows (sizing the `qual_*` vectors by
+ *          `np + nm`) is a deliberate, separate round — until it lands, the
+ *          delivered mass reaches `qual_routing_final` through the
+ *          end-of-run inventory sweep and therefore surfaces as CONTINUITY
+ *          ERROR rather than as a labelled term. **Recorded, not hidden.**
+ *
+ * @param conduit   mesh conduit row of the first clamp (diagnostic only).
+ * @param shortfall the UNMET extraction (positive, internal mass units).
+ */
+inline void bookNegativeCellSourceClamp(SimulationContext& ctx, int conduit,
+                                        double shortfall) {
+    auto& st = ctx.negsrc;
+    st.clamp_events += 1;
+    st.shortfall_mass += shortfall;
+    if (!st.runtime_warned) {
+        st.runtime_warned = true;
+        st.first_node = conduit;
+        ctx.warnings.push_back(
+            "D-NS1/P1.4: a negative [TRANSPORT_SOURCES] row requested more "
+            "mass than its conduit's cells held — extraction was clamped to "
+            "the available amount (first at mesh conduit row " +
+            std::to_string(conduit) +
+            "). Total clamp counts are summarized at end of run.");
+    }
+}
+
 /// End-of-run summary (pushed once by SWMMEngine::end when anything
 /// clamped; gates read ctx.warnings, so .rpt ordering is not load-bearing).
 inline void summarizeNegativeSourceClamps(SimulationContext& ctx) {
@@ -103,7 +146,9 @@ inline void summarizeNegativeSourceClamps(SimulationContext& ctx) {
              ? ", water-age extraction clamped " +
                    std::to_string(st.age_clamp_events) + " time(s)"
              : std::string()) +
-        ". The ledger carries the mass actually removed.");
+        ". Node-seam clamps are ledgered (the ledger carries the mass "
+        "actually removed); ARD cell-source clamps are counted only — "
+        "see bookNegativeCellSourceClamp.");
 }
 
 }  // namespace quality

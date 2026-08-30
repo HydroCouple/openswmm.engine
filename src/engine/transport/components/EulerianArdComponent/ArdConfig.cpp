@@ -258,10 +258,15 @@ void applyArdSections(SimulationContext& ctx,
                 const std::string mode = upper(toks[2]);
                 if (mode == "VALUE") {
                     double v = 0.0;
-                    if (!parse_value(toks[3], v) || v < 0.0) {
+                    // P1.4: a boundary CONCENTRATION below zero is
+                    // meaningless and stays refused; a source RATE below
+                    // zero is extraction (D-NS1) and is accepted here, then
+                    // warned once in resolveArdTransportRows.
+                    if (!parse_value(toks[3], v) || (is_bc && v < 0.0)) {
                         errors.push_back(
                             "[" + tag + "] '" + toks[0] + "': VALUE '" +
-                            toks[3] + "' is not a non-negative number.");
+                            toks[3] + (is_bc ? "' is not a non-negative number."
+                                             : "' is not a number."));
                         continue;
                     }
                     row.value = v;
@@ -455,6 +460,18 @@ void resolveArdTransportRows(SimulationContext& ctx,
                 break;
             }
         if (dup) continue;
+        // P1.4 / D-NS1: a negative rate is legal — it means extraction — but
+        // it is unusual enough to say so once at parse time, matching the
+        // node seam's warning for negative [INFLOWS] quality baselines.
+        // Only configured VALUE rows are scanned; a TIMESERIES that dips
+        // negative at runtime is covered by the clamp warning instead
+        // (X6 §2.6's recorded caveat, same reasoning).
+        if (!row.is_ts && row.value < 0.0)
+            ctx.warnings.push_back(
+                "[TRANSPORT_SOURCES] '" + row.element + "' species '" +
+                row.species + "': negative rate is treated as EXTRACTION "
+                "(D-NS1). Removal is clamped to the mass the conduit's "
+                "cells actually hold.");
         cfg.src_link.push_back(link);
         cfg.src_msx.push_back(s);
         // VALUE rates arrive in species mass units per second; internal MSX
