@@ -969,6 +969,10 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         else if (opt.surcharge_method == 1) val = "SLOT";
         else                                val = "DYNAMIC_SLOT";
     }
+    else if (k == "UNSTEADY_FRICTION") {  // issue #156
+        val = (opt.unsteady_friction == 1) ? "VITKOVSKY" : "NONE";
+    }
+    else if (k == "UF_K3")             val = std::to_string(opt.uf_k3);
     else if (k == "NODE_CONTINUITY") {
         val = (opt.node_continuity == openswmm::NodeContinuity::SEMI_IMPLICIT)
               ? "SEMI_IMPLICIT" : "EXPLICIT";
@@ -1039,6 +1043,8 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "FV_SLOT_CELERITY")  val = std::to_string(opt.fv.slot_celerity);
     else if (k == "FV_PRESSURIZED_IMPLICIT")
         val = opt.fv.pressurized_implicit ? "YES" : "NO";
+    else if (k == "FV_PRESSURE_CLOSURE")  // issue #156
+        val = (opt.fv.pressure_closure == 1) ? "TPA" : "SLOT";
     else if (k == "FV_DISPERSION")     val = std::to_string(opt.fv.dispersion);
     else if (k == "FV_STRUCTURE_COUPLING")
         val = (opt.fv.structure_coupling == openswmm::fv::StructureCoupling::ROUTING_STEP)
@@ -1352,6 +1358,14 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (vu == "DYNAMIC_SLOT") opt.surcharge_method = 2;
         else return SWMM_ERR_BADPARAM;
     }
+    else if (k == "UNSTEADY_FRICTION") {  // issue #156
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "NONE")      opt.unsteady_friction = 0;
+        else if (vu == "VITKOVSKY") opt.unsteady_friction = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "UF_K3")             opt.uf_k3 = stod_strict(v);
     else if (k == "NODE_CONTINUITY") {
         std::string vu(v);
         for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
@@ -1417,6 +1431,12 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         const std::string vu = upper_copy(v);
         opt.fv.pressurized_implicit =
             (vu == "YES" || vu == "TRUE" || vu == "ON" || vu == "1");
+    }
+    else if (k == "FV_PRESSURE_CLOSURE") {  // issue #156
+        const std::string vu = upper_copy(v);
+        if      (vu == "SLOT") opt.fv.pressure_closure = 0;
+        else if (vu == "TPA")  opt.fv.pressure_closure = 1;
+        else return SWMM_ERR_BADPARAM;
     }
     else if (k == "FV_DISPERSION")     opt.fv.dispersion       = stod_strict(v);
     else if (k == "FV_MIN_PARALLEL_CELLS")

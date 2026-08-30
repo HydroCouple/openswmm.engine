@@ -502,6 +502,32 @@ private:
     // Cell scratch.
     std::vector<double> cell_eta_;     ///< z_b + h
     std::vector<double> cell_u_;       ///< Q/A, dry-guarded
+
+    /// Unsteady-friction convective term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell
+    /// (issue #156). Precomputed from a consistent old-state snapshot before
+    /// each (parallel) cell-update loop so no update reads a mid-update
+    /// neighbor; sized only when FvOptions::unsteady_friction != 0.
+    std::vector<double> uf_grad_;
+
+    /// Fill uf_grad_ for @p cells (nullptr = all cells) from the current
+    /// cell_u_/state snapshot. Same-conduit neighbors only: across virtual
+    /// junction splices the conduit frames may point into each other, so the
+    /// stencil falls back to one-sided there rather than risk a sign flip.
+    void computeUfGradients(const std::vector<int>* cells);
+
+    // -- TPA pressure closure (issue #156 Phase 4) ---------------------------
+    bool tpa_ = false;                    ///< FV_PRESSURE_CLOSURE == TPA
+    std::vector<uint8_t> tpa_scratch_;    ///< previous-flag snapshot (sweep)
+    std::vector<uint8_t> save_tpa_;       ///< step-rejection snapshot
+
+    /// Update the per-cell regime flags (state_->cell_tpa) once per substep
+    /// from the venting rule — see the implementation comment.
+    void updateTpaFlags();
+
+    /// Regime of one cell under TPA; always false when the closure is SLOT.
+    bool tpaCell(std::size_t uc) const noexcept {
+        return tpa_ && state_->cell_tpa[uc] != 0;
+    }
     std::vector<double> cell_q_int_;   ///< ∫(mean face mass flux) dt over the
                                        ///< routing step — the DISCHARGE the
                                        ///< report publishes; equals ∫Q dt in

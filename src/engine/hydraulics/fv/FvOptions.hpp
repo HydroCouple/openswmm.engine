@@ -149,6 +149,26 @@ struct FvOptions {
     /// flows or in-conduit profiles matter.
     int min_cells = 4;
 
+    // -- Pressure closure (issue #156 Phase 4) -------------------------------
+    /// [OPTIONS] FV_PRESSURE_CLOSURE SLOT|TPA. 0 = SLOT (default,
+    /// parity-preserving), 1 = TPA (Vasconcelos/Wright/Roe 2006): a per-cell
+    /// regime flag extends the slot line to ΔA < 0 (sub-atmospheric full-pipe
+    /// flow), with venting governed by atmosphere contact. FV_SLOT_CELERITY
+    /// doubles as the TPA acoustic celerity a (same physical dial).
+    /// Plan: plans/TPA_TWO_COMPONENT_PRESSURE_PLAN.md + MIXED_FLOW §2.2.
+    int pressure_closure = 0;
+
+    // -- Unsteady friction (issue #156) --------------------------------------
+    // Mirrors SimulationOptions::unsteady_friction / uf_k3 (shared [OPTIONS]
+    // keys UNSTEADY_FRICTION / UF_K3, not FV_*); copied in Router::initFv so
+    // the solver keeps seeing only FvOptions. Both dimensionless.
+
+    /// 0 = NONE (default, bit-inert), 1 = VITKOVSKY.
+    int unsteady_friction = 0;
+
+    /// Brunone-type k3 coefficient; consumed only when unsteady_friction != 0.
+    double uf_k3 = 0.015;
+
     // -- Scheme -------------------------------------------------------------
 
     double        cfl              = 0.5;

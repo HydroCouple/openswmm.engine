@@ -118,6 +118,12 @@ struct PressurizedView {
     const double* cell_eta = nullptr;
     double*       cell_u   = nullptr;
 
+    /// Unsteady-friction convective term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell
+    /// (issue #156), precomputed by ExplicitFvSolver::computeUfGradients from
+    /// the old-state snapshot BEFORE solve() runs. Null/empty when
+    /// FvOptions::unsteady_friction == 0.
+    const std::vector<double>* uf_grad = nullptr;
+
     const std::vector<int>*  active_faces = nullptr;
     const std::vector<char>* cell_active  = nullptr;
 
@@ -186,9 +192,15 @@ public:
     // -- static predicates shared with the census edit ----------------------
 
     /// Is this cell pressurized (band entry and above) under the R2 rule?
+    /// Under the TPA closure (issue #156: state.cell_tpa non-empty) membership
+    /// IS the regime flag — a latched sub-atmospheric cell sits below y_crown
+    /// yet is exactly the stiff-acoustic case this solver exists for (plan
+    /// §2.2(1)). The flag is fixed within a substep, so the SPD structure and
+    /// the census edit stay consistent.
     static bool cellPressurized(const NetworkMeshData& mesh,
                                 const NetworkStateData& state, int cell) {
         const auto uc = static_cast<std::size_t>(cell);
+        if (!state.cell_tpa.empty()) return state.cell_tpa[uc] != 0;
         const FvGeometry& g =
             mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
         return !g.is_open && state.cell_h[uc] >= g.y_crown;

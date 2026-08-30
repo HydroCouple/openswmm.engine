@@ -556,6 +556,73 @@ OPENSWMM_KERNEL_FN double localLossUpdate(double q, double u, double k,
     return q / (1.0 + dt * k * std::fabs(u) / (2.0 * dx));
 }
 
+/**
+ * @brief Unsteady-friction momentum update (issue #156).
+ *
+ * Pinto/Vasconcelos/Soares (2025) source term, split by stiffness:
+ *   S_fu = (k3/g)·(∂V/∂t + c·sgn(V)·|∂V/∂x|)
+ * The local-acceleration half integrates IMPLICITLY (Δt cancels:
+ * ΔQ = −k3·A·(V^{n+1} − Vⁿ) ⇒ Q^{n+1} = (Q* + k3·A·Vⁿ)/(1 + k3)),
+ * so it is unconditionally stable like frictionUpdate. The convective half
+ * enters explicitly through @p grad_term = c·sgn(Vⁿ)·|∂V/∂x|ⁿ, precomputed by
+ * the solver from a consistent old-state snapshot (never from mid-update
+ * neighbors). The combined change is clamped to half the incoming momentum
+ * per substep — the paper reports instability for k3 ≳ 0.02 with no such
+ * guard; the clamp also makes UF exactly inert at rest (q = 0 ⇒ cap = 0,
+ * and u_old = grad = 0 anyway), preserving the well-balanced property.
+ * k3 = 0 returns q bit-unchanged.
+ */
+OPENSWMM_KERNEL_FN double ufUpdate(double q, double a, double u_old,
+                                   double k3, double grad_term,
+                                   double dt) noexcept {
+    if (k3 <= 0.0 || a <= 0.0) return q;
+    // Dead-band (measured, issue #156): the implicit fold acts as added
+    // inertia — it resists velocity DECAY too, so applied to the ~mm/s
+    // numerical ripple of a storage-coupled pool it sustained noise that
+    // steady friction was correctly killing (0.004 → 0.011 cfs on the
+    // at-rest fixture). UF correlations are calibrated for real transients
+    // (paper velocities O(0.1–1 m/s)); below 0.01 ft/s the term is noise
+    // amplification, not physics. Both the old and candidate velocities must
+    // clear the floor, so a genuinely at-rest deck stays bit-identical.
+    constexpr double kUfVelFloor = 0.01;  // ft/s, internal units
+    if (std::fabs(u_old) < kUfVelFloor && std::fabs(q / a) < kUfVelFloor)
+        return q;
+    double qn = (q + k3 * a * u_old) / (1.0 + k3);
+    qn -= dt * k3 * a * grad_term;
+    const double dq  = qn - q;
+    const double cap = 0.5 * std::fabs(q);
+    if (std::fabs(dq) > cap) qn = q + ((dq > 0.0) ? cap : -cap);
+    return qn;
+}
+
+// ---------------------------------------------------------------------------
+// TPA — two-component pressure approach (issue #156 Phase 4)
+// ---------------------------------------------------------------------------
+// Vasconcelos, Wright & Roe (2006). For a cell whose regime FLAG is set
+// (state.cell_tpa — physical air-pathway history, updated once per substep by
+// the solver, NOT evaluated here), the closure is the slot line extended to
+// BOTH signs of ΔA = A − a_crown:
+//     h(A) = y_full + (A − a_crown)/t_slot        (hs = h − y_full, signed)
+//     A(h) = a_crown + t_slot·(h − y_full)
+//     I₁(h) = i1_crown + a_crown·(h − y_full)     (paper Eq. 12b: the slot's
+//                                                  ½·t_slot·d² numerical
+//                                                  storage pressure is dropped)
+//     T = t_slot,  R = r_full,  c = √(g·A/t_slot) ≈ acoustic celerity a.
+// Free-surface (unflagged) cells use the table closure above UNCHANGED,
+// including the crown taper. The pair is continuous at A = a_crown, h = y_full.
+
+OPENSWMM_KERNEL_FN double tpaDepthOfArea(const FvGeometry& g, double a) noexcept {
+    return g.y_full + (a - g.a_crown) / g.t_slot;
+}
+
+OPENSWMM_KERNEL_FN double tpaAreaOfDepth(const FvGeometry& g, double h) noexcept {
+    return g.a_crown + g.t_slot * (h - g.y_full);
+}
+
+OPENSWMM_KERNEL_FN double tpaI1OfDepth(const FvGeometry& g, double h) noexcept {
+    return g.i1_crown + g.a_crown * (h - g.y_full);
+}
+
 /// CFL-limited step for one face: α·Δx/(|u| + c).
 OPENSWMM_KERNEL_FN double faceCflDt(double cfl, double dx, double u,
                                     double c) noexcept {

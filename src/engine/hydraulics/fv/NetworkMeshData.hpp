@@ -484,6 +484,17 @@ struct NetworkStateData {
     std::vector<double> cell_phi;
     int n_species = 0;
 
+    /// TPA regime flag per cell (issue #156 Phase 4): EMPTY unless
+    /// FV_PRESSURE_CLOSURE TPA; 1 = pressurized (closure evaluates on the
+    /// extended slot line, both signs of ΔA), 0 = free surface (table
+    /// closure). Lives in the STATE because the static membership predicates
+    /// (PressurizedHeadSolver::cellPressurized, the census edit) must see it.
+    /// The flag is physical air-pathway history — updated once per substep by
+    /// the solver's venting rule, saved/restored with the step-rejection
+    /// snapshot, cleared (all-free) on cold start; a restart worst-case is
+    /// one spurious re-pressurization step (TPA plan §5).
+    std::vector<uint8_t> cell_tpa;
+
     void resize(int n_cells, int n_nodes, int n_species_in) {
         const auto nc = static_cast<std::size_t>(n_cells);
         const auto nn = static_cast<std::size_t>(n_nodes);

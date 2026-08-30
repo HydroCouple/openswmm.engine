@@ -530,6 +530,9 @@ endif()
 # I₁ as the antiderivative of A with an analytic above-crown extension, and the
 # FV_SLOT_CELERITY design value actually delivered.
 add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
+add_gtest_unit(test_engine_fv_unsteady_friction test_fv_unsteady_friction.cpp)
+add_gtest_unit(test_engine_dw_unsteady_friction test_dw_unsteady_friction.cpp)
+add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
 # pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
 # solutions incl. shock SPEED, and mass conservation to machine precision over

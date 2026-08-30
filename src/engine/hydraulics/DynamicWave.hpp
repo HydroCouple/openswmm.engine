@@ -238,6 +238,25 @@ public:
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
     bool   anderson_accel = false;       ///< Enable Anderson acceleration
 
+    /// Unsteady friction (issue #156 Phase 3): 0 = NONE (default, bit-inert),
+    /// 1 = VITKOVSKY. Folded into the momentum denominator (so dqdh_ stays
+    /// consistent with the surcharge Jacobian) with the same dead-band and
+    /// half-momentum clamp as kernels::ufUpdate on the FV side.
+    int    unsteady_friction = 0;
+    double uf_k3 = 0.015;  ///< Brunone-type k3; consumed only when active.
+
+    /// Cross-link ∂V/∂x stencil for UF (issue #156). A full link has equal
+    /// end areas, so the within-link |v2−v1| estimator is structurally ZERO
+    /// in exactly the pressurized cases UF exists for (measured: pure added
+    /// inertia, slight ANTI-damping). The gradient therefore comes from the
+    /// neighboring conduits' previous-iterate velocities across simple
+    /// degree-2 conduit junctions (links.flow is double-buffered within a
+    /// Picard iteration, so neighbor reads are deterministic at any thread
+    /// count). Built once in init() when unsteady_friction != 0; -1 = no
+    /// simple neighbor on that side (falls back one-sided / within-link).
+    std::vector<int>    uf_nb_up_, uf_nb_dn_;
+    std::vector<int8_t> uf_sg_up_, uf_sg_dn_;   ///< +1 same sense, -1 opposed
+
     /// Evaporation rate (ft/s) — set by Router::step() each timestep so that
     /// solveMomentumBatch can recompute dq6 per Picard iteration (Gap #14).
     double evap_rate  = 0.0;

@@ -307,6 +307,10 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
             dw_solver_.anderson_accel = ctx.options.anderson_accel;
+            // Unsteady friction (issue #156): dimensionless, no unit
+            // conversion.
+            dw_solver_.unsteady_friction = ctx.options.unsteady_friction;
+            dw_solver_.uf_k3             = ctx.options.uf_k3;
 
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
@@ -812,6 +816,10 @@ void Router::initFv(SimulationContext& ctx) {
     fv_opts_.cell_length   = ctx.options.fv.cell_length   / ucf_len;
     fv_opts_.slot_celerity = ctx.options.fv.slot_celerity / ucf_len;
     fv_opts_.dispersion    = ctx.options.fv.dispersion    / (ucf_len * ucf_len);
+    // Unsteady friction (issue #156): shared [OPTIONS] keys, dimensionless —
+    // copied here so the solver keeps seeing only FvOptions.
+    fv_opts_.unsteady_friction = ctx.options.unsteady_friction;
+    fv_opts_.uf_k3             = ctx.options.uf_k3;
 
     // Options that are parsed and stored but reach nothing. Saying so at open
     // is the whole point: a model calibrated with FV_DISPERSION set would

@@ -26,6 +26,8 @@
  */
 
 #include "PostParseResolver.hpp"
+
+#include <array>
 #include "MultiColumnSeriesFile.hpp"
 #include "../core/Constants.hpp"
 #include "../core/ErrorCodes.hpp"
@@ -1606,6 +1608,117 @@ void resolve_cross_references(SimulationContext& ctx) {
     // EXTRAN surcharge corr=0.6 factor) is applied once at the END of node
     // initialisation in SWMMEngine (after the second, conduit-only degree pass),
     // matching legacy flowrout.c::validateGeneralLayout.
+
+    // -------------------------------------------------------------------------
+    // Virtual-junction initial-state seeding (issue #156)
+    // -------------------------------------------------------------------------
+    // [VIRTUAL_JUNCTIONS] carries no init-depth column, so VJs started dry
+    // regardless of their neighbors — a deck whose real nodes define an
+    // initial pool began with a hole at every splice (found by the mixed-flow
+    // study P0 verification: a station VJ drained the Aureli initial pool).
+    // Seed each VJ head by distance-weighted linear interpolation between the
+    // nearest NON-virtual nodes reached by walking its spliced conduit chain
+    // in both directions. Runs before the solver initializes; decks without
+    // VJs (or with all-dry neighbors) are bitwise untouched.
+    //
+    // DYNWAVE ONLY, and that restriction is measured, not cautionary. Under FV
+    // the initial condition does not live in the node state: Router::initFv
+    // lays each conduit's cells at a UNIFORM DEPTH taken from links.depth (the
+    // average of the two end-node depths), and only overrides that where one
+    // bank is dry across a bed step. Seeding the node alone therefore starts
+    // the run with a VJ head that its own adjacent cells contradict, and the
+    // junction coupling drives the difference: measured on the study's e3
+    // deck (a pressurized 0.094 m pipe, FV_SLOT_CELERITY 300), the flow-
+    // routing continuity error went 0.000% -> -19.133% and VJ99's head
+    // excursion reached 4371 m. Making FV benefit needs the level-surface
+    // both-wet cell projection that Router::initFv deliberately does not do
+    // (see the comment block there, and the P0 verification's open issue 2);
+    // that is its own change with its own gates, so FV is left exactly as it
+    // was rather than half-seeded.
+    if (ctx.options.routing_model == RoutingModel::DYNWAVE) {
+        // Incident CONDUITS per node (VJ splices are conduit-only by
+        // validation; a VJ with conduit-degree != 2 is left unseeded here and
+        // rejected later by the mesh builder / DW vjunc validation).
+        std::vector<std::array<int, 2>> inc(static_cast<std::size_t>(n_nodes),
+                                            {-1, -1});
+        std::vector<int> inc_n(static_cast<std::size_t>(n_nodes), 0);
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+            for (int nd : {ctx.links.node1[uj], ctx.links.node2[uj]}) {
+                if (nd < 0 || nd >= n_nodes) continue;
+                auto und = static_cast<std::size_t>(nd);
+                if (ctx.nodes.is_virtual[und] == 0) continue;
+                if (inc_n[und] < 2) inc[und][inc_n[und]] = j;
+                ++inc_n[und];
+            }
+        }
+        auto walk = [&](int start_vj, int via_link, double& head_out,
+                        double& dist_out, bool& wet_out) -> bool {
+            int node = start_vj, link = via_link;
+            double dist = 0.0;
+            for (int guard = 0; guard <= n_links; ++guard) {
+                auto ul = static_cast<std::size_t>(link);
+                const int cr = ctx.link_subtypes.conduit_row(link);
+                dist += (cr >= 0)
+                    ? ctx.link_subtypes.conduits.length[static_cast<std::size_t>(cr)]
+                    : 0.0;
+                const int other = (ctx.links.node1[ul] == node)
+                    ? ctx.links.node2[ul] : ctx.links.node1[ul];
+                if (other < 0 || other >= n_nodes) return false;
+                auto uo = static_cast<std::size_t>(other);
+                if (ctx.nodes.is_virtual[uo] == 0) {
+                    head_out = ctx.nodes.head[uo];
+                    dist_out = dist;
+                    wet_out  = ctx.nodes.depth[uo] > 0.0;
+                    return true;
+                }
+                if (inc_n[uo] != 2) return false;
+                link = (inc[uo][0] == link) ? inc[uo][1] : inc[uo][0];
+                if (link < 0) return false;
+                node = other;
+            }
+            return false;  // cycle of VJs (rejected elsewhere)
+        };
+        for (int i = 0; i < n_nodes; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ctx.nodes.is_virtual[ui] == 0 || inc_n[ui] != 2) continue;
+            double hA = 0.0, dA = 0.0, hB = 0.0, dB = 0.0;
+            bool wetA = false, wetB = false;
+            const bool okA = walk(i, inc[ui][0], hA, dA, wetA);
+            const bool okB = walk(i, inc[ui][1], hB, dB, wetB);
+            // A dry node's head is just its invert — interpolating between two
+            // dry endpoints with differing inverts would MANUFACTURE water on a
+            // dry deck (P1 verification finding: vj_fv_invert_collision seeded
+            // 1 ft from nothing). Seeding requires at least one WET endpoint.
+            if (!(okA && wetA) && !(okB && wetB)) continue;
+            double head;
+            if (okA && okB) {
+                const double dt_sum = dA + dB;
+                head = (dt_sum > 0.0) ? (hA * dB + hB * dA) / dt_sum
+                                      : 0.5 * (hA + hB);
+            } else if (okA) {
+                head = hA;
+            } else if (okB) {
+                head = hB;
+            } else {
+                continue;
+            }
+            const double depth = head - ctx.nodes.invert_elev[ui];
+            if (depth > 0.0) {
+                // init_depth is the field that SURVIVES: SWMMEngine::initialize
+                // calls NodeData::reset_state(), which re-derives depth,
+                // old_depth and head from init_depth on every cold start. A
+                // seeding that wrote only depth/head was visible to a caller
+                // that just opened the model and gone by the first routing
+                // step — measured on the study's e4 deck, where base and
+                // seeded binaries produced byte-identical .out files.
+                ctx.nodes.init_depth[ui] = depth;
+                ctx.nodes.depth[ui]      = depth;
+                ctx.nodes.head[ui]       = head;
+            }
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Evaporation timeseries resolution

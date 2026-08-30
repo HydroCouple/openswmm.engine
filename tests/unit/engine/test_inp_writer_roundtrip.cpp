@@ -968,3 +968,36 @@ TEST(InpWriterRoundTrip, IrregularFixtureConvergesAtTheSecondGeneration) {
               slurp(data("_irregular_transect_rt3.inp")))
         << "irregular_transect.inp: writer does not converge";
 }
+
+// ===========================================================================
+// Unsteady friction — [OPTIONS] UNSTEADY_FRICTION / UF_K3 (issue #156)
+//
+// Both keys are inert in this build (no solver reads them), so a writer that
+// drops them loses data with no other symptom: the file still reloads, just
+// with the defaults back in place. Non-default values in the fixture are what
+// make that visible.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, UnsteadyFrictionKeysSurviveTheRoundTrip) {
+    const auto g = gen1("uf_options.inp");
+    EXPECT_EQ(row(g.text, "OPTIONS", "UNSTEADY_FRICTION").at(1), "VITKOVSKY");
+    EXPECT_DOUBLE_EQ(std::stod(row(g.text, "OPTIONS", "UF_K3").at(1)), 0.02);
+
+    Reopened r("_uf_options_rt1.inp");
+    char buf[64] = {};
+    ASSERT_EQ(swmm_options_get(r.e, "UNSTEADY_FRICTION", buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "VITKOVSKY");
+    ASSERT_EQ(swmm_options_get(r.e, "UF_K3", buf, sizeof(buf)), SWMM_OK);
+    EXPECT_DOUBLE_EQ(std::stod(buf), 0.02);
+}
+
+TEST(InpWriterRoundTrip, UnsteadyFrictionKeysAreWrittenEvenAtTheirDefaults) {
+    // The keys are emitted unconditionally (like SURCHARGE_METHOD), so a deck
+    // that never named them still carries them forward. Without this the
+    // previous test would also pass against a writer that only emits
+    // non-defaults — and the GUI's Save would silently drop a user's explicit
+    // "NONE" back to an absent key.
+    const auto g = gen1("hydrology.inp");
+    EXPECT_EQ(row(g.text, "OPTIONS", "UNSTEADY_FRICTION").at(1), "NONE");
+    EXPECT_DOUBLE_EQ(std::stod(row(g.text, "OPTIONS", "UF_K3").at(1)), 0.015);
+}

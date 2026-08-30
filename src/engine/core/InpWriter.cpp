@@ -36,9 +36,10 @@
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES,
  *   MAP, COORDINATES, VERTICES, Polygons, SYMBOLS,
  *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
- *   2D_OPTIONS, 2D_MESH_FILE (external mode) or 2D_VERTICES, 2D_TRIANGLES,
- *   2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP, 2D_BOUNDARY_CONDITIONS,
- *   2D_EDGE_CONVEYANCE (inline mode)
+ *   2D_OPTIONS, 2D_INFILTRATION_OPTIONS, 2D_INFILTRATION_DEFAULTS,
+ *   2D_INFILTRATION, 2D_MESH_FILE (external mode) or 2D_VERTICES,
+ *   2D_TRIANGLES, 2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP,
+ *   2D_BOUNDARY_CONDITIONS, 2D_EDGE_CONVEYANCE (inline mode)
  *
  * @ingroup engine_core
  *
@@ -62,6 +63,14 @@
 #include "../2d/data/BoundaryData.hpp"
 #include "../2d/data/PendingRows2D.hpp"
 #include "../2d/data/Serialize2D.hpp"
+
+#ifdef OPENSWMM_HAS_2D
+// Unlike the 2D data headers above, Infil2D's grammar helpers
+// (infil2DMethodToken / infil2DDestToken / infil2DParamCount) are defined in
+// 2d/infil/Infil2D.cpp, which is compiled only when the 2D module is built —
+// so the [2D_INFILTRATION*] emission is guarded rather than runtime-checked.
+#include "../2d/infil/Infil2D.hpp"
+#endif
 
 #include <cmath>
 #include <cstdio>
@@ -346,6 +355,77 @@ static const char* bc2d_type_token(const twoD::PendingBoundaryRow& r) {
 
 static void emit2DMeshSections(FILE* f, const SimulationContext& ctx);
 
+#ifdef OPENSWMM_HAS_2D
+// ---- [2D_INFILTRATION_OPTIONS] / _DEFAULTS / [2D_INFILTRATION] (plan §5.5) --
+//
+// §5.5.5: these are per-cell mesh attributes, so they FOLLOW THE MESH exactly
+// as [2D_VERTICES]/[2D_TRIANGLES] do — into the .2dm sidecar in external-mesh
+// mode, into the .inp when the mesh is inline. This function is therefore
+// called from exactly one place, the tail of emit2DMeshSections(), which is
+// itself invoked once per save against one destination stream; double emission
+// is impossible by construction rather than being resolved by read-side
+// precedence. Emitting into both files would be actively wrong:
+// load2DMeshExternalFile applies SIDECAR-WINS-PER-SECTION, so an .inp copy of
+// a section the .2dm also carries is silently discarded on reload.
+//
+// [2D_TRIANGLES] is deliberately NOT extended with infiltration columns
+// (§5.5.3): its columns are positional (V1 V2 V3 MANNINGS_N [INIT_DEPTH]
+// [TAG], a numeric 5th token meaning INIT_DEPTH) and appending would break
+// hand-authored meshes.
+static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
+    const twoD::Infil2D* infil = ctx.twod_io.infil;
+    if (!infil) return;
+
+    // METHOD [P1..Pn] DEST. Parameter columns are POSITIONAL and in PROJECT
+    // UNITS (stored verbatim; Infil2D::resolve converts). Trailing columns the
+    // method does not use are trimmed with infil2DParamCount(); the one
+    // interior no-op in the legacy [INFILTRATION] layout — CURVE_NUMBER's
+    // middle column, see the table on Infil2DRow — is written as "-" so the
+    // columns after it keep their positions.
+    auto emit_row = [f](const twoD::Infil2DRow& row) {
+        std::fprintf(f, " %-20s", twoD::infil2DMethodToken(row));
+        if (!row.has_method) { std::fprintf(f, "\n"); return; }
+        const int np = twoD::infil2DParamCount(row.method);
+        for (int k = 0; k < np && k < twoD::kInfil2DMaxParams; ++k) {
+            if (row.method == InfilModel::CURVE_NUM && k == 1)
+                std::fprintf(f, " %-12s", "-");
+            else
+                std::fprintf(f, " %-12.12g", row.p[k]);
+        }
+        std::fprintf(f, " %s\n", twoD::infil2DDestToken(row.dest));
+    };
+
+    if (infil->options().infil_step > 0.0) {
+        char sb[32];
+        fmt_step(sb, infil->options().infil_step);
+        sec(f, "2D_INFILTRATION_OPTIONS");
+        std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
+        std::fprintf(f, "%-22s %s\n", "INFIL_STEP", sb);
+    }
+
+    if (!infil->defaults().empty()) {
+        sec(f, "2D_INFILTRATION_DEFAULTS");
+        std::fprintf(f, ";;%-14s %-20s %-12s %-12s %-12s %-12s %-12s %s\n",
+                     "TAG", "METHOD", "P1", "P2", "P3", "P4", "P5", "DEST");
+        for (const auto& d : infil->defaults()) {
+            std::fprintf(f, "%-16s", d.tag.c_str());
+            emit_row(d.row);
+        }
+    }
+
+    if (!infil->overrides().empty()) {
+        sec(f, "2D_INFILTRATION");
+        std::fprintf(f, ";;%-14s %-20s %-12s %-12s %-12s %-12s %-12s %s\n",
+                     "CELL", "METHOD", "P1", "P2", "P3", "P4", "P5", "DEST");
+        for (const auto& o : infil->overrides()) {
+            // CELL is 1-BASED in the file (tri is 0-based internally).
+            std::fprintf(f, "%-16d", o.tri + 1);
+            emit_row(o.row);
+        }
+    }
+}
+#endif // OPENSWMM_HAS_2D
+
 static void write2DSections(FILE* f, const SimulationContext& ctx,
                             const std::string& dst_dir,
                             bool force_abs_paths,
@@ -471,9 +551,11 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
 }
 
 // Emit [2D_VERTICES] / [2D_TRIANGLES] / node maps / [2D_BOUNDARY_CONDITIONS]
-// / [2D_EDGE_CONVEYANCE] from the in-memory mesh state. Target is either the
-// main .inp (inline mode) or the external .2dm sidecar — both are parsed by
-// the same section grammar (SectionHandlers2D / load2DMeshExternalFile).
+// / [2D_EDGE_CONVEYANCE] / the [2D_INFILTRATION*] family from the in-memory
+// mesh state. Target is either the main .inp (inline mode) or the external
+// .2dm sidecar — both are parsed by the same section grammar
+// (SectionHandlers2D / load2DMeshExternalFile). Exactly one destination per
+// save, which is what keeps every section here single-emission.
 static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     const auto& tio  = ctx.twod_io;
     const auto& mesh = *tio.mesh;
@@ -655,6 +737,14 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
             }
         }
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // ---- [2D_INFILTRATION_OPTIONS] / _DEFAULTS / [2D_INFILTRATION] ------------
+    // Per-cell mesh attributes (§5.5.5): they travel with the mesh, into
+    // whichever single destination this function was pointed at. THE ONLY CALL
+    // SITE — see emit2DInfilSections.
+    emit2DInfilSections(f, ctx);
+#endif
 }
 
 int writeInpFile(const SimulationContext& ctx_internal,
@@ -709,6 +799,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     static const char* sInertial[]   = {"NONE","PARTIAL","FULL"};
     static const char* sNormFlow[]   = {"SLOPE","FROUDE","BOTH","NEITHER"};
     static const char* sSurcharge[]  = {"EXTRAN","SLOT","DYNAMIC_SLOT"};
+    static const char* sUnsteadyFriction[] = {"NONE","VITKOVSKY"};  // issue #156
 
     const SimulationOptions& o = ctx.options;
     int fu  = static_cast<int>(o.flow_units);
@@ -818,6 +909,13 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-20s %s\n",  "NORMAL_FLOW_LIMITED", (nfl>=0&&nfl<=3)?sNormFlow[nfl]:"BOTH");
     std::fprintf(f,"%-20s %s\n",  "FORCE_MAIN_EQUATION", o.force_main_eqn==1?"D-W":"H-W");
     std::fprintf(f,"%-20s %s\n",  "SURCHARGE_METHOD",    (sm>=0&&sm<=2)?sSurcharge[sm]:"EXTRAN");
+    {   // Unsteady friction (issue #156): round-tripped unconditionally, like
+        // SURCHARGE_METHOD — the keys are inert unless a consuming solver runs.
+        const int uf = o.unsteady_friction;
+        std::fprintf(f,"%-20s %s\n","UNSTEADY_FRICTION",
+                     (uf>=0&&uf<=1)?sUnsteadyFriction[uf]:"NONE");
+        std::fprintf(f,"%-20s %g\n","UF_K3", o.uf_k3);
+    }
     std::fprintf(f,"%-20s %.2f\n","VARIABLE_STEP",       o.variable_step);
     std::fprintf(f,"%-20s %g\n",  "LENGTHENING_STEP",    o.lengthening_step);
     std::fprintf(f,"%-20s %g\n",  "MIN_SURFAREA",        o.min_surf_area);
@@ -867,6 +965,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
         if (fvo.pressurized_implicit)
             std::fprintf(f,"%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
+        if (fvo.pressure_closure == 1)  // issue #156: non-default only
+            std::fprintf(f,"%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
         if (fvo.dispersion > 0.0)
             std::fprintf(f,"%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
         if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
