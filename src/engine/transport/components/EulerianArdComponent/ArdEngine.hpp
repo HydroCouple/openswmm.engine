@@ -42,11 +42,17 @@
  *          on the mesh under this engine — the state carries pollutant
  *          rows first (np-aligned) then the MSX rows; the R4b
  *          element-local limitation is LEGACY-only. WALL species fall
- *          back to LEGACY with a warning. Still pending: treatment
- *          interop, sources/BCs, and mass-balance ledger rows (E5);
- *          direct consumption of the FV solver's own cell state instead
- *          of the projection (E2b); storage mixing models beyond CMSTR
- *          (E2b, shared with LARD).
+ *          back to LEGACY with a warning.
+ *
+ *          Treatment interop, sources/BCs and the mass-balance ledger rows
+ *          LANDED with E5a (`cbb9d321`) and E5b (`721ae60c`) — this comment
+ *          listed all three as pending until 2026-08-25, five rounds after
+ *          the fact, and a program-state audit read it as authoritative.
+ *
+ *          Genuinely still pending: direct consumption of the FV solver's
+ *          own cell state instead of the projection (E2b); storage mixing
+ *          models beyond CMSTR (E2b, shared with LARD); tidal reverse-flow
+ *          boundary concentration (E2b, no scaffolding at all).
  *
  * @ingroup engine_transport
  *
