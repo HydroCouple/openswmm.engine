@@ -1228,7 +1228,12 @@ struct SimulationContext {
         double shortfall_mass   = 0.0; ///< unmet extraction, internal units
         long   age_clamp_events = 0;   ///< age-row clamps
         int    first_node       = -1;  ///< element of the first clamp
-        bool   runtime_warned   = false;
+        /// First clamp seen — captures `first_node` once. NOT a warning flag:
+        /// the per-clamp runtime warning was removed 2026-08-29 because it
+        /// fired on every correct extraction deck (a deck extracting 40 % of
+        /// its inflow logged 108 clamps while the chain wetted). The
+        /// end-of-run summary is the diagnostic.
+        bool   first_clamp_recorded = false;
         bool   api_warned       = false; ///< first negative API mass flux
         void reset() { *this = NegativeSourceStats{}; }
     } negsrc;
