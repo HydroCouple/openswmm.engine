@@ -6552,18 +6552,21 @@ void SWMMEngine::initHydrology() noexcept {
                     }
                 }
             }
-            // Storage layer: [0]=thickness, [1]=voidFrac
+            // Storage layer: [0]=thickness, [1]=void RATIO (voids/solids),
+            // converted to a fraction p/(p+1) in LIDSolver::init (issue #102).
+            // Legacy readStorageData accepts any non-negative ratio; a cap at
+            // 1.0 here would silently limit storage to 50 % voids.
             if (uj < ctx_.lid_controls.storage.size()) {
                 const auto& s = ctx_.lid_controls.storage[uj];
-                if (s[0] > 0.0 && (s[1] <= 0.0 || s[1] > 1.0)) {
+                if (s[0] > 0.0 && s[1] <= 0.0) {
                     ctx_.errors.push_back(format_error(ERR_LID_PARAMS, lname));
                     set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
                 }
             }
-            // Pavement layer: [0]=thickness, [1]=voidRatio
+            // Pavement layer: [0]=thickness, [1]=void RATIO — same convention.
             if (uj < ctx_.lid_controls.pavement.size()) {
                 const auto& p = ctx_.lid_controls.pavement[uj];
-                if (p[0] > 0.0 && (p[1] <= 0.0 || p[1] > 1.0)) {
+                if (p[0] > 0.0 && p[1] <= 0.0) {
                     ctx_.errors.push_back(format_error(ERR_LID_PARAMS, lname));
                     set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
                 }

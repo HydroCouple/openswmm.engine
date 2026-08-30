@@ -32,6 +32,7 @@
 
 #include "hydrology/LID.hpp"
 #include "core/SimulationContext.hpp"
+#include "core/SWMMEngine.hpp"
 #include "data/HydrologyData.hpp"
 
 using namespace openswmm;
@@ -777,6 +778,50 @@ TEST(LIDModelBuilder, FromImpervConvertedToFraction) {
 
     EXPECT_NEAR(solver.group(0).from_imperv[0], 0.5, 1e-10)
         << "from_imperv should be converted from % to fraction";
+}
+
+// A [STORAGE] layer's second field is a void RATIO (voids/solids), which the
+// solver converts to a fraction p/(p+1). Legacy readStorageData accepts any
+// non-negative ratio. The Gap #82 validator capped it at 1.0 as if it were
+// the fraction, so 75 % voids (ratio 3) could not be expressed at all —
+// found when the LID fix round (2026-08-30) re-expressed the age/heat decks
+// in user units. This gate FAILS at base: ERROR 185 on open.
+TEST(LIDModelBuilder, StorageVoidRatioAboveOneIsLegal) {
+    std::filesystem::create_directories("lid_area_out");
+    const std::string inp = "lid_area_out/void_ratio.inp";
+    {
+        std::ofstream f(inp);
+        f << "[TITLE]\nstorage void ratio 3 = 75% voids\n\n[OPTIONS]\n"
+             "FLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING KINWAVE\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+             "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+             "REPORT_STEP 00:05:00\nWET_STEP 00:05:00\nDRY_STEP 00:05:00\n"
+             "ROUTING_STEP 60\n\n"
+             "[RAINGAGES]\nRG INTENSITY 1:00 1.0 TIMESERIES STORM\n\n"
+             "[SUBCATCHMENTS]\nS1 RG O1 5 0 500 0.5 0\n\n"
+             "[SUBAREAS]\nS1 0.01 0.1 0.0 0.0 100 OUTLET\n\n"
+             "[INFILTRATION]\nS1 0.0 0.0 4.0 7.0 0\n\n"
+             "[LID_CONTROLS]\nBC1 BC\n"
+             "BC1 SURFACE  0.6  0.0  0.1  100  5\n"
+             "BC1 SOIL     3.0  0.5  0.2  0.1  0.864 10.0 3.6\n"
+             "BC1 STORAGE  12.0 3.0  0.0  0\n"
+             "BC1 DRAIN    0.5  0.5  0    0\n\n"
+             "[LID_USAGE]\nS1 BC1 1 43560 500 50 100 0\n\n"
+             "[OUTFALLS]\nO1 0.0 FREE NO\n\n"
+             "[TIMESERIES]\nSTORM 01/01/2026 00:00 0.5\n"
+             "STORM 01/01/2026 01:00 0.0\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), "lid_area_out/void_ratio.rpt",
+                               "lid_area_out/void_ratio.out", nullptr), 0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    // And the solver holds the FRACTION: 3 / (3 + 1).
+    const auto& g = static_cast<openswmm::SWMMEngine*>(e)->lid().group(0);
+    ASSERT_GT(g.count, 0);
+    EXPECT_DOUBLE_EQ(g.stor_void[0], 0.75);
+    swmm_engine_destroy(e);
 }
 
 TEST(LIDModelBuilder, DrainToNodeResolved) {
