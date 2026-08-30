@@ -84,6 +84,13 @@ struct LIDGroupSoA {
     LIDType type = LIDType::BIO_CELL;
     int count = 0;
 
+    // Unit-conversion factors for the model's flow units (legacy UCF()).
+    // Layer parameters are converted to internal ft / ft-per-sec at init();
+    // these two factors also drive the underdrain head/rate conversion in
+    // getDrainRate(). Defaults are the US-customary values (issue #102).
+    double ucf_raindepth = 12.0;    ///< ft → in|mm  (RAINDEPTH)
+    double ucf_rainfall  = 43200.0; ///< ft/sec → in/hr|mm/hr  (RAINFALL)
+
     std::vector<int> subcatch_idx;     ///< Which subcatchment this unit belongs to
     std::vector<int> control_idx;      ///< LID control index (into ctx.lid_controls)
     std::vector<double> area;          ///< Unit area (ft2)
