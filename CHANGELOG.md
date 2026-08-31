@@ -21,6 +21,47 @@ retroactive.
 
 ## [Unreleased]
 
+### Added
+
+- **Heat transport H6a — incoming shortwave forcing.** `[RADIATIVE_FLUXES]
+  SHORTWAVE` now takes three mutually exclusive spellings instead of one
+  constant: a fixed W/m², `TIMESERIES <name>` for a measured record, or
+  `COMPUTED` for a Spencer/NOAA solar position driving a Bird & Hulstrom
+  (1981) clear-sky model. New `[SOLAR_RADIATION]` (site coordinates,
+  timezone, elevation, Bird atmosphere) and `[CLOUD_COVER]` (fraction,
+  constant or timeseries) sections in `model.heat`, plus the new public
+  header `openswmm_heat.h` — the surface GUI task G4g was blocked on.
+  The header also carries the `[HEAT_SOURCES]` inlet-temperature table
+  (step 3): per-source GLOBAL read/write with a configured-vs-default
+  distinction, NODE-override enumeration and CRUD, and an effective-value
+  resolver that delegates to the engine's own precedence. The API refuses
+  exactly what the parser refuses — including NaN/inf, a hole the
+  pre-existing `[RADIATIVE_FLUXES]` fraction guard had and which is now
+  closed. ⚠ API edits to a component config do not yet survive
+  `swmm_model_write` (no per-component serialization until IO3) — pinned
+  by a gate rather than left to be discovered.
+
+  Cloud fraction modulates **both** directions: it attenuates shortwave
+  (Kasten–Czeplak `1 − k C^n`) and raises atmospheric emissivity in the
+  longwave (Bolz `1 + k_lw C²`). Clear sky is bit-identical to H3, not
+  merely close — the cloud factor is a literal `1.0` that
+  `atmosphericEmissivity` short-circuits, so the RHE-gated Brunt path is
+  the same object code it was validated as.
+
+  Three refusals worth knowing about, each chosen over a silent fallback:
+  configuring two SHORTWAVE spellings is an error rather than a precedence
+  ladder; `COMPUTED` without `LATITUDE`/`LONGITUDE` is an error rather than
+  a fallback onto the `[TEMPERATURE]` SNOWMELT latitude (which defaults to
+  0 and would model equatorial noon); and out-of-range values are refused
+  rather than clamped, identically in the parser and the C API.
+
+  **Solar position is Spencer/NOAA (~0.1°), not NREL SPA (±0.0003°).** The
+  plan originally specified SPA; implementing it faithfully needs ~260 rows
+  of periodic-term constants that would have been transcribed from memory
+  alongside the test vector meant to check them. `solarPosition()` is the
+  swap point for landing SPA later, against its published source. See
+  `HEAT_TRANSPORT_PLAN.md` §2.5 and D-H6a-4.
+
 ### Performance
 
 - **FV published node stages no longer stand above the conduits they connect.**

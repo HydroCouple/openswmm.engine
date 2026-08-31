@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "SolarRadiation.hpp"
 #include "SurfaceExchange.hpp"
 #include "../../../core/SimulationContext.hpp"
 
@@ -73,23 +74,30 @@ double backLongwave(double t_water_c, double emiss_water) noexcept {
     return emiss_water * kStefanBoltzmann * kelvin4(t_water_c);
 }
 
-double atmosphericEmissivity(double e_a_kpa,
-                             double atm_emiss_coeff) noexcept {
+double atmosphericEmissivity(double e_a_kpa, double atm_emiss_coeff,
+                             double cloud_factor) noexcept {
     // Brunt (1932). The reference passes PASCALS into the square root
     // (`sqrt(vaporPressureAir * 1000)`); vapour pressure here is kPa, so
     // the ×1000 is the unit conversion, not a fudge. Using kPa understates
     // this term by sqrt(1000).
-    return atm_emiss_coeff +
-           0.0027 * std::sqrt(std::max(0.0, e_a_kpa) * 1000.0);
+    const double clear =
+        atm_emiss_coeff + 0.0027 * std::sqrt(std::max(0.0, e_a_kpa) * 1000.0);
+
+    // H6a (D-H6a-2). Guarded rather than multiplied unconditionally: the
+    // clear-sky result must be the SAME OBJECT CODE H3 was gated on, not a
+    // multiply by a value that happens to be 1.0. `cloudLongwaveFactor`
+    // returns a literal 1.0 for C <= 0 for the same reason.
+    if (cloud_factor == 1.0) return clear;
+    return clear * cloud_factor;
 }
 
 double atmosphericLongwave(double t_air_c, double humidity_pct,
                            double atm_emiss_coeff, double lw_reflection,
-                           double sky_view) noexcept {
+                           double sky_view, double cloud_factor) noexcept {
     const double e_a =
         (humidity_pct / 100.0) * saturationVapourPressure(t_air_c);
     return kStefanBoltzmann * kelvin4(t_air_c) *
-           atmosphericEmissivity(e_a, atm_emiss_coeff) *
+           atmosphericEmissivity(e_a, atm_emiss_coeff, cloud_factor) *
            (1.0 - lw_reflection) * sky_view;
 }
 
@@ -104,14 +112,18 @@ double landCoverLongwave(double t_air_c, double emiss_landcover,
 }
 
 double netRadiativeFluxOut(double t_water_c, double t_air_c,
-                           double humidity_pct,
-                           const RadiativeConfig& cfg) noexcept {
-    const double jsn = netShortwave(cfg.shortwave_wm2, cfg.albedo,
-                                    cfg.shade_factor);
+                           double humidity_pct, const RadiativeConfig& cfg,
+                           double jin_wm2, double cloud_factor) noexcept {
+    // Negative sentinel = "no resolved value, use the configured constant".
+    // 0 is a legal Jin (night) and must not read as unset.
+    const double jin = (jin_wm2 < 0.0) ? cfg.shortwave_wm2 : jin_wm2;
+
+    const double jsn = netShortwave(jin, cfg.albedo, cfg.shade_factor);
     const double jbr = backLongwave(t_water_c, cfg.emiss_water);
     const double jan = atmosphericLongwave(t_air_c, humidity_pct,
                                            cfg.atm_emiss_coeff,
-                                           cfg.lw_reflection, cfg.sky_view);
+                                           cfg.lw_reflection, cfg.sky_view,
+                                           cloud_factor);
     const double jlc = landCoverLongwave(t_air_c, cfg.emiss_landcover,
                                          cfg.sky_view);
     // Sign flip lives here and nowhere else: three terms warm the water,
@@ -122,9 +134,19 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
 double radiativeFluxOut(const SimulationContext& ctx, double t_w) noexcept {
     if (!ctx.options.heat_transport || !ctx.heat_config.radiative_exchange)
         return 0.0;
-    return netRadiativeFluxOut(t_w, airTempCelsius(ctx),
-                               ctx.climate_state.humidity,
-                               ctx.heat_config.radiative);
+
+    // H6a. `shortwave_now` is resolved once per step by `updateSolarForcing`
+    // at every binding prologue; this call is const and only reads it.
+    //
+    // Under CONSTANT with no cloud these two arguments reproduce H3 exactly:
+    // `updateSolarForcing` copies `cfg.shortwave_wm2` into `shortwave_now`
+    // unchanged, and `cloudLongwaveFactor(0, k)` is a literal 1.0 which
+    // `atmosphericEmissivity` then short-circuits.
+    const auto& cc = ctx.heat_config.cloud;
+    return netRadiativeFluxOut(
+        t_w, airTempCelsius(ctx), ctx.climate_state.humidity,
+        ctx.heat_config.radiative, ctx.heat_state.shortwave_now,
+        cloudLongwaveFactor(ctx.heat_state.cloud_now, cc.lw_cloud_k));
 }
 
 }  // namespace openswmm::transport::heat

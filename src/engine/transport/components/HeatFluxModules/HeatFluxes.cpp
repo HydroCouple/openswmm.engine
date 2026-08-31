@@ -28,6 +28,7 @@
 #include <cstddef>
 
 #include "RadiativeExchange.hpp"
+#include "SolarRadiation.hpp"
 #include "SurfaceExchange.hpp"
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
@@ -65,7 +66,10 @@ XSectParams buildXsp(const LinkData& links, std::size_t uk) {
 
 double netFluxOut(const SimulationContext& ctx, double t_w) noexcept {
     // Every family, one sign convention (positive OUT of the water), one
-    // sum. H6's SEDIMENT_EXCHANGE is a fourth term on this line.
+    // sum. H6b's SEDIMENT_EXCHANGE is a fourth term on this line.
+    //
+    // H6a deliberately adds NO term here: it changes where `Jin` comes from
+    // inside radiativeFluxOut, not how many families are summed.
     return surfaceFluxOut(ctx, t_w) + radiativeFluxOut(ctx, t_w);
 }
 
@@ -75,6 +79,11 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
         !ctx.heat_config.radiative_exchange)
         return;
     if (!(dt > 0.0)) return;
+
+    // H6a: resolve this step's Jin and cloud fraction BEFORE any flux call.
+    // `netFluxOut` is const and reads the cache; nothing downstream can
+    // refresh it.
+    updateSolarForcing(ctx);
 
     auto& hs = ctx.heat_state;
     const double rho = ctx.options.water_density;
