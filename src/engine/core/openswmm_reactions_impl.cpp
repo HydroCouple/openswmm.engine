@@ -36,6 +36,7 @@
 #include "../plugins/ProcessComponentRegistry.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -260,6 +261,8 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
         v = std::to_string(rx.atol);
     } else if (k == "RTOL") {
         v = std::to_string(rx.rtol);
+    } else if (k == "TEMPERATURE") {
+        v = std::to_string(rx.default_temp_c);
     } else {
         return SWMM_ERR_BADPARAM;
     }
@@ -539,6 +542,13 @@ SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
         if (!end || *end != '\0' || end == value || d <= 0.0)
             return SWMM_ERR_BADPARAM;
         (k == "ATOL" ? rx.atol : rx.rtol) = d;
+    } else if (k == "TEMPERATURE") {
+        // Any finite value is a temperature (degC); no range gate.
+        char* end = nullptr;
+        const double d = std::strtod(value, &end);
+        if (!end || *end != '\0' || end == value || !std::isfinite(d))
+            return SWMM_ERR_BADPARAM;
+        rx.default_temp_c = d;
     } else {
         return SWMM_ERR_BADPARAM;
     }

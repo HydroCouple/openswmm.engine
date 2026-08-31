@@ -121,6 +121,12 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
         } else if (key == "RTOL") {
             if (to_num(tok[1], num) && num > 0.0) rx.rtol = num;
             else errors.push_back("[REACTION_OPTIONS] bad RTOL '" + tok[1] + "'.");
+        } else if (key == "TEMPERATURE") {
+            // TEMP's fallback (degC) for elements without a heat-transport
+            // temperature. Any finite value is a temperature; no range gate.
+            if (to_num(tok[1], num)) rx.default_temp_c = num;
+            else errors.push_back("[REACTION_OPTIONS] bad TEMPERATURE '" +
+                                  tok[1] + "'.");
         } else {
             errors.push_back("[REACTION_OPTIONS] unknown option '" + tok[0] + "'.");
         }

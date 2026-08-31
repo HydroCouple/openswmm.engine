@@ -89,6 +89,10 @@ struct ReactionData {
     double             timestep    = 0.0;   ///< 0 ⇒ follow QUALITY_STEP
     double             atol        = 1.0e-6;
     double             rtol        = 1.0e-4;
+    /// TEMP's value when no heat-transport temperature exists for the
+    /// element (HEAT_TRANSPORT off, or state not yet seeded). 20 degC is
+    /// the standard water-quality reference temperature.
+    double             default_temp_c = 20.0;
 
     // ---- [REACTION_SPECIES] — index-aligned with the SpeciesRegistry MSX
     //      block (registry index = registry_base + i). ------------------------

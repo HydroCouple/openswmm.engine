@@ -111,7 +111,8 @@ SWMM_ENGINE_API int swmm_reaction_expr_get(SWMM_Engine engine, int scope,
 
 /**
  * @brief Read a [REACTION_OPTIONS] value as its canonical token.
- * @param key SOLVER, COUPLING, RATE_UNITS, AREA_UNITS, TIMESTEP, ATOL, RTOL.
+ * @param key SOLVER, COUPLING, RATE_UNITS, AREA_UNITS, TIMESTEP, ATOL, RTOL,
+ *            TEMPERATURE (degC fallback for the TEMP expression variable).
  */
 SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
         const char* key, char* value, int value_len);
@@ -223,7 +224,8 @@ SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine,
 
 /* ---- Static vocabulary (no engine handle needed) ----------------------- */
 
-/** @brief Number of built-in hydraulic variables (D Q U RE US FF AV HRT DT). */
+/** @brief Number of built-in hydraulic variables (D Q U RE US FF AV HRT DT
+ *         TEMP). */
 SWMM_ENGINE_API int swmm_reaction_hydvar_count(void);
 
 /** @brief Read one hydraulic variable's name and description. */

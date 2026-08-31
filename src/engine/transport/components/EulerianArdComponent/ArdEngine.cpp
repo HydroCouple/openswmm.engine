@@ -1117,7 +1117,7 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
         ctx, dt, state_.cell_phi.data(), state_.cell_a.data(),
         mesh_.cell_dx.data(), mesh_.n_cells(), node_mass_.data(),
         node_vol_.data(), static_cast<int>(node_vol_.size()),
-        ctx.n_pollutants(), state_.n_species, kMinStoreVol);
+        ctx.n_pollutants(), state_.n_species, kMinStoreVol, temp_row_);
 
     publish(ctx);
 

@@ -97,6 +97,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <vector>
 
@@ -533,9 +534,17 @@ public:
                     for (int p = 0; p < np; ++p)
                         msx_poll_[static_cast<std::size_t>(p)] =
                             store_.seg_conc(l, i, p);
+                    // TEMP: the segment's own temperature row when heat
+                    // rides the store (H7b); NaN defers to the
+                    // [REACTION_OPTIONS] TEMPERATURE constant.
+                    const double seg_temp_c =
+                        (L.temp_row >= 0)
+                            ? store_.seg_conc(l, i, L.temp_row)
+                            : std::numeric_limits<double>::quiet_NaN();
                     transport::reactSpeciesBlock(
                         ctx, /*tank=*/false, dt, msx_block_.data(),
-                        np > 0 ? msx_poll_.data() : nullptr, 0.0);
+                        np > 0 ? msx_poll_.data() : nullptr, 0.0,
+                        seg_temp_c);
                     for (int sp = 0; sp < nsp; ++sp)
                         store_.set_seg_conc(l, i, L.msx_first + sp,
                                             msx_block_[
@@ -556,9 +565,15 @@ public:
                                    static_cast<std::size_t>(p)];
                 const double hrt =
                     (un < nodes.hrt.size()) ? nodes.hrt[un] : 0.0;
+                const double node_temp_c =
+                    (L.temp_row >= 0 &&
+                     un < ctx.heat_state.node_temp.size())
+                        ? ctx.heat_state.node_temp[un]
+                        : std::numeric_limits<double>::quiet_NaN();
                 transport::reactSpeciesBlock(
                     ctx, /*tank=*/true, dt, msx_block_.data(),
-                    np > 0 ? msx_poll_.data() : nullptr, hrt);
+                    np > 0 ? msx_poll_.data() : nullptr, hrt,
+                    node_temp_c);
                 for (int sp = 0; sp < nsp; ++sp)
                     rx.msx_node_conc[un * static_cast<std::size_t>(nsp) +
                                      static_cast<std::size_t>(sp)] =

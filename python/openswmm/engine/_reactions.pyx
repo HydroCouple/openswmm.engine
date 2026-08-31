@@ -914,7 +914,7 @@ class Reactions:
         indirection.
 
         :param key: One of ``SOLVER``, ``COUPLING``, ``RATE_UNITS``,
-            ``AREA_UNITS``, ``TIMESTEP``, ``ATOL``, ``RTOL``.
+            ``AREA_UNITS``, ``TIMESTEP``, ``ATOL``, ``RTOL``, ``TEMPERATURE``.
         :returns: The canonical token (numeric options come back as text —
             ``TIMESTEP`` in seconds, ``ATOL``/``RTOL`` dimensionless).
         :raises BadParamError: *key* is not a recognised option.
@@ -931,7 +931,7 @@ class Reactions:
         ``BUILDING``/``OPENED`` only, validated eagerly with rollback.
 
         :param key: One of ``SOLVER``, ``COUPLING``, ``RATE_UNITS``,
-            ``AREA_UNITS``, ``TIMESTEP``, ``ATOL``, ``RTOL``.
+            ``AREA_UNITS``, ``TIMESTEP``, ``ATOL``, ``RTOL``, ``TEMPERATURE``.
         :param value: The canonical token; numeric options take their value
             as text (``TIMESTEP`` in seconds, ``ATOL``/``RTOL`` dimensionless).
         :raises BadParamError: *key* or *value* is not recognised.

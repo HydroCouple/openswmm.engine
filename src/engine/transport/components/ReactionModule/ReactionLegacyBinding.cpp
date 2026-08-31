@@ -159,6 +159,13 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
     const int np = ctx.n_pollutants();
     double hydvar[static_cast<int>(RxHydVar::COUNT_)] = {};
 
+    // TEMP source: the heat engines mirror element temperatures into
+    // heat_state (node_temp / link_temp, degC) whichever router runs;
+    // absent that (HEAT_TRANSPORT off), the [REACTION_OPTIONS]
+    // TEMPERATURE constant applies.
+    const auto& elem_temp =
+        tank ? ctx.heat_state.node_temp : ctx.heat_state.link_temp;
+
     for (int e = 0; e < n_elems; ++e) {
         const auto ue = static_cast<std::size_t>(e);
         const auto base = ue * static_cast<std::size_t>(ns);
@@ -167,6 +174,10 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
         // full hydraulic-variable population is the ARD binding's job (R6).
         hydvar[static_cast<int>(RxHydVar::HRT)] =
             (tank && ue < ctx.nodes.hrt.size()) ? ctx.nodes.hrt[ue] : 0.0;
+        hydvar[static_cast<int>(RxHydVar::TEMP)] =
+            (ctx.options.heat_transport && ue < elem_temp.size())
+                ? elem_temp[ue]
+                : rx.default_temp_c;
 
         for (int s = 0; s < ns; ++s)
             sc.block[static_cast<std::size_t>(s)] =
@@ -197,7 +208,7 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
 
 void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
                        double* species_block, const double* pollut,
-                       double hrt_seconds) {
+                       double hrt_seconds, double temp_c) {
     auto& rx = ctx.reactions;
     const int ns = rx.n_species();
     if (ns == 0) return;
@@ -205,6 +216,8 @@ void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
     sc.ensure(rx);
     double hydvar[static_cast<int>(RxHydVar::COUNT_)] = {};
     hydvar[static_cast<int>(RxHydVar::HRT)] = hrt_seconds;
+    hydvar[static_cast<int>(RxHydVar::TEMP)] =
+        std::isfinite(temp_c) ? temp_c : rx.default_temp_c;
     for (int s = 0; s < ns; ++s)
         sc.block[static_cast<std::size_t>(s)] = species_block[s];
     const auto rep = ReactionIntegrator::step(rx, tank, dt,

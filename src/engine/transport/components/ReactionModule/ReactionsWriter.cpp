@@ -93,6 +93,7 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
         row(out, "TIMESTEP",   fmt_double(rx.timestep));
         row(out, "ATOL",       fmt_double(rx.atol));
         row(out, "RTOL",       fmt_double(rx.rtol));
+        row(out, "TEMPERATURE", fmt_double(rx.default_temp_c));
     }
 
     out += "\n[REACTION_SPECIES]\n";
