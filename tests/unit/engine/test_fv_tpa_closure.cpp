@@ -405,53 +405,6 @@ TEST(FvTpa, SealedSlopedColumnSurvivesAcousticCelerity) {
         << "routing continuity error % = " << r.cont_err;
 }
 
-TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
-    // R3 (issue #156 review): the substep retry loop shrinks dt away from CFL
-    // violations, but the RK2 x TPA amplification on this same sealed sloped
-    // acoustic deck is dt-INDEPENDENT (measured on the study's e3 deck at
-    // FV_CFL 0.9/0.45/0.25: bit-near-identical growth, x20-40 per
-    // millisecond) — all 8 retries fail identically and the loop then ACCEPTS
-    // the diverged step. Before the guard this run COMPLETED with status OK
-    // and garbage physics (P6 finding F3: 30 of 118 study series beyond 10x
-    // the observed range, none flagged). The guard must convert it into a
-    // hard ERROR 14 that names the offending conduit.
-    std::string deck = overTopModel(
-        "FV_PRESSURE_CLOSURE  TPA\n"
-        "FV_SLOT_CELERITY     984\n"
-        "FV_CELL_LENGTH       0.5\n"
-        "FV_TIME_INTEGRATION  RK2\n",
-        true, 7.2, 2.0);
-    const auto pos = deck.find("END_TIME             00:30:00");
-    ASSERT_NE(pos, std::string::npos);
-    deck.replace(pos, std::string("END_TIME             00:30:00").size(),
-                 "END_TIME             00:02:00");
-
-    const std::string inp = outPath("tpa_sloped_acoustic_rk2.inp");
-    { std::ofstream f(inp); f << deck; }
-    SWMM_Engine e = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
-                               outPath("tpa_sloped_acoustic_rk2.rpt").c_str(),
-                               outPath("tpa_sloped_acoustic_rk2.out").c_str(),
-                               nullptr), 0)
-        << swmm_get_last_error_msg(e);
-    ASSERT_EQ(swmm_engine_initialize(e), 0);
-    ASSERT_EQ(swmm_engine_start(e, 1), 0);
-    double elapsed = 0.0;
-    int rc = 0;
-    do {
-        rc = swmm_engine_step(e, &elapsed);
-    } while (rc == 0 && elapsed > 0.0);
-    EXPECT_NE(rc, 0)
-        << "RK2 x TPA on the sealed sloped acoustic column now COMPLETES — "
-           "either the R2 instability is fixed (retire this gate and re-pin "
-           "the study matrix's C3/C5 integrator) or the guard went blind";
-    if (rc != 0) {
-        const std::string msg = swmm_get_last_error_msg(e);
-        EXPECT_NE(msg.find("diverged"), std::string::npos) << msg;
-    }
-    swmm_engine_end(e);
-    swmm_engine_destroy(e);
-}
 
 TEST(FvTpa, SealedSlopedColumnHoldsUnderImplicitAcoustic) {
     // P5 task-3 (the matrix.yaml open item): implicit × TPA diverged at t=0
@@ -614,6 +567,50 @@ FillingSurgeResult runFillingSurge(const std::string& base,
 
 } // namespace
 
+TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
+    // R3 (issue #156 review): the divergence guard converts a run the retry
+    // loop cannot save into a hard ERROR 14 naming the offending CONDUIT at
+    // the routing step where the cells went bad — instead of the legacy
+    // node-head check catching the published wreckage later, or (worse) a
+    // finite-garbage run scoring OK (P6 finding F3).
+    //
+    // History of this gate's deck: it first pinned the sealed sloped acoustic
+    // column under RK2, which diverged FINITELY — but that divergence turned
+    // out to be the MIN_TIMESTEP clamp (the R2 root cause: the census was
+    // clamped up past CFL; with the floor fixed the deck completes and the
+    // finite-garbage class has no known natural deck). The surviving natural
+    // divergence is the a = 150 filling deck under explicit EULER — the real
+    // temporal odd–even mode (see the KnownIssue pin above) — which NaNs;
+    // the guard must catch it in the conduit, loudly, the same routing step.
+    const std::string deck = fillingSurgeDeck("150");
+    const std::string inp = outPath("tpa_guard_loud.inp");
+    { std::ofstream f(inp); f << deck; }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
+                               outPath("tpa_guard_loud.rpt").c_str(),
+                               outPath("tpa_guard_loud.out").c_str(),
+                               nullptr), 0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0);
+    double elapsed = 0.0;
+    int rc = 0;
+    do {
+        rc = swmm_engine_step(e, &elapsed);
+    } while (rc == 0 && elapsed > 0.0);
+    EXPECT_NE(rc, 0)
+        << "Euler at a = 150 completed — the temporal mode is fixed: retire "
+           "this gate's deck choice AND the KnownIssue pin together";
+    if (rc != 0) {
+        const std::string msg = swmm_get_last_error_msg(e);
+        EXPECT_NE(msg.find("the FV solution diverged in conduit"),
+                  std::string::npos)
+            << "run failed but not through the cell-state guard: " << msg;
+    }
+    swmm_engine_end(e);
+    swmm_engine_destroy(e);
+}
+
 TEST(FvTpa, FillingSurgeSurvivesRegimeTransitions) {
     // P5b falsifier gate (issue #156): at the paper's own a = 25 m/s the
     // fixture must run clean — but ONLY because of the regime-consistent
@@ -662,47 +659,53 @@ TEST(FvTpa, KnownIssueHighCelerityFillingDiverges) {
            "e2_2025:C3/C5 in the study matrix";
 }
 
-TEST(FvTpa, Rk2FillingRescueSupersededByDivergenceGuard) {
-    // Stability round (2026-08-31) then R3 (the FV review), in that order.
-    // The round measured that RK2 (Heun) COMPLETES the a = 150 filling deck
-    // the Euler pin above diverges on, with 0.000 % continuity, and the study
-    // matrix pinned e2_2025's C3/C5 on that rescue. The R3 divergence guard
-    // then showed what the completion was made of: the odd–even temporal mode
-    // is not removed by Heun, only BOUNDED — this deck transits a cell depth
-    // magnitude of 12,314 ft (3.7 km of pressure head on a 9.4 cm pipe) at
-    // t = 0.4 s and rides such states for many routing steps before relaxing
-    // into its clean-looking finish. A solver state like that at a routing
-    // step boundary is not a transient overshoot, it is garbage the retry
-    // loop accepted because it is dt-independent; completing afterwards does
-    // not redeem the seconds that were garbage. So the guard supersedes the
-    // rescue: BOTH integrators now fail this deck loudly, and the difference
-    // between them lives where the physics is sane — at the paper's own
-    // a = 25 m/s, where RK2 must complete as cleanly as the Euler gate above
-    // (the positive control that Heun has not regressed).
-    //
-    // If the RK2 arm ever COMPLETES again, either the Vasconcelos & Wright
-    // hybrid flux (or another real fix) landed — retire this test and the
-    // Euler pin together and unpin the study matrix — or the guard went
-    // blind, which the DivergenceGuardFailsLoudNotSilent gate would also see.
+TEST(FvTpa, Rk2CompletesWhereEulerFillingPinDiverges) {
+    // The differential pin, restored — third revision, and this time the
+    // completion is REAL. History, because each turn was measured:
+    //   1. Stability round: RK2 completes a = 150 where Euler NaNs; the
+    //      matrix pinned e2_2025's C3/C5 on it.
+    //   2. R3's divergence guard exposed that completion as garbage-transit
+    //      (|h| = 12,314 ft at t = 0.4 s) and this test briefly asserted the
+    //      opposite: both integrators fail loudly.
+    //   3. The R2 root cause landed: the census was being CLAMPED UP to
+    //      constants::MIN_TIMESTEP (0.001 s, DYNWAVE granularity), so every
+    //      RK2 run — which disables LTS and takes the global path — stepped
+    //      at 4x its CFL limit on this deck's 0.04 m cells (stable dt
+    //      2.4e-4 s). With the floor fixed (kMinSubstep), RK2 completes with
+    //      the guard armed and green the whole run: no garbage transit, real
+    //      damping of the temporal odd–even mode that still NaNs Euler
+    //      (the KnownIssue pin above, unchanged — its measured dt of
+    //      0.0002 s was the UNCLAMPED LTS tier, which is why the clamp never
+    //      showed in its trace).
+    // The pin above IS the falsifier: same deck, one variable (integrator),
+    // opposite outcomes, both asserted. If the PIN fails, Euler's temporal
+    // mode got fixed — retire both together and unpin e2_2025 in the study
+    // matrix. If THIS fails, either Heun regressed or the dt floor crept
+    // back up.
     const auto rk2 = runFillingSurge(
         "tpa_filling_surge_c150_rk2",
         fillingSurgeDeck("150", "FV_TIME_INTEGRATION  RK2\n"));
-    EXPECT_FALSE(rk2.completed)
-        << "RK2 at a = 150 completed under the divergence guard — retire "
-           "this test and the Euler pin, and unpin e2_2025:C3/C5 in the "
-           "study matrix (cont err % = " << rk2.cont << ")";
+    EXPECT_TRUE(rk2.completed) << "RK2 diverged on the filling deck";
+    if (rk2.completed) {
+        EXPECT_LT(std::fabs(rk2.cont), 2.0)
+            << "routing continuity error % = " << rk2.cont;
+        EXPECT_GT(rk2.max_st, 0.094)
+            << "surge tank never rose above the pipe crown — the bore never "
+               "arrived and the fixture is not exercising the surge";
+    }
 
+    // Positive control at the paper's own a = 25 m/s (never clamped: stable
+    // dt 1.4e-3 s > the old floor — which is exactly why a = 25 always
+    // worked and a = 150 didn't; the "celerity threshold" WAS the clamp).
     const auto rk2_25 = runFillingSurge(
         "tpa_filling_surge_c25_rk2",
         fillingSurgeDeck("25", "FV_TIME_INTEGRATION  RK2\n"));
     EXPECT_TRUE(rk2_25.completed)
         << "RK2 diverged at a = 25 where Euler completes — a takeSubstep/"
-           "Heun regression, not a guard question";
+           "Heun regression";
     if (rk2_25.completed) {
         EXPECT_LT(std::fabs(rk2_25.cont), 2.0)
             << "routing continuity error % = " << rk2_25.cont;
-        EXPECT_GT(rk2_25.max_st, 0.094)
-            << "surge tank never rose above the pipe crown — the bore never "
-               "arrived and the fixture is not exercising the surge";
+        EXPECT_GT(rk2_25.max_st, 0.094);
     }
 }

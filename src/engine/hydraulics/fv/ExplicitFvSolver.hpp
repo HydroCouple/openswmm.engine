@@ -572,6 +572,15 @@ private:
     static constexpr double kStepAcceptRatio = 0.5;
     static constexpr int    kMaxStepRetries  = 8;
 
+    /// Substep floor — a loop guard only, far below any stable step this
+    /// solver legitimately computes. NOT constants::MIN_TIMESTEP (0.001 s,
+    /// legacy DYNWAVE routing granularity): clamping an EXPLICIT scheme's
+    /// census up to that value violates CFL wherever a cell demands
+    /// dt < 1 ms, which is routine at acoustic slot celerities on sub-foot
+    /// cells — and was the root cause of the issue-#156 "high-celerity TPA
+    /// instability" class (see the comment at the clamp site in advance()).
+    static constexpr double kMinSubstep = 1.0e-6;   ///< s
+
     // Divergence guard (issue #156 R3). The retry loop above is sound for CFL
     // violations, which shrink away with dt — but a dt-INDEPENDENT
     // amplification (measured: RK2 x TPA on the study's e3 siphon grows the
