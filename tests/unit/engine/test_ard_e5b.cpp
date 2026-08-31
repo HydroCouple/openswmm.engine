@@ -378,15 +378,18 @@ TEST(ArdE5bTest, ConfigCarryAlongsideOnSaveAs) {
               0);
     swmm_engine_destroy(e);
 
-    // The relative config reference must not dangle in the destination:
-    // the file the model was READ from is copied alongside, byte-equal.
+    // The relative config reference must not dangle in the destination.
+    // IO3c: the file is RENDERED from live state (transport.ard adopted the
+    // ComponentConfigSave hook), no longer byte-copied — assert the content
+    // semantically.
     std::ifstream copied("_e5b_saveas/_e5b_sv.ard");
     ASSERT_TRUE(copied.is_open())
         << "save-as did not carry the component config alongside — the "
            "written config=\"_e5b_sv.ard\" reference dangles.";
     std::stringstream got;
     got << copied.rdbuf();
-    EXPECT_EQ(got.str(), ard_body);
+    EXPECT_NE(got.str().find("[TRANSPORT_OPTIONS]"), std::string::npos);
+    EXPECT_NE(got.str().find("DISPERSION 5"), std::string::npos);
 }
 
 // ---------------------------------------------------------------------------

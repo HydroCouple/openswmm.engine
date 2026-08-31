@@ -64,6 +64,9 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+
+#include <iterator>
 
 #include "core/SWMMEngine.hpp"
 
@@ -639,3 +642,107 @@ TEST(ArdTransportBcsTest, TimeseriesSourceMatchesValueSource) {
 }
 
 }  // namespace
+
+// ===========================================================================
+// IO3c — the transport.ard component writes its own config file.
+// ===========================================================================
+
+namespace {
+
+std::string io3c_slurp(const char* path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f),
+                       std::istreambuf_iterator<char>());
+}
+
+}  // namespace
+
+// Base-FAILING leg: the written model.ard is RENDERED, not copied — the
+// SCALAR_SCHEME/LIMITER rows are aliases of [OPTIONS] FV_SCALAR_SCHEME /
+// FV_LIMITER, which the main writer persists in the .inp; the renderer
+// deliberately drops them from the component file because it cannot know
+// whether the live value came from this file, the deck, or a default
+// (emitting it would invent configuration — IO3a's invented-row lesson).
+// The copy fallback preserves them, which is how this gate fails at base.
+TEST(ArdIo3cSaveTest, ArdConfigIsRenderedNotCopied) {
+    write_file("_io3c_a.rxn", kInertRxn);
+    // The ;; comment is the rendered-vs-copied discriminator: the section
+    // reader strips comments (strip_comment), so only the COPY fallback can
+    // reproduce one in the written file.
+    write_file("_io3c_a.ard",
+               "[TRANSPORT_OPTIONS]\n"
+               ";; hand comment — only a byte copy preserves this line\n"
+               "DISPERSION 1.5\n"
+               "SCALAR_SCHEME MUSCL\n"
+               "TARGET_DX 25\n"
+               "[CONDUIT_DISPERSION]\n"
+               "C2 0.75\n"
+               "[TRANSPORT_BOUNDARIES]\n"
+               "J0 X VALUE 8.25\n"
+               "[TRANSPORT_SOURCES]\n"
+               "C3 X TIMESERIES src_ts\n");
+    write_deck("_io3c_a.inp", pc_two("_io3c_a.rxn", "_io3c_a.ard", false),
+               "", true, "src_ts 0 1.0\nsrc_ts 1 1.0\n");
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_io3c_a.inp", "_io3c_a.rpt", "_io3c_a.out",
+                               nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_a_out.inp"), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    swmm_engine_destroy(e);
+
+    const std::string ard = io3c_slurp("_io3c_a.ard");
+    EXPECT_EQ(ard.find(";;"), std::string::npos)
+        << "the written model.ard still carries the hand comment — the "
+           "renderer did not run (copy fallback)";
+    // The alias is PRESERVED (with the live value): the INP writer emits
+    // FV_SCALAR_SCHEME only under FLOW_ROUTING FV, so on this DYNWAVE deck
+    // the component file is the only carrier of that state across a save.
+    EXPECT_NE(ard.find("SCALAR_SCHEME MUSCL"), std::string::npos)
+        << "the SCALAR_SCHEME alias was dropped — on a non-FV deck nothing "
+           "else persists it (the FV_* [OPTIONS] block is FV-gated)";
+    EXPECT_NE(ard.find("DISPERSION 1.5"), std::string::npos);
+    EXPECT_NE(ard.find("TARGET_DX 25"), std::string::npos);
+    EXPECT_NE(ard.find("C2 0.75"), std::string::npos);
+    EXPECT_NE(ard.find("J0 X VALUE 8.25"), std::string::npos);
+    EXPECT_NE(ard.find("C3 X TIMESERIES src_ts"), std::string::npos);
+
+    // Invention leg (lesson 196): a config that never spelled the alias
+    // must not gain one — the provenance flags, not ctx.options.fv, decide.
+    write_file("_io3c_b.rxn", kInertRxn);
+    write_file("_io3c_b.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 2.25\n");
+    write_deck("_io3c_b.inp", pc_two("_io3c_b.rxn", "_io3c_b.ard", true));
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_io3c_b.inp", "_io3c_b.rpt",
+                               "_io3c_b.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e2);
+    ASSERT_EQ(swmm_model_write(e2, "_io3c_b_out.inp"), SWMM_OK);
+    swmm_engine_destroy(e2);
+    const std::string ard_b = io3c_slurp("_io3c_b.ard");
+    EXPECT_EQ(ard_b.find("SCALAR_SCHEME"), std::string::npos)
+        << "an alias-free model.ard gained SCALAR_SCHEME on save — "
+           "invented configuration";
+    EXPECT_EQ(ard_b.find("LIMITER"), std::string::npos);
+    EXPECT_NE(ard_b.find("DISPERSION 2.25"), std::string::npos);
+
+    // Reopen: everything still applies (the renderer's spellings are ones
+    // the parser accepts — the IO3b key-space lesson), and the second and
+    // third generations are byte-identical (fixed point).
+    e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_io3c_a_out.inp", "_io3c_a_r.rpt",
+                               "_io3c_a_r.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_a_out2.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string gen2 = io3c_slurp("_io3c_a.ard");
+    e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_io3c_a_out2.inp", "_io3c_a_r2.rpt",
+                               "_io3c_a_r2.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_a_out3.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string gen3 = io3c_slurp("_io3c_a.ard");
+    EXPECT_EQ(gen2, gen3);
+}

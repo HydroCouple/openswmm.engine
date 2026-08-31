@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -68,6 +69,31 @@ bool parse_hours(const std::string& tok, double& out) {
     char* end = nullptr;
     out = std::strtod(tok.c_str(), &end);
     return end != nullptr && *end == '\0' && end != tok.c_str();
+}
+
+/// Storage-index → file spelling, the inverse of source_of below.
+const char* source_name(int s) {
+    static const char* const kNames[] = {
+        "RAINFALL", "DWF", "GW", "RDII", "EXTERNAL_INFLOW",
+        "IFACE", "INITIAL_STATE"};
+    static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
+                      static_cast<int>(WaterAgeSource::COUNT_),
+                  "source_name is missing a WaterAgeSource — teach it "
+                  "the new pathway, then serializeWaterAgeConfig");
+    return (s >= 0 && s < static_cast<int>(WaterAgeSource::COUNT_))
+               ? kNames[s] : "?";
+}
+
+/// Shortest decimal that reads back EXACTLY — fmt_degc's convention.
+/// The config stores SECONDS against a file in HOURS; a formatter
+/// that rounds (the old %g) drifts the model on every save.
+std::string fmt_hours(double v) {
+    char buf[64];
+    for (int prec = 15; prec <= 17; ++prec) {
+        std::snprintf(buf, sizeof(buf), "%.*g", prec, v);
+        if (std::strtod(buf, nullptr) == v) break;
+    }
+    return buf;
 }
 
 int source_of(const std::string& u) {
@@ -236,6 +262,39 @@ void applyWaterAgeSections(SimulationContext& ctx,
 
 }  // namespace
 
+std::string serializeWaterAgeConfig(const SimulationContext& ctx) {
+    const auto& cfg = ctx.water_age_config;
+    // Never applied → DECLINE (empty): the carry-alongside copy runs,
+    // exactly the heat convention. A configured model always renders —
+    // applyWaterAgeSections sets `configured` whenever it applied
+    // cleanly, sections or none.
+    if (!cfg.configured) return {};
+    std::string out = "[WATER_AGE_SOURCES]\n";
+    for (int s = 0; s < static_cast<int>(WaterAgeSource::COUNT_); ++s) {
+        // Zero is the default age and there is NO per-source configured
+        // flag, so an explicit-zero row canonicalises away (physically
+        // identical: source_age falls back to 0). Writing every row
+        // would make a save-as of an untouched model look configured
+        // (lesson 196). Negative rows DO write (D-NS1 extraction).
+        if (cfg.global_age[s] == 0.0) continue;
+        out += source_name(s);
+        out += " GLOBAL ";
+        out += fmt_hours(cfg.global_age[s] / 3600.0);
+        out += "\n";
+    }
+    for (std::size_t i = 0; i < cfg.node_over_source.size(); ++i) {
+        const int nd = cfg.node_over_node[i];
+        if (nd < 0 || nd >= ctx.n_nodes()) continue;
+        out += source_name(cfg.node_over_source[i]);
+        out += " NODE ";
+        out += ctx.node_names.name_of(nd);
+        out += ' ';
+        out += fmt_hours(cfg.node_over_age[i] / 3600.0);
+        out += "\n";
+    }
+    return out;
+}
+
 void registerWaterAgeComponent() {
     components::ProcessComponentRegistry::instance().register_component(
         kAgeId,
@@ -245,6 +304,10 @@ void registerWaterAgeComponent() {
            const components::ComponentConfigSections& config,
            std::vector<std::string>& errors) {
             applyWaterAgeSections(ctx, config, errors);
+        },
+        [](const SimulationContext& ctx,
+           const ProcessComponentSpec& /*spec*/) -> std::string {
+            return serializeWaterAgeConfig(ctx);
         });
 }
 
