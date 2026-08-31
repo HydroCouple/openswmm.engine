@@ -115,7 +115,7 @@ void write_deck(const std::string& path, const DeckSpec& s,
       << "C3 CIRCULAR 2.0 0 0 0\nC4 CIRCULAR 2.0 0 0 0\n"
       << "C5 CIRCULAR 2.0 0 0 0\n\n";
     if (s.pollutant_decay)
-        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 1.0e-3 NO * 0 0 0\n\n";
+        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 86.4 NO * 0 0 0\n\n";  // 1e-3 1/s in the 1/day column (KD1)
     if (s.bone_dry) {
         // no [INFLOWS] at all — the network never wets
     } else if (s.inflow_stop_h > 0) {

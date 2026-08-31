@@ -79,6 +79,7 @@
 #include "../../data/QualityData.hpp"
 
 #include "../InputParseUtils.hpp"
+#include "../../core/Constants.hpp"
 
 #include <charconv>
 #include <string>
@@ -128,7 +129,11 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         if (tok.size() > 2) ctx.pollutants.c_rain[idx]  = to_double(tok[2]);
         if (tok.size() > 3) ctx.pollutants.c_gw[idx]    = to_double(tok[3]);
         if (tok.size() > 4) ctx.pollutants.c_rdii[idx]  = to_double(tok[4]);
-        if (tok.size() > 5) ctx.pollutants.k_decay[idx] = to_double(tok[5]);
+        // The Kdecay column is 1/day; store 1/sec, exactly as legacy
+        // does (landuse.c divides by SECperDAY at parse) — KD1.
+        if (tok.size() > 5)
+            ctx.pollutants.k_decay[idx] =
+                to_double(tok[5]) / constants::SEC_PER_DAY;
 
         // SnowOnly
         if (tok.size() > 6) {

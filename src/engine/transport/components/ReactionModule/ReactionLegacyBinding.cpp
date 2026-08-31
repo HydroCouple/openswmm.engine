@@ -107,20 +107,36 @@ void ensureMsxState(SimulationContext& ctx) {
 /// closed form of first-order decay — replaces the legacy linearized
 /// (1 - k*dt) when reactions are active.
 void decayPollutantsExact(SimulationContext& ctx, double dt,
-                          std::vector<double>& conc, int n_elems) {
+                          std::vector<double>& conc, int n_elems,
+                          const std::vector<double>& volume,
+                          const std::vector<NodeType>* node_types) {
     const int np = ctx.n_pollutants();
     for (int p = 0; p < np; ++p) {
         const double k = ctx.pollutants.k_decay[static_cast<std::size_t>(p)];
         if (k == 0.0) continue;
         const double f = std::exp(-k * dt);
+        double removed = 0.0;  // KD1: book the decayed mass
         for (int i = 0; i < n_elems; ++i) {
             const auto idx = static_cast<std::size_t>(i) *
                              static_cast<std::size_t>(np) +
                              static_cast<std::size_t>(p);
             if (idx >= conc.size()) continue;
+            const auto ui = static_cast<std::size_t>(i);
+            const double v = (ui < volume.size()) ? volume[ui] : 0.0;
+            // KD1 legacy parity: a non-storage node holding no volume
+            // does not decay (qualrout.c findNodeQual decays nothing).
+            if (node_types && ui < node_types->size() &&
+                (*node_types)[ui] != NodeType::STORAGE &&
+                v <= 0.0353147)  // ZERO_VOLUME (QualityRouting.hpp)
+                continue;
+            removed += conc[idx] * (1.0 - f) * v;
             conc[idx] *= f;
             if (conc[idx] < 0.0) conc[idx] = 0.0;
         }
+        if (static_cast<std::size_t>(p) <
+            ctx.mass_balance.qual_routing_reacted.size())
+            ctx.mass_balance.qual_routing_reacted[
+                static_cast<std::size_t>(p)] += removed;
     }
 }
 
@@ -180,7 +196,8 @@ bool legacyReactionsActive(const SimulationContext& ctx) {
 void reactLegacyNodes(SimulationContext& ctx, double dt) {
     if (!legacyReactionsActive(ctx) || dt <= 0.0) return;
     ensureMsxState(ctx);
-    decayPollutantsExact(ctx, dt, ctx.nodes.conc, ctx.n_nodes());
+    decayPollutantsExact(ctx, dt, ctx.nodes.conc, ctx.n_nodes(),
+                         ctx.nodes.volume, &ctx.nodes.type);
     reactElements(ctx, dt, /*tank=*/true, ctx.reactions.msx_node_conc,
                   ctx.nodes.conc, ctx.n_nodes(), "node");
 }
@@ -188,7 +205,8 @@ void reactLegacyNodes(SimulationContext& ctx, double dt) {
 void reactLegacyLinks(SimulationContext& ctx, double dt) {
     if (!legacyReactionsActive(ctx) || dt <= 0.0) return;
     ensureMsxState(ctx);
-    decayPollutantsExact(ctx, dt, ctx.links.conc, ctx.n_links());
+    decayPollutantsExact(ctx, dt, ctx.links.conc, ctx.n_links(),
+                         ctx.links.volume, nullptr);
     reactElements(ctx, dt, /*tank=*/false, ctx.reactions.msx_link_conc,
                   ctx.links.conc, ctx.n_links(), "link");
 }

@@ -736,20 +736,36 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
                 }
             }
             double c_in = mass_in / v_in;
-            double c_max = std::max(c_old, c_in);
 
-            double c_new = (v_old > ZERO_VOLUME)
-                ? (c_old * v_old + mass_in) / (v_old + v_in)
-                : c_in;
-
-            // Evaporation concentration factor (P8-G20)
-            // When water evaporates, concentration increases
-            double v_new = nodes.volume[ui];
-            if (v_new > ZERO_VOLUME && v_new < v_old + v_in) {
-                c_new *= (v_old + v_in) / v_new;
+            // Evaporation concentration factor (P8-G20, repaired in KD1):
+            // legacy findStorageQual scales the STORED concentration by
+            // fEvap = 1 + vEvap/v1 from the storage unit's ACTUAL
+            // evaporation volume. The previous spelling inferred
+            // evaporation from v_new < v_old + v_in — true for EVERY
+            // draining node, and outflow is not evaporation — inflating
+            // the store to retain mass the downstream link had already
+            // pulled. The min(c_new, c_max) cap masked the creation
+            // whenever concentrations were uniform (every k = 0 deck);
+            // KDECAY unmasked it (a draining storage CREATED ~c*v_out of
+            // mass per step, -47% continuity). Legacy has no cap, and the
+            // volume-balance mix cannot exceed max(c_old, c_in) on its
+            // own.
+            double f_evap = 1.0;
+            if (v_old > ZERO_VOLUME) {
+                const int srow = ctx.node_subtypes.storage_row(i);
+                if (srow >= 0) {
+                    const auto us = static_cast<size_t>(srow);
+                    const auto& st = ctx.node_subtypes.storages;
+                    const double v_evap =
+                        (us < st.evap_loss.size()) ? st.evap_loss[us] : 0.0;
+                    if (v_evap > 0.0) f_evap += v_evap / v_old;
+                }
             }
 
-            c_new = std::min(c_new, c_max);
+            double c_new = (v_old > ZERO_VOLUME)
+                ? (c_old * f_evap * v_old + mass_in) / (v_old + v_in)
+                : c_in;
+
             c_new = std::max(c_new, 0.0);
             nodes.conc[idx] = c_new;
         }
@@ -774,15 +790,37 @@ void QualitySolver::applyDecay(SimulationContext& ctx, double dt) {
     for (int p = 0; p < np; ++p) {
         double k = poll.k_decay[static_cast<size_t>(p)];
         if (k == 0.0) continue;
-        double decay_factor = 1.0 - k * dt;
+        // KD1: clamp BEFORE applying so the booked removal equals the
+        // actual loss even if 1 - k*dt goes negative.
+        double decay_factor = std::max(1.0 - k * dt, 0.0);
+        double removed = 0.0;
 
         OPENSWMM_IVDEP
         for (int i = 0; i < ctx.n_nodes(); ++i) {
             auto idx = static_cast<size_t>(i) * static_cast<size_t>(np) + static_cast<size_t>(p);
             if (idx >= ctx.nodes.conc.size()) continue;
+            const auto ui = static_cast<size_t>(i);
+            // KD1 legacy parity (qualrout.c routeQuality dispatch): only
+            // STORAGE nodes or nodes actually holding volume decay —
+            // findNodeQual applies NO decay, so pass-through junction flux
+            // is never reacted at a node. That is also what makes the
+            // volume-basis booking below exact. The basis is the CURRENT
+            // volume: this decay runs after mixAtNodes, whose conc pairs
+            // with the new volume (an old-volume basis overbooks a
+            // draining storage — measured -21.7% on the storage gate).
+            const double v =
+                (ui < ctx.nodes.volume.size()) ? ctx.nodes.volume[ui] : 0.0;
+            if (ctx.nodes.type[ui] != NodeType::STORAGE &&
+                v <= ZERO_VOLUME)
+                continue;
+            removed += ctx.nodes.conc[idx] * (1.0 - decay_factor) * v;
             ctx.nodes.conc[idx] *= decay_factor;
-            if (ctx.nodes.conc[idx] < 0.0) ctx.nodes.conc[idx] = 0.0;
         }
+        // KD1: book the decayed mass — legacy getReactedQual does; without
+        // this the loss surfaces as continuity error, not Mass Reacted.
+        if (static_cast<size_t>(p) < ctx.mass_balance.qual_routing_reacted.size())
+            ctx.mass_balance.qual_routing_reacted[static_cast<size_t>(p)]
+                += removed;
     }
 
     // Link decay is applied within updateLinkQuality() (volume-balance mixing)
@@ -855,6 +893,7 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
             if (transport::legacyReactionsActive(ctx)) k = 0.0;
 
             double c_new;
+            double reacted = 0.0;  // KD1: decayed mass to book
 
             if (is_steady) {
                 // Gap #38: Steady Flow quality routing (legacy findSFLinkQual).
@@ -863,10 +902,14 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
                 // No volume-balance mixing — steady flow has invariant volumes.
                 double c1 = c_up * fEvap;
                 c_new = (k > 0.0) ? c1 * std::exp(-k * dt) : c1;
+                // legacy findSFLinkQual: lossRate = (c1 - c2) * flow
+                if (k > 0.0) reacted = (c1 - c_new) * q * dt;
             } else if (q <= 0.0) {
                 // No flow: retain old concentration with in-place decay
                 // Apply fEvap first (legacy order: fEvap then decay)
-                c_new = c_old * fEvap * std::max(1.0 - k * dt, 0.0);
+                double c1 = c_old * fEvap;
+                c_new = c1 * std::max(1.0 - k * dt, 0.0);
+                reacted = (c1 - c_new) * v_old;  // getReactedQual basis
             } else if (v_new <= ZERO_VOLUME) {
                 // Zero-volume link — matching legacy qualrout.c findLinkQual:
                 // when vNew == 0 the link carries upstream mass instantaneously,
@@ -886,6 +929,7 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
 
                 double c1 = c_old * fEvap;           // evap-concentrated
                 double c2 = c1 * std::max(1.0 - k * dt, 0.0);  // decayed
+                reacted = (c1 - c2) * v_old;  // KD1: getReactedQual books this
                 double w_in = c_up * q_in;           // mass inflow rate
 
                 // getMixedQual: (c2 * v_old + w_in * dt) / (v_old + q_in * dt)
@@ -896,6 +940,13 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
 
             c_new = std::max(c_new, 0.0);
             links.conc[li] = c_new;
+            // KD1: book in-link decay (legacy qualrout books both its
+            // link forms; this loop is serial — see the pragma note).
+            if (reacted > 0.0 &&
+                static_cast<size_t>(p) <
+                    ctx.mass_balance.qual_routing_reacted.size())
+                ctx.mass_balance.qual_routing_reacted[
+                    static_cast<size_t>(p)] += reacted;
         }
     }
 }

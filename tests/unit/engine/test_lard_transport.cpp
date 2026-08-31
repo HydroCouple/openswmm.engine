@@ -121,7 +121,8 @@ void write_deck(const std::string& path, const DeckSpec& s) {
           << "C3 CIRCULAR 2.0 0 0 0\nC4 CIRCULAR 2.0 0 0 0\n"
           << "C5 CIRCULAR 2.0 0 0 0\n\n";
     }
-    f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << s.kdecay << " NO * 0 0 "
+    f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << (s.kdecay * 86400.0)  // 1/day column (KD1)
+      << " NO * 0 0 "
       << s.cinit << "\n\n"
       << "[INFLOWS]\n"
       << "J0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n"
