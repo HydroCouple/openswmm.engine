@@ -5,6 +5,7 @@
  */
 
 #include "GeoPackageWriter.hpp"
+#include "../../core/Constants.hpp"
 #include "ExternalContentWriter.hpp"
 #include "GeoPackageSchema.hpp"
 #include "GpkgUtils.hpp"
@@ -1032,7 +1033,10 @@ static void write_pollutants(sqlite3* db, const SimulationContext& ctx,
         bind_int(stmt.get(), 3, static_cast<int>(safe_get(ctx.pollutants.units, (size_t)i, MassUnits::MG_PER_L)));
         bind_double(stmt.get(), 4, safe_dbl(ctx.pollutants.c_rain, i));
         bind_double(stmt.get(), 5, safe_dbl(ctx.pollutants.c_gw, i));
-        bind_double(stmt.get(), 6, safe_dbl(ctx.pollutants.k_decay, i));
+        // Kdecay column carries file units (1/day), like the INP column
+        // (KD1); internal storage is 1/sec.
+        bind_double(stmt.get(), 6,
+                    safe_dbl(ctx.pollutants.k_decay, i) * constants::SEC_PER_DAY);
         bind_int(stmt.get(), 7, safe_get(ctx.pollutants.snow_only, (size_t)i, false) ? 1 : 0);
         int co = safe_int(ctx.pollutants.co_pollut, i);
         if (co >= 0 && co < ctx.pollutant_names.size())

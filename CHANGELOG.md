@@ -225,6 +225,35 @@ retroactive.
 
 ### Fixed
 
+- **`[POLLUTANTS]` Kdecay was applied 86,400× too fast — and the common case
+  destroyed the pollutant with a 100 % continuity error, booked nowhere
+  (KD1).** The Kdecay column is 1/day; legacy divides by `SECperDAY` at parse
+  (`landuse.c`), but this engine used the raw value against dt-in-seconds at
+  every application site. Any deck with a plausible decay coefficient
+  (0.05–1/day BOD or coliform values) silently reported ~zero for that
+  pollutant: the linearized node factor `1 − k·dt` went negative, clamped to
+  zero, and the annihilated mass never reached the ledger. The parser now
+  stores 1/sec exactly as legacy does, and every file-unit boundary converts
+  back — INP writer, GeoPackage both directions (pre-KD1 `.gpkg` files stored
+  the deck value unconverted, the same unit, so both eras read correctly),
+  and the C API, whose header documented 1/day all along. Three more defects
+  fell out of making the new gates close: the legacy-path solver never booked
+  decayed mass into `qual_routing_reacted` (nodes, all three link branches,
+  and the reactions-active twin now book it); every node decayed where legacy
+  decays only storage nodes or nodes actually holding volume, so pass-through
+  junction flux picked up decay factors legacy never applies; and
+  `mixAtNodes`' evaporation factor inferred evaporation from any volume
+  decrease — true for every draining node — creating ~`c·v_out` of mass per
+  step at a draining storage whenever concentrations weren't uniform (the
+  `c_max` cap masked it on every k = 0 deck). It now uses the storage unit's
+  actual evaporation volume, `fEvap = 1 + vEvap/v1`, per legacy
+  `findStorageQual`. After all four: the k = 1/day differential probe reads
+  Mass Reacted 0.158 lbs vs legacy's 0.159, and k = 200/day books 8.455 vs
+  legacy's 8.523 with continuity at baseline. Known residual (both engines,
+  P2.4): per-step transit mass takes the decay factor outside any
+  volume-basis booking — legacy leaks 6.5–7 % on the same storage deck.
+  Triage + evidence: `plans/transport/KDECAY_UNITS_TRIAGE_2026-08-31.md`.
+
 - **The 2D results file now says what its coordinates mean.** `Mesh2_node_x/y`
   and `Mesh2_face_x/y` have always been written in the solver's SI metres and
   tagged `units = "m"`, but nothing in the file recorded the model's own CRS or

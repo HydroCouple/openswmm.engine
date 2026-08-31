@@ -27,6 +27,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "Constants.hpp"
 #include "../../../include/openswmm/engine/openswmm_pollutants.h"
 
 namespace {
@@ -193,7 +194,10 @@ SWMM_ENGINE_API int swmm_pollutant_set_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] = k;
+    // The API speaks deck units (1/day) — the header's contract all
+    // along; storage is 1/sec (KD1), like legacy's swmm_POLLUT_KDECAY.
+    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] =
+        k / openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 
@@ -255,7 +259,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (k) *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)];
+    if (k) *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] *
+                openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 

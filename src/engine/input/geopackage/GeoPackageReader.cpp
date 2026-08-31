@@ -5,6 +5,7 @@
  */
 
 #include "GeoPackageReader.hpp"
+#include "../../core/Constants.hpp"
 #include "ExternalContentReader.hpp"
 #include <stdexcept>
 #include "GpkgUtils.hpp"
@@ -941,7 +942,11 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
         ctx.pollutants.units[idx] = static_cast<MassUnits>(column_int(stmt.get(), 1));
         ctx.pollutants.c_rain[idx] = column_double(stmt.get(), 2);
         ctx.pollutants.c_gw[idx] = column_double(stmt.get(), 3);
-        ctx.pollutants.k_decay[idx] = column_double(stmt.get(), 4);
+        // Column is file units (1/day) — pre-KD1 files stored the deck
+        // value unconverted, which is the same unit, so both eras read
+        // correctly here.
+        ctx.pollutants.k_decay[idx] =
+            column_double(stmt.get(), 4) / constants::SEC_PER_DAY;
         ctx.pollutants.snow_only[idx] = column_int(stmt.get(), 5) != 0;
 
         if (!column_is_null(stmt.get(), 6)) {

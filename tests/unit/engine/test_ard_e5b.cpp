@@ -134,7 +134,7 @@ void write_deck(const char* path, const std::string& pc_lines,
     f << "[POLLUTANTS]\n"
       << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
          "Cdwf Cinit\n"
-      << "TSS    MG/L  0     0   0     " << kdecay
+      << "TSS    MG/L  0     0   0     " << (kdecay * 86400.0)  // 1/day column (KD1)
       << "      NO       *        0      0    " << kC0 << "\n\n";
     if (treatment_j2) f << "[TREATMENT]\nJ2 TSS R = 0.5\n\n";
     if (!pc_lines.empty())

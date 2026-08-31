@@ -18,6 +18,10 @@
 #include <openswmm/engine/openswmm_subcatchments.h>
 #include <openswmm/engine/openswmm_pollutants.h>
 #include <openswmm/engine/openswmm_quality.h>
+#include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/engine/openswmm_massbalance.h>
+
+#include <cmath>
 
 #include <cstring>
 #include <filesystem>
@@ -435,4 +439,244 @@ TEST_F(QualityRoundtripTest, TreatmentValidateExpression) {
     char buf[256] = {};
     ASSERT_EQ(swmm_treatment_get(engine, 0, 0, buf, sizeof(buf)), SWMM_OK);
     EXPECT_STREQ(buf, "");
+}
+
+// ============================================================================
+// KD1 — the [POLLUTANTS] Kdecay column is 1/day (KDECAY_UNITS_TRIAGE
+// 2026-08-31). Legacy divides by SECperDAY at parse (landuse.c:173); until
+// KD1 the new engine applied the raw column value against dt in SECONDS —
+// 86,400x too fast, and the linearized node factor 1 - k*dt went NEGATIVE,
+// annihilating the pollutant with a 100% continuity error booked nowhere.
+// ============================================================================
+
+namespace {
+
+// The triage probe as a deck function: constant 1 cfs at 100 mg/L TSS into
+// one short conduit under KINWAVE. Residence is minutes, so k = 1/day decays
+// ~0.1% (legacy: Mass Reacted 0.159 of 134.7 lbs); an engine reading the
+// column as 1/sec destroys everything.
+std::string kdecay_routed_model(double kdecay_col) {
+    std::ostringstream m;
+    m <<
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         KINWAVE\n"
+        "INFILTRATION         HORTON\n"
+        "START_DATE           01/01/2024\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2024\n"
+        "END_TIME             02:00:00\n"
+        "REPORT_STEP          00:05:00\n"
+        "ROUTING_STEP         0:00:30\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        "J1               100        10         0          0          0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        "O1               95         FREE                        NO\n"
+        "\n"
+        "[CONDUITS]\n"
+        "C1               J1               O1               400        0.013      0          0          0          0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        "C1               CIRCULAR     2                0          0          0          1\n"
+        "\n"
+        "[POLLUTANTS]\n"
+        ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
+        "TSS              MG/L   0.0        0.0        0.0        " << kdecay_col <<
+        "        NO         *                0.0        0.0        0.0\n"
+        "\n"
+        "[INFLOWS]\n"
+        "J1               FLOW             \"\"               FLOW     1.0      1.0      1.0\n"
+        "J1               TSS              \"\"               CONCEN   1.0      1.0      100.0\n"
+        "\n"
+        "[REPORT]\n"
+        "INPUT NO\n";
+    return m.str();
+}
+
+}  // namespace
+
+// Gate i (KD1 §5): a deck Kdecay of 1.0 is one per DAY. Over a residence of
+// minutes it must leave the concentration essentially intact — not read it
+// as 1/sec (86,400/day) and zero the network.
+TEST_F(QualityRoundtripTest, KdecayDeckColumnIsPerDayNotPerSecond) {
+    open_model("kd_perday", kdecay_routed_model(1.0));
+
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK)
+        << swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK)
+        << swmm_get_last_error_msg(engine);
+    double elapsed = 1.0;
+    while (swmm_engine_step(engine, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+
+    const int o1 = swmm_node_index(engine, "O1");
+    ASSERT_GE(o1, 0);
+    double conc = -1.0;
+    ASSERT_EQ(swmm_node_get_quality(engine, o1, 0, &conc), SWMM_OK);
+    EXPECT_GT(conc, 90.0)
+        << "k = 1/day annihilated a 100 mg/L stream over minutes of "
+           "residence — the column is being applied as 1/sec";
+
+    double err = -1.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(engine, 0, &err), SWMM_OK);
+    EXPECT_LT(std::fabs(err), 0.02)
+        << "quality continuity error " << err * 100.0 << "%";
+}
+
+// Gate iv (KD1 §5): decayed mass is BOOKED (qual_routing_reacted), not left
+// as continuity error. k = 200/day decays a real fraction over the run;
+// only a booked ledger keeps the continuity error small. At base this deck
+// reads 100% error and an untouched Mass Reacted of zero.
+TEST_F(QualityRoundtripTest, KdecayLegacyPathBooksReactedMass) {
+    open_model("kd_booked", kdecay_routed_model(200.0));
+
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK)
+        << swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK)
+        << swmm_get_last_error_msg(engine);
+    double elapsed = 1.0;
+    while (swmm_engine_step(engine, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+
+    // The observable is the OUTFALL: junctions never decay (legacy
+    // findNodeQual applies no decay — KD1 restored that), so the decayed
+    // signal arrives through the link.
+    const int o1 = swmm_node_index(engine, "O1");
+    ASSERT_GE(o1, 0);
+    double conc = -1.0;
+    ASSERT_EQ(swmm_node_get_quality(engine, o1, 0, &conc), SWMM_OK);
+    EXPECT_GT(conc, 5.0)  << "annihilated — units still wrong";
+    EXPECT_LT(conc, 99.0) << "no decay at all — the stage went dead";
+
+    double err = -1.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(engine, 0, &err), SWMM_OK);
+    EXPECT_LT(std::fabs(err), 0.02)
+        << "decayed mass is escaping the ledger (continuity error "
+        << err * 100.0 << "%) — qual_routing_reacted is not being booked";
+}
+
+// Gate ii (KD1 §5): the Kdecay COLUMN round-trips through the writer at file
+// units. Parse-only conversion would write the internal 1/sec value —
+// 1.157e-5, which %10.4f prints as 0.0000, silently erasing the decay.
+TEST_F(QualityRoundtripTest, KdecayColumnRoundTripsThroughWriteAndReopen) {
+    open_model("kd_rt", kdecay_routed_model(1.0));
+
+    double k = -1.0;
+    ASSERT_EQ(swmm_pollutant_get_kdecay(engine, 0, &k), SWMM_OK);
+    EXPECT_NEAR(k, 1.0, 1e-9) << "API contract is deck units (1/day)";
+
+    const std::string text = written_model("kd_rt");
+    const auto pos = text.find("[POLLUTANTS]");
+    ASSERT_NE(pos, std::string::npos);
+    const auto row = text.find("TSS", pos);
+    ASSERT_NE(row, std::string::npos);
+    std::istringstream ls(text.substr(row, text.find('\n', row) - row));
+    std::string name, units, crain, cgw, crdii, kcol;
+    ls >> name >> units >> crain >> cgw >> crdii >> kcol;
+    EXPECT_NEAR(std::stod(kcol), 1.0, 1e-4)
+        << "written Kdecay column reads " << kcol
+        << " — the writer is not emitting file units";
+
+    reopen_from("kd_rt");
+    k = -1.0;
+    ASSERT_EQ(swmm_pollutant_get_kdecay(engine, 0, &k), SWMM_OK);
+    EXPECT_NEAR(k, 1.0, 1e-4) << "Kdecay drifted across write -> reopen";
+}
+
+// Gate iii (KD1 §5): the C API speaks deck units (1/day) in both directions
+// — the header has documented that contract all along. A set of 2.0 must
+// read back 2.0 and write as 2.0000.
+TEST_F(QualityRoundtripTest, KdecayApiContractIsPerDayBothWays) {
+    open_model("kd_api", kdecay_routed_model(0.0));
+
+    ASSERT_EQ(swmm_pollutant_set_kdecay(engine, 0, 2.0), SWMM_OK);
+    double k = -1.0;
+    ASSERT_EQ(swmm_pollutant_get_kdecay(engine, 0, &k), SWMM_OK);
+    EXPECT_NEAR(k, 2.0, 1e-9);
+
+    const std::string text = written_model("kd_api");
+    const auto pos = text.find("[POLLUTANTS]");
+    ASSERT_NE(pos, std::string::npos);
+    const auto row = text.find("TSS", pos);
+    ASSERT_NE(row, std::string::npos);
+    std::istringstream ls(text.substr(row, text.find('\n', row) - row));
+    std::string name, units, crain, cgw, crdii, kcol;
+    ls >> name >> units >> crain >> cgw >> crdii >> kcol;
+    EXPECT_NEAR(std::stod(kcol), 2.0, 1e-4)
+        << "API-set Kdecay wrote as " << kcol;
+}
+
+// Gate v (KD1, added by the check pass): the NODE-side decay + booking has
+// its own observer. Junctions never decay (legacy findNodeQual), but a
+// STORAGE node does (findStorageQual via getReactedQual) — this pins that
+// the storage path still decays, and that its removal is BOOKED from the
+// node-volume basis (the k=200 routed deck above only exercises the LINK
+// booking).
+TEST_F(QualityRoundtripTest, KdecayStorageNodeStillDecaysAndBooks) {
+    std::string deck = kdecay_routed_model(200.0);
+    // DYNWAVE: KINWAVE's storage handling leaves a ~9% FLOW continuity
+    // error on this shape, which no quality ledger can close over.
+    auto rt = deck.find("FLOW_ROUTING         KINWAVE");
+    ASSERT_NE(rt, std::string::npos);
+    deck.replace(rt, std::string("FLOW_ROUTING         KINWAVE").size(),
+                 "FLOW_ROUTING         DYNWAVE");
+    // Splice a storage unit between J1 and O1: J1 -C1-> ST1 -C2-> O1.
+    const std::string storage =
+        "[STORAGE]\n"
+        ";;Name Elev MaxDepth InitDepth Shape      Coeff Expon Const\n"
+        "ST1    96   10       2.0       FUNCTIONAL 0     0     1000\n"
+        "\n"
+        "[OUTFALLS]\n";
+    auto pos = deck.find("[OUTFALLS]");
+    ASSERT_NE(pos, std::string::npos);
+    deck.replace(pos, std::string("[OUTFALLS]").size(), storage);
+    const std::string conduits =
+        "[CONDUITS]\n"
+        "C1               J1               ST1              400        0.013      0          0          0          0\n"
+        "C2               ST1              O1               400        0.013      0          0          0          0\n";
+    pos = deck.find("[CONDUITS]");
+    ASSERT_NE(pos, std::string::npos);
+    auto endpos = deck.find("\n\n", pos);
+    deck.replace(pos, endpos - pos + 1, conduits);
+    const std::string xsects =
+        "[XSECTIONS]\n"
+        "C1               CIRCULAR     2                0          0          0          1\n"
+        "C2               CIRCULAR     2                0          0          0          1\n";
+    pos = deck.find("[XSECTIONS]");
+    ASSERT_NE(pos, std::string::npos);
+    endpos = deck.find("\n\n", pos);
+    deck.replace(pos, endpos - pos + 1, xsects);
+
+    open_model("kd_storage", deck);
+
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK)
+        << swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK)
+        << swmm_get_last_error_msg(engine);
+    double elapsed = 1.0;
+    while (swmm_engine_step(engine, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+
+    const int st1 = swmm_node_index(engine, "ST1");
+    ASSERT_GE(st1, 0);
+    double conc = -1.0;
+    ASSERT_EQ(swmm_node_get_quality(engine, st1, 0, &conc), SWMM_OK);
+    EXPECT_GT(conc, 1.0)  << "storage annihilated — the clamp regressed";
+    EXPECT_LT(conc, 95.0) << "the storage node no longer decays — the "
+                             "junction gate over-reached";
+
+    double err = -1.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(engine, 0, &err), SWMM_OK);
+    // Threshold: this deck's storage volume-balance accounting leaks even
+    // with NO decay (this engine k=0: +3.9%; LEGACY on the same deck:
+    // +6.5% at k=200/day, +7.0% at k=0), and per-step transit mass takes
+    // the decay factor outside any volume-basis booking (the P2.4 storage
+    // mixing class, present in both engines). 15% cleanly separates
+    // "booked, with the pre-existing slop" from unbooked decay (~+50%
+    // here) and from the pre-KD1 creation (-47%).
+    EXPECT_LT(std::fabs(err), 0.15)
+        << "storage decay is escaping the ledger (continuity error "
+        << err * 100.0 << "%)";
 }
