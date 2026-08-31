@@ -24,6 +24,7 @@
  */
 
 #include "ReactionsComponent.hpp"
+#include "ReactionsWriter.hpp"   // IO3a save hook
 
 #include <cstdlib>
 
@@ -528,6 +529,15 @@ void registerReactionsComponent() {
            const components::ComponentConfigSections& config,
            std::vector<std::string>& errors) {
             applyReactionSections(ctx, config, errors);
+        },
+        // IO3a: the canonical .rxn serializer already existed (E-C3,
+        // ReactionsWriter) and was reachable only through the C API's
+        // get-text call. Nothing ever asked it to write the file on save, so
+        // reaction edits made through the API or the GUI were lost exactly
+        // like heat's. The capability was present; the CALL SITE was missing.
+        [](const SimulationContext& ctx,
+           const ProcessComponentSpec& /*spec*/) -> std::string {
+            return transport::serializeReactionSystem(ctx);
         });
 }
 

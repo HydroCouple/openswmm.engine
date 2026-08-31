@@ -30,10 +30,11 @@
  *          tested against the parser's own answers, not against constants
  *          this file chose.
  *
- *          ⚠ There is deliberately **no save/reopen round-trip gate**. See
- *          `NodeOverrideEditsDoNotSurviveASave` and the handoff: nothing
- *          serializes a component config back to disk, so such a gate could
- *          not pass and its absence is a finding, not an oversight.
+ *          The save/reopen round-trip gate **exists now** (IO3a). It could
+ *          not when this file was written: nothing serialized a component
+ *          config back to disk, so the file instead pinned the LOSS and said
+ *          the pin must fail when serialization landed. It did, and
+ *          `SourceEditsSurviveASaveAndReopen` is what replaced it.
  *
  *          Scratch fixtures use the `_hs_` prefix (collision-checked).
  */
@@ -316,30 +317,29 @@ TEST(HeatSourcesApiTest, RepeatedNodeOverrideUpdatesRatherThanDuplicates) {
 }
 
 // ---------------------------------------------------------------------------
-// ⚠ A FINDING, pinned as a gate: edits made through this API DO NOT SURVIVE
-// A SAVE.
+// IO3a FLIPPED THIS GATE, exactly as its previous body predicted.
 //
-// swmm_model_write emits [PROCESS_COMPONENTS] with the config= PATH but never
-// rewrites the config file's CONTENT — there is no per-component saveData()
-// (IO3, still owed). So the .inp points at the ORIGINAL model.heat and every
-// API edit is silently gone on reopen.
+// It used to assert that an API edit was LOST on save — pinning the defect so
+// a user would not discover it — and its failure message said: "the edit
+// SURVIVED ... replace it with a real round-trip assertion rather than
+// relaxing it." The component save hook landed, so that is what this is now.
 //
-// This is the embedded-section data-loss family one layer out, and unlike
-// that case it is NOT warned: the writer's warning fires only for EMBEDDED
-// sections, and its advice — "move them to an external component config file
-// to keep them" — is false for anything edited through the API or the GUI.
-//
-// The gate asserts the CURRENT behaviour so the loss is observed rather than
-// discovered by a user. **When IO3 lands, this gate must FAIL** — that is the
-// signal to replace it with the round-trip assertion it is standing in for.
+// The old body is not kept as a commented corpse: the claim it carried is the
+// negation of the claim below, and two contradictory statements of the same
+// fact in one file is how the next reader ends up believing the wrong one.
 // ---------------------------------------------------------------------------
-TEST(HeatSourcesApiTest, NodeOverrideEditsDoNotSurviveASave) {
+TEST(HeatSourcesApiTest, SourceEditsSurviveASaveAndReopen) {
     write_file("_hs_save.heat", "[HEAT_SOURCES]\nDWF GLOBAL 14.5\n");
     std::string why;
     SWMM_Engine e = open_deck("_hs_save", "_hs_save.heat", &why);
     ASSERT_NE(e, nullptr) << why;
 
+    // Edit BOTH row kinds: a GLOBAL that the deck already carried, and a NODE
+    // override the deck did not — so the gate covers "changed" and "added",
+    // which serialize through different branches of saveHeatConfig.
     ASSERT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_DWF, 31.0), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_EXTERNAL_INFLOW, 1,
+                                          6.25), SWMM_OK);
     ASSERT_EQ(swmm_model_write(e, "_hs_save_out.inp"), SWMM_OK);
     swmm_engine_destroy(e);
 
@@ -347,11 +347,123 @@ TEST(HeatSourcesApiTest, NodeOverrideEditsDoNotSurviveASave) {
     ASSERT_NE(r, nullptr);
     ASSERT_EQ(swmm_engine_open(r, "_hs_save_out.inp", "_hs_save2.rpt",
                               "_hs_save2.out", nullptr), SWMM_OK);
+
+    double t = 0.0;
+    ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_DWF, &t), SWMM_OK);
+    EXPECT_DOUBLE_EQ(t, 31.0)
+        << "the GLOBAL edit was lost on save — the component save hook did "
+           "not run, or it declined and the carry-alongside copy wrote the "
+           "ORIGINAL file back over it";
+
+    int n = -1;
+    ASSERT_EQ(swmm_heat_node_override_count(r, &n), SWMM_OK);
+    ASSERT_EQ(n, 1) << "the added NODE override did not survive";
+    int src = -1, node = -1;
+    double ot = 0.0;
+    EXPECT_EQ(swmm_heat_get_node_override(r, 0, &src, &node, &ot), SWMM_OK);
+    EXPECT_EQ(src, SWMM_HEAT_SRC_EXTERNAL_INFLOW);
+    EXPECT_EQ(node, 1);
+    EXPECT_DOUBLE_EQ(ot, 6.25);
+
+    // A source the model never configured must NOT have been invented by the
+    // save. This is the half a naive serializer gets wrong: writing all seven
+    // rows at their defaults makes every saved model look configured.
+    int cfgd = -1;
+    EXPECT_EQ(swmm_heat_get_source_configured(r, SWMM_HEAT_SRC_RAINFALL,
+                                              &cfgd), SWMM_OK);
+    EXPECT_EQ(cfgd, 0) << "the save invented a row the model never set";
+
+    swmm_engine_destroy(r);
+}
+
+// ---------------------------------------------------------------------------
+// Writing twice gives the same file. A serializer that is not idempotent
+// makes every save a diff, which destroys review and version control for
+// models nobody edited.
+// ---------------------------------------------------------------------------
+TEST(HeatSourcesApiTest, SaveIsIdempotent) {
+    write_file("_hs_idem.heat",
+               "[HEAT_SOURCES]\nDWF GLOBAL 14.5\nGW GLOBAL 9.0\n");
+    std::string why;
+    SWMM_Engine e = open_deck("_hs_idem", "_hs_idem.heat", &why);
+    ASSERT_NE(e, nullptr) << why;
+    // Both saves rewrite the SAME config path (_hs_idem.heat — the writer
+    // resolves the relative config= against the destination dir, which is
+    // this cwd), so idempotence must be judged by capturing the content
+    // BETWEEN the two saves. Slurping once after both compares the file with
+    // itself and passes vacuously — the first spelling of this gate did
+    // exactly that (caught in the IO3a check round).
+    auto slurp = [](const char* p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    };
+
+    ASSERT_EQ(swmm_model_write(e, "_hs_idem_a.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string first = slurp("_hs_idem.heat");
+    ASSERT_FALSE(first.empty()) << "first save wrote nothing";
+
+    SWMM_Engine r = swmm_engine_create();
+    ASSERT_NE(r, nullptr);
+    ASSERT_EQ(swmm_engine_open(r, "_hs_idem_a.inp", "_hs_idem2.rpt",
+                              "_hs_idem2.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(r, "_hs_idem_b.inp"), SWMM_OK);
+    swmm_engine_destroy(r);
+    const std::string second = slurp("_hs_idem.heat");
+
+    EXPECT_EQ(first, second)
+        << "a second save produced a different config file from the first";
+}
+
+// ---------------------------------------------------------------------------
+// The one data loss IO3a could have introduced (its handoff §6 last bullet):
+// saveHeatConfig cannot yet render H6a's sections ([RADIATIVE_FLUXES],
+// [SOLAR_RADIATION], [CLOUD_COVER]). A model carrying them must make the
+// save DECLINE — the copy fallback preserves the whole file — rather than
+// write a file holding only the sections the renderer knows, silently
+// truncating the rest.
+//
+// The other half of this gate is honest about the cost: under decline, an
+// API edit to [HEAT_SOURCES] is still lost for such models (the step-3
+// finding remains true for them until IO3b extends the renderer). Asserted
+// here so IO3b's landing flips a gate instead of a comment.
+// ---------------------------------------------------------------------------
+TEST(HeatSourcesApiTest, UnrenderableSectionsDeclineRatherThanTruncate) {
+    write_file("_hs_h6a.heat",
+               "[HEAT_SOURCES]\nDWF GLOBAL 14.5\n\n"
+               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n");
+    std::string why;
+    SWMM_Engine e = open_deck("_hs_h6a", "_hs_h6a.heat", &why);
+    ASSERT_NE(e, nullptr) << why;
+
+    ASSERT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_DWF, 31.0), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(e, "_hs_h6a_out.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+
+    SWMM_Engine r = swmm_engine_create();
+    ASSERT_NE(r, nullptr);
+    ASSERT_EQ(swmm_engine_open(r, "_hs_h6a_out.inp", "_hs_h6a2.rpt",
+                              "_hs_h6a2.out", nullptr), SWMM_OK);
+
+    // The radiative section SURVIVED — the save declined and copied.
+    double sw = 0.0;
+    ASSERT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_SHORTWAVE, &sw),
+              SWMM_OK);
+    EXPECT_DOUBLE_EQ(sw, 317.5)
+        << "[RADIATIVE_FLUXES] was truncated away — saveHeatConfig rendered "
+           "a partial file instead of declining";
+
+    // ...and the DECLINE means the API edit was NOT kept for this model —
+    // the documented IO3b gap. When IO3b extends the renderer to H6a's
+    // sections, this expectation flips to 31.0.
     double t = 0.0;
     ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_DWF, &t), SWMM_OK);
     EXPECT_DOUBLE_EQ(t, 14.5)
-        << "the edit SURVIVED — component-config serialization has landed, so "
-           "this gate is obsolete: replace it with a real round-trip "
-           "assertion rather than relaxing it";
+        << "the edit survived on an H6a-configured model — the renderer now "
+           "covers those sections (IO3b?): flip this gate to assert 31.0 and "
+           "retire UnrenderableSectionsDeclineRatherThanTruncate's decline leg";
+
     swmm_engine_destroy(r);
 }

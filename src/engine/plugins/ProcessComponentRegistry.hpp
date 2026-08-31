@@ -103,10 +103,41 @@ using ComponentConfigApply =
                        const ComponentConfigSections& config,
                        std::vector<std::string>& errors)>;
 
+/**
+ * @brief Save hook (IO3a): render this component's CURRENT engine state back
+ *        to config-file text — the inverse of ::ComponentConfigApply.
+ *
+ * @details Until this existed, `swmm_model_write` emitted the
+ *          `[PROCESS_COMPONENTS]` `config=` PATH and copied the file the model
+ *          was read from, but nothing rewrote its CONTENT. So every edit made
+ *          through a C API or the GUI — a `[HEAT_SOURCES]` temperature, a
+ *          reaction expression — was **silently lost on save**, while a
+ *          hand-edit of the same file persisted. `InpWriter`'s own comment
+ *          states the intended division ("the component config FILES are each
+ *          component's own to write, never ours"); this is the hook that lets
+ *          a component honour it.
+ *
+ * @return  the complete config-file text, or **empty to decline** — an empty
+ *          return means "I have nothing to serialize", and the writer falls
+ *          back to the IO3 carry-alongside copy. Declining is how a component
+ *          that has not implemented saving yet stays correct rather than
+ *          truncating its own file to nothing.
+ *
+ * @note    `ctx` is CONST. A save must not mutate the model it is describing;
+ *          that is the property that makes writing twice give the same file.
+ */
+using ComponentConfigSave =
+    std::function<std::string(const SimulationContext& ctx,
+                              const ProcessComponentSpec& spec)>;
+
 struct ProcessComponentEntry {
     std::string description;      ///< short human-readable description
     std::string pending_phase;    ///< non-empty ⇒ planned, not yet implemented
     ComponentConfigApply apply;   ///< null for planned entries
+    /// IO3a. Null until a component implements serialization; the writer then
+    /// falls back to copying, so components can adopt this ONE AT A TIME
+    /// without any intermediate state losing data.
+    ComponentConfigSave  save;
 };
 
 /**
@@ -121,8 +152,13 @@ class ProcessComponentRegistry {
 public:
     static ProcessComponentRegistry& instance();
 
+    /// @param save IO3a serialization hook; DEFAULTED so every existing
+    ///             registration compiles unchanged and components adopt
+    ///             saving one at a time (a null save falls back to the
+    ///             carry-alongside copy, which is what they do today).
     void register_component(const std::string& id, std::string description,
-                            ComponentConfigApply apply);
+                            ComponentConfigApply apply,
+                            ComponentConfigSave save = nullptr);
 
     const ProcessComponentEntry* find(const std::string& id) const;
     std::vector<std::string> known_ids() const;
