@@ -78,8 +78,8 @@ struct DeckSpec {
     const char* solver = "LAGRANGIAN";  ///< QUALITY_SOLVER value; "" = omit line
     bool pollutants = true;             ///< [POLLUTANTS] TSS + its inflow row
     bool water_age = false;             ///< WATER_AGE ON
-    bool heat = false;                  ///< HEAT_TRANSPORT ON (the X4-era
-                                        ///< bypass warning's only trigger)
+    bool heat = false;                  ///< HEAT_TRANSPORT ON (live under
+                                        ///< LARD as of H7b)
     bool ignore_quality = false;        ///< IGNORE_QUALITY YES
     int quality_step = 0;               ///< X3a: QUALITY_STEP seconds; 0 = omit
     int max_segs = 0;                   ///< X3a: MAX_SEGMENTS_PER_LINK; 0 = omit
@@ -364,17 +364,20 @@ TEST(LardWiringTest, DefaultDeckStillRunsLegacyTransport) {
 // Gate 5 — the warning predicate, exercised in both directions.
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
-    // (a) A heat deck under LARD: temperature does not advance until H7,
-    // so the bypass warning must fire (with or without a pollutant row —
-    // the lesson-52 shape).
+    // (a) H7b FLIP: a heat deck under LARD is now LIVE — temperature rides
+    // the segments as the second reserved row and takes RWPT dispersion,
+    // so the bypass warning must NOT fire. (Until 2026-08-30 this leg
+    // asserted the opposite; retiring a deferral flips the assertion that
+    // recorded it, lesson 21.)
     DeckSpec heat_only;
     heat_only.pollutants = false;
     heat_only.heat = true;
     const WiringRun a = run_deck("_lw_warn_heat", heat_only);
     ASSERT_TRUE(a.ok);
-    EXPECT_TRUE(has_lard_warning(a.warnings))
-        << "a heat deck under LARD ran silently — the reserved-species "
-           "bypass lost its observer";
+    EXPECT_FALSE(has_lard_warning(a.warnings))
+        << "the bypass warning fired on a heat deck — temperature is live "
+           "under LARD as of H7b, and warning about it would be a false "
+           "claim";
 
     // (a2) X4 FLIP: an age deck under LARD is now LIVE — no bypass warning.
     DeckSpec age_only;

@@ -65,3 +65,4 @@ tests/parity/transport/age_legacy.inp	WATER_AGE ON with np=0, default solver -- 
 tests/parity/transport/age_ard.inp	the same body under QUALITY_SOLVER EULERIAN_ARD -- age as an ARD mesh row (A1a); the pair localises a movement to one engine
 tests/parity/transport/age_lard.inp	the same body once more under QUALITY_SOLVER LAGRANGIAN -- age as the LARD segment row (X4); the TRIPLE localises a movement to one of three engines
 tests/parity/transport/heat_parity.inp	pollutant + age + heat -- the only deck reaching the np+age+heat reported stride (D-UT10's seam); carries heat_parity.heat beside it
+tests/parity/transport/heat_lard.inp	the same body under QUALITY_SOLVER LAGRANGIAN -- temperature as the LARD segment row (H7b); the pair with heat_parity localises a heat movement to one engine
