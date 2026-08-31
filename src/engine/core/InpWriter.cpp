@@ -77,6 +77,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+
+// IO3a: the component save hook — each component writes its own config file.
+#include "../plugins/ProcessComponentRegistry.hpp"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -2545,7 +2548,39 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // emit_path_token above and need no copy. Failures WARN, never fail
     // the save — the deck text itself is intact.
     namespace fsys=std::filesystem;
-    if(!pc.resolved_config_path.empty()){
+
+    // IO3a: ask the COMPONENT to write its own file first. The writer's rule
+    // above ("each component's own to write, never ours") was the intent all
+    // along; until this hook existed nothing acted on it, so a model.heat or
+    // model.rxn edited through the C API or the GUI was copied back in its
+    // ORIGINAL form and the edit vanished — silently, and unlike the embedded
+    // case, unwarned.
+    //
+    // An EMPTY render means the component declines (nothing configured, or it
+    // has not implemented saving), and the carry-alongside copy below runs
+    // instead. That fallback is what lets components adopt saving one at a
+    // time without any intermediate state losing data.
+    bool component_wrote=false;
+    if(!pc.config_path.empty()){
+    const auto*entry=components::ProcessComponentRegistry::instance().find(pc.id);
+    if(entry&&entry->save){
+    const std::string text=entry->save(ctx,pc);
+    if(!text.empty()){
+    std::error_code wec;
+    fsys::path rel_w(pc.config_path);
+    fsys::path dst_w=rel_w.is_absolute()
+    ?fsys::path(emit_path_token(pc.config_path,dst_dir,force_abs_paths,nullptr))
+    :(dst_dir.empty()?rel_w:fsys::path(dst_dir)/rel_w);
+    if(dst_w.has_parent_path())fsys::create_directories(dst_w.parent_path(),wec);
+    std::ofstream cf(dst_w,std::ios::binary|std::ios::trunc);
+    if(cf.is_open()){cf<<text;component_wrote=cf.good();cf.close();}
+    if(!component_wrote&&warnings)warnings->push_back(
+    "Could not write component config '"+pc.config_path+"' for '"+pc.id+
+    "' — the model's in-memory configuration for that component was NOT "
+    "saved. The previous file, if any, is unchanged.");
+    }}}
+
+    if(!component_wrote&&!pc.resolved_config_path.empty()){
     fsys::path src(pc.resolved_config_path);
     fsys::path rel(pc.config_path);
     if(rel.is_relative()&&!dst_dir.empty()){

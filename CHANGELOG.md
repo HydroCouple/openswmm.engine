@@ -23,6 +23,21 @@ retroactive.
 
 ### Added
 
+- **Components write their own config files — API and GUI edits survive a
+  save (IO3a).** `swmm_model_write` emitted the `[PROCESS_COMPONENTS]`
+  `config=` path and copied the file the model was read from; nothing
+  rewrote its content, so every edit made through a C API or the GUI — a
+  `[HEAT_SOURCES]` temperature, a reaction expression — was silently lost
+  on save while a hand-edit persisted. A new `ComponentConfigSave` hook
+  (the inverse of `ComponentConfigApply`; empty return = decline → the
+  carry-alongside copy still runs) lets components adopt saving one at a
+  time with no intermediate state losing data. Heat and reactions adopt
+  here; water age and ARD still decline (IO3b). `saveHeatConfig` writes
+  only what the model actually set — and DECLINES whenever H6a's
+  radiative/solar/cloud sections carry state it cannot yet render, so the
+  copy preserves them rather than truncating (pinned by
+  `UnrenderableSectionsDeclineRatherThanTruncate`).
+
 - **Heat transport H6a — incoming shortwave forcing.** `[RADIATIVE_FLUXES]
   SHORTWAVE` now takes three mutually exclusive spellings instead of one
   constant: a fixed W/m², `TIMESERIES <name>` for a measured record, or

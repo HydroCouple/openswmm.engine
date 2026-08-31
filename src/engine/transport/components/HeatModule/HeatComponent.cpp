@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>   // IO3a: snprintf in fmt_degc
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -105,6 +106,31 @@ int source_of(const std::string& u) {
     if (u == "IFACE")           return static_cast<int>(HeatSource::IFACE);
     if (u == "INITIAL_STATE")   return static_cast<int>(HeatSource::INITIAL_STATE);
     return -1;
+}
+
+/// Inverse of source_of, for IO3a serialization. Table order matches the
+/// enum, so a new HeatSource that forgets this array trips the static_assert
+/// rather than silently writing the wrong keyword.
+const char* source_name(int s) {
+    static const char* kNames[] = {"RAINFALL", "DWF", "GW", "RDII",
+                                   "EXTERNAL_INFLOW", "IFACE",
+                                   "INITIAL_STATE"};
+    static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
+                      static_cast<std::size_t>(HeatSource::COUNT_),
+                  "source_name is missing a HeatSource");
+    return (s >= 0 && s < static_cast<int>(HeatSource::COUNT_))
+               ? kNames[s] : "?";
+}
+
+/// Shortest decimal that reads back EXACTLY — ReactionsWriter's fmt_double
+/// convention. A save that rounds is a save that moves the model.
+std::string fmt_degc(double v) {
+    char buf[64];
+    for (int prec = 15; prec <= 17; ++prec) {
+        std::snprintf(buf, sizeof(buf), "%.*g", prec, v);
+        if (std::strtod(buf, nullptr) == v) break;
+    }
+    return buf;
 }
 
 void applyHeatSections(SimulationContext& ctx,
@@ -729,6 +755,91 @@ void applyHeatSections(SimulationContext& ctx,
     }
 }
 
+/**
+ * @brief IO3a: render `heat_config` back to `model.heat` text.
+ *
+ * @details Only what the model actually SET is emitted. A source at its 20 °C
+ *          default with `configured_source == false` produces no row, so a
+ *          save does not invent configuration the user never wrote — the
+ *          reason `configured_source` exists at all.
+ *
+ *          Sections are emitted in the parser's own recognized order so the
+ *          file reads the way a hand-written one does, and every value is
+ *          written in the units the parser reads (°C here; the radiative and
+ *          solar blocks are H6a's own and stay in their documented units).
+ *
+ *          **Declines by returning empty when nothing is configured.** An
+ *          empty return means "copy the original instead" — writing an empty
+ *          file over a config the model never touched would be the data loss
+ *          this hook exists to end, inverted.
+ */
+/// IO3a check round: the sections this renderer cannot yet write —
+/// [RADIATIVE_FLUXES], [SOLAR_RADIATION], [CLOUD_COVER] (H6a's). If ANY of
+/// them carries non-default state, saving must DECLINE so the copy fallback
+/// preserves the whole file; rendering only the sections we know would
+/// truncate the others away — the one data loss this round could have
+/// introduced (handoff §6, implemented per its own recommendation).
+/// Field-by-field against default-constructed configs because none of these
+/// structs carries a per-section `configured` flag except cloud.
+bool hasUnrenderableSections(const HeatConfigData& cfg) {
+    const RadiativeConfig rd{};
+    const auto& r = cfg.radiative;
+    if (r.shortwave_wm2 != rd.shortwave_wm2 || r.albedo != rd.albedo ||
+        r.shade_factor != rd.shade_factor || r.sky_view != rd.sky_view ||
+        r.emiss_water != rd.emiss_water ||
+        r.emiss_landcover != rd.emiss_landcover ||
+        r.atm_emiss_coeff != rd.atm_emiss_coeff ||
+        r.lw_reflection != rd.lw_reflection ||
+        r.sw_mode != rd.sw_mode || r.sw_ts_index != rd.sw_ts_index)
+        return true;
+    const SolarConfig sd{};
+    const auto& sl = cfg.solar;
+    if (sl.has_latitude || sl.has_longitude || sl.has_timezone ||
+        sl.has_elevation ||
+        sl.aod380 != sd.aod380 || sl.aod500 != sd.aod500 ||
+        sl.precip_water_cm != sd.precip_water_cm ||
+        sl.ozone_cm != sd.ozone_cm || sl.ground_albedo != sd.ground_albedo)
+        return true;
+    return cfg.cloud.configured;
+}
+
+std::string saveHeatConfig(const SimulationContext& ctx) {
+    const auto& cfg = ctx.heat_config;
+    if (hasUnrenderableSections(cfg)) return {};
+    std::string out;
+
+    // [HEAT_SOURCES] — GLOBAL rows for explicitly configured sources, then
+    // NODE overrides in table order.
+    std::string rows;
+    for (int s = 0; s < static_cast<int>(HeatSource::COUNT_); ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (!cfg.configured_source[us]) continue;
+        rows += std::string(source_name(s)) + " GLOBAL " +
+                fmt_degc(cfg.global_temp[us]) + "\n";
+    }
+    for (std::size_t i = 0; i < cfg.node_over_source.size(); ++i) {
+        const int nd = cfg.node_over_node[i];
+        if (nd < 0 || nd >= ctx.n_nodes()) continue;  // stale index: skip
+        rows += std::string(source_name(cfg.node_over_source[i])) + " NODE " +
+                ctx.node_names.name_of(nd) + " " +
+                fmt_degc(cfg.node_over_temp[i]) + "\n";
+    }
+    if (!rows.empty()) out += "[HEAT_SOURCES]\n" + rows + "\n";
+
+    // [HEAT_FLUXES] — only the modules that are ON. An OFF module is the
+    // default, and emitting it would make every saved file look configured.
+    std::string flux;
+    if (cfg.surface_exchange)   flux += "SURFACE_EXCHANGE ON\n";
+    if (cfg.radiative_exchange) flux += "RADIATIVE_EXCHANGE ON\n";
+    if (cfg.layer_conduction)   flux += "LAYER_CONDUCTION ON\n";
+    if (!flux.empty()) out += "[HEAT_FLUXES]\n" + flux + "\n";
+
+    // Empty means DECLINE — see the hook's contract. A heat component that
+    // parsed a file carrying only sections this function cannot yet render
+    // must fall back to the copy rather than truncate them away.
+    return out;
+}
+
 }  // namespace
 
 void registerHeatComponent() {
@@ -741,6 +852,10 @@ void registerHeatComponent() {
            const components::ComponentConfigSections& config,
            std::vector<std::string>& errors) {
             applyHeatSections(ctx, config, errors);
+        },
+        [](const SimulationContext& ctx,
+           const ProcessComponentSpec& /*spec*/) -> std::string {
+            return saveHeatConfig(ctx);
         });
 }
 

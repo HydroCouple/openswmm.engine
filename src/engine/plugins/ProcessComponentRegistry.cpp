@@ -157,7 +157,7 @@ ProcessComponentRegistry::ProcessComponentRegistry() {
     };
     for (const auto& pl : planned)
         entries_[pl.id] =
-            ProcessComponentEntry{pl.desc, pl.phase, nullptr};
+            ProcessComponentEntry{pl.desc, pl.phase, nullptr, nullptr};
 }
 
 ProcessComponentRegistry& ProcessComponentRegistry::instance() {
@@ -167,9 +167,11 @@ ProcessComponentRegistry& ProcessComponentRegistry::instance() {
 
 void ProcessComponentRegistry::register_component(const std::string& id,
                                                   std::string description,
-                                                  ComponentConfigApply apply) {
+                                                  ComponentConfigApply apply,
+                                                  ComponentConfigSave save) {
     entries_[id] =
-        ProcessComponentEntry{std::move(description), std::string{}, std::move(apply)};
+        ProcessComponentEntry{std::move(description), std::string{},
+                              std::move(apply), std::move(save)};
 }
 
 const ProcessComponentEntry* ProcessComponentRegistry::find(
