@@ -1120,6 +1120,18 @@ where the full shock-capturing formulation is available as
 @ref hydraulics_ref_ch8_finite_volume "Chapter 8".) Like `DYNAMIC_SLOT`
 it is flagged experimental.
 
+**Requirements.** The method needs a **closed conduit with a defined
+full depth**: an open cross-section, or one whose \f$Y_{full}\f$ is
+zero, never latches and keeps ordinary free-surface geometry — the
+option is inert outside closed pipe, so mixed networks need no special
+arrangement. Setup is the pair `SURCHARGE_METHOD TPA` and
+`TPA_CELERITY` under `FLOW_ROUTING DYNWAVE`. Only a *sealed* conduit
+end — a virtual junction (Section 3.3.10) or a node with positive
+surcharge depth — can hold sub-crown pressure; every other end vents.
+Signed heads reach the binary output only under
+`REPORT_SIGNED_HEADS YES`, and `NODE_CONTINUITY SEMI_IMPLICIT`
+(Section 3.5) is the recommended pairing.
+
 **Above the crown: a constant-width slot.** Where the static slot of
 Section 3.3.6 uses the Sjőberg width function 3-30, TPA uses the
 classical celerity-derived width directly, held constant per conduit:
@@ -1183,7 +1195,19 @@ rapid-filling laboratory case of Vasconcelos et al. (2006), DW TPA's
 bore arrival lands within 2 % of the finite-volume timing (10.25 s
 against 10.45 s), where the Sjőberg static slot arrives about 20 %
 early (8.35 s) — measured on the mixed-flow closure study of issue
-#156. To observe signed heads in the binary output file at all, set
+#156. Phase 6 of that study, scoring against the digitized laboratory
+record on a shared absolute threshold (head first exceeding 0.15 m at
+the 9.9 m station, measured at 6.69 s), places the columns in absolute
+terms: the dynamic slot lands 0.14 s early (6.55 s), the static slot
+at 9.95 s, DW TPA at 12.25 s, and EXTRAN at 14.35 s — so DW TPA's
+agreement with the finite-volume timing above is scheme consistency,
+not accuracy on this filling case (and the finite-volume columns'
+own timing there is compromised by a documented initial-condition
+seeding defect). On the negative-pressure siphon case, Phase 6
+measured every dynamic-wave column bottoming at 0.231–0.233 m of
+crest head against 0.1035 m for finite-volume TPA — the quantified
+form of the invert-floor limit above. To observe signed heads in the
+binary output file at all, set
 `REPORT_SIGNED_HEADS YES` (default `NO` preserves legacy bit-parity;
 the HEAD field then carries the true signed head while DEPTH stays
 floored — both solvers honor the option).
