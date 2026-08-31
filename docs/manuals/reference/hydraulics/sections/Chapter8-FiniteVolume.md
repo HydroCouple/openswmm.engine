@@ -359,6 +359,27 @@ component \f$h_s\f$ carried only by a pressurized cell, and \f$h_s\f$ may
 be negative — the pipe stays full, at sub-atmospheric pressure, until
 air can physically reach it.
 
+**Requirements.** TPA applies to **closed conduits only**: a cell whose
+cross-section is open never latches (`updateTpaFlags` clears its flag
+unconditionally) and evaluates the free-surface closure verbatim, so
+mixed networks need no special arrangement — the option is inert
+outside closed pipe. Eligibility needs nothing beyond the closed
+section's own full-flow properties, which every closed shape already
+carries for the SLOT closure: \f$A_{crown}\f$, \f$y_{full}\f$, and the
+slot width \f$T_{slot} = gA_{full}/a^{2}\f$. Setup is `FLOW_ROUTING FV`
+with `FV_PRESSURE_CLOSURE TPA`; the acoustic celerity \f$a\f$ comes
+from `FV_SLOT_CELERITY` (§8.4.1). A node is sealed against the venting
+sweep by a positive `SURCHARGE_DEPTH` (a bolted cover); virtual
+junctions are sealed by construction (§8.6.2). Sub-atmospheric heads
+reach the `.out` file **only** under `REPORT_SIGNED_HEADS YES` —
+without it the physics is computed but invisible, the HEAD field
+flooring at the invert. The validated configuration for the
+sub-atmospheric class is the explicit scheme with forward-Euler time
+integration or the implicit acoustic solve (see the scoring below);
+`FV_TIME_INTEGRATION RK2` alters the stability landscape in both
+directions and is not a safe default with TPA (see the known
+limitation).
+
 **The closure pair.** The observation that makes TPA cheap here is that
 the existing slot line *is* the TPA pressurized branch for
 \f$\Delta A = A - A_{crown} \geq 0\f$. TPA extends the same line to both
@@ -443,10 +464,13 @@ instructive: as a settle transient drives cells across the crown, the
 table width swings five orders of magnitude between the clamped
 zero-width branch and the free-surface branch, and the apex cell's head
 reached 877,208 ft within 50 substeps. With the rules in place,
-implicit × TPA closes continuity at 0.000 %; a residual fidelity note
-stands — the implicit path under-tracks the explicit vacuum at a crest
-(minimum crest head 0.104 m against −0.045 m explicit) — so the
-validation columns run explicit.
+implicit × TPA closes continuity at 0.000 %. An earlier probe recorded
+the implicit path under-tracking the explicit vacuum at a crest; the
+Phase 6 scoring against the digitized laboratory record did not
+reproduce that gap — the two land within a millimetre of each other at
+the crest minimum (0.1037 m implicit against 0.1035 m explicit, NSE
+0.9960 against 0.9955 on the 14.1 m pressure trace) — so both are
+validated configurations for the sub-atmospheric class.
 
 **Hot start.** The regime flags are cleared on cold start *and* on
 restore from a hot start file. A restored run whose reach was
@@ -465,7 +489,14 @@ of the legacy HEAD field). The case is scored over the 40 s the deck
 runs, which is where its own header puts the boundary of the physics
 the model contains; the vacuum is still deepening monotonically when
 the run ends, so this figure is a lower bound on the closure's reach,
-not a plateau.
+not a plateau. Phase 6 of the companion study scored this trace
+against the record digitized from the source figures: NSE 0.9955
+(explicit Euler) and 0.9960 (implicit) on the 14.1 m pressure station,
+at an RMSE of ~4 mm — below the source figure's own ±8 mm resolution —
+while the best slot-closure column scores 0.55 and every dynamic-wave
+column goes negative. The sub-atmospheric decline is tracked to within
+what the published figure can resolve; this is the closure's measured
+payoff, and it is only observable with `REPORT_SIGNED_HEADS YES` set.
 
 **Known limitation: high-celerity filling.** At \f$a\f$ = 150 m/s the
 rapid-fill validation case diverges at the reflected return surge — a
@@ -476,11 +507,29 @@ high-celerity post-shock frontier: their Fig. 7 discussion needs a
 flagged-neighbourhood-local, exactly conservative filter of that form
 was implemented, measured — it does not rescue the case at either the
 paper's weight or five times it, because spatial smoothing cannot damp
-a temporal odd–even mode — and reverted. The documented contingency is
-the hybrid flux of Vasconcelos, Wright and Roe (2009). The divergence is
-pinned in-tree (`FvTpa.KnownIssueHighCelerityFillingDiverges`), and the
-same case at the paper's original \f$a\f$ = 25 m/s parameterization runs
-clean.
+a temporal odd–even mode — and reverted. Two further measured results
+bound the frontier. First, the Euler front is knife-edge marginal, not
+threshold-limited: a \f$k_{3}\f$ of \f$10^{-6}\f$ (physically nothing)
+or a 0.002 % change in `FV_SLOT_CELERITY` flips a marginal filling
+case between completing and diverging, so apparent "stability
+thresholds" in that neighbourhood are floating-point luck. Second,
+two-stage RK2 (Heun) time integration damps the temporal mode and
+completes the pinned filling case
+(`FvTpa.Rk2CompletesWhereEulerFillingPinDiverges`), **but it is not a
+remedy**: on the negative-pressure siphon case — the physics TPA
+exists for — RK2 destroys the solution (NSE −6.6×10¹⁰ against 0.996
+under Euler or implicit), and Phase 6 found RK2 completions can hide
+silent divergence: a run that spikes to thousands of feet mid-record
+and returns exits cleanly, with no `ERROR` line and plausible early
+metrics. No single (closure, integrator) pairing measured to date is
+stable across all four validation decks; the integrator is a
+per-problem choice, and a completed run's status line is not evidence
+of a healthy trace — inspect the reported extrema. The documented
+contingency for the Euler filling front remains the hybrid flux of
+Vasconcelos, Wright and Roe (2009). The Euler divergence is pinned
+in-tree (`FvTpa.KnownIssueHighCelerityFillingDiverges`), and the same
+case at the paper's original \f$a\f$ = 25 m/s parameterization runs
+clean under every integrator.
 
 **Implementation.** The pressurized-branch kernels are
 `tpaDepthOfArea`, `tpaAreaOfDepth` and `tpaI1OfDepth` in
