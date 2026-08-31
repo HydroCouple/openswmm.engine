@@ -1409,19 +1409,11 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
 
 // Precompute the convective UF term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell from the
 // CURRENT (pre-update) cell_u_/state snapshot, so the parallel update loops
-// never read a mid-update neighbor. Stencil is same-conduit, same-TPA-regime
-// only: within one conduit every cell shares the conduit frame, while across
-// virtual-junction splices and node faces the frames may oppose (face_dir_l/r
-// flips), so the stencil degrades to one-sided/own there — slightly diffusive
-// at splices, never sign-wrong. Under TPA the stencil additionally skips a
-// neighbor whose regime flag differs (stability round, issue #156): across a
-// flagged|free front the velocity difference is a SHOCK, not a gradient, and
-// the flagged cell's acoustic celerity multiplies it into a grad_term that is
-// clamped per substep yet reapplied at acoustic dt every substep — the
-// explicit-source stability limit that killed e4×C5 on clang/arm64 at
-// k3 = 0.005 (threshold 0.002–0.003 there; ~0.010 on gcc/x86). With TPA off
-// the flags are empty and tpaCell() is constant-false, so the skip is
-// byte-inert. Wave celerity is regime-consistent by construction:
+// never read a mid-update neighbor. Stencil is same-conduit only: within one
+// conduit every cell shares the conduit frame, while across virtual-junction
+// splices and node faces the frames may oppose (face_dir_l/r flips), so the
+// stencil degrades to one-sided/own there — slightly diffusive at splices,
+// never sign-wrong. Wave celerity is regime-consistent by construction:
 // kernels::celerity(A, T) delivers √(gA/T), which above the crown is the slot
 // (acoustic) celerity because T = t_slot — exactly the paper's Eq. (12).
 void ExplicitFvSolver::computeUfGradients(const std::vector<int>* cells) {
@@ -1448,7 +1440,6 @@ void ExplicitFvSolver::computeUfGradients(const std::vector<int>* cells) {
             if (nb < 0) continue;                                  // node face
             const auto unb = static_cast<std::size_t>(nb);
             if (mesh_->cell_conduit[unb] != cond) continue;        // VJ splice
-            if (tpaCell(unb) != tpaCell(uc)) continue;             // TPA front
             const double d = 0.5 * (dx_c + mesh_->cell_dx[unb]);
             if (sides[e] == 0) { uR = cell_u_[unb]; dsum += d; }
             else               { uL = cell_u_[unb]; dsum += d; }
