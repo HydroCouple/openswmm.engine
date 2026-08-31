@@ -32,11 +32,38 @@ retroactive.
   (the inverse of `ComponentConfigApply`; empty return = decline → the
   carry-alongside copy still runs) lets components adopt saving one at a
   time with no intermediate state losing data. Heat and reactions adopt
-  here; water age and ARD still decline (IO3b). `saveHeatConfig` writes
-  only what the model actually set — and DECLINES whenever H6a's
-  radiative/solar/cloud sections carry state it cannot yet render, so the
-  copy preserves them rather than truncating (pinned by
-  `UnrenderableSectionsDeclineRatherThanTruncate`).
+  here; water age and ARD still decline (IO3c — their configs are
+  unit-bearing: age stores seconds against a file in hours, so their
+  serializers need a fixed-point round-trip gate heat never needed). `saveHeatConfig` writes
+  only what the model actually set. IO3b (same release) extended the heat
+  renderer to all five sections — `[RADIATIVE_FLUXES]` (all three SHORTWAVE
+  spellings, with the TIMESERIES index mapped back to its series name),
+  `[SOLAR_RADIATION]` and `[CLOUD_COVER]` — so heat edits survive a save on
+  EVERY model, and the IO3a decline guard is deleted in favour of
+  structural `sizeof` pins: growing any of the three config structs now
+  breaks the build beside the renderer instead of silently reopening the
+  loss. Found en route: the renderer's first spelling of the
+  longwave-reflection key (`LW_REFLECTION`) is one the parser refuses
+  (`ATM_LW_REFLECTION`) — caught by the new field-by-field round-trip gate
+  before it shipped.
+
+- **Preissmann slot readers and 2-D name/bulk accessors.** `Link.slot_volume`
+  reports the water standing above the pipe crown, and
+  `LinkStatsView.peak_slot_share` / `LinkStatsView.slot_share` report the
+  peak instantaneous and run-level slot fraction — the latter a ratio of
+  time integrals, never an average of instantaneous ratios. All three are
+  finite-volume-routing only and read `0.0` under dynamic wave.
+  `Surface2D` gains `set_vertex_z_bulk` (one mesh rescan instead of one
+  per vertex) and the three read-back companions the boundary-condition
+  setters had been missing: `get_edge_bc_tseries_name`,
+  `get_edge_bc_flow_tseries_name` and `get_edge_bc_rating_curve_name`,
+  each returning `""` for a clear slot so a round trip through an editor
+  no longer has to remember what it wrote.
+
+- **C/Python/MCP parity matrix at zero gaps in all three columns.** Of
+  1016 C symbols, 992 are at parity and the remaining 24 are
+  documented-intentional exclusions — the first time the matrix has been
+  clean across the C, Python and MCP columns simultaneously.
 
 - **Heat transport H6a — incoming shortwave forcing.** `[RADIATIVE_FLUXES]
   SHORTWAVE` now takes three mutually exclusive spellings instead of one

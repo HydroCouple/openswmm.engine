@@ -383,7 +383,11 @@ TEST(HeatSourcesApiTest, SourceEditsSurviveASaveAndReopen) {
 // ---------------------------------------------------------------------------
 TEST(HeatSourcesApiTest, SaveIsIdempotent) {
     write_file("_hs_idem.heat",
-               "[HEAT_SOURCES]\nDWF GLOBAL 14.5\nGW GLOBAL 9.0\n");
+               "[HEAT_SOURCES]\nDWF GLOBAL 14.5\nGW GLOBAL 9.0\n\n"
+               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n"
+               "ALBEDO GLOBAL 0.12\n\n"
+               "[CLOUD_COVER]\nFRACTION GLOBAL 0.4\n");
     std::string why;
     SWMM_Engine e = open_deck("_hs_idem", "_hs_idem.heat", &why);
     ASSERT_NE(e, nullptr) << why;
@@ -417,19 +421,14 @@ TEST(HeatSourcesApiTest, SaveIsIdempotent) {
 }
 
 // ---------------------------------------------------------------------------
-// The one data loss IO3a could have introduced (its handoff §6 last bullet):
-// saveHeatConfig cannot yet render H6a's sections ([RADIATIVE_FLUXES],
-// [SOLAR_RADIATION], [CLOUD_COVER]). A model carrying them must make the
-// save DECLINE — the copy fallback preserves the whole file — rather than
-// write a file holding only the sections the renderer knows, silently
-// truncating the rest.
-//
-// The other half of this gate is honest about the cost: under decline, an
-// API edit to [HEAT_SOURCES] is still lost for such models (the step-3
-// finding remains true for them until IO3b extends the renderer). Asserted
-// here so IO3b's landing flips a gate instead of a comment.
+// IO3b FLIPPED THIS GATE, exactly as its previous body predicted. Under
+// IO3a the renderer could not write H6a's sections, so the save DECLINED on
+// such models (preserving them via the copy) and this gate asserted the
+// cost: the API edit was lost. The renderer now covers every heat section,
+// so both halves must hold at once — the radiative config survives because
+// it is RENDERED, and the edit survives with it.
 // ---------------------------------------------------------------------------
-TEST(HeatSourcesApiTest, UnrenderableSectionsDeclineRatherThanTruncate) {
+TEST(HeatSourcesApiTest, H6aSectionsRoundTripWithEditsThroughTheRenderer) {
     write_file("_hs_h6a.heat",
                "[HEAT_SOURCES]\nDWF GLOBAL 14.5\n\n"
                "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
@@ -447,23 +446,129 @@ TEST(HeatSourcesApiTest, UnrenderableSectionsDeclineRatherThanTruncate) {
     ASSERT_EQ(swmm_engine_open(r, "_hs_h6a_out.inp", "_hs_h6a2.rpt",
                               "_hs_h6a2.out", nullptr), SWMM_OK);
 
-    // The radiative section SURVIVED — the save declined and copied.
+    // The radiative section survived — RENDERED this time, not copied.
     double sw = 0.0;
     ASSERT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_SHORTWAVE, &sw),
               SWMM_OK);
     EXPECT_DOUBLE_EQ(sw, 317.5)
-        << "[RADIATIVE_FLUXES] was truncated away — saveHeatConfig rendered "
-           "a partial file instead of declining";
+        << "[RADIATIVE_FLUXES] was lost — the renderer dropped or mangled "
+           "the section it now claims to cover";
 
-    // ...and the DECLINE means the API edit was NOT kept for this model —
-    // the documented IO3b gap. When IO3b extends the renderer to H6a's
-    // sections, this expectation flips to 31.0.
+    // ...and the edit survives WITH it: the step-3 loss is retired for
+    // H6a-configured models. (At IO3b's base this reads 14.5 — the decline
+    // path copied the original file over the edit — which is this round's
+    // fails-at-base evidence.)
     double t = 0.0;
     ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_DWF, &t), SWMM_OK);
-    EXPECT_DOUBLE_EQ(t, 14.5)
-        << "the edit survived on an H6a-configured model — the renderer now "
-           "covers those sections (IO3b?): flip this gate to assert 31.0 and "
-           "retire UnrenderableSectionsDeclineRatherThanTruncate's decline leg";
+    EXPECT_DOUBLE_EQ(t, 31.0)
+        << "the [HEAT_SOURCES] edit was lost on an H6a-configured model — "
+           "the save declined (or the renderer skipped the section)";
 
     swmm_engine_destroy(r);
+}
+
+// ---------------------------------------------------------------------------
+// IO3b falsifier-i coverage: every rendered section carries at least one
+// asserted field, or "renders it" is untested. One deck configures all five
+// sections (both TIMESERIES spellings included), takes an API edit, saves,
+// reopens, and every value must come back exactly.
+// ---------------------------------------------------------------------------
+TEST(HeatSourcesApiTest, EveryHeatSectionRoundTripsFieldByField) {
+    write_file("_hs_all.heat",
+               "[HEAT_SOURCES]\nGW GLOBAL 9.5\n\n"
+               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\nRADIATIVE_EXCHANGE ON\n\n"
+               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n"
+               "ALBEDO GLOBAL 0.12\nSKY_VIEW GLOBAL 0.8\n"
+               "ATM_LW_REFLECTION GLOBAL 0.05\n\n"
+               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
+               "LONGITUDE GLOBAL -111.8\nTIMEZONE GLOBAL -7\n"
+               "ELEVATION GLOBAL -430\nOZONE GLOBAL 0.41\n\n"
+               "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_ts\n"
+               "LW_CLOUD_K GLOBAL 0.3\n");
+    // The deck needs the two named series.
+    const std::string inp =
+        std::string("[TITLE]\nIO3b all-sections round trip\n\n[OPTIONS]\n") +
+        "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n" +
+        "HEAT_TRANSPORT       YES\n" +
+        "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n" +
+        "END_DATE             01/01/2026\nEND_TIME             00:30:00\n" +
+        "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n" +
+        // [TIMESERIES] must precede [PROCESS_COMPONENTS]: the heat config's
+        // TIMESERIES spellings resolve names during the component apply, so
+        // a series declared later reads as missing (the same section-order
+        // family as H7b's [INFLOWS]-before-[POLLUTANTS] finding).
+        "[TIMESERIES]\nsw_ts 01/01/2026 00:00 700.0\n" +
+        "sw_ts 01/02/2026 00:00 700.0\n" +
+        "cloud_ts 01/01/2026 00:00 0.5\ncloud_ts 01/02/2026 00:00 0.5\n\n" +
+        "[PROCESS_COMPONENTS]\n" +
+        "org.hydrocouple.openswmm.heat config=\"_hs_all.heat\"\n\n" +
+        "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\nJ1 9.0 10 0.5 0 0\n\n" +
+        "[OUTFALLS]\nOUT 7.0 FREE NO\n\n" +
+        "[CONDUITS]\nC1 J0 J1 400 0.013 0 0 0\nC2 J1 OUT 400 0.013 0 0 0\n\n" +
+        "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n\n" +
+        "[REPORT]\nINPUT NO\n";
+    write_file("_hs_all.inp", inp);
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_hs_all.inp", "_hs_all.rpt", "_hs_all.out",
+                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_GW, 11.5), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(e, "_hs_all_out.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+
+    SWMM_Engine r = swmm_engine_create();
+    ASSERT_NE(r, nullptr);
+    ASSERT_EQ(swmm_engine_open(r, "_hs_all_out.inp", "_hs_all2.rpt",
+                               "_hs_all2.out", nullptr), SWMM_OK);
+
+    double v = 0.0; int iv = -1;
+    ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_GW, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 11.5);                       // the edit
+    EXPECT_EQ(swmm_heat_get_module(r, SWMM_HEAT_SURFACE_EXCHANGE, &iv),
+              SWMM_OK);
+    EXPECT_EQ(iv, 1);                                // [HEAT_FLUXES]
+    EXPECT_EQ(swmm_heat_get_shortwave_mode(r, &iv), SWMM_OK);
+    EXPECT_EQ(iv, SWMM_HEAT_SW_TIMESERIES);          // TIMESERIES spelling
+    EXPECT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_ALBEDO, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 0.12);                       // [RADIATIVE_FLUXES]
+    EXPECT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_SKY_VIEW, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 0.8);
+    EXPECT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_LW_REFLECTION, &v),
+              SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 0.05);
+    EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_LATITUDE, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 41.7);                       // [SOLAR_RADIATION]
+    EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_LONGITUDE, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, -111.8);
+    EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_TIMEZONE, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, -7.0);
+    EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_ELEVATION, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, -430.0);                     // below sea level kept
+    EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_OZONE, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 0.41);
+    EXPECT_EQ(swmm_heat_get_solar_sited(r, &iv), SWMM_OK);
+    EXPECT_EQ(iv, 1);                                // has_* flags survived
+    EXPECT_EQ(swmm_heat_get_cloud_configured(r, &iv), SWMM_OK);
+    EXPECT_EQ(iv, 1);                                // [CLOUD_COVER]
+    EXPECT_EQ(swmm_heat_get_cloud(r, SWMM_HEAT_CLOUD_LW_CLOUD_K, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 0.3);
+
+    swmm_engine_destroy(r);
+
+    // FILE-level leg: invented DEFAULTS are invisible through the API for
+    // the radiative scalars (they carry no per-field configured state), so
+    // only the written file can show a serializer that emits every default.
+    // EMISS_WATER stays at its 0.97 default in this fixture: its key must
+    // not appear in the config the save wrote.
+    {
+        std::ifstream f("_hs_all.heat", std::ios::binary);
+        const std::string written((std::istreambuf_iterator<char>(f)),
+                                  std::istreambuf_iterator<char>());
+        ASSERT_FALSE(written.empty());
+        EXPECT_EQ(written.find("EMISS_WATER"), std::string::npos)
+            << "the save emitted a default the model never set — invented "
+               "configuration (lesson 196), invisible through the API and "
+               "caught only here";
+    }
 }
