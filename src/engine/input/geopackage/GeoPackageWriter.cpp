@@ -230,6 +230,8 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("UNSTEADY_FRICTION", std::to_string(opts.unsteady_friction));  // issue #156
     insert_d("UF_K3", opts.uf_k3);
     insert("FV_PRESSURE_CLOSURE", std::to_string(opts.fv.pressure_closure));  // issue #156
+    insert("REPORT_SIGNED_HEADS", std::to_string(opts.report_signed_heads));  // issue #156
+    insert_d("TPA_CELERITY", opts.tpa_celerity);  // issue #156
     if (opts.surcharge_method == 2) {
         insert_d("DPS_CELERITY", opts.dps_target_celerity);
         insert_d("DPS_ALPHA", opts.dps_alpha);

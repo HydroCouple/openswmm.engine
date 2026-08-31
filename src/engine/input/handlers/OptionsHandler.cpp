@@ -391,6 +391,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             if      (sv == "EXTRAN")       opt.surcharge_method = 0;
             else if (sv == "SLOT")         opt.surcharge_method = 1;
             else if (sv == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+            else if (sv == "TPA")          opt.surcharge_method = 3;  // issue #156
+
+        } else if (key == "TPA_CELERITY") {  // issue #156
+            opt.tpa_celerity = to_double(val);
 
         } else if (key == "DPS_CELERITY") {
             opt.dps_target_celerity = to_double(val);
@@ -413,6 +417,12 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "UF_K3") {
             opt.uf_k3 = to_double(val);
+
+        } else if (key == "REPORT_SIGNED_HEADS") {  // issue #156 O-6
+            const std::string sv2 = norm(val);
+            opt.report_signed_heads =
+                (sv2 == "YES" || sv2 == "TRUE" || sv2 == "ON" || sv2 == "1")
+                    ? 1 : 0;
 
         // -----------------------------------------------------------------
         // Explicit finite-volume solver (FLOW_ROUTING FV).

@@ -967,12 +967,16 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "SURCHARGE_METHOD") {
         if      (opt.surcharge_method == 0) val = "EXTRAN";
         else if (opt.surcharge_method == 1) val = "SLOT";
+        else if (opt.surcharge_method == 3) val = "TPA";   // issue #156
         else                                val = "DYNAMIC_SLOT";
     }
+    else if (k == "TPA_CELERITY")      val = std::to_string(opt.tpa_celerity);
     else if (k == "UNSTEADY_FRICTION") {  // issue #156
         val = (opt.unsteady_friction == 1) ? "VITKOVSKY" : "NONE";
     }
     else if (k == "UF_K3")             val = std::to_string(opt.uf_k3);
+    else if (k == "REPORT_SIGNED_HEADS")  // issue #156 O-6
+        val = opt.report_signed_heads ? "YES" : "NO";
     else if (k == "NODE_CONTINUITY") {
         val = (opt.node_continuity == openswmm::NodeContinuity::SEMI_IMPLICIT)
               ? "SEMI_IMPLICIT" : "EXPLICIT";
@@ -1356,6 +1360,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         if      (vu == "EXTRAN")       opt.surcharge_method = 0;
         else if (vu == "SLOT")         opt.surcharge_method = 1;
         else if (vu == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+        else if (vu == "TPA")          opt.surcharge_method = 3;  // issue #156
         else return SWMM_ERR_BADPARAM;
     }
     else if (k == "UNSTEADY_FRICTION") {  // issue #156
@@ -1366,6 +1371,12 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else return SWMM_ERR_BADPARAM;
     }
     else if (k == "UF_K3")             opt.uf_k3 = stod_strict(v);
+    else if (k == "TPA_CELERITY")      opt.tpa_celerity = stod_strict(v);
+    else if (k == "REPORT_SIGNED_HEADS") {  // issue #156 O-6
+        const std::string vu = upper_copy(v);
+        opt.report_signed_heads =
+            (vu == "YES" || vu == "TRUE" || vu == "ON" || vu == "1") ? 1 : 0;
+    }
     else if (k == "NODE_CONTINUITY") {
         std::string vu(v);
         for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));

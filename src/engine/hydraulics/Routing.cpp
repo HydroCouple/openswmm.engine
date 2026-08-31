@@ -311,6 +311,7 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             // conversion.
             dw_solver_.unsteady_friction = ctx.options.unsteady_friction;
             dw_solver_.uf_k3             = ctx.options.uf_k3;
+            dw_solver_.tpa_celerity      = ctx.options.tpa_celerity;  // #156
 
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
@@ -400,7 +401,22 @@ int Router::step(SimulationContext& ctx, double dt,
     divider::computeDividerFlows(ctx, ctx.node_subtypes.dividers);
 
     // 6. Update link final states (depth, volume)
-    updateLinkStates(ctx);
+    //
+    // NOT under FV: publishFv has already written every node's head, and an
+    // FV head is PIEZOMETRIC. `head = invert + depth` cannot express one that
+    // sits below the node's own invert, because the published depth is a
+    // water depth floored at zero — so recomputing here silently replaced it
+    // with the invert. Measured on the issue #156 TPA sealed-drawdown
+    // fixture: the apex head reached 3.5 ft inside the step (invert 6.0) and
+    // every reader outside the solver saw exactly 6.0, which is what made the
+    // sub-atmospheric gate unfalsifiable. For every node whose head is at or
+    // above its invert the two agree exactly, so this changes nothing else.
+    //
+    // The other routers still need it: they set depth as the primary variable
+    // and derive head from it, and DYNWAVE's own head writes happen per
+    // Picard pass rather than once at the end.
+    if (ctx.options.routing_model != RoutingModel::FV)
+        updateLinkStates(ctx);
 
     return iters;
 }
@@ -1434,13 +1450,29 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         if (n < 0) continue;
         const auto un = static_cast<std::size_t>(n);
         const double zf = fv_mesh_.face_zb[uf];
+        // TPA (issue #156): a FLAGGED side carries a signed piezometric
+        // level cell_zb + cell_h with no zf floor — the station VJ is
+        // exactly where E3's sub-atmospheric trace is measured. Unflagged
+        // sides keep the legacy wetting convention bit-for-bit.
         double eta = zf;                    // both sides dry ⇒ dry node
+        bool any_tpa = false;
+        double eta_tpa = 0.0;
         for (const int c : {fv_mesh_.face_cl[uf], fv_mesh_.face_cr[uf]}) {
             if (c < 0) continue;
             const auto uc = static_cast<std::size_t>(c);
+            if (!fv_state_.cell_tpa.empty() && fv_state_.cell_tpa[uc] != 0) {
+                const double e_t = fv_mesh_.cell_zb[uc] + fv_state_.cell_h[uc];
+                eta_tpa = any_tpa ? std::max(eta_tpa, e_t) : e_t;
+                any_tpa = true;
+                continue;
+            }
             eta = std::max(eta, std::min(fv_mesh_.cell_zb[uc], zf) +
                                 fv_state_.cell_h[uc]);
         }
+        // A TPA side sets the head; an unflagged side only competes when it
+        // is genuinely wet above the floor (the bare zf floor must not mask
+        // a signed TPA level).
+        if (any_tpa) eta = (eta > zf) ? std::max(eta, eta_tpa) : eta_tpa;
         ctx.nodes.head[un]  = eta;
         ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
         ctx.nodes.volume[un] = 0.0;   // zero-storage by construction

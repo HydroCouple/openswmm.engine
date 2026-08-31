@@ -534,6 +534,7 @@ add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
 add_gtest_unit(test_engine_fv_unsteady_friction test_fv_unsteady_friction.cpp)
 add_gtest_unit(test_engine_dw_unsteady_friction test_dw_unsteady_friction.cpp)
 add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
+add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
 # pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
 # solutions incl. shock SPEED, and mass conservation to machine precision over

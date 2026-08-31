@@ -59,7 +59,7 @@ static const char* InfilModelWords[] = {
     "HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
     "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"
 };
-static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT" };
+static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA" };
 static const char* NodeTypeWords[] = { "JUNCTION", "OUTFALL", "DIVIDER", "STORAGE" };
 static const char* LinkTypeWords[] = { "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET" };
 static const char* RainTypeWords[] = { "INTENSITY", "VOLUME", "CUMULATIVE" };
@@ -568,7 +568,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;
-            const char* sm_name = (sm >= 0 && sm <= 2) ? SurchargeWords[sm] : "EXTRAN";
+            const char* sm_name = (sm >= 0 && sm <= 3) ? SurchargeWords[sm] : "EXTRAN";
             std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
             const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
                                   ? "SEMI_IMPLICIT" : "EXPLICIT";

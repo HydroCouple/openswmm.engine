@@ -1030,7 +1030,10 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
         }
     }
     if (tpa_side) {
-        i1_raw = k::tpaI1OfDepth(*g, h_raw);
+        // Use the UNCLAMPED piezometric depth (eta − z_side): every h_raw
+        // branch above floors at 0, which is wrong for a sub-atmospheric
+        // column whose head can sit below the local invert.
+        i1_raw = k::tpaI1OfDepth(*g, eta - z_side);
         const double h_star_t = eta - zstar;          // signed; no clamp
         double a_t = k::tpaAreaOfDepth(*gf, h_star_t);
         if (a_t < k::kDryArea) a_t = k::kDryArea;     // vacuum floor guard
@@ -1406,11 +1409,19 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
 
 // Precompute the convective UF term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell from the
 // CURRENT (pre-update) cell_u_/state snapshot, so the parallel update loops
-// never read a mid-update neighbor. Stencil is same-conduit only: within one
-// conduit every cell shares the conduit frame, while across virtual-junction
-// splices and node faces the frames may oppose (face_dir_l/r flips), so the
-// stencil degrades to one-sided/own there — slightly diffusive at splices,
-// never sign-wrong. Wave celerity is regime-consistent by construction:
+// never read a mid-update neighbor. Stencil is same-conduit, same-TPA-regime
+// only: within one conduit every cell shares the conduit frame, while across
+// virtual-junction splices and node faces the frames may oppose (face_dir_l/r
+// flips), so the stencil degrades to one-sided/own there — slightly diffusive
+// at splices, never sign-wrong. Under TPA the stencil additionally skips a
+// neighbor whose regime flag differs (stability round, issue #156): across a
+// flagged|free front the velocity difference is a SHOCK, not a gradient, and
+// the flagged cell's acoustic celerity multiplies it into a grad_term that is
+// clamped per substep yet reapplied at acoustic dt every substep — the
+// explicit-source stability limit that killed e4×C5 on clang/arm64 at
+// k3 = 0.005 (threshold 0.002–0.003 there; ~0.010 on gcc/x86). With TPA off
+// the flags are empty and tpaCell() is constant-false, so the skip is
+// byte-inert. Wave celerity is regime-consistent by construction:
 // kernels::celerity(A, T) delivers √(gA/T), which above the crown is the slot
 // (acoustic) celerity because T = t_slot — exactly the paper's Eq. (12).
 void ExplicitFvSolver::computeUfGradients(const std::vector<int>* cells) {
@@ -1437,6 +1448,7 @@ void ExplicitFvSolver::computeUfGradients(const std::vector<int>* cells) {
             if (nb < 0) continue;                                  // node face
             const auto unb = static_cast<std::size_t>(nb);
             if (mesh_->cell_conduit[unb] != cond) continue;        // VJ splice
+            if (tpaCell(unb) != tpaCell(uc)) continue;             // TPA front
             const double d = 0.5 * (dx_c + mesh_->cell_dx[unb]);
             if (sides[e] == 0) { uR = cell_u_[unb]; dsum += d; }
             else               { uL = cell_u_[unb]; dsum += d; }
@@ -1444,8 +1456,19 @@ void ExplicitFvSolver::computeUfGradients(const std::vector<int>* cells) {
         if (dsum <= 0.0) return;
         const FvGeometry& g =
             mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-        const double c_wave = k::celerity(state_->cell_a[uc],
-                                          k::widthOfDepth(g, h));
+        // Regime-consistent wave speed (issue #156 P5b — same rule as the
+        // dt census and the implicit storage width): a FLAGGED cell's h is
+        // the SIGNED slot-line depth, and the free-surface table width is
+        // wrong at every h off the slot band (at 0 < h < y_crown it is the
+        // free width, ~1e5 × t_slot at study celerities, and the resulting
+        // c_wave drives the Vitkovsky term unstable — e4 × TPA + UF NaN'd at
+        // the reflected surge once the P5b refresh made regime-true h
+        // reachable there). A flagged cell's celerity is the constant
+        // acoustic value from the slot width at ANY h.
+        const double c_wave = tpaCell(uc)
+                                  ? k::celerity(state_->cell_a[uc], g.t_slot)
+                                  : k::celerity(state_->cell_a[uc],
+                                                k::widthOfDepth(g, h));
         const double sgn = (u > 0.0) ? 1.0 : -1.0;
         uf_grad_[uc] = c_wave * sgn * std::fabs((uR - uL) / dsum);
     };
@@ -1486,33 +1509,87 @@ void ExplicitFvSolver::updateTpaFlags() {
             mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
         if (g.is_open) { state_->cell_tpa[uc] = 0; continue; }
         const double a = state_->cell_a[uc];
+        // Atmosphere contact of THIS cell (the exit rule's vent test): an
+        // unsealed node face whose water level sits below the pipe crown at
+        // that face, or a free-surface neighbor whose level sits below the
+        // shared crown.
+        auto ventedCell = [&]() -> bool {
+            const int faces2[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+            for (const int f : faces2) {
+                const auto uf = static_cast<std::size_t>(f);
+                const double crown_elev = mesh_->face_zb[uf] + g.y_full;
+                const int nd = mesh_->face_node[uf];
+                if (nd >= 0) {
+                    const auto und = static_cast<std::size_t>(nd);
+                    if (mesh_->node_sur_depth[und] <= 0.0 &&
+                        state_->node_head[und] < crown_elev)
+                        return true;
+                    continue;
+                }
+                const int nb = (mesh_->face_cl[uf] == c) ? mesh_->face_cr[uf]
+                                                         : mesh_->face_cl[uf];
+                // Interface rule (P5b, measured both ways — the P4/P5
+                // submergence-checked contact rule STANDS). The paper vents
+                // the regime-transition interface unconditionally ("…or the
+                // flow regime transition interface, hs is set to zero"), but
+                // taken literally that unzips a submerged pressurized leg
+                // through a chain of momentary exits (the open-apex gate
+                // diverged), and a ±2 ft "weakly sub-atmospheric" band
+                // variant failed the same gates — both REJECTED (see the P5b
+                // handoff delta). An interface vents only when air actually
+                // sits at the shared face: a free-surface neighbor whose
+                // level is below the shared crown.
+                if (nb >= 0 &&
+                    tpa_scratch_[static_cast<std::size_t>(nb)] == 0 &&
+                    cell_eta_[static_cast<std::size_t>(nb)] < crown_elev)
+                    return true;
+            }
+            return false;
+        };
+        // Regime-consistent state refresh on ANY transition (P5b, measured on
+        // the e2 filling deck): the stored cell_h belongs to the OLD regime —
+        // an exited cell otherwise carries its line-depth (−200 ft class)
+        // through the whole substep's reconstruction, and the resulting eta
+        // gradients pump mass until the run NaNs at the reflected surge
+        // (~21.6 s, ERROR 14; traced: heads to 2485 ft with 5–15 flag flips
+        // per substep).
+        auto refresh = [&](uint8_t now) {
+            state_->cell_tpa[uc] = now;
+            const double h2 = now ? k::tpaDepthOfArea(g, a)
+                                  : k::depthOfArea(g, a);
+            state_->cell_h[uc] = h2;
+            cell_eta_[uc] = mesh_->cell_zb[uc] + h2;
+        };
         if (tpa_scratch_[uc] == 0) {
-            state_->cell_tpa[uc] = (a >= g.a_crown) ? uint8_t{1} : uint8_t{0};
+            // Entry at the crown area is unconditional (Phase-4 rule,
+            // unchanged). A P5b variant that ALSO forced entry for un-vented
+            // essentially-full cells (A ≥ a_full islands) was measured and
+            // REJECTED — it broke e4 and the open-apex gate (see the P5b
+            // handoff delta); do not resurrect without new evidence.
+            const uint8_t now = (a >= g.a_crown) ? uint8_t{1} : uint8_t{0};
+            if (now != tpa_scratch_[uc]) refresh(now);
+            continue;
+        }
+        // Column separation floor (the paper's own two-phase boundary): a
+        // sealed reach can sustain vacuum only to about one atmosphere of
+        // water column. Below hs ≈ −30 ft the column separates and a vapor
+        // cavity forms — modeled as an unconditional exit to free surface
+        // (documented limitation; real cavity dynamics are out of scope).
+        constexpr double kCavHead = 30.0;   // ft
+        if (a < g.a_crown - g.t_slot * kCavHead) {
+            refresh(0);   // column separation: exit + regime-true h
             continue;
         }
         if (a > g.a_crown - g.t_slot * kEpsHead) continue;   // stays P
-        bool vented = false;
-        const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
-        for (const int f : faces) {
-            const auto uf = static_cast<std::size_t>(f);
-            const int nd = mesh_->face_node[uf];
-            if (nd >= 0) {
-                if (mesh_->node_sur_depth[static_cast<std::size_t>(nd)] <= 0.0) {
-                    vented = true;
-                    break;
-                }
-                continue;   // sealed node (bolted cover / SUR_DEPTH)
-            }
-            const int nb = (mesh_->face_cl[uf] == c) ? mesh_->face_cr[uf]
-                                                     : mesh_->face_cl[uf];
-            if (nb >= 0 &&
-                tpa_scratch_[static_cast<std::size_t>(nb)] == 0) {
-                vented = true;
-                break;
-            }
-            // nb < 0 with no node: a closed end — a sealed wall, not a vent.
-        }
-        if (vented) state_->cell_tpa[uc] = 0;
+        // Atmosphere contact requires an UNSUBMERGED opening: air cannot
+        // enter through a vented node whose water level stands above the
+        // pipe crown at that face (a submerged inlet holds the siphon), nor
+        // from a free-surface neighbor whose surface is above the shared
+        // crown. Without the submergence check every sealed reach unzips
+        // from its vented ends (measured: the sealed-siphon fixture drained
+        // and then diverged). A closed end (nb < 0, no node) is a sealed
+        // wall, not a vent. Shares ventedCell with the entry rule above.
+        if (ventedCell()) refresh(0);
     }
 }
 
@@ -1674,7 +1751,11 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
         cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
         // A flagged cell is FULL of water at (possibly sub-atmospheric)
         // piezometric head — the dry cutoff must not fire on h < kDryDepth.
-        if (!tpa_cell && h_new <= k::kDryDepth) {
+        // A degenerate vacuum cell (area collapsed toward zero before the
+        // column-separation exit fires next flag update) must not divide by
+        // ~zero area.
+        if ((!tpa_cell && h_new <= k::kDryDepth) ||
+            (tpa_cell && a_new <= k::kDryArea)) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
             continue;
@@ -1790,7 +1871,12 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
             const auto uc = static_cast<std::size_t>(c);
             const double eta = cell_eta_[uc];
             if (!any || eta < lowest) { lowest = eta; any = true; }
-            if (state_->cell_h[uc] <= k::kDryDepth) continue;
+            // A TPA-flagged cell is FULL of water at a (possibly negative)
+            // gauge pressure — it is the wettest state there is, and its eta
+            // is the piezometric level the node shares. The h > kDryDepth
+            // test reads it as dry, which dropped the sealed column's own
+            // vacuum out of the average and left the node on the fallback.
+            if (!tpaCell(uc) && state_->cell_h[uc] <= k::kDryDepth) continue;
             s += eta;
             ++m;
         }
@@ -1929,6 +2015,25 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     }
     double lo = invert;
     double hi = invert + top;
+    // TPA (issue #156 Phase 4): a SEALED node inside a pressurized column
+    // carries sub-atmospheric head — the floor extends below the invert by
+    // the column-separation bound, matching the flag update's kCavHead. Only
+    // when at least one incident cell is flagged: an all-free sealed node is
+    // an ordinary junction and keeps the ordinary floor.
+    if (tpa_ && mesh_->node_sur_depth[un] > 0.0) {
+        bool any_flagged = false;
+        for (int p = b; p < e; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                       : mesh_->face_cr[uf];
+            if (cell >= 0 && tpaCell(static_cast<std::size_t>(cell))) {
+                any_flagged = true;
+                break;
+            }
+        }
+        if (any_flagged) lo = invert - 35.0;
+    }
 
     const double h0 = state_->node_head[un];
     double h = std::min(std::max(h0, lo), hi);
@@ -2531,9 +2636,19 @@ double ExplicitFvSolver::cellStableDt(int c) const {
 
     double speed = 0.0;
     const double h = state_->cell_h[uc];
-    if (h > k::kDryDepth)
+    // TPA (issue #156): a FLAGGED cell's fluxes run at the acoustic slot
+    // celerity at ANY h — the signed slot line has no free-surface width, and
+    // a sub-crown (or sub-invert, h < 0) sealed cell tiered on the table
+    // width lands in a coarse tier its own acoustic exchange then detonates.
+    // Same predicate the global census (censusDt::consider_cell) uses; the
+    // LTS bounds were the one place the regime was missed (measured on E3:
+    // the at-rest pressurized sloped column NaN'd inside the first report
+    // step — P5 task-3 finding).
+    const bool tpa_c = tpaCell(uc);
+    if (tpa_c || h > k::kDryDepth)
         speed = std::fabs(cell_u_[uc]) +
-                k::celerity(state_->cell_a[uc], k::widthOfDepth(g, h));
+                k::celerity(state_->cell_a[uc],
+                            tpa_c ? g.t_slot : k::widthOfDepth(g, h));
 
     // The ghost a boundary face presents counts against THIS cell's step, for
     // the same reason the global census is face-based: a surcharged manhole
@@ -2574,18 +2689,20 @@ double ExplicitFvSolver::algebraicNodeStableDt(int n) const noexcept {
         // Not gated on cell_active_, for the same reason nodeStableDt is not:
         // the tier schedule must not depend on whether compaction is on.
         const double h = state_->cell_h[uc];
-        if (h <= k::kDryDepth) continue;
+        const bool tpa_c = tpaCell(uc);   // full of water at any h (#156)
+        if (!tpa_c && h <= k::kDryDepth) continue;
         const FvGeometry& g =
             mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-        const double t = k::widthOfDepth(g, h);
+        const double t = tpa_c ? g.t_slot : k::widthOfDepth(g, h);
         if (t <= 0.0) continue;
 
         // Every live face contributes flux the junction has to balance.
         admit_sum += t * k::celerity(state_->cell_a[uc], t);
 
         // Only a PRESSURIZED face contributes the stiff storage. Below the
-        // crown the slot has not engaged and the response is soft.
-        if (h >= g.y_crown) {
+        // crown the slot has not engaged and the response is soft. A FLAGGED
+        // cell is pressurized at any h (#156).
+        if (tpa_c || h >= g.y_crown) {
             const double store = 0.5 * mesh_->cell_dx[uc] * t;
             if (store < store_min) store_min = store;
         }
@@ -2632,10 +2749,11 @@ double ExplicitFvSolver::nodeStableDt(int n) const {
         // the same whether or not compaction is on (§6.10), and a dry cell is
         // excluded by its own depth test in either case.
         const double h = state_->cell_h[uc];
-        if (h <= k::kDryDepth) continue;
+        const bool tpa_c = tpaCell(uc);   // full of water at any h (#156)
+        if (!tpa_c && h <= k::kDryDepth) continue;
         const FvGeometry& g =
             mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-        const double t = k::widthOfDepth(g, h);
+        const double t = tpa_c ? g.t_slot : k::widthOfDepth(g, h);
         if (t <= 0.0) continue;
         dt = std::min(dt, k::faceCflDt(opts_.cfl, as / t, cell_u_[uc],
                                        k::celerity(state_->cell_a[uc], t)));
@@ -3247,6 +3365,17 @@ void ExplicitFvSolver::settleAccumulators() {
         state_->node_head[un] =
             mesh_->node_invert[un] + nodeDepthFromVolume(n, vol);
     }
+    // TPA (#156): re-evaluate the regime BEFORE deriving depths, so the state
+    // this cycle exports is regime-consistent. updateTpaFlags otherwise runs
+    // only at substep/cycle ENTRY, and a cell whose area collapses DURING the
+    // cycle keeps the flag until the next entry — long enough for the exported
+    // depth to come off the TPA line far past the column-separation floor the
+    // flag update itself enforces. Measured on the vented sealed-apex fixture
+    // (t_slot 2.5e-3 ft, so 0.25 ft^2 of lost area is ~98 ft of head): the
+    // published apex head reached -95.06 ft on a deck whose apex is OPEN to
+    // atmosphere and can hold no vacuum at all. It was invisible until node
+    // heads stopped being overwritten by invert+depth (Routing.cpp).
+    if (tpa_) updateTpaFlags();
     refreshDepths();
 }
 

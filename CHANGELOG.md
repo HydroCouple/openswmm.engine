@@ -210,6 +210,61 @@ retroactive.
 
 ### Added
 
+- **Two-component pressure approach (TPA) — sub-atmospheric pressurized flow
+  in both hydraulic solvers.** (#156) The closure of Vasconcelos, Wright & Roe
+  (2006): a sealed full pipe may carry pressure below atmospheric instead of
+  spuriously reverting to free-surface geometry, governed by a physical
+  air-pathway regime flag with submergence-checked venting and a
+  column-separation floor at −30 ft of head. In the finite-volume solver,
+  `FV_PRESSURE_CLOSURE TPA` extends the existing slot line to both signs of
+  ΔA (`FV_SLOT_CELERITY` doubles as the acoustic celerity) and composes with
+  `FV_PRESSURIZED_IMPLICIT`; in the dynamic wave solver, `SURCHARGE_METHOD
+  TPA` adds a constant-width slot `w = g·A_full/a²` above the crown (new
+  `TPA_CELERITY` key, project units, default 100) with a per-conduit
+  sub-atmospheric latch below it, updated once per routing step so the Picard
+  iteration sees a fixed operator. Both default off and bit-inert when off.
+  Measured on the paper's laboratory cases: the FV closure carries 0.0398 m of
+  true vacuum below the crest invert of the negative-pressure siphon into the
+  `.out` file — still deepening when the deck reaches the 40 s validity
+  boundary it documents — where the slot closures floor at the invert; and
+  DW TPA's rapid-fill bore arrival lands within 2 % of the
+  FV timing where the Sjöberg slot is ~20 % early. Documented as Hydraulics
+  Reference Manual §8.4.5 and §3.3.11. One pinned known issue: explicit FV
+  TPA filling at a = 150 m/s diverges at the reflected surge (the paper's own
+  high-celerity post-shock frontier; gate
+  `FvTpa.KnownIssueHighCelerityFillingDiverges`).
+
+- **Unsteady friction (`UNSTEADY_FRICTION VITKOVSKY`, `UF_K3`) in both
+  hydraulic solvers.** (#156) The Pinto, Vasconcelos & Soares (2025) modified
+  Vítkovský term with regime-dependent celerity, orthogonal to the
+  pressurization closure: the local-acceleration half folds in
+  semi-implicitly (no new prognostic state — hotstart- and rollback-safe),
+  the convective half enters explicitly with a velocity dead-band and a
+  half-momentum clamp. The DW gradient uses a cross-link stencil (the
+  within-link difference is structurally zero on a full conduit), so DW
+  damping requires discretized reaches — a single-link reach gets added
+  inertia only. Default `NONE` is bit-identical to earlier releases.
+  Documented as §3.3.12 and §8.5.4 of the Hydraulics Reference Manual.
+
+- **`REPORT_SIGNED_HEADS` — true signed piezometric heads in the `.out`
+  file.** (#156) The binary output's NODE_HEAD has always been rebuilt from a
+  depth floored at zero, so sub-atmospheric heads were invisible. With
+  `REPORT_SIGNED_HEADS YES` the HEAD field carries the true signed head for
+  both solvers; DEPTH stays floored, and the default `NO` keeps legacy
+  bit-parity (measured: a never-negative DW deck differs only in
+  float32-rewrite ULPs, confined to HEAD).
+
+- **Virtual-junction initial-state seeding under dynamic wave routing.**
+  (#156) `[VIRTUAL_JUNCTIONS]` carries no initial-depth column, so VJs
+  started dry regardless of their neighbors — a deck whose real nodes define
+  an initial pool began with a hole at every splice. Each VJ head is now
+  seeded by distance-weighted interpolation between the nearest non-virtual
+  nodes along its spliced chain, requiring at least one wet endpoint (so a
+  dry deck cannot manufacture water). DYNWAVE only, and that restriction is
+  measured, not cautionary: seeding the node alone under FV contradicts the
+  uniform-depth cell seed and was measured to drive a pressurized study deck
+  from 0.000 % to −19 % continuity. Decks without VJs are bitwise untouched.
+
 - **A Lagrangian transport engine (LARD) joins the quality solvers.**
   `QUALITY_SOLVER LAGRANGIAN` routes pollutants with a Lagrangian
   advection–reaction–dispersion scheme in place of the legacy complete-mix

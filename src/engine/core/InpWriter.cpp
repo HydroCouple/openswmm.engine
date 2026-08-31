@@ -798,7 +798,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     static const char* sRouting[]    = {"STEADY","KINWAVE","DYNWAVE","FV"};
     static const char* sInertial[]   = {"NONE","PARTIAL","FULL"};
     static const char* sNormFlow[]   = {"SLOPE","FROUDE","BOTH","NEITHER"};
-    static const char* sSurcharge[]  = {"EXTRAN","SLOT","DYNAMIC_SLOT"};
+    static const char* sSurcharge[]  = {"EXTRAN","SLOT","DYNAMIC_SLOT","TPA"};
     static const char* sUnsteadyFriction[] = {"NONE","VITKOVSKY"};  // issue #156
 
     const SimulationOptions& o = ctx.options;
@@ -908,13 +908,17 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-20s %s\n",  "INERTIAL_DAMPING",    (id>=0&&id<=2)?sInertial[id]:"PARTIAL");
     std::fprintf(f,"%-20s %s\n",  "NORMAL_FLOW_LIMITED", (nfl>=0&&nfl<=3)?sNormFlow[nfl]:"BOTH");
     std::fprintf(f,"%-20s %s\n",  "FORCE_MAIN_EQUATION", o.force_main_eqn==1?"D-W":"H-W");
-    std::fprintf(f,"%-20s %s\n",  "SURCHARGE_METHOD",    (sm>=0&&sm<=2)?sSurcharge[sm]:"EXTRAN");
+    std::fprintf(f,"%-20s %s\n",  "SURCHARGE_METHOD",    (sm>=0&&sm<=3)?sSurcharge[sm]:"EXTRAN");
+    if (sm == 3)   // issue #156: TPA acoustic celerity, non-default method only
+        std::fprintf(f,"%-20s %g\n","TPA_CELERITY", o.tpa_celerity);
     {   // Unsteady friction (issue #156): round-tripped unconditionally, like
         // SURCHARGE_METHOD — the keys are inert unless a consuming solver runs.
         const int uf = o.unsteady_friction;
         std::fprintf(f,"%-20s %s\n","UNSTEADY_FRICTION",
                      (uf>=0&&uf<=1)?sUnsteadyFriction[uf]:"NONE");
         std::fprintf(f,"%-20s %g\n","UF_K3", o.uf_k3);
+        if (o.report_signed_heads)   // issue #156 O-6: non-default only
+            std::fprintf(f,"%-20s %s\n","REPORT_SIGNED_HEADS","YES");
     }
     std::fprintf(f,"%-20s %.2f\n","VARIABLE_STEP",       o.variable_step);
     std::fprintf(f,"%-20s %g\n",  "LENGTHENING_STEP",    o.lengthening_step);

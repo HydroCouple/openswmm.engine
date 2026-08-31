@@ -247,6 +247,8 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "UNSTEADY_FRICTION") ctx.options.unsteady_friction = std::stoi(val);  // issue #156
         else if (key == "UF_K3") ctx.options.uf_k3 = std::stod(val);
         else if (key == "FV_PRESSURE_CLOSURE") ctx.options.fv.pressure_closure = std::stoi(val);  // issue #156
+        else if (key == "REPORT_SIGNED_HEADS") ctx.options.report_signed_heads = std::stoi(val);  // issue #156
+        else if (key == "TPA_CELERITY") ctx.options.tpa_celerity = std::stod(val);  // issue #156
         else if (key == "DPS_CELERITY") ctx.options.dps_target_celerity = std::stod(val);
         else if (key == "DPS_ALPHA") ctx.options.dps_alpha = std::stod(val);
         else if (key == "DPS_DECAY_TIME") ctx.options.dps_decay_time = std::stod(val);
