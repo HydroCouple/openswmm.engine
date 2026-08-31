@@ -3612,8 +3612,23 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         const double remaining = t_target - t;
         double dt = std::min(dt_census_, remaining);
         if (!(dt > 0.0)) dt = remaining;
-        if (dt < constants::MIN_TIMESTEP)
-            dt = std::min(constants::MIN_TIMESTEP, remaining);
+        // The floor is a LOOP GUARD, not a granularity (issue #156 R2 root
+        // cause). constants::MIN_TIMESTEP (0.001 s) is legacy DYNWAVE routing
+        // granularity — sane for an iterated implicit scheme, fatal for an
+        // explicit one: clamping the census UP past the CFL limit detonated
+        // every deck whose stiffest cell demanded dt < 1 ms. That single
+        // clamp was the whole "high-celerity TPA instability" class, measured:
+        // the a = 25 vs 150 m/s filling threshold IS the clamp boundary
+        // (stable dt 1.4e-3 vs 2.4e-4 s on 0.04 m cells); e3's 0.23 m stub at
+        // a = 300 was clamped ~7x over CFL and blew up bit-identically at
+        // every FV_CFL because the census was discarded either way; e4's
+        // non-monotone k3 "knife edge" was cells wandering across the clamp;
+        // and the RK2-vs-Euler asymmetry was never the integrator — RK2
+        // disables LTS, whose tier-0 dt is unclamped, so only RK2 was forced
+        // through the clamped global path. kMinSubstep below exists solely so
+        // a pathological collapse cannot loop forever (the 2M-step backstop
+        // is the second line).
+        if (dt < kMinSubstep) dt = std::min(kMinSubstep, remaining);
 
         // Take the substep, then re-census the state it produced. If a cell
         // crossed the crown (or wetted, or pressurized a node) the stable step
@@ -3639,14 +3654,14 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                 takeSubstep(dt, forcing);
             }
 
-            if (attempt >= kMaxStepRetries || dt <= constants::MIN_TIMESTEP) break;
+            if (attempt >= kMaxStepRetries || dt <= kMinSubstep) break;
             // Post-step census on the state actually reached — membership is
             // memoryless, so re-derive it (a cell may have crossed the crown
             // inside the step, in EITHER direction).
             const double dt_post = censusDt(anyPressurizedCell());
             if (dt_post >= kStepAcceptRatio * dt) break;          // admissible
             restoreState();
-            dt = std::max(0.9 * dt_post, constants::MIN_TIMESTEP);
+            dt = std::max(0.9 * dt_post, kMinSubstep);
             if (dt > remaining) dt = remaining;
         }
         dt_cache_ = dt;                 // what suggested_step() reports
