@@ -258,11 +258,20 @@ void LIDSolver::init(SimulationContext& ctx) {
         // total_lid_area_ft2 — multiplies g.area as the footprint, while the
         // per-unit flux dynamics only ever use the full_width/area ratio,
         // which the common factor leaves unchanged (issue #131).
+        //
+        // They are also converted out of the deck's display units, like every
+        // other parameter read above: [LID_USAGE] Area is ft²|m² and Width is
+        // ft|m, while g.area / g.full_width are internal ft² / ft. Without the
+        // division `total_lid_area_ft2` (summed from g.area in initTotals())
+        // holds m² on an SI deck despite its name, and every consumer that
+        // divides a CFS rate by it — the inflow capture below, the full-
+        // coverage runon branch in SWMMEngine::stepRunoff — is off by 1/0.3048²
+        // (issue #102). US decks are unaffected: Ucf[LENGTH][US] is 1.0.
         double n_units = static_cast<double>(ctx.lid_usage.number[uj]);
         g.subcatch_idx[us] = ctx.lid_usage.subcatch_index[uj];
         g.control_idx[us]  = li;
-        g.area[us]         = ctx.lid_usage.area[uj] * n_units;
-        g.full_width[us]   = ctx.lid_usage.width[uj] * n_units;
+        g.area[us]         = ctx.lid_usage.area[uj]  * n_units / ucfLength2;
+        g.full_width[us]   = ctx.lid_usage.width[uj] * n_units / ucfLength;
         g.from_imperv[us]  = ctx.lid_usage.from_imperv[uj] / 100.0;  // % → fraction
         g.from_perv[us]    = (uj < ctx.lid_usage.from_perv.size())
                              ? ctx.lid_usage.from_perv[uj] / 100.0 : 0.0;
