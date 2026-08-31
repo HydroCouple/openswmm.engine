@@ -223,6 +223,28 @@ retroactive.
   written-back `.inp`, across six models covering STREET, IRREGULAR, FV,
   storage and quality.
 
+### Added
+
+- **Water age and ARD write their own config files — IO3 save is complete
+  (IO3c).** The last two decliners of the `ComponentConfigSave` hook adopt
+  it: every registered component now renders its own config on save.
+  `swmm_water_age_save`'s writer became the shared
+  `serializeWaterAgeConfig` (one spelling for `[WATER_AGE_SOURCES]`,
+  upgraded from `%g` to shortest-exact — the config stores seconds against
+  a file in hours, and a rounding formatter drifts the model every save;
+  the new gate pins exact round-trips and a byte-stable fixed point by
+  generation two). ARD renders `[TRANSPORT_OPTIONS]`,
+  `[CONDUIT_DISPERSION]` and the raw boundary/source rows;
+  `SCALAR_SCHEME`/`LIMITER` ride new provenance flags — they alias
+  `[OPTIONS]` FV keys the writer only emits under FLOW_ROUTING FV, so on
+  a DYNWAVE deck the component file is the only carrier of that state:
+  the renderer re-emits the alias (at the current live value) exactly
+  when the file originally spelled it, and never invents one. Found en
+  route: the IO3a **render** path silently replaced a different
+  pre-existing config at the save destination where the copy path
+  announces it — the render path now carries the same
+  announce-on-replace contract.
+
 ### Fixed
 
 - **`[POLLUTANTS]` Kdecay was applied 86,400× too fast — and the common case

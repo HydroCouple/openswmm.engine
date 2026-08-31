@@ -29,6 +29,7 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_water_age.h"
+#include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
 
 #include <cstdio>
 #include <string>
@@ -56,19 +57,6 @@ int find_override(const openswmm::WaterAgeConfigData& cfg, int source,
             cfg.node_over_node[i] == node)
             return static_cast<int>(i);
     return -1;
-}
-
-const char* source_name(int s) {
-    switch (static_cast<openswmm::WaterAgeSource>(s)) {
-        case openswmm::WaterAgeSource::RAINFALL:        return "RAINFALL";
-        case openswmm::WaterAgeSource::DWF:             return "DWF";
-        case openswmm::WaterAgeSource::GW:              return "GW";
-        case openswmm::WaterAgeSource::RDII:            return "RDII";
-        case openswmm::WaterAgeSource::EXTERNAL_INFLOW: return "EXTERNAL_INFLOW";
-        case openswmm::WaterAgeSource::IFACE:           return "IFACE";
-        case openswmm::WaterAgeSource::INITIAL_STATE:   return "INITIAL_STATE";
-        default:                                        return "UNKNOWN";
-    }
 }
 
 }  // namespace
@@ -172,27 +160,19 @@ SWMM_ENGINE_API int swmm_water_age_save(SWMM_Engine engine,
     CHECK_HANDLE(engine);
     if (path == nullptr || *path == '\0') return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
-    const auto& cfg = ctx.water_age_config;
 
+    // IO3c: one spelling for this table — the component's serializer,
+    // shared with the ComponentConfigSave hook (the reactions pattern).
+    // Upgrades the old %g (6 significant digits, NOT read-back-exact) to
+    // the shortest-exact convention. An unconfigured model still writes
+    // the empty header, this function's historical contract.
+    const std::string text = openswmm::transport::serializeWaterAgeConfig(ctx);
     std::FILE* f = std::fopen(path, "w");
     if (f == nullptr) return SWMM_ERR_IO;
-    std::fprintf(f, "[WATER_AGE_SOURCES]\n");
-    for (int s = 0; s < static_cast<int>(openswmm::WaterAgeSource::COUNT_);
-         ++s) {
-        // Zero is the default — writing every row would make a save-as of
-        // an untouched model look configured. Negative rows DO write.
-        if (cfg.global_age[s] == 0.0) continue;
-        std::fprintf(f, "%-16s GLOBAL %g\n", source_name(s),
-                     cfg.global_age[s] / kSecPerHour);
-    }
-    for (std::size_t i = 0; i < cfg.node_over_source.size(); ++i) {
-        const int nd = cfg.node_over_node[i];
-        if (nd < 0 || nd >= ctx.n_nodes()) continue;
-        std::fprintf(f, "%-16s NODE %s %g\n",
-                     source_name(cfg.node_over_source[i]),
-                     ctx.node_names.name_of(nd).c_str(),
-                     cfg.node_over_age[i] / kSecPerHour);
-    }
+    if (text.empty())
+        std::fprintf(f, "[WATER_AGE_SOURCES]\n");
+    else
+        std::fwrite(text.data(), 1, text.size(), f);
     std::fclose(f);
     return SWMM_OK;
 }

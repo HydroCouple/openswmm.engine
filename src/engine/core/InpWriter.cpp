@@ -78,6 +78,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 
 // IO3a: the component save hook — each component writes its own config file.
 #include "../plugins/ProcessComponentRegistry.hpp"
@@ -2573,8 +2574,24 @@ int writeInpFile(const SimulationContext& ctx_internal,
     ?fsys::path(emit_path_token(pc.config_path,dst_dir,force_abs_paths,nullptr))
     :(dst_dir.empty()?rel_w:fsys::path(dst_dir)/rel_w);
     if(dst_w.has_parent_path())fsys::create_directories(dst_w.parent_path(),wec);
+    // IO3c: the rendered write inherits the copy path's contract — a save
+    // that replaces a DIFFERENT pre-existing file at the destination says
+    // so (overwriting is required; silence is not). An identical file (the
+    // ordinary re-save) stays quiet.
+    bool replacing_different_r=false;
+    {std::error_code rec;
+    if(fsys::exists(dst_w,rec)&&!rec){
+    std::ifstream prev(dst_w,std::ios::binary);
+    if(prev.is_open()){
+    const std::string pstr((std::istreambuf_iterator<char>(prev)),
+    std::istreambuf_iterator<char>());
+    replacing_different_r=(pstr!=text);
+    }}}
     std::ofstream cf(dst_w,std::ios::binary|std::ios::trunc);
     if(cf.is_open()){cf<<text;component_wrote=cf.good();cf.close();}
+    if(component_wrote&&replacing_different_r&&warnings)warnings->push_back(
+    "Saving this model replaced an existing, different '"+pc.config_path+
+    "' in the destination folder with this model's rendered configuration.");
     if(!component_wrote&&warnings)warnings->push_back(
     "Could not write component config '"+pc.config_path+"' for '"+pc.id+
     "' — the model's in-memory configuration for that component was NOT "

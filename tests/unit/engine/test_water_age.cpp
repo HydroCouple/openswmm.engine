@@ -69,6 +69,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_hotstart.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_water_age.h>
 
 #include "core/InpWriter.hpp"
 #include "core/SWMMEngine.hpp"
@@ -1173,3 +1174,125 @@ TEST(WaterAgeTest, InflowAgeRowRoundTripsThroughTheWriter) {
 
 
 }  // namespace
+
+// ===========================================================================
+// IO3c — the water-age component writes its own config file.
+// Until IO3c, model.age DECLINED the ComponentConfigSave hook, so
+// swmm_model_write fell back to copying the file the model was read from —
+// and every swmm_water_age_set_* edit was silently lost on save (the same
+// step-3 loss IO3a/IO3b closed for reactions and heat).
+// ===========================================================================
+
+namespace {
+
+std::string slurp(const char* path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f),
+                       std::istreambuf_iterator<char>());
+}
+
+SWMM_Engine open_ok(const char* inp, const char* rpt, const char* out) {
+    SWMM_Engine e = swmm_engine_create();
+    EXPECT_NE(e, nullptr);
+    EXPECT_EQ(swmm_engine_open(e, inp, rpt, out, nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    return e;
+}
+
+}  // namespace
+
+// Gate 1 (base-FAILING): an API edit survives write → reopen.
+TEST(WaterAgeIo3cTest, AgeSourceEditsSurviveASaveAndReopen) {
+    write_file("_io3c_edit.age",
+               "[WATER_AGE_SOURCES]\n"
+               "EXTERNAL_INFLOW GLOBAL 6.0\n"
+               "DWF NODE J0 2.5\n");
+    write_deck("_io3c_edit.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_io3c_edit.age\"");
+
+    SWMM_Engine e = open_ok("_io3c_edit.inp", "_io3c_edit.rpt",
+                            "_io3c_edit.out");
+    ASSERT_EQ(swmm_water_age_set_global_source(
+                  e, SWMM_AGE_SRC_EXTERNAL_INFLOW, 12.0), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_edit_out.inp"), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    swmm_engine_destroy(e);
+
+    e = open_ok("_io3c_edit_out.inp", "_io3c_edit_r.rpt", "_io3c_edit_r.out");
+    double hours = -1.0;
+    ASSERT_EQ(swmm_water_age_get_global_source(
+                  e, SWMM_AGE_SRC_EXTERNAL_INFLOW, &hours), SWMM_OK);
+    EXPECT_EQ(hours, 12.0)
+        << "the API edit was lost on save — model.age still declines the "
+           "ComponentConfigSave hook and the copy fallback restored 6.0";
+
+    // The untouched NODE override rides along unharmed.
+    int src = -1, node = -1;
+    double oh = 0.0;
+    int count = 0;
+    ASSERT_EQ(swmm_water_age_override_count(e, &count), SWMM_OK);
+    ASSERT_EQ(count, 1);
+    ASSERT_EQ(swmm_water_age_get_override(e, 0, &src, &node, &oh), SWMM_OK);
+    EXPECT_EQ(src, SWMM_AGE_SRC_DWF);
+    EXPECT_EQ(oh, 2.5);
+    swmm_engine_destroy(e);
+}
+
+// Gate 2 — field-by-field exactness, the invented-row FILE leg, and the
+// seconds↔hours fixed point (the reason IO3b deferred this component: the
+// config stores SECONDS against a file in HOURS, so the serializer must
+// survive ÷3600/×3600 without drift — shortest-exact formatting, and the
+// written file must reach a fixed point by the second generation).
+TEST(WaterAgeIo3cTest, AgeConfigRoundTripsExactlyAndIdempotently) {
+    // 1.23456789 is the %g falsifier: six significant digits truncate it.
+    // -0.25 exercises the D-NS1 negative (extraction) spelling. 0.1 is the
+    // classic non-representable decimal.
+    write_file("_io3c_rt.age",
+               "[WATER_AGE_SOURCES]\n"
+               "RAINFALL GLOBAL 0.1\n"
+               "GW GLOBAL 1.23456789\n"
+               "RDII GLOBAL -0.25\n"
+               "EXTERNAL_INFLOW NODE J2 7.75\n"
+               "DWF NODE J4 0.3\n");
+    write_deck("_io3c_rt.inp",
+               "org.hydrocouple.openswmm.waterage config=\"_io3c_rt.age\"");
+
+    SWMM_Engine e = open_ok("_io3c_rt.inp", "_io3c_rt.rpt", "_io3c_rt.out");
+    ASSERT_EQ(swmm_model_write(e, "_io3c_rt_out.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string gen1 = slurp("_io3c_rt.age");
+
+    // FILE leg (IO3b lesson 201): sources never configured must not appear —
+    // there is no per-source configured flag, so an all-defaults emitter is
+    // API-invisible and only the file betrays it.
+    EXPECT_EQ(gen1.find("DWF GLOBAL"), std::string::npos);
+    EXPECT_EQ(gen1.find("IFACE"), std::string::npos);
+    EXPECT_EQ(gen1.find("INITIAL_STATE"), std::string::npos);
+
+    e = open_ok("_io3c_rt_out.inp", "_io3c_rt_r.rpt", "_io3c_rt_r.out");
+    double h = 0.0;
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RAINFALL, &h),
+              SWMM_OK);
+    EXPECT_EQ(h, 0.1);
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_GW, &h),
+              SWMM_OK);
+    EXPECT_EQ(h, 1.23456789) << "shortest-exact formatting regressed (%g?)";
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RDII, &h),
+              SWMM_OK);
+    EXPECT_EQ(h, -0.25);
+    int count = 0;
+    ASSERT_EQ(swmm_water_age_override_count(e, &count), SWMM_OK);
+    EXPECT_EQ(count, 2);
+
+    // Fixed point: generation 2 == generation 3, byte for byte.
+    ASSERT_EQ(swmm_model_write(e, "_io3c_rt_out2.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string gen2 = slurp("_io3c_rt.age");
+    e = open_ok("_io3c_rt_out2.inp", "_io3c_rt_r2.rpt", "_io3c_rt_r2.out");
+    ASSERT_EQ(swmm_model_write(e, "_io3c_rt_out3.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string gen3 = slurp("_io3c_rt.age");
+    EXPECT_EQ(gen2, gen3)
+        << "the hours↔seconds round trip has no fixed point — successive "
+           "saves oscillate";
+}

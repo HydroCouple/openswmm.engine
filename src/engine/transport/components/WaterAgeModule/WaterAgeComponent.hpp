@@ -43,11 +43,25 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_COMPONENT_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_COMPONENT_HPP
 
+#include <string>
+
+namespace openswmm {
+struct SimulationContext;
+}
+
 namespace openswmm::transport {
 
 /// Register `org.hydrocouple.openswmm.waterage` with the process-component
 /// registry (idempotent; called from SWMMEngine::open before resolution).
 void registerWaterAgeComponent();
+
+/// Render [WATER_AGE_SOURCES] from the live config in FILE units
+/// (HOURS, shortest-exact) — the single spelling shared by the
+/// ComponentConfigSave hook and swmm_water_age_save (IO3c), the same
+/// sharing the reactions component has with serializeReactionSystem.
+/// Empty when the component never applied (save DECLINES → the
+/// carry-alongside copy runs).
+std::string serializeWaterAgeConfig(const SimulationContext& ctx);
 
 }  // namespace openswmm::transport
 
