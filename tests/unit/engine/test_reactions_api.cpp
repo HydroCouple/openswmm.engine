@@ -37,6 +37,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 
@@ -144,6 +145,19 @@ TEST_F(ReactionsApiTest, DiscoveryRoundTrip) {
     EXPECT_STREQ(v, "HR");
     EXPECT_EQ(swmm_reaction_option_get(engine_, "NOPE", v, 32),
               SWMM_ERR_BADPARAM);
+
+    // TEMPERATURE (TEMP's heat-off fallback, degC): default 20, settable,
+    // negative is a legal temperature, non-numeric refused.
+    ASSERT_EQ(swmm_reaction_option_get(engine_, "TEMPERATURE", v, 32),
+              SWMM_OK);
+    EXPECT_DOUBLE_EQ(std::atof(v), 20.0);
+    ASSERT_EQ(swmm_reaction_option_set(engine_, "TEMPERATURE", "-4.5"),
+              SWMM_OK);
+    ASSERT_EQ(swmm_reaction_option_get(engine_, "TEMPERATURE", v, 32),
+              SWMM_OK);
+    EXPECT_DOUBLE_EQ(std::atof(v), -4.5);
+    EXPECT_EQ(swmm_reaction_option_set(engine_, "TEMPERATURE", "warm"),
+              SWMM_ERR_BADPARAM);
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +192,7 @@ TEST_F(ReactionsApiTest, FunctionVocabularyMatchesTheCompiler) {
     EXPECT_EQ(n_binary, 3);
 
     const int nh = swmm_reaction_hydvar_count();
-    EXPECT_EQ(nh, 9);
+    EXPECT_EQ(nh, 10);  // D Q U RE US FF AV HRT DT TEMP
     char hname[16], hdesc[128];
     ASSERT_EQ(swmm_reaction_hydvar_get(0, hname, 16, hdesc, 128), SWMM_OK);
     EXPECT_STREQ(hname, "D");

@@ -48,6 +48,8 @@ enum class RxHydVar : int {
     AV,       ///< wetted surface area per volume (1/ft)
     HRT,      ///< hydraulic residence time (s)
     DT,       ///< reaction step (s)
+    TEMP,     ///< local water temperature (degC); [REACTION_OPTIONS]
+              ///< TEMPERATURE constant when HEAT_TRANSPORT is off
     COUNT_
 };
 

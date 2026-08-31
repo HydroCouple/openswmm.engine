@@ -41,6 +41,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -133,6 +134,12 @@ TEST_F(RxVmTest, KineticsWithResolvedOperandsEvaluateExactly) {
                      -0.36 * 0.8 * 0.01 - 0.12 * 0.8);
     // Hydraulic variable resolution (U) alongside species.
     EXPECT_DOUBLE_EQ(compile_eval("U * NH2CL", env), 2.5 * 0.2);
+
+    // TEMP resolves as a hydraulic variable — the Arrhenius shape the slot
+    // exists for. theta^(T-20) with theta=1.07, T=25.
+    hv[static_cast<int>(RxHydVar::TEMP)] = 25.0;
+    EXPECT_DOUBLE_EQ(compile_eval("1.07 ^ (TEMP - 20)", env),
+                     std::pow(1.07, 5.0));
 }
 
 TEST_F(RxVmTest, UndefinedIdentifierReportsNameAndColumn) {

@@ -181,7 +181,8 @@ class TestReactionStatics(unittest.TestCase):
     def test_documented_hydraulic_variable_vocabulary(self):
         names = [hv.name for hv in Reactions.hydraulic_variables()]
         self.assertEqual(
-            names, ["D", "Q", "U", "RE", "US", "FF", "AV", "HRT", "DT"])
+            names,
+            ["D", "Q", "U", "RE", "US", "FF", "AV", "HRT", "DT", "TEMP"])
 
     def test_functions_need_no_solver(self):
         functions = Reactions.functions()
@@ -543,7 +544,7 @@ class TestReactionOptions(_ReactionsCase):
         s = self.opened_solver()
         rxn = s.reactions
         for key, value in (("TIMESTEP", 30.0), ("ATOL", 0.001),
-                           ("RTOL", 0.002)):
+                           ("RTOL", 0.002), ("TEMPERATURE", 12.5)):
             with self.subTest(key=key):
                 rxn.set_option(key, str(value))
                 # Numeric options come back as text; compare numerically.

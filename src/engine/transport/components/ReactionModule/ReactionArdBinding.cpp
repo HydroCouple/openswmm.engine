@@ -87,7 +87,8 @@ bool ardHasWallSpecies(const SimulationContext& ctx) {
 void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
                    const double* cell_a, const double* cell_dx, int n_cells,
                    double* node_mass, const double* node_vol, int n_nodes,
-                   int n_pollut, int ns_total, double min_store_vol) {
+                   int n_pollut, int ns_total, double min_store_vol,
+                   int temp_row) {
     if (dt <= 0.0) return;
 
     const auto unc = static_cast<std::size_t>(n_cells);
@@ -155,6 +156,12 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
             sc.pollut[static_cast<std::size_t>(p)] =
                 cell_phi[static_cast<std::size_t>(p) * unc + ucell];
         hydvar[static_cast<int>(RxHydVar::HRT)] = 0.0;
+        // TEMP: the cell's own heat-transport temperature row when the mesh
+        // carries one, else the [REACTION_OPTIONS] TEMPERATURE constant.
+        hydvar[static_cast<int>(RxHydVar::TEMP)] =
+            (temp_row >= 0)
+                ? cell_phi[static_cast<std::size_t>(temp_row) * unc + ucell]
+                : rx.default_temp_c;
 
         const auto rep = ReactionIntegrator::step(
             rx, /*tank=*/false, dt, sc.msx.data(), hydvar, sc.ws,
@@ -182,6 +189,13 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
                 node_mass[und * uns + static_cast<std::size_t>(p)] / vol;
         hydvar[static_cast<int>(RxHydVar::HRT)] =
             (und < ctx.nodes.hrt.size()) ? ctx.nodes.hrt[und] : 0.0;
+        // TEMP: node stores carry temperature-volume (degC·ft³) on the
+        // temperature row, so concentration-form division recovers degC.
+        hydvar[static_cast<int>(RxHydVar::TEMP)] =
+            (temp_row >= 0)
+                ? node_mass[und * uns + static_cast<std::size_t>(temp_row)] /
+                      vol
+                : rx.default_temp_c;
 
         const auto rep = ReactionIntegrator::step(
             rx, /*tank=*/true, dt, sc.msx.data(), hydvar, sc.ws,

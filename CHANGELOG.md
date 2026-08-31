@@ -23,6 +23,19 @@ retroactive.
 
 ### Added
 
+- **`TEMP` in reaction expressions — temperature-dependent kinetics.**
+  Multispecies rate/equilibrium/formula expressions can reference the
+  local water temperature (°C) as the hydraulic variable `TEMP`, enabling
+  Arrhenius-style corrections such as `theta ^ (TEMP - 20)`. Under
+  `HEAT_TRANSPORT` each element evaluates at its own transported
+  temperature (per cell on the Eulerian ARD mesh, per segment under LARD,
+  per link/node under the legacy router); without heat transport the new
+  `[REACTION_OPTIONS] TEMPERATURE` constant applies (default 20 °C, any
+  finite value accepted, exposed through `swmm_reaction_option_get/set`
+  and `solver.reactions.get_option/set_option`). The GUI expression
+  completer picks the variable up automatically from the shared
+  vocabulary API.
+
 - **Components write their own config files — API and GUI edits survive a
   save (IO3a).** `swmm_model_write` emitted the `[PROCESS_COMPONENTS]`
   `config=` path and copied the file the model was read from; nothing
