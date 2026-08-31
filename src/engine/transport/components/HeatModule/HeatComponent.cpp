@@ -773,39 +773,28 @@ void applyHeatSections(SimulationContext& ctx,
  *          file over a config the model never touched would be the data loss
  *          this hook exists to end, inverted.
  */
-/// IO3a check round: the sections this renderer cannot yet write —
-/// [RADIATIVE_FLUXES], [SOLAR_RADIATION], [CLOUD_COVER] (H6a's). If ANY of
-/// them carries non-default state, saving must DECLINE so the copy fallback
-/// preserves the whole file; rendering only the sections we know would
-/// truncate the others away — the one data loss this round could have
-/// introduced (handoff §6, implemented per its own recommendation).
-/// Field-by-field against default-constructed configs because none of these
-/// structs carries a per-section `configured` flag except cloud.
-bool hasUnrenderableSections(const HeatConfigData& cfg) {
-    const RadiativeConfig rd{};
-    const auto& r = cfg.radiative;
-    if (r.shortwave_wm2 != rd.shortwave_wm2 || r.albedo != rd.albedo ||
-        r.shade_factor != rd.shade_factor || r.sky_view != rd.sky_view ||
-        r.emiss_water != rd.emiss_water ||
-        r.emiss_landcover != rd.emiss_landcover ||
-        r.atm_emiss_coeff != rd.atm_emiss_coeff ||
-        r.lw_reflection != rd.lw_reflection ||
-        r.sw_mode != rd.sw_mode || r.sw_ts_index != rd.sw_ts_index)
-        return true;
-    const SolarConfig sd{};
-    const auto& sl = cfg.solar;
-    if (sl.has_latitude || sl.has_longitude || sl.has_timezone ||
-        sl.has_elevation ||
-        sl.aod380 != sd.aod380 || sl.aod500 != sd.aod500 ||
-        sl.precip_water_cm != sd.precip_water_cm ||
-        sl.ozone_cm != sd.ozone_cm || sl.ground_albedo != sd.ground_albedo)
-        return true;
-    return cfg.cloud.configured;
-}
+/// IO3b: the renderer covers every heat section, so the IO3a decline guard
+/// (`hasUnrenderableSections`) is DELETED rather than kept as a safety net —
+/// a decline that cannot be reached is dead code pretending to be one. What
+/// replaces its protection is STRUCTURAL: the static_asserts below break the
+/// build when any of the three config structs grows a field, so the renderer
+/// must be taught about it before the engine compiles again — the failure
+/// mode is a build error, never a silent data loss (IO3b handoff §3).
+/// The sizes are the LP64 layouts (doubles + int-sized enums/bools with
+/// standard padding), identical on arm64 and x86-64; a platform where they
+/// differ fails the build loudly, which is the safe direction.
+static_assert(sizeof(RadiativeConfig) == 72,
+              "RadiativeConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
+static_assert(sizeof(SolarConfig) == 88,
+              "SolarConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
+static_assert(sizeof(CloudConfig) == 40,
+              "CloudConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
 
 std::string saveHeatConfig(const SimulationContext& ctx) {
     const auto& cfg = ctx.heat_config;
-    if (hasUnrenderableSections(cfg)) return {};
     std::string out;
 
     // [HEAT_SOURCES] — GLOBAL rows for explicitly configured sources, then
@@ -834,9 +823,115 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
     if (cfg.layer_conduction)   flux += "LAYER_CONDUCTION ON\n";
     if (!flux.empty()) out += "[HEAT_FLUXES]\n" + flux + "\n";
 
-    // Empty means DECLINE — see the hook's contract. A heat component that
-    // parsed a file carrying only sections this function cannot yet render
-    // must fall back to the copy rather than truncate them away.
+    // [RADIATIVE_FLUXES] — H3's scalars plus H6a's three SHORTWAVE
+    // spellings. Emission conditions are the exact comparisons the IO3a
+    // decline guard used: only what departs from a default-constructed
+    // config is written (lesson 196 — a serializer that writes every
+    // default makes every saved model look configured).
+    {
+        const RadiativeConfig rd{};
+        const auto& r = cfg.radiative;
+        std::string rad;
+        switch (r.sw_mode) {
+            case ShortwaveMode::CONSTANT:
+                if (r.shortwave_wm2 != rd.shortwave_wm2)
+                    rad += "SHORTWAVE GLOBAL " + fmt_degc(r.shortwave_wm2) +
+                           "\n";
+                break;
+            case ShortwaveMode::TIMESERIES:
+                // sw_ts_index indexes ctx.tables; the file needs the NAME —
+                // `id` is the string `by_name` is built from, so this IS the
+                // back-mapping (never search by_name for a matching index).
+                if (r.sw_ts_index >= 0 &&
+                    r.sw_ts_index < static_cast<int>(ctx.tables.count()))
+                    rad += "SHORTWAVE GLOBAL TIMESERIES " +
+                           ctx.tables[r.sw_ts_index].id + "\n";
+                break;
+            case ShortwaveMode::COMPUTED:
+                rad += "SHORTWAVE GLOBAL COMPUTED\n";
+                break;
+        }
+        if (r.albedo != rd.albedo)
+            rad += "ALBEDO GLOBAL " + fmt_degc(r.albedo) + "\n";
+        if (r.shade_factor != rd.shade_factor)
+            rad += "SHADE_FACTOR GLOBAL " + fmt_degc(r.shade_factor) + "\n";
+        if (r.sky_view != rd.sky_view)
+            rad += "SKY_VIEW GLOBAL " + fmt_degc(r.sky_view) + "\n";
+        if (r.emiss_water != rd.emiss_water)
+            rad += "EMISS_WATER GLOBAL " + fmt_degc(r.emiss_water) + "\n";
+        if (r.emiss_landcover != rd.emiss_landcover)
+            rad += "EMISS_LANDCOVER GLOBAL " + fmt_degc(r.emiss_landcover) +
+                   "\n";
+        if (r.atm_emiss_coeff != rd.atm_emiss_coeff)
+            rad += "ATM_EMISS_COEFF GLOBAL " + fmt_degc(r.atm_emiss_coeff) +
+                   "\n";
+        if (r.lw_reflection != rd.lw_reflection)
+            rad += "ATM_LW_REFLECTION GLOBAL " + fmt_degc(r.lw_reflection) +
+                   "\n";
+        if (!rad.empty()) out += "[RADIATIVE_FLUXES]\n" + rad + "\n";
+    }
+
+    // [SOLAR_RADIATION] — the sited fields carry explicit has_* flags (0 is
+    // a legal latitude/timezone/elevation, so presence cannot ride on the
+    // value); the Bird atmosphere fields compare against the paper defaults.
+    {
+        const SolarConfig sd{};
+        const auto& sl = cfg.solar;
+        std::string sol;
+        if (sl.has_latitude)
+            sol += "LATITUDE GLOBAL " + fmt_degc(sl.latitude_deg) + "\n";
+        if (sl.has_longitude)
+            sol += "LONGITUDE GLOBAL " + fmt_degc(sl.longitude_deg) + "\n";
+        if (sl.has_timezone)
+            sol += "TIMEZONE GLOBAL " + fmt_degc(sl.timezone_hours) + "\n";
+        if (sl.has_elevation)
+            sol += "ELEVATION GLOBAL " + fmt_degc(sl.elevation_m) + "\n";
+        if (sl.aod380 != sd.aod380)
+            sol += "TURBIDITY_380 GLOBAL " + fmt_degc(sl.aod380) + "\n";
+        if (sl.aod500 != sd.aod500)
+            sol += "TURBIDITY_500 GLOBAL " + fmt_degc(sl.aod500) + "\n";
+        if (sl.precip_water_cm != sd.precip_water_cm)
+            sol += "PRECIP_WATER GLOBAL " + fmt_degc(sl.precip_water_cm) +
+                   "\n";
+        if (sl.ozone_cm != sd.ozone_cm)
+            sol += "OZONE GLOBAL " + fmt_degc(sl.ozone_cm) + "\n";
+        if (sl.ground_albedo != sd.ground_albedo)
+            sol += "GROUND_ALBEDO GLOBAL " + fmt_degc(sl.ground_albedo) +
+                   "\n";
+        if (!sol.empty()) out += "[SOLAR_RADIATION]\n" + sol + "\n";
+    }
+
+    // [CLOUD_COVER] — `configured` is user intent (the one per-section flag
+    // these structs have), so a configured section always emits its FRACTION
+    // anchor row, even at 0.0: a coefficients-only original canonicalises to
+    // an explicit FRACTION 0 with identical physics (both cloud factors are
+    // identities at C = 0) and the file stops warning about a fraction it
+    // now visibly carries.
+    if (cfg.cloud.configured) {
+        const CloudConfig cd{};
+        const auto& c = cfg.cloud;
+        std::string cl;
+        if (c.use_timeseries) {
+            if (c.ts_index >= 0 &&
+                c.ts_index < static_cast<int>(ctx.tables.count()))
+                cl += "FRACTION GLOBAL TIMESERIES " +
+                      ctx.tables[c.ts_index].id + "\n";
+        } else {
+            cl += "FRACTION GLOBAL " + fmt_degc(c.fraction) + "\n";
+        }
+        if (c.sw_atten_k != cd.sw_atten_k)
+            cl += "SW_ATTEN_K GLOBAL " + fmt_degc(c.sw_atten_k) + "\n";
+        if (c.sw_atten_n != cd.sw_atten_n)
+            cl += "SW_ATTEN_N GLOBAL " + fmt_degc(c.sw_atten_n) + "\n";
+        if (c.lw_cloud_k != cd.lw_cloud_k)
+            cl += "LW_CLOUD_K GLOBAL " + fmt_degc(c.lw_cloud_k) + "\n";
+        if (!cl.empty()) out += "[CLOUD_COVER]\n" + cl + "\n";
+    }
+
+    // Empty still means DECLINE (a model with no heat configuration at all
+    // keeps the copy fallback) — but with every section rendered above, a
+    // configured model never declines again: IO3b is what retired the
+    // step-3 loss for H6a-configured models.
     return out;
 }
 
