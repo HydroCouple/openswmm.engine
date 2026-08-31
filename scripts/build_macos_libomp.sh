@@ -78,7 +78,16 @@ otool -l "${PREFIX}/lib/libomp.dylib" | grep -A3 LC_BUILD_VERSION || true
 # Fail fast if the runtime predates the compiler's dispatch-loop codegen
 # (see the LLVM_OPENMP_VERSION note above) — a missing symbol here otherwise
 # surfaces much later as a cryptic engine link error.
-if ! nm -g "${PREFIX}/lib/libomp.dylib" | grep -q "___kmpc_dispatch_deinit"; then
+#
+# The symbol table is captured first and matched in-shell rather than piped
+# into `grep -q`. Under `set -o pipefail` that pipeline reports the producer's
+# status, and `grep -q` exits the moment it matches — which kills `nm` with
+# SIGPIPE (LLVM's nm prints "IO failure on output stream: Broken pipe") and
+# makes the pipeline fail EXACTLY WHEN THE SYMBOL IS PRESENT. The check
+# inverted itself: every macOS job failed here with the symbol in place.
+omp_syms="$(nm -g "${PREFIX}/lib/libomp.dylib")"
+if [[ "${omp_syms}" != *"___kmpc_dispatch_deinit"* ]]; then
   echo "ERROR: libomp ${LLVM_VER} lacks ___kmpc_dispatch_deinit (need LLVM >= 20)" >&2
   exit 1
 fi
+echo ">>> ___kmpc_dispatch_deinit present"
