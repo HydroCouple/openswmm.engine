@@ -51,13 +51,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
-#ifdef _WIN32
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
 #include <string>
 #include <vector>
+
+#include "platform_test_support.hpp"
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
@@ -68,23 +65,12 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// The G5 backend gate needs the POSIX fd and environment calls; MSVC spells
-// them with a leading underscore and has no setenv/unsetenv at all.
-#ifdef _WIN32
-inline int  dupFd(int fd)                        { return _dup(fd); }
-inline int  dup2Fd(int from, int to)             { return _dup2(from, to); }
-inline int  closeFd(int fd)                      { return _close(fd); }
-inline int  fileNo(FILE* f)                      { return _fileno(f); }
-inline void setEnvVar(const char* n, const char* v) { _putenv_s(n, v); }
-inline void unsetEnvVar(const char* n)           { _putenv_s(n, ""); }
-#else
-inline int  dupFd(int fd)                        { return dup(fd); }
-inline int  dup2Fd(int from, int to)             { return dup2(from, to); }
-inline int  closeFd(int fd)                      { return close(fd); }
-inline int  fileNo(FILE* f)                      { return fileno(f); }
-inline void setEnvVar(const char* n, const char* v) { setenv(n, v, 1); }
-inline void unsetEnvVar(const char* n)           { unsetenv(n); }
-#endif
+using plattest::closeFd;
+using plattest::dup2Fd;
+using plattest::dupFd;
+using plattest::fileNo;
+using plattest::setEnvVar;
+using plattest::unsetEnvVar;
 
 constexpr double kMetrePerInch = 0.0254;
 constexpr double kSecPerHour   = 3600.0;

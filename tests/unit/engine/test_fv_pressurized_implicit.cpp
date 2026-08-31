@@ -18,6 +18,9 @@
  *   plus the degree-3 fold (surcharged tee → the CG component path).
  */
 
+#ifdef _MSC_VER
+#  define _USE_MATH_DEFINES
+#endif
 #include <gtest/gtest.h>
 
 #include <cmath>
