@@ -152,7 +152,7 @@ inline SpeciesRowLayout rowLayout(const SimulationContext& ctx) {
     L.np = ctx.n_pollutants();
     L.ns = L.np;
     if (ctx.options.water_age) L.age_row = L.ns++;
-    // H7b will add: if (ctx.options.heat_transport) L.temp_row = L.ns++;
+    if (ctx.options.heat_transport) L.temp_row = L.ns++;   // H7b
     return L;
 }
 
@@ -163,9 +163,10 @@ public:
      *        first call (needs router-set volumes, the ARD precedent).
      */
     void step(SimulationContext& ctx, double dt_routing) {
-        // X4: the age row rides the segments after the pollutants, state
-        // published to water_age_state (seconds) rather than the np-strided
-        // conc arrays. Heat under LARD remains H7b.
+        // X4/H7b: the age and temperature rows ride the segments after
+        // the pollutants — age published to water_age_state (seconds),
+        // temperature to heat_state (degC) — rather than the np-strided
+        // conc arrays.
         const SpeciesRowLayout L = rowLayout(ctx);
         const int np = L.np;
         const int ns = L.ns;
@@ -220,19 +221,21 @@ public:
         const int np = L.np;
         const int ns = L.ns;
         // Derived from the layout rather than re-read from options, so the
-        // "is there an age row" question has exactly one answer per call.
-        const bool age = (L.age_row >= 0);
+        // "is there a reserved row" question has exactly one answer per call.
+        const bool age  = (L.age_row >= 0);
+        const bool heat = (L.temp_row >= 0);
         const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
         auto& nodes = ctx.nodes;
         auto& links = ctx.links;
         auto& ws = ctx.water_age_state;
+        auto& hs = ctx.heat_state;
 
         // ---- AGE (before transport): every parcel ages by exactly dt, and
         //      the aged value is this substep's "old" state — the plan §1
         //      convention routeLegacyAge follows (age then mix). ------------
         if (age) {
-            store_.add_species(np, dt);
+            store_.add_species(L.age_row, dt);
             for (int n = 0; n < nn; ++n)
                 ws.node_age[static_cast<std::size_t>(n)] += dt;
         }
@@ -284,7 +287,8 @@ public:
                 // H7a: identity by INDEX, not by threshold. `s >= np` was
                 // correct only while age was the sole reserved row; it would
                 // silently capture the temperature row too (H7b).
-                const bool is_age = (s == L.age_row);
+                const bool is_age  = (s == L.age_row);
+                const bool is_temp = (s == L.temp_row);
                 const auto li = un * static_cast<std::size_t>(ns) +
                                 static_cast<std::size_t>(s);  // ledger index
                 // State and external load per row. Pollutants: nodes.conc +
@@ -294,17 +298,29 @@ public:
                 // accumulator filled by all seven loader pathways).
                 const auto ci = un * static_cast<std::size_t>(np) +
                                 static_cast<std::size_t>(s);
-                const double st_old = is_age ? ws.node_age[un]
-                                             : nodes.conc[ci];
+                // Temperature mirrors age one row over: state in
+                // heat_state.node_temp (degC), external load from
+                // node_temp_vol_in (degC.ft3/s, the D-UT10 twin filled by
+                // the same seven loaders) -- H1's convention, consumed here
+                // instead of by routeLegacyHeat.
+                const double st_old = is_age  ? ws.node_age[un]
+                                    : is_temp ? hs.node_temp[un]
+                                              : nodes.conc[ci];
                 const double m_ext =
-                    is_age ? ws.node_age_vol_in[un] * dt
-                           : nodes.qual_mass_in[ci] * dt;
+                    is_age  ? ws.node_age_vol_in[un] * dt
+                  : is_temp ? hs.node_temp_vol_in[un] * dt
+                            : nodes.qual_mass_in[ci] * dt;
                 double m = st_old * v_old + node_mass_in_[li] + m_ext;
                 // D-NS1 (X6, now observable): extraction beyond the
                 // store's mass clamps to available — counted, warned
                 // once, and (pollutant rows) un-booked so the ledger
                 // carries what actually left.
-                if (m < 0.0) {
+                // The non-negativity clamp does NOT apply to temperature:
+                // degC water below zero is an ordinary state (the freezing
+                // gate in heat_watershed exists to keep it so), where a
+                // negative mass or age is a defect. Same reasoning as the
+                // report boundary's deliberate no-mask on temperature.
+                if (m < 0.0 && !is_temp) {
                     if (is_age)
                         quality::bookNegativeAgeClamp(ctx, n);
                     else
@@ -326,8 +342,9 @@ public:
                 const double st_new =
                     zero_bf ? 0.0
                             : ((denom > 1.0e-12) ? m / denom : st_old);
-                if (is_age) ws.node_age[un] = st_new;
-                else        nodes.conc[ci] = st_new;
+                if (is_age)       ws.node_age[un] = st_new;
+                else if (is_temp) hs.node_temp[un] = st_new;
+                else              nodes.conc[ci] = st_new;
                 node_mass_in_[li] = 0.0;  // consumed; cycle residue carries
             }
             node_vol_in_[un] = 0.0;
@@ -351,8 +368,14 @@ public:
                     links.conc[lp] = nodes.conc[ni];
                 }
                 if (age) {
-                    scratch_[static_cast<std::size_t>(np)] = ws.node_age[un];
+                    scratch_[static_cast<std::size_t>(L.age_row)] =
+                        ws.node_age[un];
                     ws.link_age[ul] = ws.node_age[un];
+                }
+                if (heat) {
+                    scratch_[static_cast<std::size_t>(L.temp_row)] =
+                        hs.node_temp[un];
+                    hs.link_temp[ul] = hs.node_temp[un];
                 }
                 addToLedgerRate(dn, q * dt, scratch_.data(), ns);
             }
@@ -372,14 +395,21 @@ public:
                     nodes.conc[uu * static_cast<std::size_t>(np) +
                                static_cast<std::size_t>(p)];
             if (age)
-                scratch_[static_cast<std::size_t>(np)] = ws.node_age[uu];
+                scratch_[static_cast<std::size_t>(L.age_row)] =
+                    ws.node_age[uu];
+            if (heat)
+                scratch_[static_cast<std::size_t>(L.temp_row)] =
+                    hs.node_temp[uu];
             store_.push_front(l, need, scratch_.data());
         }
 
         // ---- 3b. RWPT dispersion (X3b) — on the substep's FINAL segment
         //      field, per link, resolved vertical shear + walk. The age row
         //      disperses with the water like every other species — mixing
-        //      moves age, physically. ---------------------------------------
+        //      moves age, physically. H7b: so does TEMPERATURE, at the same
+        //      coefficient as a solute — the ARD engine's deliberate choice
+        //      for its temperature row, adopted here for cross-engine
+        //      consistency (decision 2026-08-30). ---------------------------
         if (ctx.options.lard_rwpt) {
             ++substep_counter_;
             const auto& cond = ctx.link_subtypes.conduits;
@@ -434,12 +464,17 @@ public:
     /// Per-routing-step publication: link means + the conc_old convention.
     /// `dt_routing` ages the held state of empty slabs (once per step).
     void publish(SimulationContext& ctx, double dt_routing) {
-        const int np = ctx.n_pollutants();
-        const bool age = ctx.options.water_age;
+        // H7b: the fourth layout-aware site joins rowLayout() (H7a
+        // converted step/substep/init and flagged this one).
+        const SpeciesRowLayout L = rowLayout(ctx);
+        const int np = L.np;
+        const bool age  = (L.age_row >= 0);
+        const bool heat = (L.temp_row >= 0);
         const int nl = ctx.n_links();
         auto& nodes = ctx.nodes;
         auto& links = ctx.links;
         auto& ws = ctx.water_age_state;
+        auto& hs = ctx.heat_state;
 
         // ---- 5. PUBLISH ---------------------------------------------------
         for (int l = 0; l < nl; ++l) {
@@ -459,9 +494,20 @@ public:
             // STATE keeps aging; only the report masks it).
             if (age) {
                 if (store_.count(l) > 0)
-                    ws.link_age[ul] = scratch_[static_cast<std::size_t>(np)];
+                    ws.link_age[ul] =
+                        scratch_[static_cast<std::size_t>(L.age_row)];
                 else
                     ws.link_age[ul] += dt_routing;
+            }
+            // Temperature: volume-weighted mean over the same segments. An
+            // EMPTY slab HOLDS its temperature — unlike age it does not
+            // grow, and unlike the age report it is not masked when dry
+            // (0 degC is an ordinary temperature; the no-mask call is
+            // documented at the snapshot builder).
+            if (heat) {
+                if (store_.count(l) > 0)
+                    hs.link_temp[ul] =
+                        scratch_[static_cast<std::size_t>(L.temp_row)];
             }
         }
         // conc_old bookkeeping matches the ARD/legacy convention.
@@ -475,8 +521,9 @@ private:
         const int np = L.np;
         const int ns = L.ns;
         // Derived from the layout rather than re-read from options, so the
-        // "is there an age row" question has exactly one answer per call.
-        const bool age = (L.age_row >= 0);
+        // "is there a reserved row" question has exactly one answer per call.
+        const bool age  = (L.age_row >= 0);
+        const bool heat = (L.temp_row >= 0);
         const int nn = ctx.n_nodes();
         const int nl = ctx.n_links();
         // X3a: slab capacity from [OPTIONS] MAX_SEGMENTS_PER_LINK, floored
@@ -516,6 +563,33 @@ private:
             transport::applyInitialAgeOverrides(ctx);
         }
 
+        // H7b temperature seeding, the routeLegacyHeat convention: size the
+        // state if the loaders have not already, fill with the configured
+        // INITIAL_STATE once (legacy_seeded — shared with the LEGACY mirror
+        // so a fallback path never re-seeds), then let per-element
+        // [INITIAL_QUALITY] __TEMPERATURE__ rows override. The seeded link
+        // temperatures seed the segments below, the same within-link
+        // profile collapse the age row records (lesson 37): continuous,
+        // not bit-continuous. Hotstart does NOT restore temperature — no
+        // engine's does, the record has no field for it (owed; see the
+        // H7b round record) — so a restarted run re-seeds from
+        // INITIAL_STATE exactly as LEGACY and ARD do.
+        if (heat) {
+            auto& hstate = ctx.heat_state;
+            const double t0 = ctx.heat_config.global_temp[
+                static_cast<int>(HeatSource::INITIAL_STATE)];
+            if (hstate.node_temp.size() != static_cast<std::size_t>(nn))
+                hstate.resize(nn, nl, t0);
+            if (!hstate.legacy_seeded) {
+                std::fill(hstate.node_temp.begin(), hstate.node_temp.end(),
+                          t0);
+                std::fill(hstate.link_temp.begin(), hstate.link_temp.end(),
+                          t0);
+                transport::applyInitialTempOverrides(ctx);
+                hstate.legacy_seeded = true;
+            }
+        }
+
         // Seed: one segment per conduit at the link's current volume and
         // (initQuality-seeded) concentration — a dry link seeds nothing.
         for (int l = 0; l < nl; ++l) {
@@ -529,8 +603,11 @@ private:
                     ctx.links.conc[ul * static_cast<std::size_t>(np) +
                                    static_cast<std::size_t>(p)];
             if (age)
-                scratch_[static_cast<std::size_t>(np)] =
+                scratch_[static_cast<std::size_t>(L.age_row)] =
                     ctx.water_age_state.link_age[ul];
+            if (heat)
+                scratch_[static_cast<std::size_t>(L.temp_row)] =
+                    ctx.heat_state.link_temp[ul];
             store_.push_front(l, v, scratch_.data());
             flow_sign_[ul] = (ctx.links.flow[ul] >= 0.0) ? 1 : -1;
         }

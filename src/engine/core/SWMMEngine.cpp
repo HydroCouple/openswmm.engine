@@ -337,13 +337,9 @@ int SWMMEngine::open(const char* inp_path,
         // configuration's own warning family covers it.
         if (ctx_.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
             !ctx_.options.ignore_quality) {
-            if (ctx_.options.heat_transport) {
-                ctx_.warnings.push_back(
-                    "QUALITY_SOLVER LAGRANGIAN: temperature state "
-                    "does not advance under the LARD engine yet (plan "
-                    "phase H7) — pollutant transport and water age are "
-                    "active.");
-            }
+            // H7b (2026-08-30): temperature advances under LARD — the
+            // heat bypass warning is gone, not narrowed: the row takes
+            // RWPT dispersion too (the ARD engine's coefficient choice).
             if (transport::legacyReactionsActive(ctx_)) {
                 ctx_.warnings.push_back(
                     "A reactions component is configured but QUALITY_SOLVER "
