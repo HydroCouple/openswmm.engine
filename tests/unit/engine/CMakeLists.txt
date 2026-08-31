@@ -149,6 +149,9 @@ add_gtest_unit(test_engine_transport_snow       test_transport_snow.cpp)
 add_gtest_unit(test_engine_heat_transport         test_heat_transport.cpp)
 add_gtest_unit(test_engine_heat_surface_exchange  test_heat_surface_exchange.cpp)
 add_gtest_unit(test_engine_heat_radiative_exchange test_heat_radiative_exchange.cpp)
+# Step 3 — the [HEAT_SOURCES] C API (the one heat section H6a left without one).
+add_gtest_unit(test_engine_heat_sources_api       test_heat_sources_api.cpp)
+add_gtest_unit(test_engine_heat_solar_radiation   test_heat_solar_radiation.cpp)
 add_gtest_unit(test_engine_heat_ard_binding       test_heat_ard_binding.cpp)
 add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
 # In-place rename for snow packs / aquifers / inlets / streets / LID controls.

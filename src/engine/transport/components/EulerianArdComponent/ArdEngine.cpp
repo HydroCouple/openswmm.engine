@@ -37,6 +37,7 @@
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
+#include "../HeatFluxModules/SolarRadiation.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 #include "../../fvkernels/SpeciesTransportKernels.hpp"
 #include "../ReactionModule/ReactionArdBinding.hpp"
@@ -1229,6 +1230,12 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     const bool any = ctx.heat_config.surface_exchange ||
                      ctx.heat_config.radiative_exchange;
     if (!any) return;
+
+    // H6a: resolve this step's Jin and cloud fraction before any flux call.
+    // Each of the four bindings does this in its own prologue — they run on
+    // two different clocks, so no single upstream call site covers all of
+    // them (SolarRadiation.hpp).
+    heat::updateSolarForcing(ctx);
 
     constexpr double kSqFtToSqM = 0.09290304;
     constexpr double kCuFtToCuM = 0.028316846592;

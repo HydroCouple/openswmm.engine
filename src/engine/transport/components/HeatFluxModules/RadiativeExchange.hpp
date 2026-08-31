@@ -91,12 +91,20 @@ double netShortwave(double incoming_wm2, double albedo,
 double backLongwave(double t_water_c, double emiss_water) noexcept;
 
 /// Brunt atmospheric emissivity [-]. `e_a_kpa` is converted to Pa inside.
-double atmosphericEmissivity(double e_a_kpa, double atm_emiss_coeff) noexcept;
+///
+/// H6a: `cloud_factor` is Bolz's `1 + k_lw C²` from
+/// `SolarRadiation::cloudLongwaveFactor`. It DEFAULTS TO 1.0 and the
+/// default is not decorative — every H3 gate calls the two-argument form,
+/// so the clear-sky value is unchanged by construction rather than by
+/// arithmetic that happens to round the same way.
+double atmosphericEmissivity(double e_a_kpa, double atm_emiss_coeff,
+                             double cloud_factor = 1.0) noexcept;
 
 /// Atmospheric longwave [W/m²], INTO the water.
 double atmosphericLongwave(double t_air_c, double humidity_pct,
                            double atm_emiss_coeff, double lw_reflection,
-                           double sky_view) noexcept;
+                           double sky_view,
+                           double cloud_factor = 1.0) noexcept;
 
 /// Land-cover longwave [W/m²], INTO the water.
 double landCoverLongwave(double t_air_c, double emiss_landcover,
@@ -104,9 +112,17 @@ double landCoverLongwave(double t_air_c, double emiss_landcover,
 
 /// Net radiative flux [W/m²], **positive OUT of the water** so it sums with
 /// SurfaceExchange's `Je + Jc`.
+///
+/// H6a adds two optional arguments and changes nothing without them:
+///   - `jin_wm2 < 0` (the default) means "use `cfg.shortwave_wm2`", the H3
+///     behaviour. A caller with a resolved per-step `Jin` passes it here.
+///     The sentinel is negative rather than NaN because a deck may legally
+///     mean 0 W/m² (night), and 0 must not be mistaken for "unset".
+///   - `cloud_factor` defaults to 1.0 — see `atmosphericEmissivity`.
 double netRadiativeFluxOut(double t_water_c, double t_air_c,
-                           double humidity_pct,
-                           const RadiativeConfig& cfg) noexcept;
+                           double humidity_pct, const RadiativeConfig& cfg,
+                           double jin_wm2 = -1.0,
+                           double cloud_factor = 1.0) noexcept;
 
 /// This module's contribution to the net outward flux at `t_w` [W/m²].
 /// Returns 0 unless HEAT_TRANSPORT is on AND `[HEAT_FLUXES]

@@ -33,6 +33,7 @@
 #include "../../../core/SimulationContext.hpp"
 #include "../../../hydrology/LID.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
+#include "../HeatFluxModules/SolarRadiation.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 #include "../LidLayerCommon.hpp"
 
@@ -212,6 +213,10 @@ void routeLidLayerTemperature(SimulationContext& ctx,
     const bool   do_cond = ctx.heat_config.layer_conduction;
     const bool   do_flux = ctx.heat_config.surface_exchange ||
                            ctx.heat_config.radiative_exchange;
+
+    // H6a: runoff-clock binding, same reasoning as HeatWatershed
+    // (SolarRadiation.hpp).
+    heat::updateSolarForcing(ctx);
 
     for (int t = 0; t < solver.numGroups(); ++t) {
         const auto& g = solver.group(t);
