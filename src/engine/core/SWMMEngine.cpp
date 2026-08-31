@@ -5810,6 +5810,33 @@ int SWMMEngine::checkRoutingDiverged() noexcept {
         return !std::isfinite(v) || std::fabs(v) > kAbsurd;
     };
 
+    // FV cell-state guard (issue #156 R3). The published node/link state
+    // checked below is a per-conduit REDUCTION of the FV cells, and the
+    // reduction stays far under kAbsurd long after the cells have left the
+    // physics (the mixed-flow study P6 measured 30 of 118 series beyond 10x
+    // the observed range, every run status OK — the substep retry loop cannot
+    // reject a dt-independent amplification, so it accepts the diverged step
+    // silently). The solver checks its own cells against physical-absurdity
+    // bounds once per routing step and reports the worst offender here.
+    if (const fv::INetworkSolver* s = router_.fvSolver()) {
+        fv::INetworkSolver::Divergence dv;
+        if (s->divergence(dv)) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "ERROR %d: the FV solution diverged in conduit '%s' "
+                "(%s %.6g) after %.4f hours -- a step-size-independent "
+                "instability the substep retry cannot shrink away; the run "
+                "cannot continue.",
+                CFFI_ERR_NUMERICAL,
+                dv.link >= 0 ? ctx_.link_names.name_of(dv.link).c_str() : "?",
+                dv.what ? dv.what : "state", dv.value,
+                ctx_.current_time / 3600.0);
+            ctx_.errors.push_back(buf);
+            set_error(CFFI_ERR_NUMERICAL, buf);
+            return CFFI_ERR_NUMERICAL;
+        }
+    }
+
     const int nn = ctx_.n_nodes();
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);

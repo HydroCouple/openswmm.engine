@@ -3652,6 +3652,48 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         if (node_pub_[un] && !algebraicActive(static_cast<int>(un)))
             node_pub_[un] = 0;
 
+    // Divergence guard (issue #156 R3, bounds documented at their definition).
+    // The retry loop cannot reject a dt-independent amplification — all 8
+    // retries fail identically and the step is accepted — so the state that
+    // survives to here is the last line of defence. Track the worst offender
+    // by its ratio to the bound so the reported element is the one furthest
+    // gone, not the first one found.
+    div_link_ = -1;
+    {
+        double worst = 1.0;
+        const int n_cells = mesh_->n_cells();
+        for (int c = 0; c < n_cells; ++c) {
+            const auto uc = static_cast<std::size_t>(c);
+            const double a = state_->cell_a[uc];
+            const double q = state_->cell_q[uc];
+            const double h = state_->cell_h[uc];
+            const double u = cell_u_[uc];
+            double ratio;
+            const char* what;
+            double bad = h;
+            if (!std::isfinite(a) || !std::isfinite(q) || !std::isfinite(h)) {
+                ratio = std::numeric_limits<double>::infinity();
+                what  = "non-finite state";
+                bad   = !std::isfinite(a) ? a : (!std::isfinite(q) ? q : h);
+            } else if (std::fabs(u) > kDivergedVelocity * worst) {
+                ratio = std::fabs(u) / kDivergedVelocity;
+                what  = "velocity (ft/s)";
+            } else if (std::fabs(h) > kDivergedDepth * worst) {
+                ratio = std::fabs(h) / kDivergedDepth;
+                what  = "depth magnitude (ft)";
+            } else {
+                continue;
+            }
+            worst      = std::min(ratio,
+                                  std::numeric_limits<double>::max());
+            div_link_  = mesh_->conduit_link[static_cast<std::size_t>(
+                mesh_->cell_conduit[uc])];
+            div_value_ = (what[0] == 'v') ? u : bad;
+            div_what_  = what;
+            if (!std::isfinite(ratio)) break;  // cannot get worse
+        }
+    }
+
     last_nsteps_ = steps;
     total_steps_ += steps;
     perf::count(perf::n_fv_substep, steps);
