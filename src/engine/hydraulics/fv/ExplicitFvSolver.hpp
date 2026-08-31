@@ -565,6 +565,7 @@ private:
     std::vector<double> rk_node_vol_, rk_node_head_;
     std::vector<double> rk_exch_, rk_in_, rk_out_, rk_flood_, rk_qint_,
                         rk_carry_;
+    std::vector<uint8_t> rk_tpa_;   ///< Uⁿ regime latch (issue #156 R4c)
 
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.
