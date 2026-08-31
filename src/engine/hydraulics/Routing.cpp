@@ -871,6 +871,103 @@ void Router::initFv(SimulationContext& ctx) {
     const int nn = fv_mesh_.n_nodes();
     fv_state_.resize(nc, nn, 0);
 
+    // Virtual junctions have no [JUNCTIONS] InitDepth row, and the post-parse
+    // seeding that interpolates one (issue #156 P1) is DYNWAVE-only by
+    // measurement — so under FV a VJ is dry here, links.depth on a conduit
+    // that ends at one has averaged in a zero, and a chain the mesh treats as
+    // ONE run of cells starts with a hole at every splice. On the mixed-flow
+    // study's e2 deck (initial level 0.073 m) the mid reach seeded at 0.001 m
+    // and the bore reached the 9.9 m station 3.6x late (P6 finding F1).
+    //
+    // So interpolate a free surface for every conduit-degree-2 VJ between the
+    // nearest NON-virtual nodes reached by walking its spliced chain in both
+    // directions — the same walk, with the same at-least-one-wet-endpoint
+    // rule, as PostParseResolver's DW seeding — and let the loop below read a
+    // VJ end through that surface. A VJ becomes as transparent to the initial
+    // condition as its spliced face is to the solution. CELL seeding only:
+    // node state is untouched, so the P1 measurement that live VJ node
+    // seeding destabilizes FV is not disturbed. Decks without VJs take the
+    // any_vj early-out and are bitwise unaffected.
+    std::vector<double> vj_eta;  // per node; NaN = no surface seeded
+    {
+        const int n_nodes = ctx.n_nodes();
+        const int n_links = ctx.n_links();
+        bool any_vj = false;
+        for (int n = 0; n < n_nodes && !any_vj; ++n)
+            any_vj = ctx.nodes.is_virtual[static_cast<std::size_t>(n)] != 0;
+        if (any_vj) {
+            vj_eta.assign(static_cast<std::size_t>(n_nodes),
+                          std::numeric_limits<double>::quiet_NaN());
+            // Incident CONDUITS per virtual node (VJ splices are conduit-only
+            // by validation; anything else is rejected by the mesh builder).
+            std::vector<int> incA(static_cast<std::size_t>(n_nodes), -1);
+            std::vector<int> incB(static_cast<std::size_t>(n_nodes), -1);
+            std::vector<int> inc_n(static_cast<std::size_t>(n_nodes), 0);
+            for (int j = 0; j < n_links; ++j) {
+                const auto ujj = static_cast<std::size_t>(j);
+                if (ctx.links.type[ujj] != LinkType::CONDUIT) continue;
+                for (int nd : {ctx.links.node1[ujj], ctx.links.node2[ujj]}) {
+                    if (nd < 0 || nd >= n_nodes) continue;
+                    const auto und = static_cast<std::size_t>(nd);
+                    if (ctx.nodes.is_virtual[und] == 0) continue;
+                    if (inc_n[und] == 0)      incA[und] = j;
+                    else if (inc_n[und] == 1) incB[und] = j;
+                    ++inc_n[und];
+                }
+            }
+            auto walk = [&](int start_node, int via_link, double& eta_out,
+                            double& dist_out, bool& wet_out) -> bool {
+                int node = start_node, link = via_link;
+                double dist = 0.0;
+                for (int guard = 0; guard <= n_links; ++guard) {
+                    const auto ul = static_cast<std::size_t>(link);
+                    const int cr = ctx.link_subtypes.conduit_row(link);
+                    dist += (cr >= 0)
+                        ? ctx.link_subtypes.conduits
+                              .length[static_cast<std::size_t>(cr)]
+                        : 0.0;
+                    const int other = (ctx.links.node1[ul] == node)
+                        ? ctx.links.node2[ul] : ctx.links.node1[ul];
+                    if (other < 0 || other >= n_nodes) return false;
+                    const auto uo = static_cast<std::size_t>(other);
+                    if (ctx.nodes.is_virtual[uo] == 0) {
+                        eta_out = ctx.nodes.invert_elev[uo] +
+                                  ctx.nodes.depth[uo];
+                        dist_out = dist;
+                        wet_out  = ctx.nodes.depth[uo] > 0.0;
+                        return true;
+                    }
+                    if (inc_n[uo] != 2) return false;
+                    link = (incA[uo] == link) ? incB[uo] : incA[uo];
+                    if (link < 0) return false;
+                    node = other;
+                }
+                return false;  // cycle of VJs (rejected elsewhere)
+            };
+            for (int i = 0; i < n_nodes; ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                if (ctx.nodes.is_virtual[ui] == 0 || inc_n[ui] != 2) continue;
+                double eA = 0.0, dA = 0.0, eB = 0.0, dB = 0.0;
+                bool wetA = false, wetB = false;
+                const bool okA = walk(i, incA[ui], eA, dA, wetA);
+                const bool okB = walk(i, incB[ui], eB, dB, wetB);
+                // A dry node's surface is just its invert — interpolating
+                // between two dry endpoints with differing inverts would
+                // MANUFACTURE water on a dry deck. At least one wet endpoint,
+                // exactly as the DW seeding requires.
+                if (!(okA && wetA) && !(okB && wetB)) continue;
+                if (okA && okB) {
+                    const double d_sum = dA + dB;
+                    vj_eta[ui] = (d_sum > 0.0)
+                        ? (eA * dB + eB * dA) / d_sum
+                        : 0.5 * (eA + eB);
+                } else {
+                    vj_eta[ui] = okA ? eA : eB;
+                }
+            }
+        }
+    }
+
     // Seed cell state from the model's initial condition. LinkData carries ONE
     // depth per conduit, and that depth is the average of the two end-node
     // DEPTHS — which are measured from different inverts. Laying it down as a
@@ -911,10 +1008,17 @@ void Router::initFv(SimulationContext& ctx) {
         // links.flow is the aggregate discharge, so neither is divided here.
         const double q = ctx.links.flow[uj];
 
-        // Surface at each end, where that end has water to define one.
+        // Surface at each end, where that end has water to define one. A
+        // virtual end carries the surface interpolated across its chain above.
         auto bank_eta = [&](int nd, double& eta) {
             if (nd < 0) return false;
             const auto und = static_cast<std::size_t>(nd);
+            if (und < vj_eta.size() && ctx.nodes.is_virtual[und] != 0) {
+                if (!std::isfinite(vj_eta[und]) ||
+                    vj_eta[und] <= ctx.nodes.invert_elev[und]) return false;
+                eta = vj_eta[und];
+                return true;
+            }
             if (ctx.nodes.depth[und] <= 0.0) return false;
             eta = ctx.nodes.invert_elev[und] + ctx.nodes.depth[und];
             return true;
@@ -934,8 +1038,33 @@ void Router::initFv(SimulationContext& ctx) {
         const bool shoreline = (wet1 != wet2) && step;
         const double eta_wet = wet1 ? eta1 : eta2;
 
-        const double uniform =
-            fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
+        // links.depth is the average of the two end-node depths, and a virtual
+        // end contributed a zero to it. Rebuild the average through the
+        // interpolated VJ surfaces so the projection is the one the deck's
+        // real nodes define.
+        double init_depth = ctx.links.depth[uj];
+        {
+            const int n1 = ctx.links.node1[uj];
+            const int n2 = ctx.links.node2[uj];
+            const bool v1 = n1 >= 0 && static_cast<std::size_t>(n1) <
+                vj_eta.size() &&
+                ctx.nodes.is_virtual[static_cast<std::size_t>(n1)] != 0;
+            const bool v2 = n2 >= 0 && static_cast<std::size_t>(n2) <
+                vj_eta.size() &&
+                ctx.nodes.is_virtual[static_cast<std::size_t>(n2)] != 0;
+            if ((v1 || v2) && n1 >= 0 && n2 >= 0) {
+                auto end_depth = [&](int nd, bool v) {
+                    const auto und = static_cast<std::size_t>(nd);
+                    if (!v) return ctx.nodes.depth[und];
+                    return std::isfinite(vj_eta[und])
+                        ? std::max(0.0,
+                                   vj_eta[und] - ctx.nodes.invert_elev[und])
+                        : 0.0;
+                };
+                init_depth = 0.5 * (end_depth(n1, v1) + end_depth(n2, v2));
+            }
+        }
+        const double uniform = fv::kernels::areaOfDepth(g, init_depth);
 
         double vol = 0.0, a_len = 0.0, sum_len = 0.0, slot_vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {

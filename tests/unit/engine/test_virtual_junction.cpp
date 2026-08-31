@@ -1206,6 +1206,51 @@ TEST(VirtualJunction, InitialStateIsNotSeededUnderFv) {
     destroy(e);
 }
 
+TEST(VirtualJunction, InitialStateFvCellsSeedAcrossTheSplice) {
+    // The FV counterpart of the seeding above lives in the CELLS, not the
+    // node (the test above pins that the node stays dry). Router::initFv
+    // seeds each conduit from links.depth = the average of its end-node
+    // depths, and on a FLAT bed the shoreline projection never fires — so
+    // before the chain seeding, a VJ end averaged a ZERO into every spliced
+    // conduit: on the mixed-flow study's e2 deck (level 0.073 m over a flat
+    // bed) the mid reach started at 0.001 m and the filling bore arrived
+    // 3.6x late (P6 finding F1). This gate is that deck in miniature:
+    // three conduits over a flat bed at invert 9, two VJs, a level pool at
+    // depth 0.5 — every link must OPEN at depth 0.5, VJs transparent.
+    std::ostringstream ss;
+    ss << options("FV")
+       << "[JUNCTIONS]\n"
+          ";;Name  Elev  MaxDepth  InitDepth\n"
+          "J_IN    9.0   8.0       0.5\n"
+          "J_OUT   9.0   8.0       0.5\n\n"
+          "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\nVA      9.0\nVB      9.0\n\n"
+          "[OUTFALLS]\n;;Name  Elev  Type  Gated\nO_OUT   9.0   FREE  NO\n\n"
+          "[WEIRS]\n;;Name  From   To     Type        CrestHt  Cd\n"
+          "W_OVF   J_OUT  O_OUT  TRANSVERSE  7.9      3.33\n\n"
+          "[CONDUITS]\n;;Name  From  To     Length  N      Z1  Z2\n"
+          "C_A     J_IN  VA     100.0   0.013  0   0\n"
+          "C_B     VA    VB     100.0   0.013  0   0\n"
+          "C_C     VB    J_OUT  100.0   0.013  0   0\n\n"
+          "[XSECTIONS]\n;;Link  Shape     G1   G2  G3  G4  Barrels\n"
+          "C_A     CIRCULAR  1.0  0   0   0   1\n"
+          "C_B     CIRCULAR  1.0  0   0   0   1\n"
+          "C_C     CIRCULAR  1.0  0   0   0   1\n"
+          "W_OVF   RECT_OPEN 2.0  1.0 0   0\n";
+    SWMM_Engine e = openModel("vj_seed_fv_cells", ss.str(), true);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
+    for (const char* name : {"C_A", "C_B", "C_C"}) {
+        const int j = swmm_link_index(e, name);
+        ASSERT_GE(j, 0) << name;
+        double d = -1.0;
+        ASSERT_EQ(swmm_link_get_depth(e, j, &d), SWMM_OK);
+        // Pre-fix: C_A/C_C read 0.25 (one zero averaged in), C_B 0.0 (two).
+        EXPECT_NEAR(d, 0.5, 1e-6) << name;
+    }
+    swmm_engine_end(e);
+    destroy(e);
+}
+
 TEST(VirtualJunction, InitialStateWeightsByDistanceNotByEndOrder) {
     // SlopedPool above uses two 100 ft legs, so (hA*dB + hB*dA)/(dA+dB) and
     // (hA*dA + hB*dB)/(dA+dB) agree to the last bit — it pins the midpoint and
