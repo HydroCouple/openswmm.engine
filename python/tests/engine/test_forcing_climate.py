@@ -15,9 +15,16 @@ and per-test report/output files to ``tests/_artifacts`` so they remain
 reviewable after the run.
 
 The bundled site-drainage model has no temperature or wind data source,
-so the engine defaults apply (70 deg F, 0 mph) and any other value
+so the engine defaults apply (0 deg F, 0 mph) and any other value
 observed is attributable to the forcing alone. Snowmelt-response tests
 require a snowpack fixture and are tracked as follow-up work in the plan.
+
+The temperature baseline is 0, not the 70 deg F the ClimateState NSDMI
+carries: 672d99ef ("fix(climate): report sys.TEMPERATURE as legacy does")
+zeroes it at init when no source is present, because legacy's setTemp
+assigns Temp.ta only for FILE_TEMP/TSERIES_TEMP and reports 0 otherwise.
+That divergence was the single largest contributor to parity failures.
+These assertions predate that commit and encoded the old contract.
 
 @author: Caleb Buahin
 """
@@ -36,7 +43,9 @@ _DATA_DIR = os.path.join(
 _INP = os.path.join(_DATA_DIR, "site_drainage_example.inp")
 _OUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 
-_DEFAULT_TEMP_F = 70.0   # ClimateState default when no source is present
+# Legacy parity: 0, not the 70 the NSDMI carries — see the module docstring
+# and SWMMEngine.cpp's temp_source == 0 branch.
+_DEFAULT_TEMP_F = 0.0    # effective default when no source is present
 _DEFAULT_WIND = 0.0
 
 # Climate state (temperature/wind/evap) is refreshed on the runoff clock, not
