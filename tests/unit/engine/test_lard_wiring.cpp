@@ -52,6 +52,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
+
 #include <algorithm>
 #include <fstream>
 #include <string>
@@ -85,6 +87,7 @@ struct DeckSpec {
     int max_segs = 0;                   ///< X3a: MAX_SEGMENTS_PER_LINK; 0 = omit
     bool rwpt = false;                  ///< X3b: DISPERSION RWPT
     int rwpt_seed = 0;                  ///< X3b: RWPT_SEED; 0 = omit
+    std::string pc_lines;               ///< L3: [PROCESS_COMPONENTS] body
 };
 
 void write_deck(const std::string& path, const DeckSpec& s) {
@@ -128,6 +131,8 @@ void write_deck(const std::string& path, const DeckSpec& s) {
       << "J0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n";
     if (s.pollutants)
         f << "J0 TSS  \"\" CONCEN 1.0 1.0 " << kCin << "\n";
+    if (!s.pc_lines.empty())
+        f << "\n[PROCESS_COMPONENTS]\n" << s.pc_lines << "\n";
     f << "\n[REPORT]\nINPUT NO\n";
 }
 
@@ -140,6 +145,7 @@ struct WiringRun {
     std::vector<double> depth_trace;  ///< J2 depth per step
     std::vector<double> flow_trace;   ///< C3 flow per step
     std::vector<double> link_final;   ///< [link] conc at end
+    std::vector<double> msx_link_final;  ///< [link*nsp+s] at end (L3)
     std::vector<std::string> warnings;
     int solver_kind = -1;             ///< ctx value after open
     bool ok = false;
@@ -195,6 +201,7 @@ WiringRun run_deck(const std::string& tag, const DeckSpec& s) {
             r.link_final[static_cast<std::size_t>(l)] =
                 ctx.links.conc[static_cast<std::size_t>(l * np)];
     }
+    r.msx_link_final = ctx.reactions.msx_link_conc;
     r.warnings = ctx.warnings;
     r.ok = true;
     swmm_engine_destroy(e);
@@ -414,3 +421,98 @@ TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
 }
 
 }  // namespace
+
+
+// ===========================================================================
+// L3 — MSX species ride LARD segments and react (the last unstarted quality
+// step). Until L3, a reactions component under QUALITY_SOLVER LAGRANGIAN
+// warned "the LARD reaction binding is not implemented (deferred L3)" and
+// every species stayed at its initial value.
+// ===========================================================================
+
+namespace {
+
+bool l3_has(const std::vector<std::string>& w, const char* needle) {
+    for (const auto& s : w)
+        if (s.find(needle) != std::string::npos) return true;
+    return false;
+}
+
+}  // namespace
+
+// Gate 1 (base-FAILING): FORMULA over a transported pollutant is live on
+// the segments — X = 2·TSS holds at the tail link once TSS is steady.
+TEST(LardL3Test, FormulaSpeciesTracksItsPollutantOnSegments) {
+    std::ofstream rxn("_l3_f.rxn");
+    rxn << "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+        << "[REACTION_SPECIES]\nBULK X MG\n"
+        << "[REACTION_PIPES]\nFORMULA X 2.0 * TSS\n"
+        << "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n";
+    rxn.close();
+    DeckSpec s;
+    s.pc_lines =
+        "org.hydrocouple.openswmm.reactions config=\"_l3_f.rxn\"";
+    const WiringRun r = run_deck("_l3_f", s);
+    ASSERT_TRUE(r.ok);
+
+    ASSERT_FALSE(r.link_final.empty());
+    ASSERT_FALSE(r.msx_link_final.empty());
+    const double tss_c5 = r.link_final[4];
+    const double x_c5 = r.msx_link_final[4];  // one species → index = link
+    ASSERT_GT(tss_c5, 1.0) << "premise: TSS never arrived at C5";
+    EXPECT_NEAR(x_c5, 2.0 * tss_c5, 0.02 * (2.0 * tss_c5))
+        << "FORMULA X = 2*TSS reads " << x_c5 << " against TSS " << tss_c5
+        << " — the LARD reaction binding is dead (deferred L3)";
+
+    // The deferral warning is retired on a reacting LARD deck…
+    EXPECT_FALSE(l3_has(r.warnings, "deferred L3"))
+        << "the L3 deferral warning still fires on a deck that reacts";
+    // …and the R4b "not transported" warning must NOT fire here either:
+    // under LARD the species DO transport (that is what this round adds).
+    EXPECT_FALSE(l3_has(r.warnings, "not yet transported"))
+        << "the LEGACY-scoped R4b transport warning leaked onto a LARD run";
+}
+
+// Gate 2 (base-FAILING): RATE production from a transported pollutant
+// accumulates along the flow direction, and the segment answer agrees with
+// the ARD engine's cell answer on the same deck to within discretisation.
+TEST(LardL3Test, RateProductionGrowsAlongFlowAndAgreesWithArd) {
+    std::ofstream rxn("_l3_r.rxn");
+    rxn << "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+        << "[REACTION_SPECIES]\nBULK X MG\n"
+        << "[REACTION_PIPES]\nRATE X 0.001 * TSS\n"
+        << "[REACTION_TANKS]\nRATE X 0.001 * TSS\n";
+    rxn.close();
+    DeckSpec lard;
+    lard.pc_lines =
+        "org.hydrocouple.openswmm.reactions config=\"_l3_r.rxn\"";
+    DeckSpec ard = lard;
+    ard.solver = "EULERIAN_ARD";
+
+    const WiringRun a = run_deck("_l3_r_lard", lard);
+    const WiringRun b = run_deck("_l3_r_ard", ard);
+    ASSERT_TRUE(a.ok && b.ok);
+    ASSERT_FALSE(a.msx_link_final.empty());
+    ASSERT_FALSE(b.msx_link_final.empty());
+
+    const double x1 = a.msx_link_final[0];
+    const double x5 = a.msx_link_final[4];
+    EXPECT_GT(x5, 1.0)
+        << "RATE X 0.001*TSS produced nothing at the tail link under LARD "
+           "— the binding is dead (base reads 0)";
+    EXPECT_GT(x5, x1)
+        << "production must ACCUMULATE along the flow direction — more "
+           "residence behind C5 than C1";
+
+    const double x5_ard = b.msx_link_final[4];
+    std::printf("L3 cross-engine at C5: LARD %.4f vs ARD %.4f (ratio %.4f)\n",
+                x5, x5_ard, x5 / x5_ard);
+    ASSERT_GT(x5_ard, 1.0) << "premise: the ARD reference produced nothing";
+    // 0.10, not 0.35: the honest ratio is 0.975 (0.025 off), and the
+    // off-by-np gather falsifier reads 1.146 — bands of 0.35 and even
+    // 0.15 let that bug through (it slid inside 0.15 by 0.004).
+    EXPECT_NEAR(x5 / x5_ard, 1.0, 0.10)
+        << "LARD segments read " << x5 << " where ARD cells read " << x5_ard
+        << " — cross-engine agreement is discretisation-level, not exact, "
+           "but a factor apart means wrong physics";
+}

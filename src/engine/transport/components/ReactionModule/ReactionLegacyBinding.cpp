@@ -57,8 +57,11 @@ BindingScratch& scratch() {
     return s;
 }
 
+}  // namespace
+
 /// Lazily size + seed the MSX element state; warn once about the R4b
-/// transport limitation when any RATE MSX species exists in either scope.
+/// transport limitation when any RATE MSX species exists in either scope
+/// (LEGACY only — under LARD the species ride the segments as of L3).
 void ensureMsxState(SimulationContext& ctx) {
     auto& rx = ctx.reactions;
     const auto ns = static_cast<std::size_t>(rx.n_species());
@@ -84,7 +87,8 @@ void ensureMsxState(SimulationContext& ctx) {
                 rx.init_elem_value[k];
         }
     }
-    if (!rx.warned_msx_not_transported) {
+    if (ctx.options.quality_solver == QualitySolverKind::LEGACY &&
+        !rx.warned_msx_not_transported) {
         bool any_rate = false;
         for (int s = 0; s < rx.n_species(); ++s) {
             const auto us = static_cast<std::size_t>(s);
@@ -102,6 +106,8 @@ void ensureMsxState(SimulationContext& ctx) {
         }
     }
 }
+
+namespace {
 
 /// Exact exponential pollutant decay: c *= exp(-k*dt), clamp at 0. The
 /// closed form of first-order decay — replaces the legacy linearized
@@ -188,6 +194,33 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
 }
 
 }  // namespace
+
+void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
+                       double* species_block, const double* pollut,
+                       double hrt_seconds) {
+    auto& rx = ctx.reactions;
+    const int ns = rx.n_species();
+    if (ns == 0) return;
+    auto& sc = scratch();
+    sc.ensure(rx);
+    double hydvar[static_cast<int>(RxHydVar::COUNT_)] = {};
+    hydvar[static_cast<int>(RxHydVar::HRT)] = hrt_seconds;
+    for (int s = 0; s < ns; ++s)
+        sc.block[static_cast<std::size_t>(s)] = species_block[s];
+    const auto rep = ReactionIntegrator::step(rx, tank, dt,
+                                              sc.block.data(), hydvar,
+                                              sc.ws, pollut);
+    if (rep.ok) {
+        for (int s = 0; s < ns; ++s)
+            species_block[s] = sc.block[static_cast<std::size_t>(s)];
+    } else if (!rx.warned_react_failure) {
+        rx.warned_react_failure = true;
+        ctx.warnings.push_back(
+            std::string("Reaction step failed on a LARD element "
+                        "(element state left unchanged): ") +
+            rep.error);
+    }
+}
 
 bool legacyReactionsActive(const SimulationContext& ctx) {
     return ctx.reactions.configured && ctx.reactions.compiled;

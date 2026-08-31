@@ -58,6 +58,20 @@ namespace openswmm::transport {
 /// the QualitySolver's branch condition.
 bool legacyReactionsActive(const SimulationContext& ctx);
 
+/// L3: lazily size + seed the MSX element state (GLOBAL fill +
+/// [REACTION_QUALITY] overrides). Shared by the LEGACY dispatch and the
+/// LARD engine's init — one seeding spelling for both engines.
+void ensureMsxState(SimulationContext& ctx);
+
+/// L3: integrate ONE species block in place over dt through the shared
+/// integrator. `pollut` may be null (no pollutant context); `tank`
+/// selects tank-scope expressions; `hrt_seconds` feeds RxHydVar::HRT.
+/// On an integrator failure the block is left unchanged and the
+/// once-per-run failure warning fires — the reactElements contract.
+void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
+                       double* species_block, const double* pollut,
+                       double hrt_seconds);
+
 /// Node-side step: exact-exponential pollutant decay + MSX tank-scope
 /// integration. Runs where applyDecay() ran (before updateLinkQuality).
 void reactLegacyNodes(SimulationContext& ctx, double dt);
