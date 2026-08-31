@@ -107,7 +107,8 @@ using constants::FUDGE;
 
 double DWSolver::getCrownCutoff() const {
     if (surcharge_method == SurchargeMethod::SLOT ||
-        surcharge_method == SurchargeMethod::DYNAMIC_SLOT)
+        surcharge_method == SurchargeMethod::DYNAMIC_SLOT ||
+        surcharge_method == SurchargeMethod::TPA)
         return SLOT_CROWN_CUTOFF;
     return EXTRAN_CROWN_CUTOFF;
 }
@@ -270,6 +271,104 @@ void DWSolver::applyDPSGeometry(SimulationContext& ctx) {
 
         // Friction excludes slot — hydraulic radius stays at full-pipe value.
         hrad_mid_[uj] = rf;
+    }
+}
+
+// ============================================================================
+// TPA (issue #156 Phase 5) — latch update + geometry override
+// ============================================================================
+
+// Once per routing step, BEFORE the Picard loop, from last-committed state:
+// the operator stays fixed within the iteration (mirrors how DPS advances its
+// state outside the iteration). Vent rule carries P4's SUBMERGENCE lesson:
+// air enters only where a VENTED node's water level sits below the pipe crown
+// at that end — a submerged connection holds the column. Sealed = virtual
+// junction or SUR_DEPTH > 0. Column separation at yMid < y_full − 30 ft
+// clears unconditionally (documented two-phase limitation).
+void DWSolver::updateTpaLatch(SimulationContext& ctx) {
+    const auto& links = ctx.links;
+    const auto& nodes = ctx.nodes;
+    constexpr double kCavHead = 30.0;   // ft, mirrors the FV closure
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        const auto uci = static_cast<std::size_t>(ci);
+        const int j = conduit_idx_[uci];
+        const auto uj = static_cast<std::size_t>(j);
+        tpa_latch_changed_[uci] = 0;
+        if (is_open_[uj]) { tpa_latch_[uci] = 0; continue; }
+        const double yf = links.xsect_y_full[uj];
+        if (yf <= 0.0) { tpa_latch_[uci] = 0; continue; }
+        const double y1 = depth1_[uj];
+        const double y2 = depth2_[uj];
+        const uint8_t old = tpa_latch_[uci];
+        uint8_t latched = old;
+        if (!old) {
+            // Set when the conduit reaches full — the same condition that
+            // engages the slot branch today (TPA plan §B2).
+            latched = (y1 >= yf && y2 >= yf) ? uint8_t{1} : uint8_t{0};
+        } else {
+            const double yMid = depth_mid_[uj];
+            if (yMid < yf - kCavHead) {
+                latched = 0;   // column separation
+            } else {
+                // Clear on atmosphere contact: a vented end whose level is
+                // below the crown AT THAT END.
+                auto vented_end = [&](int n, double y_end) -> bool {
+                    if (n < 0) return false;
+                    const auto un2 = static_cast<std::size_t>(n);
+                    const bool sealed =
+                        (un2 < nodes.is_virtual.size() &&
+                         nodes.is_virtual[un2] != 0) ||
+                        (un2 < nodes.sur_depth.size() &&
+                         nodes.sur_depth[un2] > 0.0);
+                    return !sealed && y_end < yf;
+                };
+                if (vented_end(links.node1[uj], y1) ||
+                    vented_end(links.node2[uj], y2))
+                    latched = 0;
+            }
+        }
+        tpa_latch_[uci] = latched;
+        tpa_latch_changed_[uci] = (latched != old) ? uint8_t{1} : uint8_t{0};
+    }
+}
+
+// DPS-style geometry override (called where applyDPSGeometry is): engaged
+// when latched OR above the crown cutoff (memoryless above the crown — the
+// latch only matters below it). Area rides the SIGNED slot line
+// A = A_full + w_tpa·(y − y_full) — "shrinkage" for sub-atmospheric heads —
+// width is the constant w_tpa, the hydraulic radius stays r_full (the slot
+// carries no wetted perimeter), and both ends contribute slot surface area
+// to node continuity (the latch keeps sealed heads meaningful).
+void DWSolver::applyTpaGeometry(SimulationContext& ctx) {
+    auto& links = ctx.links;
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        const auto uci = static_cast<std::size_t>(ci);
+        const int j = conduit_idx_[uci];
+        const auto uj = static_cast<std::size_t>(j);
+        if (is_open_[uj]) continue;
+        const double yf = links.xsect_y_full[uj];
+        const double af = links.xsect_a_full[uj];
+        const double rf = links.xsect_r_full[uj];
+        if (yf <= 0.0 || af <= 0.0) continue;
+        const double w = tpa_w_[uci];
+        if (w <= 0.0) continue;
+        const double yMid = depth_mid_[uj];
+        const bool engaged = (tpa_latch_[uci] != 0) ||
+                             (yMid >= SLOT_CROWN_CUTOFF * yf);
+        if (!engaged) continue;
+
+        auto line_area = [&](double y) {
+            return std::max(af + w * (y - yf), 0.05 * af);
+        };
+        area_mid_[uj] = line_area(yMid);
+        area1_[uj]    = line_area(depth1_[uj]);
+        area2_[uj]    = line_area(depth2_[uj]);
+        width_mid_[uj] = w;
+        const double L = cached_length_[uj];
+        const double slot_surf_per_end = 0.25 * w * L;  // (w+w)·L/4 convention
+        surf_area1_[uj] = slot_surf_per_end;
+        surf_area2_[uj] = slot_surf_per_end;
+        hrad_mid_[uj] = rf;   // slot/elastic area carries no wetted perimeter
     }
 }
 
@@ -587,6 +686,26 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     aa_g_prev_.resize(un, 0.0);
     aa_r_prev_.resize(un, 0.0);
     aa_skip_.resize(un, 0);
+
+    // TPA initialization (issue #156 Phase 5): per-conduit constant slot
+    // width w = g·A_full/a², a in PROJECT units converted like the other
+    // length-per-time options.
+    if (surcharge_method == SurchargeMethod::TPA) {
+        const double ucf_len2 = ucf::Ucf[ucf::LENGTH][
+            ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+        const double a_fts = std::max(tpa_celerity / ucf_len2, 1.0);
+        const auto ucn = static_cast<std::size_t>(n_conduits_);
+        tpa_w_.assign(ucn, 0.0);
+        tpa_latch_.assign(ucn, 0);
+        tpa_latch_changed_.assign(ucn, 0);
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            const auto uj = static_cast<std::size_t>(
+                conduit_idx_[static_cast<std::size_t>(ci)]);
+            const double af = ctx.links.xsect_a_full[uj];
+            tpa_w_[static_cast<std::size_t>(ci)] =
+                (af > 0.0) ? GRAVITY * af / (a_fts * a_fts) : 0.0;
+        }
+    }
 
     // Dynamic Preissmann Slot (DPS) initialization
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
@@ -1142,6 +1261,10 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     // legacy dynwave.c:280 which sets a2 = a1 in initRoutingStep().
     // area_mid_ still holds the final midpoint areas from the previous timestep.
     std::copy(area_mid_.begin(), area_mid_.end(), area_old_.begin());
+
+    // TPA latch (issue #156 Phase 5): advanced once per routing step from the
+    // last committed state, so Picard/Anderson iterate a FIXED operator.
+    if (surcharge_method == SurchargeMethod::TPA) updateTpaLatch(ctx);
 
     // Clear bypass flags at the start of each timestep
     // (matching legacy initRoutingStep: Link[i].bypassed = FALSE)
@@ -2025,6 +2148,14 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         #pragma omp single
         {
         applyDPSGeometry(ctx);
+        }
+    }
+    else if (surcharge_method == SurchargeMethod::TPA) {
+        // TPA (issue #156): same serialization rationale as DPS — the
+        // override is a cheap per-conduit pass and stays off the team.
+        #pragma omp single
+        {
+        applyTpaGeometry(ctx);
         }
     }
     // Static slot (Sjoberg formula) / EXTRAN STEP E overrides are FUSED into
@@ -3129,6 +3260,22 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
             auto ui = static_cast<std::size_t>(i);
             if (xnode_.is_surcharged[ui])
                 aa_skip_[ui] = 1;
+        }
+    }
+
+    // TPA (issue #156, plan §B3): skip AA at both end nodes of any conduit
+    // whose latch CHANGED this step — a discrete operator switch, the same
+    // reasoning as the static-slot kink walk. Steady latched or steady free
+    // conduits remain AA-eligible.
+    if (surcharge_method == SurchargeMethod::TPA) {
+        for (int ci = 0; ci < n_conduits_; ++ci) {
+            const auto uci = static_cast<std::size_t>(ci);
+            if (!tpa_latch_changed_[uci]) continue;
+            const auto uj = static_cast<std::size_t>(conduit_idx_[uci]);
+            const int n1 = links.node1[uj];
+            const int n2 = links.node2[uj];
+            if (n1 >= 0) aa_skip_[static_cast<std::size_t>(n1)] = 1;
+            if (n2 >= 0) aa_skip_[static_cast<std::size_t>(n2)] = 1;
         }
     }
 

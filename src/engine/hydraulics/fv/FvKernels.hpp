@@ -153,6 +153,13 @@ OPENSWMM_KERNEL_FN double slotRampIntegral(double s) noexcept {
 // ===========================================================================
 // Closure — one continuous geometry from dry bed to full pressurization
 // ===========================================================================
+//
+// This is the memoryless SLOT closure — every cell, every state, no history.
+// TPA exception (issue #156): under FV_PRESSURE_CLOSURE TPA a cell whose
+// regime flag is set evaluates the tpa* kernels at the end of this file
+// instead. The flag is physical air-pathway history (cleared on cold start
+// and hotstart restore), not numerical relaxation; unflagged cells — and the
+// entire SLOT closure path — are untouched.
 
 /// Flow area at depth @p h, INCLUDING the tapered slot. Monotone in h for any
 /// section, which is what makes the depth inversion well posed.

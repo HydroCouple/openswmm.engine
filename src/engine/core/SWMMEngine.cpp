@@ -4563,8 +4563,25 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                                    + f_rt  * ctx_.nodes.depth[ui];
                     snap.nodes.depth[ui] = y;
                     // Placeholder; rewritten below in float32 arithmetic to
-                    // reproduce legacy NODE_HEAD bit-for-bit.
-                    snap.nodes.head[ui] = ctx_.nodes.invert_elev[ui] + y;
+                    // reproduce legacy NODE_HEAD bit-for-bit. Under
+                    // REPORT_SIGNED_HEADS (issue #156 O-6) the HEAD field
+                    // carries the TRUE signed head, interpolated like every
+                    // other snapshot field via the SIGNED offset head−invert
+                    // (== depth exactly for any node at/above its invert, so
+                    // never-negative decks differ from the legacy rewrite by
+                    // float32 rounding only). There is no old_head array; the
+                    // old endpoint uses the floored old_depth, so a sub-invert
+                    // excursion is attenuated toward the invert only when the
+                    // report instant falls strictly inside a routing span.
+                    // DEPTH stays floored either way. (A point-in-time head
+                    // was measured 2.175 ft off the interpolated series on a
+                    // never-negative FV corpus deck — P5 task-2 finding.)
+                    snap.nodes.head[ui] = ctx_.options.report_signed_heads
+                        ? ctx_.nodes.invert_elev[ui]
+                          + f1_rt * ctx_.nodes.old_depth[ui]
+                          + f_rt  * (ctx_.nodes.head[ui]
+                                     - ctx_.nodes.invert_elev[ui])
+                        : ctx_.nodes.invert_elev[ui] + y;
                     snap.nodes.volume[ui] =
                         f1_rt * reportedNodeVolume(i, ctx_.nodes.old_depth[ui],
                                                    ctx_.nodes.old_volume[ui])
@@ -4853,7 +4870,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // unit system, including SI where du.length != 1.0. Skipped under
             // rpt_averages (that path averages the double head; legacy averages the
             // per-step float32 head — a separate concern from this 1-ULP instant bug).
-            if (!ctx_.options.rpt_averages) {
+            // Skipped under REPORT_SIGNED_HEADS (issue #156 O-6): the parity
+            // rewrite derives head from the FLOORED depth, which is exactly
+            // what the option exists to bypass.
+            if (!ctx_.options.rpt_averages &&
+                !ctx_.options.report_signed_heads) {
                 const std::size_t nn =
                     std::min<std::size_t>(snap.nodes.head.size(), snap.nodes.depth.size());
                 for (std::size_t i = 0; i < nn; ++i) {

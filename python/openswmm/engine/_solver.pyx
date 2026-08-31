@@ -1196,6 +1196,11 @@ class SimulationOptions(MutableMapping):
         "UNSTEADY_FRICTION", "UF_K3",
         # TPA pressure closure (issue #156 Phase 4): FV solver.
         "FV_PRESSURE_CLOSURE",
+        # Signed piezometric heads in the .out HEAD field (issue #156 O-6).
+        "REPORT_SIGNED_HEADS",
+        # DW surcharge method + TPA celerity (issue #156 Phase 5; adding
+        # SURCHARGE_METHOD also closes the long-standing known-keys gap).
+        "SURCHARGE_METHOD", "TPA_CELERITY",
     )
 
     def __getitem__(self, key: str) -> str:

@@ -47,8 +47,9 @@ inertial damping and normal-flow limiting.
 
 Several aspects of the analysis remain unchanged: the method is still
 one-dimensional, still uses the Preissmann slot for pressurized flow
-and therefore still cannot represent sub-atmospheric pipe pressure, and
-still treats a general junction as a stagnation volume (§8.6).
+under its default closure — which cannot represent sub-atmospheric pipe
+pressure; the optional TPA closure of §8.4.5 can — and still treats a
+general junction as a stagnation volume (§8.6).
 
 ## 8.2 Governing equations
 
@@ -192,6 +193,15 @@ used here rather than the Dynamic Preissmann Slot: a relaxing slot
 makes bore speed depend on relaxation history, which would destroy the
 Rankine–Hugoniot front speed the method exists to get right.
 
+That argument rules out *relaxing* closures — ones whose pressurized
+celerity evolves with pressurization history, like the dynamic slot —
+and it is worth being precise that it does **not** rule out the TPA
+closure of §8.4.5. TPA's pressurized celerity is the same constant
+\f$a\f$ as the static slot's, so the Rankine–Hugoniot speed of a filling
+bore is unaffected by its history flag; only the \f$\Delta A < 0\f$
+branch — the sub-atmospheric regime, which the static slot handles
+unphysically in any case — consults the flag at all.
+
 ### 8.4.3 Inverting the closure
 
 The solver carries \f$A\f$ and derives the free surface as
@@ -298,7 +308,9 @@ and node updates then integrate them unchanged, so mass conservation,
 step rejection, hot start and reporting are structurally untouched.
 Membership is a pure function of the instantaneous state — no flags, no
 memory — so the hysteresis and hot-start properties of §8.4 are
-inherited rather than re-proven.
+inherited rather than re-proven. (Under the TPA closure of §8.4.5
+membership is instead the regime flag, which is fixed within a substep;
+see that section for the interaction.)
 
 Three details carry the accuracy claims. First, the conductance area
 \f$\hat A_f\f$ and the friction coefficient \f$\gamma_f\f$ use the
@@ -328,6 +340,158 @@ and runs on the CPU solver's global path (a device backend request is
 overridden while the option is on; composing the solve with the local-
 time-stepping macro cycle is future work). Gates:
 `tests/unit/engine/test_fv_pressurized_implicit.cpp`.
+
+### 8.4.5 The two-component pressure approach (`FV_PRESSURE_CLOSURE TPA`)
+
+> **Experimental.** Fully functional and gated, selected with
+> `FV_PRESSURE_CLOSURE TPA`; the default `SLOT` preserves the closure of
+> §8.4.1–§8.4.2 bit for bit. One known limitation is pinned in-tree
+> (high-celerity filling, below).
+
+The slot closure is monotone: a head below the crown *is* a free
+surface, so a full pipe carrying pressure below atmospheric has no
+representation — a sealed reach hit by a rapid downsurge spuriously
+reverts to free-surface geometry instead of holding vacuum. The
+two-component pressure approach of Vasconcelos, Wright and Roe (2006)
+lifts exactly this restriction: pressure is decomposed into a
+hydrostatic component, present in both regimes, and a surcharge
+component \f$h_s\f$ carried only by a pressurized cell, and \f$h_s\f$ may
+be negative — the pipe stays full, at sub-atmospheric pressure, until
+air can physically reach it.
+
+**The closure pair.** The observation that makes TPA cheap here is that
+the existing slot line *is* the TPA pressurized branch for
+\f$\Delta A = A - A_{crown} \geq 0\f$. TPA extends the same line to both
+signs of \f$\Delta A\f$:
+
+| | | | |
+|---|---|---|---|
+| \f[h(A) = y_{full} + \frac{A - A_{crown}}{T_{slot}}, \qquad h_{s} = h - y_{full} \text{ of either sign}\f] | | (8-34) | |
+| \f[I_{1}(h) = I_{1,crown} + A_{crown}\,\left( h - y_{full} \right)\f] | | (8-35) | |
+
+Equation (8-35) is the paper's Eq. (12b): the pressurized first moment
+drops the \f$\tfrac{1}{2}T_{slot}(h - y_{full})^{2}\f$ term the SLOT
+closure keeps — that term is the slot's own numerical storage pressure,
+not part of the physical decomposition. Free-surface cells evaluate the
+table closure of §8.4.2 **unchanged, including the tapered slot mouth**;
+the two branches are continuous at \f$A = A_{crown}\f$. The pressurized
+celerity is the constant \f$a\f$, the hydraulic radius stays frozen at
+\f$r_{full}\f$, and the pressurized inverse \f$h(A)\f$ is closed-form.
+`FV_SLOT_CELERITY` doubles as the TPA acoustic celerity \f$a\f$ — it is
+the same physical dial, since \f$T_{slot} = gA_{full}/a^{2}\f$ is derived
+from it under either closure.
+
+**The regime flag is physical air-pathway history, not numerical
+relaxation.** Which branch a cell evaluates is decided by a per-cell
+flag recording whether air can reach the cell — the paper's governing
+rule. Its transitions, applied once per substep outside the flux loops:
+
+- **Entry** is unconditional at \f$A \geq A_{crown}\f$ — the cell fills
+  through the taper.
+- **Exit** requires \f$\Delta A \leq 0\f$ past a small hysteresis band
+  (\f$h_s\f$ below about \f$-10^{-4}\f$ ft, so the flag cannot chatter at
+  \f$\Delta A \approx 0\f$) **and** atmosphere contact this step, under
+  the venting rule below.
+- **Column separation** exits unconditionally when \f$h_s\f$ falls below
+  −30 ft — about one atmosphere of water column, past which the column
+  separates and a vapor cavity forms. Cavity dynamics are two-phase and
+  out of scope (the paper's own limitation); the floor bounds the
+  representable vacuum instead.
+- **Every transition refreshes the cell's derived state from the new
+  regime's closure at its current area.** The stored depth belongs to
+  the old regime: without the refresh, a cell that exits deep in vacuum
+  carries its slot-line depth — of order −200 ft at study celerities —
+  through the whole substep's reconstruction, and the resulting
+  free-surface gradients pump a reflected filling surge to NaN (the
+  measured failure class on the rapid-fill validation deck: 5–15 flag
+  flips per substep with heads reaching 2485 ft before the run died).
+  With the refresh the deck completes and bore arrival matches the SLOT
+  closure columns exactly, at 10.45 s.
+
+**Venting.** A cell has atmosphere contact when one of its faces
+touches an *unsealed* node — no `SURCHARGE_DEPTH` seal — whose water
+level at that face stands **below the pipe crown**, or a free-surface
+neighbouring cell whose surface stands below the shared crown. The
+submergence check is load-bearing: air cannot enter through an opening
+that is itself under water, and without the check every sealed reach
+unzips from its vented ends (measured — the sealed-siphon fixture
+drained and then diverged). Two alternative rules were measured and
+rejected rather than assumed away: the paper's literal unconditional
+venting of the regime-transition interface unzips a submerged
+pressurized leg through a chain of momentary exits, and an
+entry-at-\f$A_{full}\f$ island rule broke the V-shaped filling case.
+Virtual junctions need no special casing and get the correct physics by
+construction: a virtual junction is spliced out of the mesh (§8.6.2),
+so it can never seed the venting sweep — a splice has no atmosphere
+contact — while contact still propagates across it, because cell chains
+span the splice.
+
+**Interaction with `FV_PRESSURIZED_IMPLICIT` (§8.4.4).** The pressurized
+branch (8-34) is the same linear closure the implicit solve exploits, so
+the two options compose, with four TPA-specific rules. Membership in the
+implicit set *is* the regime flag — a latched cell with \f$h_s < 0\f$
+sits below the crown yet is exactly the stiff-acoustic case the solve
+exists for — and since the flag is fixed within a substep, the SPD
+structure is unchanged. A sealed node standing against a flagged
+interior cell presents a *pressurized* ghost even though its head is
+below the crown. The Dirichlet floor applied to a folded junction row
+extends below the node invert by the column-separation bound, because a
+solved sub-atmospheric head is now legal. And a flagged cell's storage
+row uses the regime's own width \f$T_{slot}\f$ at *any* head, never the
+free-surface table width — the measured failure without this rule is
+instructive: as a settle transient drives cells across the crown, the
+table width swings five orders of magnitude between the clamped
+zero-width branch and the free-surface branch, and the apex cell's head
+reached 877,208 ft within 50 substeps. With the rules in place,
+implicit × TPA closes continuity at 0.000 %; a residual fidelity note
+stands — the implicit path under-tracks the explicit vacuum at a crest
+(minimum crest head 0.104 m against −0.045 m explicit) — so the
+validation columns run explicit.
+
+**Hot start.** The regime flags are cleared on cold start *and* on
+restore from a hot start file. A restored run whose reach was
+pressurized re-derives the flags from the state within one step; the
+worst case is a single spurious re-pressurization step.
+
+**Reporting.** The `.out` format floors node depth at zero for legacy
+bit-parity, so sub-atmospheric heads are invisible in it by default.
+`REPORT_SIGNED_HEADS YES` publishes the true signed piezometric head in
+the `.out` HEAD field (both solvers; DEPTH stays floored; the default
+NO keeps bit parity). The measured payoff on the negative-pressure
+siphon validation case: a minimum crest head of +0.1035 m — 0.0398 m
+below the crest invert of 0.1433 m — in the output file, where every
+slot-closure column floors at the invert (−0.0003 m, the float32 noise
+of the legacy HEAD field). The case is scored over the 40 s the deck
+runs, which is where its own header puts the boundary of the physics
+the model contains; the vacuum is still deepening monotonically when
+the run ends, so this figure is a lower bound on the closure's reach,
+not a plateau.
+
+**Known limitation: high-celerity filling.** At \f$a\f$ = 150 m/s the
+rapid-fill validation case diverges at the reflected return surge — a
+*temporal* odd–even pressure/vacuum oscillation inside the flagged
+region, at a correctly acoustic-bounded step. This is the paper's own
+high-celerity post-shock frontier: their Fig. 7 discussion needs a
+[0.05, 0.90, 0.05] conservative filter already at \f$a\f$ = 100 m/s. A
+flagged-neighbourhood-local, exactly conservative filter of that form
+was implemented, measured — it does not rescue the case at either the
+paper's weight or five times it, because spatial smoothing cannot damp
+a temporal odd–even mode — and reverted. The documented contingency is
+the hybrid flux of Vasconcelos, Wright and Roe (2009). The divergence is
+pinned in-tree (`FvTpa.KnownIssueHighCelerityFillingDiverges`), and the
+same case at the paper's original \f$a\f$ = 25 m/s parameterization runs
+clean.
+
+**Implementation.** The pressurized-branch kernels are
+`tpaDepthOfArea`, `tpaAreaOfDepth` and `tpaI1OfDepth` in
+`src/engine/hydraulics/fv/FvKernels.hpp`; the flag transitions, venting
+sweep and regime refresh are
+@ref openswmm::fv::ExplicitFvSolver::updateTpaFlags; the implicit-set
+rules are `cellPressurized` and `ghostPressurized` in
+`src/engine/hydraulics/fv/PressurizedHeadSolver.hpp`. Gates:
+`tests/unit/engine/test_fv_tpa_closure.cpp`. The dynamic wave solver
+carries its own port of the approach as `SURCHARGE_METHOD TPA`
+(@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3").
 
 ## 8.5 Numerical scheme
 
@@ -466,6 +630,63 @@ equivalent friction slope and integrated in the same implicit form:
 
 so calibrated models carry over unchanged, and \f$K = 0\f$ leaves \f$Q\f$
 bit-unaffected.
+
+#### Unsteady friction (`UNSTEADY_FRICTION VITKOVSKY`)
+
+Steady-friction-only mixed-flow models have a documented failure mode:
+reproducing observed transient damping requires an unphysical Manning
+\f$n\f$ (Pinto, Vasconcelos and Soares (2025) needed \f$n\f$ = 0.013 for an
+acrylic pipe with unsteady friction off). Their remedy — a modified
+Vítkovský et al. (2000) instantaneous-acceleration term with a
+Brunone-type coefficient \f$k_3\f$ — is available in both solvers as an
+option orthogonal to the pressurization closure. The total friction
+slope becomes \f$S_f = S_{fs} + S_{fu}\f$ with the steady term unchanged
+and
+
+| | | | |
+|---|---|---|---|
+| \f[S_{fu} = \frac{k_{3}}{g}\left( \frac{\partial V}{\partial t} + c\,\mathrm{sgn}(V)\left\lvert \frac{\partial V}{\partial x} \right\rvert \right)\f] | | (8-36) | |
+
+The celerity \f$c\f$ is **regime-dependent** — the paper's one
+modification to Vítkovský, and exactly the celerity this solver already
+computes: \f$\sqrt{gA/T}\f$ for a free-surface cell, the constant
+acoustic \f$a\f$ for a pressurized one (under the TPA closure,
+"pressurized" is the regime flag at *any* head; under SLOT,
+\f$h \geq y_{crown}\f$).
+
+The term is split by stiffness. The local-acceleration half folds into
+the update implicitly, like (8-13) — unconditionally stable, no new
+prognostic state, so hot start and step rollback are untouched. The
+convective half enters as an explicit source using neighbour-cell
+velocities within the conduit chain (one-sided at chain ends), gathered
+from a consistent old-state snapshot. Two guards bound it, both
+measured rather than assumed: a velocity dead-band of 0.01 ft/s — below
+it the implicit fold is pure added inertia and, applied to the mm/s
+settling ripple of a storage-coupled pool, it sustained noise that
+steady friction was correctly killing (0.004 → 0.011 cfs); with the
+dead-band a discretely-at-rest deck is bit-identical — and a per-substep
+clamp of the combined change to half the incoming momentum, since the
+paper reports instability for \f$k_3 \gtrsim 0.02\f$ with no such guard.
+
+Set expectations from the mechanism: a uniform-velocity slosh shows
+**no** net damping (\f$\partial V/\partial x \approx 0\f$ leaves pure
+added inertia; measured late amplitude 0.507 against 0.487 without the
+option), while a valve-closure transient — sharp \f$\partial V/\partial t\f$
+with a wave-front \f$\partial V/\partial x\f$ — damps at
+\f$k_3\f$ = 0.02 as the paper reports.
+
+The option surface is shared with the dynamic wave solver
+(@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3"):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `UNSTEADY_FRICTION` | `NONE` | `NONE` or `VITKOVSKY`. `NONE` is bit-inert in both solvers. |
+| `UF_K3` | 0.015 | Brunone-type coefficient \f$k_3\f$, used only when the method is not `NONE`. Paper-calibrated range 0.005–0.020, swept to 0.045. |
+
+**Implementation.** @ref openswmm::fv::kernels::ufUpdate in
+`src/engine/hydraulics/fv/FvKernels.hpp`, with the convective gradients
+gathered by `ExplicitFvSolver::computeUfGradients`. Gates:
+`tests/unit/engine/test_fv_unsteady_friction.cpp`.
 
 Before the update is applied, each control volume's total outgoing mass
 flux is compared with the volume it holds, and every outgoing face flux
@@ -1461,8 +1682,9 @@ file.
 | `FV_LIMITER` | `MINMOD` | `MINMOD`, `VANLEER` or `SUPERBEE`, with `FV_ORDER 2`. |
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
-| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
-| `FV_PRESSURIZED_IMPLICIT` | `NO` | **Experimental** — subject to slot program R2b; surfaced in the GUI as an experimental checkbox. Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; local time stepping stands down while the solve engages; a run that never pressurizes is bit-identical either way. |
+| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5) and doubles as the TPA acoustic celerity \f$a\f$ under `FV_PRESSURE_CLOSURE TPA` (§8.4.5) — the same physical dial either way. Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
+| `FV_PRESSURE_CLOSURE` | `SLOT` | **Experimental** — `SLOT` or `TPA`. `TPA` selects the two-component pressure approach of §8.4.5: sub-atmospheric full-pipe flow behind a per-cell air-pathway regime flag. `SLOT` (the default) is bit-identical to the closure of §8.4.1–§8.4.2. Pair with `REPORT_SIGNED_HEADS YES` to see sub-atmospheric heads in the `.out` file. |
+| `FV_PRESSURIZED_IMPLICIT` | `NO` | **Experimental** — subject to slot program R2b; surfaced in the GUI as an experimental checkbox. Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; local time stepping stands down while the solve engages; a run that never pressurizes is bit-identical either way. Composes with `FV_PRESSURE_CLOSURE TPA` under the rules of §8.4.5. |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows and outfall stages are refreshed: every substep, or once per routing step. A device backend clamps to `ROUTING_STEP`. |
 | `FV_NODE_CELL_COUPLING` | — | **Retired.** Accepted and ignored so existing projects still parse; junctions are always interfaces (§8.6.1). `FV_JUNCTION_MODEL` is retired on the same terms. |
@@ -1473,6 +1695,12 @@ file.
 | `FV_CFL_CENSUS_INTERVAL` | 1 | Substeps between full Courant censuses. 1 recomputes every substep. |
 | `FV_BACKEND` | `AUTO` | `CPU`, `AUTO`, `OMP`, `CUDA`, `HIP` or `SYCL`. |
 | `FV_MIN_PARALLEL_CELLS` | 20000 | Mesh size below which `AUTO` stays on the CPU. |
+
+Three keys without the `FV_` prefix also affect finite-volume runs and
+are shared with the dynamic wave solver: `UNSTEADY_FRICTION` and
+`UF_K3` (§8.5.4), and `REPORT_SIGNED_HEADS` (§8.4.5), which puts the
+true signed piezometric head in the `.out` HEAD field for both solvers
+(default `NO` keeps legacy bit-parity; DEPTH stays floored either way).
 
 ## 8.10 Choosing between dynamic wave and finite volume
 
@@ -1544,11 +1772,12 @@ Practical guidance:
 
 ## 8.11 Limitations
 
-- **Sub-atmospheric pressure cannot be represented.** The slot closure
-  is monotone — head below the crown means a free surface — so negative
-  pipe pressures have no representation. Air-phase effects are likewise
-  out of scope. This is the same fidelity limit the dynamic wave
-  solver's slot carries.
+- **Sub-atmospheric pressure cannot be represented under the default
+  closure.** The slot closure is monotone — head below the crown means
+  a free surface — so negative pipe pressures have no representation.
+  `FV_PRESSURE_CLOSURE TPA` (§8.4.5) lifts this, down to the
+  column-separation bound of about −30 ft of head; air-phase effects
+  remain out of scope under either closure.
 - **Junction momentum is not conserved** (§8.6.1), by choice. Where the
   connection is genuinely two collinear pipes the loss is avoided
   outright — by a virtual junction (§8.6.2) or, for a clean degree-2
@@ -1587,6 +1816,23 @@ Computation*, 62(206), 497–530.
 Leonard, B. P. (1979). "A stable and accurate convective modelling
 procedure based on quadratic upstream interpolation." *Computer Methods
 in Applied Mechanics and Engineering*, 19(1), 59–98.
+
+Pinto, S. I. G., Vasconcelos, J. G., and Soares, A. K. (2025).
+"Unsteady friction in mixed-flow models based on the Saint-Venant
+equations." *Journal of Hydraulic Engineering*, 152(1), 04025046.
+
+Vasconcelos, J. G., Wright, S. J., and Roe, P. L. (2006). "Improved
+simulation of flow regime transition in sewers: two-component pressure
+approach." *Journal of Hydraulic Engineering*, 132(6), 553–562.
+
+Vasconcelos, J. G., Wright, S. J., and Roe, P. L. (2009). "Numerical
+oscillations in pipe-filling bore predictions by shock-capturing
+models." *Journal of Hydraulic Engineering*, 135(4), 296–305.
+
+Vítkovský, J. P., Lambert, M. F., Simpson, A. R., and Bergant, A.
+(2000). "Advances in unsteady friction modelling in transient pipe
+flow." *Proc., 8th Int. Conf. on Pressure Surges*, BHR Group, The
+Hague, Netherlands.
 
 Leonard, B. P. (1991). "The ULTIMATE conservative difference scheme
 applied to unsteady one-dimensional advection." *Computer Methods in

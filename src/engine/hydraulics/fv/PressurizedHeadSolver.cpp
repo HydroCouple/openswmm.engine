@@ -269,7 +269,21 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
             const FvGeometry& g =
                 mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
             const double h = state.cell_h[uc];
-            const double T = std::max(k::widthOfDepth(g, h), 1.0e-12);
+            // TPA (issue #156 Phase 5): a FLAGGED cell lives on the SIGNED
+            // slot line, whose storage derivative dA/dη is the constant
+            // t_slot at ANY piezometric depth — including h < 0 (where the
+            // table width is zero and the clamp made this an almost
+            // storage-free row) and 0 < h < y_crown (where the table returns
+            // the free-surface width, ~1e5 × t_slot at study celerities).
+            // Either mis-width detonates the linearized head update on a
+            // sloped pressurized start: measured on E3 implicit × TPA, the
+            // apex cell's head left the physical range within 4 substeps and
+            // the run NaN'd at t=0 (P5 task-3). The width must follow the
+            // regime, exactly as censusDt/cellStableDt already do.
+            const bool tpa_c =
+                !state.cell_tpa.empty() && state.cell_tpa[uc] != 0;
+            const double T =
+                std::max(tpa_c ? g.t_slot : k::widthOfDepth(g, h), 1.0e-12);
             unk_store_[static_cast<std::size_t>(u)] =
                 T * mesh.cell_dx[uc] / dt;
             unk_eta0_[static_cast<std::size_t>(u)] = v.cell_eta[uc];
@@ -417,7 +431,16 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
             const int ent = unk_entity_[uu];
             if (ent < mesh.n_cells()) continue;
             const int n = ent - mesh.n_cells();
-            const double lo = mesh.node_invert[static_cast<std::size_t>(n)];
+            // TPA (issue #156 Phase 5): a SEALED folded junction inside a
+            // pressurized column carries sub-atmospheric head — demoting it
+            // to a Dirichlet row AT THE INVERT is what broke the sealed
+            // drawdown column under FV_PRESSURIZED_IMPLICIT (measured
+            // |TA−TB| 3.743 vs 0.003 explicit). Extend the floor by the
+            // column-separation bound, mirroring solveAlgebraicNode.
+            double lo = mesh.node_invert[static_cast<std::size_t>(n)];
+            if (!state.cell_tpa.empty() &&
+                mesh.node_sur_depth[static_cast<std::size_t>(n)] > 0.0)
+                lo -= 35.0;
             const double hi = nodeCeiling(mesh, n);
             if (unk_head_[uu] > hi) {
                 unk_dirichlet_[uu] = 1;

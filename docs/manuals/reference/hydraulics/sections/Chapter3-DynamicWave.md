@@ -747,8 +747,9 @@ based on the generalized, dynamic and transient-storage form of the
 slot developed by Sharior, Hodges, and Vasconcelos (2023). It is
 selected by setting the `SURCHARGE_METHOD` option to `DYNAMIC_SLOT`
 (the other recognized values being `EXTRAN`, the default, for the
-surcharge algorithm of Section 3.3.5 and `SLOT` for the static slot of
-Section 3.3.6). Under this method the slot's cross-sectional area
+surcharge algorithm of Section 3.3.5, `SLOT` for the static slot of
+Section 3.3.6, and `TPA` for the two-component pressure approach of
+Section 3.3.11). Under this method the slot's cross-sectional area
 evolves in time as an element of transient storage, and the modeler
 specifies the maximum pressure-wave celerity directly.
 
@@ -1105,6 +1106,183 @@ and Bocchi, J.P.P. (2020). "Comparing SWMM 5.1 Calculation Alternatives
 to Represent Unsteady Stormwater Sewer Flows." Journal of Hydraulic
 Engineering, 146(7), 04020046.*
 
+### 3.3.11 Two-Component Pressure Approach (`SURCHARGE_METHOD TPA`)
+
+All three surcharge treatments described so far share one fidelity
+limit: a head below the pipe crown is always reinterpreted as a free
+surface, so a sealed conduit cannot hold sub-atmospheric pressure
+during a rapid downsurge. OpenSWMM provides a fourth surcharge
+treatment, `SURCHARGE_METHOD TPA`, a pragmatic port of the
+two-component pressure approach of Vasconcelos, Wright and Roe (2006)
+to the node-link scheme. (Its natural home is the finite-volume solver,
+where the full shock-capturing formulation is available as
+`FV_PRESSURE_CLOSURE TPA` —
+@ref hydraulics_ref_ch8_finite_volume "Chapter 8".) Like `DYNAMIC_SLOT`
+it is flagged experimental.
+
+**Above the crown: a constant-width slot.** Where the static slot of
+Section 3.3.6 uses the Sjőberg width function 3-30, TPA uses the
+classical celerity-derived width directly, held constant per conduit:
+
+| | | | |
+|---|---|---|---|
+| \f[w_{tpa} = \frac{gA_{full}}{a^{2}}\f] | | (3-49) | |
+
+where \f$a\f$ is the acoustic celerity given by the `TPA_CELERITY`
+option, in project length units per second (converted internally;
+compare Equation 3-29). There is no Sjőberg decay and no clamp above
+1.78 *Y*<sub>full</sub>; the crown cutoff at *Y*/*Y*<sub>full</sub> = 0.985257 applies
+as it does for the other slot methods. Above the crown this is the
+whole story: heads are always updated through the ordinary
+free-surface continuity formula with the slot supplying the surface
+area, and the surcharge branch of Equation 3-28 is never invoked.
+
+**Below the crown: the sub-atmospheric latch.** The new capability is a
+per-conduit *pressurized latch*, recording whether the air pathway to
+the conduit has been cut — physical history, not a numerical device.
+The latch is **set** when the conduit reaches full (both end depths at
+*Y*<sub>full</sub>, the same condition that engages the slot branch today). While
+it is set, a head below the crown at a *sealed* end does not revert the
+conduit to free-surface geometry: the flow area follows the signed slot
+line \f$A_{full} + w_{tpa}(Y - Y_{full})\f$ — "shrinkage" of the section
+under negative gauge pressure — the top width stays \f$w_{tpa}\f$, the
+hydraulic radius stays at its full-conduit value (the slot carries no
+wetted perimeter), and each end contributes \f$w_{tpa}L/4\f$ of surface
+area to node continuity. Momentum needs no new terms: the solver
+already differences node heads, and a sub-crown head at a sealed node
+is simply a head — the latch's only job is preventing the geometry
+tables from reinterpreting it as a free-surface depth.
+
+The latch is **cleared** when air can actually re-enter: at a *vented*
+end whose flow depth stands below the crown at that end (an
+*unsubmerged* opening — a vented node whose water level stands above
+the crown holds the column, exactly as a submerged inlet holds a
+siphon), or on column separation, when the mid-reach depth falls more
+than 30 ft below the crown — about one atmosphere of water column,
+past which a vapor cavity forms and two-phase dynamics outside the
+model's scope take over. *Sealed* means a virtual junction (Section
+3.3.10) or a node with a positive surcharge depth (a bolted cover);
+everything else is vented. The latch is updated **once per routing
+step, before the iterative solution begins**, so the Picard iteration
+of Section 3.2 iterates a fixed operator — the same reasoning that has
+the dynamic slot advance its state between iterations rather than
+within them. When Anderson acceleration (Section 3.6) is active, the
+end nodes of any conduit whose latch changed this step take the plain
+iterate for that step, since a latch transition is a discrete operator
+switch (see Table 3-2).
+
+**What is and is not captured.** DW node depths are floored at zero, so
+the vacuum representable at a node is bounded by the distance from the
+crown down to the node invert: stations that would fall below their
+own invert under vacuum — the deep sub-atmospheric transients of the
+negative-pressure siphon class — are finite-volume territory
+(@ref hydraulics_ref_ch8_finite_volume "Chapter 8"). DW TPA's value is
+sealed sub-crown behavior: no spurious geometry flip, no spurious
+flooding, and a head that recovers smoothly when inflow returns. On the
+rapid-filling laboratory case of Vasconcelos et al. (2006), DW TPA's
+bore arrival lands within 2 % of the finite-volume timing (10.25 s
+against 10.45 s), where the Sjőberg static slot arrives about 20 %
+early (8.35 s) — measured on the mixed-flow closure study of issue
+#156. To observe signed heads in the binary output file at all, set
+`REPORT_SIGNED_HEADS YES` (default `NO` preserves legacy bit-parity;
+the HEAD field then carries the true signed head while DEPTH stays
+floored — both solvers honor the option).
+
+The method adds one `[OPTIONS]` keyword beside `SURCHARGE_METHOD`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TPA_CELERITY` | 100 | Acoustic celerity \f$a\f$ in Equation 3-49, in project length units per second. Air content can cut the true value by an order of magnitude, so it is a user parameter, exactly like the finite-volume solver's `FV_SLOT_CELERITY`. |
+
+`NODE_CONTINUITY SEMI_IMPLICIT` (Section 3.5) is the recommended
+pairing: with the constant \f$w_{tpa}\f$ surface area the unified update
+is smooth through the crown.
+
+**Implementation.** The latch update and geometry override are
+`updateTpaLatch` and `applyTpaGeometry` in
+@ref openswmm::dynwave::DWSolver "DWSolver"
+(`src/engine/hydraulics/DynamicWave.cpp`), hooked beside the dynamic
+slot's `applyDPSGeometry`; the per-conduit width (3-49) is computed at
+initialization. Gates: `tests/unit/engine/test_dw_tpa.cpp`.
+
+*Reference: Vasconcelos, J.G., Wright, S.J., and Roe, P.L. (2006).
+"Improved Simulation of Flow Regime Transition in Sewers: Two-Component
+Pressure Approach." Journal of Hydraulic Engineering, 132(6), 553–562.*
+
+### 3.3.12 Unsteady Friction (`UNSTEADY_FRICTION`)
+
+Mixed-flow models that carry only steady friction reproduce observed
+transient damping only by inflating Manning's *n* to unphysical values.
+OpenSWMM offers the remedy of Pinto, Vasconcelos and Soares (2025) — a
+modified Vítkovský et al. (2000) instantaneous-acceleration term with a
+Brunone-type coefficient *k*<sub>3</sub> — as an option orthogonal to the
+surcharge method and shared with the finite-volume solver
+(@ref hydraulics_ref_ch8_finite_volume "Chapter 8"). The friction slope
+becomes \f$S_f = S_{fs} + S_{fu}\f$ with the steady term unchanged and
+
+| | | | |
+|---|---|---|---|
+| \f[S_{fu} = \frac{k_{3}}{g}\left( \frac{\partial V}{\partial t} + c\,\mathrm{sgn}(V)\left\lvert \frac{\partial V}{\partial x} \right\rvert \right)\f] | | (3-50) | |
+
+where the celerity *c* is regime-dependent: the acoustic celerity when
+the conduit is pressurized, the gravity-wave celerity otherwise. In
+this solver both come out of the mid-reach top width already in hand —
+the slot width while surcharged under a slot method (so `TPA_CELERITY`
+governs under TPA), the free-surface width otherwise, and the
+near-crown width under `EXTRAN`, which has no acoustic celerity of its
+own and is therefore the weakest pairing.
+
+The term drops into the flow updating formula 3-14 the way every other
+term does. The local-acceleration half integrates semi-implicitly —
+*k*<sub>3</sub> joins the denominator alongside \f$\Delta Q_{friction}\f$ and
+\f$k_{3}\overline{A}\,V^{old}\f$ joins the numerator — which also enters
+the flow gradient 3-27, keeping the surcharge iteration and the
+semi-implicit node continuity consistent with the flow update. The
+convective half is an explicit term built from the end velocities. Two
+details are consequences of the node-link discretization rather than
+choices:
+
+- **The velocity gradient uses a cross-link stencil.** Within a single
+  link the gradient estimator is the end-velocity difference, which is
+  *structurally zero* on a full conduit (equal end areas) — exactly the
+  pressurized case the term exists for. The gradient therefore reads
+  the neighboring conduits' previous-iterate velocities across simple
+  two-conduit junctions, sign-mapped into the link's frame, with the
+  within-link difference as the fallback. The modeling consequence:
+  **unsteady-friction damping requires a discretized reach.** A single
+  long conduit has no neighbors to difference against and receives
+  added inertia only; subdividing the reach (virtual junctions serve
+  well, Section 3.3.10) restores the damping term.
+- **Force mains** have equal end areas by construction, so the gradient
+  term vanishes and only the local-acceleration fold acts.
+
+As in the finite-volume implementation, a 0.01 ft/s velocity dead-band
+keeps the added inertia from amplifying numerical settling noise, a
+per-step clamp bounds the update to half the incoming momentum, and
+with `UNSTEADY_FRICTION NONE` (the default) the original expressions
+are evaluated verbatim for bit-parity.
+
+Fidelity expectations must be set honestly: the node-link solver cannot
+reproduce waterhammer (a 1255 m/s valve-closure transient is
+finite-volume-with-implicit-acoustics territory). The dynamic wave
+value proposition is better damping of inertial oscillations and
+post-surcharge transients at ordinary routing steps.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `UNSTEADY_FRICTION` | `NONE` | `NONE` or `VITKOVSKY`. `NONE` is bit-inert in both solvers. |
+| `UF_K3` | 0.015 | Brunone-type coefficient *k*<sub>3</sub> in Equation 3-50, used only when the method is not `NONE`. Paper-calibrated range 0.005–0.020, swept to 0.045. |
+
+**Implementation.** The dq-term extension lives in `processManningLink`
+and `processForceMainLink` of @ref openswmm::dynwave::DWSolver
+"DWSolver" (`src/engine/hydraulics/DynamicWave.cpp`), with the
+cross-link stencil tables built in `DWSolver::init`. Gates:
+`tests/unit/engine/test_dw_unsteady_friction.cpp`.
+
+*Reference: Pinto, S.I.G., Vasconcelos, J.G., and Soares, A.K. (2025).
+"Unsteady Friction in Mixed-Flow Models Based on the Saint-Venant
+Equations." Journal of Hydraulic Engineering, 152(1), 04025046.*
+
 ## 3.4 Numerical Stability
 
 The numerical stability of SWMM's dynamic wave results can be affected
@@ -1389,6 +1567,7 @@ pair well.
 | Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT` | The head update switches from Equation 3-15 to Equation 3-28 at the crown. |
 | Active dynamic slot | `SURCHARGE_METHOD DYNAMIC_SLOT`; node touches a conduit with *A*<sub>s</sub> > 0 | The slot geometry of Section 3.3.9 is rewritten each iteration, so the operator differs between iterates. |
 | Near the static slot cutoff | `SURCHARGE_METHOD SLOT`; node touches a closed conduit with \f$0.98 \leq \overline{Y}/Y_{full} \leq 1.02\f$ | The slot width of Equation 3-30 engages abruptly at the crown cutoff. |
+| TPA latch transition | `SURCHARGE_METHOD TPA`; node touches a conduit whose pressurized latch changed this routing step | A latch transition is a discrete operator switch (Section 3.3.11). Steadily latched or steadily free conduits remain eligible. |
 | Weir or orifice at its crown | Upstream hydraulic grade line at or above the structure crown; both end nodes | The flow equation switches discontinuously (weir to orifice; partial to full submergence). |
 | Pump end nodes | Always; both end nodes of every pump | Pump on/off status is discrete. |
 

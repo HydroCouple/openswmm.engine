@@ -157,7 +157,11 @@ struct DWNodeArrays {
 enum class SurchargeMethod : int {
     EXTRAN = 0,  ///< Classic EXTRAN approach — dQ/dH for surcharged nodes
     SLOT   = 1,  ///< Preissmann slot — fictitious narrow slot above crown
-    DYNAMIC_SLOT = 2   ///< Dynamic slot — slot width varies with flow conditions (experimental) Sharior, S., Hodges, B.R., & Vasconcelos, J.G. (2023). Generalized, Dynamic, and Transient-Storage Form of the Preissmann Slot. Journal of Hydraulic Engineering, 149(11), 04023046.
+    DYNAMIC_SLOT = 2,  ///< Dynamic slot — slot width varies with flow conditions (experimental) Sharior, S., Hodges, B.R., & Vasconcelos, J.G. (2023). Generalized, Dynamic, and Transient-Storage Form of the Preissmann Slot. Journal of Hydraulic Engineering, 149(11), 04023046.
+    TPA    = 3   ///< Two-component pressure approach (experimental, issue #156):
+                 ///< constant-width slot w = g·A_full/a² above the crown plus a
+                 ///< per-conduit sub-atmospheric latch below it. Vasconcelos,
+                 ///< Wright & Roe (2006), J. Hydraul. Eng. 132(6).
 };
 
 /**
@@ -244,6 +248,11 @@ public:
     /// half-momentum clamp as kernels::ufUpdate on the FV side.
     int    unsteady_friction = 0;
     double uf_k3 = 0.015;  ///< Brunone-type k3; consumed only when active.
+
+    /// TPA acoustic celerity a (PROJECT length units per second, converted to
+    /// ft/s at init like FV_SLOT_CELERITY). Sets the constant slot width
+    /// w_tpa = g·A_full/a² per conduit (TPA plan §B1). Issue #156.
+    double tpa_celerity = 100.0;
 
     /// Cross-link ∂V/∂x stencil for UF (issue #156). A full link has equal
     /// end areas, so the within-link |v2−v1| estimator is structurally ZERO
@@ -659,6 +668,29 @@ private:
 
     /// Apply DPS geometry overrides for surcharged conduits (replaces static slot in STEP E).
     void applyDPSGeometry(SimulationContext& ctx);
+
+    // -- TPA (SurchargeMethod::TPA, issue #156 Phase 5) ----------------------
+    /// Constant slot width g·A_full/a² per conduit (ft), from tpa_celerity.
+    std::vector<double> tpa_w_;
+    /// Sub-atmospheric latch per conduit: while set, the conduit keeps
+    /// full-pipe geometry (signed slot line) even when node heads drop below
+    /// the crown — the latch's only job is preventing the free-surface
+    /// tables from reinterpreting a sealed head as a depth (TPA plan §B2).
+    std::vector<uint8_t> tpa_latch_;
+    /// Latch transitions this routing step (for the AA skip walk, §B3).
+    std::vector<uint8_t> tpa_latch_changed_;
+
+    /// Once per routing step, BEFORE the Picard loop (the operator stays
+    /// fixed within the iteration): set on isFull; clear on atmosphere
+    /// contact at an UNSUBMERGED vented end (P4's submergence lesson) or on
+    /// column separation (yMid < y_full − 30 ft).
+    void updateTpaLatch(SimulationContext& ctx);
+
+    /// DPS-style geometry override for TPA conduits (called where
+    /// applyDPSGeometry is): engaged when latched or above the crown —
+    /// area on the SIGNED slot line, width w_tpa, hyd radius r_full, slot
+    /// surface areas at both ends.
+    void applyTpaGeometry(SimulationContext& ctx);
 
     /// Update DPS temporal state after Picard convergence (P decay, t_s tracking).
     void updateDPSState(SimulationContext& ctx, double dt);

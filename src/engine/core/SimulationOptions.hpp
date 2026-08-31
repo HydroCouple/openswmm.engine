@@ -396,6 +396,12 @@ struct SimulationOptions {
      *  @see Sharior et al. (2023) for DYNAMIC_SLOT */
     int surcharge_method = 0;
 
+    /** @brief TPA acoustic celerity a for SURCHARGE_METHOD TPA (PROJECT
+     *         length units per second, converted like FV_SLOT_CELERITY).
+     *         Sets the constant slot width w = g·A_full/a² (issue #156).
+     *  @see Vasconcelos, Wright & Roe (2006) */
+    double tpa_celerity = 100.0;
+
     /** @brief DPS target pressure celerity (m/s, converted to ft/s at init).
      *  @details Controls the maximum modeled pressure wave speed. Lower values
      *           allow larger timesteps but reduce transient fidelity.
@@ -429,6 +435,13 @@ struct SimulationOptions {
      *  @see Pinto, Vasconcelos & Soares (2025), J. Hydraul. Eng. 152(1);
      *       Vitkovsky et al. (2000). Plan: plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §3 */
     int unsteady_friction = 0;
+
+    /** @brief Report signed piezometric heads: 0 = NO (default, legacy
+     *         bit-parity — NODE_HEAD is rebuilt as f32(floored depth) +
+     *         f32(invert)), 1 = YES — the .out HEAD field carries the TRUE
+     *         signed head (point-in-time), so sub-atmospheric TPA columns are
+     *         observable (issue #156 O-6). DEPTH stays floored either way. */
+    int report_signed_heads = 0;
 
     /** @brief Unsteady friction coefficient k3 (dimensionless).
      *  @details Brunone-type coefficient; used only when unsteady_friction != 0.
