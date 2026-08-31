@@ -340,13 +340,10 @@ int SWMMEngine::open(const char* inp_path,
             // H7b (2026-08-30): temperature advances under LARD — the
             // heat bypass warning is gone, not narrowed: the row takes
             // RWPT dispersion too (the ARD engine's coefficient choice).
-            if (transport::legacyReactionsActive(ctx_)) {
-                ctx_.warnings.push_back(
-                    "A reactions component is configured but QUALITY_SOLVER "
-                    "is LAGRANGIAN — the LARD reaction binding is not "
-                    "implemented (deferred L3), so no species react this "
-                    "simulation beyond first-order KDECAY.");
-            }
+            // L3 (2026-08-31): the reactions warning is GONE, not
+            // narrowed — MSX species ride the segments and react
+            // (LagrangianSolver stage 4b). Treatment remains the one
+            // LARD bypass and keeps its warning below.
             if (ctx_.treatment.hasAny()) {
                 ctx_.warnings.push_back(
                     "[TREATMENT] expressions are configured but "

@@ -104,6 +104,7 @@
 #include "../../transport/InitialQualitySeeds.hpp"
 #include "../NegativeSources.hpp"
 #include "../QualityRouting.hpp"
+#include "../../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "RwptDispersion.hpp"
 #include "SegmentStore.hpp"
 
@@ -138,10 +139,12 @@ constexpr double kTinyFlow = 1.0e-8;  ///< cfs; below this a link moves nothing
  *          step where a bit-identity check can no longer separate them.
  */
 struct SpeciesRowLayout {
-    int np       = 0;   ///< pollutant rows occupy [0, np)
-    int age_row  = -1;  ///< water-age row index, or -1 when absent
-    int temp_row = -1;  ///< temperature row index, or -1 (H7b)
-    int ns       = 0;   ///< total rows the store carries
+    int np        = 0;   ///< pollutant rows occupy [0, np)
+    int age_row   = -1;  ///< water-age row index, or -1 when absent
+    int temp_row  = -1;  ///< temperature row index, or -1 (H7b)
+    int msx_first = -1;  ///< first MSX species row, or -1 (L3);
+                         ///< species s rides row msx_first + s
+    int ns        = 0;   ///< total rows the store carries
 };
 
 /// The single source of truth for the row layout. Reserved rows are appended
@@ -153,6 +156,14 @@ inline SpeciesRowLayout rowLayout(const SimulationContext& ctx) {
     L.ns = L.np;
     if (ctx.options.water_age) L.age_row = L.ns++;
     if (ctx.options.heat_transport) L.temp_row = L.ns++;   // H7b
+    // L3: MSX species ride the segments after the reserved rows —
+    // stable across the run (the compiled species table is fixed at
+    // open). n_msx == 0 leaves every index above IDENTICAL to H7b's
+    // layout, which is the bit-inertness claim the corpus checks.
+    if (transport::legacyReactionsActive(ctx)) {
+        L.msx_first = L.ns;
+        L.ns += ctx.reactions.n_species();
+    }
     return L;
 }
 
@@ -289,6 +300,17 @@ public:
                 // silently capture the temperature row too (H7b).
                 const bool is_age  = (s == L.age_row);
                 const bool is_temp = (s == L.temp_row);
+                // L3: species rows — state lives in msx_node_conc
+                // ([node*nsp + sp]); no external-load pathway exists
+                // (species take no [INFLOWS]; ARD's boundary rows are
+                // ARD-engine content), so m_ext is zero.
+                const bool is_msx =
+                    (L.msx_first >= 0 && s >= L.msx_first);
+                const auto xi =
+                    is_msx ? un * static_cast<std::size_t>(
+                                      ns - L.msx_first) +
+                                 static_cast<std::size_t>(s - L.msx_first)
+                           : 0;
                 const auto li = un * static_cast<std::size_t>(ns) +
                                 static_cast<std::size_t>(s);  // ledger index
                 // State and external load per row. Pollutants: nodes.conc +
@@ -303,12 +325,15 @@ public:
                 // node_temp_vol_in (degC.ft3/s, the D-UT10 twin filled by
                 // the same seven loaders) -- H1's convention, consumed here
                 // instead of by routeLegacyHeat.
-                const double st_old = is_age  ? ws.node_age[un]
-                                    : is_temp ? hs.node_temp[un]
-                                              : nodes.conc[ci];
+                const double st_old =
+                    is_age  ? ws.node_age[un]
+                  : is_temp ? hs.node_temp[un]
+                  : is_msx  ? ctx.reactions.msx_node_conc[xi]
+                            : nodes.conc[ci];
                 const double m_ext =
                     is_age  ? ws.node_age_vol_in[un] * dt
                   : is_temp ? hs.node_temp_vol_in[un] * dt
+                  : is_msx  ? 0.0
                             : nodes.qual_mass_in[ci] * dt;
                 double m = st_old * v_old + node_mass_in_[li] + m_ext;
                 // D-NS1 (X6, now observable): extraction beyond the
@@ -323,7 +348,7 @@ public:
                 if (m < 0.0 && !is_temp) {
                     if (is_age)
                         quality::bookNegativeAgeClamp(ctx, n);
-                    else
+                    else if (!is_msx)  // L3: species have no ledger row
                         quality::bookNegativeSourceClamp(ctx, n, s, -m);
                     m = 0.0;
                 }
@@ -344,6 +369,7 @@ public:
                             : ((denom > 1.0e-12) ? m / denom : st_old);
                 if (is_age)       ws.node_age[un] = st_new;
                 else if (is_temp) hs.node_temp[un] = st_new;
+                else if (is_msx)  ctx.reactions.msx_node_conc[xi] = st_new;
                 else              nodes.conc[ci] = st_new;
                 node_mass_in_[li] = 0.0;  // consumed; cycle residue carries
             }
@@ -377,6 +403,19 @@ public:
                         hs.node_temp[un];
                     hs.link_temp[ul] = hs.node_temp[un];
                 }
+                if (L.msx_first >= 0) {  // L3
+                    const int nsp = ns - L.msx_first;
+                    for (int sp = 0; sp < nsp; ++sp) {
+                        const double c = ctx.reactions.msx_node_conc[
+                            un * static_cast<std::size_t>(nsp) +
+                            static_cast<std::size_t>(sp)];
+                        scratch_[static_cast<std::size_t>(
+                            L.msx_first + sp)] = c;
+                        ctx.reactions.msx_link_conc[
+                            ul * static_cast<std::size_t>(nsp) +
+                            static_cast<std::size_t>(sp)] = c;
+                    }
+                }
                 addToLedgerRate(dn, q * dt, scratch_.data(), ns);
             }
         }
@@ -400,6 +439,15 @@ public:
             if (heat)
                 scratch_[static_cast<std::size_t>(L.temp_row)] =
                     hs.node_temp[uu];
+            if (L.msx_first >= 0) {  // L3
+                const int nsp = ns - L.msx_first;
+                for (int sp = 0; sp < nsp; ++sp)
+                    scratch_[static_cast<std::size_t>(
+                        L.msx_first + sp)] =
+                        ctx.reactions.msx_node_conc[
+                            uu * static_cast<std::size_t>(nsp) +
+                            static_cast<std::size_t>(sp)];
+            }
             store_.push_front(l, need, scratch_.data());
         }
 
@@ -459,6 +507,64 @@ public:
                 ctx.mass_balance.qual_routing_reacted[
                     static_cast<std::size_t>(p)] += removed;
         }
+
+        // ---- 4b. REACT (L3): MSX species integrate per SEGMENT (pipe
+        //      scope, the segment's own pollutant rows as context) and
+        //      per NODE store (tank scope, the node's HRT) — D-L1's
+        //      gather/scatter through the shared integrator. Pollutant
+        //      kdecay is NOT re-applied here: stage 4 owns it (the
+        //      integrator handles only MSX kinetics), so there is no
+        //      double-decay the way the legacy binding had to avoid.
+        if (L.msx_first >= 0) {
+            auto& rx = ctx.reactions;
+            const int nsp = ns - L.msx_first;
+            if (static_cast<int>(msx_block_.size()) < nsp)
+                msx_block_.assign(static_cast<std::size_t>(nsp), 0.0);
+            if (static_cast<int>(msx_poll_.size()) < np && np > 0)
+                msx_poll_.assign(static_cast<std::size_t>(np), 0.0);
+            for (int l = 0; l < nl; ++l) {
+                const auto ul = static_cast<std::size_t>(l);
+                if (links.type[ul] != LinkType::CONDUIT) continue;
+                const int cnt = store_.count(l);
+                for (int i = 0; i < cnt; ++i) {
+                    for (int sp = 0; sp < nsp; ++sp)
+                        msx_block_[static_cast<std::size_t>(sp)] =
+                            store_.seg_conc(l, i, L.msx_first + sp);
+                    for (int p = 0; p < np; ++p)
+                        msx_poll_[static_cast<std::size_t>(p)] =
+                            store_.seg_conc(l, i, p);
+                    transport::reactSpeciesBlock(
+                        ctx, /*tank=*/false, dt, msx_block_.data(),
+                        np > 0 ? msx_poll_.data() : nullptr, 0.0);
+                    for (int sp = 0; sp < nsp; ++sp)
+                        store_.set_seg_conc(l, i, L.msx_first + sp,
+                                            msx_block_[
+                                                static_cast<std::size_t>(
+                                                    sp)]);
+                }
+            }
+            for (int n = 0; n < nn; ++n) {
+                const auto un = static_cast<std::size_t>(n);
+                for (int sp = 0; sp < nsp; ++sp)
+                    msx_block_[static_cast<std::size_t>(sp)] =
+                        rx.msx_node_conc[un * static_cast<std::size_t>(
+                                                  nsp) +
+                                         static_cast<std::size_t>(sp)];
+                for (int p = 0; p < np; ++p)
+                    msx_poll_[static_cast<std::size_t>(p)] =
+                        nodes.conc[un * static_cast<std::size_t>(np) +
+                                   static_cast<std::size_t>(p)];
+                const double hrt =
+                    (un < nodes.hrt.size()) ? nodes.hrt[un] : 0.0;
+                transport::reactSpeciesBlock(
+                    ctx, /*tank=*/true, dt, msx_block_.data(),
+                    np > 0 ? msx_poll_.data() : nullptr, hrt);
+                for (int sp = 0; sp < nsp; ++sp)
+                    rx.msx_node_conc[un * static_cast<std::size_t>(nsp) +
+                                     static_cast<std::size_t>(sp)] =
+                        msx_block_[static_cast<std::size_t>(sp)];
+            }
+        }
     }
 
     /// Per-routing-step publication: link means + the conc_old convention.
@@ -509,6 +615,17 @@ public:
                     hs.link_temp[ul] =
                         scratch_[static_cast<std::size_t>(L.temp_row)];
             }
+            // L3: species rows publish like temperature — an EMPTY
+            // slab HOLDS its concentration.
+            if (L.msx_first >= 0 && store_.count(l) > 0) {
+                const int nsp = L.ns - L.msx_first;
+                for (int sp = 0; sp < nsp; ++sp)
+                    ctx.reactions.msx_link_conc[
+                        ul * static_cast<std::size_t>(nsp) +
+                        static_cast<std::size_t>(sp)] =
+                        scratch_[static_cast<std::size_t>(
+                            L.msx_first + sp)];
+            }
         }
         // conc_old bookkeeping matches the ARD/legacy convention.
         links.conc_old = links.conc;
@@ -538,6 +655,12 @@ private:
         node_out_links_.assign(static_cast<std::size_t>(nn), {});
         release_vol_.assign(static_cast<std::size_t>(nl), 0.0);
         if (ctx.options.lard_rwpt) rwpt_.resize(nl);
+
+        // L3: size + seed the shared MSX element state (GLOBAL fill +
+        // [REACTION_QUALITY] overrides) with the SAME spelling the
+        // LEGACY dispatch uses, then let the seeded link values seed
+        // the segments below like every other row.
+        if (L.msx_first >= 0) transport::ensureMsxState(ctx);
 
         // X4 age seeding, the ARD precedent: a hotstart-loaded state wins
         // (node_age/link_age already carry the restored values, A2a);
@@ -608,6 +731,15 @@ private:
             if (heat)
                 scratch_[static_cast<std::size_t>(L.temp_row)] =
                     ctx.heat_state.link_temp[ul];
+            if (L.msx_first >= 0) {  // L3
+                const int nsp = ns - L.msx_first;
+                for (int sp = 0; sp < nsp; ++sp)
+                    scratch_[static_cast<std::size_t>(
+                        L.msx_first + sp)] =
+                        ctx.reactions.msx_link_conc[
+                            ul * static_cast<std::size_t>(nsp) +
+                            static_cast<std::size_t>(sp)];
+            }
             store_.push_front(l, v, scratch_.data());
             flow_sign_[ul] = (ctx.links.flow[ul] >= 0.0) ? 1 : -1;
         }
@@ -697,6 +829,8 @@ private:
     std::vector<double> node_mass_in_;  ///< per-step ledger, mass
     std::vector<double> node_vol_in_;   ///< per-step ledger, volume
     std::vector<double> scratch_;       ///< np-sized work array
+    std::vector<double> msx_block_;     ///< L3: per-element species block
+    std::vector<double> msx_poll_;      ///< L3: pollutant context block
     bool initialized_ = false;
 };
 

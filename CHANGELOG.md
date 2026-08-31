@@ -225,6 +225,24 @@ retroactive.
 
 ### Added
 
+- **MSX species ride LARD segments and react — L3, the last unstarted
+  quality step.** A reactions component under `QUALITY_SOLVER LAGRANGIAN`
+  used to warn "the LARD reaction binding is not implemented (deferred
+  L3)" while every species sat at its initial value — and the species did
+  not ride the segments at all (the row layout was pollutants + age +
+  temperature; the LEGACY engine does not transport them either — only
+  ARD did). The segment store now carries the compiled species table
+  after the reserved rows: they mix, pass through, release, seed and
+  publish like every other row, and a new stage after DECAY integrates
+  them through the shared reaction integrator — per segment at pipe
+  scope with the segment's own pollutant rows as expression context, per
+  node store at tank scope with the node's HRT. The deferral warning is
+  gone; treatment remains the one LARD bypass. Cross-engine: the same
+  RATE-production deck reads 85.46 under LARD segments where ARD cells
+  read 87.64 — ratio 0.9751, two independent discretisations within
+  2.5 %. A model with no reactions component is byte-identical to before
+  (the corpus is the witness).
+
 - **Water age and ARD write their own config files — IO3 save is complete
   (IO3c).** The last two decliners of the `ComponentConfigSave` hook adopt
   it: every registered component now renders its own config on save.
