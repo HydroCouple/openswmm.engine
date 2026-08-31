@@ -47,6 +47,36 @@ retroactive.
   (`ATM_LW_REFLECTION`) — caught by the new field-by-field round-trip gate
   before it shipped.
 
+- **Python bindings for the five transport-process headers.** `solver.heat`,
+  `solver.reactions`, `solver.water_age`, `solver.initial_quality` and
+  `solver.process_components` bind `openswmm_heat.h`,
+  `openswmm_reactions.h`, `openswmm_water_age.h`,
+  `openswmm_initial_quality.h` and `openswmm_process_components.h` as
+  keyed, iterable Python views rather than index-and-out-pointer calls:
+  flux-module and `[RADIATIVE_FLUXES]`/`[SOLAR_RADIATION]`/`[CLOUD_COVER]`
+  mappings plus the `[HEAT_SOURCES]` table with node overrides; species,
+  coefficients, terms, per-scope expressions and the whole-file `.rxn`
+  text surface; the `[WATER_AGE_SOURCES]` globals and overrides; the
+  `[INITIAL_QUALITY]` rows; and the `[PROCESS_COMPONENTS]` registry.
+
+  The bindings refuse exactly what the C API refuses, so the constraints
+  that matter survive the language boundary rather than being re-derived
+  on the Python side: heat values are refused rather than clamped and
+  `COMPUTED` shortwave still demands an explicit latitude and longitude;
+  reaction mutation stays eagerly validated and transactional, so a stored
+  system is never uncompilable and `serialize -> apply_text -> serialize`
+  is byte-identical; water-age hours stay **signed**, because a negative
+  source age extracts age-volume by design; and `Reactions`'
+  hydraulic-variable and function tables are exposed as engine-less
+  `staticmethod`s so a completer enumerates the compiler's own vocabulary
+  instead of carrying a copy of it.
+
+  Nine enums land with them — `HeatFluxModule`, `HeatShortwaveMode`,
+  `HeatRadiativeParam`, `HeatSolarParam`, `HeatCloudParam`,
+  `HeatSourceKind`, `WaterAgeSource`, `ReactionScope` and
+  `ReactionExprForm` — each mirroring its C counterpart's numbering, and
+  each accepted anywhere the corresponding `int` or token string is.
+
 - **Preissmann slot readers and 2-D name/bulk accessors.** `Link.slot_volume`
   reports the water standing above the pipe crown, and
   `LinkStatsView.peak_slot_share` / `LinkStatsView.slot_share` report the

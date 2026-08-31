@@ -90,10 +90,30 @@ from ._output_reader import OutputReader as OutputReader
 # =============================================================================
 from ._pollutants import Pollutants as Pollutants
 from ._quality import Quality as Quality
+from ._initial_quality import InitialQuality as InitialQuality
+from ._initial_quality import InitialQualityEntry as InitialQualityEntry
 from ._tables import Tables as Tables
 from ._inflows import Inflows as Inflows
 from ._controls import Controls as Controls
 from ._forcing import Forcing as Forcing
+
+# =============================================================================
+# Transport processes — heat, water age, reactions, process components
+# =============================================================================
+from ._heat import Heat as Heat
+from ._heat import HeatNodeOverride as HeatNodeOverride
+from ._water_age import WaterAge as WaterAge
+from ._water_age import WaterAgeOverride as WaterAgeOverride
+from ._reactions import Reactions as Reactions
+from ._reactions import ReactionSpecies as ReactionSpecies
+from ._reactions import ReactionCoefficient as ReactionCoefficient
+from ._reactions import ReactionTerm as ReactionTerm
+from ._reactions import ReactionInitialEntry as ReactionInitialEntry
+from ._reactions import ReactionHydVar as ReactionHydVar
+from ._reactions import ReactionFunction as ReactionFunction
+from ._reactions import ExpressionDiagnostic as ExpressionDiagnostic
+from ._process_components import ProcessComponents as ProcessComponents
+from ._process_components import ProcessComponent as ProcessComponent
 
 # =============================================================================
 # Spatial / infrastructure / 2D
@@ -149,6 +169,16 @@ from ._enums import (
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,
     WashoffFunc as WashoffFunc,
+    # Transport processes — heat, water age, reactions
+    HeatFluxModule as HeatFluxModule,
+    HeatShortwaveMode as HeatShortwaveMode,
+    HeatRadiativeParam as HeatRadiativeParam,
+    HeatSolarParam as HeatSolarParam,
+    HeatCloudParam as HeatCloudParam,
+    HeatSourceKind as HeatSourceKind,
+    WaterAgeSource as WaterAgeSource,
+    ReactionScope as ReactionScope,
+    ReactionExprForm as ReactionExprForm,
     # Output variables
     OutLinkVar as OutLinkVar,
     OutNodeVar as OutNodeVar,

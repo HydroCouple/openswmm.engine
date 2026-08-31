@@ -400,6 +400,10 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_get_pump_stats_bulk(SWMM_Engine e, int* cycles,
                                             double* on_time, double* volume,
                                             int count) nogil
+    # Preissmann-slot storage (FV routing only; reads 0.0 under dynamic wave)
+    cdef int swmm_link_get_slot_volume(SWMM_Engine e, int idx, double* volume)
+    cdef int swmm_link_get_stat_peak_slot_share(SWMM_Engine e, int idx, double* val)
+    cdef int swmm_link_get_stat_slot_share(SWMM_Engine e, int idx, double* val)
     # Hydraulic power
     cdef int swmm_link_get_hyd_power(SWMM_Engine e, int idx, double* power)
     # Bulk access
@@ -1281,6 +1285,144 @@ cdef extern from "openswmm_xsect.h":
                                    double* out) nogil
     cdef int swmm_xsect_critical_depth_array(SWMM_XSect xs, const double* inp,
                                              int n, double* out) nogil
+
+
+cdef extern from "openswmm_heat.h":
+
+    # Toggles
+    cdef int swmm_heat_get_enabled(SWMM_Engine e, int* enabled)
+    cdef int swmm_heat_get_module(SWMM_Engine e, int module, int* on)
+    cdef int swmm_heat_set_module(SWMM_Engine e, int module, int on)
+    # [RADIATIVE_FLUXES]
+    cdef int swmm_heat_get_radiative(SWMM_Engine e, int param, double* value)
+    cdef int swmm_heat_set_radiative(SWMM_Engine e, int param, double value)
+    cdef int swmm_heat_get_shortwave_mode(SWMM_Engine e, int* mode)
+    cdef int swmm_heat_set_shortwave_mode(SWMM_Engine e, int mode)
+    cdef int swmm_heat_set_shortwave_timeseries(SWMM_Engine e, const char* name)
+    cdef int swmm_heat_get_current_shortwave(SWMM_Engine e, double* wm2)
+    # [SOLAR_RADIATION]
+    cdef int swmm_heat_get_solar(SWMM_Engine e, int param, double* value)
+    cdef int swmm_heat_set_solar(SWMM_Engine e, int param, double value)
+    cdef int swmm_heat_get_solar_sited(SWMM_Engine e, int* sited)
+    # [CLOUD_COVER]
+    cdef int swmm_heat_get_cloud_configured(SWMM_Engine e, int* configured)
+    cdef int swmm_heat_get_cloud(SWMM_Engine e, int param, double* value)
+    cdef int swmm_heat_set_cloud(SWMM_Engine e, int param, double value)
+    cdef int swmm_heat_set_cloud_timeseries(SWMM_Engine e, const char* name)
+    cdef int swmm_heat_clear_cloud(SWMM_Engine e)
+    cdef int swmm_heat_get_current_cloud(SWMM_Engine e, double* fraction)
+    # [HEAT_SOURCES]
+    cdef int swmm_heat_source_count(SWMM_Engine e, int* count)
+    cdef int swmm_heat_get_source_temp(SWMM_Engine e, int source, double* temp_c)
+    cdef int swmm_heat_set_source_temp(SWMM_Engine e, int source, double temp_c)
+    cdef int swmm_heat_get_source_configured(SWMM_Engine e, int source, int* configured)
+    cdef int swmm_heat_clear_source_temp(SWMM_Engine e, int source)
+    cdef int swmm_heat_node_override_count(SWMM_Engine e, int* count)
+    cdef int swmm_heat_get_node_override(SWMM_Engine e, int index, int* source,
+                                          int* node, double* temp_c)
+    cdef int swmm_heat_set_node_override(SWMM_Engine e, int source, int node,
+                                          double temp_c)
+    cdef int swmm_heat_remove_node_override(SWMM_Engine e, int index)
+    cdef int swmm_heat_get_effective_source_temp(SWMM_Engine e, int source,
+                                                  int node, double* temp_c)
+
+
+cdef extern from "openswmm_water_age.h":
+
+    cdef int swmm_water_age_get_enabled(SWMM_Engine e, int* enabled)
+    cdef int swmm_water_age_get_global_source(SWMM_Engine e, int source, double* hours)
+    cdef int swmm_water_age_set_global_source(SWMM_Engine e, int source, double hours)
+    cdef int swmm_water_age_override_count(SWMM_Engine e, int* count)
+    cdef int swmm_water_age_get_override(SWMM_Engine e, int index, int* source,
+                                          int* node_index, double* hours)
+    cdef int swmm_water_age_set_override(SWMM_Engine e, int source, int node_index,
+                                          double hours)
+    cdef int swmm_water_age_remove_override(SWMM_Engine e, int source, int node_index)
+    cdef int swmm_water_age_save(SWMM_Engine e, const char* path)
+
+
+cdef extern from "openswmm_initial_quality.h":
+
+    cdef int swmm_init_quality_count(SWMM_Engine e)
+    cdef int swmm_init_quality_get(SWMM_Engine e, int entry_idx, int* is_link,
+                                    int* elem_idx, char* constituent_buf,
+                                    int constituent_len, double* value)
+    cdef int swmm_init_quality_set(SWMM_Engine e, int is_link, int elem_idx,
+                                    const char* constituent, double value)
+    cdef int swmm_init_quality_remove(SWMM_Engine e, int entry_idx)
+
+
+cdef extern from "openswmm_process_components.h":
+
+    cdef int swmm_process_component_count(SWMM_Engine e)
+    cdef int swmm_process_component_get(SWMM_Engine e, int idx,
+                                         char* id_buf, int id_len,
+                                         char* config_buf, int config_len,
+                                         char* resolved_buf, int resolved_len)
+    cdef int swmm_process_component_find(SWMM_Engine e, const char* id)
+    cdef int swmm_process_component_register(SWMM_Engine e, const char* id,
+                                              const char* config_path)
+    cdef int swmm_process_component_remove(SWMM_Engine e, int idx)
+
+
+cdef extern from "openswmm_reactions.h":
+
+    # Validation
+    cdef int swmm_reaction_validate_expression(SWMM_Engine e, int scope,
+                                                const char* expr, char* errbuf,
+                                                int buflen, int* col_out)
+    # Discovery
+    cdef int swmm_reaction_species_count(SWMM_Engine e)
+    cdef int swmm_reaction_species_get(SWMM_Engine e, int idx, char* name,
+                                        int name_len, int* is_wall, char* units,
+                                        int units_len, double* atol, double* rtol)
+    cdef int swmm_reaction_coeff_count(SWMM_Engine e)
+    cdef int swmm_reaction_coeff_get(SWMM_Engine e, int idx, char* name,
+                                      int name_len, int* is_param, double* value)
+    cdef int swmm_reaction_term_count(SWMM_Engine e)
+    cdef int swmm_reaction_term_get(SWMM_Engine e, int idx, char* name,
+                                     int name_len, char* expr, int expr_len)
+    cdef int swmm_reaction_expr_get(SWMM_Engine e, int scope, int species_idx,
+                                     int* form, char* expr, int expr_len)
+    cdef int swmm_reaction_option_get(SWMM_Engine e, const char* key, char* value,
+                                       int value_len)
+    # CRUD
+    cdef int swmm_reaction_species_add(SWMM_Engine e, const char* name, int is_wall,
+                                        const char* units, double atol, double rtol)
+    cdef int swmm_reaction_species_remove(SWMM_Engine e, int idx)
+    cdef int swmm_reaction_coeff_add(SWMM_Engine e, const char* name, int is_param,
+                                      double value)
+    cdef int swmm_reaction_coeff_set_value(SWMM_Engine e, int idx, double value)
+    cdef int swmm_reaction_coeff_remove(SWMM_Engine e, int idx)
+    cdef int swmm_reaction_term_add(SWMM_Engine e, const char* name, const char* expr)
+    cdef int swmm_reaction_term_set_expr(SWMM_Engine e, int idx, const char* expr)
+    cdef int swmm_reaction_term_remove(SWMM_Engine e, int idx)
+    cdef int swmm_reaction_expr_set(SWMM_Engine e, int scope, int species_idx,
+                                     int form, const char* expr)
+    cdef int swmm_reaction_option_set(SWMM_Engine e, const char* key, const char* value)
+    # Initial quality
+    cdef int swmm_reaction_init_global_get(SWMM_Engine e, int species_idx, double* value)
+    cdef int swmm_reaction_init_global_set(SWMM_Engine e, int species_idx, double value)
+    cdef int swmm_reaction_init_elem_count(SWMM_Engine e)
+    cdef int swmm_reaction_init_elem_get(SWMM_Engine e, int entry_idx, int* is_link,
+                                          int* elem_idx, int* species_idx, double* value)
+    cdef int swmm_reaction_init_elem_set(SWMM_Engine e, int is_link, int elem_idx,
+                                          int species_idx, double value)
+    cdef int swmm_reaction_init_elem_remove(SWMM_Engine e, int entry_idx)
+    # Whole-file text surface
+    cdef int swmm_reactions_serialize(SWMM_Engine e, char* buf, int buflen,
+                                       int* needed_len)
+    cdef int swmm_reactions_check_text(SWMM_Engine e, const char* text, char* errbuf,
+                                        int buflen)
+    cdef int swmm_reactions_apply_text(SWMM_Engine e, const char* text, char* errbuf,
+                                        int buflen)
+    cdef int swmm_reactions_save(SWMM_Engine e, const char* path_or_null)
+    # Static vocabulary (no engine handle)
+    cdef int swmm_reaction_hydvar_count()
+    cdef int swmm_reaction_hydvar_get(int idx, char* name, int name_len,
+                                       char* description, int desc_len)
+    cdef int swmm_reaction_function_count()
+    cdef int swmm_reaction_function_get(int idx, char* name, int name_len, int* arity)
 
 
 # --- Shared helpers ---

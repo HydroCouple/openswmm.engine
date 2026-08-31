@@ -76,6 +76,21 @@ Pollutants, landuse, buildup/washoff, treatment.
 
    pollutants
    quality
+   initial_quality
+
+Transport processes
+===================
+
+Heat transport, water age, multi-species reactions, and
+process-component registration.
+
+.. toctree::
+   :maxdepth: 1
+
+   heat
+   water_age
+   reactions
+   process_components
 
 Outputs
 =======

@@ -55,6 +55,11 @@ cdef class Solver:
     cdef object _infrastructure
     cdef object _spatial
     cdef object _quality
+    cdef object _initial_quality
+    cdef object _reactions
+    cdef object _heat
+    cdef object _water_age
+    cdef object _process_components
     cdef object _statistics
     cdef object _mass_balance
     cdef object _editor

@@ -1056,3 +1056,198 @@ class UserFlagType(IntEnum):
     INTEGER = 1
     REAL = 2
     STRING = 3
+
+
+# =============================================================================
+# Transport processes — heat, water age, reactions
+# =============================================================================
+
+class HeatFluxModule(IntEnum):
+    """Independently toggleable heat-flux modules (C{[HEAT_FLUXES]}).
+
+    Mirrors C{SWMM_HeatFluxModule} in C{openswmm_heat.h}.
+
+    @cvar SURFACE_EXCHANGE: Latent + sensible surface exchange.
+    @cvar RADIATIVE_EXCHANGE: Shortwave + longwave radiation.
+    @cvar LAYER_CONDUCTION: LID vertical conduction.
+    """
+
+    SURFACE_EXCHANGE = 0
+    RADIATIVE_EXCHANGE = 1
+    LAYER_CONDUCTION = 2
+
+
+class HeatShortwaveMode(IntEnum):
+    """Where incoming shortwave radiation comes from.
+
+    Mirrors C{SWMM_HeatShortwaveMode}. The three are mutually exclusive in
+    effect — exactly one is read — but switching modes does B{not} erase the
+    other modes' stored settings.
+
+    @cvar CONSTANT: Fixed W/m2, from C{HeatRadiativeParam.SHORTWAVE}.
+    @cvar TIMESERIES: A measured record bound by name.
+    @cvar COMPUTED: Solar position + Bird clear-sky model. Requires both
+        latitude and longitude to have been set explicitly.
+    """
+
+    CONSTANT = 0
+    TIMESERIES = 1
+    COMPUTED = 2
+
+
+class HeatRadiativeParam(IntEnum):
+    """C{[RADIATIVE_FLUXES]} scalar parameters.
+
+    Mirrors C{SWMM_HeatRadiativeParam}.
+
+    @cvar SHORTWAVE: Incoming shortwave, W/m2. Writable only in
+        C{HeatShortwaveMode.CONSTANT}.
+    @cvar ALBEDO: Water reflectance Rs, [0, 1].
+    @cvar SHADE_FACTOR: Shading fraction fs, [0, 1].
+    @cvar SKY_VIEW: Sky-view fraction fsky, [0, 1].
+    @cvar EMISS_WATER: Water emissivity, [0, 1].
+    @cvar EMISS_LANDCOVER: Land-cover emissivity, [0, 1].
+    @cvar ATM_EMISS_COEFF: Brunt atmospheric-emissivity coefficient, [0, 1].
+    @cvar LW_REFLECTION: Longwave reflection RL, [0, 1].
+    """
+
+    SHORTWAVE = 0
+    ALBEDO = 1
+    SHADE_FACTOR = 2
+    SKY_VIEW = 3
+    EMISS_WATER = 4
+    EMISS_LANDCOVER = 5
+    ATM_EMISS_COEFF = 6
+    LW_REFLECTION = 7
+
+
+class HeatSolarParam(IntEnum):
+    """C{[SOLAR_RADIATION]} parameters, consulted under
+    C{HeatShortwaveMode.COMPUTED} only.
+
+    Mirrors C{SWMM_HeatSolarParam}.
+
+    @cvar LATITUDE: Degrees, +N, [-90, 90].
+    @cvar LONGITUDE: Degrees, +E, [-180, 180].
+    @cvar TIMEZONE: Hours from UTC, +E.
+    @cvar ELEVATION: Metres, [-500, 9000]; below sea level is legal.
+    @cvar TURBIDITY_380: Bird aerosol optical depth at 380 nm.
+    @cvar TURBIDITY_500: Bird aerosol optical depth at 500 nm.
+    @cvar PRECIP_WATER: Precipitable water, cm.
+    @cvar OZONE: Ozone column, cm.
+    @cvar GROUND_ALBEDO: B{Land} albedo [0, 1] — not the water's
+        C{HeatRadiativeParam.ALBEDO}.
+    """
+
+    LATITUDE = 0
+    LONGITUDE = 1
+    TIMEZONE = 2
+    ELEVATION = 3
+    TURBIDITY_380 = 4
+    TURBIDITY_500 = 5
+    PRECIP_WATER = 6
+    OZONE = 7
+    GROUND_ALBEDO = 8
+
+
+class HeatCloudParam(IntEnum):
+    """C{[CLOUD_COVER]} parameters.
+
+    Mirrors C{SWMM_HeatCloudParam}.
+
+    @cvar FRACTION: Cloud fraction C, [0, 1] — a fraction, not a percent.
+    @cvar SW_ATTEN_K: Kasten-Czeplak shortwave attenuation k.
+    @cvar SW_ATTEN_N: Kasten-Czeplak shortwave attenuation n.
+    @cvar LW_CLOUD_K: Bolz longwave cloud coefficient k_lw.
+    """
+
+    FRACTION = 0
+    SW_ATTEN_K = 1
+    SW_ATTEN_N = 2
+    LW_CLOUD_K = 3
+
+
+class HeatSourceKind(IntEnum):
+    """C{[HEAT_SOURCES]} water sources.
+
+    Mirrors C{SWMM_HeatSourceKind} (and C{openswmm::HeatSource}). Only
+    C{DWF} and C{EXTERNAL_INFLOW} accept node-scope overrides — the H1 scope
+    rule, refused rather than silently deferred.
+
+    @cvar RAINFALL: Washoff runoff.
+    @cvar DWF: Dry-weather flow.
+    @cvar GW: Groundwater.
+    @cvar RDII: Rainfall-derived infiltration and inflow.
+    @cvar EXTERNAL_INFLOW: C{[INFLOWS]}.
+    @cvar IFACE: Interface file.
+    @cvar INITIAL_STATE: Water present at t = 0.
+    """
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class WaterAgeSource(IntEnum):
+    """C{[WATER_AGE_SOURCES]} pathways.
+
+    Mirrors C{SWMM_WaterAgeSource}. The C enum's trailing C{COUNT = 7}
+    sentinel is deliberately not reproduced — C{len(WaterAgeSource)} is the
+    count. Only C{DWF} and C{EXTERNAL_INFLOW} accept node-scope overrides
+    (the A1a scope rule).
+
+    @cvar RAINFALL: Rainfall-derived water.
+    @cvar DWF: Dry-weather flow.
+    @cvar GW: Groundwater.
+    @cvar RDII: Rainfall-derived infiltration and inflow.
+    @cvar EXTERNAL_INFLOW: C{[INFLOWS]}.
+    @cvar IFACE: Interface file.
+    @cvar INITIAL_STATE: Water present at t = 0.
+    """
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class ReactionScope(IntEnum):
+    """Identifier-resolution vocabulary for reaction-expression validation.
+
+    Mirrors the C{SWMM_RXN_SCOPE_*} macros in C{openswmm_reactions.h}.
+
+    @cvar TERM: Intermediate-term scope. References to B{all} terms resolve;
+        the forward-only ordering rule is enforced at file-apply time, where
+        ordinal position exists.
+    @cvar PIPE: Conduit (flowing) reaction scope.
+    @cvar TANK: Storage-unit (mixed) reaction scope.
+    """
+
+    TERM = 0
+    PIPE = 1
+    TANK = 2
+
+
+class ReactionExprForm(IntEnum):
+    """Form of a species' reaction expression.
+
+    Mirrors the C{SWMM_RXN_FORM_*} macros (and C{ReactionExprForm}).
+
+    @cvar NONE: No expression in this scope; also the value that B{clears}
+        one through C{Reactions.set_expression}.
+    @cvar RATE: Rate expression, C{dC/dt = f(...)}.
+    @cvar EQUIL: Equilibrium expression, C{0 = f(...)}.
+    @cvar FORMULA: Explicit formula, C{C = f(...)}.
+    """
+
+    NONE = 0
+    RATE = 1
+    EQUIL = 2
+    FORMULA = 3

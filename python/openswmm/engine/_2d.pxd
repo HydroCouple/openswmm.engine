@@ -15,6 +15,8 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_vertex_get_xyz_bulk(void* engine,
                                      double* x, double* y, double* z) nogil
     int swmm_2d_set_vertex_z(void* engine, int idx, double z)
+    # Bulk ground-elevation write — a pure C memory op over an owned buffer.
+    int swmm_2d_set_vertex_z_bulk(void* engine, const double* z, int count) nogil
     int swmm_2d_prepare_for_edit(void* engine)
     int swmm_2d_triangle_get_vertices(void* engine, int idx,
                                        int* v0, int* v1, int* v2)
@@ -130,6 +132,10 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_set_edge_bc_tseries_name(void* engine, int tri_idx, int edge, const char* name)
     int swmm_2d_set_edge_bc_flow_tseries_name(void* engine, int tri_idx, int edge, const char* name)
     int swmm_2d_set_edge_bc_rating_curve_name(void* engine, int tri_idx, int edge, const char* name)
+    # SVBC A8 — the setters' mirrors, so an edit can be read back.
+    int swmm_2d_get_edge_bc_tseries_name(void* engine, int tri_idx, int edge, char* buf, int buflen)
+    int swmm_2d_get_edge_bc_flow_tseries_name(void* engine, int tri_idx, int edge, char* buf, int buflen)
+    int swmm_2d_get_edge_bc_rating_curve_name(void* engine, int tri_idx, int edge, char* buf, int buflen)
 
     # Edge conveyance factor (§11A) — per-edge [0,1] multiplier on the
     # diffusion-wave flux; default 1.0; setter mirrors to the partner slot.

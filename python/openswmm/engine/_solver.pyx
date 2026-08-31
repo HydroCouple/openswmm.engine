@@ -214,6 +214,11 @@ cdef class Solver:
         self._infrastructure = None
         self._spatial = None
         self._quality = None
+        self._initial_quality = None
+        self._reactions = None
+        self._heat = None
+        self._water_age = None
+        self._process_components = None
         self._statistics = None
         self._mass_balance = None
         self._editor = None
@@ -911,6 +916,41 @@ cdef class Solver:
             from ._quality import Quality
             self._quality = Quality(self)
         return self._quality
+
+    @property
+    def initial_quality(self):
+        if self._initial_quality is None:
+            from ._initial_quality import InitialQuality
+            self._initial_quality = InitialQuality(self)
+        return self._initial_quality
+
+    @property
+    def reactions(self):
+        if self._reactions is None:
+            from ._reactions import Reactions
+            self._reactions = Reactions(self)
+        return self._reactions
+
+    @property
+    def heat(self):
+        if self._heat is None:
+            from ._heat import Heat
+            self._heat = Heat(self)
+        return self._heat
+
+    @property
+    def water_age(self):
+        if self._water_age is None:
+            from ._water_age import WaterAge
+            self._water_age = WaterAge(self)
+        return self._water_age
+
+    @property
+    def process_components(self):
+        if self._process_components is None:
+            from ._process_components import ProcessComponents
+            self._process_components = ProcessComponents(self)
+        return self._process_components
 
     @property
     def statistics(self):

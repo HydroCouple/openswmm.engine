@@ -190,6 +190,46 @@ Water quality  (landuse, buildup, washoff, treatment)
    :undoc-members:
    :show-inheritance:
 
+Initial quality  (per-element starting concentrations)
+-------------------------------------------------------
+
+.. automodule:: openswmm.engine._initial_quality
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Reactions  (multi-species reaction system)
+-------------------------------------------
+
+.. automodule:: openswmm.engine._reactions
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Process components  (``[PROCESS_COMPONENTS]`` registrations)
+-------------------------------------------------------------
+
+.. automodule:: openswmm.engine._process_components
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Water age  (source ages and node overrides)
+--------------------------------------------
+
+.. automodule:: openswmm.engine._water_age
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Heat transport  (fluxes, solar, cloud, heat sources)
+-----------------------------------------------------
+
+.. automodule:: openswmm.engine._heat
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Tables  (time series, curves, patterns)
 ---------------------------------------
 

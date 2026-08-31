@@ -82,6 +82,10 @@ zero-based.
      - Scalar ``(x, y, z)`` for one vertex.
    * - ``set_vertex_z(idx, z)``
      - Set a vertex ground elevation.
+   * - ``set_vertex_z_bulk(z)``
+     - Set **every** vertex ground elevation in one call (one mesh rescan
+       instead of one per vertex; GIL released). ``len(z)`` must equal
+       ``n_vertices``.
    * - ``get_triangle_vertices(idx)``
      - ``(v0, v1, v2)`` vertex indices.
    * - ``get_triangle_area(idx)``
@@ -307,12 +311,17 @@ type is a :class:`SurfaceBoundaryType`: ``WALL`` (closed), ``NORMAL_FLOW``,
      - Cumulative flux across the edge.
    * - ``get_edge_bc_flow`` (runtime)
      - Instantaneous flow across the edge.
-   * - ``set_edge_bc_tseries_name``
-     - Name the timeseries driving a SPECIFIED_STAGE edge.
-   * - ``set_edge_bc_flow_tseries_name``
-     - Name the timeseries driving a SPECIFIED_FLOW edge.
-   * - ``set_edge_bc_rating_curve_name``
-     - Name the rating curve driving a RATING_CURVE edge.
+   * - ``get_edge_bc_tseries_name`` / ``set_edge_bc_tseries_name``
+     - Name the timeseries driving a SPECIFIED_STAGE edge; the getter
+       returns ``""`` when the slot is clear.
+   * - ``get_edge_bc_flow_tseries_name`` /
+       ``set_edge_bc_flow_tseries_name``
+     - Name the timeseries driving a SPECIFIED_FLOW edge; ``""`` when
+       clear.
+   * - ``get_edge_bc_rating_curve_name`` /
+       ``set_edge_bc_rating_curve_name``
+     - Name the rating curve driving a RATING_CURVE edge; ``""`` when
+       clear.
 
 Edge conveyance
 ---------------

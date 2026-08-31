@@ -145,6 +145,34 @@ cdef class LinkStatsView:
         return v
 
     @property
+    def peak_slot_share(self) -> float:
+        """Peak instantaneous ``slot_volume / volume`` over the run (0..1).
+
+        Finite-volume routing only: reads ``0.0`` under the dynamic-wave
+        router, which is indistinguishable from "no slot flow occurred".
+        """
+        _check_fresh(self._link)
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_peak_slot_share(
+            _h(self._link._solver), self._link._index, &v))
+        return v
+
+    @property
+    def slot_share(self) -> float:
+        """Run-level slot share ``(∫ slot_volume dt) / (∫ volume dt)`` (0..1).
+
+        A ratio of time integrals — never an average of instantaneous
+        ratios. Finite-volume routing only: reads ``0.0`` under the
+        dynamic-wave router, which is indistinguishable from "no slot flow
+        occurred".
+        """
+        _check_fresh(self._link)
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_slot_share(
+            _h(self._link._solver), self._link._index, &v))
+        return v
+
+    @property
     def pump_cycles(self) -> int:
         """Cycles for a pump link. Raises :class:`BadParamError` on non-pumps."""
         _check_fresh(self._link)
@@ -699,6 +727,19 @@ cdef class Link:
         _check_fresh(self)
         cdef double v = 0.0
         _check(swmm_link_get_volume(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def slot_volume(self) -> float:
+        """Water held in the Preissmann slot, in project volume units.
+
+        The part of :attr:`volume` standing above the pipe crown. Finite-volume
+        routing only: reads ``0.0`` under the dynamic-wave router, which is
+        indistinguishable from "no slot storage".
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_link_get_slot_volume(_h(self._solver), self._index, &v))
         return v
 
     @property

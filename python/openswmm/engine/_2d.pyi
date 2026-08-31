@@ -150,6 +150,20 @@ class Surface2D:
         """
         ...
 
+    def set_vertex_z_bulk(self, z: Sequence[float] | npt.NDArray[np.float64]) -> None:
+        """Set EVERY vertex ground elevation in one call.
+
+        Equivalent to calling :meth:`set_vertex_z` per vertex, but rescans the
+        mesh once instead of once per vertex. GIL is released during the C
+        call.
+
+        @param z: One ground elevation per vertex (project vertical units).
+        @type z: Sequence[float] | np.ndarray
+        @raise ValueError: If C{len(z)} does not equal L{n_vertices}.
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     def get_vertex_xyz(self, idx: int) -> tuple[float, float, float]:
         """Scalar ``(x, y, z)`` for one mesh vertex (project units).
 
@@ -912,6 +926,19 @@ class Surface2D:
         """
         ...
 
+    def get_edge_bc_tseries_name(self, tri_idx: int, edge: int) -> str:
+        """Return the timeseries name driving a SPECIFIED_STAGE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     def set_edge_bc_flow_tseries_name(
         self, tri_idx: int, edge: int, name: str
     ) -> None:
@@ -927,6 +954,19 @@ class Surface2D:
         """
         ...
 
+    def get_edge_bc_flow_tseries_name(self, tri_idx: int, edge: int) -> str:
+        """Return the timeseries name driving a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     def set_edge_bc_rating_curve_name(
         self, tri_idx: int, edge: int, name: str
     ) -> None:
@@ -939,6 +979,19 @@ class Surface2D:
         @param name: Rating-curve name, or C{""} to clear.
         @type name: str
         @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def get_edge_bc_rating_curve_name(self, tri_idx: int, edge: int) -> str:
+        """Return the rating-curve name driving a RATING_CURVE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Rating-curve name; C{""} when the slot is clear.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
