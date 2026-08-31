@@ -487,7 +487,8 @@ TEST(FvTpa, SignedHeadsReachTheOutFile) {
 
 namespace {
 
-std::string fillingSurgeDeck(const std::string& celerity) {
+std::string fillingSurgeDeck(const std::string& celerity,
+                             const std::string& extra = "") {
     return
         "[OPTIONS]\n"
         "FLOW_UNITS           LPS\n"
@@ -507,6 +508,7 @@ std::string fillingSurgeDeck(const std::string& celerity) {
         "FV_SLOT_CELERITY     " + celerity + "\n"
         "FV_PRESSURE_CLOSURE  TPA\n"
         "FV_PRESSURIZED_IMPLICIT NO\n"
+        + extra +
         "\n[STORAGE]\n"
         ";;Name  Elev  MaxDepth InitDepth Shape      A1 A2 A0\n"
         "FB      0.0   0.40     0.073     FUNCTIONAL 0  0  0.03\n"
@@ -610,4 +612,53 @@ TEST(FvTpa, KnownIssueHighCelerityFillingDiverges) {
         << "HIGH-CELERITY FILLING NOW COMPLETES (cont err % = " << r.cont
         << ") — the known issue is fixed: retire this pin and unpin "
            "e2_2025:C3/C5 in the study matrix";
+}
+
+TEST(FvTpa, Rk2CompletesWhereEulerFillingPinDiverges) {
+    // Stability round (issue #156, 2026-08-31): the temporal-mode diagnosis
+    // in the pin above, made falsifiable. The SAME deck the pin proves
+    // divergent under explicit Euler must complete under RK2 (Heun) — the
+    // two-stage integrator damps the odd–even temporal mode a forward-Euler
+    // update leaves neutrally stable, which no spatial treatment measured so
+    // far touches (P5b: the §7 filter; this round: a regime-front UF stencil
+    // skip — both measured, both non-rescues). The round's measurements on
+    // gcc/x86 (studies/…/results/_stability_round/): the e4_aureli TPA cells
+    // are the same family, knife-edge marginal under Euler — C3 (NO UF) is
+    // flipped to ERROR 14 by a 0.002 % FV_SLOT_CELERITY change (50 → 50.001)
+    // and C5 by UF at k3 = 1e-6 (an FP-scale perturbation, physically
+    // nothing), so the "k3 stability threshold" of the macOS round was a
+    // dice roll, not a UF magnitude limit — while under RK2 every probed
+    // variant completes (13/13: k3 ∈ {0…0.040} + celerity jiggles, and this
+    // fixture at a = 150 with and without UF) with e4 bore arrival
+    // BIT-MATCHING the Euler record (p852 = 2.260 s C5, 2.200 s C3).
+    // Falsifier: the pin above IS the falsifier — same fixture, one variable
+    // (the integrator), opposite outcomes, both asserted. If THIS test fails,
+    // RK2 lost its temporal damping (a takeSubstep/Heun regression); if the
+    // PIN "fails", Euler got fixed — retire both together.
+    const auto rk2 = runFillingSurge(
+        "tpa_filling_surge_c150_rk2",
+        fillingSurgeDeck("150", "FV_TIME_INTEGRATION  RK2\n"));
+    EXPECT_TRUE(rk2.completed) << "RK2 diverged on the pinned filling deck";
+    if (rk2.completed) {
+        EXPECT_LT(std::fabs(rk2.cont), 2.0)
+            << "routing continuity error % = " << rk2.cont;
+        EXPECT_GT(rk2.max_st, 0.094)
+            << "surge tank never rose above the pipe crown — the bore never "
+               "arrived and the fixture is not exercising the surge";
+    }
+    // The e4:C5 combination (TPA × UF) on the same deck: UF must not spoil
+    // the RK2 rescue (measured 0.000 % continuity on the deck-level run).
+    const auto rk2_uf = runFillingSurge(
+        "tpa_filling_surge_c150_rk2_uf",
+        fillingSurgeDeck("150",
+                         "FV_TIME_INTEGRATION  RK2\n"
+                         "UNSTEADY_FRICTION    VITKOVSKY\n"
+                         "UF_K3                0.020\n"));
+    EXPECT_TRUE(rk2_uf.completed)
+        << "RK2 + UF diverged on the pinned filling deck";
+    if (rk2_uf.completed) {
+        EXPECT_LT(std::fabs(rk2_uf.cont), 2.0)
+            << "routing continuity error % = " << rk2_uf.cont;
+        EXPECT_GT(rk2_uf.max_st, 0.094);
+    }
 }
