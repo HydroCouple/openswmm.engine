@@ -36,6 +36,14 @@ constexpr int kOmpMinFaces = 4096;
 /// the per-item work is the same order.
 constexpr int kOmpMinCells = 4096;
 
+/// Column-separation vacuum limit, ~1 atm of water column (issue #156): a
+/// sealed TPA reach can sustain sub-atmospheric pressure only to about
+/// hs ≈ −30 ft before the column separates and a vapor cavity forms — modeled
+/// as an unconditional exit to free surface (documented limitation; real
+/// cavity dynamics are out of scope). Shared by the substep entry/exit rule
+/// (updateTpaFlags) and the same-substep floor check (R4d).
+constexpr double kCavHead = 30.0;   // ft
+
 /// limitSlope moved to transport/fvkernels/SpeciesTransportKernels.hpp
 /// (phase E0) — shared between the species kernels and the hydrodynamic
 /// second-order reconstruction below.
@@ -338,6 +346,11 @@ void ExplicitFvSolver::refreshDepths() {
         if (!tpa_cell && h <= k::kDryDepth) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
+        } else if (tpa_cell) {
+            // A flagged cell has no dry cutoff above, so a == 0.0 exactly
+            // would put inf/NaN in cell_u_ (issue #156 R4b). Floor at
+            // kDryArea, the same vacuum floor faceSide's TPA side uses.
+            cell_u_[uc] = state_->cell_q[uc] / std::max(a, k::kDryArea);
         } else {
             cell_u_[uc] = state_->cell_q[uc] / a;
         }
@@ -417,11 +430,19 @@ void ExplicitFvSolver::rebuildActiveLists() {
 
     // Seed: any cell holding water or momentum, plus any cell fed by a node
     // that stands above the conduit invert — a dry pipe hanging off a full
-    // manhole must not be skipped.
+    // manhole must not be skipped. A TPA-SEALED cell is active at any h
+    // (issue #156 R4a): a sealed sub-atmospheric column has NEGATIVE cell_h,
+    // so an at-rest one (q exactly 0) read as dry here, was deactivated, and
+    // updateTpaFlags then cleared its seal — converting a resting vacuum
+    // column into a free-surface film whose eta sits ~|hs| above the truth,
+    // primed to inject that head on reactivation. Today only q's float
+    // non-zeroness protects the quiescent sealed column (the P5 at-rest
+    // pressurized class); this makes the protection structural.
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         cell_active_[uc] = (state_->cell_h[uc] > k::kDryDepth ||
-                            state_->cell_q[uc] != 0.0) ? char{1} : char{0};
+                            state_->cell_q[uc] != 0.0 ||
+                            tpaCell(uc)) ? char{1} : char{0};
     }
     for (int f = 0; f < nf; ++f) {
         const auto uf = static_cast<std::size_t>(f);
@@ -1495,7 +1516,12 @@ void ExplicitFvSolver::updateTpaFlags() {
 #endif
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
-        if (!cell_active_[uc]) { state_->cell_tpa[uc] = 0; continue; }
+        // An inactive cell is SKIPPED, not mutated (issue #156 R4a): the old
+        // `cell_tpa = 0` write here destroyed the seal of any flagged cell
+        // the compaction predicate missed. With the rebuild seed keeping
+        // flagged cells active, a flagged inactive cell no longer exists —
+        // and if one ever does, silently unsealing it is the worst response.
+        if (!cell_active_[uc]) continue;
         const FvGeometry& g =
             mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
         if (g.is_open) { state_->cell_tpa[uc] = 0; continue; }
@@ -1561,12 +1587,9 @@ void ExplicitFvSolver::updateTpaFlags() {
             if (now != tpa_scratch_[uc]) refresh(now);
             continue;
         }
-        // Column separation floor (the paper's own two-phase boundary): a
-        // sealed reach can sustain vacuum only to about one atmosphere of
-        // water column. Below hs ≈ −30 ft the column separates and a vapor
-        // cavity forms — modeled as an unconditional exit to free surface
-        // (documented limitation; real cavity dynamics are out of scope).
-        constexpr double kCavHead = 30.0;   // ft
+        // Column separation floor (the paper's own two-phase boundary; the
+        // kCavHead constant is file-scope, shared with the R4d same-substep
+        // check in takeSubstep).
         if (a < g.a_crown - g.t_slot * kCavHead) {
             refresh(0);   // column separation: exit + regime-true h
             continue;
@@ -2548,6 +2571,29 @@ void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
         PressurizedView pv = pressView(forcing);
         press_.finalizeCells(pv);
     }
+    // Same-substep column-separation floor (issue #156 R4d). The entry/exit
+    // rule at the TOP of this function applies the floor to the state the
+    // substep STARTED from, so a single substep could overshoot it and carry
+    // the overshoot through the post-step census and the next reconstruction
+    // (measured −35 ft at the crest on the diverged e3 RK2 run, against the
+    // −30 ft physical limit). Apply the exit in the substep that crosses the
+    // floor — same action as updateTpaFlags' refresh(0): regime change with
+    // regime-true h, no mass touched.
+    if (tpa_) {
+        const int nc2 = mesh_->n_cells();
+        for (int c = 0; c < nc2; ++c) {
+            const auto uc = static_cast<std::size_t>(c);
+            if (!cell_active_[uc] || state_->cell_tpa[uc] == 0) continue;
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            const double a = state_->cell_a[uc];
+            if (a >= g.a_crown - g.t_slot * kCavHead) continue;
+            state_->cell_tpa[uc] = 0;
+            const double h2 = k::depthOfArea(g, a);
+            state_->cell_h[uc] = h2;
+            cell_eta_[uc] = mesh_->cell_zb[uc] + h2;
+        }
+    }
     dispersionSolve(dt);
 }
 
@@ -2563,6 +2609,7 @@ void ExplicitFvSolver::rkSave() {
     rk_flood_     = flood_vol_;
     rk_qint_      = cell_q_int_;
     rk_carry_     = node_carry_;
+    if (tpa_) rk_tpa_ = state_->cell_tpa;
 }
 
 void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
@@ -2612,6 +2659,18 @@ void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
     avg_delta(flood_vol_,  rk_flood_);
     avg_delta(cell_q_int_, rk_qint_);
     avg_delta(node_carry_, rk_carry_);
+
+    // The regime latch travels with the state (issue #156 R4c) — the same
+    // invariant saveState/restoreState carry for step rejection: h(A) must be
+    // read in the regime that produced A. The averaged area anchors on Uⁿ,
+    // exactly as a rollback does; leaving stage 2's flags here made the
+    // refresh below read the average on whatever regime the SECOND stage
+    // happened to end in. Anchoring is not a stability fix (measured: it does
+    // not touch the RK2 x TPA amplification, which the divergence guard now
+    // catches) — it is the file's own documented invariant, restored. The
+    // next substep's updateTpaFlags re-derives transitions on the averaged
+    // state as usual.
+    if (tpa_) state_->cell_tpa = rk_tpa_;
 
     refreshDepths();
 }
