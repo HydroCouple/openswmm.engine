@@ -56,6 +56,8 @@
 #include "2d/solver/SurfaceSolverFactory.hpp"
 #include "2d/solver/ISurfaceSolver.hpp"
 
+#include "platform_test_support.hpp"
+
 #ifdef OPENSWMM_HAS_2D
 #include "2d/output/Default2DOutputPlugin.hpp"
 #include "core/SimulationContext.hpp"
@@ -64,6 +66,11 @@
 #include <filesystem>
 #include <stdexcept>
 #endif
+
+// The backend-selection tests below set OPENSWMM_2D_BACKEND, which MSVC has
+// no setenv/unsetenv for.
+using plattest::setEnvVar;
+using plattest::unsetEnvVar;
 
 using namespace openswmm::twoD;
 
@@ -1100,8 +1107,8 @@ TEST(SurfaceSolverFactory, DeckBackendOptionSelectsMarcher) {
     struct Restore {
         std::string v; bool had;
         ~Restore() {
-            if (had) setenv("OPENSWMM_2D_BACKEND", v.c_str(), 1);
-            else     unsetenv("OPENSWMM_2D_BACKEND");
+            if (had) setEnvVar("OPENSWMM_2D_BACKEND", v.c_str());
+            else     unsetEnvVar("OPENSWMM_2D_BACKEND");
         }
     } restore{saved, prev != nullptr};
 
@@ -1109,14 +1116,14 @@ TEST(SurfaceSolverFactory, DeckBackendOptionSelectsMarcher) {
     std::string chosen;
 
     // CPU by option, no env: the built-in marcher, no plugin discovery.
-    unsetenv("OPENSWMM_2D_BACKEND");
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
     opts.backend = Backend2D::CPU;
     auto s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
     ASSERT_TRUE(s);
     EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
 
     // Env wins over the option: BACKEND OMP in the deck, cpu in the env.
-    setenv("OPENSWMM_2D_BACKEND", "cpu", 1);
+    setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
     opts.backend = Backend2D::OMP;
     chosen.clear();
     s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
@@ -1127,7 +1134,7 @@ TEST(SurfaceSolverFactory, DeckBackendOptionSelectsMarcher) {
     // (co-located beside the engine library in every default build); an
     // absent plugin falls back to CPU by contract, which is not a failure of
     // the option plumbing — so that case is reported as skipped, not passed.
-    unsetenv("OPENSWMM_2D_BACKEND");
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
     opts.backend = Backend2D::OMP;
     chosen.clear();
     s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 10);  // below every floor
