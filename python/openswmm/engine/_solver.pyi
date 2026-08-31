@@ -41,15 +41,20 @@ if TYPE_CHECKING:
     from ._edit import ModelEditor
     from ._forcing import Forcing
     from ._gages import Gages
+    from ._heat import Heat
     from ._hotstart import SaveSchedule
     from ._infrastructure import Infrastructure
     from ._inflows import Inflows
+    from ._initial_quality import InitialQuality
     from ._links import Links
     from ._massbalance import MassBalance
     from ._nodes import Nodes
     from ._pollutants import Pollutants
+    from ._process_components import ProcessComponents
     from ._quality import Quality
+    from ._reactions import Reactions
     from ._spatial import Spatial
+    from ._water_age import WaterAge
     from ._statistics import Statistics
     from ._subcatchments import Aquifers, Snowpacks, Subcatchments
     from ._tables import Patterns, Tables
@@ -379,6 +384,16 @@ class Solver:
     def spatial(self) -> "Spatial": ...
     @property
     def quality(self) -> "Quality": ...
+    @property
+    def initial_quality(self) -> "InitialQuality": ...
+    @property
+    def reactions(self) -> "Reactions": ...
+    @property
+    def heat(self) -> "Heat": ...
+    @property
+    def water_age(self) -> "WaterAge": ...
+    @property
+    def process_components(self) -> "ProcessComponents": ...
     @property
     def statistics(self) -> "Statistics": ...
     @property

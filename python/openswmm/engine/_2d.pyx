@@ -176,6 +176,38 @@ cdef class Surface2D:
         """
         _check(swmm_2d_set_vertex_z(self._engine, idx, z))
 
+    def set_vertex_z_bulk(self, z) -> None:
+        """Set EVERY vertex ground elevation in one call.
+
+        Equivalent to calling :meth:`set_vertex_z` for each vertex in turn —
+        the dependent geometry (centroid Z, per-edge midpoint Z) ends up
+        bitwise identical — but the whole mesh is rescanned once instead of
+        once per vertex, so this is C{O(n_vertices + n_triangles)} rather than
+        C{O(n_vertices * n_triangles)}. Editors rewriting a whole mesh should
+        prefer it. XY-derived fields are unaffected, and solver state (head,
+        depth) is not rewritten when the engine is running.
+
+        @param z: Sequence or NumPy array of C{n_vertices} ground elevations
+            (project vertical units), indexed by vertex.
+        @type z: collections.abc.Sequence or np.ndarray
+        @raise ValueError: If C{len(z)} does not equal L{n_vertices}.
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef np.ndarray[double, ndim=1] arr = np.ascontiguousarray(
+            z, dtype=np.float64).reshape(-1)
+        cdef int n = <int>arr.shape[0]
+        cdef int expected = self.n_vertices
+        if n != expected:
+            raise ValueError(
+                f"set_vertex_z_bulk expects one Z per vertex: got {n}, "
+                f"mesh has {expected}")
+        cdef void* eng = self._engine
+        cdef const double* p = <const double*>arr.data
+        cdef int err
+        with nogil:
+            err = swmm_2d_set_vertex_z_bulk(eng, p, n)
+        _check(err)
+
     def get_vertex_xyz(self, int idx):
         """Return the C{(x, y, z)} coordinates of one mesh vertex.
 
@@ -1289,6 +1321,27 @@ cdef class Surface2D:
         cdef bytes b = name.encode("utf-8")
         _check(swmm_2d_set_edge_bc_tseries_name(self._engine, tri_idx, edge, b))
 
+    def get_edge_bc_tseries_name(self, int tri_idx, int edge) -> str:
+        """Return the timeseries name driving a SPECIFIED_STAGE edge.
+
+        The mirror of L{set_edge_bc_tseries_name}, so an edit can be read
+        back and verified. Names longer than the internal buffer are
+        truncated.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear (the edge uses
+            the constant C{edge_bc_head}).
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_edge_bc_tseries_name(
+            self._engine, tri_idx, edge, buf, 256))
+        return buf.decode('utf-8')
+
     def set_edge_bc_flow_tseries_name(self, int tri_idx, int edge, str name):
         """Set the timeseries name driving a SPECIFIED_FLOW edge.
 
@@ -1305,6 +1358,25 @@ cdef class Surface2D:
         """
         cdef bytes b = name.encode("utf-8")
         _check(swmm_2d_set_edge_bc_flow_tseries_name(self._engine, tri_idx, edge, b))
+
+    def get_edge_bc_flow_tseries_name(self, int tri_idx, int edge) -> str:
+        """Return the timeseries name driving a SPECIFIED_FLOW edge.
+
+        Same contract as L{get_edge_bc_tseries_name}.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear (no series
+            bound).
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_edge_bc_flow_tseries_name(
+            self._engine, tri_idx, edge, buf, 256))
+        return buf.decode('utf-8')
 
     def set_edge_bc_rating_curve_name(self, int tri_idx, int edge, str name):
         """Set the rating-curve name driving a RATING_CURVE edge.
@@ -1323,6 +1395,25 @@ cdef class Surface2D:
         """
         cdef bytes b = name.encode("utf-8")
         _check(swmm_2d_set_edge_bc_rating_curve_name(self._engine, tri_idx, edge, b))
+
+    def get_edge_bc_rating_curve_name(self, int tri_idx, int edge) -> str:
+        """Return the rating-curve name driving a RATING_CURVE edge.
+
+        Same contract as L{get_edge_bc_tseries_name}.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Rating-curve name; C{""} when the slot is clear (no curve
+            bound).
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_edge_bc_rating_curve_name(
+            self._engine, tri_idx, edge, buf, 256))
+        return buf.decode('utf-8')
 
     # ------------------------------------------------------------------
     # Edge conveyance factor (§11A of docs/2dModelStrategy.md)

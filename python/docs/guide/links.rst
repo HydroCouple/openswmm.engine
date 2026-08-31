@@ -209,6 +209,11 @@ Wrapper: :class:`Link`
      - ``float``
      - read-only
      -
+   * - ``slot_volume``
+     - ``float``
+     - read-only
+     - Water in the Preissmann slot — the part of ``volume`` above the
+       crown. Finite-volume routing only; ``0.0`` under dynamic wave.
    * - ``hyd_power``
      - ``float``
      - read-only
@@ -328,6 +333,8 @@ links:
     print(c1.stats.max_filling)
     print(c1.stats.vol_flow)
     print(c1.stats.surcharge_time)
+    print(c1.stats.peak_slot_share)
+    print(c1.stats.slot_share)
 
     p1 = s.links["P1"]
     print(p1.stats.pump_cycles)
@@ -335,6 +342,13 @@ links:
     print(p1.stats.pump_volume)
 
 These values are only meaningful after :meth:`Solver.end`.
+
+``peak_slot_share`` is the peak instantaneous ``slot_volume / volume``
+over the run; ``slot_share`` is the run-level
+``(∫ slot_volume dt) / (∫ volume dt)`` — a ratio of time integrals, never
+an average of instantaneous ratios. Both are ``0..1``, and both are
+finite-volume-routing only: under the dynamic-wave router they read
+``0.0``, which is indistinguishable from "no slot flow occurred".
 
 ----
 

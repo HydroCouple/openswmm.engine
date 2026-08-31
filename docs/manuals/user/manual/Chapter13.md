@@ -35,6 +35,12 @@ All API functions return an integer error code (`SWMM_OK` on success) and are or
 | `openswmm_infrastructure.h` | Transects, streets, inlets, LID controls |
 | `openswmm_spatial.h` | CRS, coordinates, polylines, polygons |
 | `openswmm_quality.h` | Landuse, buildup/washoff, treatment |
+| `openswmm_initial_quality.h` | `[INITIAL_QUALITY]` per-element initial concentrations |
+| `openswmm_reactions.h` | Multi-species reaction system, expression validation, `.rxn` text |
+| `openswmm_process_components.h` | `[PROCESS_COMPONENTS]` registrations and config paths |
+| `openswmm_water_age.h` | `[WATER_AGE_SOURCES]` source ages and node overrides |
+| `openswmm_heat.h` | Heat-transport fluxes, solar/cloud forcing, `[HEAT_SOURCES]` |
+| `openswmm_infil2d.h` | 2-D surface infiltration cells, defaults, and totals |
 | `openswmm_massbalance.h` | Continuity errors and flux totals |
 | `openswmm_statistics.h` | Post-run node/link/pump statistics |
 | `openswmm_forcing.h` | Runtime forcing overrides |

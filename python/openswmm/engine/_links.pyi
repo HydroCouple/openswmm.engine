@@ -47,6 +47,8 @@ class LinkStatsView:
     max_filling: float
     vol_flow: float
     surcharge_time: float
+    peak_slot_share: float
+    slot_share: float
     pump_cycles: int
     pump_on_time: float
     pump_volume: float
@@ -123,6 +125,7 @@ class Link:
     velocity: float
     capacity: float
     volume: float
+    slot_volume: float
     hyd_power: float
 
     # Control
