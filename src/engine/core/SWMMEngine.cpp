@@ -1931,10 +1931,21 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 double q_perv   = rsoa.perv_runoff_cfs[usc];
                 double lid_area = g.area[uu];
                 // Inflow = rainfall on LID + fraction of non-LID subarea runoff captured
-                double q_from_sc = 0.0;
-                if (lid_area > 0.0)
-                    q_from_sc = (q_imperv * g.from_imperv[uu]
-                               + q_perv   * g.from_perv[uu]) / lid_area;
+                double captured_cfs = q_imperv * g.from_imperv[uu]
+                                    + q_perv   * g.from_perv[uu];
+                double q_from_sc = (lid_area > 0.0) ? captured_cfs / lid_area : 0.0;
+                // −VlidIn (legacy subcatch.c:746-751,
+                // `vOutflow = Voutflow − VlidIn + VlidOut`): the captured share
+                // is the LID's inflow, so it is no longer the subcatchment's
+                // outflow. Without this it leaves the outlet in full AND runs
+                // through the LID, so LID capture buys no runoff reduction and
+                // the run gains volume equal to whatever the unit sheds. The
+                // +VlidOut half is applied below, after the units are stepped.
+                // q_imperv/q_perv already carry legacy's fOutlet scaling
+                // (Runoff.cpp), which is what keeps this subtraction bounded by
+                // the outlet runoff it is removing from.
+                if (captured_cfs > 0.0)
+                    ctx_.subcatches.runoff[usc] -= captured_cfs;
                 // Legacy lid.c:1714-1718: when the LID occupies the full
                 // subcatchment (non-LID area snapped to zero), upstream and
                 // outfall runon flows onto the LID units — the runoff solver
