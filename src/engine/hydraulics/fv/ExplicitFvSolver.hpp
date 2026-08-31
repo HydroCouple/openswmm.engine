@@ -75,6 +75,13 @@ public:
     double suggested_step() const noexcept override { return suggested_h_; }
     RunStats run_stats() const noexcept override;
     bool   is_initialized() const noexcept override { return mesh_ != nullptr; }
+    bool   divergence(Divergence& d) const noexcept override {
+        if (div_link_ < 0) return false;
+        d.link  = div_link_;
+        d.value = div_value_;
+        d.what  = div_what_;
+        return true;
+    }
 
     /// Per-node net exchange VOLUME (ft³) accumulated over the last advance().
     /// Signed positive INTO the node. The Router glue turns this into the node
@@ -563,6 +570,22 @@ private:
     /// fraction of the step actually taken.
     static constexpr double kStepAcceptRatio = 0.5;
     static constexpr int    kMaxStepRetries  = 8;
+
+    // Divergence guard (issue #156 R3). The retry loop above is sound for CFL
+    // violations, which shrink away with dt — but a dt-INDEPENDENT
+    // amplification (measured: RK2 x TPA on the study's e3 siphon grows the
+    // crown head x20-40 per millisecond at FV_CFL 0.9, 0.45 and 0.25 alike)
+    // fails all 8 retries identically and the loop then ACCEPTS the diverged
+    // step silently. These bounds are physical absurdities, not tolerances: no
+    // water transient carries particle velocity past 1000 ft/s (celerity is
+    // not particle speed), and 10,000 ft of pressure head is 300 bar. A run
+    // that crosses either has left the physics and must say so instead of
+    // scoring OK (P6 finding F3). Checked once per routing step, O(cells).
+    static constexpr double kDivergedVelocity = 1000.0;    ///< ft/s
+    static constexpr double kDivergedDepth    = 10000.0;   ///< ft
+    int         div_link_  = -1;       ///< engine link index, -1 = clean
+    double      div_value_ = 0.0;
+    const char* div_what_  = nullptr;
 
     // Work lists (plan §5.2.1). `halo_` is the compaction safety margin: a wet
     // front advances at most CFL cells per substep, so a halo of `rebuild_

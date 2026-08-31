@@ -160,6 +160,27 @@ public:
     /// Read cumulative statistics. Default: zeros (backend has no counters).
     virtual RunStats run_stats() const noexcept { return {}; }
 
+    /// Worst offender of a diverged advance() (issue #156 R3). The substep
+    /// retry loop shrinks dt away from CFL violations, but a dt-INDEPENDENT
+    /// amplification fails all retries identically and the loop then accepts
+    /// the diverged step — after which nothing downstream said a word: the
+    /// published heads stay under the engine's absurd-value bound for a long
+    /// time while the physics is garbage (P6 finding F3: 30 of 118 study
+    /// series beyond 10x the observed range, every run status OK).
+    struct Divergence {
+        int         link  = -1;       ///< engine link index of the offender
+        double      value = 0.0;      ///< offending magnitude (internal units)
+        const char* what  = nullptr;  ///< "velocity (ft/s)" | "depth (ft)"
+    };
+
+    /// True when the last advance() left a cell beyond physical bounds (or
+    /// non-finite), with @p d describing the worst offender. Default: never
+    /// reports, for a backend without the check.
+    virtual bool divergence(Divergence& d) const noexcept {
+        (void)d;
+        return false;
+    }
+
     /// True once initialize() has completed and the solver is ready.
     virtual bool is_initialized() const noexcept = 0;
 };
