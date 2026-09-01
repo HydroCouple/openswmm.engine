@@ -572,3 +572,74 @@ TEST(HeatSourcesApiTest, EveryHeatSectionRoundTripsFieldByField) {
                "caught only here";
     }
 }
+
+// ---------------------------------------------------------------------------
+// The bound-series NAME getters — G4g's recorded gap. The set half existed
+// (swmm_heat_set_shortwave_timeseries / _set_cloud_timeseries) with no read
+// half, so the heat editor could rebind a series but only display "(keep
+// current series)" for the one already bound. Four legs: bound names come
+// back exactly, unbound reads "", a rebind through the API is reflected,
+// and a one-byte buffer truncates to "" without writing past its end.
+// ---------------------------------------------------------------------------
+TEST(HeatSourcesApiTest, BoundTimeseriesNamesAreReadable) {
+    write_file("_hs_tsn.heat",
+               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n\n"
+               "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_ts\n");
+    write_file("_hs_tsn.inp",
+               "[TITLE]\nts-name getters\n\n[OPTIONS]\n"
+               "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+               "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+               "END_DATE 01/01/2026\nEND_TIME 00:30:00\n"
+               "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n"
+               "[TIMESERIES]\nsw_ts 01/01/2026 00:00 700.0\n"
+               "sw_ts 01/02/2026 00:00 700.0\n"
+               "cloud_ts 01/01/2026 00:00 0.5\n"
+               "cloud_ts 01/02/2026 00:00 0.5\n"
+               "alt_ts 01/01/2026 00:00 100.0\n"
+               "alt_ts 01/02/2026 00:00 100.0\n\n"
+               "[PROCESS_COMPONENTS]\n"
+               "org.hydrocouple.openswmm.heat config=\"_hs_tsn.heat\"\n\n"
+               "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\n\n"
+               "[OUTFALLS]\nOUT 7.0 FREE NO\n\n"
+               "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
+               "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
+               "[REPORT]\nINPUT NO\n");
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_hs_tsn.inp", "_hs_tsn.rpt", "_hs_tsn.out",
+                               nullptr), SWMM_OK);
+
+    char buf[64];
+    ASSERT_EQ(swmm_heat_get_shortwave_timeseries(e, buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "sw_ts") << "the deck bound sw_ts";
+    ASSERT_EQ(swmm_heat_get_cloud_timeseries(e, buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "cloud_ts") << "the deck bound cloud_ts";
+
+    // A rebind through the set half is visible through the get half.
+    ASSERT_EQ(swmm_heat_set_shortwave_timeseries(e, "alt_ts"), SWMM_OK);
+    ASSERT_EQ(swmm_heat_get_shortwave_timeseries(e, buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "alt_ts");
+
+    // A one-byte buffer must come back as "" — truncated, terminated, and
+    // nothing written past the end.
+    char tiny[2] = {'x', 'x'};
+    ASSERT_EQ(swmm_heat_get_cloud_timeseries(e, tiny, 1), SWMM_OK);
+    EXPECT_EQ(tiny[0], '\0');
+    EXPECT_EQ(tiny[1], 'x') << "wrote past the end of a 1-byte buffer";
+
+    EXPECT_EQ(swmm_heat_get_shortwave_timeseries(e, nullptr, 8),
+              SWMM_ERR_BADPARAM);
+    swmm_engine_destroy(e);
+
+    // Unbound reads "": a fresh BUILDING engine has bound nothing.
+    SWMM_Engine b = swmm_engine_new();
+    ASSERT_NE(b, nullptr);
+    buf[0] = 'x';
+    ASSERT_EQ(swmm_heat_get_shortwave_timeseries(b, buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "") << "no binding must read as the empty string";
+    ASSERT_EQ(swmm_heat_get_cloud_timeseries(b, buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "");
+    swmm_engine_destroy(b);
+}

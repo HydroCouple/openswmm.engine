@@ -164,6 +164,16 @@ SWMM_ENGINE_API int swmm_heat_set_shortwave_mode(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_heat_set_shortwave_timeseries(SWMM_Engine engine,
                                                        const char* name);
 
+/** @brief Name of the `[TIMESERIES]` bound as the shortwave record, or ""
+ *         when none is bound. NUL-terminated, truncated to `buflen`.
+ *  @details The read half `swmm_heat_set_shortwave_timeseries` never had —
+ *           an editor could rebind a series but only display "(keep current
+ *           series)" for the one already bound (the G4g gap, recorded
+ *           2026-08-31). Valid in every mode: the binding survives a switch
+ *           to CONSTANT or COMPUTED, exactly as the parser's does. */
+SWMM_ENGINE_API int swmm_heat_get_shortwave_timeseries(SWMM_Engine engine,
+                                                       char* buf, int buflen);
+
 /** @brief Resolved incoming shortwave at the CURRENT step, W/m², cloud
  *         already applied. Read-only: this is state, not configuration.
  *         0 before the first step, and whenever radiative exchange is off. */
@@ -208,6 +218,13 @@ SWMM_ENGINE_API int swmm_heat_set_cloud(SWMM_Engine engine, int param,
  *  @returns ::SWMM_ERR_BADPARAM if no timeseries of that name exists. */
 SWMM_ENGINE_API int swmm_heat_set_cloud_timeseries(SWMM_Engine engine,
                                                    const char* name);
+
+/** @brief Name of the `[TIMESERIES]` bound as the cloud-fraction record, or
+ *         "" when none is bound. NUL-terminated, truncated to `buflen`.
+ *  @details The shortwave getter's sibling — see
+ *           ::swmm_heat_get_shortwave_timeseries. */
+SWMM_ENGINE_API int swmm_heat_get_cloud_timeseries(SWMM_Engine engine,
+                                                   char* buf, int buflen);
 
 /** @brief Clear `[CLOUD_COVER]` entirely — back to clear sky.
  *  @details Restores the exact H3 longwave path, not an approximation of
