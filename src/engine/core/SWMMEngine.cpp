@@ -71,6 +71,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <mutex>       // call_once: process-global one-time init, see open()
 #include "ErrorCodes.hpp"
 
 // libomp's KMP_BLOCKTIME override — declared here at file scope because
@@ -277,10 +278,23 @@ int SWMMEngine::open(const char* inp_path,
     // 2D mesh handling directly above: fatal on strict open, recorded and
     // survivable on lenient (editor) open. Implemented components register
     // first (idempotent — overwrites the planned-id placeholder).
-    transport::registerReactionsComponent();
-    transport::registerArdComponent();
-    transport::registerWaterAgeComponent();
-    transport::registerHeatComponent();
+    //
+    // ONCE per process, not once per open(). ProcessComponentRegistry is a
+    // singleton whose header states it is not thread-safe for registration
+    // ("register at startup only"), and register_component() move-assigns a
+    // heap-allocated std::string description over the existing map node. Two
+    // engines opening on different threads therefore both freed the same
+    // string buffer — the `malloc(): unaligned tcache chunk detected` abort in
+    // ConcurrentEngines.TwoInstancesDeterministic. Registration is idempotent
+    // (same four ids, same data every time), so hoisting it to a one-time init
+    // is behaviour-preserving for a single engine and removes the race.
+    static std::once_flag process_components_registered;
+    std::call_once(process_components_registered, [] {
+        transport::registerReactionsComponent();
+        transport::registerArdComponent();
+        transport::registerWaterAgeComponent();
+        transport::registerHeatComponent();
+    });
     {
         std::string base_dir;
         if (inp_path && inp_path[0] != '\0')
@@ -6129,8 +6143,19 @@ void SWMMEngine::initHydraulics() noexcept {
                 (ctx_.options.num_threads != 1 || dw_forced > 1) &&
                 dw_forced != 1;
             if (dw_threading_possible) {
-                setenv("OMP_WAIT_POLICY", "active", 0);
-                setenv("KMP_BLOCKTIME", "infinite", 0);
+                // setenv() is not thread-safe in glibc: adding a name reallocs
+                // the environ array and frees the old block, while ~30 getenv()
+                // call sites on the routing hot path read it concurrently. Two
+                // engines starting on different threads double-freed that block.
+                // libomp reads the environment once at lazy runtime init, so
+                // doing this on the first engine to get here is sufficient —
+                // the values do not vary per engine. kmp_set_blocktime below
+                // stays per-call: it is a runtime call, not an environment write.
+                static std::once_flag omp_wait_policy_set;
+                std::call_once(omp_wait_policy_set, [] {
+                    setenv("OMP_WAIT_POLICY", "active", 0);
+                    setenv("KMP_BLOCKTIME", "infinite", 0);
+                });
 #if defined(KMP_VERSION_MAJOR)
                 // libomp extension: set spin-wait blocktime on the calling
                 // (master) thread; workers forked by it inherit the setting.

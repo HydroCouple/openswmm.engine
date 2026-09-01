@@ -71,8 +71,19 @@ void buildTables(TransectData& td) {
 
     // add vertical end-walls reaching full height (legacy transect_validate)
     int N = n_in;
-    std::vector<double> X(static_cast<size_t>(N) + 2);
-    std::vector<double> Y(static_cast<size_t>(N) + 2);
+    // N+3, not N+2: getFlow() below reads X[k+1] at k == Nsta == N+1 when the
+    // right-bank branch is taken, which is one past the last written element.
+    // Legacy indexes fixed `static double Station[MAXSTATION+1]` arrays, so the
+    // same read lands on zero-initialised slack rather than out of bounds — the
+    // trailing element here is value-initialised to 0.0 to match it.
+    //
+    // Reachable only when accumulated `y` overshoots ymax by a rounding step,
+    // so the last end-wall segment is not skipped by `ylo >= y`. That made it a
+    // silent over-read on Linux and an abort on the Windows debug STL
+    // ("vector subscript out of range", exit 0xc0000409) — dependent on the
+    // deck: 7-station flood-plain transects trip it, 3-station V-notches do not.
+    std::vector<double> X(static_cast<size_t>(N) + 3);
+    std::vector<double> Y(static_cast<size_t>(N) + 3);
     X[0] = td.stations[0];              Y[0] = ymax;
     for (int i = 0; i < N; ++i) {
         X[static_cast<size_t>(i + 1)] = td.stations[static_cast<size_t>(i)];
