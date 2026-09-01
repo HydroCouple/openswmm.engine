@@ -751,5 +751,11 @@ mass-balance accounting are implemented in
 during quality initialization in `src/engine/core/SWMMEngine.cpp`, and
 the C API entry points are declared in @ref openswmm_quality.h.
 
-
-
+@note The transport model described in this chapter — one or more
+continuously stirred tanks per link — remains the default and is
+unchanged. OpenSWMM additionally provides two engines that resolve
+concentration *along* a conduit rather than treating it as fully mixed:
+an Eulerian finite-volume engine and a Lagrangian parcel-tracking
+engine, both described in @ref quality_ref_ch7_ard_transport. They are
+selected with `[OPTIONS] QUALITY_SOLVER` and share this chapter's
+external loads, treatment expressions and mass-balance ledger.
