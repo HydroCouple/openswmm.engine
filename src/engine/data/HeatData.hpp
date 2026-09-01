@@ -56,9 +56,11 @@
 #ifndef OPENSWMM_ENGINE_DATA_HEAT_DATA_HPP
 #define OPENSWMM_ENGINE_DATA_HEAT_DATA_HPP
 
+#include <limits>
 #include <vector>
 
-#include "BedZoneData.hpp"   // SedimentConfig — H6b's bed zone configuration
+#include "BedZoneData.hpp"      // SedimentConfig — H6b's bed zone configuration
+#include "HeatOverrideData.hpp" // HeatElement / HeatAttr / HeatScope — PE
 
 namespace openswmm {
 
@@ -248,11 +250,57 @@ struct RadiativeConfig {
     double atm_emiss_coeff = 0.5;   ///< Brunt Aa
     double lw_reflection   = 0.03;  ///< RL
 
+    /**
+     * @brief Land-cover radiating temperature, °C. NaN ⇒ use air temperature.
+     *
+     * @details PE2. `RadiativeExchange` computed the land-cover longwave
+     *          term from AIR temperature and its own header recorded that as
+     *          a departure from the reference, which carries a per-element
+     *          `landCoverTemperature`. The consequence is a daytime
+     *          understatement: a sunlit canopy or a concrete wall runs well
+     *          above air temperature and radiates accordingly.
+     *
+     *          The NaN sentinel — not a plausible number — is what keeps
+     *          every pre-PE model bit-identical and makes "the deck set
+     *          this" distinguishable from "the deck did not", the
+     *          `configured_source[]` distinction one struct over. A default
+     *          of, say, 20.0 would be indistinguishable from a deliberate
+     *          20 °C and would change every existing answer.
+     */
+    double landcover_temp = std::numeric_limits<double>::quiet_NaN();
+
     /// H6a. CONSTANT keeps `shortwave_wm2` load-bearing and is the default,
     /// so an H3-era deck is unaffected.
     ShortwaveMode sw_mode = ShortwaveMode::CONSTANT;
     /// Index into `ctx.tables` under TIMESERIES; -1 otherwise.
     int sw_ts_index = -1;
+};
+
+/**
+ * @brief Dense per-element attribute storage (PE2, D-PE2).
+ *
+ * @details Sized ONLY when at least one override row targets the family.
+ *          `radiativeFor`/`sedimentFor` return the global when the vector is
+ *          empty, so a model without overrides allocates nothing and passes
+ *          the same object it passed before PE — byte-identity is structural
+ *          rather than tested.
+ *
+ * @warning Do not size these unconditionally "for uniformity". That single
+ *          change would move every heat deck in the corpus, and it would do
+ *          it by writing globals into a vector that then reads back as
+ *          per-element configuration.
+ */
+struct HeatOverrideData {
+    std::vector<HeatOverrideRow> rows;   ///< as parsed; the serializer's input
+
+    std::vector<RadiativeConfig> rad_link;   ///< [link], empty ⇒ use global
+    std::vector<RadiativeConfig> rad_node;   ///< [node], empty ⇒ use global
+    std::vector<SedimentConfig>  sed_link;   ///< [link], empty ⇒ use global
+
+    bool resolved = false;
+
+    bool empty() const noexcept { return rows.empty(); }
+    void clear() { *this = HeatOverrideData{}; }
 };
 
 /**
@@ -315,6 +363,10 @@ struct HeatConfigData {
     /// streambed sediment (HTSComponent, 1670/1807). Sharing them would make
     /// one number stand for two materials.
     SedimentConfig sediment;
+
+    /// PE2 — per-element overrides for `radiative` and `sediment` above.
+    /// Empty on every model that does not use them.
+    HeatOverrideData overrides;
 
     /// `[SOLAR_RADIATION]` — only consulted under `ShortwaveMode::COMPUTED`
     /// (plan §2.5, phase H6a).

@@ -113,8 +113,20 @@ typedef enum SWMM_ForcingType {
     SWMM_FORCE_CLIMATE_WIND        = 9,  /**< System-wide; idx ignored. */
     SWMM_FORCE_SUBCATCH_SNOWFALL   = 10,
     SWMM_FORCE_CLIMATE_EVAP        = 11, /**< System-wide; idx ignored. */
-    SWMM_FORCE_LINK_QUALITY        = 12
+    SWMM_FORCE_LINK_QUALITY        = 12,
+    /* PE4 — per-ELEMENT climate. `idx` is the element index and the kind is
+       given separately; see swmm_forcing_element_climate. */
+    SWMM_FORCE_ELEM_AIR_TEMPERATURE = 13,
+    SWMM_FORCE_ELEM_HUMIDITY        = 14,
+    SWMM_FORCE_ELEM_WIND_SPEED      = 15,
+    SWMM_FORCE_ELEM_SHORTWAVE       = 16
 } SWMM_ForcingType;
+
+/** @brief Which element a per-element climate forcing targets (PE4). */
+typedef enum SWMM_HeatElemKind {
+    SWMM_HEAT_ELEM_NODE = 0,
+    SWMM_HEAT_ELEM_LINK = 1
+} SWMM_HeatElemKind;
 
 /* =========================================================================
  * Node forcing
@@ -423,6 +435,64 @@ SWMM_ENGINE_API int swmm_forcing_gage_rainfall(
  * @returns SWMM_OK or error code.
  * @ingroup engine_forcing
  */
+/* =========================================================================
+ * PE4 — per-element climate
+ *
+ * Air temperature, humidity, wind and incoming shortwave are GLOBAL in every
+ * deck and per-element ONLY here. There is no deck syntax for per-element
+ * meteorology at any phase, deliberately: `ClimateState` is shared with
+ * hydrology, snowmelt and evaporation, so a hand-maintained file that could
+ * set a per-conduit air temperature would assert something the snowpack on
+ * the subcatchment above permanently disagrees with. A caller of THIS API is
+ * a coupled driver asserting the heterogeneity per step and answerable for
+ * it — which is how the reference works too: HydroCouple's RHEComponent and
+ * CSHComponent receive per-element meteorology through EXCHANGE ITEMS.
+ *
+ * Values are resolved AT THE FLUX CALL, never written into the climate
+ * state, so a per-link push cannot reach snowmelt or evaporation.
+ * ========================================================================= */
+
+/**
+ * @brief Prescribe a climate variable for ONE element.
+ *
+ * @details Only LINK and NODE are accepted. Neither has a competing consumer
+ *          for air temperature — snowmelt runs on subcatchments, evaporation
+ *          on subcatchment and storage surfaces — so no subsystem divergence
+ *          is possible. A subcatchment DOES have competing consumers, so
+ *          there is deliberately no subcatchment spelling here; that would
+ *          be a distributed-climate feature, not a heat-transport one.
+ *
+ * @param kind      SWMM_HeatElemKind.
+ * @param index     Element index within that kind.
+ * @param variable  One of the SWMM_FORCE_ELEM_* channels.
+ * @param value     Air temperature °F/°C by unit system, humidity %,
+ *                  wind mph/kph, shortwave W/m².
+ * @param mode      SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD. **ADD is
+ *                  usually what a coupled driver wants**: a model that knows
+ *                  a reach runs 2 °C cooler than the gauge pushes ADD -2 and
+ *                  never needs the gauge value.
+ * @param persist   SWMM_FORCING_RESET or SWMM_FORCING_PERSIST. **RESET is
+ *                  the right default for a driver that pushes every step.**
+ *                  Under PERSIST, a driver that pushes on some steps and not
+ *                  others silently reuses a stale field that looks like data
+ *                  and is hours old; under RESET the value falls back to the
+ *                  global broadcast the moment the driver stops feeding it.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM for an unsupported kind/channel.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_element_climate(
+    SWMM_Engine engine, int kind, int index, int variable, double value,
+    int mode, int persist);
+
+/**
+ * @brief Read back a per-element climate forcing.
+ * @param mode  Receives SWMM_FORCING_NONE when nothing is set.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_element_climate_get(
+    SWMM_Engine engine, int kind, int index, int variable, double* value,
+    int* mode);
+
 SWMM_ENGINE_API int swmm_forcing_clear(SWMM_Engine engine, int type, int idx);
 
 /**

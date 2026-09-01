@@ -65,13 +65,15 @@ XSectParams buildXsp(const LinkData& links, std::size_t uk) {
 
 }  // namespace
 
-double netFluxOut(const SimulationContext& ctx, double t_w) noexcept {
+double netFluxOut(const SimulationContext& ctx,
+                  const HeatElement& elem, double t_w) noexcept {
     // Every family, one sign convention (positive OUT of the water), one
     // sum. H6b's SEDIMENT_EXCHANGE is a fourth term on this line.
     //
     // H6a deliberately adds NO term here: it changes where `Jin` comes from
     // inside radiativeFluxOut, not how many families are summed.
-    return surfaceFluxOut(ctx, t_w) + radiativeFluxOut(ctx, t_w);
+    return surfaceFluxOut(ctx, elem, t_w) +
+           radiativeFluxOut(ctx, elem, t_w);
 }
 
 void applyHeatFluxes(SimulationContext& ctx, double dt) {
@@ -105,9 +107,14 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     // One relaxation per element against the SUMMED flux. Stepping each
     // module separately is what made the answer depend on module order —
     // see the header.
-    const auto step = [&](double t_w, double area_ft2, double vol_ft3) {
-        return relaxT(netFluxOut(ctx, t_w),
-                      netFluxOut(ctx, t_w + kProbeC), kProbeC,
+    // PE1: the element travels with the temperature. A binding that dropped
+    // it would silently read the global block for every element, which is
+    // exactly the pre-PE behaviour and therefore invisible to a gate that
+    // only checks "did the answer change" — see the PE handoff's falsifier.
+    const auto step = [&](const HeatElement& e, double t_w, double area_ft2,
+                          double vol_ft3) {
+        return relaxT(netFluxOut(ctx, e, t_w),
+                      netFluxOut(ctx, e, t_w + kProbeC), kProbeC,
                       area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM,
                       dt, rho, cp);
     };
@@ -128,7 +135,9 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
             &ctx.node_subtypes);
         if (!(area_ft2 > 0.0)) continue;
 
-        hs.node_temp[ui] += step(hs.node_temp[ui], area_ft2, vol_ft3);
+        hs.node_temp[ui] +=
+            step(HeatElement::node(i), hs.node_temp[ui], area_ft2,
+                 vol_ft3);
     }
 
     // ---- Links. Open conduits only, area = top width x length x barrels,
@@ -173,9 +182,11 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
             const BedCoupling g = bedCouplingForLink(ctx, j, vol_ft3, t_gr);
             if (g.viable()) {
                 const double t_w = hs.link_temp[uj];
+                const HeatElement le = HeatElement::link(j);
                 const PairStep s = relaxPair(
-                    g, t_w, ctx.bed_state.link_temp[uj], netFluxOut(ctx, t_w),
-                    netFluxOut(ctx, t_w + kProbeC), kProbeC,
+                    g, t_w, ctx.bed_state.link_temp[uj],
+                    netFluxOut(ctx, le, t_w),
+                    netFluxOut(ctx, le, t_w + kProbeC), kProbeC,
                     area_ft2 * kSqFtToSqM, dt);
                 hs.link_temp[uj]             += s.dt_w;
                 ctx.bed_state.link_temp[uj]  += s.dt_b;
@@ -184,7 +195,8 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
         }
 
         if (!(area_ft2 > 0.0)) continue;
-        hs.link_temp[uj] += step(hs.link_temp[uj], area_ft2, vol_ft3);
+        hs.link_temp[uj] += step(HeatElement::link(j),
+                                 hs.link_temp[uj], area_ft2, vol_ft3);
     }
 }
 

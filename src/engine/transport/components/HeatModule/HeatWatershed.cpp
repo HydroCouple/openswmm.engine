@@ -248,8 +248,15 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 // such copy in the program, and copies of exactly this sum
                 // are how the LEGACY node/link path ended up relaxing each
                 // module separately toward a different equilibrium.
+                // PE1: a subarea is scoped to its SUBCATCHMENT. There is
+                // no per-subcatchment radiative override table (a
+                // watershed's shading is a land-cover input this program
+                // models elsewhere), so this resolves to the global — but
+                // the token is passed rather than defaulted so the call
+                // site says WHICH element it means.
+                const HeatElement er = HeatElement::subcatch(i);
                 const auto net_out = [&](double tw) {
-                    return heat::netFluxOut(ctx, tw);
+                    return heat::netFluxOut(ctx, er, tw);
                 };
                 // Both flux families are signed POSITIVE OUT of the water, so
                 // they add. There is exactly one sign flip in this program

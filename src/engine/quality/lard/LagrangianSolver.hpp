@@ -112,6 +112,7 @@
 #include "../../hydraulics/Node.hpp"
 #include "../../transport/components/HeatFluxModules/BedExchange.hpp"
 #include "../../transport/components/HeatFluxModules/HeatFluxes.hpp"
+#include "../../transport/components/HeatFluxModules/HeatOverrides.hpp"
 #include "../../transport/components/HeatFluxModules/SolarRadiation.hpp"
 #include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
 #include "../QualityRouting.hpp"
@@ -752,9 +753,10 @@ private:
                     unit_sys, &ctx.node_subtypes);
                 if (!(a > 0.0)) continue;
                 const double t = hs.node_temp[un];
+                const HeatElement ne = HeatElement::node(n);
                 hs.node_temp[un] += th::relaxT(
-                    th::netFluxOut(ctx, t),
-                    th::netFluxOut(ctx, t + th::kProbeC), th::kProbeC,
+                    th::netFluxOut(ctx, ne, t),
+                    th::netFluxOut(ctx, ne, t + th::kProbeC), th::kProbeC,
                     a * kSqFt, vol * kCuFt, dt, rho, cp);
             }
         }
@@ -783,6 +785,10 @@ private:
             if (!(vol_ft3 > 0.0)) continue;
 
             store_.mean_conc(l, scratch_.data());
+            // PE1: every parcel of a conduit shares the conduit's
+            // attributes (D-PE1) — the bed and the shading belong to the
+            // pipe, not to the water passing through it.
+            const HeatElement le = HeatElement::link(l);
 
             // Heat: one pair/relaxation against the mean, uniform dT.
             if (heat_on) {
@@ -793,13 +799,16 @@ private:
                 double d_tw = 0.0;
                 bool bed_stepped = false;
                 if (bed_on && ul < bed.link_temp.size()) {
+                    // PE2: this link's own bed material and boundary.
+                    const auto& sd = th::sedimentFor(ctx, le);
                     const th::BedCoupling g = th::bedCouplingFromContact(
-                        ctx, th::linkBedAreaM2(ctx, l), vol_ft3, t_gr);
+                        ctx, sd, th::linkBedAreaM2(ctx, l), vol_ft3,
+                        th::groundTempFor(ctx, sd, t_gr));
                     if (g.viable()) {
                         const th::PairStep ps = th::relaxPair(
                             g, t_mean, bed.link_temp[ul],
-                            flux_on ? th::netFluxOut(ctx, t_mean) : 0.0,
-                            flux_on ? th::netFluxOut(ctx,
+                            flux_on ? th::netFluxOut(ctx, le, t_mean) : 0.0,
+                            flux_on ? th::netFluxOut(ctx, le,
                                                      t_mean + th::kProbeC)
                                     : 0.0,
                             flux_on ? th::kProbeC : 0.0, surf_m2, dt);
@@ -810,8 +819,8 @@ private:
                 }
                 if (!bed_stepped && flux_on && surf_m2 > 0.0) {
                     d_tw = th::relaxT(
-                        th::netFluxOut(ctx, t_mean),
-                        th::netFluxOut(ctx, t_mean + th::kProbeC),
+                        th::netFluxOut(ctx, le, t_mean),
+                        th::netFluxOut(ctx, le, t_mean + th::kProbeC),
                         th::kProbeC, surf_m2, vol_ft3 * kCuFt, dt, rho, cp);
                 }
                 if (d_tw != 0.0)
@@ -823,11 +832,12 @@ private:
 
             // Solutes: pair against the mean, uniform dc, per bed row.
             if (bed_on && n_bed > 0) {
+                // PE2: same per-link config the heat pair above used, so the
+                // two halves of one bed cannot disagree about its material.
+                const auto& sd = th::sedimentFor(ctx, le);
                 const double bed_m2 = th::linkBedAreaM2(ctx, l);
-                const double vol_b =
-                    bed_m2 * ctx.heat_config.sediment.bed_thickness;
-                const double q_exch =
-                    th::bedExchangeQ(ctx.heat_config.sediment, bed_m2);
+                const double vol_b = bed_m2 * sd.bed_thickness;
+                const double q_exch = th::bedExchangeQ(sd, bed_m2);
                 if (q_exch > 0.0 && vol_b > 0.0) {
                     for (int b = 0; b < n_bed; ++b) {
                         // Bed row b: pollutants 0..np-1 map directly, MSX

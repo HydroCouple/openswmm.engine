@@ -71,6 +71,8 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP
 
+#include "../../../data/HeatOverrideData.hpp"   // HeatElement (PE1)
+
 namespace openswmm {
 struct SimulationContext;
 }
@@ -90,8 +92,17 @@ namespace openswmm::transport::heat {
  *          own element geometry but must compose the flux identically — the
  *          alternative being four hand-rolled copies of the same sum, which
  *          is the duplication that produced the defect above.
+ *
+ *          **PE1: `elem` names WHICH element is being evaluated**, so a
+ *          module can read per-element attributes (shading, sky view, bed
+ *          properties) instead of one global block. Passing a default-
+ *          constructed `HeatElement` yields the global config — which is
+ *          exactly what every caller got before PE — so a binding that
+ *          forgets to pass its element degrades to the old behaviour rather
+ *          than reading element 0's attributes.
  */
-double netFluxOut(const SimulationContext& ctx, double t_w) noexcept;
+double netFluxOut(const SimulationContext& ctx,
+                  const HeatElement& elem, double t_w) noexcept;
 
 /**
  * @brief Apply one step of surface heat exchange to every exchanging

@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstddef>
 
+#include "HeatOverrides.hpp"   // sedimentFor — PE2
 #include "SurfaceExchange.hpp"
 #include "../../../core/SimulationContext.hpp"
 #include "../../../data/TableData.hpp"
@@ -237,13 +238,23 @@ double bedExchangeQ(const SedimentConfig& cfg, double bed_m2) noexcept {
            cfg.hyporheic_velocity * bed_m2;
 }
 
+double groundTempFor(const SimulationContext& ctx, const SedimentConfig& sc,
+                     double t_gr_global) noexcept {
+    // The TIMESERIES spelling is GLOBAL-only by grammar, so when one is
+    // configured it IS the boundary everywhere; otherwise each element's
+    // resolved constant is (per-element rows included, and identical to the
+    // global on a model with none).
+    return (ctx.heat_config.sediment.ground_ts_index >= 0) ? t_gr_global
+                                                           : sc.ground_temp;
+}
+
 BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
+                                   const SedimentConfig& sc,
                                    double bed_m2, double vol_ft3,
                                    double t_gr) noexcept {
     BedCoupling g{};
     if (!(bed_m2 > 0.0) || !(vol_ft3 > 0.0)) return g;
 
-    const auto&  sc       = ctx.heat_config.sediment;
     const double rho_cp_s = sc.sed_density * sc.sed_specific_heat;  // J/m3/K
     const double y_bed    = sc.bed_thickness;
     const double y_gr     = sc.ground_depth;
@@ -272,8 +283,11 @@ BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
 BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
                                double vol_ft3, double t_gr) noexcept {
     if (!(vol_ft3 > 0.0)) return BedCoupling{};
-    return bedCouplingFromContact(ctx, linkBedAreaM2(ctx, link), vol_ft3,
-                                  t_gr);
+    // PE2: the link's own bed attributes. On a model with no overrides this
+    // is the very global object the pre-PE code read.
+    const SedimentConfig& sc = sedimentFor(ctx, HeatElement::link(link));
+    return bedCouplingFromContact(ctx, sc, linkBedAreaM2(ctx, link), vol_ft3,
+                                  groundTempFor(ctx, sc, t_gr));
 }
 
 // ---------------------------------------------------------------------------
@@ -326,15 +340,10 @@ void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc,
         bed.n_species = n_total;
     }
 
-    const auto&  sc = ctx.heat_config.sediment;
     const int    nl = ctx.n_links();
     const auto   na = static_cast<std::size_t>(n_arr);
     const auto   nt = static_cast<std::size_t>(n_total);
     const auto   off = static_cast<std::size_t>(offset);
-    // One lookup per STEP, not per link — the ground temperature is GLOBAL
-    // scope and a per-link lookup would advance the series cursor N times.
-    // (Solutes do not read t_gr; the seed inside seedBedTemperature does.)
-    (void)sc;
 
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
@@ -345,9 +354,13 @@ void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc,
         const double bed_m2 = linkBedAreaM2(ctx, j);
         if (!(bed_m2 > 0.0)) continue;
 
+        // PE2: this link's bed material — thickness and exchange rates may
+        // be overridden per element, and the solute store's volume must
+        // agree with the heat pair's about the same bed.
+        const SedimentConfig& sc = sedimentFor(ctx, HeatElement::link(j));
         const double vol_w  = vol_ft3 * kCuFtToCuM;
-        const double vol_b  = bed_m2 * ctx.heat_config.sediment.bed_thickness;
-        const double q_exch = bedExchangeQ(ctx.heat_config.sediment, bed_m2);
+        const double vol_b  = bed_m2 * sc.bed_thickness;
+        const double q_exch = bedExchangeQ(sc, bed_m2);
         if (!(q_exch > 0.0) || !(vol_b > 0.0)) continue;
 
         for (std::size_t s = 0; s < na; ++s) {

@@ -70,6 +70,8 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_RADIATIVE_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_RADIATIVE_EXCHANGE_HPP
 
+#include "../../../data/HeatOverrideData.hpp"   // HeatElement (PE1)
+
 namespace openswmm {
 struct SimulationContext;
 struct RadiativeConfig;
@@ -132,7 +134,8 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
 /// its own element traversal and its own explicit conversion, and that is
 /// how it came to relax separately from SurfaceExchange toward a different
 /// equilibrium — making the answer depend on which module ran last.
-double radiativeFluxOut(const SimulationContext& ctx, double t_w) noexcept;
+double radiativeFluxOut(const SimulationContext& ctx,
+                        const HeatElement& elem, double t_w) noexcept;
 
 }  // namespace openswmm::transport::heat
 
