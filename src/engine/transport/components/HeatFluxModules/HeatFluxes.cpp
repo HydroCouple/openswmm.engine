@@ -27,6 +27,7 @@
 
 #include <cstddef>
 
+#include "BedExchange.hpp"
 #include "RadiativeExchange.hpp"
 #include "SolarRadiation.hpp"
 #include "SurfaceExchange.hpp"
@@ -75,10 +76,20 @@ double netFluxOut(const SimulationContext& ctx, double t_w) noexcept {
 
 void applyHeatFluxes(SimulationContext& ctx, double dt) {
     if (!ctx.options.heat_transport) return;
+    const bool bed_on = bedExchangeEnabled(ctx);
     if (!ctx.heat_config.surface_exchange &&
-        !ctx.heat_config.radiative_exchange)
+        !ctx.heat_config.radiative_exchange && !bed_on)
         return;
     if (!(dt > 0.0)) return;
+    // H6b: seed the bed and resolve the deep-ground temperature ONCE per
+    // step, beside `updateSolarForcing` and for the same reason — both are
+    // GLOBAL-scope forcings whose timeseries cursors must not be advanced
+    // once per element.
+    double t_gr = 0.0;
+    if (bed_on) {
+        seedBedTemperature(ctx);
+        t_gr = groundTemperature(ctx);
+    }
 
     // H6a: resolve this step's Jin and cloud fraction BEFORE any flux call.
     // `netFluxOut` is const and reads the cache; nothing downstream can
@@ -132,20 +143,47 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
 
         const int cr = ctx.link_subtypes.conduit_row(j);
         if (cr < 0) continue;                       // regulators have no surface
-        const auto ucr = static_cast<std::size_t>(cr);
-        if (!xsect::isOpen(ctx.links.xsect_batch_shape[uj])) continue;
 
-        double length = CD.length[ucr];
-        if (!(length > 0.0)) length = CD.mod_length[ucr];
-        if (!(length > 0.0)) continue;
+        // H6b: a CLOSED conduit has no free surface but it does have a bed,
+        // so the open-conduit test can no longer gate the whole iteration —
+        // it gates the surface AREA only. A full pipe reaches this loop with
+        // `area_ft2 == 0` and is stepped by its bed terms alone, which is
+        // exactly the case the reference's top-width spelling would have
+        // switched off (BedZoneData.hpp divergence 1).
+        double area_ft2 = 0.0;
+        if (xsect::isOpen(ctx.links.xsect_batch_shape[uj])) {
+            const auto ucr = static_cast<std::size_t>(cr);
+            double length = CD.length[ucr];
+            if (!(length > 0.0)) length = CD.mod_length[ucr];
+            const double depth = ctx.links.depth[uj];
+            if (length > 0.0 && depth > 0.0) {
+                const auto xs = buildXsp(ctx.links, uj);
+                const double top_width = xsect::getWofY(xs, depth);
+                if (top_width > 0.0)
+                    area_ft2 = top_width * length * CD.barrels[ucr];
+            }
+        }
 
-        const double depth = ctx.links.depth[uj];
-        if (!(depth > 0.0)) continue;
-        const auto xs = buildXsp(ctx.links, uj);
-        const double top_width = xsect::getWofY(xs, depth);
-        if (!(top_width > 0.0)) continue;
+        // H6b: the bed is a SECOND BODY, not another term — see
+        // BedExchange.hpp. When it is present the pair is relaxed
+        // SIMULTANEOUSLY against the same `j0`/`j1` probe the single body
+        // would have used; stepping them one after the other is D-H5e's
+        // defect and this is the one place it could be reintroduced.
+        if (bed_on && uj < ctx.bed_state.link_temp.size()) {
+            const BedCoupling g = bedCouplingForLink(ctx, j, vol_ft3, t_gr);
+            if (g.viable()) {
+                const double t_w = hs.link_temp[uj];
+                const PairStep s = relaxPair(
+                    g, t_w, ctx.bed_state.link_temp[uj], netFluxOut(ctx, t_w),
+                    netFluxOut(ctx, t_w + kProbeC), kProbeC,
+                    area_ft2 * kSqFtToSqM, dt);
+                hs.link_temp[uj]             += s.dt_w;
+                ctx.bed_state.link_temp[uj]  += s.dt_b;
+                continue;
+            }
+        }
 
-        const double area_ft2 = top_width * length * CD.barrels[ucr];
+        if (!(area_ft2 > 0.0)) continue;
         hs.link_temp[uj] += step(hs.link_temp[uj], area_ft2, vol_ft3);
     }
 }

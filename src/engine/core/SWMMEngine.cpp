@@ -352,6 +352,40 @@ int SWMMEngine::open(const char* inp_path,
                     "is applied this simulation.");
             }
         }
+        // H6b: the bed / hyporheic zone binds to the LEGACY link store only.
+        // Under ARD and LARD it does NOT run, and it says so by name — the
+        // E1-era rule that a silent no-result configuration is never allowed.
+        //
+        // The reason it is engine-specific and the age/heat mirrors are not:
+        // those write their own per-node/per-link state, while the bed
+        // exchanges IN PLACE with whatever array the engine holds channel
+        // concentrations in. `ctx.links.conc` is that array under LEGACY;
+        // ARD holds cells and LARD holds parcels, and the mapping from a
+        // per-link bed onto either is a modelling decision (which cell does
+        // the bed under a 400 ft conduit exchange with?) rather than a
+        // wiring one. It is the first item of the H6b handoff.
+        if (ctx_.heat_config.sediment_exchange && !ctx_.options.ignore_quality &&
+            ctx_.options.quality_solver != QualitySolverKind::LEGACY) {
+            ctx_.warnings.push_back(
+                "[HEAT_FLUXES] SEDIMENT_EXCHANGE is ON but QUALITY_SOLVER is "
+                "not LEGACY — the bed/hyporheic zone binds to the LEGACY link "
+                "store only. No bed conduction, deep-ground conduction or "
+                "hyporheic exchange is applied this simulation.");
+        }
+
+        // H6b: the ground temperature is usually the LARGEST term acting on
+        // a buried pipe, and it has a default. An unstated one is therefore
+        // warned, not refused — the `SolarConfig::has_timezone` precedent,
+        // not the `has_latitude` one.
+        if (ctx_.heat_config.sediment_exchange &&
+            !ctx_.heat_config.sediment.has_ground_temp) {
+            ctx_.warnings.push_back(
+                "[SEDIMENT_EXCHANGE] GROUND_TEMPERATURE is not set; the "
+                "default 12 degC is in force. For a buried conduit this term "
+                "is often the largest one in the energy balance, so the "
+                "default is unlikely to be what you meant.");
+        }
+
         // X3a: the LARD stepping keys are consumed by no other engine —
         // the inverse bypass direction (E3 lesson 10: config spelled for
         // one engine while another runs).

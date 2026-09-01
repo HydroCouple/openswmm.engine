@@ -380,6 +380,122 @@ void applyHeatSections(SimulationContext& ctx,
 
         // H6a (D-H6a-2). ONE fraction, TWO modules — shortwave attenuation
         // and the longwave emissivity correction both read it.
+        // H6b — the bed / hyporheic zone. Every key is GLOBAL scope: the
+        // reference takes these per element from a coupled subsurface model
+        // and SWMM has no such supplier, so a per-element spelling would be
+        // a table nothing could fill. Rows are '<KEY> GLOBAL <value>', the
+        // same shape [CLOUD_COVER] and [RADIATIVE_FLUXES] already use.
+        if (sec.first == "SEDIMENT_EXCHANGE") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                if (toks.size() < 3 || upper(toks[1]) != "GLOBAL") {
+                    errors.push_back(
+                        "[SEDIMENT_EXCHANGE] expects '<param> GLOBAL "
+                        "<value>': '" + line + "'.");
+                    continue;
+                }
+                auto& sd = ctx.heat_config.sediment;
+                const std::string k = upper(toks[0]);
+
+                // GROUND_TEMPERATURE is the one key with a TIMESERIES
+                // spelling: a deep-ground boundary that varies seasonally is
+                // the ordinary case, while a bed thickness that varies with
+                // time is not a thing a deck means.
+                if (k == "GROUND_TEMPERATURE") {
+                    if (upper(toks[2]) == "TIMESERIES") {
+                        if (toks.size() != 4) {
+                            errors.push_back(
+                                "[SEDIMENT_EXCHANGE] GROUND_TEMPERATURE "
+                                "GLOBAL TIMESERIES takes a series name: '" +
+                                line + "'.");
+                            continue;
+                        }
+                        const int ts = ctx.find_timeseries(toks[3]);
+                        if (ts < 0) {
+                            errors.push_back(
+                                "[SEDIMENT_EXCHANGE] TIMESERIES '" + toks[3] +
+                                "' is not a [TIMESERIES] in the model.");
+                            continue;
+                        }
+                        sd.ground_ts_index  = ts;
+                        sd.has_ground_temp  = true;
+                        continue;
+                    }
+                }
+
+                double v = 0.0;
+                if (toks.size() != 3 || !parse_finite(toks[2], v)) {
+                    errors.push_back(
+                        "[SEDIMENT_EXCHANGE] " + toks[0] + " '" + toks[2] +
+                        "' is not a finite number.");
+                    continue;
+                }
+
+                // Lengths, diffusivities and material properties are refused
+                // at zero or below rather than clamped: every one of them is
+                // a DIVISOR or a capacity in BedExchange.cpp, and a silently
+                // repaired zero would produce an infinite conductance or a
+                // massless bed that tracks the water exactly — both of which
+                // look like a working model.
+                const auto positive = [&](double& dst) {
+                    if (!(v > 0.0)) {
+                        errors.push_back("[SEDIMENT_EXCHANGE] " + toks[0] +
+                                         " must be greater than zero, got " +
+                                         toks[2] + ".");
+                        return;
+                    }
+                    dst = v;
+                };
+
+                if (k == "THERMAL_DIFFUSIVITY")           positive(sd.thermal_diffusivity);
+                else if (k == "SOLUTE_DIFFUSIVITY") {
+                    // The one quantity for which zero is meaningful: it
+                    // selects advection-only transient storage, which is a
+                    // configuration a tracer study deliberately runs.
+                    if (v < 0.0)
+                        errors.push_back("[SEDIMENT_EXCHANGE] "
+                                         "SOLUTE_DIFFUSIVITY cannot be "
+                                         "negative, got " + toks[2] + ".");
+                    else sd.solute_diffusivity = v;
+                }
+                else if (k == "BED_THICKNESS")            positive(sd.bed_thickness);
+                else if (k == "GROUND_DEPTH")             positive(sd.ground_depth);
+                else if (k == "SEDIMENT_DENSITY")         positive(sd.sed_density);
+                else if (k == "SEDIMENT_SPECIFIC_HEAT")   positive(sd.sed_specific_heat);
+                else if (k == "HYPORHEIC_VELOCITY") {
+                    // Zero is the default and means conduction only. A
+                    // NEGATIVE exchange velocity has no reading — the
+                    // exchange is symmetric and its direction is set by the
+                    // temperature difference, not by a sign here.
+                    if (v < 0.0)
+                        errors.push_back("[SEDIMENT_EXCHANGE] "
+                                         "HYPORHEIC_VELOCITY cannot be "
+                                         "negative: the exchange direction "
+                                         "follows the gradient, not this "
+                                         "sign. Got " + toks[2] + ".");
+                    else sd.hyporheic_velocity = v;
+                }
+                else if (k == "GROUND_TEMPERATURE") {
+                    sd.ground_temp     = v;
+                    sd.ground_ts_index = -1;
+                    sd.has_ground_temp = true;
+                }
+                else if (k == "INITIAL_TEMPERATURE") {
+                    sd.initial_temp     = v;
+                    sd.has_initial_temp = true;
+                }
+                else {
+                    errors.push_back(
+                        "[SEDIMENT_EXCHANGE] unknown parameter '" + toks[0] +
+                        "' (THERMAL_DIFFUSIVITY, SOLUTE_DIFFUSIVITY, "
+                        "BED_THICKNESS, GROUND_DEPTH, GROUND_TEMPERATURE, "
+                        "HYPORHEIC_VELOCITY, SEDIMENT_DENSITY, "
+                        "SEDIMENT_SPECIFIC_HEAT, INITIAL_TEMPERATURE).");
+                }
+            }
+            continue;
+        }
+
         if (sec.first == "CLOUD_COVER") {
             for (const auto& line : sec.second) {
                 const auto toks = tokenize(line);
@@ -531,16 +647,14 @@ void applyHeatSections(SimulationContext& ctx,
                 } else if (mod == "LAYER_CONDUCTION") {
                     ctx.heat_config.layer_conduction = on;
                 } else if (mod == "SEDIMENT_EXCHANGE") {
-                    errors.push_back(
-                        "[HEAT_FLUXES] SEDIMENT_EXCHANGE arrives with plan "
-                        "phase H6 (HTS two-layer storage). H4 is the ARD "
-                        "mesh binding.");
+                    ctx.heat_config.sediment_exchange = on;   // H6b
                 } else {
                     errors.push_back(
                         "[HEAT_FLUXES] unknown module '" + toks[0] +
                         "' (SURFACE_EXCHANGE in H2, RADIATIVE_EXCHANGE in "
                         "H3, DRY_ELEMENT_TEMPERATURE in H5a, "
-                        "LAYER_CONDUCTION in H5b).");
+                        "LAYER_CONDUCTION in H5b, SEDIMENT_EXCHANGE in "
+                        "H6b).");
                 }
             }
             continue;
@@ -549,8 +663,8 @@ void applyHeatSections(SimulationContext& ctx,
             errors.push_back(
                 "model.heat: unknown section [" + sec.first +
                 "] (recognized: [HEAT_SOURCES], [HEAT_FLUXES], "
-                "[RADIATIVE_FLUXES], [SOLAR_RADIATION], [CLOUD_COVER]). "
-                "Sediment sections arrive with H6b.");
+                "[RADIATIVE_FLUXES], [SOLAR_RADIATION], [CLOUD_COVER], "
+                "[SEDIMENT_EXCHANGE]).");
             continue;
         }
         for (const auto& line : sec.second) {
@@ -789,6 +903,11 @@ static_assert(sizeof(RadiativeConfig) == 72,
 static_assert(sizeof(SolarConfig) == 88,
               "SolarConfig changed: teach saveHeatConfig its new field, "
               "then update this size pin");
+// H6b. Compiler-measured, not hand-computed — IO3b's record notes the first
+// hand computation was wrong twice, which is the whole point of asking.
+static_assert(sizeof(SedimentConfig) == 88,
+              "SedimentConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
 static_assert(sizeof(CloudConfig) == 40,
               "CloudConfig changed: teach saveHeatConfig its new field, "
               "then update this size pin");
@@ -821,6 +940,7 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
     if (cfg.surface_exchange)   flux += "SURFACE_EXCHANGE ON\n";
     if (cfg.radiative_exchange) flux += "RADIATIVE_EXCHANGE ON\n";
     if (cfg.layer_conduction)   flux += "LAYER_CONDUCTION ON\n";
+    if (cfg.sediment_exchange)  flux += "SEDIMENT_EXCHANGE ON\n";   // H6b
     if (!flux.empty()) out += "[HEAT_FLUXES]\n" + flux + "\n";
 
     // [RADIATIVE_FLUXES] — H3's scalars plus H6a's three SHORTWAVE
@@ -926,6 +1046,52 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
         if (c.lw_cloud_k != cd.lw_cloud_k)
             cl += "LW_CLOUD_K GLOBAL " + fmt_degc(c.lw_cloud_k) + "\n";
         if (!cl.empty()) out += "[CLOUD_COVER]\n" + cl + "\n";
+    }
+
+    // [SEDIMENT_EXCHANGE] — H6b. Rendered in the SAME round that added the
+    // section, deliberately. IO3a shipped a renderer that did not know about
+    // H6a's sections and every radiative deck would have lost its
+    // configuration on first save (lesson 201); adding a config struct and
+    // its serializer together is the only shape in which that cannot recur.
+    {
+        const SedimentConfig sd{};
+        const auto& s = cfg.sediment;
+        std::string bed;
+        if (s.thermal_diffusivity != sd.thermal_diffusivity)
+            bed += "THERMAL_DIFFUSIVITY GLOBAL " +
+                   fmt_degc(s.thermal_diffusivity) + "\n";
+        if (s.solute_diffusivity != sd.solute_diffusivity)
+            bed += "SOLUTE_DIFFUSIVITY GLOBAL " +
+                   fmt_degc(s.solute_diffusivity) + "\n";
+        if (s.bed_thickness != sd.bed_thickness)
+            bed += "BED_THICKNESS GLOBAL " + fmt_degc(s.bed_thickness) + "\n";
+        if (s.ground_depth != sd.ground_depth)
+            bed += "GROUND_DEPTH GLOBAL " + fmt_degc(s.ground_depth) + "\n";
+        if (s.hyporheic_velocity != sd.hyporheic_velocity)
+            bed += "HYPORHEIC_VELOCITY GLOBAL " +
+                   fmt_degc(s.hyporheic_velocity) + "\n";
+        if (s.sed_density != sd.sed_density)
+            bed += "SEDIMENT_DENSITY GLOBAL " + fmt_degc(s.sed_density) + "\n";
+        if (s.sed_specific_heat != sd.sed_specific_heat)
+            bed += "SEDIMENT_SPECIFIC_HEAT GLOBAL " +
+                   fmt_degc(s.sed_specific_heat) + "\n";
+        // Both temperatures are emitted on `has_*`, not on a value
+        // comparison: 12 °C is a perfectly ordinary deliberate choice and
+        // the flags are the only record that the user made it. This is the
+        // `configured_source` distinction, one struct over.
+        if (s.has_ground_temp) {
+            if (s.ground_ts_index >= 0 &&
+                s.ground_ts_index < static_cast<int>(ctx.tables.count()))
+                bed += "GROUND_TEMPERATURE GLOBAL TIMESERIES " +
+                       ctx.tables[s.ground_ts_index].id + "\n";
+            else
+                bed += "GROUND_TEMPERATURE GLOBAL " +
+                       fmt_degc(s.ground_temp) + "\n";
+        }
+        if (s.has_initial_temp)
+            bed += "INITIAL_TEMPERATURE GLOBAL " +
+                   fmt_degc(s.initial_temp) + "\n";
+        if (!bed.empty()) out += "[SEDIMENT_EXCHANGE]\n" + bed + "\n";
     }
 
     // Empty still means DECLINE (a model with no heat configuration at all
