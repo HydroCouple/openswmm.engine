@@ -922,10 +922,11 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "RULE_STEP") val = std::to_string(static_cast<long long>(opt.rule_step));
     else if (k == "DRY_DAYS")  val = std::to_string(opt.dry_days);
 
-    // Sweep day-of-year → MM/DD via year-2000 anchor (matches the
-    // OptionsHandler parser's convention).
+    // Sweep day-of-year → MM/DD via the NON-leap year-2001 anchor (matches
+    // OptionsHandler's parser and InpWriter's fmt_sweep — the 2000 anchor
+    // was the leap-year half of the SWEEP_END 12/31→1/1 drift).
     else if (k == "SWEEP_START") {
-        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+        const auto dt = openswmm::datetime::encodeDate(2001, 1, 1)
                       + (opt.sweep_start - 1);
         int y, m, d;
         openswmm::datetime::decodeDate(dt, y, m, d);
@@ -934,7 +935,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         val = tmp;
     }
     else if (k == "SWEEP_END") {
-        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+        const auto dt = openswmm::datetime::encodeDate(2001, 1, 1)
                       + (opt.sweep_end - 1);
         int y, m, d;
         openswmm::datetime::decodeDate(dt, y, m, d);
@@ -1299,7 +1300,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         std::from_chars(sp, se, sd);
         if (sm < 1 || sm > 12 || sd < 1 || sd > 31) return SWMM_ERR_BADPARAM;
         const int doy = openswmm::datetime::dayOfYear(
-            openswmm::datetime::encodeDate(2000,
+            openswmm::datetime::encodeDate(2001,   // non-leap: see the getter
                                            static_cast<int>(sm),
                                            static_cast<int>(sd)));
         if (k == "SWEEP_START") opt.sweep_start = doy;

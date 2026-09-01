@@ -127,7 +127,10 @@ static void fmt_step(char (&buf)[N], double secs) {
 // Format a day-of-year integer as M/D (no leading zeros, matching legacy GUI)
 template<std::size_t N>
 static void fmt_sweep(char (&buf)[N], int doy) {
-    // Anchor to a non-leap year to get a stable month/day
+    // Anchor to a non-leap year to get a stable month/day. Clamp 366 (a
+    // value only the retired leap-year parse anchor could store, e.g. in a
+    // GeoPackage saved before the fix) to 12/31 instead of wrapping to 1/1.
+    if (doy > 365) doy = 365;
     double dt = datetime::encodeDate(2001, 1, 1) + static_cast<double>(doy - 1);
     int y, m, d;
     datetime::decodeDate(dt, y, m, d);
@@ -2342,10 +2345,17 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"DIMENSIONS %-18.4f %-18.4f %-18.4f %-18.4f\n",
         ctx.spatial.map_x1, ctx.spatial.map_y1,
         ctx.spatial.map_x2, ctx.spatial.map_y2);
-    // "Units" (mixed case) matches legacy GUI keyword exactly.
-    // Always written; defaults to "None" when unspecified.
-    const char* map_units = ctx.spatial.map_units.empty()
-                            ? "None" : ctx.spatial.map_units.c_str();
+    // "Units" (mixed case) matches legacy GUI keyword exactly. The VALUE is
+    // written in the legacy GUI's mixed case too, mapped from the parser's
+    // uppercase canonical — writing the canonical directly made the second
+    // save differ from the first ("None" → "NONE"), the gen2→gen3 drift the
+    // H6b save check caught. Always written; defaults to "None".
+    const std::string& mu = ctx.spatial.map_units;
+    const char* map_units = "None";
+    if      (mu == "FEET")    map_units = "Feet";
+    else if (mu == "METERS")  map_units = "Meters";
+    else if (mu == "DEGREES") map_units = "Degrees";
+    else if (!mu.empty() && mu != "NONE") map_units = mu.c_str();
     std::fprintf(f,"Units      %s\n", map_units);
     }
 
