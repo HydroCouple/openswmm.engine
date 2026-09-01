@@ -544,3 +544,111 @@ TEST(HeatArdBindingTest, SurfaceFluxIsAppliedOncePerRoutingStep) {
                "still be applied once for the whole routing step, so the "
                "hour's cooling cannot depend on the step.";
 }
+
+// ---------------------------------------------------------------------------
+// Gate 7 — the integrator, not the flux: a steady thin sheet under hot air
+// must stay inside the interval its own temperatures span.
+//
+// The cell and node-store steps shipped as forward Euler (`-J·A·dt/(ρ cp V)`)
+// while HEAT_TRANSPORT_PLAN §6.3 recorded them as already correct — the
+// SUMMING was correct, the STEPPING was not (found while reading for H6b,
+// its handoff §3). Forward Euler\'s factor is `1 − k·dt` with
+// `k ≈ J′/(ρ cp h)`: on a millimetre-scale film at a large fixed routing
+// step `k·dt` crosses 2 and the temperature oscillates with growing
+// amplitude — D-H5d\'s `5 → 182 → −1.8e4 → NaN` family, one binding over.
+//
+// The deck holds a PERMANENT 0.001 cfs trickle (steady ~1 mm sheet — no
+// draining, so the separate CFL-starvation defect in the advection stage,
+// recorded in the round\'s evidence, cannot be the thing that moves) under
+// 40 degC air with a 25 mph wind at a fixed 300 s step, entering at 5 degC.
+// Water sitting between 5 and 40 degC can never read below 4: under relaxT
+// the step cannot leave [T0, T_eq]. Under Euler the downward swings crash
+// into the transport\'s max(0, mass) clamp and the upstream links sit at a
+// LITERAL 0 degC — colder than anything in the system, which is the
+// fails-at-base reading (0 is a floor artifact, not a temperature; the same
+// deck without the clamp reads e+2 and beyond).
+// ---------------------------------------------------------------------------
+TEST(HeatArdBindingTest, ThinSheetAtALargeFixedStepStaysInsideItsOwnBounds) {
+    write_file("_h4d.heat",
+               "[HEAT_SOURCES]\n"
+               "EXTERNAL_INFLOW GLOBAL 5.0\n"
+               "INITIAL_STATE   GLOBAL 5.0\n\n"
+               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n");
+    write_file("_h4d.inp",
+               "[TITLE]\nARD thin-sheet integrator gate\n\n"
+               "[OPTIONS]\n"
+               "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
+               "HEAT_TRANSPORT ON\nQUALITY_SOLVER EULERIAN_ARD\n"
+               "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+               "END_DATE 01/01/2026\nEND_TIME 03:00:00\n"
+               "ROUTING_STEP 300\nREPORT_STEP 00:05:00\n"
+               // Fixed steps: the variable-step machinery would shrink dt
+               // and keep k*dt below the stability boundary.
+               "VARIABLE_STEP 0\n\n"
+               // 40 degC air; the strong steady wind is what makes the flux
+               // slope steep enough for k*dt to cross that boundary on a
+               // thin film — windless decks never bite.
+               "[TEMPERATURE]\nTIMESERIES air_ts\nHUMIDITY 50\n"
+               "WINDSPEED MONTHLY 25 25 25 25 25 25 25 25 25 25 25 25\n\n"
+               "[TIMESERIES]\nair_ts 01/01/2026 00:00 104.0\n"
+               "air_ts 01/02/2026 00:00 104.0\n"
+               "q_ts 01/01/2026 00:00 0.001\n"
+               "q_ts 01/02/2026 00:00 0.001\n\n"
+               "[JUNCTIONS]\n"
+               "J0 10.0 10 1.5 0 0\nJ1 9.4 10 1.5 0 0\nJ2 8.8 10 1.5 0 0\n\n"
+               "[OUTFALLS]\nOUT 8.0 FREE  NO\n\n"
+               "[CONDUITS]\n"
+               "C1 J0 J1  500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n"
+               "C3 J2 OUT 500 0.013 0 0 0\n\n"
+               "[XSECTIONS]\n"
+               "C1 RECT_OPEN 3.0 4.0 0 0\nC2 RECT_OPEN 3.0 4.0 0 0\n"
+               "C3 RECT_OPEN 3.0 4.0 0 0\n\n"
+               "[INFLOWS]\nJ0 FLOW q_ts FLOW 1.0 1.0\n\n"
+               "[PROCESS_COMPONENTS]\n"
+               "org.hydrocouple.openswmm.heat config=\"_h4d.heat\"\n\n"
+               "[REPORT]\nINPUT NO\n");
+
+    SWMM_Engine e = run_and_hold("_h4d.inp", "_h4d.rpt", "_h4d.out");
+    ASSERT_NE(e, nullptr);
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& lt = ctx.heat_state.link_temp;
+    const auto& nt = ctx.heat_state.node_temp;
+    ASSERT_FALSE(lt.empty());
+
+    // SETUP: the sheet must actually be thin, or k*dt never crossed the
+    // boundary and boundedness below is vacuous. ~1 mm at 0.001 cfs.
+    ASSERT_FALSE(ctx.links.depth.empty());
+    EXPECT_LT(ctx.links.depth.front(), 0.02)
+        << "C1 runs " << ctx.links.depth.front()
+        << " ft deep — not a thin film, so the explicit step was never "
+           "stressed and this gate proves nothing";
+
+    // SETUP: the exchange must have acted — three hours under 40 degC air
+    // must warm the far end well above the 5 degC inflow.
+    EXPECT_GT(lt.back(), 15.0)
+        << "C3 reads " << lt.back()
+        << " degC after three hours under 40 degC air — the flux stage "
+           "never ran, so the bounds below are vacuous";
+
+    // The property: no element can leave the interval its own temperatures
+    // span. 4 = inflow minus tolerance; 41 = air plus tolerance. The
+    // at-base reading is a literal 0 degC on the upstream links (the Euler
+    // oscillation caught by the mass clamp) — colder than any water in the
+    // system.
+    for (std::size_t i = 0; i < lt.size(); ++i) {
+        EXPECT_TRUE(std::isfinite(lt[i]))
+            << "link " << i << " temperature is not finite: " << lt[i];
+        EXPECT_GE(lt[i], 4.0) << "link " << i << ": " << lt[i]
+            << " degC — below every temperature in the deck (the explicit "
+               "step\'s downward overshoot, clamp-masked at 0)";
+        EXPECT_LE(lt[i], 41.0) << "link " << i << ": " << lt[i]
+            << " degC — above every temperature in the deck";
+    }
+    for (std::size_t i = 0; i < nt.size(); ++i) {
+        EXPECT_TRUE(std::isfinite(nt[i]))
+            << "node " << i << " temperature is not finite: " << nt[i];
+        EXPECT_GE(nt[i], 4.0) << "node " << i << ": " << nt[i] << " degC";
+        EXPECT_LE(nt[i], 41.0) << "node " << i << ": " << nt[i] << " degC";
+    }
+    swmm_engine_destroy(e);
+}
