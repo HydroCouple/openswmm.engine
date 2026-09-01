@@ -3736,3 +3736,37 @@ TRACKED in both repos (user decision; the §8 debt carried twice).
   Caught only because the falsifier-marker count was part of the final
   cmp. Use arrays, newline loops, or python for multi-file restores;
   count falsifier markers as part of EVERY final verification.
+
+**2026-09-01 (later) — PE1+PE2+PE4 per-element heat attributes VALIDATED
+AND COMMITTED.** Shading, sky view, emissivities, land-cover temperature
+and the whole bed material vary per LINK/NODE/TAG (`GLOBAL < TAG <
+element`, precedence by construction); ARD cells and LARD parcels resolve
+to their parent link (D-PE1); per-element CLIMATE arrives only through
+the forcing API, resolved at the flux call, never written into
+ClimateState (§6.2). Serializer landed in the same round (D-PE8) and its
+NaN-sentinel emission test survived its falsifier. Corpus 23/23 twice
+(PE1-only stub AND full patch) against a REPAIRED base rig — see 222.
+
+- **(222) a base snapshot whose LC_RPATH points into the A/B build tree
+  is not a base snapshot** — by validation time that tree holds the
+  PATCHED dylib, dyld loads it first, and the corpus compares patched
+  with patched: 23/23 "identical" was VACUOUS. Caught because "base"
+  accepted a per-element row the base parser provably refuses. Repoint
+  the snapshot CLI's rpath at the snapshot dir itself
+  (`install_name_tool -rpath` + SONAME symlink + ad-hoc codesign) and
+  prove soundness with DYLD_PRINT_LIBRARIES showing exactly ONE engine
+  dylib. The DYLD_LIBRARY_PATH wrapper is retired for corpus work.
+- **(223) a config surface needs a physics-reader gate PER FAMILY —
+  "parsed, validated, serialized, read by nothing" shipped TWICE in one
+  changeset** (LANDCOVER_TEMPERATURE's accessor had no call site; the
+  entire sediment override table had no consumer). The syntax-only sweep
+  cannot catch it, and neither can any gate that only exercises the
+  resolution API — both were caught by gates that measure TEMPERATURE.
+  Corollary: a per-file syntax check cannot see CALLERS outside the
+  changeset (HeatLid.cpp was a sixth call site; two compile errors).
+- **(224) an observer can be INSULATED from the defect it pins** — gate
+  9's snowpack comparison stayed green under BOTH climate-contamination
+  falsifiers because the per-step climate broadcast heals the shared
+  state before snowmelt reads it. A consequence-level observable guarded
+  by intervening machinery pins nothing; pair it with a direct-state
+  observer (climate_state must hold the broadcast value after the run).

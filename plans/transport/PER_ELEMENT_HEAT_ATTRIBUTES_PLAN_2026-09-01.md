@@ -236,6 +236,15 @@ ambiguity and keeps every row self-describing when read out of context.
 
 ## 5. Phases
 
+> **STATUS 2026-09-01: PE1 + PE2 + PE4 VALIDATED AND COMMITTED** (one
+> merged round; the check re-bisected it via §1 of the handoff's stub —
+> PE1-only corpus 23/23, then the full patch 23/23). See the CHECK RECORD
+> in `PE_PER_ELEMENT_HANDOFF_2026-09-01.md` for the six fixes (two REAL:
+> both of the parsed-but-never-read family) and the A/B-rig repair
+> (roadmap lesson 222). PE3 (per-element TIMESERIES), PE5 (computed
+> shading — recommendation stands: don't build), PE6 (API + GUI table)
+> and the wind-function coefficients remain OPEN.
+
 ### PE1 — identity plumbing, zero behaviour change
 
 - `HeatElement` in `HeatData.hpp`; `netFluxOut`, `surfaceFluxOut`,
