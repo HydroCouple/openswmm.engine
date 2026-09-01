@@ -43,6 +43,7 @@
 #include <vector>
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/PostParseResolver.hpp"
+#include "../transport/components/HeatFluxModules/HeatOverrides.hpp"  // PE2
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/ProcessComponentRegistry.hpp"
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
@@ -321,6 +322,15 @@ int SWMMEngine::open(const char* inp_path,
         // fallback) has run. Resolution failures are fatal like any other
         // component config error.
         transport::resolveArdTransportRows(ctx_, errs);
+
+        // PE2: per-element heat attributes resolve here for the SAME reason
+        // — the rows name links, nodes and tags, and every component plus
+        // the full .inp parse must be complete before a name can be
+        // resolved or reported as unknown (D-RQ1 timing, D-PE5 fatality).
+        {
+            auto pe = transport::heat::resolveHeatOverrides(ctx_);
+            for (auto& e : pe) errs.push_back(std::move(e));
+        }
 
         if (!errs.empty()) {
             for (const auto& e : errs) ctx_.errors.push_back(e);

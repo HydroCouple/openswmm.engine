@@ -70,6 +70,8 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP
 
+#include "../../../data/HeatOverrideData.hpp"   // HeatElement (PE1)
+
 namespace openswmm {
 struct SimulationContext;
 }
@@ -195,7 +197,8 @@ inline constexpr double kMphToMs = 0.44704;
  *      on whichever module ran last. Every flux family now sums into one
  *      `J(T)` before a single relaxation, in `HeatFluxes.cpp`.
  */
-double surfaceFluxOut(const SimulationContext& ctx, double t_w) noexcept;
+double surfaceFluxOut(const SimulationContext& ctx,
+                      const HeatElement& elem, double t_w) noexcept;
 
 }  // namespace openswmm::transport::heat
 

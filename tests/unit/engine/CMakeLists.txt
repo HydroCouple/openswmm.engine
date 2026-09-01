@@ -157,6 +157,8 @@ add_gtest_unit(test_engine_heat_ard_binding       test_heat_ard_binding.cpp)
 add_gtest_unit(test_engine_bed_exchange           test_bed_exchange.cpp)
 # 2026-09-01 closeout — five bindings, one gate each.
 add_gtest_unit(test_engine_quality_closeout_bindings test_quality_closeout_bindings.cpp)
+# PE1/PE2/PE4 — per-element heat attributes and per-element climate forcing.
+add_gtest_unit(test_engine_heat_per_element       test_heat_per_element.cpp)
 add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
 # In-place rename for snow packs / aquifers / inlets / streets / LID controls.
 # Without these APIs the GUI registries flushed a renamed object as a NEW one,

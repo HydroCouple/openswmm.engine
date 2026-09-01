@@ -36,6 +36,8 @@
 
 #include "RadiativeExchange.hpp"
 
+#include "HeatOverrides.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -124,14 +126,23 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
                                            cfg.atm_emiss_coeff,
                                            cfg.lw_reflection, cfg.sky_view,
                                            cloud_factor);
-    const double jlc = landCoverLongwave(t_air_c, cfg.emiss_landcover,
+    // PE2: the land cover radiates at ITS OWN temperature when the deck
+    // states one; NaN is the sentinel for "use air temperature", which is
+    // what this term did unconditionally before PE and what it still does
+    // for every model that does not set the key. (The check found the field
+    // parsed, validated and serialized but never read — this line is where
+    // it is read.)
+    const double t_lc_c = std::isnan(cfg.landcover_temp) ? t_air_c
+                                                         : cfg.landcover_temp;
+    const double jlc = landCoverLongwave(t_lc_c, cfg.emiss_landcover,
                                          cfg.sky_view);
     // Sign flip lives here and nowhere else: three terms warm the water,
     // one cools it, and this module's callers expect positive = OUT.
     return jbr - jsn - jan - jlc;
 }
 
-double radiativeFluxOut(const SimulationContext& ctx, double t_w) noexcept {
+double radiativeFluxOut(const SimulationContext& ctx,
+                        const HeatElement& elem, double t_w) noexcept {
     if (!ctx.options.heat_transport || !ctx.heat_config.radiative_exchange)
         return 0.0;
 
@@ -143,9 +154,23 @@ double radiativeFluxOut(const SimulationContext& ctx, double t_w) noexcept {
     // unchanged, and `cloudLongwaveFactor(0, k)` is a literal 1.0 which
     // `atmosphericEmissivity` then short-circuits.
     const auto& cc = ctx.heat_config.cloud;
+    // PE2: the per-element radiative block (shading, sky view, emissivities,
+    // land-cover temperature). Returns the GLOBAL object when this model has
+    // no overrides, so the call below is unchanged for every pre-PE deck.
+    const RadiativeConfig& rc = radiativeFor(ctx, elem);
+    // PE4: per-element climate, resolved at the flux call (see SurfaceExchange).
+    const double t_air_c =
+        (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature)
+         - 32.0) * 5.0 / 9.0;
+    const double rh = ctx.forcing.elementHumidity(elem,
+                          ctx.climate_state.humidity);
+    // PE4: a coupled shade model can push Jin per element outright; the deck
+    // states one incident resource and SHADE_FACTOR modulates it. Precedence
+    // is stated once, here: API element forcing > deck shade on global Jin.
+    const double jin = ctx.forcing.elementShortwave(elem,
+                           ctx.heat_state.shortwave_now);
     return netRadiativeFluxOut(
-        t_w, airTempCelsius(ctx), ctx.climate_state.humidity,
-        ctx.heat_config.radiative, ctx.heat_state.shortwave_now,
+        t_w, t_air_c, rh, rc, jin,
         cloudLongwaveFactor(ctx.heat_state.cloud_now, cc.lw_cloud_k));
 }
 

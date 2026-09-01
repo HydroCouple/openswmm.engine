@@ -196,9 +196,12 @@ SolutePairStep exchangePair(double c_w, double c_b, double vol_w,
  *          (which `relaxPair` treats as a no-op) for a dry link, a
  *          non-conduit, or a link whose perimeter cannot be formed.
  */
-///          `t_gr` is passed in rather than resolved here because it is
-///          GLOBAL scope: one timeseries lookup per STEP, not one per link.
-///          That is `updateSolarForcing`'s pattern and the reason it exists.
+///          `t_gr` is passed in rather than resolved here because the
+///          TIMESERIES lookup is GLOBAL scope: one lookup per STEP, not one
+///          per link. That is `updateSolarForcing`'s pattern and the reason
+///          it exists. PE2: the link's own SedimentConfig (per-element
+///          overrides included) is resolved INSIDE, so every caller of the
+///          link form gets per-element bed attributes without threading them.
 BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
                                double vol_ft3, double t_gr) noexcept;
 
@@ -211,10 +214,26 @@ BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
  *          beds would come to disagree about the same sediment. LEGACY and
  *          LARD go through `bedCouplingForLink` (link geometry); ARD
  *          computes its per-cell `bed_m2`/`vol_ft3` and calls this directly.
+ *
+ *          PE2: `sc` is the SedimentConfig in force for the element —
+ *          `sedimentFor(ctx, elem)`, or the global for a caller with no
+ *          element. The check found the handoff's draft resolving the
+ *          per-element table and never passing it to ANY bed reader: both
+ *          links of the per-tag gate cooled to the identical bit.
  */
 BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
+                                   const SedimentConfig& sc,
                                    double bed_m2, double vol_ft3,
                                    double t_gr) noexcept;
+
+/// PE2: the deep-ground temperature in force for ONE element. The global
+/// `GROUND_TEMPERATURE TIMESERIES` wins when configured — the TIMESERIES
+/// spelling is GLOBAL-only by grammar (per-element series are PE3/D-PE7) —
+/// otherwise the element's own resolved constant. For a model with no
+/// overrides `sc.ground_temp` IS the global constant, so this returns
+/// exactly what `groundTemperature` returned, by construction.
+double groundTempFor(const SimulationContext& ctx, const SedimentConfig& sc,
+                     double t_gr_global) noexcept;
 
 /// Total solute exchange discharge across a bed interface of `bed_m2`, m³/s:
 /// `D_sed·A/Y + v_hyp·A`. One spelling, used by every engine's solute loop.

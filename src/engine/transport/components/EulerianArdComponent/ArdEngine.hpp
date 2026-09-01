@@ -204,6 +204,12 @@ private:
     /// the reserved age/temperature rows are excluded by construction).
     void applyBedSoluteExchange(SimulationContext& ctx, double dt);
 
+    /// PE1: the LinkData index a cell belongs to, or -1. Cells resolve to
+    /// their parent link for per-element attribute lookup (D-PE1); -1 makes
+    /// the accessors fall back to the global, which is the safe answer for a
+    /// cell whose conduit row cannot be resolved.
+    int cellLink(std::size_t cell) const noexcept;
+
     /// H4: state row of the reserved __TEMPERATURE__ species — the LAST
     /// row, after age, matching the REPORTED column order fixed in H1 so a
     /// deck that adds heat to an age model does not move the age column.

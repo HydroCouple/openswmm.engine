@@ -443,8 +443,10 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
     const auto un = static_cast<std::size_t>(n);
 
     const double t_w  = ctx.heat_state.node_temp[un];
-    const double j0   = se::netFluxOut(ctx, t_w);
-    const double j1   = se::netFluxOut(ctx, t_w + se::kProbeC);
+    // PE1: flux evaluators take the element token; the node's identity here.
+    const openswmm::HeatElement he_n = openswmm::HeatElement::node(n);
+    const double j0   = se::netFluxOut(ctx, he_n, t_w);
+    const double j1   = se::netFluxOut(ctx, he_n, t_w + se::kProbeC);
     const double jp   = (j1 - j0) / se::kProbeC;
     ASSERT_GT(jp, 0.0);
 
@@ -515,8 +517,9 @@ TEST(HeatIntegratorTest, ASteadyNodeSitsWhereTheSUMMEDFluxVanishes) {
     ASSERT_FALSE(c2.heat_config.surface_exchange);
     ASSERT_TRUE(c2.heat_config.radiative_exchange);
     const double t2 = c2.heat_state.node_temp[un];
-    const double r0 = se::radiativeFluxOut(c2, t2);
-    const double r1 = se::radiativeFluxOut(c2, t2 + se::kProbeC);
+    const double r0 = se::radiativeFluxOut(c2, openswmm::HeatElement::node(n), t2);
+    const double r1 = se::radiativeFluxOut(c2, openswmm::HeatElement::node(n),
+                                           t2 + se::kProbeC);
     const double rp = (r1 - r0) / se::kProbeC;
     ASSERT_GT(rp, 0.0);
     // SETUP: the two answers must be far apart, or the assertion cannot tell
