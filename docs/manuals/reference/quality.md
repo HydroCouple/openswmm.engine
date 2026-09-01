@@ -118,5 +118,8 @@ Table 6-1. LID Control Parameters
 - @subpage quality_ref_ch4_surface_washoff — Chapter 4: Surface Washoff
 - @subpage quality_ref_ch5_transport_treatment — Chapter 5: Transport and Treatment
 - @subpage quality_ref_ch6_lid_controls — Chapter 6: Low Impact Development Controls
+- @subpage quality_ref_ch7_ard_transport — Chapter 7: Advection–Reaction–Dispersion Transport
+- @subpage quality_ref_ch8_msx_reactions — Chapter 8: Multi-Species Reactions
+- @subpage quality_ref_ch9_age_heat — Chapter 9: Water Age and Heat Transport
 - @subpage quality_ref_glossary — Glossary
 - @subpage quality_ref_references — References
