@@ -31,6 +31,7 @@
 #include "QualityRouting.hpp"
 
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
+#include "../transport/components/ReactionModule/MsxLegacyTransport.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/components/HeatFluxModules/BedExchange.hpp"
 #include "../transport/components/HeatModule/HeatLegacy.hpp"
@@ -73,8 +74,18 @@ bool loadersNeeded(int np, const SimulationContext& ctx) {
     // H1: heat needs the volume half for the same reason age does — a
     // temperature-only deck (no [POLLUTANTS]) is a supported configuration
     // and every mass loop is already a no-op at np == 0.
+    // R4b: and the MSX mirror is the FOURTH member of this family — an
+    // MSX-only deck (a reactions component, no [POLLUTANTS]) needs
+    // qual_vol_in zeroed and accumulated per step. Without this,
+    // assembleExternalLoads early-returns, the accumulator is never reset,
+    // v_in grows monotonically and routeLegacyMsx's mixing denominator
+    // diverges: the first run of the R4b gate read C3 at 2.5e-20 from
+    // exactly that. (The comment at the top of this function ALREADY
+    // recorded the 0.0-vs-8.0 version of this defect for ARD boundaries —
+    // same shape, fourth recurrence.)
     return np > 0 || transport::ardBoundariesNeedExternalVolumes(ctx) ||
-           ctx.options.water_age || ctx.options.heat_transport;
+           ctx.options.water_age || ctx.options.heat_transport ||
+           transport::legacyReactionsActive(ctx);
 }
 
 /// A1a: one loader's age-volume contribution — `q · age_source` (a RATE,
@@ -297,6 +308,14 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     assembleExternalLoads(ctx, dt);
     accumulateLinkLoads(ctx, dt);
     mixAtNodes(ctx, dt);
+    // R4b (transport half): MSX element state advects on the same CSTR
+    // mirror family as age and heat. It runs BEFORE the react stages —
+    // transport-then-react, the pollutant family's own order — because
+    // FORMULA's contract is that react is the LAST writer of a derived
+    // species. The first draft placed it after reactLegacyLinks and the
+    // FORMULA tracking gate promptly drifted by 4.3e-3: transport was
+    // mixing a value the formula had just pinned.
+    transport::routeLegacyMsx(ctx, dt);
     applyTreatment(ctx, dt);       // Treatment before decay (matching legacy order)
     // R4: with a reactions component configured, pollutant decay upgrades to
     // the exact exponential and MSX species react per element via the shared
@@ -337,10 +356,23 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     // `ctx.links.conc` is already [link * np + p], the layout
     // `applyBedSoluteExchange` documents, so the array is passed rather than
     // repacked. A repack would be a second layout to keep in agreement.
-    if (transport::heat::bedExchangeEnabled(ctx) &&
-        ctx.links.conc_n_pollutants > 0 && !ctx.links.conc.empty())
-        transport::heat::applyBedSoluteExchange(
-            ctx, ctx.links.conc.data(), ctx.links.conc_n_pollutants, dt);
+    //
+    // The bed carries ONE species set — pollutants then MSX — and LEGACY
+    // holds those in two arrays, so two calls with offsets into the same
+    // store. MSX rows exchange like the reference's solutes do
+    // (HTSComponent carries its transient-storage solutes generically).
+    if (transport::heat::bedExchangeEnabled(ctx)) {
+        const int np = ctx.links.conc_n_pollutants;
+        const int nm = ctx.reactions.n_species();
+        const int nt = (np > 0 ? np : 0) + (nm > 0 ? nm : 0);
+        if (np > 0 && !ctx.links.conc.empty())
+            transport::heat::applyBedSoluteExchange(
+                ctx, ctx.links.conc.data(), np, 0, nt, dt);
+        if (nm > 0 && !ctx.reactions.msx_link_conc.empty())
+            transport::heat::applyBedSoluteExchange(
+                ctx, ctx.reactions.msx_link_conc.data(), nm,
+                (np > 0 ? np : 0), nt, dt);
+    }
 }
 
 // ============================================================================
@@ -985,7 +1017,9 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
         auto uj = static_cast<std::size_t>(j);
         if (!treat.has_treatment[uj]) continue;
 
-        // 1. Compute inflow concentration: Cin[p] = mass_in[p] / vol_in
+        // 1. Compute inflow concentration: Cin[p] = mass_in[p] / vol_in.
+        //    (The LEGACY figures; the shared per-node body below is also the
+        //    LARD MIX's seam, fed with the solver's own inflow numbers.)
         double vol_in = nodes.qual_vol_in[uj];  // total inflow volume (ft3) this step
         double q_raw  = (dt > 0.0) ? vol_in / dt : 0.0;  // inflow rate (ft3/s)
         for (int p = 0; p < np; ++p) {
@@ -994,6 +1028,25 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
                 (vol_in > 0.0 && mi < nodes.qual_mass_in.size())
                 ? nodes.qual_mass_in[mi] / vol_in : 0.0;
         }
+        applyNodeTreatment(ctx, j, dt, q_raw, treat.cin.data());
+    }
+}
+
+void applyNodeTreatment(SimulationContext& ctx, int j, double dt,
+                        double q_raw, const double* cin) {
+    const int np = ctx.n_pollutants();
+    if (np <= 0) return;
+    auto& treat = ctx.treatment;
+    if (!treat.hasAny()) return;
+    auto& nodes = ctx.nodes;
+    const auto uj = static_cast<std::size_t>(j);
+    if (uj >= treat.has_treatment.size() || !treat.has_treatment[uj]) return;
+    {
+        // The caller's inflow concentrations become the process-variable
+        // inputs. `cin` may alias `treat.cin` (the LEGACY pass does).
+        if (cin != treat.cin.data())
+            for (int p = 0; p < np; ++p)
+                treat.cin[static_cast<std::size_t>(p)] = cin ? cin[p] : 0.0;
 
         // 2. Get node state for process variables — apply UCF conversions (Gap #16)
         // Matching legacy treatmnt.c getVariableValue():

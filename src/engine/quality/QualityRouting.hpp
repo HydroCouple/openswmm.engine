@@ -50,6 +50,28 @@ namespace quality {
 constexpr double ZERO_VOLUME = 0.0353147;  ///< 1 liter in ft3
 constexpr double ZERO_DEPTH  = 0.003281;   ///< 1 mm in ft
 
+/**
+ * @brief One node's [TREATMENT] application, against the CALLER's inflow
+ *        figures — the seam the LEGACY pass and the LARD MIX share.
+ *
+ * @details Evaluates the node's compiled expressions (removal- and
+ *          concentration-typed, with co-treatment resolution and cycle
+ *          detection), rewrites `nodes.conc` for every treated pollutant and
+ *          books the removed mass into `qual_routing_reacted`. The inflow
+ *          concentration and rate come from the CALLER because the two
+ *          engines hold them in different places: LEGACY accumulates
+ *          `qual_mass_in`/`qual_vol_in`, while LARD's node inflow lives in
+ *          its solver-internal drain accumulators — reading the LEGACY
+ *          arrays under LARD made an R-typed expression a literal no-op
+ *          (`cin` read 0, and `cOut = (c_in > 0) ? … : c_node` kept the
+ *          untreated value; P2.3's first draft shipped exactly that).
+ *
+ * @param q_in_cfs  Inflow rate feeding the node this interval, ft³/s.
+ * @param cin       Per-pollutant inflow concentration, length `np`.
+ */
+void applyNodeTreatment(SimulationContext& ctx, int node, double dt,
+                        double q_in_cfs, const double* cin);
+
 // ============================================================================
 // Quality solver
 // ============================================================================

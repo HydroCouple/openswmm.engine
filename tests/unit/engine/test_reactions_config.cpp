@@ -457,11 +457,16 @@ TEST_F(ReactionsConfigTest, NodeLinkQualityRowsConsumed) {
         const auto c1 = static_cast<std::size_t>(ctx.link_names.find("C1"));
         ASSERT_GE(rx.msx_node_conc.size(), (st + 1) * ns) << s.tag;
         ASSERT_GE(rx.msx_link_conc.size(), (c1 + 1) * ns) << s.tag;
-        // One 5 s step of real flow: 10% tolerance separates the override
+        // One 5 s step of real flow: the tolerance separates the override
         // from the 0.8 global by a wide margin (falsifier: both read 0.8).
+        // The LINK band widened 0.05 → 0.15 when R4b's transport landed
+        // (2026-09-01): one step now mixes a sliver of the upstream node's
+        // state into C1 (measured 0.5846), which is TRANSPORT, not a lost
+        // seed. The 0.8 global would read outside the band by 2x — the
+        // discriminator this gate exists for is intact.
         EXPECT_NEAR(rx.msx_node_conc[st * ns], 1.2, 0.12)
             << s.tag << ": storage-node override lost";
-        EXPECT_NEAR(rx.msx_link_conc[c1 * ns], 0.5, 0.05)
+        EXPECT_NEAR(rx.msx_link_conc[c1 * ns], 0.5, 0.15)
             << s.tag << ": link override lost (or only part of the conduit "
                         "was seeded)";
 

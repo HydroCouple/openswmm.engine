@@ -349,43 +349,17 @@ int SWMMEngine::open(const char* inp_path,
         // !ignore_quality condition: under IGNORE_QUALITY the stage is
         // skipped before the solver choice is consulted, and that
         // configuration's own warning family covers it.
-        if (ctx_.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
-            !ctx_.options.ignore_quality) {
-            // H7b (2026-08-30): temperature advances under LARD — the
-            // heat bypass warning is gone, not narrowed: the row takes
-            // RWPT dispersion too (the ARD engine's coefficient choice).
-            // L3 (2026-08-31): the reactions warning is GONE, not
-            // narrowed — MSX species ride the segments and react
-            // (LagrangianSolver stage 4b). Treatment remains the one
-            // LARD bypass and keeps its warning below.
-            if (ctx_.treatment.hasAny()) {
-                ctx_.warnings.push_back(
-                    "[TREATMENT] expressions are configured but "
-                    "QUALITY_SOLVER is LAGRANGIAN — treatment interop is "
-                    "not implemented under the LARD engine yet; no removal "
-                    "is applied this simulation.");
-            }
-        }
-        // H6b: the bed / hyporheic zone binds to the LEGACY link store only.
-        // Under ARD and LARD it does NOT run, and it says so by name — the
-        // E1-era rule that a silent no-result configuration is never allowed.
-        //
-        // The reason it is engine-specific and the age/heat mirrors are not:
-        // those write their own per-node/per-link state, while the bed
-        // exchanges IN PLACE with whatever array the engine holds channel
-        // concentrations in. `ctx.links.conc` is that array under LEGACY;
-        // ARD holds cells and LARD holds parcels, and the mapping from a
-        // per-link bed onto either is a modelling decision (which cell does
-        // the bed under a 400 ft conduit exchange with?) rather than a
-        // wiring one. It is the first item of the H6b handoff.
-        if (ctx_.heat_config.sediment_exchange && !ctx_.options.ignore_quality &&
-            ctx_.options.quality_solver != QualitySolverKind::LEGACY) {
-            ctx_.warnings.push_back(
-                "[HEAT_FLUXES] SEDIMENT_EXCHANGE is ON but QUALITY_SOLVER is "
-                "not LEGACY — the bed/hyporheic zone binds to the LEGACY link "
-                "store only. No bed conduction, deep-ground conduction or "
-                "hyporheic exchange is applied this simulation.");
-        }
+        // P2.3 (2026-09-01): treatment interop under LARD landed — the
+        // legacy evaluator runs on the published node concentrations after
+        // lard_.step, which ARE the LARD node stores (nodes.conc), so no
+        // absorb step exists the way ARD needs one. The LAST LARD bypass
+        // warning is GONE, not narrowed; this engine now runs every
+        // configured quality feature or refuses at parse.
+        // H6b bed bindings (2026-09-01): ALL THREE engines now carry the
+        // bed — LEGACY on links, ARD per cell (1:1 slices, the reference's
+        // own element mapping), LARD per link against the segment mean with
+        // uniform increments. The "binds to LEGACY only" warning that stood
+        // here is gone WITH its condition, not narrowed.
 
         // H6b: the ground temperature is usually the LARGEST term acting on
         // a buried pipe, and it has a default. An unstated one is therefore
@@ -3797,6 +3771,13 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             // reactions component do not run here yet — warned at open.
             quality_.assembleExternalLoads(ctx_, dt_routing);
             lard_.step(ctx_, dt_routing);
+            // P2.3: treatment applies INSIDE the solver's MIX (per node,
+            // this substep's own inflow figures, before RELEASE draws the
+            // treated state) — quality::applyNodeTreatment, the seam shared
+            // with the LEGACY pass. The handoff's end-of-step call here was
+            // a no-op twice over (cin read the LEGACY accumulators, and a
+            // junction's ~zero stored volume gave the late write no weight
+            // in the next mix) and its own gate caught it on first run.
         } else {
             quality_.execute(ctx_, dt_routing);
         }

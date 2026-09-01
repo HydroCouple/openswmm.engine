@@ -36,6 +36,7 @@
 #include "../../InitialQualitySeeds.hpp"
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
+#include "../HeatFluxModules/BedExchange.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
 #include "../HeatFluxModules/SolarRadiation.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
@@ -56,6 +57,17 @@ constexpr int kMaxSubsteps = 512;
 /// Below this store volume (ft3) a node holds no meaningful concentration —
 /// used to decide when a store has emptied rather than merely shrunk.
 constexpr double kMinStoreVol = 1.0e-9;
+/// Debt 216's containment band: the temperature row is exempt from the
+/// non-negativity floor (0 degC is an ordinary state, and flooring there
+/// silently pins sub-zero water at freezing) but NOT unbounded — the naked
+/// exemption let the near-dry store oscillation (the recorded CFL-starvation
+/// family) run temp-mass to +-1e62 where the floor used to eat its negative
+/// half. The band is the PARSER's own authoring range (parse_celsius,
+/// HeatComponent.cpp kMinTemp/kMaxTemp — the values MUST agree): any deck
+/// whose real temperatures live inside it is untouched, and a store outside
+/// it is numerically broken by the engine's own definition.
+constexpr double kTempFloorC = -50.0;
+constexpr double kTempCeilC  = 100.0;
 /// Legacy's ZERO_VOLUME (massbal.c): one litre, in ft3. Below this an
 /// element's mass/volume quotient is residue over residue — LEGACY treats
 /// the element as holding no water at all, which is why it stays bounded on
@@ -873,8 +885,16 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             }
             const double m = a_old * state_.cell_phi[sb * unc + uc] +
                              dt_sub * dm * inv_dx;
+            // Debt 216: the temperature row is EXEMPT from the
+            // non-negativity floor (its zero is 0 °C, an ordinary state —
+            // H7b's LARD row made the same call) but CLAMPED to the
+            // parser's own band instead: see kTempFloorC. Every genuine
+            // species row keeps the floor.
+            const double m_f = (s == temp_row_)
+                ? std::clamp(m, kTempFloorC * a_new, kTempCeilC * a_new)
+                : std::max(0.0, m);
             state_.cell_phi[sb * unc + uc] =
-                (a_new > k::kDryArea) ? std::max(0.0, m) / a_new
+                (a_new > k::kDryArea) ? m_f / a_new
                                       : state_.cell_phi[sb * unc + uc];
         }
         state_.cell_a[uc] = a_new;
@@ -916,10 +936,16 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         // adjoining conduit. Symptom was a 0.67 mg/L divergence confined to
         // the outfall-adjacent conduit's MSX rows while every pollutant row
         // stayed bit-identical.
-        for (int s = 0; s < ns; ++s)
-            node_mass_[und * uns + static_cast<std::size_t>(s)] =
-                std::max(0.0, node_mass_[und * uns +
-                                         static_cast<std::size_t>(s)]);
+        for (int s = 0; s < ns; ++s) {
+            auto& ms = node_mass_[und * uns + static_cast<std::size_t>(s)];
+            if (s == temp_row_) {
+                // debt 216 — the cell loop's band clamp, store edition.
+                const double v = node_vol_[und];
+                ms = std::clamp(ms, kTempFloorC * v, kTempCeilC * v);
+            } else {
+                ms = std::max(0.0, ms);
+            }
+        }
     }
 
     // 5. Structures (E2): pumps/orifices/weirs/outlets are zero-volume
@@ -1124,6 +1150,11 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
         node_vol_.data(), static_cast<int>(node_vol_.size()),
         ctx.n_pollutants(), state_.n_species, kMinStoreVol, temp_row_);
 
+    // H6b-ARD: bed/channel SOLUTE exchange, per cell, in the same Lie-split
+    // slot as the other source stages — after reactions so the bed sees the
+    // reacted concentrations (the LEGACY ordering: the bed runs last).
+    applyBedSoluteExchange(ctx, dt);
+
     publish(ctx);
 
     // E5b: per-cell sidecar rows (every routing step — see the header note).
@@ -1230,11 +1261,100 @@ void ArdEngine::writeDetailRows(SimulationContext& ctx) {
 ///          Node STORES take the same treatment as under LEGACY: only
 ///          storage nodes have a free surface (`kNodeStorage`), and their
 ///          state is a mass, so the flux converts to a mass change.
+// ---------------------------------------------------------------------------
+// applyBedSoluteExchange — H6b-ARD: per-cell transient-storage exchange
+// ---------------------------------------------------------------------------
+void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
+    if (!heat::bedExchangeEnabled(ctx) || !(dt > 0.0)) return;
+
+    // Exchanged rows are pollutants + MSX — everything BEFORE the reserved
+    // age/temperature rows, which are last by construction (init()). Age
+    // does not live in the bed (the reference carries no bed age) and
+    // temperature has its own pair inside applyHeatFluxes.
+    int n_exch = state_.n_species;
+    if (age_row_  >= 0) --n_exch;
+    if (temp_row_ >= 0) --n_exch;
+    if (n_exch <= 0) return;
+
+    auto& bed = ctx.bed_state;
+    const int ncells = mesh_.n_cells();
+    if (bed.cell_temp.size() != static_cast<std::size_t>(ncells) ||
+        bed.cell_n_species != n_exch) {
+        // Solutes seed at ZERO (BedExchange.cpp's reasoning); the
+        // temperature seed is preserved when only the species extent grows.
+        const auto& sd = ctx.heat_config.sediment;
+        const double t_keep =
+            (bed.cell_temp.size() == static_cast<std::size_t>(ncells) &&
+             !bed.cell_temp.empty())
+                ? bed.cell_temp[0]
+                : (sd.has_initial_temp ? sd.initial_temp : sd.ground_temp);
+        std::vector<double> keep_temp;
+        if (bed.cell_temp.size() == static_cast<std::size_t>(ncells))
+            keep_temp = bed.cell_temp;
+        bed.resizeCells(ncells, n_exch, t_keep);
+        if (!keep_temp.empty()) bed.cell_temp = std::move(keep_temp);
+    }
+
+    constexpr double kSqFtToSqM = 0.09290304;
+    constexpr double kCuFtToCuM = 0.028316846592;
+    const auto unc = static_cast<std::size_t>(ncells);
+    const auto une = static_cast<std::size_t>(n_exch);
+
+    for (std::size_t c = 0; c < unc; ++c) {
+        const auto gi = static_cast<std::size_t>(mesh_.cell_geom[c]);
+        if (gi >= mesh_.geom.size()) continue;
+        const auto& g = mesh_.geom[gi];
+        const double area_x = state_.cell_a[c];
+        if (!(area_x > 0.0)) continue;
+        const double vol_ft3 = area_x * mesh_.cell_dx[c];
+        if (!(vol_ft3 > 0.0)) continue;
+        const double h = fv::kernels::depthOfArea(g, area_x);
+        if (!(h > 0.0)) continue;
+        const double rh = fv::kernels::hydRadOfDepth(g, h);
+        if (!(rh > 0.0)) continue;
+        const double bed_m2 =
+            (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM;
+
+        const double vol_w  = vol_ft3 * kCuFtToCuM;
+        const double vol_b  = bed_m2 * ctx.heat_config.sediment.bed_thickness;
+        const double q_exch =
+            heat::bedExchangeQ(ctx.heat_config.sediment, bed_m2);
+        if (!(q_exch > 0.0) || !(vol_b > 0.0)) continue;
+
+        for (std::size_t sp = 0; sp < une; ++sp) {
+            double& cw = state_.cell_phi[sp * unc + c];
+            double& cb = bed.cell_conc[sp * unc + c];
+            const heat::SolutePairStep st =
+                heat::exchangePair(cw, cb, vol_w, vol_b, q_exch, dt);
+            cw += st.dc_w;
+            cb += st.dc_b;
+        }
+    }
+}
+
 void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     if (temp_row_ < 0 || !(dt > 0.0)) return;
+    const bool bed_on = heat::bedExchangeEnabled(ctx);
     const bool any = ctx.heat_config.surface_exchange ||
-                     ctx.heat_config.radiative_exchange;
+                     ctx.heat_config.radiative_exchange || bed_on;
     if (!any) return;
+
+    // H6b-ARD: per-CELL bed slices, 1:1 — the reference's own element
+    // mapping (BedZoneData.hpp). Seeded once, at the bed's configured
+    // initial temperature, NOT the water's (BedExchange.cpp's reasoning).
+    double t_gr = 0.0;
+    if (bed_on) {
+        auto& bed = ctx.bed_state;
+        const int ncells = mesh_.n_cells();
+        if (bed.cell_temp.size() != static_cast<std::size_t>(ncells) ||
+            !bed.cells_seeded) {
+            const auto& sd = ctx.heat_config.sediment;
+            bed.resizeCells(ncells, bed.cell_n_species,
+                            sd.has_initial_temp ? sd.initial_temp
+                                                : sd.ground_temp);
+        }
+        t_gr = heat::groundTemperature(ctx);
+    }
 
     // H6a: resolve this step's Jin and cloud fraction before any flux call.
     // Each of the four bindings does this in its own prologue — they run on
@@ -1268,7 +1388,6 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         const auto gi = static_cast<std::size_t>(mesh_.cell_geom[c]);
         if (gi >= mesh_.geom.size()) continue;
         const auto& g = mesh_.geom[gi];
-        if (!g.is_open) continue;              // no free surface, no exchange
         const double area_x = state_.cell_a[c];
         if (!(area_x > 0.0)) continue;
         const double vol_ft3 = area_x * mesh_.cell_dx[c];
@@ -1276,9 +1395,44 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
 
         const double h = fv::kernels::depthOfArea(g, area_x);
         if (!(h > 0.0)) continue;
-        const double width = fv::kernels::widthOfDepth(g, h);
-        if (!(width > 0.0)) continue;
-        const double surf_m2 = width * mesh_.cell_dx[c] * kSqFtToSqM;
+
+        // H6b-ARD: a CLOSED cell has no free surface but it does have a
+        // bed, so `is_open` gates the surface AREA rather than the whole
+        // iteration — the same restructure the LEGACY link loop took, for
+        // the same full-pipe reason.
+        double surf_m2 = 0.0;
+        if (g.is_open) {
+            const double width = fv::kernels::widthOfDepth(g, h);
+            if (width > 0.0)
+                surf_m2 = width * mesh_.cell_dx[c] * kSqFtToSqM;
+        }
+
+        const double t_w = state_.cell_phi[tr * unc + c];
+
+        // H6b-ARD: the bed is a second body — the pair is relaxed
+        // SIMULTANEOUSLY, never sequentially (D-H5e; BedExchange.hpp).
+        // Contact area per cell: wetted perimeter x dx = (A/R) x dx, with
+        // barrels already inside `area_x` via barrel_scale and R identical
+        // per barrel, so A_total/R = n x per-barrel perimeter, exactly the
+        // link derivation one level up.
+        if (bed_on && c < ctx.bed_state.cell_temp.size()) {
+            const double rh = fv::kernels::hydRadOfDepth(g, h);
+            const double bed_m2 = (rh > 0.0)
+                ? (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM
+                : 0.0;
+            const heat::BedCoupling bc = heat::bedCouplingFromContact(
+                ctx, bed_m2, vol_ft3, t_gr);
+            if (bc.viable()) {
+                const heat::PairStep ps = heat::relaxPair(
+                    bc, t_w, ctx.bed_state.cell_temp[c], flux_out(t_w),
+                    flux_out(t_w + heat::kProbeC), heat::kProbeC, surf_m2,
+                    dt);
+                state_.cell_phi[tr * unc + c] += ps.dt_w;
+                ctx.bed_state.cell_temp[c]   += ps.dt_b;
+                continue;
+            }
+        }
+        if (!(surf_m2 > 0.0)) continue;
 
         // D-H5d's integrator, not forward Euler. This site shipped as the
         // explicit step `-J·A·dt/(ρ cp V)` while the plan's §6.3 recorded it
@@ -1287,7 +1441,6 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         // is exactly the regime whose k·dt explodes the explicit form
         // (SurfaceExchange.hpp). Found while reading for H6b (§3 of its
         // handoff); fixed here with the same relaxT the other bindings use.
-        const double t_w = state_.cell_phi[tr * unc + c];
         state_.cell_phi[tr * unc + c] += heat::relaxT(
             flux_out(t_w), flux_out(t_w + heat::kProbeC), heat::kProbeC,
             surf_m2, vol_ft3 * kCuFtToCuM, dt, rho, cp);

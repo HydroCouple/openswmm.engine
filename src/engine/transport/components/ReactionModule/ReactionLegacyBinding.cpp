@@ -87,24 +87,10 @@ void ensureMsxState(SimulationContext& ctx) {
                 rx.init_elem_value[k];
         }
     }
-    if (ctx.options.quality_solver == QualitySolverKind::LEGACY &&
-        !rx.warned_msx_not_transported) {
-        bool any_rate = false;
-        for (int s = 0; s < rx.n_species(); ++s) {
-            const auto us = static_cast<std::size_t>(s);
-            if (rx.pipe_form[us] == ReactionExprForm::RATE ||
-                rx.tank_form[us] == ReactionExprForm::RATE)
-                any_rate = true;
-        }
-        if (any_rate) {
-            rx.warned_msx_not_transported = true;
-            ctx.warnings.push_back(
-                "Reactions under QUALITY_SOLVER LEGACY: RATE species react "
-                "per element but are not yet transported between elements "
-                "(arrives with plan phase R4b) — EQUIL/FORMULA species and "
-                "pollutant decay are fully supported.");
-        }
-    }
+    // R4b (2026-09-01): the not-transported warning is GONE, not narrowed —
+    // routeLegacyMsx advects the element state on the CSTR mirror family
+    // (QualityRouting.cpp end-of-execute), so RATE species now arrive
+    // downstream under every engine.
 }
 
 namespace {

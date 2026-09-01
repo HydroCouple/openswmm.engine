@@ -66,3 +66,13 @@ tests/parity/transport/age_ard.inp	the same body under QUALITY_SOLVER EULERIAN_A
 tests/parity/transport/age_lard.inp	the same body once more under QUALITY_SOLVER LAGRANGIAN -- age as the LARD segment row (X4); the TRIPLE localises a movement to one of three engines
 tests/parity/transport/heat_parity.inp	pollutant + age + heat -- the only deck reaching the np+age+heat reported stride (D-UT10's seam); carries heat_parity.heat beside it
 tests/parity/transport/heat_lard.inp	the same body under QUALITY_SOLVER LAGRANGIAN -- temperature as the LARD segment row (H7b); the pair with heat_parity localises a heat movement to one engine
+
+# ---- SI and STEADY (2) ----------------------------------------------------
+# Added 2026-09-01.  UNIFIED_PLAN_STATUS §8 recorded the composition debt in
+# so many words: "21 decks; 0 2D, 0 SI, 0 STEADY".  Every UCF conversion seam
+# and the quality path's is_steady branch (pollutants AND each CSTR mirror)
+# were unobserved.  The 2D hole remains -- a mesh deck belongs to the Phase 3
+# opener, not here (trackI_bitwise_regression.sh covers 2D separately and is
+# still not wired into this runner; that wiring is a recorded debt).
+tests/parity/corpus/decks/si_dw_quality.inp	SI units (LPS) + DYNWAVE + buildup/washoff + age + heat -- the only SI deck; the UCF seams' first observer
+tests/parity/corpus/decks/steady_quality.inp	STEADY routing + pollutant + age -- the only STEADY deck; the is_steady quality branches' first observer

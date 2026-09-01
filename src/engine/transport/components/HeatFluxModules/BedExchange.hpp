@@ -97,6 +97,8 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_BED_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_BED_EXCHANGE_HPP
 
+#include "../../../data/BedZoneData.hpp"   // SedimentConfig (light header)
+
 namespace openswmm {
 struct SimulationContext;
 }
@@ -200,6 +202,34 @@ SolutePairStep exchangePair(double c_w, double c_b, double vol_w,
 BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
                                double vol_ft3, double t_gr) noexcept;
 
+/**
+ * @brief The material half of the coupling, geometry already folded in.
+ *
+ * @details Split out of `bedCouplingForLink` for the ARD binding: a CELL has
+ *          its own contact area and volume but the same material math, and a
+ *          second hand-written copy of that math is how the two engines'
+ *          beds would come to disagree about the same sediment. LEGACY and
+ *          LARD go through `bedCouplingForLink` (link geometry); ARD
+ *          computes its per-cell `bed_m2`/`vol_ft3` and calls this directly.
+ */
+BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
+                                   double bed_m2, double vol_ft3,
+                                   double t_gr) noexcept;
+
+/// Total solute exchange discharge across a bed interface of `bed_m2`, m³/s:
+/// `D_sed·A/Y + v_hyp·A`. One spelling, used by every engine's solute loop.
+double bedExchangeQ(const SedimentConfig& cfg, double bed_m2) noexcept;
+
+/// Bed contact area for link `j`, m² — wetted perimeter × length × barrels
+/// (divergence 1). 0 for a dry link or a non-conduit.
+double linkBedAreaM2(const SimulationContext& ctx, int link) noexcept;
+
+/// Free-surface area for link `j`, ft² — top width × length × barrels for an
+/// OPEN conduit, 0 otherwise. The `Routing.cpp:597` evaporation-area
+/// expression, exported so the LARD binding does not grow a fourth copy of
+/// the XSectParams builder.
+double linkFreeSurfaceFt2(const SimulationContext& ctx, int link) noexcept;
+
 /// The deep-ground temperature in force this step, °C — resolves the
 /// `GROUND_TEMPERATURE TIMESERIES` spelling against the simulation clock.
 /// Non-const because the timeseries lookup advances the table's own cursor,
@@ -226,14 +256,24 @@ void seedBedTemperature(SimulationContext& ctx);
 /**
  * @brief Step every conduit's bed/channel solute exchange for one `dt`.
  *
- * @param link_conc  [link * n_species + s] channel concentrations, updated
- *                   in place. The caller owns the layout because LEGACY and
- *                   ARD hold their channel state differently; what they
- *                   share is this function and the bed array it moves mass
- *                   into.
+ * @param link_conc  [link * n_arr + s] channel concentrations, updated in
+ *                   place. The caller owns the layout because the engines
+ *                   hold their channel state differently; what they share
+ *                   is this function and the bed array it moves mass into.
+ * @param n_arr      Species carried by `link_conc`.
+ * @param offset     Where `link_conc`'s rows start inside the bed store.
+ *                   The bed carries ONE species set — pollutants then MSX —
+ *                   and LEGACY holds those in two arrays (`links.conc`,
+ *                   `msx_link_conc`), so it calls twice: `(conc, np, 0)`
+ *                   and `(msx, nm, np)`. Splitting the bed store instead
+ *                   would give the two halves independent sizing paths and
+ *                   a seam where one resizes and the other does not.
+ * @param n_total    Total species the bed store carries (`np + nm`). Sizing
+ *                   is by `n_total`, so the two LEGACY calls agree about
+ *                   the store's shape by construction.
  */
 void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc,
-                            int n_species, double dt);
+                            int n_arr, int offset, int n_total, double dt);
 
 }  // namespace openswmm::transport::heat
 

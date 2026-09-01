@@ -170,6 +170,32 @@ struct BedZoneState {
     int  n_species = 0;
     bool seeded    = false;
 
+    // ---- ARD (cell-resolved) bed. The per-link arrays above are the
+    //      LEGACY and LARD substrate; under EULERIAN_ARD every CELL gets
+    //      its own bed slice, 1:1 — which is exactly the reference's
+    //      element mapping (HTSComponent pairs one HTS element with one
+    //      channel element) and answers "which cell does the bed under a
+    //      400 ft conduit exchange with?" with "its own". The two shapes
+    //      coexist because engine choice is per model and this state is
+    //      runtime-only (not persisted), so nothing ever has to convert
+    //      one into the other.
+    std::vector<double> cell_temp;   ///< [cell], °C
+    /// SPECIES-MAJOR [s * n_cells + c] — `cell_phi`'s own layout, because
+    /// the ARD binding walks both arrays in the same loop and two layouts
+    /// in one loop is how a stride bug reads plausibly.
+    std::vector<double> cell_conc;
+    int  cell_n_species = 0;
+    bool cells_seeded   = false;
+
+    void resizeCells(int n_cells, int n_spec, double t_init) {
+        const auto nc = static_cast<std::size_t>(n_cells > 0 ? n_cells : 0);
+        const auto ns = static_cast<std::size_t>(n_spec > 0 ? n_spec : 0);
+        cell_n_species = static_cast<int>(ns);
+        cell_temp.assign(nc, t_init);
+        cell_conc.assign(ns * nc, 0.0);
+        cells_seeded = true;
+    }
+
     void resize(int n_links, int n_spec, double t_init) {
         const auto nl = static_cast<std::size_t>(n_links > 0 ? n_links : 0);
         const auto ns = static_cast<std::size_t>(n_spec > 0 ? n_spec : 0);
