@@ -56,6 +56,11 @@ constexpr int kMaxSubsteps = 512;
 /// Below this store volume (ft3) a node holds no meaningful concentration —
 /// used to decide when a store has emptied rather than merely shrunk.
 constexpr double kMinStoreVol = 1.0e-9;
+/// Legacy's ZERO_VOLUME (massbal.c): one litre, in ft3. Below this an
+/// element's mass/volume quotient is residue over residue — LEGACY treats
+/// the element as holding no water at all, which is why it stays bounded on
+/// a draining deck where a 1e-12 floor publishes astronomical quotients.
+constexpr double kZeroVolumeFt3 = 0.0353147;
 
 // --- E3 Fischer auto-computation guards (all internal ft units) -------------
 /// g (ft/s²) for the shear velocity U* = √(g·Y·S).
@@ -1275,11 +1280,17 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         if (!(width > 0.0)) continue;
         const double surf_m2 = width * mesh_.cell_dx[c] * kSqFtToSqM;
 
+        // D-H5d's integrator, not forward Euler. This site shipped as the
+        // explicit step `-J·A·dt/(ρ cp V)` while the plan's §6.3 recorded it
+        // as already correct — the SUMMING was correct (both modules through
+        // netFluxOut), the STEPPING was not, and a draining cell's thin film
+        // is exactly the regime whose k·dt explodes the explicit form
+        // (SurfaceExchange.hpp). Found while reading for H6b (§3 of its
+        // handoff); fixed here with the same relaxT the other bindings use.
         const double t_w = state_.cell_phi[tr * unc + c];
-        const double hc  = rho * cp * vol_ft3 * kCuFtToCuM;
-        if (hc > 0.0)
-            state_.cell_phi[tr * unc + c] +=
-                -flux_out(t_w) * surf_m2 * dt / hc;
+        state_.cell_phi[tr * unc + c] += heat::relaxT(
+            flux_out(t_w), flux_out(t_w + heat::kProbeC), heat::kProbeC,
+            surf_m2, vol_ft3 * kCuFtToCuM, dt, rho, cp);
     }
 
     // ---- Node stores ----------------------------------------------------
@@ -1298,14 +1309,14 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         if (!(area_ft2 > 0.0)) continue;       // junctions have none
 
         const double t_w = node_mass_[und * uns + tr] / vol_ft3;
-        const double hc  = rho * cp * vol_ft3 * kCuFtToCuM;
-        if (hc > 0.0) {
-            const double dT =
-                -flux_out(t_w) * area_ft2 * kSqFtToSqM * dt / hc;
-            // The store carries MASS (conc x volume), so a temperature
-            // change of dT is a mass change of dT x volume.
-            node_mass_[und * uns + tr] += dT * vol_ft3;
-        }
+        // relaxT, same as the cell loop above — the node stores had the same
+        // explicit step and the same thin-volume failure mode.
+        const double dT = heat::relaxT(
+            flux_out(t_w), flux_out(t_w + heat::kProbeC), heat::kProbeC,
+            area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM, dt, rho, cp);
+        // The store carries MASS (conc x volume), so a temperature
+        // change of dT is a mass change of dT x volume.
+        node_mass_[und * uns + tr] += dT * vol_ft3;
     }
 }
 
@@ -1368,8 +1379,15 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 // so the .out column is fed by whichever engine is active.
                 // Without this branch the row would fall through to the MSX
                 // else and write past msx_link_conc.
+                //
+                // Below legacy's ZeroVolume the quotient is residue over
+                // residue (a draining conduit published 6e+117 degC from
+                // exactly this line) — HOLD the last real reading instead,
+                // which is H1's carried-temperature convention for dry
+                // elements and what the LEGACY engine does on this deck.
                 if (static_cast<std::size_t>(link) <
-                    ctx.heat_state.link_temp.size())
+                        ctx.heat_state.link_temp.size() &&
+                    vol > kZeroVolumeFt3)
                     ctx.heat_state.link_temp[static_cast<std::size_t>(link)] =
                         conc;
             } else if (s < np) {
@@ -1396,7 +1414,10 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 if (und < ctx.water_age_state.node_age.size())
                     ctx.water_age_state.node_age[und] = conc;
             } else if (s == temp_row_) {
-                if (und < ctx.heat_state.node_temp.size())
+                // The link loop's ZeroVolume hold, node-store edition — the
+                // same deck read 2.8e+36 degC at an outfall store here.
+                if (und < ctx.heat_state.node_temp.size() &&
+                    vol > kZeroVolumeFt3)
                     ctx.heat_state.node_temp[und] = conc;
             } else if (s < np) {
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] = conc;
