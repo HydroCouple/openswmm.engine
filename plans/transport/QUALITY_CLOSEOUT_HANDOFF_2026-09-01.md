@@ -212,3 +212,49 @@ and its wrapper is Direction B's test double. HC4.2 (openswmm ⇄ HTSComponent
 on one network) is the parity instrument H6b could not have: the reference
 running live rather than transcribed, with divergences 1–3 predicting exactly
 where the two will disagree.
+
+---
+
+## CHECK RECORD (checking agent, 2026-09-01)
+
+**VERDICT: VALIDATED AND COMMITTED — engine `1736593d`** (22 files,
++1719/−129) + `3086e6b4` (plan corpus tracked, 112 files) + `eed20e83`
+(manual chapters 7–9). GUI: `25a3c0c` (workplans tracked). Evidence:
+`tests/output/quality_closeout/` (PROVENANCE.txt has the full defect
+ledger and falsifier record).
+
+**The changeset needed seven fixes before it validated** — three
+fixture defects (no air source; no wind; all-closed conduits: zero
+exchange was CORRECT physics on gate 1's own deck), two REAL design
+defects (the LARD treatment wiring was a no-op twice over — fixed with
+the shared per-node seam `quality::applyNodeTreatment` inside the MIX;
+`loadersNeeded` starving routeLegacyMsx on MSX-only decks — the fourth
+member of the A1a/H1 volume-half family), one REGRESSION (the naked
+temp-floor exemption let the near-dry store oscillation run to ±1e62 —
+caught by the ARD-relax round's thin-sheet gate, contained by clamping
+to the parser's own [−50, 100] band), and one ORDER error (transport
+must run BEFORE react: FORMULA is the last writer, and the tracking
+gate drifted 4.3e-3 under the draft's order). Full detail in the
+PROVENANCE.
+
+**Base readings, verbatim (natively compiled — the DYLD-dylib override
+is ABI-unsound for a changeset that moves SimulationContext's layout):**
+5.0000000000000062 · 19.999999999999844 · 99.999999999998977 ·
+{C3 = 0, C1 = 80 exactly} · +1.3115119056826916e-115.
+
+**Figures:** ctest **186/186 ×3** (the standing figure counts binaries:
+185+1, not §4's "+5 → 190"); corpus **23/23 byte-identical** — the two
+new decks run at base too, so they landed **A/B-pinned**, not
+baseline-only as §4 assumed. Falsifiers: i, iii (predicted exactly),
+iv (both clamp sites live), vi bite; ii bites HARDER than predicted
+(both gate-1 legs); v confirms the owed MSX-bed gate.
+
+**§2's census ran:** every remaining solver-conditioned warning in
+SWMMEngine.cpp is the inverse-bypass family or the announced ARD
+failed-mesh fallback. The headline claim stands: **no quality
+configuration is silently bypassed under any engine.**
+
+**Owed from this check:** the MSX-half bed gate (falsifier v); Chapter
+7's transient-storage note (drop-in text in
+MANUAL_BED_ZONE_SECTION_DROPIN_2026-09-01.md); lesson candidate 218
+CONFIRMED and numbered in the roadmap (with 219–221 from this check).

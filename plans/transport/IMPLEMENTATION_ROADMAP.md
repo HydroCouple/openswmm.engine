@@ -3701,3 +3701,38 @@ and committed separably. Evidence: tests/output/ard_relax_batch/.
   against 2001 (non-leap) — every date past Feb 28 walked one day per
   save cycle, including the untouched DEFAULT. One anchor now (2001),
   clamped for pre-fix stored 366s.
+
+### ✅ Quality closeout COMMITTED `1736593d` (+ `3086e6b4` plans, `eed20e83` docs; gui `25a3c0c`) — five bindings, no silent bypass left (2026-09-01)
+
+LARD applies the flux modules (the batch's headline finding: H7b
+retired the warning, not the bypass — a SURFACE_EXCHANGE deck under
+LARD exchanged NOTHING, silently); the bed binds under all three
+engines (ARD per cell 1:1, LARD per link/well-mixed, uniform
+increments); treatment runs under LARD through the new shared per-node
+seam; MSX advects under LEGACY on the CSTR mirror family; sub-zero
+temperature survives ARD transport behind the parser's own band. The
+corpus gains its first SI and first STEADY decks (23, all A/B-pinned);
+openswmm_transport.h lands read-only. The plan corpus itself is now
+TRACKED in both repos (user decision; the §8 debt carried twice).
+
+- **(218) retiring a bypass warning is not the same as retiring the
+  bypass** (the handoff's own candidate, CONFIRMED by its §1 finding):
+  when a warning names more than one capability, the round that deletes
+  it owes an observer for every thing it named.
+- **(219) a syntax-only changeset's gates are hypotheses — expect the
+  first RUN to falsify fixtures and designs alike.** Seven fixes before
+  validation: three fixture defects (windless, airless, all-closed —
+  each producing a VACUOUS or wrong-reason base failure), two design
+  defects the gates caught exactly as designed (the treatment no-op,
+  the starved MSX denominator), one regression another round's gate
+  caught (the ±1e62 temp-mass runaway), one ordering error (FORMULA is
+  the last writer — transport-then-react).
+- **(220) an exemption from a safety clamp needs its own bound.** The
+  temp row correctly leaves the non-negativity floor, but the floor had
+  been eating the negative half of the near-dry store oscillation; the
+  replacement bound is the PARSER's own authoring band, not nothing.
+- **(221) zsh does not word-split unquoted variables — a `for f in
+  $FILES` restore loop no-ops SILENTLY and the next green is a lie.**
+  Caught only because the falsifier-marker count was part of the final
+  cmp. Use arrays, newline loops, or python for multi-file restores;
+  count falsifier markers as part of EVERY final verification.

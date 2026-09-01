@@ -147,7 +147,7 @@ deck landing first.
 | P2.1 H7 heat under LARD | ✅ **COMPLETE 2026-08-30** (H7a `f31efd63` + H7b `deb42172`) |
 | Step 3 `openswmm_heat.h` (+H6a validation) | ✅ **COMPLETE 2026-08-31, engine `803d5cbc`** — 28 functions incl. the `[HEAT_SOURCES]` table; H6a validated in the same round (fixture bug fixed, Bird verified vs pvlib, `frac()` NaN hole closed). **G4g now waits on IO3 serialization** (see its row) |
 | P2.2 L3 MSX on segments | ✅ `ec22580a` (2026-08-31) — one round, not 2–3: H7a/H7b's layout work had already paid the hard part |
-| P2.3 treatment interop under LARD | ⬜ 1 round |
+| P2.3 treatment interop under LARD | ✅ `1736593d` (2026-09-01) — inside the LARD MIX via the shared quality::applyNodeTreatment seam |
 | P2.4 storage mixing beyond CMSTR | ⬜ 1–2 rounds |
 | P2.5 full A6 — Python + MCP age surfaces | ⬜ 1 round |
 | P3 verification breadth | ⬜ laminar RWPT deck · RWPT corpus deck · `swmmvis_core` extraction |
