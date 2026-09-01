@@ -52,7 +52,9 @@ Repository = "https://github.com/hydrocouple/openswmm.engine"
 # ============================================================================
 [tool.scikit-build]
 minimum-version  = "build-system.requires"
-cmake.version    = ">=3.24"
+# >=4.3: same reason as the base wheel — configure runs the vcpkg toolchain,
+# and vcpkg 2026.07.29 needs string(JSON ... STRING_ENCODE ...), new in 4.3.
+cmake.version    = ">=4.3"
 cmake.build-type = "Release"
 ninja.make-fallback = true
 build-dir = "build/{wheel_tag}"

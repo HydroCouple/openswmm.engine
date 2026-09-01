@@ -101,7 +101,16 @@ Changelog     = "https://github.com/hydrocouple/openswmm.engine/blob/main/CHANGE
 # ============================================================================
 [tool.scikit-build]
 minimum-version  = "build-system.requires"
-cmake.version    = ">=3.24"
+# >=4.3, not >=3.24: configuring this project runs the vcpkg toolchain, and
+# vcpkg 2026.07.29's SPDX manifest generation calls
+# `string(JSON ... STRING_ENCODE ...)`, which arrived in CMake 4.3. The floor
+# is what scikit-build-core resolves its build-env CMake against — with
+# >=3.24 it picked 4.1.0 and every Linux wheel died on the first port
+# (`building sqlite3:x64-linux failed with: BUILD_FAILED`) during
+# `python -m build`, even though the cibuildwheel `before-all` vcpkg install
+# had already succeeded on its own pinned CMake. Both CMakes have to clear the
+# bar, because both invoke vcpkg.
+cmake.version    = ">=4.3"
 cmake.build-type = "Release"
 ninja.make-fallback = true
 
