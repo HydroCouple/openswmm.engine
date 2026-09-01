@@ -49,6 +49,19 @@ constexpr double kApiMaxTempC = 100.0;
 
 bool temp_ok(double c) { return c >= kApiMinTempC && c <= kApiMaxTempC; }
 
+/// Copy a bound-series name out, NUL-terminated and truncated to the
+/// caller's buffer — the `climate_fill_buf` convention, one API over.
+/// An out-of-range index (no binding, or a table list that shrank) is "".
+void ts_name_out(const openswmm::SimulationContext& ctx, int ts_index,
+                 char* buf, int buflen) {
+    std::string name;
+    if (ts_index >= 0 && ts_index < static_cast<int>(ctx.tables.count()))
+        name = ctx.tables[ts_index].id;
+    const auto n = std::min(static_cast<std::size_t>(buflen - 1), name.size());
+    std::memcpy(buf, name.data(), n);
+    buf[n] = '\0';
+}
+
 /// Sources that accept a NODE-scope override in H1 (HeatComponent.cpp's
 /// rule: "NODE scope applies to DWF and EXTERNAL_INFLOW in H1").
 bool node_scope_ok(int src) {
@@ -232,6 +245,15 @@ SWMM_ENGINE_API int swmm_heat_set_shortwave_timeseries(SWMM_Engine engine,
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_heat_get_shortwave_timeseries(SWMM_Engine engine,
+                                                       char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (buf == nullptr || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    ts_name_out(ctx, ctx.heat_config.radiative.sw_ts_index, buf, buflen);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_heat_get_current_shortwave(SWMM_Engine engine,
                                                     double* wm2) {
     CHECK_HANDLE(engine);
@@ -400,6 +422,15 @@ SWMM_ENGINE_API int swmm_heat_set_cloud_timeseries(SWMM_Engine engine,
     cc.use_timeseries  = true;
     cc.configured      = true;
     ctx.heat_config.configured = true;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_heat_get_cloud_timeseries(SWMM_Engine engine,
+                                                   char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (buf == nullptr || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    ts_name_out(ctx, ctx.heat_config.cloud.ts_index, buf, buflen);
     return SWMM_OK;
 }
 
