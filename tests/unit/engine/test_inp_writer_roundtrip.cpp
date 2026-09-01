@@ -1001,3 +1001,57 @@ TEST(InpWriterRoundTrip, UnsteadyFrictionKeysAreWrittenEvenAtTheirDefaults) {
     EXPECT_EQ(row(g.text, "OPTIONS", "UNSTEADY_FRICTION").at(1), "NONE");
     EXPECT_DOUBLE_EQ(std::stod(row(g.text, "OPTIONS", "UF_K3").at(1)), 0.015);
 }
+
+// ===========================================================================
+// Defect 12 — save-idempotence drift in [OPTIONS] SWEEP_* and [MAP] Units.
+//
+// Two independent parse/format asymmetries made the SECOND save differ from
+// the first on every deck (found by H6b's save check, on a control deck with
+// no sweep or map configuration at all):
+//
+//   * SWEEP_* parsed against a LEAP-year anchor (2000: 12/31 → doy 366) but
+//     formatted against a non-leap one (2001: doy 366 → "1/1"), so every
+//     date past Feb 28 shifted one day per save/reopen cycle and the default
+//     12/31 wrapped to January 1st.
+//   * [MAP] Units wrote the literal "None" while the parser uppercases, so
+//     gen1 said "None" and every later generation said "NONE".
+//
+// The gate drives one deck to generation 3 and requires generations 2 and 3
+// to agree byte-for-byte — idempotence, not just plausibility — plus the
+// specific values that used to walk.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, SweepDatesAndMapUnitsAreSaveIdempotent) {
+    {
+        std::ofstream f(data("_swp_idem.inp"));
+        f << "[OPTIONS]\n"
+             "FLOW_UNITS           CFS\nFLOW_ROUTING         KINWAVE\n"
+             "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+             "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+             "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n"
+             "SWEEP_START          03/15\nSWEEP_END            12/31\n\n"
+             "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\n\n"
+             "[OUTFALLS]\nOUT 7.0 FREE NO\n\n"
+             "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
+             "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
+             "[MAP]\nDIMENSIONS 0 0 100 100\nUnits      None\n\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    const auto g1 = writeOnce("_swp_idem.inp",     "_swp_idem_rt1.inp");
+    const auto g2 = writeOnce("_swp_idem_rt1.inp", "_swp_idem_rt2.inp");
+    const auto g3 = writeOnce("_swp_idem_rt2.inp", "_swp_idem_rt3.inp");
+
+    // The two values that used to walk, at every generation.
+    for (const auto* g : {&g1, &g2, &g3}) {
+        EXPECT_EQ(row(g->text, "OPTIONS", "SWEEP_START").at(1), "3/15");
+        EXPECT_EQ(row(g->text, "OPTIONS", "SWEEP_END").at(1), "12/31")
+            << "the leap-anchor parse turned December 31st into January 1st";
+        EXPECT_EQ(row(g->text, "MAP", "Units").at(1), "None")
+            << "the [MAP] Units value changed case between generations";
+    }
+
+    // And the strong form: a second save of a saved file changes NOTHING.
+    EXPECT_EQ(g2.text, g3.text)
+        << "generation 2 and generation 3 differ — the writer is not "
+           "idempotent over its own output";
+}

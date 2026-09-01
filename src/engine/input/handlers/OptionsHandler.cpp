@@ -353,8 +353,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
               if (sp < se) ++sp;
               std::from_chars(sp, se, sd);
             }
+            // NON-leap anchor (2001), matching InpWriter's fmt_sweep and the
+            // 365-day default (sweep_end = 365 = 12/31). The old leap-year
+            // anchor (2000) made 12/31 parse as 366, which fmt_sweep then
+            // wrote back as 1/1 — every date past Feb 28 shifted a day per
+            // save/reopen cycle (found by the H6b save check).
             opt.sweep_start = datetime::dayOfYear(
-                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+                datetime::encodeDate(2001, static_cast<int>(sm), static_cast<int>(sd)));
         } else if (key == "SWEEP_END") {
             unsigned sm = 12, sd = 31;
             { const char* sp = val.data(); const char* se = sp + val.size();
@@ -364,7 +369,7 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
               std::from_chars(sp, se, sd);
             }
             opt.sweep_end = datetime::dayOfYear(
-                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+                datetime::encodeDate(2001, static_cast<int>(sm), static_cast<int>(sd)));
 
         } else if (key == "NORMAL_FLOW_LIMITED") {
             const std::string nv = norm(val);
