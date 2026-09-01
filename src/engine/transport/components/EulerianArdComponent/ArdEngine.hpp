@@ -200,6 +200,10 @@ private:
     /// mesh twin of the LEGACY mirror's whole-link application.
     void applyHeatFluxes(SimulationContext& ctx, double dt);
 
+    /// H6b-ARD: per-cell bed/channel solute exchange (pollutant + MSX rows;
+    /// the reserved age/temperature rows are excluded by construction).
+    void applyBedSoluteExchange(SimulationContext& ctx, double dt);
+
     /// H4: state row of the reserved __TEMPERATURE__ species — the LAST
     /// row, after age, matching the REPORTED column order fixed in H1 so a
     /// deck that adds heat to an age model does not move the age column.

@@ -155,6 +155,8 @@ add_gtest_unit(test_engine_heat_solar_radiation   test_heat_solar_radiation.cpp)
 add_gtest_unit(test_engine_heat_ard_binding       test_heat_ard_binding.cpp)
 # H6b — the coupled bed / hyporheic stepper (pure-function gates).
 add_gtest_unit(test_engine_bed_exchange           test_bed_exchange.cpp)
+# 2026-09-01 closeout — five bindings, one gate each.
+add_gtest_unit(test_engine_quality_closeout_bindings test_quality_closeout_bindings.cpp)
 add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
 # In-place rename for snow packs / aquifers / inlets / streets / LID controls.
 # Without these APIs the GUI registries flushed a renamed object as a NEW one,

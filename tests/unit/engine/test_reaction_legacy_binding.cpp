@@ -276,6 +276,12 @@ TEST_F(ReactionLegacyBindingTest, PollutantKineticsRowErrors) {
 // their kinetics may reference pollutants.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, RateMsxEvolvesLocallyWithWarning) {
+    // R4b (2026-09-01) retired the "not yet transported" warning WITH its
+    // condition — routeLegacyMsx advects the element state — so this gate
+    // flips: the species still accumulates, and the warning must be GONE
+    // (a deleted warning with unchanged behaviour is the failure mode the
+    // closeout gates exist for; the transport itself is observed by
+    // MsxSpeciesAdvectUnderLegacy in test_quality_closeout_bindings).
     write_rxn("_r4_rate.rxn",
               "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
               "[REACTION_SPECIES]\nBULK X MG\n"
@@ -285,7 +291,9 @@ TEST_F(ReactionLegacyBindingTest, RateMsxEvolvesLocallyWithWarning) {
     ASSERT_NO_FATAL_FAILURE(
         run_deck("_r4_rate.inp", "_r4_rate.rpt", "_r4_rate.out"));
     const auto& ctx = as_cpp_engine(engine_).context();
-    EXPECT_TRUE(warned(ctx, "not yet transported between elements"));
+    EXPECT_FALSE(warned(ctx, "not yet transported between elements"))
+        << "the R4b deferral warning is back — its condition was retired "
+           "2026-09-01";
     ASSERT_FALSE(ctx.reactions.msx_node_conc.empty());
     EXPECT_GT(ctx.reactions.msx_node_conc[0], 0.0)
         << "X accumulates from the TSS-driven source at the node";

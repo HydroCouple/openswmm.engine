@@ -108,6 +108,13 @@
 #include "../../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "RwptDispersion.hpp"
 #include "SegmentStore.hpp"
+#include "../../core/UnitConversion.hpp"
+#include "../../hydraulics/Node.hpp"
+#include "../../transport/components/HeatFluxModules/BedExchange.hpp"
+#include "../../transport/components/HeatFluxModules/HeatFluxes.hpp"
+#include "../../transport/components/HeatFluxModules/SolarRadiation.hpp"
+#include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
+#include "../QualityRouting.hpp"
 
 namespace openswmm {
 namespace lard {
@@ -218,6 +225,11 @@ public:
         const double frac = 1.0 / static_cast<double>(nsub);
         for (int sub = 0; sub < nsub; ++sub) substep(ctx, dt, frac);
 
+        // H2/H3/H6b under LARD: surface + radiative fluxes and the bed
+        // pair, once per routing step (the ARD slot), applied to the
+        // segment field before publication.
+        applyFluxesAndBed(ctx, dt_routing);
+
         publish(ctx, dt_routing);
     }
 
@@ -254,6 +266,7 @@ public:
 
         // ---- 1. DRAIN (all conduits, before any node mixes) ---------------
         scratch_.assign(static_cast<std::size_t>(ns), 0.0);
+        treat_cin_.assign(static_cast<std::size_t>(np > 0 ? np : 0), 0.0);
         for (int l = 0; l < nl; ++l) {
             const auto ul = static_cast<std::size_t>(l);
             if (links.type[ul] != LinkType::CONDUIT) continue;
@@ -337,6 +350,12 @@ public:
                   : is_msx  ? 0.0
                             : nodes.qual_mass_in[ci] * dt;
                 double m = st_old * v_old + node_mass_in_[li] + m_ext;
+                // P2.3: stash the ARRIVING mass for the treatment cin below
+                // (pollutant rows only; s == p for rows 0..np-1).
+                if (!is_age && !is_temp && !is_msx &&
+                    s < static_cast<int>(treat_cin_.size()))
+                    treat_cin_[static_cast<std::size_t>(s)] =
+                        node_mass_in_[li] + m_ext;
                 // D-NS1 (X6, now observable): extraction beyond the
                 // store's mass clamps to available — counted, warned
                 // once, and (pollutant rows) un-booked so the ledger
@@ -375,6 +394,33 @@ public:
                 node_mass_in_[li] = 0.0;  // consumed; cycle residue carries
             }
             node_vol_in_[un] = 0.0;
+
+            // P2.3: [TREATMENT] applies HERE — to the freshly mixed node
+            // state, BEFORE the passthrough and RELEASE below draw it: the
+            // LEGACY ordering (mix → treat → links), transplanted. The
+            // handoff's end-of-step application outside the solver was a
+            // no-op twice over: the evaluator's cin read the LEGACY
+            // accumulators (external loads only — 0 at an interior node,
+            // and an R-typed expression keeps c_node when cin reads 0),
+            // and a junction's ~zero stored volume gave the late write no
+            // weight in the next mix. Fed with THIS substep's inflow
+            // figures instead; nodes with no treatment pay one flag test.
+            if (np > 0 && dt > 0.0 &&
+                un < ctx.treatment.has_treatment.size() &&
+                ctx.treatment.has_treatment[un]) {
+                const double v_in_total =
+                    v_in + nodes.qual_vol_in[un] * frac;
+                for (int p = 0; p < np; ++p)
+                    treat_cin_[static_cast<std::size_t>(p)] =
+                        (v_in_total > 1.0e-12)
+                            ? std::max(0.0,
+                                       treat_cin_[
+                                           static_cast<std::size_t>(p)]) /
+                                  v_in_total
+                            : 0.0;
+                quality::applyNodeTreatment(ctx, n, dt, v_in_total / dt,
+                                            treat_cin_.data());
+            }
 
             // Zero-volume passthrough (§2.4): outgoing pump/orifice/weir/
             // outlet links deliver the node's NEW concentration downstream
@@ -648,7 +694,169 @@ public:
     }
 
 private:
+    /**
+     * @brief Surface + radiative fluxes and the H6b bed pair, LARD spelling.
+     *
+     * @details Nodes relax exactly as `HeatFluxes.cpp` relaxes them (the
+     *          node stores ARE `heat_state.node_temp` under this engine).
+     *          Links act on the SEGMENT field: the pair/relaxation is solved
+     *          against the volume-weighted link mean and the increment is
+     *          applied UNIFORMLY to every segment. Uniform-in-temperature is
+     *          exact for the flux linearization — each segment's surface
+     *          share is proportional to its volume, so k = A·J′/(ρ·cp·V) is
+     *          the same for every segment — and it preserves the along-link
+     *          profile, which is the property this engine exists for.
+     *          Solutes take the same uniform-delta spelling from
+     *          `exchangePair`. The bed itself stays per LINK (well-mixed
+     *          along the conduit) — a per-parcel bed would have to move
+     *          with the water, and a bed does not move. Recorded divergence.
+     *
+     *          Until this method the LARD engine TRANSPORTED temperature
+     *          but applied no flux module at all, silently — a deck with
+     *          SURFACE_EXCHANGE ON simply did not exchange, and no warning
+     *          said so. Found while closing H6b §4.
+     */
+    void applyFluxesAndBed(SimulationContext& ctx, double dt) {
+        const SpeciesRowLayout L = rowLayout(ctx);
+        const bool heat_on = (L.temp_row >= 0);
+        const bool bed_on  = transport::heat::bedExchangeEnabled(ctx);
+        const bool flux_on =
+            heat_on && (ctx.heat_config.surface_exchange ||
+                        ctx.heat_config.radiative_exchange);
+        if ((!flux_on && !bed_on) || !(dt > 0.0)) return;
+        namespace th = transport::heat;
+
+        if (flux_on) th::updateSolarForcing(ctx);
+        if (bed_on) th::seedBedTemperature(ctx);
+        const double t_gr = bed_on ? th::groundTemperature(ctx) : 0.0;
+        const double rho = ctx.options.water_density;
+        const double cp  = ctx.options.water_specific_heat;
+        constexpr double kSqFt = 0.09290304;
+        constexpr double kCuFt = 0.028316846592;
+
+        auto& hs = ctx.heat_state;
+        const int nl = ctx.n_links();
+        const int nn = ctx.n_nodes();
+
+        // ---- Nodes: storage surfaces only, HeatFluxes.cpp's convention. --
+        if (flux_on) {
+            const int unit_sys = ucf::getUnitSystem(
+                static_cast<int>(ctx.options.flow_units));
+            for (int n = 0; n < nn; ++n) {
+                const auto un = static_cast<std::size_t>(n);
+                if (un >= hs.node_temp.size()) break;
+                const double vol = ctx.nodes.volume[un];
+                if (!(vol > 0.0)) continue;
+                const double a = node::getSurfArea(
+                    ctx.nodes, n, ctx.nodes.depth[un], &ctx.tables,
+                    unit_sys, &ctx.node_subtypes);
+                if (!(a > 0.0)) continue;
+                const double t = hs.node_temp[un];
+                hs.node_temp[un] += th::relaxT(
+                    th::netFluxOut(ctx, t),
+                    th::netFluxOut(ctx, t + th::kProbeC), th::kProbeC,
+                    a * kSqFt, vol * kCuFt, dt, rho, cp);
+            }
+        }
+
+        // ---- Links: segment field, uniform increments. -------------------
+        // Bed rows: pollutants then MSX — every row before age/temp.
+        const int n_bed = L.np + ((L.msx_first >= 0) ? (L.ns - L.msx_first)
+                                                     : 0);
+        auto& bed = ctx.bed_state;
+        if (bed_on && n_bed > 0 &&
+            (bed.n_species != n_bed ||
+             bed.link_conc.size() != static_cast<std::size_t>(nl) *
+                                         static_cast<std::size_t>(n_bed))) {
+            bed.link_conc.assign(static_cast<std::size_t>(nl) *
+                                     static_cast<std::size_t>(n_bed),
+                                 0.0);
+            bed.n_species = n_bed;
+        }
+
+        for (int l = 0; l < nl; ++l) {
+            const auto ul = static_cast<std::size_t>(l);
+            if (ctx.links.type[ul] != LinkType::CONDUIT) continue;
+            const int cnt = store_.count(l);
+            if (cnt <= 0) continue;
+            const double vol_ft3 = store_.total_volume(l);
+            if (!(vol_ft3 > 0.0)) continue;
+
+            store_.mean_conc(l, scratch_.data());
+
+            // Heat: one pair/relaxation against the mean, uniform dT.
+            if (heat_on) {
+                const double t_mean =
+                    scratch_[static_cast<std::size_t>(L.temp_row)];
+                const double surf_m2 =
+                    flux_on ? th::linkFreeSurfaceFt2(ctx, l) * kSqFt : 0.0;
+                double d_tw = 0.0;
+                bool bed_stepped = false;
+                if (bed_on && ul < bed.link_temp.size()) {
+                    const th::BedCoupling g = th::bedCouplingFromContact(
+                        ctx, th::linkBedAreaM2(ctx, l), vol_ft3, t_gr);
+                    if (g.viable()) {
+                        const th::PairStep ps = th::relaxPair(
+                            g, t_mean, bed.link_temp[ul],
+                            flux_on ? th::netFluxOut(ctx, t_mean) : 0.0,
+                            flux_on ? th::netFluxOut(ctx,
+                                                     t_mean + th::kProbeC)
+                                    : 0.0,
+                            flux_on ? th::kProbeC : 0.0, surf_m2, dt);
+                        d_tw = ps.dt_w;
+                        bed.link_temp[ul] += ps.dt_b;
+                        bed_stepped = true;
+                    }
+                }
+                if (!bed_stepped && flux_on && surf_m2 > 0.0) {
+                    d_tw = th::relaxT(
+                        th::netFluxOut(ctx, t_mean),
+                        th::netFluxOut(ctx, t_mean + th::kProbeC),
+                        th::kProbeC, surf_m2, vol_ft3 * kCuFt, dt, rho, cp);
+                }
+                if (d_tw != 0.0)
+                    for (int i = 0; i < cnt; ++i)
+                        store_.set_seg_conc(
+                            l, i, L.temp_row,
+                            store_.seg_conc(l, i, L.temp_row) + d_tw);
+            }
+
+            // Solutes: pair against the mean, uniform dc, per bed row.
+            if (bed_on && n_bed > 0) {
+                const double bed_m2 = th::linkBedAreaM2(ctx, l);
+                const double vol_b =
+                    bed_m2 * ctx.heat_config.sediment.bed_thickness;
+                const double q_exch =
+                    th::bedExchangeQ(ctx.heat_config.sediment, bed_m2);
+                if (q_exch > 0.0 && vol_b > 0.0) {
+                    for (int b = 0; b < n_bed; ++b) {
+                        // Bed row b: pollutants 0..np-1 map directly, MSX
+                        // rows at msx_first + (b - np).
+                        const int row = (b < L.np)
+                                            ? b
+                                            : L.msx_first + (b - L.np);
+                        const double c_mean =
+                            scratch_[static_cast<std::size_t>(row)];
+                        double& cb = bed.link_conc[
+                            ul * static_cast<std::size_t>(n_bed) +
+                            static_cast<std::size_t>(b)];
+                        const th::SolutePairStep st = th::exchangePair(
+                            c_mean, cb, vol_ft3 * kCuFt, vol_b, q_exch,
+                            dt);
+                        if (st.dc_w != 0.0)
+                            for (int i = 0; i < cnt; ++i)
+                                store_.set_seg_conc(
+                                    l, i, row,
+                                    store_.seg_conc(l, i, row) + st.dc_w);
+                        cb += st.dc_b;
+                    }
+                }
+            }
+        }
+    }
+
     void init(SimulationContext& ctx) {
+
         const SpeciesRowLayout L = rowLayout(ctx);
         const int np = L.np;
         const int ns = L.ns;
@@ -667,6 +875,7 @@ private:
             static_cast<std::size_t>(nn) * static_cast<std::size_t>(ns), 0.0);
         node_vol_in_.assign(static_cast<std::size_t>(nn), 0.0);
         scratch_.assign(static_cast<std::size_t>(ns), 0.0);
+        treat_cin_.assign(static_cast<std::size_t>(np > 0 ? np : 0), 0.0);
         node_out_links_.assign(static_cast<std::size_t>(nn), {});
         release_vol_.assign(static_cast<std::size_t>(nl), 0.0);
         if (ctx.options.lard_rwpt) rwpt_.resize(nl);
@@ -844,6 +1053,10 @@ private:
     std::vector<double> node_mass_in_;  ///< per-step ledger, mass
     std::vector<double> node_vol_in_;   ///< per-step ledger, volume
     std::vector<double> scratch_;       ///< np-sized work array
+    /// P2.3: per-substep inflow MASS per pollutant at the node under MIX,
+    /// becoming the treatment evaluator's cin — LARD's own inflow figures,
+    /// because the LEGACY accumulators carry only external loads here.
+    std::vector<double> treat_cin_;
     std::vector<double> msx_block_;     ///< L3: per-element species block
     std::vector<double> msx_poll_;      ///< L3: pollutant context block
     bool initialized_ = false;

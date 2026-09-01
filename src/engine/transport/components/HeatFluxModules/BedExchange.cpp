@@ -185,23 +185,19 @@ double groundTemperature(SimulationContext& ctx) noexcept {
     return sc.ground_temp;
 }
 
-BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
-                               double vol_ft3, double t_gr) noexcept {
-    BedCoupling g{};
-    if (!(vol_ft3 > 0.0)) return g;
-
+double linkBedAreaM2(const SimulationContext& ctx, int link) noexcept {
     const auto uj = static_cast<std::size_t>(link);
     const int  cr = ctx.link_subtypes.conduit_row(link);
-    if (cr < 0) return g;                    // regulators have no bed
+    if (cr < 0) return 0.0;                  // regulators have no bed
     const auto ucr = static_cast<std::size_t>(cr);
     const auto& CD = ctx.link_subtypes.conduits;
 
     double length = CD.length[ucr];
     if (!(length > 0.0)) length = CD.mod_length[ucr];
-    if (!(length > 0.0)) return g;
+    if (!(length > 0.0)) return 0.0;
 
     const double depth = ctx.links.depth[uj];
-    if (!(depth > 0.0)) return g;
+    if (!(depth > 0.0)) return 0.0;
 
     // Contact area = wetted perimeter x length x barrels. P = A/R, the
     // engine's own identity — NOT the reference's top width, which is zero
@@ -209,15 +205,46 @@ BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
     const auto   xs   = buildXsp(ctx.links, uj);
     const double area = xsect::getAofY(xs, depth);
     const double rhyd = xsect::getRofY(xs, depth);
-    if (!(area > 0.0) || !(rhyd > 0.0)) return g;
+    if (!(area > 0.0) || !(rhyd > 0.0)) return 0.0;
     const double perim_ft = area / rhyd;
 
-    const double bed_m2 =
+    const double m2 =
         perim_ft * length * static_cast<double>(CD.barrels[ucr]) * kSqFtToSqM;
-    if (!(bed_m2 > 0.0)) return g;
+    return (m2 > 0.0) ? m2 : 0.0;
+}
 
-    const auto&  sc      = ctx.heat_config.sediment;
-    const double rho_cp_s = sc.sed_density * sc.sed_specific_heat;  // J/m³/K
+double linkFreeSurfaceFt2(const SimulationContext& ctx, int link) noexcept {
+    const auto uj = static_cast<std::size_t>(link);
+    const int  cr = ctx.link_subtypes.conduit_row(link);
+    if (cr < 0) return 0.0;
+    if (!xsect::isOpen(ctx.links.xsect_batch_shape[uj])) return 0.0;
+    const auto ucr = static_cast<std::size_t>(cr);
+    const auto& CD = ctx.link_subtypes.conduits;
+
+    double length = CD.length[ucr];
+    if (!(length > 0.0)) length = CD.mod_length[ucr];
+    const double depth = ctx.links.depth[uj];
+    if (!(length > 0.0) || !(depth > 0.0)) return 0.0;
+    const auto xs = buildXsp(ctx.links, uj);
+    const double top_width = xsect::getWofY(xs, depth);
+    if (!(top_width > 0.0)) return 0.0;
+    return top_width * length * static_cast<double>(CD.barrels[ucr]);
+}
+
+double bedExchangeQ(const SedimentConfig& cfg, double bed_m2) noexcept {
+    if (!(bed_m2 > 0.0) || !(cfg.bed_thickness > 0.0)) return 0.0;
+    return cfg.solute_diffusivity * bed_m2 / cfg.bed_thickness +
+           cfg.hyporheic_velocity * bed_m2;
+}
+
+BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
+                                   double bed_m2, double vol_ft3,
+                                   double t_gr) noexcept {
+    BedCoupling g{};
+    if (!(bed_m2 > 0.0) || !(vol_ft3 > 0.0)) return g;
+
+    const auto&  sc       = ctx.heat_config.sediment;
+    const double rho_cp_s = sc.sed_density * sc.sed_specific_heat;  // J/m3/K
     const double y_bed    = sc.bed_thickness;
     const double y_gr     = sc.ground_depth;
     if (!(y_bed > 0.0)) return g;
@@ -227,7 +254,7 @@ BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
     // grouping (`element.cpp:132`) rather than a conductivity k, because
     // alpha is the parameter the reference exposes and re-deriving k here
     // would silently invent a second material description.
-    const double k_eff = sc.thermal_diffusivity * rho_cp_s;         // W/m/K
+    const double k_eff  = sc.thermal_diffusivity * rho_cp_s;        // W/m/K
     const double g_cond = k_eff * bed_m2 / y_bed;
     const double g_adv  = ctx.options.water_density *
                           ctx.options.water_specific_heat *
@@ -240,6 +267,13 @@ BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
     g.c_b  = rho_cp_s * bed_m2 * y_bed;
     g.t_gr = t_gr;
     return g;
+}
+
+BedCoupling bedCouplingForLink(const SimulationContext& ctx, int link,
+                               double vol_ft3, double t_gr) noexcept {
+    if (!(vol_ft3 > 0.0)) return BedCoupling{};
+    return bedCouplingFromContact(ctx, linkBedAreaM2(ctx, link), vol_ft3,
+                                  t_gr);
 }
 
 // ---------------------------------------------------------------------------
@@ -274,61 +308,51 @@ void seedBedTemperature(SimulationContext& ctx) {
 }
 
 void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc,
-                            int n_species, double dt) {
+                            int n_arr, int offset, int n_total, double dt) {
     if (!bedExchangeEnabled(ctx) || !(dt > 0.0) || link_conc == nullptr) return;
-    if (n_species <= 0) return;
+    if (n_arr <= 0 || offset < 0 || n_total < offset + n_arr) return;
     seedBedTemperature(ctx);
 
     auto& bed = ctx.bed_state;
     const int nl_all = ctx.n_links();
     const auto need = static_cast<std::size_t>(nl_all > 0 ? nl_all : 0) *
-                      static_cast<std::size_t>(n_species);
-    if (bed.n_species != n_species || bed.link_conc.size() != need) {
+                      static_cast<std::size_t>(n_total);
+    if (bed.n_species != n_total || bed.link_conc.size() != need) {
         // First solute step, or the species count changed. Seeding the bed
         // at ZERO is the honest default: the reference has no initial-bed
         // concentration input either, and inventing one would put mass into
         // the system that no deck asked for.
         bed.link_conc.assign(need, 0.0);
-        bed.n_species = n_species;
+        bed.n_species = n_total;
     }
 
     const auto&  sc = ctx.heat_config.sediment;
     const int    nl = ctx.n_links();
-    const auto   ns = static_cast<std::size_t>(n_species);
+    const auto   na = static_cast<std::size_t>(n_arr);
+    const auto   nt = static_cast<std::size_t>(n_total);
+    const auto   off = static_cast<std::size_t>(offset);
     // One lookup per STEP, not per link — the ground temperature is GLOBAL
     // scope and a per-link lookup would advance the series cursor N times.
-    const double t_gr = groundTemperature(ctx);
+    // (Solutes do not read t_gr; the seed inside seedBedTemperature does.)
+    (void)sc;
 
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
         if (uj >= bed.link_temp.size()) break;
 
         const double vol_ft3 = ctx.links.volume[uj];
-        const BedCoupling g = bedCouplingForLink(ctx, j, vol_ft3, t_gr);
-        if (!g.viable()) continue;
-
-        // Recover the bed area from the heat conductance rather than
-        // rebuilding the geometry: one derivation, so the solute exchange
-        // cannot come to disagree with the heat exchange about how big the
-        // interface is. g_cond = alpha*rho_s*c_s*A/Y  =>  A = g_cond*Y/k_eff,
-        // and g_bg is the same product over y_gr, which is the term with no
-        // advection folded into it.
-        const double k_eff = sc.thermal_diffusivity *
-                             sc.sed_density * sc.sed_specific_heat;
-        if (!(k_eff > 0.0) || !(sc.ground_depth > 0.0)) continue;
-        const double bed_m2 = g.g_bg * sc.ground_depth / k_eff;
+        if (!(vol_ft3 > 0.0)) continue;
+        const double bed_m2 = linkBedAreaM2(ctx, j);
         if (!(bed_m2 > 0.0)) continue;
 
-        const double vol_w = vol_ft3 * kCuFtToCuM;
-        const double vol_b = bed_m2 * sc.bed_thickness;
-        const double q_exch = sc.solute_diffusivity * bed_m2 /
-                                  sc.bed_thickness +
-                              sc.hyporheic_velocity * bed_m2;
-        if (!(q_exch > 0.0)) continue;
+        const double vol_w  = vol_ft3 * kCuFtToCuM;
+        const double vol_b  = bed_m2 * ctx.heat_config.sediment.bed_thickness;
+        const double q_exch = bedExchangeQ(ctx.heat_config.sediment, bed_m2);
+        if (!(q_exch > 0.0) || !(vol_b > 0.0)) continue;
 
-        for (std::size_t s = 0; s < ns; ++s) {
-            double& cw = link_conc[uj * ns + s];
-            double& cb = bed.link_conc[uj * ns + s];
+        for (std::size_t s = 0; s < na; ++s) {
+            double& cw = link_conc[uj * na + s];
+            double& cb = bed.link_conc[uj * nt + off + s];
             const SolutePairStep st =
                 exchangePair(cw, cb, vol_w, vol_b, q_exch, dt);
             cw += st.dc_w;
