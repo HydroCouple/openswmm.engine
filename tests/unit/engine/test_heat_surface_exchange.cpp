@@ -359,8 +359,9 @@ TEST(HeatSurfaceExchangeTest, FluxModuleTogglesParseAndDefer) {
     // This leg asserted that RADIATIVE_EXCHANGE refuses, which was right
     // until H3 implemented it. Retiring a deferral has to flip the gate that
     // asserted it, in the same changeset — H3's own gate covers its side, and
-    // this is the other one. SEDIMENT_EXCHANGE (H6) is now the deferral still
-    // owed, so the leg moves there rather than being deleted.
+    // this is the other one. The leg then moved to SEDIMENT_EXCHANGE (H6),
+    // and H6b implemented THAT, so it flips a second time: the toggle must
+    // now parse, enable the module, and open cleanly.
     write_file("_hx_h4.heat",
                "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
                "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n");
@@ -368,10 +369,12 @@ TEST(HeatSurfaceExchangeTest, FluxModuleTogglesParseAndDefer) {
                                  "config=\"_hx_h4.heat\"");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    EXPECT_NE(swmm_engine_open(e, "_hx_h4.inp", "_hx_h4.rpt", "_hx_h4.out",
+    ASSERT_EQ(swmm_engine_open(e, "_hx_h4.inp", "_hx_h4.rpt", "_hx_h4.out",
                                nullptr),
               SWMM_OK)
-        << "SEDIMENT_EXCHANGE is H6 and must refuse, not silently do nothing";
+        << "SEDIMENT_EXCHANGE ON still refuses — the H6 deferral was not "
+           "retired with the phase that implements it (H6b)";
+    EXPECT_TRUE(as_cpp_engine(e).context().heat_config.sediment_exchange);
     swmm_engine_destroy(e);
 
     write_file("_hx_bad.heat",

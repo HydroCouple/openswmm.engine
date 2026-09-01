@@ -305,6 +305,8 @@ TEST(HeatRadiativeExchangeTest, TheH3DeferralIsRetiredAndH6IsNot) {
     EXPECT_TRUE(as_cpp_engine(e).context().heat_config.radiative_exchange);
     swmm_engine_destroy(e);
 
+    // H6b retired the SEDIMENT_EXCHANGE deferral — the same flip this gate
+    // performed for RADIATIVE_EXCHANGE when H3 landed, one module over.
     write_file("_hr_sed.heat",
                "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
                "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n");
@@ -312,9 +314,11 @@ TEST(HeatRadiativeExchangeTest, TheH3DeferralIsRetiredAndH6IsNot) {
                               "config=\"_hr_sed.heat\"");
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    EXPECT_NE(swmm_engine_open(e2, "_hr_sed.inp", "_hr_sed.rpt", "_hr_sed.out",
+    ASSERT_EQ(swmm_engine_open(e2, "_hr_sed.inp", "_hr_sed.rpt", "_hr_sed.out",
                                nullptr),
               SWMM_OK)
-        << "SEDIMENT_EXCHANGE is H6 and must still refuse";
+        << "SEDIMENT_EXCHANGE ON still refuses — the H6 deferral was not "
+           "retired with the phase that implements it (H6b)";
+    EXPECT_TRUE(as_cpp_engine(e2).context().heat_config.sediment_exchange);
     swmm_engine_destroy(e2);
 }

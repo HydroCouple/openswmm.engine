@@ -81,6 +81,7 @@
 #include <functional>
 #include "FilePathPair.hpp"
 #include "../data/ArdConfigData.hpp"
+#include "../data/BedZoneData.hpp"
 #include "../data/GageData.hpp"
 #include "../data/HeatData.hpp"
 #include "../data/WaterAgeData.hpp"
@@ -581,6 +582,18 @@ struct SimulationContext {
      */
     HeatConfigData heat_config;
     HeatState      heat_state;
+
+    /**
+     * @brief The bed / hyporheic transient-storage zone (phase H6b).
+     *
+     * @details One entry per LINK, carrying a temperature and a per-species
+     *          concentration. It sits beside `heat_state` rather than inside
+     *          it because it holds solute state too — the reference's HTS
+     *          zone is a transient-storage zone for tracers as much as a
+     *          thermal mass. Empty and untouched unless `[HEAT_FLUXES]
+     *          SEDIMENT_EXCHANGE` is on. @see data/BedZoneData.hpp.
+     */
+    BedZoneState bed_state;
 
     /**
      * @brief Species names as REPORTED (phase A2b): the pollutant names,
@@ -1596,6 +1609,7 @@ struct SimulationContext {
         heat_config = HeatConfigData{};
         heat_state.clear();
         lid_layer_state.clear();
+        bed_state.clear();      // H6b
 
         // Virtual-junction diagnostics
         vj_diag.clear();

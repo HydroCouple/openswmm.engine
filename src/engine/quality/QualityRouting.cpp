@@ -32,6 +32,7 @@
 
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "../transport/components/HeatFluxModules/BedExchange.hpp"
 #include "../transport/components/HeatModule/HeatLegacy.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeLegacy.hpp"
 #include "NegativeSources.hpp"
@@ -324,6 +325,22 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     // heat_state — so HEAT_TRANSPORT ON leaves both the pollutant and the
     // water-age trajectories bit-identical under LEGACY.
     transport::routeLegacyHeat(ctx, dt);
+
+    // H6b: the bed's SOLUTE exchange, after every pollutant stage and after
+    // the heat mirror (whose own bed coupling is inside `applyHeatFluxes`).
+    //
+    // It runs last for the same reason the two mirrors do: it reads the
+    // settled link concentrations rather than an intermediate, so with
+    // `[HEAT_FLUXES] SEDIMENT_EXCHANGE` off — which is the default — every
+    // pollutant trajectory is bit-identical to the pre-H6b engine.
+    //
+    // `ctx.links.conc` is already [link * np + p], the layout
+    // `applyBedSoluteExchange` documents, so the array is passed rather than
+    // repacked. A repack would be a second layout to keep in agreement.
+    if (transport::heat::bedExchangeEnabled(ctx) &&
+        ctx.links.conc_n_pollutants > 0 && !ctx.links.conc.empty())
+        transport::heat::applyBedSoluteExchange(
+            ctx, ctx.links.conc.data(), ctx.links.conc_n_pollutants, dt);
 }
 
 // ============================================================================

@@ -58,6 +58,8 @@
 
 #include <vector>
 
+#include "BedZoneData.hpp"   // SedimentConfig — H6b's bed zone configuration
+
 namespace openswmm {
 
 /// Source pathways with a configurable inlet temperature ([HEAT_SOURCES]).
@@ -297,6 +299,22 @@ struct HeatConfigData {
 
     /// Parameters for the module above.
     ConductionConfig conduction;
+
+    /// `[HEAT_FLUXES] SEDIMENT_EXCHANGE ON` — the bed / hyporheic transient
+    /// storage zone (plan §2.3, phase H6b). Defaults OFF like every other
+    /// flux module. **Unlike the others it is not a surface flux**: it adds a
+    /// second state variable and is integrated as a coupled pair, which is
+    /// why its physics lives in `BedExchange.hpp` rather than as another
+    /// term in `netFluxOut`. See that header for why the earlier prediction
+    /// that it would be one term was wrong.
+    bool sediment_exchange = false;
+
+    /// `[SEDIMENT_EXCHANGE]` — parameters for the module above. Deliberately
+    /// a SEPARATE struct from `ConductionConfig`: that one describes a
+    /// bioretention soil column (GWComponent, 1970/2758), this one describes
+    /// streambed sediment (HTSComponent, 1670/1807). Sharing them would make
+    /// one number stand for two materials.
+    SedimentConfig sediment;
 
     /// `[SOLAR_RADIATION]` — only consulted under `ShortwaveMode::COMPUTED`
     /// (plan §2.5, phase H6a).
