@@ -4,16 +4,15 @@
 # Working notes not intended for version control
 doc/FlashX_SWMM_crosswalk.md
 doc/Verification_Implementation_Plan.md
-# Trailing /* rather than /, so the register below can be re-included: git
-# cannot re-include anything under an excluded *directory*.
+# plans/transport is TRACKED (user decision 2026-09-01, closing the debt
+# UNIFIED_PLAN_STATUS §8 carried twice: the entire plan corpus -- roadmap,
+# handoffs, ~217 numbered lessons -- existed in one working tree on one
+# machine, unprotected by the very version control it documents). Everything
+# else under /plans/ stays out. The _scratch subtree stays out too: it is
+# working notes, not record.
 /plans/*
 !/plans/transport/
-/plans/transport/*
-# The snow divergence register is NOT a workplan. It is what a user needs in
-# order to interpret a deck comparison against EPA SWMM -- it records every
-# place this engine departs from legacy snow.c and why. Tracked by user
-# decision (2026-08-21); everything else under /plans/ stays out of the tree.
-!/plans/transport/SNOW_DIVERGENCE_REGISTER.md
+/plans/transport/_scratch/
 /tools/
 docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 # Ignore examples/ contents (not the dir itself, so the fixture below can be
