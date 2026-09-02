@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -114,6 +115,12 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
+    } else if (iequals(key, "DISPERSION")) {
+        // S2: isotropic species dispersion, m2/s. Refused negative, not
+        // clamped (the 1D [TRANSPORT_OPTIONS] DISPERSION convention).
+        opts.dispersion = tryParseDouble(val, ok);
+        if (!ok || !std::isfinite(opts.dispersion) || opts.dispersion < 0.0)
+            return "Invalid DISPERSION value (m2/s, must be finite and >= 0)";
     } else if (iequals(key, "COUPLING_SYNC")) {
         opts.coupling_sync = tryParseDouble(val, ok);
         if (!ok || opts.coupling_sync < 0.0)
@@ -815,6 +822,84 @@ std::string parse2DInfiltrationLine(
 
 
 // ============================================================================
+// [2D_INITIAL_QUALITY] — overland transport S1/S2
+// ============================================================================
+
+std::string parse2DInitialQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow>& rows)
+{
+    if (tokens.empty()) return {};
+    // CELL <n> <species> <conc>  |  TAG <name> <species> <conc>  |  * <species> <conc>
+    SurfaceRouter2D::PendingInitialQualityRow r;
+    std::size_t at = 0;
+    if (tokens[0] == "*") {
+        if (tokens.size() != 3)
+            return "[2D_INITIAL_QUALITY] '*' row needs SPECIES CONC";
+        r.all = true;
+        at = 1;
+    } else if (iequals(tokens[0], "CELL")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_QUALITY] CELL row needs CELL <n> SPECIES CONC";
+        bool ok = false;
+        const int cell = tryParseInt(tokens[1], ok);
+        if (!ok || cell < 1)
+            return "[2D_INITIAL_QUALITY] invalid CELL index (1-based): " +
+                   tokens[1];
+        r.tri = cell - 1;   // upper bound is the router's, once the mesh exists
+        at = 2;
+    } else if (iequals(tokens[0], "TAG")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_QUALITY] TAG row needs TAG <name> SPECIES CONC";
+        r.tag = tokens[1];
+        at = 2;
+    } else {
+        return "[2D_INITIAL_QUALITY] row must start with CELL, TAG or '*': " +
+               tokens[0];
+    }
+    r.species = tokens[at];
+    bool okc = false;
+    r.conc = tryParseDouble(tokens[at + 1], okc);
+    // Refused, not clamped: a negative initial concentration is not a
+    // modelling case, and a non-finite one is a typo that would otherwise
+    // become NaN mass across the mesh.
+    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
+        return "[2D_INITIAL_QUALITY] CONC must be a finite non-negative "
+               "number, got '" + tokens[at + 1] + "'";
+    rows.push_back(std::move(r));
+    return {};
+}
+
+// ============================================================================
+// [2D_BOUNDARY_QUALITY] — overland transport S2
+// ============================================================================
+
+std::string parse2DBoundaryQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& rows)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() != 4)
+        return "[2D_BOUNDARY_QUALITY] needs TRI EDGE SPECIES CONC";
+    bool ok = false;
+    SurfaceRouter2D::PendingBoundaryQualityRow r;
+    r.tri = tryParseInt(tokens[0], ok);
+    if (!ok || r.tri < 0)
+        return "[2D_BOUNDARY_QUALITY] invalid TRI index: " + tokens[0];
+    r.edge = tryParseInt(tokens[1], ok);
+    if (!ok || r.edge < 0 || r.edge > 2)
+        return "[2D_BOUNDARY_QUALITY] invalid EDGE (must be 0..2): " + tokens[1];
+    r.species = tokens[2];
+    bool okc = false;
+    r.conc = tryParseDouble(tokens[3], okc);
+    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
+        return "[2D_BOUNDARY_QUALITY] CONC must be a finite non-negative "
+               "number, got '" + tokens[3] + "'";
+    rows.push_back(std::move(r));
+    return {};
+}
+
+// ============================================================================
 // register2DSections
 // ============================================================================
 
@@ -822,8 +907,22 @@ void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                        std::vector<SurfaceRouter2D::PendingInitialQualityRow>& pending_iq_rows,
+                        std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry)
 {
+    // S1/S2: initial surface species concentration. Main .inp only in this
+    // round — the .2dm sidecar's mini-registry does not carry it (recorded).
+    registry.register_custom("2D_INITIAL_QUALITY",
+        makeSectionHandler([&pending_iq_rows](const std::vector<std::string>& tokens) {
+            return parse2DInitialQualityLine(tokens, pending_iq_rows);
+        }));
+    // S2: inflow concentration on a non-WALL boundary edge. Main .inp only.
+    registry.register_custom("2D_BOUNDARY_QUALITY",
+        makeSectionHandler([&pending_bq_rows](const std::vector<std::string>& tokens) {
+            return parse2DBoundaryQualityLine(tokens, pending_bq_rows);
+        }));
+
     // Full-form handler (not makeSectionHandler): parse2DOptionsLine needs
     // ctx.warnings so retired CVODE-era keys warn-and-ignore on file load.
     registry.register_custom("2D_OPTIONS",

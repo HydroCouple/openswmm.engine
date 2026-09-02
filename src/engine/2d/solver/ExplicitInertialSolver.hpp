@@ -163,6 +163,9 @@ private:
     /// and no mass, so the concentration rises (§2.3 of the plan).
     void sinkMassAtCellConc(int i, double dv_m3, std::vector<double>& ledger,
                             double* per_point_ledger = nullptr) noexcept;
+    /// S2: rainfall of `rain_m3` on cell `i` brings species at the
+    /// `[POLLUTANTS]` rain concentration; booked to the gained ledger.
+    void addRainMass(int i, double rain_m3) noexcept;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an

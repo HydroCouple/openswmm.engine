@@ -207,6 +207,8 @@ int SWMMEngine::open(const char* inp_path,
                                  surface_router_.options(),
                                  surface_router_.pendingBCRows(),
                                  surface_router_.pendingEdgeConveyanceRows(),
+                                 surface_router_.pendingInitialQualityRows(),
+                                 surface_router_.pendingBoundaryQualityRows(),
                                  dip->registry());
     }
 
@@ -5231,6 +5233,30 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     // resolved — publish zeros then, so both sidecar variables always carry
     // one full [nFace] row per time step.
     snap.surface_infil_rate     = st.infil_rate;
+    // Overland transport S1: species concentration per cell, derived from the
+    // mass store behind the hydraulics' own dry threshold. Species-major, one
+    // block per species, so the plugin can write a [time, species, face]
+    // dataset with a single extend.
+    {
+        const auto& tr = st.transport;
+        snap.surface_species_count = tr.n_species;
+        if (tr.active()) {
+            const auto& mesh = surface_router_.mesh();
+            const double dry_depth = surface_router_.options().dry_depth;
+            const auto nt = static_cast<std::size_t>(tr.n_cells);
+            snap.surface_species_conc.assign(
+                static_cast<std::size_t>(tr.n_species) * nt, 0.0);
+            for (int sp = 0; sp < tr.n_species; ++sp)
+                for (int c = 0; c < tr.n_cells; ++c) {
+                    const double v_dry = dry_depth * mesh.tri_area[c];
+                    snap.surface_species_conc[static_cast<std::size_t>(sp) * nt +
+                                              static_cast<std::size_t>(c)] =
+                        tr.concentration(sp, c, st.volume[c], v_dry);
+                }
+        } else {
+            snap.surface_species_conc.clear();
+        }
+    }
     const auto& infil_cum = surface_router_.infilCumulative();
     if (infil_cum.size() == st.infil_rate.size())
         snap.surface_infil_cum = infil_cum;

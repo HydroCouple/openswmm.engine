@@ -112,6 +112,31 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     bc_accum_.assign(bc_cell_.size(), 0.0);
     bc_q_.assign(bc_cell_.size(), 0.0);
 
+    // S2: resolve [2D_BOUNDARY_QUALITY] rows onto THIS solver's boundary-edge
+    // list. bc_conc is [bc_slot * ns + s]; a row naming an edge that is not a
+    // non-WALL boundary edge cannot take effect and is fatal (a WALL admits
+    // no water, so a concentration on it describes nothing).
+    if (state.transport.active()) {
+        auto& tr = state.transport;
+        const auto ns = static_cast<std::size_t>(tr.n_species);
+        tr.bc_conc.assign(bc_cell_.size() * ns, 0.0);
+        for (const auto& row : tr.bc_quality_rows) {
+            std::size_t k = 0;
+            bool found = false;
+            for (; k < bc_slot_.size(); ++k)
+                if (bc_slot_[k] == row.slot) { found = true; break; }
+            if (!found)
+                throw std::runtime_error(
+                    "[2D_BOUNDARY_QUALITY] edge slot " + std::to_string(row.slot) +
+                    " is not a non-WALL boundary edge, so its concentration "
+                    "could never enter the mesh.");
+            if (row.species < 0 || static_cast<std::size_t>(row.species) >= ns)
+                throw std::runtime_error(
+                    "[2D_BOUNDARY_QUALITY] species index out of range.");
+            tr.bc_conc[k * ns + static_cast<std::size_t>(row.species)] = row.conc;
+        }
+    }
+
     // Live junction exchange (windowless coupling): one ∫Q dt accumulator per
     // point; spill budget tracked per 1D node. Their cells pin to tier 0 (the
     // exchange forcing changes at the fastest cadence), as do BC cells.
@@ -217,6 +242,19 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3,
     }
 }
 
+void ExplicitInertialSolver::addRainMass(int i, double rain_m3) noexcept {
+    if (!(rain_m3 > 0.0)) return;
+    auto& tr = state_->transport;
+    if (!tr.active() || tr.rain_conc.empty()) return;
+    for (int s = 0; s < tr.n_species; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (us >= tr.rain_conc.size() || !(tr.rain_conc[us] > 0.0)) continue;
+        const double g = rain_m3 * tr.rain_conc[us];
+        tr.cell_mass[tr.idx(s, i)] += g;
+        tr.gained_rainfall[us] += g;
+    }
+}
+
 void ExplicitInertialSolver::reconstructAll() {
     const int nt = mesh_->n_triangles();
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -301,6 +339,7 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
                                           area, tr.lost_coupling);
+            addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
         }
         double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
         state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -340,6 +379,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                 if (state_->coupling_flux[i] < 0.0)
                     sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
                                               area, tr.lost_coupling);
+                addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
             }
             double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
             state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -602,6 +642,67 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
                 sacc_R_[s * nef + ue] += dMs;
             }
         }
+
+        // S2 (D-2DT7): isotropic dispersion, booked on the SAME face, at the
+        // SAME cadence, into the SAME accumulators as the advective term —
+        // so it inherits the marcher's tier consistency exactly as advection
+        // does. Explicit exchange F = D·(h_f·ξ)·(c_a − c_b)/d over dt_f.
+        //
+        // Explicit diffusion has its own stability limit, D·dt/d² ≤ ~½, and
+        // the marcher's dt0 is set by gravity waves, not by D. Rather than
+        // couple dt0 to D (a global cost for a local term), the exchange is
+        // LIMITED so the pair can never cross: at most the amount that
+        // equalises the two concentrations, and at most the same β share of
+        // the giver's mass the volume flux is held to. Positivity and the
+        // pairwise max principle follow; a bind is COUNTED, because a face
+        // that binds is telling the modeller the dispersion is
+        // under-resolved at this dt.
+        if (!sacc_L_.empty() && opts_->dispersion > 0.0) {
+            const double va = state_->volume[a], vb = state_->volume[b];
+            if (va > 0.0 && vb > 0.0) {
+                const double cond =
+                    opts_->dispersion * hf * ed.xi[e] * ed.inv_dx_normal[e] *
+                    dt_f;                                  // m³ exchanged
+                const auto  ns  = static_cast<std::size_t>(
+                    state_->transport.n_species);
+                const auto  ue  = static_cast<std::size_t>(e);
+                const auto  nef = static_cast<std::size_t>(ed.ne);
+                auto& tr = state_->transport;
+                for (std::size_t s = 0; s < ns; ++s) {
+                    const double ma = tr.cell_mass[tr.idx(static_cast<int>(s), a)];
+                    const double mb = tr.cell_mass[tr.idx(static_cast<int>(s), b)];
+                    const double ca = ma / va, cb = mb / vb;
+                    double dMd = cond * (ca - cb);          // + = a → b
+                    if (dMd == 0.0) continue;
+                    // Equalisation bound, divided by 3 because PAIRWISE
+                    // bounds do not compose: a cell receiving from up to
+                    // three faces, each capped at FULL pairwise equalisation
+                    // computed from the same start-of-substep state, can end
+                    // richer than every donor (the check measured 15.31 on
+                    // an initial max of 10 at D = 20). Each face may close
+                    // at most a third of its gap; with the harmonic volume
+                    // ≤ the receiver's own, the sum over ≤ 3 faces is then
+                    // bounded by the largest donor concentration — the same
+                    // 1/3 composition argument the volume side's β/3 makes.
+                    const double eq = (ca - cb) * va * vb / (va + vb) / 3.0;
+                    // β share of the GIVER's mass, divided by the refire
+                    // ratio exactly as the volume share is.
+                    const int    giver  = (dMd > 0.0) ? a : b;
+                    const int    refire = global_step
+                        ? 1 : (1 << (tier_[giver] - face_tier_[e]));
+                    const double share  = beta_share / refire *
+                        ((dMd > 0.0) ? ma : mb);
+                    const double cap = std::min(std::fabs(eq), share);
+                    if (std::fabs(dMd) > cap) {
+                        dMd = (dMd > 0.0) ? cap : -cap;
+                        #pragma omp atomic
+                        ++tr.dispersion_limiter_binds;
+                    }
+                    sacc_L_[s * nef + ue] -= dMd;
+                    sacc_R_[s * nef + ue] += dMd;
+                }
+            }
+        }
     }
     face_passes_ += na;
     accumulators_pending_ = true;
@@ -663,10 +764,20 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_c * area,
                                    tr.lost_coupling);
+            // S2: rainfall arrives at the [POLLUTANTS] rain concentration.
+            // Volume × concentration, booked to the gained ledger so the
+            // continuity statement (S1 total − sources) still closes.
+            const double rain_m3 = state_->rainfall[i] * dt_c * area;
             const auto ns  = static_cast<std::size_t>(tr.n_species);
             const auto nef = static_cast<std::size_t>(ed.ne);
             for (std::size_t s = 0; s < ns; ++s) {
                 double dm = 0.0;
+                if (rain_m3 > 0.0 && s < tr.rain_conc.size() &&
+                    tr.rain_conc[s] > 0.0) {
+                    const double gained = rain_m3 * tr.rain_conc[s];
+                    dm += gained;
+                    tr.gained_rainfall[s] += gained;
+                }
                 for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                     const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
                     if (ed.cell_sign[p] > 0) {
@@ -802,9 +913,26 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             // an inflow boundary brings water at zero concentration until S2
             // gives edges a species column. Applied volume, not requested,
             // so the species booking matches the water booking exactly.
-            if (!sacc_L_.empty() && v_new < v_old)
-                sinkMassAtCellConc(i, v_old - v_new,
-                                   state_->transport.lost_boundary);
+            if (!sacc_L_.empty()) {
+                auto& tr = state_->transport;
+                if (v_new < v_old) {
+                    sinkMassAtCellConc(i, v_old - v_new, tr.lost_boundary);
+                } else {
+                    // S2: INFLOW carries the edge's [2D_BOUNDARY_QUALITY]
+                    // concentration (0 when none was given — clean water).
+                    const auto ns = static_cast<std::size_t>(tr.n_species);
+                    if (k * ns + ns <= tr.bc_conc.size()) {
+                        const double dv = v_new - v_old;
+                        for (std::size_t s = 0; s < ns; ++s) {
+                            const double c = tr.bc_conc[k * ns + s];
+                            if (c <= 0.0) continue;
+                            const double g = dv * c;
+                            tr.cell_mass[tr.idx(static_cast<int>(s), i)] += g;
+                            tr.gained_boundary[s] += g;
+                        }
+                    }
+                }
+            }
             state_->volume[i] = v_new;
             bc_accum_[k] += dt_c * f;
             inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],

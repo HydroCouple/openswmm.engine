@@ -12,6 +12,7 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../2d/SurfaceRouter2D.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <cstring>
 
@@ -578,6 +579,51 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     // Write per-edge fields [nFace, 3]
     extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_, 3);
 
+    // Overland transport S1: species concentration [nTime, nSpecies, nFace].
+    // Created LAZILY on the first step that carries species, and only then:
+    // a model with no 2D transport gets no variable, which is the correct
+    // statement (unlike infiltration, whose all-zero rows exist to keep a
+    // per-face time axis aligned — a 3D block has its own). Creating at the
+    // first step keeps dim 0 aligned with every other variable; a species
+    // count that changes mid-run is not a thing this engine does.
+    if (snap.surface_species_count > 0 &&
+        snap.surface_species_conc.size() ==
+            static_cast<std::size_t>(snap.surface_species_count) * n_faces_) {
+        if (ds_face_species_conc_ == H5I_INVALID_HID) {
+            n_species_ = static_cast<hsize_t>(snap.surface_species_count);
+            hsize_t zero3[3]  = {0, n_species_, n_faces_};
+            hsize_t chunk3[3] = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
+            ds_face_species_conc_ = createUnlimitedDataset(
+                "Mesh2_face_species_conc", 3, zero3, chunk3);
+            writeStringAttr(ds_face_species_conc_, "long_name",
+                            "surface species concentration");
+            // Species units are per species and live on the pollutant table;
+            // the dataset carries the layout and a name list so a reader can
+            // join. "1" here means "see species_names" — not dimensionless.
+            writeStringAttr(ds_face_species_conc_, "units", "1");
+            writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
+            writeStringAttr(ds_face_species_conc_, "location", "face");
+            writeStringAttr(ds_face_species_conc_, "layout",
+                            "[time, species, face]; species order = pollutant "
+                            "order; dry cell reports 0");
+            if (snap.pollut_names) {
+                std::string names;
+                for (std::size_t i = 0; i < snap.pollut_names->size() &&
+                                        i < n_species_; ++i) {
+                    if (i) names += ",";
+                    names += (*snap.pollut_names)[i];
+                }
+                if (!names.empty())
+                    writeStringAttr(ds_face_species_conc_, "species_names",
+                                    names.c_str());
+            }
+        }
+        if (n_species_ == static_cast<hsize_t>(snap.surface_species_count))
+            extendAndWrite3D(ds_face_species_conc_,
+                             snap.surface_species_conc.data(), n_species_,
+                             n_faces_);
+    }
+
     // Write per-node fields
     extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
     if (static_cast<hsize_t>(snap.surface_vert_depth.size()) == n_nodes_)
@@ -651,6 +697,7 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_net_source_);
     closeDS(ds_face_infil_rate_);
     closeDS(ds_face_infil_cum_);
+    closeDS(ds_face_species_conc_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

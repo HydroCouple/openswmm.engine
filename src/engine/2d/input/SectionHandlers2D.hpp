@@ -258,7 +258,19 @@ void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                        std::vector<SurfaceRouter2D::PendingInitialQualityRow>& pending_iq_rows,
+                        std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry);
+
+/// S1/S2 — one `[2D_INITIAL_QUALITY]` line. Empty string = OK.
+std::string parse2DInitialQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow>& rows);
+
+/// S2 — one `[2D_BOUNDARY_QUALITY]` line (`TRI EDGE SPECIES CONC`). Empty = OK.
+std::string parse2DBoundaryQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& rows);
 
 /**
  * @brief Load 2D mesh sections from an external file.

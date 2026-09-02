@@ -695,6 +695,35 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const int np = (ctx.options.ignore_quality) ? 0 : ctx.n_pollutants();
         state_.transport.resize(np, mesh_.n_triangles(),
                                 static_cast<int>(node_coupling_points_.size()));
+        auto& tr = state_.transport;
+        if (tr.active()) {
+            // S2: rainfall carries the [POLLUTANTS] rain concentration —
+            // the same column the 1D runoff path uses, so a species that rains
+            // in at 10 mg/L on a subcatchment rains in at 10 mg/L on the mesh.
+            tr.rain_conc.assign(ctx.pollutants.c_rain.begin(),
+                                ctx.pollutants.c_rain.begin() + np);
+            // S2: [2D_BOUNDARY_QUALITY] rows, species resolved by name here;
+            // the edge slot is resolved by the solver against its own
+            // boundary-edge list at initialize (it owns that list).
+            for (const auto& r : pending_bq_rows_) {
+                if (r.tri < 0 || r.tri >= mesh_.n_triangles())
+                    throw std::runtime_error(
+                        "[2D_BOUNDARY_QUALITY] TRI " + std::to_string(r.tri) +
+                        " is off the mesh (" +
+                        std::to_string(mesh_.n_triangles()) + " triangles).");
+                const int sp = ctx.pollutant_names.find(r.species);
+                if (sp < 0 || sp >= np)
+                    throw std::runtime_error(
+                        "[2D_BOUNDARY_QUALITY] unknown species '" + r.species +
+                        "' — declare it in [POLLUTANTS].");
+                tr.bc_quality_rows.push_back({r.tri * 3 + r.edge, sp, r.conc});
+            }
+        } else if (!pending_bq_rows_.empty()) {
+            throw std::runtime_error(
+                "[2D_BOUNDARY_QUALITY] rows are present but the model carries "
+                "no transported species ([POLLUTANTS] empty or IGNORE_QUALITY "
+                "set), so they could carry nothing.");
+        }
     }
 
     if (!solver_) {
@@ -714,6 +743,64 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         std::string infil_err;
         if (!infil_.resolve(mesh_, ctx.options, infil_err))
             throw std::runtime_error(infil_err);
+    }
+
+    // S1/S2 — [2D_INITIAL_QUALITY]: seed species MASS = conc x cell volume,
+    // now that the solver has reconstructed the initial volumes. Resolution
+    // order is `* < TAG < CELL` (the D-I3 order the infiltration rows use),
+    // applied by ORDER — later writes win — rather than by comparison, the
+    // same argument the PE resolver made. Every failure is fatal: an unknown
+    // species or tag, or a cell off the mesh, is a row that would silently
+    // seed nothing (lessons 10/20).
+    if (!pending_iq_rows_.empty()) {
+        auto& tr = state_.transport;
+        if (!tr.active())
+            throw std::runtime_error(
+                "[2D_INITIAL_QUALITY] rows are present but the model carries "
+                "no transported species ([POLLUTANTS] empty or IGNORE_QUALITY "
+                "set), so they could seed nothing.");
+        const int nt = mesh_.n_triangles();
+        auto species_index = [&](const std::string& name) {
+            return ctx.pollutant_names.find(name);   // NameIndex: -1 if absent
+        };
+        auto seed = [&](int sp, int c, double conc) {
+            tr.cell_mass[tr.idx(sp, c)] = conc * state_.volume[c];
+        };
+        for (int pass = 0; pass < 3; ++pass) {   // 0:'*', 1:TAG, 2:CELL
+            for (const auto& r : pending_iq_rows_) {
+                const int kind = r.all ? 0 : (r.tri < 0 ? 1 : 2);
+                if (kind != pass) continue;
+                const int sp = species_index(r.species);
+                if (sp < 0 || sp >= tr.n_species)
+                    throw std::runtime_error(
+                        "[2D_INITIAL_QUALITY] unknown species '" + r.species +
+                        "' — declare it in [POLLUTANTS].");
+                if (r.all) {
+                    for (int c = 0; c < nt; ++c) seed(sp, c, r.conc);
+                } else if (r.tri < 0) {
+                    bool hit = false;
+                    for (int c = 0; c < nt; ++c) {
+                        if (static_cast<std::size_t>(c) < mesh_.tri_tag.size() &&
+                            mesh_.tri_tag[static_cast<std::size_t>(c)] == r.tag) {
+                            seed(sp, c, r.conc);
+                            hit = true;
+                        }
+                    }
+                    if (!hit)
+                        throw std::runtime_error(
+                            "[2D_INITIAL_QUALITY] TAG '" + r.tag +
+                            "' matches no triangle, so this row would seed "
+                            "nothing.");
+                } else {
+                    if (r.tri >= nt)
+                        throw std::runtime_error(
+                            "[2D_INITIAL_QUALITY] CELL " +
+                            std::to_string(r.tri + 1) + " is beyond the mesh (" +
+                            std::to_string(nt) + " triangles).");
+                    seed(sp, r.tri, r.conc);
+                }
+            }
+        }
     }
     infil_elapsed_ = 0.0;
     if (infil_.active()) {

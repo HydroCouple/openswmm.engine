@@ -239,6 +239,14 @@ struct SolverOptions2D {
     /// Positivity/exchange availability fraction β: max share of a cell's
     /// volume that outgoing fluxes (or a coupling drain) may take per own-step.
     double exchange_beta  = 0.8;
+
+    /// Overland transport S2 — `[2D_OPTIONS] DISPERSION <m²/s>`: isotropic
+    /// species dispersion coefficient (D-2DT7). 0 (default) means the
+    /// dispersive face term is never entered, so pre-S2 answers are
+    /// bit-identical by construction rather than by a zero coefficient
+    /// multiplying through. Refused negative at parse: anti-diffusion is not
+    /// a modelling case.
+    double dispersion     = 0.0;
     /// Optional EMA sub-relaxation of per-substep coupling exchange (1 = off).
     double exchange_relax = 1.0;
     /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
