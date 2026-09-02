@@ -944,6 +944,88 @@ void convert_internal_to_display(SimulationContext& ctx) {
 }
 
 // ============================================================================
+// convert_internal_to_authored()
+// ============================================================================
+// resolve_cross_references applies two parse-time normalisations that mutate
+// authored link data in place: (1) adverse-slope conduits are reversed under
+// DYNWAVE/FV (node1/node2, offset1/offset2, q0 sign, inlet/outlet losses;
+// direction = -1), and (2) in LINK_OFFSETS=ELEVATION mode every offset/crest
+// is rewritten as a depth above its node invert. Neither was undone by the
+// .inp writer, so Open → Save silently swapped adverse conduits and wrote
+// depths under an ELEVATION header (destroying offsets on the next open).
+// Legacy SWMM-GUI never hit this because it exports its own object model, not
+// engine state. This is the exact inverse; call it on a COPY.
+bool needs_authored_conversion(const SimulationContext& ctx) {
+    if (ctx.options.link_offsets == 1) return true;
+    for (int j = 0; j < ctx.n_links(); ++j)
+        if (ctx.links.direction[static_cast<std::size_t>(j)] < 0) return true;
+    return false;
+}
+
+// Un-reverse adverse-slope conduits. Offsets/losses travel with their node, so
+// swapping both pairs keeps them aligned. Vertices were never touched by the
+// reversal and stay as authored. Safe on a live editing context: the GUI runs
+// simulations from a separately opened engine, never from the edit context.
+int restore_authored_orientation(SimulationContext& ctx) {
+    int n = 0;
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::CONDUIT || ctx.links.direction[uj] >= 0)
+            continue;
+        std::swap(ctx.links.node1[uj], ctx.links.node2[uj]);
+        std::swap(ctx.links.offset1[uj], ctx.links.offset2[uj]);
+        ctx.links.q0[uj] = -ctx.links.q0[uj];
+        ctx.links.direction[uj] = 1;
+        const int cr = ctx.link_subtypes.conduit_row(j);
+        if (cr >= 0) {
+            const auto ucr = static_cast<std::size_t>(cr);
+            std::swap(ctx.link_subtypes.conduits.loss_inlet[ucr],
+                      ctx.link_subtypes.conduits.loss_outlet[ucr]);
+            ctx.link_subtypes.conduits.slope[ucr] = -ctx.link_subtypes.conduits.slope[ucr];
+        }
+        ++n;
+    }
+    return n;
+}
+
+void convert_internal_to_authored(SimulationContext& ctx) {
+    const int n_links = ctx.n_links();
+    const int n_nodes = ctx.n_nodes();
+
+    // (1) Orientation.
+    restore_authored_orientation(ctx);
+
+    // (2) Depth → elevation (inverse of the two ELEV_OFFSET passes above).
+    if (ctx.options.link_offsets != 1) return;
+    for (int j = 0; j < n_links; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        const LinkType lt = ctx.links.type[uj];
+        if (lt == LinkType::PUMP) continue;
+        const int n1 = ctx.links.node1[uj];
+        const int n2 = ctx.links.node2[uj];
+        const bool ok1 = n1 >= 0 && n1 < n_nodes;
+        const bool ok2 = n2 >= 0 && n2 < n_nodes;
+        const double inv1 = ok1 ? ctx.nodes.invert_elev[static_cast<std::size_t>(n1)] : 0.0;
+        const double inv2 = ok2 ? ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] : 0.0;
+
+        if (lt == LinkType::CONDUIT) {
+            if (ok1) ctx.links.offset1[uj] += inv1;
+            if (ok2) ctx.links.offset2[uj] += inv2;
+        } else if (lt == LinkType::ORIFICE) {
+            if (ok1) ctx.links.offset1[uj] += inv1;
+        } else if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
+            const int wr  = ctx.link_subtypes.weir_row(j);
+            const int olr = (wr < 0) ? ctx.link_subtypes.outlet_row(j) : -1;
+            double* crest = (wr >= 0)
+                ? &ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
+                : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
+                            : nullptr);
+            if (crest && ok1) *crest += inv1;
+        }
+    }
+}
+
+// ============================================================================
 // validate_virtual_junctions()
 // ============================================================================
 // Refactored engine only — see plans/VIRTUAL_JUNCTION_IMPLEMENTATION_PLAN.md §6.

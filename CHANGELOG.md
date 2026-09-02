@@ -286,6 +286,18 @@ retroactive.
 
 ### Fixed
 
+- **`.inp` writer emits authored form — offsets and conduit orientation.**
+  `resolve_cross_references` rewrites `LINK_OFFSETS ELEVATION` offsets and
+  weir/outlet crests as depths and reverses adverse-slope conduits (node1/
+  node2, offsets, losses, InitFlow sign) for DYNWAVE/FV; `InpWriter` then
+  emitted both verbatim, so Open → Save wrote depths under an `ELEVATION`
+  header (clamped to 0 with WARNING 03 on the next open) and swapped From/To
+  on every adverse conduit. New `input::convert_internal_to_authored` (with
+  `needs_authored_conversion` / `restore_authored_orientation`) undoes both
+  on the writer's local copy, and `swmm_links_restore_authored_orientation`
+  lets an editing host hold the authored orientation in its live context.
+  Pinned by four new `InpWriterRoundTrip` cases on `authored_form.inp`.
+
 - **`[POLLUTANTS]` Kdecay was applied 86,400× too fast — and the common case
   destroyed the pollutant with a 100 % continuity error, booked nowhere
   (KD1).** The Kdecay column is 1/day; legacy divides by `SECperDAY` at parse

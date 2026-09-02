@@ -203,6 +203,22 @@ SWMM_ENGINE_API int swmm_link_get_from_node(SWMM_Engine engine, int idx, int* no
  */
 SWMM_ENGINE_API int swmm_link_get_to_node(SWMM_Engine engine, int idx, int* node_idx);
 
+/**
+ * @brief Restore authored From/To orientation on every conduit the parser
+ *        reversed for adverse slope (DYNWAVE/FV routing).
+ *
+ * @details At open, adverse-slope conduits have node1/node2, offset1/offset2,
+ *          initial flow sign and inlet/outlet losses swapped in place. An
+ *          editing host that displays and saves the live context should call
+ *          this once after open so the user sees and edits the orientation
+ *          they authored. Not needed for simulation-only hosts. The .inp
+ *          writer undoes the reversal on its own regardless.
+ * @param engine      Engine handle.
+ * @param[out] count  Optional; receives the number of conduits restored.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_links_restore_authored_orientation(SWMM_Engine engine, int* count);
+
 /* =========================================================================
  * Geometry setters (BUILDING or OPENED)
  * ========================================================================= */
