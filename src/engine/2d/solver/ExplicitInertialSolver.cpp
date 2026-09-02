@@ -33,6 +33,8 @@
 #endif
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>   // std::runtime_error ([2D_BOUNDARY_QUALITY] resolve)
+#include <string>      // std::to_string
 
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
