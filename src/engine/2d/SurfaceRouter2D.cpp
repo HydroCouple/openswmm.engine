@@ -682,6 +682,21 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Construct the time integrator: the Kokkos marcher plugin when installed
     // and eligible (OPENSWMM_2D_BACKEND policy + small-mesh gate), else the
     // serial ExplicitInertialSolver.
+    // S1 (overland transport): size the species state BEFORE the solver
+    // initialises, since the marcher sizes its face accumulators from it.
+    // Rows are the [POLLUTANTS] species only in S1; age, temperature and MSX
+    // rows arrive with S4 in the 1D engines' row order. Initial mass is zero
+    // — a `[2D_INITIAL_QUALITY]` surface is S2's — so a deck with pollutants
+    // and no 2D initial quality starts clean and stays clean until S2/S3
+    // give rainfall, boundaries and the coupling their concentrations.
+    // Sized to zero (transport off) when the model carries no pollutants or
+    // quality is ignored, so hydrodynamics-only models allocate nothing.
+    {
+        const int np = (ctx.options.ignore_quality) ? 0 : ctx.n_pollutants();
+        state_.transport.resize(np, mesh_.n_triangles(),
+                                static_cast<int>(node_coupling_points_.size()));
+    }
+
     if (!solver_) {
         solver_ = makeSurfaceSolver(options_, nullptr, mesh_.n_triangles());
     }

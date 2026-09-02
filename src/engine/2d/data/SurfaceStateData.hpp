@@ -38,6 +38,8 @@
 #include <algorithm>
 #include <vector>
 
+#include "SurfaceTransportState.hpp"   // S1 — species mass per cell
+
 namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advance)
 
 namespace openswmm::twoD {
@@ -74,6 +76,13 @@ struct SurfaceStateData {
     /// `nodes_1d` is the 1D node data, frozen for the duration of the batch.
     const NodeData*                   nodes_1d        = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
+
+    /// S1 — overland species transport. `transport.active()` is false (and
+    /// every marcher species branch is skipped) unless the router sized it,
+    /// so a hydrodynamics-only model pays one predicate per firing and is
+    /// otherwise untouched. Embedded rather than pointed-to: it is per-cell
+    /// STATE, sized with `volume`, and it is copied when the state is.
+    SurfaceTransportState transport;
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
