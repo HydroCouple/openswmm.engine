@@ -21,13 +21,13 @@
         {
             "name": "Windows",
             "inherits": "default",
-            "description": "Windows Release (Ninja Multi-Config, MSVC). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
+            "description": "Windows Release (Ninja Multi-Config, MSVC). FP policy: /fp:precise /fp:contract- (IEEE-754, no FMA contraction) — the MSVC counterpart of the Linux/Darwin -ffp-contract=off. /fp:precise ALONE still permits contraction in VS2022+. C extensions /we4013 promote implicit-decl to error.",
             "generator": "Ninja Multi-Config",
             "binaryDir": "${sourceDir}/build/windows",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "/fp:precise /W4 /we4013",
-                "CMAKE_CXX_FLAGS": "/fp:precise /W4",
+                "CMAKE_C_FLAGS": "/fp:precise /fp:contract- /W4 /we4013",
+                "CMAKE_CXX_FLAGS": "/fp:precise /fp:contract- /W4",
                 "CMAKE_EXE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_SHARED_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
                 "CMAKE_MODULE_LINKER_FLAGS": "/LTCG /OPT:REF /OPT:ICF",
@@ -47,13 +47,13 @@
         {
             "name": "Windows-debug",
             "inherits": "default-debug",
-            "description": "Windows Debug (Ninja Multi-Config, MSVC). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
+            "description": "Windows Debug (Ninja Multi-Config, MSVC). FP policy: /fp:precise /fp:contract- (IEEE-754, no FMA contraction) — same policy as the Windows Release preset. C extensions /we4013 promote implicit-decl to error.",
             "generator": "Ninja Multi-Config",
             "binaryDir": "${sourceDir}/build/windows-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "/fp:precise /W4 /we4013",
-                "CMAKE_CXX_FLAGS": "/fp:precise /W4",
+                "CMAKE_C_FLAGS": "/fp:precise /fp:contract- /W4 /we4013",
+                "CMAKE_CXX_FLAGS": "/fp:precise /fp:contract- /W4",
                 "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
                 "CMAKE_C_FLAGS_DEBUG": "/Zi /Od /DDEBUG",
