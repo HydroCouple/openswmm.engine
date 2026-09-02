@@ -197,6 +197,15 @@ SWMM_ENGINE_API int swmm_link_set_nodes(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_links_restore_authored_orientation(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    const int n = openswmm::input::restore_authored_orientation(ctx);
+    if (count) *count = n;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_link_get_from_node(SWMM_Engine engine, int idx, int* node_idx) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();

@@ -1055,3 +1055,113 @@ TEST(InpWriterRoundTrip, SweepDatesAndMapUnitsAreSaveIdempotent) {
         << "generation 2 and generation 3 differ — the writer is not "
            "idempotent over its own output";
 }
+
+// ===========================================================================
+// Defect 12 — authored form (offset convention + conduit orientation)
+//
+// resolve_cross_references rewrites ELEVATION offsets as depths and reverses
+// adverse-slope conduits in place. The writer emitted both as-is, so a plain
+// Open → Save wrote depths under `LINK_OFFSETS ELEVATION` (the next open
+// subtracted the invert again and clamped to 0) and swapped From/To, offsets,
+// losses and InitFlow on every adverse conduit. Legacy SWMM-GUI never hit
+// this because it exports its own object model, never engine state.
+// ===========================================================================
+
+namespace {
+double num(const std::vector<std::string>& c, std::size_t i) { return std::stod(c.at(i)); }
+}
+
+TEST(InpWriterRoundTrip, ElevationOffsetsAreWrittenAsElevations) {
+    const auto g = gen1("authored_form.inp");
+    ASSERT_FALSE(g.text.empty());
+    EXPECT_EQ(row(g.text, "OPTIONS", "LINK_OFFSETS").at(1), "ELEVATION");
+
+    const auto c_ok = row(g.text, "CONDUITS", "C_OK");
+    ASSERT_GE(c_ok.size(), 7u);
+    EXPECT_NEAR(num(c_ok, 5), 12.5, 1e-6) << "InOffset was written as a depth";
+    EXPECT_NEAR(num(c_ok, 6), 11.0, 1e-6) << "OutOffset was written as a depth";
+
+    EXPECT_NEAR(num(row(g.text, "ORIFICES", "OR1"), 4), 11.5, 1e-6);
+    EXPECT_NEAR(num(row(g.text, "WEIRS",    "W1"),  4), 12.0, 1e-6);
+    EXPECT_NEAR(num(row(g.text, "OUTLETS",  "L1"),  3), 11.25, 1e-6);
+}
+
+TEST(InpWriterRoundTrip, AdverseConduitKeepsAuthoredOrientation) {
+    const auto g = gen1("authored_form.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c = row(g.text, "CONDUITS", "C_ADV");
+    ASSERT_GE(c.size(), 8u);
+    EXPECT_EQ(c.at(1), "J1") << "From node was swapped by the adverse-slope reversal";
+    EXPECT_EQ(c.at(2), "J2");
+    EXPECT_NEAR(num(c, 5), 10.5,  1e-6);
+    EXPECT_NEAR(num(c, 6), 12.25, 1e-6);
+    EXPECT_NEAR(num(c, 7), 0.75,  1e-6) << "InitFlow sign was flipped";
+
+    const auto l = row(g.text, "LOSSES", "C_ADV");
+    ASSERT_GE(l.size(), 3u);
+    EXPECT_NEAR(num(l, 1), 0.1, 1e-6) << "Kentry/Kexit were swapped";
+    EXPECT_NEAR(num(l, 2), 0.2, 1e-6);
+
+    // Vertices were never reordered by the reversal; they must still read
+    // J1 → J2 alongside the restored endpoints.
+    const auto v = section(g.text, "VERTICES");
+    ASSERT_EQ(v.size(), 2u);
+    EXPECT_NEAR(num(cols(v[0]), 1), 100.0, 1e-6);
+    EXPECT_NEAR(num(cols(v[1]), 1), 200.0, 1e-6);
+}
+
+TEST(InpWriterRoundTrip, AuthoredFormIsSaveIdempotentAndReopensClean) {
+    const auto g1 = gen1("authored_form.inp");
+    const auto g2 = writeOnce("_authored_form_rt1.inp", "_authored_form_rt2.inp");
+    const auto g3 = writeOnce("_authored_form_rt2.inp", "_authored_form_rt3.inp");
+    EXPECT_EQ(g2.text, g3.text);
+    EXPECT_EQ(row(g1.text, "CONDUITS", "C_ADV"), row(g3.text, "CONDUITS", "C_ADV"));
+    EXPECT_EQ(row(g1.text, "CONDUITS", "C_OK"),  row(g3.text, "CONDUITS", "C_OK"));
+
+    // The reopened model must hold the same depths as the original open —
+    // and no negative-offset warning, which is what the double-subtraction
+    // used to produce.
+    Reopened r("_authored_form_rt2.inp");
+    const int idx = swmm_link_index(r.e, "C_OK");
+    ASSERT_GE(idx, 0);
+    double up = 0, dn = 0;
+    ASSERT_EQ(swmm_link_get_offset_up(r.e, idx, &up), SWMM_OK);
+    ASSERT_EQ(swmm_link_get_offset_dn(r.e, idx, &dn), SWMM_OK);
+    EXPECT_NEAR(up, 0.5, 1e-6);
+    EXPECT_NEAR(dn, 0.0, 1e-6);
+    for (int i = 0; i < swmm_get_warning_count(r.e); ++i) {
+        const std::string w = swmm_get_warning_at(r.e, i);
+        EXPECT_EQ(w.find("negative offset"), std::string::npos) << w;
+    }
+}
+
+TEST(InpWriterRoundTrip, RestoreAuthoredOrientationApiUnreversesTheLiveContext) {
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, data("authored_form.inp").c_str(),
+                               data("_authored_form.inp.rpt").c_str(), nullptr, nullptr),
+              SWMM_OK);
+    const int idx = swmm_link_index(e, "C_ADV");
+    const int j1  = swmm_node_index(e, "J1");
+    const int j2  = swmm_node_index(e, "J2");
+    ASSERT_GE(idx, 0); ASSERT_GE(j1, 0); ASSERT_GE(j2, 0);
+
+    int from = -1;
+    swmm_link_get_from_node(e, idx, &from);
+    EXPECT_EQ(from, j2) << "fixture no longer triggers the parse-time reversal";
+
+    int n = 0;
+    ASSERT_EQ(swmm_links_restore_authored_orientation(e, &n), SWMM_OK);
+    EXPECT_EQ(n, 1);
+    swmm_link_get_from_node(e, idx, &from);
+    EXPECT_EQ(from, j1);
+    double up = 0;
+    swmm_link_get_offset_up(e, idx, &up);
+    EXPECT_NEAR(up, 0.5, 1e-6) << "offset did not travel back with its node";
+
+    // Idempotent, and the writer no longer has anything to undo.
+    ASSERT_EQ(swmm_links_restore_authored_orientation(e, &n), SWMM_OK);
+    EXPECT_EQ(n, 0);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}

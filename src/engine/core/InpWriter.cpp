@@ -794,12 +794,21 @@ int writeInpFile(const SimulationContext& ctx_internal,
     const bool needs_display_conv =
         ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us_check)] != 1.0;
 
+    // Likewise, parse-time normalisations (adverse-slope conduit reversal and
+    // ELEVATION→depth offset conversion) must be undone so the file carries
+    // the authored orientation and offset convention. Otherwise Open → Save
+    // swaps From/To on adverse conduits and writes depths under an ELEVATION
+    // header, which the next open re-subtracts (clamping offsets to 0).
+    const bool needs_authored_conv = input::needs_authored_conversion(ctx_internal);
+
     SimulationContext ctx_display;
-    if (needs_display_conv) {
+    if (needs_display_conv || needs_authored_conv) {
         ctx_display = ctx_internal;
-        input::convert_internal_to_display(ctx_display);
+        if (needs_display_conv)  input::convert_internal_to_display(ctx_display);
+        if (needs_authored_conv) input::convert_internal_to_authored(ctx_display);
     }
-    const SimulationContext& ctx = needs_display_conv ? ctx_display : ctx_internal;
+    const SimulationContext& ctx =
+        (needs_display_conv || needs_authored_conv) ? ctx_display : ctx_internal;
 
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return -1;
