@@ -3797,3 +3797,26 @@ unchanged; both fixes were in the round's own instruments.
   gate-5-passes separation the control pair exists for. When a
   falsifier fails to bite, first ask whether it actually differs from
   the correct code in the dimension the design claim is about.
+
+**2026-09-02 (later) — OVERLAND TRANSPORT S2 VALIDATED AND COMMITTED.**
+Rain and boundary-inflow concentrations, limited explicit isotropic
+dispersion on the face cadence (D-2DT7), the HDF5 species variable, and
+[2D_INITIAL_QUALITY] — with the check adding the deck-path gate the
+round lacked and one real physics fix. Fickian rate measured 1.0069 ×
+2DT: the two-point face flux is a consistent Laplacian on centroids,
+and S2b-for-dispersion is closed in the negative.
+
+- **(227) a per-pair invariant does not compose into a per-cell one —
+  cap composition needs its own argument.** Each dispersive face
+  exchange was capped at full pairwise equalisation, and a cell
+  receiving from three such faces (all computed from one start-of-
+  substep state) ended RICHER than every donor: cmax 15.31 on an
+  initial max of 10, with the limiter binding the whole time. The fix
+  is the composition argument itself (each face closes ≤ 1/3 of its
+  gap, so the 3-face sum is bounded by the largest donor) — the same
+  reason the volume side's share is β/3, now stated once for species.
+  Corollary, from falsifier D: an UNCALIBRATED tolerance band is a
+  hypothesis, not a gate — the ξ-dropped defect reads 0.890 against
+  the calibrated 0.9 bound and sits comfortably inside the handoff's
+  uncalibrated 0.6. Calibrate-then-tighten is part of the check, not
+  polish.
