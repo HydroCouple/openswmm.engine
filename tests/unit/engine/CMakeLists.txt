@@ -515,6 +515,14 @@ if(OPENSWMM_BUILD_2D)
     # multiscale dam-break, K-tier ≈ global-dt equivalence, and the
     # fine-patch-in-coarse-watershed stability case.
     add_gtest_unit(test_engine_2d_lts_equivalence test_2d_lts_equivalence.cpp)
+    # Overland transport S1 (D-2DT1..D-2DT3): species MASS rides the marcher's
+    # own face accumulators on the face's tier. The uniform-concentration
+    # property to round-off across a 6-tier dam-break with a wet/dry front is
+    # the whole of S1's claim; its single-tier control tells a tier defect
+    # from a donor-timing one. Plus mass conservation, the max principle,
+    # two-species stride isolation, infiltration ledgering vs evaporative
+    # up-concentration, and species-as-passenger bit-identity.
+    add_gtest_unit(test_engine_2d_transport_s1 test_2d_transport_s1.cpp)
     # Windowless co-advance coupling gates: cross-domain conservation through
     # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
     # rederivation, conductance sign + FD parity.

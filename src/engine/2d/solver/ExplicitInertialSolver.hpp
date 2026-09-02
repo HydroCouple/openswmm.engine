@@ -140,6 +140,29 @@ private:
     std::vector<uint8_t> face_tier_;    ///< per unique face
     std::vector<double>  facc_L_;       ///< pending ΔM for the cL side (m³)
     std::vector<double>  facc_R_;       ///< pending ΔM for the cR side (m³)
+
+    // S1 — species mass rides the SAME face accumulators, one pair per
+    // species, [s * ne + e]. Booked in fireFaces immediately after the volume
+    // ΔM, from the FINAL qn1 (after the Froude cap and the positivity share),
+    // at the exporting cell's concentration read at that same substep;
+    // gathered and cleared in fireCells alongside the volume side. That is
+    // D-2DT2: the species flux inherits the volume flux's tier cadence rather
+    // than reproducing it, so conservation across tier interfaces is the
+    // marcher's own property and not a second one to prove. Empty unless
+    // `state_->transport.active()`.
+    std::vector<double>  sacc_L_;
+    std::vector<double>  sacc_R_;
+    /// Exporter concentration for a species at a cell, read against the
+    /// cell's CURRENT published volume — the same volume the positivity share
+    /// budgets against, so cumulative species takes are bounded by the same
+    /// β share as the water and mass cannot go negative where volume cannot.
+    double donorConc(int s, int cell) const noexcept;
+    /// Remove `dv_m3` of water from cell `i` at the cell's concentration and
+    /// book it to `ledger` — infiltration, boundary outflow, coupling drain.
+    /// Evaporation deliberately does NOT go through here: it removes volume
+    /// and no mass, so the concentration rises (§2.3 of the plan).
+    void sinkMassAtCellConc(int i, double dv_m3, std::vector<double>& ledger,
+                            double* per_point_ledger = nullptr) noexcept;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an
