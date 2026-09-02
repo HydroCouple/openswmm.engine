@@ -35,6 +35,7 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <vector>
 
 // ============================================================================
 // Internal helpers — convert C++ results to C structs
@@ -355,6 +356,52 @@ SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx,
     cascade_to_c(res, cascade_out);
     return SWMM_OK;
 }
+
+// ---------------------------------------------------------------------------
+// Batch deletes (perf plan Phase A1) — equivalent to sequential descending
+// per-object deletes with ONE name-index rebuild per batch.  Every index is
+// validated BEFORE any mutation so the call is all-or-nothing.
+// ---------------------------------------------------------------------------
+
+#define SWMM_DELETE_MANY_BODY(COUNT_EXPR, MANY_FN)                             \
+    CHECK_HANDLE(engine);                                                      \
+    auto& ctx = to_engine(engine)->context();                                  \
+    CHECK_EDITABLE(ctx);                                                       \
+    if (n <= 0) { cascade_to_c(openswmm::edit::CascadeResult{}, cascade_out);  \
+                  return SWMM_OK; }                                            \
+    if (!indices) return SWMM_ERR_BADPARAM;                                    \
+    for (int k = 0; k < n; ++k)                                                \
+        CHECK_INDEX(indices[k] >= 0 && indices[k] < (COUNT_EXPR));             \
+    auto res = openswmm::edit::MANY_FN(ctx,                                    \
+                                       std::vector<int>(indices, indices + n));\
+    cascade_to_c(res, cascade_out);                                            \
+    return SWMM_OK
+
+SWMM_ENGINE_API int swmm_node_delete_many(SWMM_Engine engine,
+                                          const int* indices, int n,
+                                          SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_nodes(), delete_nodes_many);
+}
+
+SWMM_ENGINE_API int swmm_link_delete_many(SWMM_Engine engine,
+                                          const int* indices, int n,
+                                          SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_links(), delete_links_many);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_delete_many(SWMM_Engine engine,
+                                              const int* indices, int n,
+                                              SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_subcatches(), delete_subcatches_many);
+}
+
+SWMM_ENGINE_API int swmm_gage_delete_many(SWMM_Engine engine,
+                                          const int* indices, int n,
+                                          SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_gages(), delete_gages_many);
+}
+
+#undef SWMM_DELETE_MANY_BODY
 
 SWMM_ENGINE_API int swmm_table_delete(SWMM_Engine engine, int idx,
                                        SWMM_ImpactReport* cascade_out) {

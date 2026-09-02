@@ -29,6 +29,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
+#include <initializer_list>
 #include <sstream>
 #include <vector>
 
@@ -717,6 +719,74 @@ CascadeResult delete_gage(SimulationContext& ctx, int gage_idx) {
     renumber_refs(ctx.subcatches.gage, gage_idx);
 
     return result;
+}
+
+// ============================================================================
+// DELETE — batches (perf plan Phase A1)
+// ============================================================================
+// Each batch runs the per-object delete above in DESCENDING index order —
+// semantics identical by construction — inside a bulk-remove scope on the
+// name indexes that type can touch, so the name→index map rebuilds ONCE per
+// batch instead of once per delete (the dominant K-delete cost).  The map is
+// stale for the scope's duration; the delete paths are audited to perform no
+// name→index lookups (name_of() reads the vector, which stays exact).
+
+namespace {
+
+/// Scoped begin/end_bulk_remove over the name indexes a batch touches.
+class NameBulkScope {
+public:
+    NameBulkScope(std::initializer_list<NameIndex*> idxs) : idxs_(idxs) {
+        for (auto* n : idxs_) n->begin_bulk_remove();
+    }
+    ~NameBulkScope() {
+        for (auto* n : idxs_) n->end_bulk_remove();
+    }
+    NameBulkScope(const NameBulkScope&)            = delete;
+    NameBulkScope& operator=(const NameBulkScope&) = delete;
+
+private:
+    std::vector<NameIndex*> idxs_;
+};
+
+/// Dedupe + sort descending, then apply `del` per index, aggregating entries.
+template <typename DeleteFn>
+CascadeResult delete_many_impl(std::vector<int> indices, DeleteFn&& del) {
+    CascadeResult result;
+    std::sort(indices.begin(), indices.end(), std::greater<int>());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    for (int idx : indices) {
+        CascadeResult r = del(idx);
+        for (auto& e : r.entries) result.entries.push_back(e);
+    }
+    return result;
+}
+
+} // namespace
+
+CascadeResult delete_nodes_many(SimulationContext& ctx, std::vector<int> indices) {
+    // delete_node removes node names AND cascade-deleted link names.
+    NameBulkScope scope{&ctx.node_names, &ctx.link_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_node(ctx, i); });
+}
+
+CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices) {
+    NameBulkScope scope{&ctx.link_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_link(ctx, i); });
+}
+
+CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices) {
+    NameBulkScope scope{&ctx.subcatch_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_subcatch(ctx, i); });
+}
+
+CascadeResult delete_gages_many(SimulationContext& ctx, std::vector<int> indices) {
+    NameBulkScope scope{&ctx.gage_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_gage(ctx, i); });
 }
 
 // ============================================================================

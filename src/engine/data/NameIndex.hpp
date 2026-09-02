@@ -220,14 +220,38 @@ public:
      *          The map is rebuilt from scratch — O(n) — which is acceptable
      *          since this is only called in BUILDING or OPENED state.
      *          No-op if idx is out of range.
+     *
+     *          Inside a begin_bulk_remove()/end_bulk_remove() scope only the
+     *          vector entry is erased (index→name stays exact) and the ONE
+     *          rebuild happens at scope end — deleting K objects then costs
+     *          one rehash instead of K.  That per-delete rehash was the
+     *          dominant bulk-delete cost on large models
+     *          (BULK_DELETE_AND_WINDOWS_OPEN_PERF_PLAN_2026-09-01 Phase A1).
      */
     void remove_at(int idx) noexcept {
         if (idx < 0 || idx >= static_cast<int>(names_.size())) return;
         names_.erase(names_.begin() + idx);
-        map_.clear();
-        map_.reserve(names_.size());
-        for (int i = 0; i < static_cast<int>(names_.size()); ++i)
-            map_[names_[i]] = i;
+        if (bulk_depth_ > 0) return;   // map rebuilt once in end_bulk_remove()
+        rebuild_map_();
+    }
+
+    /**
+     * @brief Defer map rebuilds across a batch of remove_at() calls.
+     *
+     * @details Between begin and end the name→index MAP is stale: find(),
+     *          try_find(), canonical() and rename() must not be used (the
+     *          index→name direction — name_of()/names()/size() — stays
+     *          exact throughout).  Nestable; the outermost end rebuilds.
+     *          ObjectDeleter's delete_*_many are the intended callers and
+     *          are audited to perform no map lookups while deferred.
+     */
+    void begin_bulk_remove() noexcept { ++bulk_depth_; }
+
+    /** @brief Close a begin_bulk_remove() scope; outermost close rebuilds
+     *         the map once.  Unbalanced calls are ignored. */
+    void end_bulk_remove() {
+        if (bulk_depth_ == 0 || --bulk_depth_ > 0) return;
+        rebuild_map_();
     }
 
     // -----------------------------------------------------------------------
@@ -238,9 +262,17 @@ public:
     const std::vector<std::string>& names() const noexcept { return names_; }
 
 private:
+    void rebuild_map_() {
+        map_.clear();
+        map_.reserve(names_.size());
+        for (int i = 0; i < static_cast<int>(names_.size()); ++i)
+            map_[names_[static_cast<std::size_t>(i)]] = i;
+    }
+
     /// name → index; case-insensitive (legacy hash.c parity), original-case keys
     std::unordered_map<std::string, int, CiHash, CiEqual> map_;
     std::vector<std::string> names_;  ///< index → name (original spelling)
+    int bulk_depth_ = 0;              ///< begin/end_bulk_remove() nesting
 };
 
 } /* namespace openswmm */
