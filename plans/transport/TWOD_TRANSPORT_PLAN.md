@@ -257,6 +257,13 @@ enumerates variables without hard-coding) — see
 
 ## 7. Implementation phases
 
+> **⚠ Superseded for the SURFACE track (2026-09-01).** S1–S6 below are the
+> outline; `OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md` is the
+> implementable design — mass-form state, LTS-consistent advection inside
+> `fireFaces`/`fireCells`, the coupling tuple, per-cell heat and MSX, and
+> acceptance criteria with falsifiers. **S7 (groundwater) stays here.**
+
+
 ```
 S1  SurfaceTransportState + conservative tracer advection on face fluxes
     (LTS-consistent) + wet/dry conservation + HDF5 output.
@@ -296,6 +303,9 @@ S7  GW transport (after two-zone kernel lands): per-zone state (§5.1),
 - Anisotropic dispersion tensor on TIN (v1 isotropic; revisit with field
   cases).
 - Sediment-bed heat layer per cell (couples to GW heat when both exist) —
-  decide at S5 review.
+  **the decision now has a shape**: with H6b landed, `BedZoneState` gains a
+  `cell2d_temp` array and `bedCouplingFromContact` takes the cell's wetted
+  area. The overland plan §3 argues for deferring it until AFTER S5 measures
+  whether it matters on a thin transient sheet.
 - Two-zone plan refresh (explicit marcher, not CVODE) is a prerequisite
   for S7 and is tracked as an amendment task on that document.

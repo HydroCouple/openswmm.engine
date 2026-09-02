@@ -3770,3 +3770,30 @@ NaN-sentinel emission test survived its falsifier. Corpus 23/23 twice
   state before snowmelt reads it. A consequence-level observable guarded
   by intervening machinery pins nothing; pair it with a direct-state
   observer (climate_state must hold the broadcast value after the run).
+
+**2026-09-02 — OVERLAND TRANSPORT S1 VALIDATED AND COMMITTED.** Species
+mass rides the LTS marcher's own face accumulators (D-2DT2: booked by
+the same writer, on the same face, in the same substep, from the final
+qn1), the uniform-concentration property holds to 1e-12 across six
+tiers and a moving front, and the 2D bitwise net is finally part of the
+corpus verdict (S1a). The marcher code survived first contact
+unchanged; both fixes were in the round's own instruments.
+
+- **(225) an instrument wired into the verdict must itself be in the
+  tree — and so must its coverage.** The 2D net's script was UNTRACKED
+  since Track I (clean checkouts reported UNCOVERED), its path was
+  resolved after the runner changed cwd (silently UNCOVERED even where
+  present), and its deck census is environment-dependent: 3 decks in a
+  clean checkout vs 35 in the shared tree, because the coverage lives
+  in untracked scratch. Wiring a verdict onto an instrument means
+  committing the instrument, its resolution, AND a curated deck set
+  (the last is owed).
+- **(226) a falsifier must instantiate the defect CLASS, not the
+  defect's code shape.** "Book species in a separate pass" cannot bite
+  when the separate pass runs at the same frequency over the same
+  firings — it books identical numbers by construction. The cadence
+  defect D-2DT2 forbids is a FREQUENCY error; its faithful falsifier
+  (wrong-tier dt, identity at K=1) produced the exact gate-1-fails/
+  gate-5-passes separation the control pair exists for. When a
+  falsifier fails to bite, first ask whether it actually differs from
+  the correct code in the dimension the design claim is about.
