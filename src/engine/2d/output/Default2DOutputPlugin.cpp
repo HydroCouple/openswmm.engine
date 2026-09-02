@@ -494,6 +494,10 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
                                            "infiltration loss rate", "m s-1");
     ds_face_infil_cum_     = createFaceDS("Mesh2_face_infil_cum",
                                            "cumulative infiltrated depth", "m");
+    // Cumulative rainfall VOLUME per cell (m³) — sums to mass_balance_2d
+    // rainfall_in by construction (SurfaceRouter2D::rainCumulative).
+    ds_face_rain_cum_      = createFaceDS("Mesh2_face_rain_cum",
+                                           "cumulative rainfall volume", "m3");
     ds_face_vx_            = createFaceDS("Mesh2_face_vx",
                                           "cell-centred velocity X (RT0)", "m s-1");
     ds_face_vy_            = createFaceDS("Mesh2_face_vy",
@@ -572,6 +576,8 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     extendAndWrite2D(ds_face_net_source_,    snap.surface_net_source.data(),    n_faces_);
     extendAndWrite2D(ds_face_infil_rate_,    snap.surface_infil_rate.data(),    n_faces_);
     extendAndWrite2D(ds_face_infil_cum_,     snap.surface_infil_cum.data(),     n_faces_);
+    if (snap.surface_rain_cum.size() == static_cast<std::size_t>(n_faces_))
+        extendAndWrite2D(ds_face_rain_cum_,  snap.surface_rain_cum.data(),      n_faces_);
     extendAndWrite2D(ds_face_vx_,            snap.surface_face_vx.data(),       n_faces_);
     extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
     extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
@@ -703,6 +709,7 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_continuity_err_);
     closeDS(ds_edge_flux_);
     closeDS(ds_node_head_);
+    closeDS(ds_face_rain_cum_);
     closeDS(ds_node_depth_);
     closeDS(ds_face_max_depth_);
     closeDS(ds_face_max_velocity_);

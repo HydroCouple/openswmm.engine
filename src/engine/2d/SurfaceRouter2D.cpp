@@ -883,6 +883,7 @@ void SurfaceRouter2D::refreshRenderFields() {
     reconstructVertexHeads(mesh_, state_, options_.num_threads);
     refreshOutputGradients(mesh_, state_, options_);
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
+    rain_cum_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
                                   options_.num_threads, render_eta_);
     co_render_elapsed_ = 0.0;
     render_dirty_      = false;
@@ -1548,3 +1549,4 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
 
 
 } // namespace openswmm::twoD
+        rain_cum_[ui] += state_.rainfall[ui] * area * dt;

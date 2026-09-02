@@ -5267,6 +5267,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     else
         snap.surface_infil_cum.assign(st.infil_rate.size(), 0.0);
     // Output sign convention: the integrator stores edge_flux and the face
+    snap.surface_rain_cum       = surface_router_.rainCumulative();
     // velocity INFLOW-positive (a positive edge_flux raises the cell — see
     // SurfaceFluxCalculator), whereas the documented public/HDF5 convention
     // (openswmm_2d.h) is OUTWARD-positive: positive flux leaves the cell and the
