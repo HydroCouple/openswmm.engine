@@ -119,6 +119,10 @@ public:
      * @see Legacy: routing.c addExternalInflows() pollutant portion
      */
     void addExtInflowLoads(SimulationContext& ctx, double dt);
+    /// S3: 2D→1D junction drain — its water into qual_vol_in, its species
+    /// mass (queued by SurfaceRouter2D, drained by assembleLateralInflows)
+    /// into qual_mass_in. No-op when no 2D coupling is active.
+    void addCouplingLoads(SimulationContext& ctx, double dt);
 
     /**
      * @brief Add subcatchment washoff quality loads to node inflows.

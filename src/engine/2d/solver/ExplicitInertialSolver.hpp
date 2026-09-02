@@ -166,6 +166,9 @@ private:
     /// S2: rainfall of `rain_m3` on cell `i` brings species at the
     /// `[POLLUTANTS]` rain concentration; booked to the gained ledger.
     void addRainMass(int i, double rain_m3) noexcept;
+    /// S3: outfall discharge onto cell `i` over `area_dt = area·dt` brings
+    /// species at `transport.coupling_src` (mass-rate density); gained ledger.
+    void addCouplingSourceMass(int i, double area_dt) noexcept;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an

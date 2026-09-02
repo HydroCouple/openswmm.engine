@@ -83,6 +83,16 @@ struct SurfaceTransportState {
     /// advance (m³·conc, + = 2D→1D). Reset with `exch_` per advance; S3's
     /// tuple reads it into the node's `qual_mass_in`.
     std::vector<double> exch_mass;
+    /// [k] spill VOLUME (m³, 1D→2D side only) through coupling point k this
+    /// advance. Volume, not mass — it exists for the mass bookkeeping: the
+    /// volume queue NETS a window's flip-flop while `exch_mass` holds the
+    /// drain GROSS, and the router pairs `min(spill, drain)` of the spill
+    /// against the queued mass at the node's concentration so a mixed-sign
+    /// window hands the node mass and water in the same ratio. The
+    /// net-negative remainder is the part the node's own volume drop removes
+    /// at the mixed concentration (the plan's §2.1 argument, now scoped to
+    /// exactly that remainder). Reset with `exch_mass`.
+    std::vector<double> exch_spill;
 
     // ---- S2 source concentrations (species units) -------------------------
     /// [s] concentration carried by rainfall — `[POLLUTANTS]` rain
@@ -110,6 +120,19 @@ struct SurfaceTransportState {
     /// statement can close: what came in through rain and boundaries.
     std::vector<double> gained_rainfall;
     std::vector<double> gained_boundary;
+    /// S3: what came in through the 1D→2D coupling (junction spill at the
+    /// node's published concentration, outfall discharge at the outfall's).
+    std::vector<double> gained_coupling;
+
+    // ---- S3 outfall-discharge species source ------------------------------
+    /// [s * n_cells + c] species mass-rate DENSITY (conc · m/s) riding the
+    /// positive `coupling_flux` an outfall scatters onto its cells, so a cell
+    /// gains `coupling_src · area · dt` beside the volume `coupling_flux ·
+    /// area · dt`. Sized by the router when transport is active and outfall
+    /// points exist; empty ⇒ outfall discharge arrives clean. The junction
+    /// spill does NOT use this — it is booked live in the marcher from the
+    /// node's concentration.
+    std::vector<double> coupling_src;
 
     bool active() const noexcept { return n_species > 0 && n_cells > 0; }
 
@@ -125,12 +148,17 @@ struct SurfaceTransportState {
                                   n_coupling_points > 0 ? n_coupling_points
                                                         : 0),
                          0.0);
+        exch_spill.assign(static_cast<std::size_t>(
+                              n_coupling_points > 0 ? n_coupling_points : 0),
+                          0.0);
         rain_conc.clear();          // S2: router fills when pollutants carry one
         bc_conc.clear();            // S2: solver sizes at initialize
         bc_quality_rows.clear();
         dispersion_limiter_binds = 0;
         gained_rainfall.assign(ns, 0.0);
         gained_boundary.assign(ns, 0.0);
+        gained_coupling.assign(ns, 0.0);
+        coupling_src.clear();       // S3: router sizes when outfalls exist
     }
 
     void clear() { *this = SurfaceTransportState{}; }
@@ -164,7 +192,8 @@ struct SurfaceTransportState {
         return m + lost_infiltration[us] + lost_boundary[us] +
                lost_coupling[us] -
                (us < gained_rainfall.size() ? gained_rainfall[us] : 0.0) -
-               (us < gained_boundary.size() ? gained_boundary[us] : 0.0);
+               (us < gained_boundary.size() ? gained_boundary[us] : 0.0) -
+               (us < gained_coupling.size() ? gained_coupling[us] : 0.0);
     }
 };
 

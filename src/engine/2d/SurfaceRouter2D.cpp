@@ -697,6 +697,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                                 static_cast<int>(node_coupling_points_.size()));
         auto& tr = state_.transport;
         if (tr.active()) {
+            // S3: outfall discharge onto the mesh carries the outfall's
+            // concentration through a per-cell mass-rate density that
+            // scatters exactly as coupling_flux does. Sized only when an
+            // outfall point exists; junction spill is booked live instead.
+            if (std::any_of(coupling_points_.begin(), coupling_points_.end(),
+                            [](const CouplingPoint& c) { return c.is_outfall; }))
+                tr.coupling_src.assign(static_cast<std::size_t>(np) *
+                                       static_cast<std::size_t>(mesh_.n_triangles()),
+                                       0.0);
             // S2: rainfall carries the [POLLUTANTS] rain concentration —
             // the same column the 1D runoff path uses, so a species that rains
             // in at 10 mg/L on a subcatchment rains in at 10 mg/L on the mesh.
@@ -902,19 +911,32 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                                        window_avail_budget_,
                                        /*sample_row*/ nullptr) > 0)
         ++outfall_clamp_windows_;
-    for (const auto& cp : coupling_points_) {
-        if (!cp.is_outfall) continue;
-        if (cp.vertex_idx >= 0) {
-            const int s = mesh_.vert_stencil_ptr[cp.vertex_idx];
-            const int e = mesh_.vert_stencil_ptr[cp.vertex_idx + 1];
-            for (int k = s; k < e; ++k)
-                state_.coupling_flux[mesh_.vert_stencil_idx[k]] = 0.0;
-        } else if (cp.cell_idx >= 0) {
-            state_.coupling_flux[cp.cell_idx] = 0.0;
+    {
+        auto& tr = state_.transport;
+        auto clear_cell = [&](int c) {
+            state_.coupling_flux[c] = 0.0;
+            if (!tr.coupling_src.empty())            // S3: same targeted clear
+                for (int sp = 0; sp < tr.n_species; ++sp)
+                    tr.coupling_src[tr.idx(sp, c)] = 0.0;
+        };
+        for (const auto& cp : coupling_points_) {
+            if (!cp.is_outfall) continue;
+            if (cp.vertex_idx >= 0) {
+                const int s = mesh_.vert_stencil_ptr[cp.vertex_idx];
+                const int e = mesh_.vert_stencil_ptr[cp.vertex_idx + 1];
+                for (int k = s; k < e; ++k)
+                    clear_cell(mesh_.vert_stencil_idx[k]);
+            } else if (cp.cell_idx >= 0) {
+                clear_cell(cp.cell_idx);
+            }
         }
     }
+    // S3: the outfall's published concentration rides its discharge. The 2D
+    // stride is the pollutant count, which is nodes.conc's stride too.
     injectAccumulatedExchange(coupling_points_, mesh_, state_,
-                              window_outfall_accum_, dt, +1.0);
+                              window_outfall_accum_, dt, +1.0,
+                              state_.transport.coupling_src.empty()
+                                  ? nullptr : &ctx.nodes.conc);
 
     // Rainfall / forcings on a coarse cadence: gage values change at the gage
     // timestep (minutes), and the per-cell interpolation apply is O(nt) — per
@@ -1022,6 +1044,54 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
             const auto ni =
                 static_cast<std::size_t>(node_coupling_points_[k].node_idx);
             ctx.nodes.coupling_volume[ni] += exch[k] * options_.flow_2d_to_1d;
+        }
+        // S3 (D-2DT4, 2D→1D half): the drain's species mass, booked per point
+        // by the marcher at the CELL's concentration (conc·m³), goes straight
+        // to the node's mass QUEUE in 1D mass units (conc·ft³) — the same
+        // m³→ft³ factor the volume takes, so mass/volume stays the cell's
+        // concentration exactly. assembleLateralInflows drains both queues by
+        // one rule. exch_mass is drain-only (≥ 0); the spill side is booked on
+        // the 2D cell from nodes.conc and needs no queue (see the marcher).
+        {
+            const auto& tr = state_.transport;
+            const auto  ns = static_cast<std::size_t>(tr.n_species);
+            auto& q = ctx.nodes.coupling_qual_queue;
+            if (ns > 0 && !q.empty() && !tr.exch_mass.empty()) {
+                for (std::size_t k = 0; k < n; ++k) {
+                    const auto ni = static_cast<std::size_t>(
+                        node_coupling_points_[k].node_idx);
+                    if ((ni + 1) * ns > q.size() || (k + 1) * ns > tr.exch_mass.size())
+                        continue;
+                    // The exchange flip-flops across the rim within one
+                    // window, and the VOLUME side nets (exch_ = ∫Q dt,
+                    // signed) while exch_mass holds the drain GROSS. Handing
+                    // the node gross mass with net water made a junction fed
+                    // at c0 read ABOVE c0 (the check measured 4.31). The
+                    // spill pairs against this window's own drain first —
+                    // min(spill, drain) of it, at the node's published
+                    // concentration, comes back out of the queued mass — and
+                    // only the net-negative remainder is the part §2.1's
+                    // implicit-CSTR argument covers (the node's volume drop
+                    // removes it at the mixed concentration).
+                    const double S = (k < tr.exch_spill.size())
+                                         ? tr.exch_spill[k] : 0.0;
+                    const double D = exch[k] + S;   // gross drain volume
+                    const double paired = std::min(S, (D > 0.0 ? D : 0.0));
+                    for (std::size_t sp = 0; sp < ns; ++sp) {
+                        double inc = tr.exch_mass[k * ns + sp];
+                        if (paired > 0.0 &&
+                            (ni + 1) * ns <= ctx.nodes.conc.size())
+                            inc -= paired * ctx.nodes.conc[ni * ns + sp];
+                        double& row = q[ni * ns + sp];
+                        row += inc * options_.flow_2d_to_1d;
+                        // Mass cannot be owed: a spill richer than the drain
+                        // (node above the cell) can push the pairing past
+                        // the queued mass by round-off; the floor keeps the
+                        // queue a mass.
+                        if (row < 0.0) row = 0.0;
+                    }
+                }
+            }
         }
     }
 
@@ -1209,6 +1279,20 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
             "WARNING: 2D outfall withdrawal was capped by the water available "
             "on the surface in %ld sync batch(es); check the outfall stage "
             "coupling and the 2D continuity block.", outfall_clamp_windows_);
+        ctx.warnings.push_back(buf);
+    }
+    // S2 telemetry: a face whose dispersive exchange was capped is a face
+    // where D·dt/d² exceeded the explicit limit — the physics stayed bounded
+    // but the dispersion RATE was degraded there. Surfaced as a warning so a
+    // modeller sees it without instrumenting the state.
+    if (state_.transport.dispersion_limiter_binds > 0) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "WARNING: 2D dispersion exchange was limited on %ld face-firing(s) "
+            "(D·dt/dx² above the explicit limit); the dispersion rate is "
+            "under-resolved at the marcher's time step there. Reduce "
+            "DISPERSION or MAX_TIMESTEP, or refine the mesh.",
+            state_.transport.dispersion_limiter_binds);
         ctx.warnings.push_back(buf);
     }
     active_ = false;

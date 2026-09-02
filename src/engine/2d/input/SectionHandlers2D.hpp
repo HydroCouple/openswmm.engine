@@ -307,7 +307,9 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    Infil2D* infil,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir,
-                                   std::vector<std::string>* warnings = nullptr);
+                                   std::vector<std::string>* warnings = nullptr,
+                                   std::vector<SurfaceRouter2D::PendingInitialQualityRow>* pending_iq_rows = nullptr,
+                                   std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>* pending_bq_rows = nullptr);
 
 /**
  * @brief Scan @p inp_path for a `;; UNITS: <value>` comment header and set

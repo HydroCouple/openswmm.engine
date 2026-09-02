@@ -1029,7 +1029,9 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    Infil2D* infil,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir,
-                                   std::vector<std::string>* warnings)
+                                   std::vector<std::string>* warnings,
+                                   std::vector<SurfaceRouter2D::PendingInitialQualityRow>* pending_iq_rows,
+                                   std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>* pending_bq_rows)
 {
     namespace fs = std::filesystem;
 
@@ -1070,6 +1072,20 @@ std::string load2DMeshExternalFile(MeshData& mesh,
         makeSectionHandler([&pending_bc_rows](const std::vector<std::string>& tokens) {
             return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
+
+    // S2/S3 — external .2dm may carry the surface quality sections too (they
+    // travel with the mesh they address). Registered only when the caller
+    // passes the pending stores, so older callers are unchanged.
+    if (pending_iq_rows)
+        mini.register_custom("2D_INITIAL_QUALITY",
+            makeSectionHandler([pending_iq_rows](const std::vector<std::string>& tokens) {
+                return parse2DInitialQualityLine(tokens, *pending_iq_rows);
+            }));
+    if (pending_bq_rows)
+        mini.register_custom("2D_BOUNDARY_QUALITY",
+            makeSectionHandler([pending_bq_rows](const std::vector<std::string>& tokens) {
+                return parse2DBoundaryQualityLine(tokens, *pending_bq_rows);
+            }));
 
     // §11A — external .2dm may carry its own [2D_EDGE_CONVEYANCE].
     mini.register_custom("2D_EDGE_CONVEYANCE",
