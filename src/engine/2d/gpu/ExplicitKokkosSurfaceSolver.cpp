@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "KokkosPerfCounters.hpp"
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../data/SurfaceStateData.hpp"
@@ -147,6 +148,12 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     mesh_  = &mesh;
     state_ = &state;
     opts_  = &opts;
+
+    // Perf review Phase A2: launch/fence/deep_copy counters (OPENSWMM_PERF).
+    // Installed after Kokkos::initialize (plugin construction), before the
+    // devCopy mirroring below so initialize's uploads are counted too.
+    kperf::install();
+    kperf::reset();
 
     const int nt = mesh.n_triangles();
     if (nt <= 0) return;
@@ -1209,9 +1216,14 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
 double ExplicitKokkosSurfaceSolver::advance(double t_current,
                                             double t_target) {
     if (!initialized_ || t_target <= t_current) return t_target;
+    kperf::count_advance();
 
     double t = t_current;
     if (t_last_sync_ > t_current) t_last_sync_ = t_current;
+    // Tools regions (perf review Phase A3): group the advance for external
+    // profilers (nsys via the nvtx connector, kernel-logger). No-ops when no
+    // tool is loaded.
+    Kokkos::Profiling::pushRegion("openswmm_2d_advance_push");
     pushForcings();
     pushNodeState();
     Kokkos::deep_copy(d_bc_accum_, 0.0);
@@ -1219,7 +1231,9 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
     Kokkos::deep_copy(d_node_drawn_, 0.0);
     last_steps_ = 0;
     int cycles_since_rebuild = cycles_since_rebuild_;
+    Kokkos::Profiling::popRegion();
 
+    Kokkos::Profiling::pushRegion("openswmm_2d_advance_march");
     while (t < t_target) {
         if (cycles_since_rebuild >= kRebuildEveryCycles) {
             syncAndRebuild(t);
@@ -1259,8 +1273,11 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
             lazySourcesDev(t_target);
         }
     }
+    Kokkos::Profiling::popRegion();
 
+    Kokkos::Profiling::pushRegion("openswmm_2d_advance_publish");
     publishAndCopyBack(t_current, t_target);
+    Kokkos::Profiling::popRegion();
     return t_target;
 }
 
@@ -1288,6 +1305,7 @@ void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
 
 void ExplicitKokkosSurfaceSolver::finalize() {
     if (!initialized_) return;
+    kperf::dump();
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
         if (std::FILE* f = std::fopen(telemetry_path_.c_str(), "w")) {
             std::fprintf(f, "t_s,active_cells,active_frac\n");
