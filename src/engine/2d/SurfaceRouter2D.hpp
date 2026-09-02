@@ -242,6 +242,15 @@ public:
      * Hoisted to data/PendingRows2D.hpp; alias kept for call sites.
      */
     using PendingBoundaryRow = twoD::PendingBoundaryRow;
+    using PendingInitialQualityRow = twoD::PendingInitialQualityRow;
+    using PendingBoundaryQualityRow = twoD::PendingBoundaryQualityRow;
+    /// S1/S2: raw [2D_INITIAL_QUALITY] rows, resolved at initialize().
+    std::vector<PendingInitialQualityRow>& pendingInitialQualityRows() noexcept {
+        return pending_iq_rows_;
+    }
+    std::vector<PendingBoundaryQualityRow>& pendingBoundaryQualityRows() noexcept {
+        return pending_bq_rows_;
+    }
     std::vector<PendingBoundaryRow>& pendingBCRows() noexcept { return pending_bc_rows_; }
     const std::vector<PendingBoundaryRow>& pendingBCRows() const noexcept { return pending_bc_rows_; }
 
@@ -311,6 +320,8 @@ private:
 
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
     std::vector<PendingBoundaryRow> pending_bc_rows_;
+    std::vector<PendingInitialQualityRow> pending_iq_rows_;   ///< S1/S2
+    std::vector<PendingBoundaryQualityRow> pending_bq_rows_;  ///< S2
 
     /// §11A — parse-time scratch for [2D_EDGE_CONVEYANCE] rows.
     /// Drained in initialize() into mesh_.edge_conveyance after

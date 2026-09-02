@@ -75,6 +75,36 @@ struct PendingEdgeConveyanceRow {
     double conveyance = 1.0; ///< Validated to [0, 1] at parse time
 };
 
+/**
+ * @brief One `[2D_INITIAL_QUALITY]` row (overland transport S1/S2).
+ *
+ * @details `CELL <n> <species> <conc>`, `TAG <tag> <species> <conc>` or
+ *          `* <species> <conc>`. Stored raw at parse: the mesh, its tags and
+ *          the species table are all finalised AFTER the .inp is read, so
+ *          resolution (and every fatal diagnostic — unknown species, unknown
+ *          tag, cell out of range) happens in `SurfaceRouter2D::initialize`
+ *          once the volumes exist to multiply against. Precedence at resolve
+ *          is `* < TAG < CELL`, the D-I3 order the infiltration rows use.
+ */
+struct PendingInitialQualityRow {
+    int         tri = -1;     ///< 0-based cell, or -1 for TAG / '*' scope
+    std::string tag;          ///< tag name; empty with tri >= 0 or for '*'
+    bool        all = false;  ///< the '*' spelling
+    std::string species;      ///< name in [POLLUTANTS]
+    double      conc = 0.0;   ///< species units (mass = conc x cell volume)
+};
+
+/// S2 — one `[2D_BOUNDARY_QUALITY]` row: `TRI EDGE SPECIES CONC`, the same
+/// 0-based TRI / 0..2 EDGE spelling as `[2D_BOUNDARY_CONDITIONS]`. Gives the
+/// concentration INFLOW through that boundary edge carries; outflow always
+/// leaves at the cell's concentration, so no row is needed for it.
+struct PendingBoundaryQualityRow {
+    int         tri  = 0;
+    int         edge = 0;     ///< 0..2
+    std::string species;      ///< name in [POLLUTANTS]
+    double      conc = 0.0;   ///< species units
+};
+
 } // namespace openswmm::twoD
 
 #endif // OPENSWMM_ENGINE_2D_PENDING_ROWS_HPP

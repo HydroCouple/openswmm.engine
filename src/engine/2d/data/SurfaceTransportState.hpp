@@ -84,6 +84,33 @@ struct SurfaceTransportState {
     /// tuple reads it into the node's `qual_mass_in`.
     std::vector<double> exch_mass;
 
+    // ---- S2 source concentrations (species units) -------------------------
+    /// [s] concentration carried by rainfall — `[POLLUTANTS]` rain
+    /// concentration, set by the router. Empty ⇒ rain arrives clean (S1).
+    std::vector<double> rain_conc;
+    /// [bc_slot * n_species + s] concentration carried by INFLOW through a
+    /// non-WALL boundary edge, from `[2D_BOUNDARY_QUALITY]`. Sized by the
+    /// solver to its own `bc_cell_` list at initialize; empty ⇒ inflow
+    /// arrives clean. Outflow always leaves at the cell's concentration.
+    std::vector<double> bc_conc;
+    /// Raw `[2D_BOUNDARY_QUALITY]` rows, resolved by the solver against its
+    /// boundary-edge list: (flat mesh edge slot tri*3+e, species, conc).
+    struct BoundaryQualityRow { int slot = -1; int species = -1; double conc = 0.0; };
+    std::vector<BoundaryQualityRow> bc_quality_rows;
+
+    // ---- S2 dispersion limiter telemetry ----------------------------------
+    /// Times the explicit dispersive exchange on a face was capped to keep the
+    /// pair from crossing (the max-principle limiter). Nonzero means the
+    /// dispersion is under-resolved at the marcher's dt on that face — a
+    /// modelling signal, not an error, and the reason it is counted rather
+    /// than hidden.
+    long dispersion_limiter_binds = 0;
+
+    /// Source ledgers (per species, m³·conc, cumulative) so the continuity
+    /// statement can close: what came in through rain and boundaries.
+    std::vector<double> gained_rainfall;
+    std::vector<double> gained_boundary;
+
     bool active() const noexcept { return n_species > 0 && n_cells > 0; }
 
     void resize(int n_spec, int n_tri, int n_coupling_points) {
@@ -98,6 +125,12 @@ struct SurfaceTransportState {
                                   n_coupling_points > 0 ? n_coupling_points
                                                         : 0),
                          0.0);
+        rain_conc.clear();          // S2: router fills when pollutants carry one
+        bc_conc.clear();            // S2: solver sizes at initialize
+        bc_quality_rows.clear();
+        dispersion_limiter_binds = 0;
+        gained_rainfall.assign(ns, 0.0);
+        gained_boundary.assign(ns, 0.0);
     }
 
     void clear() { *this = SurfaceTransportState{}; }
@@ -126,8 +159,12 @@ struct SurfaceTransportState {
         for (int c = 0; c < n_cells; ++c)
             m += cell_mass[base + static_cast<std::size_t>(c)];
         const auto us = static_cast<std::size_t>(s);
+        // Sources are SUBTRACTED so the quantity is "what was there at t=0":
+        // surface + everything that left − everything that arrived.
         return m + lost_infiltration[us] + lost_boundary[us] +
-               lost_coupling[us];
+               lost_coupling[us] -
+               (us < gained_rainfall.size() ? gained_rainfall[us] : 0.0) -
+               (us < gained_boundary.size() ? gained_boundary[us] : 0.0);
     }
 };
 

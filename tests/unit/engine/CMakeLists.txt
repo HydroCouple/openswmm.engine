@@ -526,6 +526,12 @@ if(OPENSWMM_BUILD_2D)
     # two-species stride isolation, infiltration ledgering vs evaporative
     # up-concentration, and species-as-passenger bit-identity.
     add_gtest_unit(test_engine_2d_transport_s1 test_2d_transport_s1.cpp)
+    # Overland transport S2: rain and boundary-inflow source concentrations
+    # (uniformity to round-off when the source matches the pond), limited
+    # explicit isotropic dispersion on the face cadence (conservation, max
+    # principle, Fickian 2·D·t rate, limiter bind at unstable D, D=0 inert),
+    # and [2D_BOUNDARY_QUALITY] refusal on a WALL edge.
+    add_gtest_unit(test_engine_2d_transport_s2 test_2d_transport_s2.cpp)
     # Windowless co-advance coupling gates: cross-domain conservation through
     # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
     # rederivation, conductance sign + FD parity.

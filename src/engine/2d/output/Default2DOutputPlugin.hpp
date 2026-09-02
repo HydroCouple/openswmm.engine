@@ -213,6 +213,11 @@ private:
     hid_t ds_face_net_source_      = H5I_INVALID_HID;
     hid_t ds_face_infil_rate_      = H5I_INVALID_HID;
     hid_t ds_face_infil_cum_       = H5I_INVALID_HID;
+    /// Overland transport S1: [nTime, nSpecies, nFace] species concentration.
+    /// Created lazily on the first update() carrying species; absent when the
+    /// model has no 2D transport.
+    hid_t   ds_face_species_conc_  = H5I_INVALID_HID;
+    hsize_t n_species_             = 0;
     hid_t ds_face_vx_              = H5I_INVALID_HID;
     hid_t ds_face_vy_              = H5I_INVALID_HID;
     hid_t ds_face_continuity_err_  = H5I_INVALID_HID;

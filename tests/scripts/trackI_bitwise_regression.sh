@@ -30,7 +30,13 @@ MODELS=()
 while IFS= read -r line; do
     [ -n "$line" ] && MODELS+=("$line")
 done < <(
-  find "$REPO/tests" -name '*.inp' -not -path '*/trackI_g1/*' -print0 \
+  # Underscore-prefixed decks are gtest SCRATCH fixtures (the suites write
+  # them into the data cwd as they run) — ephemeral, sometimes deliberately
+  # malformed, and present or absent depending on what ran last. Sweeping
+  # them in made the census's verdict depend on test-run residue: the S2
+  # check's own refusal fixtures showed up as "differing" decks.
+  find "$REPO/tests" -name '*.inp' -not -name '_*' \
+       -not -path '*/trackI_g1/*' -print0 \
   | xargs -0 grep -l -E '^\[2D_(TRIANGLES|MESH_FILE)\]' 2>/dev/null \
   | xargs grep -L -E '^\[2D_INFILTRATION' 2>/dev/null | sort
 )
