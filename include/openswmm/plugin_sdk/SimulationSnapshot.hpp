@@ -267,6 +267,7 @@ struct SimulationSnapshot {
     std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
     std::vector<double> surface_infil_rate;     ///< Held infiltration loss rate (m/s, ≥ 0), per face — all zero when no [2D_INFILTRATION*] model resolved
     std::vector<double> surface_infil_cum;      ///< Cumulative infiltrated depth (m), per face
+    std::vector<double> surface_rain_cum;       ///< Cumulative rainfall volume (m³), per face
     /**
      * @brief 2D surface species concentration (overland transport S1/S2).
      * @details Layout: [species * surface_tri_count + face], species-major to

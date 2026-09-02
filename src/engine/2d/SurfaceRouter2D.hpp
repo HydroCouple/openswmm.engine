@@ -232,6 +232,18 @@ public:
     }
 
     /**
+     * @brief Ledger-consistent cumulative rainfall volume per cell (m³).
+     *
+     * @details Booked in accumulateMassBalance() from the SAME per-cell
+     *          rainfall term that feeds `MassBalance2D::rainfall_in`, so
+     *          `sum(rainCumulative()[i]) == rainfall_in` holds by construction.
+     *          Sized [n_triangles] from initialize(); zero-filled when no rain.
+     */
+    const std::vector<double>& rainCumulative() const noexcept {
+        return rain_cum_;
+    }
+
+    /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
      *
      * V-E3. Populated by the input parser during reading (before the
@@ -317,6 +329,10 @@ private:
     /// MassBalance2D::infil_out; empty when no [2D_INFILTRATION*] model
     /// resolved.
     std::vector<double> infil_cum_applied_;
+
+    /// Per-cell cumulative rainfall volume (m³) — see rainCumulative().
+    /// Filled in accumulateMassBalance() alongside MassBalance2D::rainfall_in.
+    std::vector<double> rain_cum_;
 
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
     std::vector<PendingBoundaryRow> pending_bc_rows_;

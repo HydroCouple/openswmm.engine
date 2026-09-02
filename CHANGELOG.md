@@ -23,6 +23,14 @@ retroactive.
 
 ### Added
 
+- **Per-cell cumulative rainfall volume in the 2D sidecar.** New
+  `/Mesh2_face_rain_cum` `[nTime, nFace]` dataset (m³) alongside the existing
+  `/Mesh2_face_rainfall` intensity. Booked in
+  `SurfaceRouter2D::accumulateMassBalance` from the same per-cell term that
+  feeds `mass_balance_2d/rainfall_in`, so the sum over cells equals the
+  ledger by construction (`SurfaceRouter2D::rainCumulative`,
+  `SimulationSnapshot::surface_rain_cum`).
+
 - **`TEMP` in reaction expressions — temperature-dependent kinetics.**
   Multispecies rate/equilibrium/formula expressions can reference the
   local water temperature (°C) as the hydraulic variable `TEMP`, enabling

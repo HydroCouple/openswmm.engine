@@ -1691,6 +1691,7 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     snap.surface_grad_hx_lim   = {0.0,  0.0};
     snap.surface_grad_hy_lim   = {0.0,  0.0};
     snap.surface_rainfall      = {0.0,  0.0};
+    snap.surface_rain_cum      = {3.0,  7.0};   // m³ per cell; sums to rainfall_in
     snap.surface_coupling_flux = {0.0,  0.0};
     snap.surface_net_source    = {0.0,  0.0};
     snap.surface_face_vx       = {0.0,  0.0};
@@ -1753,6 +1754,8 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_node_depth"));
     EXPECT_TRUE(exists("Mesh2_face_vx"));
     EXPECT_TRUE(exists("Mesh2_face_vy"));
+    EXPECT_TRUE(exists("Mesh2_face_rainfall"));
+    EXPECT_TRUE(exists("Mesh2_face_rain_cum"));
     EXPECT_TRUE(exists("Mesh2_face_continuity_err"));
     EXPECT_TRUE(exists("Mesh2_face_max_depth"));
     EXPECT_TRUE(exists("Mesh2_face_max_velocity"));
@@ -1781,6 +1784,24 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         H5Sget_simple_extent_dims(space, dims, nullptr);
         EXPECT_EQ(dims[0], 1u);
         EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+
+    // /Mesh2_face_rain_cum is [1, n_tri] and carries the per-cell cumulative
+    // rainfall volume (m³) verbatim.
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_rain_cum", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        hsize_t dims[2] = {0, 0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], 1u);
+        EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        std::vector<double> vals(n_tri, 0.0);
+        H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, vals.data());
+        EXPECT_NEAR(vals[0], 3.0, 1e-12);
+        EXPECT_NEAR(vals[1], 7.0, 1e-12);
         H5Sclose(space);
         H5Dclose(ds);
     }

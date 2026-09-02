@@ -114,6 +114,7 @@ struct MeshData;  // forward declaration
  *   - /Mesh2_face_net_source         [nTime, nFace] net source/sink (m/s)
  *   - /Mesh2_face_infil_rate         [nTime, nFace] held infiltration rate (m/s)
  *   - /Mesh2_face_infil_cum          [nTime, nFace] cumulative infiltrated depth (m)
+ *   - /Mesh2_face_rain_cum           [nTime, nFace] cumulative rainfall volume (m³)
  *   - /Mesh2_face_vx                 [nTime, nFace] cell velocity X (m/s)
  *   - /Mesh2_face_vy                 [nTime, nFace] cell velocity Y (m/s)
  *   - /Mesh2_face_continuity_err     [nTime, nFace] per-cell continuity residual (m³/s)
@@ -213,6 +214,7 @@ private:
     hid_t ds_face_net_source_      = H5I_INVALID_HID;
     hid_t ds_face_infil_rate_      = H5I_INVALID_HID;
     hid_t ds_face_infil_cum_       = H5I_INVALID_HID;
+    hid_t ds_face_rain_cum_        = H5I_INVALID_HID;
     /// Overland transport S1: [nTime, nSpecies, nFace] species concentration.
     /// Created lazily on the first update() carrying species; absent when the
     /// model has no 2D transport.
