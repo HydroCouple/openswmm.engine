@@ -252,6 +252,53 @@ SWMM_ENGINE_API int swmm_gage_delete(
     SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
 
 /**
+ * @brief Delete many nodes in one call — equivalent to sequential
+ *        @ref swmm_node_delete calls in DESCENDING index order, with ONE
+ *        name-index rebuild for the whole batch.
+ *
+ * @details The per-object path rebuilds the entire name→index hash after
+ *          EVERY delete, which dominates bulk deletions on large models
+ *          (K deletes = K full rehashes over every remaining name).  The
+ *          batch runs the identical per-object cascade logic — semantics,
+ *          cascade behaviour and final state match the sequential
+ *          descending equivalent exactly — but rehashes once.
+ *
+ *          `indices` are pre-batch indices; duplicates are tolerated
+ *          (deduplicated internally).  Every index is validated BEFORE any
+ *          mutation: an out-of-range entry fails the whole call with
+ *          SWMM_ERR_BADINDEX and no changes.  Cascade entries in
+ *          `cascade_out` carry the indices the sequential-descending
+ *          equivalent would report.
+ *
+ * @param engine       Engine handle.
+ * @param indices      Array of `n` zero-based node indices (pre-batch).
+ * @param n            Number of entries in `indices`; 0 is a no-op.
+ * @param cascade_out  If non-NULL, receives the aggregate cascade report.
+ *                     Caller must free with @ref swmm_impact_report_free.
+ * @returns SWMM_OK, SWMM_ERR_LIFECYCLE if not BUILDING/OPENED,
+ *          SWMM_ERR_BADHANDLE, SWMM_ERR_BADPARAM if `indices` is NULL with
+ *          n > 0, or SWMM_ERR_BADINDEX.
+ */
+SWMM_ENGINE_API int swmm_node_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
+
+/** @copydoc swmm_node_delete_many */
+SWMM_ENGINE_API int swmm_link_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
+
+/** @copydoc swmm_node_delete_many */
+SWMM_ENGINE_API int swmm_subcatch_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
+
+/** @copydoc swmm_node_delete_many */
+SWMM_ENGINE_API int swmm_gage_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
+
+/**
  * @brief Delete a time series or curve and nullify all referencing objects.
  *
  * @details Affected references: gage ts_index, node storage_curve /

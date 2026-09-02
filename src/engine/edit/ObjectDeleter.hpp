@@ -107,6 +107,32 @@ CascadeResult delete_node    (SimulationContext& ctx, int node_idx);
 CascadeResult delete_link    (SimulationContext& ctx, int link_idx);
 CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx);
 CascadeResult delete_gage    (SimulationContext& ctx, int gage_idx);
+
+/**
+ * @brief Batch deletion — equivalent to sequential per-object deletes in
+ *        DESCENDING index order, with ONE name-index rebuild per batch.
+ *
+ * @details The K-object cost of the per-object path is dominated by
+ *          NameIndex::remove_at rebuilding the whole name→index map per
+ *          delete (K full rehashes over every remaining name).  These run
+ *          the SAME per-object delete code — semantics are identical by
+ *          construction, cascade behaviour included — inside a
+ *          begin/end_bulk_remove() scope on the affected name indexes, so
+ *          the map rebuilds once.  `indices` are deduplicated and sorted
+ *          descending internally (descending also keeps each entry's
+ *          reported index equal to its pre-batch index for the objects
+ *          named in `indices`; cascade entries report indices as the
+ *          sequential-descending equivalent would).  Out-of-range indices
+ *          are the CALLER's job to reject (the C wrapper validates before
+ *          any mutation, keeping the call all-or-nothing).
+ */
+CascadeResult delete_nodes_many     (SimulationContext& ctx, std::vector<int> indices);
+/** @copydoc delete_nodes_many */
+CascadeResult delete_links_many     (SimulationContext& ctx, std::vector<int> indices);
+/** @copydoc delete_nodes_many */
+CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices);
+/** @copydoc delete_nodes_many */
+CascadeResult delete_gages_many     (SimulationContext& ctx, std::vector<int> indices);
 CascadeResult delete_table   (SimulationContext& ctx, int table_idx);
 CascadeResult delete_transect(SimulationContext& ctx, int transect_idx);
 

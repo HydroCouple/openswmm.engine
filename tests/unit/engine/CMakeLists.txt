@@ -294,6 +294,9 @@ add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
+# Perf plan Phase A1 — swmm_*_delete_many parity with sequential descending
+# per-object deletes, all-or-nothing validation, and the one-rehash batch.
+add_gtest_unit(test_engine_object_deletion_many test_object_deletion_many.cpp)
 add_gtest_unit(test_engine_quality_roundtrip test_quality_roundtrip.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 add_gtest_unit(test_engine_tags           test_tags.cpp)
