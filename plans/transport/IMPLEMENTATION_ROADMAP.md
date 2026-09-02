@@ -3820,3 +3820,28 @@ and S2b-for-dispersion is closed in the negative.
   the calibrated 0.9 bound and sits comfortably inside the handoff's
   uncalibrated 0.6. Calibrate-then-tighten is part of the check, not
   polish.
+
+**2026-09-02 (later) — OVERLAND TRANSPORT S3 VALIDATED AND COMMITTED.**
+The 1D↔2D coupling carries species: drain at the cell's concentration
+through a node mass queue drained by the volume queue's own rule, spill
+at the node's published concentration with no debit (the CSTR's volume
+drop removes it), outfall discharge through a scattered mass-rate
+density. The handoff's own §2.1 finding (drain water invisible to the
+quality mix — a junction reads exactly 2×c0 without the fix) and the
+check's flip-flop fix both landed; the S2 debts closed; the corpus
+gained its first deck that MOVES by design, attributed once across
+both nets.
+
+- **(228) gross ledgers cannot state a net claim — pick the identity
+  BEFORE the falsifier, from the bookkeeping, not the ledger names.**
+  The rim exchange recirculates (98 m³ back over a 50 m³ pond), so
+  lost/gained count laps of the SAME mass, the volume side nets by
+  window sign, and the only identity that closes is per-window:
+  queue mass == c0 × out-ledger volume, with negative windows leaving
+  through the node's own volume drop. The check burned two wrong
+  identity formulations and one order-dependent "fix" (an incremental
+  pairing debit — a spill substep that precedes its window's drain
+  finds nothing to debit) before deriving the window-granularity
+  pairing from the mass balance itself. Corollary of 227: invariants
+  that pair quantities must pair them at the granularity the netting
+  happens at.
