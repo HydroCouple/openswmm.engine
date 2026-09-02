@@ -406,12 +406,16 @@ Decks: `Example1`, generated `reach_uniform_2000` (fv_default ≈ 8,000 cells),
 | dynwave | 236.7 s (continuity error 76.3% — the deck is pathological under DW; treat as reference-with-asterisk) |
 | fv_1cell | **≥ 1800 s (timeout)** |
 | fv_default | **≥ 1800 s (timeout)** |
-| fv_default_nolts | solo rerun in progress (killed at 269.7 s still running in the batch — earlier "completion" figures for nolts/routingstep in the batch output are kill artifacts, exit −15/−9, and must not be cited) |
+| fv_default_nolts | **≥ 5,970 s, killed unfinished** (solo run; wall contaminated by a concurrent ctest build, but even discounting that it is far past the 1800 s the LTS configs timed out at) |
 
-FV is ≥ 7.6× slower than DW on this real network at default settings —
-consistent with the standing FV/East-Boston gap. If the LTS-off solo run
-finishes in O(DW) time, LTS's fixed per-base-substep floors (F7b) are the
-blow-up mechanism on real networks and become the top FV work item alongside F5.
+FV is ≥ 7.6× slower than DW on this real network at default settings, and
+**LTS-off does not rescue it** (≥ 25× DW before the kill) — so LTS's fixed
+per-base-substep floors (F7b) are NOT the primary TwinOaks mechanism; the
+gap is the FV solver's per-substep cost itself (the F5 depthOfArea profile),
+consistent with the standing East-Boston figure (FV 946 s vs DW 49 s).
+Batch-output caveat: rows killed by signal report as wall_best
+"completions" (exit −15/−9 in results.json `reason`) — check `ok` before
+citing any batch wall.
 
 ### 7.4 Phase C verdicts against the plan's success criteria
 
