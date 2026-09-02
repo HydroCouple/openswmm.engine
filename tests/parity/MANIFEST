@@ -76,3 +76,13 @@ tests/parity/transport/heat_lard.inp	the same body under QUALITY_SOLVER LAGRANGI
 # still not wired into this runner; that wiring is a recorded debt).
 tests/parity/corpus/decks/si_dw_quality.inp	SI units (LPS) + DYNWAVE + buildup/washoff + age + heat -- the only SI deck; the UCF seams' first observer
 tests/parity/corpus/decks/steady_quality.inp	STEADY routing + pollutant + age -- the only STEADY deck; the is_steady quality branches' first observer
+
+# ---- Overland transport (1) -----------------------------------------------
+# Added 2026-09-02.  Every 2D deck the trackI census sweeps carries no
+# [POLLUTANTS], so S1 (species on the marcher), S2 (dispersion, source
+# concentrations) and S3 (the 1D<->2D coupling tuple) were invisible to it
+# (lesson 225).  This deck's J1 Cu column IS the coupling tuple.  EXPECT IT TO
+# MOVE on any overland-transport change; it moved on the round that added it
+# (base: J1 read 0, the quality sections silently ignored at rc 0).  The census
+# also sweeps it (it has a mesh) -- one deck, two nets, attribute once.
+tests/parity/corpus/decks/twod_coupled_quality.inp	DYNWAVE + coupled 2D pan with [POLLUTANTS], [2D_INITIAL_QUALITY] (* and TAG), DISPERSION -- the only deck where species cross the 1D<->2D coupling

@@ -331,6 +331,8 @@ struct BoundaryData;
 class  Infil2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
+struct PendingInitialQualityRow;
+struct PendingBoundaryQualityRow;
 } // namespace twoD
 
 // ============================================================================
@@ -914,6 +916,10 @@ struct SimulationContext {
         twoD::BoundaryData*                          boundary   = nullptr;
         std::vector<twoD::PendingBoundaryRow>*       pending_bc = nullptr;
         std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
+        /// S2/S3: authored [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] rows,
+        /// retained after initialize() so the InpWriter can round-trip them.
+        std::vector<twoD::PendingInitialQualityRow>*  pending_iq = nullptr;
+        std::vector<twoD::PendingBoundaryQualityRow>* pending_bq = nullptr;
         /// Per-cell infiltration (track I, plan §5.5). Owned by
         /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate
         /// its defaults()/overrides()/options() and the InpWriter reads them

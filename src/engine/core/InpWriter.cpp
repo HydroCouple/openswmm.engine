@@ -39,7 +39,8 @@
  *   2D_OPTIONS, 2D_INFILTRATION_OPTIONS, 2D_INFILTRATION_DEFAULTS,
  *   2D_INFILTRATION, 2D_MESH_FILE (external mode) or 2D_VERTICES,
  *   2D_TRIANGLES, 2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP,
- *   2D_BOUNDARY_CONDITIONS, 2D_EDGE_CONVEYANCE (inline mode)
+ *   2D_BOUNDARY_CONDITIONS, 2D_EDGE_CONVEYANCE (inline mode),
+ *   2D_INITIAL_QUALITY, 2D_BOUNDARY_QUALITY
  *
  * @ingroup engine_core
  *
@@ -481,6 +482,8 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                  o.advection ? "YES" : "NO");
     std::fprintf(f, "%-22s %s\n",    "COUPLING_AREA",
                  o.coupling_area_auto ? "AUTO" : "DEFAULT");
+    if (o.dispersion > 0.0)   // S2: default 0 is omitted (option-default rule)
+        std::fprintf(f, "%-22s %.12g\n", "DISPERSION", o.dispersion);
     {
         static const char* sBackend2D[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
         const int bi = static_cast<int>(o.backend);
@@ -744,6 +747,28 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                              r.conveyance);
             }
         }
+    }
+
+    // ---- [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] (S2/S3) ------------------
+    // Authored rows verbatim: CELL is the user's 1-based spelling, TRI/EDGE the
+    // 0-based [2D_BOUNDARY_CONDITIONS] spelling — both exactly as parsed.
+    if (tio.pending_iq && !tio.pending_iq->empty()) {
+        sec(f, "2D_INITIAL_QUALITY");
+        std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
+        for (const auto& r : *tio.pending_iq) {
+            if (r.all)
+                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
+            else if (r.tri >= 0)
+                std::fprintf(f, "%-8s %-16d %-12s %.12g\n", "CELL", r.tri + 1, r.species.c_str(), r.conc);
+            else
+                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "TAG", r.tag.c_str(), r.species.c_str(), r.conc);
+        }
+    }
+    if (tio.pending_bq && !tio.pending_bq->empty()) {
+        sec(f, "2D_BOUNDARY_QUALITY");
+        std::fprintf(f, ";;%-4s %-4s %-12s %s\n", "TRI", "EDGE", "SPECIES", "CONC");
+        for (const auto& r : *tio.pending_bq)
+            std::fprintf(f, "%-6d %-4d %-12s %.12g\n", r.tri, r.edge, r.species.c_str(), r.conc);
     }
 
 #ifdef OPENSWMM_HAS_2D

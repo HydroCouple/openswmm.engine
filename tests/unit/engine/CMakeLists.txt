@@ -532,6 +532,12 @@ if(OPENSWMM_BUILD_2D)
     # principle, Fickian 2·D·t rate, limiter bind at unstable D, D=0 inert),
     # and [2D_BOUNDARY_QUALITY] refusal on a WALL edge.
     add_gtest_unit(test_engine_2d_transport_s2 test_2d_transport_s2.cpp)
+    # Overland transport S3 (D-2DT4): the 1D↔2D coupling carries species —
+    # drain at the cell's concentration through the node mass queue (junction
+    # reads exactly c0), spill at nodes.conc (pan stays uniform), outfall
+    # discharge through coupling_src (max principle + bound), cross-domain
+    # mass identity, and species-as-passenger bit-identity on coupled decks.
+    add_gtest_unit(test_engine_2d_transport_s3 test_2d_transport_s3.cpp)
     # Windowless co-advance coupling gates: cross-domain conservation through
     # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
     # rederivation, conductance sign + FD parity.

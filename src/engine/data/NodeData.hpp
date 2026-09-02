@@ -321,6 +321,25 @@ struct NodeData {
      */
     std::vector<double>     coupling_queue;
 
+    /**
+     * @brief S3 — species MASS queue for the 2D→1D junction drain, per
+     *        (node, pollutant), 1D mass units (conc × ft³).
+     * @details Filled by SurfaceRouter2D from the marcher's per-point
+     *          `exch_mass` (2D→1D drains only, at the CELL's concentration);
+     *          drained by assembleLateralInflows with the SAME rule as
+     *          `coupling_queue` (uniform rate over the remaining delivery span,
+     *          flushed when remaining ≤ dt) so mass and water arrive in the
+     *          same proportions. Flat 2D `[node * n_pollutants + pollutant]`.
+     *          Never negative: a 1D→2D spill removes mass from the node
+     *          IMPLICITLY through the reduced mixing volume (the CSTR takes
+     *          every outflow at the mixed concentration), so no debit is
+     *          queued for it. In-memory only.
+     */
+    std::vector<double>     coupling_qual_queue;
+    /** @brief S3 — this step's delivered 2D→1D species mass RATE per
+     *  (node, pollutant) (mass/sec); read by QualitySolver::addCouplingLoads(). */
+    std::vector<double>     coupling_qual_inflow;
+
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
     // assembleQualityInflows() writes these; mixAtNodes() reads them.
@@ -696,6 +715,8 @@ struct NodeData {
         coupling_queue.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
+        coupling_qual_queue.clear();
+        coupling_qual_inflow.clear();
         ext_qual_mass.clear();
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
@@ -886,6 +907,7 @@ struct NodeData {
             };
             erase2d(conc); erase2d(conc_old);
             erase2d(qual_mass_in); erase2d(iface_qual_mass);
+            erase2d(coupling_qual_queue); erase2d(coupling_qual_inflow);
             erase2d(ext_qual_mass);
             erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
             if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
@@ -928,6 +950,8 @@ struct NodeData {
             user_conc_mass_flux.assign(total, 0.0);
             qual_mass_in.assign(total, 0.0);
             iface_qual_mass.assign(total, 0.0);
+            coupling_qual_queue.assign(total, 0.0);
+            coupling_qual_inflow.assign(total, 0.0);
             ext_qual_mass.assign(total, 0.0);
             lid_drain_qual_load.assign(total, 0.0);
         }
@@ -967,6 +991,8 @@ struct NodeData {
         coupling_queue.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
+        coupling_qual_queue.shrink_to_fit();
+        coupling_qual_inflow.shrink_to_fit();
         ext_qual_mass.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
@@ -1062,6 +1088,8 @@ struct NodeData {
         std::fill(coupling_inflow.begin(), coupling_inflow.end(), 0.0);
         std::fill(coupling_volume.begin(), coupling_volume.end(), 0.0);
         std::fill(coupling_queue.begin(), coupling_queue.end(), 0.0);
+        std::fill(coupling_qual_queue.begin(), coupling_qual_queue.end(), 0.0);
+        std::fill(coupling_qual_inflow.begin(), coupling_qual_inflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);

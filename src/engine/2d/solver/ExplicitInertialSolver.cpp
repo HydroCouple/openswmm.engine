@@ -255,6 +255,18 @@ void ExplicitInertialSolver::addRainMass(int i, double rain_m3) noexcept {
     }
 }
 
+void ExplicitInertialSolver::addCouplingSourceMass(int i, double area_dt) noexcept {
+    if (!(state_->coupling_flux[i] > 0.0) || !(area_dt > 0.0)) return;
+    auto& tr = state_->transport;
+    if (!tr.active() || tr.coupling_src.empty()) return;
+    for (int s = 0; s < tr.n_species; ++s) {
+        const double g = tr.coupling_src[tr.idx(s, i)] * area_dt;
+        if (!(g > 0.0)) continue;
+        tr.cell_mass[tr.idx(s, i)] += g;
+        tr.gained_coupling[static_cast<std::size_t>(s)] += g;
+    }
+}
+
 void ExplicitInertialSolver::reconstructAll() {
     const int nt = mesh_->n_triangles();
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -340,6 +352,7 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
                                           area, tr.lost_coupling);
             addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
+            addCouplingSourceMass(i, dt_lazy * area);                // S3
         }
         double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
         state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -380,6 +393,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                     sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
                                               area, tr.lost_coupling);
                 addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
+                addCouplingSourceMass(i, dt_lazy * area);                // S3
             }
             double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
             state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -778,6 +792,13 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                     dm += gained;
                     tr.gained_rainfall[s] += gained;
                 }
+                // S3: outfall discharge (positive coupling_flux) carries the
+                // outfall's concentration as a mass-rate density.
+                if (!tr.coupling_src.empty() && state_->coupling_flux[i] > 0.0) {
+                    const double g = tr.coupling_src[tr.idx(static_cast<int>(s), i)] *
+                                     dt_c * area;
+                    if (g > 0.0) { dm += g; tr.gained_coupling[s] += g; }
+                }
                 for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                     const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
                     if (ed.cell_sign[p] > 0) {
@@ -1002,6 +1023,37 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                 double* pt = (k * ns < tr.exch_mass.size())
                                  ? &tr.exch_mass[k * ns] : nullptr;
                 sinkMassAtCellConc(ci, Q * dt_c, tr.lost_coupling, pt);
+            } else if (!sacc_L_.empty() && Q < 0.0) {
+                // S3 (D-2DT4): the spill arrives at the NODE's published
+                // concentration (`nodes.conc`, which all three 1D engines
+                // write), frozen for the batch like the node head. Nothing is
+                // queued back to the node: the CSTR mix already takes every
+                // outflow — the spill included — at the mixed concentration
+                // through the reduced inflow volume, so a debit here would
+                // remove the mass twice.
+                auto& tr = state_->transport;
+                const auto ns = static_cast<std::size_t>(tr.n_species);
+                const auto ni = static_cast<std::size_t>(cp.node_idx);
+                const auto& conc = state_->nodes_1d->conc;
+                if ((ni + 1) * ns <= conc.size()) {
+                    const double v_in = -Q * dt_c;
+                    for (std::size_t s = 0; s < ns; ++s) {
+                        const double c = conc[ni * ns + s];
+                        if (!(c > 0.0)) continue;
+                        const double g = v_in * c;
+                        tr.cell_mass[tr.idx(static_cast<int>(s), ci)] += g;
+                        tr.gained_coupling[s] += g;
+                    }
+                    // The spill VOLUME is tracked per point so the router can
+                    // pair it against this window's drained mass — see
+                    // SurfaceTransportState::exch_spill. (An incremental
+                    // per-substep debit here is ORDER-DEPENDENT — a spill
+                    // substep that precedes the window's drain finds nothing
+                    // to debit — and the check measured the residue; the
+                    // pairing must be done at window granularity.)
+                    if (static_cast<std::size_t>(k) < tr.exch_spill.size())
+                        tr.exch_spill[static_cast<std::size_t>(k)] += v_in;
+                }
             }
             state_->volume[ci] -= Q * dt_c;
             if (state_->volume[ci] < 0.0) state_->volume[ci] = 0.0;
@@ -1077,6 +1129,8 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     // it rides on, so S3's tuple reads one advance's worth and not a total.
     std::fill(state_->transport.exch_mass.begin(),
               state_->transport.exch_mass.end(), 0.0);
+    std::fill(state_->transport.exch_spill.begin(),
+              state_->transport.exch_spill.end(), 0.0);
     exch_tau_ = 0.0;
     last_steps_ = 0;
     // Rebuild cadence persists ACROSS advances: under windowless co-advance

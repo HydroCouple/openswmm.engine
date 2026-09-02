@@ -196,6 +196,54 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     addGwLoads(ctx, dt);           // Groundwater inflow pollutant loads → nodes
     addIfaceLoads(ctx, dt);        // Routing interface file loads → nodes
     addExtInflowLoads(ctx, dt);    // Direct [INFLOWS] CONCEN/MASS loads → nodes
+    addCouplingLoads(ctx, dt);     // S3: 2D→1D junction drain (volume + mass)
+}
+
+// ============================================================================
+// S3 (D-2DT4, 2D→1D half): the 2D surface's junction drain. Engine-only (no
+// legacy counterpart — legacy has no 2D surface), added LAST so
+// legacy-comparable runs (coupling_inflow == 0) keep their ULPs.
+//
+// Two things arrive together and must both be booked, or the mix is wrong in
+// opposite directions: the WATER joins qual_vol_in (the mixing denominator —
+// before S3 the drain's water reached the node hydraulically but the quality
+// mix never saw it, so drained water diluted nothing) and the MASS joins
+// qual_mass_in at the rate assembleLateralInflows drained from the queue.
+// The spill (coupling_inflow < 0) books nothing here: the CSTR already takes
+// every outflow at the mixed concentration through the reduced inflow volume.
+// Age and temperature ride the EXTERNAL_INFLOW stand-ins until S4 carries
+// them on the surface. Booked as external inflow in the quality continuity
+// table, where the volume already goes on the flow side.
+// ============================================================================
+
+void QualitySolver::addCouplingLoads(SimulationContext& ctx, double dt) {
+    int np = n_pollutants_;
+    if (!loadersNeeded(np, ctx)) return;
+    auto& nodes = ctx.nodes;
+    if (nodes.coupling_inflow.empty()) return;
+
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        const double q = nodes.coupling_inflow[ui];
+        if (q > 0.0) {
+            nodes.qual_vol_in[ui] += q * dt;
+            addAgeVolume(ctx, i, q, WaterAgeSource::EXTERNAL_INFLOW);
+            addTempVolume(ctx, i, q, HeatSource::EXTERNAL_INFLOW);
+        }
+        if (nodes.coupling_qual_inflow.empty()) continue;
+        for (int p = 0; p < np; ++p) {
+            auto nd_idx = ui * static_cast<std::size_t>(np) +
+                          static_cast<std::size_t>(p);
+            if (nd_idx >= nodes.coupling_qual_inflow.size()) continue;
+            const double mass_rate = nodes.coupling_qual_inflow[nd_idx];
+            if (!(mass_rate > 0.0)) continue;
+            if (nd_idx < nodes.qual_mass_in.size())
+                nodes.qual_mass_in[nd_idx] += mass_rate;
+            auto pi = static_cast<std::size_t>(p);
+            if (pi < ctx.mass_balance.qual_routing_ex_in.size())
+                ctx.mass_balance.qual_routing_ex_in[pi] += mass_rate * dt;
+        }
+    }
 }
 
 // ============================================================================

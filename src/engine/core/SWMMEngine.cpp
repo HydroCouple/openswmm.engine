@@ -128,6 +128,8 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.boundary   = &surface_router_.boundary();
     ctx_.twod_io.pending_bc = &surface_router_.pendingBCRows();
     ctx_.twod_io.pending_ec = &surface_router_.pendingEdgeConveyanceRows();
+    ctx_.twod_io.pending_iq = &surface_router_.pendingInitialQualityRows();
+    ctx_.twod_io.pending_bq = &surface_router_.pendingBoundaryQualityRows();
     ctx_.twod_io.infil      = &surface_router_.infil();
 }
 #endif
@@ -242,7 +244,9 @@ int SWMMEngine::open(const char* inp_path,
                 surface_router_.pendingBCRows(),
                 surface_router_.pendingEdgeConveyanceRows(),
                 &surface_router_.infil(),
-                mf, base_dir, &ctx_.warnings);
+                mf, base_dir, &ctx_.warnings,
+                &surface_router_.pendingInitialQualityRows(),
+                &surface_router_.pendingBoundaryQualityRows());
             if (!err.empty()) {
                 if (lenient_open_) {
                     // A missing/unreadable external mesh must not make the
@@ -7331,6 +7335,31 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
                 ctx_.nodes.coupling_volume[uj] = 0.0;
             }
             ctx_.nodes.coupling_inflow[uj] = q_couple;
+
+            // S3: the 2D→1D species mass queue drains by the SAME rule as the
+            // volume queue above (uniform rate over the remaining span, flushed
+            // when remaining ≤ dt), so the delivered mass/volume ratio is the
+            // cell concentration the marcher booked. Written as a RATE for
+            // QualitySolver::addCouplingLoads (sized [node*np+p]; empty when
+            // the model carries no pollutants).
+            if (!ctx_.nodes.coupling_qual_queue.empty()) {
+                const auto np = static_cast<std::size_t>(ctx_.n_pollutants());
+                for (std::size_t p = 0; p < np; ++p) {
+                    const std::size_t idx = uj * np + p;
+                    double& qm = ctx_.nodes.coupling_qual_queue[idx];
+                    double  rate = 0.0;
+                    if (dt_routing > 0.0 && qm != 0.0) {
+                        if (ctx_.coupling_delivery_remaining > dt_routing) {
+                            rate = qm / ctx_.coupling_delivery_remaining;
+                            qm  -= rate * dt_routing;
+                        } else {
+                            rate = qm / dt_routing;
+                            qm   = 0.0;
+                        }
+                    }
+                    ctx_.nodes.coupling_qual_inflow[idx] = rate;
+                }
+            }
         }
 
         // PARITY: accumulate in legacy routing_execute source ORDER
