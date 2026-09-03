@@ -340,6 +340,23 @@ struct NodeData {
      *  (node, pollutant) (mass/sec); read by QualitySolver::addCouplingLoads(). */
     std::vector<double>     coupling_qual_inflow;
 
+    /**
+     * @brief S4 — the tuple's age-volume and temperature-volume halves,
+     *        per node (age·ft³ / °C·ft³ queued; age·ft³/s / °C·ft³/s
+     *        delivered). Same queue/drain rule as `coupling_qual_queue`;
+     *        consumed by addCouplingLoads into `node_age_vol_in` /
+     *        `node_temp_vol_in` when the 2D surface carries the row
+     *        (`coupling_tuple_age` / `coupling_tuple_temp`), which replaces
+     *        the EXTERNAL_INFLOW stand-in S3 used. Sized with the node
+     *        count (cheap); untouched on decks without a 2D surface.
+     */
+    std::vector<double>     coupling_age_vol_queue;
+    std::vector<double>     coupling_temp_vol_queue;
+    std::vector<double>     coupling_age_vol_inflow;
+    std::vector<double>     coupling_temp_vol_inflow;
+    bool coupling_tuple_age  = false;  ///< set by SurfaceRouter2D at initialize
+    bool coupling_tuple_temp = false;
+
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
     // assembleQualityInflows() writes these; mixAtNodes() reads them.
@@ -375,6 +392,17 @@ struct NodeData {
      * @see Legacy: routing.c addExternalInflows() pollutant portion
      */
     std::vector<double>     ext_qual_mass;
+
+    /**
+     * @brief Per-node DWF pollutant mass-rate ADJUSTMENT (mass/sec), net of
+     *        the global default: row mass (q·pattern-adjusted value) minus
+     *        q·Pollut.dwfConcen when the global default is set. Adding it on
+     *        top of the global-default DWF load reproduces legacy
+     *        addDryWeatherInflows' add-row-then-subtract-default exactly.
+     *        Flat 2D: [node * n_pollutants + pollutant].
+     * @see Legacy: routing.c addDryWeatherInflows() pollutant portion
+     */
+    std::vector<double>     dwf_qual_mass;
 
     /**
      * @brief LID drain quality mass rate per (node, pollutant) (mass/sec).
@@ -713,11 +741,16 @@ struct NodeData {
         coupling_inflow.assign(un, 0.0);
         coupling_volume.assign(un, 0.0);
         coupling_queue.assign(un, 0.0);
+        coupling_age_vol_queue.assign(un, 0.0);
+        coupling_temp_vol_queue.assign(un, 0.0);
+        coupling_age_vol_inflow.assign(un, 0.0);
+        coupling_temp_vol_inflow.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
         coupling_qual_queue.clear();
         coupling_qual_inflow.clear();
         ext_qual_mass.clear();
+        dwf_qual_mass.clear();
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
         lid_drain_qual_vol.assign(un, 0.0);
@@ -787,6 +820,8 @@ struct NodeData {
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
         g(coupling_inflow, 0.0); g(coupling_volume, 0.0); g(coupling_queue, 0.0);
+        g(coupling_age_vol_queue, 0.0); g(coupling_temp_vol_queue, 0.0);
+        g(coupling_age_vol_inflow, 0.0); g(coupling_temp_vol_inflow, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
         lid_drain_inflow.resize(un, 0.0);
@@ -845,6 +880,8 @@ struct NodeData {
         r(runoff_inflow); r(gw_inflow); r(ext_inflow); r(dwf_inflow);
         r(rdii_inflow); r(iface_inflow); r(coupling_inflow); r(coupling_volume);
         r(coupling_queue); r(inflow); r(outflow); r(overflow);
+        r(coupling_age_vol_queue); r(coupling_temp_vol_queue);
+        r(coupling_age_vol_inflow); r(coupling_temp_vol_inflow);
         r(losses); r(crown_elev); r(degree); r(old_net_inflow);
         r(full_volume); r(old_depth); r(old_volume); r(old_lat_flow);
         r(old_inflow); r(rpt_flag); r(stat_vol_flooded); r(stat_time_flooded);
@@ -881,6 +918,8 @@ struct NodeData {
         e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
         e(rdii_inflow); e(iface_inflow);
         e(coupling_inflow); e(coupling_volume); e(coupling_queue);
+        e(coupling_age_vol_queue); e(coupling_temp_vol_queue);
+        e(coupling_age_vol_inflow); e(coupling_temp_vol_inflow);
         e(qual_vol_in); e(lid_drain_qual_vol); e(lid_drain_inflow);
         e(inflow); e(outflow); e(overflow); e(losses);
         e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
@@ -909,6 +948,7 @@ struct NodeData {
             erase2d(qual_mass_in); erase2d(iface_qual_mass);
             erase2d(coupling_qual_queue); erase2d(coupling_qual_inflow);
             erase2d(ext_qual_mass);
+            erase2d(dwf_qual_mass);
             erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
             if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
         }
@@ -953,6 +993,7 @@ struct NodeData {
             coupling_qual_queue.assign(total, 0.0);
             coupling_qual_inflow.assign(total, 0.0);
             ext_qual_mass.assign(total, 0.0);
+            dwf_qual_mass.assign(total, 0.0);
             lid_drain_qual_load.assign(total, 0.0);
         }
     }
@@ -989,11 +1030,14 @@ struct NodeData {
         coupling_inflow.shrink_to_fit();
         coupling_volume.shrink_to_fit();
         coupling_queue.shrink_to_fit();
+        coupling_age_vol_queue.shrink_to_fit(); coupling_temp_vol_queue.shrink_to_fit();
+        coupling_age_vol_inflow.shrink_to_fit(); coupling_temp_vol_inflow.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
         coupling_qual_queue.shrink_to_fit();
         coupling_qual_inflow.shrink_to_fit();
         ext_qual_mass.shrink_to_fit();
+        dwf_qual_mass.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
@@ -1090,6 +1134,10 @@ struct NodeData {
         std::fill(coupling_queue.begin(), coupling_queue.end(), 0.0);
         std::fill(coupling_qual_queue.begin(), coupling_qual_queue.end(), 0.0);
         std::fill(coupling_qual_inflow.begin(), coupling_qual_inflow.end(), 0.0);
+        std::fill(coupling_age_vol_queue.begin(),  coupling_age_vol_queue.end(),  0.0);
+        std::fill(coupling_temp_vol_queue.begin(), coupling_temp_vol_queue.end(), 0.0);
+        std::fill(coupling_age_vol_inflow.begin(),  coupling_age_vol_inflow.end(),  0.0);
+        std::fill(coupling_temp_vol_inflow.begin(), coupling_temp_vol_inflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);
@@ -1113,6 +1161,7 @@ struct NodeData {
         std::fill(iface_inflow.begin(),  iface_inflow.end(),  0.0);
         std::fill(iface_qual_mass.begin(), iface_qual_mass.end(), 0.0);
         std::fill(ext_qual_mass.begin(),   ext_qual_mass.end(),   0.0);
+        std::fill(dwf_qual_mass.begin(),   dwf_qual_mass.end(),   0.0);
         std::fill(qual_mass_in.begin(),  qual_mass_in.end(),  0.0);
         std::fill(qual_vol_in.begin(),   qual_vol_in.end(),   0.0);
     }
