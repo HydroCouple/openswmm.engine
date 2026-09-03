@@ -62,6 +62,13 @@ namespace openswmm::twoD {
  * @param boundary Drained per-edge BC storage (may be null/unsized).
  * @param drained  SolverOptions2D::pending_rows_drained — true once
  *                 initialize() moved the pending rows into @p boundary.
+ * @param flow_to_si_applied  SolverOptions2D::bc_flow_to_si_applied — the
+ *                 display-flow → m³/s factor initialize() scaled the constant
+ *                 SPECIFIED_FLOW values by (1.0 when it has not run). The file
+ *                 contract is display flow units per metre, so constant flows
+ *                 read from @p boundary are divided by it. Constant STAGE heads
+ *                 need no such treatment: they follow the mesh scaling, and the
+ *                 `;; UNITS: SI (m)` header the writer emits covers them.
  * @return Authored rows; empty when every edge is a default WALL.
  *
  * @note Source selection: BEFORE the drain the pending rows are the only
@@ -75,7 +82,11 @@ namespace openswmm::twoD {
 inline std::vector<PendingBoundaryRow> collectBCRows(
     const std::vector<PendingBoundaryRow>* pending,
     const BoundaryData* boundary,
-    bool drained) {
+    bool drained,
+    double flow_to_si_applied = 1.0) {
+
+    const double flow_to_display =
+        (flow_to_si_applied > 0.0) ? 1.0 / flow_to_si_applied : 1.0;
 
     if (!drained) {
         if (pending && !pending->empty()) return *pending;
@@ -111,7 +122,7 @@ inline std::vector<PendingBoundaryRow> collectBCRows(
             if (!boundary->edge_bc_flow_tseries_name[idx].empty())
                 r.name = boundary->edge_bc_flow_tseries_name[idx];
             else
-                r.param1 = boundary->edge_bc_flow[idx];
+                r.param1 = boundary->edge_bc_flow[idx] * flow_to_display;
             break;
         case BoundaryType::RATING_CURVE:
             r.name = boundary->edge_bc_rating_curve_name[idx];

@@ -341,6 +341,14 @@ struct SolverOptions2D {
      *  they are the live state that post-initialize API mutations edit;
      *  the retained pending rows would be stale. Never parsed/persisted. */
     bool pending_rows_drained = false;
+
+    /*! Runtime-only: the display-flow-units → m³/s factor initialize() has
+     *  applied IN PLACE to the constant SPECIFIED_FLOW values in BoundaryData
+     *  (1.0 until it runs, and for CMS projects). The [2D_BOUNDARY_CONDITIONS]
+     *  file contract is display flow units per metre — there is no SI header
+     *  for flows, unlike lengths — so the writers divide edge_bc_flow by this
+     *  before emitting. Never parsed/persisted. */
+    double bc_flow_to_si_applied = 1.0;
 };
 
 } // namespace openswmm::twoD

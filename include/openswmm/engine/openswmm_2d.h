@@ -383,19 +383,26 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_cd(SWMM_Engine engine,
                                                      double cd);
 
 /** @brief Get the coupling exchange area of a vertex
- *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²; default 1.0).
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column; default 1.0).
+ *
+ *  Units follow the MESH: mesh length units squared as authored (ft² for a
+ *  US-FLOW_UNITS project unless the mesh file declares `;; UNITS: SI (m)`),
+ *  converted to m² in place by swmm_engine_initialize() together with the
+ *  vertex coordinates. Before initialize the value is therefore in mesh
+ *  (project) units; after it, m².
  *  @param vertex_idx Vertex index in `[0, vertex_count)`.
- *  @param area Output exchange area (m²).
+ *  @param area Output exchange area (mesh length units²).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_vertex_coupling_area(SWMM_Engine engine,
                                                        int vertex_idx,
                                                        double* area);
 
 /** @brief Set the coupling exchange area of a vertex
- *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²). Persisted by the `.inp`
- *         writer.
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column). Persisted by the `.inp`
+ *         writer. Same units convention as the getter: mesh length units²
+ *         (project units before initialize, m² after).
  *  @param vertex_idx Vertex index in `[0, vertex_count)`.
- *  @param area Exchange area in m²; must be > 0.
+ *  @param area Exchange area in mesh length units²; must be > 0.
  *  @return SWMM_OK on success; SWMM_ERR_BADPARAM on non-positive area.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine,
@@ -733,12 +740,17 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_type(SWMM_Engine engine,
                                                int bc_type);
 
 /** @brief Get specified stage boundary head for an edge.
+ *
+ *  Units follow the mesh vertical datum: mesh length units as authored
+ *  (feet for a US project without an SI mesh header) before
+ *  swmm_engine_initialize(), metres after it.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_head(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double* head);
 
-/** @brief Set specified stage boundary head for an edge.
+/** @brief Set specified stage boundary head for an edge (same units
+ *         convention as the getter).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_head(SWMM_Engine engine,
                                                int tri_idx, int edge,
@@ -779,14 +791,20 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_tseries_name(SWMM_Engine engine,
                                                        int edge,
                                                        char* buf, int buflen);
 
-/** @brief Get prescribed flow per metre of edge (m³/s/m) for a
- *         SPECIFIED_FLOW edge. V-E4.
+/** @brief Get prescribed flow per metre of edge for a SPECIFIED_FLOW edge.
+ *         V-E4.
+ *
+ *  Units: project display flow units per metre (the `[2D_BOUNDARY_CONDITIONS]`
+ *  file contract, e.g. CFS/m) before swmm_engine_initialize(); m³/s/m after
+ *  it (initialize scales the constants in place; the writers scale back).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_flow(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double* flow);
 
-/** @brief Set prescribed flow per metre of edge (m³/s/m). V-E4. */
+/** @brief Set prescribed flow per metre of edge (same units convention as
+ *         the getter: display flow units/m before initialize, m³/s/m after).
+ *         V-E4. */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double flow);

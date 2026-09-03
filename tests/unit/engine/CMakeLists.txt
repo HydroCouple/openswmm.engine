@@ -561,6 +561,13 @@ if(OPENSWMM_BUILD_2D)
     # residual (the silent call site 4), lazy/inactive-cell equivalence,
     # section round-trip and the C API surface.
     add_gtest_unit(test_engine_2d_infil_integration test_2d_infil_integration.cpp)
+    # 1D↔2D unit exchange for boundary conditions on a US (ft / CFS) project:
+    # constant stage follows the mesh units, TS/rating stage follows
+    # FLOW_UNITS only, flows follow FLOW_UNITS, writers emit display units,
+    # and neither reopen nor a repeated initialize() converts twice.
+    add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
+    target_compile_definitions(test_engine_2d_bc_units PRIVATE
+        OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 endif()
 
 # ---------------------------------------------------------------------------
