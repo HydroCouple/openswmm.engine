@@ -29,7 +29,9 @@ retroactive.
   `SurfaceRouter2D::accumulateMassBalance` from the same per-cell term that
   feeds `mass_balance_2d/rainfall_in`, so the sum over cells equals the
   ledger by construction (`SurfaceRouter2D::rainCumulative`,
-  `SimulationSnapshot::surface_rain_cum`).
+  `SimulationSnapshot::surface_rain_cum`). C API bulk getters
+  `swmm_2d_get_rainfall_bulk` / `swmm_2d_get_rain_volume_bulk` expose the
+  two fields to in-process consumers (GUI live plotting).
 
 - **`TEMP` in reaction expressions — temperature-dependent kinetics.**
   Multispecies rate/equilibrium/formula expressions can reference the
