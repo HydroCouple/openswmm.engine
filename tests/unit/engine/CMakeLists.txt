@@ -540,6 +540,13 @@ if(OPENSWMM_BUILD_2D)
     # discharge through coupling_src (max principle + bound), cross-domain
     # mass identity, and species-as-passenger bit-identity on coupled decks.
     add_gtest_unit(test_engine_2d_transport_s3 test_2d_transport_s3.cpp)
+    # Overland transport S4: age / temperature / MSX rows in the 1D layout —
+    # evaporation concentrates solutes but not temperature, the temperature
+    # row is signed end-to-end, a still pan ages exactly, the coupling tuple
+    # delivers temperature (not the EXTERNAL_INFLOW stand-in), spill arrives
+    # at the node temperature, kdecay applies and is ledgered, rows are
+    # passengers on the hydraulics.
+    add_gtest_unit(test_engine_2d_transport_s4 test_2d_transport_s4.cpp)
     # Windowless co-advance coupling gates: cross-domain conservation through
     # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
     # rederivation, conductance sign + FD parity.
@@ -592,6 +599,15 @@ target_compile_definitions(test_engine_fv_integration PRIVATE
     OPENSWMM_FV_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
     OPENSWMM_FV_UNIT_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+
+# Thread-capability query + THREADS resolution rules
+# (THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN_2026-09-03): explicit THREADS is
+# honoured above the hardware limit with a warning, size gates still apply,
+# and an oversubscribed run matches the serial continuity block.
+add_gtest_unit(test_engine_thread_info test_thread_info.cpp)
+target_compile_definitions(test_engine_thread_info PRIVATE
+    OPENSWMM_THREAD_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
+    OPENSWMM_THREAD_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation
 # against the legacy xsect.c. The legacy dylib hides its internal xsect_*

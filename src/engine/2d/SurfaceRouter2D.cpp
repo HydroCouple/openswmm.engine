@@ -19,6 +19,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/PerfTimers.hpp"
+#include "../core/ThreadInfo.hpp"
 #include "../transport/components/ReactionModule/ReactionArdBinding.hpp"   // S4
 
 #include <stdexcept>
@@ -651,13 +652,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // loops (computeCellContinuity / computeFaceVelocity / update_statistics)
     // read options_.num_threads outside the OPENSWMM_HAS_2D block below.
 #if defined(SWMM_USE_OPENMP)
-    {
-        int max_t = omp_get_max_threads();
-        int req   = ctx.options.num_threads;
-        int n_thr = (req == 0) ? max_t : std::min(req, max_t);
-        if (mesh_.n_triangles() < 4 * n_thr) n_thr = 1;
-        options_.num_threads = n_thr;
-    }
+    // Same resolution rules as the 1D solvers (threadinfo::twoDThreads): 0 =
+    // auto, N honoured exactly with warnings; the triangle gate still applies.
+    thread_warnings_.clear();
+    options_.requested_threads = ctx.options.num_threads;
+    options_.num_threads = threadinfo::twoDThreads(
+        ctx.options.num_threads, mesh_.n_triangles(), &thread_warnings_);
 #else
     options_.num_threads = 1;
 #endif

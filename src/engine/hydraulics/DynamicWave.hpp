@@ -51,6 +51,7 @@
 #include "../data/LinkData.hpp"
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace openswmm {
@@ -198,12 +199,17 @@ public:
      * @brief Set the number of OpenMP threads for parallel loops.
      *
      * @details Called after init() when the thread count is finalized.
-     *          A threshold is applied: if n_links < 4 * n, threading is
-     *          disabled (matching legacy dynwave.c behaviour).
+     *          Resolution (threadinfo::dwThreads): 0 = auto —
+     *          omp_get_max_threads(), the conduits-per-thread gate and the
+     *          Apple Silicon P-core clamp; N > 0 = honoured exactly, subject
+     *          only to the conduits-per-thread gate, with warnings when N
+     *          exceeds the machine / runtime limits. SWMM_DW_THREADS forces
+     *          the count outright (warned).
      *
-     * @param n  Requested thread count (0 = use omp_get_max_threads()).
+     * @param n         Requested thread count ([OPTIONS] THREADS).
+     * @param warnings  Optional sink for human-readable warnings.
      */
-    void setNumThreads(int n);
+    void setNumThreads(int n, std::vector<std::string>* warnings = nullptr);
 
     /// Callback for computing non-conduit link flows inside the Picard loop.
     /// Parameters: (ctx, dt, picard_step) where step=0 is first iteration.

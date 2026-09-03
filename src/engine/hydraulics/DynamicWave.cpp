@@ -62,6 +62,7 @@
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "../core/ThreadInfo.hpp"
 #include "../math/SIMD.hpp"
 
 #include <cmath>
@@ -79,11 +80,10 @@ static inline int omp_get_num_threads() { return 1; }
 static inline int omp_get_thread_num()  { return 0; }
 #endif
 
-// Darwin/Apple-Silicon scheduling helpers (see setNumThreads / execute):
-// sysctl for the performance-core count, pthread QoS to keep team threads
-// off the efficiency cores.
+// Darwin/Apple-Silicon scheduling helper (see execute): pthread QoS to keep
+// team threads off the efficiency cores. The P-core count query lives in
+// core/ThreadInfo.
 #if defined(__APPLE__)
-#include <sys/sysctl.h>
 #include <pthread.h>
 #include <pthread/qos.h>
 #endif
@@ -1156,21 +1156,6 @@ void DWSolver::vjAccumulateResiduals(SimulationContext& ctx) {
 // ============================================================================
 
 #if defined(__APPLE__)
-// Number of PERFORMANCE-core logical CPUs on Apple Silicon (hw.perflevel0),
-// 0 when unknown (Intel Macs / sysctl failure). With OMP_WAIT_POLICY=active
-// (see SWMMEngine::start), a team thread scheduled onto an EFFICIENCY core
-// turns every Picard barrier into a straggler wait (E-cores run this
-// workload ~3x slower), which is why T=8 on an 8P+2E M1 Max collapsed to
-// 2.2x SLOWER than serial. Timing-only: results are bit-identical at any
-// thread count.
-static int darwinPerfCoreCount() {
-    int n = 0;
-    std::size_t sz = sizeof(n);
-    if (sysctlbyname("hw.perflevel0.logicalcpu", &n, &sz, nullptr, 0) != 0)
-        return 0;
-    return (n > 0) ? n : 0;
-}
-
 // Pin the calling thread's QoS to USER_INTERACTIVE so the macOS scheduler
 // keeps it on P-cores. Called once per team thread from the persistent
 // parallel region prologue in execute() (thread_local latch). Errors are
@@ -1184,7 +1169,7 @@ static void darwinPinThreadToPerfCores() {
 }
 #endif
 
-void DWSolver::setNumThreads(int n) {
+void DWSolver::setNumThreads(int n, std::vector<std::string>* warnings) {
     // A/B override: SWMM_DW_THREADS=<N> forces the DW Picard thread count,
     // bypassing the model-size gate below (unset or invalid → normal path).
     // Results are bit-identical at any thread count (single-producer writes,
@@ -1193,47 +1178,22 @@ void DWSolver::setNumThreads(int n) {
         const int forced = std::atoi(e);
         if (forced >= 1) {
             num_threads_ = forced;
+            if (warnings) {
+                char buf[160];
+                std::snprintf(buf, sizeof buf,
+                    "Dynamic-wave thread count forced to %d by the "
+                    "SWMM_DW_THREADS environment variable ([OPTIONS] THREADS "
+                    "ignored for dynamic wave).", forced);
+                warnings->emplace_back(buf);
+            }
             return;
         }
     }
 
-    int max_threads = omp_get_max_threads();
-
-    if (n == 0)
-        num_threads_ = max_threads;
-    else
-        num_threads_ = std::min(n, max_threads);
-
-    // Threshold: with the persistent-team Picard region + active wait policy
-    // (see execute()), the per-iteration sync cost is a handful of ~0.5-3µs
-    // barriers, so the break-even model size is far lower than the old
-    // region-per-phase structure (whose kMinLinksPerThread=1000 gate forced
-    // serial DW even on ~1000-conduit models). Enable T threads only while
-    // each thread keeps >= kMinConduitsPerThread conduits of momentum work;
-    // otherwise step the thread count down (a partial reduction beats the
-    // old all-or-nothing gate on mid-size models).
-    // PERFORMANCE-ONLY deviation from legacy (`4 * NumThreads`, project.c:277
-    // — far too low): results are bit-identical at any thread count.
-    static constexpr int kMinConduitsPerThread = 100;
-    if (num_threads_ > 1) {
-        int cap = n_conduits_ / kMinConduitsPerThread;
-        if (cap < 1) cap = 1;
-        num_threads_ = std::min(num_threads_, cap);
-    }
-
-#if defined(__APPLE__)
-    // Apple Silicon P-core clamp (see darwinPerfCoreCount): never run more
-    // team threads than PERFORMANCE cores. Measured on Bellinge (M1 Max,
-    // 8P+2E): unclamped T=8 with active waits = 204s vs T=4 = 57s; with the
-    // QoS pin (execute() prologue) T=8 recovers but T=6 is the sweet spot —
-    // leaving P-core headroom for the OS/IO thread avoids barrier-straggler
-    // preemption. PERFORMANCE-ONLY: bit-identical at any thread count.
-    if (num_threads_ > 1) {
-        const int pcores = darwinPerfCoreCount();
-        if (pcores > 2)
-            num_threads_ = std::min(num_threads_, pcores - 2);
-    }
-#endif
+    // Resolution rules (THREADS = 0 auto vs explicit N, model-size gate,
+    // Apple Silicon P-core clamp for auto only) live in ThreadInfo so the
+    // C API's swmm_get_effective_threads() reports exactly what runs here.
+    num_threads_ = threadinfo::dwThreads(n, n_conduits_, warnings);
 }
 
 // ============================================================================
@@ -1331,7 +1291,7 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
         // One-time per pool thread (thread_local latch inside): QoS pin to
         // P-cores. Without it, macOS may schedule active-spinning team
         // threads onto E-cores, making every barrier wait on an E-core
-        // straggler (the T=8 collapse — see darwinPerfCoreCount).
+        // straggler (the T=8 collapse — see threadinfo::dwThreads).
         darwinPinThreadToPerfCores();
 #endif
         int  t_steps     = 0;      // per-thread replica of legacy `Steps`

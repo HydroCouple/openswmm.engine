@@ -321,6 +321,47 @@ SWMM_ENGINE_API int         swmm_get_warning_count (SWMM_Engine engine);
 SWMM_ENGINE_API const char* swmm_get_warning_at    (SWMM_Engine engine, int index);
 
 /* =========================================================================
+ * Thread capability query (engine-independent)
+ * ========================================================================= */
+
+/**
+ * Hardware / OpenMP thread limits as seen by the engine process. Lets a host
+ * show the user what [OPTIONS] THREADS can usefully be set to and why the
+ * effective count may differ from the request.
+ */
+typedef struct {
+    int logical_cpus;       /**< Logical processors (SMT included); 0 if unknown.   */
+    int omp_max_threads;    /**< omp_get_max_threads() in this process. Lower than
+                                 logical_cpus when OMP_NUM_THREADS / OMP_THREAD_LIMIT
+                                 / CPU affinity limit the process. 1 without OpenMP. */
+    int omp_available;      /**< 1 if the engine was built with OpenMP.             */
+    int perf_cores;         /**< macOS: logical CPUs on the performance cluster;
+                                 0 elsewhere / unknown.                              */
+    int kokkos_omp_threads; /**< Threads the Kokkos OpenMP 2D backend initialised
+                                 with in this process; 0 = not initialised.         */
+} SWMM_ThreadInfo;
+
+/** Fill @p out. Returns SWMM_OK, or SWMM_ERR_BADPARAM when @p out is NULL. */
+SWMM_ENGINE_API int swmm_get_thread_info(SWMM_ThreadInfo* out);
+
+/**
+ * Resolve the thread counts the engine WOULD use for @p threads_option
+ * ([OPTIONS] THREADS; 0 = auto) with the engine's current model, applying
+ * the same rules as swmm_engine_start: explicit values are honoured; auto
+ * applies omp_get_max_threads(), the model-size gates and (macOS) the
+ * performance-core clamp. Any of the out-pointers may be NULL. Returns
+ * SWMM_OK, or SWMM_ERR_BADPARAM when @p engine is NULL.
+ *
+ * @param global_threads  Team size for runoff / quality / general loops.
+ * @param dw_threads      Dynamic-wave Picard team (0 when routing is not DYNWAVE
+ *                        or the model is not open).
+ * @param twod_threads    2D CPU marcher team (0 when the model has no 2D mesh).
+ */
+SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_option,
+                                               int* global_threads, int* dw_threads,
+                                               int* twod_threads);
+
+/* =========================================================================
  * Simulation timing
  * ========================================================================= */
 
