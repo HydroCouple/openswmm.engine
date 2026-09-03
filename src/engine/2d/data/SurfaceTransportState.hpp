@@ -60,6 +60,8 @@
 #define OPENSWMM_ENGINE_2D_SURFACE_TRANSPORT_STATE_HPP
 
 #include <cstddef>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace openswmm::twoD {
@@ -67,6 +69,30 @@ namespace openswmm::twoD {
 struct SurfaceTransportState {
     int n_species = 0;   ///< rows carried; 0 ⇒ transport is off everywhere
     int n_cells   = 0;
+
+    // ---- S4 row layout — the 1D engines' convention, verbatim -------------
+    // rows [0, n_pollut) pollutants; [n_pollut, n_pollut + n_msx) MSX species
+    // in ReactionData order; then the reserved __WATER_AGE__ row; then the
+    // reserved __TEMPERATURE__ row LAST (H1 fixed the reported column order
+    // so adding heat to an age model never moves the age column). Set by the
+    // router after resize(); -1 ⇒ the row is not carried.
+    int n_pollut = 0;
+    int n_msx    = 0;
+    int age_row  = -1;
+    int temp_row = -1;
+    /// Row names in row order (pollutant ids, MSX ids, `__WATER_AGE__`,
+    /// `__TEMPERATURE__`) — what the HDF5 species attribute and the
+    /// [2D_INITIAL_QUALITY]/[2D_BOUNDARY_QUALITY] resolvers key on.
+    std::vector<std::string> row_names;
+    /// The temperature row is SIGNED (°C below zero is a state, not an
+    /// error): every "mass ≥ 0" guard in the marcher and the queue must skip
+    /// it. Age and every concentration row are non-negative.
+    bool signedRow(int s) const noexcept { return s == temp_row; }
+    int rowIndex(std::string_view name) const noexcept {
+        for (std::size_t i = 0; i < row_names.size(); ++i)
+            if (row_names[i] == name) return static_cast<int>(i);
+        return -1;
+    }
 
     /// [s * n_cells + c] species mass in the cell's water, in the species'
     /// own mass units (concentration units × m³, so a report divides by the
@@ -139,6 +165,8 @@ struct SurfaceTransportState {
     void resize(int n_spec, int n_tri, int n_coupling_points) {
         n_species = (n_spec > 0) ? n_spec : 0;
         n_cells   = (n_tri  > 0) ? n_tri  : 0;
+        n_pollut = n_species; n_msx = 0; age_row = -1; temp_row = -1;   // S4: router refines
+        row_names.clear();
         const auto ns = static_cast<std::size_t>(n_species);
         cell_mass.assign(ns * static_cast<std::size_t>(n_cells), 0.0);
         lost_infiltration.assign(ns, 0.0);

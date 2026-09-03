@@ -272,13 +272,18 @@ struct SimulationSnapshot {
      * @brief 2D surface species concentration (overland transport S1/S2).
      * @details Layout: [species * surface_tri_count + face], species-major to
      *          match the engine's own cell store. `surface_species_count`
-     *          rows; the species order is the pollutant order
-     *          (`pollut_count` rows in S1; age/temperature/MSX join in S4).
+     *          rows in the 1D row order (pollutants, MSX, age,
+     *          temperature — see `surface_species_names`).
      *          A dry cell reports 0 (its mass is held, not divided).
      *          Empty when the model carries no 2D transport.
      */
     std::vector<double> surface_species_conc;
     int surface_species_count = 0;
+    /// S4: the 2D row names in row order (pollutant ids, MSX ids,
+    /// `__WATER_AGE__`, `__TEMPERATURE__`) — `surface_species_count` entries.
+    /// Null before S4 / when 2D transport is off; consumers fall back to
+    /// `pollut_names`.
+    const std::vector<std::string>* surface_species_names = nullptr;
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
     std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)
