@@ -23,6 +23,7 @@
 #include "ExplicitInertialSolver.hpp"
 #include "GpuPluginAbi.h"
 #include "../data/SolverOptions2D.hpp"
+#include "../../core/ThreadInfo.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -149,14 +150,31 @@ void* load_cached(const std::string& path) {
     return h;
 }
 
-using ProbeFn = int (*)(OpenSwmmGpuProbe*);
-using MakeFn  = void* (*)(const OpenSwmmGpuProbe*);
+using ProbeFn       = int (*)(OpenSwmmGpuProbe*);
+using MakeFn        = void* (*)(const OpenSwmmGpuProbe*);
+using HostThreadsFn = int (*)(void);
+
+// Set an environment variable in this process only if it is not already set.
+// Used for the ABI-v3 thread-count fallback (OPENSWMM_2D_THREADS).
+void setenv_if_unset(const char* name, const std::string& value) {
+    if (std::getenv(name)) return;
+#if defined(_WIN32)
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 0);
+#endif
+}
 
 // Try to load a specific backend plugin and build its marcher solver. Returns
 // null (without throwing) if the plugin is absent, broken, reports no device,
 // carries a stale ABI, or does not export the explicit-marcher factory.
+//
+// requested_threads: raw [OPTIONS] THREADS (0 = auto). Host (OpenMP) plugins
+// take it as OpenSwmmGpuProbe::requested_threads (ABI v4); for a v3 plugin it
+// is passed through the OPENSWMM_2D_THREADS environment fallback instead.
 std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
-                                           std::string* chosen) {
+                                           std::string* chosen,
+                                           int requested_threads) {
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -171,16 +189,57 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             if (!probe || !make) continue;
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
-            if (info.abi_version != OPENSWMM_GPU_ABI_VERSION) continue;
+            const bool abi_current  = info.abi_version == OPENSWMM_GPU_ABI_VERSION;
+            const bool abi_fallback = info.abi_version == OPENSWMM_GPU_ABI_VERSION_ENV_THREADS_FALLBACK;
+            if (!abi_current && !abi_fallback) continue;
             if (rc != 0 || info.device_count <= 0) {
                 // No usable device behind this plugin — try the next candidate.
                 continue;
             }
+
+            // Host-backend thread count. Auto (0) on Apple Silicon defaults to
+            // the performance-core count — efficiency cores drag the fenced
+            // kernel loops (plan §5.1); elsewhere 0 leaves the Kokkos default.
+            const bool host_backend = info.vendor == OPENSWMM_GPU_VENDOR_OPENMP;
+            int host_req = requested_threads;
+            if (host_backend && host_req == 0) host_req = threadinfo::perfCores();
+            if (host_backend) {
+                if (abi_current) {
+                    info.requested_threads = host_req;
+                } else if (host_req > 0) {
+                    // v3 plugin: no field to carry the request — fall back to
+                    // the environment variable the plugin already honours.
+                    setenv_if_unset("OPENSWMM_2D_THREADS", std::to_string(host_req));
+                    std::fprintf(stderr,
+                        "[openswmm 2D] plugin '%s' predates ABI v4; THREADS = %d "
+                        "passed via OPENSWMM_2D_THREADS (environment fallback).\n",
+                        fname.c_str(), host_req);
+                }
+            }
+
             void* raw = make(&info);
             if (!raw) continue;
             auto* solver = static_cast<ISurfaceSolver*>(raw);
             const std::string label = backend + " (" + info.device_name + ")";
             if (chosen) *chosen = label;
+
+            // Kokkos initialises once per process: record what the host
+            // backend actually runs with and warn when this model asked for
+            // something else (only a restart can change it).
+            if (host_backend) {
+                auto host_threads = reinterpret_cast<HostThreadsFn>(
+                    platform_sym(h, "openswmm_gpu_host_threads"));
+                const int in_use = host_threads ? host_threads() : 0;
+                if (in_use > 0) {
+                    threadinfo::setKokkosOmpThreads(in_use);
+                    if (host_req > 0 && in_use != host_req)
+                        std::fprintf(stderr,
+                            "[openswmm 2D] Kokkos OpenMP backend already initialised "
+                            "with %d threads in this process; THREADS = %d cannot "
+                            "take effect until the application restarts.\n",
+                            in_use, host_req);
+                }
+            }
             // Announce the selected acceleration backend once, on successful
             // plugin load. This is the signal the omp gate tests check for; it
             // also gives operators a record of which 2D backend ran.
@@ -225,7 +284,7 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     // Explicit backend request bypasses every mesh-size gate — the operator
     // asked for it by name (OPENSWMM_2D_BACKEND / BACKEND = omp|cuda|hip|sycl).
     if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
-        if (auto s = try_plugin(mode, chosen)) return s;
+        if (auto s = try_plugin(mode, chosen, opts.requested_threads)) return s;
         std::fprintf(stderr,
             "[openswmm 2D] backend '%s' requested but no usable plugin/device "
             "found; falling back to the CPU marcher.\n", mode.c_str());
@@ -251,9 +310,9 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
 
     if (n_cells <= 0 || n_cells >= dev_floor)
         for (const char* b : {"cuda", "hip", "sycl"})
-            if (auto s = try_plugin(b, chosen)) return s;
+            if (auto s = try_plugin(b, chosen, opts.requested_threads)) return s;
     if (n_cells <= 0 || n_cells >= omp_floor)
-        if (auto s = try_plugin("omp", chosen)) return s;
+        if (auto s = try_plugin("omp", chosen, opts.requested_threads)) return s;
 
     std::fprintf(stderr,
         "[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=%d, "
