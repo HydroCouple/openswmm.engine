@@ -228,15 +228,23 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const double mesh_to_si = (us == 0) ? ft_to_m : 1.0;
 
-    // SPECIFIED_STAGE boundary heads share the mesh's vertical datum, so they
-    // convert with the same factor and under the same condition as vz: rows
-    // authored in the project's display units (feet for US) scale to the SI
-    // metres the solver compares against bed elevations; an SI-tagged mesh
-    // file's rows are already metres. Constant heads are scaled once after
-    // drainPendingRows() below; timeseries-driven heads are scaled at every
-    // lookup in resolveBoundaryValues() (the table carries display units).
+    // CONSTANT SPECIFIED_STAGE heads live in the mesh sections and share the
+    // mesh's vertical datum, so they convert with the same factor and under
+    // the same condition as vz: rows authored in the project's display units
+    // (feet for US) scale to the SI metres the solver compares against bed
+    // elevations; an SI-tagged mesh file's rows are already metres. Scaled
+    // once after drainPendingRows() below.
     bc_stage_scale_ =
         (!options_.mesh_units_si && mesh_to_si != 1.0) ? mesh_to_si : 1.0;
+
+    // TS_STAGE / rating-curve STAGE values come from the 1D [TIMESERIES] /
+    // [CURVES] tables, which are authored in the project's display units
+    // whatever the mesh file is tagged — an SI-tagged mesh in a feet project
+    // still references a feet stage series. So this factor is FLOW_UNITS-
+    // driven only (like bc_flow_scale_), applied at every lookup in
+    // resolveBoundaryValues(). Previously tied to the mesh header, which
+    // read feet series as metres after any post-run save wrote the header.
+    bc_stage_ts_scale_ = mesh_to_si;
 
     // SPECIFIED_FLOW / TS_FLOW / RATING_CURVE discharges are authored in the
     // project's display flow units PER METRE of edge (the GUI's contract —
@@ -399,7 +407,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // TS-driven entries (tseries slot == -2, name pending) are excluded:
     // their value is overwritten from the table each step and scaled at
     // lookup time; rating-curve discharges are likewise resolved per step.
-    if (bc_stage_scale_ != 1.0 || bc_flow_scale_ != 1.0) {
+    // Guarded so a repeated initialize() on the same engine (Python / API
+    // hosts) does not scale the same constants twice; the flag also tells
+    // the writers to divide edge_bc_flow back to display units.
+    if (!bc_constants_scaled_) {
         for (int idx = 0; idx < boundary_.size(); ++idx) {
             const auto bt =
                 static_cast<BoundaryType>(boundary_.edge_bc_type[idx]);
@@ -410,6 +421,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                      && boundary_.edge_bc_flow_tseries[idx] == -1)
                 boundary_.edge_bc_flow[idx] *= bc_flow_scale_;
         }
+        bc_constants_scaled_ = true;
+        options_.bc_flow_to_si_applied = bc_flow_scale_;
     }
 
     // A NORMAL_FLOW edge with zero bed slope produces zero Manning flux —
@@ -1566,9 +1579,9 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
             case BoundaryType::SPECIFIED_STAGE: {
                 const int ts = boundary_.edge_bc_tseries[idx];
                 if (ts >= 0 && ts < n_tables)
-                    // Stage values are authored in project display units
-                    // (like the constant form); scale onto the SI datum.
-                    boundary_.edge_bc_head[idx] = bc_stage_scale_ *
+                    // Series values are authored in project display units
+                    // ([TIMESERIES] is 1D data); scale onto the SI datum.
+                    boundary_.edge_bc_head[idx] = bc_stage_ts_scale_ *
                         table_lookup_cursor(ctx.tables.tables[ts], abs_t);
                 break;  // else constant: edge_bc_head already holds the value
             }
@@ -1594,7 +1607,7 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
                     const int i = idx / 3;
                     boundary_.edge_bc_flow[idx] = bc_flow_scale_ *
                         table_lookupEx(ctx.tables.tables[cv],
-                                       state_.head[i] / bc_stage_scale_);
+                                       state_.head[i] / bc_stage_ts_scale_);
                 }
                 break;
             }

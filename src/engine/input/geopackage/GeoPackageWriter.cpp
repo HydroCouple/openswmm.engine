@@ -1811,7 +1811,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
     {
         const auto rows = twoD::collectBCRows(
             ctx.twod_io.pending_bc, ctx.twod_io.boundary,
-            opts && opts->pending_rows_drained);
+            opts && opts->pending_rows_drained,
+            opts ? opts->bc_flow_to_si_applied : 1.0);
         if (!rows.empty()) {
             auto stmt = prepare(db,
                 "INSERT OR REPLACE INTO mesh_2d_boundary_conditions "

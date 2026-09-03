@@ -444,13 +444,28 @@ private:
     /// then), not at parse time.
     bool boundary_names_resolved_ = false;
 
-    /// Project-display-units → SI factor for SPECIFIED_STAGE boundary heads
-    /// (0.3048 for US FLOW_UNITS with a non-SI mesh file, else 1.0). Set in
-    /// initialize() alongside the mesh scaling; applied once to constant
-    /// heads after drainPendingRows() and at every TS lookup in
-    /// resolveBoundaryValues(). Also converts the SI head back to display
-    /// units for rating-curve stage-axis queries.
+    /// Mesh-file-units → SI factor for CONSTANT SPECIFIED_STAGE heads
+    /// (0.3048 for US FLOW_UNITS with a non-SI mesh file, else 1.0). Constant
+    /// heads live in the mesh sections and share the mesh's vertical datum
+    /// and units, so they follow the mesh scaling exactly (including the
+    /// `;; UNITS: SI (m)` header). Applied once after drainPendingRows().
     double bc_stage_scale_ = 1.0;
+
+    /// Project-display-units → SI factor for TIME-SERIES / rating-curve
+    /// stage values (0.3048 for US FLOW_UNITS, else 1.0). [TIMESERIES] and
+    /// [CURVES] tables are 1D project data authored in display units
+    /// regardless of how the mesh file is tagged, so this is driven by
+    /// FLOW_UNITS alone (like bc_flow_scale_) — NOT by the mesh header.
+    /// Applied at every lookup in resolveBoundaryValues(); also converts the
+    /// SI head back to display units for rating-curve stage-axis queries.
+    double bc_stage_ts_scale_ = 1.0;
+
+    /// True once the constant SPECIFIED_STAGE / SPECIFIED_FLOW values drained
+    /// from the authored rows have been scaled into SI. Guards a repeated
+    /// initialize() from scaling them twice, and tells the writers
+    /// (Serialize2D::collectBCRows callers) that edge_bc_flow is m³/s/m and
+    /// must be divided back to display flow units on output.
+    bool bc_constants_scaled_ = false;
 
     /// Display flow units → m³/s factor for SPECIFIED_FLOW / TS_FLOW /
     /// RATING_CURVE per-metre discharges (from FLOW_UNITS; 1.0 for CMS).

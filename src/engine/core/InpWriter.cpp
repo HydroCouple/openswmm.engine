@@ -708,7 +708,8 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // drain); BoundaryData reconstruction fallback loses the GROUP label.
     {
         const auto rows = twoD::collectBCRows(tio.pending_bc, tio.boundary,
-                                              o.pending_rows_drained);
+                                              o.pending_rows_drained,
+                                              o.bc_flow_to_si_applied);
         if (!rows.empty()) {
             sec(f, "2D_BOUNDARY_CONDITIONS");
             std::fprintf(f, ";;%-4s %-4s %-16s %-14s %-8s %s\n", "TRI", "EDGE",
@@ -1695,9 +1696,10 @@ int writeInpFile(const SimulationContext& ctx_internal,
     case DividerType::WEIR: {
         double cd = (drow>=0) ? D.cd[static_cast<size_t>(drow)] : 0.0;
         double maxd = (drow>=0) ? D.max_depth[static_cast<size_t>(drow)] : 0.0;
+        // Legacy column order: qMin dhMax cWeir (node.c:1112)
         std::fprintf(f,"%-16s %12.4f %-16s WEIR     %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f\n",
             ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
-            cutoff, cd, maxd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
+            cutoff, maxd, cd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
             ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
         break;
     }
