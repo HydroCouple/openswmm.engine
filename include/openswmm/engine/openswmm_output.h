@@ -160,6 +160,42 @@ typedef enum SWMM_OutSystemVar {
 SWMM_ENGINE_API SWMM_Output swmm_output_open(const char* path);
 
 /**
+ * @brief Open a binary output file that is still being written.
+ *
+ * @details Unlike swmm_output_open(), this does not need the closing
+ *          records: offsets come from a forward parse of the header and the
+ *          period count from the file size (whole records only). Use it to
+ *          tail a run in progress — both the 6.x engine and the legacy 5.x
+ *          engines flush the file after every report period — or to salvage
+ *          the completed periods of a run that died before finishing. Poll
+ *          swmm_output_refresh() for growth. Never modifies the file.
+ *
+ * @param path  Path to a .out file whose header is complete.
+ * @returns Opaque handle, or NULL if the header cannot be parsed yet.
+ */
+SWMM_ENGINE_API SWMM_Output swmm_output_open_live(const char* path);
+
+/**
+ * @brief Re-count the periods of a file opened with swmm_output_open_live().
+ *
+ * @details Once the writer's closing records appear, they are adopted
+ *          (period count + error code) and the handle stops being live; it
+ *          then behaves exactly like one from swmm_output_open(). On a
+ *          non-live handle this is a no-op that reports the current count.
+ *
+ * @param handle   Output reader handle.
+ * @param periods  Optional out: current period count.
+ * @returns 0 on success, -1 on a NULL handle.
+ */
+SWMM_ENGINE_API int swmm_output_refresh(SWMM_Output handle, int* periods);
+
+/**
+ * @brief 1 while a handle from swmm_output_open_live() has not yet seen the
+ *        closing records, 0 otherwise, -1 on NULL.
+ */
+SWMM_ENGINE_API int swmm_output_is_live(SWMM_Output handle);
+
+/**
  * @brief Close the output file and free all resources.
  *
  * @param handle  Output reader handle (NULL safe).

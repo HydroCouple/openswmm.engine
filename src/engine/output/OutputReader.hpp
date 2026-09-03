@@ -68,6 +68,36 @@ public:
     bool open(const char* path);
 
     /**
+     * @brief Open a file that is still being written (no footer yet).
+     *
+     * @details Every offset the footer would supply is derived by parsing
+     *          the header forward, and the period count is derived from the
+     *          file size: `floor((size - output_start) / bytes_per_period)`,
+     *          so a partially flushed last record is never counted. Call
+     *          refresh() to pick up periods appended since. Works on any
+     *          file with a complete header — including one from a run that
+     *          died before writing its footer. Never writes to the file.
+     * @returns true on success (possibly with zero periods yet).
+     */
+    bool openLive(const char* path);
+
+    /**
+     * @brief Re-count periods on a live file.
+     *
+     * @details Re-reads the file size and updates period_count(). When the
+     *          footer has appeared (the run finished) it is adopted — period
+     *          count and error code become the writer's own — and the reader
+     *          leaves live mode; subsequent calls are no-ops. On a reader
+     *          opened with open() this returns period_count() unchanged.
+     * @returns the current period count, or -1 if no file is open.
+     */
+    int refresh();
+
+    /** @brief True while opened via openLive() and the footer has not yet
+     *  been seen. */
+    bool is_live() const noexcept { return live_; }
+
+    /**
      * @brief Close the file and release resources.
      */
     void close();
@@ -211,6 +241,9 @@ private:
 
     // Computed: bytes per period record
     long bytes_per_period_ = 0;
+
+    // openLive(): period count comes from the file size until the footer lands
+    bool live_ = false;
 
     // Object IDs
     std::vector<std::string> subcatch_ids_;
