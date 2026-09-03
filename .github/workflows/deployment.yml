@@ -443,9 +443,14 @@ jobs:
           # resolving to PyPI.
           "$PY" -m pip install --only-binary :all: --no-index --find-links wheelhouse openswmm openswmm-gpu-omp
           "$PY" -m pip show openswmm | tee wheel-smoke-${{ matrix.os }}.txt
-          # gpu-omp companion must import AND be auto-discovered by base openswmm
-          # (import openswmm runs _register_gpu_companion → OPENSWMM_GPU_PLUGIN_PATH).
-          "$PY" -c "import os,openswmm,openswmm_gpu_omp as g; p=os.environ.get('OPENSWMM_GPU_PLUGIN_PATH'); assert p, 'gpu-omp plugin not discovered'; print('OPENSWMM_GPU_PLUGIN_PATH='+p); print('companion at '+g.__file__)" | tee -a wheel-smoke-${{ matrix.os }}.txt
+          # A plugin must be auto-discovered on `import openswmm`
+          # (_register_gpu_plugin → OPENSWMM_GPU_PLUGIN_PATH), the companion must
+          # import, and the discovered directory must actually CONTAIN a built
+          # plugin binary — a non-empty env var alone would pass even if the
+          # OpenMP build had silently produced nothing. The base wheel now ships
+          # the plugin too, so the discovered dir is normally openswmm/engine;
+          # the shim prefers it and skips the companion (one OpenMP runtime).
+          "$PY" -c "import os,glob,openswmm,openswmm_gpu_omp as g; p=os.environ.get('OPENSWMM_GPU_PLUGIN_PATH'); assert p, 'no gpu plugin discovered'; d=p.split(os.pathsep)[0]; hits=[f for f in glob.glob(os.path.join(d,'*openswmm_gpu_*')) if f.endswith(('.so','.dylib','.dll'))]; assert hits, 'discovered dir has no plugin binary: '+d; print('OPENSWMM_GPU_PLUGIN_PATH='+p); print('plugin: '+hits[0]); print('companion at '+g.__file__)" | tee -a wheel-smoke-${{ matrix.os }}.txt
           # Run the example model end-to-end via the shared smoke script.
           "$PY" python/smoke_test.py 2>&1 | tee -a wheel-smoke-${{ matrix.os }}.txt
 
