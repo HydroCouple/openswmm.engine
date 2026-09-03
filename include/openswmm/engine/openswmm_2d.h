@@ -445,6 +445,21 @@ SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
 SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
                                                        double* fluxes);
 
+/** @brief Bulk get the rainfall intensity (m/s) applied to every triangle
+ *  this step — the same field the HDF5 `Mesh2_face_rainfall` dataset
+ *  carries. Output pre-allocated to `triangle_count`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rainfall_bulk(SWMM_Engine engine,
+                                               double* rainfall);
+
+/** @brief Bulk get the cumulative rainfall VOLUME (m³) booked onto every
+ *  triangle since the start of the run — the `Mesh2_face_rain_cum` field;
+ *  sums over cells to the 2D mass balance's rainfall inflow. Output
+ *  pre-allocated to `triangle_count`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine,
+                                                  double* volumes);
+
 /** @brief Bulk get normal edge flux at every edge of every triangle.
  *
  *  Output array must be pre-allocated to `triangle_count * 3` doubles,

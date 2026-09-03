@@ -573,6 +573,26 @@ int swmm_2d_get_depths_bulk(SWMM_Engine engine, double* depths) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_rainfall_bulk(SWMM_Engine engine, double* rainfall) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!rainfall) return SWMM_ERR_BADPARAM;
+
+    auto& s = router2d.state();
+    std::memcpy(rainfall, s.rainfall.data(), s.rainfall.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine, double* volumes) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!volumes) return SWMM_ERR_BADPARAM;
+
+    const auto& rc = router2d.rainCumulative();
+    std::memcpy(volumes, rc.data(), rc.size() * sizeof(double));
+    return SWMM_OK;
+}
+
 int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
