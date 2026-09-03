@@ -209,6 +209,12 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
 
     std::fwrite(sys, sizeof(float), MAX_SYS_RESULTS, out_file_);
 
+    // Push the completed period to disk so a live reader (OutputReader::
+    // openLive / swmm_output_open_live) can count it from the file size.
+    // Runs on the IO thread; one write(2) per report step. The 1 MB stdio
+    // buffer still batches the per-element fwrites inside the period.
+    std::fflush(out_file_);
+
     ++n_periods_;
     ++step_count_;
     return 0;

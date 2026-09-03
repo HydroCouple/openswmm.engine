@@ -23,6 +23,17 @@ retroactive.
 
 ### Added
 
+- **Live `.out` reading.** `swmm_output_open_live(path)` opens a binary
+  output file that is still being written (or that never got its closing
+  records): offsets come from a forward parse of the header and the period
+  count from the file size, whole records only. `swmm_output_refresh`
+  re-counts on demand and adopts the footer when it appears;
+  `swmm_output_is_live` reports the state. Both writers — the 6.x
+  `DefaultOutputPlugin` and the legacy 5.3.0 `output_saveResults` — now
+  `fflush` after every report period so a tailing reader sees each period
+  as it completes. File format unchanged; `swmm_output_open` untouched.
+  (`OutputReader::openLive/refresh`, `test_engine_output_reader_live`.)
+
 - **Per-cell cumulative rainfall volume in the 2D sidecar.** New
   `/Mesh2_face_rain_cum` `[nTime, nFace]` dataset (m³) alongside the existing
   `/Mesh2_face_rainfall` intensity. Booked in

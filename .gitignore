@@ -115,3 +115,6 @@ tests/benchmarks/generated/*.inp
 tests/benchmarks/generated/*.rpt
 tests/benchmarks/generated/*.out
 tests/benchmarks/generated/*.json
+
+# Working copies written by test_engine_output_reader_live (reviewable, not tracked)
+tests/unit/engine/data/live_out/
