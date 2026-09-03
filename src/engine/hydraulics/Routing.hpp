@@ -119,7 +119,9 @@ public:
     bool hasCycle() const { return cycle_detected_; }
 
     /// Set the DWSolver OpenMP thread count (delegates to DWSolver::setNumThreads).
-    void setDWNumThreads(int n) { dw_solver_.setNumThreads(n); }
+    void setDWNumThreads(int n, std::vector<std::string>* warnings = nullptr) {
+        dw_solver_.setNumThreads(n, warnings);
+    }
 
     /// Access the DW solver (for non-conduit node state scatter).
     dynwave::DWSolver& dwSolver() { return dw_solver_; }

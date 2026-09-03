@@ -74,6 +74,7 @@
 #include <functional>
 #include <mutex>       // call_once: process-global one-time init, see open()
 #include "ErrorCodes.hpp"
+#include "ThreadInfo.hpp"
 
 // libomp's KMP_BLOCKTIME override — declared here at file scope because
 // OpenMP support — graceful degradation when not available
@@ -5244,6 +5245,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     {
         const auto& tr = st.transport;
         snap.surface_species_count = tr.n_species;
+        snap.surface_species_names = tr.active() ? &tr.row_names : nullptr;
         if (tr.active()) {
             const auto& mesh = surface_router_.mesh();
             const double dry_depth = surface_router_.options().dry_depth;
@@ -5266,8 +5268,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
         snap.surface_infil_cum = infil_cum;
     else
         snap.surface_infil_cum.assign(st.infil_rate.size(), 0.0);
-    // Output sign convention: the integrator stores edge_flux and the face
     snap.surface_rain_cum       = surface_router_.rainCumulative();
+    // Output sign convention: the integrator stores edge_flux and the face
     // velocity INFLOW-positive (a positive edge_flux raises the cell — see
     // SurfaceFluxCalculator), whereas the documented public/HDF5 convention
     // (openswmm_2d.h) is OUTWARD-positive: positive flux leaves the cell and the
@@ -6138,10 +6140,22 @@ void SWMMEngine::initHydraulics() noexcept {
 #endif
 
     // 1b. Configure OpenMP thread count from THREADS option.
-    //     0 = use all available; N = use min(N, available).
+    //     0 = auto (omp_get_max_threads() + heuristics); N = honoured exactly,
+    //     with warnings when N exceeds the logical CPUs / the runtime limit
+    //     (see ThreadInfo.hpp and THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN).
     //     DWSolver applies its own per-thread conduit-count gate.
     //     The global OMP thread count is also set for Runoff/Quality modules.
     {
+        // Resolve first: the wait-policy decision below depends on whether
+        // the requested team oversubscribes the machine.
+        // Thread warnings are collected locally and pushed through
+        // push_report_warning() at the end of this block so they reach both
+        // the .rpt warning list and the host's warning callback.
+        std::vector<std::string> thread_warnings;
+        const int nt = threadinfo::resolveRequested(
+            ctx_.options.num_threads, "OpenMP team", &thread_warnings);
+        const bool oversubscribed = threadinfo::isOversubscribed(nt);
+        (void)oversubscribed;   // only consulted by the POSIX wait-policy block
 #if defined(SWMM_USE_OPENMP) && !defined(_WIN32)
         // B2 threading wait policy: the persistent-team DW Picard loop
         // synchronizes with several barriers per iteration (~1.2M iterations
@@ -6164,7 +6178,10 @@ void SWMMEngine::initHydraulics() noexcept {
                 rm == RouteModel::DYNWAVE &&
                 (ctx_.options.num_threads != 1 || dw_forced > 1) &&
                 dw_forced != 1;
-            if (dw_threading_possible) {
+            // Never request active spinning for an oversubscribed team: a
+            // spinner waiting on a DESCHEDULED spinner turns every barrier
+            // into a scheduler-quantum stall (far worse than passive waits).
+            if (dw_threading_possible && !oversubscribed) {
                 // setenv() is not thread-safe in glibc: adding a name reallocs
                 // the environ array and frees the old block, while ~30 getenv()
                 // call sites on the routing hot path read it concurrently. Two
@@ -6187,18 +6204,39 @@ void SWMMEngine::initHydraulics() noexcept {
             }
         }
 #endif
-        int nt = ctx_.options.num_threads;
-        if (nt == 0)
-            nt = omp_get_max_threads();
-        else
-            nt = std::min(nt, omp_get_max_threads());
         omp_set_num_threads(nt);
+#if defined(SWMM_USE_OPENMP)
+        // OMP_THREAD_LIMIT (or a runtime that refuses oversubscription) caps
+        // the team silently — measure what we actually got and say so.
+        if (nt > 1) {
+            int got = 1;
+#pragma omp parallel num_threads(nt)
+            {
+#pragma omp master
+                got = omp_get_num_threads();
+            }
+            if (got < nt) {
+                char buf[256];
+                std::snprintf(buf, sizeof buf,
+                    "THREADS = %d requested but the OpenMP runtime provided a "
+                    "team of %d (OMP_THREAD_LIMIT or runtime policy).", nt, got);
+                thread_warnings.emplace_back(buf);
+            }
+        }
+#endif
 
         // DWSolver gets its own thread count with per-thread conduit gate
         // (or the SWMM_DW_THREADS forced override).
         if (rm == RouteModel::DYNWAVE) {
-            router_.setDWNumThreads(ctx_.options.num_threads);
+            router_.setDWNumThreads(ctx_.options.num_threads, &thread_warnings);
         }
+
+#ifdef OPENSWMM_HAS_2D
+        for (const auto& w : surface_router_.threadWarnings())
+            thread_warnings.push_back(w);
+#endif
+        for (const auto& w : thread_warnings)
+            push_report_warning(w, 0);   // code 0: advisory, no SWMM_WarnCode applies
     }
 
     // Initialize routing time-step histogram bins (log-scale from RouteStep
@@ -7343,24 +7381,34 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
             // cell concentration the marcher booked. Written as a RATE for
             // QualitySolver::addCouplingLoads (sized [node*np+p]; empty when
             // the model carries no pollutants).
+            auto drain_queue = [&](double& qm) -> double {
+                double rate = 0.0;
+                if (dt_routing > 0.0 && qm != 0.0) {
+                    if (ctx_.coupling_delivery_remaining > dt_routing) {
+                        rate = qm / ctx_.coupling_delivery_remaining;
+                        qm  -= rate * dt_routing;
+                    } else {
+                        rate = qm / dt_routing;
+                        qm   = 0.0;
+                    }
+                }
+                return rate;
+            };
             if (!ctx_.nodes.coupling_qual_queue.empty()) {
                 const auto np = static_cast<std::size_t>(ctx_.n_pollutants());
                 for (std::size_t p = 0; p < np; ++p) {
                     const std::size_t idx = uj * np + p;
-                    double& qm = ctx_.nodes.coupling_qual_queue[idx];
-                    double  rate = 0.0;
-                    if (dt_routing > 0.0 && qm != 0.0) {
-                        if (ctx_.coupling_delivery_remaining > dt_routing) {
-                            rate = qm / ctx_.coupling_delivery_remaining;
-                            qm  -= rate * dt_routing;
-                        } else {
-                            rate = qm / dt_routing;
-                            qm   = 0.0;
-                        }
-                    }
-                    ctx_.nodes.coupling_qual_inflow[idx] = rate;
+                    ctx_.nodes.coupling_qual_inflow[idx] =
+                        drain_queue(ctx_.nodes.coupling_qual_queue[idx]);
                 }
             }
+            // S4: the age-volume and temperature-volume halves, same rule.
+            if (uj < ctx_.nodes.coupling_age_vol_queue.size())
+                ctx_.nodes.coupling_age_vol_inflow[uj] =
+                    drain_queue(ctx_.nodes.coupling_age_vol_queue[uj]);
+            if (uj < ctx_.nodes.coupling_temp_vol_queue.size())
+                ctx_.nodes.coupling_temp_vol_inflow[uj] =
+                    drain_queue(ctx_.nodes.coupling_temp_vol_queue[uj]);
         }
 
         // PARITY: accumulate in legacy routing_execute source ORDER

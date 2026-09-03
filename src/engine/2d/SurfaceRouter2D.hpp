@@ -50,6 +50,7 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <string>
 #include <vector>
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
@@ -144,6 +145,11 @@ public:
 
     /// Check if the 2D module is active.
     bool isActive() const noexcept { return active_; }
+
+    /// Thread-count advisories produced by initialize() (THREADS above the
+    /// machine limits, triangle gate reducing an explicit request). The engine
+    /// forwards them to the report warnings and the host warning callback.
+    const std::vector<std::string>& threadWarnings() const noexcept { return thread_warnings_; }
 
     /// Windowless-coupling stabilizer: per coupled node, the exchange head
     /// sensitivity G = Σ_points −∂Q/∂h_1d ≥ 0 converted to 1D units (ft³/s per
@@ -312,6 +318,7 @@ private:
     SurfaceStateData state_;
     SolverOptions2D  options_;
     BoundaryData     boundary_;
+    std::vector<std::string> thread_warnings_;   ///< See threadWarnings().
 
     /// §5.5 track I — per-cell infiltration parameters, kernel state and the
     /// held rates published into state_.infil_rate. Inert (no allocation, no
@@ -349,6 +356,15 @@ private:
     /// Stable storage that state_.node_coupling points at; built once in
     /// initialize().
     std::vector<CouplingPoint> node_coupling_points_;
+    /// S4: published 1D node row values `[node * n_species + s]` (pollutant
+    /// conc, MSX conc, age, temperature), refreshed once per batch by
+    /// publishNodeRows(); state_.node_row_conc points here.
+    std::vector<double> node_row_conc_;
+    void publishNodeRows(const SimulationContext& ctx);
+    /// S4: aging of the age row and the per-cell reaction stage (pollutant
+    /// kdecay + MSX via reactArdStage), Lie-split after each advance.
+    void applyAgingAndReactions(SimulationContext& ctx, double dt);
+    std::vector<double> react_phi_, react_a_, react_dx_;   ///< scratch
 
     /// Sim time since the last statistics/continuity sample (30 s cadence).
     double co_refresh_elapsed_ = 0.0;

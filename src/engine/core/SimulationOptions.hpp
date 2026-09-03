@@ -585,14 +585,24 @@ struct SimulationOptions {
     /**
      * @brief Number of OpenMP threads for parallel solver loops.
      *
-     * @details Parsed from the THREADS keyword in [OPTIONS].
-     *   - 0 → use all available threads (omp_get_max_threads()).
+     * @details Parsed from the THREADS keyword in [OPTIONS]. Resolution
+     * (core/ThreadInfo.hpp, THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN):
+     *   - 0 → auto: omp_get_max_threads() — the logical processors the
+     *     OpenMP runtime allows (lowered by OMP_NUM_THREADS / OMP_THREAD_LIMIT
+     *     / CPU affinity) — then the model-size gates and, on Apple Silicon,
+     *     the dynamic-wave performance-core clamp.
      *   - 1 → single-threaded (default, no OpenMP overhead).
-     *   - N → use min(N, omp_get_max_threads()) threads.
+     *   - N → exactly N threads. Values above the logical processors or the
+     *     runtime limit are honoured (oversubscription) with a warning; the
+     *     active spin-wait policy is disabled for an oversubscribed run.
      *
-     * A performance threshold is applied at startup: if the number of
-     * conduit links is less than 4 × num_threads, threading is disabled
-     * to avoid overhead dominating on small networks.
+     * Model-size gates still apply to explicit values (warned): dynamic wave
+     * keeps >= 100 conduits per thread; the 2D marcher needs >= 4 triangles
+     * per thread. The 2D Kokkos OpenMP backend receives the raw value via
+     * the plugin ABI (v4) and initialises once per process.
+     *
+     * Environment overrides (each warned when active): SWMM_DW_THREADS forces
+     * the dynamic-wave count; OPENSWMM_2D_THREADS forces the Kokkos backend.
      *
      * @see Legacy reference: globals.h NumThreads, project.c
      */

@@ -302,6 +302,12 @@ struct SolverOptions2D {
      *  thread count is bit-identical to serial. Never parsed/persisted. */
     int num_threads = 1;
 
+    /*! Runtime-only: the RAW [OPTIONS] THREADS value (0 = auto) copied in
+     *  SurfaceRouter2D::initialize(), handed to the Kokkos OpenMP plugin as
+     *  OpenSwmmGpuProbe::requested_threads (ABI v4) so the 2D host backend
+     *  follows THREADS like the 1D solvers. Never parsed/persisted. */
+    int requested_threads = 0;
+
     /*! When true, the inline `.inp` or referenced `.2dm` declared
      *  `;; UNITS: SI (m)` (or an equivalent metric keyword). The mesh on
      *  disk is already in SI metres, so SurfaceRouter2D::initialize
