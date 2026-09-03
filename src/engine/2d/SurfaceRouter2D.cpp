@@ -19,6 +19,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/PerfTimers.hpp"
+#include "../transport/components/ReactionModule/ReactionArdBinding.hpp"   // S4
 
 #include <stdexcept>
 #include <cmath>
@@ -692,25 +693,73 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Sized to zero (transport off) when the model carries no pollutants or
     // quality is ignored, so hydrodynamics-only models allocate nothing.
     {
+        // S4: the 1D engines' row layout, verbatim (ArdEngine::initialize is
+        // the reference): pollutants, MSX species (when a reactions component
+        // is active and declares no WALL species — the same fallback the ARD
+        // engine takes, with the same warning), the reserved age row, the
+        // reserved temperature row LAST. IGNORE_QUALITY turns off the
+        // pollutant and MSX rows only: age and temperature are their own
+        // options, exactly as on the 1D side.
         const int np = (ctx.options.ignore_quality) ? 0 : ctx.n_pollutants();
-        state_.transport.resize(np, mesh_.n_triangles(),
+        int nm = 0;
+        if (!ctx.options.ignore_quality && transport::ardReactionsActive(ctx)) {
+            if (transport::ardHasWallSpecies(ctx)) {
+                ctx.warnings.push_back(
+                    "2D transport: WALL species have no transport semantics on "
+                    "the surface yet — MSX rows are not carried on the mesh "
+                    "(the LEGACY element-local binding still runs them in 1D).");
+            } else {
+                nm = ctx.reactions.n_species();
+            }
+        }
+        const int na = ctx.options.water_age     ? 1 : 0;
+        const int nt = ctx.options.heat_transport ? 1 : 0;
+        const int ns = np + nm + na + nt;
+        state_.transport.resize(ns, mesh_.n_triangles(),
                                 static_cast<int>(node_coupling_points_.size()));
         auto& tr = state_.transport;
+        tr.n_pollut = np;
+        tr.n_msx    = nm;
+        tr.age_row  = (na > 0) ? np + nm : -1;
+        tr.temp_row = (nt > 0) ? np + nm + na : -1;
+        tr.row_names.clear();
+        for (int p = 0; p < np; ++p) tr.row_names.push_back(ctx.pollutant_names.name_of(p));
+        for (int m = 0; m < nm; ++m) tr.row_names.push_back(ctx.reactions.species_name[m]);
+        if (na) tr.row_names.push_back("__WATER_AGE__");
+        if (nt) tr.row_names.push_back("__TEMPERATURE__");
+        ctx.nodes.coupling_tuple_age  = (tr.age_row  >= 0);
+        ctx.nodes.coupling_tuple_temp = (tr.temp_row >= 0);
         if (tr.active()) {
+            // S4: the temperature row starts at the INITIAL_STATE source
+            // temperature (H1's convention for water in the network at t=0),
+            // as temperature-volume; age starts at 0. [2D_INITIAL_QUALITY]
+            // below may override either by name.
+            if (tr.temp_row >= 0) {
+                const double t0 = ctx.heat_config.source_temp(
+                    HeatSource::INITIAL_STATE, -1);
+                for (int c = 0; c < tr.n_cells; ++c)
+                    tr.cell_mass[tr.idx(tr.temp_row, c)] = t0 * state_.volume[c];
+            }
             // S3: outfall discharge onto the mesh carries the outfall's
             // concentration through a per-cell mass-rate density that
             // scatters exactly as coupling_flux does. Sized only when an
             // outfall point exists; junction spill is booked live instead.
             if (std::any_of(coupling_points_.begin(), coupling_points_.end(),
                             [](const CouplingPoint& c) { return c.is_outfall; }))
-                tr.coupling_src.assign(static_cast<std::size_t>(np) *
+                tr.coupling_src.assign(static_cast<std::size_t>(ns) *
                                        static_cast<std::size_t>(mesh_.n_triangles()),
                                        0.0);
             // S2: rainfall carries the [POLLUTANTS] rain concentration —
             // the same column the 1D runoff path uses, so a species that rains
             // in at 10 mg/L on a subcatchment rains in at 10 mg/L on the mesh.
-            tr.rain_conc.assign(ctx.pollutants.c_rain.begin(),
-                                ctx.pollutants.c_rain.begin() + np);
+            // S4: MSX rows rain in clean, age rains in at 0 (new water), the
+            // temperature row at the RAINFALL source temperature.
+            tr.rain_conc.assign(static_cast<std::size_t>(ns), 0.0);
+            for (int p = 0; p < np; ++p) tr.rain_conc[static_cast<std::size_t>(p)] =
+                ctx.pollutants.c_rain[static_cast<std::size_t>(p)];
+            if (tr.temp_row >= 0)
+                tr.rain_conc[static_cast<std::size_t>(tr.temp_row)] =
+                    ctx.heat_config.source_temp(HeatSource::RAINFALL, -1);
             // S2: [2D_BOUNDARY_QUALITY] rows, species resolved by name here;
             // the edge slot is resolved by the solver against its own
             // boundary-edge list at initialize (it owns that list).
@@ -720,11 +769,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         "[2D_BOUNDARY_QUALITY] TRI " + std::to_string(r.tri) +
                         " is off the mesh (" +
                         std::to_string(mesh_.n_triangles()) + " triangles).");
-                const int sp = ctx.pollutant_names.find(r.species);
-                if (sp < 0 || sp >= np)
+                const int sp = tr.rowIndex(r.species);   // S4: any carried row
+                if (sp < 0)
                     throw std::runtime_error(
                         "[2D_BOUNDARY_QUALITY] unknown species '" + r.species +
-                        "' — declare it in [POLLUTANTS].");
+                        "' — declare it in [POLLUTANTS] / the reactions "
+                        "component, or name __WATER_AGE__ / __TEMPERATURE__ "
+                        "with that option on.");
                 tr.bc_quality_rows.push_back({r.tri * 3 + r.edge, sp, r.conc});
             }
         } else if (!pending_bq_rows_.empty()) {
@@ -733,6 +784,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 "no transported species ([POLLUTANTS] empty or IGNORE_QUALITY "
                 "set), so they could carry nothing.");
         }
+        // S4: the node row-value publisher the marcher and the outfall
+        // injector read (spill / discharge arrive at the NODE's values).
+        node_row_conc_.assign(static_cast<std::size_t>(ns) *
+                              static_cast<std::size_t>(ctx.n_nodes()), 0.0);
+        state_.node_row_conc = &node_row_conc_;
     }
 
     if (!solver_) {
@@ -770,7 +826,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 "set), so they could seed nothing.");
         const int nt = mesh_.n_triangles();
         auto species_index = [&](const std::string& name) {
-            return ctx.pollutant_names.find(name);   // NameIndex: -1 if absent
+            return tr.rowIndex(name);   // S4: any carried row; -1 if absent
         };
         auto seed = [&](int sp, int c, double conc) {
             tr.cell_mass[tr.idx(sp, c)] = conc * state_.volume[c];
@@ -783,7 +839,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 if (sp < 0 || sp >= tr.n_species)
                     throw std::runtime_error(
                         "[2D_INITIAL_QUALITY] unknown species '" + r.species +
-                        "' — declare it in [POLLUTANTS].");
+                        "' — declare it in [POLLUTANTS] / the reactions "
+                        "component, or name __WATER_AGE__ / __TEMPERATURE__ "
+                        "with that option on.");
                 if (r.all) {
                     for (int c = 0; c < nt; ++c) seed(sp, c, r.conc);
                 } else if (r.tri < 0) {
@@ -825,6 +883,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // exactly as they do for Infil2D::cumulative().
         infil_cum_applied_.clear();
     }
+    rain_cum_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
 
     active_ = true;
     sim_time_ = 0.0;
@@ -883,7 +942,6 @@ void SurfaceRouter2D::refreshRenderFields() {
     reconstructVertexHeads(mesh_, state_, options_.num_threads);
     refreshOutputGradients(mesh_, state_, options_);
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
-    rain_cum_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
                                   options_.num_threads, render_eta_);
     co_render_elapsed_ = 0.0;
     render_dirty_      = false;
@@ -932,12 +990,14 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
             }
         }
     }
-    // S3: the outfall's published concentration rides its discharge. The 2D
-    // stride is the pollutant count, which is nodes.conc's stride too.
+    // S3/S4: the outfall's published row values ride its discharge; the
+    // junction spill inside the marcher reads the same array. Refreshed once
+    // per batch here — the 1D side does not move during the advance.
+    publishNodeRows(ctx);
     injectAccumulatedExchange(coupling_points_, mesh_, state_,
                               window_outfall_accum_, dt, +1.0,
                               state_.transport.coupling_src.empty()
-                                  ? nullptr : &ctx.nodes.conc);
+                                  ? nullptr : &node_row_conc_);
 
     // Rainfall / forcings on a coarse cadence: gage values change at the gage
     // timestep (minutes), and the per-cell interpolation apply is O(nt) — per
@@ -1028,6 +1088,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
     }
     sim_time_ += dt;
+    applyAgingAndReactions(ctx, dt);   // S4: Lie-split after the advance
 
     // Junction ledger: the marcher integrated ∫Q_k dt (m³, + = 2D→1D drain)
     // per live point at substep cadence. Book the batch volume (1D ft³)
@@ -1057,7 +1118,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
             const auto& tr = state_.transport;
             const auto  ns = static_cast<std::size_t>(tr.n_species);
             auto& q = ctx.nodes.coupling_qual_queue;
-            if (ns > 0 && !q.empty() && !tr.exch_mass.empty()) {
+            if (ns > 0 && !tr.exch_mass.empty()) {
                 for (std::size_t k = 0; k < n; ++k) {
                     const auto ni = static_cast<std::size_t>(
                         node_coupling_points_[k].node_idx);
@@ -1078,18 +1139,37 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                                          ? tr.exch_spill[k] : 0.0;
                     const double D = exch[k] + S;   // gross drain volume
                     const double paired = std::min(S, (D > 0.0 ? D : 0.0));
+                    // S4: rows route by kind — pollutant rows to the
+                    // np-strided species queue, the age and temperature rows
+                    // to their scalar queues, MSX rows nowhere (the 1D node
+                    // has no MSX inflow accumulator for ANY loader yet — a 1D
+                    // seam, recorded; the mass stays in lost_coupling). The
+                    // pairing reads the published node ROW value, so the
+                    // temperature row pairs against the node temperature.
+                    const auto npol = static_cast<std::size_t>(tr.n_pollut);
                     for (std::size_t sp = 0; sp < ns; ++sp) {
                         double inc = tr.exch_mass[k * ns + sp];
                         if (paired > 0.0 &&
-                            (ni + 1) * ns <= ctx.nodes.conc.size())
-                            inc -= paired * ctx.nodes.conc[ni * ns + sp];
-                        double& row = q[ni * ns + sp];
-                        row += inc * options_.flow_2d_to_1d;
+                            (ni + 1) * ns <= node_row_conc_.size())
+                            inc -= paired * node_row_conc_[ni * ns + sp];
+                        double* row = nullptr;
+                        if (sp < npol) {
+                            if ((ni + 1) * npol <= q.size()) row = &q[ni * npol + sp];
+                        } else if (static_cast<int>(sp) == tr.age_row) {
+                            if (ni < ctx.nodes.coupling_age_vol_queue.size())
+                                row = &ctx.nodes.coupling_age_vol_queue[ni];
+                        } else if (static_cast<int>(sp) == tr.temp_row) {
+                            if (ni < ctx.nodes.coupling_temp_vol_queue.size())
+                                row = &ctx.nodes.coupling_temp_vol_queue[ni];
+                        }
+                        if (!row) continue;
+                        *row += inc * options_.flow_2d_to_1d;
                         // Mass cannot be owed: a spill richer than the drain
                         // (node above the cell) can push the pairing past
                         // the queued mass by round-off; the floor keeps the
-                        // queue a mass.
-                        if (row < 0.0) row = 0.0;
+                        // queue a mass. Not for the SIGNED temperature row.
+                        if (*row < 0.0 && !tr.signedRow(static_cast<int>(sp)))
+                            *row = 0.0;
                     }
                 }
             }
@@ -1231,6 +1311,87 @@ void SurfaceRouter2D::prepareOneShotForcing(SimulationContext& ctx) {
     }
 }
 
+
+void SurfaceRouter2D::publishNodeRows(const SimulationContext& ctx) {
+    auto& tr = state_.transport;
+    const auto ns = static_cast<std::size_t>(tr.n_species);
+    if (!tr.active() || node_row_conc_.size() != ns * static_cast<std::size_t>(ctx.n_nodes()))
+        return;
+    const auto np = static_cast<std::size_t>(tr.n_pollut);
+    const auto nm = static_cast<std::size_t>(tr.n_msx);
+    const auto& conc = ctx.nodes.conc;              // [node * np + p]
+    const auto& msx  = ctx.reactions.msx_node_conc;  // [node * nm_all + m] (LEGACY R4b)
+    const auto nm_all = static_cast<std::size_t>(ctx.reactions.n_species());
+    for (int n = 0; n < ctx.n_nodes(); ++n) {
+        const auto un = static_cast<std::size_t>(n);
+        double* row = &node_row_conc_[un * ns];
+        for (std::size_t p = 0; p < np; ++p)
+            row[p] = ((un + 1) * np <= conc.size()) ? conc[un * np + p] : 0.0;
+        for (std::size_t m = 0; m < nm; ++m)
+            row[np + m] = ((un + 1) * nm_all <= msx.size()) ? msx[un * nm_all + m] : 0.0;
+        if (tr.age_row >= 0)
+            row[static_cast<std::size_t>(tr.age_row)] =
+                (un < ctx.water_age_state.node_age.size())
+                    ? ctx.water_age_state.node_age[un] : 0.0;
+        if (tr.temp_row >= 0)
+            row[static_cast<std::size_t>(tr.temp_row)] =
+                (un < ctx.heat_state.node_temp.size())
+                    ? ctx.heat_state.node_temp[un] : 0.0;
+    }
+}
+
+void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) {
+    auto& tr = state_.transport;
+    if (!tr.active() || !(dt > 0.0)) return;
+    const auto nt = static_cast<std::size_t>(tr.n_cells);
+
+    // A1a on the surface: d(age)/dt = 1, exactly — the age row is an
+    // age-VOLUME, so += dt·V advances the mean age of every cell's water by
+    // dt at constant volume. Dry cells hold ~0 volume and stay put. Lie-split
+    // after the advance like the ARD engine's aging stage.
+    if (tr.age_row >= 0) {
+        const auto ar = static_cast<std::size_t>(tr.age_row);
+        for (std::size_t c = 0; c < nt; ++c)
+            tr.cell_mass[ar * nt + c] += dt * state_.volume[c];
+    }
+
+    // E4/S4 reaction stage, reusing reactArdStage on a per-cell CONCENTRATION
+    // view (mass / volume) of the WET cells: pollutant kdecay (exact
+    // exponential, booked to qual_routing_reacted in 1D mass units through
+    // cell_a = V·f, cell_dx = 1) and MSX pipe-scope integration with the
+    // cell's own temperature row. No node stores here (n_nodes = 0). Dry
+    // cells are skipped: no meaningful concentration, negligible mass.
+    const bool any_decay = [&] {
+        for (int p = 0; p < tr.n_pollut; ++p)
+            if (ctx.pollutants.k_decay[static_cast<std::size_t>(p)] != 0.0) return true;
+        return false;
+    }();
+    if (!any_decay && tr.n_msx == 0) return;
+    const auto ns = static_cast<std::size_t>(tr.n_species);
+    const double dry_h = options_.dry_depth;
+    react_phi_.assign(ns * nt, 0.0);
+    react_a_.assign(nt, 0.0);
+    react_dx_.assign(nt, 1.0);
+    for (std::size_t c = 0; c < nt; ++c) {
+        const double v = state_.volume[c];
+        if (!(v > dry_h * mesh_.tri_area[c])) continue;
+        react_a_[c] = v * options_.flow_2d_to_1d;   // 1D volume units
+        for (std::size_t s = 0; s < ns; ++s)
+            react_phi_[s * nt + c] = tr.cell_mass[s * nt + c] / v;
+    }
+    transport::reactArdStage(ctx, dt, react_phi_.data(), react_a_.data(),
+                             react_dx_.data(), static_cast<int>(nt),
+                             /*node_mass*/ nullptr, /*node_vol*/ nullptr,
+                             /*n_nodes*/ 0, tr.n_pollut,
+                             static_cast<int>(ns), 0.0, tr.temp_row);
+    for (std::size_t c = 0; c < nt; ++c) {
+        if (react_a_[c] == 0.0) continue;   // dry: untouched
+        const double v = state_.volume[c];
+        const auto n_react = static_cast<std::size_t>(tr.n_pollut + tr.n_msx);
+        for (std::size_t s = 0; s < n_react; ++s)   // age/temp rows do not react
+            tr.cell_mass[s * nt + c] = react_phi_[s * nt + c] * v;
+    }
+}
 
 void SurfaceRouter2D::resetWindowAccumulators() {
     std::fill(window_outfall_accum_.begin(), window_outfall_accum_.end(), 0.0);
@@ -1460,6 +1621,7 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         const auto ui = static_cast<std::size_t>(i);
         const double area = mesh_.tri_area[ui];
         rain_vol += state_.rainfall[ui] * area;
+        rain_cum_[ui] += state_.rainfall[ui] * area * dt;
         evap_vol += evapSink(state_.evap_rate[ui], state_.depth[ui],
                              options_.dry_depth) * area;
         if (do_infil) {
@@ -1549,4 +1711,3 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
 
 
 } // namespace openswmm::twoD
-        rain_cum_[ui] += state_.rainfall[ui] * area * dt;
