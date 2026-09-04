@@ -133,6 +133,35 @@ public:
     void prepareOneShotForcing(SimulationContext& ctx);
 
     /**
+     * @brief Flush the pending (partial) sync batch, if any.
+     *
+     * Closes the accumulated routing span with one co-advance so the 2D
+     * clock reaches the current routing time. A no-op under default
+     * per-routing-step coupling (the batch closes every step). Used before
+     * a report snapshot — so the report-time blend brackets the report
+     * instant — and before a one-shot forcing.
+     */
+    void flushPendingBatch(SimulationContext& ctx);
+
+    /// Report-time interpolation weight for the 2D snapshot blend:
+    /// f = (report_ms − window_old_ms)/(window_new_ms − window_old_ms),
+    /// clamped to [0,1]; returns 1.0 (pure current state) when no batch has
+    /// crossed a report instant yet. Unlike the 1D weight there is no legacy
+    /// bit pattern to reproduce, so the clamp simply absorbs ulp-level clock
+    /// skew between the router's and the engine's ms accumulators.
+    double reportWeight(double report_ms) const noexcept;
+
+    /// Cell depth (m) at the start of the sync batch that crossed the
+    /// current report instant (meaningful when reportWeight() < 1).
+    const std::vector<double>& reportOldDepth() const noexcept {
+        return report_old_depth_;
+    }
+    /// Cell head (m) at the start of that batch.
+    const std::vector<double>& reportOldHead() const noexcept {
+        return report_old_head_;
+    }
+
+    /**
      * @brief Finalize the 2D module at simulation end.
      *
      * Flushes any partial macro-step window (routing time accumulated since
@@ -409,6 +438,19 @@ private:
     /// Routing time accumulated since the last co-advance sync batch.
     double pending_dt_       = 0.0;
 
+    /// Report-time blend support (the 2D analogue of the 1D old/new report
+    /// interpolation): cell depth/head captured at the START of the sync
+    /// batch that crosses the next report instant, plus that batch's ms
+    /// window [old, new] kept on the same `+= 1000*dt` recurrence as
+    /// ctx.elapsed_ms. fillSurfaceSnapshot blends old→current with
+    /// reportWeight() so the snapshot's depth/head are truthful at the
+    /// report datestamp instead of lagging at the window end.
+    std::vector<double> report_old_depth_;
+    std::vector<double> report_old_head_;
+    double report_window_old_ms_ = 0.0;
+    double report_window_new_ms_ = 0.0;
+    bool   report_old_valid_     = false;
+
     /// OPENSWMM_2D_HEAD_RAMP experiment: per-coupling-point 1D head at the
     /// previous batch (2D metre frame) + that batch's span, for the
     /// batch-over-batch trend slope handed to the marcher.
@@ -459,13 +501,6 @@ private:
     /// Applied at every lookup in resolveBoundaryValues(); also converts the
     /// SI head back to display units for rating-curve stage-axis queries.
     double bc_stage_ts_scale_ = 1.0;
-
-    /// True once the constant SPECIFIED_STAGE / SPECIFIED_FLOW values drained
-    /// from the authored rows have been scaled into SI. Guards a repeated
-    /// initialize() from scaling them twice, and tells the writers
-    /// (Serialize2D::collectBCRows callers) that edge_bc_flow is m³/s/m and
-    /// must be divided back to display flow units on output.
-    bool bc_constants_scaled_ = false;
 
     /// Display flow units → m³/s factor for SPECIFIED_FLOW / TS_FLOW /
     /// RATING_CURVE per-metre discharges (from FLOW_UNITS; 1.0 for CMS).

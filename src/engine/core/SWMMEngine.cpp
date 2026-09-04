@@ -5051,8 +5051,13 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // REPORT_STEP grid; bring them up to date first for the case where
             // the report instant does not land on a co-advance batch boundary.
 #ifdef OPENSWMM_HAS_2D
-            if (surface_router_.isActive())
+            if (surface_router_.isActive()) {
+                // Close any pending (COUPLING_SYNC-batched) 2D window first
+                // so the report-time blend brackets the report instant; a
+                // no-op under default per-routing-step coupling.
+                surface_router_.flushPendingBatch(ctx_);
                 surface_router_.refreshRenderFieldsIfStale();
+            }
 #endif
             fillSurfaceSnapshot(snap);
 
@@ -5421,6 +5426,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // never consumed; DefaultReportPlugin::update() is a no-op.
             SimulationSnapshot snap;
             snap.sim_time = report_date;
+            surface_router_.flushPendingBatch(ctx_);
             surface_router_.refreshRenderFieldsIfStale();
             fillSurfaceSnapshot(snap);
             io_thread_.post(std::move(snap));
@@ -5439,6 +5445,31 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_vert_count    = surface_router_.mesh().n_vertices();
     snap.surface_depth          = st.depth;
     snap.surface_head           = st.head;
+    // Report-time blend (the 2D analogue of the 1D old/new interpolation):
+    // continuous cell state — depth and head only — is blended to the exact
+    // report instant, so snap.sim_time is truthful for these fields instead
+    // of carrying window-end state stamped with the report date. Derived and
+    // forcing fields (gradients, vertex/render fields, rainfall, coupling
+    // flux, cumulatives, edge flux, species) stay current-valued: they are
+    // instantaneous forcings, window-mean contracts, or reconstruction
+    // outputs whose recompute on blended copies would be a full extra
+    // machinery pass (mixed time base, documented — same spirit as legacy's
+    // derived quantities). Internal state, coupling heads, and the API
+    // getters are untouched; the blend lives in the snapshot COPIES only.
+    {
+        const double f = surface_router_.reportWeight(ctx_.next_report_ms);
+        if (f < 1.0) {
+            const double f1 = 1.0 - f;
+            const auto& od = surface_router_.reportOldDepth();
+            const auto& oh = surface_router_.reportOldHead();
+            const std::size_t n =
+                std::min(snap.surface_depth.size(), od.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                snap.surface_depth[i] = f1 * od[i] + f * snap.surface_depth[i];
+                snap.surface_head[i]  = f1 * oh[i] + f * snap.surface_head[i];
+            }
+        }
+    }
     snap.surface_grad_hx        = st.grad_hx;
     snap.surface_grad_hy        = st.grad_hy;
     snap.surface_grad_hx_lim    = st.grad_hx_lim;
