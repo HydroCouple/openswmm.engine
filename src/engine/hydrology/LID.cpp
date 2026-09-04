@@ -610,18 +610,6 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
         double unit_inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
         if (g.stor_covered[ui]) unit_inflow = 0.0;
 
-        // Track dry time for the drain delay — legacy resets on the parent
-        // subcatchment's RAINFALL above MIN_RUNOFF (lid.c:1920-1921), NOT on
-        // unit inflow: a sub-MIN_RUNOFF runoff trickle (Horton recession
-        // holds ~1e-12 cfs for hours) must not keep the drain shut forever,
-        // and a covered barrel's blocked inflow must not let it drain
-        // mid-storm.
-        constexpr double MIN_RUNOFF = 2.31481e-8;  // ft/s (legacy consts.h)
-        if (g.subcatch_rain[ui] > MIN_RUNOFF)
-            g.dry_time[ui] = 0.0;
-        else
-            g.dry_time[ui] += dt;
-
         // Inflow fills storage
         double new_depth = g.stor_depth[ui] + unit_inflow * dt;
 
@@ -670,6 +658,22 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
         g.drain_flow[ui] = drain;
         g.evap_loss[ui] = 0.0;
         g.infil_loss[ui] = exfil;  // per-step loss depth (ft), like all types
+
+        // Track dry time for the drain delay — AFTER the flux computation
+        // used it (legacy order: barrelFluxRates reads dryTime as it stood
+        // BEFORE this step; lid.c:1920-1921 updates it at the END of
+        // evalLidUnit — with long DRY_STEP substeps a pre-update clock leads
+        // legacy by one substep and opens the drain a window early). Legacy
+        // resets on the parent subcatchment's RAINFALL above MIN_RUNOFF, NOT
+        // on unit inflow: a sub-MIN_RUNOFF runoff trickle (Horton recession
+        // holds ~1e-12 cfs for hours) must not keep the drain shut forever,
+        // and a covered barrel's blocked inflow must not let it drain
+        // mid-storm.
+        constexpr double MIN_RUNOFF = 2.31481e-8;  // ft/s (legacy consts.h)
+        if (g.subcatch_rain[ui] > MIN_RUNOFF)
+            g.dry_time[ui] = 0.0;
+        else
+            g.dry_time[ui] += dt;
 
         // Water balance tracking
         g.wb_inflow[ui]     += unit_inflow * dt;
