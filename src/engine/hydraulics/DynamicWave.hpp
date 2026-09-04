@@ -366,6 +366,8 @@ private:
     std::vector<double>  tile_loss_outlet_;
     std::vector<double>  tile_loss_avg_;     ///< ConduitData.loss_avg
     std::vector<double>  tile_roughness_;    ///< ConduitData.roughness (force-main detection)
+    std::vector<double>  tile_fm_sbot_;      ///< Force-main sBot rough factor (legacy link.c:1127-1131, incl. lengthFactor)
+    std::vector<double>  tile_fm_rbot_;      ///< Force-main C / roughness height (xsect rBot) for the D-W friction factor
     std::vector<uint8_t> tile_has_flap_gate_;
     std::vector<int8_t>  tile_direction_;
 
