@@ -108,6 +108,14 @@ public:
         return flood_vol_;
     }
 
+    /// Per-structure-entry pass-through VOLUME (ft³) over the last advance(),
+    /// parallel to mesh.struct_link. Nonzero only for DUMMY entries, whose
+    /// discharge the solver derives rather than receiving in the forcing — the
+    /// Router has no other way to report their flow or book their node ledger.
+    const std::vector<double>& dummy_volume() const noexcept {
+        return dummy_vol_;
+    }
+
     /// Pass-through classification (clean degree-2 junctions whose faces
     /// present the neighbouring cells to each other directly; refreshed with
     /// the structure flows). The publish path reads it to reconstruct those
@@ -281,6 +289,40 @@ private:
     /// integrate.
     void   refreshStructFlows(const FvStepForcing& forcing);
     std::vector<double> node_qstruct_;
+
+    /// Pass-through source/sink from DUMMY links, kept separate from
+    /// node_qstruct_ because it is derived, not forced: a dummy carries
+    /// whatever arrives at its upstream node, so its value depends on the very
+    /// fluxes the node update is about to integrate. Computed by
+    /// refreshDummyFlows() immediately before each node update, from the same
+    /// arrival volume that update will use, which makes the drain exact rather
+    /// than lagged. Folded into q_lat alongside node_qstruct_ at all three
+    /// integration sites (relaxOneNode, updateNodes, fireNodes).
+    std::vector<double> node_qdummy_;
+
+    /// Volume each DUMMY link has passed through so far this routing step
+    /// (ft³), parallel to mesh.struct_link. Router divides by dt to publish the
+    /// step-mean discharge, matching how real structure flows are reported.
+    std::vector<double> dummy_vol_;
+
+    /// Compute the DUMMY pass-through for one node-update pass and scatter it
+    /// into node_qdummy_. `arrived(n)` must return the NET volume (ft³) that
+    /// reached node n over `dt` from its faces — the quantity the caller is
+    /// about to add to the node's storage. The dummy removes exactly that,
+    /// plus the node's lateral and structure forcing, so the upstream node's
+    /// volume is unchanged: DW's own continuity for a dummy reduces to
+    /// dV/dt = 0 (findNonConduitFlow sets Q = inflow + overflow, and
+    /// updateNodeFlows books it as outflow — dynwave.c:418-449).
+    template <class ArrivedFn>
+    void refreshDummyFlows(double dt, const FvStepForcing& forcing,
+                           ArrivedFn&& arrived);
+
+    /// node_qdummy_ with the empty-vector case folded in — a model with no
+    /// dummy links never allocates it, and every integration site would
+    /// otherwise need the same guard.
+    double nodeQDummy(std::size_t un) const noexcept {
+        return node_qdummy_.empty() ? 0.0 : node_qdummy_[un];
+    }
 
     double nodeDepthFromVolume(int node, double volume) const;
 

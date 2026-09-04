@@ -299,6 +299,42 @@ retroactive.
 
 ### Fixed
 
+- **DUMMY links are routed under `FLOW_ROUTING FV` instead of failing the
+  model.** A DUMMY conduit carries no cross-section, so the FV mesh builder
+  rejected it as unmeshable (`y_full <= 0`) and the run aborted — DUMMY links
+  are common in real models. They are now excluded from the mesh and routed as
+  pass-throughs, the way `isTrueConduit` (`dynwave.c:411-414`) excludes them
+  from the DW momentum solve and `findNonConduitFlow` passes the upstream
+  node's inflow straight through.
+
+  The discharge could not simply reuse the existing DUMMY branch of
+  `computeNonConduitFlowOne`: that reads `ctx.nodes.inflow`, which under FV
+  holds only laterals and structure scatter until `publishFv` writes the real
+  boundary fluxes at end of step, so a dummy fed by a conduit would have
+  carried a fraction of its true flow. `ExplicitFvSolver::refreshDummyFlows`
+  derives it instead as a drain condition on the upstream node — the net face
+  volume plus that node's lateral and structure forcing, evaluated per substep
+  against the same fluxes the node update is about to integrate. This
+  reproduces DW's continuity exactly: `Q = inflow + overflow` booked as
+  outflow leaves `dV/dt = 0`, making the node a free-drainage boundary rather
+  than a storing junction. Both ends stay pinned to LTS tier 0, so the
+  source/sink pair integrates over one span and the transfer is conservative.
+  (`NetworkMeshBuilder` `struct_is_dummy` / `node_dummy_drain`,
+  `FvStepForcing::link_q_cap` for the control setting and FLOW_LIMIT,
+  `Router::publishFv` for the step-mean discharge and the node ledger.)
+
+- **ERROR 134 — illegal DUMMY / ideal-pump connections — is enforced again.**
+  Legacy `checkDummyLinks` (`toposort.c:480-528`) and the degree test in
+  `validateGeneralLayout` (`flowrout.c:301-313`) were never ported
+  (`plans/FULL_GAP_ANALYSIS.md:618`). Both are what make a pass-through well
+  posed: its discharge is defined as everything arriving at the upstream node,
+  so it must be that node's only outlet — a second outlet has both links
+  claiming the whole inflow — and a node cannot both receive and emit one
+  without the two definitions becoming circular. A storage node's outlet may
+  not be a dummy (`link.c:1006-1014`). Enforced for DYNWAVE and FV, the two
+  models that implement the pass-through. No model in the regression corpus
+  (1,637 `.inp` files) is rejected by it.
+
 - **`.inp` writer emits authored form — offsets and conduit orientation.**
   `resolve_cross_references` rewrites `LINK_OFFSETS ELEVATION` offsets and
   weir/outlet crests as depths and reverses adverse-slope conduits (node1/

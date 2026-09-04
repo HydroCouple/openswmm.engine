@@ -119,6 +119,8 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     node_in_.assign(nn, 0.0);
     node_out_.assign(nn, 0.0);
     flood_vol_.assign(nn, 0.0);
+    node_qdummy_.assign(mesh.struct_is_dummy.empty() ? 0 : nn, 0.0);
+    dummy_vol_.assign(mesh.struct_link.size(), 0.0);
     inlet_control_.assign(static_cast<std::size_t>(mesh.n_conduits()), 0);
 
     cell_tier_.assign(nc, 0);
@@ -1353,11 +1355,18 @@ void ExplicitFvSolver::relaxOneNode(int n, double dt,
     if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un]))
         return;
     if (!(state_->node_surf_area[un] > 0.0)) return;
+    // A dummy-drain node has no head to relax toward: the pass-through removes
+    // exactly what arrives, so its continuity residual — the numerator of the
+    // correction below — is identically zero. Computing it anyway would only
+    // add a spurious resistance at the incident faces and turn a free-drainage
+    // boundary into a mild backwater.
+    if (!mesh_->node_dummy_drain.empty() && mesh_->node_dummy_drain[un]) return;
 
     const int b = mesh_->node_face_ptr[un];
     const int e = mesh_->node_face_ptr[un + 1];
 
-    const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
+    const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un] +
+                         nodeQDummy(un);
     // ONE correction, with the characteristic resistance √(g·A·T), the node
     // surface area and the face fluxes all frozen at the head the substep
     // started from. Exact for the linearized problem — the residual after it
@@ -2140,6 +2149,12 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
         const int nstruct = static_cast<int>(mesh_->struct_link.size());
         for (int s = 0; s < nstruct; ++s) {
             const auto us = static_cast<std::size_t>(s);
+            // A DUMMY entry's forcing slot holds nothing meaningful: its
+            // discharge is derived per substep by refreshDummyFlows and lands
+            // in node_qdummy_, not here. Reading it would double-count against
+            // whatever the engine-side pass-through last happened to compute.
+            if (!mesh_->struct_is_dummy.empty() && mesh_->struct_is_dummy[us])
+                continue;
             const double q = forcing.structure_flow[mesh_->struct_link[us]];
             if (q == 0.0) continue;
             node_qstruct_[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
@@ -2166,7 +2181,12 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
     if (node_lat_div_.size() != nn) node_lat_div_.assign(nn, 0);
     else std::fill(node_lat_div_.begin(), node_lat_div_.end(), 0);
     for (std::size_t un = 0; un < nn; ++un) {
-        const bool clean = node_pass_static_[un] &&
+        // A dummy-drain node is never a clean splice, however few faces it has:
+        // the pass-through removes water at it, so its two neighbours are not
+        // presenting anything to each other.
+        const bool drains =
+            !mesh_->node_dummy_drain.empty() && mesh_->node_dummy_drain[un];
+        const bool clean = node_pass_static_[un] && !drains &&
                            node_qstruct_[un] == 0.0 && node_carry_[un] == 0.0;
         const double lat =
             forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
@@ -2199,14 +2219,83 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
         // head is, not whether the incident wet cells describe the stage the
         // profile should draw. Confirmed by measurement — the published
         // excess survives on nodes with no lateral inflow at all.
-        node_pub_[un] = (node_pub_static_[un] && node_qstruct_[un] == 0.0)
-                        ? 1 : 0;
+        node_pub_[un] = (node_pub_static_[un] && node_qstruct_[un] == 0.0 &&
+                         !drains) ? 1 : 0;
+    }
+}
+
+// A DUMMY conduit has no section to march, so it cannot be a control volume;
+// but it is not a wall either. It declares that whatever reaches its upstream
+// node leaves immediately for its downstream node, with no storage and no head
+// loss — legacy findNonConduitFlow (dynwave.c:418-449) sets Q = inflow +
+// overflow and updateNodeFlows books it as outflow, so the upstream node's
+// continuity reduces to dV/dt = 0. It is a free-drainage boundary.
+//
+// That is what this reproduces, and it is why the discharge cannot come from
+// the forcing array the way a weir's does: the answer is not a head relation,
+// it is the arrival rate at the upstream node — a quantity only the solver
+// knows, and only at the moment the node update is about to consume it.
+// Calling this immediately before each node update, with the SAME arrival
+// volume that update will integrate, makes the drain exact rather than lagged
+// by a substep.
+template <class ArrivedFn>
+void ExplicitFvSolver::refreshDummyFlows(double dt, const FvStepForcing& forcing,
+                                         ArrivedFn&& arrived) {
+    if (mesh_->struct_is_dummy.empty() || dt <= 0.0) return;
+    std::fill(node_qdummy_.begin(), node_qdummy_.end(), 0.0);
+
+    const int nstruct = static_cast<int>(mesh_->struct_link.size());
+    for (int s = 0; s < nstruct; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (!mesh_->struct_is_dummy[us]) continue;
+        const auto u1 = static_cast<std::size_t>(mesh_->struct_n1[us]);
+        const auto u2 = static_cast<std::size_t>(mesh_->struct_n2[us]);
+
+        // Everything arriving at the upstream node over this window: the net
+        // face volume, plus its lateral and structure forcing. node_qdummy_ is
+        // deliberately NOT in the sum — checkDummyLinks guarantees a dummy is
+        // the only outlet of its upstream node, so there is no second dummy
+        // here to chase, and a node cannot be the upstream end of one dummy
+        // and the downstream end of another.
+        double q = arrived(u1) / dt + nodeLateral(forcing, u1) +
+                   node_qstruct_[u1];
+
+        // Never reverses: a dummy is a one-way declaration of connectivity,
+        // and legacy's Q = inflow + overflow is a magnitude sum that cannot go
+        // negative. A node running dry simply passes nothing.
+        if (q < 0.0) q = 0.0;
+
+        // Control setting, then FLOW_LIMIT — the same order and the same
+        // meaning as computeNonConduitFlowOne's DUMMY branch. A closed dummy
+        // is a wall, and the upstream node then fills on its own continuity,
+        // exactly as it does under DW.
+        if (forcing.link_q_cap) {
+            const double cap =
+                forcing.link_q_cap[static_cast<std::size_t>(mesh_->struct_link[us])];
+            if (cap >= 0.0 && q > cap) q = cap;
+        }
+
+        node_qdummy_[u1] -= q;
+        node_qdummy_[u2] += q;
+        dummy_vol_[us]   += q * dt;
     }
 }
 
 void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
     perf::GatedTimer _pt(perf::sec_fv_nodeupdate);
     const int nn = mesh_->n_nodes();
+
+    // Net face volume arriving at a node over this substep, which is exactly
+    // what the loop below is about to add to its storage.
+    refreshDummyFlows(dt, forcing, [&](std::size_t un) {
+        double sum = 0.0;
+        for (int p = mesh_->node_face_ptr[un]; p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto up = static_cast<std::size_t>(p);
+            sum += mesh_->node_face_sign[up] *
+                   f_mass_[static_cast<std::size_t>(mesh_->node_face_idx[up])];
+        }
+        return sum * dt;
+    });
 
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
@@ -2237,7 +2326,8 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
             continue;
         }
 
-        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
+        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un] +
+                             nodeQDummy(un);
 
         if (algebraicActive(n)) {
             settleAlgebraicNode(n, node_carry_[un] + dt * (sum_faces + q_lat));
@@ -3307,6 +3397,14 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
 
 void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
                                  const FvStepForcing& forcing) {
+    // Both ends of a structure link are pinned to tier 0 (assignTiers), so a
+    // dummy's two nodes always fire in the same window with the same dt — the
+    // source and the sink integrate the identical discharge over the identical
+    // span, which is what keeps the pair exactly conservative. acc_nvol_ is the
+    // window's arrival volume and is zeroed below, so the drain has to be
+    // computed from it BEFORE the loop consumes it.
+    refreshDummyFlows(dt0, forcing, [&](std::size_t un) { return acc_nvol_[un]; });
+
     for (const int n : nodes) {
         const auto un = static_cast<std::size_t>(n);
         const double dt = static_cast<double>(1 << node_tier_[un]) * dt0;
@@ -3319,7 +3417,8 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
             continue;
         }
 
-        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
+        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un] +
+                             nodeQDummy(un);
 
         if (algebraicActive(n)) {
             // Head was set by the flux-balance solve at face-firing time; the
@@ -3445,6 +3544,9 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
     std::fill(flood_vol_.begin(), flood_vol_.end(), 0.0);
     std::fill(inlet_control_.begin(), inlet_control_.end(), uint8_t{0});
     std::fill(cell_q_int_.begin(), cell_q_int_.end(), 0.0);
+    // The pass-through ledger is per routing step, like cell_q_int_: the Router
+    // divides it by dt to publish a step-mean discharge.
+    std::fill(dummy_vol_.begin(), dummy_vol_.end(), 0.0);
 
     refreshDepths();
     // Re-seed the node volume ledger from the head the engine currently holds,

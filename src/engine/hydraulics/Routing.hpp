@@ -185,6 +185,12 @@ private:
     // Per-step forcing buffers, allocated once at init.
     std::vector<double> fv_lateral_, fv_fixed_head_, fv_struct_flow_, fv_cond_loss_;
 
+    /// Per-link cap on a DUMMY link's pass-through discharge: the control
+    /// setting and FLOW_LIMIT, which the solver cannot see. Negative means
+    /// unlimited; only DUMMY entries are ever read. Refreshed with the
+    /// structures, because a control rule can close the link mid-step.
+    std::vector<double> fv_link_q_cap_;
+
     /// Time integral of each structure's discharge over the routing step
     /// (ft³), and the elapsed time the last segment started at. Under
     /// per-substep coupling the discharge MOVES within the step, so the

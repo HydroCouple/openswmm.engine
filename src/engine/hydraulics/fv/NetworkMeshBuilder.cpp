@@ -271,12 +271,27 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         const int j = CD.link_idx[ur];
         if (j < 0 || j >= n_links) continue;
         const auto uj = static_cast<std::size_t>(j);
+
+        // A DUMMY conduit is connectivity, not a channel: it declares that
+        // water leaving one node arrives at another with no section, no
+        // storage and no head loss. Legacy isTrueConduit (dynwave.c:411-414)
+        // is false for it and DW never momentum-solves one — it is routed as a
+        // pass-through by findNonConduitFlow. Do the same here: leave the row
+        // unmeshed (cell_begin −1, count 0, conduit_link −1, so every downstream
+        // consumer skips it) and pick it up in the structure loop below.
+        //
+        // This has to be tested on the SHAPE, before buildXSectParams, rather
+        // than falling through to the zero-geometry check: that check must stay
+        // an error for a link whose geometry genuinely failed to resolve.
+        if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
+
         mesh.conduit_link[ur] = j;
 
         XSectParams xs = link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
         if (xs.y_full <= 0.0 || xs.a_full <= 0.0) {
-            // A control volume needs a real section. DUMMY-shape conduits and
-            // links whose geometry never resolved cannot be marched.
+            // A control volume needs a real section. A link whose geometry
+            // never resolved cannot be marched. (DUMMY shapes are handled
+            // above and never reach here.)
             rep.errors.push_back(
                 "FV routing: conduit '" + ctx.link_names.name_of(j) +
                 "' has no usable cross-section (full depth/area is zero). "
@@ -750,16 +765,35 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
     // -----------------------------------------------------------------------
     // Non-conduit links — applied as node source/sink pairs (plan §3.4).
+    //
+    // The membership test matches StructureSolver::nc_indices_
+    // (HydStructures.cpp:221-233) exactly, DUMMY conduits included: the two
+    // lists have to agree or a link is computed by one side and applied by
+    // neither. Dummies are flagged so the solver knows to derive their
+    // discharge itself instead of reading it from the forcing array.
     // -----------------------------------------------------------------------
+    mesh.node_dummy_drain.assign(static_cast<std::size_t>(n_nodes), 0);
     for (int j = 0; j < n_links; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        const bool is_dummy = (ctx.links.type[uj] == LinkType::CONDUIT &&
+                               ctx.links.xsect_shape[uj] == XsectShape::DUMMY);
+        if (ctx.links.type[uj] == LinkType::CONDUIT && !is_dummy) continue;
         const int a = ctx.links.node1[uj];
         const int b = ctx.links.node2[uj];
         if (a < 0 || b < 0) continue;
         mesh.struct_link.push_back(j);
         mesh.struct_n1.push_back(a);
         mesh.struct_n2.push_back(b);
+        mesh.struct_is_dummy.push_back(is_dummy ? 1 : 0);
+        if (is_dummy) mesh.node_dummy_drain[static_cast<std::size_t>(a)] = 1;
+    }
+    // Leave both vectors EMPTY when the model has no dummy links at all, so
+    // `node_dummy_drain.empty()` is a cheap "nothing to do" test the solver's
+    // hot paths can branch on, and a model without dummies allocates nothing.
+    if (std::find(mesh.struct_is_dummy.begin(), mesh.struct_is_dummy.end(),
+                  uint8_t{1}) == mesh.struct_is_dummy.end()) {
+        mesh.struct_is_dummy.clear();
+        mesh.node_dummy_drain.clear();
     }
 
     rep.n_cells    = nc;

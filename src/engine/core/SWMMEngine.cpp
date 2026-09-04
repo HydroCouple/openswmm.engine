@@ -6616,6 +6616,83 @@ void SWMMEngine::initHydraulics() noexcept {
     // gone — the side-tables stand on their own.
     hydstruct_.init(ctx_);
 
+    // 10b-1. Illegal DUMMY / ideal-pump connections (legacy ERROR 134).
+    //
+    // Ports legacy checkDummyLinks (toposort.c:480-528) and the degree test in
+    // validateGeneralLayout (flowrout.c:301-313), which the C++ engine had
+    // never carried over (plans/FULL_GAP_ANALYSIS.md:618).
+    //
+    // These are not cosmetic. A dummy link and an ideal pump are both PURE
+    // PASS-THROUGHS: their discharge is defined as everything arriving at the
+    // upstream node, so the node's continuity reduces to dV/dt = 0. That
+    // definition is only well posed when the pass-through is the node's ONLY
+    // outlet — give the node a second outlet and both links claim the whole
+    // inflow, creating water — and it is circular when a node passes through to
+    // another node that passes back, since neither arrival rate is defined
+    // without the other.
+    //
+    // Runs after hydstruct_.init because that is what resolves a pump's curve
+    // type (6 == ideal, HydStructures.cpp:147); it is not available earlier.
+    // Restricted to the two models that implement the pass-through: KINWAVE
+    // returns immediately on a dummy (kinwave.c:85) and STEADY gives it zero
+    // area (flowrout.c:774), so neither can violate the invariant.
+    if (rm == RouteModel::DYNWAVE || rm == RouteModel::FV) {
+        const int n_ll = ctx_.n_links();
+        const int n_nl = ctx_.n_nodes();
+        auto is_pass_through = [&](std::size_t uj) {
+            if (ctx_.links.type[uj] == LinkType::CONDUIT)
+                return ctx_.links.xsect_shape[uj] == XsectShape::DUMMY;
+            if (ctx_.links.type[uj] != LinkType::PUMP) return false;
+            const int pr = ctx_.link_subtypes.pump_row(static_cast<int>(uj));
+            return pr >= 0 &&
+                   ctx_.link_subtypes.pumps.curve_type[static_cast<std::size_t>(pr)] == 6;
+        };
+
+        // Outgoing link count per node, and whether every incoming link is a
+        // pass-through (legacy's `marked`: 1 = yes so far, −1 = disqualified).
+        std::vector<int> n_out(static_cast<std::size_t>(n_nl), 0);
+        std::vector<int> all_in_pass(static_cast<std::size_t>(n_nl), 0);
+        for (int j = 0; j < n_ll; ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            const int n1 = ctx_.links.node1[uj], n2 = ctx_.links.node2[uj];
+            if (n1 >= 0 && n1 < n_nl) n_out[static_cast<std::size_t>(n1)]++;
+            if (n2 >= 0 && n2 < n_nl) {
+                auto& m = all_in_pass[static_cast<std::size_t>(n2)];
+                if (!is_pass_through(uj))    m = -1;
+                else if (m == 0)             m = 1;
+            }
+        }
+
+        std::vector<uint8_t> reported(static_cast<std::size_t>(n_nl), 0);
+        auto report = [&](int node) {
+            if (node < 0 || node >= n_nl) return;
+            auto un = static_cast<std::size_t>(node);
+            if (reported[un]) return;   // one message per node, not per link
+            reported[un] = 1;
+            ctx_.errors.push_back(
+                format_error(ERR_DUMMY_LINK, ctx_.node_names.names()[un]));
+            set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+        };
+
+        for (int j = 0; j < n_ll; ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            if (!is_pass_through(uj)) continue;
+            const int n1 = ctx_.links.node1[uj];
+            if (n1 < 0 || n1 >= n_nl) continue;
+            const auto u1 = static_cast<std::size_t>(n1);
+            // Must be the node's only outlet (flowrout.c:309).
+            if (n_out[u1] > 1) report(n1);
+            // Must not also be fed by a pass-through (toposort.c:522).
+            if (all_in_pass[u1] > 0) report(n1);
+            // A storage node's outlet cannot be a dummy: legacy link.c:1006-1014
+            // rejects it because the pass-through would drain the whole storage
+            // volume's inflow while the curve says otherwise.
+            if (ctx_.links.type[uj] == LinkType::CONDUIT &&
+                ctx_.nodes.type[u1] == NodeType::STORAGE)
+                report(n1);
+        }
+    }
+
     // KINWAVE/STEADY evaluate orifice/weir/outlet/pump discharge inline inside
     // their sorted-link loop (legacy getLinkInflow), so the router needs the
     // structure solver itself — DW/FV get theirs via the non_conduit_fn
