@@ -1450,16 +1450,23 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     const double total_sec_clamp = ctx_.options.totalDurationMs() / 1000.0;
     double next_routing_time = std::min(routing_time + dt_routing, total_sec_clamp);
     while (new_runoff_time_ < next_routing_time) {
-        // Save old runoff/runon/conc + GW state for interpolation at the RUNOFF
-        // step cadence (matching legacy subcatch_setOldState, which legacy calls
-        // inside runoff_execute — NOT per routing step). subcatches.save_state()
-        // snapshots old_runoff/old_runon_inflow/conc_old; old_gw_flow is saved
-        // separately (not covered by save_state). This is the ONLY place the
-        // subcatch old-state is taken (see SimulationContext::save_state()).
+        // Save old runoff/runon/conc + GW/snow/LID-drain state for interpolation
+        // at the RUNOFF step cadence (matching legacy subcatch_setOldState +
+        // lid_setOldGroupState, which legacy calls inside runoff_execute — NOT
+        // per routing step). subcatches.save_state() snapshots
+        // old_runoff/old_runon_inflow/conc_old; the rest is saved separately
+        // (not covered by save_state). This is the ONLY place the subcatch
+        // old-state is taken (see SimulationContext::save_state()).
+        // lid_drain_flow is zeroed after the roll (legacy lid.c:1341-1342) and
+        // re-accumulated by the A6b drain-routing loop later this substep.
         ctx_.subcatches.save_state();
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             ctx_.subcatches.old_gw_flow[ui] = ctx_.subcatches.gw_flow[ui];
+            ctx_.subcatches.old_snow_depth[ui] = ctx_.subcatches.snow_depth[ui];
+            ctx_.subcatches.old_lid_drain_flow[ui] =
+                ctx_.subcatches.lid_drain_flow[ui];
+            ctx_.subcatches.lid_drain_flow[ui] = 0.0;
         }
 
         // Advance runoff clock
@@ -1842,6 +1849,15 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                         soa.out_age[perv_idx];
                 }
             }
+
+            // Legacy newSnowDepth (subcatch.c:816): the per-subcatch SWE
+            // snapshot is taken each runoff step so the reporter can blend
+            // old/new to the report instant (subcatch.c:888-890). Same
+            // recompute as the API getter.
+            for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                ctx_.subcatches.snow_depth[ui] = subcatchSnowDepth(i);
+            }
         }
 
         // A3b. Apply N-PERV/DSTORE pattern adjustments (before runoff)
@@ -2074,6 +2090,14 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 //  NODE — water once, quality twice, and neither temperature
                 //  nor age paired on the water side. Resolving to the outlet
                 //  here makes water and quality take the SAME path.
+                // Legacy group newDrainFlow (lid.c:1729): destination-agnostic
+                // total drain rate, rolled per runoff step so the reporter can
+                // fold interpolated drain flow into reported runoff
+                // (subcatch.c:897-902). Legacy zeroes a unit's drain when it
+                // returns to the pervious area (lid.c:1893-1898); that path is
+                // not modeled here, so the rollup matches what is routed.
+                ctx_.subcatches.lid_drain_flow[usc] +=
+                    g.drain_flow[uu] * lid_area;  // CFS
                 int dn  = g.drain_node[uu];
                 int dsc = g.drain_subcatch[uu];
                 if (dn < 0 && (dsc < 0 || dsc == sc)) {
@@ -4852,9 +4876,21 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     auto ui = static_cast<std::size_t>(i);
                     double ro = f1 * ctx_.subcatches.old_runoff[ui]
                               + f  * ctx_.subcatches.runoff[ui];
+                    // Legacy adds the interpolated LID drain to reported
+                    // runoff BEFORE the MIN_RUNOFF cutoff, gated on
+                    // lidArea > 0 (subcatch.c:897-905).
+                    if (ctx_.subcatches.total_lid_area_ft2[ui] > 0.0)
+                        ro += f1 * ctx_.subcatches.old_lid_drain_flow[ui]
+                            + f  * ctx_.subcatches.lid_drain_flow[ui];
                     if (ro < MIN_RUNOFF * (ctx_.subcatches.area[ui] * land2ft2))
                         ro = 0.0;
                     snap.subcatch.runoff[ui] = ro;
+                    // Legacy interpolates GW flow on the same runoff-clock
+                    // weight (subcatch.c:909-910); the raw copy above only
+                    // sized the array.
+                    snap.subcatch.gw_flow[ui] =
+                        f1 * ctx_.subcatches.old_gw_flow[ui]
+                        + f * ctx_.subcatches.gw_flow[ui];
                 }
             }
 
@@ -4878,25 +4914,23 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
             }
 
-            // Per-subcatch snow depth (from snow pack state)
+            // Per-subcatch snow depth: legacy interpolates oldSnowDepth/
+            // newSnowDepth to the report instant on the runoff-clock weight
+            // (subcatch.c:888-890) — in ALL report modes. The per-step SWE
+            // recompute now lives in stepRunoff (ctx_.subcatches.snow_depth).
             {
                 const int nS = ctx_.n_subcatches();
                 snap.subcatch.snow_depth.resize(static_cast<std::size_t>(nS), 0.0);
-                const auto& soa = snow_.state();
+                const double span = new_runoff_ms_ - old_runoff_ms_;
+                const double f = (span > 0.0)
+                               ? (ctx_.next_report_ms - old_runoff_ms_) / span
+                               : 1.0;
+                const double f1 = 1.0 - f;
                 for (int s = 0; s < nS; ++s) {
                     auto us = static_cast<std::size_t>(s);
-                    if (ctx_.subcatches.snowpack[us] < 0) continue;
-                    double fi = ctx_.subcatches.frac_imperv[us];
-                    double sn = (us < soa.snn.size()) ? soa.snn[us] : 0.0;
-                    double fArea[3] = { sn * fi, (1.0 - sn) * fi, 1.0 - fi };
-                    int base = s * snow::N_SUBAREAS;
-                    double sd = 0.0;
-                    for (int k = 0; k < snow::N_SUBAREAS; ++k) {
-                        auto uk = static_cast<std::size_t>(base + k);
-                        if (uk < soa.wsnow.size())
-                            sd += soa.wsnow[uk] * fArea[k];
-                    }
-                    snap.subcatch.snow_depth[us] = sd;
+                    snap.subcatch.snow_depth[us] =
+                        f1 * ctx_.subcatches.old_snow_depth[us]
+                        + f * ctx_.subcatches.snow_depth[us];
                 }
             }
 
