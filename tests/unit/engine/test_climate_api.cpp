@@ -19,9 +19,13 @@
 
 #include <gtest/gtest.h>
 #include <array>
+#include <fstream>
+#include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_climate.h>
+
+#include "core/SWMMEngine.hpp"
 
 // Working directory is tests/unit/engine/data/ (set by CMakeLists.txt).
 namespace {
@@ -348,4 +352,104 @@ TEST(ClimateConfigCApiNoFixture, NullHandleRejected) {
     EXPECT_EQ(swmm_climate_get_temp_source(nullptr, &i), SWMM_ERR_BADHANDLE);
     EXPECT_EQ(swmm_climate_set_elevation(nullptr, 1.0), SWMM_ERR_BADHANDLE);
     EXPECT_EQ(swmm_climate_get_latitude(nullptr, &d), SWMM_ERR_BADHANDLE);
+}
+
+// ---------------------------------------------------------------------------
+// [ADJUSTMENTS] CONDUCT scales conduit seepage (legacy link.c:1378:
+// seepLossRate *= Adjust.hydconFactor). A/B decks differ only in the
+// adjustment block; a unity factor must be BIT-identical to no block at all
+// (x *= 1.0 is exact), and 0.5 must roughly halve the seepage volume on
+// both loss paths (DYNWAVE: DWSolver::recomputeConduitLossOne; KINWAVE:
+// Router::computeConduitLosses).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void writeSeepDeck(const char* path, const char* routing, double conduct) {
+    std::ofstream f(path);
+    f << "[TITLE]\nCONDUCT seepage adjustment gate\n\n[OPTIONS]\n"
+      << "FLOW_UNITS CFS\nFLOW_ROUTING " << routing << "\n"
+      << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+      << "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+      << "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n"
+      << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
+      << "[OUTFALLS]\nOUT 5.0 FREE NO\n\n"
+      << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
+      << "[XSECTIONS]\nC1 TRAPEZOIDAL 4.0 4.0 1.0 1.0\n\n"
+      << "[LOSSES]\nC1 0 0 0 NO 0.5\n\n"
+      << "[INFLOWS]\nJ1 FLOW seepin FLOW 1.0 1.0\n\n"
+      << "[TIMESERIES]\nseepin 0:00 5\nseepin 24:00 5\n";
+    if (conduct > 0.0) {
+        f << "\n[ADJUSTMENTS]\nCONDUCT";
+        for (int m = 0; m < 12; ++m) f << " " << conduct;
+        f << "\n";
+    }
+}
+
+double runSeepDeck(const char* inp, const char* rpt, const char* out) {
+    double seep = -1.0;
+    SWMM_Engine e = swmm_engine_create();
+    if (e == nullptr) { ADD_FAILURE() << "engine create"; return seep; }
+    bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK &&
+              swmm_engine_initialize(e) == SWMM_OK &&
+              swmm_engine_start(e, 1) == SWMM_OK;
+    if (!ok) ADD_FAILURE() << "open/init/start failed for " << inp;
+    if (ok) {
+        double elapsed = 0.0;
+        int guard = 0;
+        do {
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
+                ADD_FAILURE() << "step failed for " << inp;
+                ok = false;
+                break;
+            }
+        } while (elapsed > 0.0 && ++guard < 20000);
+        if (ok) {
+            swmm_engine_end(e);
+            seep = static_cast<openswmm::SWMMEngine*>(e)
+                       ->context().mass_balance.routing_seep_loss;
+        }
+        swmm_engine_close(e);
+    }
+    swmm_engine_destroy(e);
+    return seep;
+}
+
+} // namespace
+
+TEST(ConductAdjustmentSeepage, ScalesConduitSeepageBothPaths) {
+    for (const char* routing : {"DYNWAVE", "KINWAVE"}) {
+        const std::string tag = std::string("_hydcon_seep_") + routing;
+        const std::string base_inp  = tag + "_base.inp";
+        const std::string unity_inp = tag + "_unity.inp";
+        const std::string half_inp  = tag + "_half.inp";
+        writeSeepDeck(base_inp.c_str(),  routing, 0.0);   // no [ADJUSTMENTS]
+        writeSeepDeck(unity_inp.c_str(), routing, 1.0);
+        writeSeepDeck(half_inp.c_str(),  routing, 0.5);
+
+        const double base = runSeepDeck(base_inp.c_str(),
+                                        (tag + "_base.rpt").c_str(),
+                                        (tag + "_base.out").c_str());
+        const double unity = runSeepDeck(unity_inp.c_str(),
+                                         (tag + "_unity.rpt").c_str(),
+                                         (tag + "_unity.out").c_str());
+        const double half = runSeepDeck(half_inp.c_str(),
+                                        (tag + "_half.rpt").c_str(),
+                                        (tag + "_half.out").c_str());
+
+        ASSERT_GT(base, 0.0) << routing << ": deck produced no seepage — the "
+                                           "gate cannot observe the factor";
+        // ×1.0 is exact in IEEE 754: a unity CONDUCT block must not perturb
+        // a single bit of the seepage ledger.
+        EXPECT_EQ(unity, base) << routing << ": unity CONDUCT changed seepage";
+        // 0.5 halves the rate; depth feedback keeps the volume ratio near but
+        // not exactly 0.5. Pre-fix both runs were identical and fail here.
+        EXPECT_LT(half, 0.75 * base)
+            << routing << ": CONDUCT 0.5 did not reduce conduit seepage "
+                          "(Adjust.hydconFactor not applied — legacy "
+                          "link.c:1378)";
+        EXPECT_GT(half, 0.25 * base)
+            << routing << ": CONDUCT 0.5 over-reduced seepage (factor "
+                          "applied more than once?)";
+    }
 }
