@@ -1,0 +1,61 @@
+[TITLE]
+Timeseries time-mode fixture: relative, dated, mixed, interleaved, seconds
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2007
+START_TIME           06:00:00
+REPORT_START_DATE    01/01/2007
+REPORT_START_TIME    06:00:00
+END_DATE             01/03/2007
+END_TIME             06:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:15:00
+DRY_STEP             00:15:00
+ROUTING_STEP         0:00:30
+
+[JUNCTIONS]
+;;Name           Elevation  MaxDepth   InitDepth  SurDepth   Aponded
+J1               10.0       10.0       0          0          0
+
+[OUTFALLS]
+;;Name           Elevation  Type       Stage Data       Gated
+O1               0.0        FREE                        NO
+
+[CONDUITS]
+;;Name           FromNode         ToNode           Length     Roughness  InOffset   OutOffset  InitFlow   MaxFlow
+C1               J1               O1               400        0.01       0          0          0          0
+
+[XSECTIONS]
+;;Link           Shape        Geom1            Geom2      Geom3      Geom4      Barrels
+C1               CIRCULAR     2.0              0          0          0          1
+
+[INFLOWS]
+;;Node           Constituent      Time Series      Type     Mfactor  Sfactor
+J1               FLOW             TS_REL           FLOW     1.0      1.0
+
+[TIMESERIES]
+;;Pure time-only (relative): decimal hours and clock, crossing 24 h
+TS_REL                      0:00       0
+TS_REL                      1:00       10
+TS_REL                      25.5       4
+;;Pure dated
+TS_DATED         01/02/2007 00:00      0
+TS_DATED         01/02/2007 06:00      15
+TS_DATED                    12:00      0
+;;Mixed: relative head rows, then dated tail
+TS_MIXED                    0:00       1
+TS_MIXED                    2:00       2
+TS_MIXED         01/02/2007 03:00      3
+TS_MIXED                    04:00      4
+;;Interleaved: TS_ILA gets a date, TS_ILB stays time-only and must remain
+;;anchored at the simulation start (legacy keeps lastDate per series)
+TS_ILA           01/02/2007 00:00      7
+TS_ILB                      0:00       5
+TS_ILA                      01:00      8
+TS_ILB                      1:00       6
+;;Relative with seconds resolution
+TS_SEC                      0:00:30    1
+TS_SEC                      1:00       2

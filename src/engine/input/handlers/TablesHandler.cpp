@@ -80,6 +80,21 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
     double      last_date = 0.0;
     int         current_idx = -1;
 
+    // Legacy keeps the date anchor PER SERIES (Tseries[j].lastDate), not per
+    // section scan, so interleaved rows of different series must each resume
+    // their own anchor. Rows are almost always grouped by series, so the
+    // anchor is kept in these locals on the hot path and swapped through the
+    // map only when the row's series changes. `seen_date == false` means the
+    // series has not yet had an explicit date token: its date-less rows are
+    // elapsed times anchored at the simulation start (legacy input.c:170
+    // seeds lastDate = StartDate + StartTime). Those rows are stored with
+    // x relative to 0 and COUNTED in Table::n_relative; the start_date
+    // offset is applied later by resolve_cross_references(), because
+    // [OPTIONS] may legally appear after [TIMESERIES] in the file.
+    struct SeriesParseState { double last_date = 0.0; bool seen_date = false; };
+    std::unordered_map<int, SeriesParseState> series_state;
+    bool seen_date = false;
+
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty()) continue;
@@ -92,6 +107,9 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
         // keeps the whole section at one lookup per DISTINCT series.
         if (!maybe_name.empty() &&
             !(current_idx >= 0 && ieq(maybe_name, current_name))) {
+            // Park the outgoing series' anchor state before switching.
+            if (current_idx >= 0)
+                series_state[current_idx] = {last_date, seen_date};
             current_name = maybe_name;
             // Ensure table exists (kind-scoped: a curve with the same name
             // is a DIFFERENT object, matching legacy's separate hash tables)
@@ -99,6 +117,24 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
             if (current_idx < 0) {
                 current_idx = ctx.tables.add(current_name, TableType::TIMESERIES);
                 is_new_table = true;
+            }
+            const auto it = series_state.find(current_idx);
+            if (it != series_state.end()) {
+                last_date = it->second.last_date;
+                seen_date = it->second.seen_date;
+            } else if (current_idx < ctx.n_tables() &&
+                       !ctx.tables[current_idx].x.empty()) {
+                // Series resumed from an earlier [TIMESERIES] section:
+                // reconstruct the anchor from its stored rows. All-relative
+                // rows keep any accumulated day wraps in floor(x.back());
+                // once a dated row exists, floor(x.back()) IS the last date.
+                const Table& prev = ctx.tables[current_idx];
+                seen_date = prev.n_relative <
+                            static_cast<int>(prev.x.size());
+                last_date = std::floor(prev.x.back());
+            } else {
+                last_date = 0.0;
+                seen_date = false;
             }
         }
         // Attach comment to the table on its first (name-introducing) row
@@ -145,6 +181,7 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
             // scrambling rain/inflow hydrographs that repeat the date every N
             // rows.
             last_date = std::floor(x);
+            seen_date = true;
             y = to_double(tok[3]);
         } else if (!has_date && tok.size() >= 3) {
             // Name  Time  Value  (continuation, uses last_date)
@@ -196,6 +233,11 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
             }
             x = last_date + time_frac;
             y = to_double(tok[2]);
+            // Date-less rows before the series' first explicit date are
+            // elapsed times anchored at the simulation start — count them
+            // so the resolver adds start_date to exactly these rows (and
+            // InpWriter emits them back in time-only form).
+            if (!seen_date) tbl.n_relative = static_cast<int>(tbl.x.size()) + 1;
         } else {
             continue;
         }

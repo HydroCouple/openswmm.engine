@@ -1312,23 +1312,28 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Timeseries date offset resolution
     // -------------------------------------------------------------------------
-    // Timeseries without explicit dates have x-values starting near 0 (fractional
-    // days from midnight). These are relative to the simulation start date.
-    // Offset them by start_date so absolute OADate lookups work.
+    // Rows authored without a date are elapsed times anchored at the
+    // simulation start (legacy input.c:170 seeds every series' lastDate with
+    // StartDate + StartTime before parsing). The parser stored those rows
+    // relative to 0 and counted them in Table::n_relative; add start_date to
+    // exactly those rows here so absolute OADate lookups work. Rows past
+    // n_relative carry explicit dates and must NOT move — the old x[0] < 366
+    // heuristic shifted a whole mixed series, pushing its dated rows ~107
+    // years out. rel_anchor records the offset currently baked in, which
+    // makes a re-resolve idempotent and re-anchors by the delta if
+    // START_DATE was edited between resolves.
     for (std::size_t t = 0; t < ctx.tables.tables.size(); ++t) {
         auto& tbl = ctx.tables.tables[t];
         if (tbl.type != TableType::TIMESERIES) continue;
-        if (tbl.x.empty()) continue;
+        if (tbl.n_relative <= 0) continue;
 
-        // If first x-value is small (< 366, i.e. less than one year in days),
-        // it's a relative timeseries and needs the start_date offset.
-        // Absolute dates (with MM/DD/YYYY) would produce values > 30000.
-        if (tbl.x[0] < 366.0) {
-            double offset = ctx.options.start_date;
-            for (auto& xv : tbl.x) {
-                xv += offset;
-            }
-        }
+        const double start = ctx.options.start_date;
+        const double delta = start - tbl.rel_anchor;
+        if (delta == 0.0) continue;
+        const std::size_t n = std::min(tbl.x.size(),
+                                       static_cast<std::size_t>(tbl.n_relative));
+        for (std::size_t k = 0; k < n; ++k) tbl.x[k] += delta;
+        tbl.rel_anchor = start;
     }
 
     // -------------------------------------------------------------------------
