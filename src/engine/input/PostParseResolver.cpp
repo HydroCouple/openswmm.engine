@@ -49,8 +49,10 @@
 #include "../2d/data/SolverOptions2D.hpp"
 #endif
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -280,33 +282,111 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
             tbl.y.reserve(rows);
         }
 
+        // Row grammar — mirror legacy table_parseFileLine() (table.c:838).
+        // Tokens split on space/tab/CR/LF/comma (legacy TBLSEPSTR); a first
+        // token starting with ';' is a comment. A row is either
+        //   date time value   — date M/D/Y with '/' or '-' separators,
+        //                       numeric or 3-letter month name (DateFormat
+        //                       is pinned M_D_Y at open, legacy swmm5.c:647)
+        //   time value        — date carried from the last dated row
+        // and the time token is decimal HOURS when it is entirely numeric,
+        // else H:MM[:SS] (legacy datetime_strToTime). Rows before the first
+        // dated row are elapsed times anchored at the simulation START
+        // DATETIME: legacy input.c:176 seeds every series' lastDate with
+        // StartDate + StartTime, and options are already parsed when this
+        // loader runs, so the anchor is applied directly here (the rows are
+        // stored absolute; the resolver's inline relative-row offset pass
+        // does not apply to them). The previous parser accepted ONLY
+        // "M/D/Y H:MM value" rows, so every elapsed-time or decimal-hour
+        // legacy file loaded zero rows and failed the open with ERROR 363.
+        double last_date = ctx.options.start_date; // date carried across rows
+
+        auto next_tok = [](char*& p) -> char* {
+            while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' ||
+                   *p == ',') ++p;
+            if (*p == '\0') return nullptr;
+            char* start = p;
+            while (*p && *p != ' ' && *p != '\t' && *p != '\n' &&
+                   *p != '\r' && *p != ',') ++p;
+            if (*p) { *p = '\0'; ++p; }
+            return start;
+        };
+
+        auto parse_file_date = [](const char* s, double& d_out) -> bool {
+            if (!std::strchr(s, '/') && !std::strchr(s, '-')) return false;
+            unsigned m = 0, d = 0, y = 0;
+            char sep1 = 0, sep2 = 0;
+            if (std::sscanf(s, "%u%c%u%c%u", &m, &sep1, &d, &sep2, &y) < 5) {
+                char mon[4] = {};
+                if (std::sscanf(s, "%3[A-Za-z]%c%u%c%u",
+                                mon, &sep1, &d, &sep2, &y) < 5) return false;
+                static const char* kMonths[12] = {
+                    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+                m = 0;
+                for (unsigned i = 0; i < 12; ++i) {
+                    if (std::toupper(static_cast<unsigned char>(mon[0])) == kMonths[i][0] &&
+                        std::toupper(static_cast<unsigned char>(mon[1])) == kMonths[i][1] &&
+                        std::toupper(static_cast<unsigned char>(mon[2])) == kMonths[i][2]) {
+                        m = i + 1;
+                        break;
+                    }
+                }
+                if (m == 0) return false;
+            }
+            const double enc = datetime::encodeDate(static_cast<int>(y),
+                                                    static_cast<int>(m),
+                                                    static_cast<int>(d));
+            if (enc == -static_cast<double>(datetime::DateDelta)) return false;
+            d_out = enc;
+            return true;
+        };
+
+        auto parse_file_time = [](const char* s, double& t_out) -> bool {
+            char* endp = nullptr;
+            const double hrs = std::strtod(s, &endp);
+            if (endp && *endp == '\0') {           // decimal hours
+                t_out = hrs / 24.0;
+                return true;
+            }
+            int hr = 0, min = 0, sec = 0;
+            if (std::sscanf(s, "%d:%d:%d", &hr, &min, &sec) < 1) return false;
+            if (hr < 0 || min < 0 || sec < 0) return false;
+            t_out = datetime::encodeTime(hr, min, sec);
+            return true;
+        };
+
         char line[256];
         while (std::fgets(line, sizeof(line), fp)) {
-            // Skip comments and empty lines
-            if (line[0] == ';' || line[0] == '\n' || line[0] == '\r') continue;
+            char* p = line;
+            char* s1 = next_tok(p);
+            if (!s1 || *s1 == ';') continue;       // blank line or comment
+            char* s2 = next_tok(p);
+            char* s3 = next_tok(p);                // extra tokens ignored
 
-            // Parse: date  time  value
-            // Format: MM/DD/YYYY  H:MM  value  (tab or space delimited)
-            int month = 0, day = 0, year = 0;
-            int hour = 0, minute = 0;
-            double value = 0.0;
+            const char* time_tok;
+            const char* value_tok;
+            double d = 0.0;
+            if (s3) {                              // date  time  value
+                if (!parse_file_date(s1, d)) continue;
+                last_date = d;
+                time_tok  = s2;
+                value_tok = s3;
+            } else if (s2) {                       // time  value
+                d = last_date;
+                time_tok  = s1;
+                value_tok = s2;
+            } else {
+                continue;
+            }
 
-            // Try tab-delimited first, then space-delimited
-            char date_str[32] = {}, time_str[32] = {};
-            int fields = std::sscanf(line, "%31s %31s %lf", date_str, time_str, &value);
-            if (fields < 3) continue;
+            double t = 0.0;
+            if (!parse_file_time(time_tok, t)) continue;
+            char* endp = nullptr;
+            const double value = std::strtod(value_tok, &endp);
+            if (endp == value_tok || *endp != '\0') continue;
 
-            // Parse date: MM/DD/YYYY
-            if (std::sscanf(date_str, "%d/%d/%d", &month, &day, &year) != 3) continue;
-
-            // Parse time: H:MM or HH:MM or H:MM:SS
-            int second = 0;
-            if (std::sscanf(time_str, "%d:%d:%d", &hour, &minute, &second) < 2) continue;
-
-            double dt = datetime::encodeDate(year, month, day)
-                      + datetime::encodeTime(hour, minute, second);
-
-            tbl.x.push_back(dt);
+            tbl.x.push_back(d + t);
             tbl.y.push_back(value);
         }
         std::fclose(fp);
