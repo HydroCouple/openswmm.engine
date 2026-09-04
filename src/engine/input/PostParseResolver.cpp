@@ -737,7 +737,34 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
     }
 
     const double inv_len = ucf::Ucf_inv[ucf::LENGTH][usz];
-    if (inv_len == 1.0) return;  // US units: input already in internal units.
+    if (inv_len == 1.0) {
+        // US units: lengths are already internal feet, but flow-dimension
+        // inputs are in the deck's FLOW_UNITS — a GPM or MGD deck still
+        // needs the Qcf division legacy applies to every parsed flow
+        // (link.c:352-353 `x[4]/UCF(FLOW)`, node.c divider cutoff). Skipping
+        // it left q0/q_limit/cutoff in user units: a 2.6 MGD MaxFlow acted
+        // as a 2.6 cfs cap (small-orifice: pipe held to 1.68 instead of
+        // 4.02 cfs and the whole storage drawdown diverged).
+        const double qcf_us =
+            ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
+        if (qcf_us != 1.0) {
+            for (int i = 0; i < n_nodes; ++i) {
+                if (ctx.nodes.type[static_cast<std::size_t>(i)] !=
+                    NodeType::DIVIDER) continue;
+                const int r = ctx.node_subtypes.divider_row(i);
+                if (r >= 0)
+                    ctx.node_subtypes.dividers.cutoff[
+                        static_cast<std::size_t>(r)] /= qcf_us;
+            }
+            for (int j = 0; j < n_links; ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+                ctx.links.q0[uj]      /= qcf_us;
+                ctx.links.q_limit[uj] /= qcf_us;
+            }
+        }
+        return;
+    }
 
     // PARITY: legacy converts metric input to internal feet by DIVIDING by the
     // forward factor (internal = display / UCF, e.g. m / 0.3048), NOT multiplying
@@ -860,7 +887,30 @@ void convert_internal_to_display(SimulationContext& ctx) {
     }
 
     const double len = ucf::Ucf[ucf::LENGTH][usz];
-    if (len == 1.0) return;  // US units: internal already equals display.
+    if (len == 1.0) {
+        // US units: lengths are display-identical, but GPM/MGD flow fields
+        // were divided by Qcf on the way in (see convert_inputs_to_internal)
+        // and must be multiplied back for writer round-trips.
+        const double qcf_us =
+            ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
+        if (qcf_us != 1.0) {
+            for (int i = 0; i < ctx.n_nodes(); ++i) {
+                if (ctx.nodes.type[static_cast<std::size_t>(i)] !=
+                    NodeType::DIVIDER) continue;
+                const int r = ctx.node_subtypes.divider_row(i);
+                if (r >= 0)
+                    ctx.node_subtypes.dividers.cutoff[
+                        static_cast<std::size_t>(r)] *= qcf_us;
+            }
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+                ctx.links.q0[uj]      *= qcf_us;
+                ctx.links.q_limit[uj] *= qcf_us;
+            }
+        }
+        return;
+    }
 
     const double area = len * len;
     const double flow = ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];

@@ -304,7 +304,7 @@ TEST(RDIISolverInit, EmptyAssignments) {
     RDIISolver solver;
     solver.init(ctx);
     // No RDII assignments → no groups
-    solver.applyRdiiInflows(ctx);
+    solver.applyRdiiInflows(ctx, 0.0);
     for (int i = 0; i < 5; ++i) {
         EXPECT_NEAR(ctx.nodes.rdii_inflow[static_cast<size_t>(i)], 0.0, 1e-15);
     }
@@ -463,8 +463,8 @@ TEST(Convolution, ZeroRainfallProducesZeroRDII) {
 
     // Zero rainfall
     ctx.gages.rainfall[0] = 0.0;
-    solver.computeAll(ctx, 0, 300.0);
-    solver.applyRdiiInflows(ctx);
+    solver.advance(ctx, 300.0);
+    solver.applyRdiiInflows(ctx, 0.0);
 
     EXPECT_NEAR(ctx.nodes.rdii_inflow[0], 0.0, 1e-15);
 }
@@ -491,10 +491,12 @@ TEST(Convolution, RainfallProducesPositiveRDII) {
     int ri = RDIISolver::getRainInterval(solver.uh_params[0], 300.0);
     int steps_per_interval = std::max(1, ri / static_cast<int>(dt));
 
+    double elapsed = 0.0;
     for (int s = 0; s < steps_per_interval * 3; ++s) {
         std::fill(ctx.nodes.rdii_inflow.begin(), ctx.nodes.rdii_inflow.end(), 0.0);
-        solver.computeAll(ctx, 0, dt);
-        solver.applyRdiiInflows(ctx);
+        elapsed += dt;
+        solver.advance(ctx, elapsed);
+        solver.applyRdiiInflows(ctx, elapsed - dt);
     }
 
     // After sustained rainfall, RDII should be positive
@@ -526,10 +528,12 @@ TEST(Convolution, LargerAreaProducesMoreRDII) {
     int ri = RDIISolver::getRainInterval(solver.uh_params[0], 300.0);
     int steps = std::max(1, ri / static_cast<int>(dt)) * 3;
 
+    double elapsed = 0.0;
     for (int s = 0; s < steps; ++s) {
         std::fill(ctx.nodes.rdii_inflow.begin(), ctx.nodes.rdii_inflow.end(), 0.0);
-        solver.computeAll(ctx, 0, dt);
-        solver.applyRdiiInflows(ctx);
+        elapsed += dt;
+        solver.advance(ctx, elapsed);
+        solver.applyRdiiInflows(ctx, elapsed - dt);
     }
 
     double q0 = ctx.nodes.rdii_inflow[0];
@@ -574,10 +578,12 @@ TEST(Convolution, HigherR_ProducesMoreRDII) {
     int ri = RDIISolver::getRainInterval(solver.uh_params[0], 300.0);
     int steps = std::max(1, ri / static_cast<int>(dt)) * 3;
 
+    double elapsed = 0.0;
     for (int s = 0; s < steps; ++s) {
         std::fill(ctx.nodes.rdii_inflow.begin(), ctx.nodes.rdii_inflow.end(), 0.0);
-        solver.computeAll(ctx, 0, dt);
-        solver.applyRdiiInflows(ctx);
+        elapsed += dt;
+        solver.advance(ctx, elapsed);
+        solver.applyRdiiInflows(ctx, elapsed - dt);
     }
 
     double q_low  = ctx.nodes.rdii_inflow[0];
@@ -609,10 +615,12 @@ TEST(Convolution, RDIIDecaysAfterRainStops) {
 
     // Phase 1: Rain for several intervals
     ctx.gages.rainfall[0] = 2.0;
+    double elapsed = 0.0;
     for (int s = 0; s < steps_per_interval * 4; ++s) {
         std::fill(ctx.nodes.rdii_inflow.begin(), ctx.nodes.rdii_inflow.end(), 0.0);
-        solver.computeAll(ctx, 0, dt);
-        solver.applyRdiiInflows(ctx);
+        elapsed += dt;
+        solver.advance(ctx, elapsed);
+        solver.applyRdiiInflows(ctx, elapsed - dt);
     }
     double q_peak = ctx.nodes.rdii_inflow[0];
     EXPECT_GT(q_peak, 0.0);
@@ -622,8 +630,9 @@ TEST(Convolution, RDIIDecaysAfterRainStops) {
     double q_last = q_peak;
     for (int s = 0; s < steps_per_interval * 20; ++s) {
         std::fill(ctx.nodes.rdii_inflow.begin(), ctx.nodes.rdii_inflow.end(), 0.0);
-        solver.computeAll(ctx, 0, dt);
-        solver.applyRdiiInflows(ctx);
+        elapsed += dt;
+        solver.advance(ctx, elapsed);
+        solver.applyRdiiInflows(ctx, elapsed - dt);
     }
 
     // After many dry steps, RDII should have decayed toward zero
@@ -766,10 +775,12 @@ TEST(MultiResponse, ThreeResponsesSuperimpose) {
     ctx.gages.rainfall[0] = 1.0;
 
     // Run enough steps
+    double elapsed = 0.0;
     for (int s = 0; s < 30; ++s) {
         std::fill(ctx.nodes.rdii_inflow.begin(), ctx.nodes.rdii_inflow.end(), 0.0);
-        solver.computeAll(ctx, 0, dt);
-        solver.applyRdiiInflows(ctx);
+        elapsed += dt;
+        solver.advance(ctx, elapsed);
+        solver.applyRdiiInflows(ctx, elapsed - dt);
     }
 
     // Should have RDII from all three responses
@@ -1107,11 +1118,13 @@ TEST(RdiiDecayBehaviour, ExpModelProducesPositiveRdii) {
     double dt = 300.0;
     ctx.gages.rainfall[0] = 0.5;  // continuous rain (in/hr)
 
+    double elapsed = 0.0;
     for (int s = 0; s < 60; ++s) {
         std::fill(ctx.nodes.rdii_inflow.begin(),
                   ctx.nodes.rdii_inflow.end(), 0.0);
-        solver.computeAll(ctx, 0, dt);
-        solver.applyRdiiInflows(ctx);
+        elapsed += dt;
+        solver.advance(ctx, elapsed);
+        solver.applyRdiiInflows(ctx, elapsed - dt);
     }
     EXPECT_GT(ctx.nodes.rdii_inflow[0], 0.0);
 }
@@ -1130,7 +1143,8 @@ TEST(RdiiDecayBehaviour, FrozenGroundSuppressesRecovery) {
     // Drive ia_used positive with a wet period, then sit dry under freezing.
     double dt = 300.0;
     ctx.gages.rainfall[0] = 1.0;
-    for (int s = 0; s < 20; ++s) solver.computeAll(ctx, 0, dt);
+    double elapsed = 0.0;
+    for (int s = 0; s < 20; ++s) solver.advance(ctx, elapsed += dt);
 
     double ia_used_wet =
         solver.decay_params.empty()
@@ -1142,7 +1156,7 @@ TEST(RdiiDecayBehaviour, FrozenGroundSuppressesRecovery) {
     // dry-period processing does not recover ia_used (frozen).
     ctx.gages.rainfall[0] = 0.0;
     // Run a long dry stretch; iaUsed should NOT decay back toward 0.
-    for (int s = 0; s < 200; ++s) solver.computeAll(ctx, 0, dt);
+    for (int s = 0; s < 200; ++s) solver.advance(ctx, elapsed += dt);
 
     // No assertion on the private state; the qualitative guarantee is that
     // recovery is suppressed — verified directly via getRecoveryRate() unit
@@ -1164,6 +1178,7 @@ TEST(RdiiDecayBehaviour, LinearPathUnchangedWhenNoDecayRows) {
     sb.init(ctx_b);
 
     double dt = 300.0;
+    double elapsed = 0.0;
     for (int s = 0; s < 30; ++s) {
         ctx_a.gages.rainfall[0] = (s < 10) ? 0.5 : 0.0;
         ctx_b.gages.rainfall[0] = (s < 10) ? 0.5 : 0.0;
@@ -1171,10 +1186,11 @@ TEST(RdiiDecayBehaviour, LinearPathUnchangedWhenNoDecayRows) {
                   ctx_a.nodes.rdii_inflow.end(), 0.0);
         std::fill(ctx_b.nodes.rdii_inflow.begin(),
                   ctx_b.nodes.rdii_inflow.end(), 0.0);
-        sa.computeAll(ctx_a, 0, dt);
-        sb.computeAll(ctx_b, 0, dt);
-        sa.applyRdiiInflows(ctx_a);
-        sb.applyRdiiInflows(ctx_b);
+        elapsed += dt;
+        sa.advance(ctx_a, elapsed);
+        sb.advance(ctx_b, elapsed);
+        sa.applyRdiiInflows(ctx_a, elapsed - dt);
+        sb.applyRdiiInflows(ctx_b, elapsed - dt);
         EXPECT_NEAR(ctx_a.nodes.rdii_inflow[0],
                     ctx_b.nodes.rdii_inflow[0], 1e-12);
     }

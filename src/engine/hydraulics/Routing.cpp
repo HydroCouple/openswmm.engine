@@ -430,6 +430,13 @@ int Router::step(SimulationContext& ctx, double dt,
 
 double Router::getAdaptiveStep(SimulationContext& ctx,
                                 double fixed_step, double courant) {
+    // Legacy routing_getRoutingStep (routing.c:170): a model with no links
+    // always routes at the user's fixed step — the DW variable-step machinery
+    // is never entered. Without this guard the DW path returns MinRouteStep
+    // (0.5 s) for the FIRST step, permanently offsetting the routing grid so
+    // runoff windows advance one step early relative to every report
+    // boundary (all non-interpolated report values shift a window).
+    if (ctx.n_links() == 0) return fixed_step;
     if (model_ == RouteModel::DYNWAVE) {
         return dw_solver_.getRoutingStep(ctx, fixed_step, courant);
     }
