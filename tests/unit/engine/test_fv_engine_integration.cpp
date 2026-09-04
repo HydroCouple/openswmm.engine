@@ -1316,10 +1316,19 @@ TEST(FvEngine, StructuresModelAgreesWithDynamicWave) {
 // ===========================================================================
 
 // initFv bails on a mesh-build error leaving fv_solver_ == nullptr, and stepFv
-// then returns 0 for every step. Before the diagnostics were surfaced, a model
-// with a DUMMY conduit therefore ran to completion, exited clean, and reported
-// a network through which no water had ever moved. Silence is the failure mode
-// this guards.
+// then returns 0 for every step. Before the diagnostics were surfaced, such a
+// model ran to completion, exited clean, and reported a network through which
+// no water had ever moved. Silence is the failure mode this guards.
+//
+// The trigger is a zero-diameter CIRCULAR conduit, which nothing upstream
+// rejects: legacy's conduit_validate raised ERROR 119 on aFull <= 0
+// (link.c:1050-1056) but that check was never ported, and PostParseResolver
+// silently stores y_full = a_full = 0 for it. The FV mesh builder is currently
+// the only thing in the engine that notices.
+//
+// It used to be a DUMMY conduit. That is no longer unmeshable — a dummy is
+// legitimate connectivity, routed as a pass-through the way DW routes it — and
+// the tests below cover it as a supported case instead.
 TEST(FvEngine, AnUnmeshableModelFailsInsteadOfRunningUnrouted) {
     const std::string dir = outDir();
     const std::string inp = dir + "/unmeshable.inp";
@@ -1333,15 +1342,165 @@ TEST(FvEngine, AnUnmeshableModelFailsInsteadOfRunningUnrouted) {
               "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
               "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
               "C2  JB  OF  400  0.013  0  0  0  0\n\n"
-              "[XSECTIONS]\nC1  DUMMY\nC2  CIRCULAR  3.0  0  0  0  1\n\n"
+              "[XSECTIONS]\nC1  CIRCULAR  0  0  0  0  1\n"
+              "C2  CIRCULAR  3.0  0  0  0  1\n\n"
               "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  15.0\n\n"
               "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
     }
     const std::string rpt = dir + "/unmeshable.rpt";
     const std::string out = dir + "/unmeshable.out";
     EXPECT_NE(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0)
-        << "a DUMMY conduit under FV ran without error — the solver was never "
-           "constructed, so nothing was routed";
+        << "a conduit with no usable cross-section ran without error — the "
+           "solver was never constructed, so nothing was routed";
+}
+
+// ===========================================================================
+// DUMMY links: connectivity without a channel
+// ===========================================================================
+
+/// JA --C1(dummy)--> JB --C2--> OF, with a steady inflow at JA.
+///
+/// C1 declares that whatever reaches JA leaves immediately for JB. Under DW
+/// that is findNonConduitFlow's Q = inflow + overflow (dynwave.c:418-449);
+/// under FV it is the same statement written as a drain condition on JA.
+namespace {
+
+std::string writeDummyModel(const std::string& name, const std::string& routing) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\n"
+          "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+          "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\nJB   99.0  10.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+          "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
+          "C2  JB  OF  400  0.013  0  0  0  0\n\n"
+          // The geometry columns are required even though a dummy has no
+          // geometry: handle_xsections drops any row with fewer than three
+          // tokens (LinksHandler.cpp:333), and a bare "C1 DUMMY" is then
+          // silently read as a zero-area CIRCULAR.
+          "[XSECTIONS]\nC1  DUMMY  0  0  0  0\n"
+          "C2  CIRCULAR  3.0  0  0  0  1\n\n"
+          "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  5.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
+    return path;
+}
+
+RunResult runFile(const std::string& inp, const std::string& name) {
+    const std::string rpt = outDir() + "/" + name + ".rpt";
+    const std::string out = outDir() + "/" + name + ".out";
+    const int err = swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
+    EXPECT_EQ(err, 0) << name << " failed with code " << err;
+    return parseReport(rpt);
+}
+
+} // namespace
+
+// The bug this whole change exists for: FV rejected the model outright.
+TEST(FvEngine, ADummyConduitRunsAndCarriesTheUpstreamInflow) {
+    const RunResult fv = runFile(writeDummyModel("dummy_fv", "FV"), "dummy_fv");
+    ASSERT_TRUE(fv.parsed) << "FV refused a model with a DUMMY conduit";
+
+    ASSERT_TRUE(fv.peak_flow.count("C1"));
+    // 5 cfs in at JA has nowhere else to go. The number that matters is that it
+    // is the INFLOW and not merely nonzero: a drain fed from ctx.nodes.inflow
+    // instead of the solver's own fluxes reports a small fraction of this.
+    EXPECT_NEAR(fv.peak_flow.at("C1"), 5.0, 0.5)
+        << "dummy carried " << fv.peak_flow.at("C1")
+        << " cfs against 5 cfs of inflow — the pass-through is not seeing what "
+           "actually arrives at JA";
+    EXPECT_LT(std::fabs(fv.continuity_pct), 1.0)
+        << "routing continuity " << fv.continuity_pct
+        << " % — the pass-through is creating or destroying water";
+}
+
+TEST(FvEngine, DummyPassThroughAgreesWithDynamicWave) {
+    const RunResult fv = runFile(writeDummyModel("dummy_fv2", "FV"), "dummy_fv2");
+    const RunResult dw =
+        runFile(writeDummyModel("dummy_dw", "DYNWAVE"), "dummy_dw");
+    ASSERT_TRUE(fv.parsed && dw.parsed);
+
+    ASSERT_GT(dw.peak_flow.at("C1"), 0.1);
+    EXPECT_NEAR(fv.peak_flow.at("C1"), dw.peak_flow.at("C1"),
+                0.10 * dw.peak_flow.at("C1"))
+        << "FV " << fv.peak_flow.at("C1") << " vs DW " << dw.peak_flow.at("C1");
+    ASSERT_GT(dw.outflow_volume, 0.0);
+    EXPECT_NEAR(fv.outflow_volume, dw.outflow_volume, 0.05 * dw.outflow_volume)
+        << "routed volume " << fv.outflow_volume << " vs " << dw.outflow_volume;
+}
+
+// ===========================================================================
+// ERROR 134 — illegal DUMMY connections (legacy checkDummyLinks)
+// ===========================================================================
+
+/// A dummy's discharge is defined as everything arriving at its upstream node,
+/// so it must be that node's only outlet. With a second outlet both links claim
+/// the whole inflow and the model creates water. Legacy rejects it
+/// (flowrout.c:301-313); the C++ engine never did until now.
+TEST(FvEngine, ADummyThatIsNotTheOnlyOutletIsRejected) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/dummy_two_outlets.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+              "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+              "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\nJB   99.0  10.0  0  0  0\n\n"
+              "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+              // C1 is a dummy out of JA, C3 is a second outlet out of JA.
+              "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
+              "C3  JA  OF  400  0.013  0  0  0  0\n"
+              "C2  JB  OF  400  0.013  0  0  0  0\n\n"
+              "[XSECTIONS]\nC1  DUMMY  0  0  0  0\n"
+              "C2  CIRCULAR  3.0  0  0  0  1\n"
+              "C3  CIRCULAR  3.0  0  0  0  1\n\n"
+              "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  5.0\n\n"
+              "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
+    }
+    EXPECT_NE(swmm_engine_run(inp.c_str(),
+                              (dir + "/dummy_two_outlets.rpt").c_str(),
+                              (dir + "/dummy_two_outlets.out").c_str(), nullptr), 0)
+        << "a dummy sharing its upstream node with a second outlet was accepted";
+}
+
+/// Two dummies in series: JA passes through to JB, which passes through to OF.
+/// Neither arrival rate is defined without the other. Legacy checkDummyLinks
+/// (toposort.c:480-528) rejects a node with both an incoming and an outgoing
+/// pass-through; this is the same model under both DW and FV.
+TEST(FvEngine, ChainedDummyLinksAreRejectedUnderBothModels) {
+    for (const char* routing : {"FV", "DYNWAVE"}) {
+        const std::string dir  = outDir();
+        const std::string name = std::string("dummy_chain_") + routing;
+        const std::string inp  = dir + "/" + name + ".inp";
+        {
+            std::ofstream os(inp);
+            os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         "
+               << routing << "\n"
+                  "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+                  "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+                  "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+                  "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\n"
+                  "JB   99.0  10.0  0  0  0\n\n"
+                  "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+                  "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
+                  "C2  JB  OF  400  0.013  0  0  0  0\n\n"
+                  // A DUMMY row still needs its geometry columns: handle_xsections
+                  // drops any [XSECTIONS] line with fewer than three tokens
+                  // (LinksHandler.cpp:333), so a bare "C1 DUMMY" is silently
+                  // read as a zero-area CIRCULAR instead.
+                  "[XSECTIONS]\nC1  DUMMY  0  0  0  0\n"
+                  "C2  DUMMY  0  0  0  0\n\n"
+                  "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  5.0\n\n"
+                  "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
+        }
+        EXPECT_NE(swmm_engine_run(inp.c_str(), (dir + "/" + name + ".rpt").c_str(),
+                                  (dir + "/" + name + ".out").c_str(), nullptr), 0)
+            << routing << ": chained dummy links were accepted — JB has both an "
+               "incoming and an outgoing pass-through";
+    }
 }
 
 // ===========================================================================

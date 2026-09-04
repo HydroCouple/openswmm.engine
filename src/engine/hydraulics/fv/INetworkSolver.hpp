@@ -62,7 +62,20 @@ struct FvStepForcing {
 
     /// Non-conduit (pump/orifice/weir/outlet) link flows in cfs, signed
     /// positive from node1 to node2. Indexed by link; conduits are ignored.
+    ///
+    /// DUMMY-xsect conduits are the exception: they are structure links
+    /// (mesh.struct_is_dummy) but their discharge is not a head relation the
+    /// engine can evaluate outside the solver — it is whatever arrives at the
+    /// upstream node. The solver derives it from its own fluxes and ignores
+    /// this array for them; `link_q_cap` carries the only thing it cannot know.
     const double* structure_flow = nullptr;
+
+    /// Upper bound on the pass-through discharge of each DUMMY link (cfs),
+    /// indexed by link: the FLOW_LIMIT from [CONDUITS], or 0 when a control
+    /// rule has closed the link. Negative means unlimited. Only DUMMY entries
+    /// are read. Legacy applies both gates in the same order — setting first,
+    /// then the limit (computeNonConduitFlowOne, HydStructures.cpp:1196-1212).
+    const double* link_q_cap = nullptr;
 
     /// Distributed conduit loss rate per unit length (ft²/s, positive = loss)
     /// from evaporation and seepage. Indexed by conduit row.

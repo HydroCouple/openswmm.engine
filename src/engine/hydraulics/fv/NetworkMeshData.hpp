@@ -333,11 +333,31 @@ struct NetworkMeshData {
     // Non-conduit links (pumps, orifices, weirs, outlets). Evaluated by their
     // existing structure equations outside the solver and applied here as
     // source/sink pairs on the two node volumes.
+    //
+    // DUMMY-xsect conduits belong here too. Legacy isTrueConduit
+    // (dynwave.c:411-414) is false for them: they carry no cross-section, so
+    // there is nothing to march, and DW routes them through findNonConduitFlow
+    // as a pure pass-through instead. They differ from a real structure in that
+    // their discharge is not a head relation the engine can evaluate outside
+    // the solver — it is whatever arrives at the upstream node — so the solver
+    // computes it itself (`struct_is_dummy`, see ExplicitFvSolver::
+    // refreshDummyFlows) rather than reading FvStepForcing::structure_flow.
     // -----------------------------------------------------------------------
 
     std::vector<int> struct_link;  ///< LinkData index
     std::vector<int> struct_n1;    ///< upstream node
     std::vector<int> struct_n2;    ///< downstream node
+
+    /// 1 for a DUMMY-xsect conduit, 0 for a real structure. Parallel to
+    /// `struct_link`.
+    std::vector<uint8_t> struct_is_dummy;
+
+    /// 1 when the node is the upstream end of a DUMMY link. Such a node is a
+    /// free-drainage boundary, not a storing junction: the pass-through removes
+    /// exactly what arrives, so its volume is constant and its head needs no
+    /// relaxation (the correction would be identically zero — see
+    /// ExplicitFvSolver::relaxOneNode).
+    std::vector<uint8_t> node_dummy_drain;
 
     // -----------------------------------------------------------------------
     // Node → face map (CSR). Two-pass gather with NO atomics: the node update
@@ -429,6 +449,7 @@ struct NetworkMeshData {
         chain_ptr.clear(); chain_cells.clear(); chain_dir.clear();
         cell_chain.clear(); cell_chain_pos.clear();
         struct_link.clear(); struct_n1.clear(); struct_n2.clear();
+        struct_is_dummy.clear(); node_dummy_drain.clear();
         node_face_ptr.clear(); node_face_idx.clear();
         node_face_sign.clear(); node_face_zb.clear();
         node_invert.clear(); node_full_depth.clear(); node_ponded_area.clear();

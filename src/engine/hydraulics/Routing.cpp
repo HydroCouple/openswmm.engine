@@ -1170,6 +1170,7 @@ void Router::initFv(SimulationContext& ctx) {
     fv_struct_flow_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
     fv_cond_loss_.assign(static_cast<std::size_t>(fv_mesh_.n_conduits()), 0.0);
     fv_struct_int_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
+    fv_link_q_cap_.assign(static_cast<std::size_t>(ctx.n_links()), -1.0);
 }
 
 /**
@@ -1213,12 +1214,28 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     }
 
     // Non-conduit structures, evaluated against the CURRENT node heads.
+    //
+    // DUMMY conduits are in the callback's list too (StructureSolver::
+    // nc_indices_ matches mesh.struct_is_dummy), but the discharge it computes
+    // for them is not usable here: its pass-through reads ctx.nodes.inflow,
+    // which under FV holds only laterals and structure scatter until publishFv
+    // writes the real boundary fluxes at end of step. So the flow it produces
+    // is dropped by the CONDUIT test below and the solver derives its own from
+    // the fluxes it is actually integrating (ExplicitFvSolver::
+    // refreshDummyFlows). What the solver cannot see is the control setting and
+    // the FLOW_LIMIT, so those are forwarded as a cap.
     auto evaluate_structures = [&]() {
         if (non_conduit_fn) non_conduit_fn(ctx, dt, 0);
         for (int j = 0; j < nl; ++j) {
             const auto uj = static_cast<std::size_t>(j);
             fv_struct_flow_[uj] = (ctx.links.type[uj] == LinkType::CONDUIT)
                                       ? 0.0 : ctx.links.flow[uj];
+            if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) {
+                const double lim = ctx.links.q_limit[uj];
+                fv_link_q_cap_[uj] = (ctx.links.setting[uj] == 0.0)
+                                         ? 0.0
+                                         : ((lim > 0.0) ? lim : -1.0);
+            }
         }
     };
     std::fill(fv_struct_int_.begin(), fv_struct_int_.end(), 0.0);
@@ -1249,6 +1266,7 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     forcing.node_lateral    = fv_lateral_.data();
     forcing.node_fixed_head = fv_fixed_head_.data();
     forcing.structure_flow  = fv_struct_flow_.data();
+    forcing.link_q_cap      = fv_link_q_cap_.data();
     forcing.conduit_loss    = fv_cond_loss_.data();
     forcing.n_nodes = nn;
     forcing.n_links = nl;
@@ -1582,12 +1600,35 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         }
     }
 
+    // DUMMY links carry no section, so publishFv's conduit loop skipped them
+    // (their mesh row is unmeshed). Their discharge is the solver's own
+    // pass-through integral, published as the step mean for the same reason
+    // structure flow is. Depth and volume are zero by definition — legacy
+    // link_getYnorm returns 0 for a DUMMY xsect (link.c:798) — and have to be
+    // written rather than left at whatever the previous step held.
+    if (impl && dt > 0.0) {
+        const auto& dvol = impl->dummy_volume();
+        for (std::size_t s = 0; s < fv_mesh_.struct_link.size(); ++s) {
+            if (fv_mesh_.struct_is_dummy.empty() || !fv_mesh_.struct_is_dummy[s])
+                continue;
+            const auto uj = static_cast<std::size_t>(fv_mesh_.struct_link[s]);
+            ctx.links.flow[uj]   = dvol[s] / dt;
+            ctx.links.depth[uj]  = 0.0;
+            ctx.links.volume[uj] = 0.0;
+        }
+    }
+
     // Non-conduit structures move water between node ledgers exactly as they do
     // under DW (DynamicWave.cpp:2723-2727): positive flow leaves node1 and
-    // arrives at node2.
+    // arrives at node2. DUMMY links are included — the pass-through really did
+    // take water out of the upstream node and put it in the downstream one, and
+    // omitting it leaves the mass balance charging an outfall for water that
+    // never reached it.
     for (int j = 0; j < ctx.n_links(); ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        if (ctx.links.type[uj] == LinkType::CONDUIT &&
+            ctx.links.xsect_shape[uj] != XsectShape::DUMMY)
+            continue;
         const int n1 = ctx.links.node1[uj];
         const int n2 = ctx.links.node2[uj];
         if (n1 < 0 || n2 < 0) continue;
