@@ -243,3 +243,54 @@ TEST(LtsEquivalence, FinePatchInCoarseWatershedStable) {
                 1.0e-8 * rain_in);
     solver.finalize();
 }
+
+// ---------------------------------------------------------------------------
+// Degenerate-tail elimination: the window tail is split into EQUAL global
+// substeps (never one arbitrarily small leftover), a sub-ulp residue window
+// fires NO physics, and awkward window fractions stay conservative.
+// ---------------------------------------------------------------------------
+TEST(LtsEquivalence, TailSplitsUniformNeverDegenerate) {
+    auto mesh = makeGradedStrip(24, 4, 1.0, 1.08, /*slope=*/0.0, /*n=*/0.10);
+    SolverOptions2D opts;
+    opts.lts_tiers = 4;
+    auto state = makeState(mesh);
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        if (mesh.tri_cx[i] < 4.0) {
+            state.volume[i] = 1.5 * mesh.tri_area[i];
+            inertial::cellEtaDepth(mesh, opts, i, state.volume[i],
+                                   state.head[i], state.depth[i]);
+        }
+    }
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, state, opts);
+
+    // Awkward (non-dt0-multiple) windows: every advance must land exactly,
+    // never firing a degenerate substep, and conserve mass throughout.
+    const double v0 = totalVolume(state, mesh.n_triangles());
+    double t = 0.0;
+    for (int w = 0; w < 20; ++w) {
+        const double W = 0.777;
+        solver.advance(t, t + W);
+        t += W;
+        ASSERT_GT(solver.last_num_steps(), 0);
+        ASSERT_GT(solver.last_step_size(), 0.0);
+    }
+    EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), v0, 1.0e-10 * v0);
+
+    // Sub-ulp residue window (the 1-ulp macro-landing shortfall shape):
+    // lands without physics — no substep, state untouched.
+    const double v_before = totalVolume(state, mesh.n_triangles());
+    solver.advance(t, t + 1.0e-13);
+    EXPECT_EQ(solver.last_num_steps(), 0);
+    EXPECT_EQ(totalVolume(state, mesh.n_triangles()), v_before);
+    t += 1.0e-13;
+
+    // A short-but-real window below the CFL step: one substep of exactly the
+    // window's own span (nt = 1, dt_tail = remaining = t_target - t).
+    const double t2 = t + 1.0e-4;
+    solver.advance(t, t2);
+    EXPECT_EQ(solver.last_num_steps(), 1);
+    EXPECT_DOUBLE_EQ(solver.last_step_size(), t2 - t);
+
+    solver.finalize();
+}

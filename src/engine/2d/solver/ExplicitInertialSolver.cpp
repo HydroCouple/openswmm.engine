@@ -1198,38 +1198,57 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
             break;
         }
 
-        const double dt0 = std::min(dt0_, remaining);
-        int nsub = nsub_full;
-        if (nsub_full * dt0_ > remaining) {
-            // Tail: not enough room for a full macro cycle — step the whole
-            // active set once at the global dt so the window lands exactly.
-            // Settle pending transfers first: a cell about to be stepped out
-            // of cadence must not carry an in-flight accumulator whose cap
-            // bookkeeping assumed the tiered schedule.
-            //
-            // This used to be expressed by collapsing every cell and face to
-            // tier 0 and running a one-substep macro cycle, which cost an
-            // O(n_cells + n_faces) re-tiering and (because the tier lists had
-            // been destroyed) forced a full syncAndRebuild on the next entry.
-            // Under per-routing-step coupling the tail fires in EVERY window,
-            // so the marcher paid one full rebuild per substep — 4,644
-            // rebuilds for 4,643 substeps on the 79k-cell benchmark. Firing
-            // the union lists directly is the same arithmetic in the same
-            // order (the collapsed tier-0 lists WERE these lists) and leaves
-            // the tiering intact, so the rebuild keeps its own cadence.
-            settleAccumulators();
-            nsub = 1;
-            fireFaces(active_faces_, dt0, /*global_step=*/true);
-            fireCells(active_cells_, dt0, /*tier0=*/true);
-            accumulators_pending_ = false;   // every side just gathered
-            ++substeps_run_;
-            ++last_steps_;
-        } else {
-            runMacroCycle(dt0, nsub);
+        if (nsub_full * dt0_ <= remaining) {
+            // Full macro cycle fits (dt0_ <= remaining here, so no clamp).
+            runMacroCycle(dt0_, nsub_full);
+            t += nsub_full * dt0_;
+            last_dt_ = dt0_;
+            ++cycles_since_rebuild;
+            continue;
         }
-        t += nsub * dt0;
-        last_dt_ = dt0;
-        ++cycles_since_rebuild;
+
+        // Tail: not enough room for a full macro cycle — split the WHOLE
+        // remaining span into nt EQUAL global substeps so the window lands
+        // exactly with no degenerate step. nt = ceil(remaining/dt0_) is at
+        // most the substep count the un-split tail sequence took, and each
+        // dt_tail = remaining/nt is in (dt0_/2, dt0_] for nt >= 2 — still
+        // CFL-safe, never arbitrarily small. Settle pending transfers first:
+        // a cell about to be stepped out of cadence must not carry an
+        // in-flight accumulator whose cap bookkeeping assumed the tiered
+        // schedule.
+        //
+        // This used to be expressed by collapsing every cell and face to
+        // tier 0 and running a ONE-substep macro cycle at dt0 = remaining,
+        // which cost an O(n_cells + n_faces) re-tiering, forced a full
+        // syncAndRebuild on the next entry, and — because the leftover has
+        // no floor — fired degenerate substeps (down to ~1e-13 s when the
+        // macro path's `t += nsub*dt0` landed 1 ulp short of t_target).
+        // Firing the union lists directly is the same arithmetic in the
+        // same order (the collapsed tier-0 lists WERE these lists) and
+        // leaves the tiering intact, so the rebuild keeps its own cadence.
+        {
+            // Sub-ulp residue (macro landing shortfall): land without
+            // firing physics on a span below any numerical significance.
+            if (remaining <= dt0_ * 1.0e-9) {
+                t = t_target;
+                break;
+            }
+            settleAccumulators();
+            const int nt = std::max(
+                1, static_cast<int>(std::ceil(remaining / dt0_)));
+            const double dt_tail = remaining / nt;
+            for (int s = 0; s < nt; ++s) {
+                fireFaces(active_faces_, dt_tail, /*global_step=*/true);
+                fireCells(active_cells_, dt_tail, /*tier0=*/true);
+                ++substeps_run_;
+                ++last_steps_;
+            }
+            accumulators_pending_ = false;   // every side just gathered
+            last_dt_ = dt_tail;
+            ++cycles_since_rebuild;
+            t = t_target;   // exact landing — no 1-ulp re-entry
+            break;
+        }
     }
 
     cycles_since_rebuild_ = cycles_since_rebuild;

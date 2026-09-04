@@ -1250,18 +1250,34 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
             break;
         }
 
-        double dt0 = std::min(dt0_, remaining);
-        int nsub = nsub_full;
-        if (nsub_full * dt0_ > remaining) {
-            collapseToGlobalDt();
-            nsub = 1;
-            cycles_since_rebuild = kRebuildEveryCycles;   // rebuild after tail
+        if (nsub_full * dt0_ <= remaining) {
+            runMacroCycle(dt0_, nsub_full);
+            t += nsub_full * dt0_;
+            last_dt_ = dt0_;
+            ++cycles_since_rebuild;
+            continue;
         }
 
-        runMacroCycle(dt0, nsub);
-        t += nsub * dt0;
-        last_dt_ = dt0;
-        ++cycles_since_rebuild;
+        // Tail: split the WHOLE remaining span into nt EQUAL global
+        // substeps (each in (dt0_/2, dt0_] for nt >= 2 — CFL-safe, never
+        // degenerate) and land exactly. collapseToGlobalDt() drops every
+        // active cell/face to tier 0, so runMacroCycle fires nt global
+        // substeps at dt_tail (higher-tier lists are empty). Mirrors the
+        // CPU marcher's tail (ExplicitInertialSolver::advance).
+        if (remaining <= dt0_ * 1.0e-9) {
+            // Sub-ulp residue of the macro landing: no physics.
+            t = t_target;
+            break;
+        }
+        collapseToGlobalDt();
+        const int nt = std::max(
+            1, static_cast<int>(std::ceil(remaining / dt0_)));
+        const double dt_tail = remaining / nt;
+        runMacroCycle(dt_tail, nt);
+        last_dt_ = dt_tail;
+        cycles_since_rebuild = kRebuildEveryCycles;   // rebuild after tail
+        t = t_target;   // exact landing — no 1-ulp re-entry
+        break;
     }
 
     cycles_since_rebuild_ = cycles_since_rebuild;
