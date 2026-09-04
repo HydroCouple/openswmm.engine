@@ -2049,6 +2049,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                             ctx_.subcatches.total_lid_area_ft2[usc];
                 }
                 g.inflow[uu] = rain + q_from_sc;
+                // Rain-barrel dry-time reset signal (legacy lid.c:1920 uses
+                // Subcatch.rainfall, independent of what the unit captures).
+                g.subcatch_rain[uu] = rain;
                 // A4: the age of that inflow, weighted by the same four
                 // rates. This is the only place they exist together, which
                 // is why the age is assembled here rather than in the

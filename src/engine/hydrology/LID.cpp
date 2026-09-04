@@ -142,6 +142,7 @@ void LIDGroupSoA::resize(int n) {
     surf_side_slope.assign(un, 0.0);
     full_width.assign(un, 0.0);
     dry_time.assign(un, 0.0);
+    subcatch_rain.assign(un, 0.0);
 
     surf_depth.assign(un, 0.0);
     soil_moist.assign(un, 0.2);
@@ -609,8 +610,14 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
         double unit_inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
         if (g.stor_covered[ui]) unit_inflow = 0.0;
 
-        // Track dry time for drain delay
-        if (unit_inflow > 0.0)
+        // Track dry time for the drain delay — legacy resets on the parent
+        // subcatchment's RAINFALL above MIN_RUNOFF (lid.c:1920-1921), NOT on
+        // unit inflow: a sub-MIN_RUNOFF runoff trickle (Horton recession
+        // holds ~1e-12 cfs for hours) must not keep the drain shut forever,
+        // and a covered barrel's blocked inflow must not let it drain
+        // mid-storm.
+        constexpr double MIN_RUNOFF = 2.31481e-8;  // ft/s (legacy consts.h)
+        if (g.subcatch_rain[ui] > MIN_RUNOFF)
             g.dry_time[ui] = 0.0;
         else
             g.dry_time[ui] += dt;
