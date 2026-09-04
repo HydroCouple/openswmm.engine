@@ -34,6 +34,7 @@
 #ifndef OPENSWMM_INFLOW_HPP
 #define OPENSWMM_INFLOW_HPP
 
+#include <cstdint>
 #include <vector>
 
 namespace openswmm {
