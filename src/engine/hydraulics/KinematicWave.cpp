@@ -38,6 +38,7 @@
 #include "../core/UnitConversion.hpp"
 #include "HydStructures.hpp"
 #include "Node.hpp"
+#include "Divider.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -97,10 +98,17 @@ double getLinkInflow(SimulationContext& ctx,
     if (lt == LinkType::CONDUIT) {
         // PARITY link.c conduit_getInflow → node_getOutflow: a conduit
         // draining a STORAGE unit carries normal-depth flow at the pond's
-        // depth; off any other node it carries that node's inflow.
-        q = (nodes.type[un1] == NodeType::STORAGE)
-            ? storageConduitOutflow(ctx, n1, j)
-            : nodes.inflow[un1];
+        // depth; off a DIVIDER it carries that divider's split; off any
+        // other node it carries that node's inflow + overflow (node.c:395).
+        // qLimit then caps the inflow (link.c:1331).
+        if (nodes.type[un1] == NodeType::STORAGE)
+            q = storageConduitOutflow(ctx, n1, j);
+        else if (nodes.type[un1] == NodeType::DIVIDER)
+            q = divider::getOutflow(ctx, n1, j);
+        else
+            q = nodes.inflow[un1] + nodes.overflow[un1];
+        const double qlim = links.q_limit[uj];
+        if (qlim > 0.0 && q > qlim) q = qlim;
     } else if (lt == LinkType::PUMP || nodes.type[un1] == NodeType::STORAGE) {
         // PARITY link.c:546 link_getInflow — evaluate the structure's own
         // head-discharge relation at the upstream node's CURRENT depth.
@@ -196,6 +204,8 @@ void KWSolver::init(int n_conduits, const XSectGroups& /*groups*/) {
     q_out_.resize(un);
     a_out_.resize(un);
     sf_in_.resize(un);
+    y1_.assign(un, 0.0);
+    y2_.assign(un, 0.0);
 }
 
 // ============================================================================
@@ -232,6 +242,21 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
     } else {
         double s_needed = q_in_norm / beta1;  // dimensional section factor = Q_in/beta
         a_in_norm = xsect::getAofS(xs, s_needed) / a_full;
+    }
+
+    // Legacy kinwave.c early no-flow branch (`qin <= TINY && q2 <= TINY`):
+    // negligible inflow with a negligible previous outflow yields EXACT
+    // zeros with no continuity solve. Skipping this let the Newton solve
+    // produce ~1e-8 outflows from a dry start, seeding a startup transient
+    // that took ~250 report periods to relax (extran1-kw-divider).
+    if (q_in_norm <= TINY && prev_q2 <= TINY) {
+        a_in_[ui]  = a_in_norm * a_full;
+        a_out_[ui] = 0.0;
+        q_out_[ui] = 0.0;
+        if (q_in_[ui] > q_full) q_in_[ui] = q_full;
+        q1_[ui] = q_in_[ui]; a1_[ui] = a_in_[ui];
+        q2_[ui] = 0.0;       a2_[ui] = 0.0;
+        return 1;
     }
 
     // Finite-difference coefficients
@@ -278,6 +303,13 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
         a_in_[ui]  = a_in_norm * a_full;
         a_out_[ui] = a_full;   // full-pipe area
         q_out_[ui] = q_full;   // cap at full flow
+        // Legacy kinwave.c caps the ACCEPTED inflow at qFull after the solve
+        // (`if (qin > 1.0) qin = 1.0`; the returned *qinflow is the capped
+        // q1). The un-accepted excess stays at the upstream node, which is
+        // what floods a capacity-limited KW junction to its full depth
+        // (extran1-kw-divider node 82309). The C2 coefficient above keeps
+        // the RAW qin, exactly as legacy does.
+        if (q_in_[ui] > q_full) q_in_[ui] = q_full;
         q1_[ui] = q_in_[ui];  a1_[ui] = a_in_[ui];
         q2_[ui] = q_out_[ui]; a2_[ui] = a_out_[ui];
         return -2;
@@ -288,6 +320,7 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
         a_in_[ui]  = a_in_norm * a_full;
         a_out_[ui] = 0.0;
         q_out_[ui] = 0.0;
+        if (q_in_[ui] > q_full) q_in_[ui] = q_full;  // legacy post-solve cap
         q1_[ui] = q_in_[ui];  a1_[ui] = a_in_[ui];
         q2_[ui] = 0.0;        a2_[ui] = 0.0;
         return -3;
@@ -333,6 +366,10 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
     a_out_[ui] = a * a_full;
     q_out_[ui] = q_out_norm * q_full;
 
+    // Legacy post-solve inflow cap (kinwave.c: `if (qin > 1.0) qin = 1.0`) —
+    // the accepted inflow returned to the node never exceeds qFull.
+    if (q_in_[ui] > q_full) q_in_[ui] = q_full;
+
     // Update state for next timestep
     q1_[ui] = q_in_[ui];
     a1_[ui] = a_in_[ui];
@@ -372,6 +409,8 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
     int n_solved = 0;
 
     storage_updated_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0);
+    std::fill(y1_.begin(), y1_.end(), 0.0);
+    std::fill(y2_.begin(), y2_.end(), 0.0);
 
     // Process links in topological order (upstream → downstream).
     // If no sorted order set, fall back to natural order.
@@ -417,15 +456,18 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
             continue;
         }
 
-        // Skip dummy cross-sections
+        // Dummy cross-sections: legacy routes them like every other link —
+        // getLinkInflow (divider/storage dispatch, qLimit and max-outflow
+        // caps) then kinwave_execute returns qout = qin (kinwave.c:113-117)
+        // — and scatters BOTH the upstream node's outflow and the
+        // downstream node's inflow (flowrout.c:196-197).
         if (links.xsect_shape[uj] == XsectShape::DUMMY) {
             int n1 = links.node1[uj];
             int n2 = links.node2[uj];
-            if (n1 >= 0 && n2 >= 0) {
-                double q = nodes.inflow[static_cast<std::size_t>(n1)];
-                links.flow[uj] = q;
-                nodes.inflow[static_cast<std::size_t>(n2)] += q;
-            }
+            double q = getLinkInflow(ctx, structures, j, dt);
+            links.flow[uj] = q;
+            if (n1 >= 0) nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
             continue;
         }
         auto& CD = ctx.link_subtypes.conduits;
@@ -436,13 +478,9 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
         int n1 = links.node1[uj];
         double qin = 0.0;
         if (n1 >= 0) {
-            auto un1 = static_cast<std::size_t>(n1);
-            qin = (nodes.type[un1] == NodeType::STORAGE)
-                ? storageConduitOutflow(ctx, n1, j)
-                : nodes.inflow[un1];
-            // Limit by available volume at node (prevent negative depth)
-            double q_max = node::getMaxOutflow(nodes, n1, qin, dt);
-            qin = std::min(qin, q_max);
+            // Legacy getLinkInflow (flowrout.c:517): storage/divider/junction
+            // dispatch, the conduit's qLimit, then the max-outflow cap.
+            qin = getLinkInflow(ctx, structures, j, dt);
         }
 
         // Divide by barrels (KW solves per barrel)
@@ -491,6 +529,8 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
         double y_out = xsect::getYofA(xs, a_out_[uj]);
         links.depth[uj]  = 0.5 * (y_in + y_out);
         links.volume[uj] = 0.5 * (a_in_[uj] + a_out_[uj]) * length * barrels;
+        y1_[uj] = y_in;
+        y2_[uj] = y_out;
 
         // Gap #57: persist full-pipe state (bit 0 = upstream, bit 1 = downstream)
         {
@@ -501,31 +541,136 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
             }
             CD.full_state[ucr] = fs;
         }
-
-        // Update non-storage end-node depths (Gap #13)
-        // Matches legacy setNewLinkState/updateNodeDepth in flowrout.c:
-        //   non-storage nodes get max(current_depth, conduit_end_depth + offset)
-        auto updateNodeDepth = [&](int ni, double y_conduit, double link_offset) {
-            if (ni < 0) return;
-            auto uni = static_cast<std::size_t>(ni);
-            NodeType nt = nodes.type[uni];
-            if (nt == NodeType::STORAGE) return;  // storage updated separately
-            double y = y_conduit + link_offset;
-            // If flooded non-outfall, clamp to full depth
-            if (nt != NodeType::OUTFALL && nodes.overflow[uni] > 0.0)
-                y = nodes.full_depth[uni];
-            // Only raise depth, never lower (take max)
-            if (nodes.depth[uni] < y) {
-                nodes.depth[uni] = std::min(y, nodes.full_depth[uni] > 0.0
-                                              ? nodes.full_depth[uni] : y);
-                nodes.head[uni] = nodes.invert_elev[uni] + nodes.depth[uni];
-            }
-        };
-        updateNodeDepth(n1, y_in,  links.offset1[uj]);
-        updateNodeDepth(n2, y_out, links.offset2[uj]);
+        // Node depths are raised AFTER the per-node volume/overflow pass, in
+        // finishRouting — legacy runs setNewNodeState for every node before
+        // any setNewLinkState raises a depth (flowrout.c:203-205).
     }
 
+    // Legacy end-of-step passes: setNewNodeState for every node, then
+    // setNewLinkState's node-depth raises for every conduit.
+    finishRouting(ctx, structures, order, storage_updated_, y1_, y2_, dt);
+
     return (n_solved > 0) ? total_iters / n_solved : 1;
+}
+
+// ============================================================================
+// finishRouting — legacy flowrout_execute post-passes (KW/steady)
+// ============================================================================
+
+void finishRouting(SimulationContext& ctx,
+                   hydstruct::StructureSolver* structures,
+                   const std::vector<int>& order,
+                   const std::vector<char>& storage_updated,
+                   const std::vector<double>& link_y1,
+                   const std::vector<double>& link_y2,
+                   double dt) {
+    auto& nodes = ctx.nodes;
+    auto& links = ctx.links;
+    const int n_nodes = ctx.n_nodes();
+    const int n_links = ctx.n_links();
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+
+    // Legacy Node.fullVolume for the non-storage overflow threshold:
+    // identically 0 (node_getVolume's default branch is 0 at init) EXCEPT a
+    // Type-1 pump wet well, whose fullVolume is the pump curve's largest
+    // volume (legacy pump_validate). The engine-internal full_volume
+    // convention (MIN_SURFAREA·fullDepth, for the DW surcharge test) must
+    // not leak in here — it would let a junction store water legacy sheds.
+    std::vector<double> legacy_fv(static_cast<std::size_t>(n_nodes), 0.0);
+    {
+        const double ucf_vol = ucf::Ucf[ucf::VOLUME][us];
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (links.type[uj] != LinkType::PUMP) continue;
+            const int pr = ctx.link_subtypes.pump_row(j);
+            const int ci = (pr >= 0)
+                ? ctx.link_subtypes.pumps.curve[static_cast<std::size_t>(pr)] : -1;
+            if (ci < 0 || ci >= static_cast<int>(ctx.tables.tables.size())) continue;
+            const auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ci)];
+            if (tbl.type != TableType::CURVE_PUMP1) continue;
+            const int n1 = links.node1[uj];
+            if (n1 < 0 || nodes.type[static_cast<std::size_t>(n1)] == NodeType::STORAGE)
+                continue;
+            double xmax = tbl.x_max;
+            if (xmax <= 0.0 && !tbl.x.empty())
+                xmax = *std::max_element(tbl.x.begin(), tbl.x.end());
+            auto un1 = static_cast<std::size_t>(n1);
+            legacy_fv[un1] = std::max(legacy_fv[un1], xmax / ucf_vol);
+        }
+    }
+
+    // Outflow-link count per node (legacy toposort.c:75-91 — a link whose
+    // upstream node is an outfall counts toward its DOWNSTREAM node).
+    std::vector<int> degree(static_cast<std::size_t>(n_nodes), 0);
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        int n = (links.direction[uj] < 0) ? links.node2[uj] : links.node1[uj];
+        if (n < 0 || n >= n_nodes) continue;
+        if (nodes.type[static_cast<std::size_t>(n)] == NodeType::OUTFALL) {
+            n = (links.direction[uj] < 0) ? links.node1[uj] : links.node2[uj];
+            if (n < 0 || n >= n_nodes) continue;
+        }
+        degree[static_cast<std::size_t>(n)]++;
+    }
+
+    // --- legacy setNewNodeState for every node (flowrout.c:558-599) ---
+    for (int i = 0; i < n_nodes; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (nodes.type[ui] == NodeType::STORAGE) {
+            // Terminal storage (no outlet link) was never visited by the
+            // sorted-link loop; update it here (legacy flowrout.c:88-91).
+            if (ui >= storage_updated.size() || !storage_updated[ui])
+                updateStorageState(ctx, structures, order,
+                                   static_cast<int>(order.size()), i, dt);
+            continue;
+        }
+
+        double net = nodes.inflow[ui] - nodes.outflow[ui] - nodes.losses[ui];
+        double v = nodes.old_volume[ui] + net * dt;
+        if (v < constants::FUDGE) v = 0.0;
+
+        nodes.overflow[ui] = 0.0;
+        const bool can_pond =
+            ctx.options.allow_ponding && nodes.ponded_area[ui] > 0.0;
+        if (v > legacy_fv[ui]) {
+            nodes.overflow[ui] =
+                (v - std::max(nodes.old_volume[ui], legacy_fv[ui])) / dt;
+            if (nodes.overflow[ui] < constants::FUDGE) nodes.overflow[ui] = 0.0;
+            if (!can_pond) v = legacy_fv[ui];
+        }
+        nodes.volume[ui] = v;
+
+        // legacy node_getDepth: 0 for anything but storage — the depth comes
+        // from the conduit-end raises below.
+        nodes.depth[ui] = 0.0;
+        nodes.head[ui]  = nodes.invert_elev[ui];
+    }
+
+    // --- legacy setNewLinkState → updateNodeDepth raises (flowrout.c:632) ---
+    auto raise = [&](int ni, double y) {
+        if (ni < 0 || ni >= n_nodes) return;
+        auto uni = static_cast<std::size_t>(ni);
+        NodeType nt = nodes.type[uni];
+        if (nt == NodeType::STORAGE) return;
+        // A flooded non-outfall node WITH an outlet link reads full depth.
+        if (nt != NodeType::OUTFALL && degree[uni] > 0 &&
+            nodes.overflow[uni] > 0.0)
+            y = nodes.full_depth[uni];
+        if (nodes.depth[uni] < y) {
+            nodes.depth[uni] = (nodes.full_depth[uni] > 0.0 &&
+                                y > nodes.full_depth[uni])
+                                   ? nodes.full_depth[uni] : y;
+            nodes.head[uni] = nodes.invert_elev[uni] + nodes.depth[uni];
+        }
+    };
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (links.type[uj] != LinkType::CONDUIT) continue;
+        const double y1 = (uj < link_y1.size()) ? link_y1[uj] : 0.0;
+        const double y2 = (uj < link_y2.size()) ? link_y2[uj] : 0.0;
+        raise(links.node1[uj], y1 + links.offset1[uj]);
+        raise(links.node2[uj], y2 + links.offset2[uj]);
+    }
 }
 
 } // namespace kinwave

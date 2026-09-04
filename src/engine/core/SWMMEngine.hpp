@@ -575,6 +575,14 @@ private:
     /// volume-based solver + surcharge detection). See postOutputSnapshot().
     std::vector<double> report_full_volume_;
 
+    /// Legacy KW/SF Node.degree — OUTFLOW-link count per node with the
+    /// outfall quirk (legacy toposort.c:70-91: a link whose upstream node is
+    /// an outfall counts toward its DOWNSTREAM node). ctx_.nodes.degree
+    /// carries the DW-oriented hybrid (both-ends + conduit pass + sign), so
+    /// the non-DW terminal-node tests must not read it. Lazily sized in
+    /// updateRoutingMassBalance; topology is static during a run.
+    std::vector<int> outflow_degree_;
+
     /// Legacy-convention reported node volume (mirrors legacy node_getVolume):
     /// STORAGE → curve volume (ctx_.nodes.volume); junction/outfall/divider →
     /// report_full_volume_·(depth/fullDepth) = 0 for plain junctions. Used for

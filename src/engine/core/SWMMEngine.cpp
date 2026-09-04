@@ -4188,6 +4188,29 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     // degree==0 non-STORAGE nodes are interior under FV exactly as under DW.
     const bool is_dw = (ctx_.options.routing_model == RoutingModel::DYNWAVE ||
                         ctx_.options.routing_model == RoutingModel::FV);
+
+    // Legacy KW/SF Node.degree (outflow-link count, toposort.c:70-91) for the
+    // terminal-node test below — ctx_.nodes.degree is the DW hybrid and reads
+    // nonzero for a fed terminal junction, mis-filing its throughflow as
+    // interior flooding. Static topology: computed once, sized to the model.
+    if (!is_dw &&
+        outflow_degree_.size() != static_cast<std::size_t>(ctx_.n_nodes())) {
+        const int nn = ctx_.n_nodes();
+        outflow_degree_.assign(static_cast<std::size_t>(nn), 0);
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            int n = (ctx_.links.direction[uj] < 0) ? ctx_.links.node2[uj]
+                                                   : ctx_.links.node1[uj];
+            if (n < 0 || n >= nn) continue;
+            if (ctx_.nodes.type[static_cast<std::size_t>(n)] == NodeType::OUTFALL) {
+                n = (ctx_.links.direction[uj] < 0) ? ctx_.links.node1[uj]
+                                                   : ctx_.links.node2[uj];
+                if (n < 0 || n >= nn) continue;
+            }
+            outflow_degree_[static_cast<std::size_t>(n)]++;
+        }
+    }
+
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         const NodeType nt = ctx_.nodes.type[uj];
@@ -4241,11 +4264,29 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                                    ctx_.heat_state.node_temp[uj];
                 }
             }
+            // Legacy node_getSystemOutflow zeroes an outfall's overflow and
+            // volume every step (node.c:445-447) so an outfall never reports
+            // flooding or stored volume. Applied for the tree-layout routers
+            // only: KW/SF setNewNodeState computes a raw net-inflow overflow
+            // at outfalls that legacy discards here. DW outfalls never
+            // acquire overflow (boundary-condition depth path), so the DW
+            // behavior is left untouched.
+            if (!is_dw) {
+                ctx_.nodes.overflow[uj] = 0.0;
+                ctx_.nodes.volume[uj]   = 0.0;
+            }
         }
-        else if (!is_dw && ctx_.nodes.degree[uj] == 0 && nt != NodeType::STORAGE) {
-            // Non-DW terminal node: counted as system outflow.
-            ctx_.mass_balance.routing_outflow += ctx_.nodes.inflow[uj] * dt_routing;
-            ctx_.mass_balance.step_outflow    += ctx_.nodes.inflow[uj];
+        else if (!is_dw && outflow_degree_[uj] == 0 && nt != NodeType::STORAGE) {
+            // Non-DW terminal node (no OUTFLOW links — legacy KW degree):
+            // its inflow is system outflow, and legacy node_getSystemOutflow
+            // (node.c:453-459) zeroes its overflow and volume so it reports
+            // neither flooding nor storage.
+            if (ctx_.nodes.outflow[uj] == 0.0) {
+                ctx_.mass_balance.routing_outflow += ctx_.nodes.inflow[uj] * dt_routing;
+                ctx_.mass_balance.step_outflow    += ctx_.nodes.inflow[uj];
+            }
+            ctx_.nodes.overflow[uj] = 0.0;
+            ctx_.nodes.volume[uj]   = 0.0;
         }
         else {
             // Interior node (also DW terminal nodes): overflow counted as
@@ -4881,17 +4922,26 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.sys_flooding   = ctx_.mass_balance.step_flooding;
             snap.sys_outflow    = ctx_.mass_balance.step_outflow;
 
-            // Total storage volume (sum of node + link volumes). Nodes use the
-            // legacy-convention reported volume (junctions => 0, as legacy
-            // node_getVolume) so SYS_STORAGE matches legacy rather than crediting
-            // the MIN_SURFAREA junction-state volume (same basis as #A).
+            // Total storage volume — the SUM OF THE REPORTED node and link
+            // volumes, not of the raw end-of-step state. Legacy accumulates
+            // SYS_STORAGE from the routing-time-INTERPOLATED NodeResults /
+            // LinkResults it is writing (output.c:667, 700), in a REAL4
+            // accumulator (element-by-element float rounding). Summing the
+            // un-interpolated ctx state diverged from the per-element output
+            // during transients (deadend repro: 1.0127 vs 1.0046 at period 0)
+            // even though every element cell matched. snap.nodes/links.volume
+            // are internal-unit; legacy accumulates display-unit REAL4 —
+            // convert per element before the float add, then return to
+            // internal units (convertSnapshotToDisplay scales sys_storage).
             {
-                double tot_store = 0.0;
-                for (int j = 0; j < ctx_.n_nodes(); ++j)
-                    tot_store += reportedNodeVolume(j);
-                for (int j = 0; j < ctx_.n_links(); ++j)
-                    tot_store += ctx_.links.volume[static_cast<std::size_t>(j)];
-                snap.sys_storage = tot_store;
+                const double vol_ucf = ucf::Ucf[ucf::VOLUME][
+                    ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units))];
+                float tot_store = 0.0f;
+                for (std::size_t uj = 0; uj < snap.nodes.volume.size(); ++uj)
+                    tot_store += static_cast<float>(snap.nodes.volume[uj] * vol_ucf);
+                for (std::size_t uj = 0; uj < snap.links.volume.size(); ++uj)
+                    tot_store += static_cast<float>(snap.links.volume[uj] * vol_ucf);
+                snap.sys_storage = static_cast<double>(tot_store) / vol_ucf;
             }
 
             // 2D surface routing state (deep-copied; empty when 2D inactive,
@@ -6081,6 +6131,10 @@ void SWMMEngine::initHydraulics() noexcept {
                 ++n_outlets;
         }
         // Gap #83b: drainage system must have at least one outlet.
+        // Legacy raises ERR_NO_OUTLETS from validateGeneralLayout(), which
+        // flowrout_init() calls ONLY for dynamic wave; kinematic wave and
+        // steady routing go through validateTreeLayout(), which never
+        // requires an outfall. FV joins DW here as the DW-class scheme.
         // A model with a 2D surface mesh is exempt: water can leave the
         // system through the 2D domain (boundary conditions / vertex-node
         // coupling), so a 1D outfall is not required. The mesh is parsed at
@@ -6091,16 +6145,23 @@ void SWMMEngine::initHydraulics() noexcept {
         has_2d_domain = surface_router_.mesh().n_triangles() >= 1
                         && surface_router_.mesh().n_vertices() >= 3;
 #endif
-        if (n_outlets == 0 && rm != RouteModel::STEADY && !has_2d_domain) {
+        if (n_outlets == 0
+            && (rm == RouteModel::DYNWAVE || rm == RouteModel::FV)
+            && !has_2d_domain) {
             ctx_.errors.push_back(format_error(ERR_NO_OUTLETS, ""));
             set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
         }
         // Gap #84a: adverse slope only errors for non-DW routing. FV joins DW
         // here — a conservative scheme resolves an adverse slope natively.
+        // DUMMY cross-sections are exempt, exactly as legacy
+        // validateTreeLayout (flowrout.c:255-257: `slope < 0 &&
+        // xsect.type != DUMMY`) — a dummy conveys the node's inflow and has
+        // no slope-driven physics (490-kw-h-h-elements CDT-39).
         if (rm != RouteModel::DYNWAVE && rm != RouteModel::FV) {
             for (int j = 0; j < n_ll; ++j) {
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
+                if (ctx_.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
                 const int cr = ctx_.link_subtypes.conduit_row(j);
                 if (cr >= 0 && ctx_.link_subtypes.conduits.slope[static_cast<std::size_t>(cr)] < 0.0) {
                     ctx_.errors.push_back(format_error(ERR_SLOPE, ctx_.link_names.names()[uj]));
@@ -6282,17 +6343,26 @@ void SWMMEngine::initHydraulics() noexcept {
             for (int m = 0; m < 12 && (!time_err || !ratio_err); ++m) {
                 double rsum = 0.0;
                 for (int k = 0; k < 3; ++k) {
-                    if (!time_err && (uh.tPeak[m][k] < 0.0 || uh.tBase[m][k] < uh.tPeak[m][k])) {
+                    // Legacy rdii.c:873: a zero base time means the UH does
+                    // not exist for this month/term — skipped entirely, no
+                    // rsum contribution. Legacy checks ONLY tPeak < 0; a
+                    // recession constant K < 0 (tBase < tPeak) is accepted
+                    // (e.g. simple-two-pump-model CHES_47_SEP Short K=-0.42).
+                    if (uh.tBase[m][k] == 0.0) continue;
+                    if (!time_err && uh.tPeak[m][k] < 0.0) {
                         ctx_.errors.push_back(format_error(ERR_UNITHYD_TIMES, uh_name));
                         set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
                         time_err = true;
                     }
-                    if (!ratio_err && uh.r[m][k] < 0.0) {
-                        ctx_.errors.push_back(format_error(ERR_UNITHYD_RATIOS, uh_name));
-                        set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
-                        ratio_err = true;
+                    if (uh.r[m][k] < 0.0) {
+                        if (!ratio_err) {
+                            ctx_.errors.push_back(format_error(ERR_UNITHYD_RATIOS, uh_name));
+                            set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+                            ratio_err = true;
+                        }
+                    } else {
+                        rsum += uh.r[m][k];
                     }
-                    rsum += uh.r[m][k];
                 }
                 if (!ratio_err && rsum > 1.01) {
                     ctx_.errors.push_back(format_error(ERR_UNITHYD_RATIOS, uh_name));
@@ -6556,6 +6626,33 @@ void SWMMEngine::initHydrology() noexcept {
         }
     }
 
+    // Date sanity (legacy project_validate, project.c:161-169): the run must
+    // end after it starts, and the report window must begin before the end.
+    // Push + set_error only (this function is void); the collected errors
+    // abort the run at the initialize-time errors gate.
+    // Gated on an EXPLICIT end date: a programmatically-built model reaches
+    // initialize() through swmm_finalize_model with end_date still at its
+    // zero default, and the check must not reject that build path.
+    if (ctx_.options.end_date > 0.0 &&
+        ctx_.options.end_date <= ctx_.options.start_date) {
+        ctx_.errors.push_back(format_error(ERR_START_DATE, ""));
+        set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+    } else if (ctx_.options.report_start > 0.0 &&
+               ctx_.options.end_date <= ctx_.options.report_start) {
+        ctx_.errors.push_back(format_error(ERR_REPORT_DATE, ""));
+        set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+    }
+
+    // Climate-file requirement (legacy climate_validate, climate.c:850-858):
+    // FILE wind, FILE evaporation, or TEMPERATURE (Hargreaves) evaporation
+    // need the [TEMPERATURE] FILE — its daily min/max drive them.
+    if ((ctx_.options.wind_type == 1 || ctx_.options.evap_type == 4 ||
+         ctx_.options.evap_type == 3) &&
+        ctx_.options.temp_file.empty()) {
+        ctx_.errors.push_back(format_error(ERR_NO_CLIMATE_FILE, ""));
+        set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+    }
+
     // 5. Climate: transfer evaporation data from options to climate state
     {
         int evap_type = ctx_.options.evap_type;
@@ -6608,22 +6705,21 @@ void SWMMEngine::initHydrology() noexcept {
             ctx_.climate_state.temp_ts_index = ctx_.find_timeseries(ctx_.options.temp_ts_name);
         }
 
-        // With NO temperature source, legacy's air temperature stays at the
-        // zero-initialised value of its `Temp` struct: climate.c's setTemp only
-        // assigns `Temp.ta` for FILE_TEMP or TSERIES_TEMP, so a deck with no
-        // [TEMPERATURE] data reports and computes with 0 degF. This engine's
-        // 70 degF default is the more sensible number but it is NOT what legacy
-        // does, and the difference is not confined to reporting: `Temp.ea`, the
-        // saturation vapour pressure, is derived from `ta` and feeds
-        // evaporation. Matching legacy is what the parity gate is for; a
-        // deliberate, better default belongs in a documented deviation, not in
-        // a silent 70-vs-0 disagreement on nearly every deck in the corpus.
+        // With NO temperature source, legacy's air temperature stays at its
+        // project_setDefaults value: `Temp.ta = 70.0` degF (project.c:941).
+        // climate.c's setTemp never reassigns it without FILE_TEMP or
+        // TSERIES_TEMP data, so a deck with no [TEMPERATURE] section computes
+        // AND reports with 70 degF — 21.11 degC after the SI display
+        // conversion (221-h-h-si-units-elements, 15-subs-si-units). A deck
+        // with no subcatchments still reports a raw 0, because legacy assigns
+        // SYS_TEMPERATURE only inside output_saveSubcatchResults — that path
+        // is the has_subcatchments guard at the snapshot, not this default.
         //
         // An API-prescribed temperature still overrides this, exactly as
         // legacy's `Temp.apiTemp` does (climate.c:1222).
         if (ctx_.options.temp_source == 0 && ctx_.climate_state.temp_ts_index < 0) {
-            ctx_.climate_state.temperature_src = 0.0;
-            ctx_.climate_state.temperature = 0.0;
+            ctx_.climate_state.temperature_src = 70.0;
+            ctx_.climate_state.temperature = 70.0;
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
             ctx_.climate_state.evap_ts_index = ctx_.find_timeseries(ctx_.options.evap_ts_name);

@@ -650,20 +650,22 @@ void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
         OPENSWMM_IVDEP
         for (int p = 0; p < np; ++p) {
             double c_dwf = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
-            if (c_dwf <= 0.0) continue;
             auto nd_idx = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            // Per-node [DWF] pollutant rows arrive as a net adjustment on top
+            // of the global default (InflowSolver pass 2 — legacy
+            // addDryWeatherInflows adds the row's q·concentration and
+            // subtracts the q·dwfConcen default it displaces).
+            double w_adj = (nd_idx < nodes.dwf_qual_mass.size())
+                               ? nodes.dwf_qual_mass[nd_idx] : 0.0;
+            double w = (c_dwf > 0.0 ? q * c_dwf : 0.0) + w_adj;
+            if (w == 0.0) continue;
             if (nd_idx < nodes.qual_mass_in.size()) {
-                nodes.qual_mass_in[nd_idx] += q * c_dwf;
+                nodes.qual_mass_in[nd_idx] += w;
             }
-        }
-
-        // Mass balance: track dry weather quality inflow
-        for (int p = 0; p < np; ++p) {
-            double c_dwf = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
-            if (c_dwf <= 0.0) continue;
+            // Mass balance: track dry weather quality inflow
             auto pi = static_cast<std::size_t>(p);
             if (pi < ctx.mass_balance.qual_routing_dw_in.size()) {
-                ctx.mass_balance.qual_routing_dw_in[pi] += q * c_dwf * dt;
+                ctx.mass_balance.qual_routing_dw_in[pi] += w * dt;
             }
         }
     }

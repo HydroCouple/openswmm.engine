@@ -100,6 +100,12 @@ struct DwfInflowSoA {
     std::vector<int>    pat_daily;      ///< Daily pattern index (-1 = none)
     std::vector<int>    pat_hourly;     ///< Hourly pattern index (-1 = none)
     std::vector<int>    pat_weekend;    ///< Weekend pattern index (-1 = none)
+    /// Constituent is FLOW (legacy TDwfInflow.param == -1). A pollutant DWF
+    /// row is a CONCENTRATION — it must never be added as water (legacy
+    /// addDryWeatherInflows reads only the FLOW row for the hydrograph).
+    std::vector<uint8_t> is_flow;
+    /// Pollutant index for a non-FLOW row (-1 when FLOW or unmatched).
+    std::vector<int>     pollut_idx;
 
     void resize(int n);
 };

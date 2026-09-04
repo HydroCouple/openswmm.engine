@@ -56,6 +56,7 @@
 #include "../Tokenizer.hpp"
 #include "../SectionParser.hpp"
 #include "../MultiColumnSeriesFile.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/GageData.hpp"
@@ -247,12 +248,56 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
         const int idx = ctx.subcatch_names.find(tok[0]);
         if (idx < 0) continue;
 
-        ctx.subcatches.infil_model[idx] = model;
-        ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
-        ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
-        ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
-        if (tok.size() > 4) ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
-        if (tok.size() > 5) ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
+        // SWMM 5.2 allows a per-subcatchment method override as the LAST
+        // token (legacy infil.c:150-155: findmatch against InfilModelWords).
+        // Without this the keyword parsed as 0.0 into a parameter slot.
+        std::size_t ntoks = tok.size();
+        int row_model = model;
+        {
+            const std::string last = Tokenizer::to_upper(tok[ntoks - 1]);
+            if      (last == "HORTON")         { row_model = 0; --ntoks; }
+            else if (last == "MOD_HORTON")     { row_model = 1; --ntoks; }
+            else if (last == "GREEN_AMPT")     { row_model = 2; --ntoks; }
+            else if (last == "MOD_GREEN_AMPT") { row_model = 3; --ntoks; }
+            else if (last == "CURVE_NUMBER")   { row_model = 4; --ntoks; }
+        }
+
+        ctx.subcatches.infil_model[idx] = row_model;
+        if (ntoks > 1) ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
+        if (ntoks > 2) ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
+        if (ntoks > 3) ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
+        if (ntoks > 4) ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
+        if (ntoks > 5) ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
+
+        // Parameter validation — legacy infil_readParams raises ERROR 235
+        // when the model's setParams rejects the values (infil.c:198).
+        // Checks run on the RAW display-unit values, as legacy does.
+        const double p1 = ctx.subcatches.infil_p1[idx];
+        const double p2 = ctx.subcatches.infil_p2[idx];
+        const double p3 = ctx.subcatches.infil_p3[idx];
+        const double p4 = ctx.subcatches.infil_p4[idx];
+        const double p5 = ctx.subcatches.infil_p5[idx];
+        bool ok = true;
+        switch (static_cast<InfiltrationModel>(row_model)) {
+            case InfiltrationModel::HORTON:
+            case InfiltrationModel::MOD_HORTON:
+                // horton_setParams (infil.c:328): no negatives, f0 >= fmin
+                ok = p1 >= 0.0 && p2 >= 0.0 && p3 >= 0.0 &&
+                     p4 >= 0.0 && p5 >= 0.0 && p1 >= p2;
+                break;
+            case InfiltrationModel::GREEN_AMPT:
+            case InfiltrationModel::MOD_GREEN_AMPT:
+                // grnampt_setParams (infil.c:605): suction >= 0, Ksat > 0,
+                // IMD a fraction in [0, 1]
+                ok = p1 >= 0.0 && p2 > 0.0 && p3 >= 0.0 && p3 <= 1.0;
+                break;
+            case InfiltrationModel::CURVE_NUMBER:
+                // curvenum_setParams (infil.c): drying time (3rd param) > 0
+                ok = p3 > 0.0;
+                break;
+        }
+        if (!ok)
+            ctx.errors.push_back(format_error(ERR_INFILTRATION, ""));
     }
 }
 

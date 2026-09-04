@@ -352,7 +352,13 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
     double entry_end = datetime::addSeconds(entry_start, interval);
 
     double result;
-    if (t < entry_end) {
+    if (t < entry_start) {
+        // Before the series has begun: table_step_cursor parks the cursor at
+        // index 0 while the first entry is still in the future. Legacy reports
+        // from gage state, whose rainfall is 0 here (gage.c:561 reads
+        // Gage[].rainfall, still 0 before the first interval starts).
+        result = 0.0;
+    } else if (t < entry_end) {
         // Report time is within current rain interval
         result = tbl.y[static_cast<std::size_t>(idx)];
     } else {

@@ -281,9 +281,11 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
             }
         } else if (dtype == "WEIR") {
             D.method[drow] = DividerType::WEIR;
+            // Legacy column order (node.c:1112): qMin dhMax cWeir — dhMax is
+            // token 5 and the discharge coefficient token 6 (was swapped).
             if (tok.size() > 4) D.cutoff[drow]    = to_double(tok[4]);
-            if (tok.size() > 5) D.cd[drow]        = to_double(tok[5]);
-            if (tok.size() > 6) D.max_depth[drow] = to_double(tok[6]);
+            if (tok.size() > 5) D.max_depth[drow] = to_double(tok[5]);
+            if (tok.size() > 6) D.cd[drow]        = to_double(tok[6]);
         }
 
         // MaxDepth after type-specific fields
