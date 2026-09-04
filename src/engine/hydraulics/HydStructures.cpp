@@ -350,14 +350,20 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
                     q = table_intervalLookup(ctx.tables.tables[uci], depth * ucf_len);
                 }
                 break;
-            case 3: // Head-based with speed
-            case 5: {
-                double s = links.setting[uj];
+            case 3: // Head-based: Q = f(head) — PUMP3_CURVE
+            case 5: {  // Variable speed: Q = f(head/s²) — PUMP5_CURVE
+                // Legacy pump_getInflow PUMP3/PUMP5: s stays 1.0 for a PUMP3
+                // curve — ONLY PUMP5 reads the live speed setting (affinity
+                // scaling head/s² before the lookup). The setting multiplies
+                // the flow exactly ONCE, after the switch (legacy
+                // `return qIn * Link[j].setting`) — no *s here, or a
+                // fractional speed lands as s²·Curve instead of s·Curve.
+                double s = (ct == 5) ? links.setting[uj] : 1.0;
                 double h = (s > 0.0) ? std::max(head / (s * s), 0.0) : 0.0;
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
                     auto& curve = ctx.tables.tables[uci];
-                    q = table_lookup_cursor(curve, h * ucf_len) * s;
-                    // dQ/dh matching legacy pump.c PUMP3/5 lines 1606-1609:
+                    q = table_lookup_cursor(curve, h * ucf_len);
+                    // dQ/dh matching legacy link.c PUMP3/5:
                     //   Link[j].dqdh = -table_getSlope(&Curve[m], head)
                     //                  * UCF(LENGTH) / UCF(FLOW) / s
                     // sign reversed because flow decreases with increasing head.
