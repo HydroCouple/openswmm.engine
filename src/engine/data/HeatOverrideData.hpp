@@ -76,7 +76,11 @@ enum class HeatElemKind : std::uint8_t {
     NODE     = 0,
     LINK     = 1,
     SUBCATCH = 2,
-    LID      = 3
+    LID      = 3,
+    /// S4 (D-2DT5): a 2D surface cell. Carries no per-element override
+    /// storage yet (S5 adds the `CELL2D` scope); the accessors' LINK/NODE
+    /// tests fall through to the global, which is the safe answer.
+    CELL2D   = 4
 };
 
 /**
@@ -96,6 +100,7 @@ struct HeatElement {
     static HeatElement node(int i) { return {HeatElemKind::NODE, i}; }
     static HeatElement link(int i) { return {HeatElemKind::LINK, i}; }
     static HeatElement subcatch(int i) { return {HeatElemKind::SUBCATCH, i}; }
+    static HeatElement cell2d(int i)   { return {HeatElemKind::CELL2D, i}; }
 };
 
 /// Scope of one override row (D-PE3). Ordered by specificity.

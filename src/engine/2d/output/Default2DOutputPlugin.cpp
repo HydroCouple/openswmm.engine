@@ -610,14 +610,20 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
             writeStringAttr(ds_face_species_conc_, "location", "face");
             writeStringAttr(ds_face_species_conc_, "layout",
-                            "[time, species, face]; species order = pollutant "
-                            "order; dry cell reports 0");
-            if (snap.pollut_names) {
+                            "[time, species, face]; species order = "
+                            "pollutants, MSX, __WATER_AGE__, __TEMPERATURE__ "
+                            "(see species_names); dry cell reports 0");
+            // S4: the row names come from the surface itself; the pollutant
+            // list is the pre-S4 fallback.
+            const std::vector<std::string>* names_src =
+                snap.surface_species_names ? snap.surface_species_names
+                                           : snap.pollut_names;
+            if (names_src) {
                 std::string names;
-                for (std::size_t i = 0; i < snap.pollut_names->size() &&
+                for (std::size_t i = 0; i < names_src->size() &&
                                         i < n_species_; ++i) {
                     if (i) names += ",";
-                    names += (*snap.pollut_names)[i];
+                    names += (*names_src)[i];
                 }
                 if (!names.empty())
                     writeStringAttr(ds_face_species_conc_, "species_names",
@@ -703,13 +709,13 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_net_source_);
     closeDS(ds_face_infil_rate_);
     closeDS(ds_face_infil_cum_);
+    closeDS(ds_face_rain_cum_);
     closeDS(ds_face_species_conc_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);
     closeDS(ds_edge_flux_);
     closeDS(ds_node_head_);
-    closeDS(ds_face_rain_cum_);
     closeDS(ds_node_depth_);
     closeDS(ds_face_max_depth_);
     closeDS(ds_face_max_velocity_);

@@ -227,8 +227,25 @@ void QualitySolver::addCouplingLoads(SimulationContext& ctx, double dt) {
         const double q = nodes.coupling_inflow[ui];
         if (q > 0.0) {
             nodes.qual_vol_in[ui] += q * dt;
-            addAgeVolume(ctx, i, q, WaterAgeSource::EXTERNAL_INFLOW);
-            addTempVolume(ctx, i, q, HeatSource::EXTERNAL_INFLOW);
+            // S4: when the surface carries the row, the tuple's own
+            // age-volume / temperature-volume arrives (drained by the same
+            // rule as the water, so the ratio is the cell's value); the
+            // EXTERNAL_INFLOW stand-in survives only for a surface that does
+            // not carry that row.
+            if (nodes.coupling_tuple_age && ctx.options.water_age &&
+                ui < ctx.water_age_state.node_age_vol_in.size() &&
+                ui < nodes.coupling_age_vol_inflow.size())
+                ctx.water_age_state.node_age_vol_in[ui] +=
+                    nodes.coupling_age_vol_inflow[ui];
+            else
+                addAgeVolume(ctx, i, q, WaterAgeSource::EXTERNAL_INFLOW);
+            if (nodes.coupling_tuple_temp && ctx.options.heat_transport &&
+                ui < ctx.heat_state.node_temp_vol_in.size() &&
+                ui < nodes.coupling_temp_vol_inflow.size())
+                ctx.heat_state.node_temp_vol_in[ui] +=
+                    nodes.coupling_temp_vol_inflow[ui];
+            else
+                addTempVolume(ctx, i, q, HeatSource::EXTERNAL_INFLOW);
         }
         if (nodes.coupling_qual_inflow.empty()) continue;
         for (int p = 0; p < np; ++p) {

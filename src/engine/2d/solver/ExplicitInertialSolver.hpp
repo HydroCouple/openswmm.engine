@@ -169,6 +169,9 @@ private:
     /// S3: outfall discharge onto cell `i` over `area_dt = area·dt` brings
     /// species at `transport.coupling_src` (mass-rate density); gained ledger.
     void addCouplingSourceMass(int i, double area_dt) noexcept;
+    /// S4: evaporation of `evap_m3` from cell `i` leaves at the cell's own
+    /// temperature (temperature row only; solutes concentrate, S1).
+    void sinkTemperatureWithEvap(int i, double evap_m3) noexcept;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an

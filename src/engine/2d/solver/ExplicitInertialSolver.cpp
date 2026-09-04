@@ -236,8 +236,10 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3,
         const double dm = dv_m3 * c;
         double& m = tr.cell_mass[tr.idx(s, i)];
         // Cannot remove more than is there (the volume clamps identically);
-        // the residual is a rounding artefact, not a modelling event.
-        const double taken = (dm < m) ? dm : m;
+        // the residual is a rounding artefact, not a modelling event. The
+        // SIGNED temperature row (S4) has no floor: °C·m³ below zero is a
+        // state, and "min(dm, m)" on two negatives would empty the row.
+        const double taken = tr.signedRow(s) ? dm : ((dm < m) ? dm : m);
         m -= taken;
         ledger[static_cast<std::size_t>(s)] += taken;
         if (per_point_ledger) per_point_ledger[s] += taken;
@@ -250,11 +252,28 @@ void ExplicitInertialSolver::addRainMass(int i, double rain_m3) noexcept {
     if (!tr.active() || tr.rain_conc.empty()) return;
     for (int s = 0; s < tr.n_species; ++s) {
         const auto us = static_cast<std::size_t>(s);
-        if (us >= tr.rain_conc.size() || !(tr.rain_conc[us] > 0.0)) continue;
+        if (us >= tr.rain_conc.size() || tr.rain_conc[us] == 0.0) continue;
         const double g = rain_m3 * tr.rain_conc[us];
         tr.cell_mass[tr.idx(s, i)] += g;
         tr.gained_rainfall[us] += g;
     }
+}
+
+void ExplicitInertialSolver::sinkTemperatureWithEvap(int i, double evap_m3) noexcept {
+    // Evaporation removes WATER and no solute (S1: concentrations rise), but
+    // it removes water AT the water's temperature: the temperature row is a
+    // temperature-volume, so leaving it untouched while the volume falls would
+    // heat the cell by evaporating it. Sink the row at the cell's own
+    // temperature; no ledger — the enthalpy left with the vapour and the 1D
+    // engines book nothing for it either (H1's convention).
+    if (!(evap_m3 > 0.0)) return;
+    auto& tr = state_->transport;
+    if (!tr.active() || tr.temp_row < 0) return;
+    const double v = state_->volume[i];
+    if (!(v > 0.0)) return;
+    double& m = tr.cell_mass[tr.idx(tr.temp_row, i)];
+    const double dv = (evap_m3 < v) ? evap_m3 : v;
+    m -= dv * (m / v);
 }
 
 void ExplicitInertialSolver::addCouplingSourceMass(int i, double area_dt) noexcept {
@@ -263,7 +282,7 @@ void ExplicitInertialSolver::addCouplingSourceMass(int i, double area_dt) noexce
     if (!tr.active() || tr.coupling_src.empty()) return;
     for (int s = 0; s < tr.n_species; ++s) {
         const double g = tr.coupling_src[tr.idx(s, i)] * area_dt;
-        if (!(g > 0.0)) continue;
+        if (g == 0.0) continue;
         tr.cell_mass[tr.idx(s, i)] += g;
         tr.gained_coupling[static_cast<std::size_t>(s)] += g;
     }
@@ -316,7 +335,9 @@ void ExplicitInertialSolver::settleAccumulators() {
                 if (dm != 0.0) {
                     double& m = tr.cell_mass[tr.idx(static_cast<int>(s), i)];
                     m += dm;
-                    if (m < 0.0) m = 0.0;
+                    // Backstop is for nonnegative rows only: the SIGNED
+                    // temperature row holds °C·m³ below zero as a state.
+                    if (m < 0.0 && !tr.signedRow(static_cast<int>(s))) m = 0.0;
                 }
             }
         }
@@ -340,15 +361,15 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
         // Book before the early-out: rain exactly cancelling the sink leaves
         // src == 0, but water still infiltrated and the ledger counts the rain.
         state_->infil_applied[i] += infil * dt_lazy;
+        const double evap =
+            evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
         const double src =
-            state_->rainfall[i] + state_->coupling_flux[i]
-            - evapSink(state_->evap_rate[i], state_->depth[i],
-                       opts_->dry_depth)
-            - infil;
+            state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
         if (src == 0.0) continue;
         if (!sacc_L_.empty()) {   // S1: see syncAndRebuild's lazy pass
             auto& tr = state_->transport;
             const double area = mesh_->tri_area[i];
+            sinkTemperatureWithEvap(i, evap * dt_lazy * area);          // S4
             sinkMassAtCellConc(i, infil * dt_lazy * area, tr.lost_infiltration);
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
@@ -378,17 +399,17 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             const double infil = infilSink(state_->infil_rate[i],
                                            state_->depth[i], opts_->dry_depth);
             state_->infil_applied[i] += infil * dt_lazy;
+            const double evap = evapSink(state_->evap_rate[i],
+                                         state_->depth[i], opts_->dry_depth);
             const double src =
-                state_->rainfall[i] + state_->coupling_flux[i]
-                - evapSink(state_->evap_rate[i], state_->depth[i],
-                           opts_->dry_depth)
-                - infil;
+                state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
             if (src == 0.0) continue;
             // S1: the lazy tier moves water without faces; the sinks still
             // carry the cell's species out (same rule as fireCells).
             if (!sacc_L_.empty()) {
                 auto& tr = state_->transport;
                 const double area = mesh_->tri_area[i];
+                sinkTemperatureWithEvap(i, evap * dt_lazy * area);      // S4
                 sinkMassAtCellConc(i, infil * dt_lazy * area,
                                    tr.lost_infiltration);
                 if (state_->coupling_flux[i] < 0.0)
@@ -706,9 +727,18 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
                     const int    giver  = (dMd > 0.0) ? a : b;
                     const int    refire = global_step
                         ? 1 : (1 << (tier_[giver] - face_tier_[e]));
+                    // The giver-mass share is a POSITIVITY guard: give at
+                    // most a β share of what is there. The SIGNED temperature
+                    // row (S4) has no positivity to guard — its mass crosses
+                    // zero at a warm/cold front, where a mass share would
+                    // vanish and bind every smoothing exchange. For it the
+                    // equalisation bound alone is the cap: it is what
+                    // enforces the pairwise max principle in both directions.
                     const double share  = beta_share / refire *
-                        ((dMd > 0.0) ? ma : mb);
-                    const double cap = std::min(std::fabs(eq), share);
+                        std::fabs((dMd > 0.0) ? ma : mb);
+                    const double cap = tr.signedRow(static_cast<int>(s))
+                        ? std::fabs(eq)
+                        : std::min(std::fabs(eq), share);
                     if (std::fabs(dMd) > cap) {
                         dMd = (dMd > 0.0) ? cap : -cap;
                         #pragma omp atomic
@@ -759,10 +789,10 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         const double infil =
             infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth);
         state_->infil_applied[i] += infil * dt_c;
+        const double evap =
+            evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
         const double src =
-            state_->rainfall[i] + state_->coupling_flux[i]
-            - evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)
-            - infil;
+            state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
 
         // S1 species. ORDER MATTERS and is the same as the faces': sinks
         // read this cell's concentration against its PUBLISHED volume
@@ -776,6 +806,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         if (!sacc_L_.empty()) {
             auto& tr = state_->transport;
             const double area = mesh_->tri_area[i];
+            sinkTemperatureWithEvap(i, evap * dt_c * area);              // S4
             sinkMassAtCellConc(i, infil * dt_c * area, tr.lost_infiltration);
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_c * area,
@@ -789,7 +820,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             for (std::size_t s = 0; s < ns; ++s) {
                 double dm = 0.0;
                 if (rain_m3 > 0.0 && s < tr.rain_conc.size() &&
-                    tr.rain_conc[s] > 0.0) {
+                    tr.rain_conc[s] != 0.0) {
                     const double gained = rain_m3 * tr.rain_conc[s];
                     dm += gained;
                     tr.gained_rainfall[s] += gained;
@@ -799,7 +830,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                 if (!tr.coupling_src.empty() && state_->coupling_flux[i] > 0.0) {
                     const double g = tr.coupling_src[tr.idx(static_cast<int>(s), i)] *
                                      dt_c * area;
-                    if (g > 0.0) { dm += g; tr.gained_coupling[s] += g; }
+                    if (g != 0.0) { dm += g; tr.gained_coupling[s] += g; }
                 }
                 for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                     const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
@@ -816,7 +847,9 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                 // The same backstop the volume has, for the same reason: the
                 // face caps make a deficit ~impossible, and a −1 ulp of mass
                 // must not become a negative concentration in a report.
-                if (m < 0.0) m = 0.0;
+                // Nonnegative rows only — the SIGNED temperature row holds
+                // °C·m³ below zero as a state, not an artefact.
+                if (m < 0.0 && !tr.signedRow(static_cast<int>(s))) m = 0.0;
             }
         }
 
@@ -948,7 +981,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                         const double dv = v_new - v_old;
                         for (std::size_t s = 0; s < ns; ++s) {
                             const double c = tr.bc_conc[k * ns + s];
-                            if (c <= 0.0) continue;
+                            if (c == 0.0) continue;
                             const double g = dv * c;
                             tr.cell_mass[tr.idx(static_cast<int>(s), i)] += g;
                             tr.gained_boundary[s] += g;
@@ -1036,12 +1069,17 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                 auto& tr = state_->transport;
                 const auto ns = static_cast<std::size_t>(tr.n_species);
                 const auto ni = static_cast<std::size_t>(cp.node_idx);
-                const auto& conc = state_->nodes_1d->conc;
-                if ((ni + 1) * ns <= conc.size()) {
+                // S4: the router publishes every ROW's node value (pollutant
+                // conc, MSX conc, age, temperature) in one ns-strided array,
+                // frozen for the batch like the node head. nodes.conc alone
+                // is np-strided and would mis-index once age/temp rows exist.
+                const auto* conc_p = state_->node_row_conc;
+                if (conc_p && (ni + 1) * ns <= conc_p->size()) {
+                    const auto& conc = *conc_p;
                     const double v_in = -Q * dt_c;
                     for (std::size_t s = 0; s < ns; ++s) {
                         const double c = conc[ni * ns + s];
-                        if (!(c > 0.0)) continue;
+                        if (c == 0.0) continue;
                         const double g = v_in * c;
                         tr.cell_mass[tr.idx(static_cast<int>(s), ci)] += g;
                         tr.gained_coupling[s] += g;
