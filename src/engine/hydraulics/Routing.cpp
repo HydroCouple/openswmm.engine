@@ -571,41 +571,84 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // The transect top-width below uses the linear approximation; the
             // faithful getWofY was tried and does NOT resolve the parity gap
             // (the gap is the timing, not the width). See PARITY_FINDINGS.
-            if (xsect::isOpen(batch_shape) && evap_rate > 0.0) {
-                double top_width = 0.0;
-                if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
-                    batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
-                    double y_full = links.xsect_y_full[uj];
-                    double w_max  = links.xsect_w_max[uj];
-                    top_width = (y_full > 0.0) ? w_max * std::min(depth / y_full, 1.0) : 0.0;
-                } else {
-                    XSectParams xs{};
-                    xs.type   = batch_shape;
-                    xs.y_full = links.xsect_y_full[uj];
-                    xs.a_full = links.xsect_a_full[uj];
-                    xs.w_max  = links.xsect_w_max[uj];
-                    top_width = xsect::getWofY(xs, depth);
-                }
-                evap_loss = top_width * length * evap_rate;
-            }
-
-            // Seepage loss
-            if (CD.seep_rate[ucr] > 0.0) {
+            const bool wantEvap = xsect::isOpen(batch_shape) && evap_rate > 0.0;
+            const bool wantSeep = CD.seep_rate[ucr] > 0.0;
+            if (wantEvap || wantSeep) {
+                // Faithful params (matching DynamicWave.cpp::buildXSP): the
+                // previous minimal {type, y_full, a_full, w_max} left y_bot/
+                // s_bot/a_bot/r_bot at 0, so getWofY returned width 0 — and
+                // seepage/evap were identically zero — for every shape whose
+                // width law needs them (TRAPEZOIDAL, TRIANGULAR, PARABOLIC,
+                // POWER, RECT_TRIANG, RECT_ROUND, MOD_BASKET) plus every
+                // tabulated shape (no transect tables wired). Legacy
+                // conduit_getLossRate uses the full xsect for all of them.
                 XSectParams xs{};
                 xs.type   = batch_shape;
                 xs.y_full = links.xsect_y_full[uj];
                 xs.a_full = links.xsect_a_full[uj];
                 xs.w_max  = links.xsect_w_max[uj];
                 xs.yw_max = links.xsect_yw_max[uj];
+                xs.r_full = links.xsect_r_full[uj];
+                xs.s_full = links.xsect_s_full[uj];
+                xs.s_max  = links.xsect_s_max[uj];
+                xs.y_bot  = links.xsect_y_bot[uj];
+                xs.a_bot  = links.xsect_a_bot[uj];
+                xs.s_bot  = links.xsect_s_bot[uj];
+                xs.r_bot  = links.xsect_r_bot[uj];
+                if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
+                    batch_shape == static_cast<int>(XSectShape::CUSTOM) ||
+                    batch_shape == static_cast<int>(XSectShape::STREET_XSECT)) {
+                    const int ci = links.xsect_curve[uj];
+                    if (ci >= 0 &&
+                        static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                        const auto& td =
+                            ctx.transect_tables[static_cast<std::size_t>(ci)];
+                        xs.transect          = ci;
+                        xs.area_tbl          = td.area_tbl;
+                        xs.hrad_tbl          = td.hrad_tbl;
+                        xs.width_tbl         = td.width_tbl;
+                        xs.area_lut          = &td.area_lut;
+                        xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+                    }
+                }
 
-                double d_seep = depth;
-                // Limit depth to depth at max width (matching legacy)
-                if (batch_shape == static_cast<int>(XSectShape::RECT_CLOSED))
-                    ; // use wMax directly
-                else if (d_seep >= xs.yw_max)
-                    d_seep = xs.yw_max;
-                double width = xsect::getWofY(xs, d_seep);
-                seep_loss = CD.seep_rate[ucr] * width * length;
+                if (wantEvap) {
+                    double top_width;
+                    if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
+                        batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
+                        // Deliberate linear approximation — see the PARITY
+                        // note above (the gap is timing, not the width law).
+                        top_width = (xs.y_full > 0.0)
+                            ? xs.w_max * std::min(depth / xs.y_full, 1.0) : 0.0;
+                    } else {
+                        top_width = xsect::getWofY(xs, depth);
+                    }
+                    evap_loss = top_width * length * evap_rate;
+                }
+
+                // Seepage loss
+                if (wantSeep) {
+                    double d_seep = depth;
+                    // Legacy conduit_getLossRate: RECT_CLOSED uses wMax
+                    // directly (getWofY's tabulated crown width is 0 exactly
+                    // at full depth); every other shape clamps depth to
+                    // yw_max first.
+                    double width;
+                    if (batch_shape ==
+                        static_cast<int>(XSectShape::RECT_CLOSED)) {
+                        width = xs.w_max;
+                    } else {
+                        if (d_seep >= xs.yw_max)
+                            d_seep = xs.yw_max;
+                        width = xsect::getWofY(xs, d_seep);
+                    }
+                    seep_loss = CD.seep_rate[ucr] * width * length;
+                    // Monthly conductivity adjustment (legacy link.c:1378:
+                    // seepLossRate *= Adjust.hydconFactor). infil_factor
+                    // mirrors adjust_hydcon[mon] each step (A2d) and is 1.0
+                    // exactly on unadjusted decks.
+                    seep_loss *= ctx.climate_state.infil_factor;
+                }
             }
 
             // Limit the total to what is actually there. A volume-tracking

@@ -2194,6 +2194,11 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
                             ? xs.w_max
                             : xsect::getWofY(xs, d_seep);
                     seep_loss = CD.seep_rate[uci] * width * length;
+                    // Monthly conductivity adjustment (legacy link.c:1378:
+                    // seepLossRate *= Adjust.hydconFactor). infil_factor
+                    // mirrors adjust_hydcon[mon] each step (A2d) and is 1.0
+                    // exactly on unadjusted decks.
+                    seep_loss *= ctx.climate_state.infil_factor;
                 }
             }
 
