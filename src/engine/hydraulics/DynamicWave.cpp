@@ -815,6 +815,8 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
     tile_loss_outlet_.resize(nc);
     tile_loss_avg_.resize(nc);
     tile_roughness_.resize(nc);
+    tile_fm_sbot_.resize(nc);
+    tile_fm_rbot_.resize(nc);
     tile_has_flap_gate_.resize(nc);
     tile_direction_.resize(nc);
     // Reverse map sized n_links_, -1 for non-conduits
@@ -869,6 +871,8 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
         tile_loss_outlet_[uci]   = CD.loss_outlet[ucr];
         tile_loss_avg_[uci]      = CD.loss_avg[ucr];
         tile_roughness_[uci]     = CD.roughness[ucr];
+        tile_fm_sbot_[uci]       = links.xsect_s_bot[uj];
+        tile_fm_rbot_[uci]       = links.xsect_r_bot[uj];
         tile_has_flap_gate_[uci] = links.has_flap_gate[uj] ? 1 : 0;
         tile_direction_[uci]     = static_cast<int8_t>(links.direction[uj]);
         tile_uj_to_ci_[uj]       = ci;
@@ -2332,7 +2336,9 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             fc == FlowClass::DN_DRY || aMid <= FUDGE || tile_is_closed_[uci]) {
             cat = MomentumCategory::SKIP_DRY;
         } else if (tile_is_force_main_[uci] && isFull) {
-            cat = (tile_roughness_[uci] < 1.0)
+            // Legacy selects by the global FORCE_MAIN_EQUATION option
+            // (forcmain.c ForceMainEqn), not by inspecting the coefficient.
+            cat = (ctx.options.force_main_eqn == 1)
                 ? MomentumCategory::FORCE_MAIN_DW
                 : MomentumCategory::FORCE_MAIN_HW;
         } else if (!tile_is_open_[uci] && isFull) {
@@ -2969,14 +2975,28 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     double rWtd = std::max(rMid, FUDGE);
     (void)rWtd;  // reserved for future friction variants
 
-    // Force main friction
-    double fm_coeff = tile_roughness_[uci];
-    double sf;
-    if (is_dw)
-        sf = forcemain::getFricSlope_DW(v, rMid, fm_coeff);
-    else
-        sf = forcemain::getFricSlope_HW(v, rMid, fm_coeff);
-    double dq1 = (absv > FUDGE) ? dt * GRAVITY * sf / absv : 0.0;
+    // Force main friction — legacy dwflow.c:236-237 via forcmain.c
+    // getFricSlope, using the PRECOMPUTED sBot rough factor
+    // (link.c:1127-1131: gravity and the artificial-lengthening
+    // compensation lf^0.54 are baked in; PostParseResolver stores it in
+    // xsect_s_bot). The kernel previously recomputed a textbook Sf from
+    // the raw coefficient (velocity exponent 1/0.54 vs legacy's literal
+    // 1.852, R exponent 0.63/0.54 vs 1.1667, no lengthFactor) — a
+    // systematic ~1e-4 relative friction bias that flips knife-edge
+    // surcharge onsets (PS4D on 800-node-sewer at t = 4.55 h).
+    const double sbot = tile_fm_sbot_[uci];
+    double dq1;
+    if (is_dw) {
+        // forcmain.c:108-112: re = 4·R·|v|/VISCOS; f from Colebrook;
+        // dq1 = dt · f · sBot · |v| / R  (sBot = 1/(8·lengthFactor)).
+        const double re = 4.0 * rMid * absv / forcemain::VISCOS;
+        const double f  = forcemain::getFricFactor(tile_fm_rbot_[uci],
+                                                   rMid, re);
+        dq1 = dt * f * sbot * absv / rMid;
+    } else {
+        // forcmain.c:105-106: dq1 = dt · sBot · |v|^0.852 / R^1.1667.
+        dq1 = dt * sbot * std::pow(absv, 0.852) / std::pow(rMid, 1.1667);
+    }
 
     // Head gradient
     double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
