@@ -157,7 +157,8 @@ TEST(IdealPumpCurve, SurvivesWriteAndReopen) {
 
 namespace {
 
-void writeSpeedDeck(const std::string& path, const char* curve_kind) {
+void writeSpeedDeck(const std::string& path, const char* curve_kind,
+                    bool setting_via_rule = false) {
     std::ofstream f(path);
     f << "[TITLE]\npump speed parity (" << curve_kind << ")\n\n"
       << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -175,66 +176,99 @@ void writeSpeedDeck(const std::string& path, const char* curve_kind) {
       << "[CURVES]\nPC " << curve_kind << " 0 100\nPC 100 0\n\n"
       << "[INFLOWS]\nSU1 FLOW ts5 FLOW 1.0 1.0\n\n"
       << "[TIMESERIES]\nts5 0:00 5\nts5 24:00 5\n";
+    if (setting_via_rule) {
+        f << "\n[CONTROLS]\n"
+          << "RULE R1\n"
+          << "IF SIMULATION TIME > 0.0001\n"
+          << "THEN PUMP P1 SETTING = 0.5\n";
+    }
+}
+
+} // namespace
+
+namespace {
+
+// Run one speed-parity deck and check the converged state against the
+// legacy relation Q = s·Curve(h) (single setting multiply; TYPE5 samples
+// the affinity-scaled head, TYPE3 the raw head). The 0.5 speed arrives
+// either through the C API (re-asserted before every step — the per-step
+// target reset mirrors legacy link_setTargetSetting, which would fold an
+// external target back to the live setting) or through a [CONTROLS] rule
+// (THEN PUMP P1 SETTING = 0.5), which legacy applies AFTER that reset, so
+// it must both land and persist with no API help.
+void runSpeedParityCheck(const char* kind, bool setting_via_rule) {
+    const bool type5 = (std::string(kind) == "PUMP5");
+    const std::string tag = std::string("pumps/_speed_") + kind +
+                            (setting_via_rule ? "_rule" : "");
+    writeSpeedDeck(tag + ".inp", kind, setting_via_rule);
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, (tag + ".inp").c_str(),
+                               (tag + ".rpt").c_str(),
+                               (tag + ".out").c_str(), nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+
+    const int pidx = swmm_link_index(e, "P1");
+    ASSERT_GE(pidx, 0);
+
+    // 60 simulated seconds — enough for the pump flow and junction heads
+    // to settle onto the curve relation; the big wet well barely moves.
+    double elapsed = 0.0;
+    for (int i = 0; i < 30; ++i) {
+        if (!setting_via_rule)
+            ASSERT_EQ(swmm_link_set_control_setting(e, pidx, 0.5), SWMM_OK);
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK)
+            << swmm_get_last_error_msg(e);
+    }
+
+    auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
+    const auto uj = static_cast<std::size_t>(pidx);
+    const auto un1 = static_cast<std::size_t>(ctx.links.node1[uj]);
+    const auto un2 = static_cast<std::size_t>(ctx.links.node2[uj]);
+
+    const double s = ctx.links.setting[uj];
+    ASSERT_DOUBLE_EQ(s, 0.5)
+        << kind << (setting_via_rule
+            ? ": the control rule's SETTING never reached the pump"
+            : ": setting did not persist");
+
+    const double head =
+        (ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2]) -
+        (ctx.nodes.depth[un1] + ctx.nodes.invert_elev[un1]);
+    const double h_curve = type5 ? std::max(head / (s * s), 0.0)
+                                 : std::max(head, 0.0);
+    ASSERT_GT(h_curve, 0.0) << kind;
+    ASSERT_LT(h_curve, 100.0) << kind << ": operating point left the curve";
+
+    // Legacy: Q = setting · Curve(h) with ONE setting multiply.
+    const double expected = s * (100.0 - h_curve);
+    const double q = ctx.links.flow[uj];
+    EXPECT_NEAR(q, expected, 0.02 * expected + 0.1)
+        << kind << ": head=" << head << " h_curve=" << h_curve
+        << " — s²·Curve (double setting multiply) and/or a speed-scaled "
+           "TYPE3 head would land far from the legacy relation";
+
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 } // namespace
 
 TEST(PumpSpeedParity, FractionalSettingSamplesAndScalesLikeLegacy) {
-    for (const char* kind : {"PUMP3", "PUMP5"}) {
-        const bool type5 = (std::string(kind) == "PUMP5");
-        const std::string tag = std::string("pumps/_speed_") + kind;
-        writeSpeedDeck(tag + ".inp", kind);
+    for (const char* kind : {"PUMP3", "PUMP5"})
+        runSpeedParityCheck(kind, /*setting_via_rule=*/false);
+}
 
-        SWMM_Engine e = swmm_engine_create();
-        ASSERT_NE(e, nullptr);
-        ASSERT_EQ(swmm_engine_open(e, (tag + ".inp").c_str(),
-                                   (tag + ".rpt").c_str(),
-                                   (tag + ".out").c_str(), nullptr), SWMM_OK)
-            << swmm_get_last_error_msg(e);
-        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
-        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
-
-        const int pidx = swmm_link_index(e, "P1");
-        ASSERT_GE(pidx, 0);
-
-        // 60 simulated seconds — enough for the pump flow and junction heads
-        // to settle onto the curve relation; the big wet well barely moves.
-        // The 0.5 speed override is re-asserted before every step (the
-        // per-step target reset mirrors legacy link_setTargetSetting, which
-        // would otherwise fold an external target back to the live setting).
-        double elapsed = 0.0;
-        for (int i = 0; i < 30; ++i) {
-            ASSERT_EQ(swmm_link_set_control_setting(e, pidx, 0.5), SWMM_OK);
-            ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK)
-                << swmm_get_last_error_msg(e);
-        }
-
-        auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
-        const auto uj = static_cast<std::size_t>(pidx);
-        const auto un1 = static_cast<std::size_t>(ctx.links.node1[uj]);
-        const auto un2 = static_cast<std::size_t>(ctx.links.node2[uj]);
-
-        const double s = ctx.links.setting[uj];
-        ASSERT_DOUBLE_EQ(s, 0.5) << kind << ": setting did not persist";
-
-        const double head =
-            (ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2]) -
-            (ctx.nodes.depth[un1] + ctx.nodes.invert_elev[un1]);
-        const double h_curve = type5 ? std::max(head / (s * s), 0.0)
-                                     : std::max(head, 0.0);
-        ASSERT_GT(h_curve, 0.0) << kind;
-        ASSERT_LT(h_curve, 100.0) << kind << ": operating point left the curve";
-
-        // Legacy: Q = setting · Curve(h) with ONE setting multiply.
-        const double expected = s * (100.0 - h_curve);
-        const double q = ctx.links.flow[uj];
-        EXPECT_NEAR(q, expected, 0.02 * expected + 0.1)
-            << kind << ": head=" << head << " h_curve=" << h_curve
-            << " — s²·Curve (double setting multiply) and/or a speed-scaled "
-               "TYPE3 head would land far from the legacy relation";
-
-        swmm_engine_end(e);
-        swmm_engine_close(e);
-        swmm_engine_destroy(e);
-    }
+// End-to-end controls confirmation: the fractional speed comes from a
+// [CONTROLS] rule instead of the API. Exercises parser → ControlEngine →
+// target_setting → computePumpFlowK in the legacy order
+// (updatePumpTargetSettings BEFORE controls_.evaluate, SWMMEngine.cpp),
+// so the rule's value must survive the per-step target reset on its own.
+TEST(PumpSpeedParity, ControlRuleSettingReachesPump) {
+    for (const char* kind : {"PUMP3", "PUMP5"})
+        runSpeedParityCheck(kind, /*setting_via_rule=*/true);
 }
