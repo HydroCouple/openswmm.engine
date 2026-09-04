@@ -270,6 +270,18 @@ struct SubcatchData {
      */
     std::vector<double> gw_flow;
 
+    /**
+     * @brief Area-weighted snow pack SWE depth (ft), end of runoff step.
+     * @see Legacy: Subcatch[i].newSnowDepth (subcatch.c:816, snow.c:202)
+     */
+    std::vector<double> snow_depth;
+
+    /**
+     * @brief Total LID drain outflow (cfs) over the current runoff step.
+     * @see Legacy: LidGroups[i]->newDrainFlow (lid.c:1729)
+     */
+    std::vector<double> lid_drain_flow;
+
     // -----------------------------------------------------------------------
     // Previous-step state
     // -----------------------------------------------------------------------
@@ -279,6 +291,12 @@ struct SubcatchData {
 
     /** @brief GW flow at the previous runoff evaluation (for interpolation). */
     std::vector<double> old_gw_flow;
+
+    /** @brief Snow depth at the previous runoff evaluation (for interpolation). */
+    std::vector<double> old_snow_depth;
+
+    /** @brief LID drain outflow at the previous runoff evaluation (for interpolation). */
+    std::vector<double> old_lid_drain_flow;
 
     // -----------------------------------------------------------------------
     // Runon coupling — subcatch-to-subcatch routing
@@ -637,8 +655,12 @@ struct SubcatchData {
         infil_loss.assign(un, 0.0);
         ponded_depth.assign(un, 0.0);
         gw_flow.assign(un, 0.0);
+        snow_depth.assign(un, 0.0);
+        lid_drain_flow.assign(un, 0.0);
         old_runoff.assign(un, 0.0);
         old_gw_flow.assign(un, 0.0);
+        old_snow_depth.assign(un, 0.0);
+        old_lid_drain_flow.assign(un, 0.0);
         runon_inflow.assign(un, 0.0);
         old_runon_inflow.assign(un, 0.0);
         outfall_runon_vol.assign(un, 0.0);
@@ -714,7 +736,9 @@ struct SubcatchData {
         g(runoff, 0.0); g(rainfall, 0.0);
         g(evap_loss, 0.0); g(infil_loss, 0.0);
         g(ponded_depth, 0.0); g(gw_flow, 0.0);
+        g(snow_depth, 0.0); g(lid_drain_flow, 0.0);
         g(old_runoff, 0.0); g(old_gw_flow, 0.0);
+        g(old_snow_depth, 0.0); g(old_lid_drain_flow, 0.0);
         g(runon_inflow, 0.0); g(old_runon_inflow, 0.0);
         g(gw_sw_head, 0.0); g(gw_node_avail_flow, 0.0);
         g(gw_max_infil_vol, std::numeric_limits<double>::max());
@@ -780,7 +804,8 @@ struct SubcatchData {
         r(pct_routed); r(infil_model); r(infil_p1); r(infil_p2);
         r(infil_p3); r(infil_p4); r(infil_p5); r(runoff);
         r(rainfall); r(evap_loss); r(infil_loss); r(ponded_depth);
-        r(gw_flow); r(old_runoff); r(old_gw_flow); r(runon_inflow);
+        r(gw_flow); r(snow_depth); r(lid_drain_flow); r(old_runoff);
+        r(old_gw_flow); r(old_snow_depth); r(old_lid_drain_flow); r(runon_inflow);
         r(old_runon_inflow); r(gw_sw_head); r(gw_node_avail_flow); r(gw_max_infil_vol);
         r(outfall_runon_vol); r(rpt_flag); r(stat_precip_vol); r(stat_evap_vol);
         r(stat_infil_vol); r(stat_imperv_vol); r(stat_perv_vol); r(stat_runoff_vol);
@@ -817,7 +842,8 @@ struct SubcatchData {
         e(infil_model); e(infil_p1); e(infil_p2); e(infil_p3); e(infil_p4); e(infil_p5);
 
         e(runoff); e(rainfall); e(evap_loss); e(infil_loss); e(ponded_depth);
-        e(gw_flow); e(old_runoff); e(old_gw_flow);
+        e(gw_flow); e(snow_depth); e(lid_drain_flow);
+        e(old_runoff); e(old_gw_flow); e(old_snow_depth); e(old_lid_drain_flow);
         e(runon_inflow); e(old_runon_inflow); e(outfall_runon_vol);
         e(gw_sw_head); e(gw_node_avail_flow); e(gw_max_infil_vol);
         e(comments); e(tags); e(rpt_flag);
@@ -930,8 +956,12 @@ struct SubcatchData {
         infil_loss.shrink_to_fit();
         ponded_depth.shrink_to_fit();
         gw_flow.shrink_to_fit();
+        snow_depth.shrink_to_fit();
+        lid_drain_flow.shrink_to_fit();
         old_runoff.shrink_to_fit();
         old_gw_flow.shrink_to_fit();
+        old_snow_depth.shrink_to_fit();
+        old_lid_drain_flow.shrink_to_fit();
         runon_inflow.shrink_to_fit();
         old_runon_inflow.shrink_to_fit();
         outfall_runon_vol.shrink_to_fit();
@@ -999,6 +1029,10 @@ struct SubcatchData {
         std::fill(ponded_depth.begin(), ponded_depth.end(), 0.0);
         std::fill(old_runoff.begin(),   old_runoff.end(),   0.0);
         std::fill(old_gw_flow.begin(),  old_gw_flow.end(),  0.0);
+        std::fill(snow_depth.begin(),   snow_depth.end(),   0.0);
+        std::fill(old_snow_depth.begin(), old_snow_depth.end(), 0.0);
+        std::fill(lid_drain_flow.begin(), lid_drain_flow.end(), 0.0);
+        std::fill(old_lid_drain_flow.begin(), old_lid_drain_flow.end(), 0.0);
         std::fill(runon_inflow.begin(), runon_inflow.end(), 0.0);
         std::fill(old_runon_inflow.begin(), old_runon_inflow.end(), 0.0);
         std::fill(gw_sw_head.begin(),   gw_sw_head.end(),   0.0);
