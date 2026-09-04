@@ -1994,6 +1994,44 @@ void resolve_cross_references(SimulationContext& ctx) {
                 }
             }
         }
+    } else {
+        // DEPTH mode: legacy link_validate (link.c:1061-1070) zeroes a
+        // NEGATIVE authored offset on every link with WARNING 03. Keeping it
+        // shifts the link's invert-relative geometry — slope, elevation
+        // drop, which conduit draws WARNING 04 — and diverges the hydraulics
+        // from the first routing step (800-node-sewer: legacy WARN03 on
+        // conduit 136687's -0.01 inOffset vs v6 WARN04 elsewhere). The ELEV
+        // branch above and the conduit conversion below already clamp their
+        // converted depths the same way. Weir/outlet crests live in the
+        // side tables (legacy keeps them in offset1 and zeroes them by the
+        // same check).
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.offset1[uj] < 0.0) {
+                ctx.warnings.push_back(format_warning(
+                    WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                ctx.links.offset1[uj] = 0.0;
+            }
+            if (ctx.links.offset2[uj] < 0.0) {
+                ctx.warnings.push_back(format_warning(
+                    WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                ctx.links.offset2[uj] = 0.0;
+            }
+            auto lt = ctx.links.type[uj];
+            if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
+                const int wr  = ctx.link_subtypes.weir_row(j);
+                const int olr = (wr < 0) ? ctx.link_subtypes.outlet_row(j) : -1;
+                double* crest = (wr >= 0)
+                    ? &ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
+                    : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
+                                : nullptr);
+                if (crest && *crest < 0.0) {
+                    ctx.warnings.push_back(format_warning(
+                        WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                    *crest = 0.0;
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
