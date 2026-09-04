@@ -1369,21 +1369,39 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         computeFinalQualityMassBalance();
     }
 
-    // Accumulate node/link results for time-step averaging (legacy RptFlags.averages)
-    if (ctx_.options.rpt_averages) {
-        accumulateAvgResults();
-    }
-
     // ---- Clear auto-reset forcings ----
     ctx_.forcing.clear_reset_entries();
 
     // Advance clock (must happen before output_due check)
     hydraulics::TimestepController::advance(ctx_, dt_next);
 
+    // Accumulate node/link results for time-step averaging with legacy's
+    // update ordering (swmm5.c saveResults): each step's END state
+    // accumulates exactly once, into the report period whose window it
+    // terminates in — a boundary hit (NewRoutingTime == ReportTime) goes to
+    // the CLOSING period (update BEFORE the save), an overshoot (>) goes to
+    // the NEXT period (update AFTER the save), and non-boundary steps always
+    // accumulate. The == compare is exact only because elapsed_ms and
+    // next_report_ms use the identical `+= 1000.0 * x` recurrences
+    // (TimestepController::advance / reset_output_timer) — keep the three
+    // sites in lockstep.
+    const bool avg_out_due =
+        ctx_.options.rpt_averages &&
+        hydraulics::TimestepController::output_due(ctx_);
+    const bool avg_exact =
+        avg_out_due && (ctx_.elapsed_ms == ctx_.next_report_ms);
+    if (ctx_.options.rpt_averages && (!avg_out_due || avg_exact)) {
+        accumulateAvgResults();
+    }
+
     // Post snapshot after advance so output_due() fires correctly.
     // All subcatch/node/link state arrays still reflect the end of the
     // just-completed routing step — advance only updates timers, not state.
     postOutputSnapshot(dt_next);
+
+    if (avg_out_due && !avg_exact) {
+        accumulateAvgResults();
+    }
 
     // Fire step-end callback
     if (callbacks_.on_step_end) {
@@ -4770,12 +4788,13 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 }
             }
 
-            // When rpt_averages is enabled, overwrite node/link snapshot arrays
-            // with time-step-averaged values (subcatchments stay point-in-time,
-            // matching legacy behavior).
-            if (ctx_.options.rpt_averages) {
-                applyAvgResults(snap);
-            }
+            // When rpt_averages is enabled, the node/link snapshot arrays are
+            // overwritten with time-step averages AFTER the display-unit
+            // conversion below (the accumulators hold float32 DISPLAY values,
+            // legacy output.c:72). The averaging machinery covers ONLY nodes
+            // and links — legacy writes subcatchment results via
+            // subcatch_getResults(j, f) unconditionally (output.c:479-490),
+            // so the interpolated subcatch blocks below run in ALL modes.
 
             // Copy subcatchment state
             // Rainfall, infil, and evap all come from the most recent runoff
@@ -4855,9 +4874,10 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // column previously used the raw constant new value, so the reported
             // runoff stepped instead of ramping within a WET_STEP. This is
             // OUTPUT-ONLY (the applied routing inflow is unchanged). Legacy also
-            // zeroes runoff below MIN_RUNOFF * area_ft2. Skipped under rpt_averages
-            // (that path accumulates its own average).
-            if (!ctx_.options.rpt_averages) {
+            // zeroes runoff below MIN_RUNOFF * area_ft2. Runs in ALL report
+            // modes — the averages machinery covers only nodes/links; legacy
+            // interpolates subcatchments unconditionally (output.c:479-490).
+            {
                 constexpr double MIN_RUNOFF = 2.31481e-8;  // ft/s (legacy consts.h)
                 // Weight at the REPORT instant (legacy output.c:593):
                 // f = (reportTime - OldRunoffTime)/(NewRunoffTime - OldRunoffTime).
@@ -4986,10 +5006,23 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 const double vol_ucf = ucf::Ucf[ucf::VOLUME][
                     ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units))];
                 float tot_store = 0.0f;
-                for (std::size_t uj = 0; uj < snap.nodes.volume.size(); ++uj)
-                    tot_store += static_cast<float>(snap.nodes.volume[uj] * vol_ucf);
-                for (std::size_t uj = 0; uj < snap.links.volume.size(); ++uj)
-                    tot_store += static_cast<float>(snap.links.volume[uj] * vol_ucf);
+                if (ctx_.options.rpt_averages) {
+                    // Averages mode: legacy output_saveAvgResults sums the
+                    // RAW end-of-step volumes over ALL nodes then ALL links
+                    // (output.c:926-948, Node/Link newVolume), not the
+                    // averaged or interpolated report values.
+                    for (int j = 0; j < ctx_.n_nodes(); ++j)
+                        tot_store += static_cast<float>(
+                            reportedNodeVolume(j) * vol_ucf);
+                    for (std::size_t uj = 0; uj < ctx_.links.volume.size(); ++uj)
+                        tot_store += static_cast<float>(
+                            ctx_.links.volume[uj] * vol_ucf);
+                } else {
+                    for (std::size_t uj = 0; uj < snap.nodes.volume.size(); ++uj)
+                        tot_store += static_cast<float>(snap.nodes.volume[uj] * vol_ucf);
+                    for (std::size_t uj = 0; uj < snap.links.volume.size(); ++uj)
+                        tot_store += static_cast<float>(snap.links.volume[uj] * vol_ucf);
+                }
                 snap.sys_storage = static_cast<double>(tot_store) / vol_ucf;
             }
 
@@ -5009,6 +5042,14 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // data directly (2D surface_* fields stay SI-native, untouched).
             const auto du = ucf::DisplayUnits::from(ctx_.options);
             convertSnapshotToDisplay(snap, du);
+
+            // Averages mode: overwrite node/link arrays with the float32
+            // display-unit averages (legacy output_saveAvgResults). Must be
+            // after the conversion boundary — the accumulators already hold
+            // display values.
+            if (ctx_.options.rpt_averages) {
+                applyAvgResults(snap);
+            }
 
             // Reproduce legacy node_getResults() NODE_HEAD bit-for-bit (node.c:484-486):
             //   x[NODE_DEPTH] = (float)(depth_disp);
@@ -5455,40 +5496,63 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
 // ============================================================================
 
 void SWMMEngine::accumulateAvgResults() noexcept {
-    // Node accumulators: depth, head, volume, lat_inflow, total_inflow, overflow
+    // Legacy output_updateAvgResults (output.c:853-901): per routing step it
+    // evaluates node_getResults/link_getResults at f = 1.0 — the REAL4
+    // DISPLAY-unit report values — and adds them into REAL4 xAvg slots. The
+    // whole chain is float32 arithmetic on display values; reproduce it
+    // exactly (see AvgAccumulator). Quality columns are NOT averaged yet —
+    // legacy also averages NODE_QUAL/LINK_QUAL; documented follow-up.
+    const auto du = ucf::DisplayUnits::from(ctx_.options);
+
+    // Node slots — legacy node_getResults at f = 1 (node.c:481-505):
+    // head = f32(depth_display) + f32(invert_display), summed in float.
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        avg_.node_depth[uj]        += ctx_.nodes.depth[uj];
-        avg_.node_head[uj]         += ctx_.nodes.head[uj];
-        avg_.node_volume[uj]       += ctx_.nodes.volume[uj];
-        avg_.node_lat_inflow[uj]   += ctx_.nodes.lat_flow[uj];
-        avg_.node_total_inflow[uj] += ctx_.nodes.inflow[uj];
-        avg_.node_overflow[uj]     += ctx_.nodes.overflow[uj];
+        const float dd =
+            static_cast<float>(ctx_.nodes.depth[uj] * du.length);
+        avg_.node_depth[uj] += dd;
+        avg_.node_head[uj] += dd +
+            static_cast<float>(ctx_.nodes.invert_elev[uj] * du.length);
+        avg_.node_volume[uj] +=
+            static_cast<float>(reportedNodeVolume(j) * du.volume);
+        avg_.node_lat_inflow[uj] +=
+            static_cast<float>(ctx_.nodes.lat_flow[uj] * du.flow);
+        avg_.node_total_inflow[uj] +=
+            static_cast<float>(ctx_.nodes.inflow[uj] * du.flow);
+        avg_.node_overflow[uj] +=
+            static_cast<float>(ctx_.nodes.overflow[uj] * du.flow);
     }
 
-    // Link accumulators: flow, depth, velocity, volume, capacity
+    // Link slots — legacy link_getResults at f = 1 (link.c:677-727):
+    // flow/velocity carry direction; velocity converts with UCF(LENGTH).
     ensureXspCache();
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q = ctx_.links.flow[uj];
         double d = ctx_.links.depth[uj];
+        const double dir = static_cast<double>(ctx_.links.direction[uj]);
 
-        avg_.link_flow[uj]   += q;
-        avg_.link_depth[uj]  += d;
-        avg_.link_volume[uj] += ctx_.links.volume[uj];
+        avg_.link_flow[uj]   += static_cast<float>(q * du.flow * dir);
+        avg_.link_depth[uj]  += static_cast<float>(d * du.length);
+        avg_.link_volume[uj] +=
+            static_cast<float>(ctx_.links.volume[uj] * du.volume);
 
         auto lt = ctx_.links.type[uj];
         if (lt == LinkType::CONDUIT) {
             const XSectParams& xs = xsp_cache_[uj];
             const int cr = ctx_.link_subtypes.conduit_row(j);
             const int nb = (cr >= 0) ? ctx_.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] : 1;
-            avg_.link_velocity[uj] += link::getVelocity(xs, q, d, nb);
-            avg_.link_capacity[uj] += link::getCapacity(xs, d);
+            avg_.link_velocity[uj] += static_cast<float>(
+                link::getVelocity(xs, q, d, nb) * du.length * dir);
+            avg_.link_capacity[uj] +=
+                static_cast<float>(link::getCapacity(xs, d));
         } else {
             // Non-conduit capacity (pump speed, regulator opening):
             // Legacy preserves last value — multiply by (n_steps+1) so that
-            // division by n_steps in applyAvgResults yields the last value.
-            avg_.link_capacity[uj] = ctx_.links.setting[uj] * (avg_.n_steps + 1);
+            // division by n_steps in applyAvgResults yields the last value
+            // (output.c:889-895; float times int, in float).
+            avg_.link_capacity[uj] = static_cast<float>(ctx_.links.setting[uj])
+                * static_cast<float>(avg_.n_steps + 1);
         }
     }
 
@@ -5501,28 +5565,32 @@ void SWMMEngine::accumulateAvgResults() noexcept {
 
 void SWMMEngine::applyAvgResults(SimulationSnapshot& snap) noexcept {
     if (avg_.n_steps <= 0) return;
-    double inv = 1.0 / avg_.n_steps;
+    // Legacy output_saveAvgResults (output.c:907-951): REAL4 slot divided by
+    // Nsteps in float arithmetic. The results are DISPLAY-unit values, so
+    // this must run AFTER convertSnapshotToDisplay — the doubles written
+    // here hold exact float32 values that the writer's final float cast
+    // reproduces bit-for-bit.
+    const float n = static_cast<float>(avg_.n_steps);
 
-    // Average node results
+    // Average node results (direction/units already in the accumulators)
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        snap.nodes.depth[uj]          = avg_.node_depth[uj] * inv;
-        snap.nodes.head[uj]           = avg_.node_head[uj] * inv;
-        snap.nodes.volume[uj]         = avg_.node_volume[uj] * inv;
-        snap.nodes.lateral_inflow[uj] = avg_.node_lat_inflow[uj] * inv;
-        snap.nodes.total_inflow[uj]   = avg_.node_total_inflow[uj] * inv;
-        snap.nodes.overflow[uj]       = avg_.node_overflow[uj] * inv;
+        snap.nodes.depth[uj]          = avg_.node_depth[uj] / n;
+        snap.nodes.head[uj]           = avg_.node_head[uj] / n;
+        snap.nodes.volume[uj]         = avg_.node_volume[uj] / n;
+        snap.nodes.lateral_inflow[uj] = avg_.node_lat_inflow[uj] / n;
+        snap.nodes.total_inflow[uj]   = avg_.node_total_inflow[uj] / n;
+        snap.nodes.overflow[uj]       = avg_.node_overflow[uj] / n;
     }
 
-    // Average link results (direction applied here, not during accumulation)
+    // Average link results
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        int dir = ctx_.links.direction[uj];
-        snap.links.flow[uj]     = avg_.link_flow[uj] * inv * dir;
-        snap.links.depth[uj]    = avg_.link_depth[uj] * inv;
-        snap.links.velocity[uj] = avg_.link_velocity[uj] * inv * dir;
-        snap.links.volume[uj]   = avg_.link_volume[uj] * inv;
-        snap.links.capacity[uj] = avg_.link_capacity[uj] * inv;
+        snap.links.flow[uj]     = avg_.link_flow[uj] / n;
+        snap.links.depth[uj]    = avg_.link_depth[uj] / n;
+        snap.links.velocity[uj] = avg_.link_velocity[uj] / n;
+        snap.links.volume[uj]   = avg_.link_volume[uj] / n;
+        snap.links.capacity[uj] = avg_.link_capacity[uj] / n;
     }
 
     // Reset for next report period
