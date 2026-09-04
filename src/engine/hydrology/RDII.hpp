@@ -134,8 +134,15 @@ struct RDIIGroupSoA {
     std::vector<UHResponseData> uh_data;
 
     std::vector<int>    rain_interval;  ///< Rain processing interval (sec) per group
-    std::vector<double> time_accum;     ///< Accumulated time (sec) within current interval
-    std::vector<double> rain_at_start;  ///< Rainfall (in/hr) captured at start of interval
+
+    // Strict-grid driver state (legacy createRdiiFile embedded at runtime).
+    // Chunk starts advance in rain_interval steps from simulation start;
+    // rates are recorded per chunk while the runoff substep containing the
+    // chunk's start is current (the substep never crosses a gage entry
+    // boundary, so the current gage rate IS the rate at the chunk start).
+    std::vector<double> gage_elapsed;         ///< Chunk cursor (sec, legacy UHGroup.gageDate)
+    std::vector<double> rate_recorded_until;  ///< Chunk starts with recorded rates (sec)
+    std::vector<std::vector<double>> pending_rates;  ///< FIFO of recorded chunk rates
 
     void resize(int n);
 };
@@ -166,22 +173,40 @@ public:
     const UhNameMap& uhNameIndex() const { return uh_name_to_idx_; }
 
     /**
-     * @brief Compute RDII inflows for all groups (buffered, not added to lat_flow).
+     * @brief Advance the strict-grid RDII computation to a runoff clock time.
      *
-     * @details Reads per-group gage rainfall from ctx.gages.rainfall[gage_idx].
-     *          Convolution: RDII = sum(pastRain[i] * r[m][k] * u(t))
-     *          Results are stored in node_rdii_flow_ for later application.
-     *          Should be called at the wet weather step (matching legacy RdiiStep = WetStep).
+     * @details Embeds legacy createRdiiFile()'s driver at runtime: RDII is
+     *          evaluated on the fixed RdiiStep (= wet_step) grid anchored at
+     *          simulation start, with each group's rainfall processed in its
+     *          own rain_interval chunks — NOT on the runoff substep cadence.
+     *          (The previous per-substep accumulator crossed at most one rain
+     *          interval per runoff substep, so a DRY_STEP jump swallowed the
+     *          intermediate intervals: dry-period tracking, IA recovery and
+     *          the convolution grid all corrupted, showing as an RDII onset
+     *          lead/lag of about one wet step.)
+     *
+     *          Call once per runoff substep after gage rates (and monthly
+     *          adjustment) are updated, with the substep's END elapsed time.
+     *          The substep never crosses a gage entry boundary (the runoff
+     *          timestep is capped to the next rain date), so the current gage
+     *          rate is exact for every chunk starting inside the substep.
+     *          Per-tick node flows are stored float32 with the legacy
+     *          ZERO_RDII threshold, one grid row per tick, zero-order held
+     *          over [tick, tick + wet_step) at lookup, matching the RDII
+     *          interface file's record windows.
      */
-    void computeAll(SimulationContext& ctx, int month, double dt);
+    void advance(SimulationContext& ctx, double new_elapsed_sec);
 
     /**
-     * @brief Apply buffered RDII inflows to node lateral flows.
+     * @brief Apply RDII inflows at a routing time to node lateral flows.
      *
-     * @details Called during routing to add pre-computed RDII to lat_flow,
-     *          matching legacy addRdiiInflows() which reads from the RDII file.
+     * @details Looks up the strict-grid row whose window contains
+     *          elapsed_sec (the START of the routing step, matching legacy
+     *          addRdiiInflows(currentDate) with currentDate taken at
+     *          routing_execute entry) and adds the stored float32 flows to
+     *          nodes.rdii_inflow.
      */
-    void applyRdiiInflows(SimulationContext& ctx) const;
+    void applyRdiiInflows(SimulationContext& ctx, double elapsed_sec) const;
 
     std::vector<UnitHydParams> uh_params;
 
@@ -207,7 +232,17 @@ public:
 private:
     RDIIGroupSoA groups_;
     UhNameMap uh_name_to_idx_;  ///< UH group name → index (case-insensitive)
-    std::vector<double> node_rdii_flow_;  ///< Buffered per-node RDII flow (CFS)
+    std::vector<double> node_rdii_flow_;  ///< Latest tick's per-node RDII flow (CFS)
+
+    // Strict grid (legacy createRdiiFile records, kept in memory).
+    double grid_step_ = 0.0;        ///< RdiiStep (sec) = wet_step
+    double next_tick_ = 0.0;        ///< Next un-emitted tick (elapsed sec)
+    std::vector<int>   grid_node_;  ///< Column → node index (sorted unique)
+    std::vector<float> grid_flows_; ///< Emitted rows × grid_node_.size(), REAL4
+
+    /// Emit one strict-grid tick at elapsed time T: catch each group's chunk
+    /// processing up to T, convolve, threshold and store the node-flow row.
+    void emitTick(SimulationContext& ctx, double T);
 
     /// Compute UH ordinate at time t for response k, month m.
     double uhOrdinate(const UnitHydParams& uh, int month, int response, double t) const;

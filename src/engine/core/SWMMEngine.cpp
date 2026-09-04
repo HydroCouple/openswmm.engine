@@ -1677,8 +1677,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 && !ctx_.options.ignore_rainfall
                 && !(rdii_iface_file_.isOpen()
                      && !rdii_iface_file_.isWriting())) {
-                int rdii_month_use = datetime::monthOfYear(abs_time) - 1;
-                rdii_.computeAll(ctx_, rdii_month_use, file_dt);
+                rdii_.advance(ctx_, new_runoff_time_);
             }
             continue;   // file replaces snowmelt/runoff/GW/LID/quality steps
         }
@@ -1717,8 +1716,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // straight from the interface file in stepRouting() B2a
                 // (legacy rdii_openRdii() skips createRdiiFile()).
             } else {
-                int rdii_month = datetime::monthOfYear(abs_time) - 1;
-                rdii_.computeAll(ctx_, rdii_month, dt_runoff);
+                rdii_.advance(ctx_, new_runoff_time_);
                 // [FILES] SAVE RDII: export the freshly computed flows
                 // (legacy saveRdiiFlows(): date + per-node cfs).
                 if (rdii_iface_file_.isOpen() && rdii_iface_file_.isWriting()) {
@@ -3435,7 +3433,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         if (rdii_iface_file_.isOpen() && !rdii_iface_file_.isWriting()) {
             rdii_iface_file_.applyFlows(ctx_, ctx_.current_date);
         } else {
-            rdii_.applyRdiiInflows(ctx_);
+            // ctx_.current_time is the START of this routing step, matching
+            // legacy addRdiiInflows(currentDate) taken at routing_execute
+            // entry before the clock advances.
+            rdii_.applyRdiiInflows(ctx_, ctx_.current_time);
         }
     }
 
@@ -4763,6 +4764,66 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.subcatch.runoff   = ctx_.subcatches.runoff;
             snap.subcatch.gw_flow  = ctx_.subcatches.gw_flow;
 
+            // Legacy-parity reported losses on LID subcatchments. Legacy
+            // (subcatch.c:740-744) reports rates averaged over the FULL
+            // subcatchment area and includes the LID units' own losses:
+            //   evapLoss  = Vevap / tStep / area   (Vevap includes LID evap)
+            //   infilLoss = (Vinfil + VlidInfil) / tStep / area
+            // This engine keeps evap_loss/infil_loss averaged over the
+            // NON-LID area with the LID losses ledgered separately (see
+            // accumulateRunoffMassBalance) — coherent internally, but the
+            // reported value must be legacy's. Rebuild it here from the
+            // non-LID rate and the LID units' last-step losses (per-step
+            // depths over each unit's area; the last runoff step's span is
+            // the divisor legacy used when it formed the rate).
+            {
+                const double land2ft2 =
+                    1.0 / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                const double dt_last =
+                    (new_runoff_ms_ - old_runoff_ms_) / 1000.0;
+                const auto& rsoa = runoff_.soa();
+                std::vector<double> lid_evap_cfs, lid_infil_cfs;
+                for (int t = 0; t < lid_.numGroups(); ++t) {
+                    const auto& g = lid_.group(t);
+                    for (int u = 0; u < g.count; ++u) {
+                        auto uu = static_cast<std::size_t>(u);
+                        int sc = g.subcatch_idx[uu];
+                        if (sc < 0 || sc >= ctx_.n_subcatches() ||
+                            dt_last <= 0.0) continue;
+                        if (lid_evap_cfs.empty()) {
+                            auto un = static_cast<std::size_t>(
+                                ctx_.n_subcatches());
+                            lid_evap_cfs.assign(un, 0.0);
+                            lid_infil_cfs.assign(un, 0.0);
+                        }
+                        auto usc = static_cast<std::size_t>(sc);
+                        lid_evap_cfs[usc] +=
+                            g.evap_loss[uu] * g.area[uu] / dt_last;
+                        lid_infil_cfs[usc] +=
+                            g.infil_loss[uu] * g.area[uu] / dt_last;
+                    }
+                }
+                for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                    auto ui = static_cast<std::size_t>(i);
+                    if (ctx_.subcatches.total_lid_area_ft2[ui] <= 0.0)
+                        continue;
+                    const double full_ft2 =
+                        ctx_.subcatches.area[ui] * land2ft2;
+                    if (full_ft2 <= 0.0) continue;
+                    const double nonlid_ft2 = rsoa.area[ui];
+                    const double ev = lid_evap_cfs.empty()
+                        ? 0.0 : lid_evap_cfs[ui];
+                    const double in = lid_infil_cfs.empty()
+                        ? 0.0 : lid_infil_cfs[ui];
+                    snap.subcatch.evap[ui] =
+                        (ctx_.subcatches.evap_loss[ui] * nonlid_ft2 + ev)
+                        / full_ft2;
+                    snap.subcatch.infil[ui] =
+                        (ctx_.subcatches.infil_loss[ui] * nonlid_ft2 + in)
+                        / full_ft2;
+                }
+            }
+
             // Report subcatchment RUNOFF time-interpolated between the old/new
             // WET_STEP values, matching legacy subcatch_getResults (subcatch.c:865)
             // + output.c:323 which use f = (reportTime-OldRunoffTime)/span. The
@@ -4856,64 +4917,18 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             snap.sys_temperature =
                 has_subcatchments ? ctx_.climate_state.temperature : 0.0;
 
-            // Area-weighted average rainfall across subcatchments
-            // (matching legacy output_saveSubcatchResults accumulation)
-            // Uses snap.subcatch.rainfall (queried at report time above)
-            {
-                double total_rain = 0.0;
-                double total_area = 0.0;
-                for (int s = 0; s < ctx_.n_subcatches(); ++s) {
-                    auto us = static_cast<std::size_t>(s);
-                    double a = ctx_.subcatches.area[us];
-                    total_rain += snap.subcatch.rainfall[us] * a;
-                    total_area += a;
-                }
-                snap.sys_rainfall = (total_area > 0.0)
-                    ? total_rain / total_area : 0.0;
-            }
-
-            // Area-weighted average snow depth across all subcatchments.
-            // Gap #60: weight by non-LID area (matches legacy snow_getSnowCover).
-            {
-                double total_snow = 0.0;
-                double total_area = 0.0;
-                for (int s = 0; s < ctx_.n_subcatches(); ++s) {
-                    auto us = static_cast<std::size_t>(s);
-                    double a = ctx_.subcatches.area[us]
-                               - ctx_.subcatches.total_lid_area_ft2[us] / 43560.0;
-                    if (a < 0.0) a = 0.0;
-                    total_snow += snap.subcatch.snow_depth[us] * a;
-                    total_area += a;
-                }
-                snap.sys_snow_depth = (total_area > 0.0) ? total_snow / total_area : 0.0;
-            }
+            // The subcatchment-derived system results (rainfall, snow depth,
+            // evap, infil, runoff) are computed AFTER the unit-conversion
+            // boundary from the reported per-subcatch float32 values — see the
+            // legacy-REAL4 accumulation block below. Zero them here so a deck
+            // with no subcatchments writes legacy's zero-initialised
+            // SysResults and the conversion boundary scales inert values.
+            snap.sys_rainfall   = 0.0;
+            snap.sys_snow_depth = 0.0;
+            snap.sys_evap       = 0.0;
+            snap.sys_infil      = 0.0;
+            snap.sys_runoff     = 0.0;
             snap.sys_pet = has_subcatchments ? ctx_.climate_state.evap_rate : 0.0;
-
-            // Area-weighted averages of evap and infil; total runoff
-            // Legacy adds GW evaporation (gw->evapLoss) to system evap
-            // (output.c:612-613): SYS_EVAP += gw->evapLoss * UCF(EVAPRATE) * area
-            {
-                double tot_evap = 0.0, tot_infil = 0.0, tot_runoff = 0.0;
-                double total_area = 0.0;
-                const auto& gw = groundwater_.state();
-                for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-                    auto ui = static_cast<std::size_t>(i);
-                    double a = ctx_.subcatches.area[ui];
-                    tot_evap   += ctx_.subcatches.evap_loss[ui] * a;
-                    // Add GW evaporation (matching legacy output.c:612-613)
-                    if (ctx_.subcatches.gw_aquifer[ui] >= 0 &&
-                        ui < gw.upper_evap.size()) {
-                        double gw_evap = gw.upper_evap[ui] + gw.lower_evap[ui];
-                        tot_evap += gw_evap * a;
-                    }
-                    tot_infil  += ctx_.subcatches.infil_loss[ui] * a;
-                    tot_runoff += ctx_.subcatches.runoff[ui];
-                    total_area += a;
-                }
-                snap.sys_evap   = (total_area > 0.0) ? tot_evap / total_area : 0.0;
-                snap.sys_infil  = (total_area > 0.0) ? tot_infil / total_area : 0.0;
-                snap.sys_runoff = tot_runoff;
-            }
 
             snap.sys_dw_inflow  = ctx_.mass_balance.step_dw_inflow;
             snap.sys_gw_inflow  = ctx_.mass_balance.step_gw_inflow;
@@ -5010,6 +5025,63 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                         (g >= 0 && g < nG)
                             ? gage_report[static_cast<std::size_t>(g)] : 0.0;
                 }
+            }
+
+            // Legacy-parity subcatchment-derived system results. Legacy
+            // accumulates SysResults (a REAL4 array) from the REPORTED
+            // per-subcatch float32 display-unit values as it writes them
+            // (output.c:596-630): SYS_RUNOFF is a plain float sum of
+            // SUBCATCH_RUNOFF, the others are area-weighted with a REAL4
+            // running totalArea and divided in float at the end. Summing the
+            // raw double state diverged three ways: no report-time
+            // interpolation, no MIN_RUNOFF zeroing (an LID draining to
+            // pervious keeps a sub-threshold trickle alive that legacy
+            // reports as 0.0 system runoff for the rest of the run), and
+            // double instead of float32 rounding. The writer's SYS_INFLOW
+            // (reader name TOTAL_LATFLOW) is a float sum that includes
+            // SYS_RUNOFF, so it inherits this fix. Placed after the
+            // conversion boundary (and after the gage report-rainfall
+            // overwrite) so the accumulation sees exactly the float32 values
+            // the writer emits; ctx_.subcatches.area is already in display
+            // land-area units (legacy's Subcatch[j].area * UCF(LANDAREA)).
+            if (has_subcatchments) {
+                float total_area = 0.0f;
+                float a_rain = 0.0f, a_snow = 0.0f, a_evap = 0.0f;
+                float a_infil = 0.0f, a_runoff = 0.0f;
+                const auto& gw = groundwater_.state();
+                for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                    auto ui = static_cast<std::size_t>(i);
+                    const double area = ctx_.subcatches.area[ui];
+                    total_area += static_cast<float>(area);
+                    a_rain += static_cast<float>(
+                        static_cast<float>(snap.subcatch.rainfall[ui]) * area);
+                    a_snow += static_cast<float>(
+                        static_cast<float>(snap.subcatch.snow_depth[ui]) * area);
+                    a_evap += static_cast<float>(
+                        static_cast<float>(snap.subcatch.evap[ui]) * area);
+                    // Legacy adds GW evaporation un-rounded (output.c:616-617):
+                    // SYS_EVAP += (REAL4)(gw->evapLoss * UCF(EVAPRATE) * area)
+                    if (ctx_.subcatches.gw_aquifer[ui] >= 0 &&
+                        ui < gw.upper_evap.size()) {
+                        a_evap += static_cast<float>(
+                            (gw.upper_evap[ui] + gw.lower_evap[ui]) *
+                            du.evaprate * area);
+                    }
+                    a_infil += static_cast<float>(
+                        static_cast<float>(snap.subcatch.infil[ui]) * area);
+                    a_runoff += static_cast<float>(snap.subcatch.runoff[ui]);
+                }
+                if (total_area > 0.0) {
+                    a_evap  /= total_area;
+                    a_rain  /= total_area;
+                    a_snow  /= total_area;
+                    a_infil /= total_area;
+                }
+                snap.sys_rainfall   = static_cast<double>(a_rain);
+                snap.sys_snow_depth = static_cast<double>(a_snow);
+                snap.sys_evap       = static_cast<double>(a_evap);
+                snap.sys_infil      = static_cast<double>(a_infil);
+                snap.sys_runoff     = static_cast<double>(a_runoff);
             }
 
             // ---------------------------------------------------------------
