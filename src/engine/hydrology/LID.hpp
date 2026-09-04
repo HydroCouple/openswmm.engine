@@ -101,6 +101,7 @@ struct LIDGroupSoA {
     std::vector<int>    drain_subcatch;///< Resolved drain-to subcatch index (-1=none)
     std::vector<double> inflow;        ///< Per-unit inflow rate (ft/sec) — set before execute()
     std::vector<double> evap_rate_unit;///< Per-unit effective PET rate (ft/sec) — filled by execute()
+    std::vector<double> subcatch_rain; ///< Parent subcatchment rainfall (ft/sec) — for the rain-barrel dry-time reset (legacy lid.c:1920)
 
     // Surface layer
     std::vector<double> surf_store;    ///< Surface storage depth (ft)
