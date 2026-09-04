@@ -113,9 +113,10 @@ struct OrificeGroup {
     int count = 0;
     std::vector<int>    link_idx;
     std::vector<int>    shape;         ///< BOTTOM or SIDE
-    std::vector<double> c_orifice;     ///< Cd * sqrt(2g) * Area
-    std::vector<double> c_weir;        ///< Cd * L * sqrt(2g) for partial fill
-    std::vector<double> h_crit;        ///< Transition depth
+    // No cached cOrif/cWeir/hCrit: legacy orifice_setSetting recomputes them
+    // from the CURRENT setting every step, so computeOrificeFlowK derives
+    // them inline per call (see the legacy-exact block there) — an init-time
+    // snapshot at full opening could only ever go stale.
     // No cached flap-gate flag: the kernels read ctx.links.has_flap_gate (and
     // flapGateBlocks) directly, so a stale init-time snapshot cannot diverge.
     /// Most-recently-computed surface area (ft²) for scatter into node
