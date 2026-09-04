@@ -407,23 +407,24 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // TS-driven entries (tseries slot == -2, name pending) are excluded:
     // their value is overwritten from the table each step and scaled at
     // lookup time; rating-curve discharges are likewise resolved per step.
-    // Guarded so a repeated initialize() on the same engine (Python / API
-    // hosts) does not scale the same constants twice; the flag also tells
-    // the writers to divide edge_bc_flow back to display units.
-    if (!bc_constants_scaled_) {
-        for (int idx = 0; idx < boundary_.size(); ++idx) {
-            const auto bt =
-                static_cast<BoundaryType>(boundary_.edge_bc_type[idx]);
-            if (bt == BoundaryType::SPECIFIED_STAGE
-                && boundary_.edge_bc_tseries[idx] == -1)
-                boundary_.edge_bc_head[idx] *= bc_stage_scale_;
-            else if (bt == BoundaryType::SPECIFIED_FLOW
-                     && boundary_.edge_bc_flow_tseries[idx] == -1)
-                boundary_.edge_bc_flow[idx] *= bc_flow_scale_;
-        }
-        bc_constants_scaled_ = true;
-        options_.bc_flow_to_si_applied = bc_flow_scale_;
+    // NOT guarded across initializes: drainPendingRows() above re-defaults
+    // boundary_ and re-applies the AUTHORED (display-unit) rows every time,
+    // so scaling once per drain IS exactly-once per value — a scaled-once
+    // flag here made a repeated initialize() revert the constants to their
+    // raw authored numbers (drain re-applied them, the guard skipped the
+    // rescale) and the writer then divided the raw flow a second time.
+    for (int idx = 0; idx < boundary_.size(); ++idx) {
+        const auto bt =
+            static_cast<BoundaryType>(boundary_.edge_bc_type[idx]);
+        if (bt == BoundaryType::SPECIFIED_STAGE
+            && boundary_.edge_bc_tseries[idx] == -1)
+            boundary_.edge_bc_head[idx] *= bc_stage_scale_;
+        else if (bt == BoundaryType::SPECIFIED_FLOW
+                 && boundary_.edge_bc_flow_tseries[idx] == -1)
+            boundary_.edge_bc_flow[idx] *= bc_flow_scale_;
     }
+    // Tells the writers to divide edge_bc_flow back to display units.
+    options_.bc_flow_to_si_applied = bc_flow_scale_;
 
     // A NORMAL_FLOW edge with zero bed slope produces zero Manning flux —
     // it silently behaves as a Wall (no auto-compute from bed geometry
@@ -901,6 +902,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     active_ = true;
     sim_time_ = 0.0;
     pending_dt_ = 0.0;
+    report_old_depth_.assign(
+        static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+    report_old_head_.assign(
+        static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+    report_window_old_ms_ = 0.0;
+    report_window_new_ms_ = 0.0;
+    report_old_valid_ = false;
 
     resetWindowAccumulators();
 
@@ -965,6 +973,23 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                                     double t) {
     if (dt <= 0.0) return;
     perf::ScopedTimer tm_window(perf::sec_2d_window);
+    // Report-time blend: when this batch reaches/crosses the next report
+    // instant, capture the batch-start depth/head as the blend's old side
+    // (~two full-mesh copies once per REPORT step, not per routing step).
+    // The ms window mirrors ctx.elapsed_ms's `+= 1000*dt` recurrence —
+    // under default per-routing-step coupling the sequences are identical.
+    {
+        const double window_end_ms = report_window_new_ms_ + 1000.0 * dt;
+        if (window_end_ms >= ctx.next_report_ms) {
+            std::copy(state_.depth.begin(), state_.depth.end(),
+                      report_old_depth_.begin());
+            std::copy(state_.head.begin(), state_.head.end(),
+                      report_old_head_.begin());
+            report_window_old_ms_ = report_window_new_ms_;
+            report_old_valid_ = true;
+        }
+        report_window_new_ms_ = window_end_ms;
+    }
     // Snapshot for computeCellContinuity, taken only on the batch whose
     // output refresh will consume it. The diagnostic is
     // (volume - old_volume)/dt against the END-OF-BATCH flux and source
@@ -1312,16 +1337,33 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
 }
 
 
-void SurfaceRouter2D::prepareOneShotForcing(SimulationContext& ctx) {
+void SurfaceRouter2D::flushPendingBatch(SimulationContext& ctx) {
     if (!active_) return;
-
-    // Flush the partial sync batch so the one-shot forcing applies to future
-    // time only; the next batch picks up the new prescription.
     if (pending_dt_ > 0.0) {
         const double span = pending_dt_;
         pending_dt_ = 0.0;
         coAdvanceStep(ctx, span, last_t_);
     }
+}
+
+
+double SurfaceRouter2D::reportWeight(double report_ms) const noexcept {
+    if (!report_old_valid_) return 1.0;
+    const double span = report_window_new_ms_ - report_window_old_ms_;
+    if (span <= 0.0) return 1.0;
+    double f = (report_ms - report_window_old_ms_) / span;
+    if (f < 0.0) f = 0.0;
+    if (f > 1.0) f = 1.0;
+    return f;
+}
+
+
+void SurfaceRouter2D::prepareOneShotForcing(SimulationContext& ctx) {
+    if (!active_) return;
+
+    // Flush the partial sync batch so the one-shot forcing applies to future
+    // time only; the next batch picks up the new prescription.
+    flushPendingBatch(ctx);
 }
 
 
