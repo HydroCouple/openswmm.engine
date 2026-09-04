@@ -497,54 +497,59 @@ private:
     // -----------------------------------------------------------------------
     // When rpt_averages is true, node and link results are accumulated over
     // each routing step and averaged at report boundaries.  Subcatchment
-    // results are always point-in-time (matching legacy).
+    // results are always interpolated point values (matching legacy).
+    // PARITY: the accumulators are float32 DISPLAY-unit sums — legacy's xAvg
+    // slots are REAL4 fed by node_getResults/link_getResults at f = 1.0
+    // (output.c:72, 853-901), so the whole accumulate/divide chain is float
+    // arithmetic on display values. Accumulating doubles (or internal units)
+    // diverges by ~1e-5 rel over a report period.
     struct AvgAccumulator {
         // Node accumulators (6 variables per node)
-        std::vector<double> node_depth;
-        std::vector<double> node_head;
-        std::vector<double> node_volume;
-        std::vector<double> node_lat_inflow;
-        std::vector<double> node_total_inflow;
-        std::vector<double> node_overflow;
+        std::vector<float> node_depth;
+        std::vector<float> node_head;
+        std::vector<float> node_volume;
+        std::vector<float> node_lat_inflow;
+        std::vector<float> node_total_inflow;
+        std::vector<float> node_overflow;
 
         // Link accumulators (5 variables per link)
-        std::vector<double> link_flow;
-        std::vector<double> link_depth;
-        std::vector<double> link_velocity;
-        std::vector<double> link_volume;
-        std::vector<double> link_capacity;
+        std::vector<float> link_flow;
+        std::vector<float> link_depth;
+        std::vector<float> link_velocity;
+        std::vector<float> link_volume;
+        std::vector<float> link_capacity;
 
         int n_steps = 0;  ///< Number of routing steps accumulated
 
         void resize(int n_nodes, int n_links) {
             auto un = static_cast<std::size_t>(n_nodes);
             auto ul = static_cast<std::size_t>(n_links);
-            node_depth.assign(un, 0.0);
-            node_head.assign(un, 0.0);
-            node_volume.assign(un, 0.0);
-            node_lat_inflow.assign(un, 0.0);
-            node_total_inflow.assign(un, 0.0);
-            node_overflow.assign(un, 0.0);
-            link_flow.assign(ul, 0.0);
-            link_depth.assign(ul, 0.0);
-            link_velocity.assign(ul, 0.0);
-            link_volume.assign(ul, 0.0);
-            link_capacity.assign(ul, 0.0);
+            node_depth.assign(un, 0.0f);
+            node_head.assign(un, 0.0f);
+            node_volume.assign(un, 0.0f);
+            node_lat_inflow.assign(un, 0.0f);
+            node_total_inflow.assign(un, 0.0f);
+            node_overflow.assign(un, 0.0f);
+            link_flow.assign(ul, 0.0f);
+            link_depth.assign(ul, 0.0f);
+            link_velocity.assign(ul, 0.0f);
+            link_volume.assign(ul, 0.0f);
+            link_capacity.assign(ul, 0.0f);
             n_steps = 0;
         }
 
         void reset() {
-            std::fill(node_depth.begin(), node_depth.end(), 0.0);
-            std::fill(node_head.begin(), node_head.end(), 0.0);
-            std::fill(node_volume.begin(), node_volume.end(), 0.0);
-            std::fill(node_lat_inflow.begin(), node_lat_inflow.end(), 0.0);
-            std::fill(node_total_inflow.begin(), node_total_inflow.end(), 0.0);
-            std::fill(node_overflow.begin(), node_overflow.end(), 0.0);
-            std::fill(link_flow.begin(), link_flow.end(), 0.0);
-            std::fill(link_depth.begin(), link_depth.end(), 0.0);
-            std::fill(link_velocity.begin(), link_velocity.end(), 0.0);
-            std::fill(link_volume.begin(), link_volume.end(), 0.0);
-            std::fill(link_capacity.begin(), link_capacity.end(), 0.0);
+            std::fill(node_depth.begin(), node_depth.end(), 0.0f);
+            std::fill(node_head.begin(), node_head.end(), 0.0f);
+            std::fill(node_volume.begin(), node_volume.end(), 0.0f);
+            std::fill(node_lat_inflow.begin(), node_lat_inflow.end(), 0.0f);
+            std::fill(node_total_inflow.begin(), node_total_inflow.end(), 0.0f);
+            std::fill(node_overflow.begin(), node_overflow.end(), 0.0f);
+            std::fill(link_flow.begin(), link_flow.end(), 0.0f);
+            std::fill(link_depth.begin(), link_depth.end(), 0.0f);
+            std::fill(link_velocity.begin(), link_velocity.end(), 0.0f);
+            std::fill(link_volume.begin(), link_volume.end(), 0.0f);
+            std::fill(link_capacity.begin(), link_capacity.end(), 0.0f);
             n_steps = 0;
         }
     };
