@@ -167,6 +167,9 @@ private:
     /// Per-node "already converged this step" flag for storage units under
     /// STEADY (the KW solver keeps its own).
     std::vector<char> steady_storage_updated_;
+    /// Per-link end-of-step flow depth under STEADY routing (uniform along
+    /// the conduit); consumed by kinwave::finishRouting's node-depth raises.
+    std::vector<double> steady_y_;
 
     // --- Explicit finite-volume solver (FLOW_ROUTING FV) -------------------
     // The mesh and state are owned here, not by the solver, exactly as

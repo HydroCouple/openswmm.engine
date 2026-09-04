@@ -116,6 +116,34 @@ void updateStorageState(SimulationContext& ctx,
                         const std::vector<int>& order,
                         int pos, int i, double dt);
 
+/**
+ * @brief End-of-step node/link state for tree-layout routing (KW/steady).
+ *
+ * @details PARITY flowrout.c:203-205 — after every link is routed, legacy
+ * runs setNewNodeState for every node (non-storage volume integration,
+ * overflow shedding, depth reset — a junction stores nothing under KW/SF)
+ * and then setNewLinkState's updateNodeDepth raises, which lift each
+ * conduit's end-node depths to the conduit end flow depths plus offsets,
+ * with a flooded non-outfall node pinned at its full depth. A terminal
+ * storage unit (no outlet link, so never visited by the sorted-link loop)
+ * gets its updateStorageState here, as legacy does (flowrout.c:88-91).
+ *
+ * @param ctx              Simulation context.
+ * @param structures       Structure solver (see getLinkInflow).
+ * @param order            Topologically sorted link order.
+ * @param storage_updated  Per-node flags set by the sorted-link loop.
+ * @param link_y1          Per-link flow depth at the upstream end (ft).
+ * @param link_y2          Per-link flow depth at the downstream end (ft).
+ * @param dt               Routing timestep (seconds).
+ */
+void finishRouting(SimulationContext& ctx,
+                   hydstruct::StructureSolver* structures,
+                   const std::vector<int>& order,
+                   const std::vector<char>& storage_updated,
+                   const std::vector<double>& link_y1,
+                   const std::vector<double>& link_y2,
+                   double dt);
+
 // ============================================================================
 // Constants (matching legacy)
 // ============================================================================
@@ -187,6 +215,8 @@ public:
     std::vector<double> q_out_;     ///< Computed outflow (cfs)
     std::vector<double> a_out_;     ///< Outlet area from Newton solve (ft2)
     std::vector<double> sf_in_;     ///< Section factor at inlet
+    std::vector<double> y1_;        ///< End-of-step upstream flow depth (ft)
+    std::vector<double> y2_;        ///< End-of-step downstream flow depth (ft)
 
 private:
     int n_conduits_ = 0;

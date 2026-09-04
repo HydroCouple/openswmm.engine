@@ -1254,6 +1254,17 @@ void resolve_cross_references(SimulationContext& ctx) {
         const auto& name = ctx.subcatches.outlet_name[us];
         if (name.empty()) continue;
 
+        // Legacy subcatch_validate (subcatch.c:391-393): an outlet name that
+        // matches BOTH a node and a subcatchment is ambiguous — ERROR 108.
+        // Legacy stores the two resolutions independently and errors when
+        // both landed; here the single-slot model must check explicitly.
+        if (ctx.node_names.find(name) >= 0 &&
+            ctx.subcatch_names.find(name) >= 0) {
+            ctx.errors.push_back(format_error(
+                ERR_SUBCATCH_OUTLET, ctx.subcatch_names.name_of(s)));
+            continue;
+        }
+
         // Already resolved during parsing — validate it
         if (ctx.subcatches.outlet_node[us] >= 0 &&
             ctx.subcatches.outlet_node[us] < n_nodes) {
@@ -2319,15 +2330,22 @@ void resolve_cross_references(SimulationContext& ctx) {
             slope = delta / std::sqrt(length * length - delta * delta);
         }
 
-        // Apply minimum slope (legacy WARNING 05)
+        // Apply minimum slope (legacy WARNING 05). Legacy conduit_getSlope
+        // (link.c:1291-1298) RETURNS the positive MinSlope for SF/KW routing
+        // before the adverse-sign flip — a sub-MinSlope adverse conduit is
+        // sanitized to a positive slope under those models.
+        bool min_slope_kw_sf = false;
         if (ctx.options.min_slope > 0.0 && slope < ctx.options.min_slope) {
             slope = ctx.options.min_slope;
             ctx.warnings.push_back(
                 format_warning(WARN_MIN_SLOPE, ctx.link_names.name_of(j)));
+            min_slope_kw_sf =
+                (ctx.options.routing_model == RoutingModel::STEADY ||
+                 ctx.options.routing_model == RoutingModel::KINWAVE);
         }
 
         // Negative slope for adverse gradient
-        if (elev1 < elev2) slope = -slope;
+        if (elev1 < elev2 && !min_slope_kw_sf) slope = -slope;
 
         if (cr >= 0) ctx.link_subtypes.conduits.slope[ucr] = slope;
 

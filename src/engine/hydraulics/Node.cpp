@@ -351,8 +351,22 @@ double getPondedArea(const NodeData& nodes, int idx, double depth,
 double getMaxOutflow(const NodeData& nodes, int idx, double q, double dt) {
     auto ui = static_cast<std::size_t>(idx);
 
-    double full_vol = constants::MIN_SURFAREA * nodes.full_depth[ui];
-    if (full_vol > 0.0) {
+    // Legacy node_getMaxOutflow (node.c:415-424) caps only nodes whose
+    // fullVolume is nonzero — storage units and Type-1 pump wet wells. A
+    // plain junction/outfall/divider has fullVolume identically 0 in legacy
+    // (node_getVolume's default branch is 0 at init), so its conduits are
+    // NEVER capped; the engine-internal full_volume convention
+    // (MIN_SURFAREA·fullDepth) must not leak into this cap. A wet-well
+    // junction is recognizable as full_volume raised ABOVE that convention
+    // by the Type-1 xMax override in SWMMEngine::initialize.
+    bool caps;
+    if (nodes.type[ui] == NodeType::STORAGE) {
+        caps = nodes.full_volume[ui] > 0.0;
+    } else {
+        caps = nodes.full_volume[ui] >
+               constants::MIN_SURFAREA * nodes.full_depth[ui];
+    }
+    if (caps) {
         double q_max = nodes.inflow[ui] + nodes.old_volume[ui] / dt;
         q = std::min(q, q_max);
     }

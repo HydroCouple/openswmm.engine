@@ -64,6 +64,8 @@ void DwfInflowSoA::resize(int n) {
     pat_daily.assign(un, -1);
     pat_hourly.assign(un, -1);
     pat_weekend.assign(un, -1);
+    is_flow.assign(un, 0);
+    pollut_idx.assign(un, -1);
 }
 
 double InflowSolver::getPatternFactor(int pat_idx, int month, int day, int hour) const {
@@ -263,6 +265,12 @@ void InflowSolver::init(SimulationContext& ctx) {
         if (constituent == "FLOW" || constituent == "flow" || constituent == "Flow") {
             int fu = static_cast<int>(ctx.options.flow_units);
             avg_val /= ucf::Qcf[fu];
+            dwf_inflows_.is_flow[ui] = 1;
+        } else {
+            // Pollutant DWF row: a concentration tied to the node's DWF flow
+            // (legacy TDwfInflow.param = pollutant index). Unmatched names
+            // stay -1 and the row is inert, like a legacy parse would reject.
+            dwf_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(constituent);
         }
         dwf_inflows_.avg_value[ui] = avg_val;
 
@@ -411,24 +419,20 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
 
     // ---- Batch DWF inflows (pattern multiply chain + scatter-add) ----
     // Matches legacy inflow_getDwfInflow: f = monthly * daily * (hourly|weekend)
-    for (int i = 0; i < dwf_inflows_.count; ++i) {
-        auto ui = static_cast<std::size_t>(i);
 
+    // Legacy FLOW_TOL (consts.h): DWF flows below it are snapped to zero
+    // (routing.c addDryWeatherInflows: `if (fabs(q) < FLOW_TOL) q = 0`).
+    constexpr double DWF_FLOW_TOL = 0.00001;
+
+    // Pattern factor of one DWF row at the current date, legacy
+    // inflow_getDwfInflow: f = monthly * daily * (hourly | weekend).
+    auto dwfFactor = [&](std::size_t ui) {
         double factor = 1.0;
-
-        // Monthly pattern
         int pm = dwf_inflows_.pat_monthly[ui];
         if (pm >= 0) factor *= getPatternFactor(pm, month, day, hour);
-
-        // Daily pattern
         int pd = dwf_inflows_.pat_daily[ui];
         if (pd >= 0) factor *= getPatternFactor(pd, month, day, hour);
-
-        // Hourly vs weekend pattern (matches legacy logic exactly):
-        //   if weekend pattern exists:
-        //     if day is Sun(0) or Sat(6): use weekend pattern
-        //     else if hourly pattern exists: use hourly pattern
-        //   else if hourly pattern exists: use hourly pattern
+        // Hourly vs weekend (matches legacy logic exactly):
         int ph = dwf_inflows_.pat_hourly[ui];
         int pw = dwf_inflows_.pat_weekend[ui];
         if (pw >= 0) {
@@ -440,13 +444,52 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         } else if (ph >= 0) {
             factor *= getPatternFactor(ph, month, day, hour);
         }
+        return factor;
+    };
 
-        double q = factor * dwf_inflows_.avg_value[ui];
+    // Pass 1 — FLOW rows only. A pollutant DWF row is a concentration, not
+    // water — legacy addDryWeatherInflows (routing.c) reads only the FLOW
+    // row for the node's hydrograph. Adding the TN/BOD5 baselines here
+    // inflated lateral inflow (wq-mass-extran1: node 80408 got 47+2 cfs).
+    for (int i = 0; i < dwf_inflows_.count; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (!dwf_inflows_.is_flow[ui]) continue;
+
+        double q = dwfFactor(ui) * dwf_inflows_.avg_value[ui];
+        if (std::fabs(q) < DWF_FLOW_TOL) q = 0.0;
 
         // Write to decomposed DWF inflow array (assembled into lat_flow later)
         int ni = dwf_inflows_.node_idx[ui];
         if (ni >= 0 && ni < static_cast<int>(ctx.nodes.dwf_inflow.size())) {
             ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)] += q;
+        }
+    }
+
+    // Pass 2 — pollutant rows (legacy addDryWeatherInflows pollutant portion,
+    // routing.c:668-688): each row adds q · (pattern-adjusted concentration)
+    // and subtracts the global-default q · dwfConcen it displaces. The net
+    // adjustment lands in nodes.dwf_qual_mass; QualityRouting adds it on top
+    // of the global-default DWF load it already computes from c_dwf.
+    if (np > 0 && !ctx.nodes.dwf_qual_mass.empty()) {
+        for (int i = 0; i < dwf_inflows_.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            const int p = dwf_inflows_.pollut_idx[ui];
+            if (p < 0 || p >= np) continue;
+            const int ni = dwf_inflows_.node_idx[ui];
+            if (ni < 0 || ni >= ctx.n_nodes()) continue;
+
+            const double q = ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)];
+            if (q <= 0.0) continue;   // legacy: no DWF quality without DWF flow
+
+            double w = q * (dwfFactor(ui) * dwf_inflows_.avg_value[ui]);
+            const double c_glob = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
+            if (c_glob > 0.0) w -= q * c_glob;
+
+            const auto idx = static_cast<std::size_t>(ni) *
+                             static_cast<std::size_t>(np) +
+                             static_cast<std::size_t>(p);
+            if (idx < ctx.nodes.dwf_qual_mass.size())
+                ctx.nodes.dwf_qual_mass[idx] += w;
         }
     }
 }
