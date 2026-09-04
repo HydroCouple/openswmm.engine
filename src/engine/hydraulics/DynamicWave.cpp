@@ -614,11 +614,18 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     wcap_d2_.resize(ul, 0.0);
     wcap_dm_.resize(ul, 0.0);
 
-    // Build conduit index list
+    // Build conduit index list. DUMMY cross-sections are excluded to match
+    // legacy isTrueConduit (dynwave.c:411-414): a dummy conduit is never
+    // momentum-solved — findNonConduitFlow passes the upstream node's
+    // inflow + overflow straight through (conduit_getInflow). Solving it
+    // here instead gives zero-area geometry, zero flow, and an upstream
+    // node that fills without bound (221-h-h-si-units-elements node "1").
     conduit_idx_.clear();
     conduit_idx_.reserve(ul);
     for (int j = 0; j < n_links; ++j) {
-        if (ctx.links.type[static_cast<std::size_t>(j)] == LinkType::CONDUIT)
+        auto ujc = static_cast<std::size_t>(j);
+        if (ctx.links.type[ujc] == LinkType::CONDUIT &&
+            ctx.links.xsect_shape[ujc] != XsectShape::DUMMY)
             conduit_idx_.push_back(j);
     }
     n_conduits_ = static_cast<int>(conduit_idx_.size());

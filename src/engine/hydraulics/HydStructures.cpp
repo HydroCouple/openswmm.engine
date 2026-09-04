@@ -29,6 +29,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/SIMD.hpp"
+#include "Divider.hpp"
 #include "Node.hpp"
 #include "XSectBatch.hpp"
 #include <cmath>
@@ -217,12 +218,17 @@ void StructureSolver::init(SimulationContext& ctx) {
         }
     }
 
-    // Build flat index of all non-conduit links for fast iteration
+    // Build flat index of all non-conduit links for fast iteration.
+    // DUMMY-xsect conduits belong here too: legacy isTrueConduit
+    // (dynwave.c:411-414) is false for them, so findLinkFlows routes them
+    // through findNonConduitFlow in link-index order — their flow is the
+    // upstream node's inflow + overflow, not a momentum solve.
     nc_indices_.clear();
     nc_indices_.reserve(static_cast<size_t>(n_pumps + n_orifices + n_weirs + n_outlets));
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<size_t>(j);
-        if (ctx.links.type[uj] != LinkType::CONDUIT)
+        if (ctx.links.type[uj] != LinkType::CONDUIT ||
+            ctx.links.xsect_shape[uj] == XsectShape::DUMMY)
             nc_indices_.push_back(j);
     }
 
@@ -1180,6 +1186,35 @@ void StructureSolver::computeNonConduitFlowOne(SimulationContext& ctx, double dt
                                                double* node_new_surf_area,
                                                int link_idx) {
     auto uj = static_cast<std::size_t>(link_idx);
+
+    // DUMMY conduit (legacy isTrueConduit == false): findNonConduitFlow →
+    // link_getInflow → conduit_getInflow — node_getOutflow's dispatch
+    // (DIVIDER split, else the upstream node's inflow + overflow) passes
+    // straight through, capped by the conduit's MaxFlow (link.c:1323-1333);
+    // a closed setting carries no flow (link.c:553). The STORAGE branch is
+    // unreachable for dummies — a storage node cannot have a dummy outflow
+    // link (link.c:1006 raises an input error).
+    // Surface area: findNonConduitSurfArea (dynwave.c:498) contributes 0
+    // for anything but an orifice, so there is nothing to scatter.
+    if (ctx.links.type[uj] == LinkType::CONDUIT) {
+        ctx.links.dqdh[uj] = 0.0;
+        double q = 0.0;
+        if (ctx.links.setting[uj] != 0.0) {
+            const int n1 = ctx.links.node1[uj];
+            if (n1 >= 0) {
+                const auto un1 = static_cast<std::size_t>(n1);
+                if (ctx.nodes.type[un1] == NodeType::DIVIDER)
+                    q = divider::getOutflow(ctx, n1, link_idx);
+                else
+                    q = ctx.nodes.inflow[un1] + ctx.nodes.overflow[un1];
+            }
+            const double qlim = ctx.links.q_limit[uj];
+            if (qlim > 0.0 && q > qlim) q = qlim;
+        }
+        ctx.links.flow[uj] = q;
+        return;
+    }
+
     int k = (uj < nc_group_k_.size()) ? nc_group_k_[uj] : -1;
     if (k < 0) return;
 
