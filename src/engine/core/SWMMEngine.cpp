@@ -975,6 +975,7 @@ int SWMMEngine::initialize() noexcept {
     ctx_.old_elapsed_ms      = 0.0;
     // Legacy swmm5.c:721 — ReportTime = 1000 * (double)ReportStep
     ctx_.next_report_ms      = 1000.0 * ctx_.options.report_step;
+    new_rule_time_ms_        = 0.0;   // legacy NewRuleTime (routing.c:131)
 
     perf::sec_init_state += perf::since(_pt_state0);
 
@@ -1321,6 +1322,16 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                     std::max(ctx_.routing_stats.max_courant, courant);
             }
         }
+        // Control-rule grid alignment (legacy routing.c:196-204): when
+        // RULE_STEP > 0 the routing step is snapped so it lands exactly on
+        // the next rule-evaluation boundary. Recomputed from the ABSOLUTE
+        // rule grid each step (advance()'s decrement would drift); the
+        // clamp itself lives in TimestepController::compute_next step 3.
+        if (ctx_.options.rule_step > 0.0) {
+            ctx_.dt_controls_remaining =
+                (new_rule_time_ms_ + 1000.0 * ctx_.options.rule_step -
+                 ctx_.elapsed_ms) / 1000.0;
+        }
         // No 2D constraint on the 1D step: the marcher owns 2D stability
         // through its internal CFL subcycling, and exchange stability is owned
         // by per-substep evaluation + limiter + the node conductance.
@@ -1374,6 +1385,14 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 
     // Advance clock (must happen before output_due check)
     hydraulics::TimestepController::advance(ctx_, dt_next);
+
+    // Advance the control-rule clock when the step landed on its grid
+    // (legacy routing.c:407-408, 1 ms tolerance).
+    if (do_routing_ && ctx_.options.rule_step > 0.0 &&
+        std::fabs(ctx_.elapsed_ms -
+                  (new_rule_time_ms_ + 1000.0 * ctx_.options.rule_step)) < 1.0) {
+        new_rule_time_ms_ += 1000.0 * ctx_.options.rule_step;
+    }
 
     // Accumulate node/link results for time-step averaging with legacy's
     // update ordering (swmm5.c saveResults): each step's END state

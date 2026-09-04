@@ -457,6 +457,7 @@ private:
     // formed from MILLISECOND quantities to round identically to legacy.
     double old_runoff_ms_ = 0.0;    ///< legacy OldRunoffTime (msec)
     double new_runoff_ms_ = 0.0;    ///< legacy NewRunoffTime (msec)
+    double new_rule_time_ms_ = 0.0; ///< legacy NewRuleTime (msec, routing.c:58)
 
     // Previous cumulative LID exfiltration / evaporation volumes (ft³), so the
     // per-step delta can be folded into the runoff-continuity infil / evap
