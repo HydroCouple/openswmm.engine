@@ -2986,16 +2986,21 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     // surcharge onsets (PS4D on 800-node-sewer at t = 4.55 h).
     const double sbot = tile_fm_sbot_[uci];
     double dq1;
+    // PARITY dwflow.c:237: dq1 = dt * forcemain_getFricSlope(...) — the
+    // slope expression is evaluated FIRST and multiplied by dt LAST.
+    // Regrouping (dt*sbot)*... rounds differently by 1 ULP, and dq1 feeds
+    // the link dqdh scattered into the node sumdqdh surcharge denominator,
+    // where a single ULP flips the PS4D knife-edge onset (800-node-sewer).
     if (is_dw) {
         // forcmain.c:108-112: re = 4·R·|v|/VISCOS; f from Colebrook;
-        // dq1 = dt · f · sBot · |v| / R  (sBot = 1/(8·lengthFactor)).
+        // Sf-term = f · sBot · |v| / R  (sBot = 1/(8·lengthFactor)).
         const double re = 4.0 * rMid * absv / forcemain::VISCOS;
         const double f  = forcemain::getFricFactor(tile_fm_rbot_[uci],
                                                    rMid, re);
-        dq1 = dt * f * sbot * absv / rMid;
+        dq1 = dt * (f * sbot * absv / rMid);
     } else {
-        // forcmain.c:105-106: dq1 = dt · sBot · |v|^0.852 / R^1.1667.
-        dq1 = dt * sbot * std::pow(absv, 0.852) / std::pow(rMid, 1.1667);
+        // forcmain.c:105-106: Sf-term = sBot · |v|^0.852 / R^1.1667.
+        dq1 = dt * (sbot * std::pow(absv, 0.852) / std::pow(rMid, 1.1667));
     }
 
     // Head gradient
