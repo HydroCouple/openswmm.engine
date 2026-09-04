@@ -242,9 +242,17 @@ void build_site_drainage_model(SWMM_Engine e) {
     ASSERT_EQ(swmm_timeseries_add(e, "2-yr"), SWMM_OK);
     const int ts = swmm_table_index(e, "2-yr");
     ASSERT_GE(ts, 0);
+    int n_storm = 0;
     for (const auto& p : kStorm) {
         ASSERT_EQ(swmm_table_add_point(e, ts, p.minutes / 1440.0, p.value), SWMM_OK);
+        ++n_storm;
     }
+    // The points above are ELAPSED times (days from the simulation start),
+    // the time-only [TIMESERIES] form. Declare that explicitly so the
+    // resolve pass anchors them at START_DATE — the engine no longer
+    // guesses relative-ness from x-value magnitude (the old x[0] < 366
+    // heuristic corrupted mixed relative+dated series).
+    ASSERT_EQ(swmm_timeseries_set_relative_info(e, ts, n_storm, 0.0), SWMM_OK);
 
     // --- [RAINGAGES] RainGage : VOLUME, 0:05 interval, scale 1.0 ---
     ASSERT_EQ(swmm_gage_add(e, "RainGage"), SWMM_OK);

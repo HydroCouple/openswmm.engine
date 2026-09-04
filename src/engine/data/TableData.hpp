@@ -148,6 +148,20 @@ struct Table {
     std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
     TableCursor         cursor;  ///< Bidirectional lookup cursor
 
+    // ---- Time-only (relative) timeseries rows ----
+    // Legacy SWMM seeds every timeseries' lastDate with StartDate+StartTime
+    // (input.c:170), so rows authored WITHOUT a date are elapsed times
+    // anchored at the simulation start, until an explicit date re-anchors
+    // the series. The parser counts those leading date-less rows here and
+    // resolve_cross_references() adds options.start_date to exactly those
+    // rows (recording the applied offset in rel_anchor so re-resolution is
+    // idempotent and a later START_DATE change re-anchors by the delta).
+    // InpWriter subtracts rel_anchor to emit the rows back in their
+    // authored time-only form; rows at index >= n_relative are absolute
+    // date/times and are written with explicit dates.
+    int    n_relative = 0;  ///< Leading rows authored as elapsed time-of-start
+    double rel_anchor = 0.0; ///< start_date offset currently baked into them
+
     // ---- File-backed time series support ----
     bool               is_file_based = false; ///< True if data is read from external file
     std::FILE*         file_handle = nullptr;  ///< Open file handle (owned)
@@ -705,7 +719,10 @@ struct TableData {
      * @returns Index of the new table.
      */
     int add(const std::string& id, TableType type) {
-        tables.push_back({id, type, {}, {}, {}});
+        Table t;
+        t.id   = id;
+        t.type = type;
+        tables.push_back(std::move(t));
         const int idx = static_cast<int>(tables.size()) - 1;
         by_name[id].push_back(idx);
         return idx;

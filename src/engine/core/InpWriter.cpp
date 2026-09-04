@@ -2308,31 +2308,34 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-16s FILE         \"%s\"\n",tN(ctx,t),tok.c_str());
         continue;
     }
-    // PostParseResolver offsets relative time series by start_date so the
-    // engine can do absolute OADate lookups.  Detect this using the same
-    // condition it uses (x[0] - start_date < 366) and strip the offset
-    // before writing so the output matches the original time-only format.
-    const double startDate = ctx.options.start_date;
-    const double x0 = tb.x.empty() ? 0.0 : tb.x.front();
-    const bool wasRelative = (x0 - startDate) >= 0.0 && (x0 - startDate) < 366.0;
-    // A true absolute series (calendar dates entered by the user) has x values
-    // that are large OADates even before any start_date offset would be added
-    // — i.e. x0 is already >> 3650 regardless of start_date.
-    const bool isAbsolute  = !wasRelative && x0 >= 3650.0;
-
+    // Rows below n_relative were authored as elapsed times anchored at the
+    // simulation start; rel_anchor is the start_date offset the resolver
+    // baked into them (0 if the model was never resolved). Subtract it to
+    // emit those rows back in their authored time-only form. All later rows
+    // carry explicit dates and are written date + time — never inferred
+    // from x-value magnitude (the old x[0]-start heuristic rewrote a series
+    // the user authored WITH dates near the start date as elapsed times,
+    // silently re-basing that data onto START_DATE).
     char dateBuf[16], timeBuf[12];
     for(size_t k=0;k<tb.x.size();++k){
-        const double xv = wasRelative ? (tb.x[k] - startDate) : tb.x[k];
-        if(isAbsolute){
-            fmt_date(dateBuf, xv);
-            fmt_time(timeBuf, xv);
-            std::fprintf(f,"%-16s %-12s %-8s %12.6f\n",tN(ctx,t),dateBuf,timeBuf,tb.y[k]);
+        const bool relative = static_cast<int>(k) < tb.n_relative;
+        if(relative){
+            // Elapsed fractional days → H:MM[:SS]; hours may exceed 23.
+            // Round to whole seconds first so 0.99999998 days prints as
+            // 24:00 and not the truncated-then-rounded "23:60".
+            const double xv = tb.x[k] - tb.rel_anchor;
+            const long long totalSecs = std::llround(xv * 86400.0);
+            const long long hh = totalSecs / 3600;
+            const int       mm = static_cast<int>((totalSecs / 60) % 60);
+            const int       ss = static_cast<int>(totalSecs % 60);
+            if(ss)
+                std::fprintf(f,"%-16s %lld:%02d:%02d %12.6f\n",tN(ctx,t),hh,mm,ss,tb.y[k]);
+            else
+                std::fprintf(f,"%-16s %lld:%02d %12.6f\n",tN(ctx,t),hh,mm,tb.y[k]);
         } else {
-            // Relative: convert fractional days → HH:MM; allow hours > 23.
-            const double totalHours = xv * 24.0;
-            const int hh = static_cast<int>(totalHours);
-            const int mm = static_cast<int>((totalHours - hh) * 60.0 + 0.5);
-            std::fprintf(f,"%-16s %d:%02d %12.6f\n",tN(ctx,t),hh,mm,tb.y[k]);
+            fmt_date(dateBuf, tb.x[k]);
+            fmt_time(timeBuf, tb.x[k]);
+            std::fprintf(f,"%-16s %-12s %-8s %12.6f\n",tN(ctx,t),dateBuf,timeBuf,tb.y[k]);
         }
     }
     }}}

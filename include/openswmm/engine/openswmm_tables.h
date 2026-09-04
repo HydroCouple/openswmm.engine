@@ -159,6 +159,47 @@ SWMM_ENGINE_API int swmm_table_get_point(SWMM_Engine engine, int idx, int pt_idx
  */
 SWMM_ENGINE_API int swmm_table_clear(SWMM_Engine engine, int idx);
 
+/**
+ * @brief Get a timeseries' time-only (relative) row info.
+ *
+ * Rows authored without a date in a `[TIMESERIES]` section are elapsed
+ * times anchored at the simulation start (legacy SWMM seeds every series'
+ * date anchor with START_DATE + START_TIME). The engine stores those rows
+ * as absolute date/times after resolution; this reports how many leading
+ * rows were authored that way and the start_date offset currently baked
+ * into their x-values, so a caller can recover the authored elapsed times
+ * as `x - anchor` and the .inp writer emits them back in time-only form.
+ *
+ * @param engine           Engine handle.
+ * @param idx              Zero-based table index (must be a TIMESERIES).
+ * @param[out] n_relative  Leading rows authored as elapsed time (0 = all
+ *                         rows carry explicit dates).
+ * @param[out] anchor      OADate offset baked into those rows' x-values.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_timeseries_get_relative_info(SWMM_Engine engine, int idx,
+                                                      int* n_relative, double* anchor);
+
+/**
+ * @brief Declare a timeseries' leading rows as time-only (relative).
+ *
+ * Use after rebuilding a series through swmm_table_clear() /
+ * swmm_table_add_point() to restore its authored time-only format: the
+ * first @p n_relative points' x-values are treated as absolute date/times
+ * containing @p anchor as their simulation-start offset, and the .inp
+ * writer emits them as elapsed times (`x - anchor`) rather than dates.
+ * Pass 0 to mark every row as explicitly dated.
+ *
+ * @param engine      Engine handle.
+ * @param idx         Zero-based table index (must be a TIMESERIES).
+ * @param n_relative  Leading rows authored as elapsed time (clamped to the
+ *                    current point count).
+ * @param anchor      OADate offset baked into those rows' x-values.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_timeseries_set_relative_info(SWMM_Engine engine, int idx,
+                                                      int n_relative, double anchor);
+
 /* =========================================================================
  * Lookup (cursor-optimized)
  * ========================================================================= */

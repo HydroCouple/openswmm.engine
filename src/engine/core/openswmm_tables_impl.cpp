@@ -163,6 +163,36 @@ SWMM_ENGINE_API int swmm_table_clear(SWMM_Engine engine, int idx) {
     tbl.x.clear();
     tbl.y.clear();
     tbl.cursor.reset();
+    // A cleared series has no authored rows left, so no time-only rows
+    // either; callers that rebuild a relative series re-declare it via
+    // swmm_timeseries_set_relative_info() after re-adding points.
+    tbl.n_relative = 0;
+    tbl.rel_anchor = 0.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_timeseries_get_relative_info(SWMM_Engine engine, int idx,
+                                                      int* n_relative, double* anchor) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
+    const auto& tbl = ctx.tables[idx];
+    if (tbl.type != openswmm::TableType::TIMESERIES) return SWMM_ERR_BADPARAM;
+    if (n_relative) *n_relative = tbl.n_relative;
+    if (anchor)     *anchor     = tbl.rel_anchor;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_timeseries_set_relative_info(SWMM_Engine engine, int idx,
+                                                      int n_relative, double anchor) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
+    auto& tbl = ctx.tables[idx];
+    if (tbl.type != openswmm::TableType::TIMESERIES) return SWMM_ERR_BADPARAM;
+    if (n_relative < 0) return SWMM_ERR_BADPARAM;
+    tbl.n_relative = std::min(n_relative, static_cast<int>(tbl.x.size()));
+    tbl.rel_anchor = anchor;
     return SWMM_OK;
 }
 
