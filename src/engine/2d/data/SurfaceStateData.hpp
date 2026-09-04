@@ -75,6 +75,11 @@ struct SurfaceStateData {
     /// it self-limits) and accumulates the exact ∫Q dt per point.
     /// `nodes_1d` is the 1D node data, frozen for the duration of the batch.
     const NodeData*                   nodes_1d        = nullptr;
+    /// S4: the 1D nodes' PUBLISHED row values, `[node * n_species + s]` in the
+    /// 2D transport row order (pollutant conc, MSX conc, age, temperature),
+    /// assembled by the router before each advance and frozen for the batch.
+    /// What a 1D→2D spill or outfall discharge arrives at.
+    const std::vector<double>*        node_row_conc   = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
 
     /// S1 — overland species transport. `transport.active()` is false (and
