@@ -84,7 +84,7 @@ bool flapGateBlocks(const SimulationContext& ctx, int j, int n1, int n2, double 
 }
 
 void PumpGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); curve_type.resize(u,0); speed.resize(u,1.0); y_on.resize(u,0); y_off.resize(u,0); }
-void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); c_orifice.resize(u,0); c_weir.resize(u,0); h_crit.resize(u,0); surf_area.resize(u,0); length_eff.resize(u,0); }
+void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); surf_area.resize(u,0); length_eff.resize(u,0); }
 void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); surf_area.resize(u,0); length_eff.resize(u,0); can_surcharge.resize(u,1); }
 void OutletGroup::resize(int n)  { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); q_coeff.resize(u,0); q_expon.resize(u,1); }
 
@@ -158,25 +158,13 @@ void StructureSolver::init(SimulationContext& ctx) {
                 auto uk = static_cast<size_t>(io);
                 orifices_.link_idx[uk] = j;
 
-                // Pre-compute orifice coefficients matching legacy orifice.c
-                // c_orifice = Cd * A_full * sqrt(2g)  (full orifice flow)
-                // c_weir = Cw * L                      (weir-like partial flow)
-                // h_crit = A_full / L                  (transition depth)
+                // No init-time cOrif/cWeir/hCrit snapshot: legacy
+                // orifice_setSetting derives them from the CURRENT setting,
+                // so computeOrificeFlowK computes them inline per call
+                // (legacy-exact, including the getWeirCoeff bottom/side
+                // split). See the OrificeGroup note in HydStructures.hpp.
                 using constants::GRAVITY;
-                double a_full = ctx.links.xsect_a_full[uj];
                 double y_full = ctx.links.xsect_y_full[uj];
-                double cd_val = ctx.link_subtypes.orifices.cd[
-                    static_cast<size_t>(ctx.link_subtypes.orifice_row(j))];
-
-                orifices_.c_orifice[uk] = cd_val * a_full * std::sqrt(2.0 * GRAVITY);
-                // Weir coefficient for partially-open orifice
-                // Legacy: CW = Cd * L * sqrt(2g) where L = perimeter
-                // For rectangular: L = 2*(w+h), for circular: L = pi*d
-                double w_max = ctx.links.xsect_w_max[uj];
-                double perim = (w_max > 0.0 && y_full > 0.0)
-                    ? 2.0 * (w_max + y_full) : 3.14159 * y_full;
-                orifices_.c_weir[uk] = cd_val * perim * std::sqrt(2.0 * GRAVITY);
-                orifices_.h_crit[uk] = (perim > 0.0) ? a_full / perim : y_full;
                 // Equivalent length for SIDE-orifice surface-area scatter
                 // (legacy link.c:1724: max(200, 2·routingStep·sqrt(g·yFull))).
                 {
