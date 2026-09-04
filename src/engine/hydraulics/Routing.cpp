@@ -397,8 +397,11 @@ int Router::step(SimulationContext& ctx, double dt,
             break;
     }
 
-    // 5. Compute divider flows (P8-G02)
-    divider::computeDividerFlows(ctx, ctx.node_subtypes.dividers);
+    // Divider flows are computed where legacy computes them — inside the
+    // routing passes via divider::getOutflow (node_getOutflow dispatch), not
+    // as a post-step overwrite. A post-step pass clobbered the diversion
+    // link's routed flow under every model, including DYNWAVE where legacy
+    // ignores the divider relation for true conduits.
 
     // 6. Update link final states (depth, volume)
     //
@@ -701,6 +704,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         : steady_sorted_links_;
 
     steady_storage_updated_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0);
+    steady_y_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
 
     for (int idx = 0; idx < static_cast<int>(order.size()); ++idx) {
         int j   = order[static_cast<std::size_t>(idx)];
@@ -733,31 +737,28 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         auto& CD = ctx.link_subtypes.conduits;
         const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
-        // DUMMY cross-section: zero area, pass flow through.
+        // DUMMY cross-section: routed like every other link in legacy —
+        // getLinkInflow (divider/storage dispatch, qLimit and max-outflow
+        // caps), steadyflow_execute passes it through, and BOTH end nodes'
+        // flow accumulators are updated (flowrout.c:196-197).
         if (links.xsect_shape[uj] == XsectShape::DUMMY) {
             int n1 = links.node1[uj];
             int n2 = links.node2[uj];
-            if (n1 >= 0) {
-                double q = nodes.inflow[static_cast<std::size_t>(n1)];
-                links.flow[uj] = q;
-                if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
-            }
+            double q = kinwave::getLinkInflow(ctx, structures_, j, dt);
+            links.flow[uj] = q;
+            if (n1 >= 0) nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
             links.depth[uj]  = 0.0;
             links.volume[uj] = 0.0;
             continue;
         }
 
-        // Gather inflow at upstream node, limited by available volume.
-        // Matches legacy getLinkInflow → node_getMaxOutflow.
+        // Gather inflow at upstream node — legacy getLinkInflow
+        // (storage/divider/junction dispatch, qLimit, max-outflow cap).
         int n1 = links.node1[uj];
         double qin = 0.0;
         if (n1 >= 0) {
-            auto un1 = static_cast<std::size_t>(n1);
-            qin = (nodes.type[un1] == NodeType::STORAGE)
-                ? kinwave::getLinkInflow(ctx, structures_, j, dt)
-                : nodes.inflow[un1];
-            double q_max = node::getMaxOutflow(nodes, n1, qin, dt);
-            qin = std::min(qin, q_max);
+            qin = kinwave::getLinkInflow(ctx, structures_, j, dt);
         }
 
         double barrels = static_cast<double>(std::max(CD.barrels[ucr], 1));
@@ -811,29 +812,19 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
 
         links.depth[uj]  = y;
         links.volume[uj] = a * length * barrels;
+        steady_y_[uj]    = y;
 
         // Gap #57: steady flow — same area at both ends, so both full or neither.
         CD.full_state[ucr] = (a_full > 0.0 && a >= a_full) ? int8_t{3} : int8_t{0};
-
-        // Update non-storage end-node depths (max of current and conduit end).
-        // Matches legacy setNewLinkState → updateNodeDepth in flowrout.c.
-        auto updateNodeDepth = [&](int ni, double y_conduit, double link_offset) {
-            if (ni < 0) return;
-            auto uni = static_cast<std::size_t>(ni);
-            NodeType nt = nodes.type[uni];
-            if (nt == NodeType::STORAGE) return;
-            double y_node = y_conduit + link_offset;
-            if (nt != NodeType::OUTFALL && nodes.overflow[uni] > 0.0)
-                y_node = nodes.full_depth[uni];
-            if (nodes.depth[uni] < y_node) {
-                double full_d = nodes.full_depth[uni];
-                nodes.depth[uni] = (full_d > 0.0) ? std::min(y_node, full_d) : y_node;
-                nodes.head[uni]  = nodes.invert_elev[uni] + nodes.depth[uni];
-            }
-        };
-        updateNodeDepth(n1, y, links.offset1[uj]);
-        updateNodeDepth(n2, y, links.offset2[uj]);
+        // Node depths are raised AFTER the per-node volume/overflow pass, in
+        // kinwave::finishRouting — legacy runs setNewNodeState for every node
+        // before any setNewLinkState raises a depth (flowrout.c:203-205).
     }
+
+    // Legacy end-of-step passes: setNewNodeState for every node, then
+    // setNewLinkState's node-depth raises (steady: same depth at both ends).
+    kinwave::finishRouting(ctx, structures_, order, steady_storage_updated_,
+                           steady_y_, steady_y_, dt);
 
     return 1;  // steady flow always converges in one pass
 }
