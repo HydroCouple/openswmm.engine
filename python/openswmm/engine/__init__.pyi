@@ -165,6 +165,7 @@ from ._enums import (
     InfilModel as InfilModel,
     # Water quality / LID
     AquiferParam as AquiferParam,
+    GwfType as GwfType,
     BuildupFunc as BuildupFunc,
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,

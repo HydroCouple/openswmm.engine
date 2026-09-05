@@ -272,6 +272,8 @@ target_compile_definitions(test_engine_benchmark_corpus PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
+# [GWF] expression C API + validator (AQUIFER_GROUNDWATER_EXCHANGE_GUI_PLAN E1).
+add_gtest_unit(test_engine_gwf_api          test_gwf_api.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
 add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)

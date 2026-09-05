@@ -7125,25 +7125,30 @@ void SWMMEngine::initHydrology() noexcept {
 
             const std::string& sc_name = ctx_.subcatch_names.names()[ui];
 
-            auto lat_it = ctx_.options.ext_options.find("GWF:" + sc_name + ":LATERAL");
-            if (lat_it != ctx_.options.ext_options.end() && !lat_it->second.empty()) {
+            // An expression that fails to compile is a model error, not
+            // something to drop silently (legacy ERR_MATH_EXPR). gwf_validate
+            // is stricter than mathexpr::parse (unknown identifiers would
+            // otherwise evaluate to 0.0) and supplies the diagnostic.
+            auto compile = [&](const char* type, mathexpr::Expression& out) {
+                auto it = ctx_.options.ext_options.find("GWF:" + sc_name + ":" + type);
+                if (it == ctx_.options.ext_options.end() || it->second.empty()) return;
+                std::string msg;
+                int col = -1;
                 mathexpr::Expression expr;
-                if (mathexpr::parse(lat_it->second, expr) == 0 && expr.valid) {
-                    mathexpr::bind_variables(expr,
-                        groundwater::GW_VAR_NAMES, groundwater::GWV_MAX);
-                    gw.lateral_expr[ui] = std::move(expr);
+                if (groundwater::gwf_validate(it->second, msg, col) != 0 ||
+                    mathexpr::parse(it->second, expr) != 0 || !expr.valid) {
+                    ctx_.errors.push_back(format_error(ERR_MATH_EXPR, "",
+                        "in [GWF] " + std::string(type) + " for Subcatchment " +
+                        sc_name + ": " + msg));
+                    set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+                    return;
                 }
-            }
-
-            auto deep_it = ctx_.options.ext_options.find("GWF:" + sc_name + ":DEEP");
-            if (deep_it != ctx_.options.ext_options.end() && !deep_it->second.empty()) {
-                mathexpr::Expression expr;
-                if (mathexpr::parse(deep_it->second, expr) == 0 && expr.valid) {
-                    mathexpr::bind_variables(expr,
-                        groundwater::GW_VAR_NAMES, groundwater::GWV_MAX);
-                    gw.deep_expr[ui] = std::move(expr);
-                }
-            }
+                mathexpr::bind_variables(expr,
+                    groundwater::GW_VAR_NAMES, groundwater::GWV_MAX);
+                out = std::move(expr);
+            };
+            compile("LATERAL", gw.lateral_expr[ui]);
+            compile("DEEP",    gw.deep_expr[ui]);
         }
     }
 

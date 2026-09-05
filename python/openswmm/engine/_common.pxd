@@ -442,6 +442,16 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int         swmm_aquifer_get_evap_pattern(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int         swmm_aquifer_set_evap_pattern(SWMM_Engine e, int idx, const char* name)
     cdef int         swmm_aquifer_rename(SWMM_Engine e, int idx, const char* new_id)
+    # [GWF] custom groundwater flow expressions
+    cdef int         swmm_subcatch_get_gwf_expression(SWMM_Engine e, int idx, int type, char* buf, int buflen)
+    cdef int         swmm_subcatch_set_gwf_expression(SWMM_Engine e, int idx, int type, const char* expr)
+    cdef int         swmm_gwf_validate_expression(SWMM_Engine e, const char* expr,
+                                                  char* errbuf, int buflen, int* col_out)
+    cdef int         swmm_gwf_variable_count(SWMM_Engine e)
+    cdef int         swmm_gwf_variable_name(SWMM_Engine e, int i, char* buf, int buflen)
+    cdef int         swmm_gwf_variable_description(SWMM_Engine e, int i, char* buf, int buflen)
+    cdef int         swmm_gwf_function_count(SWMM_Engine e)
+    cdef int         swmm_gwf_function_name(SWMM_Engine e, int i, char* buf, int buflen)
     cdef int         swmm_snowpack_count(SWMM_Engine e)
     cdef int         swmm_snowpack_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_snowpack_id(SWMM_Engine e, int idx)

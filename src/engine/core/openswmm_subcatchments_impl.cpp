@@ -28,6 +28,8 @@
 
 #include "openswmm_api_common.hpp"
 #include "StringCase.hpp"
+#include "../hydrology/Groundwater.hpp"
+#include "../math/MathExpr.hpp"
 #include "../../../include/openswmm/engine/openswmm_subcatchments.h"
 
 #include <algorithm>
@@ -686,6 +688,105 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
     if (tw)        *tw        = ctx.subcatches.gw_tw[uidx];
     if (hstar)     *hstar     = ctx.subcatches.gw_hstar[uidx];
     return SWMM_OK;
+}
+
+// ============================================================================
+// Custom groundwater flow expressions ([GWF])
+// ============================================================================
+// Single source of truth stays where handle_gwf() / InpWriter / start() already
+// look: options.ext_options["GWF:<subcatch>:LATERAL|DEEP"], keyed by the
+// registry (canonical) spelling of the subcatchment name.
+
+// C++ linkage for the helpers: this file body sits inside extern "C", and a
+// C-linkage function returning std::string draws -Wreturn-type-c-linkage.
+extern "C++" {
+namespace {
+
+std::string gwf_key(const openswmm::SimulationContext& ctx, int idx, int type) {
+    const char* ty = (type == SWMM_GWF_LATERAL) ? "LATERAL" : "DEEP";
+    return "GWF:" + ctx.subcatch_names.name_of(idx) + ":" + ty;
+}
+
+int gwf_copy_out(const std::string& s, char* buf, int buflen) {
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+} // namespace
+} // extern "C++"
+
+SWMM_ENGINE_API int swmm_subcatch_get_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (type != SWMM_GWF_LATERAL && type != SWMM_GWF_DEEP) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(index >= 0 && index < ctx.n_subcatches());
+    auto it = ctx.options.ext_options.find(gwf_key(ctx, index, type));
+    return gwf_copy_out(it == ctx.options.ext_options.end() ? std::string{} : it->second,
+                    buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     const char* expr) {
+    CHECK_HANDLE(engine);
+    if (type != SWMM_GWF_LATERAL && type != SWMM_GWF_DEEP) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    // Compiled at start() like the aquifer evap pattern — pre-start-only.
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(index >= 0 && index < ctx.n_subcatches());
+    const std::string key = gwf_key(ctx, index, type);
+    if (!expr || !*expr) ctx.options.ext_options.erase(key);
+    else                 ctx.options.ext_options[key] = expr;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gwf_validate_expression(SWMM_Engine engine, const char* expr,
+                                                 char* errbuf, int buflen, int* col_out) {
+    CHECK_HANDLE(engine);
+    if (errbuf && buflen > 0) errbuf[0] = '\0';
+    if (col_out) *col_out = -1;
+    if (!expr) return SWMM_ERR_BADPARAM;
+
+    std::string msg;
+    int col = -1;
+    if (openswmm::groundwater::gwf_validate(expr, msg, col) == 0) return SWMM_OK;
+
+    if (errbuf && buflen > 0) gwf_copy_out(msg, errbuf, buflen);
+    if (col_out) *col_out = col;
+    return SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return openswmm::groundwater::GWV_MAX;
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_name(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    CHECK_INDEX(i >= 0 && i < openswmm::groundwater::GWV_MAX);
+    return gwf_copy_out(openswmm::groundwater::GW_VAR_NAMES[i], buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_description(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    CHECK_INDEX(i >= 0 && i < openswmm::groundwater::GWV_MAX);
+    return gwf_copy_out(openswmm::groundwater::GW_VAR_DESCRIPTIONS[i], buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_gwf_function_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return static_cast<int>(openswmm::mathexpr::function_names().size());
+}
+
+SWMM_ENGINE_API int swmm_gwf_function_name(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    const auto& names = openswmm::mathexpr::function_names();
+    CHECK_INDEX(i >= 0 && static_cast<std::size_t>(i) < names.size());
+    return gwf_copy_out(names[static_cast<std::size_t>(i)], buf, buflen);
 }
 
 // ============================================================================

@@ -1153,6 +1153,133 @@ SWMM_ENGINE_API int swmm_subcatch_set_snow_scale_factor(SWMM_Engine engine, int 
 SWMM_ENGINE_API int swmm_subcatch_get_snow_scale_factor(SWMM_Engine engine, int idx,
                                             double* factor);
 
+/* =========================================================================
+ * Custom groundwater flow expressions ([GWF] section)
+ * ========================================================================= */
+
+/**
+ * @brief Which of a subcatchment's two custom groundwater flow expressions.
+ *
+ * @details LATERAL is added to the standard A1/A2/A3 lateral flow; DEEP
+ *          replaces the standard deep-percolation term. Expressions may use
+ *          the variables listed by @ref swmm_gwf_variable_name, the functions
+ *          listed by @ref swmm_gwf_function_name, and the operators
+ *          `+ - * / ^ ( )`; names are case-insensitive.
+ */
+typedef enum SWMM_GwfType {
+    SWMM_GWF_LATERAL = 0,
+    SWMM_GWF_DEEP = 1
+} SWMM_GwfType;
+
+/**
+ * @brief Read a subcatchment's custom groundwater flow expression.
+ *
+ * @details Writes a NUL-terminated string into `buf` (empty when no
+ *          expression is set), truncating if `buflen` is too small.
+ *
+ * @param engine   Engine handle.
+ * @param index    Zero-based subcatchment index.
+ * @param type     A SWMM_GwfType code.
+ * @param[out] buf Destination buffer for the expression text.
+ * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, SWMM_ERR_BADPARAM for a bad type, or an error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     char* buf, int buflen);
+
+/**
+ * @brief Set or clear a subcatchment's custom groundwater flow expression.
+ *
+ * @details Inverse of @ref swmm_subcatch_get_gwf_expression. A null or empty
+ *          string clears the expression. The text is stored as given and is
+ *          NOT validated here (so files with legacy quirks still load);
+ *          use @ref swmm_gwf_validate_expression first. An invalid expression
+ *          fails start() with ERROR 233. Pre-start-only (BUILDING / OPENED):
+ *          the expression is compiled when the simulation starts, so a
+ *          mid-run change returns SWMM_ERR_LIFECYCLE.
+ *
+ * @param engine  Engine handle.
+ * @param index   Zero-based subcatchment index.
+ * @param type    A SWMM_GwfType code.
+ * @param expr    Expression text, or null/empty to clear.
+ * @returns SWMM_OK on success, SWMM_ERR_BADPARAM for a bad type, or an error code.
+ */
+SWMM_ENGINE_API int swmm_subcatch_set_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     const char* expr);
+
+/**
+ * @brief Validate a [GWF] expression WITHOUT modifying engine state.
+ *
+ * @details Editor-support peer of swmm_treatment_validate_expression:
+ *          grammar-only, never mutates the engine, so it is safe to invoke
+ *          per keystroke. Stricter than the runtime parser: unknown
+ *          characters, unknown identifiers (must be a GW variable or a
+ *          function), unbalanced parentheses, misplaced operators and wrong
+ *          function arity (min/max take 2 arguments, all others 1) are
+ *          errors. An empty or whitespace-only expression is INVALID
+ *          ("expression is empty") — callers treat empty as "clear"
+ *          themselves.
+ *
+ * @param engine        Engine handle (grammar only; no model data is read).
+ * @param expr          Expression text.
+ * @param[out] errbuf   Receives the diagnostic on failure ("" on success).
+ *                      May be NULL.
+ * @param buflen        Size of errbuf in bytes.
+ * @param[out] col_out  Receives the 0-based character offset of the error,
+ *                      or -1 when not attributable. May be NULL.
+ * @returns SWMM_OK when the expression is valid, SWMM_ERR_BADPARAM when
+ *          invalid (diagnostic in errbuf/col_out) or on NULL expr.
+ */
+SWMM_ENGINE_API int swmm_gwf_validate_expression(SWMM_Engine engine, const char* expr,
+                                                 char* errbuf, int buflen, int* col_out);
+
+/**
+ * @brief Number of variables a [GWF] expression may reference.
+ * @param engine  Engine handle.
+ * @returns Variable count, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_gwf_variable_count(SWMM_Engine engine);
+
+/**
+ * @brief Name of the i-th [GWF] variable (upper-case, e.g. "HGW").
+ * @param engine   Engine handle.
+ * @param i        Zero-based index, < swmm_gwf_variable_count().
+ * @param[out] buf Destination buffer (NUL-terminated, truncated if too small).
+ * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gwf_variable_name(SWMM_Engine engine, int i, char* buf, int buflen);
+
+/**
+ * @brief Short English description of the i-th [GWF] variable, with a units
+ *        placeholder, e.g. "Water table height above aquifer bottom (ft or m)".
+ * @param engine   Engine handle.
+ * @param i        Zero-based index, < swmm_gwf_variable_count().
+ * @param[out] buf Destination buffer (NUL-terminated, truncated if too small).
+ * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gwf_variable_description(SWMM_Engine engine, int i, char* buf, int buflen);
+
+/**
+ * @brief Number of built-in functions a [GWF] expression may call.
+ * @param engine  Engine handle.
+ * @returns Function count, or -1 on error.
+ */
+SWMM_ENGINE_API int swmm_gwf_function_count(SWMM_Engine engine);
+
+/**
+ * @brief Name of the i-th expression function (lower-case, stable order:
+ *        abs, sgn, sqrt, log, exp, sin, cos, tan, asin, acos, atan, step, min,
+ *        max, cot, sinh, cosh, tanh, coth, log10, acot).
+ * @param engine   Engine handle.
+ * @param i        Zero-based index, < swmm_gwf_function_count().
+ * @param[out] buf Destination buffer (NUL-terminated, truncated if too small).
+ * @param buflen   Size of `buf` in bytes (must be > 0).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gwf_function_name(SWMM_Engine engine, int i, char* buf, int buflen);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
