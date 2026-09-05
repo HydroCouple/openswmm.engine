@@ -2372,6 +2372,12 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         // element: no kernel reads another link's flow, and the bypassed
         // path above holds links.flow == new_flow_ from its last commit.
         links.flow[uj] = new_flow_[uj];
+        // Publish the conduit dqdh alongside (legacy keeps Link.dqdh
+        // current for every link). Nothing in the conduit path reads it —
+        // the CSR gather uses dqdh_ directly — but the SWMM_TRACE_DUMP_STEP
+        // element dump prints links.dqdh, which held 0 for conduits and
+        // made per-element dqdh comparison against legacy impossible.
+        links.dqdh[uj] = dqdh_[uj];
     }
 }
 
@@ -2891,7 +2897,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                 std::snprintf(fname, sizeof(fname), "%s.link%ld", tr, lf_target);
                 lf = std::fopen(fname, "w");
                 if (lf) std::fprintf(lf,
-                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv\n");
+                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv,dqdh\n");
             }
         }
         if (lf && static_cast<long>(uj) == lf_target) {
@@ -2905,14 +2911,14 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                 : (lf_count > lf_skip);
             if (in_window && lf_rows < 128) {
                 ++lf_rows;
-                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a\n",
+                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a,%a\n",
                              lf_count, qLast, v, sig, rho, aWtd, rWtd,
                              dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
                              surf_area1_[uj], surf_area2_[uj],
                              static_cast<int>(links.flow_class[uj]),
                              depth1_[uj], depth_mid_[uj], area1_[uj],
                              area_mid_[uj], hrad1_[uj], hrad_mid_[uj],
-                             aMidConv);
+                             aMidConv, dqdh_[uj]);
                 if (lf_rows >= 128) { std::fclose(lf); lf = nullptr; }
             }
         }
@@ -2936,7 +2942,6 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     // Phase A extension: read invariants from the conduit-dense tile.
     auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
     double barrels_d = tile_barrels_d_[uci];
-    double inv_len = tile_inv_length_[uci];
     double aMid = area_mid_[uj];
     double rMid = hrad_mid_[uj];
     double qLast = links.flow[uj] / barrels_d;
@@ -3003,8 +3008,12 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
         dq1 = dt * (sbot * std::pow(absv, 0.852) / std::pow(rMid, 1.1667));
     }
 
-    // Head gradient
-    double dq2 = dt_g * aWtd * (h2 - h1) * inv_len;
+    // Head gradient — PARITY dwflow.c:242: divide by length directly, like
+    // the Manning kernel; x*inv_len rounds differently by 1 ULP, and on a
+    // pressurized force main that ULP reaches dqdh and the node sumdqdh
+    // surcharge denominator (PS4D on 800-node-sewer).
+    const double fm_length = tile_length_[uci];
+    double dq2 = dt_g * aWtd * (h2 - h1) / fm_length;
 
     // sig=0: no unsteady/convective terms (dq3=dq4=0)
 
@@ -3017,7 +3026,7 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
         if (a1Conv > FUDGE) losses += tile_loss_inlet_[uci] * (absq / a1Conv);
         if (a2Conv > FUDGE) losses += tile_loss_outlet_[uci] * (absq / a2Conv);
         if (aMidConv > FUDGE) losses += tile_loss_avg_[uci] * (absq / aMidConv);
-        dq5 = losses * 0.5 * inv_len * dt;
+        dq5 = losses / 2.0 / fm_length * dt;  // PARITY dwflow.c:229
     }
 
     // Evaporation/seepage. Length divisor uses RAW length (matching legacy
@@ -3055,7 +3064,9 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     double q = uf_applied
         ? (qOld - dq2 + dq6 + uf_k3 * qOld) / denom
         : (qOld - dq2 + dq6) / denom;
-    dqdh_[uj] = (1.0 / denom) * dt_g * aWtd * inv_len * barrels_d;
+    // PARITY dwflow.c:240 (same grouping as the Manning kernel):
+    // ((1/denom)*GRAVITY)*dt, divide by length — NOT dt_g / inv_len.
+    dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / fm_length * barrels_d;
 
     // Shared post-processing
     applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
