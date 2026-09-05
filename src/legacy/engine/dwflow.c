@@ -292,7 +292,7 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
                 snprintf(fname, sizeof(fname), "%s.link%ld", tr, lfTarget);
                 lf = fopen(fname, "w");
                 if ( lf ) fprintf(lf,
-                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv\n");
+                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv,dqdh\n");
             }
         }
         if ( lf && linkIndex == lfTarget )
@@ -308,12 +308,13 @@ void  dwflow_findConduitFlow(int linkIndex, int steps, double omega, double dt)
             if ( inWindow && lfRows < 128 )
             {
                 ++lfRows;
-                fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a\n",
+                fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a,%a\n",
                         lfCount, qLast, v, sigma, rho, aWtd, rWtd,
                         dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
                         Link[linkIndex].surfArea1, Link[linkIndex].surfArea2,
                         Link[linkIndex].flowClass,
-                        y1, yMid, a1, aMid, r1, rMid, aMidConv);
+                        y1, yMid, a1, aMid, r1, rMid, aMidConv,
+                        Link[linkIndex].dqdh);
                 if ( lfRows >= 128 ) { fclose(lf); lf = NULL; }
             }
         }
