@@ -19,6 +19,10 @@ cmake_minimum_required(VERSION 3.21)
 
 find_package(GTest CONFIG REQUIRED)
 
+option(OPENSWMM_WITH_INTEGRATION_TESTS
+    "Build integration-style tests under tests/unit/engine"
+    OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -294,7 +298,9 @@ add_gtest_unit(test_engine_subcatch_editor_api test_subcatch_editor_api.cpp)
 add_gtest_unit(test_engine_statistics_bulk_phase3 test_statistics_bulk_phase3.cpp)
 add_gtest_unit(test_engine_runoff_interface_capi test_runoff_interface_capi.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
+add_gtest_unit(test_engine_dps              test_dynamic_preissmann_slot.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
+add_gtest_unit(test_operator_snapshot       test_operator_snapshot.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
 # Perf plan Phase A1 — swmm_*_delete_many parity with sequential descending
@@ -306,6 +312,11 @@ add_gtest_unit(test_engine_tags           test_tags.cpp)
 # Engine gaps BN-LINK-01a / -01b — symmetric getters for initial-flow /
 # max-flow (added 2026-05-25 for Slice SB of the GUI plan).
 add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
+
+if(OPENSWMM_WITH_INTEGRATION_TESTS)
+    add_gtest_unit(test_engine_site_drainage test_site_drainage_model.cpp)
+    set_tests_properties(test_engine_site_drainage PROPERTIES LABELS "integration")
+endif()
 
 # End-to-end model-builder parity: build site_drainage_model.inp via the
 # programmatic API, run it, write it back out, and confirm result parity
