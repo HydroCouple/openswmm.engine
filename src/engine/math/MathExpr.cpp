@@ -80,6 +80,21 @@ static const std::unordered_map<std::string, TokenType> func_map = {
     {"acot",  TokenType::FUNC_ACOT},
 };
 
+const std::vector<std::string>& function_names() {
+    // Ordered by TokenType value (declaration order of the FUNC_* enumerators),
+    // so the list is stable across runs regardless of unordered_map layout.
+    static const std::vector<std::string> names = [] {
+        std::vector<std::pair<int, std::string>> byType;
+        for (const auto& kv : func_map)
+            byType.emplace_back(static_cast<int>(kv.second), kv.first);
+        std::sort(byType.begin(), byType.end());
+        std::vector<std::string> out;
+        for (const auto& p : byType) out.push_back(p.second);
+        return out;
+    }();
+    return names;
+}
+
 static std::vector<Token> tokenize(const std::string& s) {
     std::vector<Token> tokens;
     size_t i = 0;

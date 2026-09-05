@@ -306,7 +306,7 @@ from ._enums import (
     # Water quality / LID
     ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
     # Hydrology parameters
-    AquiferParam,
+    AquiferParam, GwfType,
     # Output variables
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
     # Forcing & patterns
@@ -379,7 +379,7 @@ __all__ = [
     # --- Enumerations: water quality / LID ---
     "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType",
     # --- Enumerations: hydrology parameters ---
-    "AquiferParam",
+    "AquiferParam", "GwfType",
     # --- Enumerations: output variables ---
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
     # --- Enumerations: forcing & patterns ---

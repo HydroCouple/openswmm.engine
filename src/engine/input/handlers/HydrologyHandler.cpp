@@ -87,6 +87,7 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/HydrologyData.hpp"
+#include "../../hydrology/Groundwater.hpp"
 
 #include "../InputParseUtils.hpp"
 
@@ -418,14 +419,53 @@ void handle_gwf(SimulationContext& ctx, const std::vector<std::string>& lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.size() < 3) continue;
 
-        const std::string& subcatch = tok[0];
-        const std::string type = Tokenizer::to_upper(tok[1]);
+        // Key on the [SUBCATCHMENTS] spelling so a mixed-case name in [GWF]
+        // still matches the lookup at start() and the writer (both use the
+        // registry name). An unknown subcatchment keeps the typed name, as
+        // handle_groundwater() tolerates an unresolved name.
+        const std::string* canon = ctx.subcatch_names.canonical(tok[0]);
+        const std::string& subcatch = canon ? *canon : tok[0];
 
-        // Reconstruct expression from remaining tokens
-        std::string expr;
-        for (std::size_t i = 2; i < tok.size(); ++i) {
-            if (!expr.empty()) expr += ' ';
-            expr += tok[i];
+        // Legacy gwater.c accepts any "LAT..." spelling for LATERAL.
+        const std::string type_tok = Tokenizer::to_upper(tok[1]);
+        std::string type;
+        if (type_tok.rfind("LAT", 0) == 0) type = "LATERAL";
+        else if (type_tok == "DEEP")       type = "DEEP";
+        else {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            continue;
+        }
+
+        // The expression is free text — take it verbatim from the line.
+        // Re-joining the tokenizer's output would drop the ',' between
+        // min/max arguments (the tokenizer treats a comma as a column
+        // separator), turning "MIN(HGW, HCB)" into "MIN(HGW HCB)".
+        std::string_view rest = Tokenizer::strip_comment(line);
+        for (int col = 0; col < 2; ++col) {          // skip Subcatch, Type
+            std::size_t i = 0;
+            while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
+            if (i < rest.size() && rest[i] == '"') {
+                ++i;
+                while (i < rest.size() && rest[i] != '"') ++i;
+                if (i < rest.size()) ++i;
+            } else {
+                while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t' &&
+                       rest[i] != ',') ++i;
+            }
+            while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
+            if (i < rest.size() && rest[i] == ',') ++i;  // optional CSV comma
+            rest.remove_prefix(i);
+        }
+        std::string expr(Tokenizer::trim(rest));
+
+        // mathexpr::parse is lenient (unknown identifiers evaluate to 0.0),
+        // so reject malformed expressions here like legacy ERR_MATH_EXPR.
+        std::string msg;
+        int col = -1;
+        if (groundwater::gwf_validate(expr, msg, col) != 0) {
+            ctx.errors.push_back(format_error(ERR_MATH_EXPR, "",
+                "in [GWF] " + type + " for Subcatchment " + subcatch + ": " + msg));
+            continue;
         }
 
         std::string key = "GWF:" + subcatch + ":" + type;

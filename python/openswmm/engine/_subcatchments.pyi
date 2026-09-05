@@ -26,12 +26,12 @@ Type stubs for :mod:`openswmm.engine._subcatchments`.
 """
 
 from collections.abc import Iterator, MutableMapping
-from typing import Any, NamedTuple, Optional, Tuple, Union
+from typing import Any, List, NamedTuple, Optional, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ._enums import AquiferParam, InfilModel
+from ._enums import AquiferParam, GwfType, InfilModel
 from ._gages import Gage
 from ._nodes import Node
 from ._solver import Solver
@@ -166,6 +166,14 @@ class Subcatchments:
     ids: NDArray[Any]
 
     def qualities(self, pollutant: _Key) -> NDArray[Any]: ...
+
+    def get_gwf_expression(self, key: _Key, gwf_type: Union[GwfType, int]) -> str: ...
+    def set_gwf_expression(
+        self, key: _Key, gwf_type: Union[GwfType, int], expression: Optional[str]
+    ) -> None: ...
+    def validate_gwf_expression(self, expression: str) -> Tuple[bool, str, int]: ...
+    def gwf_variables(self) -> List[Tuple[str, str]]: ...
+    def gwf_functions(self) -> List[str]: ...
 
 
 class Aquifers:

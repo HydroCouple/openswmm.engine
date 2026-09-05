@@ -81,6 +81,39 @@ static const char* GW_VAR_NAMES[] = {
     "THETA", "PHI", "FI", "FU", "A"
 };
 
+/// Short English gloss per GW_VAR_NAMES entry (editor tooltips / completers).
+static const char* GW_VAR_DESCRIPTIONS[] = {
+    "Water table height above aquifer bottom (ft or m)",
+    "Surface-water head at the receiving node above aquifer bottom (ft or m)",
+    "Channel bottom height above aquifer bottom (Hstar) (ft or m)",
+    "Ground surface height above aquifer bottom (ft or m)",
+    "Saturated hydraulic conductivity (in/hr or mm/hr)",
+    "Unsaturated hydraulic conductivity (in/hr or mm/hr)",
+    "Upper-zone moisture content (fraction)",
+    "Soil porosity (fraction)",
+    "Surface infiltration rate (in/hr or mm/hr)",
+    "Upper-zone percolation rate (in/hr or mm/hr)",
+    "Subcatchment area (ac or ha)"
+};
+
+/**
+ * @brief Validate a [GWF] flow expression without compiling or storing it.
+ *
+ * @details Diagnostic peer of mathexpr::parse for editors: a strict scan
+ *          (unknown characters, malformed numbers and identifiers outside
+ *          GW_VAR_NAMES / mathexpr::function_names() are errors, all
+ *          case-insensitive), balanced parentheses, operand/operator
+ *          sequencing including unary minus, and function arity (min/max take
+ *          exactly 2 arguments, every other function exactly 1). An empty or
+ *          whitespace-only expression is invalid.
+ *
+ * @param expr  Expression text.
+ * @param msg   [out] Human-readable diagnostic ("" when valid).
+ * @param col   [out] 0-based column of the error, or -1 when not attributable.
+ * @returns 0 when valid, -1 when invalid.
+ */
+int gwf_validate(const std::string& expr, std::string& msg, int& col);
+
 // ============================================================================
 // Per-subcatchment GW state (SoA for vectorization)
 // ============================================================================

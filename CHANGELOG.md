@@ -23,6 +23,24 @@ retroactive.
 
 ### Added
 
+- **GUI-editor round-trip API for `[GWF]` expressions** — a subcatchment's custom groundwater
+  flow expressions were reachable only through the stringly-typed `swmm_options_get/set_ext`
+  key `"GWF:<subcatch>:LATERAL|DEEP"`, with no validator:
+  - `SWMM_GwfType` (`LATERAL`, `DEEP`) with `swmm_subcatch_get_gwf_expression` /
+    `_set_gwf_expression` (NULL/empty clears; stored as typed, pre-start-only).
+  - `swmm_gwf_validate_expression` — grammar-only, never mutates the engine (peer of
+    `swmm_treatment_validate_expression`): unknown characters and identifiers, unbalanced
+    parentheses, misplaced operators and wrong `min`/`max` arity are errors, with a 0-based
+    column; an empty expression is invalid.
+  - Vocabulary for completers: `swmm_gwf_variable_count/name/description` (the 11 `GW_VAR_NAMES`)
+    and `swmm_gwf_function_count/name` (the 21 `MathExpr` functions, enumerator order).
+  - Parser leniencies matched to the editor: `[GWF]` accepts the legacy `LAT` abbreviation and a
+    subcatchment name in any case (the stored key uses the `[SUBCATCHMENTS]` spelling), and a
+    malformed expression is now **ERROR 233** at open and at `initialize()` instead of being
+    silently dropped (unknown identifiers previously evaluated to 0.0).
+  - Python: `GwfType`, `Subcatchments.get/set_gwf_expression`, `validate_gwf_expression`,
+    `gwf_variables()`, `gwf_functions()` with `.pyi` stubs. (`test_engine_gwf_api`.)
+
 - **Live `.out` reading.** `swmm_output_open_live(path)` opens a binary
   output file that is still being written (or that never got its closing
   records): offsets come from a forward parse of the header and the period

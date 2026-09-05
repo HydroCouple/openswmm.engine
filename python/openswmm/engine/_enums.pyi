@@ -489,6 +489,17 @@ class AquiferParam(IntEnum):
     UPPER_MOISTURE = 11
 
 
+class GwfType(IntEnum):
+    """Which of a subcatchment's two [GWF] custom groundwater flow expressions.
+
+    @cvar LATERAL: Added to the standard A1/A2/A3 lateral groundwater flow.
+    @cvar DEEP: Replaces the standard deep-percolation term.
+    """
+
+    LATERAL = 0
+    DEEP = 1
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
