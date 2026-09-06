@@ -62,16 +62,29 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
 list(FILTER OPENSWMM_ENGINE_HEADERS EXCLUDE REGEX "input/geopackage/.*")
 
 # ---- Library target ----
+# WebAssembly (Emscripten) has no shared objects: the engine is built as a
+# STATIC archive and linked into the consumer's .wasm (openswmm.engine.wasm).
+# OPENSWMM_ENGINE_STATIC makes SWMM_ENGINE_API expand to nothing there.
+if(EMSCRIPTEN)
+    set(_OPENSWMM_ENGINE_LIB_TYPE STATIC)
+else()
+    set(_OPENSWMM_ENGINE_LIB_TYPE SHARED)
+endif()
+
 # NOTE: If there are no .cpp files yet (skeleton phase), use a placeholder.
 # Remove this condition when real sources exist.
 if(OPENSWMM_ENGINE_SOURCES)
-    add_library(openswmm_engine SHARED ${OPENSWMM_ENGINE_SOURCES})
+    add_library(openswmm_engine ${_OPENSWMM_ENGINE_LIB_TYPE} ${OPENSWMM_ENGINE_SOURCES})
 else()
     # Placeholder object library until sources are written
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/placeholder.cpp
          "// OpenSWMM Engine — placeholder (Phase 2+ sources not yet written)\n"
          "// See docs/MASTER_IMPLEMENTATION_PLAN.md\n")
-    add_library(openswmm_engine SHARED ${CMAKE_CURRENT_BINARY_DIR}/placeholder.cpp)
+    add_library(openswmm_engine ${_OPENSWMM_ENGINE_LIB_TYPE} ${CMAKE_CURRENT_BINARY_DIR}/placeholder.cpp)
+endif()
+
+if(EMSCRIPTEN)
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_ENGINE_STATIC)
 endif()
 
 # ---- Alias targets ----
@@ -124,8 +137,12 @@ target_link_libraries(openswmm_engine
 )
 
 # ---- Threads (for IOThread) ----
-find_package(Threads REQUIRED)
-target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
+# Emscripten: single-threaded build (no -pthread / SharedArrayBuffer);
+# IOThread runs synchronously there (see output/IOThread.cpp).
+if(NOT EMSCRIPTEN)
+    find_package(Threads REQUIRED)
+    target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
+endif()
 
 # ---- OpenMP (for parallel solver loops) ----
 # macOS/AppleClang is the only platform where the stock FindOpenMP cannot
@@ -138,7 +155,7 @@ target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
 if(APPLE)
     list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
     include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
-else()
+elseif(NOT EMSCRIPTEN)
     find_package(OpenMP)
 endif()
 
@@ -151,7 +168,8 @@ else()
 endif()
 
 # ---- Platform-specific DLL loading ----
-if(UNIX AND NOT APPLE)
+# Emscripten: dlopen() is in libc (returns NULL without -sMAIN_MODULE), no -ldl.
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     target_link_libraries(openswmm_engine PRIVATE dl)
 elseif(APPLE)
     # dl is part of libSystem on macOS
@@ -552,6 +570,10 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         target_link_options(openswmm_engine PRIVATE
             "LINKER:-force_load,$<TARGET_FILE:openswmm_geopackage>"
         )
+    elseif(EMSCRIPTEN)
+        # Engine is STATIC here; link options on a static archive are not
+        # applied. The wasm consumer retains swmm_gpkg_* by naming them in
+        # -sEXPORTED_FUNCTIONS, which forces wasm-ld to pull the objects.
     else()
         # GNU ld / lld accept bracketed --whole-archive; the archive path
         # must appear between the two flags.
