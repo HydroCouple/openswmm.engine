@@ -23,6 +23,12 @@ retroactive.
 
 ### Added
 
+- **2D: `swmm_2d_get_run_stats` C API / `Surface2D.run_stats`** — the solver backend label, momentum
+  closure, configured `LTS_TIERS`, cumulative substeps and face-kernel evaluations, active-cell fractions
+  and per-tier LTS occupancy, readable while the run is in flight. The report and the warning callback
+  carry a `2D solver: …` advisory naming the backend and closure, and the Kokkos-plugin refusal for quad
+  meshes / non-`LOCAL_INERTIAL` closures is now printed under `BACKEND AUTO` too (a `DIFFUSIVE_WAVE` deck
+  used to fall back silently and read as a slowdown). `bookFaceSpecies` returns early on species-free models.
 - **2D: momentum closures `MOMENTUM_EQUATION FULL_SWE | DIFFUSIVE_WAVE` and mixed
   triangle/quadrilateral meshes `[2D_QUADS]`** (plans/2D_FULL_SWE_SHOCK_CAPTURING_PLAN_2026-09-05.md,
   plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md; handoff plans/HANDOFF_2D_TRIQUAD_FULLSWE_2026-09-06.md).

@@ -977,6 +977,36 @@ cdef class Surface2D:
         _check(swmm_2d_get_solver_last_step(self._engine, &val))
         return val
 
+    @property
+    def run_stats(self) -> dict:
+        """Cumulative marcher statistics and the backend of this 2D run.
+
+        Readable during the run (after C{start}). Keys: C{backend} (solver
+        label chosen at initialize), C{momentum} (C{LOCAL_INERTIAL} /
+        C{FULL_SWE} / C{DIFFUSIVE_WAVE}), C{lts_tiers} (configured),
+        C{steps}, C{face_evals}, C{last_step}, C{active_frac}
+        (min, mean, max; -1 = not populated) and C{tier_cells} (cumulative
+        rebuild-sampled cells per LTS tier, C{n_tiers} entries).
+
+        @return: Statistics dictionary.
+        @rtype: dict
+        @raise RuntimeError: If the C API call fails.
+        """
+        cdef SWMM_2DRunStats st
+        _check(swmm_2d_get_run_stats(self._engine, &st))
+        names = ("LOCAL_INERTIAL", "FULL_SWE", "DIFFUSIVE_WAVE")
+        return {
+            "backend": (<bytes>st.backend).decode("utf-8", "replace"),
+            "momentum": names[st.momentum] if 0 <= st.momentum < 3 else st.momentum,
+            "lts_tiers": st.lts_tiers,
+            "steps": st.steps,
+            "face_evals": st.face_evals,
+            "last_step": st.last_step,
+            "active_frac": (st.active_frac_min, st.active_frac_mean,
+                            st.active_frac_max),
+            "tier_cells": [st.tier_cells[k] for k in range(st.n_tiers)],
+        }
+
     def get_stat_max_depths(self):
         """Return cumulative maximum-depth envelope for all triangles.
 

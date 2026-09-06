@@ -747,6 +747,8 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces,
     // meshes keep the historical β/3 exactly.
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
+    // All-triangle meshes skip the per-face cell_nv load entirely.
+    const bool   has_quads = mesh_->n_quads() > 0;
     // VFR_FACE: block/convey at the shared edge's TRUE crest via the B&S
     // Eq. 14 wetted-edge depth; MEAN keeps the centroid zface bit-identical.
     const bool vfr_face =
@@ -807,7 +809,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces,
         const int    refire   =
             global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
         const double beta_share =
-            (mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
+            (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
         const double budget   = beta_share / refire *
                                 std::max(state_->volume[exp_cell], 0.0);
         const double take = std::fabs(qn1) * ed.xi[e] * dt_f;
@@ -972,6 +974,9 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces,
 void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
                                              double hf, double dt_f,
                                              bool global_step) noexcept {
+    // Hydrodynamics-only models (no species) have nothing to book: return
+    // before the divisions below — this runs once per face evaluation.
+    if (sacc_L_.empty()) return;
     const auto& ed = edges_;
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;

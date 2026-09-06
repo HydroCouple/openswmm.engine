@@ -608,6 +608,20 @@ class Surface2D:
         """
         ...
 
+    @property
+    def run_stats(self) -> dict:
+        """Cumulative marcher statistics and the backend of this 2D run.
+
+        Keys: C{backend}, C{momentum}, C{lts_tiers}, C{steps},
+        C{face_evals}, C{last_step}, C{active_frac} (min, mean, max) and
+        C{tier_cells} (one entry per populated LTS tier).
+
+        @return: Statistics dictionary.
+        @rtype: dict
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     def get_stat_max_depths(self) -> npt.NDArray[np.float64]:
         """Return cumulative maximum-depth envelope for all triangles.
 

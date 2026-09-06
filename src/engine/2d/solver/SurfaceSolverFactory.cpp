@@ -270,8 +270,9 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                                                   std::string* chosen,
                                                   int n_cells,
                                                   bool plugin_capable) {
-    auto serial_marcher = [&]() -> std::unique_ptr<ISurfaceSolver> {
-        if (chosen) *chosen = "cpu (explicit marcher)";
+    auto serial_marcher = [&](const char* label = "cpu (explicit marcher)")
+        -> std::unique_ptr<ISurfaceSolver> {
+        if (chosen) *chosen = label;
         return std::make_unique<ExplicitInertialSolver>();
     };
 
@@ -287,13 +288,15 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     // mesh or a non-LI momentum closure is refused LOUDLY and served by the
     // CPU marcher — never a silent physics substitution.
     if (!plugin_capable) {
-        if (mode != "auto" && !mode.empty())
-            std::fprintf(stderr,
-                "[openswmm 2D] backend '%s' requested, but the GPU/Kokkos "
-                "plugin supports only all-triangle meshes under "
-                "MOMENTUM_EQUATION LOCAL_INERTIAL; using the CPU marcher for "
-                "this model.\n", mode.c_str());
-        return serial_marcher();
+        // Say so under AUTO as well: a model that silently loses the plugin
+        // (a DIFFUSIVE_WAVE deck on a 100k-cell mesh, say) looks like a
+        // performance regression to the modeller.
+        std::fprintf(stderr,
+            "[openswmm 2D] backend '%s': the GPU/Kokkos plugin supports only "
+            "all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL; "
+            "using the CPU marcher for this model.\n",
+            mode.empty() ? "auto" : mode.c_str());
+        return serial_marcher("cpu (explicit marcher; plugin not applicable)");
     }
 
     // Explicit backend request bypasses every mesh-size gate — the operator

@@ -641,6 +641,32 @@ SWMM_ENGINE_API int swmm_2d_get_solver_steps(SWMM_Engine engine, long* steps);
 SWMM_ENGINE_API int swmm_2d_get_solver_last_step(SWMM_Engine engine,
                                                    double* h_last);
 
+/** @brief Cumulative explicit-marcher run statistics plus the backend and
+ *  closure this run is on — the numbers the .rpt "2D Solver Statistics"
+ *  block prints, readable DURING the run (after swmm_engine_start).
+ *  @ingroup engine_2d */
+typedef struct SWMM_2DRunStats {
+    char   backend[64];        /**< Solver label chosen at initialize, e.g.
+                                    "cpu (explicit marcher)", "omp (Kokkos OpenMP …)". */
+    int    momentum;           /**< 0 LOCAL_INERTIAL, 1 FULL_SWE, 2 DIFFUSIVE_WAVE. */
+    int    lts_tiers;          /**< Configured [2D_OPTIONS] LTS_TIERS. */
+    long   steps;              /**< Cumulative internal (marcher) substeps. */
+    long   face_evals;         /**< Cumulative face-kernel evaluations. */
+    double last_step;          /**< Last accepted internal step (s). */
+    double active_frac_min;    /**< Active-cell fraction over rebuild samples; -1 = not populated. */
+    double active_frac_mean;
+    double active_frac_max;
+    int    n_tiers;            /**< Populated entries of tier_cells (0 = no LTS telemetry). */
+    long   tier_cells[8];      /**< Cumulative rebuild-sampled cells per LTS tier. */
+} SWMM_2DRunStats;
+
+/** @brief Read the cumulative marcher statistics and backend of the 2D run.
+ *  Counters are zero (and n_tiers 0) before the first advance and again once
+ *  the solver has been finalised at swmm_engine_end; backend stays filled.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_run_stats(SWMM_Engine engine,
+                                          SWMM_2DRunStats* stats);
+
 /** @brief Get per-triangle max depth statistics (cumulative).
  *  @param max_depths Output array (pre-allocated to triangle_count).
  *  @ingroup engine_2d */

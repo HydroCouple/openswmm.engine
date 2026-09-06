@@ -826,8 +826,25 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const bool plugin_ok =
             mesh_.n_quads() == 0 &&
             options_.momentum == Momentum2D::LOCAL_INERTIAL;
-        solver_ = makeSurfaceSolver(options_, nullptr, mesh_.n_triangles(),
-                                    plugin_ok);
+        solver_ = makeSurfaceSolver(options_, &backend_name_,
+                                    mesh_.n_triangles(), plugin_ok);
+        // Say which solver this run is on. Rides the advisory-warning path
+        // (code 0) with the thread notices, so it reaches the .rpt and the
+        // GUI's warning callback — the backend choice used to be visible on
+        // stderr only, and not at all when AUTO refused the plugin.
+        const char* closure =
+            options_.momentum == Momentum2D::FULL_SWE       ? "FULL_SWE" :
+            options_.momentum == Momentum2D::DIFFUSIVE_WAVE ? "DIFFUSIVE_WAVE" :
+                                                              "LOCAL_INERTIAL";
+        char buf[320];
+        std::snprintf(buf, sizeof buf,
+            "2D solver: %s; MOMENTUM_EQUATION %s; LTS_TIERS %d; %d cells "
+            "(%d quads)%s",
+            backend_name_.c_str(), closure, options_.lts_tiers,
+            mesh_.n_triangles(), mesh_.n_quads(),
+            plugin_ok ? "" : " — the GPU/Kokkos plugin serves all-triangle "
+                             "LOCAL_INERTIAL models only");
+        thread_warnings_.emplace_back(buf);
     }
     solver_->initialize(mesh_, state_, options_);
 #endif

@@ -540,6 +540,10 @@ if(OPENSWMM_BUILD_2D)
     # properties, well-balanced rest, Stoker / Ritter dam breaks vs exact
     # solutions (first and second order), Manning steady slope, conservation.
     add_gtest_unit(test_engine_2d_momentum_modes test_2d_momentum_modes.cpp)
+    # swmm_2d_get_run_stats: backend label, closure, LTS tiers and the
+    # cumulative marcher counters the GUI shows during a run, plus the
+    # "2D solver: …" advisory in the report.
+    add_gtest_unit(test_engine_2d_run_stats test_2d_run_stats.cpp)
     # Overland transport S1 (D-2DT1..D-2DT3): species MASS rides the marcher's
     # own face accumulators on the face's tier. The uniform-concentration
     # property to round-off across a 6-tier dam-break with a wet/dry front is

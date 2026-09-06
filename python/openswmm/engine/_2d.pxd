@@ -88,6 +88,19 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_total_exchange_flow(void* engine, double* flow)
     int swmm_2d_get_solver_steps(void* engine, long* steps)
     int swmm_2d_get_solver_last_step(void* engine, double* h_last)
+    ctypedef struct SWMM_2DRunStats:
+        char   backend[64]
+        int    momentum
+        int    lts_tiers
+        long   steps
+        long   face_evals
+        double last_step
+        double active_frac_min
+        double active_frac_mean
+        double active_frac_max
+        int    n_tiers
+        long   tier_cells[8]
+    int swmm_2d_get_run_stats(void* engine, SWMM_2DRunStats* stats)
     int swmm_2d_get_stat_max_depths(void* engine, double* max_depths)
     int swmm_2d_get_stat_max_velocities(void* engine, double* max_velocities)
     int swmm_2d_get_stat_max_continuity_err(void* engine, double* max_errs)

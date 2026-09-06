@@ -897,6 +897,31 @@ int swmm_2d_get_solver_last_step(SWMM_Engine engine, double* h_last) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_run_stats(SWMM_Engine engine, SWMM_2DRunStats* stats) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!stats) return SWMM_ERR_BADPARAM;
+
+    *stats = SWMM_2DRunStats{};
+    std::snprintf(stats->backend, sizeof stats->backend, "%s",
+                  router2d.backendName().c_str());
+    const auto& o = router2d.options();
+    using openswmm::twoD::Momentum2D;
+    stats->momentum  = (o.momentum == Momentum2D::FULL_SWE)       ? 1
+                     : (o.momentum == Momentum2D::DIFFUSIVE_WAVE) ? 2 : 0;
+    stats->lts_tiers = o.lts_tiers;
+    const auto s = router2d.runStats();
+    stats->steps            = s.nsteps;
+    stats->face_evals       = s.nrhs;
+    stats->last_step        = s.last_h;
+    stats->active_frac_min  = s.active_frac_min;
+    stats->active_frac_mean = s.active_frac_mean;
+    stats->active_frac_max  = s.active_frac_max;
+    stats->n_tiers          = s.n_tiers;
+    for (int k = 0; k < 8; ++k) stats->tier_cells[k] = s.tier_cells[k];
+    return SWMM_OK;
+}
+
 int swmm_2d_get_stat_max_depths(SWMM_Engine engine, double* max_depths) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);

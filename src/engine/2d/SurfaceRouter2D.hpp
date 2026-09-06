@@ -332,10 +332,19 @@ public:
     double lastSolverStepSize() const {
         return solver_ ? solver_->last_step_size() : 0.0;
     }
+    /// Cumulative marcher statistics (ISurfaceSolver::RunStats): substeps,
+    /// face-kernel evaluations, active-cell fractions and LTS tier occupancy.
+    /// Zeros once the solver has been finalised.
+    ISurfaceSolver::RunStats runStats() const {
+        return solver_ ? solver_->run_stats() : ISurfaceSolver::RunStats{};
+    }
 #else
     long lastSolverSteps() const { return 0; }
     double lastSolverStepSize() const { return 0.0; }
 #endif
+    /// Backend label chosen by SurfaceSolverFactory at initialize()
+    /// ("cpu (explicit marcher)", "omp (…)", …); empty before that.
+    const std::string& backendName() const noexcept { return backend_name_; }
 
 private:
     /// Drain pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
@@ -348,6 +357,7 @@ private:
     SolverOptions2D  options_;
     BoundaryData     boundary_;
     std::vector<std::string> thread_warnings_;   ///< See threadWarnings().
+    std::string              backend_name_;      ///< See backendName().
 
     /// §5.5 track I — per-cell infiltration parameters, kernel state and the
     /// held rates published into state_.infil_rate. Inert (no allocation, no
