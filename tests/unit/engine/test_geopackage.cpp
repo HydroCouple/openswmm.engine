@@ -519,6 +519,114 @@ TEST_F(GeoPackageTest, VirtualJunctionFlagAndRimRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[static_cast<std::size_t>(in1)], 0.0);
 }
 
+// [STREETS], [INLETS] and both inlet-placement grammars round-trip. A model
+// with an inlet junction re-reads with its usage row, so rule 633 holds.
+TEST_F(GeoPackageTest, StreetsInletsAndInletUsageRoundTrip) {
+    auto ctx_out = build_test_context();
+
+    auto& S = ctx_out.streets;
+    S.names.push_back("ST1");
+    S.t_crown.push_back(20.0);   S.h_curb.push_back(0.5);     S.sx.push_back(4.0);
+    S.n_road.push_back(0.016);   S.gutter_depres.push_back(0.167);
+    S.gutter_width.push_back(2.0); S.sides.push_back(2);
+    S.back_width.push_back(10.0); S.back_slope.push_back(4.0); S.back_n.push_back(0.02);
+
+    auto& I = ctx_out.inlets;
+    const int combo = I.add_row("Combo1", "COMBO");
+    {
+        const auto u = static_cast<std::size_t>(combo);
+        I.length[u] = 2.0;  I.width[u] = 2.0;  I.grate_type[u] = "P_BAR-50";
+        I.curb_length[u] = 3.0;  I.curb_height[u] = 0.5;  I.curb_throat[u] = 0;
+        I.comments[u] = "combination inlet";
+    }
+    const int custom = I.add_row("Custom1", "CUSTOM");
+    I.curve_id[static_cast<std::size_t>(custom)] = "CAP1";
+
+    const int c1 = ctx_out.link_names.find("C1");
+    const int j1 = ctx_out.node_names.find("J1");
+    const int j2 = ctx_out.node_names.find("J2");
+    const int j3 = ctx_out.node_names.find("J3");
+    ASSERT_TRUE(c1 >= 0 && j1 >= 0 && j2 >= 0 && j3 >= 0);
+
+    // Conduit-hosted placement on C1, two 25 %-clogged inlets, ON_SAG, capture J3.
+    {
+        const int r = ctx_out.inlet_usages.add_row(c1, -1, combo, j3);
+        const auto ur = static_cast<std::size_t>(r);
+        ctx_out.inlet_usages.num_inlets[ur]    = 2;
+        ctx_out.inlet_usages.clog_factor[ur]   = 0.75;
+        ctx_out.inlet_usages.flow_limit[ur]    = 1.5;
+        ctx_out.inlet_usages.local_depress[ur] = 0.1;
+        ctx_out.inlet_usages.local_width[ur]   = 1.0;
+        ctx_out.inlet_usages.placement[ur]     = 2;
+    }
+    // Inlet junction J2 (usage hosted by the node), capture J1.
+    {
+        const auto n = static_cast<std::size_t>(ctx_out.node_names.size());
+        ctx_out.nodes.is_virtual.resize(n, 0);
+        ctx_out.nodes.is_inlet.resize(n, 0);
+        ctx_out.nodes.rim_depth.resize(n, 0.0);
+        const auto u2 = static_cast<std::size_t>(j2);
+        ctx_out.nodes.is_virtual[u2] = 1;
+        ctx_out.nodes.is_inlet[u2]   = 1;
+        ctx_out.nodes.rim_depth[u2]  = 0.5;
+        ctx_out.inlet_usages.add_row(-1, j2, custom, j1);
+    }
+
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    ASSERT_EQ(ctx_in.streets.count(), 1);
+    EXPECT_EQ(ctx_in.streets.names[0], "ST1");
+    EXPECT_DOUBLE_EQ(ctx_in.streets.t_crown[0], 20.0);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.sx[0], 4.0);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.gutter_depres[0], 0.167);
+    EXPECT_EQ(ctx_in.streets.sides[0], 2);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.back_n[0], 0.02);
+
+    ASSERT_EQ(ctx_in.inlets.count(), 2);
+    EXPECT_EQ(ctx_in.inlets.names[0], "Combo1");
+    EXPECT_EQ(ctx_in.inlets.inlet_type[0], "COMBO");
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.length[0], 2.0);
+    EXPECT_EQ(ctx_in.inlets.grate_type[0], "P_BAR-50");
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.curb_length[0], 3.0);
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.curb_height[0], 0.5);
+    EXPECT_EQ(ctx_in.inlets.curb_throat[0], 0);
+    EXPECT_EQ(ctx_in.inlets.comments[0], "combination inlet");
+    EXPECT_EQ(ctx_in.inlets.inlet_type[1], "CUSTOM");
+    EXPECT_EQ(ctx_in.inlets.curve_id[1], "CAP1");
+
+    ASSERT_EQ(ctx_in.inlet_usages.count(), 2);
+    const int in_c1 = ctx_in.link_names.find("C1");
+    const int in_j2 = ctx_in.node_names.find("J2");
+    ASSERT_TRUE(in_c1 >= 0 && in_j2 >= 0);
+    const int rl = ctx_in.inlet_usages.find_by_link(in_c1);
+    ASSERT_GE(rl, 0);
+    {
+        const auto ur = static_cast<std::size_t>(rl);
+        EXPECT_EQ(ctx_in.inlet_usages.node_host[ur], -1);
+        EXPECT_EQ(ctx_in.inlet_usages.design_index[ur], 0);
+        EXPECT_EQ(ctx_in.node_names.name_of(ctx_in.inlet_usages.node_index[ur]), "J3");
+        EXPECT_EQ(ctx_in.inlet_usages.num_inlets[ur], 2);
+        EXPECT_NEAR(ctx_in.inlet_usages.clog_factor[ur], 0.75, 1e-12);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.flow_limit[ur], 1.5);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_depress[ur], 0.1);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_width[ur], 1.0);
+        EXPECT_EQ(ctx_in.inlet_usages.placement[ur], 2);
+    }
+    const int rn = ctx_in.inlet_usages.find_by_node_host(in_j2);
+    ASSERT_GE(rn, 0);
+    {
+        const auto ur = static_cast<std::size_t>(rn);
+        EXPECT_EQ(ctx_in.inlet_usages.link_index[ur], -1);
+        EXPECT_EQ(ctx_in.inlet_usages.design_index[ur], 1);
+        EXPECT_EQ(ctx_in.node_names.name_of(ctx_in.inlet_usages.node_index[ur]), "J1");
+        EXPECT_EQ(ctx_in.inlet_usages.placement[ur], 0);
+    }
+    EXPECT_EQ(ctx_in.nodes.is_inlet[static_cast<std::size_t>(in_j2)], 1);
+    EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[static_cast<std::size_t>(in_j2)], 0.5);
+}
+
 // A .gpkg written before those two columns existed must still open, with no
 // virtual junctions and no rim depths — exactly how it behaved before.
 TEST_F(GeoPackageTest, LegacyGpkgWithoutVirtualColumnsOpens) {

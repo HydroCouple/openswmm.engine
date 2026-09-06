@@ -1693,6 +1693,94 @@ static void read_transects(sqlite3* db, SimulationContext& ctx, const std::strin
     }
 }
 
+// Street sections, inlet designs and inlet placements. Tables absent from a
+// .gpkg written before they existed → nothing read, exactly as before.
+static void read_streets(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "streets")) return;
+    auto stmt = prepare(db,
+        "SELECT street_id, t_crown, h_curb, sx, n_road, gutter_depres, gutter_width, "
+        "sides, back_width, back_slope, back_n FROM streets WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    auto& S = ctx.streets;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        S.names.push_back(column_text(stmt.get(), 0));
+        S.t_crown.push_back(column_double(stmt.get(), 1));
+        S.h_curb.push_back(column_double(stmt.get(), 2));
+        S.sx.push_back(column_double(stmt.get(), 3));
+        S.n_road.push_back(column_double(stmt.get(), 4));
+        S.gutter_depres.push_back(column_double(stmt.get(), 5));
+        S.gutter_width.push_back(column_double(stmt.get(), 6));
+        S.sides.push_back(column_is_null(stmt.get(), 7) ? 2 : column_int(stmt.get(), 7));
+        S.back_width.push_back(column_double(stmt.get(), 8));
+        S.back_slope.push_back(column_double(stmt.get(), 9));
+        S.back_n.push_back(column_double(stmt.get(), 10));
+    }
+}
+
+static void read_inlets(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "inlets")) return;
+    auto stmt = prepare(db,
+        "SELECT inlet_id, inlet_type, length, width, grate_type, open_area, splash_veloc, "
+        "curb_length, curb_height, curb_throat, curve_id, comment "
+        "FROM inlets WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    auto txt = [&](int col) {
+        return column_is_null(stmt.get(), col) ? std::string{} : column_text(stmt.get(), col);
+    };
+    auto& I = ctx.inlets;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int idx = I.add_row(column_text(stmt.get(), 0), column_text(stmt.get(), 1));
+        const auto u = static_cast<std::size_t>(idx);
+        I.length[u]       = column_double(stmt.get(), 2);
+        I.width[u]        = column_double(stmt.get(), 3);
+        I.grate_type[u]   = txt(4);
+        I.open_area[u]    = column_double(stmt.get(), 5);
+        I.splash_veloc[u] = column_double(stmt.get(), 6);
+        I.curb_length[u]  = column_double(stmt.get(), 7);
+        I.curb_height[u]  = column_double(stmt.get(), 8);
+        I.curb_throat[u]  = column_is_null(stmt.get(), 9) ? 2 : column_int(stmt.get(), 9);
+        I.curve_id[u]     = txt(10);
+        if (I.comments.size() < I.names.size()) I.comments.resize(I.names.size());
+        I.comments[u]     = txt(11);
+    }
+}
+
+static void read_inlet_usage(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
+    if (!table_exists(db, "inlet_usage")) return;
+    auto stmt = prepare(db,
+        "SELECT host_kind, host_id, inlet_id, capture_node, num_inlets, pct_clogged, "
+        "flow_limit, local_depress, local_width, placement "
+        "FROM inlet_usage WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const int  host_kind = column_int(stmt.get(), 0);
+        const std::string host = column_text(stmt.get(), 1);
+        const std::string design = column_text(stmt.get(), 2);
+        const int capture = ctx.node_names.find(column_text(stmt.get(), 3));
+        int di = -1;
+        for (int i = 0; i < ctx.inlets.count(); ++i)
+            if (ctx.inlets.names[static_cast<std::size_t>(i)] == design) { di = i; break; }
+        const int host_node = (host_kind == 1) ? ctx.node_names.find(host) : -1;
+        const int host_link = (host_kind == 1) ? -1 : ctx.link_names.find(host);
+        // Unresolvable references are dropped, as the [INLET_USAGE] handler does.
+        if (di < 0 || capture < 0) continue;
+        if (host_kind == 1 ? host_node < 0 : host_link < 0) continue;
+        const int r = ctx.inlet_usages.add_row(host_link, host_node, di, capture);
+        const auto ur = static_cast<std::size_t>(r);
+        ctx.inlet_usages.num_inlets[ur]    = column_is_null(stmt.get(), 4) ? 1 : column_int(stmt.get(), 4);
+        ctx.inlet_usages.clog_factor[ur]   = 1.0 - column_double(stmt.get(), 5) / 100.0;
+        ctx.inlet_usages.flow_limit[ur]    = column_double(stmt.get(), 6);
+        ctx.inlet_usages.local_depress[ur] = column_double(stmt.get(), 7);
+        ctx.inlet_usages.local_width[ur]   = column_double(stmt.get(), 8);
+        ctx.inlet_usages.placement[ur]     = column_is_null(stmt.get(), 9) ? 0 : column_int(stmt.get(), 9);
+        if (host_node >= 0) {
+            // The nodes table carries is_inlet; keep the two consistent.
+            const auto un = static_cast<std::size_t>(host_node);
+            if (un < ctx.nodes.is_inlet.size()) ctx.nodes.is_inlet[un] = 1;
+        }
+    }
+}
+
 static void read_dwf(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     if (!table_exists(db, "dwf_inflows")) return;
     auto stmt = prepare(db,
@@ -1961,6 +2049,9 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_inflows(db, ctx, simulation_id);
         read_dwf(db, ctx, simulation_id);
         read_transects(db, ctx, simulation_id);
+        read_streets(db, ctx, simulation_id);
+        read_inlets(db, ctx, simulation_id);
+        read_inlet_usage(db, ctx, simulation_id);
         read_controls(db, ctx, simulation_id);
 
         // Part E — 2D mesh model definition. Options keys (2D_*) were

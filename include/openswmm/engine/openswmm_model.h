@@ -108,6 +108,36 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine);
  */
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path);
 
+/** Write profile for swmm_model_write_compat(). */
+typedef enum SWMM_InpProfile {
+    SWMM_INP_PROFILE_FULL  = 0,  /**< native OpenSWMM format (= swmm_model_write) */
+    SWMM_INP_PROFILE_SWMM5 = 1   /**< readable by a SWMM 5.x engine */
+} SWMM_InpProfile;
+
+/**
+ * @brief Write the current model state as an .inp for a given engine profile.
+ *
+ * @details `SWMM_INP_PROFILE_SWMM5` produces a file a SWMM 5.x engine reads:
+ *          v6-only sections ([VIRTUAL_JUNCTIONS], [INLET_JUNCTIONS], [2D_*],
+ *          [PLUGINS], [PROCESS_COMPONENTS], [USER_FLAGS], [USER_FLAG_VALUES],
+ *          [RDII_DECAY]) and option keys are omitted, `FLOW_ROUTING FV` is
+ *          written as `DYNWAVE`, `SURCHARGE_METHOD DYNAMIC_SLOT`/`TPA` as
+ *          `SLOT`, a virtual junction becomes an ordinary junction, and an
+ *          inlet junction becomes an ordinary junction plus an [INLET_USAGE]
+ *          row on its approach conduit (same design, same capture node).
+ *          Each substitution is appended to the engine's warning list
+ *          (swmm_get_warning_count / swmm_get_warning_at). The file is a run
+ *          artifact: the model held by the engine is not changed.
+ *
+ * @param engine       Engine handle (SWMM_STATE_OPENED or later).
+ * @param new_inp_path Path where the file should be written.
+ * @param profile      SWMM_InpProfile value.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM for an unknown profile or
+ *          NULL path; SWMM_ERR_* on a write failure.
+ */
+SWMM_ENGINE_API int swmm_model_write_compat(SWMM_Engine engine, const char* new_inp_path,
+                                            int profile);
+
 /**
  * @brief Write the current model state via a named writer plugin.
  *

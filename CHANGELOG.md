@@ -52,6 +52,18 @@ retroactive.
     decks through both engines: capture efficiency at peak identical on every on-grade / on-sag
     deck and physical captured volumes identical; the attributed divergences are listed in its
     README). (`test_engine_inlet_capture`, `test_engine_inlet_junction_io`.)
+  - `swmm_model_write_compat(engine, path, SWMM_INP_PROFILE_SWMM5)` — the SWMM 5.x write
+    profile (MULTI_ENGINE plan V2 Phase 4): v6-only sections (`[VIRTUAL_JUNCTIONS]`,
+    `[INLET_JUNCTIONS]`, `[2D_*]`, `[PLUGINS]`, `[PROCESS_COMPONENTS]`, `[USER_FLAGS]`,
+    `[USER_FLAG_VALUES]`, `[RDII_DECAY]`) and option keys are omitted, `FLOW_ROUTING FV` is
+    written as `DYNWAVE`, `SURCHARGE_METHOD DYNAMIC_SLOT` / `TPA` as `SLOT`, a virtual junction
+    becomes an ordinary junction and an inlet junction an ordinary junction plus an
+    `[INLET_USAGE]` row on its approach conduit; every substitution is reported as a warning
+    and the file opens with a comment naming the profile. GeoPackage gains `streets`,
+    `inlets` and `inlet_usage` tables so street models and both inlet grammars round-trip
+    (files written before the tables existed read as before). Inlet junctions are refused
+    under `FLOW_ROUTING FV` (error 619): the FV mesh splices virtual junctions out and would
+    drop the inlet.
 
 - **GUI-editor round-trip API for `[GWF]` expressions** — a subcatchment's custom groundwater
   flow expressions were reachable only through the stringly-typed `swmm_options_get/set_ext`
@@ -354,7 +366,9 @@ retroactive.
   (`vj_split_conduit` now copies the named cross-section). An `[INLET_USAGE]` row naming a capture
   node declared later in the file (legacy parsing is order-independent) is deferred to the
   post-parse pass instead of failing the open with ERROR 209, and the inlet summary's "Peak Flow"
-  column is the peak approach flow, as in legacy, not the peak captured flow.
+  column is the peak approach flow, as in legacy, not the peak captured flow. The Node Inflow
+  Summary's lateral-inflow statistics keep their sign as legacy `stats.c` does (an inlet's bypass
+  node shows the transfer as a negative lateral); they were accumulated as absolute values.
 
 - **DUMMY links are routed under `FLOW_ROUTING FV` instead of failing the
   model.** A DUMMY conduit carries no cross-section, so the FV mesh builder

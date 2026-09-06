@@ -523,6 +523,73 @@ TEST(InletJunctionIO, ValidationRuleCodes) {
 }
 
 // ---------------------------------------------------------------------------
+// SWMM 5.x write profile: the inlet junction downgrades to a junction plus an
+// [INLET_USAGE] row on its approach conduit (plan §2.3, MULTI_ENGINE V2 Phase 4)
+// ---------------------------------------------------------------------------
+
+TEST(InletJunctionIO, Swmm5ProfileDowngradesInletJunction) {
+    SWMM_Engine e = openModel("ij_compat", ijModel(kCurbInlets, kIjSection), true);
+    const std::string out = outPath("ij_compat_swmm5.inp");
+    const int warn_before = swmm_get_warning_count(e);
+    ASSERT_EQ(swmm_model_write_compat(e, out.c_str(), SWMM_INP_PROFILE_SWMM5), SWMM_OK);
+    bool noted = false;
+    for (int i = warn_before; i < swmm_get_warning_count(e); ++i)
+        if (std::string(swmm_get_warning_at(e, i)).find("IJ1") != std::string::npos) noted = true;
+    EXPECT_TRUE(noted) << "the downgrade must be reported as a warning";
+    EXPECT_EQ(swmm_model_write_compat(e, out.c_str(), 99), SWMM_ERR_BADPARAM);
+    destroy(e);
+
+    const std::string txt = readFile(out);
+    EXPECT_EQ(txt.rfind(";; Written by OpenSWMM for a SWMM 5.x engine", 0), 0u) << txt;
+    EXPECT_EQ(txt.find("[INLET_JUNCTIONS]"), std::string::npos) << txt;
+    EXPECT_EQ(txt.find("[VIRTUAL_JUNCTIONS]"), std::string::npos) << txt;
+
+    // Tokens of every data row of a section.
+    auto rows = [&](const std::string& name) {
+        std::vector<std::vector<std::string>> r;
+        bool on = false;
+        std::istringstream ss(txt);
+        std::string ln;
+        while (std::getline(ss, ln)) {
+            if (!ln.empty() && ln[0] == '[') { on = (ln == "[" + name + "]"); continue; }
+            if (!on || ln.empty() || ln[0] == ';') continue;
+            std::istringstream ls(ln);
+            std::vector<std::string> tok;
+            std::string t;
+            while (ls >> t) tok.push_back(t);
+            if (!tok.empty()) r.push_back(tok);
+        }
+        return r;
+    };
+    // IJ1 is an ordinary junction whose MaxDepth is its 0.5 flood threshold...
+    bool ij1_junction = false;
+    for (const auto& tok : rows("JUNCTIONS"))
+        if (tok[0] == "IJ1") { ij1_junction = true; EXPECT_EQ(tok.at(2), "0.5000"); }
+    EXPECT_TRUE(ij1_junction) << txt;
+    // ...and its inlet rides on the approach conduit C_UP with the same design,
+    // capture node and placement columns.
+    const auto usage = rows("INLET_USAGE");
+    ASSERT_EQ(usage.size(), 1u) << txt;
+    EXPECT_EQ(usage[0].at(0), "C_UP");
+    EXPECT_EQ(usage[0].at(1), "Curb1");
+    EXPECT_EQ(usage[0].at(2), "MH1");
+    EXPECT_EQ(usage[0].at(3), "2");
+    EXPECT_EQ(usage[0].back(), "ON_SAG");
+
+    // The refactored engine reads the downgraded file as the legacy-equivalent
+    // model: a plain junction carrying a conduit-hosted inlet.
+    SWMM_Engine e2 = openModel("ij_compat_reopen", txt, true);
+    const int ij1 = swmm_node_index(e2, "IJ1");
+    ASSERT_GE(ij1, 0);
+    int is_inlet = -1;
+    EXPECT_EQ(swmm_node_is_inlet(e2, ij1, &is_inlet), SWMM_OK);
+    EXPECT_EQ(is_inlet, 0);
+    EXPECT_EQ(swmm_inlet_usage_count(e2), 1);
+    EXPECT_GE(swmm_inlet_usage_find_link(e2, swmm_link_index(e2, "C_UP")), 0);
+    destroy(e2);
+}
+
+// ---------------------------------------------------------------------------
 // Edit operations: split into an inlet junction, then fuse back
 // ---------------------------------------------------------------------------
 

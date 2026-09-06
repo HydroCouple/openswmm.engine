@@ -1106,6 +1106,81 @@ and Bocchi, J.P.P. (2020). "Comparing SWMM 5.1 Calculation Alternatives
 to Represent Unsteady Stormwater Sewer Flows." Journal of Hydraulic
 Engineering, 146(7), 04020046.*
 
+#### Inlet junctions
+
+An *inlet junction* is a virtual junction that also owns a street inlet.
+It is declared in its own `[INLET_JUNCTIONS]` section, whose first three
+entries mirror `[VIRTUAL_JUNCTIONS]` and whose remaining entries are the
+placement columns of `[INLET_USAGE]`:
+
+    [INLET_JUNCTIONS]
+    ;;Name   Elev    MaxDepth  Inlet   CaptureNode  #Inlets  %Clog  Qmax  aLocal  wLocal  Placement
+    IJ1      98.00   0.50      Curb1   MH2          1        10     0     0       0       ON_GRADE
+
+The node obeys every virtual-junction eligibility rule above and, in
+addition, both attached conduits must carry a STREET cross-section
+(error 623), the inlet design must exist (625), the capture node must
+exist, differ from the junction and be a real node (627), neither
+attached conduit may itself carry an `[INLET_USAGE]` row (629), the row
+may carry no extra entries (631), and an inlet junction without a usage
+row is refused (633). A design incompatible with the host section is a
+warning (635) that disarms the inlet, as in legacy SWMM.
+
+**Capture.** At every routing step, after all other lateral inflows have
+been assembled and before the conduits are solved, the HEC-22 capture
+kernel computes the flow the inlet intercepts from the gutter flow
+arriving on the approach conduit — the conduit whose flow is directed
+toward the node; at a sag both conduits contribute — using the street
+geometry and the design dimensions exactly as for a conduit-attribute
+inlet. The captured flow leaves the junction as a negative lateral
+inflow and enters the capture node as a positive one; the bypass
+continues down the street. When the capture node floods, its overflow
+returns to the street through the inlet as backflow, so the transfer runs
+in either direction. Placement `AUTOMATIC` resolves by slope: the node is
+a sag when both conduits fall toward it, on-grade otherwise.
+
+**Continuity.** Unlike a plain virtual junction the node is *not*
+sealed: water that rises above the street section leaves the corridor.
+The head update is the zero-storage virtual-junction form, but the
+flooding logic of an ordinary junction applies above a threshold equal
+to the street section's full depth or, when it is larger, the `MaxDepth`
+entry. `MaxDepth` can therefore raise the threshold — a raised curb line,
+a wall — but never lower it below the section, so a rendering-only rim
+inherited from a conduit split cannot make the node flood early. The node
+has no ponded area, so water above the threshold is lost as flooding.
+Its stored volume is identically zero: the half-link surface area it
+carries is the linearization of the adjacent conduits, not storage of
+its own.
+
+**Momentum.** The pair receives the zero-storage continuity treatment
+only. The directional momentum coupling (the upwind-state carry-over
+across the break) is disabled at an inlet junction, because that
+coupling assumes a sealed pair with no lateral exchange at the node.
+
+**Routing methods.** Inlet junctions require dynamic wave routing. Under
+kinematic or steady routing the virtual-junction rule applies (error
+619); under finite-volume routing, which splices virtual junctions out
+of its mesh (§8.6.2), an inlet junction is also refused with error 619,
+because the spliced node could no longer carry the capture sink.
+
+**Results and files.** The node reports as a JUNCTION in the output
+file. The Street Inlet Flow Summary lists it as `NAME (node)` beside the
+conduit-attribute inlets, with the same performance columns. When a
+model is written for a SWMM 5.x engine (the `SWMM5` write profile of
+`swmm_model_write_compat`), an inlet junction is downgraded to an
+ordinary junction plus an `[INLET_USAGE]` row on its approach conduit
+with the same design and capture node — the legacy-equivalent model —
+and the writer reports the substitution.
+
+Implementation: `src/engine/hydraulics/Inlet.cpp` (the kernel and the
+per-step transfer, `inlet::InletSolver::computeAll`), the unsealed
+flooding branch of `DWSolver::commitNodeDepthState` and the
+mechanism-1-only guard in `DWSolver::vjPrepareIteration`
+(`src/engine/hydraulics/DynamicWave.cpp`), validation in
+`src/engine/input/PostParseResolver.cpp` (`validate_inlet_junctions`),
+and the split/fuse editing operations `ij_split_conduit` / `ij_fuse` in
+`src/engine/edit/VirtualJunctionOps.cpp`.
+
 ### 3.3.11 Two-Component Pressure Approach (`SURCHARGE_METHOD TPA`)
 
 All three surcharge treatments described so far share one fidelity

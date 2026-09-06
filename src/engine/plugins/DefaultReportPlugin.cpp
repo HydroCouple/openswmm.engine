@@ -1457,7 +1457,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const auto uni = static_cast<std::size_t>(ni);
             const double max_lat = (ni >= 0 && uni < ctx.nodes.stat_max_lat_inflow.size())
                 ? ctx.nodes.stat_max_lat_inflow[uni] : 0.0;
-            if (max_lat > 0.0) {
+            // Signed statistic (an inlet junction's capture sink is negative).
+            if (std::fabs(max_lat) > 0.0) {
                 std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f   lateral %.3f %s",
                     ctx.node_names.name_of(ni).c_str(),
                     (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",

@@ -83,6 +83,7 @@
 
 // IO3a: the component save hook — each component writes its own config file.
 #include "../plugins/ProcessComponentRegistry.hpp"
+#include "../edit/VirtualJunctionOps.hpp"   // ij_host_conduit (SWMM 5.x profile)
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -808,9 +809,16 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
 #endif
 }
 
-int writeInpFile(const SimulationContext& ctx_internal,
+int writeInpFile(const SimulationContext& ctx,
                  const std::string&       path,
                  std::vector<std::string>* warnings) {
+    return writeInpFile(ctx, path, warnings, InpWriteOptions{});
+}
+
+int writeInpFile(const SimulationContext&  ctx_internal,
+                 const std::string&        path,
+                 std::vector<std::string>* warnings,
+                 const InpWriteOptions&    opts) {
     // The engine stores 1D input fields in internal units (feet/cfs); the .inp
     // must carry display units matching FLOW_UNITS. For SI models, convert a
     // local copy back to display units so the live engine state is never
@@ -838,8 +846,18 @@ int writeInpFile(const SimulationContext& ctx_internal,
     const SimulationContext& ctx =
         (needs_display_conv || needs_authored_conv) ? ctx_display : ctx_internal;
 
+    // SWMM 5.x write profile (MULTI_ENGINE plan V2 Phase 4): omit the v6-only
+    // sections and option keys, map incompatible option values, and write
+    // virtual / inlet junctions in their legacy-equivalent form. Every
+    // substitution is reported so the caller can surface it as a run warning.
+    const bool swmm5 = (opts.profile == InpWriteOptions::Profile::Swmm5);
+    auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
+
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return -1;
+    if (swmm5)
+        std::fprintf(f, ";; Written by OpenSWMM for a SWMM 5.x engine: v6-only sections and "
+                        "options omitted; virtual and inlet junctions written as junctions.\n");
 
     // Slice IO-4: pre-compute the rebase anchor + opt-out flag once so each
     // section can pass them to emit_path_token() without re-deriving.
@@ -882,7 +900,14 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // --- Group 1: Core process options (FLOW_UNITS .. SKIP_STEADY_STATE) ---
     std::fprintf(f,"%-20s %s\n",  "FLOW_UNITS",       (fu>=0&&fu<=5)?sFlowUnits[fu]:"CFS");
     std::fprintf(f,"%-20s %s\n",  "INFILTRATION",     (inf>=0&&inf<=4)?sInfilt[inf]:"HORTON");
-    std::fprintf(f,"%-20s %s\n",  "FLOW_ROUTING",     (rm>=0&&rm<=3)?sRouting[rm]:"DYNWAVE");
+    {
+        const char* routing_word = (rm>=0&&rm<=3)?sRouting[rm]:"DYNWAVE";
+        if (swmm5 && rm == 3) {   // FV has no 5.x counterpart
+            routing_word = "DYNWAVE";
+            note("[OPTIONS] FLOW_ROUTING FV written as DYNWAVE (SWMM 5.x profile)");
+        }
+        std::fprintf(f,"%-20s %s\n",  "FLOW_ROUTING",     routing_word);
+    }
     std::fprintf(f,"%-20s %s\n",  "LINK_OFFSETS",     o.link_offsets==1?"ELEVATION":"DEPTH");
     std::fprintf(f,"%-20s %g\n",  "MIN_SLOPE",        o.min_slope);
     std::fprintf(f,"%-20s %s\n",  "ALLOW_PONDING",    o.allow_ponding?"YES":"NO");
@@ -898,7 +923,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-20s %s\n",  "IGNORE_QUALITY",    o.ignore_quality?"YES":"NO");
     // OpenSWMM extension, not a legacy key — emit only when set so 1D-only
     // models keep a legacy-clean [OPTIONS] block.
-    if (o.ignore_2d)
+    if (o.ignore_2d && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "IGNORE_2D",         "YES");
     // Same rule for the two transport engine-selection keys. Both were
     // dropped on save: a EULERIAN_ARD model came back LEGACY and a
@@ -907,28 +932,28 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // carrying WATER_AGE ON without its EULERIAN_ARD line opens with the
     // "no age is tracked this simulation" warning instead of the model the
     // user saved.
-    if (o.quality_solver == QualitySolverKind::EULERIAN_ARD)
+    if (o.quality_solver == QualitySolverKind::EULERIAN_ARD && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "EULERIAN_ARD");
     // X1: same rule for LAGRANGIAN — a save-as must not silently reopen as
     // LEGACY (the A1a defect shape, third instance guarded).
-    if (o.quality_solver == QualitySolverKind::LAGRANGIAN)
+    if (o.quality_solver == QualitySolverKind::LAGRANGIAN && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "QUALITY_SOLVER",    "LAGRANGIAN");
     // X3a: the LARD stepping keys ride the same save-as rule — dropping
     // either silently changes the transport discretization on reopen.
-    if (o.quality_step > 0.0) {
+    if (o.quality_step > 0.0 && !swmm5) {
         char qsb[32];
         fmt_step(qsb, o.quality_step);
         std::fprintf(f,"%-20s %s\n",  "QUALITY_STEP",      qsb);
     }
-    if (o.max_segments_per_link != 100)
+    if (o.max_segments_per_link != 100 && !swmm5)
         std::fprintf(f,"%-20s %d\n",  "MAX_SEGMENTS_PER_LINK",
                      o.max_segments_per_link);
     // X3b: the RWPT keys ride the same rule.
-    if (o.lard_rwpt)
+    if (o.lard_rwpt && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "DISPERSION",         "RWPT");
-    if (o.rwpt_seed != 0)
+    if (o.rwpt_seed != 0 && !swmm5)
         std::fprintf(f,"%-20s %d\n",  "RWPT_SEED",          o.rwpt_seed);
-    if (o.water_age)
+    if (o.water_age && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "WATER_AGE",         "ON");
     // Same save-as rule: dropping this line silently reverts a fresh-boundary
     // model to the legacy held-quality backflow on reopen.
@@ -936,7 +961,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,"%-20s %s\n",  "OUTFALL_BACKFLOW_QUALITY", "ZERO");
     // H1: same rule, same reason — a save-as that dropped this reopened as a
     // model with no temperature tracking, silently (the A1a defect).
-    if (o.heat_transport)
+    if (o.heat_transport && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "HEAT_TRANSPORT",    "ON");
     std::fprintf(f,"\n");
 
@@ -978,10 +1003,18 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-20s %s\n",  "INERTIAL_DAMPING",    (id>=0&&id<=2)?sInertial[id]:"PARTIAL");
     std::fprintf(f,"%-20s %s\n",  "NORMAL_FLOW_LIMITED", (nfl>=0&&nfl<=3)?sNormFlow[nfl]:"BOTH");
     std::fprintf(f,"%-20s %s\n",  "FORCE_MAIN_EQUATION", o.force_main_eqn==1?"D-W":"H-W");
-    std::fprintf(f,"%-20s %s\n",  "SURCHARGE_METHOD",    (sm>=0&&sm<=3)?sSurcharge[sm]:"EXTRAN");
-    if (sm == 3)   // issue #156: TPA acoustic celerity, non-default method only
+    {
+        const char* sm_word = (sm>=0&&sm<=3)?sSurcharge[sm]:"EXTRAN";
+        if (swmm5 && sm >= 2) {   // DYNAMIC_SLOT / TPA: 5.x knows only EXTRAN and SLOT
+            note(std::string("[OPTIONS] SURCHARGE_METHOD ") + sm_word +
+                 " written as SLOT (SWMM 5.x profile)");
+            sm_word = "SLOT";
+        }
+        std::fprintf(f,"%-20s %s\n",  "SURCHARGE_METHOD",    sm_word);
+    }
+    if (sm == 3 && !swmm5)   // issue #156: TPA acoustic celerity, non-default method only
         std::fprintf(f,"%-20s %g\n","TPA_CELERITY", o.tpa_celerity);
-    {   // Unsteady friction (issue #156): round-tripped unconditionally, like
+    if (!swmm5) {   // Unsteady friction (issue #156): round-tripped unconditionally, like
         // SURCHARGE_METHOD — the keys are inert unless a consuming solver runs.
         const int uf = o.unsteady_friction;
         std::fprintf(f,"%-20s %s\n","UNSTEADY_FRICTION",
@@ -1002,14 +1035,14 @@ int writeInpFile(const SimulationContext& ctx_internal,
     std::fprintf(f,"%-20s %d\n",  "THREADS",             o.num_threads);
 
     // --- Engine-specific extensions (not in legacy GUI) ---
-    if (sm == 2) {
+    if (sm == 2 && !swmm5) {
         std::fprintf(f,"%-20s %.4f\n","DPS_CELERITY",   o.dps_target_celerity);
         std::fprintf(f,"%-20s %.4f\n","DPS_ALPHA",      o.dps_alpha);
         std::fprintf(f,"%-20s %.4f\n","DPS_DECAY_TIME", o.dps_decay_time);
     }
-    if (o.node_continuity != NodeContinuity::EXPLICIT)
+    if (o.node_continuity != NodeContinuity::EXPLICIT && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "NODE_CONTINUITY","SEMI_IMPLICIT");
-    if (o.anderson_accel)
+    if (o.anderson_accel && !swmm5)
         std::fprintf(f,"%-20s %s\n",  "ANDERSON_ACCEL", "YES");
     // VIRTUAL_JUNCTION_MOMENTUM is not emitted: FULL is retired (see
     // SimulationOptions.hpp) and virtual_junction_momentum is now always 0,
@@ -1020,7 +1053,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // under other routing models, so a round-trip that changes FLOW_ROUTING
     // does not lose a user's FV configuration mid-session — it is simply not
     // written until FV is selected again.
-    if (o.routing_model == RoutingModel::FV) {
+    if (o.routing_model == RoutingModel::FV && !swmm5) {
         static const char* sRiemann[] = {"HLL","HLLC"};
         static const char* sLimiter[] = {"MINMOD","VANLEER","SUPERBEE"};
         static const char* sScalar[]  = {"UPWIND","MUSCL","QUICKEST_ULTIMATE"};
@@ -1607,18 +1640,34 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }
 
     // [JUNCTIONS]
-    if(hasRegularJunction(ctx)){sec(f,"JUNCTIONS");
+    // Under the SWMM 5.x profile virtual and inlet junctions are written here as
+    // ordinary junctions (no [VIRTUAL_JUNCTIONS] / [INLET_JUNCTIONS] in 5.x).
+    if(hasRegularJunction(ctx)||(swmm5&&(hasVirtualJunction(ctx)||hasInletJunction(ctx)))){sec(f,"JUNCTIONS");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","Name","Elev","MaxDepth","InitDepth","SurDepth","Aponded");
     std::fprintf(f,";;%-16s %-12s %-12s %-12s %-12s %-12s\n","----------------","------------","------------","------------","------------","------------");
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::JUNCTION||isVirtualNode(ctx,u))continue;
+    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(ctx.nodes.type[u]!=NodeType::JUNCTION)continue;
+    const bool vnode=isVirtualNode(ctx,u);
+    if(vnode&&!swmm5)continue;
     write_obj_comment(f, ctx.nodes.comments, u);
+    if(vnode){
+        // MaxDepth: the rim / flood threshold when one was given, else 0 so the
+        // 5.x engine derives it from the crown as for any junction. The node
+        // had no surcharge depth and no ponded area.
+        const double rim=(u<ctx.nodes.rim_depth.size())?ctx.nodes.rim_depth[u]:0.0;
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),
+            ctx.nodes.invert_elev[u],rim>0.0?rim:0.0,0.0,0.0,0.0);
+        note("Node "+ctx.node_names.name_of(j)+(isInletNode(ctx,u)
+            ?": inlet junction written as a junction plus an [INLET_USAGE] row on its approach conduit"
+            :": virtual junction written as a junction")+" (SWMM 5.x profile)");
+        continue;
+    }
     std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],ctx.nodes.sur_depth[u],ctx.nodes.ponded_area[u]);
     }}
 
     // [VIRTUAL_JUNCTIONS] — name + invert elevation, plus an optional MaxDepth
     // that is used ONLY to draw the ground surface. All solver geometry is
     // derived from the attached conduits at load time (refactored engine only).
-    if(hasVirtualJunction(ctx)){sec(f,"VIRTUAL_JUNCTIONS");
+    if(!swmm5&&hasVirtualJunction(ctx)){sec(f,"VIRTUAL_JUNCTIONS");
     const bool anyRim = hasVirtualJunctionRim(ctx);
     if(anyRim){
         std::fprintf(f,";;%-16s %-12s %-12s\n","Name","Elev","MaxDepth");
@@ -1644,7 +1693,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // [INLET_JUNCTIONS] — a virtual junction plus its street inlet. Tokens 1-3
     // mirror [VIRTUAL_JUNCTIONS] (MaxDepth here is the flood threshold, carried
     // in rim_depth); tokens 4-11 are the [INLET_USAGE] tail.
-    if(hasInletJunction(ctx)){sec(f,"INLET_JUNCTIONS");
+    if(!swmm5&&hasInletJunction(ctx)){sec(f,"INLET_JUNCTIONS");
     std::fprintf(f,";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
         "Name","Elev","MaxDepth","Inlet","CaptureNode","#Inlets","%Clog","Qmax","aLocal","wLocal","Placement");
     std::fprintf(f,";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
@@ -2072,14 +2121,27 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // Node-hosted rows belong to [INLET_JUNCTIONS] and are skipped here.
     bool anyLinkUsage=false;
     for(int j=0;j<ctx.inlet_usages.count();++j)
-        if(ctx.inlet_usages.node_host[static_cast<size_t>(j)]<0){anyLinkUsage=true;break;}
+        if(ctx.inlet_usages.node_host[static_cast<size_t>(j)]<0||swmm5){anyLinkUsage=true;break;}
     if(anyLinkUsage){sec(f,"INLET_USAGE");
     std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","Link","Inlet","Node","#Inlets","%Clog","Qmax","aLocal","wLocal","Placement");
     std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------------","--------","--------","----------","----------","----------","----------");
     const char* const* kPlacement=kInletPlacementWords;
     for(int j=0;j<ctx.inlet_usages.count();++j){auto u=static_cast<size_t>(j);
-    if(ctx.inlet_usages.node_host[u]>=0)continue;
-    const int li=ctx.inlet_usages.link_index[u];
+    int li=ctx.inlet_usages.link_index[u];
+    const int nh=ctx.inlet_usages.node_host[u];
+    if(nh>=0){
+        if(!swmm5)continue;
+        // SWMM 5.x profile: the inlet junction's row moves onto its approach
+        // conduit — legacy books the capture at that conduit's downstream node,
+        // which is this junction — keeping design, capture node and the
+        // placement columns (plan §2.3).
+        li=edit::ij_host_conduit(ctx,/*host_kind=*/1,nh);
+        if(li<0){
+            note("Node "+ctx.node_names.name_of(nh)+
+                 ": inlet junction has no approach conduit; its inlet is dropped in the SWMM 5.x profile");
+            continue;
+        }
+    }
     const int di=ctx.inlet_usages.design_index[u];
     const int ni=ctx.inlet_usages.node_index[u];
     // The reader drops rows naming an unknown link/inlet/node, so a stale index
@@ -2331,7 +2393,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     // [RDII_DECAY] (exponential IA decay parameters; optional degree-day snow
     // clause "SNOW snow_T snow_ddf" appended to rows with the snow model on)
-    if(ctx.rdii_decay.count()>0){sec(f,"RDII_DECAY");
+    if(swmm5&&ctx.rdii_decay.count()>0) note("[RDII_DECAY] omitted (SWMM 5.x profile)");
+    if(!swmm5&&ctx.rdii_decay.count()>0){sec(f,"RDII_DECAY");
     std::fprintf(f,";;%-16s %-8s %-10s %-10s %-10s %-8s %-10s %-10s %-4s %-8s %-10s\n",
         "UHGroup","Response","k_dep","k_0","k_T","T_ref","theta_rec","T_freeze",
         "Snow","snow_T","snow_ddf");
@@ -2578,7 +2641,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }
 
     // [USER_FLAGS]
-    if(ctx.user_flags.def_count()>0){sec(f,"USER_FLAGS");
+    if(swmm5&&ctx.user_flags.def_count()>0) note("[USER_FLAGS] / [USER_FLAG_VALUES] omitted (SWMM 5.x profile)");
+    if(!swmm5&&ctx.user_flags.def_count()>0){sec(f,"USER_FLAGS");
     std::fprintf(f,";;%-20s %-10s %s\n","Name","Type","Description");
     std::fprintf(f,";;%-20s %-10s\n","--------------------","----------");
     for(const auto&d:ctx.user_flags.all_defs()){
@@ -2588,7 +2652,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }}
 
     // [USER_FLAG_VALUES]
-    if(ctx.user_flags.value_count()>0){sec(f,"USER_FLAG_VALUES");
+    if(!swmm5&&ctx.user_flags.value_count()>0){sec(f,"USER_FLAG_VALUES");
     std::fprintf(f,";;%-14s %-16s %-20s %s\n","ObjectType","ObjectName","FlagName","Value");
     std::fprintf(f,";;%-14s %-16s %-20s\n","--------------","----------------","--------------------");
     for(const auto&kv:ctx.user_flags.all_values()){const auto&k=kv.first;
@@ -2660,7 +2724,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     }
 
     // [PLUGINS]
-    if(!ctx.plugin_specs.empty()){sec(f,"PLUGINS");
+    if(swmm5&&!ctx.plugin_specs.empty()) note("[PLUGINS] omitted (SWMM 5.x profile)");
+    if(!swmm5&&!ctx.plugin_specs.empty()){sec(f,"PLUGINS");
     for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",ps.path.c_str());
     for(const auto&a:ps.init_args)std::fprintf(f," %s",a.c_str());std::fprintf(f,"\n");
     }}
@@ -2670,7 +2735,8 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // The config= reference is an external-file slot like any other, so it
     // goes through emit_path_token (Slice IO-4): an absolute path is rebased
     // against the destination directory, a relative one passes through.
-    if(!ctx.process_component_specs.empty()){sec(f,"PROCESS_COMPONENTS");
+    if(swmm5&&!ctx.process_component_specs.empty()) note("[PROCESS_COMPONENTS] omitted (SWMM 5.x profile)");
+    if(!swmm5&&!ctx.process_component_specs.empty()){sec(f,"PROCESS_COMPONENTS");
     for(const auto&pc:ctx.process_component_specs){std::fprintf(f,"%s",pc.id.c_str());
     if(!pc.config_path.empty()){const std::string cfg=
     emit_path_token(pc.config_path,dst_dir,force_abs_paths,warnings);
@@ -2790,7 +2856,7 @@ int writeInpFile(const SimulationContext& ctx_internal,
 
     // [2D_*] — 2D surface-routing model definition (no-op for 1D models
     // and for engine builds without the 2D module).
-    write2DSections(f, ctx, dst_dir, force_abs_paths, warnings);
+    if(!swmm5) write2DSections(f, ctx, dst_dir, force_abs_paths, warnings);
 
     std::fclose(f);
     return 0;

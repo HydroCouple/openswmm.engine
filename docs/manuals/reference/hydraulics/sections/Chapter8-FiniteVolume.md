@@ -1392,6 +1392,13 @@ posed — the model declares a virtual junction (see the
 consumed at mesh construction: the two conduits' cell chains are
 concatenated and the junction becomes an ordinary interior face.
 
+An *inlet junction* (`[INLET_JUNCTIONS]`, Chapter 3 §3.3.10) is a
+virtual junction that also owns a street inlet and exchanges captured
+flow with a capture node at every step. Splicing it out would leave that
+transfer with no node to act on, so inlet junctions are not admitted
+under finite-volume routing: the input processor refuses them with
+error 619.
+
 Nothing else is done, and nothing else is needed. Mass and momentum
 flux continuity across a virtual junction are then properties of the
 scheme rather than a special treatment, and a conduit split by a

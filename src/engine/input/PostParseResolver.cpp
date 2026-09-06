@@ -1356,6 +1356,18 @@ static void validate_inlet_junctions(SimulationContext& ctx) {
         if (ui >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[ui]) continue;
         const std::string& name = ctx.node_names.name_of(i);
 
+        // Rule 619 (the virtual-junction routing rule) admits FV because the
+        // FV mesh splices a virtual junction out at construction; an inlet
+        // junction cannot be spliced out — its capture sink needs the node —
+        // so under FV it is refused here. KINWAVE/STEADY already fail 619 in
+        // validate_virtual_junctions.
+        if (ctx.options.routing_model == RoutingModel::FV) {
+            ctx.errors.push_back(format_error(ERR_VJ_ROUTING_MODEL, name,
+                "(an inlet junction needs DYNWAVE: the finite-volume mesh splices "
+                "virtual junctions out and would drop the inlet)"));
+            continue;
+        }
+
         // Rule 633: the node must own a usage row. The virtual-junction rules
         // (609/611/613/617/619) already ran for this node in
         // validate_virtual_junctions — is_inlet implies is_virtual.

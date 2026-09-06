@@ -3939,13 +3939,16 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Node inflow statistics (matching legacy stats_updateNodeStats)
         double lat = ctx_.nodes.lat_flow[uj];
         double total_inflow = ctx_.nodes.inflow[uj];
-        if (std::fabs(lat) > ctx_.nodes.stat_max_lat_inflow[uj])
-            ctx_.nodes.stat_max_lat_inflow[uj] = std::fabs(lat);
+        // Signed, as legacy stats.c keeps them: a street inlet's transfer shows
+        // as a NEGATIVE lateral at its bypass node, and the Node Inflow Summary
+        // reports it that way (the peak is the largest magnitude, sign kept).
+        if (std::fabs(lat) > std::fabs(ctx_.nodes.stat_max_lat_inflow[uj]))
+            ctx_.nodes.stat_max_lat_inflow[uj] = lat;
         if (total_inflow > ctx_.nodes.stat_max_total_inflow[uj]) {
             ctx_.nodes.stat_max_total_inflow[uj] = total_inflow;
             ctx_.nodes.stat_max_inflow_date[uj] = ctx_.current_date;
         }
-        ctx_.nodes.stat_lat_inflow_vol[uj]   += std::fabs(lat) * dt_routing;
+        ctx_.nodes.stat_lat_inflow_vol[uj]   += lat * dt_routing;
         ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
         // PARITY stats.c:588 stats_updateStorageStats — a storage unit's peak
         // RELEASE, which is what its outlet structures actually passed. Not

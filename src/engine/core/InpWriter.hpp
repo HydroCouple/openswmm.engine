@@ -76,6 +76,31 @@ int writeInpFile(const SimulationContext& ctx,
                  const std::string&       path,
                  std::vector<std::string>* warnings = nullptr);
 
+/**
+ * @brief Write profile: which engine the file is written for.
+ *
+ * @details `Full` is the native format. `Swmm5` writes a file a SWMM 5.x
+ *          engine can read (MULTI_ENGINE plan V2 Phase 4): the v6-only
+ *          sections are omitted ([2D_*], [PLUGINS], [PROCESS_COMPONENTS],
+ *          [USER_FLAGS], [USER_FLAG_VALUES], [RDII_DECAY]), v6-only option
+ *          keys are omitted and incompatible values mapped (FLOW_ROUTING FV →
+ *          DYNWAVE, SURCHARGE_METHOD DYNAMIC_SLOT/TPA → SLOT), a virtual
+ *          junction becomes an ordinary junction, and an inlet junction
+ *          becomes an ordinary junction plus an [INLET_USAGE] row on its
+ *          approach conduit with the same capture node (the legacy-equivalent
+ *          model). Every substitution is reported through `warnings`; the
+ *          file starts with a comment naming the profile.
+ */
+struct InpWriteOptions {
+    enum class Profile { Full, Swmm5 };
+    Profile profile = Profile::Full;
+};
+
+int writeInpFile(const SimulationContext&  ctx,
+                 const std::string&        path,
+                 std::vector<std::string>* warnings,
+                 const InpWriteOptions&    opts);
+
 } // namespace inp_writer
 } // namespace openswmm
 

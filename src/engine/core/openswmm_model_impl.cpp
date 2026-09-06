@@ -297,6 +297,23 @@ SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_pat
     return rc;
 }
 
+SWMM_ENGINE_API int swmm_model_write_compat(SWMM_Engine engine, const char* new_inp_path,
+                                            int profile) {
+    CHECK_HANDLE(engine);
+    if (!new_inp_path) return SWMM_ERR_BADPARAM;
+    openswmm::inp_writer::InpWriteOptions opts;
+    switch (profile) {
+        case SWMM_INP_PROFILE_FULL:  opts.profile = openswmm::inp_writer::InpWriteOptions::Profile::Full;  break;
+        case SWMM_INP_PROFILE_SWMM5: opts.profile = openswmm::inp_writer::InpWriteOptions::Profile::Swmm5; break;
+        default: return SWMM_ERR_BADPARAM;
+    }
+    auto& ctx = to_engine(engine)->context();
+    std::vector<std::string> warns;
+    const int rc = openswmm::inp_writer::writeInpFile(ctx, new_inp_path, &warns, opts);
+    forwardWriteWarnings(ctx, warns);
+    return rc;
+}
+
 SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
                                                   const char* new_path,
                                                   const char* output_plugin_id) {

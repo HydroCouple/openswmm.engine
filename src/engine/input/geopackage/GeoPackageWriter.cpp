@@ -1508,6 +1508,106 @@ static void write_transects(sqlite3* db, const SimulationContext& ctx,
     }
 }
 
+// Street sections, inlet designs and inlet placements ([STREETS], [INLETS],
+// [INLET_USAGE] + [INLET_JUNCTIONS]). Written as the engine holds them (user
+// units as read, cross slope in percent), like the transects above.
+static void write_streets(sqlite3* db, const SimulationContext& ctx,
+                          const std::string& sim_id) {
+    const auto& S = ctx.streets;
+    if (S.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO streets (simulation_id, street_id, t_crown, h_curb, sx, n_road, "
+        "gutter_depres, gutter_width, sides, back_width, back_slope, back_n) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+    for (int i = 0; i < S.count(); ++i) {
+        const auto u = static_cast<std::size_t>(i);
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_text(stmt.get(), 2, S.names[u]);
+        bind_double(stmt.get(), 3, S.t_crown[u]);
+        bind_double(stmt.get(), 4, S.h_curb[u]);
+        bind_double(stmt.get(), 5, S.sx[u]);
+        bind_double(stmt.get(), 6, S.n_road[u]);
+        bind_double(stmt.get(), 7, S.gutter_depres[u]);
+        bind_double(stmt.get(), 8, S.gutter_width[u]);
+        bind_int(stmt.get(), 9, S.sides[u]);
+        bind_double(stmt.get(), 10, S.back_width[u]);
+        bind_double(stmt.get(), 11, S.back_slope[u]);
+        bind_double(stmt.get(), 12, S.back_n[u]);
+        sqlite3_step(stmt.get());
+    }
+}
+
+static void write_inlets(sqlite3* db, const SimulationContext& ctx,
+                         const std::string& sim_id) {
+    const auto& I = ctx.inlets;
+    if (I.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO inlets (simulation_id, inlet_id, inlet_type, length, width, grate_type, "
+        "open_area, splash_veloc, curb_length, curb_height, curb_throat, curve_id, comment) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    for (int i = 0; i < I.count(); ++i) {
+        const auto u = static_cast<std::size_t>(i);
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_text(stmt.get(), 2, I.names[u]);
+        bind_text(stmt.get(), 3, I.inlet_type[u]);
+        bind_double(stmt.get(), 4, I.length[u]);
+        bind_double(stmt.get(), 5, I.width[u]);
+        if (!I.grate_type[u].empty()) bind_text(stmt.get(), 6, I.grate_type[u]);
+        else                          bind_null(stmt.get(), 6);
+        bind_double(stmt.get(), 7, I.open_area[u]);
+        bind_double(stmt.get(), 8, I.splash_veloc[u]);
+        bind_double(stmt.get(), 9, I.curb_length[u]);
+        bind_double(stmt.get(), 10, I.curb_height[u]);
+        bind_int(stmt.get(), 11, I.curb_throat[u]);
+        if (!I.curve_id[u].empty()) bind_text(stmt.get(), 12, I.curve_id[u]);
+        else                        bind_null(stmt.get(), 12);
+        if (u < I.comments.size() && !I.comments[u].empty()) bind_text(stmt.get(), 13, I.comments[u]);
+        else                                                 bind_null(stmt.get(), 13);
+        sqlite3_step(stmt.get());
+    }
+}
+
+static void write_inlet_usage(sqlite3* db, const SimulationContext& ctx,
+                              const std::string& sim_id) {
+    const auto& U = ctx.inlet_usages;
+    if (U.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO inlet_usage (simulation_id, host_kind, host_id, inlet_id, capture_node, "
+        "num_inlets, pct_clogged, flow_limit, local_depress, local_width, placement) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    for (int r = 0; r < U.count(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const int di = U.design_index[ur];
+        const int ni = U.node_index[ur];
+        const int host_node = U.node_host[ur];
+        const int host_link = U.link_index[ur];
+        // A row whose references never resolved would be dropped on re-read
+        // anyway (as the .inp writer does): skip it rather than write '?'.
+        if (di < 0 || di >= ctx.inlets.count() || ni < 0 || ni >= ctx.n_nodes()) continue;
+        if (host_node < 0 && (host_link < 0 || host_link >= ctx.n_links())) continue;
+        if (host_node >= ctx.n_nodes()) continue;
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_int(stmt.get(), 2, host_node >= 0 ? 1 : 0);
+        bind_text(stmt.get(), 3, host_node >= 0 ? ctx.node_names.name_of(host_node)
+                                                : ctx.link_names.name_of(host_link));
+        bind_text(stmt.get(), 4, ctx.inlets.names[static_cast<std::size_t>(di)]);
+        bind_text(stmt.get(), 5, ctx.node_names.name_of(ni));
+        bind_int(stmt.get(), 6, U.num_inlets[ur]);
+        bind_double(stmt.get(), 7, (1.0 - U.clog_factor[ur]) * 100.0);
+        bind_double(stmt.get(), 8, U.flow_limit[ur]);
+        bind_double(stmt.get(), 9, U.local_depress[ur]);
+        bind_double(stmt.get(), 10, U.local_width[ur]);
+        bind_int(stmt.get(), 11, U.placement[ur]);
+        sqlite3_step(stmt.get());
+    }
+}
+
 static void write_controls(sqlite3* db, const SimulationContext& ctx,
                            const std::string& sim_id) {
     const auto& C = ctx.control_rules;
@@ -1961,6 +2061,9 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_inflows(db, ctx, simulation_id);
     write_dwf(db, ctx, simulation_id);
     write_transects(db, ctx, simulation_id);
+    write_streets(db, ctx, simulation_id);
+    write_inlets(db, ctx, simulation_id);
+    write_inlet_usage(db, ctx, simulation_id);
     write_controls(db, ctx, simulation_id);
 
     // Part E — 2D mesh model definition + solver options. No-ops when the
